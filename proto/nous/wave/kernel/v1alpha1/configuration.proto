@@ -1,9 +1,0 @@
-// Copyright 2026 Aravine Zhu
-// SPDX-License-Identifier: Apache-2.0
-
-syntax = "proto3";
-package nous.wave.kernel.v1alpha1;
-import "google/protobuf/empty.proto";
-import "google/protobuf/struct.proto";
-message InitializeHostRuntimeRequest { string configuration_digest = 1; google.protobuf.Struct resolved_embedding = 2; }
-service KernelConfigurationService { rpc InitializeHostRuntime(InitializeHostRuntimeRequest) returns (google.protobuf.Empty); }

@@ -1,2 +1,0 @@
-[env]
-CLIPPY_CONF_DIR = { value = ".cargo", relative = true }

@@ -1,13 +1,15 @@
 # Nous Wave
 
-PRE_PRODUCTION; no released external consumers. Internal replacements update current producers/consumers together and delete superseded shapes. Architecture-Vault owns long-term cognition semantics and accepted decisions. Executable contracts are routed through [docs/INDEX.md](docs/INDEX.md). For behavior changes, read the relevant Vault target design and accepted decisions, owning current Spec, direct dependency contracts, and current code.
+PRE_PRODUCTION rebuild. Read the construction package at `../Specs/README.md`, its constitution, architecture, contracts and construction order before changing behavior. Read the current feature Spec. Track Objective, Decisions and Current Work in `docs/construction.md`.
 
-Use project-specific engineering guidance in [.agents/skills/AGENTS.md](.agents/skills/AGENTS.md); the installed antirlhf-exec and refactoring skills guide execution and structural replacement. During iteration, use affected checks rather than requiring the complete suite for every edit. The active user goal owns the test-count and test/support-length budgets; keep the existing checks runnable without adding a counting platform.
+Use the installed antirlhf-exec and refactoring skills. Replace internal shapes and all current producers/consumers together. Delete superseded code, tests and documentation. Git preserves prior implementations. Use mature dependencies for generic execution, storage, parsing, transport and UI mechanics.
 
-TypeScript Core owns public hosting and model/resource execution. Rust semantic owners hold Authority, mutation and lifecycle meaning. `persistence` supplies database mechanics; `retrieval` supplies rebuildable Serving. `runtime` is independent of concrete retrieval/provider implementations.
+Nous is one TypeScript modular service. Modules under `packages/nous/src/` own their semantics and transactions. PostgreSQL is authoritative; LanceDB is rebuildable. Public Zod contracts live in `packages/contracts/`; generate OpenAPI and Client through `pnpm generate`. DBOS owns workflow progress and Kysely datasource owns atomic business/checkpoint transactions. Do not create a second queue, outbox, lease or workflow engine.
 
-Canonical wire contracts live in `proto/`; regenerate bindings with `corepack pnpm generate`. Database schema and ordered migrations live in `crates/persistence/migrations/`.
+Hept is an independent product and database. Share only pure common values. Use the formal Client across products. Model identity and permissions come from the trusted host, never model input. Preserve native OpenClaw execution/history/tools and AstrBot channel mechanics.
 
-Development configuration is ignored `data/config/apps/nous.toml`; secrets use SecretRoot/environment. Portable payloads contain no operator configuration. Repository-generated local artifacts live under `data/`, except standard `node_modules/`, Cargo `target/`, and third-party CodeGraph storage. Runtime acquisition is explicit; ordinary serve uses installed packs.
+Use Node 24 and TypeScript 7 ESM. Generated local artifacts belong in ignored `data/`, except standard `node_modules/` and third-party CodeGraph storage. Acquire runtimes explicitly. Keep secrets out of logs and portable data.
 
-Default branches are integration-only: PR and squash merge, never direct push.
+Human documentation is Chinese. AI instructions are concise technical English. Use a few real scenarios and necessary rule tests. During iteration run affected checks.
+
+Default branches are integration-only: use a feature branch and PR/squash merge, never push directly to the default branch.

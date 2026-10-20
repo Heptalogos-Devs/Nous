@@ -1,0 +1,79 @@
+// 世界、日历、精力与实际见闻
+digraph "world-time" {
+	graph [bgcolor="#ffffff" fontcolor="#202e3a" fontname="Noto Sans CJK SC" fontsize=18 label="世界、日历、精力与实际见闻" labeljust=l labelloc=t newrank=true nodesep=0.38 outputorder=edgesfirst pad=0.3 rankdir=TB ranksep=1.15 splines=spline]
+	node [fontname="Noto Sans CJK SC" fontsize=11.5 margin="0.20,0.12" penwidth=1.3 style="rounded,filled"]
+	edge [arrowsize=0.7 fontcolor="#334155" fontname="Noto Sans CJK SC" fontsize=9.3]
+	profile [label="独立WorldProfile
+入场、地点、人物、规律、路程与能量政策" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/product/subject/src/world-profile.ts" color="#76512e" fillcolor="#f7f0e5" peripheries=2 shape=box tooltip="Heptalogos · profile"]
+	clock [label="Nous CognitiveClock
+世界域 / rate / 现实映射" URL="https://github.com/Heptalogos-Devs/Nous-Wave/blob/412b062082afb75ccfae4c3f69fc606d3e3cc862/crates/runtime/src/subject_clock.rs" color="#2e527b" fillcolor="#e9f0fb" peripheries=2 shape=box tooltip="Nous Wave · time, worldtime"]
+	calendar [label="日历规则与例外
+RRULE / RDATE / EXDATE / RECURRENCE-ID" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/product/subject/src/world-calendar.ts" color="#76512e" fillcolor="#f7f0e5" peripheries=2 shape=box tooltip="Heptalogos · calendar"]
+	calendarread [label="readCalendar
+有限区间 / planned、lived、combined" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/product/subject/src/world-calendar.ts" color="#76512e" fillcolor="#f7f0e5" shape=box tooltip="Heptalogos · calendar"]
+	frame [label="prepareAdvance
+过去细节窗口、未来日程、已存事件" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/product/subject/src/world-life.ts" color="#76512e" fillcolor="#f7f0e5" shape=box tooltip="Heptalogos · world"]
+	fixed [label="fixed规律
+只补当前时钟已经过的区间" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/application/product-host/src/world-clock.ts" color="#76512e" fillcolor="#f7f0e5" shape=box tooltip="Heptalogos · worldtime"]
+	planner [label="world.planner
+有界事件提案与可选未来schedule" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/f855c686251a5c6393875677a26819eb778dd665/packages/application/product-host/src/subject-roles.ts" color="#286b4c" fillcolor="#e6f4ed" shape=box tooltip="原生执行环境 · roles, world"]
+	choice [label="Subject实际决定
+move / participate / rest / adjust_plan" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/product/subject/src/deliberation.ts" color="#76512e" fillcolor="#f7f0e5" peripheries=2 shape=box tooltip="Heptalogos · deliberation, living"]
+	action [label="已采纳世界动作
+持续时长 / nextOpportunity / 进展" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/product/subject/src/world-living.ts" color="#76512e" fillcolor="#f7f0e5" peripheries=2 shape=box tooltip="Heptalogos · living"]
+	complete [label="completeActions
+仅实现已经走过的动作部分" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/product/subject/src/world-living.ts" color="#76512e" fillcolor="#f7f0e5" shape=box tooltip="Heptalogos · living"]
+	realize [label="WorldLife.realizeIn
+Subject短锁、revision与时间核对" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/product/subject/src/world-life.ts" color="#76512e" fillcolor="#f7f0e5" shape=box tooltip="Heptalogos · world"]
+	events [label="WorldEvent / history
+发生区间、recordedAt、来源、perceptions" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/product/subject/src/world-life.ts" color="#76512e" fillcolor="#f7f0e5" peripheries=2 shape=box tooltip="Heptalogos · world"]
+	energy [label="readLivingState
+累计已实现主活动与附属负荷" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/product/subject/src/world-living.ts" color="#76512e" fillcolor="#f7f0e5" shape=box tooltip="Heptalogos · living"]
+	view [label="Subject可见世界投影
+角色perception与知情截止点" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/product/subject/src/world-life.ts" color="#76512e" fillcolor="#f7f0e5" shape=box tooltip="Heptalogos · world, time"]
+	pending [label="pendingContact → selected
+绑定一次真实native run" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/product/subject/src/world-life.ts" color="#76512e" fillcolor="#f7f0e5" peripheries=2 shape=box tooltip="Heptalogos · world"]
+	admitted [label="原生输入 prepare / admitted
+Occurrence与正式回执" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/f855c686251a5c6393875677a26819eb778dd665/packages/application/product-host/src/native-cognition.ts" color="#2e527b" fillcolor="#e9f0fb" shape=box tooltip="Nous Wave · bridge"]
+	released [label="World contact released
+保存该run的交接结果" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/product/subject/src/world-life.ts" color="#76512e" fillcolor="#f7f0e5" peripheries=2 shape=box tooltip="Heptalogos · world, bridge"]
+	next [label="收集下个世界 / 活动节点
+世界点映射到现实realAt" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/application/product-host/src/world-clock.ts" color="#76512e" fillcolor="#f7f0e5" shape=box tooltip="Heptalogos · worldtime"]
+	cron [label="原生 cron 单Subject声明
+command job / delivery none" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/application/product-host/src/world-clock.ts" color="#286b4c" fillcolor="#e6f4ed" peripheries=2 shape=box tooltip="原生执行环境 · worldtime"]
+	wake [label="自然节点唤醒
+重新读取安装discovery与权限" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/application/product-host/src/world-clock.ts" color="#76512e" fillcolor="#f7f0e5" shape=box tooltip="Heptalogos · worldtime, reactor"]
+	moment [label="开发分支calendar moment
+事件、输入、决定、发言聚合" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/product/subject/src/world-calendar.ts" color="#76512e" fillcolor="#f7f0e5" shape=box tooltip="Heptalogos · calendar, operator"]
+	profile -> calendar [label="采用初始规律与calendar来源" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/product/subject/src/world-profile.ts" color="#245c9a" penwidth=1.4 style=solid tooltip="将材料、候选或结果送往后续节点 · 采用初始规律与calendar来源"]
+	profile -> frame [label="规划窗口和世界配置" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/product/subject/src/world-profile.ts" color="#2a8580" penwidth=1.5 style=dashed tooltip="从对象或服务读取数据 · 规划窗口和世界配置"]
+	calendar -> calendarread [label="按区间展开规则与例外" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/product/subject/src/world-calendar.ts" color="#2a8580" penwidth=1.5 style=dashed tooltip="从对象或服务读取数据 · 按区间展开规则与例外"]
+	calendar -> frame [label="未来日程与规律" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/product/subject/src/world-life.ts" color="#2a8580" penwidth=1.5 style=dashed tooltip="从对象或服务读取数据 · 未来日程与规律"]
+	clock -> frame [label="正式当前世界点" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/application/product-host/src/world-clock.ts" color="#2a8580" penwidth=1.5 style=dashed tooltip="从对象或服务读取数据 · 正式当前世界点"]
+	frame -> fixed [label="经过的fixed规律区间" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/application/product-host/src/world-clock.ts" color="#245c9a" penwidth=1.4 style=solid tooltip="将材料、候选或结果送往后续节点 · 经过的fixed规律区间"]
+	frame -> planner [label="世界作者视角的有限frame" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/product/subject/src/world-life.ts" color="#245c9a" penwidth=1.4 style=solid tooltip="将材料、候选或结果送往后续节点 · 世界作者视角的有限frame"]
+	planner -> realize [label="过去事件WorldPatch" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/product/subject/src/world-life.ts" color="#245c9a" penwidth=1.4 style=solid tooltip="将材料、候选或结果送往后续节点 · 过去事件WorldPatch"]
+	planner -> calendar [label="需采用的未来schedule提案" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/product/subject/src/world-life.ts" color="#245c9a" penwidth=1.4 style=solid tooltip="将材料、候选或结果送往后续节点 · 需采用的未来schedule提案"]
+	choice -> action [label="adoptAction采用动作" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/product/subject/src/world-living.ts" color="#1c6593" penwidth=2 style=bold tooltip="写入所属权威状态/持久记录 · adoptAction采用动作"]
+	action -> complete [label="待推进动作及nextOpportunity" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/product/subject/src/world-living.ts" color="#2a8580" penwidth=1.5 style=dashed tooltip="从对象或服务读取数据 · 待推进动作及nextOpportunity"]
+	clock -> complete [label="真实已经过的世界点" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/application/product-host/src/world-clock.ts" color="#2a8580" penwidth=1.5 style=dashed tooltip="从对象或服务读取数据 · 真实已经过的世界点"]
+	complete -> realize [label="动作已实现部分" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/product/subject/src/world-living.ts" color="#596575" penwidth=1.3 style=solid tooltip="运行时调用或请求 · 动作已实现部分"]
+	fixed -> realize [label="fixed规律的实际区间" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/application/product-host/src/world-clock.ts" color="#596575" penwidth=1.3 style=solid tooltip="运行时调用或请求 · fixed规律的实际区间"]
+	realize -> events [label="事件修订与world history" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/product/subject/src/world-life.ts" color="#1c6593" penwidth=2 style=bold tooltip="写入所属权威状态/持久记录 · 事件修订与world history"]
+	events -> calendarread [label="lived视图中的已实现区间" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/product/subject/src/world-calendar.ts" color="#2a8580" penwidth=1.5 style=dashed tooltip="从对象或服务读取数据 · lived视图中的已实现区间"]
+	events -> energy [label="主活动费率与附属负荷" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/product/subject/src/world-living.ts" color="#2a8580" penwidth=1.5 style=dashed tooltip="从对象或服务读取数据 · 主活动费率与附属负荷"]
+	profile -> energy [label="当时生效的能量政策" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/product/subject/src/world-living.ts" color="#2a8580" penwidth=1.5 style=dashed tooltip="从对象或服务读取数据 · 当时生效的能量政策"]
+	events -> view [label="perceptions和时间截点过滤" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/product/subject/src/world-life.ts" color="#2a8580" penwidth=1.5 style=dashed tooltip="从对象或服务读取数据 · perceptions和时间截点过滤"]
+	view -> pending [label="可提供给Subject的事件" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/product/subject/src/world-life.ts" color="#245c9a" penwidth=1.4 style=solid tooltip="将材料、候选或结果送往后续节点 · 可提供给Subject的事件"]
+	pending -> admitted [label="selected run取得正式contacts" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/f855c686251a5c6393875677a26819eb778dd665/packages/application/product-host/src/native-cognition.ts" color="#245c9a" penwidth=1.4 style=solid tooltip="将材料、候选或结果送往后续节点 · selected run取得正式contacts"]
+	admitted -> released [label="Host收到occurrence回执后acknowledgeContact" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/f855c686251a5c6393875677a26819eb778dd665/packages/application/product-host/src/native-cognition.ts" color="#596575" penwidth=1.3 style=solid tooltip="运行时调用或请求 · Host收到occurrence回执后acknowledgeContact"]
+	calendarread -> next [label="下一自然日程节点" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/application/product-host/src/world-clock.ts" color="#245c9a" penwidth=1.4 style=solid tooltip="将材料、候选或结果送往后续节点 · 下一自然日程节点"]
+	action -> next [label="动作nextOpportunity" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/application/product-host/src/world-clock.ts" color="#2a8580" penwidth=1.5 style=dashed tooltip="从对象或服务读取数据 · 动作nextOpportunity"]
+	clock -> next [label="世界点到现实点的映射" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/application/product-host/src/world-clock.ts" color="#2a8580" penwidth=1.5 style=dashed tooltip="从对象或服务读取数据 · 世界点到现实点的映射"]
+	next -> cron [label="按稳定declarationKey更新一份任务" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/application/product-host/src/world-clock.ts" color="#596575" penwidth=1.3 style=solid tooltip="运行时调用或请求 · 按稳定declarationKey更新一份任务"]
+	cron -> wake [label="现实realAt到期执行command" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/application/product-host/src/world-clock.ts" color="#9b6831" penwidth=2 style=dotted tooltip="提交事实之后产生的通知或触发 · 现实realAt到期执行command"]
+	wake -> frame [label="继续世界推进" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/application/product-host/src/world-clock.ts" color="#596575" penwidth=1.3 style=solid tooltip="运行时调用或请求 · 继续世界推进"]
+	wake -> choice [label="请求同一Reactor主观机会" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/product/subject/src/reactor.ts" color="#9b6831" penwidth=2 style=dotted tooltip="提交事实之后产生的通知或触发 · 请求同一Reactor主观机会"]
+	events -> moment [label="时段内已实现事件" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/product/subject/src/world-calendar.ts" color="#2a8580" penwidth=1.5 style=dashed tooltip="从对象或服务读取数据 · 时段内已实现事件"]
+	calendarread -> moment [label="时段安排与偏差" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/product/subject/src/world-calendar.ts" color="#245c9a" penwidth=1.4 style=solid tooltip="将材料、候选或结果送往后续节点 · 时段安排与偏差"]
+}

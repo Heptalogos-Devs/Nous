@@ -1,0 +1,29 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "../../data/product/apps/server/src",
+    "customConditions": [],
+    "paths": {
+      "@nous-wave/contracts": [
+        "../../data/packages/contracts/dist/index.d.ts"
+      ],
+      "@nous-wave/contracts/*": [
+        "../../data/packages/contracts/dist/*.d.ts"
+      ],
+      "@nous-wave/nous": [
+        "../../data/packages/nous/dist/packages/nous/src/index.d.ts"
+      ],
+      "@nous-wave/client": [
+        "../../data/packages/client/dist/index.d.ts"
+      ]
+    }
+  },
+  "include": [
+    "src/**/*.ts"
+  ],
+  "exclude": [
+    "dist",
+    "node_modules"
+  ]
+}

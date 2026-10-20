@@ -1,0 +1,54 @@
+digraph target {
+graph [rankdir=TB, fontname="Noto Sans CJK SC", fontsize=17, bgcolor="white", pad="0.3", nodesep="0.35", ranksep="0.65", splines=polyline, label="两个产品的能力与协作 · 目标设计", labelloc=t];
+node [fontname="Noto Sans CJK SC",fontsize=11,color="#77818b",margin="0.17,0.10",penwidth=1.0];
+edge [fontname="Noto Sans CJK SC",fontsize=9,arrowsize=0.7,penwidth=1.1];
+subgraph cluster_0 { label="Heptalogos"; style="rounded,dashed"; color="#b6c4cb"; fontsize=12;
+h [label="Heptalogos 应用操作",shape=box,style="rounded,filled",fillcolor="#e9eef4",URL="../设计/整体架构.md#目标与结构",tooltip="Heptalogos 应用操作：见设计/整体架构.md"];
+dir [label="Directory / Communication",shape=box,style="rounded,filled",fillcolor="#e9eef4",URL="../设计/整体架构.md#目标与结构",tooltip="Directory / Communication：见设计/整体架构.md"];
+world [label="World / Clock / Calendar / Actor",shape=box,style="rounded,filled",fillcolor="#e9eef4",URL="../设计/整体架构.md#目标与结构",tooltip="World / Clock / Calendar / Actor：见设计/整体架构.md"];
+reactor [label="Life / Attention / Agency",shape=box,style="rounded,filled",fillcolor="#e9eef4",URL="../设计/整体架构.md#目标与结构",tooltip="Life / Attention / Agency：见设计/整体架构.md"];
+task [label="Activity / Pursuit / Device",shape=box,style="rounded,filled",fillcolor="#e9eef4",URL="../设计/整体架构.md#目标与结构",tooltip="Activity / Pursuit / Device：见设计/整体架构.md"];
+expr [label="Expression / Commitment",shape=box,style="rounded,filled",fillcolor="#e9eef4",URL="../设计/整体架构.md#目标与结构",tooltip="Expression / Commitment：见设计/整体架构.md"];
+hp [label="Hept 数据库 + pg-boss",shape=cylinder,style="filled",fillcolor="#e8f0f3",URL="../设计/整体架构.md#目标与结构",tooltip="Hept 数据库 + pg-boss：见设计/整体架构.md"];
+}
+subgraph cluster_1 { label="Nous Wave"; style="rounded,dashed"; color="#b6c4cb"; fontsize=12;
+n [label="Nous 应用操作",shape=box,style="rounded,filled",fillcolor="#e9eef4",URL="../设计/整体架构.md#目标与结构",tooltip="Nous 应用操作：见设计/整体架构.md"];
+mat [label="Material / Encounter",shape=box,style="rounded,filled",fillcolor="#e9eef4",URL="../设计/整体架构.md#目标与结构",tooltip="Material / Encounter：见设计/整体架构.md"];
+mem [label="Memory / Episode / Journal / Schema",shape=box,style="rounded,filled",fillcolor="#e9eef4",URL="../设计/整体架构.md#目标与结构",tooltip="Memory / Episode / Journal / Schema：见设计/整体架构.md"];
+domains [label="Self / Social / Motivation",shape=box,style="rounded,filled",fillcolor="#e9eef4",URL="../设计/整体架构.md#目标与结构",tooltip="Self / Social / Motivation：见设计/整体架构.md"];
+cog [label="Context / Recall / Growth",shape=box,style="rounded,filled",fillcolor="#e9eef4",URL="../设计/整体架构.md#目标与结构",tooltip="Context / Recall / Growth：见设计/整体架构.md"];
+np [label="Nous 数据库 + pg-boss",shape=cylinder,style="filled",fillcolor="#e8f0f3",URL="../设计/整体架构.md#目标与结构",tooltip="Nous 数据库 + pg-boss：见设计/整体架构.md"];
+ls [label="LanceDB / blob",shape=hexagon,style="filled",fillcolor="#efedf6",URL="../设计/整体架构.md#目标与结构",tooltip="LanceDB / blob：见设计/整体架构.md"];
+}
+ui [label="Console / CLI / MCP",shape=hexagon,style="filled",fillcolor="#efedf6",URL="../设计/整体架构.md#目标与结构",tooltip="Console / CLI / MCP：见设计/整体架构.md"];
+nc [label="Nous 官方 Client",shape=box,style="rounded,filled",fillcolor="#e9eef4",URL="../设计/整体架构.md#目标与结构",tooltip="Nous 官方 Client：见设计/整体架构.md"];
+oc [label="OpenClaw 原生执行与渠道",shape=hexagon,style="filled",fillcolor="#efedf6",URL="../设计/整体架构.md#目标与结构",tooltip="OpenClaw 原生执行与渠道：见设计/整体架构.md"];
+platform [label="真实渠道 / 设备 / 工具",shape=hexagon,style="filled",fillcolor="#efedf6",URL="../设计/整体架构.md#目标与结构",tooltip="真实渠道 / 设备 / 工具：见设计/整体架构.md"];
+ui -> h [label="管理与业务操作",style="solid",color="#254e70",fontcolor="#254e70",arrowhead=normal,constraint=true,tooltip="调用：源节点请求目标完成标注操作；管理与业务操作"];
+ui -> n [label="独立认知操作",style="solid",color="#254e70",fontcolor="#254e70",arrowhead=normal,constraint=true,tooltip="调用：源节点请求目标完成标注操作；独立认知操作"];
+h -> dir [label="人物、收件与读取",style="solid",color="#254e70",fontcolor="#254e70",arrowhead=normal,constraint=true,tooltip="调用：源节点请求目标完成标注操作；人物、收件与读取"];
+h -> world [label="生活与时间",style="solid",color="#254e70",fontcolor="#254e70",arrowhead=normal,constraint=true,tooltip="调用：源节点请求目标完成标注操作；生活与时间"];
+h -> reactor [label="当前情境与决定",style="solid",color="#254e70",fontcolor="#254e70",arrowhead=normal,constraint=true,tooltip="调用：源节点请求目标完成标注操作；当前情境与决定"];
+h -> task [label="任务与追求",style="solid",color="#254e70",fontcolor="#254e70",arrowhead=normal,constraint=true,tooltip="调用：源节点请求目标完成标注操作；任务与追求"];
+h -> expr [label="表达采用",style="solid",color="#254e70",fontcolor="#254e70",arrowhead=normal,constraint=true,tooltip="调用：源节点请求目标完成标注操作；表达采用"];
+dir -> hp [label="写事实与唤醒",style="bold",color="#19705c",fontcolor="#19705c",arrowhead=normal,constraint=true,tooltip="提交：在标注事务中写入正式状态；写事实与唤醒"];
+world -> hp [label="写事件与状态",style="bold",color="#19705c",fontcolor="#19705c",arrowhead=normal,constraint=true,tooltip="提交：在标注事务中写入正式状态；写事件与状态"];
+reactor -> hp [label="写决定",style="bold",color="#19705c",fontcolor="#19705c",arrowhead=normal,constraint=true,tooltip="提交：在标注事务中写入正式状态；写决定"];
+task -> hp [label="写任务和成果",style="bold",color="#19705c",fontcolor="#19705c",arrowhead=normal,constraint=true,tooltip="提交：在标注事务中写入正式状态；写任务和成果"];
+expr -> hp [label="写表达与义务",style="bold",color="#19705c",fontcolor="#19705c",arrowhead=normal,constraint=true,tooltip="提交：在标注事务中写入正式状态；写表达与义务"];
+h -> nc [label="完整认知 API",style="solid",color="#254e70",fontcolor="#254e70",arrowhead=normal,constraint=true,tooltip="调用：源节点请求目标完成标注操作；完整认知 API"];
+nc -> n [label="上下文 / 接触 / 条件",style="solid",color="#254e70",fontcolor="#254e70",arrowhead=normal,constraint=true,tooltip="调用：源节点请求目标完成标注操作；上下文 / 接触 / 条件"];
+n -> mat [label="材料与接触",style="solid",color="#254e70",fontcolor="#254e70",arrowhead=normal,constraint=true,tooltip="调用：源节点请求目标完成标注操作；材料与接触"];
+n -> mem [label="记忆与经历操作",style="solid",color="#254e70",fontcolor="#254e70",arrowhead=normal,constraint=true,tooltip="调用：源节点请求目标完成标注操作；记忆与经历操作"];
+n -> domains [label="领域读写",style="solid",color="#254e70",fontcolor="#254e70",arrowhead=normal,constraint=true,tooltip="调用：源节点请求目标完成标注操作；领域读写"];
+n -> cog [label="准备、召回、成长",style="solid",color="#254e70",fontcolor="#254e70",arrowhead=normal,constraint=true,tooltip="调用：源节点请求目标完成标注操作；准备、召回、成长"];
+mat -> np [label="来源与实际接触",style="bold",color="#19705c",fontcolor="#19705c",arrowhead=normal,constraint=true,tooltip="提交：在标注事务中写入正式状态；来源与实际接触"];
+mem -> np [label="正式修订",style="bold",color="#19705c",fontcolor="#19705c",arrowhead=normal,constraint=true,tooltip="提交：在标注事务中写入正式状态；正式修订"];
+domains -> np [label="正式修订与评价",style="bold",color="#19705c",fontcolor="#19705c",arrowhead=normal,constraint=true,tooltip="提交：在标注事务中写入正式状态；正式修订与评价"];
+cog -> ls [label="候选检索与表示",style="solid",color="#254e70",fontcolor="#254e70",arrowhead=normal,constraint=true,tooltip="调用：源节点请求目标完成标注操作；候选检索与表示"];
+np -> cog [label="成长与索引工作",style="dashed",color="#a26416",fontcolor="#a26416",arrowhead=normal,constraint=true,tooltip="交接：事件或持久工作使后续能力获得机会；成长与索引工作"];
+h -> oc [label="授权角色与已采用表达",style="solid",color="#254e70",fontcolor="#254e70",arrowhead=normal,constraint=true,tooltip="调用：源节点请求目标完成标注操作；授权角色与已采用表达"];
+oc -> platform [label="工具调用与原生发送",style="solid",color="#254e70",fontcolor="#254e70",arrowhead=normal,constraint=true,tooltip="调用：源节点请求目标完成标注操作；工具调用与原生发送"];
+oc -> h [label="实际成果与回执",style="solid",color="#555e68",fontcolor="#555e68",arrowhead=normal,constraint=true,tooltip="数据：源节点把标注内容提供给目标；实际成果与回执"];
+cog -> h [label="认知 / 条件变化",style="dashed",color="#a26416",fontcolor="#a26416",arrowhead=normal,constraint=true,tooltip="交接：事件或持久工作使后续能力获得机会；认知 / 条件变化"];
+}

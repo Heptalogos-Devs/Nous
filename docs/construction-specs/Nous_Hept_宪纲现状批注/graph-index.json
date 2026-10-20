@@ -1,0 +1,142 @@
+[
+  {
+    "index": 1,
+    "key": "attention-reactor",
+    "title": "全局注意与单一主观前台",
+    "kind": "调度与状态转换图",
+    "scope": "Hept默认分支；开发分支增加保留草稿与运行恢复候选",
+    "summary": "元信息排序选择前台机会，模型只在实际SituationFrame内决定下一项行动。",
+    "nodes": 21,
+    "edges": 25
+  },
+  {
+    "index": 2,
+    "key": "capability-gaps",
+    "title": "已有能力与宪纲尚缺的完整环节",
+    "kind": "能力覆盖关系图",
+    "scope": "以当前代码和逐句批注为依据",
+    "summary": "虚线框表示待建设或待贯通的能力；连线表示现有机制能提供的基础，全部属于需求覆盖关系。",
+    "nodes": 17,
+    "edges": 14
+  },
+  {
+    "index": 3,
+    "key": "cognition-growth",
+    "title": "材料、经历与长期认知形成",
+    "kind": "数据形成与事务流程图",
+    "scope": "默认分支；前置接触时点详见原生输入图",
+    "summary": "区分材料写入、Runtime分段、已存经历和模型形成。当前分段错误在真实执行位置展开。",
+    "nodes": 22,
+    "edges": 28
+  },
+  {
+    "index": 4,
+    "key": "context-history",
+    "title": "当前认知、工作继续信息与原生压缩",
+    "kind": "上下文组成与压缩调用图",
+    "scope": "Nous开发分支；WorkContext和ContextCompiler来自默认分支",
+    "summary": "当前认知、持久工作状态与原生对话历史使用不同来源和更新方法。",
+    "nodes": 17,
+    "edges": 20
+  },
+  {
+    "index": 5,
+    "key": "expression",
+    "title": "表达、承诺、保留草稿与物理发送",
+    "kind": "分支流程与发送状态图",
+    "scope": "Hept开发分支 f855c686；此图采用当前Draft逻辑",
+    "summary": "普通交流后置Claim索引；新世界事实、严肃承诺、重要冲突分别走明确路径。",
+    "nodes": 28,
+    "edges": 38
+  },
+  {
+    "index": 6,
+    "key": "identity",
+    "title": "身份、修订与来源引用",
+    "kind": "对象关系图",
+    "scope": "默认分支",
+    "summary": "箭头方向为“引用方 → 被引用方”；这里只画代码中的身份或来源关联，不推定未核实的数量关系。",
+    "nodes": 17,
+    "edges": 28
+  },
+  {
+    "index": 7,
+    "key": "message-contact",
+    "title": "从平台收件到主体打开消息",
+    "kind": "跨系统数据流",
+    "scope": "Hept默认分支；Nous开发分支的原生输入实现",
+    "summary": "收件保全、通知选择、正文读取和模型输入分别展开。",
+    "nodes": 17,
+    "edges": 23
+  },
+  {
+    "index": 8,
+    "key": "mutation-lifecycle",
+    "title": "认知变更、依赖失效与清除",
+    "kind": "事务与生命周期图",
+    "scope": "Nous默认分支",
+    "summary": "把对象修订、撤回/抑制、purge及派生层失效分别表示。",
+    "nodes": 17,
+    "edges": 20
+  },
+  {
+    "index": 9,
+    "key": "native-input",
+    "title": "原生模型输入的实际顺序与失败窗口",
+    "kind": "时序展开图",
+    "scope": "Nous开发分支 aa93ede；核心Observation路径与默认分支相同",
+    "summary": "按prepareModelInput中的await顺序排列。左侧为持续准备，右侧展开已经发生持久写入后的失败分支。",
+    "nodes": 20,
+    "edges": 24
+  },
+  {
+    "index": 10,
+    "key": "operations-models",
+    "title": "产品启动、角色模型与运行记录",
+    "kind": "部署控制与调用链图",
+    "scope": "默认分支；操作总览和provider attempt保管采用开发分支",
+    "summary": "管理、主体原生运行、独立维护助手和认知模型设置分开表示。",
+    "nodes": 18,
+    "edges": 28
+  },
+  {
+    "index": 11,
+    "key": "query",
+    "title": "认知查询、共享检索与最终返回",
+    "kind": "查询执行数据流",
+    "scope": "Nous默认分支",
+    "summary": "按Core QueryOrchestrator、Runtime共享融合和领域最终读取展开。",
+    "nodes": 20,
+    "edges": 26
+  },
+  {
+    "index": 12,
+    "key": "system",
+    "title": "共同主体的能力与部署结构",
+    "kind": "系统组件与功能地图",
+    "scope": "默认分支；开发分支扩展在对应节点说明",
+    "summary": "沿实际软件依赖、服务调用和持久状态串联两个项目与原生执行环境。",
+    "nodes": 17,
+    "edges": 22
+  },
+  {
+    "index": 13,
+    "key": "worker",
+    "title": "专业任务、子执行者与保留成果",
+    "kind": "执行与恢复流程图",
+    "scope": "Hept与Nous开发分支；主要执行职责已在默认分支存在",
+    "summary": "任务委派、原生执行、结果保留和主体查看构成不同步骤。",
+    "nodes": 16,
+    "edges": 21
+  },
+  {
+    "index": 14,
+    "key": "world-time",
+    "title": "世界、日历、精力与实际见闻",
+    "kind": "世界推进与双时间数据流",
+    "scope": "默认分支；calendar moment为开发分支扩展",
+    "summary": "世界规律和主体动作分别产生已实现区间，时间读取、日历查询和世界创作保持独立。",
+    "nodes": 21,
+    "edges": 31
+  }
+]

@@ -1,0 +1,476 @@
+{
+  "key": "context-history",
+  "title": "当前认知、工作继续信息与原生压缩",
+  "kind": "上下文组成与压缩调用图",
+  "scope": "Nous开发分支；WorkContext和ContextCompiler来自默认分支",
+  "summary": "当前认知、持久工作状态与原生对话历史使用不同来源和更新方法。",
+  "mechanisms": [
+    "projection",
+    "workcontext",
+    "readable",
+    "bridge"
+  ],
+  "direction": "TB",
+  "nodes": [
+    {
+      "id": "work",
+      "label": "WorkContext / Life继续信息\n目标、未决问题、最近动作与结果refs",
+      "owner": "nous",
+      "kind": "store",
+      "mechanisms": [
+        "workcontext",
+        "life"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "owners",
+      "label": "当前领域认知\nMemory / Self / Social / Motivation",
+      "owner": "nous",
+      "kind": "store",
+      "mechanisms": [
+        "memory",
+        "self",
+        "social",
+        "motivation"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "usage",
+      "label": "可信Usage / 当前材料\npurpose、audience、SourceRead、worldTime",
+      "owner": "hept",
+      "kind": "operation",
+      "mechanisms": [
+        "bridge",
+        "permissions"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "select",
+      "label": "领域选择与投影\n整项预算、scope、来源与生命周期",
+      "owner": "nous",
+      "kind": "operation",
+      "mechanisms": [
+        "projection"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "compile",
+      "label": "ContextCompiler\n已知cursor且内容前缀一致？",
+      "owner": "nous",
+      "kind": "decision",
+      "mechanisms": [
+        "projection"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "append",
+      "label": "APPEND\n只返回新增segments",
+      "owner": "nous",
+      "kind": "state",
+      "mechanisms": [
+        "projection"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "reset",
+      "label": "RESET\n新epoch与完整当前projection",
+      "owner": "nous",
+      "kind": "state",
+      "mechanisms": [
+        "projection"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "history",
+      "label": "原生持久对话历史\nSession / generation / plugin binding",
+      "owner": "native",
+      "kind": "store",
+      "mechanisms": [
+        "projection"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "filter",
+      "label": "scopeCallerHistory\n获准history keys与摘要scope",
+      "owner": "nous",
+      "kind": "operation",
+      "mechanisms": [
+        "projection",
+        "permissions"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "render",
+      "label": "最终输入组装\n角色模板 + 当前投影 + 获准历史 + 工具",
+      "owner": "native",
+      "kind": "operation",
+      "mechanisms": [
+        "projection",
+        "readable"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "fits",
+      "label": "实际完整输入预算\n原生measureContext / assertFits",
+      "owner": "native",
+      "kind": "operation",
+      "mechanisms": [
+        "projection"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "after",
+      "label": "afterTurn\n压缩开启且占用达到输入预算70%",
+      "owner": "nous",
+      "kind": "decision",
+      "mechanisms": [
+        "projection"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "compact",
+      "label": "engine.compact\n持久Nous绑定与捕获预算",
+      "owner": "nous",
+      "kind": "operation",
+      "mechanisms": [
+        "projection"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "policy",
+      "label": "nousPrefixPolicy\nbackground、scope、预算\nfilterHistory、allowsSummary、assertPublish",
+      "owner": "nous",
+      "kind": "operation",
+      "mechanisms": [
+        "projection"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "delegate",
+      "label": "delegateCompactionToRuntime\n受控OpenClaw原生压缩入口",
+      "owner": "native",
+      "kind": "operation",
+      "mechanisms": [
+        "projection"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "publish",
+      "label": "发布前回调\nflushNativeHistory + ReportUse历史检查",
+      "owner": "nous",
+      "kind": "operation",
+      "mechanisms": [
+        "projection",
+        "lifecycle"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "next",
+      "label": "下一模型调用\n重新prepare并应用当前认知",
+      "owner": "native",
+      "kind": "operation",
+      "mechanisms": [
+        "projection",
+        "bridge"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    }
+  ],
+  "edges": [
+    {
+      "id": "context-history-edge-1",
+      "from_": "work",
+      "to": "select",
+      "type": "read",
+      "label": "当前工作相关anchors及文本",
+      "mechanisms": [
+        "workcontext"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "context-history-edge-2",
+      "from_": "owners",
+      "to": "select",
+      "type": "read",
+      "label": "当前可用认知",
+      "mechanisms": [
+        "projection"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "context-history-edge-3",
+      "from_": "usage",
+      "to": "select",
+      "type": "data",
+      "label": "用途和来源范围",
+      "mechanisms": [
+        "projection"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "context-history-edge-4",
+      "from_": "select",
+      "to": "compile",
+      "type": "data",
+      "label": "当前完整projection",
+      "mechanisms": [
+        "projection"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "context-history-edge-5",
+      "from_": "compile",
+      "to": "append",
+      "type": "transition",
+      "label": "cursor同步且前缀完全一致",
+      "mechanisms": [
+        "projection"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "context-history-edge-6",
+      "from_": "compile",
+      "to": "reset",
+      "type": "transition",
+      "label": "其他情况",
+      "mechanisms": [
+        "projection"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "context-history-edge-7",
+      "from_": "history",
+      "to": "filter",
+      "type": "read",
+      "label": "原生messages与摘要",
+      "mechanisms": [
+        "projection"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "context-history-edge-8",
+      "from_": "usage",
+      "to": "filter",
+      "type": "data",
+      "label": "allowedHistoryUserKeys与usage",
+      "mechanisms": [
+        "projection"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "context-history-edge-9",
+      "from_": "append",
+      "to": "render",
+      "type": "data",
+      "label": "新增认知段",
+      "mechanisms": [
+        "projection"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "context-history-edge-10",
+      "from_": "reset",
+      "to": "render",
+      "type": "data",
+      "label": "替换该认知lane",
+      "mechanisms": [
+        "projection"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "context-history-edge-11",
+      "from_": "filter",
+      "to": "render",
+      "type": "data",
+      "label": "获准历史和工具",
+      "mechanisms": [
+        "projection"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "context-history-edge-12",
+      "from_": "render",
+      "to": "fits",
+      "type": "call",
+      "label": "完整provider输入检查",
+      "mechanisms": [
+        "projection"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "context-history-edge-13",
+      "from_": "fits",
+      "to": "next",
+      "type": "data",
+      "label": "合格context和provider controls",
+      "mechanisms": [
+        "projection"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "context-history-edge-14",
+      "from_": "next",
+      "to": "after",
+      "type": "call",
+      "label": "一轮结束时检查压缩阈值",
+      "mechanisms": [
+        "projection"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "context-history-edge-15",
+      "from_": "after",
+      "to": "compact",
+      "type": "transition",
+      "label": "达到阈值：background prefix",
+      "mechanisms": [
+        "projection"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "context-history-edge-16",
+      "from_": "compact",
+      "to": "policy",
+      "type": "data",
+      "label": "scope和捕获预算",
+      "mechanisms": [
+        "projection"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "context-history-edge-17",
+      "from_": "policy",
+      "to": "delegate",
+      "type": "call",
+      "label": "委派原生压缩",
+      "mechanisms": [
+        "projection"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "context-history-edge-18",
+      "from_": "delegate",
+      "to": "publish",
+      "type": "call",
+      "label": "使用assertPublish回调",
+      "mechanisms": [
+        "projection"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "context-history-edge-19",
+      "from_": "publish",
+      "to": "history",
+      "type": "write",
+      "label": "原生机制发布历史压缩结果",
+      "mechanisms": [
+        "projection"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "context-history-edge-20",
+      "from_": "history",
+      "to": "next",
+      "type": "read",
+      "label": "后续原生history generation",
+      "mechanisms": [
+        "projection"
+      ],
+      "symbol": "",
+      "detail": ""
+    }
+  ],
+  "notes": [
+    "70%触发来自当前afterTurn代码；完整输入不足的失败也会要求原生prefix压缩。压缩策略和实际替换由受控原生runtime执行。",
+    "ContextCompiler的tracks为进程内有界Map，丢失后使用RESET；长期认知和WorkContext继续保存在各自领域。",
+    "开发分支Self/Social统一contextText由领域renderer生成，Core投影保留这些当前语义单元。"
+  ]
+}

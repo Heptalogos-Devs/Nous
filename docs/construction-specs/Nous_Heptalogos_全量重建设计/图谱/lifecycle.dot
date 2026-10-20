@@ -1,0 +1,35 @@
+digraph target {
+graph [rankdir=TB, fontname="Noto Sans CJK SC", fontsize=17, bgcolor="white", pad="0.3", nodesep="0.35", ranksep="0.65", splines=polyline, label="活动与发送的业务状态 · 目标设计", labelloc=t];
+node [fontname="Noto Sans CJK SC",fontsize=11,color="#77818b",margin="0.17,0.10",penwidth=1.0];
+edge [fontname="Noto Sans CJK SC",fontsize=9,arrowsize=0.7,penwidth=1.1];
+subgraph cluster_0 { label="活动"; style="rounded,dashed"; color="#b6c4cb"; fontsize=12;
+proposed [label="Activity: proposed",shape=ellipse,style="filled",fillcolor="#f2ecf7",URL="../设计/公开操作与数据模型.md#操作结果",tooltip="Activity: proposed：见设计/公开操作与数据模型.md"];
+active [label="active",shape=ellipse,style="filled",fillcolor="#f2ecf7",URL="../设计/公开操作与数据模型.md#操作结果",tooltip="active：见设计/公开操作与数据模型.md"];
+waiting [label="waiting",shape=ellipse,style="filled",fillcolor="#f2ecf7",URL="../设计/公开操作与数据模型.md#操作结果",tooltip="waiting：见设计/公开操作与数据模型.md"];
+paused [label="paused",shape=ellipse,style="filled",fillcolor="#f2ecf7",URL="../设计/公开操作与数据模型.md#操作结果",tooltip="paused：见设计/公开操作与数据模型.md"];
+done [label="completed",shape=ellipse,style="filled",fillcolor="#f2ecf7",URL="../设计/公开操作与数据模型.md#操作结果",tooltip="completed：见设计/公开操作与数据模型.md"];
+cancel [label="cancelled",shape=ellipse,style="filled",fillcolor="#f2ecf7",URL="../设计/公开操作与数据模型.md#操作结果",tooltip="cancelled：见设计/公开操作与数据模型.md"];
+}
+subgraph cluster_1 { label="表达"; style="rounded,dashed"; color="#b6c4cb"; fontsize=12;
+adopted [label="Expression: adopted",shape=ellipse,style="filled",fillcolor="#f2ecf7",URL="../设计/公开操作与数据模型.md#操作结果",tooltip="Expression: adopted：见设计/公开操作与数据模型.md"];
+submitted [label="原生已接纳待发送",shape=ellipse,style="filled",fillcolor="#f2ecf7",URL="../设计/公开操作与数据模型.md#操作结果",tooltip="原生已接纳待发送：见设计/公开操作与数据模型.md"];
+accepted [label="平台 accepted",shape=ellipse,style="filled",fillcolor="#f2ecf7",URL="../设计/公开操作与数据模型.md#操作结果",tooltip="平台 accepted：见设计/公开操作与数据模型.md"];
+partial [label="部分已发送",shape=ellipse,style="filled",fillcolor="#f2ecf7",URL="../设计/公开操作与数据模型.md#操作结果",tooltip="部分已发送：见设计/公开操作与数据模型.md"];
+unknown [label="unknown",shape=ellipse,style="filled",fillcolor="#f2ecf7",URL="../设计/公开操作与数据模型.md#操作结果",tooltip="unknown：见设计/公开操作与数据模型.md"];
+failed [label="明确未发送 / failed",shape=ellipse,style="filled",fillcolor="#f2ecf7",URL="../设计/公开操作与数据模型.md#操作结果",tooltip="明确未发送 / failed：见设计/公开操作与数据模型.md"];
+}
+proposed -> active [label="主体采用",style="solid",color="#805497",fontcolor="#805497",arrowhead=normal,constraint=true,tooltip="状态：标注条件成立时发生业务状态转换；主体采用"];
+active -> waiting [label="等待任务/消息/时间",style="solid",color="#805497",fontcolor="#805497",arrowhead=normal,constraint=true,tooltip="状态：标注条件成立时发生业务状态转换；等待任务/消息/时间"];
+waiting -> active [label="实际条件到达并继续",style="solid",color="#805497",fontcolor="#805497",arrowhead=normal,constraint=true,tooltip="状态：标注条件成立时发生业务状态转换；实际条件到达并继续"];
+active -> paused [label="明确暂停",style="solid",color="#805497",fontcolor="#805497",arrowhead=normal,constraint=true,tooltip="状态：标注条件成立时发生业务状态转换；明确暂停"];
+paused -> active [label="明确恢复",style="solid",color="#805497",fontcolor="#805497",arrowhead=normal,constraint=true,tooltip="状态：标注条件成立时发生业务状态转换；明确恢复"];
+active -> done [label="实际成果或决定结束",style="solid",color="#805497",fontcolor="#805497",arrowhead=normal,constraint=true,tooltip="状态：标注条件成立时发生业务状态转换；实际成果或决定结束"];
+active -> cancel [label="取消且保存已发生结果",style="solid",color="#805497",fontcolor="#805497",arrowhead=normal,constraint=true,tooltip="状态：标注条件成立时发生业务状态转换；取消且保存已发生结果"];
+adopted -> submitted [label="原生持久交付接受",style="solid",color="#805497",fontcolor="#805497",arrowhead=normal,constraint=true,tooltip="状态：标注条件成立时发生业务状态转换；原生持久交付接受"];
+submitted -> accepted [label="平台返回真实接受结果",style="solid",color="#805497",fontcolor="#805497",arrowhead=normal,constraint=true,tooltip="状态：标注条件成立时发生业务状态转换；平台返回真实接受结果"];
+submitted -> partial [label="部分接受后后续失败",style="solid",color="#805497",fontcolor="#805497",arrowhead=normal,constraint=true,tooltip="状态：标注条件成立时发生业务状态转换；部分接受后后续失败"];
+submitted -> unknown [label="可能发生效果，结果不明",style="solid",color="#805497",fontcolor="#805497",arrowhead=normal,constraint=true,tooltip="状态：标注条件成立时发生业务状态转换；可能发生效果，结果不明"];
+submitted -> failed [label="确定未产生效果",style="solid",color="#805497",fontcolor="#805497",arrowhead=normal,constraint=true,tooltip="状态：标注条件成立时发生业务状态转换；确定未产生效果"];
+unknown -> accepted [label="平台读回确认已发",style="solid",color="#805497",fontcolor="#805497",arrowhead=normal,constraint=true,tooltip="状态：标注条件成立时发生业务状态转换；平台读回确认已发"];
+unknown -> failed [label="实际核实未发",style="solid",color="#805497",fontcolor="#805497",arrowhead=normal,constraint=true,tooltip="状态：标注条件成立时发生业务状态转换；实际核实未发"];
+}

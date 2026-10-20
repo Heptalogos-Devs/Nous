@@ -1,0 +1,62 @@
+// 从平台收件到主体打开消息
+digraph "message-contact" {
+	graph [bgcolor="#ffffff" fontcolor="#202e3a" fontname="Noto Sans CJK SC" fontsize=18 label="从平台收件到主体打开消息" labeljust=l labelloc=t newrank=true nodesep=0.38 outputorder=edgesfirst pad=0.3 rankdir=TB ranksep=1.15 splines=spline]
+	node [fontname="Noto Sans CJK SC" fontsize=11.5 margin="0.20,0.12" penwidth=1.3 style="rounded,filled"]
+	edge [arrowsize=0.7 fontcolor="#334155" fontname="Noto Sans CJK SC" fontsize=9.3]
+	platform [label="QQ / OneBot
+原始消息与通知" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/application/openclaw-host/src/ingress.ts" color="#535c69" fillcolor="#f3f4f6" shape=ellipse style=filled tooltip="外部主体或服务 · qq"]
+	receive [label="原生持久接收
+原始 envelope" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/application/openclaw-host/src/ingress.ts" color="#286b4c" fillcolor="#e6f4ed" shape=box tooltip="原生执行环境 · qq"]
+	parse [label="按消息段解析
+文字 / @ / 回复 / 转发 / 多媒体" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/application/openclaw-host/src/ingress.ts" color="#76512e" fillcolor="#f7f0e5" shape=box tooltip="Heptalogos · qq, attachments"]
+	accept [label="Messaging.accept
+会话锁、原生 ID 去重、分配 sequence" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/application/openclaw-host/src/ingress.ts" color="#76512e" fillcolor="#f7f0e5" shape=box tooltip="Heptalogos · qq"]
+	db [label="MessageFact + pending
+附件 / 回复 / 转发引用" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/application/openclaw-host/src/ingress.ts" color="#76512e" fillcolor="#f7f0e5" peripheries=2 shape=box tooltip="Heptalogos · qq"]
+	acquire [label="后台附件 / 转发展开
+大小、来源及日预算约束" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/application/openclaw-host/src/media.ts" color="#76512e" fillcolor="#f7f0e5" shape=box tooltip="Heptalogos · attachments"]
+	cas [label="受保护 CAS
+真实字节、hash、获取状态" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/application/openclaw-host/src/media.ts" color="#76512e" fillcolor="#f7f0e5" peripheries=2 shape=box tooltip="Heptalogos · attachments"]
+	notice [label="消息通知候选
+会话、提及、回复、未读数量" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/product/subject/src/attention.ts" color="#76512e" fillcolor="#f7f0e5" shape=box tooltip="Heptalogos · attention"]
+	choose [label="全局 Attention → Reactor
+按元信息选择前台" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/product/subject/src/attention.ts" color="#76512e" fillcolor="#f7f0e5" shape=box tooltip="Heptalogos · attention, reactor"]
+	action [label="主观动作？" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/f855c686251a5c6393875677a26819eb778dd665/packages/application/product-host/src/subject-situation.ts" color="#76512e" fillcolor="#f7f0e5" shape=diamond style=filled tooltip="Heptalogos · situation"]
+	inspect [label="inspect / open
+通知目录或会话导航" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/f855c686251a5c6393875677a26819eb778dd665/packages/application/product-host/src/subject-situation.ts" color="#76512e" fillcolor="#f7f0e5" shape=box tooltip="Heptalogos · situation"]
+	read [label="read
+当前权限、确切消息范围、预算" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/f855c686251a5c6393875677a26819eb778dd665/packages/application/product-host/src/subject-situation.ts" color="#76512e" fillcolor="#f7f0e5" shape=box tooltip="Heptalogos · situation, attachments"]
+	contacts [label="选中的 contacts
+来源 / 时间 / 听众 / 实际材料" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/f855c686251a5c6393875677a26819eb778dd665/packages/application/product-host/src/native-cognition.ts" color="#76512e" fillcolor="#f7f0e5" shape=box tooltip="Heptalogos · bridge, situation"]
+	input [label="下一次原生输入准备
+RecordObservation → Projection → admitted" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/f855c686251a5c6393875677a26819eb778dd665/packages/application/product-host/src/native-cognition.ts" color="#2e527b" fillcolor="#e9f0fb" shape=box tooltip="详见原生输入时序；Observation先于最终预算和admitted检查。"]
+	seen [label="Host 保存 admitted
+Messaging contact / World contact 交接" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/f855c686251a5c6393875677a26819eb778dd665/packages/application/product-host/src/native-cognition.ts" color="#76512e" fillcolor="#f7f0e5" peripheries=2 shape=box tooltip="Heptalogos · bridge, qq, world"]
+	history [label="有限历史补拉
+原 cursor、覆盖与 gap" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/application/openclaw-host/src/media.ts" color="#76512e" fillcolor="#f7f0e5" shape=box tooltip="Heptalogos · attachments"]
+	withdraw [label="平台撤回事件
+更新派生可见状态" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/application/openclaw-host/src/ingress.ts" color="#76512e" fillcolor="#f7f0e5" shape=box tooltip="Heptalogos · qq"]
+	platform -> receive [label="实时消息先进入持久收件" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/application/openclaw-host/src/ingress.ts" color="#9b6831" penwidth=2 style=dotted tooltip="提交事实之后产生的通知或触发 · 实时消息先进入持久收件"]
+	receive -> parse [label="原始 envelope / segment" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/application/openclaw-host/src/ingress.ts" color="#245c9a" penwidth=1.4 style=solid tooltip="将材料、候选或结果送往后续节点 · 原始 envelope / segment"]
+	parse -> accept [label="规范化 facts" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/application/openclaw-host/src/ingress.ts" color="#596575" penwidth=1.3 style=solid tooltip="运行时调用或请求 · 规范化 facts"]
+	accept -> db [label="同事务保存事实与待处理引用" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/application/openclaw-host/src/ingress.ts" color="#1c6593" penwidth=2 style=bold tooltip="写入所属权威状态/持久记录 · 同事务保存事实与待处理引用"]
+	db -> acquire [label="待获取附件和待展开引用" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/application/openclaw-host/src/media.ts" color="#2a8580" penwidth=1.5 style=dashed tooltip="从对象或服务读取数据 · 待获取附件和待展开引用"]
+	acquire -> cas [label="保存真实下载字节" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/application/openclaw-host/src/media.ts" color="#1c6593" penwidth=2 style=bold tooltip="写入所属权威状态/持久记录 · 保存真实下载字节"]
+	acquire -> db [label="revision-CAS 更新获取状态" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/application/openclaw-host/src/media.ts" color="#1c6593" penwidth=2 style=bold tooltip="写入所属权威状态/持久记录 · revision-CAS 更新获取状态"]
+	db -> notice [label="未处理消息的元信息" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/product/subject/src/attention.ts" color="#2a8580" penwidth=1.5 style=dashed tooltip="从对象或服务读取数据 · 未处理消息的元信息"]
+	notice -> choose [label="有界候选及 source position" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/product/subject/src/attention.ts" color="#245c9a" penwidth=1.4 style=solid tooltip="将材料、候选或结果送往后续节点 · 有界候选及 source position"]
+	choose -> action [label="实际 subject.deliberation 决定" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/product/subject/src/reactor.ts" color="#596575" penwidth=1.3 style=solid tooltip="运行时调用或请求 · 实际 subject.deliberation 决定"]
+	action -> inspect [label="inspect / open" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/f855c686251a5c6393875677a26819eb778dd665/packages/application/product-host/src/subject-situation.ts" color="#267750" penwidth=2 style=bold tooltip="同一对象/活动的生命周期状态变迁 · inspect / open"]
+	action -> read [label="read 当前目标" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/f855c686251a5c6393875677a26819eb778dd665/packages/application/product-host/src/subject-situation.ts" color="#267750" penwidth=2 style=bold tooltip="同一对象/活动的生命周期状态变迁 · read 当前目标"]
+	action -> db [label="wait / rest：保留待处理来源" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/product/subject/src/life.ts" color="#6c7180" penwidth=1 style=solid tooltip="一对象保存对另一对象的稳定引用 · wait / rest：保留待处理来源"]
+	inspect -> choose [label="新的可操作目录或导航状态" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/f855c686251a5c6393875677a26819eb778dd665/packages/application/product-host/src/subject-situation.ts" color="#245c9a" penwidth=1.4 style=solid tooltip="将材料、候选或结果送往后续节点 · 新的可操作目录或导航状态"]
+	db -> read [label="当前消息与可见引用" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/application/openclaw-host/src/media.ts" color="#2a8580" penwidth=1.5 style=dashed tooltip="从对象或服务读取数据 · 当前消息与可见引用"]
+	cas -> read [label="已就绪且获准的媒体" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/application/openclaw-host/src/media.ts" color="#2a8580" penwidth=1.5 style=dashed tooltip="从对象或服务读取数据 · 已就绪且获准的媒体"]
+	read -> contacts [label="完整语义单元及省略信息" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/f855c686251a5c6393875677a26819eb778dd665/packages/application/product-host/src/subject-situation.ts" color="#245c9a" penwidth=1.4 style=solid tooltip="将材料、候选或结果送往后续节点 · 完整语义单元及省略信息"]
+	contacts -> input [label="受信 usage 与选中来源" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/f855c686251a5c6393875677a26819eb778dd665/packages/application/product-host/src/native-cognition.ts" color="#245c9a" penwidth=1.4 style=solid tooltip="将材料、候选或结果送往后续节点 · 受信 usage 与选中来源"]
+	input -> seen [label="hosted.admitted + occurrence 回执" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/f855c686251a5c6393875677a26819eb778dd665/packages/application/product-host/src/native-cognition.ts" color="#596575" penwidth=1.3 style=solid tooltip="运行时调用或请求 · hosted.admitted + occurrence 回执"]
+	platform -> history [label="有限历史页" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/application/openclaw-host/src/media.ts" color="#245c9a" penwidth=1.4 style=solid tooltip="将材料、候选或结果送往后续节点 · 有限历史页"]
+	history -> accept [label="复用同一 facts 接纳" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/application/openclaw-host/src/media.ts" color="#596575" penwidth=1.3 style=solid tooltip="运行时调用或请求 · 复用同一 facts 接纳"]
+	platform -> withdraw [label="撤回通知" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/application/openclaw-host/src/ingress.ts" color="#9b6831" penwidth=2 style=dotted tooltip="提交事实之后产生的通知或触发 · 撤回通知"]
+	withdraw -> db [label="保留原事实并更新撤回状态" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/application/openclaw-host/src/ingress.ts" color="#1c6593" penwidth=2 style=bold tooltip="写入所属权威状态/持久记录 · 保留原事实并更新撤回状态"]
+}

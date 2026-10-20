@@ -1,0 +1,824 @@
+{
+  "key": "expression",
+  "title": "表达、承诺、保留草稿与物理发送",
+  "kind": "分支流程与发送状态图",
+  "scope": "Hept开发分支 f855c686；此图采用当前Draft逻辑",
+  "summary": "普通交流后置Claim索引；新世界事实、严肃承诺、重要冲突分别走明确路径。",
+  "mechanisms": [
+    "narrative",
+    "deliberation",
+    "sending",
+    "worker"
+  ],
+  "direction": "TB",
+  "nodes": [
+    {
+      "id": "decision",
+      "label": "DecisionCommit\n明确communicate意图、听众、来源",
+      "owner": "hept",
+      "kind": "store",
+      "mechanisms": [
+        "deliberation"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "brief",
+      "label": "ExpressionBrief\n意图、认识立场、资格和时限",
+      "owner": "hept",
+      "kind": "store",
+      "mechanisms": [
+        "narrative"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "kind",
+      "label": "semanticRequirement？",
+      "owner": "hept",
+      "kind": "decision",
+      "mechanisms": [
+        "narrative"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "prepare",
+      "label": "prepareExpression / prepareIntent\n先产生有界语义提案",
+      "owner": "hept",
+      "kind": "operation",
+      "mechanisms": [
+        "narrative"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "world",
+      "label": "world_fact\nrealizeIn采用新世界细节并回写brief",
+      "owner": "hept",
+      "kind": "operation",
+      "mechanisms": [
+        "narrative",
+        "world"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "promise",
+      "label": "serious_commitment\n保存semanticPreparation\n更新Activity.nextOpportunity",
+      "owner": "hept",
+      "kind": "store",
+      "mechanisms": [
+        "narrative",
+        "life"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "render",
+      "label": "独立subject.render\n产生完整自然表达payload",
+      "owner": "native",
+      "kind": "operation",
+      "mechanisms": [
+        "roles",
+        "narrative"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "retain",
+      "label": "retainedCandidate\n完整原文、原意图、原生发送身份",
+      "owner": "hept",
+      "kind": "store",
+      "mechanisms": [
+        "narrative"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "conflict",
+      "label": "important_conflict？",
+      "owner": "hept",
+      "kind": "decision",
+      "mechanisms": [
+        "narrative"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "review",
+      "label": "独立narrative.review\n精确quote和当前来源范围",
+      "owner": "native",
+      "kind": "operation",
+      "mechanisms": [
+        "narrative"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "adopt",
+      "label": "Narrative + Agency采用事务\n保存完整payload与正式发送义务",
+      "owner": "hept",
+      "kind": "operation",
+      "mechanisms": [
+        "narrative",
+        "sending"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "rejected",
+      "label": "明确拒绝 / 无当前采用资格\n保留候选与具体问题",
+      "owner": "hept",
+      "kind": "state",
+      "mechanisms": [
+        "narrative"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "choose",
+      "label": "后续Subject选择原候选\ncommunicate / discard / continue",
+      "owner": "hept",
+      "kind": "operation",
+      "mechanisms": [
+        "narrative",
+        "situation"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "reaffirm",
+      "label": "重新采用原文\n绑定新决定、当前听众与资格",
+      "owner": "hept",
+      "kind": "operation",
+      "mechanisms": [
+        "narrative"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "discard",
+      "label": "候选已放弃\n保存discardedBy",
+      "owner": "hept",
+      "kind": "state",
+      "mechanisms": [
+        "narrative"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "queue",
+      "label": "原生持久发送队列\n原custody / deliveryQueueId / sourceIndex",
+      "owner": "native",
+      "kind": "store",
+      "mechanisms": [
+        "sending"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "begin",
+      "label": "Host.beginDelivery\n回执重放或取得一次attempt",
+      "owner": "hept",
+      "kind": "operation",
+      "mechanisms": [
+        "sending"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "auth",
+      "label": "最终权限 / 账号 / presence / 媒体检查",
+      "owner": "hept",
+      "kind": "operation",
+      "mechanisms": [
+        "permissions",
+        "sending"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "send",
+      "label": "OneBot实际提交\n文字 / media / reply",
+      "owner": "external",
+      "kind": "external",
+      "mechanisms": [
+        "sending"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "outcome",
+      "label": "物理发送结果？",
+      "owner": "hept",
+      "kind": "decision",
+      "mechanisms": [
+        "sending"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "accepted",
+      "label": "accepted\n真实platformMessageId",
+      "owner": "hept",
+      "kind": "state",
+      "mechanisms": [
+        "sending"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "not",
+      "label": "not_sent / failed\n提交前拒绝 / 明确平台拒绝",
+      "owner": "hept",
+      "kind": "state",
+      "mechanisms": [
+        "sending"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "uncertain",
+      "label": "uncertain\n发送后结果无法确认",
+      "owner": "hept",
+      "kind": "state",
+      "mechanisms": [
+        "sending"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "receipts",
+      "label": "原生receipt → Host delivery record\n后续反馈可按原attempt继续",
+      "owner": "hept",
+      "kind": "store",
+      "mechanisms": [
+        "sending"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "indexneed",
+      "label": "semanticState: pending\n原文可供同听众继续读取",
+      "owner": "hept",
+      "kind": "store",
+      "mechanisms": [
+        "narrative"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "index",
+      "label": "后台indexPending\n只对既有原文生成Claim索引",
+      "owner": "hept",
+      "kind": "operation",
+      "mechanisms": [
+        "narrative"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "claims",
+      "label": "Claim / semanticState\nindexed或blocked，关联实际发送状态",
+      "owner": "hept",
+      "kind": "store",
+      "mechanisms": [
+        "narrative"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "due",
+      "label": "pendingCommitments\n既有agency_commitment + brief准备态承诺",
+      "owner": "hept",
+      "kind": "operation",
+      "mechanisms": [
+        "narrative",
+        "attention"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    }
+  ],
+  "edges": [
+    {
+      "id": "expression-edge-1",
+      "from_": "decision",
+      "to": "brief",
+      "type": "write",
+      "label": "saveBrief核对原采用意图",
+      "mechanisms": [
+        "narrative"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "expression-edge-2",
+      "from_": "brief",
+      "to": "kind",
+      "type": "read",
+      "label": "显式语义要求",
+      "mechanisms": [
+        "narrative"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "expression-edge-3",
+      "from_": "kind",
+      "to": "render",
+      "type": "transition",
+      "label": "普通交流；或重要冲突待后读",
+      "mechanisms": [
+        "narrative"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "expression-edge-4",
+      "from_": "kind",
+      "to": "prepare",
+      "type": "transition",
+      "label": "world_fact / serious_commitment",
+      "mechanisms": [
+        "narrative"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "expression-edge-5",
+      "from_": "prepare",
+      "to": "world",
+      "type": "call",
+      "label": "采用限于原场景的世界提案",
+      "mechanisms": [
+        "narrative",
+        "world"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "expression-edge-6",
+      "from_": "prepare",
+      "to": "promise",
+      "type": "write",
+      "label": "采用真实未来处理条件",
+      "mechanisms": [
+        "narrative"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "expression-edge-7",
+      "from_": "world",
+      "to": "render",
+      "type": "data",
+      "label": "已经采用的场景细节",
+      "mechanisms": [
+        "narrative"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "expression-edge-8",
+      "from_": "promise",
+      "to": "render",
+      "type": "data",
+      "label": "已准备的承诺语义",
+      "mechanisms": [
+        "narrative"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "expression-edge-9",
+      "from_": "render",
+      "to": "retain",
+      "type": "write",
+      "label": "保留完整候选",
+      "mechanisms": [
+        "narrative"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "expression-edge-10",
+      "from_": "retain",
+      "to": "conflict",
+      "type": "data",
+      "label": "原始payload与brief",
+      "mechanisms": [
+        "narrative"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "expression-edge-11",
+      "from_": "conflict",
+      "to": "review",
+      "type": "transition",
+      "label": "重要冲突",
+      "mechanisms": [
+        "narrative"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "expression-edge-12",
+      "from_": "conflict",
+      "to": "adopt",
+      "type": "transition",
+      "label": "普通交流或已准备语义",
+      "mechanisms": [
+        "narrative"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "expression-edge-13",
+      "from_": "review",
+      "to": "adopt",
+      "type": "data",
+      "label": "引用及冲突检查通过",
+      "mechanisms": [
+        "narrative"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "expression-edge-14",
+      "from_": "review",
+      "to": "rejected",
+      "type": "transition",
+      "label": "具体冲突 / 未获准来源",
+      "mechanisms": [
+        "narrative"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "expression-edge-15",
+      "from_": "adopt",
+      "to": "rejected",
+      "type": "transition",
+      "label": "时限或当前Activity资格变化",
+      "mechanisms": [
+        "narrative"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "expression-edge-16",
+      "from_": "retain",
+      "to": "choose",
+      "type": "read",
+      "label": "原稿可供后续前台选择",
+      "mechanisms": [
+        "narrative"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "expression-edge-17",
+      "from_": "choose",
+      "to": "reaffirm",
+      "type": "transition",
+      "label": "communicate原候选",
+      "mechanisms": [
+        "narrative"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "expression-edge-18",
+      "from_": "choose",
+      "to": "discard",
+      "type": "transition",
+      "label": "discard原候选",
+      "mechanisms": [
+        "narrative"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "expression-edge-19",
+      "from_": "reaffirm",
+      "to": "adopt",
+      "type": "call",
+      "label": "复用原文与新采用决定",
+      "mechanisms": [
+        "narrative"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "expression-edge-20",
+      "from_": "choose",
+      "to": "queue",
+      "type": "call",
+      "label": "continue已采用发送义务",
+      "mechanisms": [
+        "narrative",
+        "sending"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "expression-edge-21",
+      "from_": "adopt",
+      "to": "queue",
+      "type": "data",
+      "label": "custody及原生prepared payload",
+      "mechanisms": [
+        "sending"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "expression-edge-22",
+      "from_": "queue",
+      "to": "begin",
+      "type": "call",
+      "label": "开始精确物理part",
+      "mechanisms": [
+        "sending"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "expression-edge-23",
+      "from_": "begin",
+      "to": "auth",
+      "type": "transition",
+      "label": "取得实际发送attempt",
+      "mechanisms": [
+        "sending"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "expression-edge-24",
+      "from_": "auth",
+      "to": "send",
+      "type": "call",
+      "label": "平台提交",
+      "mechanisms": [
+        "sending"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "expression-edge-25",
+      "from_": "auth",
+      "to": "not",
+      "type": "transition",
+      "label": "提交前拒绝",
+      "mechanisms": [
+        "sending"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "expression-edge-26",
+      "from_": "send",
+      "to": "outcome",
+      "type": "data",
+      "label": "回复 / 异常 / 取消",
+      "mechanisms": [
+        "sending"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "expression-edge-27",
+      "from_": "outcome",
+      "to": "accepted",
+      "type": "transition",
+      "label": "收到可用平台消息ID",
+      "mechanisms": [
+        "sending"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "expression-edge-28",
+      "from_": "outcome",
+      "to": "not",
+      "type": "transition",
+      "label": "明确平台拒绝",
+      "mechanisms": [
+        "sending"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "expression-edge-29",
+      "from_": "outcome",
+      "to": "uncertain",
+      "type": "transition",
+      "label": "已提交且结果未知",
+      "mechanisms": [
+        "sending"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "expression-edge-30",
+      "from_": "accepted",
+      "to": "receipts",
+      "type": "write",
+      "label": "先原生receipt，后Host反馈",
+      "mechanisms": [
+        "sending"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "expression-edge-31",
+      "from_": "not",
+      "to": "receipts",
+      "type": "write",
+      "label": "记录真实失败类别",
+      "mechanisms": [
+        "sending"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "expression-edge-32",
+      "from_": "uncertain",
+      "to": "receipts",
+      "type": "write",
+      "label": "保留未知，不自动新发",
+      "mechanisms": [
+        "sending"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "expression-edge-33",
+      "from_": "adopt",
+      "to": "indexneed",
+      "type": "write",
+      "label": "非important_conflict：后置索引",
+      "mechanisms": [
+        "narrative"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "expression-edge-34",
+      "from_": "indexneed",
+      "to": "index",
+      "type": "read",
+      "label": "原生后台机会选中既有原文",
+      "mechanisms": [
+        "narrative"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "expression-edge-35",
+      "from_": "index",
+      "to": "claims",
+      "type": "write",
+      "label": "精确quote和出处索引",
+      "mechanisms": [
+        "narrative"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "expression-edge-36",
+      "from_": "receipts",
+      "to": "claims",
+      "type": "reference",
+      "label": "读取实际发送状态",
+      "mechanisms": [
+        "narrative"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "expression-edge-37",
+      "from_": "promise",
+      "to": "due",
+      "type": "read",
+      "label": "准备态承诺",
+      "mechanisms": [
+        "narrative"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "expression-edge-38",
+      "from_": "claims",
+      "to": "due",
+      "type": "reference",
+      "label": "legacy agency_commitment关联claim",
+      "mechanisms": [
+        "narrative"
+      ],
+      "symbol": "",
+      "detail": ""
+    }
+  ],
+  "notes": [
+    "普通交流的发送不等待后台Claim索引。后台索引提出的新世界事实或新承诺留作显式后续处理。",
+    "严肃承诺当前同时存在准备态brief和agency_commitment两种来源，pendingCommitments会合并读取；逐承诺完成与撤销仍需更清晰的生命周期。",
+    "图中accepted是平台确认的发送结果；subject.render返回rendered只表示表达角色结束。"
+  ]
+}

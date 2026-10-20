@@ -1,0 +1,530 @@
+{
+  "key": "system",
+  "title": "共同主体的能力与部署结构",
+  "kind": "系统组件与功能地图",
+  "scope": "默认分支；开发分支扩展在对应节点说明",
+  "summary": "沿实际软件依赖、服务调用和持久状态串联两个项目与原生执行环境。",
+  "mechanisms": [
+    "subject",
+    "host",
+    "bridge",
+    "deployment"
+  ],
+  "direction": "TB",
+  "nodes": [
+    {
+      "id": "operator",
+      "label": "操作者\n管理 CLI / Client",
+      "owner": "external",
+      "kind": "external",
+      "mechanisms": [
+        "management",
+        "operator"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "hept",
+      "label": "Hept Product Host\nHTTP · 管理 · 产品组合",
+      "owner": "hept",
+      "kind": "operation",
+      "mechanisms": [
+        "host"
+      ],
+      "symbol": "startProductHost → createGatewayRuntime",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "hs",
+      "label": "产品领域\nMessaging · Identity · Life · WorldLife\nAttention · Reactor · Narrative · Pursuit",
+      "owner": "hept",
+      "kind": "operation",
+      "mechanisms": [
+        "qq",
+        "world",
+        "reactor",
+        "narrative",
+        "pursuit"
+      ],
+      "symbol": "gateway-runtime.ts",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "hdb",
+      "label": "Hept PostgreSQL\n消息、世界、活动、决定与发送记录",
+      "owner": "hept",
+      "kind": "store",
+      "mechanisms": [
+        "host",
+        "qq",
+        "world",
+        "narrative"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "plugin",
+      "label": "Hept OpenClaw 插件\nQQ · Life 工具 · 原生派发",
+      "owner": "native",
+      "kind": "operation",
+      "mechanisms": [
+        "qq",
+        "roles",
+        "permissions"
+      ],
+      "symbol": "packages/application/openclaw-host",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "oc",
+      "label": "受控 OpenClaw\n原生 Agent / 工具 / 子执行者\n历史 / 压缩 / 调度 / 发送队列",
+      "owner": "native",
+      "kind": "operation",
+      "mechanisms": [
+        "projection",
+        "worker",
+        "sending"
+      ],
+      "symbol": "Nous installer / patches",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "nsdk",
+      "label": "Nous 官方 Client / 集成\nmanaged binding · Host bridge",
+      "owner": "nous",
+      "kind": "operation",
+      "mechanisms": [
+        "bridge",
+        "projection"
+      ],
+      "symbol": "packages/client + packages/openclaw",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "ncore",
+      "label": "Nous TypeScript Core\n公共服务、模型、Resource、投影",
+      "owner": "nous",
+      "kind": "operation",
+      "mechanisms": [
+        "models",
+        "resource",
+        "projection"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "kernel",
+      "label": "Nous Rust Kernel\n组合与协议转换",
+      "owner": "nous",
+      "kind": "operation",
+      "mechanisms": [
+        "subject",
+        "material",
+        "query"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "owners",
+      "label": "Nous 认知领域\nSubject · Material · Memory\nSelf · Social · Motivation · Runtime",
+      "owner": "nous",
+      "kind": "operation",
+      "mechanisms": [
+        "subject",
+        "material",
+        "memory",
+        "self",
+        "social",
+        "motivation",
+        "workcontext"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "ndb",
+      "label": "Nous PostgreSQL / ObjectStore\n认知、来源、修订、工作状态与材料",
+      "owner": "nous",
+      "kind": "store",
+      "mechanisms": [
+        "material",
+        "memory",
+        "workcontext"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "serving",
+      "label": "可重建 Serving\nTantivy · USearch · Concept / Topology",
+      "owner": "nous",
+      "kind": "store",
+      "mechanisms": [
+        "serving",
+        "indexes",
+        "topology"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "gateway",
+      "label": "配置选定的模型服务",
+      "owner": "external",
+      "kind": "external",
+      "mechanisms": [
+        "models"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "qq",
+      "label": "QQ / OneBot\n真实消息与回执",
+      "owner": "external",
+      "kind": "external",
+      "mechanisms": [
+        "qq",
+        "sending"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "resources",
+      "label": "宿主提供的 Resource Adapter\n外部资料服务",
+      "owner": "external",
+      "kind": "external",
+      "mechanisms": [
+        "resource"
+      ],
+      "symbol": "",
+      "detail": "默认Registry为空；需宿主显式提供适配器。",
+      "group": ""
+    },
+    {
+      "id": "ncli",
+      "label": "独立 Nous CLI / MCP / SDK\n其他 Agent 消费者",
+      "owner": "external",
+      "kind": "external",
+      "mechanisms": [
+        "subject",
+        "projection"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "maint",
+      "label": "独立维护 OpenClaw\n本机运维职责",
+      "owner": "native",
+      "kind": "operation",
+      "mechanisms": [
+        "maintenance"
+      ],
+      "symbol": "",
+      "detail": "与Subject运行使用独立配置、workspace和unit。",
+      "group": ""
+    }
+  ],
+  "edges": [
+    {
+      "id": "system-edge-1",
+      "from_": "operator",
+      "to": "hept",
+      "type": "call",
+      "label": "管理、配置与状态读取",
+      "mechanisms": [
+        "management"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "system-edge-2",
+      "from_": "hept",
+      "to": "hs",
+      "type": "call",
+      "label": "由应用组合注入领域服务",
+      "mechanisms": [
+        "host"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "system-edge-3",
+      "from_": "hs",
+      "to": "hdb",
+      "type": "write",
+      "label": "领域事务与持久回执",
+      "mechanisms": [
+        "qq",
+        "world",
+        "narrative"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "system-edge-4",
+      "from_": "hept",
+      "to": "nsdk",
+      "type": "call",
+      "label": "Subject / Clock / Cognition 公共服务",
+      "mechanisms": [
+        "bridge"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "system-edge-5",
+      "from_": "hept",
+      "to": "plugin",
+      "type": "call",
+      "label": "正式原生角色派发 / scheduler",
+      "mechanisms": [
+        "roles",
+        "worldtime"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "system-edge-6",
+      "from_": "plugin",
+      "to": "oc",
+      "type": "call",
+      "label": "公开 SDK 原生入口",
+      "mechanisms": [
+        "roles"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "system-edge-7",
+      "from_": "oc",
+      "to": "nsdk",
+      "type": "call",
+      "label": "每次模型输入的认知准备",
+      "mechanisms": [
+        "projection"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "system-edge-8",
+      "from_": "nsdk",
+      "to": "hept",
+      "type": "call",
+      "label": "prepare / admitted / feedback / completion",
+      "mechanisms": [
+        "bridge"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "system-edge-9",
+      "from_": "nsdk",
+      "to": "ncore",
+      "type": "call",
+      "label": "正式 Client 请求",
+      "mechanisms": [
+        "bridge"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "system-edge-10",
+      "from_": "ncli",
+      "to": "ncore",
+      "type": "call",
+      "label": "独立认知操作",
+      "mechanisms": [
+        "subject",
+        "query"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "system-edge-11",
+      "from_": "ncore",
+      "to": "kernel",
+      "type": "call",
+      "label": "私有 Kernel 协议",
+      "mechanisms": [
+        "models",
+        "material"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "system-edge-12",
+      "from_": "kernel",
+      "to": "owners",
+      "type": "call",
+      "label": "按领域分发操作",
+      "mechanisms": [
+        "subject",
+        "memory"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "system-edge-13",
+      "from_": "owners",
+      "to": "ndb",
+      "type": "write",
+      "label": "各领域持有数据与修订",
+      "mechanisms": [
+        "memory",
+        "self",
+        "social",
+        "motivation"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "system-edge-14",
+      "from_": "ndb",
+      "to": "serving",
+      "type": "data",
+      "label": "按捕获来源构建服务资产",
+      "mechanisms": [
+        "serving"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "system-edge-15",
+      "from_": "serving",
+      "to": "owners",
+      "type": "data",
+      "label": "候选引用交所属领域核验",
+      "mechanisms": [
+        "query"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "system-edge-16",
+      "from_": "ncore",
+      "to": "gateway",
+      "type": "call",
+      "label": "形成 / 向量 / 反思 / 可选重排",
+      "mechanisms": [
+        "models"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "system-edge-17",
+      "from_": "oc",
+      "to": "gateway",
+      "type": "call",
+      "label": "原生角色模型提交",
+      "mechanisms": [
+        "roles",
+        "custody"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "system-edge-18",
+      "from_": "ncore",
+      "to": "resources",
+      "type": "call",
+      "label": "describe / search / materialize",
+      "mechanisms": [
+        "resource"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "system-edge-19",
+      "from_": "qq",
+      "to": "plugin",
+      "type": "event",
+      "label": "平台消息与事件",
+      "mechanisms": [
+        "qq"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "system-edge-20",
+      "from_": "plugin",
+      "to": "qq",
+      "type": "call",
+      "label": "获准的物理发送",
+      "mechanisms": [
+        "sending"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "system-edge-21",
+      "from_": "plugin",
+      "to": "hs",
+      "type": "call",
+      "label": "接收记录与发送回执",
+      "mechanisms": [
+        "qq",
+        "sending"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "system-edge-22",
+      "from_": "operator",
+      "to": "maint",
+      "type": "call",
+      "label": "独立维护会话 / 服务控制",
+      "mechanisms": [
+        "maintenance"
+      ],
+      "symbol": "",
+      "detail": ""
+    }
+  ],
+  "notes": [
+    "图中的数据存储按所属系统划分；两个PostgreSQL没有跨库事务。跨项目操作经过官方Client和原事件回执。",
+    "图示职责存在于代码；正式安装后的GIF、浏览器结果交付与学生生活继续仍见PR56未完记录。"
+  ]
+}

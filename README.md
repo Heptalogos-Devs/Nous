@@ -1,33 +1,11 @@
 # Nous Wave
 
-Nous Wave 是一个 pre-production Subject cognition system。TypeScript Core 负责公共 API、模型与资源编排；Rust Kernel 负责认知 Authority、Runtime、Material、Memory 与可重建 Serving。长期认知语义和已接受的设计决定由 [Architecture-Vault](https://github.com/Heptalogos-Devs/Architecture-Vault) 持有。
+> **INTERRUPTED — 开发已暂停（2026-10-20）。** 当前分支保存未完成施工；最新改动尚未整体验证。详见[中断交接](Session-Handoff-2026-10-20-15-28.md)。恢复须等待用户明确指令。
 
-当前实现提供 Memory-only Subject、材料观察与派生、Memory 形成和生命周期、WorkContext、自动 Episode、Journal、有界 Maintenance/Offline Cognition 与整合、Query/Serving、官方 Client/CLI，以及可选 External Resource。自包含 [Agent NousQL 手册](docs/agent/NOUSQL.md) 和 `nous help nousql --json` 提供从零开始的查询入口；plain text 为一等路径，支持根 `$return`、多轴时间、`$asof/$history`、共享 Concept asset 和显式 `$explore`。能力状态见[当前状态](docs/current-state/CURRENT_STATE.md)。
+长期认知服务：有来源和时间的材料、实际接触、认识与修订，支持独立记忆产品及 Heptalogos 联合主体。
 
-## 本地开发
+项目正在按照[完整施工方案快照](docs/construction-specs/README.md)从新代码结构和空数据重建。[当前施工](docs/construction.md)保留完整目标、已定边界和正在进行的功能。旧实现可在 Git 历史中查询。
 
-前置条件：Node.js 24 LTS（版本见 [.node-version](.node-version)）、Corepack 与 Rust（版本见 [rust-toolchain.toml](rust-toolchain.toml)）。pnpm 版本由 package.json 的 `packageManager` 指定。
+正式目录按认知责任组织：`packages/nous` 是可嵌入业务核心，`packages/contracts` 定义公共 Zod schema，`apps/server`、`apps/cli` 和 `packages/client` 使用同一套操作；`integrations/openclaw` 接入原生模型调用。
 
-```text
-corepack pnpm install --frozen-lockfile
-cargo build -p nous-kernel
-corepack pnpm dev:prepare
-corepack pnpm dev
-```
-
-开发配置和密钥位于 ignored 的 `data/config/apps/` 与 `data/config/secrets/`；实例位于 `data/instances/dev/`。另一个终端可运行 `corepack pnpm nous status`。开发与 portable 操作见[脚本说明](scripts/README.md)。
-
-`just check-fast` 与 `just check` 是完整的项目检查入口，具体步骤见 [justfile](justfile)；使用这两个 target 需要安装 just。Protobuf 的唯一来源位于 `proto/`；修改后运行 `corepack pnpm generate`。
-
-## 项目导航
-
-- [仓库地图](INDEX.md)
-- [当前文档目录](docs/INDEX.md)
-- [当前产品合同](docs/specs/INDEX.md)
-- [配置、接口与使用参考](docs/reference/README.md)
-- [研究方法与观测](docs/research/README.md)
-- [第一方 CLI](apps/nous-cli/README.md)
-
-## 许可
-
-本项目依据 Apache-2.0 许可，完整条款见 [LICENSE](LICENSE)，版权与 SPDX 声明见 [NOTICE](NOTICE)。
+运行入口和使用示例随本地链验证同步补充。开发使用 Node 24、TypeScript 7、pnpm、PostgreSQL 18。

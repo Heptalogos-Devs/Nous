@@ -1,19 +1,33 @@
 {
   "compilerOptions": {
-    "target": "ES2023",
+    "target": "ES2024",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "strict": true,
-    "noUncheckedIndexedAccess": true,
-    "verbatimModuleSyntax": true,
     "skipLibCheck": true,
-    "types": ["node"],
-    "noEmit": true
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "declaration": true,
+    "sourceMap": true,
+    "rootDir": ".",
+    "outDir": "dist",
+    "types": [
+      "node"
+    ],
+    "customConditions": [
+      "development"
+    ]
   },
   "include": [
-    "apps/nous-core/**/*.ts",
-    "apps/nous-cli/**/*.ts",
+    "apps/**/*.ts",
     "packages/**/*.ts",
-    "scripts/**/*.ts"
+    "migrations/**/*.ts",
+    "tests/**/*.ts",
+    "integrations/openclaw/**/*.ts"
+  ],
+  "exclude": [
+    "**/node_modules",
+    "**/dist",
+    "data"
   ]
 }

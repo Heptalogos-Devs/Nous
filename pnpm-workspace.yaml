@@ -1,25 +1,23 @@
 packages:
-  - apps/nous-core
-  - apps/nous-cli
+  - apps/*
   - packages/*
+  - integrations/openclaw
 allowBuilds:
-  "@bufbuild/buf": true
-  "@swc/core": true
+  '@lancedb/lancedb': true
   esbuild: true
-  "@google/genai": true
-  koffi: true
-  openclaw: true
   protobufjs: true
-  tree-sitter-bash: true
+  '@biomejs/biome': true
 minimumReleaseAgeExclude:
-  - "@ai-sdk/gateway@4.0.82"
-  - "@ai-sdk/provider-utils@5.0.41"
-  - "@ai-sdk/provider@4.0.15"
-  - "@types/node@24.19.1"
-  - ai@7.0.102
-  - fastify@5.12.5
-  - "@ai-sdk/openai@4.0.67"
+  - '@ai-sdk/gateway@4.0.119'
+  - '@ai-sdk/provider-utils@5.0.64'
+  - '@ai-sdk/provider@4.0.31'
+  - ai@7.0.146
+
+ignoredOptionalDependencies:
+  - '@huggingface/transformers'
+  - openai
+
 overrides:
-  source-map-js@1.2.1: 1.2.2
-  undici@8.10.0: 8.10.2
-  "@modelcontextprotocol/sdk@1.30.0": 1.31.0
+  kysely: 0.29.7
+
+autoInstallPeers: false

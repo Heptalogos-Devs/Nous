@@ -1,0 +1,34 @@
+digraph target {
+graph [rankdir=TB, fontname="Noto Sans CJK SC", fontsize=17, bgcolor="white", pad="0.3", nodesep="0.35", ranksep="0.65", splines=polyline, label="个体化注意与单前台 · 目标设计", labelloc=t];
+node [fontname="Noto Sans CJK SC",fontsize=11,color="#77818b",margin="0.17,0.10",penwidth=1.0];
+edge [fontname="Noto Sans CJK SC",fontsize=9,arrowsize=0.7,penwidth=1.1];
+sources [label="消息 / 世界 / 任务 / 关切",shape=note,style="filled",fillcolor="#faf5e9",URL="../设计/注意Reactor与生活状态.md#个体化注意",tooltip="消息 / 世界 / 任务 / 关切：见设计/注意Reactor与生活状态.md"];
+notice [label="有界通知候选",shape=note,style="filled",fillcolor="#faf5e9",URL="../设计/注意Reactor与生活状态.md#个体化注意",tooltip="有界通知候选：见设计/注意Reactor与生活状态.md"];
+profile [label="SituationProfile\n人格、关系、目的",shape=note,style="filled",fillcolor="#faf5e9",URL="../设计/注意Reactor与生活状态.md#个体化注意",tooltip="SituationProfile\n人格、关系、目的：见设计/注意Reactor与生活状态.md"];
+life [label="精神 / 体力 / 心情\n当前活动与中断成本",shape=note,style="filled",fillcolor="#faf5e9",URL="../设计/注意Reactor与生活状态.md#个体化注意",tooltip="精神 / 体力 / 心情\n当前活动与中断成本：见设计/注意Reactor与生活状态.md"];
+select [label="Attention\n可访问性与个体评分",shape=box,style="filled",fillcolor="#eef7f4",URL="../设计/注意Reactor与生活状态.md#个体化注意",tooltip="Attention\n可访问性与个体评分：见设计/注意Reactor与生活状态.md"];
+wake [label="pg-boss Subject 唤醒",shape=hexagon,style="filled",fillcolor="#efedf6",URL="../设计/注意Reactor与生活状态.md#个体化注意",tooltip="pg-boss Subject 唤醒：见设计/注意Reactor与生活状态.md"];
+reactor [label="Reactor 单前台",shape=box,style="rounded,filled",fillcolor="#e9eef4",URL="../设计/注意Reactor与生活状态.md#个体化注意",tooltip="Reactor 单前台：见设计/注意Reactor与生活状态.md"];
+read [label="取得所需材料",shape=box,style="filled",fillcolor="#eef7f4",URL="../设计/注意Reactor与生活状态.md#个体化注意",tooltip="取得所需材料：见设计/注意Reactor与生活状态.md"];
+delib [label="subject.deliberation",shape=hexagon,style="filled",fillcolor="#efedf6",URL="../设计/注意Reactor与生活状态.md#个体化注意",tooltip="subject.deliberation：见设计/注意Reactor与生活状态.md"];
+choice [label="明确 Decision",shape=note,style="filled",fillcolor="#faf5e9",URL="../设计/注意Reactor与生活状态.md#个体化注意",tooltip="明确 Decision：见设计/注意Reactor与生活状态.md"];
+commit [label="agency.adoptDecision",shape=box,style="filled",fillcolor="#eef7f4",URL="../设计/注意Reactor与生活状态.md#个体化注意",tooltip="agency.adoptDecision：见设计/注意Reactor与生活状态.md"];
+task [label="Activity / WorldAction / Expression",shape=note,style="filled",fillcolor="#faf5e9",URL="../设计/注意Reactor与生活状态.md#个体化注意",tooltip="Activity / WorldAction / Expression：见设计/注意Reactor与生活状态.md"];
+wait [label="保存继续条件 / 等待",shape=ellipse,style="filled",fillcolor="#f2ecf7",URL="../设计/注意Reactor与生活状态.md#个体化注意",tooltip="保存继续条件 / 等待：见设计/注意Reactor与生活状态.md"];
+sources -> notice [label="实际变更与轻量信息",style="solid",color="#555e68",fontcolor="#555e68",arrowhead=normal,constraint=true,tooltip="数据：源节点把标注内容提供给目标；实际变更与轻量信息"];
+notice -> select [label="候选",style="solid",color="#555e68",fontcolor="#555e68",arrowhead=normal,constraint=true,tooltip="数据：源节点把标注内容提供给目标；候选"];
+profile -> select [label="个体连接",style="solid",color="#555e68",fontcolor="#555e68",arrowhead=normal,constraint=true,tooltip="数据：源节点把标注内容提供给目标；个体连接"];
+life -> select [label="投入与中断成本",style="solid",color="#555e68",fontcolor="#555e68",arrowhead=normal,constraint=true,tooltip="数据：源节点把标注内容提供给目标；投入与中断成本"];
+sources -> wake [label="合并唤醒",style="dashed",color="#a26416",fontcolor="#a26416",arrowhead=normal,constraint=true,tooltip="交接：事件或持久工作使后续能力获得机会；合并唤醒"];
+wake -> reactor [label="安全节点启动",style="solid",color="#254e70",fontcolor="#254e70",arrowhead=normal,constraint=true,tooltip="调用：源节点请求目标完成标注操作；安全节点启动"];
+reactor -> select [label="取得候选",style="solid",color="#254e70",fontcolor="#254e70",arrowhead=normal,constraint=true,tooltip="调用：源节点请求目标完成标注操作；取得候选"];
+select -> reactor [label="有界候选与当前关注",style="solid",color="#555e68",fontcolor="#555e68",arrowhead=normal,constraint=true,tooltip="数据：源节点把标注内容提供给目标；有界候选与当前关注"];
+reactor -> read [label="真实目标一次读取",style="solid",color="#254e70",fontcolor="#254e70",arrowhead=normal,constraint=true,tooltip="调用：源节点请求目标完成标注操作；真实目标一次读取"];
+read -> delib [label="实际输入与ContextView",style="solid",color="#555e68",fontcolor="#555e68",arrowhead=normal,constraint=true,tooltip="数据：源节点把标注内容提供给目标；实际输入与ContextView"];
+delib -> choice [label="主观选择",style="solid",color="#555e68",fontcolor="#555e68",arrowhead=normal,constraint=true,tooltip="数据：源节点把标注内容提供给目标；主观选择"];
+choice -> commit [label="采用",style="solid",color="#254e70",fontcolor="#254e70",arrowhead=normal,constraint=true,tooltip="调用：源节点请求目标完成标注操作；采用"];
+commit -> task [label="完整业务改变",style="bold",color="#19705c",fontcolor="#19705c",arrowhead=normal,constraint=true,tooltip="提交：在标注事务中写入正式状态；完整业务改变"];
+commit -> wait [label="继续点",style="bold",color="#19705c",fontcolor="#19705c",arrowhead=normal,constraint=true,tooltip="提交：在标注事务中写入正式状态；继续点"];
+task -> sources [label="实际成果/变化",style="dashed",color="#a26416",fontcolor="#a26416",arrowhead=normal,constraint=true,tooltip="交接：事件或持久工作使后续能力获得机会；实际成果/变化"];
+wait -> wake [label="条件成立后唤醒",style="dashed",color="#a26416",fontcolor="#a26416",arrowhead=normal,constraint=true,tooltip="交接：事件或持久工作使后续能力获得机会；条件成立后唤醒"];
+}

@@ -1,0 +1,48 @@
+{
+  "scope": {
+    "kind": "subject",
+    "subjectId": "$createdSubjectId"
+  },
+  "overrides": {
+    "roles": {
+      "deliberation": {
+        "modelResource": "reasoning"
+      },
+      "expression": {
+        "modelResource": "natural-language"
+      },
+      "growth": {
+        "modelResource": "structured"
+      }
+    },
+    "attention": {
+      "batchWindowMs": 1500,
+      "candidateLimit": 8,
+      "diverseCandidates": 2,
+      "idleIntervalWorldMinutes": 60,
+      "idleCallsPerRealDay": 12
+    },
+    "growth": {
+      "batchItems": 24,
+      "inputTokenLimit": 12000,
+      "backgroundIntervalRealMinutes": 30,
+      "hypothesisExploration": {
+        "enabled": false,
+        "maxRounds": 2,
+        "maxHypotheses": 3
+      }
+    },
+    "life": {
+      "offlinePolicy": "freeze"
+    },
+    "media": {
+      "preserveExpiring": true,
+      "maxSingleFileBytes": 52428800
+    },
+    "budget": {
+      "currency": "CNY",
+      "dailyLimit": 10,
+      "onExhausted": "pause-model-work"
+    }
+  }
+}

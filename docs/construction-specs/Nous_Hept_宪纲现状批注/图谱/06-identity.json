@@ -1,0 +1,571 @@
+{
+  "key": "identity",
+  "title": "身份、修订与来源引用",
+  "kind": "对象关系图",
+  "scope": "默认分支",
+  "summary": "箭头方向为“引用方 → 被引用方”；这里只画代码中的身份或来源关联，不推定未核实的数量关系。",
+  "mechanisms": [
+    "subject",
+    "seed",
+    "provenance",
+    "memory",
+    "workcontext"
+  ],
+  "direction": "TB",
+  "nodes": [
+    {
+      "id": "subject",
+      "label": "SubjectId\n同一长期主体",
+      "owner": "nous",
+      "kind": "store",
+      "mechanisms": [
+        "subject"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "entity",
+      "label": "EntityRef\nHost 人物 / 账号 / 世界 actor 绑定",
+      "owner": "hept",
+      "kind": "store",
+      "mechanisms": [
+        "people"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "native",
+      "label": "原生 Session / Run / Agent",
+      "owner": "native",
+      "kind": "store",
+      "mechanisms": [
+        "bridge"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "session",
+      "label": "Nous Session\nResidentSet / active WorkContext",
+      "owner": "nous",
+      "kind": "store",
+      "mechanisms": [
+        "workcontext"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "work",
+      "label": "WorkContext\n目的、问题、约束与 anchors",
+      "owner": "nous",
+      "kind": "store",
+      "mechanisms": [
+        "workcontext"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "activity",
+      "label": "LifeActivity\n已采纳工作、权限和进展",
+      "owner": "hept",
+      "kind": "store",
+      "mechanisms": [
+        "life"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "decision",
+      "label": "DecisionCommit\n一次正式主观决定",
+      "owner": "hept",
+      "kind": "store",
+      "mechanisms": [
+        "deliberation"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "pursuit",
+      "label": "Pursuit\n持续追求及评价链接",
+      "owner": "hept",
+      "kind": "store",
+      "mechanisms": [
+        "pursuit"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "obj",
+      "label": "认知对象身份\nMemory / Schema / Episode / Journal\nSelf / Social / Motivation",
+      "owner": "nous",
+      "kind": "store",
+      "mechanisms": [
+        "memory",
+        "self",
+        "social",
+        "motivation"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "rev",
+      "label": "不可变认知 Revision\n内容、时间、producer 与 basis",
+      "owner": "nous",
+      "kind": "store",
+      "mechanisms": [
+        "provenance",
+        "memory"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "seed",
+      "label": "SeedVersion / Adoption\n原文及采用来源",
+      "owner": "nous",
+      "kind": "store",
+      "mechanisms": [
+        "seed"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "occ",
+      "label": "ObservationOccurrence\n一次被记录的接触",
+      "owner": "nous",
+      "kind": "store",
+      "mechanisms": [
+        "material"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "art",
+      "label": "Artifact\n不可变材料及内容 hash",
+      "owner": "nous",
+      "kind": "store",
+      "mechanisms": [
+        "material"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "region",
+      "label": "SourceRegion / DerivedRegion\n原材料或派生表示的范围",
+      "owner": "nous",
+      "kind": "store",
+      "mechanisms": [
+        "material",
+        "media"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "repr",
+      "label": "DerivedRepresentation\n派生 payload 与 producer",
+      "owner": "nous",
+      "kind": "store",
+      "mechanisms": [
+        "media"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "addr",
+      "label": "LexicalRef\n类型前缀 + 三组 Proquint",
+      "owner": "nous",
+      "kind": "store",
+      "mechanisms": [
+        "address"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "world",
+      "label": "WorldEvent\n事件修订、来源、perceptions",
+      "owner": "hept",
+      "kind": "store",
+      "mechanisms": [
+        "world"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    }
+  ],
+  "edges": [
+    {
+      "id": "identity-edge-1",
+      "from_": "native",
+      "to": "subject",
+      "type": "reference",
+      "label": "持久 Nous Subject 绑定",
+      "mechanisms": [
+        "bridge"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "identity-edge-2",
+      "from_": "native",
+      "to": "session",
+      "type": "reference",
+      "label": "原生 Session 扩展保存 nousSessionId",
+      "mechanisms": [
+        "bridge"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "identity-edge-3",
+      "from_": "session",
+      "to": "subject",
+      "type": "reference",
+      "label": "所属 Subject",
+      "mechanisms": [
+        "workcontext"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "identity-edge-4",
+      "from_": "session",
+      "to": "work",
+      "type": "reference",
+      "label": "activeWorkContextId",
+      "mechanisms": [
+        "workcontext"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "identity-edge-5",
+      "from_": "activity",
+      "to": "subject",
+      "type": "reference",
+      "label": "subjectId",
+      "mechanisms": [
+        "life"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "identity-edge-6",
+      "from_": "activity",
+      "to": "work",
+      "type": "reference",
+      "label": "workContextId",
+      "mechanisms": [
+        "life"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "identity-edge-7",
+      "from_": "decision",
+      "to": "activity",
+      "type": "reference",
+      "label": "activityId / activityRevision",
+      "mechanisms": [
+        "deliberation"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "identity-edge-8",
+      "from_": "decision",
+      "to": "native",
+      "type": "reference",
+      "label": "sourceRunId",
+      "mechanisms": [
+        "deliberation"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "identity-edge-9",
+      "from_": "pursuit",
+      "to": "activity",
+      "type": "reference",
+      "label": "关联活动",
+      "mechanisms": [
+        "pursuit"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "identity-edge-10",
+      "from_": "pursuit",
+      "to": "rev",
+      "type": "reference",
+      "label": "exact DesiredConditionRevision",
+      "mechanisms": [
+        "pursuit"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "identity-edge-11",
+      "from_": "obj",
+      "to": "subject",
+      "type": "reference",
+      "label": "subjectId",
+      "mechanisms": [
+        "memory"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "identity-edge-12",
+      "from_": "obj",
+      "to": "rev",
+      "type": "reference",
+      "label": "current_revision_id",
+      "mechanisms": [
+        "memory"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "identity-edge-13",
+      "from_": "rev",
+      "to": "obj",
+      "type": "reference",
+      "label": "稳定所属对象",
+      "mechanisms": [
+        "memory"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "identity-edge-14",
+      "from_": "rev",
+      "to": "rev",
+      "type": "reference",
+      "label": "parent / 精确认知依赖",
+      "mechanisms": [
+        "provenance"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "identity-edge-15",
+      "from_": "rev",
+      "to": "entity",
+      "type": "reference",
+      "label": "aboutness / relation endpoints / scope",
+      "mechanisms": [
+        "provenance",
+        "social"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "identity-edge-16",
+      "from_": "rev",
+      "to": "occ",
+      "type": "reference",
+      "label": "EvidenceRef / formation basis",
+      "mechanisms": [
+        "provenance"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "identity-edge-17",
+      "from_": "rev",
+      "to": "seed",
+      "type": "reference",
+      "label": "SeedBasisRef",
+      "mechanisms": [
+        "self",
+        "seed"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "identity-edge-18",
+      "from_": "rev",
+      "to": "region",
+      "type": "reference",
+      "label": "来源区域引用",
+      "mechanisms": [
+        "provenance"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "identity-edge-19",
+      "from_": "seed",
+      "to": "art",
+      "type": "reference",
+      "label": "源文 Artifact",
+      "mechanisms": [
+        "seed"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "identity-edge-20",
+      "from_": "occ",
+      "to": "art",
+      "type": "reference",
+      "label": "artifact_id",
+      "mechanisms": [
+        "material"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "identity-edge-21",
+      "from_": "occ",
+      "to": "world",
+      "type": "reference",
+      "label": "WorldRealized 事件来源",
+      "mechanisms": [
+        "world",
+        "material"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "identity-edge-22",
+      "from_": "region",
+      "to": "art",
+      "type": "reference",
+      "label": "原材料定位",
+      "mechanisms": [
+        "material"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "identity-edge-23",
+      "from_": "repr",
+      "to": "region",
+      "type": "reference",
+      "label": "派生输入范围",
+      "mechanisms": [
+        "media"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "identity-edge-24",
+      "from_": "region",
+      "to": "repr",
+      "type": "reference",
+      "label": "派生区域所属表示",
+      "mechanisms": [
+        "media"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "identity-edge-25",
+      "from_": "addr",
+      "to": "obj",
+      "type": "reference",
+      "label": "canonical object mapping",
+      "mechanisms": [
+        "address"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "identity-edge-26",
+      "from_": "addr",
+      "to": "rev",
+      "type": "reference",
+      "label": "canonical revision mapping",
+      "mechanisms": [
+        "address"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "identity-edge-27",
+      "from_": "work",
+      "to": "rev",
+      "type": "reference",
+      "label": "cognition anchors",
+      "mechanisms": [
+        "workcontext"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "identity-edge-28",
+      "from_": "work",
+      "to": "entity",
+      "type": "reference",
+      "label": "entity anchors",
+      "mechanisms": [
+        "workcontext"
+      ],
+      "symbol": "",
+      "detail": ""
+    }
+  ],
+  "notes": [
+    "认知对象和认知修订各有精确地址。实际Proquint正文为三组CVCVC，48位；旧四英文词示例已经退出当前实现。",
+    "Occurrence在当前模型准备前半段写入；对应“实际获得内容”的时间缺口详见原生输入时序图。"
+  ]
+}

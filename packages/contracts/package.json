@@ -1,0 +1,55 @@
+{
+  "name": "@nous-wave/contracts",
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    ".": {
+      "development": "./index.ts",
+      "types": "./index.ts",
+      "default": "./index.ts"
+    },
+    "./common": {
+      "development": "./common.ts",
+      "types": "./common.ts",
+      "default": "./common.ts"
+    },
+    "./knowledge": {
+      "development": "./knowledge.ts",
+      "types": "./knowledge.ts",
+      "default": "./knowledge.ts"
+    },
+    "./cognition": {
+      "development": "./cognition.ts",
+      "types": "./cognition.ts",
+      "default": "./cognition.ts"
+    },
+    "./materials": {
+      "development": "./materials.ts",
+      "types": "./materials.ts",
+      "default": "./materials.ts"
+    },
+    "./management": {
+      "development": "./management.ts",
+      "types": "./management.ts",
+      "default": "./management.ts"
+    },
+    "./identity": {
+      "development": "./identity.ts",
+      "types": "./identity.ts",
+      "default": "./identity.ts"
+    }
+  },
+  "dependencies": {
+    "zod": "4.6.5"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "directory": "../../data/packages/contracts",
+    "linkDirectory": false
+  }
+}

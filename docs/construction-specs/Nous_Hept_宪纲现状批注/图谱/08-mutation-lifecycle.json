@@ -1,0 +1,474 @@
+{
+  "key": "mutation-lifecycle",
+  "title": "认知变更、依赖失效与清除",
+  "kind": "事务与生命周期图",
+  "scope": "Nous默认分支",
+  "summary": "把对象修订、撤回/抑制、purge及派生层失效分别表示。",
+  "mechanisms": [
+    "memory",
+    "lifecycle",
+    "serving",
+    "provenance"
+  ],
+  "direction": "TB",
+  "nodes": [
+    {
+      "id": "request",
+      "label": "正式领域写入\noperationId、target revision/epoch、content",
+      "owner": "nous",
+      "kind": "operation",
+      "mechanisms": [
+        "memory",
+        "self",
+        "social",
+        "motivation"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "receipt",
+      "label": "MutationEnvelope\nowner锁、幂等回执、短事务",
+      "owner": "nous",
+      "kind": "operation",
+      "mechanisms": [
+        "memory"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "same",
+      "label": "相同操作已有回执？",
+      "owner": "nous",
+      "kind": "decision",
+      "mechanisms": [
+        "memory"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "replay",
+      "label": "返回原提交结果\n不同请求digest报冲突",
+      "owner": "nous",
+      "kind": "state",
+      "mechanisms": [
+        "memory"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "check",
+      "label": "所属领域校验\n来源、对象head、scope、循环依赖",
+      "owner": "nous",
+      "kind": "operation",
+      "mechanisms": [
+        "provenance",
+        "memory"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "revision",
+      "label": "追加不可变revision\n更新当前head和object_epoch",
+      "owner": "nous",
+      "kind": "store",
+      "mechanisms": [
+        "memory"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "states",
+      "label": "采纳 / 完整性 / 抑制\n按所属领域操作分别变更",
+      "owner": "nous",
+      "kind": "store",
+      "mechanisms": [
+        "lifecycle"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "dependent",
+      "label": "依赖此来源的认知\n标记需复核或失效",
+      "owner": "nous",
+      "kind": "operation",
+      "mechanisms": [
+        "lifecycle",
+        "provenance"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "watermark",
+      "label": "Serving desired水位\n受影响family失效",
+      "owner": "nous",
+      "kind": "store",
+      "mechanisms": [
+        "serving"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "builder",
+      "label": "Serving builder\n捕获输入、复用正文与向量",
+      "owner": "nous",
+      "kind": "operation",
+      "mechanisms": [
+        "serving"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "generation",
+      "label": "发布的generation\n历史资产、read lease与回收",
+      "owner": "nous",
+      "kind": "store",
+      "mechanisms": [
+        "serving"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "purge",
+      "label": "Purge指定认知对象\n由领域持有清除语义",
+      "owner": "nous",
+      "kind": "operation",
+      "mechanisms": [
+        "lifecycle"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "runtime",
+      "label": "清理Runtime引用\nResident / WorkContext / Use refs",
+      "owner": "nous",
+      "kind": "operation",
+      "mechanisms": [
+        "lifecycle",
+        "workcontext"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "history",
+      "label": "会话历史失效屏障\n后续模型输入检查",
+      "owner": "nous",
+      "kind": "store",
+      "mechanisms": [
+        "lifecycle",
+        "projection"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "tomb",
+      "label": "保留去重/清除回执与地址状态",
+      "owner": "nous",
+      "kind": "store",
+      "mechanisms": [
+        "lifecycle",
+        "address"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "query",
+      "label": "最终读取核验\n当前权限 / purge / 可用性",
+      "owner": "nous",
+      "kind": "operation",
+      "mechanisms": [
+        "query"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "native",
+      "label": "原生调用前\n历史范围与模型输入检查",
+      "owner": "native",
+      "kind": "operation",
+      "mechanisms": [
+        "projection"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    }
+  ],
+  "edges": [
+    {
+      "id": "mutation-lifecycle-edge-1",
+      "from_": "request",
+      "to": "receipt",
+      "type": "call",
+      "label": "领域规范化后开始操作",
+      "mechanisms": [
+        "memory"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "mutation-lifecycle-edge-2",
+      "from_": "receipt",
+      "to": "same",
+      "type": "read",
+      "label": "operationId与request digest",
+      "mechanisms": [
+        "memory"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "mutation-lifecycle-edge-3",
+      "from_": "same",
+      "to": "replay",
+      "type": "transition",
+      "label": "已提交相同操作",
+      "mechanisms": [
+        "memory"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "mutation-lifecycle-edge-4",
+      "from_": "same",
+      "to": "check",
+      "type": "transition",
+      "label": "新操作",
+      "mechanisms": [
+        "memory"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "mutation-lifecycle-edge-5",
+      "from_": "check",
+      "to": "revision",
+      "type": "write",
+      "label": "合法形成或修订",
+      "mechanisms": [
+        "memory"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "mutation-lifecycle-edge-6",
+      "from_": "check",
+      "to": "states",
+      "type": "write",
+      "label": "合法生命周期操作",
+      "mechanisms": [
+        "lifecycle"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "mutation-lifecycle-edge-7",
+      "from_": "revision",
+      "to": "dependent",
+      "type": "event",
+      "label": "当前来源revision变化",
+      "mechanisms": [
+        "lifecycle"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "mutation-lifecycle-edge-8",
+      "from_": "states",
+      "to": "dependent",
+      "type": "event",
+      "label": "来源可用性变化",
+      "mechanisms": [
+        "lifecycle"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "mutation-lifecycle-edge-9",
+      "from_": "revision",
+      "to": "watermark",
+      "type": "write",
+      "label": "同事务失效标记",
+      "mechanisms": [
+        "serving"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "mutation-lifecycle-edge-10",
+      "from_": "states",
+      "to": "watermark",
+      "type": "write",
+      "label": "同事务失效标记",
+      "mechanisms": [
+        "serving"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "mutation-lifecycle-edge-11",
+      "from_": "watermark",
+      "to": "builder",
+      "type": "read",
+      "label": "待建family与来源水位",
+      "mechanisms": [
+        "serving"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "mutation-lifecycle-edge-12",
+      "from_": "builder",
+      "to": "generation",
+      "type": "write",
+      "label": "发布可重建服务资产",
+      "mechanisms": [
+        "serving"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "mutation-lifecycle-edge-13",
+      "from_": "generation",
+      "to": "query",
+      "type": "data",
+      "label": "索引候选交领域最终检查",
+      "mechanisms": [
+        "query"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "mutation-lifecycle-edge-14",
+      "from_": "purge",
+      "to": "dependent",
+      "type": "call",
+      "label": "处理来源依赖与派生引用",
+      "mechanisms": [
+        "lifecycle"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "mutation-lifecycle-edge-15",
+      "from_": "purge",
+      "to": "runtime",
+      "type": "call",
+      "label": "领域清除事务调用Runtime清理",
+      "mechanisms": [
+        "lifecycle"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "mutation-lifecycle-edge-16",
+      "from_": "runtime",
+      "to": "history",
+      "type": "write",
+      "label": "标记旧会话历史不可直接消费",
+      "mechanisms": [
+        "lifecycle"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "mutation-lifecycle-edge-17",
+      "from_": "purge",
+      "to": "tomb",
+      "type": "write",
+      "label": "保存必要去重与地址状态",
+      "mechanisms": [
+        "lifecycle",
+        "address"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "mutation-lifecycle-edge-18",
+      "from_": "purge",
+      "to": "watermark",
+      "type": "write",
+      "label": "使旧Serving候选失效",
+      "mechanisms": [
+        "serving"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "mutation-lifecycle-edge-19",
+      "from_": "history",
+      "to": "native",
+      "type": "read",
+      "label": "入模时验证历史可用性",
+      "mechanisms": [
+        "projection"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "mutation-lifecycle-edge-20",
+      "from_": "states",
+      "to": "query",
+      "type": "read",
+      "label": "读取当前生命周期状态",
+      "mechanisms": [
+        "query"
+      ],
+      "symbol": "",
+      "detail": ""
+    }
+  ],
+  "notes": [
+    "revision、撤回、抑制和物理清除各有正式操作。跨安装备份和外部原生存储的整体删除，需要各自数据所有者配合。"
+  ]
+}

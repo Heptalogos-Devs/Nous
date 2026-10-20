@@ -1,0 +1,11 @@
+{
+  "name": "@nous-wave/openclaw",
+  "version": "0.1.0",
+  "type": "module",
+  "license": "Apache-2.0",
+  "exports": "./index.ts",
+  "openclaw": { "extensions": ["./index.ts"] },
+  "dependencies": { "@nous-wave/contracts": "workspace:*", "@nous-wave/client": "workspace:*", "zod": "4.6.5" },
+  "peerDependencies": { "openclaw": ">=2026.10.5" },
+  "peerDependenciesMeta": { "openclaw": { "optional": true } }
+}

@@ -1,0 +1,68 @@
+// 身份、修订与来源引用
+digraph identity {
+	graph [bgcolor="#ffffff" fontcolor="#202e3a" fontname="Noto Sans CJK SC" fontsize=18 label="身份、修订与来源引用" labeljust=l labelloc=t newrank=true nodesep=0.38 outputorder=edgesfirst pad=0.3 rankdir=TB ranksep=1.15 splines=spline]
+	node [fontname="Noto Sans CJK SC" fontsize=11.5 margin="0.20,0.12" penwidth=1.3 style="rounded,filled"]
+	edge [arrowsize=0.7 fontcolor="#334155" fontname="Noto Sans CJK SC" fontsize=9.3]
+	subject [label="SubjectId
+同一长期主体" URL="https://github.com/Heptalogos-Devs/Nous-Wave/blob/412b062082afb75ccfae4c3f69fc606d3e3cc862/crates/subject/src/lib.rs#L64-L157" color="#2e527b" fillcolor="#e9f0fb" peripheries=2 shape=box tooltip="Nous Wave · subject"]
+	entity [label="EntityRef
+Host 人物 / 账号 / 世界 actor 绑定" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/product/identity/src/contracts.ts" color="#76512e" fillcolor="#f7f0e5" peripheries=2 shape=box tooltip="Heptalogos · people"]
+	native [label="原生 Session / Run / Agent" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/f855c686251a5c6393875677a26819eb778dd665/packages/application/product-host/src/native-cognition.ts" color="#286b4c" fillcolor="#e6f4ed" peripheries=2 shape=box tooltip="原生执行环境 · bridge"]
+	session [label="Nous Session
+ResidentSet / active WorkContext" URL="https://github.com/Heptalogos-Devs/Nous-Wave/blob/412b062082afb75ccfae4c3f69fc606d3e3cc862/crates/runtime/src/sessions.rs" color="#2e527b" fillcolor="#e9f0fb" peripheries=2 shape=box tooltip="Nous Wave · workcontext"]
+	work [label="WorkContext
+目的、问题、约束与 anchors" URL="https://github.com/Heptalogos-Devs/Nous-Wave/blob/412b062082afb75ccfae4c3f69fc606d3e3cc862/crates/runtime/src/sessions.rs" color="#2e527b" fillcolor="#e9f0fb" peripheries=2 shape=box tooltip="Nous Wave · workcontext"]
+	activity [label="LifeActivity
+已采纳工作、权限和进展" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/product/subject/src/life.ts" color="#76512e" fillcolor="#f7f0e5" peripheries=2 shape=box tooltip="Heptalogos · life"]
+	decision [label="DecisionCommit
+一次正式主观决定" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/product/subject/src/deliberation.ts" color="#76512e" fillcolor="#f7f0e5" peripheries=2 shape=box tooltip="Heptalogos · deliberation"]
+	pursuit [label="Pursuit
+持续追求及评价链接" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/product/subject/src/pursuit.ts" color="#76512e" fillcolor="#f7f0e5" peripheries=2 shape=box tooltip="Heptalogos · pursuit"]
+	obj [label="认知对象身份
+Memory / Schema / Episode / Journal
+Self / Social / Motivation" URL="https://github.com/Heptalogos-Devs/Nous-Wave/blob/412b062082afb75ccfae4c3f69fc606d3e3cc862/crates/memory/src/service/memory/mutation.rs#L18-L205" color="#2e527b" fillcolor="#e9f0fb" peripheries=2 shape=box tooltip="Nous Wave · memory, self, social, motivation"]
+	rev [label="不可变认知 Revision
+内容、时间、producer 与 basis" URL="https://github.com/Heptalogos-Devs/Nous-Wave/blob/412b062082afb75ccfae4c3f69fc606d3e3cc862/crates/memory/src/service/provenance.rs" color="#2e527b" fillcolor="#e9f0fb" peripheries=2 shape=box tooltip="Nous Wave · provenance, memory"]
+	seed [label="SeedVersion / Adoption
+原文及采用来源" URL="https://github.com/Heptalogos-Devs/Nous-Wave/blob/412b062082afb75ccfae4c3f69fc606d3e3cc862/crates/subject/src/seed.rs#L16-L63" color="#2e527b" fillcolor="#e9f0fb" peripheries=2 shape=box tooltip="Nous Wave · seed"]
+	occ [label="ObservationOccurrence
+一次被记录的接触" URL="https://github.com/Heptalogos-Devs/Nous-Wave/blob/412b062082afb75ccfae4c3f69fc606d3e3cc862/crates/material/src/service/observation.rs#L32-L311" color="#2e527b" fillcolor="#e9f0fb" peripheries=2 shape=box tooltip="Nous Wave · material"]
+	art [label="Artifact
+不可变材料及内容 hash" URL="https://github.com/Heptalogos-Devs/Nous-Wave/blob/412b062082afb75ccfae4c3f69fc606d3e3cc862/crates/material/src/service/observation.rs#L32-L311" color="#2e527b" fillcolor="#e9f0fb" peripheries=2 shape=box tooltip="Nous Wave · material"]
+	region [label="SourceRegion / DerivedRegion
+原材料或派生表示的范围" URL="https://github.com/Heptalogos-Devs/Nous-Wave/blob/412b062082afb75ccfae4c3f69fc606d3e3cc862/crates/material/src/service/observation.rs#L32-L311" color="#2e527b" fillcolor="#e9f0fb" peripheries=2 shape=box tooltip="Nous Wave · material, media"]
+	repr [label="DerivedRepresentation
+派生 payload 与 producer" URL="https://github.com/Heptalogos-Devs/Nous-Wave/blob/412b062082afb75ccfae4c3f69fc606d3e3cc862/apps/nous-core/src/model/derivation.ts" color="#2e527b" fillcolor="#e9f0fb" peripheries=2 shape=box tooltip="Nous Wave · media"]
+	addr [label="LexicalRef
+类型前缀 + 三组 Proquint" URL="https://github.com/Heptalogos-Devs/Nous-Wave/blob/412b062082afb75ccfae4c3f69fc606d3e3cc862/crates/persistence/src/identity.rs" color="#2e527b" fillcolor="#e9f0fb" peripheries=2 shape=box tooltip="Nous Wave · address"]
+	world [label="WorldEvent
+事件修订、来源、perceptions" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/product/subject/src/world-life.ts" color="#76512e" fillcolor="#f7f0e5" peripheries=2 shape=box tooltip="Heptalogos · world"]
+	native -> subject [label="持久 Nous Subject 绑定" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/f855c686251a5c6393875677a26819eb778dd665/packages/application/product-host/src/native-cognition.ts" color="#6c7180" penwidth=1 style=solid tooltip="一对象保存对另一对象的稳定引用 · 持久 Nous Subject 绑定"]
+	native -> session [label="原生 Session 扩展保存 nousSessionId" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/f855c686251a5c6393875677a26819eb778dd665/packages/application/product-host/src/native-cognition.ts" color="#6c7180" penwidth=1 style=solid tooltip="一对象保存对另一对象的稳定引用 · 原生 Session 扩展保存 nousSessionId"]
+	session -> subject [label="所属 Subject" URL="https://github.com/Heptalogos-Devs/Nous-Wave/blob/412b062082afb75ccfae4c3f69fc606d3e3cc862/crates/runtime/src/sessions.rs" color="#6c7180" penwidth=1 style=solid tooltip="一对象保存对另一对象的稳定引用 · 所属 Subject"]
+	session -> work [label=activeWorkContextId URL="https://github.com/Heptalogos-Devs/Nous-Wave/blob/412b062082afb75ccfae4c3f69fc606d3e3cc862/crates/runtime/src/sessions.rs" color="#6c7180" penwidth=1 style=solid tooltip="一对象保存对另一对象的稳定引用 · activeWorkContextId"]
+	activity -> subject [label=subjectId URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/product/subject/src/life.ts" color="#6c7180" penwidth=1 style=solid tooltip="一对象保存对另一对象的稳定引用 · subjectId"]
+	activity -> work [label=workContextId URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/product/subject/src/life.ts" color="#6c7180" penwidth=1 style=solid tooltip="一对象保存对另一对象的稳定引用 · workContextId"]
+	decision -> activity [label="activityId / activityRevision" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/product/subject/src/deliberation.ts" color="#6c7180" penwidth=1 style=solid tooltip="一对象保存对另一对象的稳定引用 · activityId / activityRevision"]
+	decision -> native [label=sourceRunId URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/product/subject/src/deliberation.ts" color="#6c7180" penwidth=1 style=solid tooltip="一对象保存对另一对象的稳定引用 · sourceRunId"]
+	pursuit -> activity [label="关联活动" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/product/subject/src/pursuit.ts" color="#6c7180" penwidth=1 style=solid tooltip="一对象保存对另一对象的稳定引用 · 关联活动"]
+	pursuit -> rev [label="exact DesiredConditionRevision" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/product/subject/src/pursuit.ts" color="#6c7180" penwidth=1 style=solid tooltip="一对象保存对另一对象的稳定引用 · exact DesiredConditionRevision"]
+	obj -> subject [label=subjectId URL="https://github.com/Heptalogos-Devs/Nous-Wave/blob/412b062082afb75ccfae4c3f69fc606d3e3cc862/crates/memory/src/service/memory/mutation.rs#L18-L205" color="#6c7180" penwidth=1 style=solid tooltip="一对象保存对另一对象的稳定引用 · subjectId"]
+	obj -> rev [label=current_revision_id URL="https://github.com/Heptalogos-Devs/Nous-Wave/blob/412b062082afb75ccfae4c3f69fc606d3e3cc862/crates/memory/src/service/memory/mutation.rs#L18-L205" color="#6c7180" penwidth=1 style=solid tooltip="一对象保存对另一对象的稳定引用 · current_revision_id"]
+	rev -> obj [label="稳定所属对象" URL="https://github.com/Heptalogos-Devs/Nous-Wave/blob/412b062082afb75ccfae4c3f69fc606d3e3cc862/crates/memory/src/service/memory/mutation.rs#L18-L205" color="#6c7180" penwidth=1 style=solid tooltip="一对象保存对另一对象的稳定引用 · 稳定所属对象"]
+	rev -> rev [label="parent / 精确认知依赖" URL="https://github.com/Heptalogos-Devs/Nous-Wave/blob/412b062082afb75ccfae4c3f69fc606d3e3cc862/crates/memory/src/service/provenance.rs" color="#6c7180" penwidth=1 style=solid tooltip="一对象保存对另一对象的稳定引用 · parent / 精确认知依赖"]
+	rev -> entity [label="aboutness / relation endpoints / scope" URL="https://github.com/Heptalogos-Devs/Nous-Wave/blob/412b062082afb75ccfae4c3f69fc606d3e3cc862/crates/memory/src/service/provenance.rs" color="#6c7180" penwidth=1 style=solid tooltip="一对象保存对另一对象的稳定引用 · aboutness / relation endpoints / scope"]
+	rev -> occ [label="EvidenceRef / formation basis" URL="https://github.com/Heptalogos-Devs/Nous-Wave/blob/412b062082afb75ccfae4c3f69fc606d3e3cc862/crates/memory/src/service/provenance.rs" color="#6c7180" penwidth=1 style=solid tooltip="一对象保存对另一对象的稳定引用 · EvidenceRef / formation basis"]
+	rev -> seed [label=SeedBasisRef URL="https://github.com/Heptalogos-Devs/Nous-Wave/blob/412b062082afb75ccfae4c3f69fc606d3e3cc862/crates/self/src/contract.rs" color="#6c7180" penwidth=1 style=solid tooltip="一对象保存对另一对象的稳定引用 · SeedBasisRef"]
+	rev -> region [label="来源区域引用" URL="https://github.com/Heptalogos-Devs/Nous-Wave/blob/412b062082afb75ccfae4c3f69fc606d3e3cc862/crates/memory/src/service/provenance.rs" color="#6c7180" penwidth=1 style=solid tooltip="一对象保存对另一对象的稳定引用 · 来源区域引用"]
+	seed -> art [label="源文 Artifact" URL="https://github.com/Heptalogos-Devs/Nous-Wave/blob/412b062082afb75ccfae4c3f69fc606d3e3cc862/crates/subject/src/seed.rs#L16-L63" color="#6c7180" penwidth=1 style=solid tooltip="一对象保存对另一对象的稳定引用 · 源文 Artifact"]
+	occ -> art [label=artifact_id URL="https://github.com/Heptalogos-Devs/Nous-Wave/blob/412b062082afb75ccfae4c3f69fc606d3e3cc862/crates/material/src/service/observation.rs#L32-L311" color="#6c7180" penwidth=1 style=solid tooltip="一对象保存对另一对象的稳定引用 · artifact_id"]
+	occ -> world [label="WorldRealized 事件来源" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/product/subject/src/world-life.ts" color="#6c7180" penwidth=1 style=solid tooltip="一对象保存对另一对象的稳定引用 · WorldRealized 事件来源"]
+	region -> art [label="原材料定位" URL="https://github.com/Heptalogos-Devs/Nous-Wave/blob/412b062082afb75ccfae4c3f69fc606d3e3cc862/crates/material/src/service/observation.rs#L32-L311" color="#6c7180" penwidth=1 style=solid tooltip="一对象保存对另一对象的稳定引用 · 原材料定位"]
+	repr -> region [label="派生输入范围" URL="https://github.com/Heptalogos-Devs/Nous-Wave/blob/412b062082afb75ccfae4c3f69fc606d3e3cc862/apps/nous-core/src/model/derivation.ts" color="#6c7180" penwidth=1 style=solid tooltip="一对象保存对另一对象的稳定引用 · 派生输入范围"]
+	region -> repr [label="派生区域所属表示" URL="https://github.com/Heptalogos-Devs/Nous-Wave/blob/412b062082afb75ccfae4c3f69fc606d3e3cc862/apps/nous-core/src/model/derivation.ts" color="#6c7180" penwidth=1 style=solid tooltip="一对象保存对另一对象的稳定引用 · 派生区域所属表示"]
+	addr -> obj [label="canonical object mapping" URL="https://github.com/Heptalogos-Devs/Nous-Wave/blob/412b062082afb75ccfae4c3f69fc606d3e3cc862/crates/persistence/src/identity.rs" color="#6c7180" penwidth=1 style=solid tooltip="一对象保存对另一对象的稳定引用 · canonical object mapping"]
+	addr -> rev [label="canonical revision mapping" URL="https://github.com/Heptalogos-Devs/Nous-Wave/blob/412b062082afb75ccfae4c3f69fc606d3e3cc862/crates/persistence/src/identity.rs" color="#6c7180" penwidth=1 style=solid tooltip="一对象保存对另一对象的稳定引用 · canonical revision mapping"]
+	work -> rev [label="cognition anchors" URL="https://github.com/Heptalogos-Devs/Nous-Wave/blob/412b062082afb75ccfae4c3f69fc606d3e3cc862/crates/runtime/src/sessions.rs" color="#6c7180" penwidth=1 style=solid tooltip="一对象保存对另一对象的稳定引用 · cognition anchors"]
+	work -> entity [label="entity anchors" URL="https://github.com/Heptalogos-Devs/Nous-Wave/blob/412b062082afb75ccfae4c3f69fc606d3e3cc862/crates/runtime/src/sessions.rs" color="#6c7180" penwidth=1 style=solid tooltip="一对象保存对另一对象的稳定引用 · entity anchors"]
+}

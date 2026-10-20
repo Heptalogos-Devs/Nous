@@ -1,0 +1,64 @@
+// 共同主体的能力与部署结构
+digraph system {
+	graph [bgcolor="#ffffff" fontcolor="#202e3a" fontname="Noto Sans CJK SC" fontsize=18 label="共同主体的能力与部署结构" labeljust=l labelloc=t newrank=true nodesep=0.38 outputorder=edgesfirst pad=0.3 rankdir=TB ranksep=1.15 splines=spline]
+	node [fontname="Noto Sans CJK SC" fontsize=11.5 margin="0.20,0.12" penwidth=1.3 style="rounded,filled"]
+	edge [arrowsize=0.7 fontcolor="#334155" fontname="Noto Sans CJK SC" fontsize=9.3]
+	operator [label="操作者
+管理 CLI / Client" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/system/management/src/authentication.ts" color="#535c69" fillcolor="#f3f4f6" shape=ellipse style=filled tooltip="外部主体或服务 · management, operator"]
+	hept [label="Hept Product Host
+HTTP · 管理 · 产品组合" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/application/product-host/src/host.ts" color="#76512e" fillcolor="#f7f0e5" shape=box tooltip="Heptalogos · host"]
+	hs [label="产品领域
+Messaging · Identity · Life · WorldLife
+Attention · Reactor · Narrative · Pursuit" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/application/openclaw-host/src/ingress.ts" color="#76512e" fillcolor="#f7f0e5" shape=box tooltip="Heptalogos · qq, world, reactor, narrative, pursuit"]
+	hdb [label="Hept PostgreSQL
+消息、世界、活动、决定与发送记录" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/application/product-host/src/host.ts" color="#76512e" fillcolor="#f7f0e5" peripheries=2 shape=box tooltip="Heptalogos · host, qq, world, narrative"]
+	plugin [label="Hept OpenClaw 插件
+QQ · Life 工具 · 原生派发" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/application/openclaw-host/src/ingress.ts" color="#286b4c" fillcolor="#e6f4ed" shape=box tooltip="原生执行环境 · qq, roles, permissions"]
+	oc [label="受控 OpenClaw
+原生 Agent / 工具 / 子执行者
+历史 / 压缩 / 调度 / 发送队列" URL="https://github.com/Heptalogos-Devs/Nous-Wave/blob/412b062082afb75ccfae4c3f69fc606d3e3cc862/apps/nous-core/src/cognition/context.ts" color="#286b4c" fillcolor="#e6f4ed" shape=box tooltip="原生执行环境 · projection, worker, sending"]
+	nsdk [label="Nous 官方 Client / 集成
+managed binding · Host bridge" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/f855c686251a5c6393875677a26819eb778dd665/packages/application/product-host/src/native-cognition.ts" color="#2e527b" fillcolor="#e9f0fb" shape=box tooltip="Nous Wave · bridge, projection"]
+	ncore [label="Nous TypeScript Core
+公共服务、模型、Resource、投影" URL="https://github.com/Heptalogos-Devs/Nous-Wave/blob/412b062082afb75ccfae4c3f69fc606d3e3cc862/apps/nous-core/src/model/roles.ts" color="#2e527b" fillcolor="#e9f0fb" shape=box tooltip="Nous Wave · models, resource, projection"]
+	kernel [label="Nous Rust Kernel
+组合与协议转换" URL="https://github.com/Heptalogos-Devs/Nous-Wave/blob/412b062082afb75ccfae4c3f69fc606d3e3cc862/crates/subject/src/lib.rs#L64-L157" color="#2e527b" fillcolor="#e9f0fb" shape=box tooltip="Nous Wave · subject, material, query"]
+	owners [label="Nous 认知领域
+Subject · Material · Memory
+Self · Social · Motivation · Runtime" URL="https://github.com/Heptalogos-Devs/Nous-Wave/blob/412b062082afb75ccfae4c3f69fc606d3e3cc862/crates/subject/src/lib.rs#L64-L157" color="#2e527b" fillcolor="#e9f0fb" shape=box tooltip="Nous Wave · subject, material, memory, self, social, motivation, workcontext"]
+	ndb [label="Nous PostgreSQL / ObjectStore
+认知、来源、修订、工作状态与材料" URL="https://github.com/Heptalogos-Devs/Nous-Wave/blob/412b062082afb75ccfae4c3f69fc606d3e3cc862/crates/material/src/service/observation.rs#L32-L311" color="#2e527b" fillcolor="#e9f0fb" peripheries=2 shape=box tooltip="Nous Wave · material, memory, workcontext"]
+	serving [label="可重建 Serving
+Tantivy · USearch · Concept / Topology" URL="https://github.com/Heptalogos-Devs/Nous-Wave/blob/412b062082afb75ccfae4c3f69fc606d3e3cc862/crates/retrieval/src/assets/build.rs" color="#2e527b" fillcolor="#e9f0fb" peripheries=2 shape=box tooltip="Nous Wave · serving, indexes, topology"]
+	gateway [label="配置选定的模型服务" URL="https://github.com/Heptalogos-Devs/Nous-Wave/blob/412b062082afb75ccfae4c3f69fc606d3e3cc862/apps/nous-core/src/model/roles.ts" color="#535c69" fillcolor="#f3f4f6" shape=ellipse style=filled tooltip="外部主体或服务 · models"]
+	qq [label="QQ / OneBot
+真实消息与回执" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/application/openclaw-host/src/ingress.ts" color="#535c69" fillcolor="#f3f4f6" shape=ellipse style=filled tooltip="外部主体或服务 · qq, sending"]
+	resources [label="宿主提供的 Resource Adapter
+外部资料服务" URL="https://github.com/Heptalogos-Devs/Nous-Wave/blob/412b062082afb75ccfae4c3f69fc606d3e3cc862/apps/nous-core/src/resources/adapter.ts" color="#535c69" fillcolor="#f3f4f6" shape=ellipse style=filled tooltip="默认Registry为空；需宿主显式提供适配器。"]
+	ncli [label="独立 Nous CLI / MCP / SDK
+其他 Agent 消费者" URL="https://github.com/Heptalogos-Devs/Nous-Wave/blob/412b062082afb75ccfae4c3f69fc606d3e3cc862/crates/subject/src/lib.rs#L64-L157" color="#535c69" fillcolor="#f3f4f6" shape=ellipse style=filled tooltip="外部主体或服务 · subject, projection"]
+	maint [label="独立维护 OpenClaw
+本机运维职责" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/scripts/package/configure-maintenance.mjs" color="#286b4c" fillcolor="#e6f4ed" shape=box tooltip="与Subject运行使用独立配置、workspace和unit。"]
+	operator -> hept [label="管理、配置与状态读取" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/system/management/src/authentication.ts" color="#596575" penwidth=1.3 style=solid tooltip="运行时调用或请求 · 管理、配置与状态读取"]
+	hept -> hs [label="由应用组合注入领域服务" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/application/product-host/src/host.ts" color="#596575" penwidth=1.3 style=solid tooltip="运行时调用或请求 · 由应用组合注入领域服务"]
+	hs -> hdb [label="领域事务与持久回执" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/application/openclaw-host/src/ingress.ts" color="#1c6593" penwidth=2 style=bold tooltip="写入所属权威状态/持久记录 · 领域事务与持久回执"]
+	hept -> nsdk [label="Subject / Clock / Cognition 公共服务" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/f855c686251a5c6393875677a26819eb778dd665/packages/application/product-host/src/native-cognition.ts" color="#596575" penwidth=1.3 style=solid tooltip="运行时调用或请求 · Subject / Clock / Cognition 公共服务"]
+	hept -> plugin [label="正式原生角色派发 / scheduler" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/f855c686251a5c6393875677a26819eb778dd665/packages/application/product-host/src/subject-roles.ts" color="#596575" penwidth=1.3 style=solid tooltip="运行时调用或请求 · 正式原生角色派发 / scheduler"]
+	plugin -> oc [label="公开 SDK 原生入口" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/f855c686251a5c6393875677a26819eb778dd665/packages/application/product-host/src/subject-roles.ts" color="#596575" penwidth=1.3 style=solid tooltip="运行时调用或请求 · 公开 SDK 原生入口"]
+	oc -> nsdk [label="每次模型输入的认知准备" URL="https://github.com/Heptalogos-Devs/Nous-Wave/blob/412b062082afb75ccfae4c3f69fc606d3e3cc862/apps/nous-core/src/cognition/context.ts" color="#596575" penwidth=1.3 style=solid tooltip="运行时调用或请求 · 每次模型输入的认知准备"]
+	nsdk -> hept [label="prepare / admitted / feedback / completion" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/f855c686251a5c6393875677a26819eb778dd665/packages/application/product-host/src/native-cognition.ts" color="#596575" penwidth=1.3 style=solid tooltip="运行时调用或请求 · prepare / admitted / feedback / completion"]
+	nsdk -> ncore [label="正式 Client 请求" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/f855c686251a5c6393875677a26819eb778dd665/packages/application/product-host/src/native-cognition.ts" color="#596575" penwidth=1.3 style=solid tooltip="运行时调用或请求 · 正式 Client 请求"]
+	ncli -> ncore [label="独立认知操作" URL="https://github.com/Heptalogos-Devs/Nous-Wave/blob/412b062082afb75ccfae4c3f69fc606d3e3cc862/crates/subject/src/lib.rs#L64-L157" color="#596575" penwidth=1.3 style=solid tooltip="运行时调用或请求 · 独立认知操作"]
+	ncore -> kernel [label="私有 Kernel 协议" URL="https://github.com/Heptalogos-Devs/Nous-Wave/blob/412b062082afb75ccfae4c3f69fc606d3e3cc862/apps/nous-core/src/model/roles.ts" color="#596575" penwidth=1.3 style=solid tooltip="运行时调用或请求 · 私有 Kernel 协议"]
+	kernel -> owners [label="按领域分发操作" URL="https://github.com/Heptalogos-Devs/Nous-Wave/blob/412b062082afb75ccfae4c3f69fc606d3e3cc862/crates/subject/src/lib.rs#L64-L157" color="#596575" penwidth=1.3 style=solid tooltip="运行时调用或请求 · 按领域分发操作"]
+	owners -> ndb [label="各领域持有数据与修订" URL="https://github.com/Heptalogos-Devs/Nous-Wave/blob/412b062082afb75ccfae4c3f69fc606d3e3cc862/crates/memory/src/service/memory/mutation.rs#L18-L205" color="#1c6593" penwidth=2 style=bold tooltip="写入所属权威状态/持久记录 · 各领域持有数据与修订"]
+	ndb -> serving [label="按捕获来源构建服务资产" URL="https://github.com/Heptalogos-Devs/Nous-Wave/blob/412b062082afb75ccfae4c3f69fc606d3e3cc862/crates/retrieval/src/assets/build.rs" color="#245c9a" penwidth=1.4 style=solid tooltip="将材料、候选或结果送往后续节点 · 按捕获来源构建服务资产"]
+	serving -> owners [label="候选引用交所属领域核验" URL="https://github.com/Heptalogos-Devs/Nous-Wave/blob/412b062082afb75ccfae4c3f69fc606d3e3cc862/crates/runtime/src/query/bind.rs" color="#245c9a" penwidth=1.4 style=solid tooltip="将材料、候选或结果送往后续节点 · 候选引用交所属领域核验"]
+	ncore -> gateway [label="形成 / 向量 / 反思 / 可选重排" URL="https://github.com/Heptalogos-Devs/Nous-Wave/blob/412b062082afb75ccfae4c3f69fc606d3e3cc862/apps/nous-core/src/model/roles.ts" color="#596575" penwidth=1.3 style=solid tooltip="运行时调用或请求 · 形成 / 向量 / 反思 / 可选重排"]
+	oc -> gateway [label="原生角色模型提交" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/f855c686251a5c6393875677a26819eb778dd665/packages/application/product-host/src/subject-roles.ts" color="#596575" penwidth=1.3 style=solid tooltip="运行时调用或请求 · 原生角色模型提交"]
+	ncore -> resources [label="describe / search / materialize" URL="https://github.com/Heptalogos-Devs/Nous-Wave/blob/412b062082afb75ccfae4c3f69fc606d3e3cc862/apps/nous-core/src/resources/adapter.ts" color="#596575" penwidth=1.3 style=solid tooltip="运行时调用或请求 · describe / search / materialize"]
+	qq -> plugin [label="平台消息与事件" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/application/openclaw-host/src/ingress.ts" color="#9b6831" penwidth=2 style=dotted tooltip="提交事实之后产生的通知或触发 · 平台消息与事件"]
+	plugin -> qq [label="获准的物理发送" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/product/subject/src/agency.ts" color="#596575" penwidth=1.3 style=solid tooltip="运行时调用或请求 · 获准的物理发送"]
+	plugin -> hs [label="接收记录与发送回执" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/packages/application/openclaw-host/src/ingress.ts" color="#596575" penwidth=1.3 style=solid tooltip="运行时调用或请求 · 接收记录与发送回执"]
+	operator -> maint [label="独立维护会话 / 服务控制" URL="https://github.com/Heptalogos-Devs/Heptalogos/blob/21f0080460f3ee639deb9f5ea47282fb6c59df95/scripts/package/configure-maintenance.mjs" color="#596575" penwidth=1.3 style=solid tooltip="运行时调用或请求 · 独立维护会话 / 服务控制"]
+}

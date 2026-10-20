@@ -1,0 +1,21 @@
+[instance]
+name = "hept-local"
+
+[http]
+host = "127.0.0.1"
+port = 7320
+
+[database]
+mode = "external"
+connectionRef = "env:HEPT_DATABASE_URL"
+
+[connections.nous]
+baseUrl = "http://127.0.0.1:7310"
+credentialRef = "env:HEPT_NOUS_API_KEY"
+
+[logging]
+level = "info"
+
+[telemetry]
+enabled = true
+exporter = "local"

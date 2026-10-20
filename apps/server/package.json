@@ -1,0 +1,18 @@
+{
+  "name": "@nous-wave/server",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@nous-wave/nous": "workspace:*",
+    "fastify": "5.12.5",
+    "@fastify/swagger": "^9.6.0",
+    "@fastify/swagger-ui": "^5.2.0",
+    "fastify-type-provider-zod": "7.0.0",
+    "zod": "4.6.5",
+    "uuid": "^13.0.0",
+    "@nous-wave/contracts": "workspace:*"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  }
+}

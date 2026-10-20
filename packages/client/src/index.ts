@@ -1,197 +1,33 @@
-import { MotivationService } from "@nous-wave/protocol/nous/wave/v1alpha1/motivation_pb.js";
-import { CognitiveClockService } from "@nous-wave/protocol/nous/wave/v1alpha1/clock_pb.js";
-// Copyright 2026 Aravine Zhu
-// SPDX-License-Identifier: Apache-2.0
-
-import { toJson, type DescService } from "@bufbuild/protobuf";
-import { ValueSchema } from "@bufbuild/protobuf/wkt";
-import { NousError } from "./errors.js";
-export {
-  projectWorldDeadline,
-  compareDomainStamps,
-  type ClockDeadline,
-} from "./clock.js";
-export { NousError, DomainErrorCode, ErrorRecovery } from "./errors.js";
-import {
-  executionOpportunitySchema,
-  executionEnvelope,
-  executionOpportunityPaths,
-} from "./policy/execution.js";
-export {
-  ConfigExposure,
-  ConfigurationView,
-} from "@nous-wave/protocol/nous/wave/v1alpha1/configuration_pb.js";
-import {
-  ConfigurationService,
-  ConfigurationView,
-  ConfigExposure,
-} from "@nous-wave/protocol/nous/wave/v1alpha1/configuration_pb.js";
-import {
-  createClient,
-  ConnectError,
-  type Client,
-  type CallOptions,
-  type Transport,
-} from "@connectrpc/connect";
-import {
-  SubjectService,
-  CognitionService,
-  RuntimeService,
-  MemoryService,
-  MaterialService,
-} from "@nous-wave/protocol/nous/wave/v1alpha1/services_pb.js";
-import { SubjectReflectionService } from "@nous-wave/protocol/nous/wave/v1alpha1/reflection_pb.js";
-import { SocialService } from "@nous-wave/protocol/nous/wave/v1alpha1/social_pb.js";
-import { SelfService } from "@nous-wave/protocol/nous/wave/v1alpha1/self_pb.js";
-import { IdentityService } from "@nous-wave/protocol/nous/wave/v1alpha1/identity_pb.js";
-
-/** A consumer-owned web identity, with the original public locator preserved. */
-export function webSource(value: string) {
-  const url = new URL(value);
-  if (
-    !["http:", "https:"].includes(url.protocol) ||
-    url.username ||
-    url.password
-  )
-    throw new Error("Source URL must be credential-free HTTP(S)");
-  const source = url.toString();
-  return {
-    sourceClass: "web",
-    externalObjectRef: `object:web:${source}`,
-    context: { source_url: source },
-  };
-}
-import {
-  ResourceService,
-  ResourceRegistryService,
-  ConceptService,
-  SystemService,
-} from "@nous-wave/protocol/nous/wave/v1alpha1/management_pb.js";
-import { ModelService } from "@nous-wave/protocol/nous/wave/v1alpha1/model_pb.js";
-
-/** Client namespaces use the canonical service descriptors. */
-export type ServiceDescriptors = {
-  readonly clocks: typeof CognitiveClockService;
-  readonly subjects: typeof SubjectService;
-  readonly self: typeof SelfService;
-  readonly social: typeof SocialService;
-  readonly reflection: typeof SubjectReflectionService;
-  readonly motivation: typeof MotivationService;
-  readonly runtime: typeof RuntimeService;
-  readonly cognition: typeof CognitionService;
-  readonly memory: typeof MemoryService;
-  readonly material: typeof MaterialService;
-  readonly identity: typeof IdentityService;
-  readonly model: typeof ModelService;
-  readonly configuration: typeof ConfigurationService;
-  readonly resourceRegistry: typeof ResourceRegistryService;
-  readonly resources: typeof ResourceService;
-  readonly concepts: typeof ConceptService;
-  readonly system: typeof SystemService;
-};
-export const serviceDescriptors: ServiceDescriptors = {
-  clocks: CognitiveClockService,
-  subjects: SubjectService,
-  self: SelfService,
-  social: SocialService,
-  reflection: SubjectReflectionService,
-  motivation: MotivationService,
-  runtime: RuntimeService,
-  cognition: CognitionService,
-  memory: MemoryService,
-  material: MaterialService,
-  identity: IdentityService,
-  model: ModelService,
-  configuration: ConfigurationService,
-  resourceRegistry: ResourceRegistryService,
-  resources: ResourceService,
-  concepts: ConceptService,
-  system: SystemService,
-};
-export type NousClient = {
-  [K in keyof typeof serviceDescriptors]: Client<
-    (typeof serviceDescriptors)[K]
-  >;
-};
-
-export interface RequestOptions {
-  signal?: AbortSignal;
-  timeoutMs?: number;
-}
-export function createNousClient(transport: Transport): NousClient {
-  const configuration = owned(ConfigurationService);
-  const executionTimeout = async (
-    workMs?: number,
-    options?: RequestOptions,
-  ) => {
-    const snapshot = await configuration.getConfiguration(
-      {
-        paths: executionOpportunityPaths,
-        view: ConfigurationView.ACTIVE,
-        exposureCeiling: ConfigExposure.DEVELOPER,
-      },
-      options,
-    );
-    const values = executionOpportunityPaths.map((path) => {
-      const entry = snapshot.entries.find((value) => value.path === path);
-      if (!entry?.value)
-        throw new Error(`Active Core execution policy unavailable: ${path}`);
-      return [
-        path.slice("core_execution.opportunity.".length),
-        toJson(ValueSchema, entry.value),
-      ];
-    });
-    return executionEnvelope(
-      executionOpportunitySchema.parse(Object.fromEntries(values)),
-      workMs,
-    ).responseTimeoutMs;
-  };
-  function owned<S extends DescService>(
-    service: S,
-    modelWork = false,
-  ): Client<S> {
-    const client = createClient(service, transport);
-    const methods = client as unknown as Record<
-      string,
-      (input: object, options?: CallOptions) => Promise<unknown>
-    >;
-    for (const method of service.methods) {
-      const invoke = methods[method.localName]!;
-      methods[method.localName] = async (input, options) => {
-        try {
-          const timeoutMs =
-            options?.timeoutMs ??
-            (modelWork
-              ? await executionTimeout(
-                  method.name === "GrantMaintenance"
-                    ? (input as { maxElapsedMs?: number }).maxElapsedMs
-                    : undefined,
-                  options,
-                )
-              : undefined);
-          return await invoke(
-            input,
-            timeoutMs === undefined ? options : { ...options, timeoutMs },
-          );
-        } catch (error) {
-          if (error instanceof ConnectError) throw new NousError(error);
-          throw error;
-        }
-      };
-    }
-    return client;
+import type { QueryInput,QueryResult,ContextPrepareInput,ContextView } from '@nous-wave/contracts/cognition';
+import type { MaterialView } from '@nous-wave/contracts/materials';
+export class NousClient {
+  readonly baseURL:string;
+  constructor(private options:{baseURL:string;apiKey?:string;fetch?:typeof fetch}) {this.baseURL=options.baseURL.replace(/\/$/,'');}
+  async request<T>(method:string,path:string,body?:unknown,options:{submissionId?:string;traceparent?:string;purpose?:string;audience?:string[]}={}):Promise<T> {
+    const headers:Record<string,string>={accept:'application/json'};
+    if(body!==undefined)headers['content-type']='application/json';
+    if(this.options.apiKey)headers.authorization=`Bearer ${this.options.apiKey}`;
+    if(options.submissionId)headers['idempotency-key']=options.submissionId;
+    if(options.traceparent)headers.traceparent=options.traceparent;
+    if(options.purpose)headers['x-purpose']=options.purpose;
+    if(options.audience)headers['x-audience']=JSON.stringify(options.audience);
+    const response=await (this.options.fetch??fetch)(`${this.baseURL}${path}`,{method,headers,...(body!==undefined?{body:JSON.stringify(body)}:{})});
+    const result=await response.json();if(!response.ok)throw Object.assign(new Error(result.detail??result.title??`Nous HTTP ${response.status}`),result);return result as T;
   }
-  return Object.fromEntries(
-    Object.entries(serviceDescriptors).map(([name, service]) => [
-      name,
-      service === ConfigurationService
-        ? configuration
-        : owned(
-            service,
-            service === CognitionService ||
-              service === ModelService ||
-              service === ResourceService,
-          ),
-    ]),
-  ) as NousClient;
+  query(subjectId:string,input:QueryInput){return this.request<QueryResult>('POST',`/v1/subjects/${subjectId}/knowledge/query`,input);}
+  prepare(subjectId:string,input:ContextPrepareInput){return this.request<ContextView>('POST',`/v1/subjects/${subjectId}/context-views`,input);}
+  capture(subjectId:string,input:unknown){return this.request<MaterialView>('POST',`/v1/subjects/${subjectId}/materials`,input);}
+  async uploadBlob(subjectId:string,bytes:Uint8Array|Blob,mediaType:string,options:{submissionId?:string;traceparent?:string;purpose?:string;audience?:string[]}={}) {
+    const headers:Record<string,string>={'content-type':'application/octet-stream','x-content-media-type':mediaType,accept:'application/json'};
+    if(this.options.apiKey)headers.authorization=`Bearer ${this.options.apiKey}`;
+    if(options.submissionId)headers['idempotency-key']=options.submissionId;
+    if(options.traceparent)headers.traceparent=options.traceparent;
+    if(options.purpose)headers['x-purpose']=options.purpose;
+    if(options.audience)headers['x-audience']=JSON.stringify(options.audience);
+    const body=bytes instanceof Blob?bytes:new Blob([Uint8Array.from(bytes)],{type:mediaType});
+    const response=await(this.options.fetch??fetch)(`${this.baseURL}/v1/subjects/${subjectId}/blobs`,{method:'POST',headers,body});
+    const result=await response.json();if(!response.ok)throw Object.assign(new Error(result.detail??result.title??`Nous HTTP ${response.status}`),result);
+    return result as {ref:import('@nous-wave/contracts/common').Ref;digest:string;bytes:number};
+  }
 }
+export { Configuration,DefaultApi } from './generated/index.js';

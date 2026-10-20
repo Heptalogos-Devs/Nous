@@ -1,0 +1,1962 @@
+diff --git a/packages/agent-core/src/agent-stream-response.ts b/packages/agent-core/src/agent-stream-response.ts
+index 27478d5f..f2660af5 100644
+--- a/packages/agent-core/src/agent-stream-response.ts
++++ b/packages/agent-core/src/agent-stream-response.ts
+@@ -157,6 +157,23 @@ export async function streamAgentResponse(
+     tools: context.tools,
+   };
+ 
++  // Native history projection and compaction have completed. This view is
++  // ephemeral: additions never enter the native transcript or a later slot.
++  const preparedModelContext = await config.modelContext?.prepare({
++    model: config.model,
++    context: llmContext,
++    outputTokens: config.maxTokens ?? config.model.maxTokens,
++    signal,
++  });
++  if (preparedModelContext?.systemPromptAddition) {
++    llmContext.systemPrompt = [llmContext.systemPrompt, preparedModelContext.systemPromptAddition]
++      .filter(Boolean)
++      .join("\n\n");
++  }
++  if (preparedModelContext?.messages?.length) {
++    llmContext.messages = [...llmContext.messages, ...preparedModelContext.messages];
++  }
++
+   const streamFunction = resolveAgentCoreStreamFn(runtime, streamFn);
+ 
+   // Resolve API key (important for expiring tokens)
+@@ -256,6 +273,8 @@ export async function streamAgentResponse(
+     executions = Promise.all([previousExecutions, execution]).then(() => {});
+   };
+   try {
++    if (preparedModelContext)
++      await config.modelContext?.dispatch?.({ prepared: preparedModelContext });
+     const stream = streamFunction(config.model, llmContext, {
+       ...config,
+       apiKey: resolvedApiKey,
+@@ -293,7 +312,17 @@ export async function streamAgentResponse(
+           return fragment;
+         };
+ 
+-        const commitFragment = async (message: AssistantMessage) => {
++        const commitFragment = async (message: AssistantMessage, terminal = false) => {
++          if (preparedModelContext) {
++            message = {
++              ...message,
++              modelContext: {
++                callId: preparedModelContext.callId,
++                terminal,
++                inputRefs: preparedModelContext.inputRefs,
++              },
++            };
++          }
+           if (partialIndex === undefined) {
+             context.messages.push(message);
+             await emit({ type: "message_start", message: { ...message } });
+@@ -415,7 +444,12 @@ export async function streamAgentResponse(
+               }),
+             ),
+           );
+-          await commitFragment(finalMessage);
++          await commitFragment(finalMessage, true);
++          // message_end has durably saved the native response. The host retains
++          // this handoff and can accept it again without another provider call.
++          if (preparedModelContext) {
++            await config.modelContext?.accept({ prepared: preparedModelContext, output: result });
++          }
+           if (executedIds.size > 0) {
+             enqueueTools(finalMessage);
+           }
+diff --git a/packages/agent-core/src/agent.ts b/packages/agent-core/src/agent.ts
+index 516cf0ff..e9f13dfd 100644
+--- a/packages/agent-core/src/agent.ts
++++ b/packages/agent-core/src/agent.ts
+@@ -98,6 +98,7 @@ function createMutableAgentState(initialState?: AgentOptions["initialState"]): M
+ 
+ /** Options for constructing an {@link Agent}. */
+ export interface AgentOptions {
++  modelContext?: AgentLoopConfig["modelContext"];
+   /** Initial transcript, tools, model, and prompt state. */
+   initialState?: Partial<
+     Omit<AgentState, "pendingToolCalls" | "isStreaming" | "streamingMessage" | "errorMessage">
+@@ -311,6 +312,7 @@ export class Agent {
+   private toolLoopRecoveryState: ToolLoopRecoveryState = { criticalToolLoopSeen: false };
+ 
+   public convertToLlm: NonNullable<AgentOptions["convertToLlm"]>;
++  public modelContext?: AgentLoopConfig["modelContext"];
+   public transformContext?: NonNullable<AgentOptions["transformContext"]>;
+   public runtime?: AgentCoreStreamRuntimeDeps;
+   public streamFn: StreamFn;
+@@ -338,6 +340,7 @@ export class Agent {
+   constructor(options: AgentOptions = {}) {
+     this.mutableState = createMutableAgentState(options.initialState);
+     this.convertToLlm = options.convertToLlm ?? defaultConvertToLlm;
++    this.modelContext = options.modelContext;
+     this.transformContext = options.transformContext;
+     this.runtime = options.runtime;
+     this.streamFn = resolveAgentCoreStreamFn(options.runtime, options.streamFn);
+@@ -623,6 +626,7 @@ export class Agent {
+           : undefined,
+       convertToLlm: this.convertToLlm,
+       transformContext: this.transformContext,
++      modelContext: this.modelContext,
+       getApiKey: this.getApiKey,
+       getSteeringMessages,
+       getFollowUpMessages: async () => this.followUpQueue.drain(),
+diff --git a/packages/agent-core/src/harness/compaction/summarization-completion.ts b/packages/agent-core/src/harness/compaction/summarization-completion.ts
+index 169bf9c3..31f9b8ad 100644
+--- a/packages/agent-core/src/harness/compaction/summarization-completion.ts
++++ b/packages/agent-core/src/harness/compaction/summarization-completion.ts
+@@ -151,12 +151,38 @@ export async function runSummarizationCompletion(
+     const context = createSummarizationContext(
+       `<conversation>\n${conversation.text}\n</conversation>\n\n${omissionNote}${instructions}`,
+     );
++    const sourceRefs = llmMessages.flatMap((message) =>
++      message.role === "assistant" || message.role === "user"
++        ? [
++            ...(message.modelContext?.inputRefs ?? []),
++            ...(message.role === "assistant" && message.modelContext?.outputRef
++              ? [message.modelContext.outputRef]
++              : []),
++          ]
++        : [],
++    );
++    if (sourceRefs.length)
++      Object.assign(context.messages[0]!, { modelContext: { inputRefs: sourceRefs } });
++    const prepared = await params.runtime?.modelContext?.prepare({
++      role: "compaction",
++      model,
++      context,
++      outputTokens: completionTokens,
++      signal,
++    });
++    if (prepared?.systemPromptAddition)
++      context.systemPrompt += `\n\n${prepared.systemPromptAddition}`;
++    if (prepared?.messages)
++      context.messages.push(...(prepared.messages as typeof context.messages));
++    if (prepared) await params.runtime?.modelContext?.dispatch?.({ prepared });
+     response = params.streamFn
+       ? await consumeAgentCoreStream(
+           params.streamFn(params.model, context, options),
+           params.runtime,
+         )
+       : await resolveAgentCoreCompleteFn(params.runtime)(params.model, context, options);
++    if (prepared)
++      await params.runtime?.modelContext?.accept({ prepared, output: response, auxiliary: true });
+     // Usage belongs to the completed provider request even when its summary is invalid.
+     params.runtime?.internalUsageSink?.(response.usage);
+     if (response.stopReason === "aborted" || !isContextOverflow(response, model.contextWindow)) {
+diff --git a/packages/agent-core/src/harness/messages.ts b/packages/agent-core/src/harness/messages.ts
+index c0439e87..711922c3 100644
+--- a/packages/agent-core/src/harness/messages.ts
++++ b/packages/agent-core/src/harness/messages.ts
+@@ -80,11 +80,13 @@ export function createBranchSummaryMessage(
+   summary: string,
+   fromId: string,
+   timestamp: string,
++  inputRefs?: unknown[],
+ ): BranchSummaryMessage {
+   return {
+     role: "branchSummary",
+     summary,
+     fromId,
++    ...(inputRefs?.length ? { modelContext: { inputRefs } } : {}),
+     timestamp: requireSessionTimestampMs(timestamp, "branch summary timestamp"),
+   };
+ }
+@@ -94,11 +96,13 @@ export function createCompactionSummaryMessage(
+   summary: string,
+   tokensBefore: number,
+   timestamp: string,
++  inputRefs?: unknown[],
+ ): CompactionSummaryMessage {
+   return {
+     role: "compactionSummary",
+     summary,
+     tokensBefore,
++    ...(inputRefs?.length ? { modelContext: { inputRefs } } : {}),
+     timestamp: requireSessionTimestampMs(timestamp, "compaction summary timestamp"),
+   };
+ }
+@@ -224,7 +228,16 @@ export function convertToLlm(messages: AgentMessage[]): Message[] {
+         runtimeContextCarrier: true,
+       });
+     } else {
+-      llmMessages.push({ role: "user", content, timestamp });
++      const inputRefs =
++        message.role === "compactionSummary" || message.role === "branchSummary"
++          ? message.modelContext?.inputRefs
++          : undefined;
++      llmMessages.push({
++        role: "user",
++        content,
++        timestamp,
++        ...(Array.isArray(inputRefs) ? { modelContext: { inputRefs } } : {}),
++      });
+     }
+   });
+   return llmMessages;
+diff --git a/packages/agent-core/src/harness/session/session.ts b/packages/agent-core/src/harness/session/session.ts
+index 8792ad1a..94d9caf4 100644
+--- a/packages/agent-core/src/harness/session/session.ts
++++ b/packages/agent-core/src/harness/session/session.ts
+@@ -46,9 +46,19 @@ export function projectSessionEntryMessage(entry: SessionTreeEntry): AgentMessag
+         entry.timestamp,
+       );
+     case "branch_summary":
+-      return createBranchSummaryMessage(entry.summary, entry.fromId, entry.timestamp);
++      return createBranchSummaryMessage(
++        entry.summary,
++        entry.fromId,
++        entry.timestamp,
++        entry.modelContextInputRefs,
++      );
+     case "compaction":
+-      return createCompactionSummaryMessage(entry.summary, entry.tokensBefore, entry.timestamp);
++      return createCompactionSummaryMessage(
++        entry.summary,
++        entry.tokensBefore,
++        entry.timestamp,
++        entry.modelContextInputRefs,
++      );
+     default:
+       return undefined;
+   }
+diff --git a/packages/agent-core/src/harness/types.ts b/packages/agent-core/src/harness/types.ts
+index d083dc92..8fc6013d 100644
+--- a/packages/agent-core/src/harness/types.ts
++++ b/packages/agent-core/src/harness/types.ts
+@@ -76,6 +76,7 @@ export type SessionTreeEntry = SessionTreeEntryBase &
+     | { type: "model_change"; provider: string; modelId: string }
+     | {
+         type: "compaction";
++        modelContextInputRefs?: unknown[];
+         summary: string;
+         firstKeptEntryId: string;
+         tokensBefore: number;
+@@ -89,6 +90,7 @@ export type SessionTreeEntry = SessionTreeEntryBase &
+       }
+     | {
+         type: "branch_summary";
++        modelContextInputRefs?: unknown[];
+         fromId: string;
+         summary: string;
+         details?: unknown;
+diff --git a/packages/agent-core/src/model-context.test.ts b/packages/agent-core/src/model-context.test.ts
+new file mode 100644
+index 00000000..79b3eb49
+--- /dev/null
++++ b/packages/agent-core/src/model-context.test.ts
+@@ -0,0 +1,108 @@
++import { expect, it } from "vitest";
++import {
++  captureAgentLoop,
++  config,
++  createTurnSequenceStream,
++  makeCall,
++  makeTool,
++  model,
++  user,
++} from "./agent-loop.test-support.js";
++
++it("prepares each actual model step after projection and accepts its saved output before continuing", async () => {
++  const order: string[] = [];
++  const inputs: { prompt?: string; model: string; count: number }[] = [];
++  let sequence = 0;
++  let persisted = () => false;
++  const task = captureAgentLoop(
++    [user("Read the note and answer")],
++    {
++      systemPrompt: "Native role",
++      messages: [],
++      tools: [makeTool("read")],
++    },
++    {
++      ...config,
++      transformContext: async (messages) => {
++        order.push("project");
++        return messages;
++      },
++      prepareNextTurn: () => ({ model: { ...model, id: "second-model" } }),
++      modelContext: {
++        async prepare({ model: actual }) {
++          sequence++;
++          order.push(`prepare:${sequence}`);
++          return {
++            callId: `call-${sequence}`,
++            view: { revision: sequence },
++            systemPromptAddition: `Cognition ${sequence}`,
++          };
++        },
++        async dispatch({ prepared }) {
++          order.push(`dispatch:${prepared.callId}`);
++        },
++        async accept({ prepared }) {
++          const call = prepared.callId;
++          expect(persisted()).toBe(true);
++          order.push(`accept:${call}`);
++        },
++      },
++    },
++    undefined,
++    (actual, context) => {
++      order.push(`provider:${inputs.length + 1}`);
++      inputs.push({
++        prompt: context.systemPrompt,
++        model: actual.id,
++        count: context.messages.length,
++      });
++      return createTurnSequenceStream([
++        inputs.length === 1 ? [makeCall("read")] : [{ type: "text", text: "Read the note" }],
++      ])(actual, context);
++    },
++  );
++  persisted = () =>
++    task.events.some((event) => event.type === "message_end" && event.message.role === "assistant");
++  await task.result;
++  expect(inputs.map((input) => input.prompt)).toEqual([
++    "Native role\n\nCognition 1",
++    "Native role\n\nCognition 2",
++  ]);
++  expect(inputs.map((input) => input.model)).toEqual([model.id, "second-model"]);
++  expect(order).toEqual([
++    "project",
++    "prepare:1",
++    "dispatch:call-1",
++    "provider:1",
++    "accept:call-1",
++    "project",
++    "prepare:2",
++    "dispatch:call-2",
++    "provider:2",
++    "accept:call-2",
++  ]);
++
++  let dispatched = false;
++  const failure = captureAgentLoop(
++    [user()],
++    { systemPrompt: "", messages: [], tools: [] },
++    {
++      ...config,
++      modelContext: {
++        async prepare() {
++          throw new Error("Context dependency unavailable");
++        },
++        async accept() {
++          throw new Error("No response should exist");
++        },
++      },
++    },
++    undefined,
++    () => {
++      dispatched = true;
++      throw new Error("No provider call allowed");
++    },
++  );
++  await expect(failure.result).rejects.toThrow("Context dependency unavailable");
++  expect(dispatched).toBe(false);
++});
+diff --git a/packages/agent-core/src/runtime-deps.ts b/packages/agent-core/src/runtime-deps.ts
+index 0092aa10..60998fbc 100644
+--- a/packages/agent-core/src/runtime-deps.ts
++++ b/packages/agent-core/src/runtime-deps.ts
+@@ -1,4 +1,5 @@
+ import type { CompleteSimpleFn, StreamFn, Usage } from "@openclaw/llm-core";
++import type { ModelContextHandoff } from "./types.js";
+ 
+ /** Runtime functions injected by host packages so agent-core stays provider-agnostic. */
+ export interface AgentCoreRuntimeDeps {
+@@ -24,6 +25,7 @@ export type AgentCoreCompletionRuntimeDeps = Pick<
+ > & {
+   /** Internal host sink for usage from auxiliary model completions. */
+   internalUsageSink?: (usage: Usage) => void;
++  modelContext?: ModelContextHandoff;
+ };
+ 
+ function missingRuntimeDep(name: keyof AgentCoreRuntimeDeps): Error {
+diff --git a/packages/agent-core/src/types.ts b/packages/agent-core/src/types.ts
+index 640b2d0f..6d0a597b 100644
+--- a/packages/agent-core/src/types.ts
++++ b/packages/agent-core/src/types.ts
+@@ -1,5 +1,6 @@
+ import type {
+   AssistantMessage,
++  Context,
+   AssistantMessageEvent,
+   ImageContent,
+   Message,
+@@ -190,7 +191,34 @@ export type ToolLoopRecoveryState = {
+   repeatedToolError?: { signature: string; count: number };
+ };
+ 
++/** A required per-provider handoff, after native projection and persistence. */
++export interface ModelContextView {
++  callId: string;
++  inputRefs?: unknown[];
++  view: unknown;
++  systemPromptAddition?: string;
++  messages?: Message[];
++}
++
++export interface ModelContextHandoff {
++  prepare(input: {
++    model: Model;
++    role?: string;
++    context: Context;
++    outputTokens: number;
++    signal?: AbortSignal;
++  }): Promise<ModelContextView | undefined>;
++  dispatch?(input: { prepared: ModelContextView }): Promise<void>;
++  accept(input: {
++    prepared: ModelContextView;
++    output: AssistantMessage;
++    auxiliary?: boolean;
++  }): Promise<void>;
++}
++
+ export interface AgentLoopConfig extends SimpleStreamOptions {
++  /** A failed required handoff stops this invocation before further dispatch. */
++  modelContext?: ModelContextHandoff;
+   model: Model;
+   /** Logical thinking level retained across model changes before provider mapping. */
+   thinkingLevel?: ThinkingLevel;
+@@ -387,6 +415,7 @@ export interface CustomMessage<T = unknown> {
+ }
+ 
+ export interface BranchSummaryMessage {
++  modelContext?: { inputRefs: unknown[] };
+   role: "branchSummary";
+   /** Summary text inserted back into model context. */
+   summary: string;
+@@ -397,6 +426,7 @@ export interface BranchSummaryMessage {
+ }
+ 
+ export interface CompactionSummaryMessage {
++  modelContext?: { inputRefs: unknown[] };
+   role: "compactionSummary";
+   /** Summary text inserted back into model context. */
+   summary: string;
+diff --git a/packages/llm-core/src/types.ts b/packages/llm-core/src/types.ts
+index 19318703..596668c9 100644
+--- a/packages/llm-core/src/types.ts
++++ b/packages/llm-core/src/types.ts
+@@ -353,6 +353,8 @@ export const DEFAULT_MISSING_TOOL_RESULT_TEXT =
+   "Tool call interrupted before a result was recorded; its outcome is unknown. Retry only if the operation is read-only or idempotent. If it may have had side effects, verify the current state first instead of repeating it.";
+ 
+ export interface UserMessage {
++  /** Source dependencies retained by a native summary. */
++  modelContext?: { inputRefs: unknown[] };
+   role: "user";
+   content: string | (TextContent | ImageContent)[];
+   timestamp: number; // Unix timestamp in milliseconds
+@@ -499,6 +501,14 @@ export type AssistantDeliveryTtsFacts = {
+ };
+ 
+ export interface AssistantMessage {
++  /** Native model-context handoff identity, excluded from provider messages. */
++  modelContext?: {
++    callId: string;
++    terminal: boolean;
++    inputRefs?: unknown[];
++    outputRef?: unknown;
++    selectedOutputRefs?: unknown[];
++  };
+   role: "assistant";
+   content: (TextContent | ThinkingContent | ToolCall)[];
+   openclawDelivery?: {
+diff --git a/src/agents/agent-hooks/compaction-safeguard.ts b/src/agents/agent-hooks/compaction-safeguard.ts
+index eb853153..da2d00d8 100644
+--- a/src/agents/agent-hooks/compaction-safeguard.ts
++++ b/src/agents/agent-hooks/compaction-safeguard.ts
+@@ -1,6 +1,5 @@
+-/** Extension that safeguards compaction with structured summaries and quality repair. */
+-
+ import fs from "node:fs";
++/** Extension that safeguards compaction with structured summaries and quality repair. */
+ import path from "node:path";
+ /* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */
+ import { sliceUtf16Safe, truncateUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
+@@ -30,6 +29,7 @@ import { isRealConversationMessage } from "../compaction-real-conversation.js";
+ import { summarizeCompactionHistory } from "../compaction.js";
+ import { collectTextContentBlocks } from "../content-blocks.js";
+ import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "../copilot-dynamic-headers.js";
++import { isAgentHarnessPreflightError } from "../harness/errors.js";
+ import { stripRuntimeContextCustomMessages } from "../internal-runtime-context.js";
+ import {
+   buildSessionContext as buildCoreSessionContext,
+@@ -794,6 +794,7 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
+       signal,
+       thinkingLevel,
+       streamFn,
++      modelContext,
+     } = event;
+     const previousSummary = normalizeLegacySplitTurnSummary(preparation.previousSummary?.trim());
+     let baseMessagesToSummarize = stripRuntimeContextCustomMessages(
+@@ -1019,6 +1020,7 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
+         summarizationInstructions,
+         thinkingLevel,
+         streamFn,
++        modelContext,
+         usageSink,
+       };
+       const qualityGuardMaxRetries = resolveQualityGuardMaxRetries(runtime?.qualityGuardMaxRetries);
+@@ -1098,6 +1100,7 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
+             });
+           }
+         } catch (attemptError) {
++          if (isAgentHarnessPreflightError(attemptError)) throw attemptError;
+           if (signal?.aborted) {
+             signal.throwIfAborted();
+           }
+@@ -1192,6 +1195,7 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
+ 
+       throw new Error("Compaction safeguard exhausted summary attempts without a decision.");
+     } catch (error) {
++      if (isAgentHarnessPreflightError(error)) throw error;
+       // Caller cancellation is terminal, not a safeguard failure. Preserve the
+       // original abort so the runner can classify it without a false data-loss warning.
+       if (signal?.aborted) {
+diff --git a/src/agents/compaction.ts b/src/agents/compaction.ts
+index d545eb35..418da193 100644
+--- a/src/agents/compaction.ts
++++ b/src/agents/compaction.ts
+@@ -1,3 +1,4 @@
++import type { ModelContextHandoff } from "@openclaw/agent-core";
+ import {
+   CompactionError,
+   SummaryOutputBudgetError,
+@@ -10,6 +11,7 @@ import { retryAsync } from "../infra/retry.js";
+ import { createSubsystemLogger } from "../logging/subsystem.js";
+ import { sanitizeCompactionMessages } from "./compaction-planning.js";
+ import { isTimeoutError } from "./failover-error.js";
++import { isAgentHarnessPreflightError } from "./harness/errors.js";
+ import type {
+   AgentMessage,
+   CompactionSummaryPrompt,
+@@ -47,6 +49,7 @@ type CompactionSummaryParams = {
+   thinkingLevel?: ThinkingLevel;
+   streamFn?: StreamFn;
+   usageSink?: SessionModelUsageSink;
++  modelContext?: ModelContextHandoff;
+ };
+ 
+ function buildCompactionSummarizationInstructions(
+@@ -99,6 +102,7 @@ export async function summarizeCompactionHistory(params: CompactionSummaryParams
+           params.streamFn,
+           params.usageSink,
+           params.summaryPrompt,
++          params.modelContext,
+         ),
+       {
+         attempts: 3,
+@@ -113,11 +117,13 @@ export async function summarizeCompactionHistory(params: CompactionSummaryParams
+         // AbortErrors without caller cancellation remain retryable.
+         shouldRetry: (err) =>
+           !params.signal.aborted &&
++          !isAgentHarnessPreflightError(err) &&
+           !(err instanceof SummaryOutputBudgetError) &&
+           (isAbortError(err) || !isTimeoutError(err)),
+       },
+     );
+   } catch (err) {
++    if (isAgentHarnessPreflightError(err)) throw err;
+     if (params.signal.aborted) {
+       throw err;
+     }
+diff --git a/src/agents/embedded-agent-runner/compaction-session-execution.ts b/src/agents/embedded-agent-runner/compaction-session-execution.ts
+index a535f246..45742744 100644
+--- a/src/agents/embedded-agent-runner/compaction-session-execution.ts
++++ b/src/agents/embedded-agent-runner/compaction-session-execution.ts
+@@ -65,6 +65,7 @@ import { log } from "./logger.js";
+ import type { PreparedCompactionRuntime } from "./prepared-compaction-runtime.js";
+ import { declarePromptHistoryRewrite } from "./prompt-cache-observability.js";
+ import { sanitizeSessionHistory, validateReplayTurns } from "./replay-history.js";
++import { installModelContextHandoff } from "./run/attempt.model-context.js";
+ import { wrapStreamFnWithDiagnosticModelCallEvents } from "./run/attempt.model-diagnostic-events.js";
+ import { readCompactionAccountingRecorder } from "./run/compaction-accounting-bridge.js";
+ import { estimateLlmBoundaryTokenPressure } from "./run/preemptive-compaction.js";
+@@ -241,6 +242,7 @@ export async function executePreparedCompactionSession(runtime: PreparedCompacti
+       const systemPromptText = buildSystemPromptText();
+       let session: AgentSession | undefined;
+       let diagnosticOwner: DiagnosticEmbeddedRunOwner | undefined;
++      let removeModelContextHandoff: (() => void) | undefined;
+       let resetCompactionTimeout: (() => void) | undefined;
+       try {
+         const createdSession = await createAgentSession({
+@@ -257,6 +259,19 @@ export async function executePreparedCompactionSession(runtime: PreparedCompacti
+           resourceLoader,
+         });
+         session = createdSession.session;
++        removeModelContextHandoff = installModelContextHandoff({
++          agent: session.agent,
++          sessionManager,
++          agentId: sessionAgentId,
++          attempt: {
++            runId: diagnosticCompactionRunId,
++            sessionId: params.sessionId,
++            sessionKey: params.sessionKey,
++            spawnedBy: params.spawnedBy,
++            workspaceDir: effectiveWorkspace,
++            contextTokenBudget,
++          },
++        });
+         session[agentSessionSetContextReplacementHook](
+           (tokensAfter, tokensBefore) =>
+             recordCompaction({ tokensBefore, tokensAfter, compactionKind: "context-engine" }),
+@@ -453,6 +468,7 @@ export async function executePreparedCompactionSession(runtime: PreparedCompacti
+           : await attemptServerEndpointCompaction({
+               trigger,
+               streamFn: session.agent.streamFn,
++              modelContext: session.agent.modelContext,
+               model: effectiveModel,
+               context: { systemPrompt: systemPromptText, messages: session.messages },
+               sessionManager,
+@@ -677,6 +693,7 @@ export async function executePreparedCompactionSession(runtime: PreparedCompacti
+         }
+         throw err;
+       } finally {
++        removeModelContextHandoff?.();
+         // Retire diagnostic ownership before asynchronous session cleanup can yield.
+         if (diagnosticOwner) {
+           closeDiagnosticEmbeddedRunOwner(diagnosticOwner);
+diff --git a/src/agents/embedded-agent-runner/run/attempt-setup.ts b/src/agents/embedded-agent-runner/run/attempt-setup.ts
+index c3708574..0a20a35a 100644
+--- a/src/agents/embedded-agent-runner/run/attempt-setup.ts
++++ b/src/agents/embedded-agent-runner/run/attempt-setup.ts
+@@ -60,6 +60,7 @@ import {
+   createEmbeddedRunStageSummaryEmitter,
+   logEmbeddedRunStageSummary,
+ } from "./attempt-stage-timing.js";
++import { installModelContextHandoff } from "./attempt.model-context.js";
+ import { installHistoryImagePruneContextTransform } from "./history-image-prune.js";
+ import type { MidTurnPrecheckRequest } from "./midturn-precheck.js";
+ import type { EmbeddedRunAttemptParams, EmbeddedRunAttemptResult } from "./types.js";
+@@ -184,6 +185,12 @@ export function installEmbeddedAttemptContextGuards(input: {
+   sandbox?: SandboxContext | null;
+ }) {
+   const { activeContextEngine, activeSession, attempt, settingsManager } = input;
++  const removeModelContextHandoff = installModelContextHandoff({
++    agent: activeSession.agent,
++    attempt,
++    sessionManager: input.sessionManager,
++    agentId: input.sessionAgentId,
++  });
+   const contextTokenBudget = Math.max(
+     1,
+     Math.floor(
+@@ -384,6 +391,7 @@ export function installEmbeddedAttemptContextGuards(input: {
+       lastCacheTouchAt = startedAt;
+     },
+     remove: () => {
++      removeModelContextHandoff();
+       activeSession.agent.transformContext = previousComputerFrameTransform;
+       removeHistoryImagePruneContextTransform();
+       removeToolResultGuard();
+diff --git a/src/agents/embedded-agent-runner/run/attempt.model-context.test.ts b/src/agents/embedded-agent-runner/run/attempt.model-context.test.ts
+new file mode 100644
+index 00000000..66321b17
+--- /dev/null
++++ b/src/agents/embedded-agent-runner/run/attempt.model-context.test.ts
+@@ -0,0 +1,256 @@
++import path from "node:path";
++import { expect, it, vi } from "vitest";
++import {
++  makeAssistantMessage,
++  createTurnSequenceStream,
++  model,
++} from "../../../../packages/agent-core/src/agent-loop.test-support.js";
++import { Agent } from "../../../../packages/agent-core/src/agent.js";
++import { runSummarizationCompletion } from "../../../../packages/agent-core/src/harness/compaction/summarization-completion.js";
++import { convertToLlm } from "../../../../packages/agent-core/src/harness/messages.js";
++import { replaceSessionEntry } from "../../../config/sessions/session-accessor.js";
++import { SessionManager } from "../../../plugin-sdk/agent-sessions.js";
++import { withOpenClawTestState } from "../../../test-utils/openclaw-test-state.js";
++import { installModelContextHandoff } from "./attempt.model-context.js";
++import type { EmbeddedRunAttemptParams } from "./types.js";
++
++const { runner } = vi.hoisted(() => ({
++  runner: {
++    hasHooks: () => true,
++    runModelContextPrepare: vi.fn(async (_event: unknown) => ({
++      view: { revision: 1 },
++      inputRefs: [
++        {
++          product: "nous",
++          installationId: "n",
++          subjectId: "s",
++          kind: "Material",
++          id: "private",
++          revision: 1,
++        },
++      ],
++      systemPromptAddition: "Known memory",
++    })),
++    runModelContextDispatch: vi.fn(async () => {}),
++    runModelContextAccept: vi.fn(
++      async (
++        event: unknown,
++        _context?: unknown,
++      ): Promise<{ outputRef?: unknown; selectedOutputRefs?: unknown[] } | undefined> => {
++        if (event && typeof event === "object" && "output" in event) {
++          const outputRef = {
++            product: "nous",
++            installationId: "n",
++            subjectId: "s",
++            kind: "Material",
++            id: "native-result",
++            revision: 1,
++          };
++          return {
++            outputRef,
++            selectedOutputRefs: [
++              { ...outputRef, selector: { kind: "node", nodeId: "/content/0/text" } },
++            ],
++          };
++        }
++      },
++    ),
++  },
++}));
++vi.mock("../../../plugins/hook-runner-global.js", () => ({ getGlobalHookRunner: () => runner }));
++
++it("reopens the native response and completes acceptance before another model call", async () => {
++  await withOpenClawTestState({ label: "model-context-handoff" }, async (state) => {
++    const target = {
++      agentId: "main",
++      sessionId: "handoff",
++      sessionKey: "agent:main:handoff",
++      storePath: path.join(state.agentDir("main"), "openclaw-agent.sqlite"),
++    };
++    await replaceSessionEntry(target, { sessionId: target.sessionId, updatedAt: 1 });
++    let manager = await SessionManager.openAsync(target, state.workspaceDir);
++    const attempt = {
++      runId: "task",
++      sessionId: target.sessionId,
++      sessionKey: target.sessionKey,
++      workspaceDir: state.workspaceDir,
++    } as EmbeddedRunAttemptParams;
++    const first = new Agent({ streamFn: createTurnSequenceStream([]) });
++    const cleanup = installModelContextHandoff({
++      agent: first,
++      attempt,
++      sessionManager: manager,
++      agentId: "main",
++    });
++    const summary = makeAssistantMessage([{ type: "text", text: "Saved native summary" }]);
++    const compacted = await runSummarizationCompletion({
++      messages: [{ role: "user", content: "Earlier work", timestamp: 1 }],
++      prompt: "Summarize",
++      model: { ...model, contextWindow: 128000 },
++      maxTokens: 100,
++      apiKey: "local-test",
++      errorLabel: "compaction",
++      runtime: {
++        completeSimple: async () => summary,
++        modelContext: first.modelContext,
++      },
++    });
++    expect(compacted).toEqual({ ok: true, value: "Saved native summary" });
++    expect(runner.runModelContextPrepare.mock.calls[0]?.[0]).toMatchObject({ role: "compaction" });
++    expect(
++      manager
++        .getBranch()
++        .some(
++          (entry) =>
++            entry.type === "custom" &&
++            entry.customType === "openclaw.model-context.auxiliary-output",
++        ),
++    ).toBe(true);
++    const rejected = await first.modelContext!.prepare({
++      model,
++      outputTokens: 100,
++      context: { messages: [] },
++    });
++    runner.runModelContextDispatch.mockRejectedValueOnce(new Error("Call budget exhausted"));
++    await expect(first.modelContext!.dispatch!({ prepared: rejected! })).rejects.toThrow(
++      "Required model context dispatch failed",
++    );
++    expect(runner.runModelContextAccept.mock.calls.at(-1)?.[0]).toMatchObject({
++      callId: rejected!.callId,
++      outcome: "not_sent",
++    });
++    const prepared = await first.modelContext!.prepare({
++      model,
++      outputTokens: 100,
++      context: { messages: [], tools: [] },
++    });
++    expect(prepared).toBeDefined();
++    await first.modelContext!.dispatch!({ prepared: prepared! });
++    const output = makeAssistantMessage([{ type: "text", text: "Already paid result" }]);
++    await manager.appendMessageAsync({
++      ...output,
++      modelContext: { callId: prepared!.callId, terminal: true, inputRefs: prepared!.inputRefs },
++    });
++    runner.runModelContextAccept.mockRejectedValueOnce(new Error("Nous temporarily unavailable"));
++    await expect(first.modelContext!.accept({ prepared: prepared!, output })).rejects.toThrow(
++      "Required model context accept failed",
++    );
++    cleanup();
++
++    manager = await SessionManager.openAsync(target, state.workspaceDir);
++    const resumed = new Agent({ streamFn: createTurnSequenceStream([]) });
++    const stop = installModelContextHandoff({
++      agent: resumed,
++      attempt,
++      sessionManager: manager,
++      agentId: "main",
++    });
++    try {
++      const next = await resumed.modelContext!.prepare({
++        model,
++        outputTokens: 100,
++        context: { messages: [], tools: [] },
++      });
++      expect(runner.runModelContextAccept).toHaveBeenCalledTimes(4);
++      expect(runner.runModelContextAccept.mock.calls[3]?.[0]).toMatchObject({
++        callId: prepared!.callId,
++        output: { content: output.content },
++      });
++      expect(runner.runModelContextAccept.mock.calls[3]?.[0]).toEqual(
++        runner.runModelContextAccept.mock.calls[2]?.[0],
++      );
++      const restoredOutput = manager
++        .getBranch()
++        .find(
++          (entry) =>
++            entry.type === "message" &&
++            entry.message.role === "assistant" &&
++            entry.message.modelContext?.callId === prepared!.callId,
++        );
++      expect(restoredOutput).toMatchObject({
++        message: {
++          modelContext: {
++            outputRef: { id: "native-result" },
++            selectedOutputRefs: [{ selector: { nodeId: "/content/0/text" } }],
++          },
++        },
++      });
++      const entries = manager.getBranch();
++      const accepted = entries.findIndex(
++        (entry) => entry.type === "custom" && entry.customType === "openclaw.model-context.settled",
++      );
++      expect(accepted).toBeGreaterThan(-1);
++      expect(
++        entries
++          .slice(accepted + 1)
++          .some(
++            (entry) =>
++              entry.type === "custom" && entry.customType === "openclaw.model-context.prepared",
++          ),
++      ).toBe(true);
++      await resumed.modelContext!.dispatch!({ prepared: next! });
++      await manager.appendMessageAsync({
++        ...output,
++        modelContext: { callId: next!.callId, terminal: false },
++      });
++      stop();
++      manager = await SessionManager.openAsync(target, state.workspaceDir);
++      const interrupted = new Agent({ streamFn: createTurnSequenceStream([]) });
++      const stopInterrupted = installModelContextHandoff({
++        agent: interrupted,
++        attempt,
++        sessionManager: manager,
++        agentId: "main",
++      });
++      try {
++        await expect(
++          interrupted.modelContext!.prepare({
++            model,
++            outputTokens: 100,
++            context: { messages: [], tools: [] },
++          }),
++        ).rejects.toThrow("Required model context recovery failed");
++        expect(runner.runModelContextAccept).toHaveBeenCalledTimes(4);
++      } finally {
++        stopInterrupted();
++      }
++      await manager.appendMessageAsync({
++        ...output,
++        stopReason: "error",
++        modelContext: { callId: next!.callId, terminal: true },
++      });
++      const unknown = new Agent({ streamFn: createTurnSequenceStream([]) });
++      const stopUnknown = installModelContextHandoff({
++        agent: unknown,
++        attempt,
++        sessionManager: manager,
++        agentId: "main",
++      });
++      try {
++        for (let check = 0; check < 2; check++)
++          await expect(
++            unknown.modelContext!.prepare({ model, outputTokens: 100, context: { messages: [] } }),
++          ).rejects.toThrow("Required model context recovery failed");
++        expect(runner.runModelContextAccept).toHaveBeenCalledTimes(5);
++      } finally {
++        stopUnknown();
++      }
++      const kept = await manager.appendMessageAsync({
++        role: "user",
++        content: "Continue later",
++        timestamp: 2,
++      });
++      await manager.appendCompactionAsync("Prior work summary", kept!, 100);
++      const projected = convertToLlm(manager.buildSessionContext().messages);
++      expect(
++        projected.some(
++          (message) =>
++            message.role === "user" &&
++            message.modelContext?.inputRefs.some((ref) => (ref as { id: string }).id === "private"),
++        ),
++      ).toBe(true);
++    } finally {
++      stop();
++    }
++  });
++});
+diff --git a/src/agents/embedded-agent-runner/run/attempt.model-context.ts b/src/agents/embedded-agent-runner/run/attempt.model-context.ts
+new file mode 100644
+index 00000000..95cc756b
+--- /dev/null
++++ b/src/agents/embedded-agent-runner/run/attempt.model-context.ts
+@@ -0,0 +1,370 @@
++import { randomUUID } from "node:crypto";
++import type { AssistantMessage } from "@openclaw/llm-core";
++import { isProviderRefusalAssistantError } from "@openclaw/llm-core/diagnostics";
++import { getActiveDiagnosticTraceContext } from "../../../infra/diagnostic-trace-context.js";
++import { formatPropagatedDiagnosticTraceparent } from "../../../infra/diagnostic-trace-propagation.js";
++import { getGlobalHookRunner } from "../../../plugins/hook-runner-global.js";
++import type {
++  PluginHookAgentContext,
++  PluginHookModelContextPrepareResult,
++} from "../../../plugins/hook-types.js";
++import { AgentHarnessPreflightError } from "../../harness/errors.js";
++import { estimateTokens } from "../../runtime/index.js";
++import type { guardSessionManager } from "../../session-tool-result-guard-wrapper.js";
++import type { AgentSession } from "../../sessions/index.js";
++import { withSessionManagerWrite } from "../../sessions/session-manager-write-admission.js";
++import { rewriteTranscriptEntriesInSessionManager } from "../transcript-rewrite.js";
++import type { EmbeddedRunAttemptParams } from "./types.js";
++
++const PREPARED = "openclaw.model-context.prepared";
++const DISPATCHED = "openclaw.model-context.dispatched";
++const AUXILIARY_OUTPUT = "openclaw.model-context.auxiliary-output";
++const NOT_DISPATCHED = "openclaw.model-context.not-dispatched";
++const SETTLED = "openclaw.model-context.settled";
++
++type Prepared = {
++  callId: string;
++  runId: string;
++  role?: string;
++  prepared: PluginHookModelContextPrepareResult;
++  invocation: {
++    traceparent?: string;
++    provider: string;
++    model: string;
++    inputTokensEstimate: number;
++    outputTokens: number;
++  };
++};
++
++/** Install the required handoff on the provider boundary, outside compaction. */
++export function installModelContextHandoff(input: {
++  agent: AgentSession["agent"];
++  attempt: Pick<
++    EmbeddedRunAttemptParams,
++    "runId" | "sessionId" | "sessionKey" | "spawnedBy" | "workspaceDir" | "contextTokenBudget"
++  >;
++  sessionManager: ReturnType<typeof guardSessionManager>;
++  agentId: string;
++}): () => void {
++  const runner = getGlobalHookRunner();
++  if (!runner?.hasHooks("model_context_prepare")) {
++    return () => {};
++  }
++  const { agent, attempt, sessionManager } = input;
++  const previous = agent.modelContext;
++  const trace = getActiveDiagnosticTraceContext();
++  const traceparent = formatPropagatedDiagnosticTraceparent(trace);
++  const context: PluginHookAgentContext = {
++    trace,
++    agentId: input.agentId,
++    runId: attempt.runId,
++    sessionId: attempt.sessionId,
++    sessionKey: attempt.sessionKey,
++    parentSessionKey: attempt.spawnedBy ?? undefined,
++    workspaceDir: attempt.workspaceDir,
++    contextTokenBudget: attempt.contextTokenBudget,
++  };
++
++  const required = async <T>(phase: string, operation: () => Promise<T>): Promise<T> => {
++    try {
++      return await operation();
++    } catch (cause) {
++      throw new AgentHarnessPreflightError(`Required model context ${phase} failed`, {
++        cause,
++        userMessage:
++          "Model context handoff is waiting. Continue the existing task after its dependency recovers.",
++      });
++    }
++  };
++  let currentPrepared: Prepared | undefined;
++  const savedResponse = (record: Prepared, entries = sessionManager.getBranch()) => {
++    const start = entries.findIndex(
++      (entry) =>
++        entry.type === "custom" &&
++        entry.customType === PREPARED &&
++        (entry.data as Prepared).callId === record.callId,
++    );
++    const auxiliary = entries.find(
++      (entry) =>
++        entry.type === "custom" &&
++        entry.customType === AUXILIARY_OUTPUT &&
++        (entry.data as { callId: string }).callId === record.callId,
++    );
++    if (auxiliary?.type === "custom")
++      return {
++        output: (auxiliary.data as { output: AssistantMessage }).output,
++        entryId: auxiliary.id,
++      };
++    const fragments: { id: string; message: AssistantMessage }[] = [];
++    for (const candidate of entries.slice(start + 1)) {
++      if (candidate.type === "custom" && candidate.customType === PREPARED) break;
++      if (
++        candidate.type === "message" &&
++        candidate.message.role === "assistant" &&
++        candidate.message.modelContext?.callId === record.callId
++      )
++        fragments.push({ id: candidate.id, message: candidate.message });
++    }
++    const terminal = fragments.at(-1);
++    return terminal?.message.modelContext?.terminal
++      ? {
++          output: {
++            ...terminal.message,
++            content: fragments.flatMap((fragment) => fragment.message.content),
++          },
++          entryId: terminal.id,
++        }
++      : undefined;
++  };
++  const settleNotSent = async (record: Prepared) => {
++    await required("accept", () =>
++      runner.runModelContextAccept(
++        {
++          ...record,
++          traceparent: record.invocation.traceparent,
++          sessionId: attempt.sessionId,
++          outcome: "not_sent",
++        },
++        { ...context, runId: record.runId },
++      ),
++    );
++    await sessionManager.appendCustomEntryAsync(SETTLED, {
++      callId: record.callId,
++      outcome: "not_sent",
++    });
++  };
++  const settle = async (record: Prepared, output: AssistantMessage, entryId?: string) => {
++    const accepted = await required("accept", () =>
++      runner.runModelContextAccept(
++        {
++          ...record,
++          traceparent: record.invocation.traceparent,
++          sessionId: attempt.sessionId,
++          output,
++          ...(entryId ? { transcriptEntryId: entryId } : {}),
++        },
++        { ...context, runId: record.runId },
++      ),
++    );
++    if (accepted?.outputRef && entryId) {
++      const entry = sessionManager.getBranch().find((candidate) => candidate.id === entryId);
++      if (
++        entry?.type === "message" &&
++        entry.message.role === "assistant" &&
++        entry.message.modelContext
++      ) {
++        const metadata = {
++          ...entry.message.modelContext,
++          outputRef: accepted.outputRef,
++          selectedOutputRefs: accepted.selectedOutputRefs,
++        };
++        await withSessionManagerWrite(sessionManager, () =>
++          rewriteTranscriptEntriesInSessionManager({
++            sessionManager,
++            replacements: [{ entryId, message: { ...entry.message, modelContext: metadata } }],
++            preserveReplacementCompactionReplay: true,
++          }),
++        );
++        for (const message of agent.state.messages)
++          if (
++            message.role === "assistant" &&
++            message.modelContext?.callId === record.callId &&
++            message.modelContext.terminal
++          )
++            message.modelContext = metadata;
++      }
++    }
++    const unknown =
++      (output.stopReason === "error" || output.stopReason === "aborted") &&
++      !isProviderRefusalAssistantError(output);
++    await sessionManager.appendCustomEntryAsync(SETTLED, {
++      callId: record.callId,
++      ...(accepted?.outputRef
++        ? { outputRef: accepted.outputRef, selectedOutputRefs: accepted.selectedOutputRefs }
++        : {}),
++      outcome: unknown
++        ? "unknown"
++        : isProviderRefusalAssistantError(output)
++          ? "not_sent"
++          : "completed",
++    });
++    if (unknown) {
++      throw new AgentHarnessPreflightError(
++        `Model call ${record.callId} has an unknown provider outcome`,
++        {
++          userMessage:
++            "The provider outcome is unknown. Inspect this call before starting another model request.",
++        },
++      );
++    }
++  };
++
++  // Source and output remain in the native session. A response saved immediately
++  // before a crash is recovered from that session, then handed off once again.
++  const acceptPending = async () => {
++    const entries = sessionManager.getBranch();
++    const dispatched = new Set(
++      entries.flatMap((entry) =>
++        entry.type === "custom" && entry.customType === DISPATCHED
++          ? [(entry.data as { callId: string }).callId]
++          : [],
++      ),
++    );
++    const unresolved = entries.find(
++      (entry) =>
++        entry.type === "custom" &&
++        entry.customType === SETTLED &&
++        (entry.data as { outcome: string }).outcome === "unknown",
++    );
++    if (unresolved)
++      throw new AgentHarnessPreflightError(
++        "A previous native model call still has an unknown provider outcome",
++      );
++    const notDispatched = new Set(
++      entries.flatMap((entry) =>
++        entry.type === "custom" && entry.customType === NOT_DISPATCHED
++          ? [(entry.data as { callId: string }).callId]
++          : [],
++      ),
++    );
++    const settled = new Set(
++      entries.flatMap((entry) =>
++        entry.type === "custom" && entry.customType === SETTLED
++          ? [(entry.data as { callId: string }).callId]
++          : [],
++      ),
++    );
++    for (let index = 0; index < entries.length; index++) {
++      const entry = entries[index]!;
++      if (entry.type !== "custom" || entry.customType !== PREPARED) {
++        continue;
++      }
++      const record = entry.data as Prepared;
++      if (settled.has(record.callId)) {
++        continue;
++      }
++      if (notDispatched.has(record.callId)) {
++        await settleNotSent(record);
++        continue;
++      }
++      const saved = savedResponse(record, entries);
++      if (!saved) {
++        if (!dispatched.has(record.callId)) {
++          await sessionManager.appendCustomEntryAsync(SETTLED, {
++            callId: record.callId,
++            outcome: "not_sent",
++          });
++          continue;
++        }
++        throw new AgentHarnessPreflightError(
++          `model context call ${record.callId} has an unknown provider outcome; resolve it before continuing`,
++        );
++      }
++      await settle(record, saved.output, saved.entryId);
++    }
++  };
++
++  agent.modelContext = {
++    async prepare({ model, role, context: current, outputTokens, signal }) {
++      await required("recovery", acceptPending);
++      signal?.throwIfAborted();
++      const callId = `${attempt.runId}:${randomUUID()}`;
++      const baseEstimate =
++        current.messages.reduce((sum, message) => sum + estimateTokens(message), 0) +
++        estimateTokens({
++          role: "user",
++          content: `${current.systemPrompt ?? ""}\n${JSON.stringify(current.tools ?? [])}`,
++          timestamp: 0,
++        });
++      const contextLimit = attempt.contextTokenBudget ?? model.contextWindow;
++      if (typeof contextLimit !== "number" || !Number.isFinite(contextLimit) || contextLimit <= 0)
++        throw new AgentHarnessPreflightError(
++          `Native model ${model.provider}/${model.id} has no context limit`,
++        );
++      const prepared = await required("prepare", () =>
++        runner.runModelContextPrepare(
++          {
++            callId,
++            role,
++            traceparent,
++            runId: attempt.runId,
++            sessionId: attempt.sessionId,
++            provider: model.provider,
++            model: model.id,
++            contextLimit,
++            outputTokens,
++            inputTokensEstimate: baseEstimate,
++            transcriptCursor: sessionManager.getLeafEntry()?.id,
++            systemPrompt: current.systemPrompt,
++            messages: current.messages,
++            tools: current.tools ?? [],
++          },
++          context,
++        ),
++      );
++      if (!prepared) {
++        return undefined;
++      }
++      const invocation = {
++        traceparent,
++        provider: model.provider,
++        model: model.id,
++        outputTokens,
++        inputTokensEstimate:
++          baseEstimate +
++          estimateTokens({
++            role: "user",
++            content: prepared.systemPromptAddition ?? "",
++            timestamp: 0,
++          }) +
++          (prepared.messages ?? []).reduce((sum, message) => sum + estimateTokens(message), 0),
++      };
++      await sessionManager.appendCustomEntryAsync(PREPARED, {
++        callId,
++        runId: attempt.runId,
++        role,
++        prepared,
++        invocation,
++      } satisfies Prepared);
++      currentPrepared = { callId, runId: attempt.runId, role, prepared, invocation };
++      return { callId, ...prepared };
++    },
++    async dispatch({ prepared }) {
++      const record = currentPrepared;
++      if (!record || record.callId !== prepared.callId)
++        throw new Error("Native prepared call identity changed");
++      await sessionManager.appendCustomEntryAsync(DISPATCHED, { callId: record.callId });
++      try {
++        await required("dispatch", () =>
++          runner.runModelContextDispatch(
++            { ...record, ...record.invocation, sessionId: attempt.sessionId },
++            context,
++          ),
++        );
++      } catch (cause) {
++        // The provider has not been invoked while this callback is pending.
++        // Persist that fact before releasing any reservation, including after restart.
++        await sessionManager.appendCustomEntryAsync(NOT_DISPATCHED, { callId: record.callId });
++        await settleNotSent(record);
++        throw cause;
++      }
++    },
++    async accept({ prepared, output, auxiliary }) {
++      const record = currentPrepared;
++      if (!record || record.callId !== prepared.callId)
++        throw new Error("Native prepared call identity changed");
++      if (auxiliary)
++        await sessionManager.appendCustomEntryAsync(AUXILIARY_OUTPUT, {
++          callId: record.callId,
++          output,
++        });
++      const saved = savedResponse(record);
++      if (!saved)
++        throw new AgentHarnessPreflightError("The native response has not been durably saved");
++      await settle(record, saved.output, saved.entryId);
++    },
++  };
++  return () => {
++    agent.modelContext = previous;
++  };
++}
+diff --git a/src/agents/embedded-agent-runner/server-endpoint-compaction.test.ts b/src/agents/embedded-agent-runner/server-endpoint-compaction.test.ts
+index 8e3d1316..6665b409 100644
+--- a/src/agents/embedded-agent-runner/server-endpoint-compaction.test.ts
++++ b/src/agents/embedded-agent-runner/server-endpoint-compaction.test.ts
+@@ -120,7 +120,20 @@ describe("attemptServerEndpointCompaction", () => {
+           throw observerError;
+         }
+       });
+-      const request = { trigger, model: requestModel, onCompactionCommitted };
++      const modelContext = {
++        prepare: vi.fn(async () => ({
++          callId: "native-compact-call",
++          view: {},
++          systemPromptAddition: "Current cognitive view",
++        })),
++        dispatch: vi.fn(async () => {
++          expect(requestPreparedCompactionMock).not.toHaveBeenCalled();
++        }),
++        accept: vi.fn(async ({ output }: { output: AssistantMessage }) => {
++          expect(output.usage).toMatchObject({ input: 1000, output: 200, totalTokens: 1200 });
++        }),
++      };
++      const request = { trigger, model: requestModel, onCompactionCommitted, modelContext };
+       const { session, result } = attempt(request);
+ 
+       if (throws) {
+@@ -155,6 +168,12 @@ describe("attemptServerEndpointCompaction", () => {
+         },
+       });
+       expect(owner.message.providerReplay).not.toHaveProperty("replayIndex");
++      expect(modelContext.prepare).toHaveBeenCalledOnce();
++      expect(modelContext.dispatch).toHaveBeenCalledOnce();
++      expect(modelContext.accept).toHaveBeenCalledOnce();
++      expect(requestPreparedCompactionMock.mock.calls[0]?.[2].systemPrompt).toContain(
++        "Current cognitive view",
++      );
+       expect(onCompactionCommitted).toHaveBeenCalledExactlyOnceWith(1_000);
+       expect(committedOwner).toMatchObject({
+         id: owner.id,
+diff --git a/src/agents/embedded-agent-runner/server-endpoint-compaction.ts b/src/agents/embedded-agent-runner/server-endpoint-compaction.ts
+index 75c90dd9..5af9333c 100644
+--- a/src/agents/embedded-agent-runner/server-endpoint-compaction.ts
++++ b/src/agents/embedded-agent-runner/server-endpoint-compaction.ts
+@@ -1,17 +1,21 @@
+ import { isDeepStrictEqual } from "node:util";
++import type { ModelContextHandoff, ModelContextView } from "@openclaw/agent-core";
+ import {
+   captureOpenAIResponsesCompaction,
+   requestPreparedOpenAIResponsesCompaction,
+   requiresCompactionReplayRefresh,
+   resolveOpenAIResponsesCompactEndpointPlan,
+ } from "@openclaw/ai/transports";
++import type { AssistantMessage } from "@openclaw/llm-core";
+ import type { Message } from "@openclaw/llm-core";
+ import type { OpenClawConfig } from "../../config/types.openclaw.js";
+ import { formatErrorMessage } from "../../infra/errors.js";
++import { AgentHarnessPreflightError, isAgentHarnessPreflightError } from "../harness/errors.js";
+ import type { AgentMessage } from "../runtime/index.js";
+ import type { CompactionRequestBudget } from "../sessions/compaction/request-budget.js";
+ import { withSessionManagerWrite } from "../sessions/session-manager-write-admission.js";
+ import { redactTranscriptMessage } from "../transcript-redact.js";
++import { makeZeroUsageSnapshot, normalizeUsage } from "../usage.js";
+ import { compactWithSafetyTimeout } from "./compaction-safety-timeout.js";
+ import { log } from "./logger.js";
+ import {
+@@ -33,6 +37,7 @@ export async function attemptServerEndpointCompaction(params: {
+   trigger: "budget" | "overflow" | "manual";
+   streamFn: Parameters<typeof requestPreparedOpenAIResponsesCompaction>[0];
+   model: Parameters<typeof requestPreparedOpenAIResponsesCompaction>[1];
++  modelContext?: ModelContextHandoff;
+   context: { systemPrompt: string; messages: readonly AgentMessage[] };
+   sessionManager: SessionManagerLike;
+   extraParams: Record<string, unknown>;
+@@ -54,6 +59,9 @@ export async function attemptServerEndpointCompaction(params: {
+   }
+   params.assertActive?.();
+   let compactionCommitted = false;
++  let prepared: ModelContextView | undefined;
++  let dispatched = false;
++  let accepted = false;
+   try {
+     const messages = params.context.messages.filter(
+       (message): message is Message =>
+@@ -73,18 +81,54 @@ export async function attemptServerEndpointCompaction(params: {
+     if (!owner || owner.type !== "message" || owner.message.role !== "assistant") {
+       throw new Error("Responses compact endpoint requires a persisted assistant owner");
+     }
++    const modelContext = { systemPrompt: params.context.systemPrompt, messages };
++    prepared = await params.modelContext?.prepare({
++      role: "compaction",
++      model: params.model,
++      context: modelContext,
++      outputTokens: params.model.maxTokens,
++      signal: params.requestOptions.signal,
++    });
++    if (prepared?.systemPromptAddition)
++      modelContext.systemPrompt += `\n\n${prepared.systemPromptAddition}`;
++    if (prepared?.messages) modelContext.messages.push(...prepared.messages);
++    if (prepared) await params.modelContext?.dispatch?.({ prepared });
++    dispatched = true;
+     const compacted = await compactWithSafetyTimeout(
+       (signal) =>
+-        requestPreparedOpenAIResponsesCompaction(
+-          params.streamFn,
+-          params.model,
+-          { systemPrompt: params.context.systemPrompt, messages },
+-          { ...params.requestOptions, signal },
+-        ),
++        requestPreparedOpenAIResponsesCompaction(params.streamFn, params.model, modelContext, {
++          ...params.requestOptions,
++          signal,
++        }),
+       params.requestOptions.timeoutMs,
+       params.requestOptions.signal ? { abortSignal: params.requestOptions.signal } : undefined,
+     );
+     params.onUsage?.(compacted.usage);
++    if (prepared) {
++      const normalized = normalizeUsage(compacted.usage);
++      const empty = makeZeroUsageSnapshot();
++      const usage = {
++        ...empty,
++        ...normalized,
++        cost: { ...empty.cost, ...normalized?.cost },
++        totalTokens: compacted.usage.input_tokens + compacted.usage.output_tokens,
++      };
++      await params.modelContext?.accept({
++        prepared,
++        auxiliary: true,
++        output: {
++          role: "assistant",
++          api: compacted.model.api,
++          provider: compacted.model.provider,
++          model: compacted.model.id,
++          content: [{ type: "text", text: JSON.stringify(compacted.output) }],
++          usage,
++          stopReason: "stop",
++          timestamp: Date.now(),
++        },
++      });
++      accepted = true;
++    }
+     params.assertActive?.();
+     const replacement = structuredClone(owner.message);
+     captureOpenAIResponsesCompaction(
+@@ -144,6 +188,24 @@ export async function attemptServerEndpointCompaction(params: {
+     });
+     return compacted;
+   } catch (err) {
++    if (isAgentHarnessPreflightError(err)) throw err;
++    if (prepared && dispatched && !accepted) {
++      const output: AssistantMessage = {
++        role: "assistant",
++        api: params.model.api,
++        provider: params.model.provider,
++        model: params.model.id,
++        content: [],
++        stopReason: "error",
++        errorMessage: formatErrorMessage(err),
++        usage: makeZeroUsageSnapshot(),
++        timestamp: Date.now(),
++      };
++      await params.modelContext?.accept({ prepared, auxiliary: true, output });
++      throw new AgentHarnessPreflightError("The native compaction provider outcome is unknown", {
++        cause: err,
++      });
++    }
+     // Observer or handle-release failures after commit must not trigger a
+     // second client compaction of the already replaced context.
+     if (compactionCommitted) {
+diff --git a/src/agents/sessions/agent-session-compaction.ts b/src/agents/sessions/agent-session-compaction.ts
+index 405b25dc..0d0a0c3c 100644
+--- a/src/agents/sessions/agent-session-compaction.ts
++++ b/src/agents/sessions/agent-session-compaction.ts
+@@ -11,6 +11,7 @@ import { MAX_OVERFLOW_COMPACTION_ATTEMPTS } from "../agent-compaction-constants.
+ import { resolveCompactionInstructions } from "../agent-hooks/compaction-instructions.js";
+ import { SAFETY_MARGIN } from "../compaction-planning.js";
+ import { sanitizeCompactionReplayMessages } from "../compaction-replay.js";
++import { isAgentHarnessPreflightError } from "../harness/errors.js";
+ import {
+   calculateContextTokens,
+   buildSessionContext,
+@@ -341,6 +342,7 @@ export abstract class AgentSessionCompaction extends AgentSessionInspection {
+         // context as the core path below or provider wrappers and reasoning drift.
+         thinkingLevel: compactionThinkingLevel,
+         streamFn: this.agent.streamFn,
++        modelContext: this.agent.modelContext,
+       });
+ 
+       if (extensionResult?.cancel) {
+@@ -383,7 +385,10 @@ export abstract class AgentSessionCompaction extends AgentSessionInspection {
+           options.signal,
+           compactionThinkingLevel,
+           this.agent.streamFn,
+-          createCompactionRuntime((usage) => recordSessionModelUsage(this.sessionManager, usage)),
++          createCompactionRuntime(
++            (usage) => recordSessionModelUsage(this.sessionManager, usage),
++            this.agent.modelContext,
++          ),
+         );
+       let result = await runCoreCompaction();
+       // Automatic core compaction owns one retry for invalid summary output.
+@@ -661,6 +666,7 @@ export abstract class AgentSessionCompaction extends AgentSessionInspection {
+       // Continue once so queued messages are delivered.
+       return this.agent.hasQueuedMessages();
+     } catch (error) {
++      if (isAgentHarnessPreflightError(error)) throw error;
+       if (abortController.signal.aborted) {
+         this.emit({ type: "compaction_end", reason, itemId, outcome: { status: "aborted" } });
+         return false;
+diff --git a/src/agents/sessions/agent-session-tree.ts b/src/agents/sessions/agent-session-tree.ts
+index edff96db..493575b2 100644
+--- a/src/agents/sessions/agent-session-tree.ts
++++ b/src/agents/sessions/agent-session-tree.ts
+@@ -122,8 +122,9 @@ export abstract class AgentSessionTree extends AgentSessionExecution {
+           replaceInstructions,
+           reserveTokens: branchSummarySettings.reserveTokens,
+           streamFn: this.agent.streamFn,
+-          runtime: createCompactionRuntime((usage) =>
+-            recordSessionModelUsage(this.sessionManager, usage),
++          runtime: createCompactionRuntime(
++            (usage) => recordSessionModelUsage(this.sessionManager, usage),
++            this.agent.modelContext,
+           ),
+         });
+         if (!result.ok) {
+diff --git a/src/agents/sessions/compaction/compaction.ts b/src/agents/sessions/compaction/compaction.ts
+index 43601859..06204fcd 100644
+--- a/src/agents/sessions/compaction/compaction.ts
++++ b/src/agents/sessions/compaction/compaction.ts
+@@ -1,4 +1,5 @@
+ /** Preserves the session SDK's throwing summary API over agent-core results. */
++import type { ModelContextHandoff } from "@openclaw/agent-core";
+ import type { Model } from "../../../llm/types.js";
+ import {
+   generateSummary as generateSummaryCore,
+@@ -30,6 +31,7 @@ export async function generateSummary(
+   streamFn?: StreamFn,
+   usageSink?: SessionModelUsageSink,
+   summaryPrompt?: CompactionSummaryPrompt,
++  modelContext?: ModelContextHandoff,
+ ): Promise<string> {
+   return unwrapCoreResult(
+     await generateSummaryCore(
+@@ -43,7 +45,7 @@ export async function generateSummary(
+       previousSummary,
+       thinkingLevel,
+       streamFn,
+-      createCompactionRuntime(usageSink),
++      createCompactionRuntime(usageSink, modelContext),
+       summaryPrompt,
+     ),
+   );
+diff --git a/src/agents/sessions/compaction/runtime.ts b/src/agents/sessions/compaction/runtime.ts
+index adfc2f1c..777de079 100644
+--- a/src/agents/sessions/compaction/runtime.ts
++++ b/src/agents/sessions/compaction/runtime.ts
+@@ -1,11 +1,17 @@
++import type { ModelContextHandoff } from "@openclaw/agent-core";
+ import type { Usage } from "../../../llm/types.js";
+ import { openClawAgentCoreRuntime } from "../../runtime/index.js";
+ 
+ export type SessionModelUsageSink = (usage: Usage) => void;
+ 
+ /** Adds a private usage sink without changing public summary result shapes. */
+-export function createCompactionRuntime(usageSink?: SessionModelUsageSink) {
+-  return usageSink
+-    ? { ...openClawAgentCoreRuntime, internalUsageSink: usageSink }
+-    : openClawAgentCoreRuntime;
++export function createCompactionRuntime(
++  usageSink?: SessionModelUsageSink,
++  modelContext?: ModelContextHandoff,
++) {
++  return {
++    ...openClawAgentCoreRuntime,
++    ...(usageSink ? { internalUsageSink: usageSink } : {}),
++    ...(modelContext ? { modelContext } : {}),
++  };
+ }
+diff --git a/src/agents/sessions/extensions/runner.ts b/src/agents/sessions/extensions/runner.ts
+index 4afd3d67..1e931ef2 100644
+--- a/src/agents/sessions/extensions/runner.ts
++++ b/src/agents/sessions/extensions/runner.ts
+@@ -3,6 +3,7 @@ import { coerceErrorMessage } from "@openclaw/normalization-core/error-coercion"
+ import type { ImageContent, Model } from "../../../llm/types.js";
+ import { registerListener } from "../../../shared/listeners.js";
+ import { rethrowIncognitoSessionError } from "../../../state/incognito-session-error.js";
++import { isAgentHarnessPreflightError } from "../../harness/errors.js";
+ import { interactiveAgentTheme as theme } from "../../modes/interactive/theme/theme.js";
+ import type { AgentMessage } from "../../runtime/index.js";
+ import { isToolResultError } from "../../tool-result-error.js";
+@@ -588,7 +589,7 @@ export class ExtensionRunner {
+             return result;
+           }
+         } catch (err) {
+-          if (eventType === "tool_call") {
++          if (eventType === "tool_call" || isAgentHarnessPreflightError(err)) {
+             throw err;
+           }
+           // Runtime faults must escape before another handler can run.
+diff --git a/src/agents/sessions/extensions/types.ts b/src/agents/sessions/extensions/types.ts
+index 5fb90c18..0d9ceb44 100644
+--- a/src/agents/sessions/extensions/types.ts
++++ b/src/agents/sessions/extensions/types.ts
+@@ -19,6 +19,7 @@ import type {
+   OverlayOptions,
+   TUI,
+ } from "@earendil-works/pi-tui";
++import type { ModelContextHandoff } from "@openclaw/agent-core";
+ import type { ImageContent, Model, TextContent } from "openclaw/plugin-sdk/llm";
+ import type { Static, TSchema } from "typebox";
+ import type { Theme } from "../../modes/interactive/theme/theme.js";
+@@ -512,6 +513,7 @@ interface SessionBeforeCompactEvent {
+   thinkingLevel?: ThinkingLevel;
+   /** Prepared provider stream for extension-owned summarization. */
+   streamFn?: StreamFn;
++  modelContext?: ModelContextHandoff;
+ }
+ 
+ /** Fired after context compaction */
+diff --git a/src/agents/sessions/session-manager-entries.ts b/src/agents/sessions/session-manager-entries.ts
+index b96b30de..90aca1ba 100644
+--- a/src/agents/sessions/session-manager-entries.ts
++++ b/src/agents/sessions/session-manager-entries.ts
+@@ -30,6 +30,31 @@ type LeafControlSelection = {
+   appendMode?: "side";
+ };
+ 
++/** Retain source dependencies when text is replaced by a native summary. */
++function collectModelContextInputRefs(
++  entries: SessionEntry[],
++  firstKeptId: string,
++): unknown[] | undefined {
++  const refs = new Map<string, unknown>();
++  for (const entry of entries) {
++    if (entry.id === firstKeptId) break;
++    const inputs =
++      entry.type === "message" &&
++      (entry.message.role === "assistant" || entry.message.role === "user")
++        ? [
++            ...(entry.message.modelContext?.inputRefs ?? []),
++            ...(entry.message.role === "assistant" && entry.message.modelContext?.outputRef
++              ? [entry.message.modelContext.outputRef]
++              : []),
++          ]
++        : entry.type === "compaction" || entry.type === "branch_summary"
++          ? entry.modelContextInputRefs
++          : undefined;
++    if (Array.isArray(inputs)) for (const ref of inputs) refs.set(JSON.stringify(ref), ref);
++  }
++  return refs.size ? [...refs.values()] : undefined;
++}
++
+ export class SessionManagerEntries extends SessionManagerAppend {
+   private createEntry<T extends { type: SessionEntry["type"] }>(data: T) {
+     return {
+@@ -49,6 +74,7 @@ export class SessionManagerEntries extends SessionManagerAppend {
+     metadata?: CompactionEntry["__openclaw"],
+     tokensAfter?: number,
+   ): Promise<string> {
++    const modelContextInputRefs = collectModelContextInputRefs(this.getBranch(), firstKeptEntryId);
+     const entry: CompactionEntry = this.createEntry({
+       type: "compaction",
+       summary,
+@@ -56,6 +82,7 @@ export class SessionManagerEntries extends SessionManagerAppend {
+       tokensBefore,
+       ...(tokensAfter !== undefined ? { tokensAfter } : {}),
+       details,
++      ...(modelContextInputRefs ? { modelContextInputRefs } : {}),
+       fromHook,
+       ...(metadata?.runId || metadata?.itemId ? { __openclaw: metadata } : {}),
+     });
+@@ -76,6 +103,7 @@ export class SessionManagerEntries extends SessionManagerAppend {
+     tokensAfter?: number,
+   ): string {
+     prepareSessionManagerSync("appendCompaction", this.persistenceTarget, this);
++    const modelContextInputRefs = collectModelContextInputRefs(this.getBranch(), firstKeptEntryId);
+     const entry: CompactionEntry = this.createEntry({
+       type: "compaction",
+       summary,
+@@ -83,6 +111,7 @@ export class SessionManagerEntries extends SessionManagerAppend {
+       tokensBefore,
+       ...(tokensAfter !== undefined ? { tokensAfter } : {}),
+       details,
++      ...(modelContextInputRefs ? { modelContextInputRefs } : {}),
+       fromHook,
+       ...(metadata?.runId || metadata?.itemId ? { __openclaw: metadata } : {}),
+     });
+@@ -443,6 +472,7 @@ export class SessionManagerEntries extends SessionManagerAppend {
+     if (branchTargetId === undefined) {
+       throw new Error(`Entry ${branchFromId} not found`);
+     }
++    const modelContextInputRefs = collectModelContextInputRefs(this.getBranch(), "");
+     return {
+       type: "branch_summary",
+       id: generateSessionEntryId(),
+@@ -451,6 +481,7 @@ export class SessionManagerEntries extends SessionManagerAppend {
+       fromId: branchTargetId ?? "root",
+       summary,
+       details,
++      ...(modelContextInputRefs ? { modelContextInputRefs } : {}),
+       fromHook,
+     };
+   }
+diff --git a/src/gateway/server-http.ts b/src/gateway/server-http.ts
+index 92f89a05..810c8498 100644
+--- a/src/gateway/server-http.ts
++++ b/src/gateway/server-http.ts
+@@ -189,8 +189,12 @@ export function createGatewayHttpServer(opts: {
+   ) => {
+     markGatewayIngressTransport(req, opts.ingressTransport ?? { kind: "ordinary" });
+     void runGatewayHttpRequest(req, res, opts.httpRequestLifetime, () =>
+-      runWithDiagnosticTraceContext(createDiagnosticTraceContext(), () =>
+-        handleRequest(req, res, expectation),
++      runWithDiagnosticTraceContext(
++        createDiagnosticTraceContext({
++          traceparent:
++            typeof req.headers.traceparent === "string" ? req.headers.traceparent : undefined,
++        }),
++        () => handleRequest(req, res, expectation),
+       ),
+     ).catch((error: unknown) => {
+       console.error("[gateway-http] failed to finalize request:", error);
+diff --git a/src/gateway/server-plugin-subagent-runtime.ts b/src/gateway/server-plugin-subagent-runtime.ts
+index 6e4921e2..1d7c25d6 100644
+--- a/src/gateway/server-plugin-subagent-runtime.ts
++++ b/src/gateway/server-plugin-subagent-runtime.ts
+@@ -430,7 +430,11 @@ export function createGatewaySubagentRuntime(
+           ...(pluginId ? { pluginRuntimeOwnerId: pluginId } : {}),
+           ...(pluginSubagentRequester ? { pluginSubagentRequester } : {}),
+           ...(runtimePluginToolGrant ? { runtimePluginToolGrant } : {}),
+-          ...(params.disableTools === true ? { pluginSubagentToolsAllow: [] } : {}),
++          ...(params.disableTools === true
++            ? { pluginSubagentToolsAllow: [] }
++            : params.toolsAllow !== undefined
++              ? { pluginSubagentToolsAllow: [...params.toolsAllow] }
++              : {}),
+           resolveGatewayContext,
+         },
+       );
+diff --git a/src/plugins/hook-agent-context.types.ts b/src/plugins/hook-agent-context.types.ts
+index 1f6099db..11f7ae8b 100644
+--- a/src/plugins/hook-agent-context.types.ts
++++ b/src/plugins/hook-agent-context.types.ts
+@@ -29,6 +29,8 @@ export type PluginHookAgentContext = PluginHookContextWindow & {
+   trace?: DiagnosticTraceContext;
+   agentId?: string;
+   sessionKey?: string;
++  /** Trusted immediate parent session for internal subagent work. */
++  parentSessionKey?: string;
+   sessionId?: string;
+   /** Host-resolved memory partition for this turn. */
+   memoryAudience?: MemoryAudience;
+diff --git a/src/plugins/hook-types.ts b/src/plugins/hook-types.ts
+index 471987b3..2a01f1d7 100644
+--- a/src/plugins/hook-types.ts
++++ b/src/plugins/hook-types.ts
+@@ -100,6 +100,9 @@ const PLUGIN_HOOK_NAMES = [
+   "agent_turn_prepare",
+   "before_prompt_build",
+   "before_agent_reply",
++  "model_context_prepare",
++  "model_context_accept",
++  "model_context_dispatch",
+   "model_call_started",
+   "model_call_ended",
+   "llm_input",
+@@ -165,6 +168,7 @@ export const isPluginHookName = (hookName: unknown): hookName is PluginHookName
+   typeof hookName === "string" && pluginHookNameSet.has(hookName as PluginHookName);
+ 
+ export const isPromptInjectionHookName = (hookName: PluginHookName): boolean =>
++  hookName === "model_context_prepare" ||
+   hookName === "agent_turn_prepare" ||
+   hookName === "before_prompt_build" ||
+   hookName === "heartbeat_prompt_contribution";
+@@ -229,6 +233,60 @@ export type PluginHookBeforeAgentReplyResult = {
+   reason?: string;
+ };
+ 
++export type PluginHookModelContextPrepareEvent = {
++  traceparent?: string;
++  callId: string;
++  role?: string;
++  runId: string;
++  sessionId: string;
++  provider: string;
++  model: string;
++  contextLimit: number;
++  outputTokens: number;
++  inputTokensEstimate: number;
++  transcriptCursor?: string;
++  systemPrompt?: string;
++  messages: import("@openclaw/llm-core").Message[];
++  tools: unknown[];
++};
++
++export type PluginHookModelContextPrepareResult = {
++  inputRefs?: unknown[];
++  view: unknown;
++  systemPromptAddition?: string;
++  messages?: import("@openclaw/llm-core").Message[];
++};
++
++export type PluginHookModelContextDispatchEvent = {
++  traceparent?: string;
++  callId: string;
++  role?: string;
++  runId: string;
++  sessionId: string;
++  provider: string;
++  model: string;
++  inputTokensEstimate: number;
++  outputTokens: number;
++  prepared: PluginHookModelContextPrepareResult;
++};
++
++export type PluginHookModelContextAcceptResult = {
++  outputRef?: unknown;
++  selectedOutputRefs?: unknown[];
++};
++
++export type PluginHookModelContextAcceptEvent = {
++  traceparent?: string;
++  callId: string;
++  role?: string;
++  runId: string;
++  sessionId: string;
++  prepared: PluginHookModelContextPrepareResult;
++  outcome?: "not_sent";
++  output?: import("@openclaw/llm-core").AssistantMessage;
++  transcriptEntryId?: string;
++};
++
+ export type PluginHookLlmInputEvent = {
+   runId: string;
+   sessionId: string;
+@@ -855,6 +913,20 @@ export type PluginHookHandlerMap = {
+   >;
+   model_call_started: AsyncPluginHook<PluginHookModelCallStartedEvent, PluginHookAgentContext>;
+   model_call_ended: AsyncPluginHook<PluginHookModelCallEndedEvent, PluginHookAgentContext>;
++  model_context_prepare: AsyncPluginHook<
++    PluginHookModelContextPrepareEvent,
++    PluginHookAgentContext,
++    PluginHookModelContextPrepareResult
++  >;
++  model_context_accept: AsyncPluginHook<
++    PluginHookModelContextAcceptEvent,
++    PluginHookAgentContext,
++    PluginHookModelContextAcceptResult
++  >;
++  model_context_dispatch: AsyncPluginHook<
++    PluginHookModelContextDispatchEvent,
++    PluginHookAgentContext
++  >;
+   llm_input: AsyncPluginHook<PluginHookLlmInputEvent, PluginHookAgentContext>;
+   llm_output: AsyncPluginHook<PluginHookLlmOutputEvent, PluginHookAgentContext>;
+   before_agent_finalize: AsyncPluginHook<
+diff --git a/src/plugins/hooks.ts b/src/plugins/hooks.ts
+index d7bf111f..06015000 100644
+--- a/src/plugins/hooks.ts
++++ b/src/plugins/hooks.ts
+@@ -248,6 +248,9 @@ export function createHookRunner(
+   const catchErrors = options.catchErrors ?? true;
+   const failurePolicyByHook = {
+     before_agent_run: "fail-closed",
++    model_context_prepare: "fail-closed",
++    model_context_accept: "fail-closed",
++    model_context_dispatch: "fail-closed",
+     ...options.failurePolicyByHook,
+   } satisfies Partial<Record<PluginHookName, HookFailurePolicy>>;
+   const voidHookTimeoutMsByHook = {
+@@ -1126,6 +1129,24 @@ export function createHookRunner(
+     runModelCallStarted: bindVoidHook("model_call_started"),
+     runModelCallEnded: bindVoidHook("model_call_ended"),
+     runLlmInput: withoutIncognitoLlmContent(bindVoidHook("llm_input")),
++    runModelContextPrepare: bindModifyingHook("model_context_prepare", {
++      mergeResults: (previous, next) => {
++        if (previous?.view != null && next?.view != null) {
++          throw new Error("One cognition view owner is allowed per native call");
++        }
++        // Null views are required metadata observers (for example budget).
++        // They participate in dispatch/accept without replacing cognition.
++        return next?.view != null ? next : (previous ?? next);
++      },
++    }),
++    runModelContextAccept: bindModifyingHook("model_context_accept", {
++      mergeResults: (previous, next) => {
++        if (previous?.outputRef != null && next?.outputRef != null)
++          throw new Error("One output material owner is allowed per native call");
++        return next?.outputRef != null ? next : (previous ?? next);
++      },
++    }),
++    runModelContextDispatch: bindVoidHook("model_context_dispatch"),
+     runLlmOutput: withoutIncognitoLlmContent(bindVoidHook("llm_output")),
+     runBeforeAgentFinalize: async (
+       event: HookEvent<"before_agent_finalize">,
+diff --git a/src/plugins/loader-module-runtime.ts b/src/plugins/loader-module-runtime.ts
+index 1c669283..d7a2bbc5 100644
+--- a/src/plugins/loader-module-runtime.ts
++++ b/src/plugins/loader-module-runtime.ts
+@@ -35,6 +35,7 @@ import type { OpenClawPluginDefinition } from "./types.js";
+ // Scoped runtime proxies also ask for descriptors after their get trap returns.
+ const LAZY_RUNTIME_PROPERTIES = {
+   version: true,
++  modelContext: true,
+   decisions: true,
+   gateway: true,
+   config: true,
+diff --git a/src/plugins/registry-registrars-tools-hooks.ts b/src/plugins/registry-registrars-tools-hooks.ts
+index 6407da07..cb863c08 100644
+--- a/src/plugins/registry-registrars-tools-hooks.ts
++++ b/src/plugins/registry-registrars-tools-hooks.ts
+@@ -55,6 +55,9 @@ const conversationHookNames = new Set<PluginHookName>([
+   "agent_turn_prepare",
+   "before_prompt_build",
+   "before_agent_reply",
++  "model_context_prepare",
++  "model_context_accept",
++  "model_context_dispatch",
+   "llm_input",
+   "llm_output",
+   "before_agent_finalize",
+diff --git a/src/plugins/runtime/index.ts b/src/plugins/runtime/index.ts
+index 02f217a7..c42c7bf7 100644
+--- a/src/plugins/runtime/index.ts
++++ b/src/plugins/runtime/index.ts
+@@ -257,6 +257,7 @@ export const createPluginRuntime: PluginRuntimeFactory = (
+   let modelConfig = _options.modelConfig;
+   const runtime: PluginRuntime = {
+     version: VERSION,
++    modelContext: { version: 1, harnesses: ["embedded"] },
+     capabilities: base.capabilities,
+     decisions: {
+       evaluate: async (...args) =>
+diff --git a/src/plugins/runtime/types.ts b/src/plugins/runtime/types.ts
+index 1ba77516..6c4ffd6a 100644
+--- a/src/plugins/runtime/types.ts
++++ b/src/plugins/runtime/types.ts
+@@ -25,6 +25,8 @@ type SubagentRunParams = {
+   message: string;
+   /** Run with an exact empty tool surface. */
+   disableTools?: boolean;
++  /** Narrow the native tool surface; normal agent policy still applies. */
++  toolsAllow?: string[];
+   /** Add exact tools registered by the calling plugin to the worker's normal tool surface. */
+   toolsAlsoAllow?: string[];
+   provider?: string;
+@@ -145,6 +147,8 @@ export type RuntimeGatewayRequestOptions = {
+ 
+ /** Trusted in-process runtime surface injected into native plugins. */
+ export type PluginRuntime = PluginRuntimeCore & {
++  /** Required per-model prepare/dispatch/accept, supported by the embedded harness. */
++  modelContext: { version: 1; harnesses: readonly ["embedded"] };
+   gateway: {
+     /** Whether this process owns an active Gateway request context. */
+     isAvailable: () => Promise<boolean>;
+diff --git a/tsdown.config.ts b/tsdown.config.ts
+index a42b660a..47524b02 100644
+--- a/tsdown.config.ts
++++ b/tsdown.config.ts
+@@ -386,6 +386,9 @@ const rootDependencyOptions = withExternalPackageSubpaths({
+     "jimp",
+     "matrix-js-sdk",
+     "prism-media",
++    // Browser execution uses the installed root dependency; keep its large
++    // transport bundle out of the shared runtime compilation graph.
++    "playwright-core",
+     // Extensions and external tool validation must share Format and Settings registries.
+     "typebox",
+     "typescript",

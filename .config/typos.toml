@@ -1,9 +1,0 @@
-[files]
-# Generated bindings are checked through their Proto/schema sources instead.
-extend-exclude = [
-    "packages/protocol-ts/src/generated/**",
-    "crates/protocol/src/generated/**",
-]
-
-[default.extend-words]
-sherif = "sherif"

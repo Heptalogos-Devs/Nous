@@ -1,0 +1,478 @@
+{
+  "key": "worker",
+  "title": "专业任务、子执行者与保留成果",
+  "kind": "执行与恢复流程图",
+  "scope": "Hept与Nous开发分支；主要执行职责已在默认分支存在",
+  "summary": "任务委派、原生执行、结果保留和主体查看构成不同步骤。",
+  "mechanisms": [
+    "worker",
+    "bridge",
+    "reactor",
+    "life"
+  ],
+  "direction": "TB",
+  "nodes": [
+    {
+      "id": "choice",
+      "label": "正式 search / delegation 决定",
+      "owner": "hept",
+      "kind": "store",
+      "mechanisms": [
+        "deliberation"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "start",
+      "label": "roles.startExecution\n绑定实际Activity与工具范围",
+      "owner": "hept",
+      "kind": "operation",
+      "mechanisms": [
+        "worker",
+        "roles"
+      ],
+      "symbol": "subject-situation.ts search",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "prior",
+      "label": "已有相同 requestId？",
+      "owner": "hept",
+      "kind": "decision",
+      "mechanisms": [
+        "worker"
+      ],
+      "symbol": "readDispatch / requestDigest",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "saved",
+      "label": "保存的运行输入 / dispatch\n原始任务、来源、角色与时限",
+      "owner": "hept",
+      "kind": "store",
+      "mechanisms": [
+        "bridge",
+        "worker"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "dispatch",
+      "label": "原生 subject.execution\n独立运行，返回给Host为pending",
+      "owner": "native",
+      "kind": "operation",
+      "mechanisms": [
+        "worker"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "tool",
+      "label": "获准工具 / 子执行者",
+      "owner": "native",
+      "kind": "operation",
+      "mechanisms": [
+        "permissions",
+        "worker"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "child",
+      "label": "isolated子Session\nNous parent-child绑定与Host handoff",
+      "owner": "nous",
+      "kind": "operation",
+      "mechanisms": [
+        "worker",
+        "projection"
+      ],
+      "symbol": "prepareSubagentSpawn",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "results",
+      "label": "保留的真实工具 / 模型结果\n原始source、payload、usage、terminal",
+      "owner": "hept",
+      "kind": "store",
+      "mechanisms": [
+        "worker",
+        "custody"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "completion",
+      "label": "完成回传 / flush原生历史\n保留原结果并发ready通知",
+      "owner": "hept",
+      "kind": "operation",
+      "mechanisms": [
+        "worker",
+        "bridge"
+      ],
+      "symbol": "prepareSubagentCompletion / completion",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "notice",
+      "label": "Attention：activity_result\n可查看结果的元信息",
+      "owner": "hept",
+      "kind": "operation",
+      "mechanisms": [
+        "attention"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "read",
+      "label": "前台read选中role_result\n检查同一Activity与实际父运行",
+      "owner": "hept",
+      "kind": "operation",
+      "mechanisms": [
+        "situation",
+        "worker"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "release",
+      "label": "releaseResult\n稳定releaseId + 选定resultIds",
+      "owner": "hept",
+      "kind": "operation",
+      "mechanisms": [
+        "worker"
+      ],
+      "symbol": "native.releaseResult",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "contacts",
+      "label": "后续Subject contacts",
+      "owner": "hept",
+      "kind": "operation",
+      "mechanisms": [
+        "bridge"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "input",
+      "label": "Subject原生输入准备\n按图“原生模型输入”接纳",
+      "owner": "nous",
+      "kind": "operation",
+      "mechanisms": [
+        "bridge"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "recover",
+      "label": "显式原任务继续\n复用结果 / 完成回传 / 原候选",
+      "owner": "hept",
+      "kind": "operation",
+      "mechanisms": [
+        "operator",
+        "worker"
+      ],
+      "symbol": "operator task resume",
+      "detail": "",
+      "group": ""
+    },
+    {
+      "id": "blocked",
+      "label": "仍在运行 / 结果未知 / 权限变化\n保留实际状态并返回具体问题",
+      "owner": "hept",
+      "kind": "state",
+      "mechanisms": [
+        "worker",
+        "permissions"
+      ],
+      "symbol": "",
+      "detail": "",
+      "group": ""
+    }
+  ],
+  "edges": [
+    {
+      "id": "worker-edge-1",
+      "from_": "choice",
+      "to": "start",
+      "type": "call",
+      "label": "委派已采纳的有界任务",
+      "mechanisms": [
+        "worker"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "worker-edge-2",
+      "from_": "start",
+      "to": "prior",
+      "type": "read",
+      "label": "按requestId读取现有dispatch",
+      "mechanisms": [
+        "worker"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "worker-edge-3",
+      "from_": "prior",
+      "to": "saved",
+      "type": "write",
+      "label": "没有既有记录：登记输入",
+      "mechanisms": [
+        "bridge"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "worker-edge-4",
+      "from_": "saved",
+      "to": "dispatch",
+      "type": "call",
+      "label": "正式原生运行入口",
+      "mechanisms": [
+        "worker"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "worker-edge-5",
+      "from_": "prior",
+      "to": "results",
+      "type": "read",
+      "label": "已完成：读取原结果",
+      "mechanisms": [
+        "worker"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "worker-edge-6",
+      "from_": "prior",
+      "to": "blocked",
+      "type": "transition",
+      "label": "pending / uncertain / identity conflict",
+      "mechanisms": [
+        "worker"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "worker-edge-7",
+      "from_": "dispatch",
+      "to": "tool",
+      "type": "call",
+      "label": "逐工具实际授权后执行",
+      "mechanisms": [
+        "permissions"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "worker-edge-8",
+      "from_": "tool",
+      "to": "child",
+      "type": "call",
+      "label": "明确isolated spawn",
+      "mechanisms": [
+        "worker",
+        "projection"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "worker-edge-9",
+      "from_": "child",
+      "to": "completion",
+      "type": "call",
+      "label": "真实子运行终态",
+      "mechanisms": [
+        "worker"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "worker-edge-10",
+      "from_": "tool",
+      "to": "results",
+      "type": "write",
+      "label": "实际工具成果",
+      "mechanisms": [
+        "bridge",
+        "worker"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "worker-edge-11",
+      "from_": "dispatch",
+      "to": "results",
+      "type": "write",
+      "label": "实际模型输出与终态",
+      "mechanisms": [
+        "worker"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "worker-edge-12",
+      "from_": "completion",
+      "to": "results",
+      "type": "write",
+      "label": "完成回传关联原始结果",
+      "mechanisms": [
+        "worker"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "worker-edge-13",
+      "from_": "results",
+      "to": "notice",
+      "type": "read",
+      "label": "readyResults有界目录",
+      "mechanisms": [
+        "attention"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "worker-edge-14",
+      "from_": "notice",
+      "to": "read",
+      "type": "data",
+      "label": "当前结果对象可执行read",
+      "mechanisms": [
+        "situation"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "worker-edge-15",
+      "from_": "read",
+      "to": "release",
+      "type": "call",
+      "label": "选择精确结果",
+      "mechanisms": [
+        "worker"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "worker-edge-16",
+      "from_": "results",
+      "to": "release",
+      "type": "read",
+      "label": "保留payload及来源",
+      "mechanisms": [
+        "worker"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "worker-edge-17",
+      "from_": "release",
+      "to": "contacts",
+      "type": "data",
+      "label": "发布给Subject的选定内容",
+      "mechanisms": [
+        "worker"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "worker-edge-18",
+      "from_": "contacts",
+      "to": "input",
+      "type": "data",
+      "label": "进入后续模型输入",
+      "mechanisms": [
+        "bridge"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "worker-edge-19",
+      "from_": "recover",
+      "to": "saved",
+      "type": "read",
+      "label": "原任务与运行状态",
+      "mechanisms": [
+        "operator"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "worker-edge-20",
+      "from_": "recover",
+      "to": "completion",
+      "type": "call",
+      "label": "恢复已有完成交接",
+      "mechanisms": [
+        "operator",
+        "worker"
+      ],
+      "symbol": "",
+      "detail": ""
+    },
+    {
+      "id": "worker-edge-21",
+      "from_": "recover",
+      "to": "blocked",
+      "type": "data",
+      "label": "尚未满足的继续条件",
+      "mechanisms": [
+        "operator"
+      ],
+      "symbol": "",
+      "detail": ""
+    }
+  ],
+  "notes": [
+    "ready只建立待看候选，release选择供后续输入使用的结果。Occurrence的实际写入顺序见原生模型输入图。",
+    "PR56仍记录原浏览器结果交付和现有学生生活继续未完成，图中的恢复为现有操作流程。"
+  ]
+}
