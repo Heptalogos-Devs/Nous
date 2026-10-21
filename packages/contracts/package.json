@@ -1,55 +1,77 @@
 {
   "name": "@nous-wave/contracts",
-  "version": "0.1.0",
+  "version": "0.2.0-infrastructure.1",
   "type": "module",
   "exports": {
     ".": {
-      "development": "./index.ts",
-      "types": "./index.ts",
-      "default": "./index.ts"
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
     },
     "./common": {
-      "development": "./common.ts",
-      "types": "./common.ts",
-      "default": "./common.ts"
+      "types": "./dist/common.d.ts",
+      "default": "./dist/common.js"
     },
     "./knowledge": {
-      "development": "./knowledge.ts",
-      "types": "./knowledge.ts",
-      "default": "./knowledge.ts"
+      "types": "./dist/knowledge.d.ts",
+      "default": "./dist/knowledge.js"
     },
     "./cognition": {
-      "development": "./cognition.ts",
-      "types": "./cognition.ts",
-      "default": "./cognition.ts"
+      "types": "./dist/cognition.d.ts",
+      "default": "./dist/cognition.js"
     },
     "./materials": {
-      "development": "./materials.ts",
-      "types": "./materials.ts",
-      "default": "./materials.ts"
+      "types": "./dist/materials.d.ts",
+      "default": "./dist/materials.js"
     },
     "./management": {
-      "development": "./management.ts",
-      "types": "./management.ts",
-      "default": "./management.ts"
+      "types": "./dist/management.d.ts",
+      "default": "./dist/management.js"
     },
     "./identity": {
-      "development": "./identity.ts",
-      "types": "./identity.ts",
-      "default": "./identity.ts"
+      "types": "./dist/identity.d.ts",
+      "default": "./dist/identity.js"
+    },
+    "./runtime": {
+      "types": "./dist/runtime.d.ts",
+      "default": "./dist/runtime.js"
+    },
+    "./settings": {
+      "types": "./dist/settings.d.ts",
+      "default": "./dist/settings.js"
+    },
+    "./credentials": {
+      "types": "./dist/credentials.d.ts",
+      "default": "./dist/credentials.js"
+    },
+    "./prompts": {
+      "types": "./dist/prompts.d.ts",
+      "default": "./dist/prompts.js"
+    },
+    "./time": {
+      "types": "./dist/time.d.ts",
+      "default": "./dist/time.js"
+    },
+    "./models": {
+      "types": "./dist/models.d.ts",
+      "default": "./dist/models.js"
+    },
+    "./http": {
+      "types": "./dist/http.d.ts",
+      "default": "./dist/http.js"
     }
   },
   "dependencies": {
-    "zod": "4.6.5"
+    "zod": "4.6.5",
+    "@js-temporal/polyfill": "0.5.1"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json"
   },
   "files": [
-    "dist"
+    "dist",
+    "LICENSE",
+    "NOTICE",
+    "LICENSES"
   ],
-  "publishConfig": {
-    "directory": "../../data/packages/contracts",
-    "linkDirectory": false
-  }
+  "license": "AGPL-3.0-only"
 }

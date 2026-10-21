@@ -1,3 +1,5 @@
+import {requireSubject} from '../platform/security.js';
+import {parseInstant} from '@nous-wave/platform/time';
 import { sql } from 'kysely';
 import { z } from 'zod';
 import type { CallContext, Consumer, Policy, Ref, Selector, TimePoint, TimeRange } from '@nous-wave/contracts/common';
@@ -40,7 +42,7 @@ export function normalizedSelector(selector: Selector | undefined, textLength?: 
 }
 
 export function createSourceRepository(store: Storage) {
-  async function snapshots(ctx: CallContext, refs: Ref[]): Promise<SourceSnapshot[]> {
+  async function snapshots(ctx: CallContext, refs: Ref[],db=store.db): Promise<SourceSnapshot[]> {requireSubject(ctx);
     if (!refs.length) return [];
     for (const ref of refs) if (!z.uuid().safeParse(ref.id).success) fail('not_found', '来源身份不存在');
     const rows = await sql<{
@@ -60,27 +62,27 @@ export function createSourceRepository(store: Storage) {
       from requested q join encounters e on e.id=(q.ref->>'id')::uuid and e.subject_id=${ctx.subjectId}::uuid
       where q.ref->>'kind'='Encounter'
       union all
-      select q.ref,jsonb_build_object('kind','subject','host','nous','id',e.subject_id),e.id,null,'ExperienceItem',null::jsonb,null::jsonb,jsonb_path_query_array(e.body,'$.portions[*].ref'),
+      select q.ref,c.body->'consumer',e.id,null,'ExperienceItem',null::jsonb,null::jsonb,jsonb_path_query_array(e.body,'$.portions[*].ref'),
         e.body->'observed','subject',e.recorded_at,null,null,null
-      from requested q join experience_items e on e.id=(q.ref->>'id')::uuid and e.subject_id=${ctx.subjectId}::uuid
-      where q.ref->>'kind'='ExperienceItem'`.execute(store.db);
+      from requested q join experience_items e on e.id=(q.ref->>'id')::uuid and e.subject_id=${ctx.subjectId}::uuid join encounters c on c.id=e.encounter_id
+      where q.ref->>'kind'='ExperienceItem'`.execute(db);
     return rows.rows.map(row => {
       if (row.kind !== 'Material' && (row.requested.selector || row.requested.revision)) fail('invalid_input', '不可变接触与经历不接受修订或区域');
       const source = row.kind === 'Material' ? MaterialSourceSchema.parse(row.source) : undefined;
       const selector = normalizedSelector(row.requested.selector, row.textLength ?? undefined, row.mediaType ?? undefined);
       return { requested: row.requested,scope:row.scope??undefined, ref: { ...reference(store.installationId, ctx.subjectId, row.kind, row.id, row.revision ?? undefined), selector },
         inputs: source?.inputs ?? row.inputs, roots: source?.roots ?? [], policy: row.policy ?? all,
-        recorded: { clockId: 'real', at: new Date(row.recordedAt).toISOString() }, observed: row.observed ?? undefined,
+        recorded: { domainId: 'real', at: parseInstant(row.recordedAt) }, observed: row.observed ?? undefined,
         consumerKind: row.consumerKind ?? undefined, textLength: row.textLength ?? undefined, mediaType: row.mediaType ?? undefined, occurred: row.occurred ?? undefined };
     });
   }
-  async function observations(ctx: CallContext, ids: string[], at: TimePoint, recordedAsOf?: string) {
+  async function observations(ctx: CallContext, ids: string[], at: TimePoint, recordedAsOf?: string,db=store.db) {requireSubject(ctx);
     if (!ids.length) return [];
     return (await sql<{ ref: Ref; observed: TimePoint }>`select l.to_ref as ref,e.body->'observed' as observed
       from source_links l join experience_items e on e.id=(l.from_ref->>'id')::uuid and e.subject_id=l.subject_id
       where l.subject_id=${ctx.subjectId}::uuid and l.from_ref->>'kind'='ExperienceItem'
-      and l.to_ref->>'id'=any(${ids}::text[]) and e.clock_id=${at.clockId} and e.observed_at<=${at.at}::timestamptz
-      and (${recordedAsOf ?? null}::timestamptz is null or e.recorded_at<=${recordedAsOf ?? null}::timestamptz)`.execute(store.db)).rows;
+      and l.to_ref->>'id'=any(${ids}::text[]) and e.domain_id=${at.domainId} and e.observed_at<=${at.at}::timestamptz
+      and (${recordedAsOf ?? null}::timestamptz is null or e.recorded_at<=${recordedAsOf ?? null}::timestamptz)`.execute(db)).rows;
   }
   return { snapshots, observations };
 }

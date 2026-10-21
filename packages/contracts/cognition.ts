@@ -1,6 +1,7 @@
 import { z } from 'zod';
-import { ConsumerSchema, PolicySchema, RefSchema, SelectorSchema, TimePointSchema, TimeRangeSchema } from './common.js';
+import { ConsumerSchema, PolicySchema, RefSchema, SelectorSchema, TimePointSchema, TimeRangeSchema, TimePointInputSchema, InstantInputSchema, InstantSchema } from './common.js';
 import { KnowledgeCreateSchema, KnowledgeKindSchema } from './knowledge.js';
+import {ConfigSnapshotSchema} from './settings.js';
 import { MaterialViewSchema } from './materials.js';
 
 export const QuerySchema = z.object({
@@ -14,12 +15,12 @@ export const QuerySchema = z.object({
   tagMatch: z.enum(['any', 'all']).default('any'),
   time: z.object({
     field: z.enum(['occurred', 'observed', 'formed', 'valid', 'recorded']),
-    clockId: z.string(),
-    start: z.string().datetime().overwrite(at => new Date(at).toISOString()),
-    end: z.string().datetime().overwrite(at => new Date(at).toISOString()),
+    domainId: z.string(),
+    start: InstantInputSchema,
+    end: InstantInputSchema,
   }).optional(),
-  knowledgeAt: TimePointSchema.optional(),
-  recordedAsOf: z.string().datetime().overwrite(at => new Date(at).toISOString()).optional(),
+  knowledgeAt: TimePointInputSchema.optional(),
+  recordedAsOf: InstantInputSchema.optional(),
   refs: z.array(z.string()).default([]),
   sources: z.array(z.string()).default([]),
   preferences: z.array(z.enum(['recent', 'independent_sources', 'diverse'])).default([]),
@@ -82,7 +83,7 @@ export const WorkContextBodySchema = z.object({
 export const WorkContextSchema = WorkContextBodySchema.extend({
   scope:ConsumerSchema,
   id: z.string(), subjectId: z.string(), revision: z.number().int().positive(),
-  ref: RefSchema, recorded: z.string(),
+  ref: RefSchema, recorded: InstantSchema,
 });
 export type WorkContext = z.infer<typeof WorkContextSchema>;
 export const InputPortionSchema = z.object({
@@ -107,7 +108,7 @@ export const ContextPrepareSchema = z.object({
     mediaTokens: z.number().int().nonnegative().default(0),
     cognitionTokens: z.number().int().positive().optional(),
   }),
-  observed: TimePointSchema,
+  observed: TimePointInputSchema,
 });
 export type ContextPrepareInput = z.input<typeof ContextPrepareSchema>;
 export const ContextBlockSchema = z.object({
@@ -124,9 +125,9 @@ export const ContextViewSchema = z.object({
   model: ContextPrepareSchema.shape.model,
   budget: z.object({ availableTokens: z.number(), usedTokens: z.number(), reservedTokens: z.number(), estimate: z.literal('unicode_code_points') }),
   effectivePolicy: z.object({ purpose: z.string(), audience: z.array(z.string()) }),
-  settingsRevisions: z.record(z.string(), z.number().int().nonnegative()),
+  settingsSnapshots:z.record(z.string(),ConfigSnapshotSchema),
   observed: TimePointSchema,
-  recorded: z.string(),
+  recorded: InstantSchema,
 });
 export type ContextView = z.infer<typeof ContextViewSchema>;
 export const FeedbackSchema = z.object({
@@ -154,14 +155,14 @@ export const FormationArtifactSchema = z.object({
     createdRefs: z.array(RefSchema), revisedRefs: z.array(RefSchema),
     conflicts: z.array(z.object({ id: z.string(), expectedRevision: z.number(), currentRevision: z.number().optional() })),
   })),
-  modelInvocationId:z.string().optional(),
-  resolutions:z.array(z.object({groupIds:z.array(z.string()),previous:ChangeSetSchema,action:z.enum(['edit','rejudge','discard']),reason:z.string(),at:TimePointSchema,modelInvocationId:z.string().optional()})).default([]),
-  modelOutputRef: RefSchema.optional(), recorded: z.string(),
+  modelOperationId:z.string().optional(),
+  resolutions:z.array(z.object({groupIds:z.array(z.string()),previous:ChangeSetSchema,action:z.enum(['edit','rejudge','discard']),reason:z.string(),at:TimePointSchema,modelOperationId:z.string().optional()})).default([]),
+  modelOutputRef: RefSchema.optional(), recorded: InstantSchema,
 });
 export type FormationArtifact = z.infer<typeof FormationArtifactSchema>;
-export const GrowthResolveSchema=z.object({id:z.string(),groupIds:z.array(z.string()).min(1),action:z.enum(['edit','rejudge','discard']),groups:ChangeSetSchema.shape.groups.optional(),formed:TimePointSchema,reason:z.string().min(1)});
+export const GrowthResolveSchema=z.object({id:z.string(),groupIds:z.array(z.string()).min(1),action:z.enum(['edit','rejudge','discard']),groups:ChangeSetSchema.shape.groups.optional(),formed:TimePointInputSchema,reason:z.string().min(1)});
 export const SeedApplySchema = z.object({
-  id: z.string(),formed:TimePointSchema, selectedIndexes: z.array(z.number().int().nonnegative()).optional(),
+  id: z.string(),formed:TimePointInputSchema, selectedIndexes: z.array(z.number().int().nonnegative()).optional(),
   changes: z.array(KnowledgeChangeSchema).optional(),
 });
 

@@ -4,11 +4,11 @@ PRE_PRODUCTION rebuild. Read the construction package at `../Specs/README.md`, i
 
 Use the installed antirlhf-exec and refactoring skills. Replace internal shapes and all current producers/consumers together. Delete superseded code, tests and documentation. Git preserves prior implementations. Use mature dependencies for generic execution, storage, parsing, transport and UI mechanics.
 
-Nous is one TypeScript modular service. Modules under `packages/nous/src/` own their semantics and transactions. PostgreSQL is authoritative; LanceDB is rebuildable. Public Zod contracts live in `packages/contracts/`; generate OpenAPI and Client through `pnpm generate`. DBOS owns workflow progress and Kysely datasource owns atomic business/checkpoint transactions. Do not create a second queue, outbox, lease or workflow engine.
+Nous is one TypeScript modular service. Modules under `packages/nous/src/` own their semantics and transactions. PostgreSQL is authoritative; LanceDB is rebuildable. Public Zod contracts live in `packages/contracts/`; generate OpenAPI and Client through `pnpm generate`. DBOS owns durable workflow progress. Ordinary domain transactions use Kysely directly; workflow transactions use the official Kysely datasource and the same pool. Do not create a second queue, outbox, lease or workflow engine.
 
 Hept is an independent product and database. Share only pure common values. Use the formal Client across products. Model identity and permissions come from the trusted host, never model input. Preserve native OpenClaw execution/history/tools and AstrBot channel mechanics.
 
-Use Node 24 and TypeScript 7 ESM. Generated local artifacts belong in ignored `data/`, except standard `node_modules/` and third-party CodeGraph storage. Acquire runtimes explicitly. Keep secrets out of logs and portable data.
+Use Node 24 and TypeScript 7 ESM. New downloads, caches, probes and temporary runtime instances belong in `../temp/`. Existing `data/` sources stay in place. Standard package `dist/`, `node_modules/` and third-party CodeGraph storage use their normal locations. Acquire runtimes explicitly. Keep secrets out of logs and portable data.
 
 Human documentation is Chinese. AI instructions are concise technical English. Use a few real scenarios and necessary rule tests. During iteration run affected checks.
 

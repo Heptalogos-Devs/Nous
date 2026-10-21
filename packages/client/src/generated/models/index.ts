@@ -9,27 +9,15 @@ export interface Actor {
     /**
      * 
      */
-    kind: ActorKindEnum;
-    /**
-     * 
-     */
     id: string;
     /**
      * 
      */
-    grants: Array<string>;
+    kind: ActorKindEnum;
     /**
      * 
      */
-    subjectIds?: Array<string>;
-    /**
-     * 
-     */
-    expiresAt?: string;
-    /**
-     * 
-     */
-    consumer?: Consumer;
+    authorityRef: string;
 }
 
 
@@ -38,8 +26,8 @@ export interface Actor {
  */
 export const ActorKindEnum = {
     Human: 'human',
-    Subject: 'subject',
     Service: 'service',
+    Subject: 'subject',
     Worker: 'worker',
     Author: 'author',
 } as const;
@@ -54,27 +42,15 @@ export interface ActorInput {
     /**
      * 
      */
-    kind: ActorInputKindEnum;
-    /**
-     * 
-     */
     id: string;
     /**
      * 
      */
-    grants: Array<string>;
+    kind: ActorInputKindEnum;
     /**
      * 
      */
-    subjectIds?: Array<string>;
-    /**
-     * 
-     */
-    expiresAt?: string;
-    /**
-     * 
-     */
-    consumer?: ConsumerInput;
+    authorityRef: string;
 }
 
 
@@ -83,13 +59,411 @@ export interface ActorInput {
  */
 export const ActorInputKindEnum = {
     Human: 'human',
-    Subject: 'subject',
     Service: 'service',
+    Subject: 'subject',
     Worker: 'worker',
     Author: 'author',
 } as const;
 export type ActorInputKindEnum = typeof ActorInputKindEnum[keyof typeof ActorInputKindEnum];
 
+/**
+ * 
+ * @export
+ * @interface AppliedField
+ */
+export interface AppliedField {
+    /**
+     * 
+     */
+    definitionRevision: string;
+    /**
+     * 
+     */
+    revisions: Array<RevisionRef>;
+    /**
+     * 
+     */
+    value?: JsonValue | null;
+}
+/**
+ * 
+ * @export
+ * @interface AppliedFieldInput
+ */
+export interface AppliedFieldInput {
+    /**
+     * 
+     */
+    definitionRevision: string;
+    /**
+     * 
+     */
+    revisions: Array<RevisionRefInput>;
+    /**
+     * 
+     */
+    value?: JsonValueInput | null;
+}
+/**
+ * 
+ * @export
+ * @interface AuthenticatedIdentity
+ */
+export interface AuthenticatedIdentity {
+    /**
+     * 
+     */
+    actor: Actor;
+    /**
+     * 
+     */
+    consumer: Consumer;
+}
+/**
+ * 
+ * @export
+ * @interface AuthenticatedIdentityInput
+ */
+export interface AuthenticatedIdentityInput {
+    /**
+     * 
+     */
+    actor: ActorInput;
+    /**
+     * 
+     */
+    consumer: ConsumerInput;
+}
+/**
+ * 
+ * @export
+ * @interface BlobResult
+ */
+export interface BlobResult {
+    /**
+     * 
+     */
+    digest: string;
+    /**
+     * 
+     */
+    bytes: number;
+    /**
+     * 
+     */
+    mediaType: string;
+    /**
+     * 
+     */
+    ref: Ref;
+}
+/**
+ * 
+ * @export
+ * @interface BlobResultInput
+ */
+export interface BlobResultInput {
+    /**
+     * 
+     */
+    digest: string;
+    /**
+     * 
+     */
+    bytes: number;
+    /**
+     * 
+     */
+    mediaType: string;
+    /**
+     * 
+     */
+    ref: RefInput;
+}
+/**
+ * 
+ * @export
+ * @interface BudgetAllocationSnapshot
+ */
+export interface BudgetAllocationSnapshot {
+    /**
+     * 
+     */
+    allocationRef: Ref;
+    /**
+     * 
+     */
+    childOperationId: string;
+    /**
+     * 
+     */
+    receiptDigest: string;
+    /**
+     * 
+     */
+    taskRef: Ref;
+    /**
+     * 
+     */
+    budgetOwnerRef: Ref;
+    /**
+     * 
+     */
+    issuer: BudgetAllocationSnapshotInputIssuer;
+    /**
+     * 
+     */
+    target: BudgetAllocationSnapshotTarget;
+    /**
+     * 
+     */
+    limits: BudgetAllocationSnapshotLimits;
+    /**
+     * 
+     */
+    expiresAt: CapturedTimeOneOfPoint;
+}
+/**
+ * 
+ * @export
+ * @interface BudgetAllocationSnapshotInput
+ */
+export interface BudgetAllocationSnapshotInput {
+    /**
+     * 
+     */
+    allocationRef: RefInput;
+    /**
+     * 
+     */
+    childOperationId: string;
+    /**
+     * 
+     */
+    receiptDigest: string;
+    /**
+     * 
+     */
+    taskRef: RefInput;
+    /**
+     * 
+     */
+    budgetOwnerRef: RefInput;
+    /**
+     * 
+     */
+    issuer: BudgetAllocationSnapshotInputIssuer;
+    /**
+     * 
+     */
+    target: BudgetAllocationSnapshotInputTarget;
+    /**
+     * 
+     */
+    limits: BudgetAllocationSnapshotInputLimits;
+    /**
+     * 
+     */
+    expiresAt: BudgetAllocationSnapshotInputExpiresAt;
+}
+/**
+ * 
+ * @export
+ * @interface BudgetAllocationSnapshotInputExpiresAt
+ */
+export interface BudgetAllocationSnapshotInputExpiresAt {
+    /**
+     * 
+     */
+    domainId: BudgetAllocationSnapshotInputExpiresAtDomainIdEnum;
+    /**
+     * 
+     */
+    at: string;
+}
+
+
+/**
+ * @export
+ */
+export const BudgetAllocationSnapshotInputExpiresAtDomainIdEnum = {
+    Real: 'real',
+} as const;
+export type BudgetAllocationSnapshotInputExpiresAtDomainIdEnum = typeof BudgetAllocationSnapshotInputExpiresAtDomainIdEnum[keyof typeof BudgetAllocationSnapshotInputExpiresAtDomainIdEnum];
+
+/**
+ * 
+ * @export
+ * @interface BudgetAllocationSnapshotInputIssuer
+ */
+export interface BudgetAllocationSnapshotInputIssuer {
+    /**
+     * 
+     */
+    product: BudgetAllocationSnapshotInputIssuerProductEnum;
+    /**
+     * 
+     */
+    installationId: string;
+    /**
+     * 
+     */
+    authorityRef: string;
+}
+
+
+/**
+ * @export
+ */
+export const BudgetAllocationSnapshotInputIssuerProductEnum = {
+    Hept: 'hept',
+} as const;
+export type BudgetAllocationSnapshotInputIssuerProductEnum = typeof BudgetAllocationSnapshotInputIssuerProductEnum[keyof typeof BudgetAllocationSnapshotInputIssuerProductEnum];
+
+/**
+ * 
+ * @export
+ * @interface BudgetAllocationSnapshotInputLimits
+ */
+export interface BudgetAllocationSnapshotInputLimits {
+    /**
+     * 
+     */
+    totalAmount: MoneyInput;
+    /**
+     * 
+     */
+    perCallAmount?: MoneyInput;
+    /**
+     * 
+     */
+    maxCalls?: number;
+    /**
+     * 
+     */
+    maxTokens?: number;
+}
+/**
+ * 
+ * @export
+ * @interface BudgetAllocationSnapshotInputTarget
+ */
+export interface BudgetAllocationSnapshotInputTarget {
+    /**
+     * 
+     */
+    product: BudgetAllocationSnapshotInputTargetProductEnum;
+    /**
+     * 
+     */
+    installationId: string;
+    /**
+     * 
+     */
+    subjectId: string;
+    /**
+     * 
+     */
+    consumer: ConsumerInput;
+}
+
+
+/**
+ * @export
+ */
+export const BudgetAllocationSnapshotInputTargetProductEnum = {
+    Nous: 'nous',
+    Hept: 'hept',
+} as const;
+export type BudgetAllocationSnapshotInputTargetProductEnum = typeof BudgetAllocationSnapshotInputTargetProductEnum[keyof typeof BudgetAllocationSnapshotInputTargetProductEnum];
+
+/**
+ * 
+ * @export
+ * @interface BudgetAllocationSnapshotLimits
+ */
+export interface BudgetAllocationSnapshotLimits {
+    /**
+     * 
+     */
+    totalAmount: Money;
+    /**
+     * 
+     */
+    perCallAmount?: Money;
+    /**
+     * 
+     */
+    maxCalls?: number;
+    /**
+     * 
+     */
+    maxTokens?: number;
+}
+/**
+ * 
+ * @export
+ * @interface BudgetAllocationSnapshotTarget
+ */
+export interface BudgetAllocationSnapshotTarget {
+    /**
+     * 
+     */
+    product: BudgetAllocationSnapshotTargetProductEnum;
+    /**
+     * 
+     */
+    installationId: string;
+    /**
+     * 
+     */
+    subjectId: string;
+    /**
+     * 
+     */
+    consumer: Consumer;
+}
+
+
+/**
+ * @export
+ */
+export const BudgetAllocationSnapshotTargetProductEnum = {
+    Nous: 'nous',
+    Hept: 'hept',
+} as const;
+export type BudgetAllocationSnapshotTargetProductEnum = typeof BudgetAllocationSnapshotTargetProductEnum[keyof typeof BudgetAllocationSnapshotTargetProductEnum];
+
+/**
+ * 
+ * @export
+ * @interface BudgetAllocationUse
+ */
+export interface BudgetAllocationUse {
+    /**
+     * 
+     */
+    allocationRef: Ref;
+    /**
+     * 
+     */
+    childOperationId: string;
+}
+/**
+ * 
+ * @export
+ * @interface BudgetAllocationUseInput
+ */
+export interface BudgetAllocationUseInput {
+    /**
+     * 
+     */
+    allocationRef: RefInput;
+    /**
+     * 
+     */
+    childOperationId: string;
+}
 /**
  * 
  * @export
@@ -103,7 +477,11 @@ export interface CallContext {
     /**
      * 
      */
-    subjectId: string;
+    consumer: Consumer;
+    /**
+     * 
+     */
+    subjectId?: string;
     /**
      * 
      */
@@ -115,11 +493,7 @@ export interface CallContext {
     /**
      * 
      */
-    consumer?: Consumer;
-    /**
-     * 
-     */
-    traceContext: CallContextTraceContext;
+    trace: TraceContext;
 }
 /**
  * 
@@ -134,7 +508,11 @@ export interface CallContextInput {
     /**
      * 
      */
-    subjectId: string;
+    consumer: ConsumerInput;
+    /**
+     * 
+     */
+    subjectId?: string;
     /**
      * 
      */
@@ -146,50 +524,204 @@ export interface CallContextInput {
     /**
      * 
      */
-    consumer?: ConsumerInput;
+    trace: TraceContextInput;
+}
+/**
+ * @type CapturedTime
+ * 
+ * @export
+ */
+export type CapturedTime = CapturedTimeOneOf | CapturedTimeOneOf1;
+/**
+ * @type CapturedTimeInput
+ * 
+ * @export
+ */
+export type CapturedTimeInput = CapturedTimeInputOneOf | CapturedTimeInputOneOf1;
+/**
+ * 
+ * @export
+ * @interface CapturedTimeInputOneOf
+ */
+export interface CapturedTimeInputOneOf {
     /**
      * 
      */
-    traceContext: CallContextInputTraceContext;
+    point: CapturedTimeInputOneOfPoint;
+    /**
+     * 
+     */
+    realAt: string;
 }
 /**
  * 
  * @export
- * @interface CallContextInputTraceContext
+ * @interface CapturedTimeInputOneOf1
  */
-export interface CallContextInputTraceContext {
+export interface CapturedTimeInputOneOf1 {
     /**
      * 
      */
-    traceId: string;
+    point: TimePointInput;
     /**
      * 
      */
-    operationId: string;
+    realAt: string;
     /**
      * 
      */
-    traceparent?: string;
+    clockRef: CapturedTimeInputOneOf1ClockRef;
+    /**
+     * 
+     */
+    clockRevision: number;
+    /**
+     * 
+     */
+    segmentRef: ClockSegmentRefInput;
 }
 /**
  * 
  * @export
- * @interface CallContextTraceContext
+ * @interface CapturedTimeInputOneOf1ClockRef
  */
-export interface CallContextTraceContext {
+export interface CapturedTimeInputOneOf1ClockRef {
     /**
      * 
      */
-    traceId: string;
+    product: CapturedTimeInputOneOf1ClockRefProductEnum;
     /**
      * 
      */
-    operationId: string;
+    installationId: string;
     /**
      * 
      */
-    traceparent?: string;
+    subjectId?: string;
+    /**
+     * 
+     */
+    kind: CapturedTimeInputOneOf1ClockRefKindEnum;
+    /**
+     * 
+     */
+    id: string;
+    /**
+     * 
+     */
+    revision: number;
 }
+
+
+/**
+ * @export
+ */
+export const CapturedTimeInputOneOf1ClockRefProductEnum = {
+    Nous: 'nous',
+    Hept: 'hept',
+} as const;
+export type CapturedTimeInputOneOf1ClockRefProductEnum = typeof CapturedTimeInputOneOf1ClockRefProductEnum[keyof typeof CapturedTimeInputOneOf1ClockRefProductEnum];
+
+/**
+ * @export
+ */
+export const CapturedTimeInputOneOf1ClockRefKindEnum = {
+    Clock: 'Clock',
+} as const;
+export type CapturedTimeInputOneOf1ClockRefKindEnum = typeof CapturedTimeInputOneOf1ClockRefKindEnum[keyof typeof CapturedTimeInputOneOf1ClockRefKindEnum];
+
+/**
+ * 
+ * @export
+ * @interface CapturedTimeInputOneOfPoint
+ */
+export interface CapturedTimeInputOneOfPoint {
+    /**
+     * 
+     */
+    domainId: CapturedTimeInputOneOfPointDomainIdEnum;
+    /**
+     * 
+     */
+    at: string;
+}
+
+
+/**
+ * @export
+ */
+export const CapturedTimeInputOneOfPointDomainIdEnum = {
+    Real: 'real',
+} as const;
+export type CapturedTimeInputOneOfPointDomainIdEnum = typeof CapturedTimeInputOneOfPointDomainIdEnum[keyof typeof CapturedTimeInputOneOfPointDomainIdEnum];
+
+/**
+ * 
+ * @export
+ * @interface CapturedTimeOneOf
+ */
+export interface CapturedTimeOneOf {
+    /**
+     * 
+     */
+    point: CapturedTimeOneOfPoint;
+    /**
+     * 
+     */
+    realAt: string;
+}
+/**
+ * 
+ * @export
+ * @interface CapturedTimeOneOf1
+ */
+export interface CapturedTimeOneOf1 {
+    /**
+     * 
+     */
+    point: TimePoint;
+    /**
+     * 
+     */
+    realAt: string;
+    /**
+     * 
+     */
+    clockRef: CapturedTimeInputOneOf1ClockRef;
+    /**
+     * 
+     */
+    clockRevision: number;
+    /**
+     * 
+     */
+    segmentRef: ClockSegmentRef;
+}
+/**
+ * 
+ * @export
+ * @interface CapturedTimeOneOfPoint
+ */
+export interface CapturedTimeOneOfPoint {
+    /**
+     * 
+     */
+    domainId: CapturedTimeOneOfPointDomainIdEnum;
+    /**
+     * 
+     */
+    at: string;
+}
+
+
+/**
+ * @export
+ */
+export const CapturedTimeOneOfPointDomainIdEnum = {
+    Real: 'real',
+} as const;
+export type CapturedTimeOneOfPointDomainIdEnum = typeof CapturedTimeOneOfPointDomainIdEnum[keyof typeof CapturedTimeOneOfPointDomainIdEnum];
+
 /**
  * 
  * @export
@@ -230,6 +762,1255 @@ export interface ChangeSetInput {
      * 
      */
     groups: Array<GrowthResolveRequestGroupsInner>;
+}
+/**
+ * 
+ * @export
+ * @interface ClockAdvanceRequest
+ */
+export interface ClockAdvanceRequest {
+    /**
+     * 
+     */
+    clockRef: ClockRef;
+    /**
+     * 
+     */
+    expectedRevision: number;
+    /**
+     * 
+     */
+    deltaMicros: string;
+}
+/**
+ * 
+ * @export
+ * @interface ClockAdvanceRequestInput
+ */
+export interface ClockAdvanceRequestInput {
+    /**
+     * 
+     */
+    clockRef: ClockRefInput;
+    /**
+     * 
+     */
+    expectedRevision: number;
+    /**
+     * 
+     */
+    deltaMicros: string;
+}
+/**
+ * 
+ * @export
+ * @interface ClockChangeReceipt
+ */
+export interface ClockChangeReceipt {
+    /**
+     * 
+     */
+    operationId: string;
+    /**
+     * 
+     */
+    record: ClockRecord;
+    /**
+     * 
+     */
+    snapshot: ClockSnapshot;
+    /**
+     * 
+     */
+    closure?: ClockSegmentClosure;
+    /**
+     * 
+     */
+    lifecycle?: ClockChangeReceiptInputLifecycle;
+}
+/**
+ * 
+ * @export
+ * @interface ClockChangeReceiptInput
+ */
+export interface ClockChangeReceiptInput {
+    /**
+     * 
+     */
+    operationId: string;
+    /**
+     * 
+     */
+    record: ClockRecordInput;
+    /**
+     * 
+     */
+    snapshot: ClockSnapshotInput;
+    /**
+     * 
+     */
+    closure?: ClockSegmentClosureInput;
+    /**
+     * 
+     */
+    lifecycle?: ClockChangeReceiptInputLifecycle;
+}
+/**
+ * 
+ * @export
+ * @interface ClockChangeReceiptInputLifecycle
+ */
+export interface ClockChangeReceiptInputLifecycle {
+    /**
+     * 
+     */
+    status: ClockChangeReceiptInputLifecycleStatusEnum;
+    /**
+     * 
+     */
+    resumeOperationId?: string;
+    /**
+     * 
+     */
+    gap: string | null;
+}
+
+
+/**
+ * @export
+ */
+export const ClockChangeReceiptInputLifecycleStatusEnum = {
+    Offline: 'offline',
+    Resumed: 'resumed',
+    Superseded: 'superseded',
+    Recovered: 'recovered',
+} as const;
+export type ClockChangeReceiptInputLifecycleStatusEnum = typeof ClockChangeReceiptInputLifecycleStatusEnum[keyof typeof ClockChangeReceiptInputLifecycleStatusEnum];
+
+/**
+ * 
+ * @export
+ * @interface ClockConfigureRequest
+ */
+export interface ClockConfigureRequest {
+    /**
+     * 
+     */
+    subjectId?: string;
+    /**
+     * 
+     */
+    domainId: string;
+    /**
+     * 
+     */
+    expectedRevision: number;
+    /**
+     * 
+     */
+    initialAt: any;
+    /**
+     * 
+     */
+    rate: string;
+    /**
+     * 
+     */
+    offlinePolicy: ClockOfflinePolicy;
+    /**
+     * 
+     */
+    clockRef?: ClockRef;
+}
+/**
+ * 
+ * @export
+ * @interface ClockConfigureRequestAnyOf
+ */
+export interface ClockConfigureRequestAnyOf {
+    /**
+     * 
+     */
+    subjectId?: string;
+    /**
+     * 
+     */
+    domainId: string;
+    /**
+     * 
+     */
+    expectedRevision: ClockConfigureRequestAnyOfExpectedRevisionEnum;
+    /**
+     * 
+     */
+    initialAt: any;
+    /**
+     * 
+     */
+    rate: string;
+    /**
+     * 
+     */
+    offlinePolicy: ClockOfflinePolicy;
+}
+
+
+/**
+ * @export
+ */
+export const ClockConfigureRequestAnyOfExpectedRevisionEnum = {
+    NUMBER_0: 0,
+} as const;
+export type ClockConfigureRequestAnyOfExpectedRevisionEnum = typeof ClockConfigureRequestAnyOfExpectedRevisionEnum[keyof typeof ClockConfigureRequestAnyOfExpectedRevisionEnum];
+
+/**
+ * 
+ * @export
+ * @interface ClockConfigureRequestAnyOf1
+ */
+export interface ClockConfigureRequestAnyOf1 {
+    /**
+     * 
+     */
+    subjectId?: string;
+    /**
+     * 
+     */
+    domainId: string;
+    /**
+     * 
+     */
+    clockRef?: ClockRef;
+    /**
+     * 
+     */
+    expectedRevision: number;
+    /**
+     * 
+     */
+    rate?: string;
+    /**
+     * 
+     */
+    offlinePolicy?: ClockOfflinePolicy;
+}
+/**
+ * 
+ * @export
+ * @interface ClockConfigureRequestInput
+ */
+export interface ClockConfigureRequestInput {
+    /**
+     * 
+     */
+    subjectId?: string;
+    /**
+     * 
+     */
+    domainId: string;
+    /**
+     * 
+     */
+    expectedRevision: number;
+    /**
+     * 
+     */
+    initialAt: string;
+    /**
+     * 
+     */
+    rate: string;
+    /**
+     * 
+     */
+    offlinePolicy: ClockOfflinePolicyInput;
+    /**
+     * 
+     */
+    clockRef?: ClockRefInput;
+}
+/**
+ * 
+ * @export
+ * @interface ClockConfigureRequestInputAnyOf
+ */
+export interface ClockConfigureRequestInputAnyOf {
+    /**
+     * 
+     */
+    subjectId?: string;
+    /**
+     * 
+     */
+    domainId: string;
+    /**
+     * 
+     */
+    expectedRevision: ClockConfigureRequestInputAnyOfExpectedRevisionEnum;
+    /**
+     * 
+     */
+    initialAt: string;
+    /**
+     * 
+     */
+    rate: string;
+    /**
+     * 
+     */
+    offlinePolicy: ClockOfflinePolicyInput;
+}
+
+
+/**
+ * @export
+ */
+export const ClockConfigureRequestInputAnyOfExpectedRevisionEnum = {
+    NUMBER_0: 0,
+} as const;
+export type ClockConfigureRequestInputAnyOfExpectedRevisionEnum = typeof ClockConfigureRequestInputAnyOfExpectedRevisionEnum[keyof typeof ClockConfigureRequestInputAnyOfExpectedRevisionEnum];
+
+/**
+ * 
+ * @export
+ * @interface ClockConfigureRequestInputAnyOf1
+ */
+export interface ClockConfigureRequestInputAnyOf1 {
+    /**
+     * 
+     */
+    subjectId?: string;
+    /**
+     * 
+     */
+    domainId: string;
+    /**
+     * 
+     */
+    clockRef?: ClockRefInput;
+    /**
+     * 
+     */
+    expectedRevision: number;
+    /**
+     * 
+     */
+    rate?: string;
+    /**
+     * 
+     */
+    offlinePolicy?: ClockOfflinePolicyInput;
+}
+/**
+ * @type ClockDeadline
+ * 
+ * @export
+ */
+export type ClockDeadline = ClockDeadlineInputOneOf1 | ClockDeadlineInputOneOf2 | ClockDeadlineOneOf;
+/**
+ * @type ClockDeadlineInput
+ * 
+ * @export
+ */
+export type ClockDeadlineInput = ClockDeadlineInputOneOf | ClockDeadlineInputOneOf1 | ClockDeadlineInputOneOf2;
+/**
+ * 
+ * @export
+ * @interface ClockDeadlineInputOneOf
+ */
+export interface ClockDeadlineInputOneOf {
+    /**
+     * 
+     */
+    kind: ClockDeadlineInputOneOfKindEnum;
+    /**
+     * 
+     */
+    at: string;
+}
+
+
+/**
+ * @export
+ */
+export const ClockDeadlineInputOneOfKindEnum = {
+    Due: 'due',
+} as const;
+export type ClockDeadlineInputOneOfKindEnum = typeof ClockDeadlineInputOneOfKindEnum[keyof typeof ClockDeadlineInputOneOfKindEnum];
+
+/**
+ * 
+ * @export
+ * @interface ClockDeadlineInputOneOf1
+ */
+export interface ClockDeadlineInputOneOf1 {
+    /**
+     * 
+     */
+    kind: ClockDeadlineInputOneOf1KindEnum;
+}
+
+
+/**
+ * @export
+ */
+export const ClockDeadlineInputOneOf1KindEnum = {
+    Paused: 'paused',
+} as const;
+export type ClockDeadlineInputOneOf1KindEnum = typeof ClockDeadlineInputOneOf1KindEnum[keyof typeof ClockDeadlineInputOneOf1KindEnum];
+
+/**
+ * 
+ * @export
+ * @interface ClockDeadlineInputOneOf2
+ */
+export interface ClockDeadlineInputOneOf2 {
+    /**
+     * 
+     */
+    kind: ClockDeadlineInputOneOf2KindEnum;
+}
+
+
+/**
+ * @export
+ */
+export const ClockDeadlineInputOneOf2KindEnum = {
+    Unmapped: 'unmapped',
+} as const;
+export type ClockDeadlineInputOneOf2KindEnum = typeof ClockDeadlineInputOneOf2KindEnum[keyof typeof ClockDeadlineInputOneOf2KindEnum];
+
+/**
+ * 
+ * @export
+ * @interface ClockDeadlineOneOf
+ */
+export interface ClockDeadlineOneOf {
+    /**
+     * 
+     */
+    kind: ClockDeadlineOneOfKindEnum;
+    /**
+     * 
+     */
+    at: string;
+}
+
+
+/**
+ * @export
+ */
+export const ClockDeadlineOneOfKindEnum = {
+    Due: 'due',
+} as const;
+export type ClockDeadlineOneOfKindEnum = typeof ClockDeadlineOneOfKindEnum[keyof typeof ClockDeadlineOneOfKindEnum];
+
+/**
+ * @type ClockOfflinePolicy
+ * 
+ * @export
+ */
+export type ClockOfflinePolicy = ClockOfflinePolicyInputOneOf | ClockOfflinePolicyOneOf;
+/**
+ * @type ClockOfflinePolicyInput
+ * 
+ * @export
+ */
+export type ClockOfflinePolicyInput = ClockOfflinePolicyInputOneOf | ClockOfflinePolicyInputOneOf1;
+/**
+ * 
+ * @export
+ * @interface ClockOfflinePolicyInputOneOf
+ */
+export interface ClockOfflinePolicyInputOneOf {
+    /**
+     * 
+     */
+    mode: ClockOfflinePolicyInputOneOfModeEnum;
+}
+
+
+/**
+ * @export
+ */
+export const ClockOfflinePolicyInputOneOfModeEnum = {
+    Freeze: 'freeze',
+} as const;
+export type ClockOfflinePolicyInputOneOfModeEnum = typeof ClockOfflinePolicyInputOneOfModeEnum[keyof typeof ClockOfflinePolicyInputOneOfModeEnum];
+
+/**
+ * 
+ * @export
+ * @interface ClockOfflinePolicyInputOneOf1
+ */
+export interface ClockOfflinePolicyInputOneOf1 {
+    /**
+     * 
+     */
+    mode: ClockOfflinePolicyInputOneOf1ModeEnum;
+    /**
+     * 
+     */
+    offlineRate: string;
+}
+
+
+/**
+ * @export
+ */
+export const ClockOfflinePolicyInputOneOf1ModeEnum = {
+    Elapsed: 'elapsed',
+} as const;
+export type ClockOfflinePolicyInputOneOf1ModeEnum = typeof ClockOfflinePolicyInputOneOf1ModeEnum[keyof typeof ClockOfflinePolicyInputOneOf1ModeEnum];
+
+/**
+ * 
+ * @export
+ * @interface ClockOfflinePolicyOneOf
+ */
+export interface ClockOfflinePolicyOneOf {
+    /**
+     * 
+     */
+    mode: ClockOfflinePolicyOneOfModeEnum;
+    /**
+     * 
+     */
+    offlineRate: string;
+}
+
+
+/**
+ * @export
+ */
+export const ClockOfflinePolicyOneOfModeEnum = {
+    Elapsed: 'elapsed',
+} as const;
+export type ClockOfflinePolicyOneOfModeEnum = typeof ClockOfflinePolicyOneOfModeEnum[keyof typeof ClockOfflinePolicyOneOfModeEnum];
+
+/**
+ * 
+ * @export
+ * @interface ClockPauseRequest
+ */
+export interface ClockPauseRequest {
+    /**
+     * 
+     */
+    clockRef: ClockRef;
+    /**
+     * 
+     */
+    expectedRevision: number;
+}
+/**
+ * 
+ * @export
+ * @interface ClockPauseRequestInput
+ */
+export interface ClockPauseRequestInput {
+    /**
+     * 
+     */
+    clockRef: ClockRefInput;
+    /**
+     * 
+     */
+    expectedRevision: number;
+}
+/**
+ * 
+ * @export
+ * @interface ClockRecord
+ */
+export interface ClockRecord {
+    /**
+     * 
+     */
+    ref: CapturedTimeInputOneOf1ClockRef;
+    /**
+     * 
+     */
+    domainId: string;
+    /**
+     * 
+     */
+    revision: number;
+    /**
+     * 
+     */
+    currentSegmentRef: ClockSegmentRef;
+    /**
+     * 
+     */
+    onlineRate: string;
+    /**
+     * 
+     */
+    offlinePolicy: ClockOfflinePolicy;
+    /**
+     * 
+     */
+    status: ClockRecordStatusEnum;
+}
+
+
+/**
+ * @export
+ */
+export const ClockRecordStatusEnum = {
+    Running: 'running',
+    Paused: 'paused',
+    Retired: 'retired',
+} as const;
+export type ClockRecordStatusEnum = typeof ClockRecordStatusEnum[keyof typeof ClockRecordStatusEnum];
+
+/**
+ * 
+ * @export
+ * @interface ClockRecordInput
+ */
+export interface ClockRecordInput {
+    /**
+     * 
+     */
+    ref: CapturedTimeInputOneOf1ClockRef;
+    /**
+     * 
+     */
+    domainId: string;
+    /**
+     * 
+     */
+    revision: number;
+    /**
+     * 
+     */
+    currentSegmentRef: ClockSegmentRefInput;
+    /**
+     * 
+     */
+    onlineRate: string;
+    /**
+     * 
+     */
+    offlinePolicy: ClockOfflinePolicyInput;
+    /**
+     * 
+     */
+    status: ClockRecordInputStatusEnum;
+}
+
+
+/**
+ * @export
+ */
+export const ClockRecordInputStatusEnum = {
+    Running: 'running',
+    Paused: 'paused',
+    Retired: 'retired',
+} as const;
+export type ClockRecordInputStatusEnum = typeof ClockRecordInputStatusEnum[keyof typeof ClockRecordInputStatusEnum];
+
+/**
+ * 
+ * @export
+ * @interface ClockRef
+ */
+export interface ClockRef {
+    /**
+     * 
+     */
+    product: ClockRefProductEnum;
+    /**
+     * 
+     */
+    installationId: string;
+    /**
+     * 
+     */
+    subjectId?: string;
+    /**
+     * 
+     */
+    kind: ClockRefKindEnum;
+    /**
+     * 
+     */
+    id: string;
+    /**
+     * 
+     */
+    revision?: number;
+}
+
+
+/**
+ * @export
+ */
+export const ClockRefProductEnum = {
+    Nous: 'nous',
+    Hept: 'hept',
+} as const;
+export type ClockRefProductEnum = typeof ClockRefProductEnum[keyof typeof ClockRefProductEnum];
+
+/**
+ * @export
+ */
+export const ClockRefKindEnum = {
+    Clock: 'Clock',
+} as const;
+export type ClockRefKindEnum = typeof ClockRefKindEnum[keyof typeof ClockRefKindEnum];
+
+/**
+ * 
+ * @export
+ * @interface ClockRefInput
+ */
+export interface ClockRefInput {
+    /**
+     * 
+     */
+    product: ClockRefInputProductEnum;
+    /**
+     * 
+     */
+    installationId: string;
+    /**
+     * 
+     */
+    subjectId?: string;
+    /**
+     * 
+     */
+    kind: ClockRefInputKindEnum;
+    /**
+     * 
+     */
+    id: string;
+    /**
+     * 
+     */
+    revision?: number;
+}
+
+
+/**
+ * @export
+ */
+export const ClockRefInputProductEnum = {
+    Nous: 'nous',
+    Hept: 'hept',
+} as const;
+export type ClockRefInputProductEnum = typeof ClockRefInputProductEnum[keyof typeof ClockRefInputProductEnum];
+
+/**
+ * @export
+ */
+export const ClockRefInputKindEnum = {
+    Clock: 'Clock',
+} as const;
+export type ClockRefInputKindEnum = typeof ClockRefInputKindEnum[keyof typeof ClockRefInputKindEnum];
+
+/**
+ * 
+ * @export
+ * @interface ClockResumeRequest
+ */
+export interface ClockResumeRequest {
+    /**
+     * 
+     */
+    clockRef: ClockRef;
+    /**
+     * 
+     */
+    expectedRevision: number;
+    /**
+     * 
+     */
+    rate: string;
+}
+/**
+ * 
+ * @export
+ * @interface ClockResumeRequestInput
+ */
+export interface ClockResumeRequestInput {
+    /**
+     * 
+     */
+    clockRef: ClockRefInput;
+    /**
+     * 
+     */
+    expectedRevision: number;
+    /**
+     * 
+     */
+    rate: string;
+}
+/**
+ * 
+ * @export
+ * @interface ClockSegment
+ */
+export interface ClockSegment {
+    /**
+     * 
+     */
+    ref: ClockSegmentRef;
+    /**
+     * 
+     */
+    clockRef: CapturedTimeInputOneOf1ClockRef;
+    /**
+     * 
+     */
+    domainId: string;
+    /**
+     * 
+     */
+    revision: number;
+    /**
+     * 
+     */
+    domainAnchor: string;
+    /**
+     * 
+     */
+    realAnchor: string;
+    /**
+     * 
+     */
+    rate: string;
+    /**
+     * 
+     */
+    startedByOperationId: string;
+    /**
+     * 
+     */
+    reason: ClockSegmentReasonEnum;
+}
+
+
+/**
+ * @export
+ */
+export const ClockSegmentReasonEnum = {
+    Configure: 'configure',
+    ChangeRate: 'change_rate',
+    Pause: 'pause',
+    Resume: 'resume',
+    Advance: 'advance',
+    HostStart: 'host_start',
+    HostStop: 'host_stop',
+} as const;
+export type ClockSegmentReasonEnum = typeof ClockSegmentReasonEnum[keyof typeof ClockSegmentReasonEnum];
+
+/**
+ * 
+ * @export
+ * @interface ClockSegmentClosure
+ */
+export interface ClockSegmentClosure {
+    /**
+     * 
+     */
+    segmentRef: ClockSegmentRef;
+    /**
+     * 
+     */
+    closedByClockRevision: number;
+    /**
+     * 
+     */
+    domainEnd: string;
+    /**
+     * 
+     */
+    endedRealAt: string;
+    /**
+     * 
+     */
+    endedByOperationId: string;
+}
+/**
+ * 
+ * @export
+ * @interface ClockSegmentClosureInput
+ */
+export interface ClockSegmentClosureInput {
+    /**
+     * 
+     */
+    segmentRef: ClockSegmentRefInput;
+    /**
+     * 
+     */
+    closedByClockRevision: number;
+    /**
+     * 
+     */
+    domainEnd: string;
+    /**
+     * 
+     */
+    endedRealAt: string;
+    /**
+     * 
+     */
+    endedByOperationId: string;
+}
+/**
+ * 
+ * @export
+ * @interface ClockSegmentInput
+ */
+export interface ClockSegmentInput {
+    /**
+     * 
+     */
+    ref: ClockSegmentRefInput;
+    /**
+     * 
+     */
+    clockRef: CapturedTimeInputOneOf1ClockRef;
+    /**
+     * 
+     */
+    domainId: string;
+    /**
+     * 
+     */
+    revision: number;
+    /**
+     * 
+     */
+    domainAnchor: string;
+    /**
+     * 
+     */
+    realAnchor: string;
+    /**
+     * 
+     */
+    rate: string;
+    /**
+     * 
+     */
+    startedByOperationId: string;
+    /**
+     * 
+     */
+    reason: ClockSegmentInputReasonEnum;
+}
+
+
+/**
+ * @export
+ */
+export const ClockSegmentInputReasonEnum = {
+    Configure: 'configure',
+    ChangeRate: 'change_rate',
+    Pause: 'pause',
+    Resume: 'resume',
+    Advance: 'advance',
+    HostStart: 'host_start',
+    HostStop: 'host_stop',
+} as const;
+export type ClockSegmentInputReasonEnum = typeof ClockSegmentInputReasonEnum[keyof typeof ClockSegmentInputReasonEnum];
+
+/**
+ * 
+ * @export
+ * @interface ClockSegmentRef
+ */
+export interface ClockSegmentRef {
+    /**
+     * 
+     */
+    product: ClockSegmentRefProductEnum;
+    /**
+     * 
+     */
+    installationId: string;
+    /**
+     * 
+     */
+    subjectId?: string;
+    /**
+     * 
+     */
+    kind: ClockSegmentRefKindEnum;
+    /**
+     * 
+     */
+    id: string;
+}
+
+
+/**
+ * @export
+ */
+export const ClockSegmentRefProductEnum = {
+    Nous: 'nous',
+    Hept: 'hept',
+} as const;
+export type ClockSegmentRefProductEnum = typeof ClockSegmentRefProductEnum[keyof typeof ClockSegmentRefProductEnum];
+
+/**
+ * @export
+ */
+export const ClockSegmentRefKindEnum = {
+    ClockSegment: 'ClockSegment',
+} as const;
+export type ClockSegmentRefKindEnum = typeof ClockSegmentRefKindEnum[keyof typeof ClockSegmentRefKindEnum];
+
+/**
+ * 
+ * @export
+ * @interface ClockSegmentRefInput
+ */
+export interface ClockSegmentRefInput {
+    /**
+     * 
+     */
+    product: ClockSegmentRefInputProductEnum;
+    /**
+     * 
+     */
+    installationId: string;
+    /**
+     * 
+     */
+    subjectId?: string;
+    /**
+     * 
+     */
+    kind: ClockSegmentRefInputKindEnum;
+    /**
+     * 
+     */
+    id: string;
+}
+
+
+/**
+ * @export
+ */
+export const ClockSegmentRefInputProductEnum = {
+    Nous: 'nous',
+    Hept: 'hept',
+} as const;
+export type ClockSegmentRefInputProductEnum = typeof ClockSegmentRefInputProductEnum[keyof typeof ClockSegmentRefInputProductEnum];
+
+/**
+ * @export
+ */
+export const ClockSegmentRefInputKindEnum = {
+    ClockSegment: 'ClockSegment',
+} as const;
+export type ClockSegmentRefInputKindEnum = typeof ClockSegmentRefInputKindEnum[keyof typeof ClockSegmentRefInputKindEnum];
+
+/**
+ * 
+ * @export
+ * @interface ClockSnapshot
+ */
+export interface ClockSnapshot {
+    /**
+     * 
+     */
+    domainId: string;
+    /**
+     * 
+     */
+    rate: string;
+    /**
+     * 
+     */
+    now: CapturedTimeOneOf1;
+    /**
+     * 
+     */
+    clockRef: CapturedTimeInputOneOf1ClockRef;
+    /**
+     * 
+     */
+    revision: number;
+    /**
+     * 
+     */
+    segment: ClockSegment;
+}
+/**
+ * 
+ * @export
+ * @interface ClockSnapshotAnyOf
+ */
+export interface ClockSnapshotAnyOf {
+    /**
+     * 
+     */
+    domainId: ClockSnapshotAnyOfDomainIdEnum;
+    /**
+     * 
+     */
+    rate: ClockSnapshotAnyOfRateEnum;
+    /**
+     * 
+     */
+    now: CapturedTimeOneOf;
+}
+
+
+/**
+ * @export
+ */
+export const ClockSnapshotAnyOfDomainIdEnum = {
+    Real: 'real',
+} as const;
+export type ClockSnapshotAnyOfDomainIdEnum = typeof ClockSnapshotAnyOfDomainIdEnum[keyof typeof ClockSnapshotAnyOfDomainIdEnum];
+
+/**
+ * @export
+ */
+export const ClockSnapshotAnyOfRateEnum = {
+    _1: '1',
+} as const;
+export type ClockSnapshotAnyOfRateEnum = typeof ClockSnapshotAnyOfRateEnum[keyof typeof ClockSnapshotAnyOfRateEnum];
+
+/**
+ * 
+ * @export
+ * @interface ClockSnapshotAnyOf1
+ */
+export interface ClockSnapshotAnyOf1 {
+    /**
+     * 
+     */
+    domainId: string;
+    /**
+     * 
+     */
+    rate: string;
+    /**
+     * 
+     */
+    clockRef: CapturedTimeInputOneOf1ClockRef;
+    /**
+     * 
+     */
+    revision: number;
+    /**
+     * 
+     */
+    segment: ClockSegment;
+    /**
+     * 
+     */
+    now: CapturedTimeOneOf1;
+}
+/**
+ * 
+ * @export
+ * @interface ClockSnapshotInput
+ */
+export interface ClockSnapshotInput {
+    /**
+     * 
+     */
+    domainId: string;
+    /**
+     * 
+     */
+    rate: string;
+    /**
+     * 
+     */
+    now: CapturedTimeInputOneOf1;
+    /**
+     * 
+     */
+    clockRef: CapturedTimeInputOneOf1ClockRef;
+    /**
+     * 
+     */
+    revision: number;
+    /**
+     * 
+     */
+    segment: ClockSegmentInput;
+}
+/**
+ * 
+ * @export
+ * @interface ClockSnapshotInputAnyOf
+ */
+export interface ClockSnapshotInputAnyOf {
+    /**
+     * 
+     */
+    domainId: ClockSnapshotInputAnyOfDomainIdEnum;
+    /**
+     * 
+     */
+    rate: ClockSnapshotInputAnyOfRateEnum;
+    /**
+     * 
+     */
+    now: CapturedTimeInputOneOf;
+}
+
+
+/**
+ * @export
+ */
+export const ClockSnapshotInputAnyOfDomainIdEnum = {
+    Real: 'real',
+} as const;
+export type ClockSnapshotInputAnyOfDomainIdEnum = typeof ClockSnapshotInputAnyOfDomainIdEnum[keyof typeof ClockSnapshotInputAnyOfDomainIdEnum];
+
+/**
+ * @export
+ */
+export const ClockSnapshotInputAnyOfRateEnum = {
+    _1: '1',
+} as const;
+export type ClockSnapshotInputAnyOfRateEnum = typeof ClockSnapshotInputAnyOfRateEnum[keyof typeof ClockSnapshotInputAnyOfRateEnum];
+
+/**
+ * 
+ * @export
+ * @interface ClockSnapshotInputAnyOf1
+ */
+export interface ClockSnapshotInputAnyOf1 {
+    /**
+     * 
+     */
+    domainId: string;
+    /**
+     * 
+     */
+    rate: string;
+    /**
+     * 
+     */
+    clockRef: CapturedTimeInputOneOf1ClockRef;
+    /**
+     * 
+     */
+    revision: number;
+    /**
+     * 
+     */
+    segment: ClockSegmentInput;
+    /**
+     * 
+     */
+    now: CapturedTimeInputOneOf1;
 }
 /**
  * 
@@ -480,7 +2261,7 @@ export interface ConceptsMergeRequest {
     /**
      * 
      */
-    formed: TimePointInput;
+    formed: TimePointRequestInput;
     /**
      * 
      */
@@ -507,7 +2288,7 @@ export interface ConceptsSplitRequest {
     /**
      * 
      */
-    formed: TimePointInput;
+    formed: TimePointRequestInput;
     /**
      * 
      */
@@ -536,6 +2317,249 @@ export interface ConceptsSplitRequestBranchesInner {
      */
     memberRefs: Array<RefInput>;
 }
+/**
+ * @type ConfigScope
+ * 
+ * @export
+ */
+export type ConfigScope = ConfigScopeInputOneOf | ConfigScopeOneOf | ConfigScopeOneOf1;
+/**
+ * @type ConfigScopeInput
+ * 
+ * @export
+ */
+export type ConfigScopeInput = ConfigScopeInputOneOf | ConfigScopeInputOneOf1 | ConfigScopeInputOneOf2;
+/**
+ * 
+ * @export
+ * @interface ConfigScopeInputOneOf
+ */
+export interface ConfigScopeInputOneOf {
+    /**
+     * 
+     */
+    kind: ConfigScopeInputOneOfKindEnum;
+    /**
+     * 
+     */
+    installationId: string;
+}
+
+
+/**
+ * @export
+ */
+export const ConfigScopeInputOneOfKindEnum = {
+    Installation: 'installation',
+} as const;
+export type ConfigScopeInputOneOfKindEnum = typeof ConfigScopeInputOneOfKindEnum[keyof typeof ConfigScopeInputOneOfKindEnum];
+
+/**
+ * 
+ * @export
+ * @interface ConfigScopeInputOneOf1
+ */
+export interface ConfigScopeInputOneOf1 {
+    /**
+     * 
+     */
+    kind: ConfigScopeInputOneOf1KindEnum;
+    /**
+     * 
+     */
+    subjectId: string;
+}
+
+
+/**
+ * @export
+ */
+export const ConfigScopeInputOneOf1KindEnum = {
+    Subject: 'subject',
+} as const;
+export type ConfigScopeInputOneOf1KindEnum = typeof ConfigScopeInputOneOf1KindEnum[keyof typeof ConfigScopeInputOneOf1KindEnum];
+
+/**
+ * 
+ * @export
+ * @interface ConfigScopeInputOneOf2
+ */
+export interface ConfigScopeInputOneOf2 {
+    /**
+     * 
+     */
+    kind: ConfigScopeInputOneOf2KindEnum;
+    /**
+     * 
+     */
+    subjectId: string;
+    /**
+     * 
+     */
+    roleId: string;
+}
+
+
+/**
+ * @export
+ */
+export const ConfigScopeInputOneOf2KindEnum = {
+    Role: 'role',
+} as const;
+export type ConfigScopeInputOneOf2KindEnum = typeof ConfigScopeInputOneOf2KindEnum[keyof typeof ConfigScopeInputOneOf2KindEnum];
+
+/**
+ * 
+ * @export
+ * @interface ConfigScopeOneOf
+ */
+export interface ConfigScopeOneOf {
+    /**
+     * 
+     */
+    kind: ConfigScopeOneOfKindEnum;
+    /**
+     * 
+     */
+    subjectId: string;
+}
+
+
+/**
+ * @export
+ */
+export const ConfigScopeOneOfKindEnum = {
+    Subject: 'subject',
+} as const;
+export type ConfigScopeOneOfKindEnum = typeof ConfigScopeOneOfKindEnum[keyof typeof ConfigScopeOneOfKindEnum];
+
+/**
+ * 
+ * @export
+ * @interface ConfigScopeOneOf1
+ */
+export interface ConfigScopeOneOf1 {
+    /**
+     * 
+     */
+    kind: ConfigScopeOneOf1KindEnum;
+    /**
+     * 
+     */
+    subjectId: string;
+    /**
+     * 
+     */
+    roleId: string;
+}
+
+
+/**
+ * @export
+ */
+export const ConfigScopeOneOf1KindEnum = {
+    Role: 'role',
+} as const;
+export type ConfigScopeOneOf1KindEnum = typeof ConfigScopeOneOf1KindEnum[keyof typeof ConfigScopeOneOf1KindEnum];
+
+/**
+ * 
+ * @export
+ * @interface ConfigSnapshot
+ */
+export interface ConfigSnapshot {
+    /**
+     * 
+     */
+    values: { [key: string]: JsonValue; };
+    /**
+     * 
+     */
+    sources: { [key: string]: ConfigSnapshotSourcesValue; };
+    /**
+     * 
+     */
+    revisions: Array<RevisionRef>;
+    /**
+     * 
+     */
+    definitionRevision: string;
+}
+/**
+ * 
+ * @export
+ * @interface ConfigSnapshotInput
+ */
+export interface ConfigSnapshotInput {
+    /**
+     * 
+     */
+    values: { [key: string]: JsonValueInput; };
+    /**
+     * 
+     */
+    sources: { [key: string]: ConfigSnapshotInputSourcesValue; };
+    /**
+     * 
+     */
+    revisions: Array<RevisionRefInput>;
+    /**
+     * 
+     */
+    definitionRevision: string;
+}
+/**
+ * 
+ * @export
+ * @interface ConfigSnapshotInputSourcesValue
+ */
+export interface ConfigSnapshotInputSourcesValue {
+    /**
+     * 
+     */
+    source: ConfigSnapshotInputSourcesValueSourceEnum;
+    /**
+     * 
+     */
+    revision?: RevisionRefInput;
+}
+
+
+/**
+ * @export
+ */
+export const ConfigSnapshotInputSourcesValueSourceEnum = {
+    Default: 'default',
+    Override: 'override',
+} as const;
+export type ConfigSnapshotInputSourcesValueSourceEnum = typeof ConfigSnapshotInputSourcesValueSourceEnum[keyof typeof ConfigSnapshotInputSourcesValueSourceEnum];
+
+/**
+ * 
+ * @export
+ * @interface ConfigSnapshotSourcesValue
+ */
+export interface ConfigSnapshotSourcesValue {
+    /**
+     * 
+     */
+    source: ConfigSnapshotSourcesValueSourceEnum;
+    /**
+     * 
+     */
+    revision?: RevisionRef;
+}
+
+
+/**
+ * @export
+ */
+export const ConfigSnapshotSourcesValueSourceEnum = {
+    Default: 'default',
+    Override: 'override',
+} as const;
+export type ConfigSnapshotSourcesValueSourceEnum = typeof ConfigSnapshotSourcesValueSourceEnum[keyof typeof ConfigSnapshotSourcesValueSourceEnum];
+
 /**
  * 
  * @export
@@ -567,6 +2591,160 @@ export const ConsumerKindEnum = {
     Maintenance: 'maintenance',
 } as const;
 export type ConsumerKindEnum = typeof ConsumerKindEnum[keyof typeof ConsumerKindEnum];
+
+/**
+ * 
+ * @export
+ * @interface ConsumerAppliedView
+ */
+export interface ConsumerAppliedView {
+    /**
+     * 
+     */
+    processBootId: string;
+    /**
+     * 
+     */
+    consumerId: string;
+    /**
+     * 
+     */
+    namespace: string;
+    /**
+     * 
+     */
+    scope: ConfigScope;
+    /**
+     * 
+     */
+    fields: { [key: string]: ConsumerAppliedViewFieldsValue; };
+    /**
+     * 
+     */
+    error?: Problem;
+}
+/**
+ * 
+ * @export
+ * @interface ConsumerAppliedViewFieldsValue
+ */
+export interface ConsumerAppliedViewFieldsValue {
+    /**
+     * 
+     */
+    effect: ConsumerAppliedViewFieldsValueEffectEnum;
+    /**
+     * 
+     */
+    state: ConsumerAppliedViewFieldsValueStateEnum;
+    /**
+     * 
+     */
+    desired: AppliedField;
+    /**
+     * 
+     */
+    applied?: AppliedField;
+}
+
+
+/**
+ * @export
+ */
+export const ConsumerAppliedViewFieldsValueEffectEnum = {
+    Hot: 'hot',
+    NextCall: 'next_call',
+    Restart: 'restart',
+} as const;
+export type ConsumerAppliedViewFieldsValueEffectEnum = typeof ConsumerAppliedViewFieldsValueEffectEnum[keyof typeof ConsumerAppliedViewFieldsValueEffectEnum];
+
+/**
+ * @export
+ */
+export const ConsumerAppliedViewFieldsValueStateEnum = {
+    Current: 'current',
+    Pending: 'pending',
+    Unknown: 'unknown',
+    Failed: 'failed',
+} as const;
+export type ConsumerAppliedViewFieldsValueStateEnum = typeof ConsumerAppliedViewFieldsValueStateEnum[keyof typeof ConsumerAppliedViewFieldsValueStateEnum];
+
+/**
+ * 
+ * @export
+ * @interface ConsumerAppliedViewInput
+ */
+export interface ConsumerAppliedViewInput {
+    /**
+     * 
+     */
+    processBootId: string;
+    /**
+     * 
+     */
+    consumerId: string;
+    /**
+     * 
+     */
+    namespace: string;
+    /**
+     * 
+     */
+    scope: ConfigScopeInput;
+    /**
+     * 
+     */
+    fields: { [key: string]: ConsumerAppliedViewInputFieldsValue; };
+    /**
+     * 
+     */
+    error?: ProblemInput;
+}
+/**
+ * 
+ * @export
+ * @interface ConsumerAppliedViewInputFieldsValue
+ */
+export interface ConsumerAppliedViewInputFieldsValue {
+    /**
+     * 
+     */
+    effect: ConsumerAppliedViewInputFieldsValueEffectEnum;
+    /**
+     * 
+     */
+    state: ConsumerAppliedViewInputFieldsValueStateEnum;
+    /**
+     * 
+     */
+    desired: AppliedFieldInput;
+    /**
+     * 
+     */
+    applied?: AppliedFieldInput;
+}
+
+
+/**
+ * @export
+ */
+export const ConsumerAppliedViewInputFieldsValueEffectEnum = {
+    Hot: 'hot',
+    NextCall: 'next_call',
+    Restart: 'restart',
+} as const;
+export type ConsumerAppliedViewInputFieldsValueEffectEnum = typeof ConsumerAppliedViewInputFieldsValueEffectEnum[keyof typeof ConsumerAppliedViewInputFieldsValueEffectEnum];
+
+/**
+ * @export
+ */
+export const ConsumerAppliedViewInputFieldsValueStateEnum = {
+    Current: 'current',
+    Pending: 'pending',
+    Unknown: 'unknown',
+    Failed: 'failed',
+} as const;
+export type ConsumerAppliedViewInputFieldsValueStateEnum = typeof ConsumerAppliedViewInputFieldsValueStateEnum[keyof typeof ConsumerAppliedViewInputFieldsValueStateEnum];
 
 /**
  * 
@@ -725,7 +2903,7 @@ export interface ContextPrepare {
     /**
      * 
      */
-    observed: TimePoint;
+    observed: TimePointRequest;
 }
 /**
  * 
@@ -803,7 +2981,7 @@ export interface ContextPrepareInput {
     /**
      * 
      */
-    observed: TimePointInput;
+    observed: TimePointRequestInput;
 }
 /**
  * 
@@ -931,7 +3109,7 @@ export interface ContextView {
     /**
      * 
      */
-    settingsRevisions: { [key: string]: number; };
+    settingsSnapshots: { [key: string]: ConfigSnapshot; };
     /**
      * 
      */
@@ -1050,7 +3228,7 @@ export interface ContextViewInput {
     /**
      * 
      */
-    settingsRevisions: { [key: string]: number; };
+    settingsSnapshots: { [key: string]: ConfigSnapshotInput; };
     /**
      * 
      */
@@ -1172,9 +3350,9 @@ export interface ContextsUpdateWorkRequest {
 /**
  * 
  * @export
- * @interface CredentialsIssue200Response
+ * @interface CredentialsCreateManagementKey200Response
  */
-export interface CredentialsIssue200Response {
+export interface CredentialsCreateManagementKey200Response {
     /**
      * 
      */
@@ -1183,21 +3361,25 @@ export interface CredentialsIssue200Response {
      * 
      */
     key: string;
+    /**
+     * 
+     */
+    authorityRef: string;
+    /**
+     * 
+     */
+    delegationId: string;
 }
 /**
  * 
  * @export
- * @interface CredentialsIssueRequest
+ * @interface CredentialsCreateManagementKeyRequest
  */
-export interface CredentialsIssueRequest {
+export interface CredentialsCreateManagementKeyRequest {
     /**
      * 
      */
     name: string;
-    /**
-     * 
-     */
-    actor: ActorInput;
 }
 /**
  * 
@@ -1260,7 +3442,7 @@ export interface CriterionInput {
     /**
      * 
      */
-    predicate?: CriterionInputPredicate;
+    predicate?: KnowledgeReviseRequestBodyOneOf2CriterionPredicate;
     /**
      * 
      */
@@ -1282,49 +3464,6 @@ export type CriterionInputModeEnum = typeof CriterionInputModeEnum[keyof typeof 
 /**
  * 
  * @export
- * @interface CriterionInputPredicate
- */
-export interface CriterionInputPredicate {
-    /**
-     * 
-     */
-    path: Array<string>;
-    /**
-     * 
-     */
-    operator: CriterionInputPredicateOperatorEnum;
-    /**
-     * 
-     */
-    value?: CriterionInputPredicateValue | null;
-}
-
-
-/**
- * @export
- */
-export const CriterionInputPredicateOperatorEnum = {
-    Eq: 'eq',
-    Neq: 'neq',
-    Gt: 'gt',
-    Gte: 'gte',
-    Lt: 'lt',
-    Lte: 'lte',
-    Contains: 'contains',
-    Exists: 'exists',
-} as const;
-export type CriterionInputPredicateOperatorEnum = typeof CriterionInputPredicateOperatorEnum[keyof typeof CriterionInputPredicateOperatorEnum];
-
-/**
- * 
- * @export
- * @interface CriterionInputPredicateValue
- */
-export interface CriterionInputPredicateValue {
-}
-/**
- * 
- * @export
  * @interface CriterionPredicate
  */
 export interface CriterionPredicate {
@@ -1339,7 +3478,7 @@ export interface CriterionPredicate {
     /**
      * 
      */
-    value?: CriterionInputPredicateValue | null;
+    value?: KnowledgeReviseRequestBodyOneOf2CriterionPredicateValue | null;
 }
 
 
@@ -1358,6 +3497,684 @@ export const CriterionPredicateOperatorEnum = {
 } as const;
 export type CriterionPredicateOperatorEnum = typeof CriterionPredicateOperatorEnum[keyof typeof CriterionPredicateOperatorEnum];
 
+/**
+ * 
+ * @export
+ * @interface DelegationChildCreateBody
+ */
+export interface DelegationChildCreateBody {
+    /**
+     * 
+     */
+    name: string;
+    /**
+     * 
+     */
+    scope: DelegationChildCreateBodyScope;
+    /**
+     * 
+     */
+    principalKind: DelegationChildCreateBodyPrincipalKindEnum;
+}
+
+
+/**
+ * @export
+ */
+export const DelegationChildCreateBodyPrincipalKindEnum = {
+    Human: 'human',
+    Service: 'service',
+    Subject: 'subject',
+    Worker: 'worker',
+    Author: 'author',
+} as const;
+export type DelegationChildCreateBodyPrincipalKindEnum = typeof DelegationChildCreateBodyPrincipalKindEnum[keyof typeof DelegationChildCreateBodyPrincipalKindEnum];
+
+/**
+ * 
+ * @export
+ * @interface DelegationChildCreateBodyInput
+ */
+export interface DelegationChildCreateBodyInput {
+    /**
+     * 
+     */
+    name: string;
+    /**
+     * 
+     */
+    scope: DelegationsCreateRequestScope;
+    /**
+     * 
+     */
+    principalKind: DelegationChildCreateBodyInputPrincipalKindEnum;
+}
+
+
+/**
+ * @export
+ */
+export const DelegationChildCreateBodyInputPrincipalKindEnum = {
+    Human: 'human',
+    Service: 'service',
+    Subject: 'subject',
+    Worker: 'worker',
+    Author: 'author',
+} as const;
+export type DelegationChildCreateBodyInputPrincipalKindEnum = typeof DelegationChildCreateBodyInputPrincipalKindEnum[keyof typeof DelegationChildCreateBodyInputPrincipalKindEnum];
+
+/**
+ * 
+ * @export
+ * @interface DelegationChildCreateBodyScope
+ */
+export interface DelegationChildCreateBodyScope {
+    /**
+     * 
+     */
+    plane: DelegationChildCreateBodyScopePlaneEnum;
+    /**
+     * 
+     */
+    operations: Array<string>;
+    /**
+     * 
+     */
+    subjectIds: Array<string>;
+    /**
+     * 
+     */
+    consumer: Consumer;
+    /**
+     * 
+     */
+    purposes: Array<string>;
+    /**
+     * 
+     */
+    audiences: Array<string>;
+    /**
+     * 
+     */
+    targets: Array<DelegationChildCreateBodyScopeTargetsInner>;
+    /**
+     * 
+     */
+    inputRefs: Array<Ref>;
+    /**
+     * 
+     */
+    taskRef?: Ref;
+    /**
+     * 
+     */
+    nativeBinding?: DelegationChildCreateBodyScopeNativeBinding;
+    /**
+     * 
+     */
+    notBefore?: TimePointRequest;
+    /**
+     * 
+     */
+    expiresAt: TimePointRequest | null;
+    /**
+     * 
+     */
+    mayDelegate: boolean;
+}
+
+
+/**
+ * @export
+ */
+export const DelegationChildCreateBodyScopePlaneEnum = {
+    Subject: 'subject',
+    System: 'system',
+    Machine: 'machine',
+    Recovery: 'recovery',
+} as const;
+export type DelegationChildCreateBodyScopePlaneEnum = typeof DelegationChildCreateBodyScopePlaneEnum[keyof typeof DelegationChildCreateBodyScopePlaneEnum];
+
+/**
+ * 
+ * @export
+ * @interface DelegationChildCreateBodyScopeNativeBinding
+ */
+export interface DelegationChildCreateBodyScopeNativeBinding {
+    /**
+     * 
+     */
+    runtimeId: string;
+    /**
+     * 
+     */
+    sessionKey: string;
+    /**
+     * 
+     */
+    rootTaskId?: string;
+}
+/**
+ * @type DelegationChildCreateBodyScopeTargetsInner
+ * 
+ * @export
+ */
+export type DelegationChildCreateBodyScopeTargetsInner = DelegationChildCreateBodyScopeTargetsInnerOneOf | DelegationChildCreateBodyScopeTargetsInnerOneOf1 | DelegationChildCreateBodyScopeTargetsInnerOneOf2 | DelegationChildCreateBodyScopeTargetsInnerOneOf3;
+/**
+ * 
+ * @export
+ * @interface DelegationChildCreateBodyScopeTargetsInnerOneOf
+ */
+export interface DelegationChildCreateBodyScopeTargetsInnerOneOf {
+    /**
+     * 
+     */
+    kind: DelegationChildCreateBodyScopeTargetsInnerOneOfKindEnum;
+    /**
+     * 
+     */
+    adapterId: string;
+    /**
+     * 
+     */
+    accountId: string;
+    /**
+     * 
+     */
+    conversationId: string;
+    /**
+     * 
+     */
+    actions: Array<string>;
+}
+
+
+/**
+ * @export
+ */
+export const DelegationChildCreateBodyScopeTargetsInnerOneOfKindEnum = {
+    Conversation: 'conversation',
+} as const;
+export type DelegationChildCreateBodyScopeTargetsInnerOneOfKindEnum = typeof DelegationChildCreateBodyScopeTargetsInnerOneOfKindEnum[keyof typeof DelegationChildCreateBodyScopeTargetsInnerOneOfKindEnum];
+
+/**
+ * 
+ * @export
+ * @interface DelegationChildCreateBodyScopeTargetsInnerOneOf1
+ */
+export interface DelegationChildCreateBodyScopeTargetsInnerOneOf1 {
+    /**
+     * 
+     */
+    kind: DelegationChildCreateBodyScopeTargetsInnerOneOf1KindEnum;
+    /**
+     * 
+     */
+    connectorId: string;
+    /**
+     * 
+     */
+    resourceIds: Array<string>;
+    /**
+     * 
+     */
+    actions: Array<string>;
+}
+
+
+/**
+ * @export
+ */
+export const DelegationChildCreateBodyScopeTargetsInnerOneOf1KindEnum = {
+    Resource: 'resource',
+} as const;
+export type DelegationChildCreateBodyScopeTargetsInnerOneOf1KindEnum = typeof DelegationChildCreateBodyScopeTargetsInnerOneOf1KindEnum[keyof typeof DelegationChildCreateBodyScopeTargetsInnerOneOf1KindEnum];
+
+/**
+ * 
+ * @export
+ * @interface DelegationChildCreateBodyScopeTargetsInnerOneOf2
+ */
+export interface DelegationChildCreateBodyScopeTargetsInnerOneOf2 {
+    /**
+     * 
+     */
+    kind: DelegationChildCreateBodyScopeTargetsInnerOneOf2KindEnum;
+    /**
+     * 
+     */
+    workspaceRef: Ref;
+    /**
+     * 
+     */
+    actions: Array<string>;
+}
+
+
+/**
+ * @export
+ */
+export const DelegationChildCreateBodyScopeTargetsInnerOneOf2KindEnum = {
+    Workspace: 'workspace',
+} as const;
+export type DelegationChildCreateBodyScopeTargetsInnerOneOf2KindEnum = typeof DelegationChildCreateBodyScopeTargetsInnerOneOf2KindEnum[keyof typeof DelegationChildCreateBodyScopeTargetsInnerOneOf2KindEnum];
+
+/**
+ * 
+ * @export
+ * @interface DelegationChildCreateBodyScopeTargetsInnerOneOf3
+ */
+export interface DelegationChildCreateBodyScopeTargetsInnerOneOf3 {
+    /**
+     * 
+     */
+    kind: DelegationChildCreateBodyScopeTargetsInnerOneOf3KindEnum;
+    /**
+     * 
+     */
+    refs: Array<Ref>;
+    /**
+     * 
+     */
+    actions: Array<string>;
+}
+
+
+/**
+ * @export
+ */
+export const DelegationChildCreateBodyScopeTargetsInnerOneOf3KindEnum = {
+    Object: 'object',
+} as const;
+export type DelegationChildCreateBodyScopeTargetsInnerOneOf3KindEnum = typeof DelegationChildCreateBodyScopeTargetsInnerOneOf3KindEnum[keyof typeof DelegationChildCreateBodyScopeTargetsInnerOneOf3KindEnum];
+
+/**
+ * 
+ * @export
+ * @interface DelegationChildView
+ */
+export interface DelegationChildView {
+    /**
+     * 
+     */
+    delegationId: string;
+    /**
+     * 
+     */
+    authorityRef: string;
+    /**
+     * 
+     */
+    revision: number;
+    /**
+     * 
+     */
+    scope: DelegationChildCreateBodyScope;
+}
+/**
+ * 
+ * @export
+ * @interface DelegationChildViewInput
+ */
+export interface DelegationChildViewInput {
+    /**
+     * 
+     */
+    delegationId: string;
+    /**
+     * 
+     */
+    authorityRef: string;
+    /**
+     * 
+     */
+    revision: number;
+    /**
+     * 
+     */
+    scope: DelegationsCreateRequestScope;
+}
+/**
+ * 
+ * @export
+ * @interface DelegationsCreateRequest
+ */
+export interface DelegationsCreateRequest {
+    /**
+     * 
+     */
+    name: string;
+    /**
+     * 
+     */
+    scope: DelegationsCreateRequestScope;
+    /**
+     * 
+     */
+    principalKind: DelegationsCreateRequestPrincipalKindEnum;
+}
+
+
+/**
+ * @export
+ */
+export const DelegationsCreateRequestPrincipalKindEnum = {
+    Subject: 'subject',
+    Worker: 'worker',
+    Author: 'author',
+    Human: 'human',
+    Service: 'service',
+} as const;
+export type DelegationsCreateRequestPrincipalKindEnum = typeof DelegationsCreateRequestPrincipalKindEnum[keyof typeof DelegationsCreateRequestPrincipalKindEnum];
+
+/**
+ * 
+ * @export
+ * @interface DelegationsCreateRequestScope
+ */
+export interface DelegationsCreateRequestScope {
+    /**
+     * 
+     */
+    plane: DelegationsCreateRequestScopePlaneEnum;
+    /**
+     * 
+     */
+    operations: Array<string>;
+    /**
+     * 
+     */
+    subjectIds: Array<string>;
+    /**
+     * 
+     */
+    consumer: ConsumerInput;
+    /**
+     * 
+     */
+    purposes: Array<string>;
+    /**
+     * 
+     */
+    audiences: Array<string>;
+    /**
+     * 
+     */
+    targets: Array<DelegationsCreateRequestScopeTargetsInner>;
+    /**
+     * 
+     */
+    inputRefs: Array<RefInput>;
+    /**
+     * 
+     */
+    taskRef?: RefInput;
+    /**
+     * 
+     */
+    nativeBinding?: DelegationsCreateRequestScopeNativeBinding;
+    /**
+     * 
+     */
+    notBefore?: TimePointRequestInput;
+    /**
+     * 
+     */
+    expiresAt: TimePointRequestInput | null;
+    /**
+     * 
+     */
+    mayDelegate: boolean;
+}
+
+
+/**
+ * @export
+ */
+export const DelegationsCreateRequestScopePlaneEnum = {
+    Subject: 'subject',
+    System: 'system',
+    Machine: 'machine',
+    Recovery: 'recovery',
+} as const;
+export type DelegationsCreateRequestScopePlaneEnum = typeof DelegationsCreateRequestScopePlaneEnum[keyof typeof DelegationsCreateRequestScopePlaneEnum];
+
+/**
+ * 
+ * @export
+ * @interface DelegationsCreateRequestScopeNativeBinding
+ */
+export interface DelegationsCreateRequestScopeNativeBinding {
+    /**
+     * 
+     */
+    runtimeId: string;
+    /**
+     * 
+     */
+    sessionKey: string;
+    /**
+     * 
+     */
+    rootTaskId?: string;
+}
+/**
+ * @type DelegationsCreateRequestScopeTargetsInner
+ * 
+ * @export
+ */
+export type DelegationsCreateRequestScopeTargetsInner = DelegationsCreateRequestScopeTargetsInnerOneOf | DelegationsCreateRequestScopeTargetsInnerOneOf1 | DelegationsCreateRequestScopeTargetsInnerOneOf2 | DelegationsCreateRequestScopeTargetsInnerOneOf3;
+/**
+ * 
+ * @export
+ * @interface DelegationsCreateRequestScopeTargetsInnerOneOf
+ */
+export interface DelegationsCreateRequestScopeTargetsInnerOneOf {
+    /**
+     * 
+     */
+    kind: DelegationsCreateRequestScopeTargetsInnerOneOfKindEnum;
+    /**
+     * 
+     */
+    adapterId: string;
+    /**
+     * 
+     */
+    accountId: string;
+    /**
+     * 
+     */
+    conversationId: string;
+    /**
+     * 
+     */
+    actions: Array<string>;
+}
+
+
+/**
+ * @export
+ */
+export const DelegationsCreateRequestScopeTargetsInnerOneOfKindEnum = {
+    Conversation: 'conversation',
+} as const;
+export type DelegationsCreateRequestScopeTargetsInnerOneOfKindEnum = typeof DelegationsCreateRequestScopeTargetsInnerOneOfKindEnum[keyof typeof DelegationsCreateRequestScopeTargetsInnerOneOfKindEnum];
+
+/**
+ * 
+ * @export
+ * @interface DelegationsCreateRequestScopeTargetsInnerOneOf1
+ */
+export interface DelegationsCreateRequestScopeTargetsInnerOneOf1 {
+    /**
+     * 
+     */
+    kind: DelegationsCreateRequestScopeTargetsInnerOneOf1KindEnum;
+    /**
+     * 
+     */
+    connectorId: string;
+    /**
+     * 
+     */
+    resourceIds: Array<string>;
+    /**
+     * 
+     */
+    actions: Array<string>;
+}
+
+
+/**
+ * @export
+ */
+export const DelegationsCreateRequestScopeTargetsInnerOneOf1KindEnum = {
+    Resource: 'resource',
+} as const;
+export type DelegationsCreateRequestScopeTargetsInnerOneOf1KindEnum = typeof DelegationsCreateRequestScopeTargetsInnerOneOf1KindEnum[keyof typeof DelegationsCreateRequestScopeTargetsInnerOneOf1KindEnum];
+
+/**
+ * 
+ * @export
+ * @interface DelegationsCreateRequestScopeTargetsInnerOneOf2
+ */
+export interface DelegationsCreateRequestScopeTargetsInnerOneOf2 {
+    /**
+     * 
+     */
+    kind: DelegationsCreateRequestScopeTargetsInnerOneOf2KindEnum;
+    /**
+     * 
+     */
+    workspaceRef: RefInput;
+    /**
+     * 
+     */
+    actions: Array<string>;
+}
+
+
+/**
+ * @export
+ */
+export const DelegationsCreateRequestScopeTargetsInnerOneOf2KindEnum = {
+    Workspace: 'workspace',
+} as const;
+export type DelegationsCreateRequestScopeTargetsInnerOneOf2KindEnum = typeof DelegationsCreateRequestScopeTargetsInnerOneOf2KindEnum[keyof typeof DelegationsCreateRequestScopeTargetsInnerOneOf2KindEnum];
+
+/**
+ * 
+ * @export
+ * @interface DelegationsCreateRequestScopeTargetsInnerOneOf3
+ */
+export interface DelegationsCreateRequestScopeTargetsInnerOneOf3 {
+    /**
+     * 
+     */
+    kind: DelegationsCreateRequestScopeTargetsInnerOneOf3KindEnum;
+    /**
+     * 
+     */
+    refs: Array<RefInput>;
+    /**
+     * 
+     */
+    actions: Array<string>;
+}
+
+
+/**
+ * @export
+ */
+export const DelegationsCreateRequestScopeTargetsInnerOneOf3KindEnum = {
+    Object: 'object',
+} as const;
+export type DelegationsCreateRequestScopeTargetsInnerOneOf3KindEnum = typeof DelegationsCreateRequestScopeTargetsInnerOneOf3KindEnum[keyof typeof DelegationsCreateRequestScopeTargetsInnerOneOf3KindEnum];
+
+/**
+ * 
+ * @export
+ * @interface DelegationsUpdateRequest
+ */
+export interface DelegationsUpdateRequest {
+    /**
+     * 
+     */
+    expectedRevision: number;
+    /**
+     * 
+     */
+    scope: DelegationsCreateRequestScope;
+}
+/**
+ * 
+ * @export
+ * @interface EffectiveSettingsView
+ */
+export interface EffectiveSettingsView {
+    /**
+     * 
+     */
+    scope: ConfigScope;
+    /**
+     * 
+     */
+    modules: { [key: string]: ConfigSnapshot; };
+    /**
+     * 
+     */
+    targetOverrides: { [key: string]: EffectiveSettingsViewTargetOverridesValue; };
+}
+/**
+ * 
+ * @export
+ * @interface EffectiveSettingsViewInput
+ */
+export interface EffectiveSettingsViewInput {
+    /**
+     * 
+     */
+    scope: ConfigScopeInput;
+    /**
+     * 
+     */
+    modules: { [key: string]: ConfigSnapshotInput; };
+    /**
+     * 
+     */
+    targetOverrides: { [key: string]: EffectiveSettingsViewInputTargetOverridesValue; };
+}
+/**
+ * 
+ * @export
+ * @interface EffectiveSettingsViewInputTargetOverridesValue
+ */
+export interface EffectiveSettingsViewInputTargetOverridesValue {
+    /**
+     * 
+     */
+    revision: number;
+    /**
+     * 
+     */
+    sparse: { [key: string]: JsonValueInput; };
+}
+/**
+ * 
+ * @export
+ * @interface EffectiveSettingsViewTargetOverridesValue
+ */
+export interface EffectiveSettingsViewTargetOverridesValue {
+    /**
+     * 
+     */
+    revision: number;
+    /**
+     * 
+     */
+    sparse: { [key: string]: JsonValue; };
+}
 /**
  * 
  * @export
@@ -1391,11 +4208,11 @@ export interface EncounterAccept {
     /**
      * 
      */
-    observed: TimePoint;
+    observed: TimePointRequest;
     /**
      * 
      */
-    occurred?: TimeRange;
+    occurred?: TimeRangeRequest;
     /**
      * 
      */
@@ -1457,11 +4274,11 @@ export interface EncounterAcceptInput {
     /**
      * 
      */
-    observed: TimePointInput;
+    observed: TimePointRequestInput;
     /**
      * 
      */
-    occurred?: TimeRangeInput;
+    occurred?: TimeRangeRequestInput;
     /**
      * 
      */
@@ -1812,7 +4629,7 @@ export interface EpisodesOrganizeRequest {
     /**
      * 
      */
-    formed: TimePointInput;
+    formed: TimePointRequestInput;
     /**
      * 
      */
@@ -1859,7 +4676,7 @@ export interface EpisodesOrganizeRequestEpisodesInner {
     /**
      * 
      */
-    range: TimeRangeInput;
+    range: TimeRangeRequestInput;
     /**
      * 
      */
@@ -2117,6 +4934,82 @@ export interface ExperienceItemInput {
 /**
  * 
  * @export
+ * @interface ExperienceList
+ */
+export interface ExperienceList {
+    /**
+     * 
+     */
+    refs?: Array<Ref>;
+    /**
+     * 
+     */
+    range?: TimeRangeRequest;
+    /**
+     * 
+     */
+    cursor?: string;
+    /**
+     * 
+     */
+    limit: number;
+}
+/**
+ * 
+ * @export
+ * @interface ExperienceListInput
+ */
+export interface ExperienceListInput {
+    /**
+     * 
+     */
+    refs?: Array<RefInput>;
+    /**
+     * 
+     */
+    range?: TimeRangeRequestInput;
+    /**
+     * 
+     */
+    cursor?: string;
+    /**
+     * 
+     */
+    limit?: number;
+}
+/**
+ * 
+ * @export
+ * @interface ExperiencePage
+ */
+export interface ExperiencePage {
+    /**
+     * 
+     */
+    items: Array<ExperienceItem>;
+    /**
+     * 
+     */
+    nextCursor?: string;
+}
+/**
+ * 
+ * @export
+ * @interface ExperiencePageInput
+ */
+export interface ExperiencePageInput {
+    /**
+     * 
+     */
+    items: Array<ExperienceItemInput>;
+    /**
+     * 
+     */
+    nextCursor?: string;
+}
+/**
+ * 
+ * @export
  * @interface Feedback
  */
 export interface Feedback {
@@ -2191,6 +5084,174 @@ export type FeedbackInputKindEnum = typeof FeedbackInputKindEnum[keyof typeof Fe
 /**
  * 
  * @export
+ * @interface FieldMetadata
+ */
+export interface FieldMetadata {
+    /**
+     * 
+     */
+    labelKey: string;
+    /**
+     * 
+     */
+    descriptionKey: string;
+    /**
+     * 
+     */
+    scopes: Array<FieldMetadataScopesEnum>;
+    /**
+     * 
+     */
+    visibility: FieldMetadataVisibilityEnum;
+    /**
+     * 
+     */
+    effect: FieldMetadataEffectEnum;
+    /**
+     * 
+     */
+    unit?: string;
+    /**
+     * 
+     */
+    readonly?: boolean;
+    /**
+     * 
+     */
+    restriction?: FieldMetadataRestrictionEnum;
+    /**
+     * 
+     */
+    consumerIds: Array<string>;
+}
+
+
+/**
+ * @export
+ */
+export const FieldMetadataScopesEnum = {
+    Installation: 'installation',
+    Subject: 'subject',
+    Role: 'role',
+} as const;
+export type FieldMetadataScopesEnum = typeof FieldMetadataScopesEnum[keyof typeof FieldMetadataScopesEnum];
+
+/**
+ * @export
+ */
+export const FieldMetadataVisibilityEnum = {
+    Standard: 'standard',
+    Advanced: 'advanced',
+    Developer: 'developer',
+} as const;
+export type FieldMetadataVisibilityEnum = typeof FieldMetadataVisibilityEnum[keyof typeof FieldMetadataVisibilityEnum];
+
+/**
+ * @export
+ */
+export const FieldMetadataEffectEnum = {
+    Hot: 'hot',
+    NextCall: 'next_call',
+    Restart: 'restart',
+} as const;
+export type FieldMetadataEffectEnum = typeof FieldMetadataEffectEnum[keyof typeof FieldMetadataEffectEnum];
+
+/**
+ * @export
+ */
+export const FieldMetadataRestrictionEnum = {
+    UpperBound: 'upper_bound',
+    SetIntersection: 'set_intersection',
+} as const;
+export type FieldMetadataRestrictionEnum = typeof FieldMetadataRestrictionEnum[keyof typeof FieldMetadataRestrictionEnum];
+
+/**
+ * 
+ * @export
+ * @interface FieldMetadataInput
+ */
+export interface FieldMetadataInput {
+    /**
+     * 
+     */
+    labelKey: string;
+    /**
+     * 
+     */
+    descriptionKey: string;
+    /**
+     * 
+     */
+    scopes: Array<FieldMetadataInputScopesEnum>;
+    /**
+     * 
+     */
+    visibility: FieldMetadataInputVisibilityEnum;
+    /**
+     * 
+     */
+    effect: FieldMetadataInputEffectEnum;
+    /**
+     * 
+     */
+    unit?: string;
+    /**
+     * 
+     */
+    readonly?: boolean;
+    /**
+     * 
+     */
+    restriction?: FieldMetadataInputRestrictionEnum;
+    /**
+     * 
+     */
+    consumerIds: Array<string>;
+}
+
+
+/**
+ * @export
+ */
+export const FieldMetadataInputScopesEnum = {
+    Installation: 'installation',
+    Subject: 'subject',
+    Role: 'role',
+} as const;
+export type FieldMetadataInputScopesEnum = typeof FieldMetadataInputScopesEnum[keyof typeof FieldMetadataInputScopesEnum];
+
+/**
+ * @export
+ */
+export const FieldMetadataInputVisibilityEnum = {
+    Standard: 'standard',
+    Advanced: 'advanced',
+    Developer: 'developer',
+} as const;
+export type FieldMetadataInputVisibilityEnum = typeof FieldMetadataInputVisibilityEnum[keyof typeof FieldMetadataInputVisibilityEnum];
+
+/**
+ * @export
+ */
+export const FieldMetadataInputEffectEnum = {
+    Hot: 'hot',
+    NextCall: 'next_call',
+    Restart: 'restart',
+} as const;
+export type FieldMetadataInputEffectEnum = typeof FieldMetadataInputEffectEnum[keyof typeof FieldMetadataInputEffectEnum];
+
+/**
+ * @export
+ */
+export const FieldMetadataInputRestrictionEnum = {
+    UpperBound: 'upper_bound',
+    SetIntersection: 'set_intersection',
+} as const;
+export type FieldMetadataInputRestrictionEnum = typeof FieldMetadataInputRestrictionEnum[keyof typeof FieldMetadataInputRestrictionEnum];
+
+/**
+ * 
+ * @export
  * @interface FormationArtifact
  */
 export interface FormationArtifact {
@@ -2237,7 +5298,7 @@ export interface FormationArtifact {
     /**
      * 
      */
-    modelInvocationId?: string;
+    modelOperationId?: string;
     /**
      * 
      */
@@ -2375,7 +5436,7 @@ export interface FormationArtifactInput {
     /**
      * 
      */
-    modelInvocationId?: string;
+    modelOperationId?: string;
     /**
      * 
      */
@@ -2493,7 +5554,7 @@ export interface FormationArtifactInputResolutionsInner {
     /**
      * 
      */
-    modelInvocationId?: string;
+    modelOperationId?: string;
 }
 
 
@@ -2536,7 +5597,7 @@ export interface FormationArtifactResolutionsInner {
     /**
      * 
      */
-    modelInvocationId?: string;
+    modelOperationId?: string;
 }
 
 
@@ -2586,7 +5647,7 @@ export interface GrowthResolve {
     /**
      * 
      */
-    formed: TimePoint;
+    formed: TimePointRequest;
     /**
      * 
      */
@@ -2629,7 +5690,7 @@ export interface GrowthResolveInput {
     /**
      * 
      */
-    formed: TimePointInput;
+    formed: TimePointRequestInput;
     /**
      * 
      */
@@ -2668,7 +5729,7 @@ export interface GrowthResolveRequest {
     /**
      * 
      */
-    formed: TimePointInput;
+    formed: TimePointRequestInput;
     /**
      * 
      */
@@ -2718,12 +5779,296 @@ export interface GrowthRunRequest {
     /**
      * 
      */
-    formed?: TimePointInput;
+    formed?: TimePointRequestInput;
     /**
      * 
      */
     apply?: boolean;
 }
+/**
+ * 
+ * @export
+ * @interface GrowthSettings
+ */
+export interface GrowthSettings {
+    /**
+     * 
+     */
+    enabled: boolean;
+    /**
+     * 
+     */
+    batchSize: number;
+    /**
+     * 
+     */
+    intervalMinutes: number;
+    /**
+     * 
+     */
+    journalEnabled: boolean;
+    /**
+     * 
+     */
+    journalTimeZone: string;
+}
+/**
+ * 
+ * @export
+ * @interface GrowthSettingsInput
+ */
+export interface GrowthSettingsInput {
+    /**
+     * 
+     */
+    enabled: boolean;
+    /**
+     * 
+     */
+    batchSize: number;
+    /**
+     * 
+     */
+    intervalMinutes: number;
+    /**
+     * 
+     */
+    journalEnabled: boolean;
+    /**
+     * 
+     */
+    journalTimeZone: string;
+}
+/**
+ * 
+ * @export
+ * @interface HostDrain200Response
+ */
+export interface HostDrain200Response {
+    /**
+     * 
+     */
+    state: string;
+    /**
+     * 
+     */
+    acceptingWork: boolean;
+}
+/**
+ * 
+ * @export
+ * @interface HostStatus
+ */
+export interface HostStatus {
+    /**
+     * 
+     */
+    product: HostStatusProductEnum;
+    /**
+     * 
+     */
+    installationId: string;
+    /**
+     * 
+     */
+    version: string;
+    /**
+     * 
+     */
+    state: HostStatusStateEnum;
+    /**
+     * 
+     */
+    components: { [key: string]: HostStatusComponentsValue; };
+    /**
+     * 
+     */
+    subjectsAutoStart: boolean;
+}
+
+
+/**
+ * @export
+ */
+export const HostStatusProductEnum = {
+    Nous: 'nous',
+    Hept: 'hept',
+} as const;
+export type HostStatusProductEnum = typeof HostStatusProductEnum[keyof typeof HostStatusProductEnum];
+
+/**
+ * @export
+ */
+export const HostStatusStateEnum = {
+    Created: 'created',
+    Starting: 'starting',
+    Running: 'running',
+    Draining: 'draining',
+    Stopped: 'stopped',
+    Failed: 'failed',
+} as const;
+export type HostStatusStateEnum = typeof HostStatusStateEnum[keyof typeof HostStatusStateEnum];
+
+/**
+ * 
+ * @export
+ * @interface HostStatusComponentsValue
+ */
+export interface HostStatusComponentsValue {
+    /**
+     * 
+     */
+    state: HostStatusComponentsValueStateEnum;
+    /**
+     * 
+     */
+    code?: string;
+    /**
+     * 
+     */
+    problem?: Problem;
+}
+
+
+/**
+ * @export
+ */
+export const HostStatusComponentsValueStateEnum = {
+    Available: 'available',
+    Degraded: 'degraded',
+    Unavailable: 'unavailable',
+} as const;
+export type HostStatusComponentsValueStateEnum = typeof HostStatusComponentsValueStateEnum[keyof typeof HostStatusComponentsValueStateEnum];
+
+/**
+ * 
+ * @export
+ * @interface HostStatusInput
+ */
+export interface HostStatusInput {
+    /**
+     * 
+     */
+    product: HostStatusInputProductEnum;
+    /**
+     * 
+     */
+    installationId: string;
+    /**
+     * 
+     */
+    version: string;
+    /**
+     * 
+     */
+    state: HostStatusInputStateEnum;
+    /**
+     * 
+     */
+    components: { [key: string]: HostStatusInputComponentsValue; };
+    /**
+     * 
+     */
+    subjectsAutoStart: boolean;
+}
+
+
+/**
+ * @export
+ */
+export const HostStatusInputProductEnum = {
+    Nous: 'nous',
+    Hept: 'hept',
+} as const;
+export type HostStatusInputProductEnum = typeof HostStatusInputProductEnum[keyof typeof HostStatusInputProductEnum];
+
+/**
+ * @export
+ */
+export const HostStatusInputStateEnum = {
+    Created: 'created',
+    Starting: 'starting',
+    Running: 'running',
+    Draining: 'draining',
+    Stopped: 'stopped',
+    Failed: 'failed',
+} as const;
+export type HostStatusInputStateEnum = typeof HostStatusInputStateEnum[keyof typeof HostStatusInputStateEnum];
+
+/**
+ * 
+ * @export
+ * @interface HostStatusInputComponentsValue
+ */
+export interface HostStatusInputComponentsValue {
+    /**
+     * 
+     */
+    state: HostStatusInputComponentsValueStateEnum;
+    /**
+     * 
+     */
+    code?: string;
+    /**
+     * 
+     */
+    problem?: ProblemInput;
+}
+
+
+/**
+ * @export
+ */
+export const HostStatusInputComponentsValueStateEnum = {
+    Available: 'available',
+    Degraded: 'degraded',
+    Unavailable: 'unavailable',
+} as const;
+export type HostStatusInputComponentsValueStateEnum = typeof HostStatusInputComponentsValueStateEnum[keyof typeof HostStatusInputComponentsValueStateEnum];
+
+/**
+ * 
+ * @export
+ * @interface HostStop202Response
+ */
+export interface HostStop202Response {
+    /**
+     * 
+     */
+    state: HostStop202ResponseStateEnum;
+}
+
+
+/**
+ * @export
+ */
+export const HostStop202ResponseStateEnum = {
+    Stopping: 'stopping',
+} as const;
+export type HostStop202ResponseStateEnum = typeof HostStop202ResponseStateEnum[keyof typeof HostStop202ResponseStateEnum];
+
+/**
+ * 
+ * @export
+ * @interface HostStopRequest
+ */
+export interface HostStopRequest {
+    /**
+     * 
+     */
+    mode: HostStopRequestModeEnum;
+}
+
+
+/**
+ * @export
+ */
+export const HostStopRequestModeEnum = {
+    Graceful: 'graceful',
+    Force: 'force',
+} as const;
+export type HostStopRequestModeEnum = typeof HostStopRequestModeEnum[keyof typeof HostStopRequestModeEnum];
+
 /**
  * 
  * @export
@@ -2773,174 +6118,223 @@ export interface InputPortionInput {
 /**
  * 
  * @export
- * @interface InvocationCompletion
+ * @interface InvocationSnapshot
  */
-export interface InvocationCompletion {
+export interface InvocationSnapshot {
     /**
      * 
      */
-    status: InvocationCompletionStatusEnum;
+    config: InvocationSnapshotConfig;
     /**
      * 
      */
-    inputTokens?: number;
+    roleId: string;
     /**
      * 
      */
-    outputTokens?: number;
+    requestedResource: ResourceRef;
     /**
      * 
      */
-    cacheReadTokens?: number;
+    actualResource: ResourceRef;
     /**
      * 
      */
-    cacheWriteTokens?: number;
+    actualProvider: string;
     /**
      * 
      */
-    providerRequestId?: string;
+    actualModelId: string;
     /**
      * 
      */
-    outputRef?: Ref;
+    definition: ModelDefinition;
     /**
      * 
      */
-    rawUsage?: { [key: string]: any; };
-}
-
-
-/**
- * @export
- */
-export const InvocationCompletionStatusEnum = {
-    Completed: 'completed',
-    NotSent: 'not_sent',
-    Unknown: 'unknown',
-} as const;
-export type InvocationCompletionStatusEnum = typeof InvocationCompletionStatusEnum[keyof typeof InvocationCompletionStatusEnum];
-
-/**
- * 
- * @export
- * @interface InvocationCompletionInput
- */
-export interface InvocationCompletionInput {
+    provider?: ProviderDefinition;
     /**
      * 
      */
-    status: InvocationCompletionInputStatusEnum;
+    policy: RolePolicy;
     /**
      * 
      */
-    inputTokens?: number;
+    inference: { [key: string]: JsonValue; };
     /**
      * 
      */
-    outputTokens?: number;
+    prompt?: PromptSnapshotRef;
     /**
      * 
      */
-    cacheReadTokens?: number;
+    credential?: InvocationSnapshotInputCredential;
     /**
      * 
      */
-    cacheWriteTokens?: number;
+    network?: InvocationSnapshotNetwork;
     /**
      * 
      */
-    providerRequestId?: string;
+    pricing?: PriceBook;
     /**
      * 
      */
-    outputRef?: RefInput;
-    /**
-     * 
-     */
-    rawUsage?: { [key: string]: any; };
-}
-
-
-/**
- * @export
- */
-export const InvocationCompletionInputStatusEnum = {
-    Completed: 'completed',
-    NotSent: 'not_sent',
-    Unknown: 'unknown',
-} as const;
-export type InvocationCompletionInputStatusEnum = typeof InvocationCompletionInputStatusEnum[keyof typeof InvocationCompletionInputStatusEnum];
-
-/**
- * 
- * @export
- * @interface InvocationPrepare
- */
-export interface InvocationPrepare {
-    /**
-     * 
-     */
-    invocationId: string;
-    /**
-     * 
-     */
-    role: string;
-    /**
-     * 
-     */
-    modelResourceId: string;
-    /**
-     * 
-     */
-    inputTokensEstimate: number;
-    /**
-     * 
-     */
-    maxOutputTokens: number;
-    /**
-     * 
-     */
-    inputRefs: Array<Ref>;
-    /**
-     * 
-     */
-    nativeRunRef?: Ref;
+    budgetAllocation?: BudgetAllocationSnapshot;
 }
 /**
  * 
  * @export
- * @interface InvocationPrepareInput
+ * @interface InvocationSnapshotConfig
  */
-export interface InvocationPrepareInput {
+export interface InvocationSnapshotConfig {
     /**
      * 
      */
-    invocationId: string;
+    revisions: Array<RevisionRef>;
     /**
      * 
      */
-    role: string;
+    definitionRevisions: { [key: string]: string; };
     /**
      * 
      */
-    modelResourceId: string;
+    digest: string;
+}
+/**
+ * 
+ * @export
+ * @interface InvocationSnapshotInput
+ */
+export interface InvocationSnapshotInput {
     /**
      * 
      */
-    inputTokensEstimate: number;
+    config: InvocationSnapshotInputConfig;
     /**
      * 
      */
-    maxOutputTokens: number;
+    roleId: string;
     /**
      * 
      */
-    inputRefs?: Array<RefInput>;
+    requestedResource: ResourceRefInput;
     /**
      * 
      */
-    nativeRunRef?: RefInput;
+    actualResource: ResourceRefInput;
+    /**
+     * 
+     */
+    actualProvider: string;
+    /**
+     * 
+     */
+    actualModelId: string;
+    /**
+     * 
+     */
+    definition: ModelDefinitionInput;
+    /**
+     * 
+     */
+    provider?: ProviderDefinitionInput;
+    /**
+     * 
+     */
+    policy: RolePolicyInput;
+    /**
+     * 
+     */
+    inference: { [key: string]: JsonValueInput; };
+    /**
+     * 
+     */
+    prompt?: PromptSnapshotRefInput;
+    /**
+     * 
+     */
+    credential?: InvocationSnapshotInputCredential;
+    /**
+     * 
+     */
+    network?: InvocationSnapshotInputNetwork;
+    /**
+     * 
+     */
+    pricing?: PriceBookInput;
+    /**
+     * 
+     */
+    budgetAllocation?: BudgetAllocationSnapshotInput;
+}
+/**
+ * 
+ * @export
+ * @interface InvocationSnapshotInputConfig
+ */
+export interface InvocationSnapshotInputConfig {
+    /**
+     * 
+     */
+    revisions: Array<RevisionRefInput>;
+    /**
+     * 
+     */
+    definitionRevisions: { [key: string]: string; };
+    /**
+     * 
+     */
+    digest: string;
+}
+/**
+ * 
+ * @export
+ * @interface InvocationSnapshotInputCredential
+ */
+export interface InvocationSnapshotInputCredential {
+    /**
+     * 
+     */
+    ref: string;
+    /**
+     * 
+     */
+    revision: number;
+    /**
+     * 
+     */
+    generation: number;
+}
+/**
+ * 
+ * @export
+ * @interface InvocationSnapshotInputNetwork
+ */
+export interface InvocationSnapshotInputNetwork {
+    /**
+     * 
+     */
+    profileId: string;
+    /**
+     * 
+     */
+    revisions: Array<RevisionRefInput>;
+}
+/**
+ * 
+ * @export
+ * @interface InvocationSnapshotNetwork
+ */
+export interface InvocationSnapshotNetwork {
+    /**
+     * 
+     */
+    profileId: string;
+    /**
+     * 
+     */
+    revisions: Array<RevisionRef>;
 }
 /**
  * 
@@ -3077,7 +6471,7 @@ export interface JournalsWriteRequest {
     /**
      * 
      */
-    range: TimeRangeInput;
+    range: TimeRangeRequestInput;
     /**
      * 
      */
@@ -3085,11 +6479,11 @@ export interface JournalsWriteRequest {
     /**
      * 
      */
-    knowledgeAt: TimePointInput;
+    knowledgeAt: TimePointRequestInput;
     /**
      * 
      */
-    formed: TimePointInput;
+    formed: TimePointRequestInput;
     /**
      * 
      */
@@ -3110,6 +6504,20 @@ export interface JournalsWriteRequest {
      * 
      */
     reason?: string;
+}
+/**
+ * 
+ * @export
+ * @interface JsonValue
+ */
+export interface JsonValue {
+}
+/**
+ * 
+ * @export
+ * @interface JsonValueInput
+ */
+export interface JsonValueInput {
 }
 /**
  * @type KnowledgeBody
@@ -3136,7 +6544,7 @@ export interface KnowledgeChange {
     /**
      * 
      */
-    body: KnowledgeBody;
+    body: KnowledgeCreateBody;
     /**
      * 
      */
@@ -3144,11 +6552,11 @@ export interface KnowledgeChange {
     /**
      * 
      */
-    formed: TimePoint;
+    formed: TimePointRequest;
     /**
      * 
      */
-    valid?: TimeRange;
+    valid?: TimeRangeRequest;
     /**
      * 
      */
@@ -3214,7 +6622,7 @@ export interface KnowledgeChangeInput {
     /**
      * 
      */
-    body: KnowledgeBodyInput;
+    body: KnowledgeReviseRequestBody;
     /**
      * 
      */
@@ -3222,11 +6630,11 @@ export interface KnowledgeChangeInput {
     /**
      * 
      */
-    formed: TimePointInput;
+    formed: TimePointRequestInput;
     /**
      * 
      */
-    valid?: TimeRangeInput;
+    valid?: TimeRangeRequestInput;
     /**
      * 
      */
@@ -3307,7 +6715,7 @@ export interface KnowledgeCreate {
     /**
      * 
      */
-    body: KnowledgeBody;
+    body: KnowledgeCreateBody;
     /**
      * 
      */
@@ -3315,11 +6723,11 @@ export interface KnowledgeCreate {
     /**
      * 
      */
-    formed: TimePoint;
+    formed: TimePointRequest;
     /**
      * 
      */
-    valid?: TimeRange;
+    valid?: TimeRangeRequest;
     /**
      * 
      */
@@ -3365,6 +6773,251 @@ export const KnowledgeCreateStanceEnum = {
 export type KnowledgeCreateStanceEnum = typeof KnowledgeCreateStanceEnum[keyof typeof KnowledgeCreateStanceEnum];
 
 /**
+ * @type KnowledgeCreateBody
+ * 
+ * @export
+ */
+export type KnowledgeCreateBody = CognitiveSchema | Concept | KnowledgeCreateBodyOneOf | KnowledgeCreateBodyOneOf1 | KnowledgeCreateBodyOneOf2 | LanguageConvention | Memory | Self | Social;
+/**
+ * 
+ * @export
+ * @interface KnowledgeCreateBodyOneOf
+ */
+export interface KnowledgeCreateBodyOneOf {
+    /**
+     * 
+     */
+    content: string;
+    /**
+     * 
+     */
+    title?: string;
+    /**
+     * 
+     */
+    entityRefs: Array<Ref>;
+    /**
+     * 
+     */
+    conceptRefs: Array<Ref>;
+    /**
+     * 
+     */
+    tags: Array<string>;
+    /**
+     * 
+     */
+    kind: KnowledgeCreateBodyOneOfKindEnum;
+    /**
+     * 
+     */
+    track: KnowledgeCreateBodyOneOfTrackEnum;
+    /**
+     * 
+     */
+    range: TimeRangeRequest;
+    /**
+     * 
+     */
+    members: Array<Ref>;
+    /**
+     * 
+     */
+    participants: Array<Ref>;
+    /**
+     * 
+     */
+    placeRef?: Ref;
+    /**
+     * 
+     */
+    parentRef?: Ref;
+}
+
+
+/**
+ * @export
+ */
+export const KnowledgeCreateBodyOneOfKindEnum = {
+    Episode: 'Episode',
+} as const;
+export type KnowledgeCreateBodyOneOfKindEnum = typeof KnowledgeCreateBodyOneOfKindEnum[keyof typeof KnowledgeCreateBodyOneOfKindEnum];
+
+/**
+ * @export
+ */
+export const KnowledgeCreateBodyOneOfTrackEnum = {
+    Life: 'life',
+    Social: 'social',
+    Work: 'work',
+} as const;
+export type KnowledgeCreateBodyOneOfTrackEnum = typeof KnowledgeCreateBodyOneOfTrackEnum[keyof typeof KnowledgeCreateBodyOneOfTrackEnum];
+
+/**
+ * 
+ * @export
+ * @interface KnowledgeCreateBodyOneOf1
+ */
+export interface KnowledgeCreateBodyOneOf1 {
+    /**
+     * 
+     */
+    content: string;
+    /**
+     * 
+     */
+    title?: string;
+    /**
+     * 
+     */
+    entityRefs: Array<Ref>;
+    /**
+     * 
+     */
+    conceptRefs: Array<Ref>;
+    /**
+     * 
+     */
+    tags: Array<string>;
+    /**
+     * 
+     */
+    kind: KnowledgeCreateBodyOneOf1KindEnum;
+    /**
+     * 
+     */
+    range: TimeRangeRequest;
+    /**
+     * 
+     */
+    experienceRefs: Array<Ref>;
+    /**
+     * 
+     */
+    perspectiveAt: TimePointRequest;
+    /**
+     * 
+     */
+    mood?: string;
+    /**
+     * 
+     */
+    outlook?: string;
+}
+
+
+/**
+ * @export
+ */
+export const KnowledgeCreateBodyOneOf1KindEnum = {
+    Journal: 'Journal',
+} as const;
+export type KnowledgeCreateBodyOneOf1KindEnum = typeof KnowledgeCreateBodyOneOf1KindEnum[keyof typeof KnowledgeCreateBodyOneOf1KindEnum];
+
+/**
+ * 
+ * @export
+ * @interface KnowledgeCreateBodyOneOf2
+ */
+export interface KnowledgeCreateBodyOneOf2 {
+    /**
+     * 
+     */
+    content: string;
+    /**
+     * 
+     */
+    title?: string;
+    /**
+     * 
+     */
+    entityRefs: Array<Ref>;
+    /**
+     * 
+     */
+    conceptRefs: Array<Ref>;
+    /**
+     * 
+     */
+    tags: Array<string>;
+    /**
+     * 
+     */
+    kind: KnowledgeCreateBodyOneOf2KindEnum;
+    /**
+     * 
+     */
+    aspect: KnowledgeCreateBodyOneOf2AspectEnum;
+    /**
+     * 
+     */
+    importance: number;
+    /**
+     * 
+     */
+    criterion?: KnowledgeCreateBodyOneOf2Criterion;
+}
+
+
+/**
+ * @export
+ */
+export const KnowledgeCreateBodyOneOf2KindEnum = {
+    Motivation: 'Motivation',
+} as const;
+export type KnowledgeCreateBodyOneOf2KindEnum = typeof KnowledgeCreateBodyOneOf2KindEnum[keyof typeof KnowledgeCreateBodyOneOf2KindEnum];
+
+/**
+ * @export
+ */
+export const KnowledgeCreateBodyOneOf2AspectEnum = {
+    Desire: 'desire',
+    Concern: 'concern',
+    EvaluableExpectation: 'evaluable_expectation',
+} as const;
+export type KnowledgeCreateBodyOneOf2AspectEnum = typeof KnowledgeCreateBodyOneOf2AspectEnum[keyof typeof KnowledgeCreateBodyOneOf2AspectEnum];
+
+/**
+ * 
+ * @export
+ * @interface KnowledgeCreateBodyOneOf2Criterion
+ */
+export interface KnowledgeCreateBodyOneOf2Criterion {
+    /**
+     * 
+     */
+    mode: KnowledgeCreateBodyOneOf2CriterionModeEnum;
+    /**
+     * 
+     */
+    range: TimeRangeRequest;
+    /**
+     * 
+     */
+    condition: string;
+    /**
+     * 
+     */
+    predicate?: CriterionPredicate;
+    /**
+     * 
+     */
+    requiredCoverage: number;
+}
+
+
+/**
+ * @export
+ */
+export const KnowledgeCreateBodyOneOf2CriterionModeEnum = {
+    Achieve: 'achieve',
+    Terminate: 'terminate',
+    Maintain: 'maintain',
+    Avoid: 'avoid',
+} as const;
+export type KnowledgeCreateBodyOneOf2CriterionModeEnum = typeof KnowledgeCreateBodyOneOf2CriterionModeEnum[keyof typeof KnowledgeCreateBodyOneOf2CriterionModeEnum];
+
+/**
  * 
  * @export
  * @interface KnowledgeCreateInput
@@ -3377,7 +7030,7 @@ export interface KnowledgeCreateInput {
     /**
      * 
      */
-    body: KnowledgeBodyInput;
+    body: KnowledgeReviseRequestBody;
     /**
      * 
      */
@@ -3385,11 +7038,11 @@ export interface KnowledgeCreateInput {
     /**
      * 
      */
-    formed: TimePointInput;
+    formed: TimePointRequestInput;
     /**
      * 
      */
-    valid?: TimeRangeInput;
+    valid?: TimeRangeRequestInput;
     /**
      * 
      */
@@ -3451,11 +7104,11 @@ export interface KnowledgeHistory {
     /**
      * 
      */
-    knowledgeAt?: TimePoint;
+    knowledgeAt?: TimePointRequest;
     /**
      * 
      */
-    recordedAsOf?: string;
+    recordedAsOf?: any;
 }
 /**
  * 
@@ -3474,7 +7127,7 @@ export interface KnowledgeHistoryInput {
     /**
      * 
      */
-    knowledgeAt?: TimePointInput;
+    knowledgeAt?: TimePointRequestInput;
     /**
      * 
      */
@@ -3529,11 +7182,11 @@ export interface KnowledgeList {
     /**
      * 
      */
-    knowledgeAt?: TimePoint;
+    knowledgeAt?: TimePointRequest;
     /**
      * 
      */
-    recordedAsOf?: string;
+    recordedAsOf?: any;
     /**
      * 
      */
@@ -3542,6 +7195,10 @@ export interface KnowledgeList {
      * 
      */
     includeHistory?: boolean;
+    /**
+     * 
+     */
+    range?: TimeRangeRequest;
     /**
      * 
      */
@@ -3616,7 +7273,7 @@ export interface KnowledgeListInput {
     /**
      * 
      */
-    knowledgeAt?: TimePointInput;
+    knowledgeAt?: TimePointRequestInput;
     /**
      * 
      */
@@ -3629,6 +7286,10 @@ export interface KnowledgeListInput {
      * 
      */
     includeHistory?: boolean;
+    /**
+     * 
+     */
+    range?: TimeRangeRequestInput;
     /**
      * 
      */
@@ -3737,11 +7398,11 @@ export interface KnowledgeRead {
     /**
      * 
      */
-    knowledgeAt?: TimePoint;
+    knowledgeAt?: TimePointRequest;
     /**
      * 
      */
-    recordedAsOf?: string;
+    recordedAsOf?: any;
 }
 /**
  * 
@@ -3760,7 +7421,7 @@ export interface KnowledgeReadInput {
     /**
      * 
      */
-    knowledgeAt?: TimePointInput;
+    knowledgeAt?: TimePointRequestInput;
     /**
      * 
      */
@@ -3779,7 +7440,7 @@ export interface KnowledgeRevise {
     /**
      * 
      */
-    body: KnowledgeBody;
+    body: KnowledgeCreateBody;
     /**
      * 
      */
@@ -3787,11 +7448,11 @@ export interface KnowledgeRevise {
     /**
      * 
      */
-    formed: TimePoint;
+    formed: TimePointRequest;
     /**
      * 
      */
-    valid?: TimeRange;
+    valid?: TimeRangeRequest;
     /**
      * 
      */
@@ -3861,7 +7522,7 @@ export interface KnowledgeReviseInput {
     /**
      * 
      */
-    body: KnowledgeBodyInput;
+    body: KnowledgeReviseRequestBody;
     /**
      * 
      */
@@ -3869,11 +7530,11 @@ export interface KnowledgeReviseInput {
     /**
      * 
      */
-    formed: TimePointInput;
+    formed: TimePointRequestInput;
     /**
      * 
      */
-    valid?: TimeRangeInput;
+    valid?: TimeRangeRequestInput;
     /**
      * 
      */
@@ -3943,7 +7604,7 @@ export interface KnowledgeReviseRequest {
     /**
      * 
      */
-    body: KnowledgeBodyInput;
+    body: KnowledgeReviseRequestBody;
     /**
      * 
      */
@@ -3951,11 +7612,11 @@ export interface KnowledgeReviseRequest {
     /**
      * 
      */
-    formed: TimePointInput;
+    formed: TimePointRequestInput;
     /**
      * 
      */
-    valid?: TimeRangeInput;
+    valid?: TimeRangeRequestInput;
     /**
      * 
      */
@@ -4008,6 +7669,294 @@ export const KnowledgeReviseRequestStanceEnum = {
 } as const;
 export type KnowledgeReviseRequestStanceEnum = typeof KnowledgeReviseRequestStanceEnum[keyof typeof KnowledgeReviseRequestStanceEnum];
 
+/**
+ * @type KnowledgeReviseRequestBody
+ * 
+ * @export
+ */
+export type KnowledgeReviseRequestBody = CognitiveSchemaInput | ConceptInput | KnowledgeReviseRequestBodyOneOf | KnowledgeReviseRequestBodyOneOf1 | KnowledgeReviseRequestBodyOneOf2 | LanguageConventionInput | MemoryInput | SelfInput | SocialInput;
+/**
+ * 
+ * @export
+ * @interface KnowledgeReviseRequestBodyOneOf
+ */
+export interface KnowledgeReviseRequestBodyOneOf {
+    /**
+     * 
+     */
+    content: string;
+    /**
+     * 
+     */
+    title?: string;
+    /**
+     * 
+     */
+    entityRefs?: Array<RefInput>;
+    /**
+     * 
+     */
+    conceptRefs?: Array<RefInput>;
+    /**
+     * 
+     */
+    tags?: Array<string>;
+    /**
+     * 
+     */
+    kind: KnowledgeReviseRequestBodyOneOfKindEnum;
+    /**
+     * 
+     */
+    track: KnowledgeReviseRequestBodyOneOfTrackEnum;
+    /**
+     * 
+     */
+    range: TimeRangeRequestInput;
+    /**
+     * 
+     */
+    members: Array<RefInput>;
+    /**
+     * 
+     */
+    participants?: Array<RefInput>;
+    /**
+     * 
+     */
+    placeRef?: RefInput;
+    /**
+     * 
+     */
+    parentRef?: RefInput;
+}
+
+
+/**
+ * @export
+ */
+export const KnowledgeReviseRequestBodyOneOfKindEnum = {
+    Episode: 'Episode',
+} as const;
+export type KnowledgeReviseRequestBodyOneOfKindEnum = typeof KnowledgeReviseRequestBodyOneOfKindEnum[keyof typeof KnowledgeReviseRequestBodyOneOfKindEnum];
+
+/**
+ * @export
+ */
+export const KnowledgeReviseRequestBodyOneOfTrackEnum = {
+    Life: 'life',
+    Social: 'social',
+    Work: 'work',
+} as const;
+export type KnowledgeReviseRequestBodyOneOfTrackEnum = typeof KnowledgeReviseRequestBodyOneOfTrackEnum[keyof typeof KnowledgeReviseRequestBodyOneOfTrackEnum];
+
+/**
+ * 
+ * @export
+ * @interface KnowledgeReviseRequestBodyOneOf1
+ */
+export interface KnowledgeReviseRequestBodyOneOf1 {
+    /**
+     * 
+     */
+    content: string;
+    /**
+     * 
+     */
+    title?: string;
+    /**
+     * 
+     */
+    entityRefs?: Array<RefInput>;
+    /**
+     * 
+     */
+    conceptRefs?: Array<RefInput>;
+    /**
+     * 
+     */
+    tags?: Array<string>;
+    /**
+     * 
+     */
+    kind: KnowledgeReviseRequestBodyOneOf1KindEnum;
+    /**
+     * 
+     */
+    range: TimeRangeRequestInput;
+    /**
+     * 
+     */
+    experienceRefs: Array<RefInput>;
+    /**
+     * 
+     */
+    perspectiveAt: TimePointRequestInput;
+    /**
+     * 
+     */
+    mood?: string;
+    /**
+     * 
+     */
+    outlook?: string;
+}
+
+
+/**
+ * @export
+ */
+export const KnowledgeReviseRequestBodyOneOf1KindEnum = {
+    Journal: 'Journal',
+} as const;
+export type KnowledgeReviseRequestBodyOneOf1KindEnum = typeof KnowledgeReviseRequestBodyOneOf1KindEnum[keyof typeof KnowledgeReviseRequestBodyOneOf1KindEnum];
+
+/**
+ * 
+ * @export
+ * @interface KnowledgeReviseRequestBodyOneOf2
+ */
+export interface KnowledgeReviseRequestBodyOneOf2 {
+    /**
+     * 
+     */
+    content: string;
+    /**
+     * 
+     */
+    title?: string;
+    /**
+     * 
+     */
+    entityRefs?: Array<RefInput>;
+    /**
+     * 
+     */
+    conceptRefs?: Array<RefInput>;
+    /**
+     * 
+     */
+    tags?: Array<string>;
+    /**
+     * 
+     */
+    kind: KnowledgeReviseRequestBodyOneOf2KindEnum;
+    /**
+     * 
+     */
+    aspect: KnowledgeReviseRequestBodyOneOf2AspectEnum;
+    /**
+     * 
+     */
+    importance: number;
+    /**
+     * 
+     */
+    criterion?: KnowledgeReviseRequestBodyOneOf2Criterion;
+}
+
+
+/**
+ * @export
+ */
+export const KnowledgeReviseRequestBodyOneOf2KindEnum = {
+    Motivation: 'Motivation',
+} as const;
+export type KnowledgeReviseRequestBodyOneOf2KindEnum = typeof KnowledgeReviseRequestBodyOneOf2KindEnum[keyof typeof KnowledgeReviseRequestBodyOneOf2KindEnum];
+
+/**
+ * @export
+ */
+export const KnowledgeReviseRequestBodyOneOf2AspectEnum = {
+    Desire: 'desire',
+    Concern: 'concern',
+    EvaluableExpectation: 'evaluable_expectation',
+} as const;
+export type KnowledgeReviseRequestBodyOneOf2AspectEnum = typeof KnowledgeReviseRequestBodyOneOf2AspectEnum[keyof typeof KnowledgeReviseRequestBodyOneOf2AspectEnum];
+
+/**
+ * 
+ * @export
+ * @interface KnowledgeReviseRequestBodyOneOf2Criterion
+ */
+export interface KnowledgeReviseRequestBodyOneOf2Criterion {
+    /**
+     * 
+     */
+    mode: KnowledgeReviseRequestBodyOneOf2CriterionModeEnum;
+    /**
+     * 
+     */
+    range: TimeRangeRequestInput;
+    /**
+     * 
+     */
+    condition: string;
+    /**
+     * 
+     */
+    predicate?: KnowledgeReviseRequestBodyOneOf2CriterionPredicate;
+    /**
+     * 
+     */
+    requiredCoverage?: number;
+}
+
+
+/**
+ * @export
+ */
+export const KnowledgeReviseRequestBodyOneOf2CriterionModeEnum = {
+    Achieve: 'achieve',
+    Terminate: 'terminate',
+    Maintain: 'maintain',
+    Avoid: 'avoid',
+} as const;
+export type KnowledgeReviseRequestBodyOneOf2CriterionModeEnum = typeof KnowledgeReviseRequestBodyOneOf2CriterionModeEnum[keyof typeof KnowledgeReviseRequestBodyOneOf2CriterionModeEnum];
+
+/**
+ * 
+ * @export
+ * @interface KnowledgeReviseRequestBodyOneOf2CriterionPredicate
+ */
+export interface KnowledgeReviseRequestBodyOneOf2CriterionPredicate {
+    /**
+     * 
+     */
+    path: Array<string>;
+    /**
+     * 
+     */
+    operator: KnowledgeReviseRequestBodyOneOf2CriterionPredicateOperatorEnum;
+    /**
+     * 
+     */
+    value?: KnowledgeReviseRequestBodyOneOf2CriterionPredicateValue | null;
+}
+
+
+/**
+ * @export
+ */
+export const KnowledgeReviseRequestBodyOneOf2CriterionPredicateOperatorEnum = {
+    Eq: 'eq',
+    Neq: 'neq',
+    Gt: 'gt',
+    Gte: 'gte',
+    Lt: 'lt',
+    Lte: 'lte',
+    Contains: 'contains',
+    Exists: 'exists',
+} as const;
+export type KnowledgeReviseRequestBodyOneOf2CriterionPredicateOperatorEnum = typeof KnowledgeReviseRequestBodyOneOf2CriterionPredicateOperatorEnum[keyof typeof KnowledgeReviseRequestBodyOneOf2CriterionPredicateOperatorEnum];
+
+/**
+ * 
+ * @export
+ * @interface KnowledgeReviseRequestBodyOneOf2CriterionPredicateValue
+ */
+export interface KnowledgeReviseRequestBodyOneOf2CriterionPredicateValue {
+}
 /**
  * 
  * @export
@@ -4343,6 +8292,56 @@ export type LanguageConventionInputKindEnum = typeof LanguageConventionInputKind
 /**
  * 
  * @export
+ * @interface LanguageSettings
+ */
+export interface LanguageSettings {
+    /**
+     * 
+     */
+    maxOutputTokens: number;
+    /**
+     * 
+     */
+    temperature?: number;
+    /**
+     * 
+     */
+    reasoning?: Reasoning;
+    /**
+     * 
+     */
+    providerOptions: { [key: string]: { [key: string]: JsonValue; }; };
+}
+
+
+/**
+ * 
+ * @export
+ * @interface LanguageSettingsInput
+ */
+export interface LanguageSettingsInput {
+    /**
+     * 
+     */
+    maxOutputTokens: number;
+    /**
+     * 
+     */
+    temperature?: number;
+    /**
+     * 
+     */
+    reasoning?: ReasoningInput;
+    /**
+     * 
+     */
+    providerOptions: { [key: string]: { [key: string]: JsonValueInput; }; };
+}
+
+
+/**
+ * 
+ * @export
  * @interface MaterialCapture
  */
 export interface MaterialCapture {
@@ -4373,7 +8372,7 @@ export interface MaterialCapture {
     /**
      * 
      */
-    occurred?: TimeRange;
+    occurred?: TimeRangeRequest;
     /**
      * 
      */
@@ -4412,7 +8411,7 @@ export interface MaterialCaptureInput {
     /**
      * 
      */
-    occurred?: TimeRangeInput;
+    occurred?: TimeRangeRequestInput;
     /**
      * 
      */
@@ -4599,25 +8598,6 @@ export interface MaterialViewInput {
 /**
  * 
  * @export
- * @interface MaterialsUploadBlob200Response
- */
-export interface MaterialsUploadBlob200Response {
-    /**
-     * 
-     */
-    ref: Ref;
-    /**
-     * 
-     */
-    digest: string;
-    /**
-     * 
-     */
-    bytes: number;
-}
-/**
- * 
- * @export
  * @interface Memory
  */
 export interface Memory {
@@ -4734,6 +8714,1548 @@ export type MemoryInputRoleEnum = typeof MemoryInputRoleEnum[keyof typeof Memory
 /**
  * 
  * @export
+ * @interface ModelBudget
+ */
+export interface ModelBudget {
+    /**
+     * 
+     */
+    maxCalls?: number;
+    /**
+     * 
+     */
+    maxTokens?: number;
+    /**
+     * 
+     */
+    concurrentCalls?: number;
+    /**
+     * 
+     */
+    totalAmount?: Money | null;
+    /**
+     * 
+     */
+    dailyAmount?: Money | null;
+    /**
+     * 
+     */
+    perCallAmount?: Money | null;
+    /**
+     * 
+     */
+    window?: ModelBudgetInputWindow;
+    /**
+     * 
+     */
+    timeZone?: string;
+}
+/**
+ * 
+ * @export
+ * @interface ModelBudgetInput
+ */
+export interface ModelBudgetInput {
+    /**
+     * 
+     */
+    maxCalls?: number;
+    /**
+     * 
+     */
+    maxTokens?: number;
+    /**
+     * 
+     */
+    concurrentCalls?: number;
+    /**
+     * 
+     */
+    totalAmount?: MoneyInput | null;
+    /**
+     * 
+     */
+    dailyAmount?: MoneyInput | null;
+    /**
+     * 
+     */
+    perCallAmount?: MoneyInput | null;
+    /**
+     * 
+     */
+    window?: ModelBudgetInputWindow;
+    /**
+     * 
+     */
+    timeZone?: string;
+}
+/**
+ * 
+ * @export
+ * @interface ModelBudgetInputWindow
+ */
+export interface ModelBudgetInputWindow {
+    /**
+     * 
+     */
+    kind: ModelBudgetInputWindowKindEnum;
+    /**
+     * 
+     */
+    durationMs: number;
+}
+
+
+/**
+ * @export
+ */
+export const ModelBudgetInputWindowKindEnum = {
+    Rolling: 'rolling',
+} as const;
+export type ModelBudgetInputWindowKindEnum = typeof ModelBudgetInputWindowKindEnum[keyof typeof ModelBudgetInputWindowKindEnum];
+
+/**
+ * 
+ * @export
+ * @interface ModelCallView
+ */
+export interface ModelCallView {
+    /**
+     * 
+     */
+    identity: ModelInvocationIdentity;
+    /**
+     * 
+     */
+    authorityRef: string;
+    /**
+     * 
+     */
+    native?: NativeOrigin;
+    /**
+     * 
+     */
+    purpose: string;
+    /**
+     * 
+     */
+    audience: Array<string>;
+    /**
+     * 
+     */
+    traceId: string;
+    /**
+     * 
+     */
+    subjectId?: string;
+    /**
+     * 
+     */
+    consumer: Consumer;
+    /**
+     * 
+     */
+    roleId: string;
+    /**
+     * 
+     */
+    kind: ModelKind;
+    /**
+     * 
+     */
+    status: ModelCallViewStatusEnum;
+    /**
+     * 
+     */
+    snapshot: InvocationSnapshot;
+    /**
+     * 
+     */
+    preparation?: ModelPreparation;
+    /**
+     * 
+     */
+    inputRefs: Array<Ref>;
+    /**
+     * 
+     */
+    outputRefs: Array<Ref>;
+    /**
+     * 
+     */
+    observed?: TimeCaptureReceipt;
+    /**
+     * 
+     */
+    formed?: TimeCaptureReceipt;
+    /**
+     * 
+     */
+    usage?: NormalizedUsage;
+    /**
+     * 
+     */
+    providerRequestId?: string;
+    /**
+     * 
+     */
+    reservedCost: Money | null;
+    /**
+     * 
+     */
+    actualCost: Money | null;
+    /**
+     * 
+     */
+    problem?: Problem;
+    /**
+     * 
+     */
+    recordedAt: string;
+    /**
+     * 
+     */
+    completedAt?: string;
+}
+
+
+/**
+ * @export
+ */
+export const ModelCallViewStatusEnum = {
+    Prepared: 'prepared',
+    Dispatched: 'dispatched',
+    Completed: 'completed',
+    NotSent: 'not_sent',
+    Unknown: 'unknown',
+} as const;
+export type ModelCallViewStatusEnum = typeof ModelCallViewStatusEnum[keyof typeof ModelCallViewStatusEnum];
+
+/**
+ * 
+ * @export
+ * @interface ModelCallViewInput
+ */
+export interface ModelCallViewInput {
+    /**
+     * 
+     */
+    identity: ModelInvocationIdentityInput;
+    /**
+     * 
+     */
+    authorityRef: string;
+    /**
+     * 
+     */
+    native?: NativeOriginInput;
+    /**
+     * 
+     */
+    purpose: string;
+    /**
+     * 
+     */
+    audience: Array<string>;
+    /**
+     * 
+     */
+    traceId: string;
+    /**
+     * 
+     */
+    subjectId?: string;
+    /**
+     * 
+     */
+    consumer: ConsumerInput;
+    /**
+     * 
+     */
+    roleId: string;
+    /**
+     * 
+     */
+    kind: ModelKindInput;
+    /**
+     * 
+     */
+    status: ModelCallViewInputStatusEnum;
+    /**
+     * 
+     */
+    snapshot: InvocationSnapshotInput;
+    /**
+     * 
+     */
+    preparation?: ModelPreparationInput;
+    /**
+     * 
+     */
+    inputRefs: Array<RefInput>;
+    /**
+     * 
+     */
+    outputRefs: Array<RefInput>;
+    /**
+     * 
+     */
+    observed?: TimeCaptureReceiptInput;
+    /**
+     * 
+     */
+    formed?: TimeCaptureReceiptInput;
+    /**
+     * 
+     */
+    usage?: NormalizedUsageInput;
+    /**
+     * 
+     */
+    providerRequestId?: string;
+    /**
+     * 
+     */
+    reservedCost: MoneyInput | null;
+    /**
+     * 
+     */
+    actualCost: MoneyInput | null;
+    /**
+     * 
+     */
+    problem?: ProblemInput;
+    /**
+     * 
+     */
+    recordedAt: string;
+    /**
+     * 
+     */
+    completedAt?: string;
+}
+
+
+/**
+ * @export
+ */
+export const ModelCallViewInputStatusEnum = {
+    Prepared: 'prepared',
+    Dispatched: 'dispatched',
+    Completed: 'completed',
+    NotSent: 'not_sent',
+    Unknown: 'unknown',
+} as const;
+export type ModelCallViewInputStatusEnum = typeof ModelCallViewInputStatusEnum[keyof typeof ModelCallViewInputStatusEnum];
+
+/**
+ * 
+ * @export
+ * @interface ModelDataBundle
+ */
+export interface ModelDataBundle {
+    /**
+     * 
+     */
+    formatVersion: ModelDataBundleFormatVersionEnum;
+    /**
+     * 
+     */
+    sourceProduct: ModelDataBundleSourceProductEnum;
+    /**
+     * 
+     */
+    sourceInstallationId: string;
+    /**
+     * 
+     */
+    subjectId: string | null;
+    /**
+     * 
+     */
+    calls: Array<ModelDataRecord>;
+}
+
+
+/**
+ * @export
+ */
+export const ModelDataBundleFormatVersionEnum = {
+    NUMBER_1: 1,
+} as const;
+export type ModelDataBundleFormatVersionEnum = typeof ModelDataBundleFormatVersionEnum[keyof typeof ModelDataBundleFormatVersionEnum];
+
+/**
+ * @export
+ */
+export const ModelDataBundleSourceProductEnum = {
+    Nous: 'nous',
+    Hept: 'hept',
+} as const;
+export type ModelDataBundleSourceProductEnum = typeof ModelDataBundleSourceProductEnum[keyof typeof ModelDataBundleSourceProductEnum];
+
+/**
+ * 
+ * @export
+ * @interface ModelDataBundleInput
+ */
+export interface ModelDataBundleInput {
+    /**
+     * 
+     */
+    formatVersion: ModelDataBundleInputFormatVersionEnum;
+    /**
+     * 
+     */
+    sourceProduct: ModelDataBundleInputSourceProductEnum;
+    /**
+     * 
+     */
+    sourceInstallationId: string;
+    /**
+     * 
+     */
+    subjectId: string | null;
+    /**
+     * 
+     */
+    calls: Array<ModelDataRecordInput>;
+}
+
+
+/**
+ * @export
+ */
+export const ModelDataBundleInputFormatVersionEnum = {
+    NUMBER_1: 1,
+} as const;
+export type ModelDataBundleInputFormatVersionEnum = typeof ModelDataBundleInputFormatVersionEnum[keyof typeof ModelDataBundleInputFormatVersionEnum];
+
+/**
+ * @export
+ */
+export const ModelDataBundleInputSourceProductEnum = {
+    Nous: 'nous',
+    Hept: 'hept',
+} as const;
+export type ModelDataBundleInputSourceProductEnum = typeof ModelDataBundleInputSourceProductEnum[keyof typeof ModelDataBundleInputSourceProductEnum];
+
+/**
+ * 
+ * @export
+ * @interface ModelDataRecord
+ */
+export interface ModelDataRecord {
+    /**
+     * 
+     */
+    id: string;
+    /**
+     * 
+     */
+    logicalOperationId: string;
+    /**
+     * 
+     */
+    physicalOrdinal: number;
+    /**
+     * 
+     */
+    attemptNo: number;
+    /**
+     * 
+     */
+    workflowId: string | null;
+    /**
+     * 
+     */
+    stepNo: number | null;
+    /**
+     * 
+     */
+    batchNo: number | null;
+    /**
+     * 
+     */
+    subjectId: string | null;
+    /**
+     * 
+     */
+    consumer: Consumer;
+    /**
+     * 
+     */
+    purpose: string;
+    /**
+     * 
+     */
+    audience: Array<string>;
+    /**
+     * 
+     */
+    authorityRef: string;
+    /**
+     * 
+     */
+    traceId: string;
+    /**
+     * 
+     */
+    roleId: string;
+    /**
+     * 
+     */
+    modelKind: ModelKind;
+    /**
+     * 
+     */
+    status: ModelDataRecordStatusEnum;
+    /**
+     * 
+     */
+    requestDigest: string;
+    /**
+     * 
+     */
+    completionDigest: string | null;
+    /**
+     * 
+     */
+    configSnapshot: InvocationSnapshot;
+    /**
+     * 
+     */
+    resourceId: string;
+    /**
+     * 
+     */
+    resourceRevision: number;
+    /**
+     * 
+     */
+    actualProvider: string;
+    /**
+     * 
+     */
+    actualModelId: string;
+    /**
+     * 
+     */
+    inputSources: Array<Ref>;
+    /**
+     * 
+     */
+    semanticInputRefs: Array<Ref>;
+    /**
+     * 
+     */
+    outputRefs: Array<Ref>;
+    /**
+     * 
+     */
+    observedCapture: TimeCaptureReceipt | null;
+    /**
+     * 
+     */
+    formedCapture: TimeCaptureReceipt | null;
+    /**
+     * 
+     */
+    preparation: ModelPreparation | null;
+    /**
+     * 
+     */
+    tokenEstimate: TokenEstimate;
+    /**
+     * 
+     */
+    maxOutputTokens: number;
+    /**
+     * 
+     */
+    usage: NormalizedUsage | null;
+    /**
+     * 
+     */
+    rawUsage: JsonValue | null;
+    /**
+     * 
+     */
+    budgetSnapshot: ModelDataRecordBudgetSnapshot;
+    /**
+     * 
+     */
+    budgetKeys: Array<string>;
+    /**
+     * 
+     */
+    reservedCost: string | null;
+    /**
+     * 
+     */
+    actualCost: string | null;
+    /**
+     * 
+     */
+    currency: string | null;
+    /**
+     * 
+     */
+    actualTokens: string | null;
+    /**
+     * 
+     */
+    providerRequestId: string | null;
+    /**
+     * 
+     */
+    problem: Problem | null;
+    /**
+     * 
+     */
+    recordedAt: string;
+    /**
+     * 
+     */
+    completedAt: string | null;
+    /**
+     * 
+     */
+    nativeIdentity: JsonValue | null;
+    /**
+     * 
+     */
+    adoptedAt: string | null;
+}
+
+
+/**
+ * @export
+ */
+export const ModelDataRecordStatusEnum = {
+    Prepared: 'prepared',
+    Dispatched: 'dispatched',
+    Completed: 'completed',
+    NotSent: 'not_sent',
+    Unknown: 'unknown',
+} as const;
+export type ModelDataRecordStatusEnum = typeof ModelDataRecordStatusEnum[keyof typeof ModelDataRecordStatusEnum];
+
+/**
+ * 
+ * @export
+ * @interface ModelDataRecordBudgetSnapshot
+ */
+export interface ModelDataRecordBudgetSnapshot {
+    /**
+     * 
+     */
+    constraints: Array<ModelDataRecordBudgetSnapshotConstraintsInner>;
+}
+/**
+ * 
+ * @export
+ * @interface ModelDataRecordBudgetSnapshotConstraintsInner
+ */
+export interface ModelDataRecordBudgetSnapshotConstraintsInner {
+    /**
+     * 
+     */
+    key: string;
+    /**
+     * 
+     */
+    budget: ModelBudget;
+}
+/**
+ * 
+ * @export
+ * @interface ModelDataRecordInput
+ */
+export interface ModelDataRecordInput {
+    /**
+     * 
+     */
+    id: string;
+    /**
+     * 
+     */
+    logicalOperationId: string;
+    /**
+     * 
+     */
+    physicalOrdinal: number;
+    /**
+     * 
+     */
+    attemptNo: number;
+    /**
+     * 
+     */
+    workflowId: string | null;
+    /**
+     * 
+     */
+    stepNo: number | null;
+    /**
+     * 
+     */
+    batchNo: number | null;
+    /**
+     * 
+     */
+    subjectId: string | null;
+    /**
+     * 
+     */
+    consumer: ConsumerInput;
+    /**
+     * 
+     */
+    purpose: string;
+    /**
+     * 
+     */
+    audience: Array<string>;
+    /**
+     * 
+     */
+    authorityRef: string;
+    /**
+     * 
+     */
+    traceId: string;
+    /**
+     * 
+     */
+    roleId: string;
+    /**
+     * 
+     */
+    modelKind: ModelKindInput;
+    /**
+     * 
+     */
+    status: ModelDataRecordInputStatusEnum;
+    /**
+     * 
+     */
+    requestDigest: string;
+    /**
+     * 
+     */
+    completionDigest: string | null;
+    /**
+     * 
+     */
+    configSnapshot: InvocationSnapshotInput;
+    /**
+     * 
+     */
+    resourceId: string;
+    /**
+     * 
+     */
+    resourceRevision: number;
+    /**
+     * 
+     */
+    actualProvider: string;
+    /**
+     * 
+     */
+    actualModelId: string;
+    /**
+     * 
+     */
+    inputSources: Array<RefInput>;
+    /**
+     * 
+     */
+    semanticInputRefs: Array<RefInput>;
+    /**
+     * 
+     */
+    outputRefs: Array<RefInput>;
+    /**
+     * 
+     */
+    observedCapture: TimeCaptureReceiptInput | null;
+    /**
+     * 
+     */
+    formedCapture: TimeCaptureReceiptInput | null;
+    /**
+     * 
+     */
+    preparation: ModelPreparationInput | null;
+    /**
+     * 
+     */
+    tokenEstimate: TokenEstimateInput;
+    /**
+     * 
+     */
+    maxOutputTokens: number;
+    /**
+     * 
+     */
+    usage: NormalizedUsageInput | null;
+    /**
+     * 
+     */
+    rawUsage: JsonValueInput | null;
+    /**
+     * 
+     */
+    budgetSnapshot: ModelDataRecordInputBudgetSnapshot;
+    /**
+     * 
+     */
+    budgetKeys: Array<string>;
+    /**
+     * 
+     */
+    reservedCost: string | null;
+    /**
+     * 
+     */
+    actualCost: string | null;
+    /**
+     * 
+     */
+    currency: string | null;
+    /**
+     * 
+     */
+    actualTokens: string | null;
+    /**
+     * 
+     */
+    providerRequestId: string | null;
+    /**
+     * 
+     */
+    problem: ProblemInput | null;
+    /**
+     * 
+     */
+    recordedAt: string;
+    /**
+     * 
+     */
+    completedAt: string | null;
+    /**
+     * 
+     */
+    nativeIdentity: JsonValueInput | null;
+    /**
+     * 
+     */
+    adoptedAt: string | null;
+}
+
+
+/**
+ * @export
+ */
+export const ModelDataRecordInputStatusEnum = {
+    Prepared: 'prepared',
+    Dispatched: 'dispatched',
+    Completed: 'completed',
+    NotSent: 'not_sent',
+    Unknown: 'unknown',
+} as const;
+export type ModelDataRecordInputStatusEnum = typeof ModelDataRecordInputStatusEnum[keyof typeof ModelDataRecordInputStatusEnum];
+
+/**
+ * 
+ * @export
+ * @interface ModelDataRecordInputBudgetSnapshot
+ */
+export interface ModelDataRecordInputBudgetSnapshot {
+    /**
+     * 
+     */
+    constraints: Array<ModelDataRecordInputBudgetSnapshotConstraintsInner>;
+}
+/**
+ * 
+ * @export
+ * @interface ModelDataRecordInputBudgetSnapshotConstraintsInner
+ */
+export interface ModelDataRecordInputBudgetSnapshotConstraintsInner {
+    /**
+     * 
+     */
+    key: string;
+    /**
+     * 
+     */
+    budget: ModelBudgetInput;
+}
+/**
+ * @type ModelDefinition
+ * 
+ * @export
+ */
+export type ModelDefinition = ModelDefinitionOneOf | ModelRegistrationOneOf;
+/**
+ * @type ModelDefinitionInput
+ * 
+ * @export
+ */
+export type ModelDefinitionInput = ModelDefinitionInputOneOf | ModelRegistrationInputOneOf;
+/**
+ * 
+ * @export
+ * @interface ModelDefinitionInputOneOf
+ */
+export interface ModelDefinitionInputOneOf {
+    /**
+     * 
+     */
+    managedBy: ModelDefinitionInputOneOfManagedByEnum;
+    /**
+     * 
+     */
+    id: string;
+    /**
+     * 
+     */
+    binding: NativeModelBindingInput;
+    /**
+     * 
+     */
+    enabled: boolean;
+    /**
+     * 
+     */
+    pricingRef?: string;
+}
+
+
+/**
+ * @export
+ */
+export const ModelDefinitionInputOneOfManagedByEnum = {
+    Native: 'native',
+} as const;
+export type ModelDefinitionInputOneOfManagedByEnum = typeof ModelDefinitionInputOneOfManagedByEnum[keyof typeof ModelDefinitionInputOneOfManagedByEnum];
+
+/**
+ * 
+ * @export
+ * @interface ModelDefinitionOneOf
+ */
+export interface ModelDefinitionOneOf {
+    /**
+     * 
+     */
+    managedBy: ModelDefinitionOneOfManagedByEnum;
+    /**
+     * 
+     */
+    id: string;
+    /**
+     * 
+     */
+    binding: NativeModelBinding;
+    /**
+     * 
+     */
+    enabled: boolean;
+    /**
+     * 
+     */
+    pricingRef?: string;
+}
+
+
+/**
+ * @export
+ */
+export const ModelDefinitionOneOfManagedByEnum = {
+    Native: 'native',
+} as const;
+export type ModelDefinitionOneOfManagedByEnum = typeof ModelDefinitionOneOfManagedByEnum[keyof typeof ModelDefinitionOneOfManagedByEnum];
+
+/**
+ * 
+ * @export
+ * @interface ModelInvocationFilter
+ */
+export interface ModelInvocationFilter {
+    /**
+     * 
+     */
+    logicalOperationId?: string;
+    /**
+     * 
+     */
+    subjectId?: string;
+    /**
+     * 
+     */
+    roleId?: string;
+    /**
+     * 
+     */
+    status?: ModelInvocationFilterStatusEnum;
+    /**
+     * 
+     */
+    cursor?: string;
+    /**
+     * 
+     */
+    limit?: number;
+}
+
+
+/**
+ * @export
+ */
+export const ModelInvocationFilterStatusEnum = {
+    Prepared: 'prepared',
+    Dispatched: 'dispatched',
+    Completed: 'completed',
+    NotSent: 'not_sent',
+    Unknown: 'unknown',
+} as const;
+export type ModelInvocationFilterStatusEnum = typeof ModelInvocationFilterStatusEnum[keyof typeof ModelInvocationFilterStatusEnum];
+
+/**
+ * 
+ * @export
+ * @interface ModelInvocationFilterInput
+ */
+export interface ModelInvocationFilterInput {
+    /**
+     * 
+     */
+    logicalOperationId?: string;
+    /**
+     * 
+     */
+    subjectId?: string;
+    /**
+     * 
+     */
+    roleId?: string;
+    /**
+     * 
+     */
+    status?: ModelInvocationFilterInputStatusEnum;
+    /**
+     * 
+     */
+    cursor?: string;
+    /**
+     * 
+     */
+    limit?: number;
+}
+
+
+/**
+ * @export
+ */
+export const ModelInvocationFilterInputStatusEnum = {
+    Prepared: 'prepared',
+    Dispatched: 'dispatched',
+    Completed: 'completed',
+    NotSent: 'not_sent',
+    Unknown: 'unknown',
+} as const;
+export type ModelInvocationFilterInputStatusEnum = typeof ModelInvocationFilterInputStatusEnum[keyof typeof ModelInvocationFilterInputStatusEnum];
+
+/**
+ * 
+ * @export
+ * @interface ModelInvocationIdentity
+ */
+export interface ModelInvocationIdentity {
+    /**
+     * 
+     */
+    invocationId: string;
+    /**
+     * 
+     */
+    logicalOperationId: string;
+    /**
+     * 
+     */
+    physicalOrdinal: number;
+    /**
+     * 
+     */
+    stepNo?: number;
+    /**
+     * 
+     */
+    batchNo?: number;
+    /**
+     * 
+     */
+    attemptNo: number;
+    /**
+     * 
+     */
+    workflowId?: string;
+}
+/**
+ * 
+ * @export
+ * @interface ModelInvocationIdentityInput
+ */
+export interface ModelInvocationIdentityInput {
+    /**
+     * 
+     */
+    invocationId: string;
+    /**
+     * 
+     */
+    logicalOperationId: string;
+    /**
+     * 
+     */
+    physicalOrdinal: number;
+    /**
+     * 
+     */
+    stepNo?: number;
+    /**
+     * 
+     */
+    batchNo?: number;
+    /**
+     * 
+     */
+    attemptNo: number;
+    /**
+     * 
+     */
+    workflowId?: string;
+}
+/**
+ * 
+ * @export
+ * @interface ModelInvocationPage
+ */
+export interface ModelInvocationPage {
+    /**
+     * 
+     */
+    items: Array<ModelCallView>;
+    /**
+     * 
+     */
+    nextCursor?: string;
+}
+/**
+ * 
+ * @export
+ * @interface ModelInvocationPageInput
+ */
+export interface ModelInvocationPageInput {
+    /**
+     * 
+     */
+    items: Array<ModelCallViewInput>;
+    /**
+     * 
+     */
+    nextCursor?: string;
+}
+/**
+ * 
+ * @export
+ * @interface ModelInvocationsDispatchRequest
+ */
+export interface ModelInvocationsDispatchRequest {
+    /**
+     * 
+     */
+    observed?: TimeCaptureReceiptInput;
+}
+
+/**
+ * 
+ * @export
+ */
+export const ModelKind = {
+    Language: 'language',
+    Embedding: 'embedding',
+    Reranking: 'reranking',
+    Transcription: 'transcription',
+    Speech: 'speech',
+} as const;
+export type ModelKind = typeof ModelKind[keyof typeof ModelKind];
+
+
+/**
+ * 
+ * @export
+ */
+export const ModelKindInput = {
+    Language: 'language',
+    Embedding: 'embedding',
+    Reranking: 'reranking',
+    Transcription: 'transcription',
+    Speech: 'speech',
+} as const;
+export type ModelKindInput = typeof ModelKindInput[keyof typeof ModelKindInput];
+
+/**
+ * 
+ * @export
+ * @interface ModelPreparation
+ */
+export interface ModelPreparation {
+    /**
+     * 
+     */
+    referenceTime: CapturedTime;
+    /**
+     * 
+     */
+    inputDigest?: string;
+    /**
+     * 
+     */
+    contextRef?: ModelPreparationContextRef;
+}
+/**
+ * 
+ * @export
+ * @interface ModelPreparationContextRef
+ */
+export interface ModelPreparationContextRef {
+    /**
+     * 
+     */
+    product: ModelPreparationContextRefProductEnum;
+    /**
+     * 
+     */
+    installationId: string;
+    /**
+     * 
+     */
+    subjectId?: string;
+    /**
+     * 
+     */
+    kind: ModelPreparationContextRefKindEnum;
+    /**
+     * 
+     */
+    id: string;
+    /**
+     * 
+     */
+    revision?: number;
+    /**
+     * 
+     */
+    selector?: Selector;
+}
+
+
+/**
+ * @export
+ */
+export const ModelPreparationContextRefProductEnum = {
+    Nous: 'nous',
+    Hept: 'hept',
+} as const;
+export type ModelPreparationContextRefProductEnum = typeof ModelPreparationContextRefProductEnum[keyof typeof ModelPreparationContextRefProductEnum];
+
+/**
+ * @export
+ */
+export const ModelPreparationContextRefKindEnum = {
+    ContextView: 'ContextView',
+} as const;
+export type ModelPreparationContextRefKindEnum = typeof ModelPreparationContextRefKindEnum[keyof typeof ModelPreparationContextRefKindEnum];
+
+/**
+ * 
+ * @export
+ * @interface ModelPreparationInput
+ */
+export interface ModelPreparationInput {
+    /**
+     * 
+     */
+    referenceTime: CapturedTimeInput;
+    /**
+     * 
+     */
+    inputDigest?: string;
+    /**
+     * 
+     */
+    contextRef?: ModelPreparationInputContextRef;
+}
+/**
+ * 
+ * @export
+ * @interface ModelPreparationInputContextRef
+ */
+export interface ModelPreparationInputContextRef {
+    /**
+     * 
+     */
+    product: ModelPreparationInputContextRefProductEnum;
+    /**
+     * 
+     */
+    installationId: string;
+    /**
+     * 
+     */
+    subjectId?: string;
+    /**
+     * 
+     */
+    kind: ModelPreparationInputContextRefKindEnum;
+    /**
+     * 
+     */
+    id: string;
+    /**
+     * 
+     */
+    revision?: number;
+    /**
+     * 
+     */
+    selector?: SelectorInput;
+}
+
+
+/**
+ * @export
+ */
+export const ModelPreparationInputContextRefProductEnum = {
+    Nous: 'nous',
+    Hept: 'hept',
+} as const;
+export type ModelPreparationInputContextRefProductEnum = typeof ModelPreparationInputContextRefProductEnum[keyof typeof ModelPreparationInputContextRefProductEnum];
+
+/**
+ * @export
+ */
+export const ModelPreparationInputContextRefKindEnum = {
+    ContextView: 'ContextView',
+} as const;
+export type ModelPreparationInputContextRefKindEnum = typeof ModelPreparationInputContextRefKindEnum[keyof typeof ModelPreparationInputContextRefKindEnum];
+
+/**
+ * 
+ * @export
+ * @interface ModelReconcile
+ */
+export interface ModelReconcile {
+    /**
+     * 
+     */
+    invocationId: string;
+    /**
+     * 
+     */
+    status: ModelReconcileStatusEnum;
+    /**
+     * 
+     */
+    usage?: NormalizedUsage;
+    /**
+     * 
+     */
+    outputRefs?: Array<Ref>;
+    /**
+     * 
+     */
+    providerRequestId?: string;
+    /**
+     * 
+     */
+    formed?: TimeCaptureReceipt;
+}
+
+
+/**
+ * @export
+ */
+export const ModelReconcileStatusEnum = {
+    Completed: 'completed',
+    NotSent: 'not_sent',
+} as const;
+export type ModelReconcileStatusEnum = typeof ModelReconcileStatusEnum[keyof typeof ModelReconcileStatusEnum];
+
+/**
+ * 
+ * @export
+ * @interface ModelReconcileInput
+ */
+export interface ModelReconcileInput {
+    /**
+     * 
+     */
+    invocationId: string;
+    /**
+     * 
+     */
+    status: ModelReconcileInputStatusEnum;
+    /**
+     * 
+     */
+    usage?: NormalizedUsageInput;
+    /**
+     * 
+     */
+    outputRefs?: Array<RefInput>;
+    /**
+     * 
+     */
+    providerRequestId?: string;
+    /**
+     * 
+     */
+    formed?: TimeCaptureReceiptInput;
+}
+
+
+/**
+ * @export
+ */
+export const ModelReconcileInputStatusEnum = {
+    Completed: 'completed',
+    NotSent: 'not_sent',
+} as const;
+export type ModelReconcileInputStatusEnum = typeof ModelReconcileInputStatusEnum[keyof typeof ModelReconcileInputStatusEnum];
+
+/**
+ * @type ModelRegistration
+ * 
+ * @export
+ */
+export type ModelRegistration = ModelRegistrationInputOneOf1 | ModelRegistrationOneOf;
+/**
+ * @type ModelRegistrationInput
+ * 
+ * @export
+ */
+export type ModelRegistrationInput = ModelRegistrationInputOneOf | ModelRegistrationInputOneOf1;
+/**
+ * 
+ * @export
+ * @interface ModelRegistrationInputOneOf
+ */
+export interface ModelRegistrationInputOneOf {
+    /**
+     * 
+     */
+    managedBy: ModelRegistrationInputOneOfManagedByEnum;
+    /**
+     * 
+     */
+    definition: ModelResourceInput;
+}
+
+
+/**
+ * @export
+ */
+export const ModelRegistrationInputOneOfManagedByEnum = {
+    Sdk: 'sdk',
+} as const;
+export type ModelRegistrationInputOneOfManagedByEnum = typeof ModelRegistrationInputOneOfManagedByEnum[keyof typeof ModelRegistrationInputOneOfManagedByEnum];
+
+/**
+ * 
+ * @export
+ * @interface ModelRegistrationInputOneOf1
+ */
+export interface ModelRegistrationInputOneOf1 {
+    /**
+     * 
+     */
+    managedBy: ModelRegistrationInputOneOf1ManagedByEnum;
+    /**
+     * 
+     */
+    definition: ModelRegistrationInputOneOf1Definition;
+}
+
+
+/**
+ * @export
+ */
+export const ModelRegistrationInputOneOf1ManagedByEnum = {
+    Native: 'native',
+} as const;
+export type ModelRegistrationInputOneOf1ManagedByEnum = typeof ModelRegistrationInputOneOf1ManagedByEnum[keyof typeof ModelRegistrationInputOneOf1ManagedByEnum];
+
+/**
+ * 
+ * @export
+ * @interface ModelRegistrationInputOneOf1Definition
+ */
+export interface ModelRegistrationInputOneOf1Definition {
+    /**
+     * 
+     */
+    id: string;
+    /**
+     * 
+     */
+    runtimeId: string;
+    /**
+     * 
+     */
+    nativeResourceId: string;
+    /**
+     * 
+     */
+    enabled: boolean;
+    /**
+     * 
+     */
+    pricingRef?: string;
+}
+/**
+ * 
+ * @export
+ * @interface ModelRegistrationOneOf
+ */
+export interface ModelRegistrationOneOf {
+    /**
+     * 
+     */
+    managedBy: ModelRegistrationOneOfManagedByEnum;
+    /**
+     * 
+     */
+    definition: ModelResource;
+}
+
+
+/**
+ * @export
+ */
+export const ModelRegistrationOneOfManagedByEnum = {
+    Sdk: 'sdk',
+} as const;
+export type ModelRegistrationOneOfManagedByEnum = typeof ModelRegistrationOneOfManagedByEnum[keyof typeof ModelRegistrationOneOfManagedByEnum];
+
+/**
+ * 
+ * @export
  * @interface ModelResource
  */
 export interface ModelResource {
@@ -4744,7 +10266,11 @@ export interface ModelResource {
     /**
      * 
      */
-    provider: ModelResourceProviderEnum;
+    label: string;
+    /**
+     * 
+     */
+    providerId: string;
     /**
      * 
      */
@@ -4752,53 +10278,33 @@ export interface ModelResource {
     /**
      * 
      */
-    baseURL: string;
+    kind: ModelKind;
     /**
      * 
      */
-    credentialRef: string;
+    enabled: boolean;
     /**
      * 
      */
-    capabilities: Array<ModelResourceCapabilitiesEnum>;
+    capabilities: Array<string>;
     /**
      * 
      */
-    contextLimit: number;
+    contextLimit?: number;
     /**
      * 
      */
-    outputLimit: number;
+    outputLimit?: number;
     /**
      * 
      */
-    pricing: ModelResourcePricing | null;
+    providerOptions: { [key: string]: { [key: string]: JsonValue; }; };
     /**
      * 
      */
-    providerOptions: { [key: string]: any; };
+    pricingRef?: string;
 }
 
-
-/**
- * @export
- */
-export const ModelResourceProviderEnum = {
-    OpenaiCompatible: 'openai-compatible',
-} as const;
-export type ModelResourceProviderEnum = typeof ModelResourceProviderEnum[keyof typeof ModelResourceProviderEnum];
-
-/**
- * @export
- */
-export const ModelResourceCapabilitiesEnum = {
-    Text: 'text',
-    Vision: 'vision',
-    Tools: 'tools',
-    Structured: 'structured',
-    Embedding: 'embedding',
-} as const;
-export type ModelResourceCapabilitiesEnum = typeof ModelResourceCapabilitiesEnum[keyof typeof ModelResourceCapabilitiesEnum];
 
 /**
  * 
@@ -4813,7 +10319,11 @@ export interface ModelResourceInput {
     /**
      * 
      */
-    provider: ModelResourceInputProviderEnum;
+    label: string;
+    /**
+     * 
+     */
+    providerId: string;
     /**
      * 
      */
@@ -4821,87 +10331,298 @@ export interface ModelResourceInput {
     /**
      * 
      */
-    baseURL: string;
+    kind: ModelKindInput;
     /**
      * 
      */
-    credentialRef: string;
+    enabled: boolean;
     /**
      * 
      */
-    capabilities: Array<ModelResourceInputCapabilitiesEnum>;
+    capabilities: Array<string>;
     /**
      * 
      */
-    contextLimit: number;
+    contextLimit?: number;
     /**
      * 
      */
-    outputLimit: number;
+    outputLimit?: number;
     /**
      * 
      */
-    pricing?: ModelResourceInputPricing | null;
+    providerOptions: { [key: string]: { [key: string]: JsonValueInput; }; };
     /**
      * 
      */
-    providerOptions?: { [key: string]: any; };
+    pricingRef?: string;
+}
+
+
+
+/**
+ * 
+ * @export
+ */
+export const ModelSelection = {
+    Ordered: 'ordered',
+    Balance: 'balance',
+    Random: 'random',
+} as const;
+export type ModelSelection = typeof ModelSelection[keyof typeof ModelSelection];
+
+
+/**
+ * 
+ * @export
+ */
+export const ModelSelectionInput = {
+    Ordered: 'ordered',
+    Balance: 'balance',
+    Random: 'random',
+} as const;
+export type ModelSelectionInput = typeof ModelSelectionInput[keyof typeof ModelSelectionInput];
+
+/**
+ * 
+ * @export
+ * @interface ModelTestBody
+ */
+export interface ModelTestBody {
+    /**
+     * 
+     */
+    roleId: string;
+    /**
+     * 
+     */
+    prompt: string;
+    /**
+     * 
+     */
+    promptParams: JsonValue | null;
+    /**
+     * 
+     */
+    resource?: ResourceRef;
+    /**
+     * 
+     */
+    maxOutputTokens?: number;
+}
+/**
+ * 
+ * @export
+ * @interface ModelTestBodyInput
+ */
+export interface ModelTestBodyInput {
+    /**
+     * 
+     */
+    roleId: string;
+    /**
+     * 
+     */
+    prompt: string;
+    /**
+     * 
+     */
+    promptParams: JsonValueInput | null;
+    /**
+     * 
+     */
+    resource?: ResourceRefInput;
+    /**
+     * 
+     */
+    maxOutputTokens?: number;
+}
+/**
+ * 
+ * @export
+ * @interface ModelsCreateRequest
+ */
+export interface ModelsCreateRequest {
+    /**
+     * 
+     */
+    definition: ModelRegistrationInput;
+    /**
+     * 
+     */
+    expectedRevision: number;
+}
+/**
+ * 
+ * @export
+ * @interface ModelsList200ResponseInner
+ */
+export interface ModelsList200ResponseInner {
+    /**
+     * 
+     */
+    ref: ResourceRef;
+    /**
+     * 
+     */
+    definition: ModelRegistration;
+}
+/**
+ * 
+ * @export
+ * @interface ModelsPrepareRequest
+ */
+export interface ModelsPrepareRequest {
+    /**
+     * 
+     */
+    roleId: string;
+}
+/**
+ * 
+ * @export
+ * @interface ModelsRead200Response
+ */
+export interface ModelsRead200Response {
+    /**
+     * 
+     */
+    ref: ResourceRef;
+    /**
+     * 
+     */
+    definition: ModelRegistration;
+    /**
+     * 
+     */
+    snapshot: ConfigSnapshot;
+}
+/**
+ * 
+ * @export
+ * @interface ModelsReconcileRequest
+ */
+export interface ModelsReconcileRequest {
+    /**
+     * 
+     */
+    invocationId: string;
+    /**
+     * 
+     */
+    status: ModelsReconcileRequestStatusEnum;
+    /**
+     * 
+     */
+    usage?: NormalizedUsageInput;
+    /**
+     * 
+     */
+    outputRefs?: Array<RefInput>;
+    /**
+     * 
+     */
+    providerRequestId?: string;
+    /**
+     * 
+     */
+    formed?: TimeCaptureReceiptInput;
+    /**
+     * 
+     */
+    subjectId?: string;
 }
 
 
 /**
  * @export
  */
-export const ModelResourceInputProviderEnum = {
-    OpenaiCompatible: 'openai-compatible',
+export const ModelsReconcileRequestStatusEnum = {
+    Completed: 'completed',
+    NotSent: 'not_sent',
 } as const;
-export type ModelResourceInputProviderEnum = typeof ModelResourceInputProviderEnum[keyof typeof ModelResourceInputProviderEnum];
-
-/**
- * @export
- */
-export const ModelResourceInputCapabilitiesEnum = {
-    Text: 'text',
-    Vision: 'vision',
-    Tools: 'tools',
-    Structured: 'structured',
-    Embedding: 'embedding',
-} as const;
-export type ModelResourceInputCapabilitiesEnum = typeof ModelResourceInputCapabilitiesEnum[keyof typeof ModelResourceInputCapabilitiesEnum];
+export type ModelsReconcileRequestStatusEnum = typeof ModelsReconcileRequestStatusEnum[keyof typeof ModelsReconcileRequestStatusEnum];
 
 /**
  * 
  * @export
- * @interface ModelResourceInputPricing
+ * @interface ModuleDescription
  */
-export interface ModelResourceInputPricing {
+export interface ModuleDescription {
     /**
      * 
      */
-    inputPerMillion: number;
+    namespace: string;
     /**
      * 
      */
-    outputPerMillion: number;
+    definitionRevision: string;
     /**
      * 
      */
-    currency?: string;
+    owner: string;
+    /**
+     * 
+     */
+    jsonSchema: { [key: string]: JsonValue; };
+    /**
+     * 
+     */
+    defaults: { [key: string]: JsonValue; };
+    /**
+     * 
+     */
+    fields: { [key: string]: FieldMetadata; };
+    /**
+     * 
+     */
+    recordedAt?: string;
 }
 /**
  * 
  * @export
- * @interface ModelResourcePricing
+ * @interface ModuleDescriptionInput
  */
-export interface ModelResourcePricing {
+export interface ModuleDescriptionInput {
     /**
      * 
      */
-    inputPerMillion: number;
+    namespace: string;
     /**
      * 
      */
-    outputPerMillion: number;
+    definitionRevision: string;
+    /**
+     * 
+     */
+    owner: string;
+    /**
+     * 
+     */
+    jsonSchema: { [key: string]: JsonValueInput; };
+    /**
+     * 
+     */
+    defaults: { [key: string]: JsonValueInput; };
+    /**
+     * 
+     */
+    fields: { [key: string]: FieldMetadataInput; };
+    /**
+     * 
+     */
+    recordedAt?: string;
+}
+/**
+ * 
+ * @export
+ * @interface Money
+ */
+export interface Money {
+    /**
+     * 
+     */
+    amount: string;
     /**
      * 
      */
@@ -4910,13 +10631,17 @@ export interface ModelResourcePricing {
 /**
  * 
  * @export
- * @interface ModelsList200Response
+ * @interface MoneyInput
  */
-export interface ModelsList200Response {
+export interface MoneyInput {
     /**
      * 
      */
-    items: Array<ModelResource>;
+    amount: string;
+    /**
+     * 
+     */
+    currency: string;
 }
 /**
  * 
@@ -5002,7 +10727,7 @@ export interface MotivationEvaluateRequest {
     /**
      * 
      */
-    evaluatedAt: TimePointInput;
+    evaluatedAt: TimePointRequestInput;
 }
 /**
  * 
@@ -5013,7 +10738,7 @@ export interface MotivationEvaluateRequestCoverage {
     /**
      * 
      */
-    range: TimeRangeInput;
+    range: TimeRangeRequestInput;
     /**
      * 
      */
@@ -5025,7 +10750,7 @@ export interface MotivationEvaluateRequestCoverage {
     /**
      * 
      */
-    missing?: Array<TimeRangeInput>;
+    missing?: Array<TimeRangeRequestInput>;
 }
 /**
  * 
@@ -5090,6 +10815,483 @@ export const MotivationInputAspectEnum = {
 } as const;
 export type MotivationInputAspectEnum = typeof MotivationInputAspectEnum[keyof typeof MotivationInputAspectEnum];
 
+/**
+ * 
+ * @export
+ * @interface NativeInvocationCompletion
+ */
+export interface NativeInvocationCompletion {
+    /**
+     * 
+     */
+    invocationId: string;
+    /**
+     * 
+     */
+    status: NativeInvocationCompletionStatusEnum;
+    /**
+     * 
+     */
+    usage?: NormalizedUsage;
+    /**
+     * 
+     */
+    rawUsage?: JsonValue | null;
+    /**
+     * 
+     */
+    providerRequestId?: string;
+    /**
+     * 
+     */
+    outputRef?: Ref;
+    /**
+     * 
+     */
+    formed?: TimeCaptureReceipt;
+}
+
+
+/**
+ * @export
+ */
+export const NativeInvocationCompletionStatusEnum = {
+    Completed: 'completed',
+    NotSent: 'not_sent',
+    Unknown: 'unknown',
+} as const;
+export type NativeInvocationCompletionStatusEnum = typeof NativeInvocationCompletionStatusEnum[keyof typeof NativeInvocationCompletionStatusEnum];
+
+/**
+ * 
+ * @export
+ * @interface NativeInvocationCompletionInput
+ */
+export interface NativeInvocationCompletionInput {
+    /**
+     * 
+     */
+    invocationId: string;
+    /**
+     * 
+     */
+    status: NativeInvocationCompletionInputStatusEnum;
+    /**
+     * 
+     */
+    usage?: NormalizedUsageInput;
+    /**
+     * 
+     */
+    rawUsage?: JsonValueInput | null;
+    /**
+     * 
+     */
+    providerRequestId?: string;
+    /**
+     * 
+     */
+    outputRef?: RefInput;
+    /**
+     * 
+     */
+    formed?: TimeCaptureReceiptInput;
+}
+
+
+/**
+ * @export
+ */
+export const NativeInvocationCompletionInputStatusEnum = {
+    Completed: 'completed',
+    NotSent: 'not_sent',
+    Unknown: 'unknown',
+} as const;
+export type NativeInvocationCompletionInputStatusEnum = typeof NativeInvocationCompletionInputStatusEnum[keyof typeof NativeInvocationCompletionInputStatusEnum];
+
+/**
+ * 
+ * @export
+ * @interface NativeInvocationPrepare
+ */
+export interface NativeInvocationPrepare {
+    /**
+     * 
+     */
+    invocationId: string;
+    /**
+     * 
+     */
+    roleId: string;
+    /**
+     * 
+     */
+    modelResourceId: string;
+    /**
+     * 
+     */
+    actualProvider: string;
+    /**
+     * 
+     */
+    actualModelId: string;
+    /**
+     * 
+     */
+    native: NativeOrigin;
+    /**
+     * 
+     */
+    inputTokensEstimate: TokenEstimate;
+    /**
+     * 
+     */
+    maxOutputTokens: number;
+    /**
+     * 
+     */
+    inputRefs: Array<Ref>;
+    /**
+     * 
+     */
+    preparation?: ModelPreparation;
+    /**
+     * 
+     */
+    budgetAllocation?: BudgetAllocationUse;
+}
+/**
+ * 
+ * @export
+ * @interface NativeInvocationPrepareInput
+ */
+export interface NativeInvocationPrepareInput {
+    /**
+     * 
+     */
+    invocationId: string;
+    /**
+     * 
+     */
+    roleId: string;
+    /**
+     * 
+     */
+    modelResourceId: string;
+    /**
+     * 
+     */
+    actualProvider: string;
+    /**
+     * 
+     */
+    actualModelId: string;
+    /**
+     * 
+     */
+    native: NativeOriginInput;
+    /**
+     * 
+     */
+    inputTokensEstimate: TokenEstimateInput;
+    /**
+     * 
+     */
+    maxOutputTokens: number;
+    /**
+     * 
+     */
+    inputRefs: Array<RefInput>;
+    /**
+     * 
+     */
+    preparation?: ModelPreparationInput;
+    /**
+     * 
+     */
+    budgetAllocation?: BudgetAllocationUseInput;
+}
+/**
+ * 
+ * @export
+ * @interface NativeModelBinding
+ */
+export interface NativeModelBinding {
+    /**
+     * 
+     */
+    id: string;
+    /**
+     * 
+     */
+    runtimeId: string;
+    /**
+     * 
+     */
+    nativeResourceId: string;
+    /**
+     * 
+     */
+    configRevision: string;
+    /**
+     * 
+     */
+    actualProvider: string;
+    /**
+     * 
+     */
+    actualModelId: string;
+    /**
+     * 
+     */
+    kind: ModelKind;
+    /**
+     * 
+     */
+    capabilities: Array<string>;
+    /**
+     * 
+     */
+    contextLimit?: number;
+    /**
+     * 
+     */
+    outputLimit?: number;
+}
+
+
+/**
+ * 
+ * @export
+ * @interface NativeModelBindingInput
+ */
+export interface NativeModelBindingInput {
+    /**
+     * 
+     */
+    id: string;
+    /**
+     * 
+     */
+    runtimeId: string;
+    /**
+     * 
+     */
+    nativeResourceId: string;
+    /**
+     * 
+     */
+    configRevision: string;
+    /**
+     * 
+     */
+    actualProvider: string;
+    /**
+     * 
+     */
+    actualModelId: string;
+    /**
+     * 
+     */
+    kind: ModelKindInput;
+    /**
+     * 
+     */
+    capabilities: Array<string>;
+    /**
+     * 
+     */
+    contextLimit?: number;
+    /**
+     * 
+     */
+    outputLimit?: number;
+}
+
+
+/**
+ * 
+ * @export
+ * @interface NativeOrigin
+ */
+export interface NativeOrigin {
+    /**
+     * 
+     */
+    type: NativeOriginTypeEnum;
+    /**
+     * 
+     */
+    runtimeId: string;
+    /**
+     * 
+     */
+    sessionId: string;
+    /**
+     * 
+     */
+    sessionKey: string;
+    /**
+     * 
+     */
+    runId: string;
+    /**
+     * 
+     */
+    entryId?: string;
+    /**
+     * 
+     */
+    callId: string;
+}
+
+
+/**
+ * @export
+ */
+export const NativeOriginTypeEnum = {
+    Native: 'native',
+} as const;
+export type NativeOriginTypeEnum = typeof NativeOriginTypeEnum[keyof typeof NativeOriginTypeEnum];
+
+/**
+ * 
+ * @export
+ * @interface NativeOriginInput
+ */
+export interface NativeOriginInput {
+    /**
+     * 
+     */
+    type: NativeOriginInputTypeEnum;
+    /**
+     * 
+     */
+    runtimeId: string;
+    /**
+     * 
+     */
+    sessionId: string;
+    /**
+     * 
+     */
+    sessionKey: string;
+    /**
+     * 
+     */
+    runId: string;
+    /**
+     * 
+     */
+    entryId?: string;
+    /**
+     * 
+     */
+    callId: string;
+}
+
+
+/**
+ * @export
+ */
+export const NativeOriginInputTypeEnum = {
+    Native: 'native',
+} as const;
+export type NativeOriginInputTypeEnum = typeof NativeOriginInputTypeEnum[keyof typeof NativeOriginInputTypeEnum];
+
+/**
+ * 
+ * @export
+ * @interface NetworkProbeRequest
+ */
+export interface NetworkProbeRequest {
+    /**
+     * 
+     */
+    resourceRef: RefInput;
+    /**
+     * 
+     */
+    kind: NetworkProbeRequestKindEnum;
+    /**
+     * 
+     */
+    url: string;
+}
+
+
+/**
+ * @export
+ */
+export const NetworkProbeRequestKindEnum = {
+    Dns: 'dns',
+    Tls: 'tls',
+    Http: 'http',
+} as const;
+export type NetworkProbeRequestKindEnum = typeof NetworkProbeRequestKindEnum[keyof typeof NetworkProbeRequestKindEnum];
+
+/**
+ * 
+ * @export
+ * @interface NormalizedUsage
+ */
+export interface NormalizedUsage {
+    /**
+     * 
+     */
+    inputTokens?: number;
+    /**
+     * 
+     */
+    outputTokens?: number;
+    /**
+     * 
+     */
+    cacheReadTokens?: number;
+    /**
+     * 
+     */
+    cacheWriteTokens?: number;
+    /**
+     * 
+     */
+    reasoningTokens?: number;
+    /**
+     * 
+     */
+    units?: Array<UsageQuantity>;
+}
+/**
+ * 
+ * @export
+ * @interface NormalizedUsageInput
+ */
+export interface NormalizedUsageInput {
+    /**
+     * 
+     */
+    inputTokens?: number;
+    /**
+     * 
+     */
+    outputTokens?: number;
+    /**
+     * 
+     */
+    cacheReadTokens?: number;
+    /**
+     * 
+     */
+    cacheWriteTokens?: number;
+    /**
+     * 
+     */
+    reasoningTokens?: number;
+    /**
+     * 
+     */
+    units?: Array<UsageQuantityInput>;
+}
 /**
  * 
  * @export
@@ -5211,6 +11413,28 @@ export interface ObjectRelationInput {
 /**
  * 
  * @export
+ * @interface OperationControl
+ */
+export interface OperationControl {
+    /**
+     * 
+     */
+    subjectId?: string;
+}
+/**
+ * 
+ * @export
+ * @interface OperationControlInput
+ */
+export interface OperationControlInput {
+    /**
+     * 
+     */
+    subjectId?: string;
+}
+/**
+ * 
+ * @export
  * @interface OperationRef
  */
 export interface OperationRef {
@@ -5246,6 +11470,684 @@ export interface OperationRefInput {
      */
     resourceRef?: RefInput;
 }
+/**
+ * 
+ * @export
+ * @interface OperationTrace
+ */
+export interface OperationTrace {
+    /**
+     * 
+     */
+    operation: OperationView;
+    /**
+     * 
+     */
+    steps: Array<OperationTraceStepsInner>;
+}
+/**
+ * 
+ * @export
+ * @interface OperationTraceInput
+ */
+export interface OperationTraceInput {
+    /**
+     * 
+     */
+    operation: OperationViewInput;
+    /**
+     * 
+     */
+    steps: Array<OperationTraceInputStepsInner>;
+}
+/**
+ * 
+ * @export
+ * @interface OperationTraceInputStepsInner
+ */
+export interface OperationTraceInputStepsInner {
+    /**
+     * 
+     */
+    functionID: number;
+    /**
+     * 
+     */
+    name: string;
+    /**
+     * 
+     */
+    status: OperationTraceInputStepsInnerStatusEnum;
+    /**
+     * 
+     */
+    childWorkflowID?: string;
+    /**
+     * 
+     */
+    startedAtEpochMs?: number;
+    /**
+     * 
+     */
+    completedAtEpochMs?: number;
+    /**
+     * 
+     */
+    problem?: ProblemInput;
+}
+
+
+/**
+ * @export
+ */
+export const OperationTraceInputStepsInnerStatusEnum = {
+    Completed: 'completed',
+    Failed: 'failed',
+} as const;
+export type OperationTraceInputStepsInnerStatusEnum = typeof OperationTraceInputStepsInnerStatusEnum[keyof typeof OperationTraceInputStepsInnerStatusEnum];
+
+/**
+ * 
+ * @export
+ * @interface OperationTraceStepsInner
+ */
+export interface OperationTraceStepsInner {
+    /**
+     * 
+     */
+    functionID: number;
+    /**
+     * 
+     */
+    name: string;
+    /**
+     * 
+     */
+    status: OperationTraceStepsInnerStatusEnum;
+    /**
+     * 
+     */
+    childWorkflowID?: string;
+    /**
+     * 
+     */
+    startedAtEpochMs?: number;
+    /**
+     * 
+     */
+    completedAtEpochMs?: number;
+    /**
+     * 
+     */
+    problem?: Problem;
+}
+
+
+/**
+ * @export
+ */
+export const OperationTraceStepsInnerStatusEnum = {
+    Completed: 'completed',
+    Failed: 'failed',
+} as const;
+export type OperationTraceStepsInnerStatusEnum = typeof OperationTraceStepsInnerStatusEnum[keyof typeof OperationTraceStepsInnerStatusEnum];
+
+/**
+ * 
+ * @export
+ * @interface OperationView
+ */
+export interface OperationView {
+    /**
+     * 
+     */
+    operationId: string;
+    /**
+     * 
+     */
+    status: OperationViewStatusEnum;
+    /**
+     * 
+     */
+    nativeStatus: string;
+    /**
+     * 
+     */
+    createdAtEpochMs: number;
+    /**
+     * 
+     */
+    updatedAtEpochMs?: number;
+    /**
+     * 
+     */
+    completedAtEpochMs?: number;
+    /**
+     * 
+     */
+    traceId?: string;
+    /**
+     * 
+     */
+    operation: string;
+    /**
+     * 
+     */
+    subjectId?: string;
+    /**
+     * 
+     */
+    parentOperationId?: string;
+    /**
+     * 
+     */
+    queueName?: string;
+    /**
+     * 
+     */
+    applicationVersion?: string;
+    /**
+     * 
+     */
+    recoveryAttempts?: number;
+    /**
+     * 
+     */
+    problem?: Problem;
+}
+
+
+/**
+ * @export
+ */
+export const OperationViewStatusEnum = {
+    Queued: 'queued',
+    Running: 'running',
+    Waiting: 'waiting',
+    Completed: 'completed',
+    Failed: 'failed',
+    Cancelled: 'cancelled',
+} as const;
+export type OperationViewStatusEnum = typeof OperationViewStatusEnum[keyof typeof OperationViewStatusEnum];
+
+/**
+ * 
+ * @export
+ * @interface OperationViewInput
+ */
+export interface OperationViewInput {
+    /**
+     * 
+     */
+    operationId: string;
+    /**
+     * 
+     */
+    status: OperationViewInputStatusEnum;
+    /**
+     * 
+     */
+    nativeStatus: string;
+    /**
+     * 
+     */
+    createdAtEpochMs: number;
+    /**
+     * 
+     */
+    updatedAtEpochMs?: number;
+    /**
+     * 
+     */
+    completedAtEpochMs?: number;
+    /**
+     * 
+     */
+    traceId?: string;
+    /**
+     * 
+     */
+    operation: string;
+    /**
+     * 
+     */
+    subjectId?: string;
+    /**
+     * 
+     */
+    parentOperationId?: string;
+    /**
+     * 
+     */
+    queueName?: string;
+    /**
+     * 
+     */
+    applicationVersion?: string;
+    /**
+     * 
+     */
+    recoveryAttempts?: number;
+    /**
+     * 
+     */
+    problem?: ProblemInput;
+}
+
+
+/**
+ * @export
+ */
+export const OperationViewInputStatusEnum = {
+    Queued: 'queued',
+    Running: 'running',
+    Waiting: 'waiting',
+    Completed: 'completed',
+    Failed: 'failed',
+    Cancelled: 'cancelled',
+} as const;
+export type OperationViewInputStatusEnum = typeof OperationViewInputStatusEnum[keyof typeof OperationViewInputStatusEnum];
+
+/**
+ * @type OriginIdentity
+ * 
+ * @export
+ */
+export type OriginIdentity = OriginIdentityInputOneOf | OriginIdentityInputOneOf1 | OriginIdentityInputOneOf2;
+/**
+ * @type OriginIdentityInput
+ * 
+ * @export
+ */
+export type OriginIdentityInput = OriginIdentityInputOneOf | OriginIdentityInputOneOf1 | OriginIdentityInputOneOf2;
+/**
+ * 
+ * @export
+ * @interface OriginIdentityInputOneOf
+ */
+export interface OriginIdentityInputOneOf {
+    /**
+     * 
+     */
+    type: OriginIdentityInputOneOfTypeEnum;
+    /**
+     * 
+     */
+    adapterId: string;
+    /**
+     * 
+     */
+    accountId: string;
+    /**
+     * 
+     */
+    conversationId: string;
+    /**
+     * 
+     */
+    messageId: string;
+    /**
+     * 
+     */
+    nodePath?: Array<string>;
+}
+
+
+/**
+ * @export
+ */
+export const OriginIdentityInputOneOfTypeEnum = {
+    Platform: 'platform',
+} as const;
+export type OriginIdentityInputOneOfTypeEnum = typeof OriginIdentityInputOneOfTypeEnum[keyof typeof OriginIdentityInputOneOfTypeEnum];
+
+/**
+ * 
+ * @export
+ * @interface OriginIdentityInputOneOf1
+ */
+export interface OriginIdentityInputOneOf1 {
+    /**
+     * 
+     */
+    type: OriginIdentityInputOneOf1TypeEnum;
+    /**
+     * 
+     */
+    connectorId: string;
+    /**
+     * 
+     */
+    documentId: string;
+    /**
+     * 
+     */
+    version?: string;
+}
+
+
+/**
+ * @export
+ */
+export const OriginIdentityInputOneOf1TypeEnum = {
+    Resource: 'resource',
+} as const;
+export type OriginIdentityInputOneOf1TypeEnum = typeof OriginIdentityInputOneOf1TypeEnum[keyof typeof OriginIdentityInputOneOf1TypeEnum];
+
+/**
+ * 
+ * @export
+ * @interface OriginIdentityInputOneOf2
+ */
+export interface OriginIdentityInputOneOf2 {
+    /**
+     * 
+     */
+    type: OriginIdentityInputOneOf2TypeEnum;
+    /**
+     * 
+     */
+    runtimeId: string;
+    /**
+     * 
+     */
+    sessionId: string;
+    /**
+     * 
+     */
+    sessionKey?: string;
+    /**
+     * 
+     */
+    runId?: string;
+    /**
+     * 
+     */
+    entryId?: string;
+    /**
+     * 
+     */
+    callId?: string;
+}
+
+
+/**
+ * @export
+ */
+export const OriginIdentityInputOneOf2TypeEnum = {
+    Native: 'native',
+} as const;
+export type OriginIdentityInputOneOf2TypeEnum = typeof OriginIdentityInputOneOf2TypeEnum[keyof typeof OriginIdentityInputOneOf2TypeEnum];
+
+/**
+ * @type PatchOperation
+ * 
+ * @export
+ */
+export type PatchOperation = PatchOperationInputOneOf3 | PatchOperationInputOneOf4 | PatchOperationInputOneOf5 | PatchOperationOneOf | PatchOperationOneOf1 | PatchOperationOneOf2;
+/**
+ * @type PatchOperationInput
+ * 
+ * @export
+ */
+export type PatchOperationInput = PatchOperationInputOneOf | PatchOperationInputOneOf1 | PatchOperationInputOneOf2 | PatchOperationInputOneOf3 | PatchOperationInputOneOf4 | PatchOperationInputOneOf5;
+/**
+ * 
+ * @export
+ * @interface PatchOperationInputOneOf
+ */
+export interface PatchOperationInputOneOf {
+    /**
+     * 
+     */
+    op: PatchOperationInputOneOfOpEnum;
+    /**
+     * 
+     */
+    path: string;
+    /**
+     * 
+     */
+    value: JsonValueInput | null;
+}
+
+
+/**
+ * @export
+ */
+export const PatchOperationInputOneOfOpEnum = {
+    Add: 'add',
+} as const;
+export type PatchOperationInputOneOfOpEnum = typeof PatchOperationInputOneOfOpEnum[keyof typeof PatchOperationInputOneOfOpEnum];
+
+/**
+ * 
+ * @export
+ * @interface PatchOperationInputOneOf1
+ */
+export interface PatchOperationInputOneOf1 {
+    /**
+     * 
+     */
+    op: PatchOperationInputOneOf1OpEnum;
+    /**
+     * 
+     */
+    path: string;
+    /**
+     * 
+     */
+    value: JsonValueInput | null;
+}
+
+
+/**
+ * @export
+ */
+export const PatchOperationInputOneOf1OpEnum = {
+    Replace: 'replace',
+} as const;
+export type PatchOperationInputOneOf1OpEnum = typeof PatchOperationInputOneOf1OpEnum[keyof typeof PatchOperationInputOneOf1OpEnum];
+
+/**
+ * 
+ * @export
+ * @interface PatchOperationInputOneOf2
+ */
+export interface PatchOperationInputOneOf2 {
+    /**
+     * 
+     */
+    op: PatchOperationInputOneOf2OpEnum;
+    /**
+     * 
+     */
+    path: string;
+    /**
+     * 
+     */
+    value: JsonValueInput | null;
+}
+
+
+/**
+ * @export
+ */
+export const PatchOperationInputOneOf2OpEnum = {
+    Test: 'test',
+} as const;
+export type PatchOperationInputOneOf2OpEnum = typeof PatchOperationInputOneOf2OpEnum[keyof typeof PatchOperationInputOneOf2OpEnum];
+
+/**
+ * 
+ * @export
+ * @interface PatchOperationInputOneOf3
+ */
+export interface PatchOperationInputOneOf3 {
+    /**
+     * 
+     */
+    op: PatchOperationInputOneOf3OpEnum;
+    /**
+     * 
+     */
+    path: string;
+}
+
+
+/**
+ * @export
+ */
+export const PatchOperationInputOneOf3OpEnum = {
+    Remove: 'remove',
+} as const;
+export type PatchOperationInputOneOf3OpEnum = typeof PatchOperationInputOneOf3OpEnum[keyof typeof PatchOperationInputOneOf3OpEnum];
+
+/**
+ * 
+ * @export
+ * @interface PatchOperationInputOneOf4
+ */
+export interface PatchOperationInputOneOf4 {
+    /**
+     * 
+     */
+    op: PatchOperationInputOneOf4OpEnum;
+    /**
+     * 
+     */
+    path: string;
+    /**
+     * 
+     */
+    from: string;
+}
+
+
+/**
+ * @export
+ */
+export const PatchOperationInputOneOf4OpEnum = {
+    Move: 'move',
+} as const;
+export type PatchOperationInputOneOf4OpEnum = typeof PatchOperationInputOneOf4OpEnum[keyof typeof PatchOperationInputOneOf4OpEnum];
+
+/**
+ * 
+ * @export
+ * @interface PatchOperationInputOneOf5
+ */
+export interface PatchOperationInputOneOf5 {
+    /**
+     * 
+     */
+    op: PatchOperationInputOneOf5OpEnum;
+    /**
+     * 
+     */
+    path: string;
+    /**
+     * 
+     */
+    from: string;
+}
+
+
+/**
+ * @export
+ */
+export const PatchOperationInputOneOf5OpEnum = {
+    Copy: 'copy',
+} as const;
+export type PatchOperationInputOneOf5OpEnum = typeof PatchOperationInputOneOf5OpEnum[keyof typeof PatchOperationInputOneOf5OpEnum];
+
+/**
+ * 
+ * @export
+ * @interface PatchOperationOneOf
+ */
+export interface PatchOperationOneOf {
+    /**
+     * 
+     */
+    op: PatchOperationOneOfOpEnum;
+    /**
+     * 
+     */
+    path: string;
+    /**
+     * 
+     */
+    value: JsonValue | null;
+}
+
+
+/**
+ * @export
+ */
+export const PatchOperationOneOfOpEnum = {
+    Add: 'add',
+} as const;
+export type PatchOperationOneOfOpEnum = typeof PatchOperationOneOfOpEnum[keyof typeof PatchOperationOneOfOpEnum];
+
+/**
+ * 
+ * @export
+ * @interface PatchOperationOneOf1
+ */
+export interface PatchOperationOneOf1 {
+    /**
+     * 
+     */
+    op: PatchOperationOneOf1OpEnum;
+    /**
+     * 
+     */
+    path: string;
+    /**
+     * 
+     */
+    value: JsonValue | null;
+}
+
+
+/**
+ * @export
+ */
+export const PatchOperationOneOf1OpEnum = {
+    Replace: 'replace',
+} as const;
+export type PatchOperationOneOf1OpEnum = typeof PatchOperationOneOf1OpEnum[keyof typeof PatchOperationOneOf1OpEnum];
+
+/**
+ * 
+ * @export
+ * @interface PatchOperationOneOf2
+ */
+export interface PatchOperationOneOf2 {
+    /**
+     * 
+     */
+    op: PatchOperationOneOf2OpEnum;
+    /**
+     * 
+     */
+    path: string;
+    /**
+     * 
+     */
+    value: JsonValue | null;
+}
+
+
+/**
+ * @export
+ */
+export const PatchOperationOneOf2OpEnum = {
+    Test: 'test',
+} as const;
+export type PatchOperationOneOf2OpEnum = typeof PatchOperationOneOf2OpEnum[keyof typeof PatchOperationOneOf2OpEnum];
+
 /**
  * 
  * @export
@@ -5332,17 +12234,123 @@ export interface PortionInput {
 /**
  * 
  * @export
+ * @interface PriceBook
+ */
+export interface PriceBook {
+    /**
+     * 
+     */
+    id: string;
+    /**
+     * 
+     */
+    rates: Array<PriceRate>;
+    /**
+     * 
+     */
+    revision: number;
+}
+/**
+ * 
+ * @export
+ * @interface PriceBookInput
+ */
+export interface PriceBookInput {
+    /**
+     * 
+     */
+    id: string;
+    /**
+     * 
+     */
+    rates: Array<PriceRateInput>;
+    /**
+     * 
+     */
+    revision: number;
+}
+/**
+ * 
+ * @export
+ * @interface PriceDefinition
+ */
+export interface PriceDefinition {
+    /**
+     * 
+     */
+    id: string;
+    /**
+     * 
+     */
+    rates: Array<PriceRate>;
+}
+/**
+ * 
+ * @export
+ * @interface PriceDefinitionInput
+ */
+export interface PriceDefinitionInput {
+    /**
+     * 
+     */
+    id: string;
+    /**
+     * 
+     */
+    rates: Array<PriceRateInput>;
+}
+/**
+ * 
+ * @export
+ * @interface PriceRate
+ */
+export interface PriceRate {
+    /**
+     * 
+     */
+    unit: string;
+    /**
+     * 
+     */
+    amount: Money;
+    /**
+     * 
+     */
+    per: string;
+}
+/**
+ * 
+ * @export
+ * @interface PriceRateInput
+ */
+export interface PriceRateInput {
+    /**
+     * 
+     */
+    unit: string;
+    /**
+     * 
+     */
+    amount: MoneyInput;
+    /**
+     * 
+     */
+    per: string;
+}
+/**
+ * 
+ * @export
  * @interface Problem
  */
 export interface Problem {
     /**
      * 
      */
-    type: string;
+    code: string;
     /**
      * 
      */
-    title: string;
+    category: ProblemCategoryEnum;
     /**
      * 
      */
@@ -5350,11 +12358,15 @@ export interface Problem {
     /**
      * 
      */
-    detail?: string;
+    messageKey: string;
     /**
      * 
      */
-    code: ProblemCodeEnum;
+    args?: { [key: string]: ProblemInputArgsValue; };
+    /**
+     * 
+     */
+    message: string;
     /**
      * 
      */
@@ -5362,28 +12374,37 @@ export interface Problem {
     /**
      * 
      */
+    traceId?: string;
+    /**
+     * 
+     */
     currentRevision?: number;
     /**
      * 
      */
-    retryAfter?: number;
+    retry?: ProblemRetry;
+    /**
+     * 
+     */
+    details?: { [key: string]: JsonValue; };
 }
 
 
 /**
  * @export
  */
-export const ProblemCodeEnum = {
-    InvalidInput: 'invalid_input',
+export const ProblemCategoryEnum = {
+    Validation: 'validation',
     Forbidden: 'forbidden',
     NotFound: 'not_found',
     Conflict: 'conflict',
-    CapabilityUnavailable: 'capability_unavailable',
-    BudgetExhausted: 'budget_exhausted',
-    DependencyUnavailable: 'dependency_unavailable',
+    Unavailable: 'unavailable',
+    ResourcePressure: 'resource_pressure',
+    Budget: 'budget',
     EffectUnknown: 'effect_unknown',
+    Failed: 'failed',
 } as const;
-export type ProblemCodeEnum = typeof ProblemCodeEnum[keyof typeof ProblemCodeEnum];
+export type ProblemCategoryEnum = typeof ProblemCategoryEnum[keyof typeof ProblemCategoryEnum];
 
 /**
  * 
@@ -5394,11 +12415,11 @@ export interface ProblemInput {
     /**
      * 
      */
-    type: string;
+    code: string;
     /**
      * 
      */
-    title: string;
+    category: ProblemInputCategoryEnum;
     /**
      * 
      */
@@ -5406,11 +12427,15 @@ export interface ProblemInput {
     /**
      * 
      */
-    detail?: string;
+    messageKey: string;
     /**
      * 
      */
-    code: ProblemInputCodeEnum;
+    args?: { [key: string]: ProblemInputArgsValue; };
+    /**
+     * 
+     */
+    message: string;
     /**
      * 
      */
@@ -5418,29 +12443,1783 @@ export interface ProblemInput {
     /**
      * 
      */
+    traceId?: string;
+    /**
+     * 
+     */
     currentRevision?: number;
     /**
      * 
      */
-    retryAfter?: number;
+    retry?: ProblemInputRetry;
+    /**
+     * 
+     */
+    details?: { [key: string]: JsonValueInput; };
 }
 
 
 /**
  * @export
  */
-export const ProblemInputCodeEnum = {
-    InvalidInput: 'invalid_input',
+export const ProblemInputCategoryEnum = {
+    Validation: 'validation',
     Forbidden: 'forbidden',
     NotFound: 'not_found',
     Conflict: 'conflict',
-    CapabilityUnavailable: 'capability_unavailable',
-    BudgetExhausted: 'budget_exhausted',
-    DependencyUnavailable: 'dependency_unavailable',
+    Unavailable: 'unavailable',
+    ResourcePressure: 'resource_pressure',
+    Budget: 'budget',
     EffectUnknown: 'effect_unknown',
+    Failed: 'failed',
 } as const;
-export type ProblemInputCodeEnum = typeof ProblemInputCodeEnum[keyof typeof ProblemInputCodeEnum];
+export type ProblemInputCategoryEnum = typeof ProblemInputCategoryEnum[keyof typeof ProblemInputCategoryEnum];
 
+/**
+ * 
+ * @export
+ * @interface ProblemInputArgsValue
+ */
+export interface ProblemInputArgsValue {
+}
+/**
+ * 
+ * @export
+ * @interface ProblemInputRetry
+ */
+export interface ProblemInputRetry {
+    /**
+     * 
+     */
+    mode: ProblemInputRetryModeEnum;
+    /**
+     * 
+     */
+    at?: string;
+}
+
+
+/**
+ * @export
+ */
+export const ProblemInputRetryModeEnum = {
+    AfterChange: 'after_change',
+    AfterDelay: 'after_delay',
+    Reconcile: 'reconcile',
+    None: 'none',
+} as const;
+export type ProblemInputRetryModeEnum = typeof ProblemInputRetryModeEnum[keyof typeof ProblemInputRetryModeEnum];
+
+/**
+ * 
+ * @export
+ * @interface ProblemRetry
+ */
+export interface ProblemRetry {
+    /**
+     * 
+     */
+    mode: ProblemRetryModeEnum;
+    /**
+     * 
+     */
+    at?: string;
+}
+
+
+/**
+ * @export
+ */
+export const ProblemRetryModeEnum = {
+    AfterChange: 'after_change',
+    AfterDelay: 'after_delay',
+    Reconcile: 'reconcile',
+    None: 'none',
+} as const;
+export type ProblemRetryModeEnum = typeof ProblemRetryModeEnum[keyof typeof ProblemRetryModeEnum];
+
+/**
+ * 
+ * @export
+ * @interface PromptActivateRequest
+ */
+export interface PromptActivateRequest {
+    /**
+     * 
+     */
+    promptId: string;
+    /**
+     * 
+     */
+    locale: string;
+    /**
+     * 
+     */
+    scope: PromptScope;
+    /**
+     * 
+     */
+    expectedRevision: number;
+    /**
+     * 
+     */
+    revision: number;
+}
+/**
+ * 
+ * @export
+ * @interface PromptActivateRequestInput
+ */
+export interface PromptActivateRequestInput {
+    /**
+     * 
+     */
+    promptId: string;
+    /**
+     * 
+     */
+    locale: string;
+    /**
+     * 
+     */
+    scope: PromptScopeInput;
+    /**
+     * 
+     */
+    expectedRevision: number;
+    /**
+     * 
+     */
+    revision: number;
+}
+/**
+ * 
+ * @export
+ * @interface PromptBinding
+ */
+export interface PromptBinding {
+    /**
+     * 
+     */
+    promptId: string;
+    /**
+     * 
+     */
+    locale?: string;
+    /**
+     * 
+     */
+    revision?: number;
+}
+/**
+ * 
+ * @export
+ * @interface PromptBindingInput
+ */
+export interface PromptBindingInput {
+    /**
+     * 
+     */
+    promptId: string;
+    /**
+     * 
+     */
+    locale?: string;
+    /**
+     * 
+     */
+    revision?: number;
+}
+/**
+ * 
+ * @export
+ * @interface PromptChangeResult
+ */
+export interface PromptChangeResult {
+    /**
+     * 
+     */
+    promptId: string;
+    /**
+     * 
+     */
+    locale: string;
+    /**
+     * 
+     */
+    scope: PromptScope;
+    /**
+     * 
+     */
+    revision: number;
+    /**
+     * 
+     */
+    latestRevision: number;
+    /**
+     * 
+     */
+    activeRevision: number | null;
+    /**
+     * 
+     */
+    changed: boolean;
+    /**
+     * 
+     */
+    snapshot?: PromptSnapshot;
+}
+/**
+ * 
+ * @export
+ * @interface PromptChangeResultInput
+ */
+export interface PromptChangeResultInput {
+    /**
+     * 
+     */
+    promptId: string;
+    /**
+     * 
+     */
+    locale: string;
+    /**
+     * 
+     */
+    scope: PromptScopeInput;
+    /**
+     * 
+     */
+    revision: number;
+    /**
+     * 
+     */
+    latestRevision: number;
+    /**
+     * 
+     */
+    activeRevision: number | null;
+    /**
+     * 
+     */
+    changed: boolean;
+    /**
+     * 
+     */
+    snapshot?: PromptSnapshotInput;
+}
+/**
+ * 
+ * @export
+ * @interface PromptDescribeBody
+ */
+export interface PromptDescribeBody {
+    /**
+     * 
+     */
+    owner?: string;
+    /**
+     * 
+     */
+    scope?: PromptScope;
+}
+/**
+ * 
+ * @export
+ * @interface PromptDescribeBodyInput
+ */
+export interface PromptDescribeBodyInput {
+    /**
+     * 
+     */
+    owner?: string;
+    /**
+     * 
+     */
+    scope?: PromptScopeInput;
+}
+/**
+ * 
+ * @export
+ * @interface PromptDescription
+ */
+export interface PromptDescription {
+    /**
+     * 
+     */
+    id: string;
+    /**
+     * 
+     */
+    owner: string;
+    /**
+     * 
+     */
+    labelKey: string;
+    /**
+     * 
+     */
+    descriptionKey: string;
+    /**
+     * 
+     */
+    visibility: PromptDescriptionVisibilityEnum;
+    /**
+     * 
+     */
+    locales: Array<string>;
+    /**
+     * 
+     */
+    defaultLocale: string;
+    /**
+     * 
+     */
+    paramsSchema: { [key: string]: JsonValue; };
+    /**
+     * 
+     */
+    paramsSchemaRevision: string;
+    /**
+     * 
+     */
+    allowedPartials: Array<string>;
+    /**
+     * 
+     */
+    catalogRevision: string;
+}
+
+
+/**
+ * @export
+ */
+export const PromptDescriptionVisibilityEnum = {
+    Standard: 'standard',
+    Advanced: 'advanced',
+    Developer: 'developer',
+} as const;
+export type PromptDescriptionVisibilityEnum = typeof PromptDescriptionVisibilityEnum[keyof typeof PromptDescriptionVisibilityEnum];
+
+/**
+ * 
+ * @export
+ * @interface PromptDescriptionInput
+ */
+export interface PromptDescriptionInput {
+    /**
+     * 
+     */
+    id: string;
+    /**
+     * 
+     */
+    owner: string;
+    /**
+     * 
+     */
+    labelKey: string;
+    /**
+     * 
+     */
+    descriptionKey: string;
+    /**
+     * 
+     */
+    visibility: PromptDescriptionInputVisibilityEnum;
+    /**
+     * 
+     */
+    locales: Array<string>;
+    /**
+     * 
+     */
+    defaultLocale: string;
+    /**
+     * 
+     */
+    paramsSchema: { [key: string]: JsonValueInput; };
+    /**
+     * 
+     */
+    paramsSchemaRevision: string;
+    /**
+     * 
+     */
+    allowedPartials: Array<string>;
+    /**
+     * 
+     */
+    catalogRevision: string;
+}
+
+
+/**
+ * @export
+ */
+export const PromptDescriptionInputVisibilityEnum = {
+    Standard: 'standard',
+    Advanced: 'advanced',
+    Developer: 'developer',
+} as const;
+export type PromptDescriptionInputVisibilityEnum = typeof PromptDescriptionInputVisibilityEnum[keyof typeof PromptDescriptionInputVisibilityEnum];
+
+/**
+ * 
+ * @export
+ * @interface PromptHistoryBody
+ */
+export interface PromptHistoryBody {
+    /**
+     * 
+     */
+    scope: PromptScope;
+    /**
+     * 
+     */
+    cursor?: string;
+    /**
+     * 
+     */
+    limit?: number;
+    /**
+     * 
+     */
+    promptId: string;
+    /**
+     * 
+     */
+    locale: string;
+}
+/**
+ * 
+ * @export
+ * @interface PromptHistoryBodyInput
+ */
+export interface PromptHistoryBodyInput {
+    /**
+     * 
+     */
+    scope: PromptScopeInput;
+    /**
+     * 
+     */
+    cursor?: string;
+    /**
+     * 
+     */
+    limit?: number;
+    /**
+     * 
+     */
+    promptId: string;
+    /**
+     * 
+     */
+    locale: string;
+}
+/**
+ * 
+ * @export
+ * @interface PromptHistoryPage
+ */
+export interface PromptHistoryPage {
+    /**
+     * 
+     */
+    items: Array<PromptRevision>;
+    /**
+     * 
+     */
+    nextCursor?: string;
+}
+/**
+ * 
+ * @export
+ * @interface PromptHistoryPageInput
+ */
+export interface PromptHistoryPageInput {
+    /**
+     * 
+     */
+    items: Array<PromptRevisionInput>;
+    /**
+     * 
+     */
+    nextCursor?: string;
+}
+/**
+ * 
+ * @export
+ * @interface PromptListBody
+ */
+export interface PromptListBody {
+    /**
+     * 
+     */
+    scope: PromptScope;
+    /**
+     * 
+     */
+    cursor?: string;
+    /**
+     * 
+     */
+    limit?: number;
+}
+/**
+ * 
+ * @export
+ * @interface PromptListBodyInput
+ */
+export interface PromptListBodyInput {
+    /**
+     * 
+     */
+    scope: PromptScopeInput;
+    /**
+     * 
+     */
+    cursor?: string;
+    /**
+     * 
+     */
+    limit?: number;
+}
+/**
+ * 
+ * @export
+ * @interface PromptListItem
+ */
+export interface PromptListItem {
+    /**
+     * 
+     */
+    promptId: string;
+    /**
+     * 
+     */
+    locale: string;
+    /**
+     * 
+     */
+    scope: PromptScope;
+    /**
+     * 
+     */
+    revision: number;
+    /**
+     * 
+     */
+    latestRevision: number;
+    /**
+     * 
+     */
+    activeRevision: number | null;
+}
+/**
+ * 
+ * @export
+ * @interface PromptListItemInput
+ */
+export interface PromptListItemInput {
+    /**
+     * 
+     */
+    promptId: string;
+    /**
+     * 
+     */
+    locale: string;
+    /**
+     * 
+     */
+    scope: PromptScopeInput;
+    /**
+     * 
+     */
+    revision: number;
+    /**
+     * 
+     */
+    latestRevision: number;
+    /**
+     * 
+     */
+    activeRevision: number | null;
+}
+/**
+ * 
+ * @export
+ * @interface PromptListPage
+ */
+export interface PromptListPage {
+    /**
+     * 
+     */
+    items: Array<PromptListItem>;
+    /**
+     * 
+     */
+    nextCursor?: string;
+}
+/**
+ * 
+ * @export
+ * @interface PromptListPageInput
+ */
+export interface PromptListPageInput {
+    /**
+     * 
+     */
+    items: Array<PromptListItemInput>;
+    /**
+     * 
+     */
+    nextCursor?: string;
+}
+/**
+ * 
+ * @export
+ * @interface PromptPreviewRequest
+ */
+export interface PromptPreviewRequest {
+    /**
+     * 
+     */
+    binding: PromptBinding;
+    /**
+     * 
+     */
+    scope: PromptScope;
+    /**
+     * 
+     */
+    params: JsonValue | null;
+    /**
+     * 
+     */
+    unsavedText?: string;
+}
+/**
+ * 
+ * @export
+ * @interface PromptPreviewRequestInput
+ */
+export interface PromptPreviewRequestInput {
+    /**
+     * 
+     */
+    binding: PromptBindingInput;
+    /**
+     * 
+     */
+    scope: PromptScopeInput;
+    /**
+     * 
+     */
+    params: JsonValueInput | null;
+    /**
+     * 
+     */
+    unsavedText?: string;
+}
+/**
+ * @type PromptPreviewResult
+ * 
+ * @export
+ */
+export type PromptPreviewResult = PromptPreviewResultOneOf | PromptPreviewResultOneOf1;
+/**
+ * @type PromptPreviewResultInput
+ * 
+ * @export
+ */
+export type PromptPreviewResultInput = PromptPreviewResultInputOneOf | PromptPreviewResultInputOneOf1;
+/**
+ * 
+ * @export
+ * @interface PromptPreviewResultInputOneOf
+ */
+export interface PromptPreviewResultInputOneOf {
+    /**
+     * 
+     */
+    text: string;
+    /**
+     * 
+     */
+    bytes: number;
+    /**
+     * 
+     */
+    snapshot: PromptSnapshotInput;
+    /**
+     * 
+     */
+    persisted: boolean;
+}
+/**
+ * 
+ * @export
+ * @interface PromptPreviewResultInputOneOf1
+ */
+export interface PromptPreviewResultInputOneOf1 {
+    /**
+     * 
+     */
+    persisted: boolean;
+    /**
+     * 
+     */
+    text: string;
+    /**
+     * 
+     */
+    bytes: number;
+    /**
+     * 
+     */
+    snapshot: PromptPreviewResultInputOneOf1SnapshotEnum | null;
+    /**
+     * 
+     */
+    draft: PromptPreviewResultInputOneOf1Draft;
+}
+
+
+/**
+ * @export
+ */
+export const PromptPreviewResultInputOneOf1SnapshotEnum = {
+} as const;
+export type PromptPreviewResultInputOneOf1SnapshotEnum = typeof PromptPreviewResultInputOneOf1SnapshotEnum[keyof typeof PromptPreviewResultInputOneOf1SnapshotEnum];
+
+/**
+ * 
+ * @export
+ * @interface PromptPreviewResultInputOneOf1Draft
+ */
+export interface PromptPreviewResultInputOneOf1Draft {
+    /**
+     * 
+     */
+    digest: string;
+    /**
+     * 
+     */
+    promptId: string;
+    /**
+     * 
+     */
+    locale: string;
+    /**
+     * 
+     */
+    dependencies: Array<PromptSnapshotInputDependenciesInner>;
+    /**
+     * 
+     */
+    engine: PromptSnapshotInputEngine;
+}
+/**
+ * 
+ * @export
+ * @interface PromptPreviewResultOneOf
+ */
+export interface PromptPreviewResultOneOf {
+    /**
+     * 
+     */
+    text: string;
+    /**
+     * 
+     */
+    bytes: number;
+    /**
+     * 
+     */
+    snapshot: PromptSnapshot;
+    /**
+     * 
+     */
+    persisted: boolean;
+}
+/**
+ * 
+ * @export
+ * @interface PromptPreviewResultOneOf1
+ */
+export interface PromptPreviewResultOneOf1 {
+    /**
+     * 
+     */
+    persisted: boolean;
+    /**
+     * 
+     */
+    text: string;
+    /**
+     * 
+     */
+    bytes: number;
+    /**
+     * 
+     */
+    snapshot: PromptPreviewResultOneOf1SnapshotEnum | null;
+    /**
+     * 
+     */
+    draft: PromptPreviewResultOneOf1Draft;
+}
+
+
+/**
+ * @export
+ */
+export const PromptPreviewResultOneOf1SnapshotEnum = {
+} as const;
+export type PromptPreviewResultOneOf1SnapshotEnum = typeof PromptPreviewResultOneOf1SnapshotEnum[keyof typeof PromptPreviewResultOneOf1SnapshotEnum];
+
+/**
+ * 
+ * @export
+ * @interface PromptPreviewResultOneOf1Draft
+ */
+export interface PromptPreviewResultOneOf1Draft {
+    /**
+     * 
+     */
+    digest: string;
+    /**
+     * 
+     */
+    promptId: string;
+    /**
+     * 
+     */
+    locale: string;
+    /**
+     * 
+     */
+    dependencies: Array<PromptSnapshotDependenciesInner>;
+    /**
+     * 
+     */
+    engine: PromptSnapshotInputEngine;
+}
+/**
+ * 
+ * @export
+ * @interface PromptReadRequest
+ */
+export interface PromptReadRequest {
+    /**
+     * 
+     */
+    promptId: string;
+    /**
+     * 
+     */
+    locale: string;
+    /**
+     * 
+     */
+    scope: PromptScope;
+    /**
+     * 
+     */
+    revision?: number;
+}
+/**
+ * 
+ * @export
+ * @interface PromptReadRequestInput
+ */
+export interface PromptReadRequestInput {
+    /**
+     * 
+     */
+    promptId: string;
+    /**
+     * 
+     */
+    locale: string;
+    /**
+     * 
+     */
+    scope: PromptScopeInput;
+    /**
+     * 
+     */
+    revision?: number;
+}
+/**
+ * 
+ * @export
+ * @interface PromptReadResult
+ */
+export interface PromptReadResult {
+    /**
+     * 
+     */
+    promptId: string;
+    /**
+     * 
+     */
+    locale: string;
+    /**
+     * 
+     */
+    requestedLocale: string;
+    /**
+     * 
+     */
+    scope: PromptScope;
+    /**
+     * 
+     */
+    sourceScope: PromptScope;
+    /**
+     * 
+     */
+    source: PromptReadResultSourceEnum;
+    /**
+     * 
+     */
+    revision: number;
+    /**
+     * 
+     */
+    sourceRevision?: number;
+    /**
+     * 
+     */
+    digest: string;
+    /**
+     * 
+     */
+    text: string;
+    /**
+     * 
+     */
+    latestRevision: number;
+    /**
+     * 
+     */
+    activeRevision: number | null;
+}
+
+
+/**
+ * @export
+ */
+export const PromptReadResultSourceEnum = {
+    Program: 'program',
+    Override: 'override',
+} as const;
+export type PromptReadResultSourceEnum = typeof PromptReadResultSourceEnum[keyof typeof PromptReadResultSourceEnum];
+
+/**
+ * 
+ * @export
+ * @interface PromptReadResultInput
+ */
+export interface PromptReadResultInput {
+    /**
+     * 
+     */
+    promptId: string;
+    /**
+     * 
+     */
+    locale: string;
+    /**
+     * 
+     */
+    requestedLocale: string;
+    /**
+     * 
+     */
+    scope: PromptScopeInput;
+    /**
+     * 
+     */
+    sourceScope: PromptScopeInput;
+    /**
+     * 
+     */
+    source: PromptReadResultInputSourceEnum;
+    /**
+     * 
+     */
+    revision: number;
+    /**
+     * 
+     */
+    sourceRevision?: number;
+    /**
+     * 
+     */
+    digest: string;
+    /**
+     * 
+     */
+    text: string;
+    /**
+     * 
+     */
+    latestRevision: number;
+    /**
+     * 
+     */
+    activeRevision: number | null;
+}
+
+
+/**
+ * @export
+ */
+export const PromptReadResultInputSourceEnum = {
+    Program: 'program',
+    Override: 'override',
+} as const;
+export type PromptReadResultInputSourceEnum = typeof PromptReadResultInputSourceEnum[keyof typeof PromptReadResultInputSourceEnum];
+
+/**
+ * 
+ * @export
+ * @interface PromptRenderRequest
+ */
+export interface PromptRenderRequest {
+    /**
+     * 
+     */
+    snapshot: PromptSnapshotRef;
+    /**
+     * 
+     */
+    params: JsonValue | null;
+}
+/**
+ * 
+ * @export
+ * @interface PromptRenderRequestInput
+ */
+export interface PromptRenderRequestInput {
+    /**
+     * 
+     */
+    snapshot: PromptSnapshotRefInput;
+    /**
+     * 
+     */
+    params: JsonValueInput | null;
+}
+/**
+ * 
+ * @export
+ * @interface PromptRenderResult
+ */
+export interface PromptRenderResult {
+    /**
+     * 
+     */
+    text: string;
+    /**
+     * 
+     */
+    bytes: number;
+    /**
+     * 
+     */
+    snapshot: PromptSnapshot;
+}
+/**
+ * 
+ * @export
+ * @interface PromptRenderResultInput
+ */
+export interface PromptRenderResultInput {
+    /**
+     * 
+     */
+    text: string;
+    /**
+     * 
+     */
+    bytes: number;
+    /**
+     * 
+     */
+    snapshot: PromptSnapshotInput;
+}
+/**
+ * 
+ * @export
+ * @interface PromptResetRequest
+ */
+export interface PromptResetRequest {
+    /**
+     * 
+     */
+    promptId: string;
+    /**
+     * 
+     */
+    locale: string;
+    /**
+     * 
+     */
+    scope: PromptScope;
+    /**
+     * 
+     */
+    expectedRevision: number;
+}
+/**
+ * 
+ * @export
+ * @interface PromptResetRequestInput
+ */
+export interface PromptResetRequestInput {
+    /**
+     * 
+     */
+    promptId: string;
+    /**
+     * 
+     */
+    locale: string;
+    /**
+     * 
+     */
+    scope: PromptScopeInput;
+    /**
+     * 
+     */
+    expectedRevision: number;
+}
+/**
+ * 
+ * @export
+ * @interface PromptRevision
+ */
+export interface PromptRevision {
+    /**
+     * 
+     */
+    id: string;
+    /**
+     * 
+     */
+    promptId: string;
+    /**
+     * 
+     */
+    locale: string;
+    /**
+     * 
+     */
+    scope: PromptScope;
+    /**
+     * 
+     */
+    revision: number;
+    /**
+     * 
+     */
+    text: string;
+    /**
+     * 
+     */
+    digest: string;
+    /**
+     * 
+     */
+    paramsSchemaRevision: string;
+    /**
+     * 
+     */
+    reason: string | null;
+    /**
+     * 
+     */
+    recordedAt: string;
+}
+/**
+ * 
+ * @export
+ * @interface PromptRevisionInput
+ */
+export interface PromptRevisionInput {
+    /**
+     * 
+     */
+    id: string;
+    /**
+     * 
+     */
+    promptId: string;
+    /**
+     * 
+     */
+    locale: string;
+    /**
+     * 
+     */
+    scope: PromptScopeInput;
+    /**
+     * 
+     */
+    revision: number;
+    /**
+     * 
+     */
+    text: string;
+    /**
+     * 
+     */
+    digest: string;
+    /**
+     * 
+     */
+    paramsSchemaRevision: string;
+    /**
+     * 
+     */
+    reason: string | null;
+    /**
+     * 
+     */
+    recordedAt: string;
+}
+/**
+ * 
+ * @export
+ * @interface PromptSaveRequest
+ */
+export interface PromptSaveRequest {
+    /**
+     * 
+     */
+    promptId: string;
+    /**
+     * 
+     */
+    locale: string;
+    /**
+     * 
+     */
+    scope: PromptScope;
+    /**
+     * 
+     */
+    expectedRevision: number;
+    /**
+     * 
+     */
+    text: string;
+    /**
+     * 
+     */
+    reason?: string;
+}
+/**
+ * 
+ * @export
+ * @interface PromptSaveRequestInput
+ */
+export interface PromptSaveRequestInput {
+    /**
+     * 
+     */
+    promptId: string;
+    /**
+     * 
+     */
+    locale: string;
+    /**
+     * 
+     */
+    scope: PromptScopeInput;
+    /**
+     * 
+     */
+    expectedRevision: number;
+    /**
+     * 
+     */
+    text: string;
+    /**
+     * 
+     */
+    reason?: string;
+}
+/**
+ * @type PromptScope
+ * 
+ * @export
+ */
+export type PromptScope = ConfigScopeOneOf | PromptScopeInputOneOf;
+/**
+ * @type PromptScopeInput
+ * 
+ * @export
+ */
+export type PromptScopeInput = ConfigScopeInputOneOf1 | PromptScopeInputOneOf;
+/**
+ * 
+ * @export
+ * @interface PromptScopeInputOneOf
+ */
+export interface PromptScopeInputOneOf {
+    /**
+     * 
+     */
+    kind: PromptScopeInputOneOfKindEnum;
+    /**
+     * 
+     */
+    installationId: string;
+}
+
+
+/**
+ * @export
+ */
+export const PromptScopeInputOneOfKindEnum = {
+    Installation: 'installation',
+} as const;
+export type PromptScopeInputOneOfKindEnum = typeof PromptScopeInputOneOfKindEnum[keyof typeof PromptScopeInputOneOfKindEnum];
+
+/**
+ * 
+ * @export
+ * @interface PromptSnapshot
+ */
+export interface PromptSnapshot {
+    /**
+     * 
+     */
+    ref: PromptSnapshotRef;
+    /**
+     * 
+     */
+    promptId: string;
+    /**
+     * 
+     */
+    locale: string;
+    /**
+     * 
+     */
+    scope: PromptScope;
+    /**
+     * 
+     */
+    sourceScope: PromptScope;
+    /**
+     * 
+     */
+    source: PromptSnapshotSourceEnum;
+    /**
+     * 
+     */
+    revision?: number;
+    /**
+     * 
+     */
+    catalogRevision: string;
+    /**
+     * 
+     */
+    paramsSchemaRevision: string;
+    /**
+     * 
+     */
+    dependencies: Array<PromptSnapshotDependenciesInner>;
+    /**
+     * 
+     */
+    engine: PromptSnapshotInputEngine;
+}
+
+
+/**
+ * @export
+ */
+export const PromptSnapshotSourceEnum = {
+    Program: 'program',
+    Override: 'override',
+} as const;
+export type PromptSnapshotSourceEnum = typeof PromptSnapshotSourceEnum[keyof typeof PromptSnapshotSourceEnum];
+
+/**
+ * 
+ * @export
+ * @interface PromptSnapshotDependenciesInner
+ */
+export interface PromptSnapshotDependenciesInner {
+    /**
+     * 
+     */
+    promptId: string;
+    /**
+     * 
+     */
+    locale: string;
+    /**
+     * 
+     */
+    source: PromptSnapshotDependenciesInnerSourceEnum;
+    /**
+     * 
+     */
+    scope: PromptScope;
+    /**
+     * 
+     */
+    revision?: number;
+    /**
+     * 
+     */
+    digest: string;
+}
+
+
+/**
+ * @export
+ */
+export const PromptSnapshotDependenciesInnerSourceEnum = {
+    Program: 'program',
+    Override: 'override',
+} as const;
+export type PromptSnapshotDependenciesInnerSourceEnum = typeof PromptSnapshotDependenciesInnerSourceEnum[keyof typeof PromptSnapshotDependenciesInnerSourceEnum];
+
+/**
+ * 
+ * @export
+ * @interface PromptSnapshotInput
+ */
+export interface PromptSnapshotInput {
+    /**
+     * 
+     */
+    ref: PromptSnapshotRefInput;
+    /**
+     * 
+     */
+    promptId: string;
+    /**
+     * 
+     */
+    locale: string;
+    /**
+     * 
+     */
+    scope: PromptScopeInput;
+    /**
+     * 
+     */
+    sourceScope: PromptScopeInput;
+    /**
+     * 
+     */
+    source: PromptSnapshotInputSourceEnum;
+    /**
+     * 
+     */
+    revision?: number;
+    /**
+     * 
+     */
+    catalogRevision: string;
+    /**
+     * 
+     */
+    paramsSchemaRevision: string;
+    /**
+     * 
+     */
+    dependencies: Array<PromptSnapshotInputDependenciesInner>;
+    /**
+     * 
+     */
+    engine: PromptSnapshotInputEngine;
+}
+
+
+/**
+ * @export
+ */
+export const PromptSnapshotInputSourceEnum = {
+    Program: 'program',
+    Override: 'override',
+} as const;
+export type PromptSnapshotInputSourceEnum = typeof PromptSnapshotInputSourceEnum[keyof typeof PromptSnapshotInputSourceEnum];
+
+/**
+ * 
+ * @export
+ * @interface PromptSnapshotInputDependenciesInner
+ */
+export interface PromptSnapshotInputDependenciesInner {
+    /**
+     * 
+     */
+    promptId: string;
+    /**
+     * 
+     */
+    locale: string;
+    /**
+     * 
+     */
+    source: PromptSnapshotInputDependenciesInnerSourceEnum;
+    /**
+     * 
+     */
+    scope: PromptScopeInput;
+    /**
+     * 
+     */
+    revision?: number;
+    /**
+     * 
+     */
+    digest: string;
+}
+
+
+/**
+ * @export
+ */
+export const PromptSnapshotInputDependenciesInnerSourceEnum = {
+    Program: 'program',
+    Override: 'override',
+} as const;
+export type PromptSnapshotInputDependenciesInnerSourceEnum = typeof PromptSnapshotInputDependenciesInnerSourceEnum[keyof typeof PromptSnapshotInputDependenciesInnerSourceEnum];
+
+/**
+ * 
+ * @export
+ * @interface PromptSnapshotInputEngine
+ */
+export interface PromptSnapshotInputEngine {
+    /**
+     * 
+     */
+    name: PromptSnapshotInputEngineNameEnum;
+    /**
+     * 
+     */
+    version: string;
+    /**
+     * 
+     */
+    optionsDigest: string;
+}
+
+
+/**
+ * @export
+ */
+export const PromptSnapshotInputEngineNameEnum = {
+    Liquidjs: 'liquidjs',
+} as const;
+export type PromptSnapshotInputEngineNameEnum = typeof PromptSnapshotInputEngineNameEnum[keyof typeof PromptSnapshotInputEngineNameEnum];
+
+/**
+ * 
+ * @export
+ * @interface PromptSnapshotRef
+ */
+export interface PromptSnapshotRef {
+    /**
+     * 
+     */
+    id: string;
+    /**
+     * 
+     */
+    digest: string;
+}
+/**
+ * 
+ * @export
+ * @interface PromptSnapshotRefInput
+ */
+export interface PromptSnapshotRefInput {
+    /**
+     * 
+     */
+    id: string;
+    /**
+     * 
+     */
+    digest: string;
+}
+/**
+ * 
+ * @export
+ * @interface PromptSnapshotRequest
+ */
+export interface PromptSnapshotRequest {
+    /**
+     * 
+     */
+    binding: PromptBinding;
+    /**
+     * 
+     */
+    scope: PromptScope;
+}
+/**
+ * 
+ * @export
+ * @interface PromptSnapshotRequestInput
+ */
+export interface PromptSnapshotRequestInput {
+    /**
+     * 
+     */
+    binding: PromptBindingInput;
+    /**
+     * 
+     */
+    scope: PromptScopeInput;
+}
+/**
+ * 
+ * @export
+ * @interface ProviderDefinition
+ */
+export interface ProviderDefinition {
+    /**
+     * 
+     */
+    id: string;
+    /**
+     * 
+     */
+    adapter: string;
+    /**
+     * 
+     */
+    baseURL?: string;
+    /**
+     * 
+     */
+    credentialRef?: string;
+    /**
+     * 
+     */
+    networkProfileId: string;
+    /**
+     * 
+     */
+    options: { [key: string]: JsonValue; };
+    /**
+     * 
+     */
+    enabled: boolean;
+}
+/**
+ * 
+ * @export
+ * @interface ProviderDefinitionInput
+ */
+export interface ProviderDefinitionInput {
+    /**
+     * 
+     */
+    id: string;
+    /**
+     * 
+     */
+    adapter: string;
+    /**
+     * 
+     */
+    baseURL?: string;
+    /**
+     * 
+     */
+    credentialRef?: string;
+    /**
+     * 
+     */
+    networkProfileId: string;
+    /**
+     * 
+     */
+    options: { [key: string]: JsonValueInput; };
+    /**
+     * 
+     */
+    enabled: boolean;
+}
+/**
+ * 
+ * @export
+ * @interface ProvidersCreateRequest
+ */
+export interface ProvidersCreateRequest {
+    /**
+     * 
+     */
+    definition: ProviderDefinitionInput;
+    /**
+     * 
+     */
+    expectedRevision: number;
+}
+/**
+ * 
+ * @export
+ * @interface ProvidersDeleteRequest
+ */
+export interface ProvidersDeleteRequest {
+    /**
+     * 
+     */
+    expectedRevision: number;
+}
+/**
+ * 
+ * @export
+ * @interface ProvidersList200ResponseInner
+ */
+export interface ProvidersList200ResponseInner {
+    /**
+     * 
+     */
+    ref: ResourceRef;
+    /**
+     * 
+     */
+    definition: ProviderDefinition;
+}
+/**
+ * 
+ * @export
+ * @interface ProvidersRead200Response
+ */
+export interface ProvidersRead200Response {
+    /**
+     * 
+     */
+    ref: ResourceRef;
+    /**
+     * 
+     */
+    definition: ProviderDefinition;
+    /**
+     * 
+     */
+    snapshot: ConfigSnapshot;
+}
 /**
  * 
  * @export
@@ -5486,11 +14265,11 @@ export interface Query {
     /**
      * 
      */
-    knowledgeAt?: TimePoint;
+    knowledgeAt?: TimePointRequest;
     /**
      * 
      */
-    recordedAsOf?: string;
+    recordedAsOf?: any;
     /**
      * 
      */
@@ -5612,7 +14391,7 @@ export interface QueryExplainRequest {
     /**
      * 
      */
-    knowledgeAt?: TimePointInput;
+    knowledgeAt?: TimePointRequestInput;
     /**
      * 
      */
@@ -5738,7 +14517,7 @@ export interface QueryInput {
     /**
      * 
      */
-    knowledgeAt?: TimePointInput;
+    knowledgeAt?: TimePointRequestInput;
     /**
      * 
      */
@@ -5832,7 +14611,7 @@ export interface QueryInputTime {
     /**
      * 
      */
-    clockId: string;
+    domainId: string;
     /**
      * 
      */
@@ -6033,11 +14812,11 @@ export interface QueryRequest {
     /**
      * 
      */
-    knowledgeAt?: TimePoint;
+    knowledgeAt?: TimePointRequest;
     /**
      * 
      */
-    recordedAsOf?: string;
+    recordedAsOf?: any;
     /**
      * 
      */
@@ -6159,7 +14938,7 @@ export interface QueryRequestInput {
     /**
      * 
      */
-    knowledgeAt?: TimePointInput;
+    knowledgeAt?: TimePointRequestInput;
     /**
      * 
      */
@@ -6389,15 +15168,15 @@ export interface QueryTime {
     /**
      * 
      */
-    clockId: string;
+    domainId: string;
     /**
      * 
      */
-    start: string;
+    start: any;
     /**
      * 
      */
-    end: string;
+    end: any;
 }
 
 
@@ -6412,6 +15191,40 @@ export const QueryTimeFieldEnum = {
     Recorded: 'recorded',
 } as const;
 export type QueryTimeFieldEnum = typeof QueryTimeFieldEnum[keyof typeof QueryTimeFieldEnum];
+
+
+/**
+ * 
+ * @export
+ */
+export const Reasoning = {
+    ProviderDefault: 'provider-default',
+    None: 'none',
+    Minimal: 'minimal',
+    Low: 'low',
+    Medium: 'medium',
+    High: 'high',
+    Xhigh: 'xhigh',
+    Max: 'max',
+} as const;
+export type Reasoning = typeof Reasoning[keyof typeof Reasoning];
+
+
+/**
+ * 
+ * @export
+ */
+export const ReasoningInput = {
+    ProviderDefault: 'provider-default',
+    None: 'none',
+    Minimal: 'minimal',
+    Low: 'low',
+    Medium: 'medium',
+    High: 'high',
+    Xhigh: 'xhigh',
+    Max: 'max',
+} as const;
+export type ReasoningInput = typeof ReasoningInput[keyof typeof ReasoningInput];
 
 /**
  * 
@@ -6544,11 +15357,11 @@ export interface RelationRead {
     /**
      * 
      */
-    knowledgeAt?: TimePoint;
+    knowledgeAt?: TimePointRequest;
     /**
      * 
      */
-    recordedAsOf?: string;
+    recordedAsOf?: any;
     /**
      * 
      */
@@ -6567,7 +15380,7 @@ export interface RelationReadInput {
     /**
      * 
      */
-    knowledgeAt?: TimePointInput;
+    knowledgeAt?: TimePointRequestInput;
     /**
      * 
      */
@@ -6610,11 +15423,11 @@ export interface RelationWrite {
     /**
      * 
      */
-    formed: TimePoint;
+    formed: TimePointRequest;
     /**
      * 
      */
-    valid?: TimeRange;
+    valid?: TimeRangeRequest;
 }
 /**
  * 
@@ -6645,11 +15458,11 @@ export interface RelationWriteInput {
     /**
      * 
      */
-    formed: TimePointInput;
+    formed: TimePointRequestInput;
     /**
      * 
      */
-    valid?: TimeRangeInput;
+    valid?: TimeRangeRequestInput;
 }
 /**
  * @type ResourceBody
@@ -6912,6 +15725,36 @@ export type ResourceBodyOneOf2KindEnum = typeof ResourceBodyOneOf2KindEnum[keyof
 /**
  * 
  * @export
+ * @interface ResourceRef
+ */
+export interface ResourceRef {
+    /**
+     * 
+     */
+    id: string;
+    /**
+     * 
+     */
+    revision: number;
+}
+/**
+ * 
+ * @export
+ * @interface ResourceRefInput
+ */
+export interface ResourceRefInput {
+    /**
+     * 
+     */
+    id: string;
+    /**
+     * 
+     */
+    revision: number;
+}
+/**
+ * 
+ * @export
  * @interface ResourcesReadRequest
  */
 export interface ResourcesReadRequest {
@@ -6923,48 +15766,907 @@ export interface ResourcesReadRequest {
 /**
  * 
  * @export
- * @interface RoleProfile
+ * @interface RetrievalSettings
  */
-export interface RoleProfile {
+export interface RetrievalSettings {
     /**
      * 
      */
-    modelResourceId: string;
+    limit: number;
     /**
      * 
      */
-    temperature: number;
-    /**
-     * 
-     */
-    maxOutputTokens: number;
-    /**
-     * 
-     */
-    reasoning?: string;
+    exploration: number;
 }
 /**
  * 
  * @export
- * @interface RoleProfileInput
+ * @interface RetrievalSettingsInput
  */
-export interface RoleProfileInput {
+export interface RetrievalSettingsInput {
     /**
      * 
      */
-    modelResourceId: string;
+    limit: number;
     /**
      * 
      */
-    temperature?: number;
+    exploration: number;
+}
+/**
+ * 
+ * @export
+ * @interface RevisionRef
+ */
+export interface RevisionRef {
     /**
      * 
      */
-    maxOutputTokens?: number;
+    namespace: string;
     /**
      * 
      */
-    reasoning?: string;
+    scope: ConfigScope;
+    /**
+     * 
+     */
+    revision: number;
+}
+/**
+ * 
+ * @export
+ * @interface RevisionRefInput
+ */
+export interface RevisionRefInput {
+    /**
+     * 
+     */
+    namespace: string;
+    /**
+     * 
+     */
+    scope: ConfigScopeInput;
+    /**
+     * 
+     */
+    revision: number;
+}
+/**
+ * @type RolePolicy
+ * 
+ * @export
+ */
+export type RolePolicy = RolePolicyOneOf | RolePolicyOneOf1 | RolePolicyOneOf2 | RolePolicyOneOf3 | RolePolicyOneOf4;
+/**
+ * @type RolePolicyInput
+ * 
+ * @export
+ */
+export type RolePolicyInput = RolePolicyInputOneOf | RolePolicyInputOneOf1 | RolePolicyInputOneOf2 | RolePolicyInputOneOf3 | RolePolicyInputOneOf4;
+/**
+ * 
+ * @export
+ * @interface RolePolicyInputOneOf
+ */
+export interface RolePolicyInputOneOf {
+    /**
+     * 
+     */
+    enabled: boolean;
+    /**
+     * 
+     */
+    resources: Array<ResourceRefInput>;
+    /**
+     * 
+     */
+    selection: ModelSelectionInput;
+    /**
+     * 
+     */
+    timeoutMs: number;
+    /**
+     * 
+     */
+    budgetPolicyRef?: string;
+    /**
+     * 
+     */
+    prompt?: PromptBindingInput;
+    /**
+     * 
+     */
+    kind: RolePolicyInputOneOfKindEnum;
+    /**
+     * 
+     */
+    inference: LanguageSettingsInput;
+}
+
+
+/**
+ * @export
+ */
+export const RolePolicyInputOneOfKindEnum = {
+    Language: 'language',
+} as const;
+export type RolePolicyInputOneOfKindEnum = typeof RolePolicyInputOneOfKindEnum[keyof typeof RolePolicyInputOneOfKindEnum];
+
+/**
+ * 
+ * @export
+ * @interface RolePolicyInputOneOf1
+ */
+export interface RolePolicyInputOneOf1 {
+    /**
+     * 
+     */
+    enabled: boolean;
+    /**
+     * 
+     */
+    resources: Array<ResourceRefInput>;
+    /**
+     * 
+     */
+    selection: ModelSelectionInput;
+    /**
+     * 
+     */
+    timeoutMs: number;
+    /**
+     * 
+     */
+    budgetPolicyRef?: string;
+    /**
+     * 
+     */
+    prompt?: PromptBindingInput;
+    /**
+     * 
+     */
+    kind: RolePolicyInputOneOf1KindEnum;
+    /**
+     * 
+     */
+    inference: RolePolicyInputOneOf1Inference;
+}
+
+
+/**
+ * @export
+ */
+export const RolePolicyInputOneOf1KindEnum = {
+    Embedding: 'embedding',
+} as const;
+export type RolePolicyInputOneOf1KindEnum = typeof RolePolicyInputOneOf1KindEnum[keyof typeof RolePolicyInputOneOf1KindEnum];
+
+/**
+ * 
+ * @export
+ * @interface RolePolicyInputOneOf1Inference
+ */
+export interface RolePolicyInputOneOf1Inference {
+    /**
+     * 
+     */
+    maxParallelCalls: number;
+    /**
+     * 
+     */
+    providerOptions: { [key: string]: { [key: string]: JsonValueInput; }; };
+}
+/**
+ * 
+ * @export
+ * @interface RolePolicyInputOneOf2
+ */
+export interface RolePolicyInputOneOf2 {
+    /**
+     * 
+     */
+    enabled: boolean;
+    /**
+     * 
+     */
+    resources: Array<ResourceRefInput>;
+    /**
+     * 
+     */
+    selection: ModelSelectionInput;
+    /**
+     * 
+     */
+    timeoutMs: number;
+    /**
+     * 
+     */
+    budgetPolicyRef?: string;
+    /**
+     * 
+     */
+    prompt?: PromptBindingInput;
+    /**
+     * 
+     */
+    kind: RolePolicyInputOneOf2KindEnum;
+    /**
+     * 
+     */
+    inference: RolePolicyInputOneOf2Inference;
+}
+
+
+/**
+ * @export
+ */
+export const RolePolicyInputOneOf2KindEnum = {
+    Reranking: 'reranking',
+} as const;
+export type RolePolicyInputOneOf2KindEnum = typeof RolePolicyInputOneOf2KindEnum[keyof typeof RolePolicyInputOneOf2KindEnum];
+
+/**
+ * 
+ * @export
+ * @interface RolePolicyInputOneOf2Inference
+ */
+export interface RolePolicyInputOneOf2Inference {
+    /**
+     * 
+     */
+    topN?: number;
+    /**
+     * 
+     */
+    providerOptions: { [key: string]: { [key: string]: JsonValueInput; }; };
+}
+/**
+ * 
+ * @export
+ * @interface RolePolicyInputOneOf3
+ */
+export interface RolePolicyInputOneOf3 {
+    /**
+     * 
+     */
+    enabled: boolean;
+    /**
+     * 
+     */
+    resources: Array<ResourceRefInput>;
+    /**
+     * 
+     */
+    selection: ModelSelectionInput;
+    /**
+     * 
+     */
+    timeoutMs: number;
+    /**
+     * 
+     */
+    budgetPolicyRef?: string;
+    /**
+     * 
+     */
+    prompt?: PromptBindingInput;
+    /**
+     * 
+     */
+    kind: RolePolicyInputOneOf3KindEnum;
+    /**
+     * 
+     */
+    inference: RolePolicyInputOneOf3Inference;
+}
+
+
+/**
+ * @export
+ */
+export const RolePolicyInputOneOf3KindEnum = {
+    Transcription: 'transcription',
+} as const;
+export type RolePolicyInputOneOf3KindEnum = typeof RolePolicyInputOneOf3KindEnum[keyof typeof RolePolicyInputOneOf3KindEnum];
+
+/**
+ * 
+ * @export
+ * @interface RolePolicyInputOneOf3Inference
+ */
+export interface RolePolicyInputOneOf3Inference {
+    /**
+     * 
+     */
+    providerOptions: { [key: string]: { [key: string]: JsonValueInput; }; };
+}
+/**
+ * 
+ * @export
+ * @interface RolePolicyInputOneOf4
+ */
+export interface RolePolicyInputOneOf4 {
+    /**
+     * 
+     */
+    enabled: boolean;
+    /**
+     * 
+     */
+    resources: Array<ResourceRefInput>;
+    /**
+     * 
+     */
+    selection: ModelSelectionInput;
+    /**
+     * 
+     */
+    timeoutMs: number;
+    /**
+     * 
+     */
+    budgetPolicyRef?: string;
+    /**
+     * 
+     */
+    prompt?: PromptBindingInput;
+    /**
+     * 
+     */
+    kind: RolePolicyInputOneOf4KindEnum;
+    /**
+     * 
+     */
+    inference: RolePolicyInputOneOf4Inference;
+}
+
+
+/**
+ * @export
+ */
+export const RolePolicyInputOneOf4KindEnum = {
+    Speech: 'speech',
+} as const;
+export type RolePolicyInputOneOf4KindEnum = typeof RolePolicyInputOneOf4KindEnum[keyof typeof RolePolicyInputOneOf4KindEnum];
+
+/**
+ * 
+ * @export
+ * @interface RolePolicyInputOneOf4Inference
+ */
+export interface RolePolicyInputOneOf4Inference {
+    /**
+     * 
+     */
+    voice?: string;
+    /**
+     * 
+     */
+    outputFormat?: string;
+    /**
+     * 
+     */
+    speed?: number;
+    /**
+     * 
+     */
+    language?: string;
+    /**
+     * 
+     */
+    providerOptions: { [key: string]: { [key: string]: JsonValueInput; }; };
+}
+/**
+ * 
+ * @export
+ * @interface RolePolicyOneOf
+ */
+export interface RolePolicyOneOf {
+    /**
+     * 
+     */
+    enabled: boolean;
+    /**
+     * 
+     */
+    resources: Array<ResourceRef>;
+    /**
+     * 
+     */
+    selection: ModelSelection;
+    /**
+     * 
+     */
+    timeoutMs: number;
+    /**
+     * 
+     */
+    budgetPolicyRef?: string;
+    /**
+     * 
+     */
+    prompt?: PromptBinding;
+    /**
+     * 
+     */
+    kind: RolePolicyOneOfKindEnum;
+    /**
+     * 
+     */
+    inference: LanguageSettings;
+}
+
+
+/**
+ * @export
+ */
+export const RolePolicyOneOfKindEnum = {
+    Language: 'language',
+} as const;
+export type RolePolicyOneOfKindEnum = typeof RolePolicyOneOfKindEnum[keyof typeof RolePolicyOneOfKindEnum];
+
+/**
+ * 
+ * @export
+ * @interface RolePolicyOneOf1
+ */
+export interface RolePolicyOneOf1 {
+    /**
+     * 
+     */
+    enabled: boolean;
+    /**
+     * 
+     */
+    resources: Array<ResourceRef>;
+    /**
+     * 
+     */
+    selection: ModelSelection;
+    /**
+     * 
+     */
+    timeoutMs: number;
+    /**
+     * 
+     */
+    budgetPolicyRef?: string;
+    /**
+     * 
+     */
+    prompt?: PromptBinding;
+    /**
+     * 
+     */
+    kind: RolePolicyOneOf1KindEnum;
+    /**
+     * 
+     */
+    inference: RolePolicyOneOf1Inference;
+}
+
+
+/**
+ * @export
+ */
+export const RolePolicyOneOf1KindEnum = {
+    Embedding: 'embedding',
+} as const;
+export type RolePolicyOneOf1KindEnum = typeof RolePolicyOneOf1KindEnum[keyof typeof RolePolicyOneOf1KindEnum];
+
+/**
+ * 
+ * @export
+ * @interface RolePolicyOneOf1Inference
+ */
+export interface RolePolicyOneOf1Inference {
+    /**
+     * 
+     */
+    maxParallelCalls: number;
+    /**
+     * 
+     */
+    providerOptions: { [key: string]: { [key: string]: JsonValue; }; };
+}
+/**
+ * 
+ * @export
+ * @interface RolePolicyOneOf2
+ */
+export interface RolePolicyOneOf2 {
+    /**
+     * 
+     */
+    enabled: boolean;
+    /**
+     * 
+     */
+    resources: Array<ResourceRef>;
+    /**
+     * 
+     */
+    selection: ModelSelection;
+    /**
+     * 
+     */
+    timeoutMs: number;
+    /**
+     * 
+     */
+    budgetPolicyRef?: string;
+    /**
+     * 
+     */
+    prompt?: PromptBinding;
+    /**
+     * 
+     */
+    kind: RolePolicyOneOf2KindEnum;
+    /**
+     * 
+     */
+    inference: RolePolicyOneOf2Inference;
+}
+
+
+/**
+ * @export
+ */
+export const RolePolicyOneOf2KindEnum = {
+    Reranking: 'reranking',
+} as const;
+export type RolePolicyOneOf2KindEnum = typeof RolePolicyOneOf2KindEnum[keyof typeof RolePolicyOneOf2KindEnum];
+
+/**
+ * 
+ * @export
+ * @interface RolePolicyOneOf2Inference
+ */
+export interface RolePolicyOneOf2Inference {
+    /**
+     * 
+     */
+    topN?: number;
+    /**
+     * 
+     */
+    providerOptions: { [key: string]: { [key: string]: JsonValue; }; };
+}
+/**
+ * 
+ * @export
+ * @interface RolePolicyOneOf3
+ */
+export interface RolePolicyOneOf3 {
+    /**
+     * 
+     */
+    enabled: boolean;
+    /**
+     * 
+     */
+    resources: Array<ResourceRef>;
+    /**
+     * 
+     */
+    selection: ModelSelection;
+    /**
+     * 
+     */
+    timeoutMs: number;
+    /**
+     * 
+     */
+    budgetPolicyRef?: string;
+    /**
+     * 
+     */
+    prompt?: PromptBinding;
+    /**
+     * 
+     */
+    kind: RolePolicyOneOf3KindEnum;
+    /**
+     * 
+     */
+    inference: RolePolicyOneOf3Inference;
+}
+
+
+/**
+ * @export
+ */
+export const RolePolicyOneOf3KindEnum = {
+    Transcription: 'transcription',
+} as const;
+export type RolePolicyOneOf3KindEnum = typeof RolePolicyOneOf3KindEnum[keyof typeof RolePolicyOneOf3KindEnum];
+
+/**
+ * 
+ * @export
+ * @interface RolePolicyOneOf3Inference
+ */
+export interface RolePolicyOneOf3Inference {
+    /**
+     * 
+     */
+    providerOptions: { [key: string]: { [key: string]: JsonValue; }; };
+}
+/**
+ * 
+ * @export
+ * @interface RolePolicyOneOf4
+ */
+export interface RolePolicyOneOf4 {
+    /**
+     * 
+     */
+    enabled: boolean;
+    /**
+     * 
+     */
+    resources: Array<ResourceRef>;
+    /**
+     * 
+     */
+    selection: ModelSelection;
+    /**
+     * 
+     */
+    timeoutMs: number;
+    /**
+     * 
+     */
+    budgetPolicyRef?: string;
+    /**
+     * 
+     */
+    prompt?: PromptBinding;
+    /**
+     * 
+     */
+    kind: RolePolicyOneOf4KindEnum;
+    /**
+     * 
+     */
+    inference: RolePolicyOneOf4Inference;
+}
+
+
+/**
+ * @export
+ */
+export const RolePolicyOneOf4KindEnum = {
+    Speech: 'speech',
+} as const;
+export type RolePolicyOneOf4KindEnum = typeof RolePolicyOneOf4KindEnum[keyof typeof RolePolicyOneOf4KindEnum];
+
+/**
+ * 
+ * @export
+ * @interface RolePolicyOneOf4Inference
+ */
+export interface RolePolicyOneOf4Inference {
+    /**
+     * 
+     */
+    voice?: string;
+    /**
+     * 
+     */
+    outputFormat?: string;
+    /**
+     * 
+     */
+    speed?: number;
+    /**
+     * 
+     */
+    language?: string;
+    /**
+     * 
+     */
+    providerOptions: { [key: string]: { [key: string]: JsonValue; }; };
+}
+/**
+ * 
+ * @export
+ * @interface SecretsCreate200Response
+ */
+export interface SecretsCreate200Response {
+    /**
+     * 
+     */
+    ref: string;
+    /**
+     * 
+     */
+    revision: number;
+    /**
+     * 
+     */
+    generation: number;
+    /**
+     * 
+     */
+    state: SecretsCreate200ResponseStateEnum;
+    /**
+     * 
+     */
+    purpose: string;
+    /**
+     * 
+     */
+    resourceRef: Ref;
+    /**
+     * 
+     */
+    allowedConsumers: Array<Consumer>;
+    /**
+     * 
+     */
+    backend: SecretsCreate200ResponseBackendEnum;
+    /**
+     * 
+     */
+    configured: boolean;
+    /**
+     * 
+     */
+    available: boolean;
+    /**
+     * 
+     */
+    createdAt: TimePoint;
+    /**
+     * 
+     */
+    replacedAt?: TimePoint;
+    /**
+     * 
+     */
+    revokedAt?: TimePoint;
+    /**
+     * 
+     */
+    cleanupPending: boolean;
+    /**
+     * 
+     */
+    externalRotationRequired: boolean;
+}
+
+
+/**
+ * @export
+ */
+export const SecretsCreate200ResponseStateEnum = {
+    Active: 'active',
+    Revoked: 'revoked',
+    Unavailable: 'unavailable',
+} as const;
+export type SecretsCreate200ResponseStateEnum = typeof SecretsCreate200ResponseStateEnum[keyof typeof SecretsCreate200ResponseStateEnum];
+
+/**
+ * @export
+ */
+export const SecretsCreate200ResponseBackendEnum = {
+    Environment: 'environment',
+    Os: 'os',
+    ProtectedFile: 'protected_file',
+} as const;
+export type SecretsCreate200ResponseBackendEnum = typeof SecretsCreate200ResponseBackendEnum[keyof typeof SecretsCreate200ResponseBackendEnum];
+
+/**
+ * 
+ * @export
+ * @interface SecretsCreateRequest
+ */
+export interface SecretsCreateRequest {
+    /**
+     * 
+     */
+    purpose: string;
+    /**
+     * 
+     */
+    resourceRef: RefInput;
+    /**
+     * 
+     */
+    allowedConsumers: Array<ConsumerInput>;
+    /**
+     * 
+     */
+    backend: SecretsCreateRequestBackend;
+}
+/**
+ * @type SecretsCreateRequestBackend
+ * 
+ * @export
+ */
+export type SecretsCreateRequestBackend = SecretsCreateRequestBackendOneOf | SecretsCreateRequestBackendOneOf1;
+/**
+ * 
+ * @export
+ * @interface SecretsCreateRequestBackendOneOf
+ */
+export interface SecretsCreateRequestBackendOneOf {
+    /**
+     * 
+     */
+    kind: SecretsCreateRequestBackendOneOfKindEnum;
+    /**
+     * 
+     */
+    variable: string;
+}
+
+
+/**
+ * @export
+ */
+export const SecretsCreateRequestBackendOneOfKindEnum = {
+    Environment: 'environment',
+} as const;
+export type SecretsCreateRequestBackendOneOfKindEnum = typeof SecretsCreateRequestBackendOneOfKindEnum[keyof typeof SecretsCreateRequestBackendOneOfKindEnum];
+
+/**
+ * 
+ * @export
+ * @interface SecretsCreateRequestBackendOneOf1
+ */
+export interface SecretsCreateRequestBackendOneOf1 {
+    /**
+     * 
+     */
+    kind: SecretsCreateRequestBackendOneOf1KindEnum;
+    /**
+     * 
+     */
+    material: string;
+}
+
+
+/**
+ * @export
+ */
+export const SecretsCreateRequestBackendOneOf1KindEnum = {
+    ProtectedFile: 'protected_file',
+    Os: 'os',
+} as const;
+export type SecretsCreateRequestBackendOneOf1KindEnum = typeof SecretsCreateRequestBackendOneOf1KindEnum[keyof typeof SecretsCreateRequestBackendOneOf1KindEnum];
+
+/**
+ * 
+ * @export
+ * @interface SecretsRevokeRequest
+ */
+export interface SecretsRevokeRequest {
+    /**
+     * 
+     */
+    expectedRevision: number;
+}
+/**
+ * 
+ * @export
+ * @interface SecretsRotateRequest
+ */
+export interface SecretsRotateRequest {
+    /**
+     * 
+     */
+    expectedRevision: number;
+    /**
+     * 
+     */
+    backend: SecretsCreateRequestBackend;
+    /**
+     * 
+     */
+    allowedConsumers?: Array<ConsumerInput>;
 }
 /**
  * 
@@ -6979,7 +16681,7 @@ export interface SeedApply {
     /**
      * 
      */
-    formed: TimePoint;
+    formed: TimePointRequest;
     /**
      * 
      */
@@ -7002,7 +16704,7 @@ export interface SeedApplyInput {
     /**
      * 
      */
-    formed: TimePointInput;
+    formed: TimePointRequestInput;
     /**
      * 
      */
@@ -7028,81 +16730,56 @@ export interface SeedsPreviewRequest {
     instructions?: string;
 }
 /**
+ * @type Selector
  * 
  * @export
- * @interface Selector
  */
-export interface Selector {
+export type Selector = SelectorOneOf | SelectorOneOf1;
+/**
+ * @type SelectorInput
+ * 
+ * @export
+ */
+export type SelectorInput = SelectorInputOneOf | SelectorInputOneOf1;
+/**
+ * 
+ * @export
+ * @interface SelectorInputOneOf
+ */
+export interface SelectorInputOneOf {
     /**
      * 
      */
-    kind: SelectorKindEnum;
+    kind: SelectorInputOneOfKindEnum;
     /**
      * 
      */
-    start?: number;
+    pointer: string;
     /**
      * 
      */
-    end?: number;
-    /**
-     * 
-     */
-    page?: number;
-    /**
-     * 
-     */
-    partId?: string;
-    /**
-     * 
-     */
-    nodeId?: string;
-    /**
-     * 
-     */
-    x?: number;
-    /**
-     * 
-     */
-    y?: number;
-    /**
-     * 
-     */
-    width?: number;
-    /**
-     * 
-     */
-    height?: number;
-    /**
-     * 
-     */
-    within?: Selector;
+    within?: SelectorInput;
 }
 
 
 /**
  * @export
  */
-export const SelectorKindEnum = {
-    Text: 'text',
-    Page: 'page',
-    Image: 'image',
-    Media: 'media',
-    Part: 'part',
+export const SelectorInputOneOfKindEnum = {
     Node: 'node',
 } as const;
-export type SelectorKindEnum = typeof SelectorKindEnum[keyof typeof SelectorKindEnum];
+export type SelectorInputOneOfKindEnum = typeof SelectorInputOneOfKindEnum[keyof typeof SelectorInputOneOfKindEnum];
 
 /**
  * 
  * @export
- * @interface SelectorInput
+ * @interface SelectorInputOneOf1
  */
-export interface SelectorInput {
+export interface SelectorInputOneOf1 {
     /**
      * 
      */
-    kind: SelectorInputKindEnum;
+    kind: SelectorInputOneOf1KindEnum;
     /**
      * 
      */
@@ -7119,10 +16796,6 @@ export interface SelectorInput {
      * 
      */
     partId?: string;
-    /**
-     * 
-     */
-    nodeId?: string;
     /**
      * 
      */
@@ -7149,15 +16822,296 @@ export interface SelectorInput {
 /**
  * @export
  */
-export const SelectorInputKindEnum = {
+export const SelectorInputOneOf1KindEnum = {
     Text: 'text',
     Page: 'page',
     Image: 'image',
     Media: 'media',
     Part: 'part',
+} as const;
+export type SelectorInputOneOf1KindEnum = typeof SelectorInputOneOf1KindEnum[keyof typeof SelectorInputOneOf1KindEnum];
+
+/**
+ * 
+ * @export
+ * @interface SelectorOneOf
+ */
+export interface SelectorOneOf {
+    /**
+     * 
+     */
+    kind: SelectorOneOfKindEnum;
+    /**
+     * 
+     */
+    pointer: string;
+    /**
+     * 
+     */
+    within?: Selector;
+}
+
+
+/**
+ * @export
+ */
+export const SelectorOneOfKindEnum = {
     Node: 'node',
 } as const;
-export type SelectorInputKindEnum = typeof SelectorInputKindEnum[keyof typeof SelectorInputKindEnum];
+export type SelectorOneOfKindEnum = typeof SelectorOneOfKindEnum[keyof typeof SelectorOneOfKindEnum];
+
+/**
+ * 
+ * @export
+ * @interface SelectorOneOf1
+ */
+export interface SelectorOneOf1 {
+    /**
+     * 
+     */
+    kind: SelectorOneOf1KindEnum;
+    /**
+     * 
+     */
+    start?: number;
+    /**
+     * 
+     */
+    end?: number;
+    /**
+     * 
+     */
+    page?: number;
+    /**
+     * 
+     */
+    partId?: string;
+    /**
+     * 
+     */
+    x?: number;
+    /**
+     * 
+     */
+    y?: number;
+    /**
+     * 
+     */
+    width?: number;
+    /**
+     * 
+     */
+    height?: number;
+    /**
+     * 
+     */
+    within?: Selector;
+}
+
+
+/**
+ * @export
+ */
+export const SelectorOneOf1KindEnum = {
+    Text: 'text',
+    Page: 'page',
+    Image: 'image',
+    Media: 'media',
+    Part: 'part',
+} as const;
+export type SelectorOneOf1KindEnum = typeof SelectorOneOf1KindEnum[keyof typeof SelectorOneOf1KindEnum];
+
+/**
+ * @type SelectorQuery
+ * 
+ * @export
+ */
+export type SelectorQuery = SelectorQueryOneOf | SelectorQueryOneOf1;
+/**
+ * @type SelectorQueryInput
+ * 
+ * @export
+ */
+export type SelectorQueryInput = SelectorQueryInputOneOf | SelectorQueryInputOneOf1;
+/**
+ * 
+ * @export
+ * @interface SelectorQueryInputOneOf
+ */
+export interface SelectorQueryInputOneOf {
+    /**
+     * 
+     */
+    kind: SelectorQueryInputOneOfKindEnum;
+    /**
+     * 
+     */
+    pointer: string;
+    /**
+     * 
+     */
+    within?: SelectorQueryInput;
+}
+
+
+/**
+ * @export
+ */
+export const SelectorQueryInputOneOfKindEnum = {
+    Node: 'node',
+} as const;
+export type SelectorQueryInputOneOfKindEnum = typeof SelectorQueryInputOneOfKindEnum[keyof typeof SelectorQueryInputOneOfKindEnum];
+
+/**
+ * 
+ * @export
+ * @interface SelectorQueryInputOneOf1
+ */
+export interface SelectorQueryInputOneOf1 {
+    /**
+     * 
+     */
+    kind: SelectorQueryInputOneOf1KindEnum;
+    /**
+     * 
+     */
+    start?: number;
+    /**
+     * 
+     */
+    end?: number;
+    /**
+     * 
+     */
+    page?: number;
+    /**
+     * 
+     */
+    partId?: string;
+    /**
+     * 
+     */
+    x?: number;
+    /**
+     * 
+     */
+    y?: number;
+    /**
+     * 
+     */
+    width?: number;
+    /**
+     * 
+     */
+    height?: number;
+    /**
+     * 
+     */
+    within?: SelectorQueryInput;
+}
+
+
+/**
+ * @export
+ */
+export const SelectorQueryInputOneOf1KindEnum = {
+    Text: 'text',
+    Page: 'page',
+    Image: 'image',
+    Media: 'media',
+    Part: 'part',
+} as const;
+export type SelectorQueryInputOneOf1KindEnum = typeof SelectorQueryInputOneOf1KindEnum[keyof typeof SelectorQueryInputOneOf1KindEnum];
+
+/**
+ * 
+ * @export
+ * @interface SelectorQueryOneOf
+ */
+export interface SelectorQueryOneOf {
+    /**
+     * 
+     */
+    kind: SelectorQueryOneOfKindEnum;
+    /**
+     * 
+     */
+    pointer: string;
+    /**
+     * 
+     */
+    within?: SelectorQuery;
+}
+
+
+/**
+ * @export
+ */
+export const SelectorQueryOneOfKindEnum = {
+    Node: 'node',
+} as const;
+export type SelectorQueryOneOfKindEnum = typeof SelectorQueryOneOfKindEnum[keyof typeof SelectorQueryOneOfKindEnum];
+
+/**
+ * 
+ * @export
+ * @interface SelectorQueryOneOf1
+ */
+export interface SelectorQueryOneOf1 {
+    /**
+     * 
+     */
+    kind: SelectorQueryOneOf1KindEnum;
+    /**
+     * 
+     */
+    start?: number;
+    /**
+     * 
+     */
+    end?: number;
+    /**
+     * 
+     */
+    page?: number;
+    /**
+     * 
+     */
+    partId?: string;
+    /**
+     * 
+     */
+    x?: number;
+    /**
+     * 
+     */
+    y?: number;
+    /**
+     * 
+     */
+    width?: number;
+    /**
+     * 
+     */
+    height?: number;
+    /**
+     * 
+     */
+    within?: SelectorQuery;
+}
+
+
+/**
+ * @export
+ */
+export const SelectorQueryOneOf1KindEnum = {
+    Text: 'text',
+    Page: 'page',
+    Image: 'image',
+    Media: 'media',
+    Part: 'part',
+} as const;
+export type SelectorQueryOneOf1KindEnum = typeof SelectorQueryOneOf1KindEnum[keyof typeof SelectorQueryOneOf1KindEnum];
 
 /**
  * 
@@ -7318,190 +17272,822 @@ export type SelfInputStabilityEnum = typeof SelfInputStabilityEnum[keyof typeof 
 /**
  * 
  * @export
- * @interface Settings
+ * @interface SettingsBundle
  */
-export interface Settings {
+export interface SettingsBundle {
     /**
      * 
      */
-    roles: { [key: string]: RoleProfile; };
+    formatVersion: SettingsBundleFormatVersionEnum;
     /**
      * 
      */
-    budget: SettingsBudget;
+    historyComplete: boolean;
     /**
      * 
      */
-    growth: SettingsGrowth;
+    sourceBundleRef?: Ref;
     /**
      * 
      */
-    retrieval: SettingsRetrieval;
+    definitions: Array<ModuleDescription>;
+    /**
+     * 
+     */
+    heads: Array<SettingsBundleHeadsInner>;
+    /**
+     * 
+     */
+    revisions: Array<SettingsBundleRevisionsInner>;
+}
+
+
+/**
+ * @export
+ */
+export const SettingsBundleFormatVersionEnum = {
+    NUMBER_1: 1,
+} as const;
+export type SettingsBundleFormatVersionEnum = typeof SettingsBundleFormatVersionEnum[keyof typeof SettingsBundleFormatVersionEnum];
+
+/**
+ * 
+ * @export
+ * @interface SettingsBundleHeadsInner
+ */
+export interface SettingsBundleHeadsInner {
+    /**
+     * 
+     */
+    namespace: string;
+    /**
+     * 
+     */
+    scope: ConfigScope;
+    /**
+     * 
+     */
+    revision: number;
 }
 /**
  * 
  * @export
- * @interface SettingsBudget
+ * @interface SettingsBundleInput
  */
-export interface SettingsBudget {
+export interface SettingsBundleInput {
     /**
      * 
      */
-    dailyAmount: number | null;
+    formatVersion: SettingsBundleInputFormatVersionEnum;
     /**
      * 
      */
-    dailyCalls: number;
+    historyComplete: boolean;
     /**
      * 
      */
-    perCallAmount: number | null;
+    sourceBundleRef?: RefInput;
+    /**
+     * 
+     */
+    definitions: Array<ModuleDescriptionInput>;
+    /**
+     * 
+     */
+    heads: Array<SettingsBundleInputHeadsInner>;
+    /**
+     * 
+     */
+    revisions: Array<SettingsBundleInputRevisionsInner>;
+}
+
+
+/**
+ * @export
+ */
+export const SettingsBundleInputFormatVersionEnum = {
+    NUMBER_1: 1,
+} as const;
+export type SettingsBundleInputFormatVersionEnum = typeof SettingsBundleInputFormatVersionEnum[keyof typeof SettingsBundleInputFormatVersionEnum];
+
+/**
+ * 
+ * @export
+ * @interface SettingsBundleInputHeadsInner
+ */
+export interface SettingsBundleInputHeadsInner {
+    /**
+     * 
+     */
+    namespace: string;
+    /**
+     * 
+     */
+    scope: ConfigScopeInput;
+    /**
+     * 
+     */
+    revision: number;
 }
 /**
  * 
  * @export
- * @interface SettingsGrowth
+ * @interface SettingsBundleInputRevisionsInner
  */
-export interface SettingsGrowth {
+export interface SettingsBundleInputRevisionsInner {
     /**
      * 
      */
-    enabled: boolean;
+    namespace: string;
     /**
      * 
      */
-    batchSize: number;
+    scope: ConfigScopeInput;
     /**
      * 
      */
-    intervalMinutes: number;
+    revision: number;
+    /**
+     * 
+     */
+    definitionRevision: string;
+    /**
+     * 
+     */
+    sparse: { [key: string]: JsonValueInput; };
+    /**
+     * 
+     */
+    patch: Array<PatchOperationInput>;
+    /**
+     * 
+     */
+    actor: ActorInput;
+    /**
+     * 
+     */
+    reason?: string;
+    /**
+     * 
+     */
+    recordedAt: string;
+    /**
+     * 
+     */
+    origin?: SettingsRevisionOriginInput;
 }
 /**
  * 
  * @export
- * @interface SettingsInput
+ * @interface SettingsBundleRevisionsInner
  */
-export interface SettingsInput {
+export interface SettingsBundleRevisionsInner {
     /**
      * 
      */
-    roles?: { [key: string]: RoleProfileInput; };
+    namespace: string;
     /**
      * 
      */
-    budget?: SettingsInputBudget;
+    scope: ConfigScope;
     /**
      * 
      */
-    growth?: SettingsInputGrowth;
+    revision: number;
     /**
      * 
      */
-    retrieval?: SettingsInputRetrieval;
+    definitionRevision: string;
+    /**
+     * 
+     */
+    sparse: { [key: string]: JsonValue; };
+    /**
+     * 
+     */
+    patch: Array<PatchOperation>;
+    /**
+     * 
+     */
+    actor: Actor;
+    /**
+     * 
+     */
+    reason?: string;
+    /**
+     * 
+     */
+    recordedAt: string;
+    /**
+     * 
+     */
+    origin?: SettingsRevisionOrigin;
 }
 /**
  * 
  * @export
- * @interface SettingsInputBudget
+ * @interface SettingsChange
  */
-export interface SettingsInputBudget {
+export interface SettingsChange {
     /**
      * 
      */
-    dailyAmount?: number | null;
+    namespace: string;
     /**
      * 
      */
-    dailyCalls?: number;
+    scope: ConfigScope;
     /**
      * 
      */
-    perCallAmount?: number | null;
+    expectedRevision: number;
+    /**
+     * 
+     */
+    reason?: string;
+    /**
+     * 
+     */
+    patch: Array<PatchOperation>;
 }
 /**
  * 
  * @export
- * @interface SettingsInputGrowth
+ * @interface SettingsChangeInput
  */
-export interface SettingsInputGrowth {
+export interface SettingsChangeInput {
     /**
      * 
      */
-    enabled?: boolean;
+    namespace: string;
     /**
      * 
      */
-    batchSize?: number;
+    scope: ConfigScopeInput;
     /**
      * 
      */
-    intervalMinutes?: number;
+    expectedRevision: number;
+    /**
+     * 
+     */
+    reason?: string;
+    /**
+     * 
+     */
+    patch: Array<PatchOperationInput>;
 }
 /**
  * 
  * @export
- * @interface SettingsInputRetrieval
+ * @interface SettingsChangeResult
  */
-export interface SettingsInputRetrieval {
+export interface SettingsChangeResult {
+    /**
+     * 
+     */
+    namespace: string;
+    /**
+     * 
+     */
+    scope: ConfigScope;
+    /**
+     * 
+     */
+    operationId: string;
+    /**
+     * 
+     */
+    revision: number;
+    /**
+     * 
+     */
+    changed: boolean;
+    /**
+     * 
+     */
+    snapshot: ConfigSnapshot;
+    /**
+     * 
+     */
+    effects: SettingsChangeResultInputEffects;
+}
+/**
+ * 
+ * @export
+ * @interface SettingsChangeResultInput
+ */
+export interface SettingsChangeResultInput {
+    /**
+     * 
+     */
+    namespace: string;
+    /**
+     * 
+     */
+    scope: ConfigScopeInput;
+    /**
+     * 
+     */
+    operationId: string;
+    /**
+     * 
+     */
+    revision: number;
+    /**
+     * 
+     */
+    changed: boolean;
+    /**
+     * 
+     */
+    snapshot: ConfigSnapshotInput;
+    /**
+     * 
+     */
+    effects: SettingsChangeResultInputEffects;
+}
+/**
+ * 
+ * @export
+ * @interface SettingsChangeResultInputEffects
+ */
+export interface SettingsChangeResultInputEffects {
+    /**
+     * 
+     */
+    hot: Array<string>;
+    /**
+     * 
+     */
+    nextCall: Array<string>;
+    /**
+     * 
+     */
+    restart: Array<string>;
+}
+/**
+ * 
+ * @export
+ * @interface SettingsDescribe
+ */
+export interface SettingsDescribe {
+    /**
+     * 
+     */
+    namespace?: string;
+    /**
+     * 
+     */
+    scope?: ConfigScope;
+    /**
+     * 
+     */
+    definitionRevision?: string;
+}
+/**
+ * 
+ * @export
+ * @interface SettingsDescribeInput
+ */
+export interface SettingsDescribeInput {
+    /**
+     * 
+     */
+    namespace?: string;
+    /**
+     * 
+     */
+    scope?: ConfigScopeInput;
+    /**
+     * 
+     */
+    definitionRevision?: string;
+}
+/**
+ * 
+ * @export
+ * @interface SettingsHistory
+ */
+export interface SettingsHistory {
+    /**
+     * 
+     */
+    namespace: string;
+    /**
+     * 
+     */
+    scope: ConfigScope;
+    /**
+     * 
+     */
+    cursor?: string;
     /**
      * 
      */
     limit?: number;
-    /**
-     * 
-     */
-    exploration?: number;
 }
 /**
  * 
  * @export
- * @interface SettingsRetrieval
+ * @interface SettingsHistoryInput
  */
-export interface SettingsRetrieval {
+export interface SettingsHistoryInput {
     /**
      * 
      */
-    limit: number;
+    namespace: string;
     /**
      * 
      */
-    exploration: number;
+    scope: ConfigScopeInput;
+    /**
+     * 
+     */
+    cursor?: string;
+    /**
+     * 
+     */
+    limit?: number;
 }
 /**
  * 
  * @export
- * @interface SettingsUpdateRequest
+ * @interface SettingsHistoryPage
  */
-export interface SettingsUpdateRequest {
+export interface SettingsHistoryPage {
     /**
      * 
      */
-    scope: SettingsUpdateRequestScopeEnum;
+    items: Array<SettingsRevision>;
     /**
      * 
      */
-    role?: string;
-    /**
-     * 
-     */
-    values: { [key: string]: any; };
-    /**
-     * 
-     */
-    expectedRevision?: number;
+    nextCursor?: string;
 }
-
-
 /**
+ * 
  * @export
+ * @interface SettingsHistoryPageInput
  */
-export const SettingsUpdateRequestScopeEnum = {
-    Installation: 'installation',
-    Subject: 'subject',
-    Role: 'role',
-} as const;
-export type SettingsUpdateRequestScopeEnum = typeof SettingsUpdateRequestScopeEnum[keyof typeof SettingsUpdateRequestScopeEnum];
-
+export interface SettingsHistoryPageInput {
+    /**
+     * 
+     */
+    items: Array<SettingsRevisionInput>;
+    /**
+     * 
+     */
+    nextCursor?: string;
+}
+/**
+ * 
+ * @export
+ * @interface SettingsRead
+ */
+export interface SettingsRead {
+    /**
+     * 
+     */
+    namespaces: Array<string>;
+    /**
+     * 
+     */
+    scope: ConfigScope;
+}
+/**
+ * 
+ * @export
+ * @interface SettingsReadInput
+ */
+export interface SettingsReadInput {
+    /**
+     * 
+     */
+    namespaces: Array<string>;
+    /**
+     * 
+     */
+    scope: ConfigScopeInput;
+}
+/**
+ * 
+ * @export
+ * @interface SettingsReset
+ */
+export interface SettingsReset {
+    /**
+     * 
+     */
+    namespace: string;
+    /**
+     * 
+     */
+    scope: ConfigScope;
+    /**
+     * 
+     */
+    expectedRevision: number;
+    /**
+     * 
+     */
+    reason?: string;
+    /**
+     * 
+     */
+    paths?: Array<string>;
+}
+/**
+ * 
+ * @export
+ * @interface SettingsResetInput
+ */
+export interface SettingsResetInput {
+    /**
+     * 
+     */
+    namespace: string;
+    /**
+     * 
+     */
+    scope: ConfigScopeInput;
+    /**
+     * 
+     */
+    expectedRevision: number;
+    /**
+     * 
+     */
+    reason?: string;
+    /**
+     * 
+     */
+    paths?: Array<string>;
+}
+/**
+ * 
+ * @export
+ * @interface SettingsRestore
+ */
+export interface SettingsRestore {
+    /**
+     * 
+     */
+    namespace: string;
+    /**
+     * 
+     */
+    scope: ConfigScope;
+    /**
+     * 
+     */
+    expectedRevision: number;
+    /**
+     * 
+     */
+    reason?: string;
+    /**
+     * 
+     */
+    revision: number;
+}
+/**
+ * 
+ * @export
+ * @interface SettingsRestoreInput
+ */
+export interface SettingsRestoreInput {
+    /**
+     * 
+     */
+    namespace: string;
+    /**
+     * 
+     */
+    scope: ConfigScopeInput;
+    /**
+     * 
+     */
+    expectedRevision: number;
+    /**
+     * 
+     */
+    reason?: string;
+    /**
+     * 
+     */
+    revision: number;
+}
+/**
+ * 
+ * @export
+ * @interface SettingsRevision
+ */
+export interface SettingsRevision {
+    /**
+     * 
+     */
+    namespace: string;
+    /**
+     * 
+     */
+    scope: ConfigScope;
+    /**
+     * 
+     */
+    revision: number;
+    /**
+     * 
+     */
+    definitionRevision: string;
+    /**
+     * 
+     */
+    sparse: { [key: string]: JsonValue; };
+    /**
+     * 
+     */
+    patch: Array<PatchOperation>;
+    /**
+     * 
+     */
+    actor: Actor;
+    /**
+     * 
+     */
+    reason?: string;
+    /**
+     * 
+     */
+    recordedAt: string;
+    /**
+     * 
+     */
+    definition: ModuleDescription;
+    /**
+     * 
+     */
+    origin?: SettingsRevisionOrigin;
+}
+/**
+ * 
+ * @export
+ * @interface SettingsRevisionInput
+ */
+export interface SettingsRevisionInput {
+    /**
+     * 
+     */
+    namespace: string;
+    /**
+     * 
+     */
+    scope: ConfigScopeInput;
+    /**
+     * 
+     */
+    revision: number;
+    /**
+     * 
+     */
+    definitionRevision: string;
+    /**
+     * 
+     */
+    sparse: { [key: string]: JsonValueInput; };
+    /**
+     * 
+     */
+    patch: Array<PatchOperationInput>;
+    /**
+     * 
+     */
+    actor: ActorInput;
+    /**
+     * 
+     */
+    reason?: string;
+    /**
+     * 
+     */
+    recordedAt: string;
+    /**
+     * 
+     */
+    definition: ModuleDescriptionInput;
+    /**
+     * 
+     */
+    origin?: SettingsRevisionOriginInput;
+}
+/**
+ * 
+ * @export
+ * @interface SettingsRevisionOrigin
+ */
+export interface SettingsRevisionOrigin {
+    /**
+     * 
+     */
+    scope: ConfigScope;
+    /**
+     * 
+     */
+    revision: number;
+    /**
+     * 
+     */
+    actor: Actor;
+    /**
+     * 
+     */
+    recordedAt: string;
+    /**
+     * 
+     */
+    definitionRevision: string;
+    /**
+     * 
+     */
+    sourceBundleRef?: Ref;
+    /**
+     * 
+     */
+    previous?: SettingsRevisionOrigin;
+}
+/**
+ * 
+ * @export
+ * @interface SettingsRevisionOriginInput
+ */
+export interface SettingsRevisionOriginInput {
+    /**
+     * 
+     */
+    scope: ConfigScopeInput;
+    /**
+     * 
+     */
+    revision: number;
+    /**
+     * 
+     */
+    actor: ActorInput;
+    /**
+     * 
+     */
+    recordedAt: string;
+    /**
+     * 
+     */
+    definitionRevision: string;
+    /**
+     * 
+     */
+    sourceBundleRef?: RefInput;
+    /**
+     * 
+     */
+    previous?: SettingsRevisionOriginInput;
+}
+/**
+ * 
+ * @export
+ * @interface SettingsScopeMapInner
+ */
+export interface SettingsScopeMapInner {
+    /**
+     * 
+     */
+    from: ConfigScope;
+    /**
+     * 
+     */
+    to: ConfigScope;
+    /**
+     * 
+     */
+    expectedRevisions: { [key: string]: number; };
+}
+/**
+ * 
+ * @export
+ * @interface SettingsScopeMapInputInner
+ */
+export interface SettingsScopeMapInputInner {
+    /**
+     * 
+     */
+    from: ConfigScopeInput;
+    /**
+     * 
+     */
+    to: ConfigScopeInput;
+    /**
+     * 
+     */
+    expectedRevisions: { [key: string]: number; };
+}
 /**
  * 
  * @export
@@ -7660,6 +18246,66 @@ export const SocialInputAspectEnum = {
 } as const;
 export type SocialInputAspectEnum = typeof SocialInputAspectEnum[keyof typeof SocialInputAspectEnum];
 
+/**
+ * 
+ * @export
+ * @interface SourceResolution
+ */
+export interface SourceResolution {
+    /**
+     * 
+     */
+    resolvedRefs: Array<Ref>;
+    /**
+     * 
+     */
+    roots: Array<Ref>;
+    /**
+     * 
+     */
+    policies: Array<Policy>;
+}
+/**
+ * 
+ * @export
+ * @interface SourceResolutionInput
+ */
+export interface SourceResolutionInput {
+    /**
+     * 
+     */
+    resolvedRefs: Array<RefInput>;
+    /**
+     * 
+     */
+    roots: Array<RefInput>;
+    /**
+     * 
+     */
+    policies: Array<PolicyInput>;
+}
+/**
+ * 
+ * @export
+ * @interface SourcesResolveBody
+ */
+export interface SourcesResolveBody {
+    /**
+     * 
+     */
+    refs: Array<Ref>;
+}
+/**
+ * 
+ * @export
+ * @interface SourcesResolveBodyInput
+ */
+export interface SourcesResolveBodyInput {
+    /**
+     * 
+     */
+    refs: Array<RefInput>;
+}
 /**
  * 
  * @export
@@ -7831,6 +18477,559 @@ export interface SubjectsCapabilitiesRequest {
     capabilities: Array<KnowledgeKindInput>;
 }
 /**
+ * @type TemporalExtent
+ * 
+ * @export
+ */
+export type TemporalExtent = TemporalExtentInputOneOf | TemporalExtentOneOf | TemporalExtentOneOf1;
+/**
+ * @type TemporalExtentInput
+ * 
+ * @export
+ */
+export type TemporalExtentInput = TemporalExtentInputOneOf | TemporalExtentInputOneOf1 | TemporalExtentInputOneOf2;
+/**
+ * 
+ * @export
+ * @interface TemporalExtentInputOneOf
+ */
+export interface TemporalExtentInputOneOf {
+    /**
+     * 
+     */
+    kind: TemporalExtentInputOneOfKindEnum;
+}
+
+
+/**
+ * @export
+ */
+export const TemporalExtentInputOneOfKindEnum = {
+    Unknown: 'unknown',
+} as const;
+export type TemporalExtentInputOneOfKindEnum = typeof TemporalExtentInputOneOfKindEnum[keyof typeof TemporalExtentInputOneOfKindEnum];
+
+/**
+ * 
+ * @export
+ * @interface TemporalExtentInputOneOf1
+ */
+export interface TemporalExtentInputOneOf1 {
+    /**
+     * 
+     */
+    kind: TemporalExtentInputOneOf1KindEnum;
+    /**
+     * 
+     */
+    point: TimePointInput;
+}
+
+
+/**
+ * @export
+ */
+export const TemporalExtentInputOneOf1KindEnum = {
+    Instant: 'instant',
+} as const;
+export type TemporalExtentInputOneOf1KindEnum = typeof TemporalExtentInputOneOf1KindEnum[keyof typeof TemporalExtentInputOneOf1KindEnum];
+
+/**
+ * 
+ * @export
+ * @interface TemporalExtentInputOneOf2
+ */
+export interface TemporalExtentInputOneOf2 {
+    /**
+     * 
+     */
+    kind: TemporalExtentInputOneOf2KindEnum;
+    /**
+     * 
+     */
+    range: TimeRangeInput;
+}
+
+
+/**
+ * @export
+ */
+export const TemporalExtentInputOneOf2KindEnum = {
+    Interval: 'interval',
+} as const;
+export type TemporalExtentInputOneOf2KindEnum = typeof TemporalExtentInputOneOf2KindEnum[keyof typeof TemporalExtentInputOneOf2KindEnum];
+
+/**
+ * 
+ * @export
+ * @interface TemporalExtentOneOf
+ */
+export interface TemporalExtentOneOf {
+    /**
+     * 
+     */
+    kind: TemporalExtentOneOfKindEnum;
+    /**
+     * 
+     */
+    point: TimePoint;
+}
+
+
+/**
+ * @export
+ */
+export const TemporalExtentOneOfKindEnum = {
+    Instant: 'instant',
+} as const;
+export type TemporalExtentOneOfKindEnum = typeof TemporalExtentOneOfKindEnum[keyof typeof TemporalExtentOneOfKindEnum];
+
+/**
+ * 
+ * @export
+ * @interface TemporalExtentOneOf1
+ */
+export interface TemporalExtentOneOf1 {
+    /**
+     * 
+     */
+    kind: TemporalExtentOneOf1KindEnum;
+    /**
+     * 
+     */
+    range: TimeRange;
+}
+
+
+/**
+ * @export
+ */
+export const TemporalExtentOneOf1KindEnum = {
+    Interval: 'interval',
+} as const;
+export type TemporalExtentOneOf1KindEnum = typeof TemporalExtentOneOf1KindEnum[keyof typeof TemporalExtentOneOf1KindEnum];
+
+/**
+ * 
+ * @export
+ * @interface TimeCaptureBody
+ */
+export interface TimeCaptureBody {
+    /**
+     * 
+     */
+    subjectId?: string;
+    /**
+     * 
+     */
+    domainId?: string;
+    /**
+     * 
+     */
+    preferClock?: ClockRef;
+    /**
+     * 
+     */
+    existingOnly?: boolean;
+}
+/**
+ * 
+ * @export
+ * @interface TimeCaptureBodyInput
+ */
+export interface TimeCaptureBodyInput {
+    /**
+     * 
+     */
+    subjectId?: string;
+    /**
+     * 
+     */
+    domainId?: string;
+    /**
+     * 
+     */
+    preferClock?: ClockRefInput;
+    /**
+     * 
+     */
+    existingOnly?: boolean;
+}
+/**
+ * @type TimeCaptureReceipt
+ * 
+ * @export
+ */
+export type TimeCaptureReceipt = TimeCaptureReceiptOneOf | TimeCaptureReceiptOneOf1;
+/**
+ * @type TimeCaptureReceiptInput
+ * 
+ * @export
+ */
+export type TimeCaptureReceiptInput = TimeCaptureReceiptInputOneOf | TimeCaptureReceiptInputOneOf1;
+/**
+ * 
+ * @export
+ * @interface TimeCaptureReceiptInputOneOf
+ */
+export interface TimeCaptureReceiptInputOneOf {
+    /**
+     * 
+     */
+    point: CapturedTimeInputOneOfPoint;
+    /**
+     * 
+     */
+    realAt: string;
+    /**
+     * 
+     */
+    captureRef: TimeCaptureRefInput;
+}
+/**
+ * 
+ * @export
+ * @interface TimeCaptureReceiptInputOneOf1
+ */
+export interface TimeCaptureReceiptInputOneOf1 {
+    /**
+     * 
+     */
+    point: TimePointInput;
+    /**
+     * 
+     */
+    realAt: string;
+    /**
+     * 
+     */
+    clockRef: CapturedTimeInputOneOf1ClockRef;
+    /**
+     * 
+     */
+    clockRevision: number;
+    /**
+     * 
+     */
+    segmentRef: ClockSegmentRefInput;
+    /**
+     * 
+     */
+    captureRef: TimeCaptureRefInput;
+}
+/**
+ * 
+ * @export
+ * @interface TimeCaptureReceiptOneOf
+ */
+export interface TimeCaptureReceiptOneOf {
+    /**
+     * 
+     */
+    point: CapturedTimeOneOfPoint;
+    /**
+     * 
+     */
+    realAt: string;
+    /**
+     * 
+     */
+    captureRef: TimeCaptureRef;
+}
+/**
+ * 
+ * @export
+ * @interface TimeCaptureReceiptOneOf1
+ */
+export interface TimeCaptureReceiptOneOf1 {
+    /**
+     * 
+     */
+    point: TimePoint;
+    /**
+     * 
+     */
+    realAt: string;
+    /**
+     * 
+     */
+    clockRef: CapturedTimeInputOneOf1ClockRef;
+    /**
+     * 
+     */
+    clockRevision: number;
+    /**
+     * 
+     */
+    segmentRef: ClockSegmentRef;
+    /**
+     * 
+     */
+    captureRef: TimeCaptureRef;
+}
+/**
+ * 
+ * @export
+ * @interface TimeCaptureRef
+ */
+export interface TimeCaptureRef {
+    /**
+     * 
+     */
+    product: TimeCaptureRefProductEnum;
+    /**
+     * 
+     */
+    installationId: string;
+    /**
+     * 
+     */
+    subjectId?: string;
+    /**
+     * 
+     */
+    kind: TimeCaptureRefKindEnum;
+    /**
+     * 
+     */
+    id: string;
+}
+
+
+/**
+ * @export
+ */
+export const TimeCaptureRefProductEnum = {
+    Nous: 'nous',
+    Hept: 'hept',
+} as const;
+export type TimeCaptureRefProductEnum = typeof TimeCaptureRefProductEnum[keyof typeof TimeCaptureRefProductEnum];
+
+/**
+ * @export
+ */
+export const TimeCaptureRefKindEnum = {
+    TimeCapture: 'TimeCapture',
+} as const;
+export type TimeCaptureRefKindEnum = typeof TimeCaptureRefKindEnum[keyof typeof TimeCaptureRefKindEnum];
+
+/**
+ * 
+ * @export
+ * @interface TimeCaptureRefInput
+ */
+export interface TimeCaptureRefInput {
+    /**
+     * 
+     */
+    product: TimeCaptureRefInputProductEnum;
+    /**
+     * 
+     */
+    installationId: string;
+    /**
+     * 
+     */
+    subjectId?: string;
+    /**
+     * 
+     */
+    kind: TimeCaptureRefInputKindEnum;
+    /**
+     * 
+     */
+    id: string;
+}
+
+
+/**
+ * @export
+ */
+export const TimeCaptureRefInputProductEnum = {
+    Nous: 'nous',
+    Hept: 'hept',
+} as const;
+export type TimeCaptureRefInputProductEnum = typeof TimeCaptureRefInputProductEnum[keyof typeof TimeCaptureRefInputProductEnum];
+
+/**
+ * @export
+ */
+export const TimeCaptureRefInputKindEnum = {
+    TimeCapture: 'TimeCapture',
+} as const;
+export type TimeCaptureRefInputKindEnum = typeof TimeCaptureRefInputKindEnum[keyof typeof TimeCaptureRefInputKindEnum];
+
+/**
+ * 
+ * @export
+ * @interface TimeDomain
+ */
+export interface TimeDomain {
+    /**
+     * 
+     */
+    domainId: string;
+    /**
+     * 
+     */
+    label: string;
+    /**
+     * 
+     */
+    coordinateSystem: TimeDomainCoordinateSystemEnum;
+    /**
+     * 
+     */
+    precision: TimeDomainPrecisionEnum;
+    /**
+     * 
+     */
+    authorityRef: Ref;
+    /**
+     * 
+     */
+    status: TimeDomainStatusEnum;
+    /**
+     * 
+     */
+    subjectId?: string;
+    /**
+     * 
+     */
+    createdRealAt: string;
+}
+
+
+/**
+ * @export
+ */
+export const TimeDomainCoordinateSystemEnum = {
+    Iso8601: 'iso8601',
+} as const;
+export type TimeDomainCoordinateSystemEnum = typeof TimeDomainCoordinateSystemEnum[keyof typeof TimeDomainCoordinateSystemEnum];
+
+/**
+ * @export
+ */
+export const TimeDomainPrecisionEnum = {
+    Microsecond: 'microsecond',
+} as const;
+export type TimeDomainPrecisionEnum = typeof TimeDomainPrecisionEnum[keyof typeof TimeDomainPrecisionEnum];
+
+/**
+ * @export
+ */
+export const TimeDomainStatusEnum = {
+    Active: 'active',
+    Retired: 'retired',
+} as const;
+export type TimeDomainStatusEnum = typeof TimeDomainStatusEnum[keyof typeof TimeDomainStatusEnum];
+
+/**
+ * 
+ * @export
+ * @interface TimeDomainCreateRequest
+ */
+export interface TimeDomainCreateRequest {
+    /**
+     * 
+     */
+    domainId: string;
+    /**
+     * 
+     */
+    label: string;
+    /**
+     * 
+     */
+    subjectId?: string;
+}
+/**
+ * 
+ * @export
+ * @interface TimeDomainCreateRequestInput
+ */
+export interface TimeDomainCreateRequestInput {
+    /**
+     * 
+     */
+    domainId: string;
+    /**
+     * 
+     */
+    label: string;
+    /**
+     * 
+     */
+    subjectId?: string;
+}
+/**
+ * 
+ * @export
+ * @interface TimeDomainInput
+ */
+export interface TimeDomainInput {
+    /**
+     * 
+     */
+    domainId: string;
+    /**
+     * 
+     */
+    label: string;
+    /**
+     * 
+     */
+    coordinateSystem: TimeDomainInputCoordinateSystemEnum;
+    /**
+     * 
+     */
+    precision: TimeDomainInputPrecisionEnum;
+    /**
+     * 
+     */
+    authorityRef: RefInput;
+    /**
+     * 
+     */
+    status: TimeDomainInputStatusEnum;
+    /**
+     * 
+     */
+    subjectId?: string;
+    /**
+     * 
+     */
+    createdRealAt: string;
+}
+
+
+/**
+ * @export
+ */
+export const TimeDomainInputCoordinateSystemEnum = {
+    Iso8601: 'iso8601',
+} as const;
+export type TimeDomainInputCoordinateSystemEnum = typeof TimeDomainInputCoordinateSystemEnum[keyof typeof TimeDomainInputCoordinateSystemEnum];
+
+/**
+ * @export
+ */
+export const TimeDomainInputPrecisionEnum = {
+    Microsecond: 'microsecond',
+} as const;
+export type TimeDomainInputPrecisionEnum = typeof TimeDomainInputPrecisionEnum[keyof typeof TimeDomainInputPrecisionEnum];
+
+/**
+ * @export
+ */
+export const TimeDomainInputStatusEnum = {
+    Active: 'active',
+    Retired: 'retired',
+} as const;
+export type TimeDomainInputStatusEnum = typeof TimeDomainInputStatusEnum[keyof typeof TimeDomainInputStatusEnum];
+
+/**
  * 
  * @export
  * @interface TimePoint
@@ -7839,7 +19038,7 @@ export interface TimePoint {
     /**
      * 
      */
-    clockId: string;
+    domainId: string;
     /**
      * 
      */
@@ -7854,7 +19053,37 @@ export interface TimePointInput {
     /**
      * 
      */
-    clockId: string;
+    domainId: string;
+    /**
+     * 
+     */
+    at: string;
+}
+/**
+ * 
+ * @export
+ * @interface TimePointRequest
+ */
+export interface TimePointRequest {
+    /**
+     * 
+     */
+    domainId: string;
+    /**
+     * 
+     */
+    at: any;
+}
+/**
+ * 
+ * @export
+ * @interface TimePointRequestInput
+ */
+export interface TimePointRequestInput {
+    /**
+     * 
+     */
+    domainId: string;
     /**
      * 
      */
@@ -7890,6 +19119,247 @@ export interface TimeRangeInput {
      */
     end?: TimePointInput;
 }
+/**
+ * 
+ * @export
+ * @interface TimeRangeRequest
+ */
+export interface TimeRangeRequest {
+    /**
+     * 
+     */
+    start?: TimePointRequest;
+    /**
+     * 
+     */
+    end?: TimePointRequest;
+}
+/**
+ * 
+ * @export
+ * @interface TimeRangeRequestInput
+ */
+export interface TimeRangeRequestInput {
+    /**
+     * 
+     */
+    start?: TimePointRequestInput;
+    /**
+     * 
+     */
+    end?: TimePointRequestInput;
+}
+/**
+ * 
+ * @export
+ * @interface TimeReadRequest
+ */
+export interface TimeReadRequest {
+    /**
+     * 
+     */
+    subjectId?: string;
+    /**
+     * 
+     */
+    domainId?: string;
+    /**
+     * 
+     */
+    preferClock?: ClockRefInput;
+}
+/**
+ * 
+ * @export
+ * @interface TimeSelection
+ */
+export interface TimeSelection {
+    /**
+     * 
+     */
+    subjectId?: string;
+    /**
+     * 
+     */
+    domainId?: string;
+    /**
+     * 
+     */
+    preferClock?: ClockRef;
+}
+/**
+ * 
+ * @export
+ * @interface TimeSelectionInput
+ */
+export interface TimeSelectionInput {
+    /**
+     * 
+     */
+    subjectId?: string;
+    /**
+     * 
+     */
+    domainId?: string;
+    /**
+     * 
+     */
+    preferClock?: ClockRefInput;
+}
+/**
+ * 
+ * @export
+ * @interface TokenEstimate
+ */
+export interface TokenEstimate {
+    /**
+     * 
+     */
+    value: number;
+    /**
+     * 
+     */
+    method: string;
+}
+/**
+ * 
+ * @export
+ * @interface TokenEstimateInput
+ */
+export interface TokenEstimateInput {
+    /**
+     * 
+     */
+    value: number;
+    /**
+     * 
+     */
+    method: string;
+}
+/**
+ * 
+ * @export
+ * @interface TraceContext
+ */
+export interface TraceContext {
+    /**
+     * 
+     */
+    traceId: string;
+    /**
+     * 
+     */
+    operationId: string;
+    /**
+     * 
+     */
+    traceparent?: string;
+    /**
+     * 
+     */
+    invocationId?: string;
+    /**
+     * 
+     */
+    taskId?: string;
+    /**
+     * 
+     */
+    effectId?: string;
+}
+/**
+ * 
+ * @export
+ * @interface TraceContextInput
+ */
+export interface TraceContextInput {
+    /**
+     * 
+     */
+    traceId: string;
+    /**
+     * 
+     */
+    operationId: string;
+    /**
+     * 
+     */
+    traceparent?: string;
+    /**
+     * 
+     */
+    invocationId?: string;
+    /**
+     * 
+     */
+    taskId?: string;
+    /**
+     * 
+     */
+    effectId?: string;
+}
+/**
+ * 
+ * @export
+ * @interface UsageQuantity
+ */
+export interface UsageQuantity {
+    /**
+     * 
+     */
+    unit: string;
+    /**
+     * 
+     */
+    quantity: string;
+    /**
+     * 
+     */
+    source: UsageQuantitySourceEnum;
+}
+
+
+/**
+ * @export
+ */
+export const UsageQuantitySourceEnum = {
+    Provider: 'provider',
+    Measured: 'measured',
+    Estimated: 'estimated',
+} as const;
+export type UsageQuantitySourceEnum = typeof UsageQuantitySourceEnum[keyof typeof UsageQuantitySourceEnum];
+
+/**
+ * 
+ * @export
+ * @interface UsageQuantityInput
+ */
+export interface UsageQuantityInput {
+    /**
+     * 
+     */
+    unit: string;
+    /**
+     * 
+     */
+    quantity: string;
+    /**
+     * 
+     */
+    source: UsageQuantityInputSourceEnum;
+}
+
+
+/**
+ * @export
+ */
+export const UsageQuantityInputSourceEnum = {
+    Provider: 'provider',
+    Measured: 'measured',
+    Estimated: 'estimated',
+} as const;
+export type UsageQuantityInputSourceEnum = typeof UsageQuantityInputSourceEnum[keyof typeof UsageQuantityInputSourceEnum];
+
 /**
  * 
  * @export

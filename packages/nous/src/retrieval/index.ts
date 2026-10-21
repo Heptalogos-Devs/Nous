@@ -1,3 +1,4 @@
+import {requireSubject} from '../platform/security.js';
 import { createHash } from 'node:crypto';
 import * as lance from '@lancedb/lancedb';
 import { MultiDirectedGraph } from 'graphology';
@@ -9,10 +10,10 @@ import { canonicalRefKey } from '@nous-wave/contracts/common';
 import { ExpandSchema, ExpansionResultSchema, QueryResultSchema, type Query, type QueryInput, type QueryResult } from '@nous-wave/contracts/cognition';
 import type { KnowledgeKind, KnowledgeView,KnowledgePage,KnowledgeListSchema,KnowledgeReadSchema } from '@nous-wave/contracts/knowledge';
 import type { MaterialView } from '@nous-wave/contracts/materials';
-import { resolveQuery } from './nousql.js';
+import { resolveQuery } from './query-input.js';
 import { DomainError, fail } from '../platform/errors.js';
 
-export { resolveQuery, QuerySyntaxError } from './nousql.js';
+export { resolveQuery } from './query-input.js';
 
 export interface RetrievalDependencies {
   installationId: string;
@@ -28,7 +29,7 @@ export interface RetrievalDependencies {
   materials?: { read(ctx: CallContext, input: { ref: Ref }): Promise<MaterialView> };
   encounterInputs?(ctx: CallContext, ref: Ref): Promise<Ref[]>;
   capabilities?(ctx: CallContext): Promise<KnowledgeKind[]>;
-  authorize(ctx: CallContext, operation: string): void;
+  authorize(ctx:CallContext,operation:string,target?:Ref):Promise<void>;
 }
 
 const keyOf = (view: KnowledgeView) => `${view.ref.id}:${view.revision}`;
@@ -69,13 +70,13 @@ function structuredMatch(view: KnowledgeView, query: Query) {
   if (!match(query.refs, [view.ref.id, view.alias, sourceKey(view.ref)], false)) return false;
   if (!match(query.sources, refNames([...view.sourceRefs, ...view.sourceRoots]), false)) return false;
   if (query.time) {
-    const { field, clockId, start, end } = query.time;
+    const { field, domainId, start, end } = query.time;
     if (field === 'valid') {
-      if (view.valid?.start && (view.valid.start.clockId !== clockId || view.valid.start.at >= end)) return false;
-      if (view.valid?.end && (view.valid.end.clockId !== clockId || view.valid.end.at <= start)) return false;
+      if (view.valid?.start && (view.valid.start.domainId !== domainId || view.valid.start.at >= end)) return false;
+      if (view.valid?.end && (view.valid.end.domainId !== domainId || view.valid.end.at <= start)) return false;
     } else {
       const point = field === 'formed' ? view.formed : field === 'recorded' ? view.recorded : undefined;
-      if (point && (point.clockId !== clockId || point.at < start || point.at >= end)) return false;
+      if (point && (point.domainId !== domainId || point.at < start || point.at >= end)) return false;
     }
   }
   return true;
@@ -83,8 +84,8 @@ function structuredMatch(view: KnowledgeView, query: Query) {
 
 function sourceTimeMatch(time: NonNullable<Query['time']>, times: { observed: TimePoint[]; occurred: TimeRange[] }) {
   return time.field === 'observed'
-    ? times.observed.some(point => point.clockId === time.clockId && point.at >= time.start && point.at < time.end)
-    : times.occurred.some(range => Boolean(range.start || range.end) && (!range.start || range.start.clockId === time.clockId && range.start.at < time.end) && (!range.end || range.end.clockId === time.clockId && range.end.at > time.start));
+    ? times.observed.some(point => point.domainId === time.domainId && point.at >= time.start && point.at < time.end)
+    : times.occurred.some(range => Boolean(range.start || range.end) && (!range.start || range.start.domainId === time.domainId && range.start.at < time.end) && (!range.end || range.end.domainId === time.domainId && range.end.at > time.start));
 }
 
 export function createRetrieval(deps: RetrievalDependencies) {
@@ -107,7 +108,7 @@ export function createRetrieval(deps: RetrievalDependencies) {
     return table;
   }
 
-  async function refresh(ctx: CallContext, views?: KnowledgeView[]) {
+  async function refresh(ctx: CallContext, views?: KnowledgeView[]) {requireSubject(ctx);
     if(!views){let cursor:string|undefined,indexed=0;do{const page=await deps.knowledge.list(ctx,{includeHistory:true,cursor,limit:100});indexed+=(await refresh(ctx,page.items)).indexed;cursor=page.nextCursor;}while(cursor);return {textReady:true,vectorReady:Boolean(deps.embed),indexed};}
     const selected = views;
     if (!selected.length) return { textReady: true, vectorReady: Boolean(deps.embed), indexed: 0 };
@@ -132,8 +133,8 @@ export function createRetrieval(deps: RetrievalDependencies) {
     return { textReady: true, vectorReady: Boolean(deps.embed), indexed: rows.length };
   }
 
-  async function query(ctx: CallContext, input: QueryInput): Promise<QueryResult> {
-    deps.authorize(ctx, 'knowledge.read');
+  async function query(ctx: CallContext, input: QueryInput): Promise<QueryResult> {requireSubject(ctx);
+    await deps.authorize(ctx, 'knowledge.read');
     const resolved = resolveQuery(input);
     if (resolved.subjectId && resolved.subjectId !== ctx.subjectId) fail('forbidden', '查询主体与已授权主体不符');
     resolved.subjectId = ctx.subjectId;
@@ -224,7 +225,7 @@ export function createRetrieval(deps: RetrievalDependencies) {
     });
   }
 
-  async function readResult(ctx: CallContext, resultSetId: string, number: number) {
+  async function readResult(ctx: CallContext, resultSetId: string, number: number) {requireSubject(ctx);
     const set = resultSets.get(resultSetId);
     if (!set || set.scope !== digest([ctx.subjectId, ctx.actor.id, ctx.purpose, ctx.audience])) fail('not_found', '查询结果集不存在');
     const ref = set.refs[number - 1];
@@ -232,8 +233,8 @@ export function createRetrieval(deps: RetrievalDependencies) {
     return deps.knowledge.read(ctx, { id: ref.id, revision: ref.revision });
   }
 
-  async function expand(ctx: CallContext, input: z.input<typeof ExpandSchema>) {
-    deps.authorize(ctx, 'knowledge.read');
+  async function expand(ctx: CallContext, input: z.input<typeof ExpandSchema>) {requireSubject(ctx);
+    await deps.authorize(ctx, 'knowledge.read');
     const request = ExpandSchema.parse(input);
     const items = new Map<string, KnowledgeView>();
     const sources = new Map<string, MaterialView>();
@@ -291,9 +292,9 @@ export function createRetrieval(deps: RetrievalDependencies) {
 
   return {
     query, refresh, readResult, expand,
-    rebuild: async (ctx: CallContext) => { deps.authorize(ctx, 'maintenance.run'); const db = await getConnection(); if ((await db.tableNames()).includes(tableName)) await (await db.openTable(tableName)).delete(`subject_id = ${quoted(ctx.subjectId)}`); return refresh(ctx); },
+    rebuild: async (ctx: CallContext) => { requireSubject(ctx);await deps.authorize(ctx, 'maintenance.run'); const db = await getConnection(); if ((await db.tableNames()).includes(tableName)) await (await db.openTable(tableName)).delete(`subject_id = ${quoted(ctx.subjectId)}`); return refresh(ctx); },
     explain: async (ctx: CallContext, input: QueryInput) => { const result = await query(ctx, input); return { query: result.resolvedQuery, indexState: result.indexState, matches: result.items.map(item => ({ ref: item.ref, reasons: item.matchReasons })) }; },
-    removeSubject: async (ctx: CallContext) => { deps.authorize(ctx, 'data.purge'); const db = await getConnection(); for (const name of await db.tableNames()) if (name.startsWith('knowledge_')) await (await db.openTable(name)).delete(`subject_id = ${quoted(ctx.subjectId)}`); },
+    removeSubject: async (ctx: CallContext) => { requireSubject(ctx);await deps.authorize(ctx, 'data.purge'); const db = await getConnection(); for (const name of await db.tableNames()) if (name.startsWith('knowledge_')) await (await db.openTable(name)).delete(`subject_id = ${quoted(ctx.subjectId)}`); },
     close: async () => { if (table) (await table).close(); if (connection) (await connection).close(); resultSets.clear(); },
   };
 }

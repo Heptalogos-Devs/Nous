@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { PolicySchema, RefSchema, TimePointSchema, TimeRangeSchema } from './common.js';
+import { PolicySchema, RefSchema, TimePointSchema, TimeRangeSchema, TimePointInputSchema, TimeRangeInputSchema, InstantInputSchema, InstantSchema } from './common.js';
 
 export const KnowledgeKindSchema = z.enum(['Memory','Episode','Journal','Schema','Concept','Self','Social','LanguageConvention','Motivation']);
 export type KnowledgeKind = z.infer<typeof KnowledgeKindSchema>;
@@ -17,39 +17,40 @@ export const CriterionSchema = z.object({ mode: z.enum(['achieve','terminate','m
 export const MotivationSchema = Content.extend({ kind: z.literal('Motivation'), aspect: z.enum(['desire','concern','evaluable_expectation']), importance: z.number().min(0).max(1), criterion: CriterionSchema.optional() });
 export const KnowledgeBodySchema = z.discriminatedUnion('kind', [MemorySchema,EpisodeSchema,JournalSchema,CognitiveSchemaSchema,ConceptSchema,SelfSchema,SocialSchema,LanguageConventionSchema,MotivationSchema]);
 export type KnowledgeBody = z.infer<typeof KnowledgeBodySchema>;
+export const KnowledgeBodyInputSchema=z.discriminatedUnion('kind',[MemorySchema,EpisodeSchema.extend({range:TimeRangeInputSchema}),JournalSchema.extend({range:TimeRangeInputSchema,perspectiveAt:TimePointInputSchema}),CognitiveSchemaSchema,ConceptSchema,SelfSchema,SocialSchema,LanguageConventionSchema,MotivationSchema.extend({criterion:CriterionSchema.extend({range:TimeRangeInputSchema}).optional()})]);
 export const KnowledgeCreateSchema = z.object({
-  kind: KnowledgeKindSchema, body: KnowledgeBodySchema, sourceRefs: z.array(RefSchema), formed: TimePointSchema,
-  valid: TimeRangeSchema.optional(), formation: z.enum(['observed','told','read','inferred','reflection','initial_setting','operator_edit']),
+  kind: KnowledgeKindSchema, body: KnowledgeBodyInputSchema, sourceRefs: z.array(RefSchema), formed: TimePointInputSchema,
+  valid: TimeRangeInputSchema.optional(), formation: z.enum(['observed','told','read','inferred','reflection','initial_setting','operator_edit']),
   stance: z.enum(['accepted','uncertain','hypothesis','disputed']), confidence: z.number().min(0).max(1).default(0.5), policy: PolicySchema.optional(),
 });
 export type KnowledgeCreate = z.infer<typeof KnowledgeCreateSchema>;
 export const KnowledgeReviseSchema = KnowledgeCreateSchema.extend({ id: z.string(), expectedRevision: z.number().int().positive(), reason: z.string().min(1) });
 export const KnowledgeViewSchema = KnowledgeCreateSchema.extend({
-  ref: RefSchema, alias: z.string(), revision: z.number().int().positive(), sourceRoots: z.array(RefSchema),
+  body:KnowledgeBodySchema,formed:TimePointSchema,valid:TimeRangeSchema.optional(),ref: RefSchema, alias: z.string(), revision: z.number().int().positive(), sourceRoots: z.array(RefSchema),
   recorded: TimePointSchema, policy: PolicySchema, status: z.enum(['active','suppressed','retired','purged']),
 });
 export type KnowledgeView = z.infer<typeof KnowledgeViewSchema>;
-export const KnowledgeReadSchema = z.object({ id: z.string(), revision: z.number().int().positive().optional(), knowledgeAt: TimePointSchema.optional(), recordedAsOf: z.iso.datetime().optional() });
-export const KnowledgeListSchema = z.object({ kinds: z.array(KnowledgeKindSchema).optional(), knowledgeAt: TimePointSchema.optional(), recordedAsOf: z.iso.datetime().optional(), includeInactive: z.boolean().optional(),includeHistory:z.boolean().optional(),range:TimeRangeSchema.optional(), ids:z.array(z.uuid()).max(200).optional(), entities:z.array(z.string()).optional(),entityMatch:z.enum(['any','all']).optional(),tags:z.array(z.string()).optional(),tagMatch:z.enum(['any','all']).optional(),refs:z.array(z.string()).optional(),sources:z.array(z.string()).optional(),conceptIds:z.array(z.string()).optional(), cursor:z.string().optional(), limit: z.number().int().positive().max(200).default(100) });
+export const KnowledgeReadSchema = z.object({ id: z.string(), revision: z.number().int().positive().optional(), knowledgeAt: TimePointInputSchema.optional(), recordedAsOf: InstantInputSchema.optional() });
+export const KnowledgeListSchema = z.object({ kinds: z.array(KnowledgeKindSchema).optional(), knowledgeAt: TimePointInputSchema.optional(), recordedAsOf: InstantInputSchema.optional(), includeInactive: z.boolean().optional(),includeHistory:z.boolean().optional(),range:TimeRangeInputSchema.optional(), ids:z.array(z.uuid()).max(200).optional(), entities:z.array(z.string()).optional(),entityMatch:z.enum(['any','all']).optional(),tags:z.array(z.string()).optional(),tagMatch:z.enum(['any','all']).optional(),refs:z.array(z.string()).optional(),sources:z.array(z.string()).optional(),conceptIds:z.array(z.string()).optional(), cursor:z.string().optional(), limit: z.number().int().positive().max(200).default(100) });
 export const KnowledgePageSchema=z.object({items:z.array(KnowledgeViewSchema),nextCursor:z.string().optional()});
 export type KnowledgePage=z.infer<typeof KnowledgePageSchema>;
-export const KnowledgeHistorySchema=z.object({cursor:z.string().optional(),limit:z.number().int().positive().max(200).default(100),knowledgeAt:TimePointSchema.optional(),recordedAsOf:z.iso.datetime().optional()});
-export const RelationWriteSchema=z.object({fromId:z.string(),toId:z.string(),relation:z.string().min(1),weight:z.number().default(1),evidenceRefs:z.array(RefSchema),formed:TimePointSchema,valid:TimeRangeSchema.optional()});
-export const ObjectRelationSchema=RelationWriteSchema.extend({id:z.uuid(),relationId:z.uuid(),revision:z.number().int().positive(),subjectId:z.uuid(),roots:z.array(RefSchema),recordedAt:z.iso.datetime(),valid:TimeRangeSchema.nullish()});
+export const KnowledgeHistorySchema=z.object({cursor:z.string().optional(),limit:z.number().int().positive().max(200).default(100),knowledgeAt:TimePointInputSchema.optional(),recordedAsOf:InstantInputSchema.optional()});
+export const RelationWriteSchema=z.object({fromId:z.string(),toId:z.string(),relation:z.string().min(1),weight:z.number().default(1),evidenceRefs:z.array(RefSchema),formed:TimePointInputSchema,valid:TimeRangeInputSchema.optional()});
+export const ObjectRelationSchema=RelationWriteSchema.extend({formed:TimePointSchema,id:z.uuid(),relationId:z.uuid(),revision:z.number().int().positive(),subjectId:z.uuid(),roots:z.array(RefSchema),recordedAt:InstantSchema,valid:TimeRangeSchema.nullish()});
 export const RelationPageSchema=z.object({items:z.array(ObjectRelationSchema),nextCursor:z.string().optional()});
-export const RelationReadSchema=z.object({knowledgeAt:TimePointSchema.optional(),recordedAsOf:z.iso.datetime().optional(),limit:z.number().int().positive().max(200).default(60),cursor:z.string().optional()});
+export const RelationReadSchema=z.object({knowledgeAt:TimePointInputSchema.optional(),recordedAsOf:InstantInputSchema.optional(),limit:z.number().int().positive().max(200).default(60),cursor:z.string().optional()});
 
 const RevisionTargetSchema=z.object({id:z.string(),expectedRevision:z.number().int().positive()});
 export const EpisodeOrganizeSchema=z.object({
-  track:z.enum(['life','social','work']),experienceRefs:z.array(RefSchema),formed:TimePointSchema,reason:z.string().min(1),
-  episodes:z.array(z.object({target:RevisionTargetSchema.optional(),title:z.string(),summary:z.string(),range:TimeRangeSchema,memberRefs:z.array(RefSchema),participantRefs:z.array(RefSchema).default([]),placeRef:RefSchema.optional(),parentRef:RefSchema.optional()})),
+  track:z.enum(['life','social','work']),experienceRefs:z.array(RefSchema),formed:TimePointInputSchema,reason:z.string().min(1),
+  episodes:z.array(z.object({target:RevisionTargetSchema.optional(),title:z.string(),summary:z.string(),range:TimeRangeInputSchema,memberRefs:z.array(RefSchema),participantRefs:z.array(RefSchema).default([]),placeRef:RefSchema.optional(),parentRef:RefSchema.optional()})),
   replaced:z.array(RevisionTargetSchema).default([]),
 });
-export const JournalWriteSchema=z.object({target:RevisionTargetSchema.optional(),range:TimeRangeSchema,experienceRefs:z.array(RefSchema),knowledgeAt:TimePointSchema,formed:TimePointSchema,content:z.string().min(1).optional(),title:z.string().optional(),mood:z.string().optional(),outlook:z.string().optional(),reason:z.string().default('组织实际经历的日记')});
-export const ConceptMergeSchema=z.object({kept:RevisionTargetSchema,merged:z.array(RevisionTargetSchema).min(1),content:z.string().optional(),formed:TimePointSchema,reason:z.string().min(1)});
-export const ConceptSplitSchema=z.object({source:RevisionTargetSchema,branches:z.array(z.object({name:z.string(),aliases:z.array(z.string()).default([]),definition:z.string(),memberRefs:z.array(RefSchema)})).min(2),remainingDefinition:z.string().optional(),formed:TimePointSchema,reason:z.string().min(1)});
-export const ObservationCoverageSchema=z.object({range:TimeRangeSchema,ratio:z.number().min(0).max(1),sourceRefs:z.array(RefSchema),missing:z.array(TimeRangeSchema).default([])});
-export const MotivationEvaluateSchema=z.object({id:z.string(),revision:z.number().int().positive().optional(),observationRefs:z.array(RefSchema),coverage:ObservationCoverageSchema,evaluatedAt:TimePointSchema});
+export const JournalWriteSchema=z.object({target:RevisionTargetSchema.optional(),range:TimeRangeInputSchema,experienceRefs:z.array(RefSchema),knowledgeAt:TimePointInputSchema,formed:TimePointInputSchema,content:z.string().min(1).optional(),title:z.string().optional(),mood:z.string().optional(),outlook:z.string().optional(),reason:z.string().default('组织实际经历的日记')});
+export const ConceptMergeSchema=z.object({kept:RevisionTargetSchema,merged:z.array(RevisionTargetSchema).min(1),content:z.string().optional(),formed:TimePointInputSchema,reason:z.string().min(1)});
+export const ConceptSplitSchema=z.object({source:RevisionTargetSchema,branches:z.array(z.object({name:z.string(),aliases:z.array(z.string()).default([]),definition:z.string(),memberRefs:z.array(RefSchema)})).min(2),remainingDefinition:z.string().optional(),formed:TimePointInputSchema,reason:z.string().min(1)});
+export const ObservationCoverageSchema=z.object({range:TimeRangeInputSchema,ratio:z.number().min(0).max(1),sourceRefs:z.array(RefSchema),missing:z.array(TimeRangeInputSchema).default([])});
+export const MotivationEvaluateSchema=z.object({id:z.string(),revision:z.number().int().positive().optional(),observationRefs:z.array(RefSchema),coverage:ObservationCoverageSchema,evaluatedAt:TimePointInputSchema});
 export const MotivationEvaluationSchema=z.object({id:z.string(),ref:RefSchema,criterionRef:RefSchema,criterionRevision:z.number().int().positive(),verdict:z.enum(['satisfied','violated','unknown']),applicable:z.boolean(),observationCoverage:ObservationCoverageSchema,basisRefs:z.array(RefSchema),evaluatedAt:TimePointSchema,recorded:TimePointSchema});
 
 // Named public schemas are shared by OpenAPI references.

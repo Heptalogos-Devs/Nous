@@ -1,6 +1,6 @@
 {
   "name": "@nous-wave/cli",
-  "version": "0.1.0",
+  "version": "0.2.0-infrastructure.1",
   "type": "module",
   "bin": {
     "nous": "./dist/main.js"
@@ -8,9 +8,15 @@
   "dependencies": {
     "@nous-wave/client": "workspace:*",
     "@nous-wave/nous": "workspace:*",
-    "commander": "^14.0.0"
+    "commander": "15.0.0",
+    "@nous-wave/platform": "workspace:*",
+    "@nous-wave/server": "workspace:*"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json"
-  }
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/main.js"
+  },
+  "files": [
+    "dist"
+  ]
 }

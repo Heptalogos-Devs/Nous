@@ -1,17 +1,15 @@
 {
   "name": "@nous-wave/client",
-  "version": "0.1.0",
+  "version": "0.2.0-infrastructure.1",
   "type": "module",
   "exports": {
     ".": {
-      "development": "./src/index.ts",
-      "types": "./src/index.ts",
-      "default": "./src/index.ts"
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
     },
     "./generated": {
-      "development": "./src/generated/index.ts",
-      "types": "./src/generated/index.ts",
-      "default": "./src/generated/index.ts"
+      "types": "./dist/generated/index.d.ts",
+      "default": "./dist/generated/index.js"
     }
   },
   "dependencies": {
@@ -21,10 +19,10 @@
     "build": "tsc -p tsconfig.json"
   },
   "files": [
-    "dist"
+    "dist",
+    "LICENSE",
+    "NOTICE",
+    "LICENSES"
   ],
-  "publishConfig": {
-    "directory": "../../data/packages/client",
-    "linkDirectory": false
-  }
+  "license": "AGPL-3.0-only"
 }

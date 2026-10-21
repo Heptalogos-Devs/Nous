@@ -13,15 +13,11 @@
     "outDir": "dist",
     "types": [
       "node"
-    ],
-    "customConditions": [
-      "development"
     ]
   },
   "include": [
     "apps/**/*.ts",
     "packages/**/*.ts",
-    "migrations/**/*.ts",
     "tests/**/*.ts",
     "integrations/openclaw/**/*.ts"
   ],

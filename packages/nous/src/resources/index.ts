@@ -1,3 +1,5 @@
+import {requireSubject} from '../platform/security.js';
+import {parseInstant} from '@nous-wave/platform/time';
 import { createHash } from 'node:crypto';
 import { readFile, readdir, realpath, stat } from 'node:fs/promises';
 import { extname, isAbsolute, relative, resolve, sep } from 'node:path';
@@ -5,14 +7,14 @@ import { v7 as uuid } from 'uuid';
 import type { CallContext, Ref, Selector } from '@nous-wave/contracts/common';
 import { ResourceBodySchema, type ResourceBody } from '@nous-wave/contracts/cognition';
 import type { MaterialView } from '@nous-wave/contracts/materials';
-import { authorize, mayRead } from '../platform/security.js';
+import { mayRead } from '../platform/security.js';
 import { fail } from '../platform/errors.js';
 import { json, now, reference, type Storage } from '../platform/context.js';
 
 export interface ResourceDependencies extends Storage {
   materials: {
-    capture(ctx: CallContext, input: unknown): Promise<MaterialView>;
-    read(ctx: CallContext, input: { ref: Ref }): Promise<MaterialView>;
+    capture(ctx: CallContext, input: unknown, db?:Storage['db']): Promise<MaterialView>;
+    read(ctx: CallContext, input: { ref: Ref }, db?:Storage['db']): Promise<MaterialView>;
     putBlob(ctx: CallContext, bytes: Buffer, mediaType: string): Promise<{ ref: Ref }>;
   };
   mcp?: Record<string, {
@@ -26,13 +28,13 @@ const hash = (text: string | Buffer) => createHash('sha256').update(text).digest
 const mediaType = (name: string) => ({ '.md': 'text/markdown', '.txt': 'text/plain', '.json': 'application/json', '.html': 'text/html', '.csv': 'text/csv', '.toml': 'application/toml', '.yaml': 'application/yaml', '.yml': 'application/yaml', '.xml': 'application/xml' })[extname(name).toLowerCase()] ?? 'application/octet-stream';
 
 export function createResources(deps: ResourceDependencies) {
-  async function inspect(ctx: CallContext, input: { id: string }) {
-    authorize(ctx, 'resources.read');
-    const row = await deps.db.selectFrom('resources').selectAll().where('id', '=', input.id).where('subjectId', '=', ctx.subjectId).executeTakeFirst();
+  async function inspect(ctx: CallContext, input: { id: string },db=deps.db) {requireSubject(ctx);
+    const row = await db.selectFrom('resources').selectAll().where('id', '=', input.id).where('subjectId', '=', ctx.subjectId).executeTakeFirst();
     if (!row) fail('not_found', '外部资料源不存在');
+    await deps.authorize(ctx,'resources.read',reference(deps.installationId,ctx.subjectId,'Resource',row.id,row.revision));
     const body = ResourceBodySchema.parse(row.body);
     if (!mayRead(ctx, body.policy)) fail('forbidden', '资料源不允许本次用途或听众');
-    return { ref: reference(deps.installationId, ctx.subjectId, 'Resource', row.id, row.revision), ...body, recordedAt: new Date(row.recordedAt).toISOString() };
+    return { ref: reference(deps.installationId, ctx.subjectId, 'Resource', row.id, row.revision), ...body, recordedAt: parseInstant(row.recordedAt) };
   }
 
   async function pathWithin(root: string, target: string) {
@@ -83,25 +85,25 @@ export function createResources(deps: ResourceDependencies) {
   }
 
   return {
-    async register(ctx: CallContext, input: unknown) {
-      authorize(ctx, 'resources.register');
+    async register(ctx: CallContext, input: unknown) {requireSubject(ctx);
+      await deps.authorize(ctx, 'resources.register');
       const body = ResourceBodySchema.parse(input);
       if (body.kind === 'directory') body.root = await realpath(body.root);
       if (body.kind === 'http') checkUrl(body, body.baseUrl);
       if (body.kind === 'mcp') connector(body);
-      return deps.transaction(async () => {
+      return deps.transaction(async (db) => {
         const id = uuid();
-        await deps.db.insertInto('resources').values({ id, subjectId: ctx.subjectId, revision: 1, body: json(body), recordedAt: now().at }).execute();
-        return inspect(ctx, { id });
+        await db.insertInto('resources').values({ id, subjectId: ctx.subjectId, revision: 1, body: json(body), recordedAt: now().at }).execute();
+        return inspect(ctx, { id },db);
       });
     },
     inspect,
-    async list(ctx: CallContext) {
-      authorize(ctx, 'resources.read');
+    async list(ctx: CallContext) {requireSubject(ctx);
+      await deps.authorize(ctx, 'resources.read');
       const rows = await deps.db.selectFrom('resources').select(['id', 'body']).where('subjectId', '=', ctx.subjectId).execute();
       return Promise.all(rows.filter(row => mayRead(ctx, ResourceBodySchema.parse(row.body).policy)).map(row => inspect(ctx, row)));
     },
-    async directory(ctx: CallContext, input: { id: string; target?: string; query?: string }) {
+    async directory(ctx: CallContext, input: { id: string; target?: string; query?: string }) {requireSubject(ctx);
       const resource = await inspect(ctx, input);
       if (resource.kind === 'directory') {
         const { path } = await pathWithin(resource.root, input.target ?? '.');
@@ -116,7 +118,7 @@ export function createResources(deps: ResourceDependencies) {
       }
       return [{ target: resource.baseUrl, title: resource.title, kind: 'document' }];
     },
-    async read(ctx: CallContext, input: { id: string; target: string; version?: string; selector?: Selector }) {
+    async read(ctx: CallContext, input: { id: string; target: string; version?: string; selector?: Selector }) {requireSubject(ctx);
       const resource = await inspect(ctx, input);
       if (input.version) {
         const saved = await deps.db.selectFrom('resourceVersions').select('materialRef').where('resourceId', '=', resource.ref.id).where('version', '=', input.version).executeTakeFirst();
@@ -146,15 +148,15 @@ export function createResources(deps: ResourceDependencies) {
       if (existing) return deps.materials.read(ctx, { ref: existing.materialRef });
       const isText = /^(text\/|application\/(json|toml|yaml|xml))/.test(content.mediaType);
       const blob = isText ? undefined : await deps.materials.putBlob(ctx, content.bytes, content.mediaType);
-      return deps.transaction(async () => {
-        await deps.db.selectFrom('resources').select('id').where('id', '=', resource.ref.id).forUpdate().executeTakeFirstOrThrow();
-        const prior = await deps.db.selectFrom('resourceVersions').select('materialRef').where('resourceId', '=', resource.ref.id).where('version', '=', version).executeTakeFirst();
-        if (prior) return deps.materials.read(ctx, { ref: { ...prior.materialRef, selector: input.selector } });
+      return deps.transaction(async (db) => {
+        await db.selectFrom('resources').select('id').where('id', '=', resource.ref.id).forUpdate().executeTakeFirstOrThrow();
+        const prior = await db.selectFrom('resourceVersions').select('materialRef').where('resourceId', '=', resource.ref.id).where('version', '=', version).executeTakeFirst();
+        if (prior) return deps.materials.read(ctx, { ref: { ...prior.materialRef, selector: input.selector } },db);
         const id = uuid();
         const sourceRef: Ref = reference(deps.installationId, ctx.subjectId, 'ResourceVersion', id);
-        const material = await deps.materials.capture(ctx, { kind: 'resource', mediaType: content.mediaType, title: content.title, text: isText ? content.bytes.toString('utf8') : undefined, blobRef: blob?.ref, source: { ref: sourceRef, roots: [sourceRef], originVersion: content.originVersion ?? version }, policy: resource.policy });
-        await deps.db.insertInto('resourceVersions').values({ id, resourceId: resource.ref.id, version, materialRef: json(material.ref), recordedAt: now().at }).execute();
-        return deps.materials.read(ctx, { ref: { ...material.ref, selector: input.selector } });
+        const material = await deps.materials.capture(ctx, { kind: 'resource', mediaType: content.mediaType, title: content.title, text: isText ? content.bytes.toString('utf8') : undefined, blobRef: blob?.ref, source: { ref: sourceRef, roots: [sourceRef], originVersion: content.originVersion ?? version }, policy: resource.policy },db);
+        await db.insertInto('resourceVersions').values({ id, resourceId: resource.ref.id, version, materialRef: json(material.ref), recordedAt: now().at }).execute();
+        return deps.materials.read(ctx, { ref: { ...material.ref, selector: input.selector } },db);
       });
     },
   };

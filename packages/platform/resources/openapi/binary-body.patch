@@ -1,0 +1,30 @@
+Source: OpenAPITools/openapi-generator v7.26.0, typescript-fetch/apis.mustache (Apache-2.0).
+Adaptation: raw binary request bodies accept standard fetch BodyInit; multipart files keep Blob.
+
+--- a/apis.mustache
++++ b/apis.mustache
+@@ -34,7 +34,7 @@
+     member's body satisfies this one, and the body goes out under the wrong content-type }}
+ export type {{#prefixParameterInterfaces}}{{classname}}{{/prefixParameterInterfaces}}{{operationIdCamelCase}}Request = {{#hasContentTypeRequestVariants}}runtime.ExclusiveUnion<{{/hasContentTypeRequestVariants}}
+ {{#contentTypeRequestVariants}}
+-    | { {{#hasContentTypeRequestVariants}}contentType{{#isDefault}}?{{/isDefault}}: '{{mediaType}}'; {{/hasContentTypeRequestVariants}}{{#allParams}}{{paramName}}{{^required}}?{{/required}}: {{#isEnum}}{{{datatypeWithEnum}}}{{/isEnum}}{{^isEnum}}{{#hasReadOnly}}Omit<{{{dataType}}}, {{#readOnlyVars}}'{{baseName}}'{{^-last}}|{{/-last}}{{/readOnlyVars}}>{{/hasReadOnly}}{{^hasReadOnly}}{{{dataType}}}{{/hasReadOnly}}{{#isNullable}} | null{{/isNullable}}{{/isEnum}}; {{/allParams}}}
++    | { {{#hasContentTypeRequestVariants}}contentType{{#isDefault}}?{{/isDefault}}: '{{mediaType}}'; {{/hasContentTypeRequestVariants}}{{#allParams}}{{paramName}}{{^required}}?{{/required}}: {{#isEnum}}{{{datatypeWithEnum}}}{{/isEnum}}{{^isEnum}}{{#hasReadOnly}}Omit<{{>apisParameterType}}, {{#readOnlyVars}}'{{baseName}}'{{^-last}}|{{/-last}}{{/readOnlyVars}}>{{/hasReadOnly}}{{^hasReadOnly}}{{>apisParameterType}}{{/hasReadOnly}}{{#isNullable}} | null{{/isNullable}}{{/isEnum}}; {{/allParams}}}
+ {{/contentTypeRequestVariants}}
+ {{#hasContentTypeRequestVariants}}>{{/hasContentTypeRequestVariants}};
+ 
+@@ -49,7 +49,7 @@
+      * @deprecated
+     {{/isDeprecated}}
+      */
+-    {{paramName}}{{^required}}?{{/required}}: {{#isEnum}}{{{datatypeWithEnum}}}{{/isEnum}}{{^isEnum}}{{#hasReadOnly}}Omit<{{{dataType}}}, {{#readOnlyVars}}'{{name}}'{{^-last}}|{{/-last}}{{/readOnlyVars}}>{{/hasReadOnly}}{{^hasReadOnly}}{{{dataType}}}{{/hasReadOnly}}{{#isNullable}} | null{{/isNullable}}{{/isEnum}};
++    {{paramName}}{{^required}}?{{/required}}: {{#isEnum}}{{{datatypeWithEnum}}}{{/isEnum}}{{^isEnum}}{{#hasReadOnly}}Omit<{{>apisParameterType}}, {{#readOnlyVars}}'{{name}}'{{^-last}}|{{/-last}}{{/readOnlyVars}}>{{/hasReadOnly}}{{^hasReadOnly}}{{>apisParameterType}}{{/hasReadOnly}}{{#isNullable}} | null{{/isNullable}}{{/isEnum}};
+ {{/allParams}}
+ }
+ 
+diff --git a/apisParameterType.mustache b/apisParameterType.mustache
+new file mode 100644
+--- /dev/null
++++ b/apisParameterType.mustache
+@@ -0,0 +1 @@
++{{#isBodyParam}}{{#isBinary}}BodyInit{{/isBinary}}{{^isBinary}}{{{dataType}}}{{/isBinary}}{{/isBodyParam}}{{^isBodyParam}}{{{dataType}}}{{/isBodyParam}}
+\ No newline at end of file

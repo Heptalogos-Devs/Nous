@@ -1,0 +1,65 @@
+// Native transport and proof composition adapted from Hept platform/execution.ts and work/native-accounting.ts.
+// Copyright 2026 Arsvine Zhu; SPDX-License-Identifier: AGPL-3.0-only
+import {z} from 'zod';
+import {canonicalize} from 'json-canonicalize';
+import {type CallContext,type Ref,type Actor,type Consumer,sameRef} from '@nous-wave/contracts/common';
+import {SecretRefSchema,type SecretUse,type ServiceDelegation} from '@nous-wave/contracts/credentials';
+import {NativeOriginSchema,NativeInvocationPrepareSchema,NativeInvocationCompletionSchema,type NativeInvocationPrepare,type NativeInvocationCompletion,type ModelCallView} from '@nous-wave/contracts/models';
+import type {TimeCaptureReceipt} from '@nous-wave/contracts/time';
+import type {Authentication,SecretRegistry} from '@nous-wave/platform/credentials';
+import type {Models,ModelsOptions} from '@nous-wave/platform/models';
+import {type Network,ResourceNetworkScopeSchema} from '@nous-wave/platform/network';
+import {type Settings,type SettingsModule} from '@nous-wave/platform/settings';
+import {problem} from '@nous-wave/platform/errors';
+import {createOpenClawModelClient,invocationIdentity,type NativeOrigin,type NativeCallFacts} from '@nous-wave/openclaw/client';
+const authority=z.string().regex(/^delegation:[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+const endpoint=z.url().refine(value=>{const u=new URL(value);return ['http:','https:'].includes(u.protocol)&&!u.username&&!u.password&&!u.search&&!u.hash;},'原生Gateway地址必须为无秘密的HTTP(S)基础地址');
+export const NativeSettingsSchema=z.strictObject({runtimes:z.record(z.string().min(1),z.strictObject({endpoint,credentialRef:SecretRefSchema,networkProfileId:z.string().min(1),enabled:z.boolean(),network:ResourceNetworkScopeSchema.pick({addressScope:true,allowedPrivateRanges:true}),bindings:z.record(z.string().min(1),z.strictObject({authorityRef:authority}))}))});
+export const nativeSettingsModule:SettingsModule<z.infer<typeof NativeSettingsSchema>>={id:'nous.native',definitionRevision:'1',owner:'nous.models.native',schema:NativeSettingsSchema,defaults:{runtimes:{}},fields:{'/runtimes':{labelKey:'native.runtimes',descriptionKey:'native.runtimes.description',scopes:['installation'],visibility:'advanced',effect:'next_call',consumerIds:['native.host']}}};
+export interface NativeHostOptions {
+ installationId:string;processBootId:string;settings:Settings;secrets:SecretRegistry;network:Network;authentication:Authentication;
+ authorize(ctx:CallContext,operation:string,target?:Ref):Promise<void>;
+ models():Models;
+}
+export function createNativeHost(options:NativeHostOptions){
+ const ref=(id:string):Ref=>({product:'nous',installationId:options.installationId,kind:'NativeRuntime',id});
+ const registered=options.settings.registerConsumer({namespace:'nous.native',consumerId:'native.host',processBootId:options.processBootId,scope:{kind:'installation',installationId:options.installationId}});
+ async function runtime(id:string){const snapshot=await registered.snapshot(),value=NativeSettingsSchema.parse(snapshot.values).runtimes[id];if(!value?.enabled)throw problem('native.runtime_unavailable','unavailable','原生运行时连接未启用');return {value,snapshot};}
+ function own(input:Ref){if(input.product!=='nous'||input.installationId!==options.installationId||input.kind!=='NativeRuntime'||input.subjectId||input.selector||input.revision!==undefined)throw problem('native.runtime_scope','forbidden','需要本安装原生运行时资源');return input.id;}
+ async function selection(ctx:CallContext,target:Ref){const id=own(target),{value,snapshot}=await runtime(id),url=new URL(value.endpoint);await options.authorize(ctx,'native.connect',target);return {value,snapshot,resource:{resourceRef:target,operation:'native.connect',profileId:value.networkProfileId,allowedOrigins:[url.origin],allowedPathPrefixes:[`${url.pathname.replace(/\/$/,'')}/plugins/nous/`],methods:['POST'],credentialOrigins:[url.origin],...value.network}};}
+ async function withClient<T>(ctx:CallContext,id:string,use:(client:ReturnType<typeof createOpenClawModelClient>)=>Promise<T>){const selected=await selection(ctx,ref(id));return options.network.withClient(ctx,{resource:selected.resource},transport=>options.secrets.withSecret(ctx,{ref:selected.value.credentialRef,purpose:'native.gateway',resourceRef:ref(id)},bytes=>{registered.reportApplied(selected.snapshot);return use(createOpenClawModelClient({endpoint:selected.value.endpoint,token:new TextDecoder().decode(bytes),fetch:transport.fetch}));}));}
+ async function facts(host:CallContext,native:NativeOrigin){await options.authorize(host,'native.record',ref(native.runtimeId));const value=await withClient(host,native.runtimeId,client=>client.readCall(native,host.trace.traceparent));if(!value)throw problem('native.call_not_found','not_found','实际原生调用不存在');if(host.subjectId!==undefined&&host.subjectId!==value.scope.subjectId)throw problem('native.subject_mismatch','forbidden','原生调用不属于请求主体');return value;}
+ async function delegation(host:CallContext,authorityRef:string){const parsed=authority.parse(authorityRef);return options.authentication.delegations.read(host,parsed.slice(11));}
+ const actor=(value:ServiceDelegation,consumer:Consumer):Actor=>({kind:value.principalKind,id:value.principalKind==='human'?value.ownerUserId:['subject','worker','author'].includes(value.principalKind)?consumer.id:value.id,authorityRef:`delegation:${value.id}`});
+ function context(host:CallContext,value:ServiceDelegation,input:{subjectId:string;consumer:Consumer;purpose:string;audience:string[];native:NativeOrigin}):CallContext{return {...host,actor:actor(value,input.consumer),consumer:input.consumer,subjectId:input.subjectId,purpose:input.purpose,audience:[...input.audience],trace:{...host.trace,operationId:`native:${input.native.runtimeId}:${input.native.callId}`}};}
+ async function original(host:CallContext,call:ModelCallView){if(!call.native||!call.subjectId)throw problem('native.call_scope','forbidden','该调用缺少原生或主体身份');const granted=await delegation(host,call.authorityRef);return context(host,granted,{subjectId:call.subjectId,consumer:call.consumer,purpose:call.purpose,audience:call.audience,native:call.native});}
+ async function current(host:CallContext,native:NativeOrigin,actual:NativeCallFacts){const configured=(await runtime(native.runtimeId)).value.bindings[actual.agentId];if(!configured)throw problem('native.consumer_unbound','forbidden','原生agent没有已登记消费者委派');const granted=await delegation(host,configured.authorityRef),scope=granted.scope;
+  if(actual.scope.authorityRef!==configured.authorityRef||actual.scope.billing!=='nous'||!scope.subjectIds.includes(actual.scope.subjectId)||canonicalize(scope.consumer)!==canonicalize(actual.scope.consumer)||scope.nativeBinding?.runtimeId!==native.runtimeId||!actual.scope.ancestors.some(parent=>parent.sessionKey===scope.nativeBinding?.sessionKey))throw problem('native.consumer_mismatch','forbidden','当前委派与实际原生消费者或会话来源不符');
+  const caller=context(host,granted,{subjectId:actual.scope.subjectId,consumer:scope.consumer,purpose:actual.scope.purpose,audience:actual.scope.audience,native});await options.authentication.currentAuthority(caller);return caller;
+ }
+ const bindings:NonNullable<ModelsOptions['nativeBindings']>={
+  read:(ctx,input,local)=>withClient(local?.hostContext??ctx,input.runtimeId,client=>client.readBinding(input,(local?.hostContext??ctx).trace.traceparent)),
+  async authorizeCall(ctx,input,local){const host=local?.hostContext;if(!host)throw problem('native.host_required','forbidden','原生调用必须经受信Host事实入口');const actual=await facts(host,input.native);if(invocationIdentity(actual)!==input.invocationId)throw problem('native.invocation_mismatch','forbidden','调用身份与原生UUID不同');
+   if(input.phase==='complete'){const call=await options.models().invocations.read(host,{invocationId:input.invocationId}),caller=await original(host,call);if(canonicalize(call.native)!==canonicalize(input.native)||call.snapshot.actualResource.id!==input.resource.id||call.snapshot.actualResource.revision!==input.resource.revision||call.snapshot.actualProvider!==actual.prepared.provider||call.snapshot.actualModelId!==actual.prepared.modelId||canonicalize(caller.actor)!==canonicalize(ctx.actor)||canonicalize(caller.consumer)!==canonicalize(ctx.consumer)||caller.subjectId!==ctx.subjectId||caller.purpose!==ctx.purpose||canonicalize(caller.audience)!==canonicalize(ctx.audience))throw problem('native.completion_scope','forbidden','终止事实不属于原调用授权与消费者');return;}
+   const caller=await current(host,input.native,actual);
+   if(canonicalize(caller.actor)!==canonicalize(ctx.actor)||canonicalize(caller.consumer)!==canonicalize(ctx.consumer)||caller.subjectId!==ctx.subjectId||!actual.active||actual.notDispatched||actual.terminal)throw problem('native.dispatch_scope','forbidden','实际原生调用当前不允许付费派发');
+   const resource=await options.models().resources.read(host,{id:input.resource.id,revision:input.resource.revision}),registration=resource.definition;
+   if(!('managedBy'in registration)||registration.managedBy!=='native'||registration.definition.runtimeId!==input.native.runtimeId)throw problem('native.resource_mismatch','forbidden','正式模型资源没有该原生绑定');
+   const model=await withClient(host,input.native.runtimeId,client=>client.readBinding({runtimeId:input.native.runtimeId,nativeResourceId:registration.definition.nativeResourceId},host.trace.traceparent));
+   if(model.actualProvider!==actual.prepared.provider||model.actualModelId!==actual.prepared.modelId)throw problem('native.model_mismatch','forbidden','实际原生模型与当前登记资源不同');
+  },
+ };
+ function completion(actual:NativeCallFacts){const status=actual.settlement?.outcome??(actual.terminal?.providerRefused?'not_sent':actual.terminal?['error','aborted'].includes(actual.terminal.stopReason??'')?'unknown':'completed':actual.notDispatched?'not_sent':'unknown'),usage=actual.terminal?.usage;return {status,usage:usage?{inputTokens:usage.input+usage.cacheRead+usage.cacheWrite,outputTokens:usage.output,cacheReadTokens:usage.cacheRead,cacheWriteTokens:usage.cacheWrite}:undefined,rawUsage:usage,providerRequestId:actual.terminal?.providerRequestId};}
+ return {bindings,
+  async credentialTarget(ctx:CallContext,input:SecretUse){const selected=await runtime(own(input.resourceRef));if(input.purpose!=='native.gateway'||input.ref!==selected.value.credentialRef||(input.useRef&&!sameRef(input.useRef,input.resourceRef)))throw problem('native.credential_mismatch','forbidden','原生Gateway未绑定该秘密');return {operation:'native.connect',target:input.resourceRef};},
+  async networkSelection(ctx:CallContext,target:Ref){const selected=await selection(ctx,target);return {resource:selected.resource};},
+  async status(){const snapshot=await registered.snapshot();return {configured:Object.entries(NativeSettingsSchema.parse(snapshot.values).runtimes).filter(([,value])=>value.enabled).map(([id])=>id)};},
+  facade:{
+   async prepare(host:CallContext,input:unknown){const request=NativeInvocationPrepareSchema.parse(input),actual=await facts(host,request.native),caller=await current(host,request.native,actual);if(request.roleId!=='native_agent'||request.invocationId!==invocationIdentity(actual)||request.actualProvider!==actual.prepared.provider||request.actualModelId!==actual.prepared.modelId||request.inputTokensEstimate.value!==actual.prepared.inputTokensEstimate||canonicalize(request.inputRefs)!==canonicalize(actual.prepared.inputRefs)||request.maxOutputTokens!==actual.prepared.outputTokens)throw problem('native.preparation_mismatch','forbidden','调用准备与实际原生记录不同');return options.models().native.prepare(caller,request,{hostContext:host});},
+   async dispatch(host:CallContext,input:{invocationId:string;observed?:TimeCaptureReceipt}){const call=await options.models().invocations.read(host,{invocationId:input.invocationId}),native=NativeOriginSchema.parse(call.native),caller=await original(host,call);await current(host,native,await facts(host,native));return options.models().native.dispatch(caller,input,{hostContext:host});},
+   async complete(host:CallContext,input:unknown){const request=NativeInvocationCompletionSchema.parse(input),call=await options.models().invocations.read(host,{invocationId:request.invocationId}),native=NativeOriginSchema.parse(call.native),actual=await facts(host,native),expected=completion(actual),caller=await original(host,call);if(request.status!==expected.status||canonicalize(request.usage??null)!==canonicalize(expected.usage??null)||request.providerRequestId!==expected.providerRequestId||(request.rawUsage!==undefined&&canonicalize(request.rawUsage)!==canonicalize(expected.rawUsage??null)))throw problem('native.completion_mismatch','conflict','终止状态与实际原生用量不同');if(request.outputRef&&(!actual.terminal?.outputRef||!sameRef(request.outputRef,actual.terminal.outputRef)))throw problem('native.output_mismatch','forbidden','输出引用尚未保存于原生终止记录');return options.models().native.complete(caller,{...request,rawUsage:expected.rawUsage},{hostContext:host});},
+  },
+  close(){registered.close();},
+ };
+}
+export type NativeHost=ReturnType<typeof createNativeHost>;

@@ -1,3 +1,4 @@
+import {requireSubject} from '../platform/security.js';
 import { sql, type Selectable } from 'kysely';
 import type { z } from 'zod';
 import type { CallContext } from '@nous-wave/contracts/common';
@@ -10,7 +11,7 @@ export type ReadRequest = z.input<typeof KnowledgeReadSchema>;
 export type ListRequest = z.infer<typeof KnowledgeListSchema>;
 
 export function createKnowledgeRepository(store: Storage) {
-  async function records(ctx: CallContext, requests: ReadRequest[]): Promise<Array<KnowledgeRecord & { requested: ReadRequest }>> {
+  async function records(ctx: CallContext, requests: ReadRequest[],db=store.db): Promise<Array<KnowledgeRecord & { requested: ReadRequest }>> {requireSubject(ctx);
     if (!requests.length) return [];
     return (await sql<KnowledgeRecord & { requested: ReadRequest }>`with requested as(select value as request,ordinality as position from jsonb_array_elements(${JSON.stringify(requests)}::jsonb) with ordinality)
       select q.request as requested,
@@ -20,13 +21,13 @@ export function createKnowledgeRepository(store: Storage) {
       join lateral(select * from knowledge_revisions v where v.object_id=o.id
         and(q.request->>'revision' is null or v.revision=(q.request->>'revision')::integer)
         and(q.request->>'recordedAsOf' is null or v.recorded_at<=(q.request->>'recordedAsOf')::timestamptz)
-        and(q.request->'knowledgeAt' is null or(v.formed->>'clockId'=q.request->'knowledgeAt'->>'clockId' and v.formed->>'at'<=q.request->'knowledgeAt'->>'at'))
-        order by v.revision desc limit 1) r on true order by q.position`.execute(store.db)).rows;
+        and(q.request->'knowledgeAt' is null or(v.formed->>'domainId'=q.request->'knowledgeAt'->>'domainId' and v.formed->>'at'<=q.request->'knowledgeAt'->>'at'))
+        order by v.revision desc limit 1) r on true order by q.position`.execute(db)).rows;
   }
-  function candidates(ctx: CallContext, input: ListRequest, scope: string) {
-    let query = store.db.selectFrom('knowledgeObjects as o').innerJoinLateral(eb => {
+  function candidates(ctx: CallContext, input: ListRequest, scope: string,db=store.db) {requireSubject(ctx);
+    let query = db.selectFrom('knowledgeObjects as o').innerJoinLateral(eb => {
       let revision = eb.selectFrom('knowledgeRevisions as r').select(['r.objectId','r.revision','r.body','r.sourceRefs','r.sourceRoots']).whereRef('r.objectId','=','o.id');
-      if (input.knowledgeAt) revision=revision.where(sql<boolean>`r.formed->>'clockId'=${input.knowledgeAt.clockId} and r.formed->>'at'<=${input.knowledgeAt.at}`);
+      if (input.knowledgeAt) revision=revision.where(sql<boolean>`r.formed->>'domainId'=${input.knowledgeAt.domainId} and r.formed->>'at'<=${input.knowledgeAt.at}`);
       if (input.recordedAsOf) revision=revision.where('r.recordedAt','<=',input.recordedAsOf);
       const ordered=revision.orderBy('r.revision','desc');return(input.includeHistory?ordered:ordered.limit(1)).as('v');
     }, join=>join.onTrue()).select(['o.id','v.revision']).select(sql<string>`${scope}`.as('scope')).where('o.subjectId','=',ctx.subjectId).where('o.status','!=','purged');

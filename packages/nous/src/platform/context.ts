@@ -1,37 +1,26 @@
+import {requireSubject} from './security.js';
 import { randomBytes } from 'node:crypto';
 import { v7 as uuid } from 'uuid';
-import type { CallContext, Ref, TimePoint } from '@nous-wave/contracts/common';
+import type { CallContext, Ref, Consumer } from '@nous-wave/contracts/common';
 import { sql } from 'kysely';
 import type { Kysely } from 'kysely';
 import type { Database } from './database.js';
 import { trace,isSpanContextValid } from '@opentelemetry/api';
-export const now = (): TimePoint => ({
-  clockId: 'real',
-  at: new Date().toISOString(),
-});
+export {readReal as now} from '@nous-wave/platform/time';
+import {readReal as now} from '@nous-wave/platform/time';
 export const json = <T>(value: T) => sql<T>`${JSON.stringify(value)}::jsonb`;
-export function makeContext(
-  actor: CallContext['actor'],
-  subjectId: string,
-  purpose = 'management',
-  audience = [subjectId],
-  operationId = uuid(),
-  traceparent?: string,
-): CallContext {
+export function makeContext(input:{
+  actor:CallContext['actor'];consumer:Consumer;subjectId?:string;purpose?:string;audience?:string[];
+  operationId?:string;traceparent?:string;invocationId?:string;taskId?:string;effectId?:string;
+}):CallContext {
   const active=trace.getActiveSpan()?.spanContext();
   const current=active&&isSpanContextValid(active)?active:undefined;
   return {
-  actor,
-  subjectId,
-  consumer:actor.consumer,
-  purpose,
-  audience,
-  traceContext: {
-    operationId,
-    traceId: current?.traceId??traceparent?.split('-')[1] ?? randomBytes(16).toString('hex'),
-    traceparent:current?`00-${current.traceId}-${current.spanId}-${current.traceFlags.toString(16).padStart(2,'0')}`:traceparent,
-  },
-};
+    actor:input.actor,consumer:input.consumer,subjectId:input.subjectId,purpose:input.purpose??'management',audience:input.audience??[],
+    trace:{operationId:input.operationId??uuid(),traceId:current?.traceId??input.traceparent?.split('-')[1]??randomBytes(16).toString('hex'),
+      traceparent:current?`00-${current.traceId}-${current.spanId}-${current.traceFlags.toString(16).padStart(2,'0')}`:input.traceparent,
+      invocationId:input.invocationId,taskId:input.taskId,effectId:input.effectId},
+  };
 }
 export function reference(
   installationId: string,
@@ -54,6 +43,7 @@ export async function changed(
   ctx: CallContext,
   refs: Ref[],
 ) {
+  requireSubject(ctx);
   const subject = await db
     .updateTable('subjects')
     .set({ changeCursor: sql<string>`change_cursor + 1` })
@@ -73,6 +63,7 @@ export async function changed(
 }
 export interface Storage {
   readonly db: Kysely<Database>;
-  transaction<T>(fn: () => Promise<T>): Promise<T>;
+  transaction<T>(fn: (db: Kysely<Database>) => Promise<T>): Promise<T>;
   installationId: string;
+  authorize(ctx:CallContext,operation:string,target?:Ref,db?:Kysely<any>):Promise<void>;
 }

@@ -1,21 +1,14 @@
 {
   "extends": "../../tsconfig.json",
   "compilerOptions": {
-    "rootDir": "../..",
-    "outDir": "../../data/packages/nous/dist",
+    "rootDir": ".",
+    "outDir": "dist",
     "customConditions": [],
-    "paths": {
-      "@nous-wave/contracts": [
-        "../../data/packages/contracts/dist/index.d.ts"
-      ],
-      "@nous-wave/contracts/*": [
-        "../../data/packages/contracts/dist/*.d.ts"
-      ]
-    }
+    "paths": {}
   },
   "include": [
     "src/**/*.ts",
-    "../../migrations/**/*.ts"
+    "migrations/**/*.ts"
   ],
   "exclude": [
     "dist",

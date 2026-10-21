@@ -1,57 +1,51 @@
 {
   "name": "@nous-wave/nous",
-  "version": "0.1.0",
+  "version": "0.2.0-infrastructure.1",
   "type": "module",
   "exports": {
     ".": {
-      "development": "./src/index.ts",
-      "types": "./src/index.ts",
-      "default": "./src/index.ts"
+      "types": "./dist/src/index.d.ts",
+      "default": "./dist/src/index.js"
+    },
+    "./package.json": "./package.json",
+    "./time": {
+      "types": "./dist/src/time/index.d.ts",
+      "default": "./dist/src/time/index.js"
+    },
+    "./time/migration": {
+      "types": "./dist/src/time/migration.d.ts",
+      "default": "./dist/src/time/migration.js"
     }
   },
   "dependencies": {
-    "@ai-sdk/openai-compatible": "^3.0.0",
-    "@better-auth/api-key": "^1.7.0",
     "@dbos-inc/dbos-sdk": "5.3.0",
-    "@dbos-inc/kysely-datasource": "5.3.0",
-    "@dbos-inc/vercel-ai": "0.5.4",
-    "@fastify/deepmerge": "3.2.2",
-    "@fastify/swagger": "^9.6.0",
-    "@fastify/swagger-ui": "^5.2.0",
     "@js-temporal/polyfill": "^0.5.1",
     "@lancedb/lancedb": "0.40.0",
-    "@modelcontextprotocol/sdk": "1.31.0",
     "@nous-wave/contracts": "workspace:*",
     "@opentelemetry/api": "^1.9.0",
-    "@opentelemetry/sdk-node": "^0.208.0",
     "ai": "7.0.146",
-    "apache-arrow": "18.1.0",
-    "better-auth": "1.7.11",
     "cacache": "^20.0.0",
-    "chevrotain": "^11.0.3",
-    "confbox": "^0.2.2",
-    "env-paths": "^3.0.0",
-    "fastify": "5.12.5",
-    "fastify-type-provider-zod": "7.0.0",
     "graphology": "^0.26.0",
     "jsonpointer": "5.0.1",
     "kysely": "0.29.7",
     "kysely-paginate": "0.3.1",
     "ml-matrix": "^6.12.1",
-    "pg": "^8.16.0",
-    "pino": "^10.0.0",
     "proquint": "0.0.1",
     "uuid": "^13.0.0",
-    "zod": "4.6.5"
+    "zod": "4.6.5",
+    "@nous-wave/platform": "workspace:*",
+    "json-canonicalize": "2.0.0",
+    "@nous-wave/openclaw": "workspace:*"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json"
   },
   "files": [
-    "dist"
+    "dist",
+    "LICENSE",
+    "NOTICE",
+    "LICENSES",
+    "prompts"
   ],
-  "publishConfig": {
-    "directory": "../../data/packages/nous",
-    "linkDirectory": false
-  }
+  "license": "AGPL-3.0-only"
 }

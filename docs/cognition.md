@@ -1,10 +1,10 @@
 # 认知运行与维护
 
-Nous 的认识、经历组织与来源限制由 knowledge、materials、retrieval 和 cognition 各自保存。主体形成的认识沿固定修订和实际接触读取；后台工作使用 DBOS 的工作流、队列和调度。当前设计入口见[设计目录](INDEX.md)。
+Nous 的认识、经历组织与来源限制由 knowledge、materials、retrieval 和 cognition 各自保存。主体形成的认识沿固定修订和实际接触读取；需要持久恢复的后台工作使用 DBOS。当前架构与完整能力合同见[工程设计](https://github.com/Heptalogos-Devs/Architecture-Vault/tree/feat/specs-infrastructure-research)，基础设施进度见[当前施工](construction.md)。
 
 ## Current Work
 
-当前施工贯通批量查询、历史理解、概念整理和可继续的成长：
+当前阶段先完成公共底座和真实消费者接线。现有认知实现保留以下能力，完整领域重建在基础设施完成后继续：
 
 - 将认识、修订与来源读取改成按批取得，公开列表和历史使用真正的键集游标。
 - 在正式修订事务中维护概念成员，合并和拆分遍历全部实际引用，保留旧修订及关系历史。

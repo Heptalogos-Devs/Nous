@@ -11,6 +11,10 @@
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "type": "object",
     "properties": {
+      "runtimeId": {
+        "type": "string",
+        "minLength": 1
+      },
       "baseURL": {
         "type": "string",
         "format": "uri"
@@ -28,43 +32,56 @@
           "type": "string"
         },
         "additionalProperties": {
-          "type": "object",
-          "properties": {
-            "subjectId": {
-              "type": "string"
-            },
-            "consumer": {
-              "default": "worker",
-              "type": "string",
-              "enum": [
-                "subject",
-                "worker",
-                "author",
-                "maintenance"
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "authorityRef": {
+                  "type": "string",
+                  "pattern": "^delegation:[0-9a-f-]{36}$"
+                },
+                "subjectId": {
+                  "type": "string"
+                },
+                "consumer": {
+                  "$ref": "#/$defs/Consumer"
+                },
+                "purpose": {
+                  "default": "worker",
+                  "type": "string"
+                },
+                "audience": {
+                  "default": [],
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "billing": {
+                  "default": "nous",
+                  "type": "string",
+                  "const": "nous"
+                }
+              },
+              "required": [
+                "authorityRef",
+                "subjectId",
+                "consumer"
               ]
             },
-            "purpose": {
-              "default": "worker",
-              "type": "string"
-            },
-            "audience": {
-              "default": [],
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
-            },
-            "billing": {
-              "default": "nous",
-              "type": "string",
-              "enum": [
-                "nous",
-                "external"
-              ]
+            {
+              "type": "object",
+              "properties": {
+                "billing": {
+                  "type": "string",
+                  "const": "external"
+                }
+              },
+              "required": [
+                "billing"
+              ],
+              "additionalProperties": false
             }
-          },
-          "required": [
-            "subjectId"
           ]
         }
       },
@@ -79,10 +96,40 @@
       }
     },
     "required": [
-      "baseURL",
+      "runtimeId",
       "installationId",
       "bindings",
       "modelResources"
-    ]
+    ],
+    "$defs": {
+      "Consumer": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "subject",
+              "worker",
+              "author",
+              "maintenance"
+            ]
+          },
+          "host": {
+            "type": "string",
+            "minLength": 1
+          },
+          "id": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "kind",
+          "host",
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    }
   }
 }

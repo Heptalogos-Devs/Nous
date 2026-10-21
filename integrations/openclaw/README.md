@@ -1,23 +1,19 @@
 # OpenClaw 认知接入
 
-`nous-cognition` 在实际模型边界准备认知，在原生输出持久保存后接纳接触。普通工具循环、压缩摘要、分支摘要及工具后续调用分别取得稳定 callId。原生历史、工具、子代理、执行与压缩继续由 OpenClaw 管理。consumer=worker 的接触留在工作者范围；主体查看成果时才形成主体经历。
+`nous-cognition` 在每次真实模型输入前准备认知，在原生保存终端输出后接纳接触。OpenClaw 保留模型与工具循环、历史、压缩、子代理和沙箱。每次普通调用、工具后续调用与辅助摘要持有独立 callId；其 UUIDv7 后缀直接作为正式 ModelInvocation 身份。
 
 ## 构建与安装
 
-基线与许可证见 [source.json](upstream/source.json) 和 [LICENSE](upstream/LICENSE)。[model-context.patch](upstream/model-context.patch) 直接修改 agent-core、原生会话、embedded 调用宿主、插件合同、HTTP trace 接纳与工具授权责任位置。
-
-在已安装工作区依赖的 Nous 仓库运行：
+固定源码与许可证见 [source.json](upstream/source.json) 和 [LICENSE](upstream/LICENSE)。[model-context.patch](upstream/model-context.patch) 改编实际调用宿主、原生会话与归档读取、发布模型目录和插件合同。在已安装工作区依赖的 Nous 仓库运行：
 
 ```sh
 node integrations/openclaw/build-upstream.mjs
 node integrations/openclaw/build.mjs
 ```
 
-第一条从固定源码应用补丁，以官方 `build-all package` 和自包含打包入口生成 `data/native/openclaw/` 正常 npm 包；包含官方包校验。使用 Linux systemd 用户 scope，将完整构建限制为 6 GiB 内存、512 MiB swap、2 核，Node 堆限制为 2 GiB。下载并发为 4。安装后使用普通 OpenClaw 启动入口。
+第一条用官方 `build-all package` 和自包含打包入口生成 `data/native/openclaw/` npm 包，完整构建限制为 6 GiB 内存、512 MiB swap、2 核。第二条生成 `data/native/plugins/nous-cognition/`。先通过正常包安装入口安装改编后的 OpenClaw，再安装插件。插件要求 `modelContext.version=1`。当前补丁的受影响源码场景已经通过；完整包构建由发行步骤执行。
 
-第二条使用工作区固定的 esbuild 产出独立插件 `data/native/plugins/nous-cognition/`，运行依赖已捆绑。先安装改编后的 OpenClaw 包，再通过原生插件安装入口安装该产物目录。插件要求宿主公开 `modelContext.version=1`。
-
-## 配置
+## 独立 Nous 配置
 
 OpenClaw `plugins.entries.nous-cognition`：
 
@@ -26,31 +22,49 @@ OpenClaw `plugins.entries.nous-cognition`：
   "enabled": true,
   "hooks": { "allowConversationAccess": true, "allowPromptInjection": true, "timeoutMs": 120000 },
   "config": {
+    "runtimeId": "openclaw-local",
     "baseURL": "http://127.0.0.1:4333",
     "tokenEnv": "NOUS_SERVICE_TOKEN",
-    "installationId": "local-openclaw",
+    "installationId": "<actual-nous-installation-id>",
     "modelResources": { "<provider>/<model>": "<registered-nous-model-resource-id>" },
     "bindings": {
-      "main": { "subjectId": "<subject-id>", "consumer": "worker", "consumerId": "main", "purpose": "worker", "audience": [], "billing": "nous" }
+      "main": {
+        "authorityRef": "delegation:<registered-leaf-id>",
+        "subjectId": "<subject-id>",
+        "consumer": { "kind": "worker", "host": "openclaw-local", "id": "main" },
+        "purpose": "worker",
+        "audience": [],
+        "billing": "nous"
+      }
     }
   }
 }
 ```
 
-服务令牌从 SecretRoot 或宿主环境供给。服务身份授予对应主体的材料、上下文、接触与模型调用权限。`modelResources` 映射实际提供方和模型至正式资源，压缩使用不同模型时也须登记。联合运行由 Hept 承担专业任务费用时，该绑定改用 `billing:"external"`；Hept 插件仍在同一原生派发边界执行预算与计费。
+`installationId` 是目标 Nous 安装身份。binding 指向已登记的叶委派；Consumer、Subject、用途和听众与该委派一致。父 Host 令牌由 SecretRoot 或宿主环境供给，认知请求通过 `x-delegation-authority` 选择叶委派。材料范围和当前授权由 Nous 真实 owner 重验。SDK 和令牌只在本次请求内使用。
 
-原生宿主提供 agentId、父会话与调用身份；`consumerId` 与服务凭据 metadata 的 consumer 一致，子代理沿父会话使用同一工作范围。材料 scope 由服务可信入口确定。用途和听众来自受信绑定。调用使用正式 Nous Client，传送用途、听众、稳定幂等键与 traceparent。
+`nous.native` 安装配置登记同一 runtime 的 Gateway endpoint、SecretRef、网络 profile 和 agent→authorityRef。模型资源登记真实 native binding；`modelResources` 映射实际 provider/model，辅助摘要使用其他模型时也需显式登记。原生角色使用 `native_agent`，不替换 OpenClaw 自身 Prompt。
 
-## 接触、来源与恢复
+## 联合 Hept 配置
 
-prepare 发生在原生投影和压缩后。只将本次新增原生输入的有界片段作为当前材料，图像原始字节通过正式 blob 操作保存。整个历史仍由原生宿主持有。已有历史的来源引用通过 `requiredSources` 重新检查当前政策；原生压缩摘要保留这些依赖。外部 session 文档作为稳定来源根，调用与原生 transcript cursor 表示其修订。
+专业 Task 安装 [hept-worker](../../../Heptalogos/integrations/openclaw/README.md)。对应 agent 的认知 binding 只写：
 
-选定认知仅占本次临时 slot。真实调用前，原生会话先保存 prepared/dispatch 身份，正式费用 owner 再预留并标记派发；随后交回原生 provider。成功输出完成原生保存后，accept 保存具有直接输入依赖的输出材料，结算实际用量并接纳 Encounter。辅助摘要的输出保存在同一个原生会话的 custom entry。
+```json
+{ "billing": "external" }
+```
 
-接受失败保留原生输出。恢复读取同 callId 的完整终端响应，先补接纳，再允许新调用。未派发的 prepared 调用可退役；预算或权限拒绝发生在 provider 调用前，持久记录 not-dispatched 并结算 not_sent；已派发而没有完整响应，或已经接纳为 unknown 的调用，保持阻断直到核实原结果。当前段落输出不视为终端结果，所有接纳重投使用同一原生响应。
+四类认知操作通过现有 Gateway 方法 `hept.cognition.capture/prepare/accept/uploadBlob` 交给 Hept 插件。Hept 依据真实 session/run 和 Task 读取同一个 Worker，再用保存的 Nous 子委派访问正式认知 API。首次材料回执提供实际 Consumer 和 Subject。该模式不读取 Nous Host 令牌，逐调用费用只记在 Hept 的正式模型账本。
 
-上游补丁包含两个连续场景：实际 agent 工具循环与模型切换；原生 SQLite 会话恢复、辅助摘要、压缩来源继承和 unknown 阻断。运行：
+## 来源、回执与恢复
+
+prepare 位于原生投影和压缩之后。插件保存当前新增输入的有界文本及原图字节，已有历史来源通过 `requiredSources` 复验。稳定 session 文档是来源根，callId 与 transcript cursor 表示修订。原生 messages、tools 和系统说明继续由原生宿主保存；选定认知进入一次性 slot。
+
+原生先保存 PREPARED，再由正式模型 owner 预留并记派发，随后交回原生 provider。终端输出持久后，高优先级会计先保存实际 usage/费用；认知成功返回的 outputRef 写回同一原生终端 entry，低优先级会计再采用该精确引用。辅助摘要使用同一原生 custom entry。认知失败时保留已经发生的调用事实。
+
+恢复读取原 callId 的完整终端响应，完成同一接纳后才允许新调用。未派发调用记 not_sent；已派发无完整响应或结果 unknown 保持待核实。`sessions.modelCall` 经原生会话 owner 读取精确 UUID，并沿 retained window、压缩引用和原生归档验证旧 UUID 关系；终态旧调用可恢复，归档调用不能重新派发。接口不返回 Prompt、工具正文、输出正文或凭据。
+
+受影响源码回归：
 
 ```sh
-node_modules/.bin/vitest run packages/agent-core/src/model-context.test.ts src/agents/embedded-agent-runner/run/attempt.model-context.test.ts --pool=forks --maxWorkers=1 --no-file-parallelism
+node_modules/.bin/vitest run src/agents/published-model-binding.test.ts src/gateway/server-methods/sessions-model-call.worker.test.ts src/agents/embedded-agent-runner/run/attempt.model-context.test.ts src/gateway/server-methods/sessions-get.worker.test.ts src/gateway/server-methods-list.test.ts src/gateway/agent-turn/agent-wait-dedupe.test.ts --pool=forks --maxWorkers=1 --no-file-parallelism
 ```

@@ -16,5 +16,5 @@
 *.7z -text
 *.wasm -text
 *.bin -text
-packages/openclaw/patches/*.patch whitespace=-space-before-tab
-packages/protocol-ts/src/generated/** whitespace=-blank-at-eof
+*.patch whitespace=-blank-at-eol,-space-before-tab
+packages/client/src/generated/** whitespace=-blank-at-eof,-blank-at-eol

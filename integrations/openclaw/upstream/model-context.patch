@@ -437,6 +437,49 @@ index 640b2d0f..6d0a597b 100644
    role: "compactionSummary";
    /** Summary text inserted back into model context. */
    summary: string;
+diff --git a/packages/gateway-protocol/src/public-schema.ts b/packages/gateway-protocol/src/public-schema.ts
+index 4a479488..8afa59b3 100644
+--- a/packages/gateway-protocol/src/public-schema.ts
++++ b/packages/gateway-protocol/src/public-schema.ts
+@@ -174,6 +174,7 @@ export {
+   SessionsStorageStatusResultSchema,
+   SessionsPreviewParamsSchema,
+   SessionsDescribeParamsSchema,
++  SessionsModelCallParamsSchema,
+   SessionsResolveCandidateSchema,
+   SessionsResolveParamsSchema,
+   SessionsResolveResultSchema,
+diff --git a/packages/gateway-protocol/src/schema/sessions.ts b/packages/gateway-protocol/src/schema/sessions.ts
+index f4f9ba70..7393c1f7 100644
+--- a/packages/gateway-protocol/src/schema/sessions.ts
++++ b/packages/gateway-protocol/src/schema/sessions.ts
+@@ -428,6 +428,14 @@ export const SessionsDescribeParamsSchema = closedObject({
+   includeLastMessage: Type.Optional(Type.Boolean()),
+ });
+ 
++export const SessionsModelCallParamsSchema = closedObject({
++  key: NonEmptyString,
++  agentId: Type.Optional(NonEmptyString),
++  sessionId: NonEmptyString,
++  runId: NonEmptyString,
++  callId: NonEmptyString,
++});
++
+ export const SessionWorktreeInfoSchema = closedObject({
+   id: NonEmptyString,
+   path: NonEmptyString,
+diff --git a/packages/gateway-protocol/src/validator-registry.ts b/packages/gateway-protocol/src/validator-registry.ts
+index 8857f8bc..1f585490 100644
+--- a/packages/gateway-protocol/src/validator-registry.ts
++++ b/packages/gateway-protocol/src/validator-registry.ts
+@@ -282,6 +282,7 @@ export const validateSessionsCleanupParams = compile(S.SessionsCleanupParamsSche
+ export const validateSessionsStorageParams = compile(S.SessionsStorageParamsSchema);
+ export const validateSessionsPreviewParams = compile(S.SessionsPreviewParamsSchema);
+ export const validateSessionsDescribeParams = compile(S.SessionsDescribeParamsSchema);
++export const validateSessionsModelCallParams = compile(S.SessionsModelCallParamsSchema);
+ export const validateSessionsResolveParams = compile(S.SessionsResolveParamsSchema);
+ export const validateSessionsFilesListParams = compile(S.SessionsFilesListParamsSchema);
+ export const validateSessionsFilesGetParams = compile(S.SessionsFilesGetParamsSchema);
 diff --git a/packages/llm-core/src/types.ts b/packages/llm-core/src/types.ts
 index 19318703..596668c9 100644
 --- a/packages/llm-core/src/types.ts
@@ -655,10 +698,10 @@ index c3708574..0a20a35a 100644
        removeToolResultGuard();
 diff --git a/src/agents/embedded-agent-runner/run/attempt.model-context.test.ts b/src/agents/embedded-agent-runner/run/attempt.model-context.test.ts
 new file mode 100644
-index 00000000..66321b17
+index 00000000..820fa6a3
 --- /dev/null
 +++ b/src/agents/embedded-agent-runner/run/attempt.model-context.test.ts
-@@ -0,0 +1,256 @@
+@@ -0,0 +1,378 @@
 +import path from "node:path";
 +import { expect, it, vi } from "vitest";
 +import {
@@ -671,6 +714,8 @@ index 00000000..66321b17
 +import { convertToLlm } from "../../../../packages/agent-core/src/harness/messages.js";
 +import { replaceSessionEntry } from "../../../config/sessions/session-accessor.js";
 +import { SessionManager } from "../../../plugin-sdk/agent-sessions.js";
++import { createHookRunner } from "../../../plugins/hooks.js";
++import { createEmptyPluginRegistry } from "../../../plugins/registry-empty.js";
 +import { withOpenClawTestState } from "../../../test-utils/openclaw-test-state.js";
 +import { installModelContextHandoff } from "./attempt.model-context.js";
 +import type { EmbeddedRunAttemptParams } from "./types.js";
@@ -697,6 +742,10 @@ index 00000000..66321b17
 +      async (
 +        event: unknown,
 +        _context?: unknown,
++        _persist?: (accepted: {
++          outputRef?: unknown;
++          selectedOutputRefs?: unknown[];
++        }) => Promise<void>,
 +      ): Promise<{ outputRef?: unknown; selectedOutputRefs?: unknown[] } | undefined> => {
 +        if (event && typeof event === "object" && "output" in event) {
 +          const outputRef = {
@@ -707,12 +756,14 @@ index 00000000..66321b17
 +            id: "native-result",
 +            revision: 1,
 +          };
-+          return {
++          const accepted = {
 +            outputRef,
 +            selectedOutputRefs: [
-+              { ...outputRef, selector: { kind: "node", nodeId: "/content/0/text" } },
++              { ...outputRef, selector: { kind: "node", pointer: "/content/0/text" } },
 +            ],
 +          };
++          await _persist?.(accepted);
++          return accepted;
 +        }
 +      },
 +    ),
@@ -832,7 +883,7 @@ index 00000000..66321b17
 +        message: {
 +          modelContext: {
 +            outputRef: { id: "native-result" },
-+            selectedOutputRefs: [{ selector: { nodeId: "/content/0/text" } }],
++            selectedOutputRefs: [{ selector: { pointer: "/content/0/text" } }],
 +          },
 +        },
 +      });
@@ -915,13 +966,126 @@ index 00000000..66321b17
 +    }
 +  });
 +});
++
++it("saves known accounting before cognition failure and persists the accepted native output before late accounting", async () => {
++  await withOpenClawTestState({ label: "native-accepted-output" }, async (state) => {
++    const target = {
++      agentId: "main",
++      sessionId: "accepted-output",
++      sessionKey: "agent:main:accepted-output",
++      storePath: path.join(state.agentDir("main"), "openclaw-agent.sqlite"),
++    };
++    await replaceSessionEntry(target, { sessionId: target.sessionId, updatedAt: 1 });
++    const manager = await SessionManager.openAsync(target, state.workspaceDir),
++      agent = new Agent({ streamFn: createTurnSequenceStream([]) }),
++      order: string[] = [];
++    const outputRef = {
++      product: "nous",
++      installationId: "fixture",
++      kind: "Material",
++      id: "saved-output",
++      revision: 1,
++    };
++    let captureFails = true,
++      physical = 0;
++    const registry = createEmptyPluginRegistry();
++    registry.typedHooks.push(
++      {
++        pluginId: "accounting",
++        source: "test",
++        hookName: "model_context_accept",
++        priority: 200,
++        conversationAccessAllowed: true,
++        handler: async () => {
++          order.push("cost");
++        },
++      },
++      {
++        pluginId: "cognition",
++        source: "test",
++        hookName: "model_context_accept",
++        priority: 100,
++        conversationAccessAllowed: true,
++        handler: async () => {
++          order.push("capture");
++          if (captureFails) throw new Error("capture unavailable");
++          return { outputRef };
++        },
++      },
++      {
++        pluginId: "accounting",
++        source: "test",
++        hookName: "model_context_accept",
++        priority: 0,
++        conversationAccessAllowed: true,
++        handler: async (event) => {
++          expect(event.accepted?.outputRef).toEqual(outputRef);
++          const reopened = await SessionManager.openAsync(target, state.workspaceDir);
++          const saved = reopened
++            .getBranch()
++            .findLast(
++              (entry) =>
++                entry.type === "custom" &&
++                entry.customType === "openclaw.model-context.auxiliary-output",
++            );
++          expect(
++            saved?.type === "custom" && (saved.data as { outputRef?: unknown }).outputRef,
++          ).toEqual(outputRef);
++          order.push("adopt");
++        },
++      },
++    );
++    const actual = createHookRunner(registry, { catchErrors: false }),
++      previous = runner.runModelContextAccept.getMockImplementation();
++    runner.runModelContextAccept.mockImplementation((event, ctx, persist) =>
++      actual.runModelContextAccept(event as never, ctx as never, persist),
++    );
++    const stop = installModelContextHandoff({
++      agent,
++      attempt: {
++        runId: "accepted-run",
++        sessionId: target.sessionId,
++        sessionKey: target.sessionKey,
++        workspaceDir: state.workspaceDir,
++      } as EmbeddedRunAttemptParams,
++      sessionManager: manager,
++      agentId: "main",
++    });
++    try {
++      const result = runSummarizationCompletion({
++        messages: [{ role: "user", content: "Earlier work", timestamp: 1 }],
++        prompt: "Summarize",
++        model: { ...model, contextWindow: 128000 },
++        maxTokens: 100,
++        apiKey: "fixture",
++        errorLabel: "compaction",
++        runtime: {
++          completeSimple: async () => {
++            physical++;
++            return makeAssistantMessage([{ type: "text", text: "Actual native response" }]);
++          },
++          modelContext: agent.modelContext,
++        },
++      });
++      await expect(result).rejects.toThrow("Required model context accept failed");
++      expect(order).toEqual(["cost", "capture"]);
++      expect(physical).toBe(1);
++      captureFails = false;
++      await agent.modelContext!.prepare({ model, outputTokens: 100, context: { messages: [] } });
++      expect(order).toEqual(["cost", "capture", "cost", "capture", "adopt"]);
++      expect(physical).toBe(1);
++    } finally {
++      stop();
++      if (previous) runner.runModelContextAccept.mockImplementation(previous);
++    }
++  });
++});
 diff --git a/src/agents/embedded-agent-runner/run/attempt.model-context.ts b/src/agents/embedded-agent-runner/run/attempt.model-context.ts
 new file mode 100644
-index 00000000..95cc756b
+index 00000000..748d909c
 --- /dev/null
 +++ b/src/agents/embedded-agent-runner/run/attempt.model-context.ts
-@@ -0,0 +1,370 @@
-+import { randomUUID } from "node:crypto";
+@@ -0,0 +1,413 @@
 +import type { AssistantMessage } from "@openclaw/llm-core";
 +import { isProviderRefusalAssistantError } from "@openclaw/llm-core/diagnostics";
 +import { getActiveDiagnosticTraceContext } from "../../../infra/diagnostic-trace-context.js";
@@ -935,6 +1099,7 @@ index 00000000..95cc756b
 +import { estimateTokens } from "../../runtime/index.js";
 +import type { guardSessionManager } from "../../session-tool-result-guard-wrapper.js";
 +import type { AgentSession } from "../../sessions/index.js";
++import { createManagedSessionId } from "../../sessions/session-manager-id.js";
 +import { withSessionManagerWrite } from "../../sessions/session-manager-write-admission.js";
 +import { rewriteTranscriptEntriesInSessionManager } from "../transcript-rewrite.js";
 +import type { EmbeddedRunAttemptParams } from "./types.js";
@@ -1057,22 +1222,32 @@ index 00000000..95cc756b
 +    });
 +  };
 +  const settle = async (record: Prepared, output: AssistantMessage, entryId?: string) => {
-+    const accepted = await required("accept", () =>
-+      runner.runModelContextAccept(
-+        {
-+          ...record,
-+          traceparent: record.invocation.traceparent,
-+          sessionId: attempt.sessionId,
-+          output,
-+          ...(entryId ? { transcriptEntryId: entryId } : {}),
-+        },
-+        { ...context, runId: record.runId },
-+      ),
-+    );
-+    if (accepted?.outputRef && entryId) {
-+      const entry = sessionManager.getBranch().find((candidate) => candidate.id === entryId);
++    const persistAccepted = async (accepted: {
++      outputRef?: unknown;
++      selectedOutputRefs?: unknown[];
++    }) => {
++      if (!accepted.outputRef) return;
++      const entries = sessionManager.getBranch();
++      const entry =
++        entries.findLast(
++          (candidate) =>
++            candidate.type === "message" &&
++            candidate.message.role === "assistant" &&
++            candidate.message.modelContext?.callId === record.callId &&
++            candidate.message.modelContext.terminal,
++        ) ??
++        entries.find(
++          (candidate) =>
++            candidate.type === "custom" &&
++            candidate.customType === AUXILIARY_OUTPUT &&
++            (candidate.data as { callId?: string }).callId === record.callId,
++        );
++      if (!entry)
++        throw new AgentHarnessPreflightError(
++          "Native accepted output has no persisted terminal entry",
++        );
 +      if (
-+        entry?.type === "message" &&
++        entry.type === "message" &&
 +        entry.message.role === "assistant" &&
 +        entry.message.modelContext
 +      ) {
@@ -1084,7 +1259,9 @@ index 00000000..95cc756b
 +        await withSessionManagerWrite(sessionManager, () =>
 +          rewriteTranscriptEntriesInSessionManager({
 +            sessionManager,
-+            replacements: [{ entryId, message: { ...entry.message, modelContext: metadata } }],
++            replacements: [
++              { entryId: entry.id, message: { ...entry.message, modelContext: metadata } },
++            ],
 +            preserveReplacementCompactionReplay: true,
 +          }),
 +        );
@@ -1095,8 +1272,39 @@ index 00000000..95cc756b
 +            message.modelContext.terminal
 +          )
 +            message.modelContext = metadata;
++      } else if (entry.type === "custom") {
++        await withSessionManagerWrite(sessionManager, () =>
++          rewriteTranscriptEntriesInSessionManager({
++            sessionManager,
++            replacements: [],
++            customDataReplacements: [
++              {
++                entryId: entry.id,
++                data: {
++                  ...(entry.data as object),
++                  outputRef: accepted.outputRef,
++                  selectedOutputRefs: accepted.selectedOutputRefs,
++                },
++              },
++            ],
++            preserveReplacementCompactionReplay: true,
++          }),
++        );
 +      }
-+    }
++    };
++    const accepted = await required("accept", () =>
++      runner.runModelContextAccept(
++        {
++          ...record,
++          traceparent: record.invocation.traceparent,
++          sessionId: attempt.sessionId,
++          output,
++          ...(entryId ? { transcriptEntryId: entryId } : {}),
++        },
++        { ...context, runId: record.runId },
++        persistAccepted,
++      ),
++    );
 +    const unknown =
 +      (output.stopReason === "error" || output.stopReason === "aborted") &&
 +      !isProviderRefusalAssistantError(output);
@@ -1191,7 +1399,7 @@ index 00000000..95cc756b
 +    async prepare({ model, role, context: current, outputTokens, signal }) {
 +      await required("recovery", acceptPending);
 +      signal?.throwIfAborted();
-+      const callId = `${attempt.runId}:${randomUUID()}`;
++      const callId = `${attempt.runId}:${createManagedSessionId()}`;
 +      const baseEstimate =
 +        current.messages.reduce((sum, message) => sum + estimateTokens(message), 0) +
 +        estimateTokens({
@@ -1460,6 +1668,277 @@ index 75c90dd9..5af9333c 100644
      // Observer or handle-release failures after commit must not trigger a
      // second client compaction of the already replaced context.
      if (compactionCommitted) {
+diff --git a/src/agents/embedded-agent-runner/transcript-rewrite.ts b/src/agents/embedded-agent-runner/transcript-rewrite.ts
+index c1ce8b53..6d61515b 100644
+--- a/src/agents/embedded-agent-runner/transcript-rewrite.ts
++++ b/src/agents/embedded-agent-runner/transcript-rewrite.ts
+@@ -25,14 +25,25 @@ function unchangedRewrite(reason: string): TranscriptRewriteResult {
+ function findTranscriptRewriteMatches(
+   branch: readonly SessionBranchEntry[],
+   replacementsById: ReadonlyMap<string, AgentMessage>,
++  customById: ReadonlyMap<string, { data: unknown }>,
+ ): { matchedIndices: number[]; bytesFreed: number } {
+   const matchedIndices: number[] = [];
+   let bytesFreed = 0;
+ 
+   for (const [index, entry] of branch.entries()) {
+-    if (entry.type !== "message") {
++    if (entry.type === "custom") {
++      const replacement = customById.get(entry.id);
++      if (replacement && JSON.stringify(entry.data) !== JSON.stringify(replacement.data)) {
++        matchedIndices.push(index);
++        bytesFreed += Math.max(
++          0,
++          Buffer.byteLength(JSON.stringify(entry.data) ?? "") -
++            Buffer.byteLength(JSON.stringify(replacement.data) ?? ""),
++        );
++      }
+       continue;
+     }
++    if (entry.type !== "message") continue;
+     const replacement = replacementsById.get(entry.id);
+     if (!replacement) {
+       continue;
+@@ -62,6 +73,7 @@ async function appendBranchEntry(params: {
+   rewrittenEntryIds: ReadonlyMap<string, string>;
+   appendMessage: RewriteMessageAppender;
+   replacement?: AgentMessage;
++  customReplacement?: { data: unknown };
+ }): Promise<string> {
+   const { sessionManager, entry, rewrittenEntryIds, appendMessage } = params;
+   switch (entry.type) {
+@@ -98,7 +110,10 @@ async function appendBranchEntry(params: {
+     case "model_change":
+       return sessionManager.appendModelChange(entry.provider, entry.modelId);
+     case "custom":
+-      return sessionManager.appendCustomEntryAsync(entry.customType, entry.data);
++      return sessionManager.appendCustomEntryAsync(
++        entry.customType,
++        params.customReplacement ? params.customReplacement.data : entry.data,
++      );
+     case "custom_message":
+       return sessionManager.appendCustomMessageEntryAsync(
+         entry.customType,
+@@ -130,6 +145,7 @@ async function appendBranchEntry(params: {
+ export async function rewriteTranscriptEntriesInSessionManager(params: {
+   sessionManager: SessionManager;
+   replacements: TranscriptRewriteReplacement[];
++  customDataReplacements?: { entryId: string; data: unknown }[];
+   /** Preserve a checkpoint freshly captured on an explicit replacement. */
+   preserveReplacementCompactionReplay?: boolean;
+ }): Promise<TranscriptRewriteResult> {
+@@ -143,7 +159,10 @@ export async function rewriteTranscriptEntriesInSessionManager(params: {
+           : stripStalePrefixReplay(replacement.message),
+       ]),
+   );
+-  if (replacementsById.size === 0) {
++  const customById = new Map(
++    params.customDataReplacements?.map((item) => [item.entryId, { data: item.data }]),
++  );
++  if (replacementsById.size === 0 && customById.size === 0) {
+     return unchangedRewrite("no replacements requested");
+   }
+ 
+@@ -155,6 +174,7 @@ export async function rewriteTranscriptEntriesInSessionManager(params: {
+   const { matchedIndices, bytesFreed } = findTranscriptRewriteMatches(
+     activeBranch,
+     replacementsById,
++    customById,
+   );
+ 
+   if (matchedIndices.length === 0) {
+@@ -174,8 +194,8 @@ export async function rewriteTranscriptEntriesInSessionManager(params: {
+   const firstMatchedIndex = matchedIndices.at(0);
+   const firstMatchedEntry =
+     firstMatchedIndex === undefined ? undefined : branch.at(firstMatchedIndex);
+-  // matchedIndices only contains indices of branch "message" entries.
+-  if (!firstMatchedEntry || firstMatchedEntry.type !== "message") {
++  // Both native messages and custom result envelopes use the same admitted rewrite.
++  if (!firstMatchedEntry || !["message", "custom"].includes(firstMatchedEntry.type)) {
+     return unchangedRewrite("invalid first rewrite target");
+   }
+ 
+@@ -205,6 +225,7 @@ export async function rewriteTranscriptEntriesInSessionManager(params: {
+       rewrittenEntryIds,
+       appendMessage,
+       replacement: entry.type === "message" ? replacementsById.get(entry.id) : undefined,
++      customReplacement: entry.type === "custom" ? customById.get(entry.id) : undefined,
+     });
+     rewrittenEntryIds.set(entry.id, newEntryId);
+   }
+diff --git a/src/agents/published-model-binding.test.ts b/src/agents/published-model-binding.test.ts
+new file mode 100644
+index 00000000..ed625695
+--- /dev/null
++++ b/src/agents/published-model-binding.test.ts
+@@ -0,0 +1,67 @@
++import { expect, it, vi } from "vitest";
++const state = vi.hoisted(() => ({
++  config: {
++    agents: {
++      defaults: {
++        model: { primary: "fixture/selected" },
++        modelPolicy: { allow: ["fixture/selected"] },
++      },
++    },
++  },
++  current: true,
++  model: {
++    provider: "fixture",
++    id: "selected",
++    name: "Selected",
++    api: "openai-completions",
++    baseUrl: "https://provider.invalid/v1",
++    input: ["text", "image"],
++    reasoning: true,
++    contextWindow: 64000,
++    maxTokens: 4096,
++    headers: { authorization: "fixture-private-key" },
++    compat: { supportsTools: false },
++  },
++  createStores: vi.fn(() => {
++    throw new Error("Credential stores must not be resolved by a metadata read");
++  }),
++}));
++vi.mock("../config/config.js", () => ({ getRuntimeConfig: () => state.config }));
++vi.mock("./prepared-model-catalog.js", () => ({
++  getPublishedPreparedModelCatalogOwnerSnapshot: () => ({
++    isCurrent: () => state.current,
++    metadataSnapshot: { plugins: [], owners: { modelIdNormalizationPolicies: new Map() } },
++    modelCatalog: {
++      entries: [{ provider: "fixture", id: "selected", name: "Selected" }],
++      routeVariants: [],
++    },
++    findConfiguredRuntimeModel: (provider: string, id: string) =>
++      provider === state.model.provider && id === state.model.id ? state.model : undefined,
++    createStores: state.createStores,
++  }),
++}));
++import { readPublishedModelBinding } from "./published-model-binding.js";
++it("projects the published default and exact route, current policy and revision without acquiring credentials", () => {
++  const first = readPublishedModelBinding({ agentId: "main" });
++  expect(first).toMatchObject({
++    provider: "fixture",
++    modelId: "selected",
++    contextWindow: 64000,
++    maxTokens: 4096,
++    supportsTools: false,
++    reasoning: true,
++    input: ["text", "image"],
++  });
++  expect(JSON.stringify(first)).not.toMatch(/private-key|authorization|provider.invalid|baseUrl/);
++  state.model.baseUrl = "https://replacement.invalid/v1";
++  expect(
++    readPublishedModelBinding({ agentId: "main", provider: "fixture", modelId: "selected" })
++      .configRevision,
++  ).not.toBe(first.configRevision);
++  expect(() =>
++    readPublishedModelBinding({ agentId: "main", provider: "fixture", modelId: "blocked" }),
++  ).toThrow("outside this agent's current model policy");
++  state.current = false;
++  expect(() => readPublishedModelBinding({ agentId: "main" })).toThrow("not currently published");
++  expect(state.createStores).not.toHaveBeenCalled();
++});
+diff --git a/src/agents/published-model-binding.ts b/src/agents/published-model-binding.ts
+new file mode 100644
+index 00000000..1c2787d9
+--- /dev/null
++++ b/src/agents/published-model-binding.ts
+@@ -0,0 +1,81 @@
++/** Read-only projection of one lifecycle-owned executable model; never discovers or resolves secrets. */
++import { createHash } from "node:crypto";
++import { getRuntimeConfig } from "../config/config.js";
++import { resolveRuntimeConfigCacheKey } from "../config/runtime-snapshot.js";
++import type { ProviderRuntimeModel } from "../plugins/provider-runtime-model.types.js";
++import { resolveDefaultModelForAgent } from "./model-selection-config.js";
++import { getModelRefStatus } from "./model-selection-shared.js";
++import { supportsModelTools } from "./model-tool-support.js";
++import { getPublishedPreparedModelCatalogOwnerSnapshot } from "./prepared-model-catalog.js";
++
++export type PublishedModelBinding = {
++  agentId: string;
++  provider: string;
++  modelId: string;
++  configRevision: string;
++  input: readonly string[];
++  reasoning: boolean;
++  supportsTools: boolean;
++  contextWindow?: number;
++  maxTokens?: number;
++};
++export function readPublishedModelBinding(input: {
++  agentId: string;
++  provider?: string;
++  modelId?: string;
++}): PublishedModelBinding {
++  const config = getRuntimeConfig(),
++    owner = getPublishedPreparedModelCatalogOwnerSnapshot({ agentId: input.agentId, config });
++  if (!owner?.isCurrent()) throw new Error("Native model owner is not currently published");
++  const defaultModel = resolveDefaultModelForAgent({
++    cfg: config,
++    agentId: input.agentId,
++    manifestPlugins: owner.metadataSnapshot,
++    allowPluginNormalization: false,
++  });
++  if ((input.provider === undefined) !== (input.modelId === undefined))
++    throw new Error("Native model selection requires both provider and modelId");
++  const provider = input.provider ?? defaultModel.provider;
++  const modelId = input.modelId ?? defaultModel.model;
++  const status = getModelRefStatus({
++    cfg: config,
++    agentId: input.agentId,
++    catalog: owner.modelCatalog.entries,
++    defaultProvider: defaultModel.provider,
++    defaultModel,
++    manifestPlugins: owner.metadataSnapshot,
++    ref: { provider, model: modelId },
++  });
++  if (!status.allowed)
++    throw new Error("Native model binding is outside this agent's current model policy");
++  let model = owner.findConfiguredRuntimeModel(provider, modelId);
++  if (!model) {
++    const candidates = [...(owner.readPublishedModels?.()?.values() ?? [])]
++      .flat()
++      .filter((row) => row.provider === provider && row.id === modelId);
++    const routes = new Map(candidates.map((row) => [JSON.stringify([row.api, row.baseUrl]), row]));
++    if (routes.size !== 1)
++      throw new Error("Native model binding has no unique published executable route");
++    model = routes.values().next().value as ProviderRuntimeModel | undefined;
++  }
++  if (!model || model.provider !== provider || model.id !== modelId)
++    throw new Error("Native model binding is not published for this resource");
++  const positive = (value: unknown) =>
++    typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : undefined;
++  const facts = {
++    agentId: input.agentId,
++    provider: model.provider,
++    modelId: model.id,
++    input: [...model.input],
++    reasoning: model.reasoning,
++    supportsTools: supportsModelTools(model),
++    contextWindow: positive(model.contextWindow),
++    maxTokens: positive(model.maxTokens),
++  };
++  const routeDigest = createHash("sha256")
++    .update(JSON.stringify({ ...facts, api: model.api, baseUrl: model.baseUrl }))
++    .digest("hex");
++  if (!owner.isCurrent() || getRuntimeConfig() !== config)
++    throw new Error("Native model binding changed during read");
++  return { ...facts, configRevision: `${resolveRuntimeConfigCacheKey(config)}:${routeDigest}` };
++}
+diff --git a/src/agents/run-wait.types.ts b/src/agents/run-wait.types.ts
+index 34446780..25d39c28 100644
+--- a/src/agents/run-wait.types.ts
++++ b/src/agents/run-wait.types.ts
+@@ -3,6 +3,8 @@ import type { AgentRunTerminalReplySnapshot } from "./agent-run-terminal-reply.t
+ 
+ /** Normalized terminal or pending state returned by `agent.wait`. */
+ export type AgentWaitResult = {
++  /** Actual run-to-session association from the native run owner, absent when unconfirmed. */
++  run?: { runId: string; sessionKey: string; sessionId?: string; agentId?: string };
+   status: "ok" | "timeout" | "error" | "pending";
+   error?: string;
+   /** Set locally when the wait RPC fails; terminal run text is never retry evidence. */
 diff --git a/src/agents/sessions/agent-session-compaction.ts b/src/agents/sessions/agent-session-compaction.ts
 index 405b25dc..0d0a0c3c 100644
 --- a/src/agents/sessions/agent-session-compaction.ts
@@ -1694,6 +2173,464 @@ index b96b30de..90aca1ba 100644
        fromHook,
      };
    }
+diff --git a/src/config/sessions/session-accessor.sqlite-archive-read.ts b/src/config/sessions/session-accessor.sqlite-archive-read.ts
+index ad2255e8..aea3ddd7 100644
+--- a/src/config/sessions/session-accessor.sqlite-archive-read.ts
++++ b/src/config/sessions/session-accessor.sqlite-archive-read.ts
+@@ -42,6 +42,10 @@ import type {
+ } from "./session-accessor.sqlite-archive-types.js";
+ import { MAX_VISIBLE_MESSAGE_MAX_MESSAGES } from "./session-accessor.sqlite-visible-cursor.js";
+ import type { TranscriptEvent } from "./session-accessor.types.js";
++import {
++  collectSessionModelCallFacts,
++  projectSessionModelCallEvent,
++} from "./session-model-call-read.js";
+ import { readSessionTranscriptHeaderStartedAt } from "./transcript-header.js";
+ 
+ type ArchiveDatabase = Pick<DB, "session_transcript_archives">;
+@@ -173,6 +177,7 @@ export async function readTranscriptArchiveFinalInWorker(
+     ).toReversed();
+     const result: TranscriptArchiveReadResult = {};
+     for (const archive of archives) {
++      if (plan.modelCall && archive.sessionKey !== plan.sessionKey) continue;
+       if (
+         plan.sessionId
+           ? archive.sessionId !== plan.sessionId
+@@ -195,17 +200,41 @@ export async function readTranscriptArchiveFinalInWorker(
+       if (hashSessionArchiveBytes(row.archive_blob) !== row.archive_sha256) {
+         throw new Error("Archived transcript bytes do not match their registered hash.");
+       }
++      const modelValues: Record<string, unknown>[] = [];
+       await scanArchivedTranscript(
+         row.archive_blob,
+         row.encoding === "zstd",
+         archive.sessionId,
+         (event) => {
++          if (plan.modelCall) {
++            const value = projectSessionModelCallEvent(event, plan.modelCall.callId);
++            if (value) {
++              if (modelValues.length >= 4096)
++                throw new Error("Native archived model call exceeds its bounded metadata read");
++              modelValues.push(value);
++            }
++            return;
++          }
+           if (isVisibleAssistantResultEventForRun(event, plan.runId)) {
+             result.event = event;
+           }
+         },
+       );
+-      if (result.event !== undefined) {
++      if (plan.modelCall && plan.sessionId) {
++        result.modelCall = collectSessionModelCallFacts(
++          modelValues,
++          {
++            agentId: plan.logicalAgentId,
++            sessionId: plan.sessionId,
++            sessionKey: plan.sessionKey,
++            storePath: plan.databasePath,
++          },
++          { callId: plan.modelCall.callId, runId: plan.runId },
++          plan.modelCall.currentSessionId,
++          () => false,
++        );
++      }
++      if (result.event !== undefined || result.modelCall) {
+         break;
+       }
+     }
+diff --git a/src/config/sessions/session-accessor.sqlite-archive-types.ts b/src/config/sessions/session-accessor.sqlite-archive-types.ts
+index ed1a529c..996d9831 100644
+--- a/src/config/sessions/session-accessor.sqlite-archive-types.ts
++++ b/src/config/sessions/session-accessor.sqlite-archive-types.ts
+@@ -4,6 +4,7 @@ import type { SessionLifecycleArchivedTranscript } from "./session-accessor.life
+ import type { SessionStateDeleteSnapshot } from "./session-accessor.sqlite-delete-snapshot.types.js";
+ import type { TranscriptEvent } from "./session-accessor.types.js";
+ import type { SessionArchivePruningRead } from "./session-history-archive-pruning.types.js";
++import type { SessionModelCallFacts } from "./session-transcript-hydration.types.js";
+ 
+ export type SessionStateDeletePlan = {
+   agentId: string;
+@@ -81,6 +82,7 @@ export type TranscriptArchiveReadPlan = {
+   sessionId?: string;
+   sessionKey: string;
+   runId: string;
++  modelCall?: { callId: string; currentSessionId: string };
+   expectedIdentity: DatabasePathIdentity | undefined;
+ };
+ 
+@@ -93,7 +95,10 @@ export type TranscriptArchivePresenceRead = {
+   expectedIdentity: DatabasePathIdentity;
+ };
+ 
+-export type TranscriptArchiveReadResult = { event?: TranscriptEvent };
++export type TranscriptArchiveReadResult = {
++  event?: TranscriptEvent;
++  modelCall?: SessionModelCallFacts | null;
++};
+ 
+ export type TranscriptArchivePageBinding = {
+   sessionId: string;
+diff --git a/src/config/sessions/session-model-call-read.ts b/src/config/sessions/session-model-call-read.ts
+new file mode 100644
+index 00000000..fb1558ca
+--- /dev/null
++++ b/src/config/sessions/session-model-call-read.ts
+@@ -0,0 +1,230 @@
++import { sql } from "kysely";
++import {
++  executeSqliteQueryTakeFirstSync,
++  iterateSqliteQuerySync,
++} from "../../infra/kysely-sync.js";
++import type { OpenClawAgentReadOnlyDatabase } from "../../state/openclaw-agent-db-readonly.js";
++import { readSessionEntryRow } from "./session-accessor.sqlite-entry-store.js";
++import { collectSessionStateIdsForEntry } from "./session-accessor.sqlite-references.js";
++import { getSessionKysely } from "./session-accessor.sqlite-scope.js";
++import { isTranscriptEntryOnActivePathInTransaction } from "./session-accessor.sqlite-transcript-parent.js";
++import type { SessionTranscriptRuntimeTarget } from "./session-accessor.types.js";
++import type { SessionModelCallFacts } from "./session-transcript-hydration.types.js";
++import { transcriptEventJsonSql } from "./transcript-payload.js";
++
++/** Runs inside the transcript owner's canonical, deferred read transaction. */
++export function readSessionModelCallInTransaction(
++  database: OpenClawAgentReadOnlyDatabase,
++  target: SessionTranscriptRuntimeTarget,
++  request: { callId: string; runId: string; sessionId: string },
++): SessionModelCallFacts | null {
++  const currentSessionId = target.sessionId;
++  if (request.sessionId !== currentSessionId) {
++    const entry = readSessionEntryRow(database, target.sessionKey)?.entry;
++    const retained = entry && collectSessionStateIdsForEntry(entry).includes(request.sessionId);
++    const window = executeSqliteQueryTakeFirstSync(
++      database.db,
++      getSessionKysely(database.db)
++        .selectFrom("session_windows")
++        .select("session_id")
++        .where("session_key", "=", target.sessionKey)
++        .where("session_id", "=", request.sessionId)
++        .limit(1),
++    );
++    if (!retained && !window) return null;
++  }
++  target = { ...target, sessionId: request.sessionId };
++  const event = transcriptEventJsonSql(database.db);
++  // Project metadata inside the native payload owner. Prepared views, message bodies,
++  // provider errors, credentials and arbitrary custom data never leave this read.
++  const rows = iterateSqliteQuerySync(
++    database.db,
++    getSessionKysely(database.db)
++      .selectFrom("transcript_events")
++      .select([
++        /* kysely-allow-raw: select only the handoff's documented metadata paths. */
++        sql<string>`json_object(
++          'id', json_extract(${event}, '$.id'),
++          'type', json_extract(${event}, '$.type'),
++          'customType', json_extract(${event}, '$.customType'),
++          'runId', json_extract(${event}, '$.data.runId'),
++          'role', json_extract(${event}, '$.data.role'),
++          'provider', json_extract(${event}, '$.data.invocation.provider'),
++          'modelId', json_extract(${event}, '$.data.invocation.model'),
++          'inputTokensEstimate', json_extract(${event}, '$.data.invocation.inputTokensEstimate'),
++          'outputTokens', json_extract(${event}, '$.data.invocation.outputTokens'),
++          'inputRefs', json_extract(${event}, '$.data.prepared.inputRefs'),
++          'outcome', json_extract(${event}, '$.data.outcome'),
++          'terminal', json_extract(${event}, '$.message.modelContext.terminal'),
++          'outputRef', coalesce(json_extract(${event}, '$.message.modelContext.outputRef'), json_extract(${event}, '$.data.outputRef')),
++          'selectedOutputRefs', coalesce(json_extract(${event}, '$.message.modelContext.selectedOutputRefs'), json_extract(${event}, '$.data.selectedOutputRefs')),
++          'providerRefused', EXISTS (SELECT 1 FROM json_each(coalesce(json_extract(${event}, '$.message.diagnostics'), json_extract(${event}, '$.data.output.diagnostics'), '[]')) WHERE json_extract(value, '$.type') = 'provider_refusal'),
++          'stopReason', coalesce(json_extract(${event}, '$.message.stopReason'), json_extract(${event}, '$.data.output.stopReason')),
++          'providerRequestId', coalesce(json_extract(${event}, '$.message.responseId'), json_extract(${event}, '$.data.output.responseId')),
++          'usage', coalesce(json_extract(${event}, '$.message.usage'), json_extract(${event}, '$.data.output.usage'))
++        )`.as("facts"),
++      ])
++      .where("session_id", "=", target.sessionId)
++      .where((eb) =>
++        eb.or([
++          /* kysely-allow-raw: exact native call identity in custom handoff entries. */
++          sql<boolean>`json_extract(${event}, '$.data.callId') = ${request.callId}`,
++          /* kysely-allow-raw: exact native call identity in assistant fragments. */
++          sql<boolean>`json_extract(${event}, '$.message.modelContext.callId') = ${request.callId}`,
++        ]),
++      )
++      .orderBy("seq", "asc")
++      .limit(4097),
++  );
++  return collectSessionModelCallFacts(
++    [...rows].map((row) => JSON.parse(row.facts) as Record<string, unknown>),
++    target,
++    request,
++    currentSessionId,
++    (id) =>
++      request.sessionId === currentSessionId &&
++      isTranscriptEntryOnActivePathInTransaction(database, target.sessionId, id),
++  );
++}
++
++export function collectSessionModelCallFacts(
++  values: Iterable<Record<string, unknown>>,
++  target: SessionTranscriptRuntimeTarget,
++  request: { callId: string; runId: string },
++  currentSessionId: string,
++  isActive: (id: string) => boolean,
++): SessionModelCallFacts | null {
++  let facts: SessionModelCallFacts | null = null;
++  let count = 0;
++  for (const value of values) {
++    if (++count > 4096) throw new Error("Native model call exceeds the bounded metadata read");
++    const id = typeof value.id === "string" ? value.id : undefined;
++    if (!id) throw new Error("Native model call entry has no identity");
++    if (value.type === "custom" && value.customType === "openclaw.model-context.prepared") {
++      if (
++        facts ||
++        value.runId !== request.runId ||
++        !request.callId.startsWith(`${request.runId}:`)
++      ) {
++        throw new Error("Native model call prepared identity is inconsistent");
++      }
++      if (
++        typeof value.provider !== "string" ||
++        typeof value.modelId !== "string" ||
++        !Number.isSafeInteger(value.inputTokensEstimate) ||
++        Number(value.inputTokensEstimate) < 0 ||
++        !Number.isSafeInteger(value.outputTokens) ||
++        Number(value.outputTokens) < 1
++      ) {
++        throw new Error("Native model call prepared metadata is incomplete");
++      }
++      facts = {
++        agentId: target.agentId,
++        sessionId: target.sessionId,
++        currentSessionId,
++        sessionKey: target.sessionKey,
++        callId: request.callId,
++        runId: request.runId,
++        prepared: {
++          entryId: id,
++          provider: value.provider,
++          modelId: value.modelId,
++          ...(typeof value.role === "string" ? { role: value.role } : {}),
++          inputTokensEstimate: Number(value.inputTokensEstimate),
++          outputTokens: Number(value.outputTokens),
++          inputRefs: Array.isArray(value.inputRefs) ? value.inputRefs : [],
++        },
++        active: isActive(id),
++        dispatched: false,
++        notDispatched: false,
++      };
++      continue;
++    }
++    if (!facts) continue;
++    if (value.type === "custom") {
++      if (value.customType === "openclaw.model-context.dispatched") facts.dispatched = true;
++      if (value.customType === "openclaw.model-context.not-dispatched") facts.notDispatched = true;
++      if (
++        value.customType === "openclaw.model-context.settled" &&
++        ["completed", "not_sent", "unknown"].includes(String(value.outcome))
++      ) {
++        facts.settlement = {
++          entryId: id,
++          outcome: value.outcome as "completed" | "not_sent" | "unknown",
++        };
++      }
++    }
++    if (
++      (value.type === "message" && value.terminal === 1) ||
++      (value.type === "custom" && value.customType === "openclaw.model-context.auxiliary-output")
++    ) {
++      const usage =
++        typeof value.usage === "string" ? (JSON.parse(value.usage) as unknown) : value.usage;
++      const checkedUsage =
++        usage &&
++        typeof usage === "object" &&
++        ["input", "output", "cacheRead", "cacheWrite"].every(
++          (key) =>
++            Number.isSafeInteger((usage as Record<string, unknown>)[key]) &&
++            Number((usage as Record<string, unknown>)[key]) >= 0,
++        )
++          ? (Object.fromEntries(
++              ["input", "output", "cacheRead", "cacheWrite"].map((key) => [
++                key,
++                (usage as Record<string, number>)[key],
++              ]),
++            ) as NonNullable<SessionModelCallFacts["terminal"]>["usage"])
++          : undefined;
++      facts.terminal = {
++        entryId: id,
++        providerRefused: value.providerRefused === 1,
++        ...(value.outputRef ? { outputRef: value.outputRef } : {}),
++        ...(Array.isArray(value.selectedOutputRefs)
++          ? { selectedOutputRefs: value.selectedOutputRefs }
++          : {}),
++        ...(typeof value.stopReason === "string" ? { stopReason: value.stopReason } : {}),
++        ...(typeof value.providerRequestId === "string"
++          ? { providerRequestId: value.providerRequestId }
++          : {}),
++        ...(checkedUsage ? { usage: checkedUsage } : {}),
++      };
++    }
++  }
++  return facts;
++}
++
++/** Project an already decoded archived event inside the native archive owner. */
++export function projectSessionModelCallEvent(
++  event: unknown,
++  callId: string,
++): Record<string, unknown> | undefined {
++  if (!event || typeof event !== "object") return;
++  const e = event as Record<string, any>,
++    data = e.data ?? {},
++    message = e.message ?? {};
++  if (data.callId !== callId && message.modelContext?.callId !== callId) return;
++  const output =
++    e.customType === "openclaw.model-context.auxiliary-output" ? (data.output ?? {}) : message;
++  return {
++    id: e.id,
++    type: e.type,
++    customType: e.customType,
++    runId: data.runId,
++    role: data.role,
++    provider: data.invocation?.provider,
++    modelId: data.invocation?.model,
++    inputTokensEstimate: data.invocation?.inputTokensEstimate,
++    outputTokens: data.invocation?.outputTokens,
++    inputRefs: data.prepared?.inputRefs,
++    outcome: data.outcome,
++    terminal: message.modelContext?.terminal === true ? 1 : 0,
++    stopReason: output.stopReason,
++    providerRequestId: output.responseId,
++    providerRefused: output.diagnostics?.some((row: any) => row.type === "provider_refusal")
++      ? 1
++      : 0,
++    usage: output.usage,
++    outputRef: message.modelContext?.outputRef ?? data.outputRef,
++    selectedOutputRefs: message.modelContext?.selectedOutputRefs ?? data.selectedOutputRefs,
++  };
++}
+diff --git a/src/config/sessions/session-transcript-hydration.types.ts b/src/config/sessions/session-transcript-hydration.types.ts
+index 2c9773d6..20b61219 100644
+--- a/src/config/sessions/session-transcript-hydration.types.ts
++++ b/src/config/sessions/session-transcript-hydration.types.ts
+@@ -19,6 +19,7 @@ import type { TranscriptEntryAnchor } from "./transcript-entry-anchor.js";
+ export type { PreparedSessionTranscriptHydration } from "./session-history-read.types.js";
+ 
+ export type SessionTranscriptMaintenanceRead =
++  | { operation: "model-call"; callId: string; runId: string; sessionId: string }
+   | { operation: "previous"; beforeSeq: number }
+   | { operation: "identity"; eventId: string }
+   | { operation: "version" }
+@@ -44,6 +45,39 @@ export type SessionTranscriptMaintenanceFacts = {
+   appendParentId?: string | null;
+   lifecycleRevision?: SessionTranscriptWriteScope["expectedLifecycleRevision"];
+   events?: TranscriptEvent[];
++  modelCall?: SessionModelCallFacts | null;
++};
++
++/** Provider handoff facts read from the native transcript, without prompt or output bodies. */
++export type SessionModelCallFacts = {
++  agentId: string;
++  sessionId: string;
++  currentSessionId: string;
++  sessionKey: string;
++  runId: string;
++  callId: string;
++  prepared: {
++    entryId: string;
++    provider: string;
++    modelId: string;
++    role?: string;
++    inputTokensEstimate: number;
++    outputTokens: number;
++    inputRefs: unknown[];
++  };
++  active: boolean;
++  dispatched: boolean;
++  notDispatched: boolean;
++  terminal?: {
++    entryId: string;
++    providerRefused: boolean;
++    outputRef?: unknown;
++    selectedOutputRefs?: unknown[];
++    stopReason?: string;
++    providerRequestId?: string;
++    usage?: { input: number; output: number; cacheRead: number; cacheWrite: number };
++  };
++  settlement?: { entryId: string; outcome: "completed" | "not_sent" | "unknown" };
+ };
+ 
+ export type SessionTranscriptHydrationWorkerResult =
+diff --git a/src/config/sessions/session-transcript-maintenance-read.ts b/src/config/sessions/session-transcript-maintenance-read.ts
+index 674a9f3e..78826364 100644
+--- a/src/config/sessions/session-transcript-maintenance-read.ts
++++ b/src/config/sessions/session-transcript-maintenance-read.ts
+@@ -15,6 +15,7 @@ import { resolveTranscriptMessageAppendParent } from "./session-accessor.sqlite-
+ import { readTranscriptContextVersionInTransaction } from "./session-accessor.sqlite-transcript-state.js";
+ import type { SessionTranscriptRuntimeTarget } from "./session-accessor.types.js";
+ import { readWithCanonicalSessionAdmission } from "./session-canonical-key.js";
++import { readSessionModelCallInTransaction } from "./session-model-call-read.js";
+ import type {
+   SessionTranscriptMaintenanceRead,
+   SessionTranscriptMaintenanceFacts,
+@@ -26,6 +27,14 @@ export function readSessionTranscriptMaintenance(
+   target: SessionTranscriptRuntimeTarget,
+   request: SessionTranscriptMaintenanceRead,
+ ): SessionTranscriptMaintenanceFacts {
++  if (request.operation === "model-call") {
++    return readWithCanonicalSessionAdmission(database, () =>
++      runSqliteDeferredTransactionSync(database.db, () => ({
++        kind: "transcript-maintenance" as const,
++        modelCall: readSessionModelCallInTransaction(database, target, request),
++      })),
++    );
++  }
+   if (request.operation === "previous") {
+     return {
+       kind: "transcript-maintenance",
+diff --git a/src/gateway/agent-turn/agent-wait-dedupe.test.ts b/src/gateway/agent-turn/agent-wait-dedupe.test.ts
+index e89ac0bf..5f020e49 100644
+--- a/src/gateway/agent-turn/agent-wait-dedupe.test.ts
++++ b/src/gateway/agent-turn/agent-wait-dedupe.test.ts
+@@ -318,6 +318,12 @@ describe("agent.wait gateway dedupe observations", () => {
+           status: "pending",
+           timeoutPhase: "queue",
+           providerStarted: false,
++          run: {
++            runId,
++            sessionKey: session.sessionKey,
++            sessionId: session.sessionId,
++            agentId: session.agentId,
++          },
+         };
+         expect(await invoke(owner)).toHaveBeenCalledWith(true, expected);
+         vi.setSystemTime(2_600_001);
+@@ -381,7 +387,16 @@ describe("agent.wait gateway dedupe observations", () => {
+           await vi.advanceTimersByTimeAsync(10);
+           await waiting;
+           if (transition === "compaction") {
+-            expect(respond).toHaveBeenCalledWith(true, { runId, status: "timeout" });
++            expect(respond).toHaveBeenCalledWith(true, {
++              runId,
++              status: "timeout",
++              run: {
++                runId,
++                sessionKey: session.sessionKey,
++                sessionId: "successor-session",
++                agentId: session.agentId,
++              },
++            });
+           } else {
+             expect(respond).toHaveBeenCalledWith(
+               false,
+diff --git a/src/gateway/methods/core-descriptors.ts b/src/gateway/methods/core-descriptors.ts
+index 48387a41..b8ea1881 100644
+--- a/src/gateway/methods/core-descriptors.ts
++++ b/src/gateway/methods/core-descriptors.ts
+@@ -722,4 +722,5 @@ export const CORE_GATEWAY_METHOD_SPECS = [
+   ["skills.workshop.changes", "skills", "operator.read", "2026.9"],
+   ["skills.workshop.archive", "skills", "operator.admin", "2026.9"],
+   ["skills.workshop.restore", "skills", "operator.admin", "2026.9"],
++  ["sessions.modelCall", "sessions-read", "operator.read", "2026.10", OBSERVATION],
+ ] as const satisfies readonly CoreGatewayMethodSpecRow[];
 diff --git a/src/gateway/server-http.ts b/src/gateway/server-http.ts
 index 92f89a05..810c8498 100644
 --- a/src/gateway/server-http.ts
@@ -1713,6 +2650,362 @@ index 92f89a05..810c8498 100644
        ),
      ).catch((error: unknown) => {
        console.error("[gateway-http] failed to finalize request:", error);
+diff --git a/src/gateway/server-methods/agent.ts b/src/gateway/server-methods/agent.ts
+index 22264258..fe0e3bec 100644
+--- a/src/gateway/server-methods/agent.ts
++++ b/src/gateway/server-methods/agent.ts
+@@ -56,7 +56,20 @@ const agentWaitHandler: GatewayRequestHandlers["agent.wait"] = async ({
+   }
+   const observation = await prepared.wait();
+   if (authorizeWait(observation.session)) {
+-    respond(true, observation.result);
++    const session = observation.session;
++    respond(true, {
++      ...observation.result,
++      ...(session?.sessionKey
++        ? {
++            run: {
++              runId: params.runId,
++              sessionKey: session.sessionKey,
++              ...(session.sessionId ? { sessionId: session.sessionId } : {}),
++              ...(session.agentId ? { agentId: session.agentId } : {}),
++            },
++          }
++        : {}),
++    });
+   }
+ };
+ 
+diff --git a/src/gateway/server-methods/request-authorization.ts b/src/gateway/server-methods/request-authorization.ts
+index 67377cf3..53a528e0 100644
+--- a/src/gateway/server-methods/request-authorization.ts
++++ b/src/gateway/server-methods/request-authorization.ts
+@@ -65,6 +65,7 @@ const startupReadMethods = new Set([
+   "sessions.list",
+   "sessions.resolve",
+   "sessions.describe",
++  "sessions.modelCall",
+   "models.list",
+ ]);
+ 
+diff --git a/src/gateway/server-methods/sessions-model-call.worker.test.ts b/src/gateway/server-methods/sessions-model-call.worker.test.ts
+new file mode 100644
+index 00000000..5cdc907d
+--- /dev/null
++++ b/src/gateway/server-methods/sessions-model-call.worker.test.ts
+@@ -0,0 +1,174 @@
++import path from "node:path";
++import { expect, it, vi } from "vitest";
++import {
++  deleteSessionEntryLifecycle,
++  replaceSessionEntrySync,
++  replaceTranscriptEvents,
++} from "../../config/sessions/session-accessor.js";
++import { withOpenClawTestState } from "../../test-utils/openclaw-test-state.js";
++import { sessionByKeyReadHandlers } from "./sessions-read-by-key.js";
++import {
++  identifiedClient,
++  initializeSessionReadContext,
++  requestContext,
++} from "./sessions-read-cache.test-support.js";
++
++it("reads actual prepared, dispatch and terminal facts through the native owner without transcript bodies", async () => {
++  await withOpenClawTestState({ scenario: "minimal" }, async (state) => {
++    const scope = {
++      agentId: "main",
++      sessionKey: "agent:main:model-call",
++      sessionId: "native-session-uuid",
++      storePath: path.join(state.agentDir("main"), "openclaw-agent.sqlite"),
++    };
++    const runId = "native-run",
++      callId = `${runId}:019a0000-0000-7000-8000-000000000001`;
++    replaceSessionEntrySync(scope, {
++      sessionId: scope.sessionId,
++      updatedAt: 1,
++      visibility: "shared",
++    });
++    const events = [
++      { type: "session", id: scope.sessionId },
++      {
++        type: "custom",
++        id: "prepared",
++        parentId: null,
++        customType: "openclaw.model-context.prepared",
++        data: {
++          runId,
++          callId,
++          role: "worker",
++          prepared: { view: { blocks: ["secret prompt body"] } },
++          invocation: {
++            provider: "native-provider",
++            model: "actual-model",
++            inputTokensEstimate: 42,
++            outputTokens: 128,
++          },
++        },
++      },
++    ];
++    await replaceTranscriptEvents(scope, events);
++    const context = requestContext({ agents: { entries: { main: {} } } });
++    await initializeSessionReadContext(context);
++    const read = async (sessionId = scope.sessionId) => {
++      const respond = vi.fn();
++      await sessionByKeyReadHandlers["sessions.modelCall"]!({
++        req: { type: "req", id: "call-facts", method: "sessions.modelCall" },
++        params: { key: scope.sessionKey, sessionId, runId, callId },
++        client: identifiedClient("synthetic-viewer"),
++        context,
++        respond,
++        isWebchatConnect: () => false,
++      });
++      expect(respond).toHaveBeenCalledOnce();
++      expect(respond.mock.calls[0]?.[0]).toBe(true);
++      return respond.mock.calls[0]?.[1];
++    };
++    expect(await read()).toMatchObject({
++      call: {
++        agentId: scope.agentId,
++        sessionKey: scope.sessionKey,
++        sessionId: scope.sessionId,
++        runId,
++        callId,
++        active: true,
++        dispatched: false,
++        notDispatched: false,
++        prepared: {
++          entryId: "prepared",
++          provider: "native-provider",
++          modelId: "actual-model",
++          inputTokensEstimate: 42,
++        },
++      },
++    });
++    expect(await read("another-session")).toEqual({ call: null });
++    await replaceTranscriptEvents(scope, [
++      ...events,
++      {
++        type: "custom",
++        id: "dispatch",
++        parentId: "prepared",
++        customType: "openclaw.model-context.dispatched",
++        data: { callId },
++      },
++      {
++        type: "message",
++        id: "terminal",
++        parentId: "dispatch",
++        message: {
++          role: "assistant",
++          content: [{ type: "text", text: "secret output body" }],
++          errorMessage: "secret provider body",
++          stopReason: "stop",
++          responseId: "provider-request",
++          modelContext: { callId, terminal: true },
++          usage: { input: 30, output: 12, cacheRead: 3, cacheWrite: 2, cost: { total: 999 } },
++        },
++      },
++      {
++        type: "custom",
++        id: "settled",
++        parentId: "terminal",
++        customType: "openclaw.model-context.settled",
++        data: { callId, outcome: "completed" },
++      },
++    ]);
++    const actual = await read();
++    expect(actual).toMatchObject({
++      call: {
++        dispatched: true,
++        terminal: {
++          entryId: "terminal",
++          providerRequestId: "provider-request",
++          usage: { input: 30, output: 12 },
++        },
++        settlement: { entryId: "settled", outcome: "completed" },
++      },
++    });
++    expect(JSON.stringify(actual)).not.toMatch(/secret|cost|999/);
++    const successor = { ...scope, sessionId: "successor-uuid" };
++    replaceSessionEntrySync(successor, {
++      sessionId: successor.sessionId,
++      previousSessionId: scope.sessionId,
++      updatedAt: 2,
++      visibility: "shared",
++    });
++    await replaceTranscriptEvents(successor, [{ type: "session", id: successor.sessionId }]);
++    expect(await read()).toMatchObject({
++      call: {
++        sessionId: scope.sessionId,
++        currentSessionId: successor.sessionId,
++        active: false,
++        terminal: { entryId: "terminal" },
++      },
++    });
++    const archived = await deleteSessionEntryLifecycle({
++      agentId: scope.agentId,
++      storePath: scope.storePath,
++      archiveTranscript: true,
++      target: { canonicalKey: scope.sessionKey, storeKeys: [scope.sessionKey] },
++    });
++    expect(archived.deleted).toBe(true);
++    const current = { ...scope, sessionId: "after-archive-uuid" };
++    replaceSessionEntrySync(current, {
++      sessionId: current.sessionId,
++      updatedAt: 3,
++      visibility: "shared",
++    });
++    await replaceTranscriptEvents(current, [{ type: "session", id: current.sessionId }]);
++    const recovered = await read();
++    expect(recovered).toMatchObject({
++      call: {
++        sessionId: scope.sessionId,
++        currentSessionId: current.sessionId,
++        active: false,
++        prepared: { provider: "native-provider" },
++        terminal: { entryId: "terminal" },
++      },
++    });
++    expect(JSON.stringify(recovered)).not.toMatch(/secret|cost|999/);
++  });
++});
+diff --git a/src/gateway/server-methods/sessions-read-by-key.ts b/src/gateway/server-methods/sessions-read-by-key.ts
+index ff21d00f..b5f59766 100644
+--- a/src/gateway/server-methods/sessions-read-by-key.ts
++++ b/src/gateway/server-methods/sessions-read-by-key.ts
+@@ -1,6 +1,12 @@
+ import { resolveIntegerOption } from "@openclaw/normalization-core/number-coercion";
+ import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
+-import { validateSessionsDescribeParams } from "../../../packages/gateway-protocol/src/index.js";
++import {
++  validateSessionsDescribeParams,
++  validateSessionsModelCallParams,
++} from "../../../packages/gateway-protocol/src/index.js";
++import { withSqliteTranscriptArchiveSession } from "../../config/sessions/session-accessor.sqlite-archive-session.js";
++import { runSqliteTranscriptArchiveReadWorker } from "../../config/sessions/session-accessor.sqlite-archive.js";
++import { prepareSessionTranscriptHydration } from "../../config/sessions/session-transcript-hydration.js";
+ import { isIncognitoSessionKey } from "../../routing/session-key.js";
+ import { projectOperatorModelRead } from "../operator-model-presentation.js";
+ import { hasOperatorBoundary } from "../operator-role-policy.js";
+@@ -77,14 +83,17 @@ export const sessionByKeyReadHandlers: GatewayRequestHandlers = {
+       },
+     );
+   },
+-  "sessions.get": async ({
+-    params,
+-    respond,
+-    context,
+-    client,
+-    signal,
+-    sessionMutationAuthorization,
+-  }) => {
++  "sessions.get": readByKey("messages"),
++  "sessions.modelCall": readByKey("model-call"),
++};
++
++function readByKey(mode: "messages" | "model-call"): GatewayRequestHandlers[string] {
++  return async ({ params, respond, context, client, signal, sessionMutationAuthorization }) => {
++    if (
++      mode === "model-call" &&
++      !assertValidParams(params, validateSessionsModelCallParams, "sessions.modelCall", respond)
++    )
++      return;
+     const p = params;
+     const key = requireSessionKey(p.key ?? p.sessionKey, respond);
+     if (!key) {
+@@ -116,7 +125,7 @@ export const sessionByKeyReadHandlers: GatewayRequestHandlers = {
+         ? createSessionListEntryFilter({ client, cfg: policyConfig })
+         : undefined;
+       if (!record?.entry.sessionId || boundaryFilter?.(record.key, record.entry) === false) {
+-        respond(true, { messages: [] }, undefined);
++        respond(true, mode === "model-call" ? { call: null } : { messages: [] }, undefined);
+         return undefined;
+       }
+       return record;
+@@ -136,15 +145,54 @@ export const sessionByKeyReadHandlers: GatewayRequestHandlers = {
+       maxLines: limit * 20 + 20,
+       allowResetArchiveFallback: true,
+     };
+-    const messages =
+-      selected.entry.incognito || isIncognitoSessionKey(selected.key)
+-        ? (await readRecentSessionMessagesWithStatsAsync(target, limits)).messages
+-        : await (
+-            await import("../../config/sessions/session-history-worker-runtime.js")
+-          ).readSessionHistoryPageInWorker(
+-            { kind: "recent", params: { target, ...limits } },
+-            signal,
+-          );
++    const result =
++      mode === "model-call"
++        ? {
++            call:
++              (
++                await prepareSessionTranscriptHydration(target).readMaintenance({
++                  operation: "model-call",
++                  callId: String(p.callId),
++                  runId: String(p.runId),
++                  sessionId: String(p.sessionId),
++                })
++              ).modelCall ?? null,
++          }
++        : {
++            messages:
++              selected.entry.incognito || isIncognitoSessionKey(selected.key)
++                ? (await readRecentSessionMessagesWithStatsAsync(target, limits)).messages
++                : await (
++                    await import("../../config/sessions/session-history-worker-runtime.js")
++                  ).readSessionHistoryPageInWorker(
++                    { kind: "recent", params: { target, ...limits } },
++                    signal,
++                  ),
++          };
++    if (
++      mode === "model-call" &&
++      "call" in result &&
++      !result.call &&
++      !(selected.entry.incognito || isIncognitoSessionKey(selected.key))
++    ) {
++      const [archive] = await withSqliteTranscriptArchiveSession(
++        { agentId: target.agentId, path: target.storePath },
++        () =>
++          runSqliteTranscriptArchiveReadWorker([
++            {
++              agentId: target.agentId,
++              logicalAgentId: target.agentId,
++              databasePath: target.storePath,
++              sessionKey: target.sessionKey,
++              sessionId: String(p.sessionId),
++              runId: String(p.runId),
++              modelCall: { callId: String(p.callId), currentSessionId: target.sessionId },
++              expectedIdentity: undefined,
++            },
++          ]),
++      );
++      result.call = archive?.modelCall ?? null;
++    }
+     await withReadySessionRows(projection, queries, (read) => {
+       sessionMutationAuthorization?.assertCurrent();
+       const requested = requestedAgent();
+@@ -163,14 +211,16 @@ export const sessionByKeyReadHandlers: GatewayRequestHandlers = {
+         current.entry.sessionId !== target.sessionId ||
+         boundaryFilter?.(current.key, current.entry) === false
+       ) {
+-        respond(true, { messages: [] }, undefined);
++        respond(true, mode === "model-call" ? { call: null } : { messages: [] }, undefined);
+         return;
+       }
+       respond(
+         true,
+-        projectOperatorModelRead({ context, client, agentId: current.agentId }, { messages }),
++        mode === "model-call"
++          ? result
++          : projectOperatorModelRead({ context, client, agentId: current.agentId }, result),
+         undefined,
+       );
+     });
+-  },
+-};
++  };
++}
 diff --git a/src/gateway/server-plugin-subagent-runtime.ts b/src/gateway/server-plugin-subagent-runtime.ts
 index 6e4921e2..1d7c25d6 100644
 --- a/src/gateway/server-plugin-subagent-runtime.ts
@@ -1730,6 +3023,18 @@ index 6e4921e2..1d7c25d6 100644
            resolveGatewayContext,
          },
        );
+diff --git a/src/gateway/session-method-policy.ts b/src/gateway/session-method-policy.ts
+index b39ac70e..b492f549 100644
+--- a/src/gateway/session-method-policy.ts
++++ b/src/gateway/session-method-policy.ts
+@@ -104,6 +104,7 @@ const DIRECT_SESSION_READ_METHODS = new Set([
+   "chat.history",
+   "sessions.processes.list",
+   "sessions.describe",
++  "sessions.modelCall",
+   "sessions.get",
+   "sessions.preview",
+   "sessions.branches.list",
 diff --git a/src/plugins/hook-agent-context.types.ts b/src/plugins/hook-agent-context.types.ts
 index 1f6099db..11f7ae8b 100644
 --- a/src/plugins/hook-agent-context.types.ts
@@ -1744,7 +3049,7 @@ index 1f6099db..11f7ae8b 100644
    /** Host-resolved memory partition for this turn. */
    memoryAudience?: MemoryAudience;
 diff --git a/src/plugins/hook-types.ts b/src/plugins/hook-types.ts
-index 471987b3..2a01f1d7 100644
+index 471987b3..fd09147b 100644
 --- a/src/plugins/hook-types.ts
 +++ b/src/plugins/hook-types.ts
 @@ -100,6 +100,9 @@ const PLUGIN_HOOK_NAMES = [
@@ -1765,7 +3070,7 @@ index 471987b3..2a01f1d7 100644
    hookName === "agent_turn_prepare" ||
    hookName === "before_prompt_build" ||
    hookName === "heartbeat_prompt_contribution";
-@@ -229,6 +233,60 @@ export type PluginHookBeforeAgentReplyResult = {
+@@ -229,6 +233,62 @@ export type PluginHookBeforeAgentReplyResult = {
    reason?: string;
  };
  
@@ -1812,6 +3117,8 @@ index 471987b3..2a01f1d7 100644
 +};
 +
 +export type PluginHookModelContextAcceptEvent = {
++  /** Already persisted output selected by an earlier acceptance owner in priority order. */
++  accepted?: PluginHookModelContextAcceptResult;
 +  traceparent?: string;
 +  callId: string;
 +  role?: string;
@@ -1826,7 +3133,7 @@ index 471987b3..2a01f1d7 100644
  export type PluginHookLlmInputEvent = {
    runId: string;
    sessionId: string;
-@@ -855,6 +913,20 @@ export type PluginHookHandlerMap = {
+@@ -855,6 +915,20 @@ export type PluginHookHandlerMap = {
    >;
    model_call_started: AsyncPluginHook<PluginHookModelCallStartedEvent, PluginHookAgentContext>;
    model_call_ended: AsyncPluginHook<PluginHookModelCallEndedEvent, PluginHookAgentContext>;
@@ -1848,9 +3155,18 @@ index 471987b3..2a01f1d7 100644
    llm_output: AsyncPluginHook<PluginHookLlmOutputEvent, PluginHookAgentContext>;
    before_agent_finalize: AsyncPluginHook<
 diff --git a/src/plugins/hooks.ts b/src/plugins/hooks.ts
-index d7bf111f..06015000 100644
+index d7bf111f..df3a6c3f 100644
 --- a/src/plugins/hooks.ts
 +++ b/src/plugins/hooks.ts
+@@ -162,7 +162,7 @@ type ModifyingHookPolicy<K extends PluginHookName> = {
+   onHandlerResult?: (params: {
+     hook: PluginHookRegistration<K>;
+     result: HookResult<K> | undefined;
+-  }) => void;
++  }) => void | Promise<void>;
+   onHandlerError?: (hook: PluginHookRegistration<K>, failOpen: boolean) => void;
+ };
+ 
 @@ -248,6 +248,9 @@ export function createHookRunner(
    const catchErrors = options.catchErrors ?? true;
    const failurePolicyByHook = {
@@ -1861,7 +3177,24 @@ index d7bf111f..06015000 100644
      ...options.failurePolicyByHook,
    } satisfies Partial<Record<PluginHookName, HookFailurePolicy>>;
    const voidHookTimeoutMsByHook = {
-@@ -1126,6 +1129,24 @@ export function createHookRunner(
+@@ -738,8 +741,6 @@ export function createHookRunner(
+           }
+         }
+ 
+-        policy.onHandlerResult?.({ hook, result: handlerResult });
+-
+         const shouldMergeResult =
+           handlerResult !== undefined && (handlerResult !== null || policy.mergeNullResults);
+         if (shouldMergeResult) {
+@@ -757,6 +758,7 @@ export function createHookRunner(
+             shouldStop = true;
+           }
+         }
++        await policy.onHandlerResult?.({ hook, result: handlerResult });
+       } catch (err) {
+         const failOpen = !(err instanceof HookIsolationError) && shouldCatchHookErrors(hookName);
+         policy.onHandlerError?.(hook, failOpen);
+@@ -1126,6 +1128,36 @@ export function createHookRunner(
      runModelCallStarted: bindVoidHook("model_call_started"),
      runModelCallEnded: bindVoidHook("model_call_ended"),
      runLlmInput: withoutIncognitoLlmContent(bindVoidHook("llm_input")),
@@ -1875,13 +3208,25 @@ index d7bf111f..06015000 100644
 +        return next?.view != null ? next : (previous ?? next);
 +      },
 +    }),
-+    runModelContextAccept: bindModifyingHook("model_context_accept", {
-+      mergeResults: (previous, next) => {
-+        if (previous?.outputRef != null && next?.outputRef != null)
-+          throw new Error("One output material owner is allowed per native call");
-+        return next?.outputRef != null ? next : (previous ?? next);
-+      },
-+    }),
++    runModelContextAccept: (
++      event: HookEvent<"model_context_accept">,
++      ctx: HookContext<"model_context_accept">,
++      persistAccepted?: (accepted: HookResult<"model_context_accept">) => Promise<void>,
++    ) =>
++      runModifyingHook("model_context_accept", event, ctx, {
++        onHandlerResult: async ({ result }) => {
++          if (result?.outputRef) await persistAccepted?.(result);
++        },
++        eventForHandler: (event, result) => ({
++          ...event,
++          ...(result ? { accepted: structuredClone(result) } : {}),
++        }),
++        mergeResults: (previous, next) => {
++          if (previous?.outputRef != null && next?.outputRef != null)
++            throw new Error("One output material owner is allowed per native call");
++          return next?.outputRef != null ? next : (previous ?? next);
++        },
++      }),
 +    runModelContextDispatch: bindVoidHook("model_context_dispatch"),
      runLlmOutput: withoutIncognitoLlmContent(bindVoidHook("llm_output")),
      runBeforeAgentFinalize: async (
@@ -1898,6 +3243,37 @@ index 1c669283..d7a2bbc5 100644
    decisions: true,
    gateway: true,
    config: true,
+diff --git a/src/plugins/loader-runtime-load.ts b/src/plugins/loader-runtime-load.ts
+index 8431531c..1b3d0f83 100644
+--- a/src/plugins/loader-runtime-load.ts
++++ b/src/plugins/loader-runtime-load.ts
+@@ -4,6 +4,7 @@ import { createAuthProfileStoreRuntime } from "../agents/auth-profiles/store.js"
+ import { resolveModelRuntimePolicy } from "../agents/model-runtime-policy.js";
+ import { resolveDefaultModelForAgent } from "../agents/model-selection-config.js";
+ import { resolveAllowedModelRefCore } from "../agents/model-selection-resolve.js";
++import { createLazyRuntimeMethod } from "../shared/lazy-runtime.js";
+ import { resolveCompatibleRuntimePluginRegistry } from "./active-runtime-registry.js";
+ import { createPluginCapabilityCatalogContext } from "./capability-catalog-context.js";
+ import { isPluginRegistryLoadInFlight } from "./loader-cache.js";
+@@ -66,6 +67,10 @@ let modelConfig: NativePluginLoadBindings["modelConfig"] | undefined;
+ let capabilityCatalogContext: NativePluginLoadBindings["capabilityCatalogContext"] | undefined;
+ // Imports of store/hook facades must not construct unrelated policy surfaces.
+ // Consumers share immutable defaults and retain their own mutable method views.
++const readPublishedModelBinding = createLazyRuntimeMethod(
++  () => import("../agents/published-model-binding.js"),
++  (runtime) => runtime.readPublishedModelBinding,
++);
+ const loaderBindings: NativePluginLoadBindings = Object.freeze({
+   get modelAuth() {
+     return (modelAuth ??= Object.freeze(
+@@ -77,6 +82,7 @@ const loaderBindings: NativePluginLoadBindings = Object.freeze({
+   },
+   get modelConfig() {
+     return (modelConfig ??= Object.freeze({
++      readPublishedModelBinding,
+       resolveDefaultModelForAgent,
+       resolveAllowedModelRef: resolveAllowedModelRefCore,
+       resolveModelRuntimePolicy,
 diff --git a/src/plugins/registry-registrars-tools-hooks.ts b/src/plugins/registry-registrars-tools-hooks.ts
 index 6407da07..cb863c08 100644
 --- a/src/plugins/registry-registrars-tools-hooks.ts
@@ -1912,6 +3288,18 @@ index 6407da07..cb863c08 100644
    "llm_input",
    "llm_output",
    "before_agent_finalize",
+diff --git a/src/plugins/registry-runtime.ts b/src/plugins/registry-runtime.ts
+index f5bf7c08..53e60cdf 100644
+--- a/src/plugins/registry-runtime.ts
++++ b/src/plugins/registry-runtime.ts
+@@ -229,6 +229,7 @@ export function createPluginRuntimeResolver(state: PluginRegistryState) {
+         "resolveApiKeyForProvider",
+       ]),
+       modelConfig: createRuntimeFacade<PluginRuntime["modelConfig"]>(invokeSelectedRuntime, [
++        "readPublishedModelBinding",
+         "resolveDefaultModelForAgent",
+         "resolveAllowedModelRef",
+       ]),
 diff --git a/src/plugins/runtime/index.ts b/src/plugins/runtime/index.ts
 index 02f217a7..c42c7bf7 100644
 --- a/src/plugins/runtime/index.ts
@@ -1924,6 +3312,23 @@ index 02f217a7..c42c7bf7 100644
      capabilities: base.capabilities,
      decisions: {
        evaluate: async (...args) =>
+diff --git a/src/plugins/runtime/types-core.ts b/src/plugins/runtime/types-core.ts
+index 86f53746..74f8f7f6 100644
+--- a/src/plugins/runtime/types-core.ts
++++ b/src/plugins/runtime/types-core.ts
+@@ -592,6 +592,12 @@ export type PluginRuntimeCore = {
+     ) => Promise<{ release: () => void } | undefined>;
+   };
+   modelConfig: {
++    /** Secret-free current executable metadata; no discovery, login or model request. */
++    readPublishedModelBinding: (input: {
++      agentId: string;
++      provider?: string;
++      modelId?: string;
++    }) => Promise<import("../../agents/published-model-binding.js").PublishedModelBinding>;
+     /** Read-only model selection; no session mutation or harness execution authority. */
+     resolveDefaultModelForAgent: typeof import("../../agents/model-selection-config.js").resolveDefaultModelForAgent;
+     resolveAllowedModelRef: typeof import("../../agents/model-selection-resolve.js").resolveAllowedModelRefCore;
 diff --git a/src/plugins/runtime/types.ts b/src/plugins/runtime/types.ts
 index 1ba77516..6c4ffd6a 100644
 --- a/src/plugins/runtime/types.ts

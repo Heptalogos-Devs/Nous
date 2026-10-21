@@ -1,86 +1,188 @@
-import Fastify from 'fastify';
+import { createHash } from 'node:crypto';
+import type { Readable } from 'node:stream';
 import swagger from '@fastify/swagger';
 import swaggerUI from '@fastify/swagger-ui';
 import {
-  validatorCompiler,
-  serializerCompiler,
-  createJsonSchemaTransform,
-  createJsonSchemaTransformObject,
-} from 'fastify-type-provider-zod';
-import { z } from 'zod';
-import { createHash } from 'node:crypto';
-import { v7 as uuid } from 'uuid';
-import type { Readable } from 'node:stream';
-import {
-  ActorSchema,
-  CallContextSchema,
-  ProblemSchema,
-  RefSchema,
-  TimePointSchema,
-  PolicySchema,
-} from '@nous-wave/contracts/common';
-import {
-  EpisodeOrganizeSchema,
-  JournalWriteSchema,
-  ConceptMergeSchema,
-  ConceptSplitSchema,
-  MotivationEvaluateSchema,
-  KnowledgeCreateSchema,
-  KnowledgeReviseSchema,
-  KnowledgeViewSchema,
-  KnowledgeReadSchema,
-  KnowledgeKindSchema,
-  KnowledgeHistorySchema,
-  KnowledgePageSchema,
-} from '@nous-wave/contracts/knowledge';
-import {
-  MaterialCaptureSchema,
-  MaterialViewSchema,
-  MaterialPublishSchema,
-  EncounterAcceptSchema,
-  EncounterViewSchema,
-} from '@nous-wave/contracts/materials';
-import {
   ContextPrepareSchema,
   ContextViewSchema,
-  QuerySchema,
-  QueryResultSchema,
   ExpandSchema,
   ExpansionResultSchema,
+  FeedbackSchema,
+  GrowthResolveSchema,
+  QueryResultSchema,
+  QuerySchema,
+  ResourceBodySchema,
+  SeedApplySchema,
   WorkContextBodySchema,
   WorkContextSchema,
-  FeedbackSchema,
-  ResourceBodySchema,
-  GrowthResolveSchema,
-  SeedApplySchema,
 } from '@nous-wave/contracts/cognition';
+import type { CallContext } from '@nous-wave/contracts/common';
 import {
-  InvocationPrepareSchema,
-  InvocationCompletionSchema,
-  ModelResourceSchema,
-  SettingsScopeSchema,
-  SettingsUpdateSchema,
+  CallContextSchema,
+  ConsumerSchema,
+  OperationRefSchema,
+  PolicySchema,
+  ProblemSchema,
+  RefSchema,
+  readProblem,
+  SelectorQuerySchema,
+  TimePointInputSchema,
+} from '@nous-wave/contracts/common';
+import {
+  AuthenticatedIdentitySchema,
+  DelegationChildCreateSchema,
+  DelegationChildViewSchema,
+  DelegationScopeSchema,
+  SecretStatusSchema,
+} from '@nous-wave/contracts/credentials';
+import { SubjectCreateSchema } from '@nous-wave/contracts/identity';
+import {
+  ConceptMergeSchema,
+  ConceptSplitSchema,
+  EpisodeOrganizeSchema,
+  JournalWriteSchema,
+  KnowledgeCreateSchema,
+  KnowledgeHistorySchema,
+  KnowledgeKindSchema,
+  KnowledgePageSchema,
+  KnowledgeReadSchema,
+  KnowledgeReviseSchema,
+  KnowledgeViewSchema,
+  MotivationEvaluateSchema,
+} from '@nous-wave/contracts/knowledge';
+import {
+  BlobResultSchema,
+  EncounterAcceptSchema,
+  EncounterViewSchema,
+  MaterialCaptureSchema,
+  MaterialPublishSchema,
+  MaterialViewSchema,
+  SourceResolutionSchema,
+  SourcesResolveSchema,
+} from '@nous-wave/contracts/materials';
+import {
+  InvocationSnapshotSchema,
+  ModelCallViewSchema,
+  ModelInvocationFilterSchema,
+  ModelInvocationPageSchema,
+  ModelReconcileSchema,
+  ModelRegistrationSchema,
+  ModelTestInputSchema,
+  NativeInvocationCompletionSchema,
+  NativeInvocationPrepareSchema,
+  ProviderDefinitionSchema,
+  ResourceRefSchema,
+} from '@nous-wave/contracts/models';
+import {
+  PromptActivateSchema,
+  PromptChangeResultSchema,
+  PromptDescribeSchema,
+  PromptDescriptionSchema,
+  PromptHistoryPageSchema,
+  PromptHistorySchema,
+  PromptListPageSchema,
+  PromptListSchema,
+  PromptPreviewResultSchema,
+  PromptPreviewSchema,
+  PromptReadResultSchema,
+  PromptReadSchema,
+  PromptRenderRequestSchema,
+  PromptRenderResultSchema,
+  PromptResetSchema,
+  PromptSaveSchema,
+  PromptSnapshotRequestSchema,
+  PromptSnapshotSchema,
+} from '@nous-wave/contracts/prompts';
+import {
+  HostStatusSchema,
+  OperationViewSchema,
+  OperationControlSchema,
+  OperationTraceSchema,
+} from '@nous-wave/contracts/runtime';
+import {
+  ConfigScopeSchema,
+  ConfigSnapshotSchema,
+  ConsumerAppliedViewSchema,
+  EffectiveSettingsViewSchema,
+  ModuleDescriptionSchema,
+  SettingsChangeResultSchema,
+  SettingsChangeSchema,
+  SettingsDescribeSchema,
+  SettingsHistoryPageSchema,
+  SettingsHistorySchema,
+  SettingsReadSchema,
   SettingsResetSchema,
   SettingsRestoreSchema,
-} from '@nous-wave/contracts/management';
-import { SubjectCreateSchema } from '@nous-wave/contracts/identity';
-import { DomainError } from '@nous-wave/nous';
-import { span } from '@nous-wave/nous';
-import { makeContext } from '@nous-wave/nous';
+} from '@nous-wave/contracts/settings';
+import {
+  CapturedTimeSchema,
+  TimeCaptureReceiptSchema,
+  TimeCaptureRequestSchema,
+  TimeSelectionSchema,
+} from '@nous-wave/contracts/time';
 import type { Nous } from '@nous-wave/nous';
-import type { CallContext } from '@nous-wave/contracts/common';
+import { DomainError, makeContext } from '@nous-wave/nous';
+import { problem } from '@nous-wave/platform/errors';
+import Fastify, {
+  type FastifyBaseLogger,
+  type FastifyInstance,
+  LogController,
+  type RawServerDefault,
+} from 'fastify';
+import {
+  createJsonSchemaTransform,
+  createJsonSchemaTransformObject,
+  serializerCompiler,
+  validatorCompiler,
+} from 'fastify-type-provider-zod';
+import qs from 'qs';
+import { v7 as uuid } from 'uuid';
+import { z } from 'zod';
+
+declare module 'fastify' {
+  interface FastifyRequest {
+    callContext?: CallContext;
+  }
+}
 
 export async function createHttp(
   application: Nous | undefined = undefined,
-  options: { baseURL?: string; authentication?: boolean } = {},
-) {
+  options: {
+    baseURL?: string;
+    authentication?: boolean;
+    stop?: (mode: 'graceful' | 'force') => Promise<void>;
+  } = {},
+): Promise<FastifyInstance> {
   const app = () => {
     if (!application)
       throw new Error('Schema-only server cannot execute business operations');
     return application;
   };
-  const server = Fastify({
-    logger: { redact: ['req.headers.authorization', 'req.headers.cookie'] },
+  const server = Fastify<
+    RawServerDefault,
+    import('node:http').IncomingMessage,
+    import('node:http').ServerResponse,
+    FastifyBaseLogger
+  >({
+    genReqId: () => uuid(),
+    logController: new LogController({ disableRequestLogging: true }),
+    routerOptions: {
+      querystringParser: (value) =>
+        qs.parse(value, {
+          allowPrototypes: false,
+          plainObjects: true,
+          depth: 8,
+          strictDepth: true,
+          parameterLimit: 128,
+          arrayLimit: 100,
+          throwOnLimitExceeded: true,
+        }),
+    },
+    ...(application
+      ? {
+          loggerInstance: application.telemetry.component('http'),
+        }
+      : { logger: false }),
   });
   server.addContentTypeParser('*', (_request, payload, done) =>
     done(null, payload),
@@ -90,7 +192,7 @@ export async function createHttp(
   await server.register(swagger, {
     openapi: {
       openapi: '3.0.3',
-      info: { title: 'Nous Wave', version: '0.1.0' },
+      info: { title: 'Nous Wave', version: '0.2.0-infrastructure.1' },
       components: {
         securitySchemes: { bearer: { type: 'http', scheme: 'bearer' } },
       },
@@ -106,18 +208,22 @@ export async function createHttp(
   const authentication =
     !application || options.authentication === false
       ? undefined
-      : await app().authentication(options.baseURL);
+      : app().authentication;
   if (authentication)
     server.route({
       method: ['GET', 'POST'],
-      url: '/api/auth/*',
+      url: '/v1/auth/*',
       schema: { hide: true },
       handler: async (request, reply) => {
         const path = request.url.split('?')[0]!;
         if (path.includes('/sign-up') || path.includes('/api-key/'))
-          return reply
-            .code(403)
-            .send({ code: 'forbidden', title: '此操作使用正式管理入口' });
+          return reply.code(403).type('application/problem+json').send({
+            code: 'credentials.native_endpoint_disabled',
+            category: 'forbidden',
+            status: 403,
+            messageKey: 'credentials.native_endpoint_disabled',
+            message: '此操作使用正式管理入口',
+          });
         const url = new URL(
           request.url,
           options.baseURL ?? 'http://127.0.0.1:4333',
@@ -143,35 +249,38 @@ export async function createHttp(
         return reply.send(await response.text());
       },
     });
+  server.decorateRequest('callContext');
   server.setErrorHandler((error, request, reply) => {
-    if (error instanceof DomainError)
-      return reply.code(error.status).send(error.problem());
-    if(error instanceof Error&&'code' in error&&ProblemSchema.shape.code.safeParse(error.code).success){
-      const restored=new DomainError(ProblemSchema.shape.code.parse(error.code),error.message,'details' in error?error.details as {operationId?:string;currentRevision?:number}:{});
-      return reply.code(restored.status).send(restored.problem());
+    let failure: z.infer<typeof ProblemSchema> | undefined;
+    const known = readProblem(error);
+    if (known) failure = known;
+    else if (error instanceof Error && 'problem' in error) {
+      const parsed = ProblemSchema.safeParse(error.problem);
+      if (parsed.success) failure = parsed.data;
     }
-    if (
-      (error instanceof Error && 'validation' in error) ||
-      error instanceof z.ZodError
-    )
-      return reply
-        .code(400)
-        .send({
-          type: 'urn:nous:problem:invalid_input',
-          title: '请求字段无效',
-          status: 400,
-          code: 'invalid_input',
-          detail: error instanceof Error ? error.message : String(error),
-        });
-    request.log.error({ err: error }, 'operation.failed');
+    if (!failure) {
+      const validation =
+        error instanceof z.ZodError ||
+        (error instanceof Error && 'validation' in error);
+      failure = {
+        code: validation ? 'http.invalid_input' : 'system.failed',
+        category: validation ? ('validation' as const) : ('failed' as const),
+        status: validation ? 400 : 500,
+        messageKey: validation ? 'http.invalid_input' : 'system.failed',
+        message: validation ? '请求字段无效' : '操作执行失败',
+      };
+    }
+    const ctx = request.callContext;
+    failure = {
+      operationId: ctx?.trace.operationId ?? request.id,
+      ...(ctx ? { traceId: ctx.trace.traceId } : {}),
+      ...failure,
+    };
+    request.log.error({ event: 'http.failed', problem: failure });
     return reply
-      .code(500)
-      .send({
-        type: 'urn:nous:problem:dependency_unavailable',
-        title: '操作执行失败',
-        status: 500,
-        code: 'dependency_unavailable',
-      });
+      .type('application/problem+json')
+      .code(failure.status)
+      .send(failure);
   });
   const S = '/v1/subjects/:subjectId';
   const params = z.object({ subjectId: z.uuidv7() });
@@ -180,9 +289,9 @@ export async function createHttp(
     headers: Record<string, string | string[] | undefined>;
     params: unknown;
     url: string;
-    method?:string;
-    query?:unknown;
-    body?:unknown;
+    method?: string;
+    query?: unknown;
+    body?: unknown;
   }): Promise<CallContext> {
     if (!authentication)
       throw new DomainError(
@@ -193,37 +302,56 @@ export async function createHttp(
     for (const [name, value] of Object.entries(request.headers))
       if (value !== undefined)
         headers.set(name, Array.isArray(value) ? value.join(',') : value);
-    const actor = await authentication.actor(headers);
-    const selected=(request.method==='GET'?request.query:request.body) as {subjectId?:unknown}|undefined;
-    const subjectId = (request.params as { subjectId?: string })?.subjectId ?? (selected?.subjectId===undefined?'':z.uuidv7().parse(selected.subjectId));
+    const { actor, consumer } = await authentication.authenticate(headers);
+    const selected = (
+      request.method === 'GET' ? request.query : request.body
+    ) as { subjectId?: unknown; scope?: { subjectId?: unknown } } | undefined;
+    const subjectId =
+      (request.params as { subjectId?: string })?.subjectId ??
+      (selected?.scope?.subjectId !== undefined
+        ? z.uuidv7().parse(selected.scope.subjectId)
+        : selected?.subjectId !== undefined
+          ? z.uuidv7().parse(selected.subjectId)
+          : undefined);
     const submission = headers.get('idempotency-key') ?? uuid();
-    const operationId = createHash('sha256')
-      .update(
-        JSON.stringify([
-          actor.id,
-          subjectId,
-          request.url.split('?')[0],
-          submission,
-        ]),
-      )
-      .digest('hex');
     const audience = z
       .array(z.string())
       .parse(
         headers.has('x-audience')
           ? JSON.parse(headers.get('x-audience')!)
-          : [subjectId],
+          : subjectId
+            ? [subjectId]
+            : [],
       );
-    return CallContextSchema.parse(
-      makeContext(
-        actor,
-        subjectId,
-        headers.get('x-purpose') ?? 'management',
-        audience,
-        operationId,
-        headers.get('traceparent') ?? undefined,
-      ),
-    );
+    let ctx = makeContext({
+      actor,
+      consumer,
+      subjectId,
+      purpose: headers.get('x-purpose') ?? 'management',
+      audience,
+      operationId: submission,
+      traceparent: headers.get('traceparent') ?? undefined,
+    });
+    const selectedAuthority = headers.get('x-delegation-authority');
+    if (selectedAuthority)
+      ctx = await authentication.selectDelegation(ctx, selectedAuthority);
+    const operationId = createHash('sha256')
+      .update(
+        JSON.stringify([
+          {
+            consumer: ctx.consumer,
+            actor: ctx.actor.kind === 'human' ? ctx.actor.id : null,
+          },
+          ctx.subjectId,
+          request.url.split('?')[0],
+          submission,
+        ]),
+      )
+      .digest('hex');
+    return CallContextSchema.parse({
+      ...ctx,
+      trace: { ...ctx.trace, operationId },
+    });
   }
   function route<I extends z.ZodType, O extends z.ZodType>(
     method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE',
@@ -263,27 +391,26 @@ export async function createHttp(
         },
       },
       handler: async (request, reply) => {
-        return span(
-          `nous.${operationId}`,
-          typeof request.headers.traceparent==='string'
-            ? { traceparent: request.headers.traceparent }
-            : {},
-          async () => {
-            const ctx = await context(request);
-            reply.header('x-operation-id',`${operationId}:${ctx.traceContext.operationId}`);
-            const data=input.parse(method==='GET'?request.query:request.body);
-            const result = await handler(ctx, data, request.params as RouteIds);
-            request.log.info({
-              event: operationId,
-              operationId: ctx.traceContext.operationId,
-              traceId: ctx.traceContext.traceId,
-              subjectId: ctx.subjectId,
-              actorKind: ctx.actor.kind,
-              outcome: 'completed',
-            });
-            return result;
-          },
-        );
+        const ctx = await context(request);
+        return app().telemetry.span(ctx, `nous.${operationId}`, async (ctx) => {
+          request.callContext = ctx;
+          reply
+            .header('x-operation-id', ctx.trace.operationId)
+            .header('x-trace-id', ctx.trace.traceId);
+          const data = input.parse(
+            method === 'GET' ? request.query : request.body,
+          );
+          const result = await handler(ctx, data, request.params as RouteIds);
+          request.log.info({
+            event: 'http.operation_completed',
+            operationId: ctx.trace.operationId,
+            traceId: ctx.trace.traceId,
+            subjectId: ctx.subjectId,
+            actorKind: ctx.actor.kind,
+            outcome: 'completed',
+          });
+          return result;
+        });
       },
     });
   }
@@ -291,26 +418,130 @@ export async function createHttp(
     unknown = z.unknown();
   route(
     'POST',
-    '/v1/access-keys',
-    'credentials.issue',
-    z.object({ name: z.string(), actor: ActorSchema }),
-    z.object({ id: z.string(), key: z.string() }),
-    (ctx, input) => app().credentials.issue(ctx, input),
+    '/v1/time/read',
+    'time.read',
+    TimeSelectionSchema.extend({}),
+    CapturedTimeSchema,
+    (ctx, input) => app().time.read(ctx, input),
+  );
+  route(
+    'POST',
+    '/v1/time/captures',
+    'time.capture',
+    TimeCaptureRequestSchema,
+    TimeCaptureReceiptSchema,
+    (ctx, { existingOnly, ...selection }) =>
+      app().time.capture(ctx, {
+        operationId: ctx.trace.operationId,
+        selection,
+        existingOnly,
+      }),
+  );
+  route(
+    'GET',
+    `${S}/time/captures/:id`,
+    'time.readCapture',
+    empty,
+    TimeCaptureReceiptSchema,
+    (ctx, _input, p) =>
+      app().time.readCapture(ctx, {
+        product: 'nous',
+        installationId: app().installationId,
+        subjectId: ctx.subjectId,
+        kind: 'TimeCapture',
+        id: p.id!,
+      }),
+  );
+  route(
+    'GET',
+    '/v1/identity',
+    'identity.read',
+    empty,
+    AuthenticatedIdentitySchema,
+    async (ctx) => ({ actor: ctx.actor, consumer: ctx.consumer }),
+  );
+  route(
+    'POST',
+    `${S}/sources/resolve`,
+    'sources.resolve',
+    SourcesResolveSchema,
+    SourceResolutionSchema,
+    async (ctx, input) => {
+      const { resolvedRefs, roots, policies } =
+        await app().knowledge.sources.resolve(ctx, input.refs);
+      return { resolvedRefs, roots, policies };
+    },
+  );
+  route(
+    'GET',
+    '/v1/status',
+    'host.status',
+    empty,
+    HostStatusSchema,
+    async (ctx) => {
+      await app().authorize(ctx, 'host.status');
+      return app().host.status();
+    },
+  );
+  route(
+    'POST',
+    '/v1/host/drain',
+    'host.drain',
+    empty,
+    z.object({ state: z.string(), acceptingWork: z.boolean() }),
+    async (ctx) => {
+      await app().authorize(ctx, 'host.drain');
+      return app().host.drain();
+    },
+  );
+  server.post(
+    '/v1/host/stop',
+    {
+      schema: {
+        operationId: 'host.stop',
+        body: z.object({ mode: z.enum(['graceful', 'force']) }),
+        response: { 202: z.object({ state: z.literal('stopping') }) },
+      },
+    },
+    async (request, reply) => {
+      const ctx = await context(request);
+      await app().authorize(ctx, 'host.stop');
+      if (!options.stop)
+        throw new DomainError(
+          'dependency_unavailable',
+          '当前Host未注册停止入口',
+        );
+      const { mode } = request.body as { mode: 'graceful' | 'force' };
+      reply.raw.once('finish', () => {
+        void options.stop!(mode).catch(() => {});
+      });
+      return reply.code(202).send({ state: 'stopping' as const });
+    },
+  );
+  route(
+    'POST',
+    '/v1/management-keys',
+    'credentials.createManagementKey',
+    z.object({ name: z.string().min(1).max(256) }),
+    z.object({
+      id: z.string(),
+      key: z.string(),
+      authorityRef: z.string(),
+      delegationId: z.string(),
+    }),
+    (ctx, input) => app().credentials.createManagementKey(ctx, input.name),
   );
   server.post(
     `${S}/blobs`,
     {
       schema: {
         operationId: 'materials.uploadBlob',
-        consumes:['application/octet-stream'],
-        body:z.any().meta({type:'string',format:'binary'}),
+        security: [{ bearer: [] }],
+        consumes: ['application/octet-stream'],
+        body: z.any().meta({ type: 'string', format: 'binary' }),
         params,
         response: {
-          200: z.object({
-            ref: RefSchema,
-            digest: z.string(),
-            bytes: z.number().int().nonnegative(),
-          }),
+          200: BlobResultSchema,
         },
       },
     },
@@ -327,15 +558,14 @@ export async function createHttp(
         request.body as Readable,
         mediaType,
       );
-      reply.header(
-        'x-operation-id',
-        `materials.acceptBlob:${ctx.traceContext.operationId}`,
-      );
+      reply.header('x-operation-id', ctx.trace.operationId);
       return result;
     },
   );
-  route('GET', '/v1/health', 'health.read', empty, unknown, async () =>
-    app().doctor(),
+  route('GET', '/v1/health', 'health.read', empty, unknown, async (ctx) =>
+    app()
+      .authorize(ctx, 'host.status')
+      .then(() => app().host.doctor()),
   );
   route(
     'POST',
@@ -374,7 +604,7 @@ export async function createHttp(
     'materials.publish',
     MaterialPublishSchema,
     MaterialViewSchema,
-    (ctx,input)=>app().materials.publish(ctx,input),
+    (ctx, input) => app().materials.publish(ctx, input),
   );
   route(
     'PATCH',
@@ -406,7 +636,10 @@ export async function createHttp(
     'GET',
     `${S}/materials/:id`,
     'materials.read',
-    z.object({ revision: z.coerce.number().optional() }),
+    z.object({
+      revision: z.coerce.number().int().positive().optional(),
+      selector: SelectorQuerySchema.optional(),
+    }),
     MaterialViewSchema,
     (ctx, input, p) =>
       app().materials.read(ctx, {
@@ -417,6 +650,7 @@ export async function createHttp(
           kind: 'Material',
           id: p.id!,
           revision: input.revision,
+          selector: input.selector,
         },
       }),
   );
@@ -466,9 +700,11 @@ export async function createHttp(
     'GET',
     `${S}/knowledge/:id/history`,
     'knowledge.history',
-    KnowledgeHistorySchema.extend({limit:z.coerce.number().int().positive().max(200).default(100)}),
+    KnowledgeHistorySchema.extend({
+      limit: z.coerce.number().int().positive().max(200).default(100),
+    }),
     KnowledgePageSchema,
-    (ctx, input, p) => app().knowledge.history(ctx, p.id!,input),
+    (ctx, input, p) => app().knowledge.history(ctx, p.id!, input),
   );
   route(
     'POST',
@@ -551,7 +787,7 @@ export async function createHttp(
     'growth.run',
     z.object({
       experienceRefs: z.array(RefSchema).optional(),
-      formed: TimePointSchema.optional(),
+      formed: TimePointInputSchema.optional(),
       apply: z.boolean().optional(),
     }),
     unknown,
@@ -573,7 +809,14 @@ export async function createHttp(
     unknown,
     (ctx, input, p) => app().growth.apply(ctx, { ...input, id: p.id! }),
   );
-  route('POST',`${S}/growth/:id/resolve`,'growth.resolve',GrowthResolveSchema.omit({id:true}),unknown,(ctx,input,p)=>app().growth.resolve(ctx,{...input,id:p.id!}));
+  route(
+    'POST',
+    `${S}/growth/:id/resolve`,
+    'growth.resolve',
+    GrowthResolveSchema.omit({ id: true }),
+    unknown,
+    (ctx, input, p) => app().growth.resolve(ctx, { ...input, id: p.id! }),
+  );
   route(
     'POST',
     `${S}/seeds/preview`,
@@ -661,68 +904,487 @@ export async function createHttp(
     'GET',
     '/v1/settings/schema',
     'settings.describe',
-    empty,
-    unknown,
-    async () => app().settings.describe(),
+    SettingsDescribeSchema.extend({}),
+    z.array(ModuleDescriptionSchema),
+    (ctx, input) => app().settings.describe(ctx, input),
   );
-  route('GET','/v1/settings','settings.read',SettingsScopeSchema,unknown,(ctx,input)=>app().settings.read(ctx,input.role));
-  route('PATCH','/v1/settings','settings.update',SettingsUpdateSchema,unknown,(ctx,input)=>app().settings.update(ctx,input));
-  route('POST','/v1/settings/reset','settings.reset',SettingsResetSchema,unknown,(ctx,input)=>app().settings.reset(ctx,input));
-  route('GET','/v1/settings/history','settings.history',SettingsScopeSchema,unknown,(ctx,input)=>app().settings.history(ctx,input));
-  route('POST','/v1/settings/restore','settings.restore',SettingsRestoreSchema,unknown,(ctx,input)=>app().settings.restore(ctx,input));
-  for(const method of ['PUT','GET','DELETE'] as const)route(method,'/v1/secrets/:id',`secrets.${method==='PUT'?'set':method==='GET'?'status':'delete'}`,method==='PUT'?z.object({value:z.string().min(1)}):empty,unknown,(ctx,input,p)=>method==='PUT'?app().secrets.set(ctx,p.id!,('value' in input?input.value:'') as string):method==='GET'?app().secrets.status(ctx,p.id!):app().secrets.delete(ctx,p.id!));
+  const settingQuery = SettingsReadSchema.extend({
+    namespaces: z.preprocess(
+      (value) => (typeof value === 'string' ? [value] : value),
+      z.array(z.string().min(1)),
+    ),
+  });
+  route(
+    'GET',
+    '/v1/settings',
+    'settings.read',
+    settingQuery,
+    EffectiveSettingsViewSchema,
+    (ctx, input) => app().settings.read(ctx, input),
+  );
+  route(
+    'PATCH',
+    '/v1/settings',
+    'settings.update',
+    SettingsChangeSchema,
+    SettingsChangeResultSchema,
+    (ctx, input) => app().settings.update(ctx, input),
+  );
   route(
     'POST',
-    '/v1/models',
-    'models.register',
-    ModelResourceSchema,
-    ModelResourceSchema,
-    (ctx, input) => app().models.register(ctx, input),
+    '/v1/settings/reset',
+    'settings.reset',
+    SettingsResetSchema,
+    SettingsChangeResultSchema,
+    (ctx, input) => app().settings.reset(ctx, input),
   );
   route(
     'GET',
-    '/v1/models',
-    'models.list',
+    '/v1/settings/history',
+    'settings.history',
+    SettingsHistorySchema.extend({
+      limit: z.coerce.number().int().min(1).max(200).optional(),
+    }),
+    SettingsHistoryPageSchema,
+    (ctx, input) => app().settings.history(ctx, input),
+  );
+  route(
+    'POST',
+    '/v1/settings/restore',
+    'settings.restore',
+    SettingsRestoreSchema,
+    SettingsChangeResultSchema,
+    (ctx, input) => app().settings.restore(ctx, input),
+  );
+  route(
+    'GET',
+    '/v1/settings/applied',
+    'settings.applied',
+    settingQuery,
+    z.array(ConsumerAppliedViewSchema),
+    (ctx, input) => app().settings.applied(ctx, input),
+  );
+  const backend = z.discriminatedUnion('kind', [
+    z.strictObject({
+      kind: z.literal('environment'),
+      variable: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/),
+    }),
+    z.strictObject({
+      kind: z.enum(['protected_file', 'os']),
+      material: z.string().min(1).max(65536),
+    }),
+  ]);
+  async function secretWrite<T>(
+    value: z.infer<typeof backend>,
+    use: (
+      backend: import('@nous-wave/platform/credentials').SecretCreate['backend'],
+    ) => Promise<T>,
+  ) {
+    if (value.kind === 'environment') return use(value);
+    const bytes = Buffer.from(value.material, 'utf8');
+    try {
+      return await use({ kind: value.kind, material: bytes });
+    } finally {
+      bytes.fill(0);
+    }
+  }
+  route(
+    'POST',
+    '/v1/secrets',
+    'secrets.create',
+    z.strictObject({
+      purpose: z.string(),
+      resourceRef: RefSchema,
+      allowedConsumers: z.array(ConsumerSchema),
+      backend,
+    }),
+    SecretStatusSchema,
+    (ctx, input) =>
+      secretWrite(input.backend, (backend) =>
+        app().secrets.create(ctx, { ...input, backend }),
+      ),
+  );
+  route(
+    'GET',
+    '/v1/secrets/:id',
+    'secrets.status',
     empty,
-    z.object({ items: z.array(ModelResourceSchema) }),
-    async (ctx) => ({ items: await app().models.list(ctx) }),
+    SecretStatusSchema,
+    (ctx, _, p) => app().secrets.status(ctx, { ref: p.id! }),
+  );
+  route(
+    'POST',
+    '/v1/secrets/:id/rotate',
+    'secrets.rotate',
+    z.strictObject({
+      expectedRevision: z.number().int().positive(),
+      backend,
+      allowedConsumers: z.array(ConsumerSchema).optional(),
+    }),
+    SecretStatusSchema,
+    (ctx, input, p) =>
+      secretWrite(input.backend, (backend) =>
+        app().secrets.rotate(ctx, { ...input, ref: p.id!, backend }),
+      ),
+  );
+  route(
+    'POST',
+    '/v1/secrets/:id/revoke',
+    'secrets.revoke',
+    z.strictObject({ expectedRevision: z.number().int().positive() }),
+    SecretStatusSchema,
+    (ctx, input, p) => app().secrets.revoke(ctx, { ...input, ref: p.id! }),
+  );
+  route(
+    'POST',
+    '/v1/delegations/children',
+    'delegations.createChild',
+    DelegationChildCreateSchema,
+    DelegationChildViewSchema,
+    (ctx, input) => app().credentials.delegations.createChild(ctx, input),
+  );
+  route(
+    'POST',
+    '/v1/delegations',
+    'delegations.create',
+    z.strictObject({
+      name: z.string().min(1).max(256),
+      scope: DelegationScopeSchema,
+      principalKind: z.enum([
+        'subject',
+        'worker',
+        'author',
+        'human',
+        'service',
+      ]),
+    }),
+    unknown,
+    (ctx, input) => app().credentials.delegations.create(ctx, input),
+  );
+  route(
+    'GET',
+    '/v1/delegations/:id',
+    'delegations.read',
+    empty,
+    unknown,
+    (ctx, _, p) => app().credentials.delegations.read(ctx, p.id!),
+  );
+  route(
+    'PATCH',
+    '/v1/delegations/:id',
+    'delegations.update',
+    z.strictObject({
+      expectedRevision: z.number().int().positive(),
+      scope: DelegationScopeSchema,
+    }),
+    unknown,
+    (ctx, input, p) => app().credentials.delegations.update(ctx, p.id!, input),
+  );
+  route(
+    'POST',
+    '/v1/delegations/:id/revoke',
+    'delegations.revoke',
+    z.strictObject({ expectedRevision: z.number().int().positive() }),
+    unknown,
+    (ctx, input, p) => app().credentials.delegations.revoke(ctx, p.id!, input),
+  );
+  route(
+    'GET',
+    '/v1/network',
+    'network.inspect',
+    z.strictObject({
+      scope: ConfigScopeSchema.optional(),
+      profileId: z.string().optional(),
+    }),
+    unknown,
+    (ctx, input) => app().network.inspect(ctx, input),
+  );
+  route(
+    'POST',
+    '/v1/network/probes',
+    'network.probe',
+    z.strictObject({
+      resourceRef: RefSchema,
+      kind: z.enum(['dns', 'tls', 'http']),
+      url: z.url(),
+    }),
+    unknown,
+    async (ctx, input) =>
+      app().network.probe(ctx, {
+        ...(await app().models.networkSelection(ctx, input.resourceRef)),
+        kind: input.kind,
+        url: input.url,
+      }),
+  );
+  route(
+    'GET',
+    `${S}/context-views/:id`,
+    'contexts.readView',
+    empty,
+    ContextViewSchema,
+    (ctx, _input, p) => app().contexts.readView(ctx, { id: p.id! }),
+  );
+  route(
+    'POST',
+    '/v1/models/test',
+    'models.test',
+    ModelTestInputSchema,
+    OperationRefSchema,
+    (ctx, input) => app().testModel(ctx, input),
+  );
+  const cas = z.number().int().nonnegative().safe();
+  for (const [name, definition] of [
+    ['providers', ProviderDefinitionSchema],
+    ['models', ModelRegistrationSchema],
+  ] as const) {
+    const owner = () =>
+      name === 'providers' ? app().models.providers : app().models.resources;
+    const path = name === 'providers' ? '/v1/model-providers' : '/v1/models';
+    const entry = z.strictObject({ ref: ResourceRefSchema, definition });
+    route('GET', path, `${name}.list`, empty, z.array(entry), (ctx) =>
+      owner().list(ctx),
+    );
+    route(
+      'GET',
+      `${path}/:id`,
+      `${name}.read`,
+      z.strictObject({
+        revision: z.coerce.number().int().positive().optional(),
+      }),
+      entry.extend({ snapshot: ConfigSnapshotSchema }),
+      (ctx, input, p) => owner().read(ctx, { ...input, id: p.id! }),
+    );
+    route(
+      'POST',
+      path,
+      `${name}.create`,
+      z.strictObject({ definition, expectedRevision: cas }),
+      SettingsChangeResultSchema,
+      (ctx, input) => owner().create(ctx, input),
+    );
+    route(
+      'PATCH',
+      `${path}/:id`,
+      `${name}.update`,
+      z.strictObject({ definition, expectedRevision: cas }),
+      SettingsChangeResultSchema,
+      (ctx, input, p) => owner().update(ctx, { ...input, id: p.id! }),
+    );
+    route(
+      'DELETE',
+      `${path}/:id`,
+      `${name}.delete`,
+      z.strictObject({ expectedRevision: cas }),
+      SettingsChangeResultSchema,
+      (ctx, input, p) => owner().delete(ctx, { ...input, id: p.id! }),
+    );
+  }
+  route(
+    'GET',
+    '/v1/roles',
+    'models.roles',
+    z.strictObject({ scope: ConfigScopeSchema.optional() }),
+    unknown,
+    (ctx, input) => app().models.describeRoles(ctx, input.scope),
+  );
+  route(
+    'POST',
+    `${S}/models/prepare`,
+    'models.prepare',
+    z.strictObject({ roleId: z.string().min(1) }),
+    InvocationSnapshotSchema,
+    (ctx, input) => app().models.prepare(ctx, input.roleId),
   );
   route(
     'POST',
     `${S}/model-invocations/prepare`,
     'modelInvocations.prepare',
-    InvocationPrepareSchema,
-    unknown,
-    (ctx, input) => app().invocations.prepare(ctx, input),
+    NativeInvocationPrepareSchema,
+    ModelCallViewSchema,
+    (ctx, input) => app().nativeModels.prepare(ctx, input),
   );
   route(
     'POST',
     `${S}/model-invocations/:id/dispatch`,
     'modelInvocations.dispatch',
-    empty,
-    unknown,
-    (ctx, _, p) => app().invocations.dispatch(ctx, p.id!),
+    z.strictObject({ observed: TimeCaptureReceiptSchema.optional() }),
+    ModelCallViewSchema,
+    (ctx, input, p) =>
+      app().nativeModels.dispatch(ctx, { ...input, invocationId: p.id! }),
   );
   route(
     'POST',
     `${S}/model-invocations/:id/completion`,
     'modelInvocations.complete',
-    InvocationCompletionSchema,
-    unknown,
-    (ctx, input, p) => app().invocations.complete(ctx, p.id!, input),
+    NativeInvocationCompletionSchema,
+    ModelCallViewSchema,
+    (ctx, input, p) => {
+      if (input.invocationId !== p.id)
+        throw problem(
+          'models.invocation_mismatch',
+          'conflict',
+          '路径与回执的模型调用身份不一致',
+        );
+      return app().nativeModels.complete(ctx, input);
+    },
   );
-  route('GET', '/v1/costs', 'costs.read', z.object({subjectId:z.uuidv7()}), unknown, async (ctx) => ({
-    items: await app().costs.read(ctx),
-  }));
+  route(
+    'GET',
+    '/v1/model-invocations',
+    'models.invocations.list',
+    ModelInvocationFilterSchema.extend({
+      limit: z.coerce.number().int().min(1).max(200).optional(),
+    }),
+    ModelInvocationPageSchema,
+    (ctx, input) => app().models.invocations.list(ctx, input),
+  );
+  route(
+    'GET',
+    '/v1/model-invocations/:id',
+    'models.invocations.read',
+    z.strictObject({ subjectId: z.uuidv7().optional() }),
+    ModelCallViewSchema,
+    (ctx, _input, p) =>
+      app().models.invocations.read(ctx, { invocationId: p.id! }),
+  );
+  route(
+    'POST',
+    '/v1/model-invocations/reconcile',
+    'models.reconcile',
+    ModelReconcileSchema.extend({ subjectId: z.uuidv7().optional() }),
+    ModelCallViewSchema,
+    (ctx, { subjectId: _subjectId, ...input }) =>
+      app().models.reconcile(ctx, input),
+  );
+  route(
+    'GET',
+    '/v1/costs',
+    'costs.read',
+    ModelInvocationFilterSchema.extend({
+      limit: z.coerce.number().int().min(1).max(200).optional(),
+    }),
+    ModelInvocationPageSchema,
+    (ctx, input) => app().models.costs.read(ctx, input),
+  );
+
+  route(
+    'GET',
+    '/v1/prompts/catalog',
+    'prompts.describe',
+    PromptDescribeSchema.extend({}),
+    z.array(PromptDescriptionSchema),
+    (ctx, input) => app().prompts.describe(ctx, input),
+  );
+  route(
+    'GET',
+    '/v1/prompts',
+    'prompts.list',
+    PromptListSchema.extend({
+      limit: z.coerce.number().int().min(1).max(200).optional(),
+    }),
+    PromptListPageSchema,
+    (ctx, input) => app().prompts.list(ctx, input),
+  );
+  route(
+    'GET',
+    '/v1/prompts/read',
+    'prompts.read',
+    PromptReadSchema.extend({
+      revision: z.coerce.number().int().positive().optional(),
+    }),
+    PromptReadResultSchema,
+    (ctx, input) => app().prompts.read(ctx, input),
+  );
+  route(
+    'GET',
+    '/v1/prompts/history',
+    'prompts.history',
+    PromptHistorySchema.extend({
+      limit: z.coerce.number().int().min(1).max(200).optional(),
+    }),
+    PromptHistoryPageSchema,
+    (ctx, input) => app().prompts.history(ctx, input),
+  );
+  route(
+    'POST',
+    '/v1/prompts',
+    'prompts.save',
+    PromptSaveSchema,
+    PromptChangeResultSchema,
+    (ctx, input) => app().prompts.save(ctx, input),
+  );
+  route(
+    'POST',
+    '/v1/prompts/activate',
+    'prompts.activate',
+    PromptActivateSchema,
+    PromptChangeResultSchema,
+    (ctx, input) => app().prompts.activate(ctx, input),
+  );
+  route(
+    'POST',
+    '/v1/prompts/reset',
+    'prompts.reset',
+    PromptResetSchema,
+    PromptChangeResultSchema,
+    (ctx, input) => app().prompts.reset(ctx, input),
+  );
+  route(
+    'POST',
+    '/v1/prompts/preview',
+    'prompts.preview',
+    PromptPreviewSchema,
+    PromptPreviewResultSchema,
+    (ctx, input) => app().prompts.preview(ctx, input),
+  );
+  route(
+    'POST',
+    '/v1/prompts/snapshot',
+    'prompts.snapshot',
+    PromptSnapshotRequestSchema,
+    PromptSnapshotSchema,
+    (ctx, input) => app().prompts.snapshot(ctx, input),
+  );
+  route(
+    'POST',
+    '/v1/prompts/render',
+    'prompts.render',
+    PromptRenderRequestSchema,
+    PromptRenderResultSchema,
+    (ctx, input) => app().prompts.render(ctx, input),
+  );
   route(
     'GET',
     '/v1/operations/:id',
     'operations.inspect',
-    z.object({subjectId:z.uuidv7().optional()}),
-    unknown,
+    OperationControlSchema,
+    OperationViewSchema,
     (ctx, _, p) => app().operations.inspect(ctx, p.id!),
   );
-  route('GET','/v1/operations/:id/trace','operations.trace',z.object({subjectId:z.uuidv7().optional()}),unknown,(ctx,_,p)=>app().operations.trace(ctx,p.id!));
+  route(
+    'GET',
+    '/v1/operations/:id/trace',
+    'operations.trace',
+    OperationControlSchema,
+    OperationTraceSchema,
+    (ctx, _, p) => app().operations.trace(ctx, p.id!),
+  );
+  route(
+    'POST',
+    '/v1/operations/:id/cancel',
+    'operations.cancel',
+    OperationControlSchema,
+    OperationViewSchema,
+    (ctx, _input, p) => app().operations.cancel(ctx, p.id!),
+  );
+  route(
+    'POST',
+    '/v1/operations/:id/resume',
+    'operations.resume',
+    OperationControlSchema,
+    OperationViewSchema,
+    (ctx, _input, p) => app().operations.resume(ctx, p.id!),
+  );
   server.get('/openapi.json', { schema: { hide: true } }, async () =>
     server.swagger(),
   );

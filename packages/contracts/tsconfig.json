@@ -2,8 +2,9 @@
   "extends": "../../tsconfig.json",
   "compilerOptions": {
     "rootDir": ".",
-    "outDir": "../../data/packages/contracts/dist",
-    "customConditions": []
+    "outDir": "dist",
+    "customConditions": [],
+    "paths": {}
   },
   "include": [
     "*.ts"

@@ -1,0 +1,9 @@
+Copyright 2026 Aravine Zhu
+SPDX-License-Identifier: Apache-2.0
+
+Prompt resources and role catalog
+prompts/en/ and src/models/catalog.ts copy/adapt Nous-Wave commit
+412b062082afb75ccfae4c3f69fc606d3e3cc862, prompts/ and apps/nous-core/src/model/roles.ts.
+Copyright 2026 Aravine Zhu; Apache-2.0, see LICENSES/Apache-2.0.txt.
+Formation, reflection, Journal and criterion resources retain their source semantics
+with output fields adapted to the current owner contracts.

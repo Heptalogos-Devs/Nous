@@ -1,0 +1,138 @@
+{
+  "name": "@nous-wave/platform",
+  "version": "0.2.0-infrastructure.1",
+  "type": "module",
+  "license": "AGPL-3.0-only",
+  "exports": {
+    "./bootstrap": {
+      "types": "./dist/bootstrap/index.d.ts",
+      "default": "./dist/bootstrap/index.js"
+    },
+    "./storage": {
+      "types": "./dist/storage/index.d.ts",
+      "default": "./dist/storage/index.js"
+    },
+    "./credentials": {
+      "types": "./dist/credentials/index.d.ts",
+      "default": "./dist/credentials/index.js"
+    },
+    "./errors": {
+      "types": "./dist/errors.d.ts",
+      "default": "./dist/errors.js"
+    },
+    "./time": {
+      "types": "./dist/time/index.d.ts",
+      "default": "./dist/time/index.js"
+    },
+    "./settings": {
+      "types": "./dist/settings/index.d.ts",
+      "default": "./dist/settings/index.js"
+    },
+    "./settings/contracts": {
+      "types": "./dist/settings/types.d.ts",
+      "default": "./dist/settings/types.js"
+    },
+    "./telemetry": {
+      "types": "./dist/telemetry/index.d.ts",
+      "default": "./dist/telemetry/index.js"
+    },
+    "./telemetry/contracts": {
+      "types": "./dist/telemetry/contracts.d.ts",
+      "default": "./dist/telemetry/contracts.js"
+    },
+    "./network": {
+      "types": "./dist/network/index.d.ts",
+      "default": "./dist/network/index.js"
+    },
+    "./network/contracts": {
+      "types": "./dist/network/contracts.d.ts",
+      "default": "./dist/network/contracts.js"
+    },
+    "./prompts": {
+      "types": "./dist/prompts/index.d.ts",
+      "default": "./dist/prompts/index.js"
+    },
+    "./prompts/contracts": {
+      "types": "./dist/prompts/contracts.d.ts",
+      "default": "./dist/prompts/contracts.js"
+    },
+    "./models": {
+      "types": "./dist/models/index.d.ts",
+      "default": "./dist/models/index.js"
+    },
+    "./devtools/openapi": {
+      "types": "./dist/devtools/openapi.d.ts",
+      "default": "./dist/devtools/openapi.js"
+    }
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "NOTICE",
+    "LICENSES",
+    "resources"
+  ],
+  "engines": {
+    "node": ">=24.21.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@nous-wave/contracts": "workspace:*",
+    "@dbos-inc/dbos-sdk": "5.3.0",
+    "@dbos-inc/kysely-datasource": "5.3.0",
+    "@js-temporal/polyfill": "0.5.1",
+    "confbox": "0.3.1",
+    "env-paths": "3.0.0",
+    "kysely": "0.29.7",
+    "pg": "8.23.1",
+    "postgres-array": "3.0.4",
+    "proper-lockfile": "4.1.2",
+    "write-file-atomic": "8.0.0",
+    "zod": "4.6.5",
+    "uuid": "13.0.0",
+    "execa": "10.0.1",
+    "@napi-rs/keyring": "2.0.0",
+    "@fastify/deepmerge": "3.2.2",
+    "fast-json-patch": "3.1.1",
+    "json-canonicalize": "2.0.0",
+    "decimal.js": "10.6.0",
+    "better-auth": "1.7.11",
+    "@better-auth/api-key": "1.7.11",
+    "pino": "10.4.0",
+    "pino-roll": "4.0.0",
+    "@opentelemetry/api": "1.9.1",
+    "@opentelemetry/sdk-node": "0.208.0",
+    "@grpc/grpc-js": "1.14.6",
+    "@opentelemetry/resources": "2.2.0",
+    "@opentelemetry/sdk-trace-base": "2.2.0",
+    "@opentelemetry/sdk-metrics": "2.2.0",
+    "@opentelemetry/core": "2.2.0",
+    "@opentelemetry/exporter-trace-otlp-proto": "0.208.0",
+    "@opentelemetry/exporter-trace-otlp-http": "0.208.0",
+    "@opentelemetry/exporter-trace-otlp-grpc": "0.208.0",
+    "@opentelemetry/exporter-metrics-otlp-proto": "0.208.0",
+    "@opentelemetry/exporter-metrics-otlp-http": "0.208.0",
+    "@opentelemetry/exporter-metrics-otlp-grpc": "0.208.0",
+    "undici": "8.10.0",
+    "ipaddr.js": "2.5.0",
+    "lru-cache": "11.5.3",
+    "@opentelemetry/api-logs": "0.208.0",
+    "liquidjs": "10.30.0",
+    "chokidar": "6.0.0",
+    "get-stream": "9.0.1",
+    "@ai-sdk/openai": "4.0.99",
+    "@ai-sdk/cohere": "4.0.66",
+    "@ai-sdk/provider": "4.0.31",
+    "@ai-sdk/openai-compatible": "3.0.71",
+    "ai": "7.0.146",
+    "@dbos-inc/vercel-ai": "0.5.4",
+    "@ai-sdk/provider-utils": "5.0.65"
+  },
+  "devDependencies": {
+    "@types/pg": "8.15.5",
+    "@types/proper-lockfile": "4.1.4",
+    "@types/write-file-atomic": "4.0.3"
+  }
+}

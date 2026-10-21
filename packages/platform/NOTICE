@@ -1,0 +1,49 @@
+Copyright 2026 Aravine Zhu
+SPDX-License-Identifier: AGPL-3.0-only
+
+Vercel AI SDK embedding batch plan
+AI SDK 7.0.146, commit 0a5c786ef65bcd835328fb543685f6d8ef233dae.
+models/embedding-plan.ts adapts splitByEmbeddingLimits from
+packages/ai/src/embed/embed-many.ts. Copyright Vercel, Inc.
+Licensed under Apache-2.0; full license in LICENSES/Apache-2.0.txt.
+
+Nous-Wave model configuration validation
+Nous-Wave commit 412b062082afb75ccfae4c3f69fc606d3e3cc862.
+models/configuration.ts adapts graph-link validation from
+apps/nous-core/src/model/configuration.ts and execution/binding.ts.
+Copyright 2026 Aravine Zhu. Original source licensed under Apache-2.0;
+full license in LICENSES/Apache-2.0.txt.
+
+Undici network routing source
+Undici 8.10.0, commit c8d80e6b2dcfab282557b08f51352937bc9e5692
+The environment proxy route helper is copied/adapted from lib/dispatcher/env-http-proxy-agent.js.
+
+MIT License
+
+Copyright (c) Matteo Collina and Undici contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+embedded-postgres managed cluster source
+bootstrap/postgres/embedded.ts copies/adapts packages/embedded-postgres/src/index.ts
+from leinelissen/embedded-postgres commit 8c8c16d1b81bec8ae3315d59a050654086a85e23.
+Copyright (c) 2022 Lei Nelissen; MIT, see LICENSES/embedded-postgres-MIT.txt.
+Only the selected upstream native binary package is installed explicitly at runtime acquisition.
+
+OpenAPI Generator 7.26.0 typescript-fetch/apis.mustache (OpenAPITools, Apache-2.0): resources/openapi/binary-body.patch adapts raw binary body parameters to fetch BodyInit. Templates are acquired from the official pinned generator; multipart file behavior is retained.
