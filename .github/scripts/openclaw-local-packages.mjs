@@ -41,7 +41,9 @@ if (values.phase === 'hept') {
   const workspace = parseYAML(await readFile(file, 'utf8'));
   workspace.overrides = { ...workspace.overrides, ...overrides };
   const upstream = parseYAML(await readFile(path.resolve(values['runtime-source'], 'pnpm-workspace.yaml'), 'utf8'));
-  workspace.allowBuilds = { ...upstream.allowBuilds, ...workspace.allowBuilds, openclaw: true };
+  // pnpm 12 matches a local tarball's exact file locator, rather than its registry name.
+  const runtimeBuildId = `openclaw@file:${path.relative(hept, runtime).split(path.sep).join('/')}`;
+  workspace.allowBuilds = { ...upstream.allowBuilds, ...workspace.allowBuilds, [runtimeBuildId]: true };
   const manifestPath = path.join(hept, 'package.json');
   const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
   // The actual built SDK is an explicit test dependency for channel consumers.
