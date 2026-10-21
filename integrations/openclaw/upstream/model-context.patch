@@ -4092,10 +4092,10 @@ index 774017df..66cedcab 100644
      "completed",
      retention,
 diff --git a/src/infra/delivery-queue-sqlite.types.ts b/src/infra/delivery-queue-sqlite.types.ts
-index f94e9112..48ae2bdc 100644
+index f94e9112..0a6a7074 100644
 --- a/src/infra/delivery-queue-sqlite.types.ts
 +++ b/src/infra/delivery-queue-sqlite.types.ts
-@@ -82,6 +82,22 @@ export function inferDeliveryQueueFailureRetention(
+@@ -82,6 +82,27 @@ export function inferDeliveryQueueFailureRetention(
    return durable || ambiguous ? "permanent" : undefined;
  }
  
@@ -4115,10 +4115,15 @@ index f94e9112..48ae2bdc 100644
 +  }>;
 +};
 +
++export type DeliveryPhysicalReceiptView = {
++  status: "pending" | "completed" | "failed";
++  receipt: DeliveryPhysicalReceipt | null;
++};
++
  /** Persisted queue entry fields common to all delivery queue payloads. */
  export type DeliveryQueueEntryState = {
    id: string;
-@@ -102,6 +118,7 @@ export type DeliveryQueueEntryState = {
+@@ -102,6 +123,7 @@ export type DeliveryQueueEntryState = {
    /** UUID fencing one platform attempt even when clock timestamps collide. */
    platformSendAttemptId?: string;
    platformSendStartedAt?: number;
@@ -4126,7 +4131,7 @@ index f94e9112..48ae2bdc 100644
    recoveryState?: string;
  };
  
-@@ -130,7 +147,7 @@ export function hasLiveDeliveryQueueClaim(
+@@ -130,7 +152,7 @@ export function hasLiveDeliveryQueueClaim(
  
  /** Strip a terminal queue row to the producer policy needed for admission. */
  export function projectDeliveryQueueTerminalEntry(
@@ -4135,7 +4140,7 @@ index f94e9112..48ae2bdc 100644
    terminalAt: number,
    terminal: "completed" | "failed",
    completionRetention?: DeliveryQueueCompletionRetention,
-@@ -149,6 +166,7 @@ export function projectDeliveryQueueTerminalEntry(
+@@ -149,6 +171,7 @@ export function projectDeliveryQueueTerminalEntry(
      retryCount,
      ...(terminal === "completed" ? { acknowledgedAt: terminalAt } : { failedAt: terminalAt }),
      ...(completionRetention ? { completionRetention } : {}),
@@ -4144,10 +4149,18 @@ index f94e9112..48ae2bdc 100644
    };
  }
 diff --git a/src/infra/delivery-queue.worker.ts b/src/infra/delivery-queue.worker.ts
-index 47e7c8cb..dc940667 100644
+index 47e7c8cb..f3338ade 100644
 --- a/src/infra/delivery-queue.worker.ts
 +++ b/src/infra/delivery-queue.worker.ts
-@@ -81,6 +81,8 @@ type OutboundDeliveryMutation = {
+@@ -30,6 +30,7 @@ import {
+   updateDeliveryQueueEntryInDatabase,
+   upsertDeliveryQueueEntryInDatabase,
+ } from "./delivery-queue-sqlite.kernel.js";
++import type { DeliveryPhysicalReceiptView } from "./delivery-queue-sqlite.types.js";
+ import {
+   ackDeliveryInDatabase,
+   retireUnsentDeliveryInDatabase,
+@@ -81,6 +82,8 @@ type OutboundDeliveryMutation = {
    | { kind: "fail" | "fail-before-send" | "fail-after-send"; error: string }
    | { kind: "start" | "dispatch"; route?: { replyToId?: string | null } }
    | { kind: "unknown" }
@@ -4156,7 +4169,7 @@ index 47e7c8cb..dc940667 100644
  );
  
  function claimPreparation(
-@@ -151,6 +153,59 @@ function mutateOutbound(database: OpenClawStateDatabase, input: OutboundDelivery
+@@ -151,6 +154,59 @@ function mutateOutbound(database: OpenClawStateDatabase, input: OutboundDelivery
    const update = (entry: QueuedDelivery): QueuedDelivery => {
      const now = Date.now();
      switch (input.kind) {
@@ -4216,16 +4229,21 @@ index 47e7c8cb..dc940667 100644
        case "fail":
        case "fail-before-send":
        case "fail-after-send":
-@@ -462,6 +517,12 @@ export const deliveryQueueOperations = {
+@@ -462,6 +518,17 @@ export const deliveryQueueOperations = {
    ) => executePendingDeliveryFailure(input, { database: open(), ...stateOptions() }),
    "deliveryQueue.findIntentOwners": readOperation(findDeliveryIntentOwnersInDatabase),
    "deliveryQueue.inspectReceipt": readOperation(inspectDeliveryQueueReceiptInDatabase),
-+  "deliveryQueue.inspectPhysicalReceipt": readOperation((database, input: { id: string }) => {
-+    const [owner] = findDeliveryIntentOwnersInDatabase(database, { ids: [input.id] });
-+    if (!owner || owner.namespace !== "prepared") return null;
-+    const entry = loadDeliveryQueueEntryInDatabase(database, owner.queueName, input.id, "all");
-+    return entry ? { status: owner.status, receipt: entry.physicalReceipt ?? null } : null;
-+  }),
++  "deliveryQueue.inspectPhysicalReceipt": readOperation(
++    (database, input: { id: string }): DeliveryPhysicalReceiptView | null => {
++      const [owner] = findDeliveryIntentOwnersInDatabase(database, { ids: [input.id] });
++      if (!owner || owner.namespace !== "prepared") return null;
++      if (owner.status !== "pending" && owner.status !== "completed" && owner.status !== "failed") {
++        throw new Error(`Unsupported physical delivery status: ${input.id}`);
++      }
++      const entry = loadDeliveryQueueEntryInDatabase(database, owner.queueName, input.id, "all");
++      return entry ? { status: owner.status, receipt: entry.physicalReceipt ?? null } : null;
++    },
++  ),
    "deliveryQueue.countFailed": (_input: undefined, { open }) =>
      countFailedDeliveryQueueEntriesInDatabase(open()),
    "deliveryQueue.countPending": (input: { queueNames: string[] }, { open }) =>
@@ -4506,7 +4524,7 @@ index 7ea70dae..f5f37e1e 100644
    id: string,
    stateDir?: string,
 diff --git a/src/plugin-sdk/channel-outbound.ts b/src/plugin-sdk/channel-outbound.ts
-index f0e6ca8c..912a516d 100644
+index f0e6ca8c..aec62cf2 100644
 --- a/src/plugin-sdk/channel-outbound.ts
 +++ b/src/plugin-sdk/channel-outbound.ts
 @@ -249,6 +249,7 @@ export type {
@@ -4517,7 +4535,7 @@ index f0e6ca8c..912a516d 100644
  } from "../channels/message/types.js";
  
  async function loadChannelDurableDeliveryModule(): Promise<ChannelDurableDeliveryModule> {
-@@ -276,6 +277,29 @@ export const deliverStructuredInboundReplyWithMessageSendContext: ChannelDurable
+@@ -276,6 +277,26 @@ export const deliverStructuredInboundReplyWithMessageSendContext: ChannelDurable
      return await mod.deliverStructuredInboundReplyWithMessageSendContextCore(...args);
    };
  
@@ -4527,10 +4545,7 @@ index f0e6ca8c..912a516d 100644
 +  channel: string;
 +  to: string;
 +  accountId?: string;
-+}): Promise<{
-+  status: "pending" | "completed" | "failed";
-+  receipt: import("../infra/delivery-queue-sqlite.types.js").DeliveryPhysicalReceipt | null;
-+} | null> {
++}): Promise<import("../infra/delivery-queue-sqlite.types.js").DeliveryPhysicalReceiptView | null> {
 +  const { inspectDeliveryPhysicalReceipt } =
 +    await import("../infra/outbound/delivery-queue-storage.js");
 +  const view = await inspectDeliveryPhysicalReceipt(input.id);
