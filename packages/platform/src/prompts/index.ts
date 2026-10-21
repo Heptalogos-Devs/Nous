@@ -22,6 +22,7 @@ export * from './types.js';
 export {promptsDefinition,promptsDefaults,PromptsSettingsSchema} from './config.js';
 export {promptsMigration,type PromptDatabase} from './migration.js';
 export {PromptRegistry} from './registry.js';
+export {createPromptDataLifecycle,promptDataMigration} from './data.js';
 export interface PromptsOptions {
   installationId:string;db:Kysely<PromptDatabase>;programRoot:string;overrideRoot:string;
   catalog:readonly PromptDescriptor[];settings:Settings;authorize:PromptAuthorize;processBootId?:string;

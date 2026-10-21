@@ -5908,6 +5908,9 @@
               "root": {
                 "type": "string"
               },
+              "bindingRequired": {
+                "type": "boolean"
+              },
               "extensions": {
                 "default": [],
                 "type": "array",
@@ -6663,6 +6666,790 @@
           "changeCursor",
           "branchedFrom"
         ]
+      },
+      "OwnerCutInput": {
+        "type": "object",
+        "properties": {
+          "owner": {
+            "type": "string"
+          },
+          "schemaVersion": {
+            "type": "integer",
+            "minimum": 0,
+            "exclusiveMinimum": true,
+            "maximum": 9007199254740991
+          },
+          "subjectId": {
+            "$ref": "#/components/schemas/SubjectIdInput"
+          },
+          "realRecordedCut": {
+            "$ref": "#/components/schemas/InstantInput"
+          },
+          "selectionRef": {
+            "$ref": "#/components/schemas/RefInput"
+          },
+          "count": {
+            "type": "string",
+            "pattern": "^\\d+$"
+          }
+        },
+        "required": [
+          "owner",
+          "schemaVersion",
+          "subjectId",
+          "realRecordedCut",
+          "selectionRef",
+          "count"
+        ],
+        "additionalProperties": false
+      },
+      "DataComponentInput": {
+        "type": "object",
+        "properties": {
+          "owner": {
+            "type": "string"
+          },
+          "schemaVersion": {
+            "type": "integer",
+            "minimum": 0,
+            "exclusiveMinimum": true,
+            "maximum": 9007199254740991
+          },
+          "path": {
+            "type": "string"
+          },
+          "digest": {
+            "type": "string",
+            "minLength": 1
+          },
+          "bytes": {
+            "type": "string",
+            "pattern": "^\\d+$"
+          }
+        },
+        "required": [
+          "owner",
+          "schemaVersion",
+          "path",
+          "digest",
+          "bytes"
+        ],
+        "additionalProperties": false
+      },
+      "BlobExportEntryInput": {
+        "type": "object",
+        "properties": {
+          "blobRef": {
+            "$ref": "#/components/schemas/RefInput"
+          },
+          "digest": {
+            "type": "string",
+            "minLength": 1
+          },
+          "bytes": {
+            "type": "string",
+            "pattern": "^\\d+$"
+          },
+          "mediaType": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "blobRef",
+          "digest",
+          "bytes",
+          "mediaType",
+          "path"
+        ],
+        "additionalProperties": false
+      },
+      "PendingResourceInput": {
+        "type": "object",
+        "properties": {
+          "owner": {
+            "type": "string"
+          },
+          "ref": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/RefInput"
+              }
+            ]
+          },
+          "reasonCode": {
+            "type": "string"
+          },
+          "operationId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "owner",
+          "reasonCode"
+        ],
+        "additionalProperties": false
+      },
+      "BindingRequirementInput": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "secret",
+              "provider",
+              "channel_account",
+              "time_authority",
+              "native_runtime",
+              "resource"
+            ]
+          },
+          "logicalName": {
+            "type": "string"
+          },
+          "sourceRef": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/RefInput"
+              }
+            ]
+          },
+          "capabilities": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "logicalName",
+          "capabilities"
+        ],
+        "additionalProperties": false
+      },
+      "SubjectBundleManifestInput": {
+        "type": "object",
+        "properties": {
+          "format": {
+            "type": "string",
+            "enum": [
+              "nous-hept-subject"
+            ]
+          },
+          "version": {
+            "type": "number",
+            "enum": [
+              1
+            ]
+          },
+          "bundleId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "restore"
+            ]
+          },
+          "subject": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "$ref": "#/components/schemas/SubjectIdInput"
+              },
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "name"
+            ],
+            "additionalProperties": false
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "product": {
+                  "type": "string",
+                  "enum": [
+                    "nous",
+                    "hept"
+                  ]
+                },
+                "installationId": {
+                  "type": "string"
+                },
+                "productVersion": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "product",
+                "installationId",
+                "productVersion"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "createdAt": {
+            "$ref": "#/components/schemas/TimePointInput"
+          },
+          "cuts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OwnerCutInput"
+            }
+          },
+          "components": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DataComponentInput"
+            }
+          },
+          "blobs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BlobExportEntryInput"
+            }
+          },
+          "requiredBindings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BindingRequirementInput"
+            }
+          },
+          "pending": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PendingResourceInput"
+            }
+          }
+        },
+        "required": [
+          "format",
+          "version",
+          "bundleId",
+          "mode",
+          "subject",
+          "sources",
+          "createdAt",
+          "cuts",
+          "components",
+          "blobs",
+          "requiredBindings",
+          "pending"
+        ],
+        "additionalProperties": false
+      },
+      "DataArtifactInput": {
+        "type": "object",
+        "properties": {
+          "ref": {
+            "$ref": "#/components/schemas/RefInput"
+          },
+          "blobRef": {
+            "$ref": "#/components/schemas/RefInput"
+          },
+          "mediaType": {
+            "type": "string"
+          },
+          "digest": {
+            "type": "string",
+            "minLength": 1
+          },
+          "bytes": {
+            "type": "string",
+            "pattern": "^\\d+$"
+          },
+          "createdAt": {
+            "$ref": "#/components/schemas/TimePointInput"
+          },
+          "expiresAt": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TimePointInput"
+              }
+            ]
+          },
+          "policy": {
+            "$ref": "#/components/schemas/PolicyInput"
+          },
+          "consumer": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ConsumerInput"
+              }
+            ]
+          },
+          "sourceRefs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RefInput"
+            }
+          }
+        },
+        "required": [
+          "ref",
+          "blobRef",
+          "mediaType",
+          "digest",
+          "bytes",
+          "createdAt",
+          "policy",
+          "sourceRefs"
+        ],
+        "additionalProperties": false
+      },
+      "DataExportInput": {
+        "type": "object",
+        "properties": {
+          "subjectId": {
+            "$ref": "#/components/schemas/SubjectIdInput"
+          },
+          "mode": {
+            "default": "restore",
+            "type": "string",
+            "enum": [
+              "restore"
+            ]
+          }
+        },
+        "required": [
+          "subjectId"
+        ],
+        "additionalProperties": false
+      },
+      "DataArtifactReadInput": {
+        "type": "object",
+        "properties": {
+          "artifactRef": {
+            "$ref": "#/components/schemas/RefInput"
+          }
+        },
+        "required": [
+          "artifactRef"
+        ],
+        "additionalProperties": false
+      },
+      "ImportArtifactResultInput": {
+        "type": "object",
+        "properties": {
+          "artifactRef": {
+            "$ref": "#/components/schemas/RefInput"
+          },
+          "digest": {
+            "type": "string",
+            "minLength": 1
+          },
+          "bytes": {
+            "type": "string",
+            "pattern": "^\\d+$"
+          }
+        },
+        "required": [
+          "artifactRef",
+          "digest",
+          "bytes"
+        ],
+        "additionalProperties": false
+      },
+      "ExpectedDataTargetInput": {
+        "type": "object",
+        "properties": {
+          "ref": {
+            "$ref": "#/components/schemas/RefInput"
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "expectedCursor": {
+            "type": "string",
+            "pattern": "^\\d+$"
+          }
+        },
+        "required": [
+          "ref"
+        ],
+        "additionalProperties": false
+      },
+      "ImportPlanInput": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+          },
+          "artifactRef": {
+            "$ref": "#/components/schemas/RefInput"
+          },
+          "manifestDigest": {
+            "type": "string",
+            "minLength": 1
+          },
+          "targetMode": {
+            "type": "string",
+            "enum": [
+              "restore"
+            ]
+          },
+          "subjectId": {
+            "$ref": "#/components/schemas/SubjectIdInput"
+          },
+          "ownerValidations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "owner": {
+                  "type": "string"
+                },
+                "schemaVersion": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "exclusiveMinimum": true,
+                  "maximum": 9007199254740991
+                },
+                "compatible": {
+                  "type": "boolean"
+                },
+                "problems": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ProblemInput"
+                  }
+                }
+              },
+              "required": [
+                "owner",
+                "schemaVersion",
+                "compatible",
+                "problems"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "expectedTargets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExpectedDataTargetInput"
+            }
+          },
+          "requiredBindings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BindingRequirementInput"
+            }
+          },
+          "pending": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PendingResourceInput"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "artifactRef",
+          "manifestDigest",
+          "targetMode",
+          "subjectId",
+          "ownerValidations",
+          "expectedTargets",
+          "requiredBindings",
+          "pending"
+        ],
+        "additionalProperties": false
+      },
+      "DataImportInput": {
+        "type": "object",
+        "properties": {
+          "planId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+          },
+          "expectedTargets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExpectedDataTargetInput"
+            }
+          }
+        },
+        "required": [
+          "planId",
+          "expectedTargets"
+        ],
+        "additionalProperties": false
+      },
+      "DataImportResultInput": {
+        "type": "object",
+        "properties": {
+          "subjectId": {
+            "$ref": "#/components/schemas/SubjectIdInput"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "paused"
+            ]
+          },
+          "pending": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PendingResourceInput"
+            }
+          }
+        },
+        "required": [
+          "subjectId",
+          "status",
+          "pending"
+        ],
+        "additionalProperties": false
+      },
+      "DataPurgeSelectionInput": {
+        "type": "object",
+        "properties": {
+          "subjectId": {
+            "$ref": "#/components/schemas/SubjectIdInput"
+          }
+        },
+        "required": [
+          "subjectId"
+        ],
+        "additionalProperties": false
+      },
+      "PurgePlanInput": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+          },
+          "selectionRef": {
+            "$ref": "#/components/schemas/RefInput"
+          },
+          "subjectId": {
+            "$ref": "#/components/schemas/SubjectIdInput"
+          },
+          "expectedTargets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExpectedDataTargetInput"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "selectionRef",
+          "subjectId",
+          "expectedTargets"
+        ],
+        "additionalProperties": false
+      },
+      "PurgeReceiptInput": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+          },
+          "selectionRef": {
+            "$ref": "#/components/schemas/RefInput"
+          },
+          "recordedAt": {
+            "$ref": "#/components/schemas/TimePointInput"
+          },
+          "cleared": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "owner": {
+                  "type": "string"
+                },
+                "count": {
+                  "type": "string",
+                  "pattern": "^\\d+$"
+                },
+                "bytes": {
+                  "type": "string",
+                  "pattern": "^\\d+$"
+                }
+              },
+              "required": [
+                "owner",
+                "count"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "pending": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PendingResourceInput"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "selectionRef",
+          "recordedAt",
+          "cleared",
+          "pending"
+        ],
+        "additionalProperties": false
+      },
+      "DataReceiptReadInput": {
+        "type": "object",
+        "properties": {
+          "operationId": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "operationId"
+        ],
+        "additionalProperties": false
+      },
+      "DataReceiptInput": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "operationId": {
+                "type": "string"
+              },
+              "operationName": {
+                "type": "string",
+                "enum": [
+                  "data.export"
+                ]
+              },
+              "recordedAt": {
+                "$ref": "#/components/schemas/TimePointInput"
+              },
+              "result": {
+                "$ref": "#/components/schemas/DataArtifactInput"
+              }
+            },
+            "required": [
+              "operationId",
+              "operationName",
+              "recordedAt",
+              "result"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "operationId": {
+                "type": "string"
+              },
+              "operationName": {
+                "type": "string",
+                "enum": [
+                  "data.import"
+                ]
+              },
+              "recordedAt": {
+                "$ref": "#/components/schemas/TimePointInput"
+              },
+              "result": {
+                "$ref": "#/components/schemas/DataImportResultInput"
+              }
+            },
+            "required": [
+              "operationId",
+              "operationName",
+              "recordedAt",
+              "result"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "operationId": {
+                "type": "string"
+              },
+              "operationName": {
+                "type": "string",
+                "enum": [
+                  "data.purge"
+                ]
+              },
+              "recordedAt": {
+                "$ref": "#/components/schemas/TimePointInput"
+              },
+              "result": {
+                "$ref": "#/components/schemas/PurgeReceiptInput"
+              }
+            },
+            "required": [
+              "operationId",
+              "operationName",
+              "recordedAt",
+              "result"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      },
+      "DataSettingsInput": {
+        "type": "object",
+        "properties": {
+          "maxBundleBytes": {
+            "type": "integer",
+            "minimum": 0,
+            "exclusiveMinimum": true,
+            "maximum": 9007199254740991
+          },
+          "maxExpandedBytes": {
+            "type": "integer",
+            "minimum": 0,
+            "exclusiveMinimum": true,
+            "maximum": 9007199254740991
+          },
+          "maxEntries": {
+            "type": "integer",
+            "minimum": 0,
+            "exclusiveMinimum": true,
+            "maximum": 9007199254740991
+          },
+          "temporaryRetentionHours": {
+            "type": "integer",
+            "minimum": 0,
+            "exclusiveMinimum": true,
+            "maximum": 720
+          }
+        },
+        "required": [
+          "maxBundleBytes",
+          "maxExpandedBytes",
+          "maxEntries",
+          "temporaryRetentionHours"
+        ],
+        "additionalProperties": false
       },
       "PromptIdInput": {
         "type": "string",
@@ -17465,6 +18252,9 @@
               "root": {
                 "type": "string"
               },
+              "bindingRequired": {
+                "type": "boolean"
+              },
               "extensions": {
                 "default": [],
                 "type": "array",
@@ -18242,6 +19032,791 @@
           "createdAt",
           "changeCursor",
           "branchedFrom"
+        ],
+        "additionalProperties": false
+      },
+      "OwnerCut": {
+        "type": "object",
+        "properties": {
+          "owner": {
+            "type": "string"
+          },
+          "schemaVersion": {
+            "type": "integer",
+            "minimum": 0,
+            "exclusiveMinimum": true,
+            "maximum": 9007199254740991
+          },
+          "subjectId": {
+            "$ref": "#/components/schemas/SubjectId"
+          },
+          "realRecordedCut": {
+            "$ref": "#/components/schemas/Instant"
+          },
+          "selectionRef": {
+            "$ref": "#/components/schemas/Ref"
+          },
+          "count": {
+            "type": "string",
+            "pattern": "^\\d+$"
+          }
+        },
+        "required": [
+          "owner",
+          "schemaVersion",
+          "subjectId",
+          "realRecordedCut",
+          "selectionRef",
+          "count"
+        ],
+        "additionalProperties": false
+      },
+      "DataComponent": {
+        "type": "object",
+        "properties": {
+          "owner": {
+            "type": "string"
+          },
+          "schemaVersion": {
+            "type": "integer",
+            "minimum": 0,
+            "exclusiveMinimum": true,
+            "maximum": 9007199254740991
+          },
+          "path": {
+            "type": "string"
+          },
+          "digest": {
+            "type": "string",
+            "minLength": 1
+          },
+          "bytes": {
+            "type": "string",
+            "pattern": "^\\d+$"
+          }
+        },
+        "required": [
+          "owner",
+          "schemaVersion",
+          "path",
+          "digest",
+          "bytes"
+        ],
+        "additionalProperties": false
+      },
+      "BlobExportEntry": {
+        "type": "object",
+        "properties": {
+          "blobRef": {
+            "$ref": "#/components/schemas/Ref"
+          },
+          "digest": {
+            "type": "string",
+            "minLength": 1
+          },
+          "bytes": {
+            "type": "string",
+            "pattern": "^\\d+$"
+          },
+          "mediaType": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "blobRef",
+          "digest",
+          "bytes",
+          "mediaType",
+          "path"
+        ],
+        "additionalProperties": false
+      },
+      "PendingResource": {
+        "type": "object",
+        "properties": {
+          "owner": {
+            "type": "string"
+          },
+          "ref": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Ref"
+              }
+            ]
+          },
+          "reasonCode": {
+            "type": "string"
+          },
+          "operationId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "owner",
+          "reasonCode"
+        ],
+        "additionalProperties": false
+      },
+      "BindingRequirement": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "secret",
+              "provider",
+              "channel_account",
+              "time_authority",
+              "native_runtime",
+              "resource"
+            ]
+          },
+          "logicalName": {
+            "type": "string"
+          },
+          "sourceRef": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Ref"
+              }
+            ]
+          },
+          "capabilities": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "logicalName",
+          "capabilities"
+        ],
+        "additionalProperties": false
+      },
+      "SubjectBundleManifest": {
+        "type": "object",
+        "properties": {
+          "format": {
+            "type": "string",
+            "enum": [
+              "nous-hept-subject"
+            ]
+          },
+          "version": {
+            "type": "number",
+            "enum": [
+              1
+            ]
+          },
+          "bundleId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "restore"
+            ]
+          },
+          "subject": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "$ref": "#/components/schemas/SubjectId"
+              },
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "name"
+            ],
+            "additionalProperties": false
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "product": {
+                  "type": "string",
+                  "enum": [
+                    "nous",
+                    "hept"
+                  ]
+                },
+                "installationId": {
+                  "type": "string"
+                },
+                "productVersion": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "product",
+                "installationId",
+                "productVersion"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "createdAt": {
+            "$ref": "#/components/schemas/TimePoint"
+          },
+          "cuts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OwnerCut"
+            }
+          },
+          "components": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DataComponent"
+            }
+          },
+          "blobs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BlobExportEntry"
+            }
+          },
+          "requiredBindings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BindingRequirement"
+            }
+          },
+          "pending": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PendingResource"
+            }
+          }
+        },
+        "required": [
+          "format",
+          "version",
+          "bundleId",
+          "mode",
+          "subject",
+          "sources",
+          "createdAt",
+          "cuts",
+          "components",
+          "blobs",
+          "requiredBindings",
+          "pending"
+        ],
+        "additionalProperties": false
+      },
+      "DataArtifact": {
+        "type": "object",
+        "properties": {
+          "ref": {
+            "$ref": "#/components/schemas/Ref"
+          },
+          "blobRef": {
+            "$ref": "#/components/schemas/Ref"
+          },
+          "mediaType": {
+            "type": "string"
+          },
+          "digest": {
+            "type": "string",
+            "minLength": 1
+          },
+          "bytes": {
+            "type": "string",
+            "pattern": "^\\d+$"
+          },
+          "createdAt": {
+            "$ref": "#/components/schemas/TimePoint"
+          },
+          "expiresAt": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TimePoint"
+              }
+            ]
+          },
+          "policy": {
+            "$ref": "#/components/schemas/Policy"
+          },
+          "consumer": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Consumer"
+              }
+            ]
+          },
+          "sourceRefs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Ref"
+            }
+          }
+        },
+        "required": [
+          "ref",
+          "blobRef",
+          "mediaType",
+          "digest",
+          "bytes",
+          "createdAt",
+          "policy",
+          "sourceRefs"
+        ],
+        "additionalProperties": false
+      },
+      "DataExport": {
+        "type": "object",
+        "properties": {
+          "subjectId": {
+            "$ref": "#/components/schemas/SubjectId"
+          },
+          "mode": {
+            "default": "restore",
+            "type": "string",
+            "enum": [
+              "restore"
+            ]
+          }
+        },
+        "required": [
+          "subjectId",
+          "mode"
+        ],
+        "additionalProperties": false
+      },
+      "DataArtifactRead": {
+        "type": "object",
+        "properties": {
+          "artifactRef": {
+            "$ref": "#/components/schemas/Ref"
+          }
+        },
+        "required": [
+          "artifactRef"
+        ],
+        "additionalProperties": false
+      },
+      "ImportArtifactResult": {
+        "type": "object",
+        "properties": {
+          "artifactRef": {
+            "$ref": "#/components/schemas/Ref"
+          },
+          "digest": {
+            "type": "string",
+            "minLength": 1
+          },
+          "bytes": {
+            "type": "string",
+            "pattern": "^\\d+$"
+          }
+        },
+        "required": [
+          "artifactRef",
+          "digest",
+          "bytes"
+        ],
+        "additionalProperties": false
+      },
+      "ExpectedDataTarget": {
+        "type": "object",
+        "properties": {
+          "ref": {
+            "$ref": "#/components/schemas/Ref"
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "expectedCursor": {
+            "type": "string",
+            "pattern": "^\\d+$"
+          }
+        },
+        "required": [
+          "ref"
+        ],
+        "additionalProperties": false
+      },
+      "ImportPlan": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+          },
+          "artifactRef": {
+            "$ref": "#/components/schemas/Ref"
+          },
+          "manifestDigest": {
+            "type": "string",
+            "minLength": 1
+          },
+          "targetMode": {
+            "type": "string",
+            "enum": [
+              "restore"
+            ]
+          },
+          "subjectId": {
+            "$ref": "#/components/schemas/SubjectId"
+          },
+          "ownerValidations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "owner": {
+                  "type": "string"
+                },
+                "schemaVersion": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "exclusiveMinimum": true,
+                  "maximum": 9007199254740991
+                },
+                "compatible": {
+                  "type": "boolean"
+                },
+                "problems": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Problem"
+                  }
+                }
+              },
+              "required": [
+                "owner",
+                "schemaVersion",
+                "compatible",
+                "problems"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "expectedTargets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExpectedDataTarget"
+            }
+          },
+          "requiredBindings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BindingRequirement"
+            }
+          },
+          "pending": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PendingResource"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "artifactRef",
+          "manifestDigest",
+          "targetMode",
+          "subjectId",
+          "ownerValidations",
+          "expectedTargets",
+          "requiredBindings",
+          "pending"
+        ],
+        "additionalProperties": false
+      },
+      "DataImport": {
+        "type": "object",
+        "properties": {
+          "planId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+          },
+          "expectedTargets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExpectedDataTarget"
+            }
+          }
+        },
+        "required": [
+          "planId",
+          "expectedTargets"
+        ],
+        "additionalProperties": false
+      },
+      "DataImportResult": {
+        "type": "object",
+        "properties": {
+          "subjectId": {
+            "$ref": "#/components/schemas/SubjectId"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "paused"
+            ]
+          },
+          "pending": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PendingResource"
+            }
+          }
+        },
+        "required": [
+          "subjectId",
+          "status",
+          "pending"
+        ],
+        "additionalProperties": false
+      },
+      "DataPurgeSelection": {
+        "type": "object",
+        "properties": {
+          "subjectId": {
+            "$ref": "#/components/schemas/SubjectId"
+          }
+        },
+        "required": [
+          "subjectId"
+        ],
+        "additionalProperties": false
+      },
+      "PurgePlan": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+          },
+          "selectionRef": {
+            "$ref": "#/components/schemas/Ref"
+          },
+          "subjectId": {
+            "$ref": "#/components/schemas/SubjectId"
+          },
+          "expectedTargets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExpectedDataTarget"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "selectionRef",
+          "subjectId",
+          "expectedTargets"
+        ],
+        "additionalProperties": false
+      },
+      "PurgeReceipt": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+          },
+          "selectionRef": {
+            "$ref": "#/components/schemas/Ref"
+          },
+          "recordedAt": {
+            "$ref": "#/components/schemas/TimePoint"
+          },
+          "cleared": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "owner": {
+                  "type": "string"
+                },
+                "count": {
+                  "type": "string",
+                  "pattern": "^\\d+$"
+                },
+                "bytes": {
+                  "type": "string",
+                  "pattern": "^\\d+$"
+                }
+              },
+              "required": [
+                "owner",
+                "count"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "pending": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PendingResource"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "selectionRef",
+          "recordedAt",
+          "cleared",
+          "pending"
+        ],
+        "additionalProperties": false
+      },
+      "DataReceiptRead": {
+        "type": "object",
+        "properties": {
+          "operationId": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "operationId"
+        ],
+        "additionalProperties": false
+      },
+      "DataReceipt": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "operationId": {
+                "type": "string"
+              },
+              "operationName": {
+                "type": "string",
+                "enum": [
+                  "data.export"
+                ]
+              },
+              "recordedAt": {
+                "$ref": "#/components/schemas/TimePoint"
+              },
+              "result": {
+                "$ref": "#/components/schemas/DataArtifact"
+              }
+            },
+            "required": [
+              "operationId",
+              "operationName",
+              "recordedAt",
+              "result"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "operationId": {
+                "type": "string"
+              },
+              "operationName": {
+                "type": "string",
+                "enum": [
+                  "data.import"
+                ]
+              },
+              "recordedAt": {
+                "$ref": "#/components/schemas/TimePoint"
+              },
+              "result": {
+                "$ref": "#/components/schemas/DataImportResult"
+              }
+            },
+            "required": [
+              "operationId",
+              "operationName",
+              "recordedAt",
+              "result"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "operationId": {
+                "type": "string"
+              },
+              "operationName": {
+                "type": "string",
+                "enum": [
+                  "data.purge"
+                ]
+              },
+              "recordedAt": {
+                "$ref": "#/components/schemas/TimePoint"
+              },
+              "result": {
+                "$ref": "#/components/schemas/PurgeReceipt"
+              }
+            },
+            "required": [
+              "operationId",
+              "operationName",
+              "recordedAt",
+              "result"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      },
+      "DataSettings": {
+        "type": "object",
+        "properties": {
+          "maxBundleBytes": {
+            "type": "integer",
+            "minimum": 0,
+            "exclusiveMinimum": true,
+            "maximum": 9007199254740991
+          },
+          "maxExpandedBytes": {
+            "type": "integer",
+            "minimum": 0,
+            "exclusiveMinimum": true,
+            "maximum": 9007199254740991
+          },
+          "maxEntries": {
+            "type": "integer",
+            "minimum": 0,
+            "exclusiveMinimum": true,
+            "maximum": 9007199254740991
+          },
+          "temporaryRetentionHours": {
+            "type": "integer",
+            "minimum": 0,
+            "exclusiveMinimum": true,
+            "maximum": 720
+          }
+        },
+        "required": [
+          "maxBundleBytes",
+          "maxExpandedBytes",
+          "maxEntries",
+          "temporaryRetentionHours"
         ],
         "additionalProperties": false
       },
@@ -22929,9 +24504,949 @@
     }
   },
   "paths": {
+    "/v1/subjects/{subjectId}/data/exports": {
+      "post": {
+        "operationId": "data.export",
+        "tags": [
+          "data"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "mode": {
+                    "default": "restore",
+                    "type": "string",
+                    "enum": [
+                      "restore"
+                    ]
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+            },
+            "in": "path",
+            "name": "subjectId",
+            "required": true
+          }
+        ],
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationRef"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/subjects/{subjectId}/data/imports": {
+      "post": {
+        "operationId": "data.import",
+        "tags": [
+          "data"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DataImportInput"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+            },
+            "in": "path",
+            "name": "subjectId",
+            "required": true
+          }
+        ],
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationRef"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/subjects/{subjectId}/data/purge-plans": {
+      "post": {
+        "operationId": "data.planPurge",
+        "tags": [
+          "data"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {}
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+            },
+            "in": "path",
+            "name": "subjectId",
+            "required": true
+          }
+        ],
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PurgePlan"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/subjects/{subjectId}/data/purges": {
+      "post": {
+        "operationId": "data.purge",
+        "tags": [
+          "data"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DataImportInput"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+            },
+            "in": "path",
+            "name": "subjectId",
+            "required": true
+          }
+        ],
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationRef"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/data/import-plans": {
+      "post": {
+        "operationId": "data.importPreview",
+        "tags": [
+          "data"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DataArtifactReadInput"
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportPlan"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/data/artifacts": {
+      "get": {
+        "operationId": "data.readArtifact",
+        "tags": [
+          "data"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/RefInput"
+            },
+            "in": "query",
+            "name": "artifactRef",
+            "required": true
+          }
+        ],
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DataArtifact"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/data-receipts/{id}": {
+      "get": {
+        "operationId": "data.readReceipt",
+        "tags": [
+          "data"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DataReceipt"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/data/import-artifacts": {
+      "post": {
+        "operationId": "data.uploadImportArtifact",
+        "tags": [
+          "data"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportArtifactResult"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/data/artifacts/content": {
+      "get": {
+        "operationId": "data.downloadArtifact",
+        "tags": [
+          "data"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/RefInput"
+            },
+            "in": "query",
+            "name": "artifactRef",
+            "required": true
+          }
+        ],
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/gzip": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/time/read": {
       "post": {
         "operationId": "time.read",
+        "tags": [
+          "time"
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -23065,6 +25580,9 @@
     "/v1/time/captures": {
       "post": {
         "operationId": "time.capture",
+        "tags": [
+          "time"
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -23177,6 +25695,9 @@
     "/v1/subjects/{subjectId}/time/captures/{id}": {
       "get": {
         "operationId": "time.readCapture",
+        "tags": [
+          "time"
+        ],
         "parameters": [
           {
             "schema": {
@@ -23300,6 +25821,9 @@
     "/v1/identity": {
       "get": {
         "operationId": "identity.read",
+        "tags": [
+          "identity"
+        ],
         "security": [
           {
             "bearer": []
@@ -23402,6 +25926,9 @@
     "/v1/subjects/{subjectId}/sources/resolve": {
       "post": {
         "operationId": "sources.resolve",
+        "tags": [
+          "sources"
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -23526,6 +26053,9 @@
     "/v1/status": {
       "get": {
         "operationId": "host.status",
+        "tags": [
+          "host"
+        ],
         "security": [
           {
             "bearer": []
@@ -23628,6 +26158,9 @@
     "/v1/host/drain": {
       "post": {
         "operationId": "host.drain",
+        "tags": [
+          "host"
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -23754,6 +26287,9 @@
     "/v1/host/stop": {
       "post": {
         "operationId": "host.stop",
+        "tags": [
+          "host"
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -23805,6 +26341,9 @@
     "/v1/management-keys": {
       "post": {
         "operationId": "credentials.createManagementKey",
+        "tags": [
+          "credentials"
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -23948,6 +26487,9 @@
     "/v1/subjects/{subjectId}/blobs": {
       "post": {
         "operationId": "materials.uploadBlob",
+        "tags": [
+          "materials"
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -23993,6 +26535,9 @@
     "/v1/health": {
       "get": {
         "operationId": "health.read",
+        "tags": [
+          "health"
+        ],
         "security": [
           {
             "bearer": []
@@ -24093,6 +26638,9 @@
     "/v1/subjects": {
       "post": {
         "operationId": "subjects.create",
+        "tags": [
+          "subjects"
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -24201,6 +26749,9 @@
       },
       "get": {
         "operationId": "subjects.list",
+        "tags": [
+          "subjects"
+        ],
         "security": [
           {
             "bearer": []
@@ -24301,6 +26852,9 @@
     "/v1/subjects/{subjectId}": {
       "get": {
         "operationId": "subjects.read",
+        "tags": [
+          "subjects"
+        ],
         "parameters": [
           {
             "schema": {
@@ -24413,6 +26967,9 @@
     "/v1/subjects/{subjectId}/bindings": {
       "post": {
         "operationId": "subjects.bind",
+        "tags": [
+          "subjects"
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -24553,6 +27110,9 @@
     "/v1/subjects/{subjectId}/materials/publish": {
       "post": {
         "operationId": "materials.publish",
+        "tags": [
+          "materials"
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -24677,6 +27237,9 @@
     "/v1/subjects/{subjectId}/capabilities": {
       "patch": {
         "operationId": "subjects.capabilities",
+        "tags": [
+          "subjects"
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -24810,6 +27373,9 @@
     "/v1/subjects/{subjectId}/changes": {
       "get": {
         "operationId": "subjects.changes",
+        "tags": [
+          "subjects"
+        ],
         "parameters": [
           {
             "schema": {
@@ -24931,6 +27497,9 @@
     "/v1/subjects/{subjectId}/materials": {
       "post": {
         "operationId": "materials.capture",
+        "tags": [
+          "materials"
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -25055,6 +27624,9 @@
     "/v1/subjects/{subjectId}/materials/{id}": {
       "get": {
         "operationId": "materials.read",
+        "tags": [
+          "materials"
+        ],
         "parameters": [
           {
             "schema": {
@@ -25201,6 +27773,9 @@
     "/v1/subjects/{subjectId}/materials/{id}/policy": {
       "patch": {
         "operationId": "policy.update",
+        "tags": [
+          "policy"
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -25347,6 +27922,9 @@
     "/v1/subjects/{subjectId}/encounters": {
       "post": {
         "operationId": "encounters.accept",
+        "tags": [
+          "encounters"
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -25471,6 +28049,9 @@
     "/v1/subjects/{subjectId}/knowledge": {
       "post": {
         "operationId": "knowledge.create",
+        "tags": [
+          "knowledge"
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -25595,6 +28176,9 @@
     "/v1/subjects/{subjectId}/knowledge/{id}": {
       "get": {
         "operationId": "knowledge.read",
+        "tags": [
+          "knowledge"
+        ],
         "parameters": [
           {
             "schema": {
@@ -25753,6 +28337,9 @@
     "/v1/subjects/{subjectId}/knowledge/{id}/history": {
       "get": {
         "operationId": "knowledge.history",
+        "tags": [
+          "knowledge"
+        ],
         "parameters": [
           {
             "schema": {
@@ -25920,6 +28507,9 @@
     "/v1/subjects/{subjectId}/knowledge/{id}/revisions": {
       "post": {
         "operationId": "knowledge.revise",
+        "tags": [
+          "knowledge"
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -26429,6 +29019,9 @@
     "/v1/subjects/{subjectId}/knowledge/query": {
       "post": {
         "operationId": "knowledge.query",
+        "tags": [
+          "knowledge"
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -26553,6 +29146,9 @@
     "/v1/subjects/{subjectId}/knowledge/expand": {
       "post": {
         "operationId": "knowledge.expand",
+        "tags": [
+          "knowledge"
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -26677,6 +29273,9 @@
     "/v1/subjects/{subjectId}/knowledge/query-explanation": {
       "post": {
         "operationId": "query.explain",
+        "tags": [
+          "query"
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -26806,6 +29405,9 @@
     "/v1/subjects/{subjectId}/context-views": {
       "post": {
         "operationId": "contexts.prepare",
+        "tags": [
+          "contexts"
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -26930,6 +29532,9 @@
     "/v1/subjects/{subjectId}/work-contexts": {
       "post": {
         "operationId": "contexts.createWork",
+        "tags": [
+          "contexts"
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -27054,6 +29659,9 @@
     "/v1/subjects/{subjectId}/work-contexts/{id}": {
       "get": {
         "operationId": "contexts.read",
+        "tags": [
+          "contexts"
+        ],
         "parameters": [
           {
             "schema": {
@@ -27175,6 +29783,9 @@
       },
       "patch": {
         "operationId": "contexts.updateWork",
+        "tags": [
+          "contexts"
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -27322,6 +29933,9 @@
     "/v1/subjects/{subjectId}/feedback": {
       "post": {
         "operationId": "cognition.feedback",
+        "tags": [
+          "cognition"
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -27444,6 +30058,9 @@
     "/v1/subjects/{subjectId}/growth": {
       "post": {
         "operationId": "growth.run",
+        "tags": [
+          "growth"
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -27584,6 +30201,9 @@
     "/v1/subjects/{subjectId}/growth/{id}": {
       "get": {
         "operationId": "growth.inspect",
+        "tags": [
+          "growth"
+        ],
         "parameters": [
           {
             "schema": {
@@ -27705,6 +30325,9 @@
     "/v1/subjects/{subjectId}/growth/{id}/apply": {
       "post": {
         "operationId": "growth.apply",
+        "tags": [
+          "growth"
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -27844,6 +30467,9 @@
     "/v1/subjects/{subjectId}/growth/{id}/resolve": {
       "post": {
         "operationId": "growth.resolve",
+        "tags": [
+          "growth"
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -28030,6 +30656,9 @@
     "/v1/subjects/{subjectId}/seeds/preview": {
       "post": {
         "operationId": "seeds.preview",
+        "tags": [
+          "seeds"
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -28166,6 +30795,9 @@
     "/v1/subjects/{subjectId}/seeds/apply": {
       "post": {
         "operationId": "seeds.apply",
+        "tags": [
+          "seeds"
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -28288,6 +30920,9 @@
     "/v1/subjects/{subjectId}/episodes/resegment": {
       "post": {
         "operationId": "episodes.organize",
+        "tags": [
+          "episodes"
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -28530,6 +31165,9 @@
     "/v1/subjects/{subjectId}/journals": {
       "post": {
         "operationId": "journals.write",
+        "tags": [
+          "journals"
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -28712,6 +31350,9 @@
     "/v1/subjects/{subjectId}/concepts/merge": {
       "post": {
         "operationId": "concepts.merge",
+        "tags": [
+          "concepts"
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -28892,6 +31533,9 @@
     "/v1/subjects/{subjectId}/concepts/split": {
       "post": {
         "operationId": "concepts.split",
+        "tags": [
+          "concepts"
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -29083,6 +31727,9 @@
     "/v1/subjects/{subjectId}/motivation/{id}/evaluations": {
       "post": {
         "operationId": "motivation.evaluate",
+        "tags": [
+          "motivation"
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -29267,6 +31914,9 @@
     "/v1/subjects/{subjectId}/persona": {
       "get": {
         "operationId": "persona.read",
+        "tags": [
+          "persona"
+        ],
         "parameters": [
           {
             "schema": {
@@ -29379,6 +32029,9 @@
     "/v1/subjects/{subjectId}/resources": {
       "post": {
         "operationId": "resources.register",
+        "tags": [
+          "resources"
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -29501,6 +32154,9 @@
     "/v1/subjects/{subjectId}/resources/{id}": {
       "get": {
         "operationId": "resources.inspect",
+        "tags": [
+          "resources"
+        ],
         "parameters": [
           {
             "schema": {
@@ -29622,6 +32278,9 @@
     "/v1/subjects/{subjectId}/resources/{id}/read": {
       "post": {
         "operationId": "resources.read",
+        "tags": [
+          "resources"
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -29763,6 +32422,9 @@
     "/v1/settings/schema": {
       "get": {
         "operationId": "settings.describe",
+        "tags": [
+          "settings"
+        ],
         "parameters": [
           {
             "schema": {
@@ -29901,6 +32563,9 @@
     "/v1/settings": {
       "get": {
         "operationId": "settings.read",
+        "tags": [
+          "settings"
+        ],
         "parameters": [
           {
             "schema": {
@@ -30023,6 +32688,9 @@
       },
       "patch": {
         "operationId": "settings.update",
+        "tags": [
+          "settings"
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -30135,6 +32803,9 @@
     "/v1/settings/reset": {
       "post": {
         "operationId": "settings.reset",
+        "tags": [
+          "settings"
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -30247,6 +32918,9 @@
     "/v1/settings/history": {
       "get": {
         "operationId": "settings.history",
+        "tags": [
+          "settings"
+        ],
         "parameters": [
           {
             "schema": {
@@ -30388,6 +33062,9 @@
     "/v1/settings/restore": {
       "post": {
         "operationId": "settings.restore",
+        "tags": [
+          "settings"
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -30500,6 +33177,9 @@
     "/v1/settings/applied": {
       "get": {
         "operationId": "settings.applied",
+        "tags": [
+          "settings"
+        ],
         "parameters": [
           {
             "schema": {
@@ -30627,6 +33307,9 @@
     "/v1/secrets": {
       "post": {
         "operationId": "secrets.create",
+        "tags": [
+          "secrets"
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -30897,6 +33580,9 @@
     "/v1/secrets/{id}": {
       "get": {
         "operationId": "secrets.status",
+        "tags": [
+          "secrets"
+        ],
         "parameters": [
           {
             "schema": {
@@ -31101,6 +33787,9 @@
     "/v1/secrets/{id}/rotate": {
       "post": {
         "operationId": "secrets.rotate",
+        "tags": [
+          "secrets"
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -31380,6 +34069,9 @@
     "/v1/secrets/{id}/revoke": {
       "post": {
         "operationId": "secrets.revoke",
+        "tags": [
+          "secrets"
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -31606,6 +34298,9 @@
     "/v1/delegations/children": {
       "post": {
         "operationId": "delegations.createChild",
+        "tags": [
+          "delegations"
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -31718,6 +34413,9 @@
     "/v1/delegations": {
       "post": {
         "operationId": "delegations.create",
+        "tags": [
+          "delegations"
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -32100,6 +34798,9 @@
     "/v1/delegations/{id}": {
       "get": {
         "operationId": "delegations.read",
+        "tags": [
+          "delegations"
+        ],
         "parameters": [
           {
             "schema": {
@@ -32209,6 +34910,9 @@
       },
       "patch": {
         "operationId": "delegations.update",
+        "tags": [
+          "delegations"
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -32592,6 +35296,9 @@
     "/v1/delegations/{id}/revoke": {
       "post": {
         "operationId": "delegations.revoke",
+        "tags": [
+          "delegations"
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -32725,6 +35432,9 @@
     "/v1/network": {
       "get": {
         "operationId": "network.inspect",
+        "tags": [
+          "network"
+        ],
         "parameters": [
           {
             "schema": {
@@ -32847,6 +35557,9 @@
     "/v1/network/probes": {
       "post": {
         "operationId": "network.probe",
+        "tags": [
+          "network"
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -32980,6 +35693,9 @@
     "/v1/subjects/{subjectId}/context-views/{id}": {
       "get": {
         "operationId": "contexts.readView",
+        "tags": [
+          "contexts"
+        ],
         "parameters": [
           {
             "schema": {
@@ -33103,6 +35819,9 @@
     "/v1/models/test": {
       "post": {
         "operationId": "models.test",
+        "tags": [
+          "models"
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -33215,6 +35934,9 @@
     "/v1/model-providers": {
       "get": {
         "operationId": "providers.list",
+        "tags": [
+          "providers"
+        ],
         "security": [
           {
             "bearer": []
@@ -33331,6 +36053,9 @@
       },
       "post": {
         "operationId": "providers.create",
+        "tags": [
+          "providers"
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -33458,6 +36183,9 @@
     "/v1/model-providers/{id}": {
       "get": {
         "operationId": "providers.read",
+        "tags": [
+          "providers"
+        ],
         "parameters": [
           {
             "schema": {
@@ -33597,6 +36325,9 @@
       },
       "patch": {
         "operationId": "providers.update",
+        "tags": [
+          "providers"
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -33733,6 +36464,9 @@
       },
       "delete": {
         "operationId": "providers.delete",
+        "tags": [
+          "providers"
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -33867,6 +36601,9 @@
     "/v1/models": {
       "get": {
         "operationId": "models.list",
+        "tags": [
+          "models"
+        ],
         "security": [
           {
             "bearer": []
@@ -33983,6 +36720,9 @@
       },
       "post": {
         "operationId": "models.create",
+        "tags": [
+          "models"
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -34110,6 +36850,9 @@
     "/v1/models/{id}": {
       "get": {
         "operationId": "models.read",
+        "tags": [
+          "models"
+        ],
         "parameters": [
           {
             "schema": {
@@ -34249,6 +36992,9 @@
       },
       "patch": {
         "operationId": "models.update",
+        "tags": [
+          "models"
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -34385,6 +37131,9 @@
       },
       "delete": {
         "operationId": "models.delete",
+        "tags": [
+          "models"
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -34519,6 +37268,9 @@
     "/v1/roles": {
       "get": {
         "operationId": "models.roles",
+        "tags": [
+          "models"
+        ],
         "parameters": [
           {
             "schema": {
@@ -34633,6 +37385,9 @@
     "/v1/subjects/{subjectId}/models/prepare": {
       "post": {
         "operationId": "models.prepare",
+        "tags": [
+          "models"
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -34767,6 +37522,9 @@
     "/v1/subjects/{subjectId}/model-invocations/prepare": {
       "post": {
         "operationId": "modelInvocations.prepare",
+        "tags": [
+          "modelInvocations"
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -34891,6 +37649,9 @@
     "/v1/subjects/{subjectId}/model-invocations/{id}/dispatch": {
       "post": {
         "operationId": "modelInvocations.dispatch",
+        "tags": [
+          "modelInvocations"
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -35034,6 +37795,9 @@
     "/v1/subjects/{subjectId}/model-invocations/{id}/completion": {
       "post": {
         "operationId": "modelInvocations.complete",
+        "tags": [
+          "modelInvocations"
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -35167,6 +37931,9 @@
     "/v1/model-invocations": {
       "get": {
         "operationId": "models.invocations.list",
+        "tags": [
+          "models"
+        ],
         "parameters": [
           {
             "schema": {
@@ -35337,6 +38104,9 @@
     "/v1/model-invocations/{id}": {
       "get": {
         "operationId": "models.invocations.read",
+        "tags": [
+          "models"
+        ],
         "parameters": [
           {
             "schema": {
@@ -35460,6 +38230,9 @@
     "/v1/model-invocations/reconcile": {
       "post": {
         "operationId": "models.reconcile",
+        "tags": [
+          "models"
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -35619,6 +38392,9 @@
     "/v1/costs": {
       "get": {
         "operationId": "costs.read",
+        "tags": [
+          "costs"
+        ],
         "parameters": [
           {
             "schema": {
@@ -35789,6 +38565,9 @@
     "/v1/prompts/catalog": {
       "get": {
         "operationId": "prompts.describe",
+        "tags": [
+          "prompts"
+        ],
         "parameters": [
           {
             "schema": {
@@ -35916,6 +38695,9 @@
     "/v1/prompts": {
       "get": {
         "operationId": "prompts.list",
+        "tags": [
+          "prompts"
+        ],
         "parameters": [
           {
             "schema": {
@@ -36045,6 +38827,9 @@
       },
       "post": {
         "operationId": "prompts.save",
+        "tags": [
+          "prompts"
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -36157,6 +38942,9 @@
     "/v1/prompts/read": {
       "get": {
         "operationId": "prompts.read",
+        "tags": [
+          "prompts"
+        ],
         "parameters": [
           {
             "schema": {
@@ -36296,6 +39084,9 @@
     "/v1/prompts/history": {
       "get": {
         "operationId": "prompts.history",
+        "tags": [
+          "prompts"
+        ],
         "parameters": [
           {
             "schema": {
@@ -36443,6 +39234,9 @@
     "/v1/prompts/activate": {
       "post": {
         "operationId": "prompts.activate",
+        "tags": [
+          "prompts"
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -36555,6 +39349,9 @@
     "/v1/prompts/reset": {
       "post": {
         "operationId": "prompts.reset",
+        "tags": [
+          "prompts"
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -36667,6 +39464,9 @@
     "/v1/prompts/preview": {
       "post": {
         "operationId": "prompts.preview",
+        "tags": [
+          "prompts"
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -36779,6 +39579,9 @@
     "/v1/prompts/snapshot": {
       "post": {
         "operationId": "prompts.snapshot",
+        "tags": [
+          "prompts"
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -36891,6 +39694,9 @@
     "/v1/prompts/render": {
       "post": {
         "operationId": "prompts.render",
+        "tags": [
+          "prompts"
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -37003,6 +39809,9 @@
     "/v1/operations/{id}": {
       "get": {
         "operationId": "operations.inspect",
+        "tags": [
+          "operations"
+        ],
         "parameters": [
           {
             "schema": {
@@ -37128,6 +39937,9 @@
     "/v1/operations/{id}/trace": {
       "get": {
         "operationId": "operations.trace",
+        "tags": [
+          "operations"
+        ],
         "parameters": [
           {
             "schema": {
@@ -37253,6 +40065,9 @@
     "/v1/operations/{id}/cancel": {
       "post": {
         "operationId": "operations.cancel",
+        "tags": [
+          "operations"
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -37376,6 +40191,9 @@
     "/v1/operations/{id}/resume": {
       "post": {
         "operationId": "operations.resume",
+        "tags": [
+          "operations"
+        ],
         "requestBody": {
           "required": true,
           "content": {

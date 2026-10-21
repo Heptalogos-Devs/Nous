@@ -100,14 +100,19 @@ export function createMaterials(
     ctx: CallContext,
     metadata: BlobMetadata,
     key: string,
+    installation = false,
+    client?: Storage['db'],
+    operation?: string,
   ): Promise<BlobResult> {
-    requireSubject(ctx);
-    return store.transaction(async (db) => {
+    if(!installation)requireSubject(ctx);
+    const subjectId=installation?null:ctx.subjectId!;
+    const adopt=async (db:Storage['db']):Promise<BlobResult> => {
+      if(operation)await store.authorize(ctx,operation,undefined,db);
       await db
         .insertInto('blobs')
         .values({
           id: uuid(),
-          subjectId: ctx.subjectId,
+          subjectId,
           submissionKey: key,
           ...metadata,
           recordedAt: now().at,
@@ -116,12 +121,12 @@ export function createMaterials(
           conflict.columns(['subjectId', 'submissionKey']).doNothing(),
         )
         .execute();
-      const actual = await db
+      let query = db
         .selectFrom('blobs')
         .selectAll()
-        .where('subjectId', '=', ctx.subjectId)
-        .where('submissionKey', '=', key)
-        .executeTakeFirstOrThrow();
+        .where('submissionKey', '=', key);
+      query=subjectId===null?query.where('subjectId','is',null):query.where('subjectId','=',subjectId);
+      const actual=await query.executeTakeFirstOrThrow();
       if (
         actual.digest !== metadata.digest ||
         Number(actual.bytes) !== metadata.bytes ||
@@ -129,12 +134,13 @@ export function createMaterials(
       )
         fail('conflict', '同一上传提交已保存不同的原件');
       return {
-        ref: reference(store.installationId, ctx.subjectId, 'Blob', actual.id),
+        ref: {product:'nous',installationId:store.installationId,...(subjectId?{subjectId}:{}),kind:'Blob',id:actual.id},
         digest: actual.digest,
         bytes: Number(actual.bytes),
         mediaType: actual.mediaType,
       };
-    });
+    };
+    return client?adopt(client):store.transaction(adopt);
   }
   async function acceptBlob(
     ctx: CallContext,
@@ -152,16 +158,14 @@ export function createMaterials(
         metadata.mediaType
     )
       fail('invalid_input', '原件元数据没有对应本次已完成的上传');
-    return registerBlob(ctx, metadata, submissionKey(ctx));
+    return registerBlob(ctx, metadata, submissionKey(ctx),false,undefined,'materials.capture');
   }
-  async function storeBlob(
-    ctx: CallContext,
+  async function storeBytes(
     input: Readable,
     mediaType: string,
     maxBytes: number,
     key: string,
-  ): Promise<BlobResult> {
-    requireSubject(ctx);
+  ): Promise<BlobMetadata> {
     if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0)
       fail('invalid_input', '上传大小上限无效');
     let bytes = 0,
@@ -174,9 +178,10 @@ export function createMaterials(
         else done(null, chunk);
       },
     });
+    const stagingKey=`${key}:upload:${uuid()}`;
     const writer = cacache.put.stream(
       store.blobPath,
-      `blob:${ctx.subjectId}:${key}`,
+      stagingKey,
       { metadata: { mediaType } },
     );
     writer.on('integrity', (value) => {
@@ -184,8 +189,12 @@ export function createMaterials(
     });
     await pipeline(input, measure, writer);
     if (!digest) fail('dependency_unavailable', '原件存储未返回完整性摘要');
-    return registerBlob(ctx, { digest, bytes, mediaType }, key);
+    await cacache.index.insert(store.blobPath,`blob-content:${digest}`,digest,{size:bytes,metadata:{mediaType}});
+    await cacache.index.insert(store.blobPath,key,digest,{size:bytes,metadata:{mediaType}});
+    await cacache.rm.entry(store.blobPath,stagingKey);
+    return { digest, bytes, mediaType };
   }
+  async function storeBlob(ctx:CallContext,input:Readable,mediaType:string,maxBytes:number,key:string,operation?:string):Promise<BlobResult>{requireSubject(ctx);return registerBlob(ctx,await storeBytes(input,mediaType,maxBytes,`blob:${ctx.subjectId}:${key}`),key,false,undefined,operation);}
   async function putBlobStream(
     ctx: CallContext,
     input: Readable,
@@ -194,7 +203,7 @@ export function createMaterials(
   ): Promise<BlobResult> {
     requireSubject(ctx);
     await store.authorize(ctx, 'materials.capture');
-    return storeBlob(ctx, input, mediaType, maxBytes, submissionKey(ctx));
+    return storeBlob(ctx, input, mediaType, maxBytes, submissionKey(ctx),'materials.capture');
   }
   async function blobRecord(ctx: CallContext, ref: Ref) {
     requireSubject(ctx);
@@ -1119,5 +1128,11 @@ export function createMaterials(
       );
     },
   };
-  return { materials, encounters, sourceRepository, recordings };
+  const artifactBlobs={
+    async store(ctx:CallContext,input:Readable,options:{operation:'data.import'|'data.export';mediaType:string;maxBytes:number;key:string}){await store.authorize(ctx,options.operation);return storeBytes(input,options.mediaType,options.maxBytes,`data:${options.key}`);},
+    async accept(ctx:CallContext,metadata:BlobMetadata,key:string,db:Storage['db']){const actual=await cacache.get.info(store.blobPath,`data:${key}`);if(!actual||String(actual.integrity)!==metadata.digest||actual.size!==metadata.bytes)fail('invalid_input','归档原件缺少本次完整上传');return registerBlob(ctx,metadata,`data:${key}`,true,db);},
+    async open(ref:Ref):Promise<Readable>{if(ref.product!=='nous'||ref.installationId!==store.installationId||ref.kind!=='Blob'||ref.subjectId||ref.selector||ref.revision)fail('forbidden','需要本安装归档原件');const row=await store.db.selectFrom('blobs').selectAll().where('id','=',ref.id).where('subjectId','is',null).executeTakeFirst();if(!row)fail('not_found','归档原件不存在');return Readable.from(cacache.get.stream.byDigest(store.blobPath,row.digest));},
+    async release(ref:Ref,db:Storage['db']){const row=await db.deleteFrom('blobs').where('id','=',ref.id).where('subjectId','is',null).returning('digest').executeTakeFirst();return row?.digest;},
+  };
+  return { materials, encounters, sourceRepository, recordings, artifactBlobs };
 }

@@ -4,7 +4,12 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   Configuration,
-  DefaultApi,
+  GrowthApi,
+  HostApi,
+  KnowledgeApi,
+  MaterialsApi,
+  OperationsApi,
+  SubjectsApi,
   problemMiddleware,
 } from '@nous-wave/client';
 import {
@@ -18,6 +23,7 @@ import { problem, safeProblem } from '@nous-wave/platform/errors';
 import { readReal } from '@nous-wave/platform/time';
 import { Command } from 'commander';
 import { addManagementCommands } from './management.js';
+import { addDataCommands } from './data.js';
 
 const cli = new Command('nous')
   .description('Nous Wave 长期认知服务与安装管理')
@@ -42,8 +48,9 @@ function locator() {
     instanceHome: options.instance,
   });
 }
-async function withClient<T>(
-  use: (client: DefaultApi) => Promise<T>,
+async function withClient<A, T>(
+  Api: new (configuration: Configuration) => A,
+  use: (client: A) => Promise<T>,
 ): Promise<T> {
   const view = await locator().inspect();
   const { listen } = view.bootstrap;
@@ -56,7 +63,7 @@ async function withClient<T>(
     { purpose: 'cli.authentication' },
     (bytes) =>
       use(
-        new DefaultApi(
+        new Api(
           new Configuration({
             basePath: baseURL,
             accessToken: decoder.decode(bytes),
@@ -462,7 +469,9 @@ auth
 cli
   .command('status')
   .description('读取已运行Host状态')
-  .action(async () => show(await withClient((client) => client.hostStatus())));
+  .action(async () =>
+    show(await withClient(HostApi, (client) => client.hostStatus())),
+  );
 
 const subjects = cli.command('subjects').description('主体管理');
 subjects
@@ -470,7 +479,7 @@ subjects
   .option('--full', '启用完整认知')
   .action(async (name, options) =>
     show(
-      await withClient((client) =>
+      await withClient(SubjectsApi, (client) =>
         client.subjectsCreate({
           subjectCreateInput: {
             displayName: name,
@@ -495,13 +504,15 @@ subjects
 subjects
   .command('list')
   .action(async () =>
-    show(await withClient((client) => client.subjectsList())),
+    show(await withClient(SubjectsApi, (client) => client.subjectsList())),
   );
 subjects
   .command('read <subject>')
   .action(async (subject) =>
     show(
-      await withClient((client) => client.subjectsRead({ subjectId: subject })),
+      await withClient(SubjectsApi, (client) =>
+        client.subjectsRead({ subjectId: subject }),
+      ),
     ),
   );
 cli
@@ -509,7 +520,7 @@ cli
   .description('认知查询')
   .action(async (subject, text) =>
     show(
-      await withClient((client) =>
+      await withClient(KnowledgeApi, (client) =>
         client.knowledgeQuery({ subjectId: subject, queryInput: text }),
       ),
     ),
@@ -520,7 +531,7 @@ cli
   .action(async (subject, file) => {
     const text = await readFile(file, 'utf8');
     show(
-      await withClient((client) =>
+      await withClient(MaterialsApi, (client) =>
         client.materialsCapture({
           subjectId: subject,
           materialCaptureInput: {
@@ -538,7 +549,7 @@ cli
   .command('read <subject> <id>')
   .action(async (subject, id) =>
     show(
-      await withClient((client) =>
+      await withClient(KnowledgeApi, (client) =>
         client.knowledgeRead({ subjectId: subject, id }),
       ),
     ),
@@ -548,7 +559,7 @@ cli
   .description('管理员直接创建认识')
   .action(async (subject, text) =>
     show(
-      await withClient((client) =>
+      await withClient(KnowledgeApi, (client) =>
         client.knowledgeCreate({
           subjectId: subject,
           knowledgeCreateInput: {
@@ -567,7 +578,7 @@ cli
   .command('growth <subject>')
   .action(async (subject) =>
     show(
-      await withClient((client) =>
+      await withClient(GrowthApi, (client) =>
         client.growthRun({ subjectId: subject, growthRunRequest: {} }),
       ),
     ),
@@ -580,7 +591,7 @@ operation
   .option('--subject <id>')
   .action(async (id, o) =>
     show(
-      await withClient((client) =>
+      await withClient(OperationsApi, (client) =>
         client.operationsInspect({ id, subjectId: o.subject }),
       ),
     ),
@@ -590,7 +601,7 @@ operation
   .option('--subject <id>')
   .action(async (id, o) =>
     show(
-      await withClient((client) =>
+      await withClient(OperationsApi, (client) =>
         client.operationsTrace({ id, subjectId: o.subject }),
       ),
     ),
@@ -600,7 +611,7 @@ operation
   .option('--subject <id>')
   .action(async (id, o) =>
     show(
-      await withClient((client) =>
+      await withClient(OperationsApi, (client) =>
         client.operationsCancel({
           id,
           operationControlInput: { subjectId: o.subject },
@@ -613,7 +624,7 @@ operation
   .option('--subject <id>')
   .action(async (id, o) =>
     show(
-      await withClient((client) =>
+      await withClient(OperationsApi, (client) =>
         client.operationsResume({
           id,
           operationControlInput: { subjectId: o.subject },
@@ -623,6 +634,7 @@ operation
   );
 
 addManagementCommands({ cli, withClient, show });
+addDataCommands({ cli, withClient, show });
 const host = cli.command('host').description('Host生命周期');
 host.command('start').action(async () => {
   const { runHost } = await import('@nous-wave/server');
@@ -634,18 +646,20 @@ host.command('start').action(async () => {
 });
 host
   .command('status')
-  .action(async () => show(await withClient((client) => client.hostStatus())));
+  .action(async () =>
+    show(await withClient(HostApi, (client) => client.hostStatus())),
+  );
 host
   .command('drain')
   .action(async () =>
-    show(await withClient((client) => client.hostDrain({ body: {} }))),
+    show(await withClient(HostApi, (client) => client.hostDrain({ body: {} }))),
   );
 host
   .command('stop')
   .option('--force')
   .action(async (options) =>
     show(
-      await withClient((client) =>
+      await withClient(HostApi, (client) =>
         client.hostStop({
           hostStopRequest: { mode: options.force ? 'force' : 'graceful' },
         }),

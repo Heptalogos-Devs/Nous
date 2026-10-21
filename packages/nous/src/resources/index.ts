@@ -105,6 +105,7 @@ export function createResources(deps: ResourceDependencies) {
     },
     async directory(ctx: CallContext, input: { id: string; target?: string; query?: string }) {requireSubject(ctx);
       const resource = await inspect(ctx, input);
+      if(resource.kind==='directory'&&resource.bindingRequired)fail('capability_unavailable','该资料源的机器目录需要重新绑定');
       if (resource.kind === 'directory') {
         const { path } = await pathWithin(resource.root, input.target ?? '.');
         const entries = await readdir(path, { withFileTypes: true });
@@ -125,6 +126,7 @@ export function createResources(deps: ResourceDependencies) {
         if (!saved) fail('not_found', '资料源的该版本尚未取得');
         return deps.materials.read(ctx, { ref: saved.materialRef });
       }
+      if(resource.kind==='directory'&&resource.bindingRequired)fail('capability_unavailable','该资料源的机器目录需要重新绑定');
       let content: { bytes: Buffer; mediaType: string; title: string; target: string; originVersion?: string };
       if (resource.kind === 'directory') {
         const location = await pathWithin(resource.root, input.target);

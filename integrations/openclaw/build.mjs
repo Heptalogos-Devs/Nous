@@ -2,10 +2,16 @@ import { createRequire } from 'node:module';
 import { mkdir, readFile, writeFile, copyFile } from 'node:fs/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import path from 'node:path';
+import { parseArgs } from 'node:util';
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(directory, '../..');
-const output = path.join(root, 'data/native/plugins/nous-cognition');
+const { values } = parseArgs({ options: { output: { type: 'string' }, help: { type: 'boolean' } } });
+if (values.help) {
+  console.log('Usage: node integrations/openclaw/build.mjs [--output DIRECTORY]');
+  process.exit(0);
+}
+const output = values.output ? path.resolve(values.output) : path.resolve(root, '../temp/spec-research/native-release/plugins/nous-cognition');
 // tsx supplies the pinned esbuild already present in this workspace lockfile.
 const tool = createRequire(import.meta.resolve('tsx'))('esbuild');
 const pkg = JSON.parse(await readFile(path.join(directory, 'package.json'), 'utf8'));
@@ -25,4 +31,5 @@ await writeFile(path.join(output, 'package.json'), `${JSON.stringify({ name: pkg
   openclaw: { extensions: ['./index.js'] } }, null, 2)}\n`);
 await copyFile(path.join(root, 'LICENSE'), path.join(output, 'LICENSE'));
 await copyFile(path.join(directory, 'README.md'), path.join(output, 'README.md'));
+await copyFile(path.join(directory, 'smoke-upstream.mjs'), path.join(output, 'smoke-upstream.mjs'));
 console.log(output);

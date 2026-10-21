@@ -104,7 +104,7 @@ export interface DelegationOptions {
     input: { name: string; expiresIn: number | null },
     database?: Kysely<any>,
   ) => Promise<{ id: string; key: string }>;
-  disableKey: (id: string) => Promise<void>;
+  disableKey: (id: string, database?: Kysely<any>) => Promise<void>;
   sourceGuard?: (
     ctx: CallContext,
     operation: string,
@@ -235,6 +235,19 @@ function principalId(value: ServiceDelegation): string {
 }
 export function createDelegations(options: DelegationOptions) {
   const { db } = options;
+  function transaction<T>(
+    database: Kysely<any> | undefined,
+    use: (tx: Kysely<any>) => Promise<T>,
+  ) {
+    if (!database) return db.transaction().execute(use);
+    if (!database.isTransaction)
+      throw problem(
+        'credentials.transaction_required',
+        'validation',
+        '凭据操作需要当前业务事务',
+      );
+    return use(database);
+  }
   function deny(): never {
     throw problem(
       'credentials.scope_denied',
@@ -502,14 +515,20 @@ export function createDelegations(options: DelegationOptions) {
     ctx: CallContext,
     id: string,
     operation: string,
+    database?: Kysely<any>,
   ): Promise<ServiceDelegation> {
-    await authorize(ctx, operation, {
-      kind: 'resource',
-      connectorId: `${options.product}:${options.installationId}:credentials`,
-      resourceIds: [id],
-      actions: [operation],
-    });
-    const stored = await get(id);
+    await authorize(
+      ctx,
+      operation,
+      {
+        kind: 'resource',
+        connectorId: `${options.product}:${options.installationId}:credentials`,
+        resourceIds: [id],
+        actions: [operation],
+      },
+      database,
+    );
+    const stored = await get(id, database);
     if (!stored)
       throw problem(
         'credentials.delegation_not_found',
@@ -517,7 +536,7 @@ export function createDelegations(options: DelegationOptions) {
         '委派不存在',
       );
     const { submissionKey: _receipt, ...value } = stored;
-    const scope = await authority(ctx);
+    const scope = await authority(ctx, database);
     if (!scope) return value;
     if (scope.plane === 'system' && scope.consumer.kind === 'maintenance') {
       if (
@@ -539,7 +558,7 @@ export function createDelegations(options: DelegationOptions) {
     ) {
       if (parent === mine) return value;
       seen.add(parent);
-      const row = await get(parent.slice(11));
+      const row = await get(parent.slice(11), database);
       if (!row) break;
       parent = row.parentAuthorityRef;
     }
@@ -552,8 +571,9 @@ export function createDelegations(options: DelegationOptions) {
     name: string,
     principalKind: Actor['kind'],
     issuer = parent,
+    database?: Kysely<any>,
   ) {
-    return db.transaction().execute(async (tx) => {
+    return transaction(database, async (tx) => {
       const id = uuid();
       await sql`insert into service_delegations(id,owner_user_id,parent_authority_ref,issuer_authority_ref,principal_kind,scope,revision,state) values(${id},${userId},${parent},${issuer},${principalKind},${JSON.stringify(scope)}::jsonb,1,'pending')`.execute(
         tx,
@@ -630,6 +650,7 @@ export function createDelegations(options: DelegationOptions) {
     if (ctx.actor.authorityRef.startsWith('session:')) {
       const session = await options.currentSession(
         ctx.actor.authorityRef.slice(8),
+        database,
       );
       if (
         !session ||
@@ -641,7 +662,27 @@ export function createDelegations(options: DelegationOptions) {
     const userId = ctx.actor.authorityRef.startsWith('delegation:')
       ? (await active(ctx.actor.authorityRef.slice(11), database)).ownerUserId
       : ctx.actor.id;
+    await guardSubjects(ctx, scope, database);
     return { scope, userId };
+  }
+  async function guardSubjects(
+    ctx: CallContext,
+    scope: DelegationScope,
+    database?: Kysely<any>,
+  ) {
+    for (const subjectId of [...new Set(scope.subjectIds)].sort())
+      await options.sourceGuard?.(
+        { ...ctx, subjectId },
+        'delegations.create',
+        {
+          product: options.product,
+          installationId: options.installationId,
+          subjectId,
+          kind: 'subject',
+          id: subjectId,
+        },
+        database,
+      );
   }
   return {
     authorize,
@@ -703,39 +744,136 @@ export function createDelegations(options: DelegationOptions) {
       ctx: CallContext,
       input: { name: string; scope: DelegationScope },
     ) {
-      await authorize(ctx, 'installation.manage');
-      const issuer = await authority(ctx),
-        scope = checkedScope(input.scope);
-      if (
-        ctx.actor.kind !== 'human' ||
-        scope.plane !== 'subject' ||
-        scope.consumer.kind !== 'subject' ||
-        scope.consumer.host !== options.installationId ||
-        scope.subjectIds.length !== 1 ||
-        scope.subjectIds[0] !== scope.consumer.id ||
-        scope.expiresAt !== null ||
-        !(await options.issuancePolicy?.({
-          issuer: {
-            actor: ctx.actor,
-            consumer: ctx.consumer,
-            scope: issuer ?? undefined,
+      return transaction(undefined, async (tx) => {
+        await authorize(ctx, 'installation.manage', undefined, tx);
+        const issuer = await authority(ctx, tx),
+          scope = checkedScope(input.scope);
+        if (
+          ctx.actor.kind !== 'human' ||
+          scope.plane !== 'subject' ||
+          scope.consumer.kind !== 'subject' ||
+          scope.consumer.host !== options.installationId ||
+          scope.subjectIds.length !== 1 ||
+          scope.subjectIds[0] !== scope.consumer.id ||
+          scope.expiresAt !== null ||
+          !(await options.issuancePolicy?.(
+            {
+              issuer: {
+                actor: ctx.actor,
+                consumer: ctx.consumer,
+                scope: issuer ?? undefined,
+              },
+              requested: scope,
+              requestedPrincipalKind: 'subject',
+            },
+            tx,
+          ))
+        )
+          deny();
+        const userId = ctx.actor.authorityRef.startsWith('delegation:')
+          ? (await active(ctx.actor.authorityRef.slice(11), tx)).ownerUserId
+          : ctx.actor.id;
+        await guardSubjects(ctx, scope, tx);
+        return issue(
+          `user:${userId}`,
+          userId,
+          scope,
+          input.name,
+          'subject',
+          ctx.actor.authorityRef,
+          tx,
+        );
+      });
+    },
+    /** Data owner composition only; never restores an old grant on Subject import. */
+    async deleteSubject(
+      ctx: CallContext,
+      input: { subjectId: string },
+      database?: Kysely<any>,
+    ) {
+      const subjectId = SubjectIdSchema.parse(input.subjectId);
+      if (ctx.subjectId && ctx.subjectId !== subjectId) deny();
+      return transaction(database, async (tx) => {
+        await authorize(
+          { ...ctx, subjectId },
+          'data.purge',
+          {
+            product: options.product,
+            installationId: options.installationId,
+            subjectId,
+            kind: 'subject',
+            id: subjectId,
           },
-          requested: scope,
-          requestedPrincipalKind: 'subject',
-        }))
-      )
-        deny();
-      const userId = ctx.actor.authorityRef.startsWith('delegation:')
-        ? (await active(ctx.actor.authorityRef.slice(11))).ownerUserId
-        : ctx.actor.id;
-      return issue(
-        `user:${userId}`,
-        userId,
-        scope,
-        input.name,
-        'subject',
-        ctx.actor.authorityRef,
-      );
+          tx,
+        );
+        const rows =
+          await sql<ServiceDelegation>`select id,api_key_id,owner_user_id,parent_authority_ref,issuer_authority_ref,principal_kind,scope,revision,state from service_delegations where state in ('pending','active') and scope->'subjectIds' @> ${JSON.stringify([subjectId])}::jsonb order by id for update`.execute(
+            tx,
+          );
+        let revoked = 0,
+          narrowed = 0;
+        for (const current of rows.rows) {
+          const previous = DelegationScopeSchema.parse(current.scope);
+          const subjectIds = previous.subjectIds.filter(
+            (value) => value !== subjectId,
+          );
+          const targets = previous.targets.flatMap((target): TargetScope[] => {
+            if (target.kind === 'workspace')
+              return target.workspaceRef.subjectId === subjectId
+                ? []
+                : [target];
+            if (target.kind !== 'object') return [target];
+            const refs = target.refs.filter(
+              (ref) => ref.subjectId !== subjectId,
+            );
+            return refs.length ? [{ ...target, refs }] : [];
+          });
+          // Removing the last positive target must not turn that operation into an unrestricted grant.
+          const operations = previous.operations.filter(
+            (operation) =>
+              !previous.targets.some((target) =>
+                target.actions.includes(operation),
+              ) || targets.some((target) => target.actions.includes(operation)),
+          );
+          if (
+            !subjectIds.length ||
+            !operations.length ||
+            previous.taskRef?.subjectId === subjectId ||
+            previous.nativeBinding ||
+            (previous.consumer.kind === 'subject' &&
+              previous.consumer.id === subjectId)
+          ) {
+            await sql`update service_delegations set state='revoked',revision=revision+1,revoked_at=clock_timestamp() where id=${current.id}`.execute(
+              tx,
+            );
+            if (current.apiKeyId)
+              await options.disableKey(current.apiKeyId, tx);
+            revoked++;
+          } else {
+            const scope = DelegationScopeSchema.parse({
+              ...previous,
+              subjectIds,
+              operations,
+              targets: targets
+                .map((target) => ({
+                  ...target,
+                  actions: target.actions.filter((operation) =>
+                    operations.includes(operation),
+                  ),
+                }))
+                .filter((target) => target.actions.length),
+              inputRefs: previous.inputRefs.filter(
+                (ref) => ref.subjectId !== subjectId,
+              ),
+            });
+            await sql`update service_delegations set scope=${JSON.stringify(scope)}::jsonb,revision=revision+1 where id=${current.id}`.execute(
+              tx,
+            );
+            narrowed++;
+          }
+        }
+        return { revoked, narrowed };
+      });
     },
     async create(
       ctx: CallContext,
@@ -744,15 +882,20 @@ export function createDelegations(options: DelegationOptions) {
         scope: DelegationScope;
         principalKind: Actor['kind'];
       },
+      database?: Kysely<any>,
     ) {
-      const { scope, userId } = await prepareIssue(ctx, input);
-      return issue(
-        ctx.actor.authorityRef,
-        userId,
-        scope,
-        input.name,
-        input.principalKind,
-      );
+      return transaction(database, async (tx) => {
+        const { scope, userId } = await prepareIssue(ctx, input, tx);
+        return issue(
+          ctx.actor.authorityRef,
+          userId,
+          scope,
+          input.name,
+          input.principalKind,
+          ctx.actor.authorityRef,
+          tx,
+        );
+      });
     },
     async createChild(
       ctx: CallContext,
@@ -919,20 +1062,23 @@ export function createDelegations(options: DelegationOptions) {
       ctx: CallContext,
       id: string,
       input: { expectedRevision: number },
+      database?: Kysely<any>,
     ) {
-      const prior = await managed(ctx, id, 'delegations.revoke');
-      const result =
-        await sql`update service_delegations set state='revoked',revision=revision+1,revoked_at=clock_timestamp() where id=${id} and revision=${input.expectedRevision}`.execute(
-          db,
-        );
-      if (result.numAffectedRows !== 1n)
-        throw problem(
-          'credentials.revision_conflict',
-          'conflict',
-          '委派版本已变化',
-        );
-      if (prior.apiKeyId) await options.disableKey(prior.apiKeyId);
-      return { id, revoked: true };
+      return transaction(database, async (tx) => {
+        const prior = await managed(ctx, id, 'delegations.revoke', tx);
+        const result =
+          await sql`update service_delegations set state='revoked',revision=revision+1,revoked_at=clock_timestamp() where id=${id} and revision=${input.expectedRevision}`.execute(
+            tx,
+          );
+        if (result.numAffectedRows !== 1n)
+          throw problem(
+            'credentials.revision_conflict',
+            'conflict',
+            '委派版本已变化',
+          );
+        if (prior.apiKeyId) await options.disableKey(prior.apiKeyId, tx);
+        return { id, revoked: true };
+      });
     },
   };
 }

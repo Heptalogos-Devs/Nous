@@ -37,6 +37,16 @@ import {
 } from '@nous-wave/contracts/credentials';
 import { SubjectCreateSchema } from '@nous-wave/contracts/identity';
 import {
+  DataArtifactSchema,
+  DataArtifactReadSchema,
+  DataExportSchema,
+  DataImportSchema,
+  DataReceiptSchema,
+  ImportArtifactResultSchema,
+  ImportPlanSchema,
+  PurgePlanSchema,
+} from '@nous-wave/contracts/data';
+import {
   ConceptMergeSchema,
   ConceptSplitSchema,
   EpisodeOrganizeSchema,
@@ -364,31 +374,34 @@ export async function createHttp(
       input: z.output<I>,
       routeParams: RouteIds,
     ) => Promise<z.input<O>>,
+    status: 200 | 202 = 200,
   ) {
     const routeParamsSchema = z.object({
       ...(url.includes(':subjectId') ? { subjectId: z.uuidv7() } : {}),
       ...(url.includes(':id') ? { id: z.string().min(1) } : {}),
       ...(url.includes(':action') ? { action: z.string().min(1) } : {}),
     });
+    const responses: Record<number, z.ZodType> = {
+      [status]: output,
+      400: ProblemSchema,
+      401: ProblemSchema,
+      403: ProblemSchema,
+      404: ProblemSchema,
+      409: ProblemSchema,
+      422: ProblemSchema,
+      429: ProblemSchema,
+      503: ProblemSchema,
+    };
     server.route({
       method,
       url,
       schema: {
         operationId,
+        tags: [operationId.split('.')[0]!],
         security: [{ bearer: [] }],
         ...(url.includes(':') ? { params: routeParamsSchema } : {}),
         ...(method === 'GET' ? { querystring: input } : { body: input }),
-        response: {
-          200: output,
-          400: ProblemSchema,
-          401: ProblemSchema,
-          403: ProblemSchema,
-          404: ProblemSchema,
-          409: ProblemSchema,
-          422: ProblemSchema,
-          429: ProblemSchema,
-          503: ProblemSchema,
-        },
+        response: responses,
       },
       handler: async (request, reply) => {
         const ctx = await context(request);
@@ -401,6 +414,7 @@ export async function createHttp(
             method === 'GET' ? request.query : request.body,
           );
           const result = await handler(ctx, data, request.params as RouteIds);
+          reply.code(status);
           request.log.info({
             event: 'http.operation_completed',
             operationId: ctx.trace.operationId,
@@ -416,6 +430,148 @@ export async function createHttp(
   }
   const empty = z.object({}),
     unknown = z.unknown();
+  route(
+    'POST',
+    `${S}/data/exports`,
+    'data.export',
+    DataExportSchema.omit({ subjectId: true }),
+    OperationRefSchema,
+    async (ctx, input) => {
+      const handle = await app().data.export.start(ctx, {
+        ...input,
+        subjectId: ctx.subjectId!,
+      });
+      return {
+        operationId: handle.workflowID,
+        statusUrl: `/v1/operations/${encodeURIComponent(handle.workflowID)}`,
+      };
+    },
+    202,
+  );
+  route(
+    'POST',
+    `${S}/data/imports`,
+    'data.import',
+    DataImportSchema,
+    OperationRefSchema,
+    async (ctx, input) => {
+      const handle = await app().data.import.start(ctx, input);
+      return {
+        operationId: handle.workflowID,
+        statusUrl: `/v1/operations/${encodeURIComponent(handle.workflowID)}`,
+      };
+    },
+    202,
+  );
+  route(
+    'POST',
+    `${S}/data/purge-plans`,
+    'data.planPurge',
+    empty,
+    PurgePlanSchema,
+    (ctx) => app().data.planPurge(ctx, { subjectId: ctx.subjectId! }),
+  );
+  route(
+    'POST',
+    `${S}/data/purges`,
+    'data.purge',
+    DataImportSchema,
+    OperationRefSchema,
+    async (ctx, input) => {
+      const handle = await app().data.purge.start(ctx, input);
+      return {
+        operationId: handle.workflowID,
+        statusUrl: `/v1/operations/${encodeURIComponent(handle.workflowID)}`,
+      };
+    },
+    202,
+  );
+  route(
+    'POST',
+    '/v1/data/import-plans',
+    'data.importPreview',
+    DataArtifactReadSchema,
+    ImportPlanSchema,
+    (ctx, input) => app().data.importPreview(ctx, input),
+  );
+  route(
+    'GET',
+    '/v1/data/artifacts',
+    'data.readArtifact',
+    DataArtifactReadSchema,
+    DataArtifactSchema,
+    (ctx, input) => app().data.artifacts.read(ctx, input),
+  );
+  route(
+    'GET',
+    '/v1/data-receipts/:id',
+    'data.readReceipt',
+    empty,
+    DataReceiptSchema,
+    (ctx, _input, p) => app().data.receipts.read(ctx, { operationId: p.id! }),
+  );
+  server.post(
+    '/v1/data/import-artifacts',
+    {
+      schema: {
+        operationId: 'data.uploadImportArtifact',
+        tags: ['data'],
+        security: [{ bearer: [] }],
+        consumes: ['application/octet-stream'],
+        body: z.any().meta({ type: 'string', format: 'binary' }),
+        response: { 200: ImportArtifactResultSchema },
+      },
+    },
+    async (request, reply) => {
+      const ctx = await context(request);
+      return app().telemetry.span(
+        ctx,
+        'nous.data.uploadImportArtifact',
+        async (ctx) => {
+          request.callContext = ctx;
+          const result = await app().data.uploadImportArtifact(
+            ctx,
+            request.body as Readable,
+          );
+          reply
+            .header('x-operation-id', ctx.trace.operationId)
+            .header('x-trace-id', ctx.trace.traceId);
+          return result;
+        },
+      );
+    },
+  );
+  server.get(
+    '/v1/data/artifacts/content',
+    {
+      schema: {
+        operationId: 'data.downloadArtifact',
+        tags: ['data'],
+        security: [{ bearer: [] }],
+        querystring: DataArtifactReadSchema,
+        response: { 200: z.any().meta({ type: 'string', format: 'binary' }) },
+        produces: ['application/gzip'],
+      },
+    },
+    async (request, reply) => {
+      const ctx = await context(request);
+      return app().telemetry.span(
+        ctx,
+        'nous.data.downloadArtifact',
+        async (ctx) => {
+          request.callContext = ctx;
+          const input = DataArtifactReadSchema.parse(request.query),
+            metadata = await app().data.artifacts.read(ctx, input);
+          const body = await app().data.artifacts.readStream(ctx, input);
+          return reply
+            .header('x-operation-id', ctx.trace.operationId)
+            .header('x-trace-id', ctx.trace.traceId)
+            .type(metadata.mediaType)
+            .send(body);
+        },
+      );
+    },
+  );
   route(
     'POST',
     '/v1/time/read',
@@ -499,6 +655,7 @@ export async function createHttp(
     {
       schema: {
         operationId: 'host.stop',
+        tags: ['host'],
         body: z.object({ mode: z.enum(['graceful', 'force']) }),
         response: { 202: z.object({ state: z.literal('stopping') }) },
       },
@@ -536,6 +693,7 @@ export async function createHttp(
     {
       schema: {
         operationId: 'materials.uploadBlob',
+        tags: ['materials'],
         security: [{ bearer: [] }],
         consumes: ['application/octet-stream'],
         body: z.any().meta({ type: 'string', format: 'binary' }),

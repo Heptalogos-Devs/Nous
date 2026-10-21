@@ -4,6 +4,10 @@
   "type": "module",
   "license": "AGPL-3.0-only",
   "exports": {
+    "./data": {
+      "types": "./dist/data/index.d.ts",
+      "default": "./dist/data/index.js"
+    },
     "./bootstrap": {
       "types": "./dist/bootstrap/index.d.ts",
       "default": "./dist/bootstrap/index.js"
@@ -63,6 +67,10 @@
     "./devtools/openapi": {
       "types": "./dist/devtools/openapi.d.ts",
       "default": "./dist/devtools/openapi.js"
+    },
+    "./devtools/release": {
+      "types": "./dist/devtools/release.d.ts",
+      "default": "./dist/devtools/release.js"
     }
   },
   "files": [
@@ -79,6 +87,7 @@
     "build": "tsc -p tsconfig.json"
   },
   "dependencies": {
+    "tar": "7.5.22",
     "@nous-wave/contracts": "workspace:*",
     "@dbos-inc/dbos-sdk": "5.3.0",
     "@dbos-inc/kysely-datasource": "5.3.0",

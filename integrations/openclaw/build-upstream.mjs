@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile, lstat } from 'node:fs/promises';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
@@ -40,7 +40,7 @@ const environment = {
   TMPDIR: path.join(cache, 'tmp'),
   GOMEMLIMIT: '1536MiB', GOMAXPROCS: '2', RAYON_NUM_THREADS: '2', TOKIO_WORKER_THREADS: '2',
 };
-async function run(command, args, {cwd=source, memory=3072, heap=2048, capture=false}={}) {
+async function run(command, args, {cwd=source, memory=3072, heap=2048, capture=false, windowsVerbatimArguments=false}={}) {
   const env = {...environment, NODE_OPTIONS:`--max-old-space-size=${heap}`, OPENCLAW_TSDOWN_MAX_OLD_SPACE_MB:String(heap)};
   if (values['systemd-scope']) {
     args = ['--user','--scope','-p',`MemoryMax=${memory}M`,'-p','MemorySwapMax=512M','-p','CPUQuota=200%',command,...args];
@@ -48,24 +48,31 @@ async function run(command, args, {cwd=source, memory=3072, heap=2048, capture=f
   }
   return new Promise((resolve,reject)=>{
     let stdout='';
-    const child=spawn(command,args,{cwd,env,stdio:capture?['ignore','pipe','pipe']:'inherit'});
+    const child=spawn(command,args,{cwd,env,windowsVerbatimArguments,stdio:capture?['ignore','pipe','pipe']:'inherit'});
     if(capture){child.stdout.on('data',value=>{stdout+=value;});child.stderr.resume();}
     child.once('error',reject);
-    child.once('exit',(code,signal)=>code===0?resolve(stdout.trim()):reject(new Error(`${command} exited ${code??signal}`)));
+    child.once('exit',(code,signal)=>code===0?resolve(stdout):reject(new Error(`${command} exited ${code??signal}`)));
   });
 }
 let exists=true;
 try {await lstat(source);} catch(error) {if(error.code==='ENOENT')exists=false;else throw error;}
 if(!exists) await run('git',['clone','--depth','1','--branch',provenance.tag,provenance.repository,source],{cwd:path.dirname(source),memory:512,heap:256});
-const head=await run('git',['rev-parse','HEAD'],{capture:true,memory:512,heap:256});
+const head=(await run('git',['rev-parse','HEAD'],{capture:true,memory:512,heap:256})).trim();
 if(head!==provenance.commit && head!==provenance.modifiedCommit) throw new Error('The selected source is not the pinned base or adapted commit');
 try {await run('git',['apply','--reverse','--check',patch],{capture:true,memory:512,heap:256});}
-catch {await run('git',['apply','--check',patch],{memory:512,heap:256});await run('git',['apply',patch],{memory:512,heap:256});}
+catch {await run('git',['diff','--quiet','HEAD','--'],{capture:true,memory:512,heap:256});await run('git',['apply','--index','--check',patch],{memory:512,heap:256});await run('git',['apply','--index',patch],{memory:512,heap:256});}
 const actualPatch=await run('git',['diff','--binary',provenance.commit],{capture:true,memory:512,heap:256});
-if(`${actualPatch}\n`!==await readFile(patch,'utf8')) throw new Error('The selected source has changes outside the pinned adaptation');
+if(actualPatch!==await readFile(patch,'utf8')) throw new Error('The selected source has changes outside the pinned adaptation');
+const status=await run('git',['status','--porcelain','--untracked-files=all'],{capture:true,memory:512,heap:256});
+if(/^\?\? /m.test(status))throw new Error('The selected source contains untracked files outside the pinned adaptation');
 const installed=await lstat(path.join(source,'node_modules')).catch(error=>{if(error.code==='ENOENT')return null;throw error;});
 if(installed?.isSymbolicLink()) throw new Error('OpenClaw declaration compilation requires dependencies physically inside the selected checkout; use an independent installation');
-if(!values['skip-install']) await run('pnpm',['install','--frozen-lockfile','--network-concurrency=4','--child-concurrency=1','--store-dir',path.join(cache,'pnpm-store')]);
+if(values['skip-install']&&!installed)throw new Error('--skip-install requires an existing physical dependency installation');
+if(!values['skip-install']) {
+  const {resolvePnpmRunner}=await import(pathToFileURL(path.join(source,'scripts/pnpm-runner.mts')));
+  const install=resolvePnpmRunner({cwd:source,env:environment,pnpmArgs:['install','--frozen-lockfile','--network-concurrency=4','--child-concurrency=1','--store-dir',path.join(cache,'pnpm-store')]});
+  await run(install.command,install.args,{windowsVerbatimArguments:install.windowsVerbatimArguments});
+}
 if(!values['skip-build']) await run('node',['--import','./scripts/tsx.mjs','scripts/build-all.mts',values.profile],{memory:6144,heap:4352});
 if(!values['build-only']) await run('node',['scripts/package-openclaw-for-docker.mjs','--skip-build','--allow-unreleased-changelog','--output-dir',output]);
 console.log(values['build-only']?source:output);

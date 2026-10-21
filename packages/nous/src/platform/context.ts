@@ -3,7 +3,7 @@ import { randomBytes } from 'node:crypto';
 import { v7 as uuid } from 'uuid';
 import type { CallContext, Ref, Consumer } from '@nous-wave/contracts/common';
 import { sql } from 'kysely';
-import type { Kysely } from 'kysely';
+import type { Kysely,IsolationLevel } from 'kysely';
 import type { Database } from './database.js';
 import { trace,isSpanContextValid } from '@opentelemetry/api';
 export {readReal as now} from '@nous-wave/platform/time';
@@ -63,7 +63,7 @@ export async function changed(
 }
 export interface Storage {
   readonly db: Kysely<Database>;
-  transaction<T>(fn: (db: Kysely<Database>) => Promise<T>): Promise<T>;
+  transaction<T>(fn: (db: Kysely<Database>) => Promise<T>,options?:{isolationLevel?:IsolationLevel}): Promise<T>;
   installationId: string;
   authorize(ctx:CallContext,operation:string,target?:Ref,db?:Kysely<any>):Promise<void>;
 }

@@ -125,13 +125,31 @@ export function createNetwork(options: NetworkOptions) {
     }
     return value;
   }
-  function profileReference(profileId: string): Ref {
+  function profileReference(profileId: string, scope?: ConfigScope): Ref {
     return {
       product: options.product,
       installationId: options.installationId,
+      ...(scope && scope.kind !== 'installation'
+        ? { subjectId: scope.subjectId }
+        : {}),
       kind: 'NetworkProfile',
       id: profileId,
     };
+  }
+  function credentialBindings(
+    profileId: string,
+    profile: NetworkProfile,
+    snapshot: ConfigSnapshot,
+  ) {
+    const prefix = `/profiles/${profileId.replaceAll('~', '~0').replaceAll('/', '~1')}`;
+    return materialRefs(profile).map(({ ref, purpose, path }) => ({
+      ref,
+      purpose,
+      resourceRef: profileReference(
+        profileId,
+        snapshot.sources[prefix + path]?.revision?.scope,
+      ),
+    }));
   }
   function selectionScope(
     ctx: CallContext,
@@ -179,7 +197,7 @@ export function createNetwork(options: NetworkOptions) {
       snapshot,
       profileId,
       profile,
-      profileRef: profileReference(profileId),
+      bindings: credentialBindings(profileId, profile, snapshot),
     };
   }
   async function resolveResource(ctx: CallContext, useRef: Ref) {
@@ -210,10 +228,12 @@ export function createNetwork(options: NetworkOptions) {
     const selection = await resolveResource(ctx, input.useRef),
       selected = await selectedProfile(ctx, selection);
     if (
-      canonicalRefKey(input.resourceRef) !==
-        canonicalRefKey(selected.profileRef) ||
-      !materialRefs(selected.profile).some(
-        (item) => item.ref === input.ref && item.purpose === input.purpose,
+      !selected.bindings.some(
+        (item) =>
+          item.ref === input.ref &&
+          item.purpose === input.purpose &&
+          canonicalRefKey(input.resourceRef) ===
+            canonicalRefKey(item.resourceRef),
       )
     )
       throw problem(
@@ -229,7 +249,7 @@ export function createNetwork(options: NetworkOptions) {
   async function acquire(
     ctx: CallContext,
     resource: ResourceNetworkScope,
-    profileRef: Ref,
+    bindings: ReturnType<typeof credentialBindings>,
     profile: NetworkProfile,
     snapshot: ConfigSnapshot,
     scope: ConfigScope,
@@ -239,8 +259,7 @@ export function createNetwork(options: NetworkOptions) {
       options,
       ctx,
       resource,
-      profileRef,
-      profile,
+      bindings,
       async (materials) => {
         const materialVersions = versions(materials);
         const environment =
@@ -305,7 +324,7 @@ export function createNetwork(options: NetworkOptions) {
         '网络资源不属于当前安装',
       );
     await options.authorize(ctx, resource.operation, resource.resourceRef);
-    const { scope, registered, snapshot, profileId, profile, profileRef } =
+    const { scope, registered, snapshot, profileId, profile, bindings } =
       await selectedProfile(ctx, { ...selection, resource });
     if (selection.deadline)
       selection = {
@@ -321,7 +340,7 @@ export function createNetwork(options: NetworkOptions) {
     const pool = await acquire(
       ctx,
       resource,
-      profileRef,
+      bindings,
       profile,
       snapshot,
       scope,
@@ -349,6 +368,7 @@ export function createNetwork(options: NetworkOptions) {
         if (
           digest(actual.resource) !== digest(resource) ||
           canonicalize(selected.scope) !== canonicalize(scope) ||
+          canonicalize(selected.bindings) !== canonicalize(bindings) ||
           digest(selected.profile) !== digest(profile)
         )
           throw problem(
@@ -382,8 +402,7 @@ export function createNetwork(options: NetworkOptions) {
         options,
         ctx,
         resource,
-        profileRef,
-        profile,
+        bindings,
         async (materials) => {
           if (versions(materials) !== pool.versions)
             throw problem(
@@ -753,6 +772,7 @@ export function createNetwork(options: NetworkOptions) {
             id,
             proxy: p.proxy.mode,
             tlsVerified: p.tls.rejectUnauthorized,
+            credentialBindings: credentialBindings(id, p, snapshot),
           })),
         revisionRefs: snapshot.revisions,
         pools: pools.size,

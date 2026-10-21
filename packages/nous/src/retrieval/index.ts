@@ -93,7 +93,7 @@ export function createRetrieval(deps: RetrievalDependencies) {
   const tableName = `knowledge_${digest({ tokenizer: 'icu', embeddingSpace, dimensions: deps.embed?.dimensions }).slice(0, 16)}`;
   let connection: Promise<lance.Connection> | undefined;
   let table: Promise<lance.Table> | undefined;
-  const resultSets = new Map<string, { scope: string; refs: Ref[]; at: number }>();
+  const resultSets = new Map<string, { subjectId:string;scope: string; refs: Ref[]; at: number }>();
   const getConnection = () => connection ??= lance.connect(deps.indexPath);
 
   async function open(rows: Record<string, unknown>[]) {
@@ -215,7 +215,7 @@ export function createRetrieval(deps: RetrievalDependencies) {
     }
     const chosen = ranking.slice(offset, offset + resolved.limit).map(id => byKey.get(id)).filter((view): view is KnowledgeView => Boolean(view));
     const resultSetId = uuid();
-    resultSets.set(resultSetId, { scope: digest([ctx.subjectId, ctx.actor.id, ctx.purpose, ctx.audience]), refs: chosen.map(view => view.ref), at: Date.now() });
+    resultSets.set(resultSetId, { subjectId:ctx.subjectId,scope: digest([ctx.subjectId, ctx.actor.id, ctx.purpose, ctx.audience]), refs: chosen.map(view => view.ref), at: Date.now() });
     for (const [id, value] of resultSets) if (Date.now() - value.at > 3_600_000 || resultSets.size > 1000) resultSets.delete(id);
     return QueryResultSchema.parse({
       items: chosen.map(view => ({ ref: view.ref, title: view.body.title ?? (view.body.kind === 'Concept' ? view.body.name : view.kind), excerpt: view.body.content, formation: view.formation, stance: view.stance, confidence: view.confidence, time: { formed: view.formed, valid: view.valid, recorded: view.recorded }, sourceRefs: view.sourceRefs, matchReasons: reasons.get(keyOf(view)) ?? ['范围内认识'] })),
@@ -294,7 +294,7 @@ export function createRetrieval(deps: RetrievalDependencies) {
     query, refresh, readResult, expand,
     rebuild: async (ctx: CallContext) => { requireSubject(ctx);await deps.authorize(ctx, 'maintenance.run'); const db = await getConnection(); if ((await db.tableNames()).includes(tableName)) await (await db.openTable(tableName)).delete(`subject_id = ${quoted(ctx.subjectId)}`); return refresh(ctx); },
     explain: async (ctx: CallContext, input: QueryInput) => { const result = await query(ctx, input); return { query: result.resolvedQuery, indexState: result.indexState, matches: result.items.map(item => ({ ref: item.ref, reasons: item.matchReasons })) }; },
-    removeSubject: async (ctx: CallContext) => { requireSubject(ctx);await deps.authorize(ctx, 'data.purge'); const db = await getConnection(); for (const name of await db.tableNames()) if (name.startsWith('knowledge_')) await (await db.openTable(name)).delete(`subject_id = ${quoted(ctx.subjectId)}`); },
+    removeSubject: async (subjectId:string) => { const db = await getConnection(); for (const name of await db.tableNames()) if (name.startsWith('knowledge_')) await (await db.openTable(name)).delete(`subject_id = ${quoted(subjectId)}`);for(const[id,value]of resultSets)if(value.subjectId===subjectId)resultSets.delete(id); },
     close: async () => { if (table) (await table).close(); if (connection) (await connection).close(); resultSets.clear(); },
   };
 }

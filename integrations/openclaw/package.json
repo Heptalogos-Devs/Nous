@@ -39,7 +39,8 @@
     "openclaw.plugin.json",
     "upstream",
     "build-upstream.mjs",
-    "build.mjs"
+    "build.mjs",
+    "smoke-upstream.mjs"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json"

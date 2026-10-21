@@ -4,8 +4,8 @@
   "commit": "1b58cb9a1b4f4353e1add63c8506db4d890962e8",
   "patch": "model-context.patch",
   "license": "MIT",
-  "modifiedCommit": "30eb14dbe7bf198d3577b9843d809cb7c9178230",
-  "patchSha256": "a801d73c1b2254cc089e82935fd44ffde0d35bc6add0cf36773d256492b7eb1b",
+  "modifiedCommit": "29b0a6c6013a395130722d2117bc93da3c10a006",
+  "patchSha256": "6ad26c82b6747105e7ab8be04efe78e5ab548f519a237a127acd2a3a15603ec7",
   "snapshotStatus": "source-tested",
   "includesUncommittedChanges": false
 }

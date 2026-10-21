@@ -52,7 +52,7 @@ import type {
 } from './types.js';
 
 export { officialProviderAdapters } from './adapters.js';
-export { type ModelsDatabase, modelMigration } from './migration.js';
+export { type ModelsDatabase, modelMigration, modelDataMigration } from './migration.js';
 export * from './types.js';
 export { languageUsage, modelCost, nativeLanguageUsage } from './usage.js';
 export { modelNamespaces, modelSettingsModules };

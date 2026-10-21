@@ -16,7 +16,7 @@
 ## Current Work
 
 
-当前先闭合 Hept Task → 受限 Worker → Nous 当前来源与上下文 → OpenClaw 原生模型/工具 → 选定成果发布 → Subject 正式读取。逐调用权限、时间、费用与实际接触沿同一身份保存；取消阻止后续效果并保留已发生事实。完整 Gateway 制品和空启动验证同时推进。
+当前先完成全部 owner 的数据导出、同身份恢复与清除，将配置、Prompt、模型账目、时间、来源、原件、运行授权及提交后清理接入正式 API/CLI。共享 SDK 的独立发行、完整 Gateway 制品和空启动验证同时推进。
 
 接着完成真实外部 ClockSource 连接、完整媒体与扩展管理、受限诊断与 Web/i18n、全部 owner 数据生命周期和跨平台发行。正式 SDK 发行源及 Hept 正式 lock 尚待收口。完整 NousQL/VCP/认知与生活语义在基础底座完成后继续。
 
@@ -30,9 +30,14 @@
 
 模型平台已通过正式Auth/Settings/Secret/Network/Material/Blob/Encounter/Time的五族实际HTTP与官方DBOS场景，包括工具循环、流、embedding批并行、重排/转录/语音、费用保全及unknown不重发。Hept分段Clock已通过单连接池、wall回退/mono单调、离线/暂停/变速、高水位恢复、DST和真实DBOS期限重投影。
 
-Nous已替换旧ModelResource/Invoice与硬编码Prompt，Provider/Model/Role/价目/祖先limits分别通过正式Settings采用，18个既有职责及native_agent接缝与15份资源已接实际SDK messages。原认知长场景通过来源撤权、组事务回滚、种子并发、Selector.pointer、结构错误输出与费用保全；安装级模型测试保存独立ModelArtifact，不创建主体。另一个正式五族场景以15次实际HTTP贯通工具热配置、流、批并行、DBOS恢复、当前来源重验与调用数据导出删除恢复，恢复不产生新Provider调用。实际终止时间接收已覆盖进行中撤委派、原时间回执丢确认和管理身份重采用，正在闭合原生Task授权与选定成果交付。正式HTTP/CLI已接Provider/Model/Role、Prompt、网络、时间与调用ledger；两产品Client统一采用生成操作和纯HTTP元数据。
+Nous已替换旧ModelResource/Invoice与硬编码Prompt，Provider/Model/Role/价目/祖先limits分别通过正式Settings采用，18个既有职责及native_agent接缝与15份资源已接实际SDK messages。原认知长场景通过来源撤权、组事务回滚、种子并发、Selector.pointer、结构错误输出与费用保全；安装级模型测试保存独立ModelArtifact，不创建主体。另一个正式五族场景以15次实际HTTP贯通工具热配置、流、批并行、DBOS恢复、当前来源重验与调用数据导出删除恢复，恢复不产生新Provider调用。实际终止时间接收已覆盖进行中撤委派、原时间回执丢确认和管理身份重采用，原生Task授权与选定成果交付已通过联合Source场景。正式HTTP/CLI已接Provider/Model/Role、Prompt、网络、时间与调用ledger；两产品Client统一采用生成操作和纯HTTP元数据。
 
-Worker连接已通过正式HTTP/SDK与单连接PostgreSQL场景：受限Host创建metadata-only子委派，真实Consumer选择、私有来源读取、并发/丢确认幂等、principal限制与当前撤权均由原Auth/source owner执行；子key不进入HTTP结果或工作检查点。Hept Task正在贯通本地Worker、远端cognitionAuthority与原生四语义入口。取消后实际调用保持completed/time/cost，原件与ContextView定位认知采用pending；撤权后Nous晚到原件的私有接收仍待完整消费proof单元，不放宽当前选择或重发模型。
+Worker连接已通过正式HTTP/SDK与单连接PostgreSQL场景：受限Host创建metadata-only子委派，真实Consumer选择、私有来源读取、并发/丢确认幂等、principal限制与当前撤权均由原Auth/source owner执行；子key不进入HTTP结果或工作检查点。真实PNG上传、Blob元数据、image区域与node pointer已贯通。
+
+联合原生场景已通过同一 Task、run 和 Session 的恢复：正常任务2次实际模型调用、1次原生read工具，原调用不重发；完成2个终止回执与选定成果发布。Subject只读选定发布正文，精确私有草稿仍403；Worker、管理读取与未消费成果不制造Subject经历。第二调用的观察时间等于实际派发回执。派发后取消场景保留已发生的终止时间、usage与未知价格，0工具执行、认知pending；实际HookRunner阻止已撤权任务继续工具。收紧原来源Policy后，Nous及Hept的保存成果读取立即403。
+
+这条联合验证使用真实Source Agent、HookRunner、SessionManager、SQLite和两产品HTTP/RPC，模型响应由确定性提供方给出；正式完整Gateway制品、安装及其运行链继续施工。原生冻结消息改为不可变状态替换，恢复凭证由类型化accept失败和原工具owner提供；效果不明时保持unknown。
+
 
 原生历史 UUID、归档来源和晚到结果已沿实际 owner 验证；完整 Gateway 安装与发行闭包继续施工。
 

@@ -1,5 +1,133 @@
+diff --git a/packages/agent-core/src/agent-loop.ts b/packages/agent-core/src/agent-loop.ts
+index 02c67ada..804cf09f 100644
+--- a/packages/agent-core/src/agent-loop.ts
++++ b/packages/agent-core/src/agent-loop.ts
+@@ -133,6 +133,45 @@ export async function runAgentLoopContinue(
+   return runAgentLoop([], context, config, emit, signal, streamFn, runtime);
+ }
+ 
++/** Resume only native synchronous tool calls that the owner proved never launched. */
++export async function runAgentLoopResumeToolCalls(
++  context: AgentContext,
++  callId: string,
++  config: AgentLoopConfig,
++  emit: AgentEventSink,
++  signal?: AbortSignal,
++  streamFn?: StreamFn,
++  runtime?: AgentCoreStreamRuntimeDeps,
++): Promise<AgentMessage[]> {
++  const message = context.messages.at(-1);
++  if (
++    message?.role !== "assistant" ||
++    message.stopReason !== "toolUse" ||
++    message.modelContext?.callId !== callId ||
++    !message.modelContext.terminal ||
++    !message.modelContext.outputRef ||
++    !message.content.some((part) => part.type === "toolCall") ||
++    message.content.some((part) => part.type === "toolCall" && part.async === true)
++  ) {
++    throw new Error(
++      "Native recovery requires an accepted terminal with unstarted synchronous tools",
++    );
++  }
++  await emit({ type: "agent_start" });
++  await emit({ type: "turn_start" });
++  return runLoop(
++    { context: { ...context, messages: [...context.messages] } },
++    [],
++    config,
++    signal,
++    emit,
++    streamFn,
++    runtime,
++    [],
++    message,
++  );
++}
++
+ /**
+  * Own one replaceable context slot so this async frame does not retain earlier
+  * contexts after a next-turn hook replaces them.
+@@ -146,6 +185,7 @@ async function runLoop(
+   streamFn?: StreamFn,
+   runtime?: AgentCoreStreamRuntimeDeps,
+   initialPromptContext: AgentMessage[] = [],
++  recoveredResponse?: AssistantMessage,
+ ): Promise<AgentMessage[]> {
+   let config = initialConfig;
+   let promptContext = initialPromptContext;
+@@ -266,34 +306,43 @@ async function runLoop(
+ 
+       const toolPlan: ToolPlanState = { executionStarted: false };
+       const streamedSteering = createStreamedSteeringConfig(config);
+-      const streamed = await streamAgentResponse(
+-        state.context,
+-        config,
+-        signal,
+-        emit,
+-        newMessages,
+-        async (assistantMessage, toolCalls, executionSignal, toolEmit, scheduling) => {
+-          const batch = await executeToolCalls(
++      const resumed = recoveredResponse;
++      recoveredResponse = undefined;
++      const streamed = resumed
++        ? {
++            message: resumed,
++            executedIds: new Set<string>(),
++            batches: [],
++            continuationRequired: false,
++          }
++        : await streamAgentResponse(
+             state.context,
+-            assistantMessage,
+-            streamedSteering.config,
+-            executionSignal,
+-            toolEmit,
+-            toolLoopRecoveryState,
+-            toolPlan,
+-            toolCalls,
+-            scheduling,
+-            scheduling.hasUnobservedAsyncToolResults,
++            config,
++            signal,
++            emit,
++            newMessages,
++            async (assistantMessage, toolCalls, executionSignal, toolEmit, scheduling) => {
++              const batch = await executeToolCalls(
++                state.context,
++                assistantMessage,
++                streamedSteering.config,
++                executionSignal,
++                toolEmit,
++                toolLoopRecoveryState,
++                toolPlan,
++                toolCalls,
++                scheduling,
++                scheduling.hasUnobservedAsyncToolResults,
++              );
++              if (batch.intervention) {
++                toolLoopRecoveryState.criticalToolLoopSeen = true;
++              }
++              return batch;
++            },
++            (message) => withAssistantTurnTaint(message, turnTainted),
++            streamFn,
++            runtime,
+           );
+-          if (batch.intervention) {
+-            toolLoopRecoveryState.criticalToolLoopSeen = true;
+-          }
+-          return batch;
+-        },
+-        (message) => withAssistantTurnTaint(message, turnTainted),
+-        streamFn,
+-        runtime,
+-      );
+       const { message } = streamed;
+ 
+       const providerFailed = message.stopReason === "error" || message.stopReason === "aborted";
 diff --git a/packages/agent-core/src/agent-stream-response.ts b/packages/agent-core/src/agent-stream-response.ts
-index 27478d5f..f2660af5 100644
+index 27478d5f..52c897cb 100644
 --- a/packages/agent-core/src/agent-stream-response.ts
 +++ b/packages/agent-core/src/agent-stream-response.ts
 @@ -157,6 +157,23 @@ export async function streamAgentResponse(
@@ -54,24 +182,64 @@ index 27478d5f..f2660af5 100644
            if (partialIndex === undefined) {
              context.messages.push(message);
              await emit({ type: "message_start", message: { ...message } });
-@@ -415,7 +444,12 @@ export async function streamAgentResponse(
+@@ -304,6 +333,7 @@ export async function streamAgentResponse(
+           partialIndex = undefined;
+           newMessages.push(message);
+           await emit({ type: "message_end", message });
++          return message;
+         };
+ 
+         for await (const event of response) {
+@@ -395,7 +425,7 @@ export async function streamAgentResponse(
+             await executions;
+           }
+           const tail = remainingFragment(result);
+-          const finalMessage = prepareAssistantMessage(
++          let finalMessage = prepareAssistantMessage(
+             ensureToolTurnIdentity(
+               removeNonExecutableToolCalls({
+                 ...tail,
+@@ -415,7 +445,26 @@ export async function streamAgentResponse(
                }),
              ),
            );
 -          await commitFragment(finalMessage);
-+          await commitFragment(finalMessage, true);
++          finalMessage = await commitFragment(finalMessage, true);
 +          // message_end has durably saved the native response. The host retains
 +          // this handoff and can accept it again without another provider call.
 +          if (preparedModelContext) {
-+            await config.modelContext?.accept({ prepared: preparedModelContext, output: result });
++            const accepted = await config.modelContext?.accept({
++              prepared: preparedModelContext,
++              output: result,
++            });
++            if (accepted?.outputRef && finalMessage.modelContext) {
++              const persisted = finalMessage;
++              finalMessage = {
++                ...persisted,
++                modelContext: { ...persisted.modelContext!, ...accepted },
++              };
++              for (const messages of [context.messages, newMessages]) {
++                const index = messages.indexOf(persisted);
++                if (index >= 0) messages[index] = finalMessage;
++              }
++            }
 +          }
            if (executedIds.size > 0) {
              enqueueTools(finalMessage);
            }
 diff --git a/packages/agent-core/src/agent.ts b/packages/agent-core/src/agent.ts
-index 516cf0ff..e9f13dfd 100644
+index 516cf0ff..c2be3b32 100644
 --- a/packages/agent-core/src/agent.ts
 +++ b/packages/agent-core/src/agent.ts
+@@ -7,7 +7,7 @@ import type {
+   ThinkingBudgets,
+   Transport,
+ } from "@openclaw/llm-core";
+-import { runAgentLoop } from "./agent-loop.js";
++import { runAgentLoop, runAgentLoopResumeToolCalls } from "./agent-loop.js";
+ import { TranscriptNotContinuableError } from "./errors.js";
+ import {
+   attachInternalSyncSteeringGetter,
 @@ -98,6 +98,7 @@ function createMutableAgentState(initialState?: AgentOptions["initialState"]): M
  
  /** Options for constructing an {@link Agent}. */
@@ -96,7 +264,34 @@ index 516cf0ff..e9f13dfd 100644
      this.transformContext = options.transformContext;
      this.runtime = options.runtime;
      this.streamFn = resolveAgentCoreStreamFn(options.runtime, options.streamFn);
-@@ -623,6 +626,7 @@ export class Agent {
+@@ -526,6 +529,26 @@ export class Agent {
+     await this.runPromptMessages([]);
+   }
+ 
++  /** Resume an owner-verified accepted response before any new model request. */
++  async resumeToolCalls(input: { callId: string }): Promise<void> {
++    if (this.hasQueuedMessages())
++      throw new Error("Native tool recovery requires an empty input queue");
++    if (!this.modelContext?.recover)
++      throw new Error("Native model-context recovery is unavailable");
++    await this.runWithLifecycle(async (signal) => {
++      await this.modelContext!.recover!({ callId: input.callId });
++      signal.throwIfAborted();
++      await runAgentLoopResumeToolCalls(
++        this.createContextSnapshot(),
++        input.callId,
++        this.createLoopConfig(),
++        (event) => this.processEvents(event),
++        signal,
++        this.streamFn,
++      );
++    });
++  }
++
+   private normalizePromptInput(
+     input: string | AgentMessage | AgentMessage[],
+     images?: ImageContent[],
+@@ -623,6 +646,7 @@ export class Agent {
            : undefined,
        convertToLlm: this.convertToLlm,
        transformContext: this.transformContext,
@@ -104,6 +299,25 @@ index 516cf0ff..e9f13dfd 100644
        getApiKey: this.getApiKey,
        getSteeringMessages,
        getFollowUpMessages: async () => this.followUpQueue.drain(),
+diff --git a/packages/agent-core/src/errors.ts b/packages/agent-core/src/errors.ts
+index ba3bdef8..bffc690b 100644
+--- a/packages/agent-core/src/errors.ts
++++ b/packages/agent-core/src/errors.ts
+@@ -15,3 +15,14 @@ export class TranscriptNotContinuableError extends Error {
+     this.role = role;
+   }
+ }
++
++/** Created only by the native required-accept owner, before synchronous tool admission. */
++export const MODEL_CONTEXT_ACCEPT_FAILURE_CODE = "openclaw_model_context_accept_failed";
++export class ModelContextAcceptanceError extends Error {
++  readonly callId: string;
++  constructor(callId: string, cause: unknown) {
++    super("Required model context accept failed", { cause });
++    this.name = "ModelContextAcceptanceError";
++    this.callId = callId;
++  }
++}
 diff --git a/packages/agent-core/src/harness/compaction/summarization-completion.ts b/packages/agent-core/src/harness/compaction/summarization-completion.ts
 index 169bf9c3..31f9b8ad 100644
 --- a/packages/agent-core/src/harness/compaction/summarization-completion.ts
@@ -245,10 +459,10 @@ index d083dc92..8fc6013d 100644
          details?: unknown;
 diff --git a/packages/agent-core/src/model-context.test.ts b/packages/agent-core/src/model-context.test.ts
 new file mode 100644
-index 00000000..79b3eb49
+index 00000000..8ef6ce0b
 --- /dev/null
 +++ b/packages/agent-core/src/model-context.test.ts
-@@ -0,0 +1,108 @@
+@@ -0,0 +1,154 @@
 +import { expect, it } from "vitest";
 +import {
 +  captureAgentLoop,
@@ -256,6 +470,7 @@ index 00000000..79b3eb49
 +  createTurnSequenceStream,
 +  makeCall,
 +  makeTool,
++  makeAssistantMessage,
 +  model,
 +  user,
 +} from "./agent-loop.test-support.js";
@@ -280,8 +495,12 @@ index 00000000..79b3eb49
 +      },
 +      prepareNextTurn: () => ({ model: { ...model, id: "second-model" } }),
 +      modelContext: {
-+        async prepare({ model: actual }) {
++        async prepare({ model: actual, context }) {
 +          sequence++;
++          if (sequence > 1)
++            expect(
++              context.messages.findLast((message) => message.role === "assistant"),
++            ).toMatchObject({ modelContext: { outputRef: "original-output" } });
 +          order.push(`prepare:${sequence}`);
 +          return {
 +            callId: `call-${sequence}`,
@@ -296,6 +515,7 @@ index 00000000..79b3eb49
 +          const call = prepared.callId;
 +          expect(persisted()).toBe(true);
 +          order.push(`accept:${call}`);
++          return { outputRef: "original-output" };
 +        },
 +      },
 +    },
@@ -357,6 +577,46 @@ index 00000000..79b3eb49
 +  await expect(failure.result).rejects.toThrow("Context dependency unavailable");
 +  expect(dispatched).toBe(false);
 +});
++
++it("resumes an accepted unstarted tool response through the native executor without repeating its provider", async () => {
++  const { Agent } = await import("./agent.js");
++  const tools: string[] = [];
++  const callId = "original-run:original-call";
++  const terminal = {
++    ...makeAssistantMessage([makeCall("read")]),
++    modelContext: { callId, terminal: true, outputRef: { id: "saved-output" } },
++  };
++  let physical = 0,
++    recovered = 0;
++  const agent = new Agent({
++    initialState: { model, tools: [makeTool("read", tools)], messages: [user(), terminal] },
++    streamFn: (actual, context, options) => {
++      physical++;
++      expect(context.messages.some((message) => message.role === "toolResult")).toBe(true);
++      return createTurnSequenceStream([[{ type: "text", text: "Original tool result received" }]])(
++        actual,
++        context,
++        options,
++      );
++    },
++  });
++  agent.modelContext = {
++    async recover(input) {
++      expect(input.callId).toBe(callId);
++      recovered++;
++    },
++    async prepare() {
++      return undefined;
++    },
++    async accept() {},
++  };
++  await agent.resumeToolCalls({ callId });
++  expect(agent.state.errorMessage).toBeUndefined();
++  expect(recovered).toBe(1);
++  expect(tools).toEqual(["read"]);
++  expect(physical).toBe(1);
++  expect(agent.state.messages.filter((message) => message === terminal)).toHaveLength(1);
++});
 diff --git a/packages/agent-core/src/runtime-deps.ts b/packages/agent-core/src/runtime-deps.ts
 index 0092aa10..60998fbc 100644
 --- a/packages/agent-core/src/runtime-deps.ts
@@ -375,8 +635,44 @@ index 0092aa10..60998fbc 100644
  };
  
  function missingRuntimeDep(name: keyof AgentCoreRuntimeDeps): Error {
+diff --git a/packages/agent-core/src/turn-interruption.ts b/packages/agent-core/src/turn-interruption.ts
+index f4c61945..1bdaee15 100644
+--- a/packages/agent-core/src/turn-interruption.ts
++++ b/packages/agent-core/src/turn-interruption.ts
+@@ -1,4 +1,5 @@
+ import type { AssistantMessage, Model } from "@openclaw/llm-core";
++import { MODEL_CONTEXT_ACCEPT_FAILURE_CODE, ModelContextAcceptanceError } from "./errors.js";
+ import type { AgentEvent, AgentMessage } from "./types.js";
+ 
+ /** Canonical empty aborted/error assistant recorded when a run ends without output. */
+@@ -7,8 +8,25 @@ export function createFailureMessage(
+   error: unknown,
+   aborted: boolean,
+ ): AssistantMessage {
++  const seen = new Set<unknown>();
++  let cause = error,
++    acceptance: ModelContextAcceptanceError | undefined;
++  while (cause instanceof Error && !seen.has(cause)) {
++    if (cause instanceof ModelContextAcceptanceError) {
++      acceptance = cause;
++      break;
++    }
++    seen.add(cause);
++    cause = cause.cause;
++  }
+   return {
+     role: "assistant",
++    ...(acceptance
++      ? {
++          errorCode: MODEL_CONTEXT_ACCEPT_FAILURE_CODE,
++          modelContextFailure: { phase: "accept" as const, callId: acceptance.callId },
++        }
++      : {}),
+     content: [{ type: "text", text: "" }],
+     api: model.api,
+     provider: model.provider,
 diff --git a/packages/agent-core/src/types.ts b/packages/agent-core/src/types.ts
-index 640b2d0f..6d0a597b 100644
+index 640b2d0f..ce478e65 100644
 --- a/packages/agent-core/src/types.ts
 +++ b/packages/agent-core/src/types.ts
 @@ -1,5 +1,6 @@
@@ -386,7 +682,7 @@ index 640b2d0f..6d0a597b 100644
    AssistantMessageEvent,
    ImageContent,
    Message,
-@@ -190,7 +191,34 @@ export type ToolLoopRecoveryState = {
+@@ -190,7 +191,36 @@ export type ToolLoopRecoveryState = {
    repeatedToolError?: { signature: string; count: number };
  };
  
@@ -400,6 +696,8 @@ index 640b2d0f..6d0a597b 100644
 +}
 +
 +export interface ModelContextHandoff {
++  /** Reaccept an already persisted call without preparing or dispatching another request. */
++  recover?(input: { callId: string }): Promise<void>;
 +  prepare(input: {
 +    model: Model;
 +    role?: string;
@@ -412,7 +710,7 @@ index 640b2d0f..6d0a597b 100644
 +    prepared: ModelContextView;
 +    output: AssistantMessage;
 +    auxiliary?: boolean;
-+  }): Promise<void>;
++  }): Promise<void | { outputRef?: unknown; selectedOutputRefs?: unknown[] }>;
 +}
 +
  export interface AgentLoopConfig extends SimpleStreamOptions {
@@ -421,7 +719,7 @@ index 640b2d0f..6d0a597b 100644
    model: Model;
    /** Logical thinking level retained across model changes before provider mapping. */
    thinkingLevel?: ThinkingLevel;
-@@ -387,6 +415,7 @@ export interface CustomMessage<T = unknown> {
+@@ -387,6 +417,7 @@ export interface CustomMessage<T = unknown> {
  }
  
  export interface BranchSummaryMessage {
@@ -429,7 +727,7 @@ index 640b2d0f..6d0a597b 100644
    role: "branchSummary";
    /** Summary text inserted back into model context. */
    summary: string;
-@@ -397,6 +426,7 @@ export interface BranchSummaryMessage {
+@@ -397,6 +428,7 @@ export interface BranchSummaryMessage {
  }
  
  export interface CompactionSummaryMessage {
@@ -481,7 +779,7 @@ index 8857f8bc..1f585490 100644
  export const validateSessionsFilesListParams = compile(S.SessionsFilesListParamsSchema);
  export const validateSessionsFilesGetParams = compile(S.SessionsFilesGetParamsSchema);
 diff --git a/packages/llm-core/src/types.ts b/packages/llm-core/src/types.ts
-index 19318703..596668c9 100644
+index 19318703..1801d584 100644
 --- a/packages/llm-core/src/types.ts
 +++ b/packages/llm-core/src/types.ts
 @@ -353,6 +353,8 @@ export const DEFAULT_MISSING_TOOL_RESULT_TEXT =
@@ -493,10 +791,12 @@ index 19318703..596668c9 100644
    role: "user";
    content: string | (TextContent | ImageContent)[];
    timestamp: number; // Unix timestamp in milliseconds
-@@ -499,6 +501,14 @@ export type AssistantDeliveryTtsFacts = {
+@@ -499,6 +501,16 @@ export type AssistantDeliveryTtsFacts = {
  };
  
  export interface AssistantMessage {
++  /** Native required-accept failure provenance; never supplied by provider output. */
++  modelContextFailure?: { phase: "accept"; callId: string };
 +  /** Native model-context handoff identity, excluded from provider messages. */
 +  modelContext?: {
 +    callId: string;
@@ -508,6 +808,38 @@ index 19318703..596668c9 100644
    role: "assistant";
    content: (TextContent | ThinkingContent | ToolCall)[];
    openclawDelivery?: {
+diff --git a/src/agents/agent-command.ts b/src/agents/agent-command.ts
+index a1c5f99b..6b41a4f2 100644
+--- a/src/agents/agent-command.ts
++++ b/src/agents/agent-command.ts
+@@ -226,16 +226,17 @@ async function agentCommandInternal(
+     return await sessionWorkAdmission.run(async () => {
+       if (sessionStore && sessionKey && !suppressVisibleSessionEffects) {
+         try {
+-          await repairPendingAssistantTranscriptTurns({
+-            context: {
+-              sessionKey,
+-              sessionEntry,
+-              sessionStore,
+-              storePath,
+-              sessionAgentId,
+-              config: cfg,
+-            },
+-          });
++          if (!opts.modelContextRecovery)
++            await repairPendingAssistantTranscriptTurns({
++              context: {
++                sessionKey,
++                sessionEntry,
++                sessionStore,
++                storePath,
++                sessionAgentId,
++                config: cfg,
++              },
++            });
+           sessionEntry = sessionStore[sessionKey] ?? sessionEntry;
+         } catch (error) {
+           if (!isNewSession) {
 diff --git a/src/agents/agent-hooks/compaction-safeguard.ts b/src/agents/agent-hooks/compaction-safeguard.ts
 index eb853153..da2d00d8 100644
 --- a/src/agents/agent-hooks/compaction-safeguard.ts
@@ -560,6 +892,66 @@ index eb853153..da2d00d8 100644
        // Caller cancellation is terminal, not a safeguard failure. Preserve the
        // original abort so the runner can classify it without a false data-loss warning.
        if (signal?.aborted) {
+diff --git a/src/agents/agent-tools.before-tool-call.policy.ts b/src/agents/agent-tools.before-tool-call.policy.ts
+index b13c14a9..15b24e53 100644
+--- a/src/agents/agent-tools.before-tool-call.policy.ts
++++ b/src/agents/agent-tools.before-tool-call.policy.ts
+@@ -7,7 +7,11 @@
+  */
+ import { isDeepStrictEqual } from "node:util";
+ import type { ToolLoopWarning } from "@openclaw/agent-core";
+-import { freezeDiagnosticTraceContext } from "../infra/diagnostic-trace-context.js";
++import {
++  freezeDiagnosticTraceContext,
++  getActiveDiagnosticTraceContext,
++} from "../infra/diagnostic-trace-context.js";
++import { formatPropagatedDiagnosticTraceparent } from "../infra/diagnostic-trace-propagation.js";
+ import { cloneHookIsolationValue } from "../plugins/hook-isolation.js";
+ import { getGlobalHookRunnerRegistry } from "../plugins/hook-runner-global-state.js";
+ import { getGlobalHookRunner } from "../plugins/hook-runner-global.js";
+@@ -220,6 +224,9 @@ export async function runBeforeToolCallHook(args: {
+     };
+     const buildToolContext = (identity: typeof toolIdentity) => ({
+       toolName,
++      traceparent: formatPropagatedDiagnosticTraceparent(
++        args.ctx?.trace ?? getActiveDiagnosticTraceContext(),
++      ),
+       ...identity,
+       ...(args.ctx?.agentId && { agentId: args.ctx.agentId }),
+       ...(args.ctx?.sessionKey && { sessionKey: args.ctx.sessionKey }),
+diff --git a/src/agents/command/attempt-execution.ts b/src/agents/command/attempt-execution.ts
+index 9d981df8..6b5c246c 100644
+--- a/src/agents/command/attempt-execution.ts
++++ b/src/agents/command/attempt-execution.ts
+@@ -783,6 +783,7 @@ export function runAgentAttempt(
+     agentHarnessRuntimeOverride: embeddedAgentHarnessOverride,
+     agentHarnessRuntimePreparationHint:
+       agentHarnessPolicy.runtimeSource !== "implicit" ? agentHarnessPolicy.runtime : undefined,
++    modelContextRecovery: params.opts.modelContextRecovery,
+     prompt: effectivePrompt,
+     transcriptPrompt: continuationTranscriptBody,
+     // CLI retries cannot replay a persisted turn after orphan-user repair removes it.
+diff --git a/src/agents/command/types.ts b/src/agents/command/types.ts
+index 590aaabc..89d21e48 100644
+--- a/src/agents/command/types.ts
++++ b/src/agents/command/types.ts
+@@ -57,6 +57,8 @@ export type AgentRunContext = {
+ 
+ /** Full trusted option surface for running an agent command. */
+ export type AgentCommandOpts = {
++  /** Host-only plan for recovery of a saved response; never a new user turn. */
++  modelContextRecovery?: import("../embedded-agent-runner/model-context-recovery.js").ModelContextToolRecoveryPlan;
+   message: string;
+   /** User-visible transcript body; defaults to message and excludes runtime-only context. */
+   transcriptMessage?: string;
+@@ -277,6 +279,7 @@ export const AGENT_COMMAND_PUBLIC_INGRESS_DEFAULTS = Object.freeze({
+   operationalRunInstance: undefined,
+   assertSourceCurrent: undefined,
+   operatorAuthority: undefined,
++  modelContextRecovery: undefined,
+   privateCompletion: undefined,
+   skillLibraryAuthoring: undefined,
+   cronCreatorAuthorityCapability: undefined,
 diff --git a/src/agents/compaction.ts b/src/agents/compaction.ts
 index d545eb35..418da193 100644
 --- a/src/agents/compaction.ts
@@ -663,6 +1055,194 @@ index a535f246..45742744 100644
          // Retire diagnostic ownership before asynchronous session cleanup can yield.
          if (diagnosticOwner) {
            closeDiagnosticEmbeddedRunOwner(diagnosticOwner);
+diff --git a/src/agents/embedded-agent-runner/model-context-recovery.ts b/src/agents/embedded-agent-runner/model-context-recovery.ts
+new file mode 100644
+index 00000000..10ec6f3f
+--- /dev/null
++++ b/src/agents/embedded-agent-runner/model-context-recovery.ts
+@@ -0,0 +1,159 @@
++import { MODEL_CONTEXT_ACCEPT_FAILURE_CODE } from "../../../packages/agent-core/src/errors.js";
++import type { Agent } from "../runtime/index.js";
++import { withSessionManagerWrite } from "../sessions/session-manager-write-admission.js";
++import type { SessionManager } from "../sessions/session-manager.js";
++
++export class ModelContextToolRecoveryError extends Error {
++  constructor(
++    readonly code:
++      | "native.recovery_scope_changed"
++      | "native.recovery_plan_changed"
++      | "native.recovery_effect_unknown"
++      | "native.recovery_proof_unavailable",
++    message: string,
++  ) {
++    super(message);
++    this.name = "ModelContextToolRecoveryError";
++  }
++}
++
++export type ModelContextToolRecoveryPlan = {
++  sessionKey: string;
++  sessionId: string;
++  runId: string;
++  callId: string;
++  terminalEntryId: string;
++  pendingToolCallIds: string[];
++};
++
++/** The accept failure precedes all synchronous tool starts in the native stream owner. */
++export function readModelContextToolRecoveryPlan(
++  manager: SessionManager,
++  request: Pick<ModelContextToolRecoveryPlan, "sessionKey" | "sessionId" | "runId" | "callId">,
++): ModelContextToolRecoveryPlan {
++  const target = manager.getSessionTarget();
++  if (target?.sessionKey !== request.sessionKey || manager.getSessionId() !== request.sessionId)
++    throw new ModelContextToolRecoveryError(
++      "native.recovery_scope_changed",
++      "Native recovery session binding changed",
++    );
++  const branch = manager.getBranch();
++  const prepared = branch.findLast(
++    (entry) => entry.type === "custom" && entry.customType === "openclaw.model-context.prepared",
++  );
++  if (
++    prepared?.type !== "custom" ||
++    (prepared.data as { callId?: string; runId?: string }).callId !== request.callId ||
++    (prepared.data as { runId?: string }).runId !== request.runId ||
++    !request.callId.startsWith(`${request.runId}:`)
++  )
++    throw new ModelContextToolRecoveryError(
++      "native.recovery_plan_changed",
++      "Native recovery requires the latest prepared call of this run",
++    );
++  const terminalIndex = branch.findLastIndex(
++    (entry) =>
++      entry.type === "message" &&
++      entry.message.role === "assistant" &&
++      entry.message.modelContext?.callId === request.callId &&
++      entry.message.modelContext.terminal,
++  );
++  const preparedIndex = branch.indexOf(prepared);
++  const callEvents = branch.slice(preparedIndex + 1, terminalIndex + 1);
++  if (
++    !callEvents.some(
++      (entry) =>
++        entry.type === "custom" &&
++        entry.customType === "openclaw.model-context.dispatched" &&
++        (entry.data as { callId?: string }).callId === request.callId,
++    ) ||
++    callEvents.some(
++      (entry) =>
++        entry.type === "custom" &&
++        entry.customType === "openclaw.model-context.not-dispatched" &&
++        (entry.data as { callId?: string }).callId === request.callId,
++    ) ||
++    callEvents.some(
++      (entry) =>
++        entry.type === "message" &&
++        (entry.message.role === "toolResult" ||
++          (entry.message.role === "assistant" &&
++            !entry.message.modelContext?.terminal &&
++            entry.message.content.some((part) => part.type === "toolCall"))),
++    )
++  )
++    throw new ModelContextToolRecoveryError(
++      "native.recovery_effect_unknown",
++      "Native recovery cannot prove that the saved call has no earlier tool effects",
++    );
++  const terminal = branch[terminalIndex];
++  if (
++    terminal?.type !== "message" ||
++    terminal.message.role !== "assistant" ||
++    terminal.message.stopReason !== "toolUse"
++  )
++    throw new ModelContextToolRecoveryError(
++      "native.recovery_proof_unavailable",
++      "Native recovery has no successful saved tool response",
++    );
++  const calls = terminal.message.content.filter((part) => part.type === "toolCall");
++  if (!calls.length || calls.some((call) => call.async === true))
++    throw new ModelContextToolRecoveryError(
++      "native.recovery_effect_unknown",
++      "Native recovery requires unstarted synchronous tools",
++    );
++  const suffix = branch.slice(terminalIndex + 1);
++  const failures = suffix.filter((entry) => entry.type === "message");
++  if (
++    !failures.length ||
++    suffix.some((entry) => entry.type === "message" && entry.message.role === "toolResult") ||
++    suffix.some(
++      (entry) => entry.type === "custom" && entry.customType === "openclaw.model-context.settled",
++    )
++  )
++    throw new ModelContextToolRecoveryError(
++      "native.recovery_effect_unknown",
++      "Native recovery requires inspection after tool admission or branch publication",
++    );
++  if (
++    failures.length !== 1 ||
++    failures[0]?.type !== "message" ||
++    failures[0].message.role !== "assistant" ||
++    failures[0].message.stopReason !== "error" ||
++    failures[0].message.modelContext ||
++    failures[0].message.errorCode !== MODEL_CONTEXT_ACCEPT_FAILURE_CODE ||
++    failures[0].message.modelContextFailure?.phase !== "accept" ||
++    failures[0].message.modelContextFailure.callId !== request.callId
++  )
++    throw new ModelContextToolRecoveryError(
++      "native.recovery_proof_unavailable",
++      "Native recovery cannot prove that these tool calls were never launched",
++    );
++  return {
++    sessionKey: request.sessionKey,
++    sessionId: request.sessionId,
++    runId: request.runId,
++    callId: request.callId,
++    terminalEntryId: terminal.id,
++    pendingToolCallIds: calls.map((call) => call.id),
++  };
++}
++
++/** Rebranch the native history and reuse the original executor, policy hooks and next-turn loop. */
++export async function recoverModelContextTools(input: {
++  agent: Agent;
++  sessionManager: SessionManager;
++  expected: ModelContextToolRecoveryPlan;
++}): Promise<void> {
++  const current = readModelContextToolRecoveryPlan(input.sessionManager, input.expected);
++  if (JSON.stringify(current) !== JSON.stringify(input.expected))
++    throw new ModelContextToolRecoveryError(
++      "native.recovery_plan_changed",
++      "Native tool recovery plan changed",
++    );
++  await withSessionManagerWrite(input.sessionManager, () =>
++    input.sessionManager.branchAsync(current.terminalEntryId),
++  );
++  input.agent.state.messages = input.sessionManager.buildSessionContext().messages;
++  await input.agent.resumeToolCalls({ callId: current.callId });
++}
+diff --git a/src/agents/embedded-agent-runner/run/attempt-execution-phase.ts b/src/agents/embedded-agent-runner/run/attempt-execution-phase.ts
+index 91b3c172..44f6ed1f 100644
+--- a/src/agents/embedded-agent-runner/run/attempt-execution-phase.ts
++++ b/src/agents/embedded-agent-runner/run/attempt-execution-phase.ts
+@@ -122,7 +122,17 @@ export async function runEmbeddedAttemptExecutionPhase(
+       if (input.runAbortController.signal.aborted) {
+         return abortable(Promise.resolve());
+       }
+-      const runPrompt = () => activeSession.prompt(prompt, options);
++      const runPrompt = async () => {
++        if (attempt.modelContextRecovery) {
++          const { recoverModelContextTools } = await import("../model-context-recovery.js");
++          return recoverModelContextTools({
++            agent: activeSession.agent,
++            sessionManager: sessionRuntime.sessionManager,
++            expected: attempt.modelContextRecovery,
++          });
++        }
++        return activeSession.prompt(prompt, options);
++      };
+       return abortable(
+         trackPromptSettlePromise(
+           input.sessionLock.assertCronRootCurrent
 diff --git a/src/agents/embedded-agent-runner/run/attempt-setup.ts b/src/agents/embedded-agent-runner/run/attempt-setup.ts
 index c3708574..0a20a35a 100644
 --- a/src/agents/embedded-agent-runner/run/attempt-setup.ts
@@ -698,15 +1278,17 @@ index c3708574..0a20a35a 100644
        removeToolResultGuard();
 diff --git a/src/agents/embedded-agent-runner/run/attempt.model-context.test.ts b/src/agents/embedded-agent-runner/run/attempt.model-context.test.ts
 new file mode 100644
-index 00000000..820fa6a3
+index 00000000..6d1f5a70
 --- /dev/null
 +++ b/src/agents/embedded-agent-runner/run/attempt.model-context.test.ts
-@@ -0,0 +1,378 @@
+@@ -0,0 +1,547 @@
 +import path from "node:path";
 +import { expect, it, vi } from "vitest";
 +import {
 +  makeAssistantMessage,
 +  createTurnSequenceStream,
++  makeCall,
++  makeTool,
 +  model,
 +} from "../../../../packages/agent-core/src/agent-loop.test-support.js";
 +import { Agent } from "../../../../packages/agent-core/src/agent.js";
@@ -1080,14 +1662,182 @@ index 00000000..820fa6a3
 +    }
 +  });
 +});
++
++it("adopts an assistant persisted by the native event subscriber without mutating its immutable snapshot", async () => {
++  await withOpenClawTestState({ label: "native-immutable-accepted-output" }, async (state) => {
++    const target = {
++      agentId: "main",
++      sessionId: "immutable-output",
++      sessionKey: "agent:main:immutable-output",
++      storePath: path.join(state.agentDir("main"), "openclaw-agent.sqlite"),
++    };
++    await replaceSessionEntry(target, { sessionId: target.sessionId, updatedAt: 1 });
++    const manager = await SessionManager.openAsync(target, state.workspaceDir);
++    const agent = new Agent({
++      initialState: { model: { ...model, contextWindow: 128000 } },
++      streamFn: createTurnSequenceStream([[{ type: "text", text: "Saved original response" }]]),
++    });
++    agent.subscribe(async (event) => {
++      if (event.type === "message_end") await manager.appendMessageAsync(event.message as never);
++    });
++    const stop = installModelContextHandoff({
++      agent,
++      sessionManager: manager,
++      agentId: "main",
++      attempt: {
++        runId: "immutable-run",
++        sessionId: target.sessionId,
++        sessionKey: target.sessionKey,
++        workspaceDir: state.workspaceDir,
++      } as EmbeddedRunAttemptParams,
++    });
++    try {
++      await agent.prompt("Read the note");
++      expect(agent.state.errorMessage).toBeUndefined();
++      expect(
++        manager
++          .getBranch()
++          .findLast((entry) => entry.type === "message" && entry.message.role === "assistant"),
++      ).toMatchObject({ message: { modelContext: { outputRef: { id: "native-result" } } } });
++    } finally {
++      stop();
++    }
++  });
++});
++
++it("recovers the original saved tool response after acceptance failure without reissuing that model request", async () => {
++  await withOpenClawTestState({ label: "native-tool-accept-recovery" }, async (state) => {
++    const { readModelContextToolRecoveryPlan, recoverModelContextTools } =
++      await import("../model-context-recovery.js");
++    const target = {
++      agentId: "main",
++      sessionId: "tool-recovery",
++      sessionKey: "agent:main:tool-recovery",
++      storePath: path.join(state.agentDir("main"), "openclaw-agent.sqlite"),
++    };
++    await replaceSessionEntry(target, { sessionId: target.sessionId, updatedAt: 1 });
++    const attempt = {
++      runId: "original-run",
++      sessionId: target.sessionId,
++      sessionKey: target.sessionKey,
++      workspaceDir: state.workspaceDir,
++    } as EmbeddedRunAttemptParams;
++    const effects: string[] = [];
++    let physical = 0,
++      failLate = true;
++    const previous = runner.runModelContextAccept.getMockImplementation();
++    runner.runModelContextAccept.mockImplementation(async (event, _context, persist) => {
++      if (event && typeof event === "object" && "output" in event) {
++        const accepted = {
++          outputRef: {
++            product: "nous",
++            installationId: "fixture",
++            kind: "Material",
++            id: String(Reflect.get(event, "callId")),
++            revision: 1,
++          },
++        };
++        await persist?.(accepted);
++        if (failLate) {
++          failLate = false;
++          throw new Error("Late accounting unavailable");
++        }
++        return accepted;
++      }
++    });
++    let manager = await SessionManager.openAsync(target, state.workspaceDir);
++    const makeAgent = (turns: Parameters<typeof createTurnSequenceStream>[0]) => {
++      const stream = createTurnSequenceStream(turns);
++      const agent = new Agent({
++        initialState: {
++          model: { ...model, contextWindow: 128000 },
++          tools: [makeTool("read", effects)],
++        },
++        streamFn: (...args) => {
++          physical++;
++          return stream(...args);
++        },
++      });
++      agent.subscribe(async (event) => {
++        if (event.type === "message_end") await manager.appendMessageAsync(event.message as never);
++      });
++      return agent;
++    };
++    const first = makeAgent([[makeCall("read")]]);
++    const stop = installModelContextHandoff({
++      agent: first,
++      sessionManager: manager,
++      agentId: "main",
++      attempt,
++    });
++    try {
++      await first.prompt("Read the note");
++      expect(first.state.errorMessage).toBe("Required model context accept failed");
++      expect(physical).toBe(1);
++      expect(effects).toEqual([]);
++      const call = manager
++        .getBranch()
++        .find(
++          (entry) =>
++            entry.type === "custom" && entry.customType === "openclaw.model-context.prepared",
++        );
++      if (call?.type !== "custom") throw new Error("Missing original prepared call");
++      const callId = (call.data as { callId: string }).callId;
++      expect(first.state.messages.at(-1)).toMatchObject({
++        errorCode: "openclaw_model_context_accept_failed",
++        modelContextFailure: { phase: "accept", callId },
++      });
++      stop();
++      manager = await SessionManager.openAsync(target, state.workspaceDir);
++      const resumed = makeAgent([[{ type: "text", text: "The original tool completed" }]]);
++      const release = installModelContextHandoff({
++        agent: resumed,
++        sessionManager: manager,
++        agentId: "main",
++        attempt,
++      });
++      try {
++        const expected = readModelContextToolRecoveryPlan(manager, {
++          sessionKey: target.sessionKey,
++          sessionId: target.sessionId,
++          runId: attempt.runId,
++          callId,
++        });
++        await recoverModelContextTools({ agent: resumed, sessionManager: manager, expected });
++        expect(resumed.state.errorMessage).toBeUndefined();
++        expect(physical).toBe(2);
++        expect(effects).toEqual(["read"]);
++        expect(
++          manager
++            .getBranch()
++            .filter(
++              (entry) =>
++                entry.type === "custom" && entry.customType === "openclaw.model-context.prepared",
++            ),
++        ).toHaveLength(2);
++        await expect(
++          recoverModelContextTools({ agent: resumed, sessionManager: manager, expected }),
++        ).rejects.toThrow();
++        expect(physical).toBe(2);
++        expect(effects).toEqual(["read"]);
++      } finally {
++        release();
++      }
++    } finally {
++      stop();
++      if (previous) runner.runModelContextAccept.mockImplementation(previous);
++    }
++  });
++});
 diff --git a/src/agents/embedded-agent-runner/run/attempt.model-context.ts b/src/agents/embedded-agent-runner/run/attempt.model-context.ts
 new file mode 100644
-index 00000000..748d909c
+index 00000000..bcc25629
 --- /dev/null
 +++ b/src/agents/embedded-agent-runner/run/attempt.model-context.ts
-@@ -0,0 +1,413 @@
+@@ -0,0 +1,437 @@
 +import type { AssistantMessage } from "@openclaw/llm-core";
 +import { isProviderRefusalAssistantError } from "@openclaw/llm-core/diagnostics";
++import { ModelContextAcceptanceError } from "../../../../packages/agent-core/src/errors.js";
 +import { getActiveDiagnosticTraceContext } from "../../../infra/diagnostic-trace-context.js";
 +import { formatPropagatedDiagnosticTraceparent } from "../../../infra/diagnostic-trace-propagation.js";
 +import { getGlobalHookRunner } from "../../../plugins/hook-runner-global.js";
@@ -1153,12 +1903,17 @@ index 00000000..748d909c
 +    contextTokenBudget: attempt.contextTokenBudget,
 +  };
 +
-+  const required = async <T>(phase: string, operation: () => Promise<T>): Promise<T> => {
++  const required = async <T>(
++    phase: string,
++    operation: () => Promise<T>,
++    callId?: string,
++  ): Promise<T> => {
 +    try {
 +      return await operation();
 +    } catch (cause) {
 +      throw new AgentHarnessPreflightError(`Required model context ${phase} failed`, {
-+        cause,
++        cause:
++          phase === "accept" && callId ? new ModelContextAcceptanceError(callId, cause) : cause,
 +        userMessage:
 +          "Model context handoff is waiting. Continue the existing task after its dependency recovers.",
 +      });
@@ -1265,13 +2020,13 @@ index 00000000..748d909c
 +            preserveReplacementCompactionReplay: true,
 +          }),
 +        );
-+        for (const message of agent.state.messages)
-+          if (
-+            message.role === "assistant" &&
-+            message.modelContext?.callId === record.callId &&
-+            message.modelContext.terminal
-+          )
-+            message.modelContext = metadata;
++        agent.state.messages = agent.state.messages.map((message) =>
++          message.role === "assistant" &&
++          message.modelContext?.callId === record.callId &&
++          message.modelContext.terminal
++            ? { ...message, modelContext: metadata }
++            : message,
++        );
 +      } else if (entry.type === "custom") {
 +        await withSessionManagerWrite(sessionManager, () =>
 +          rewriteTranscriptEntriesInSessionManager({
@@ -1292,18 +2047,21 @@ index 00000000..748d909c
 +        );
 +      }
 +    };
-+    const accepted = await required("accept", () =>
-+      runner.runModelContextAccept(
-+        {
-+          ...record,
-+          traceparent: record.invocation.traceparent,
-+          sessionId: attempt.sessionId,
-+          output,
-+          ...(entryId ? { transcriptEntryId: entryId } : {}),
-+        },
-+        { ...context, runId: record.runId },
-+        persistAccepted,
-+      ),
++    const accepted = await required(
++      "accept",
++      () =>
++        runner.runModelContextAccept(
++          {
++            ...record,
++            traceparent: record.invocation.traceparent,
++            sessionId: attempt.sessionId,
++            output,
++            ...(entryId ? { transcriptEntryId: entryId } : {}),
++          },
++          { ...context, runId: record.runId },
++          persistAccepted,
++        ),
++      record.callId,
 +    );
 +    const unknown =
 +      (output.stopReason === "error" || output.stopReason === "aborted") &&
@@ -1328,11 +2086,12 @@ index 00000000..748d909c
 +        },
 +      );
 +    }
++    return accepted;
 +  };
 +
 +  // Source and output remain in the native session. A response saved immediately
 +  // before a crash is recovered from that session, then handed off once again.
-+  const acceptPending = async () => {
++  const acceptPending = async (onlyCallId?: string) => {
 +    const entries = sessionManager.getBranch();
 +    const dispatched = new Set(
 +      entries.flatMap((entry) =>
@@ -1371,6 +2130,7 @@ index 00000000..748d909c
 +        continue;
 +      }
 +      const record = entry.data as Prepared;
++      if (onlyCallId && record.callId !== onlyCallId) continue;
 +      if (settled.has(record.callId)) {
 +        continue;
 +      }
@@ -1396,8 +2156,21 @@ index 00000000..748d909c
 +  };
 +
 +  agent.modelContext = {
++    async recover({ callId }) {
++      const prepared = sessionManager
++        .getBranch()
++        .find(
++          (entry) =>
++            entry.type === "custom" &&
++            entry.customType === PREPARED &&
++            (entry.data as Prepared).callId === callId,
++        );
++      if (prepared?.type !== "custom" || (prepared.data as Prepared).runId !== attempt.runId)
++        throw new AgentHarnessPreflightError("Native recovery call does not belong to this run");
++      await required("recovery", () => acceptPending(callId));
++    },
 +    async prepare({ model, role, context: current, outputTokens, signal }) {
-+      await required("recovery", acceptPending);
++      await required("recovery", () => acceptPending());
 +      signal?.throwIfAborted();
 +      const callId = `${attempt.runId}:${createManagedSessionId()}`;
 +      const baseEstimate =
@@ -1492,13 +2265,43 @@ index 00000000..748d909c
 +      const saved = savedResponse(record);
 +      if (!saved)
 +        throw new AgentHarnessPreflightError("The native response has not been durably saved");
-+      await settle(record, saved.output, saved.entryId);
++      return await settle(record, saved.output, saved.entryId);
 +    },
 +  };
 +  return () => {
 +    agent.modelContext = previous;
 +  };
 +}
+diff --git a/src/agents/embedded-agent-runner/run/params.ts b/src/agents/embedded-agent-runner/run/params.ts
+index fc043149..df288473 100644
+--- a/src/agents/embedded-agent-runner/run/params.ts
++++ b/src/agents/embedded-agent-runner/run/params.ts
+@@ -55,6 +55,7 @@ export type ResolvedToolPromptFinalizer = (params: {
+ }) => string;
+ 
+ export type RunEmbeddedAgentParams = {
++  modelContextRecovery?: import("../model-context-recovery.js").ModelContextToolRecoveryPlan;
+   /** Host-minted parent audience inherited by a trusted internal child run. */
+   memoryAudience?: import("../../../plugins/memory-provider-types.js").MemoryAudience;
+   /** Detached runs may read session identity but never write its durable transcript or metadata. */
+diff --git a/src/agents/embedded-agent-runner/run/run-attempt-dispatch.ts b/src/agents/embedded-agent-runner/run/run-attempt-dispatch.ts
+index b8ef2ead..22ecb572 100644
+--- a/src/agents/embedded-agent-runner/run/run-attempt-dispatch.ts
++++ b/src/agents/embedded-agent-runner/run/run-attempt-dispatch.ts
+@@ -471,11 +471,12 @@ export async function prepareAndDispatchEmbeddedRunAttempt(
+         : preparedExecApprovalContinuation.transcriptPrompt,
+     finalizePromptForResolvedTools:
+       pluginHarnessPrompt === undefined ? params.finalizePromptForResolvedTools : undefined,
++    modelContextRecovery: params.modelContextRecovery,
+     userTurnTranscriptRecorder: params.userTurnTranscriptRecorder,
+     // The outer run-loop owns the begun lease; the inner attempt reports only
+     // the accepted candidate boundary to that owner.
+     onContextEngineTurnCandidate: params.onContextEngineTurnCandidate,
+-    skipPreparedUserTurnMessage,
++    skipPreparedUserTurnMessage: params.modelContextRecovery ? true : skipPreparedUserTurnMessage,
+     currentInboundEventKind: params.currentInboundEventKind,
+     currentInboundContext: params.currentInboundContext,
+     explicitSkillSelections: params.explicitSkillSelections?.map((selection) =>
 diff --git a/src/agents/embedded-agent-runner/server-endpoint-compaction.test.ts b/src/agents/embedded-agent-runner/server-endpoint-compaction.test.ts
 index 8e3d1316..6665b409 100644
 --- a/src/agents/embedded-agent-runner/server-endpoint-compaction.test.ts
@@ -2690,12 +3493,15 @@ index 67377cf3..53a528e0 100644
  
 diff --git a/src/gateway/server-methods/sessions-model-call.worker.test.ts b/src/gateway/server-methods/sessions-model-call.worker.test.ts
 new file mode 100644
-index 00000000..5cdc907d
+index 00000000..a574c976
 --- /dev/null
 +++ b/src/gateway/server-methods/sessions-model-call.worker.test.ts
-@@ -0,0 +1,174 @@
+@@ -0,0 +1,223 @@
 +import path from "node:path";
 +import { expect, it, vi } from "vitest";
++import { rewriteTranscriptEntriesInSessionManager } from "../../agents/embedded-agent-runner/transcript-rewrite.js";
++import { withSessionManagerWrite } from "../../agents/sessions/session-manager-write-admission.js";
++import { CURRENT_SESSION_VERSION, SessionManager } from "../../agents/sessions/session-manager.js";
 +import {
 +  deleteSessionEntryLifecycle,
 +  replaceSessionEntrySync,
@@ -2725,7 +3531,13 @@ index 00000000..5cdc907d
 +      visibility: "shared",
 +    });
 +    const events = [
-+      { type: "session", id: scope.sessionId },
++      {
++        type: "session",
++        version: CURRENT_SESSION_VERSION,
++        id: scope.sessionId,
++        timestamp: new Date(0).toISOString(),
++        cwd: state.stateDir,
++      },
 +      {
 +        type: "custom",
 +        id: "prepared",
@@ -2796,6 +3608,10 @@ index 00000000..5cdc907d
 +        parentId: "dispatch",
 +        message: {
 +          role: "assistant",
++          api: "openai-completions",
++          provider: "native-provider",
++          model: "actual-model",
++          timestamp: 2,
 +          content: [{ type: "text", text: "secret output body" }],
 +          errorMessage: "secret provider body",
 +          stopReason: "stop",
@@ -2825,6 +3641,42 @@ index 00000000..5cdc907d
 +      },
 +    });
 +    expect(JSON.stringify(actual)).not.toMatch(/secret|cost|999/);
++    const manager = await SessionManager.openAsync(scope);
++    const terminal = manager
++      .getBranch()
++      .find((entry) => entry.type === "message" && entry.id === "terminal");
++    if (terminal?.type !== "message" || terminal.message.role !== "assistant")
++      throw new Error("Missing native terminal");
++    const outputRef = {
++      product: "nous",
++      installationId: "actual-nous",
++      subjectId: "subject",
++      kind: "Material",
++      id: "accepted",
++      revision: 1,
++    };
++    await withSessionManagerWrite(manager, () =>
++      rewriteTranscriptEntriesInSessionManager({
++        sessionManager: manager,
++        replacements: [
++          {
++            entryId: terminal.id,
++            message: {
++              ...terminal.message,
++              modelContext: {
++                ...terminal.message.modelContext!,
++                outputRef,
++                selectedOutputRefs: [outputRef],
++              },
++            },
++          },
++        ],
++        preserveReplacementCompactionReplay: true,
++      }),
++    );
++    expect(await read()).toMatchObject({
++      call: { terminal: { outputRef, selectedOutputRefs: [outputRef] } },
++    });
 +    const successor = { ...scope, sessionId: "successor-uuid" };
 +    replaceSessionEntrySync(successor, {
 +      sessionId: successor.sessionId,
@@ -2838,7 +3690,7 @@ index 00000000..5cdc907d
 +        sessionId: scope.sessionId,
 +        currentSessionId: successor.sessionId,
 +        active: false,
-+        terminal: { entryId: "terminal" },
++        terminal: { outputRef },
 +      },
 +    });
 +    const archived = await deleteSessionEntryLifecycle({
@@ -2862,7 +3714,7 @@ index 00000000..5cdc907d
 +        currentSessionId: current.sessionId,
 +        active: false,
 +        prepared: { provider: "native-provider" },
-+        terminal: { entryId: "terminal" },
++        terminal: { outputRef },
 +      },
 +    });
 +    expect(JSON.stringify(recovered)).not.toMatch(/secret|cost|999/);
@@ -3007,7 +3859,7 @@ index ff21d00f..b5f59766 100644
 +  };
 +}
 diff --git a/src/gateway/server-plugin-subagent-runtime.ts b/src/gateway/server-plugin-subagent-runtime.ts
-index 6e4921e2..1d7c25d6 100644
+index 6e4921e2..d7d68472 100644
 --- a/src/gateway/server-plugin-subagent-runtime.ts
 +++ b/src/gateway/server-plugin-subagent-runtime.ts
 @@ -430,7 +430,11 @@ export function createGatewaySubagentRuntime(
@@ -3023,6 +3875,163 @@ index 6e4921e2..1d7c25d6 100644
            resolveGatewayContext,
          },
        );
+@@ -442,6 +446,156 @@ export function createGatewaySubagentRuntime(
+       const runtime = normalizePluginSubagentRunRuntime(payload?.runtime);
+       return { runId, sessionKey, ...(runtime ? { runtime } : {}) };
+     },
++    async recoveryPlan(params) {
++      const pluginId = normalizeOptionalString(getPluginRuntimeGatewayRequestScope()?.pluginId);
++      if (!pluginId) throw new Error("Native model context recovery requires a plugin identity");
++      const execution = await prepareInProcessAgentExecution({
++        agentId: params.agentId,
++        pluginRuntimeOwnerId: pluginId,
++        resolveGatewayContext,
++      });
++      try {
++        await execution.authorize();
++        const described = await dispatchGatewayMethodInProcess<{
++          session?: { sessionId?: string };
++        }>(
++          "sessions.describe",
++          { key: params.sessionKey, agentId: params.agentId },
++          { resolveGatewayContext },
++        );
++        execution.assertCurrent();
++        if (described.session?.sessionId !== params.sessionId)
++          throw new Error("Native recovery requires the current session UUID");
++        const [
++          { resolveGatewaySessionStoreTarget },
++          { SessionManager },
++          { readModelContextToolRecoveryPlan },
++          { isEmbeddedAgentRunActive },
++        ] = await Promise.all([
++          import("./session-utils-store-lookup.js"),
++          import("../agents/sessions/session-manager.js"),
++          import("../agents/embedded-agent-runner/model-context-recovery.js"),
++          import("../agents/embedded-agent-runner/runs.js"),
++        ]);
++        if (isEmbeddedAgentRunActive(params.sessionId))
++          throw new Error("Native recovery requires an idle session");
++        const selected = resolveGatewaySessionStoreTarget({
++          cfg: execution.context.getRuntimeConfig(),
++          key: params.sessionKey,
++          agentId: params.agentId,
++        });
++        const manager = await SessionManager.openAsync({
++          agentId: selected.agentId,
++          sessionKey: selected.canonicalKey,
++          sessionId: params.sessionId,
++          storePath: selected.storePath,
++        });
++        execution.assertCurrent();
++        return readModelContextToolRecoveryPlan(manager, params);
++      } finally {
++        execution.release();
++      }
++    },
++    async recover(params) {
++      const pluginId = normalizeOptionalString(getPluginRuntimeGatewayRequestScope()?.pluginId);
++      if (!pluginId) throw new Error("Native model context recovery requires a plugin identity");
++      params.assertCurrent?.();
++      runtimeLifetime?.throwIfAborted();
++      const plan = await subagentRuntime.recoveryPlan!({
++        agentId: params.agentId,
++        ...params.expected,
++      });
++      if (JSON.stringify(plan) !== JSON.stringify(params.expected))
++        throw new Error("Native recovery plan changed before admission");
++      const execution = await prepareInProcessAgentExecution({
++        agentId: params.agentId,
++        pluginRuntimeOwnerId: pluginId,
++        resolveGatewayContext,
++      });
++      try {
++        await execution.authorize();
++        const assertCurrent = () => {
++          execution.assertCurrent();
++          runtimeLifetime?.throwIfAborted();
++          params.assertCurrent?.();
++        };
++        assertCurrent();
++        const [
++          { agentCommandFromSystem },
++          { waitForAgentJob, setGatewayDedupeEntry },
++          { getAgentRunLifecycleGeneration },
++        ] = await Promise.all([
++          import("../agents/agent-command.js"),
++          import("./agent-turn/agent-job.js"),
++          import("../infra/agent-run-registry.js"),
++        ]);
++        // Observe the existing native job owner; session admission still owns execution.
++        await waitForAgentJob({ runId: plan.runId, timeoutMs: 0 });
++        const session = {
++          sessionKey: plan.sessionKey,
++          sessionId: plan.sessionId,
++          agentId: params.agentId,
++          lifecycleGeneration: getAgentRunLifecycleGeneration(),
++        };
++        let admitted = false;
++        try {
++          await execution.run(() =>
++            agentCommandFromSystem(
++              {
++                agentId: params.agentId,
++                sessionKey: plan.sessionKey,
++                sessionId: plan.sessionId,
++                runId: plan.runId,
++                message: "Recover the saved native model response",
++                suppressPromptPersistence: true,
++                deliver: false,
++                allowModelOverride: false,
++                modelFallbacksOverride: [],
++                toolsAllow: [...params.toolsAllow],
++                modelContextRecovery: plan,
++                onExecutionStarted: () => {
++                  admitted = true;
++                  setGatewayDedupeEntry({
++                    dedupe: execution.context.dedupe,
++                    key: `agent:${plan.runId}`,
++                    startNewAttempt: true,
++                    session,
++                    entry: {
++                      ts: Date.now(),
++                      ok: true,
++                      payload: { runId: plan.runId, status: "accepted" },
++                    },
++                  });
++                },
++                operatorAuthority: execution.operatorAuthority,
++                assertSourceCurrent: assertCurrent,
++                abortSignal: execution.signal,
++              },
++              { boundary: "plugin-model-context-recovery" },
++            ),
++          );
++        } finally {
++          if (admitted) {
++            const terminal = await waitForAgentJob({ runId: plan.runId, timeoutMs: 0 });
++            if (
++              terminal?.session?.sessionKey === plan.sessionKey &&
++              terminal.session.sessionId === plan.sessionId &&
++              terminal.session.lifecycleGeneration === session.lifecycleGeneration &&
++              ["ok", "error", "timeout"].includes(terminal.status)
++            )
++              setGatewayDedupeEntry({
++                dedupe: execution.context.dedupe,
++                key: `agent:${plan.runId}`,
++                session,
++                entry: { ts: Date.now(), ok: true, payload: { runId: plan.runId, ...terminal } },
++              });
++          }
++        }
++        return { runId: plan.runId, sessionKey: plan.sessionKey };
++      } finally {
++        execution.release();
++      }
++    },
+     async waitForRun(params) {
+       const payload = await dispatchGatewayMethodInProcess<AgentWaitResult>(
+         "agent.wait",
 diff --git a/src/gateway/session-method-policy.ts b/src/gateway/session-method-policy.ts
 index b39ac70e..b492f549 100644
 --- a/src/gateway/session-method-policy.ts
@@ -3049,7 +4058,7 @@ index 1f6099db..11f7ae8b 100644
    /** Host-resolved memory partition for this turn. */
    memoryAudience?: MemoryAudience;
 diff --git a/src/plugins/hook-types.ts b/src/plugins/hook-types.ts
-index 471987b3..fd09147b 100644
+index 471987b3..2e6c88a8 100644
 --- a/src/plugins/hook-types.ts
 +++ b/src/plugins/hook-types.ts
 @@ -100,6 +100,9 @@ const PLUGIN_HOOK_NAMES = [
@@ -3133,7 +4142,16 @@ index 471987b3..fd09147b 100644
  export type PluginHookLlmInputEvent = {
    runId: string;
    sessionId: string;
-@@ -855,6 +915,20 @@ export type PluginHookHandlerMap = {
+@@ -520,6 +580,8 @@ export type PluginHookToolRequesterContext = {
+ };
+ 
+ export type PluginHookToolContext = {
++  /** Current exporter-owned propagation at the actual tool boundary. */
++  traceparent?: string;
+   agentId?: string;
+   sessionKey?: string;
+   sessionId?: string;
+@@ -855,6 +917,20 @@ export type PluginHookHandlerMap = {
    >;
    model_call_started: AsyncPluginHook<PluginHookModelCallStartedEvent, PluginHookAgentContext>;
    model_call_ended: AsyncPluginHook<PluginHookModelCallEndedEvent, PluginHookAgentContext>;
@@ -3243,6 +4261,27 @@ index 1c669283..d7a2bbc5 100644
    decisions: true,
    gateway: true,
    config: true,
+diff --git a/src/plugins/loader-runtime-core.ts b/src/plugins/loader-runtime-core.ts
+index fd7e7a6a..967d1e74 100644
+--- a/src/plugins/loader-runtime-core.ts
++++ b/src/plugins/loader-runtime-core.ts
+@@ -125,6 +125,16 @@ function createDeferredGatewaySubagentRuntime(runtime: PluginRuntime): PluginRun
+   const subagent: PluginRuntime["subagent"] = {
+     complete: (...args) => runtime.subagent.complete(...args),
+     run: (...args) => runtime.subagent.run(...args),
++    recoveryPlan: (...args) => {
++      if (!runtime.subagent.recoveryPlan)
++        throw new Error("Native model context recovery is unavailable");
++      return runtime.subagent.recoveryPlan(...args);
++    },
++    recover: (...args) => {
++      if (!runtime.subagent.recover)
++        throw new Error("Native model context recovery is unavailable");
++      return runtime.subagent.recover(...args);
++    },
+     waitForRun: (...args) => runtime.subagent.waitForRun(...args),
+     getSessionMessages: (...args) => runtime.subagent.getSessionMessages(...args),
+     deleteSession: (...args) => runtime.subagent.deleteSession(...args),
 diff --git a/src/plugins/loader-runtime-load.ts b/src/plugins/loader-runtime-load.ts
 index 8431531c..1b3d0f83 100644
 --- a/src/plugins/loader-runtime-load.ts
@@ -3289,7 +4328,7 @@ index 6407da07..cb863c08 100644
    "llm_output",
    "before_agent_finalize",
 diff --git a/src/plugins/registry-runtime.ts b/src/plugins/registry-runtime.ts
-index f5bf7c08..53e60cdf 100644
+index f5bf7c08..91997f97 100644
 --- a/src/plugins/registry-runtime.ts
 +++ b/src/plugins/registry-runtime.ts
 @@ -229,6 +229,7 @@ export function createPluginRuntimeResolver(state: PluginRegistryState) {
@@ -3300,11 +4339,45 @@ index f5bf7c08..53e60cdf 100644
          "resolveDefaultModelForAgent",
          "resolveAllowedModelRef",
        ]),
+@@ -684,6 +685,24 @@ export function createPluginRuntimeResolver(state: PluginRegistryState) {
+               return await subagent.run(params);
+             });
+           },
++          recoveryPlan: (params) =>
++            runWithPluginScope(() => {
++              if (!subagent.recoveryPlan)
++                throw new Error("Native model context recovery is unavailable");
++              return subagent.recoveryPlan(params);
++            }),
++          recover: async (params) => {
++            const { assertSessionIdentitiesOwned } = await loadSessionOwnership();
++            return runWithPluginScope(async () => {
++              assertSessionIdentitiesOwned({
++                action: "run",
++                sessionKeys: [params.expected.sessionKey],
++              });
++              if (!subagent.recover)
++                throw new Error("Native model context recovery is unavailable");
++              return subagent.recover(params);
++            });
++          },
+           waitForRun: (params) => runWithPluginScope(() => subagent.waitForRun(params)),
+           getSessionMessages: (params) =>
+             runWithPluginScope(() => subagent.getSessionMessages(params)),
 diff --git a/src/plugins/runtime/index.ts b/src/plugins/runtime/index.ts
-index 02f217a7..c42c7bf7 100644
+index 02f217a7..8beecb84 100644
 --- a/src/plugins/runtime/index.ts
 +++ b/src/plugins/runtime/index.ts
-@@ -257,6 +257,7 @@ export const createPluginRuntime: PluginRuntimeFactory = (
+@@ -128,6 +128,8 @@ function createUnavailableSubagentRuntime(): PluginRuntime["subagent"] {
+   return {
+     complete: unavailable,
+     run: unavailable,
++    recoveryPlan: unavailable,
++    recover: unavailable,
+     waitForRun: unavailable,
+     getSessionMessages: unavailable,
+     deleteSession: unavailable,
+@@ -257,6 +259,7 @@ export const createPluginRuntime: PluginRuntimeFactory = (
    let modelConfig = _options.modelConfig;
    const runtime: PluginRuntime = {
      version: VERSION,
@@ -3330,7 +4403,7 @@ index 86f53746..74f8f7f6 100644
      resolveDefaultModelForAgent: typeof import("../../agents/model-selection-config.js").resolveDefaultModelForAgent;
      resolveAllowedModelRef: typeof import("../../agents/model-selection-resolve.js").resolveAllowedModelRefCore;
 diff --git a/src/plugins/runtime/types.ts b/src/plugins/runtime/types.ts
-index 1ba77516..6c4ffd6a 100644
+index 1ba77516..6babd270 100644
 --- a/src/plugins/runtime/types.ts
 +++ b/src/plugins/runtime/types.ts
 @@ -25,6 +25,8 @@ type SubagentRunParams = {
@@ -3351,6 +4424,30 @@ index 1ba77516..6c4ffd6a 100644
    gateway: {
      /** Whether this process owns an active Gateway request context. */
      isAvailable: () => Promise<boolean>;
+@@ -198,6 +202,23 @@ export type PluginRuntime = PluginRuntimeCore & {
+     /** Fresh, tool-free background inference under the existing subagent model policy. */
+     complete: (params: SubagentCompleteParams) => Promise<{ text: string }>;
+     run: (params: SubagentRunParams) => Promise<SubagentRunResult>;
++    /** Inspect the saved accept failure; no model or tool is dispatched. */
++    recoveryPlan?: (params: {
++      agentId: string;
++      sessionKey: string;
++      sessionId: string;
++      runId: string;
++      callId: string;
++    }) => Promise<
++      import("../../agents/embedded-agent-runner/model-context-recovery.js").ModelContextToolRecoveryPlan
++    >;
++    /** Re-enter the native command/runner under the same original run and session. */
++    recover?: (params: {
++      agentId: string;
++      expected: import("../../agents/embedded-agent-runner/model-context-recovery.js").ModelContextToolRecoveryPlan;
++      toolsAllow: string[];
++      assertCurrent?: () => void;
++    }) => Promise<SubagentRunResult>;
+     waitForRun: (params: SubagentWaitParams) => Promise<AgentWaitResult>;
+     getSessionMessages: (
+       params: SubagentGetSessionMessagesParams,
 diff --git a/tsdown.config.ts b/tsdown.config.ts
 index a42b660a..47524b02 100644
 --- a/tsdown.config.ts

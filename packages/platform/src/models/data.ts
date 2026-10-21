@@ -2,7 +2,7 @@
 // Copyright 2026 Aravine Zhu; SPDX-License-Identifier: AGPL-3.0-only
 import {canonicalize} from 'json-canonicalize';
 import {SubjectIdSchema,type CallContext,type Ref} from '@nous-wave/contracts/common';
-import {ModelDataBundleSchema} from '@nous-wave/contracts/models';
+import {ModelDataBundleSchema,ModelDataRecordSchema} from '@nous-wave/contracts/models';
 import {sql,type Kysely,type Selectable} from 'kysely';
 import type {ModelsOptions} from './types.js';
 import type {ModelsDatabase,ModelInvocationRow} from './migration.js';
@@ -21,6 +21,19 @@ export function createModelDataLifecycle(options:Pick<ModelsOptions,'db'|'produc
    usage:json(row.usage),rawUsage:json(row.rawUsage),budgetSnapshot:json(row.budgetSnapshot),budgetKeys:json(row.budgetKeys),problem:json(row.problem),nativeIdentity:json(row.nativeIdentity)};
  }
  return {
+  async prepareExport(ctx:CallContext,selectionId:string,client:Kysely<any>){
+   const subjectId=SubjectIdSchema.parse(ctx.subjectId);if(!client.isTransaction)throw problem('models.transaction_required','validation','模型封存需要当前事务');await options.authorize(ctx,'data.export',undefined,client);
+   const strings=new Set(['reservedCost','actualCost','actualTokens']);
+   const fields=Object.keys(ModelDataRecordSchema.shape).flatMap(key=>{const column=key.replace(/[A-Z]/g,c=>'_'+c.toLowerCase());return [sql`${key}`,strings.has(key)?sql`${sql.ref(`m.${column}`)}::text`:sql`${sql.ref(`m.${column}`)}`];});
+   await sql`insert into model_export_members(selection_id,subject_id,record) select ${selectionId}::uuid,${subjectId}::uuid,jsonb_build_object(${sql.join(fields)}) from model_invocations m where subject_id=${subjectId}::uuid`.execute(client);
+   const rows=await sql<{count:string}>`select count(*)::text as count from model_export_members where selection_id=${selectionId}::uuid`.execute(client);return rows.rows[0]!;
+  },
+  async *readSelection(ctx:CallContext,selectionId:string){
+   let cursor='0';for(;;){await options.authorize(ctx,'data.export');const page=await options.db.selectFrom('modelExportMembers').select(['ordinal','record']).where('selectionId','=',selectionId).where('subjectId','=',ctx.subjectId!).where('ordinal','>',cursor).orderBy('ordinal').limit(100).execute();
+    for(const selected of page){const call=ModelDataRecordSchema.parse(selected.record);scope(ctx,call.subjectId);await options.authorize(ctx,'data.export',reference(call));await options.data.validateSources(ctx,[...call.inputSources,...call.outputRefs]);yield {collection:'model_invocations',record:call};cursor=selected.ordinal;}if(page.length<100)return;
+   }
+  },
+  async release(selectionId:string,client:Kysely<any>=options.db){await client.deleteFrom('modelExportMembers').where('selectionId','=',selectionId).execute();},
   export(ctx:CallContext,input:{subjectId?:string},client?:Kysely<any>){return within(client,async db=>{
    const subjectId=input.subjectId??ctx.subjectId??null;scope(ctx,subjectId);if(subjectId===null)await options.authorize(ctx,'installation.manage',undefined,db);await options.authorize(ctx,'data.export',undefined,db);
    let query=db.selectFrom('modelInvocations').selectAll();if(subjectId!==null)query=query.where('subjectId','=',subjectId);

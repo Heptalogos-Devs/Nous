@@ -12,7 +12,7 @@ import {
 } from '@nous-wave/contracts/credentials';
 import {
   Configuration,
-  DefaultApi,
+  IdentityApi, DelegationsApi, MaterialsApi, SourcesApi, ContextsApi,
   problemMiddleware,
   contextHeaders,
 } from '@nous-wave/client';
@@ -150,12 +150,13 @@ test('Host经正式SDK选择真实Worker子委派；私有来源与撤权仍由�
         mayDelegate: false,
       },
     });
-    const api = (
+    const api = <T>(
+      Api: new (configuration: Configuration) => T,
       token: string,
       submissionId: string,
       delegationAuthority?: string,
     ) =>
-      new DefaultApi(
+      new Api(
         new Configuration({
           basePath,
           accessToken: token,
@@ -168,7 +169,7 @@ test('Host经正式SDK选择真实Worker子委派；私有来源与撤权仍由�
           }),
         }),
       );
-    const issuer = api(host.key, 'Task-child');
+    const issuer = api(DelegationsApi,host.key, 'Task-child');
     const [first, concurrent] = await Promise.all([
       issuer.delegationsCreateChild({
         delegationChildCreateBodyInput: request,
@@ -196,9 +197,9 @@ test('Host经正式SDK选择真实Worker子委派；私有来源与撤权仍由�
         (error as { problem?: { code: string } }).problem?.code ===
         'credentials.submission_conflict',
     );
-    const selected = api(host.key, 'private-input', first.authorityRef);
-    assert.deepEqual((await selected.identityRead()).consumer, consumer);
-    const draft = await selected.materialsCapture({
+    const selected = <T>(Api: new (configuration: Configuration) => T) => api(Api,host.key, 'private-input', first.authorityRef);
+    assert.deepEqual((await selected(IdentityApi).identityRead()).consumer, consumer);
+    const draft = await selected(MaterialsApi).materialsCapture({
       subjectId,
       materialCaptureInput: {
         kind: 'worker-input',
@@ -209,7 +210,7 @@ test('Host经正式SDK选择真实Worker子委派；私有来源与撤权仍由�
     });
     assert.equal(
       (
-        await selected.sourcesResolve({
+        await selected(SourcesApi).sourcesResolve({
           subjectId,
           sourcesResolveBodyInput: { refs: [draft.ref] },
         })
@@ -217,21 +218,21 @@ test('Host经正式SDK选择真实Worker子委派；私有来源与撤权仍由�
       1,
     );
     const imageBytes=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aR1cAAAAASUVORK5CYII=','base64');
-    const imageBlob=await api(host.key,'worker-image-blob',first.authorityRef).materialsUploadBlob({subjectId,body:new Blob([imageBytes],{type:'image/png'})},async({init})=>{const headers=new Headers(init.headers);headers.set('x-content-media-type','image/png');return {...init,headers};});
+    const imageBlob=await api(MaterialsApi,host.key,'worker-image-blob',first.authorityRef).materialsUploadBlob({subjectId,body:new Blob([imageBytes],{type:'image/png'})},async({init})=>{const headers=new Headers(init.headers);headers.set('x-content-media-type','image/png');return {...init,headers};});
     assert.equal(imageBlob.mediaType,'image/png');
-    const image=await api(host.key,'worker-image-material',first.authorityRef).materialsCapture({subjectId,materialCaptureInput:{kind:'native_image_input',mediaType:'image/png',blobRef:imageBlob.ref,source:{roots:[]}}});
+    const image=await api(MaterialsApi,host.key,'worker-image-material',first.authorityRef).materialsCapture({subjectId,materialCaptureInput:{kind:'native_image_input',mediaType:'image/png',blobRef:imageBlob.ref,source:{roots:[]}}});
     const model={resourceId:'native-fixture',modelId:'native-fixture',contextLimit:2048},budget={outputTokens:64},observed=readReal();
-    const imageView=await api(host.key,'worker-image-context',first.authorityRef).contextsPrepare({subjectId,contextPrepareInput:{consumer,model,budget,observed,query:'',latestMaterials:[{ref:image.ref,text:'This label is not the image representation',selector:{kind:'image',x:0,y:0,width:1,height:1},required:true}]}});
+    const imageView=await api(ContextsApi,host.key,'worker-image-context',first.authorityRef).contextsPrepare({subjectId,contextPrepareInput:{consumer,model,budget,observed,query:'',latestMaterials:[{ref:image.ref,text:'This label is not the image representation',selector:{kind:'image',x:0,y:0,width:1,height:1},required:true}]}});
     assert.equal(imageView.inputPortions.length,1);
     assert.deepEqual(imageView.inputPortions[0]!.selector,{kind:'image',x:0,y:0,width:1,height:1});
     assert.equal(imageView.inputPortions[0]!.text,'');
     assert.equal(imageView.blocks.length,0);
-    const node=await api(host.key,'worker-node-material',first.authorityRef).materialsCapture({subjectId,materialCaptureInput:{kind:'native_model_output',mediaType:'application/json',text:JSON.stringify({content:[{type:'text',text:'Selected original text'}]}),source:{inputs:[draft.ref]}}});
-    const nodeView=await api(host.key,'worker-node-context',first.authorityRef).contextsPrepare({subjectId,contextPrepareInput:{consumer,model,budget,observed,query:'',latestMaterials:[{ref:node.ref,text:'',selector:{kind:'node',pointer:'/content/0/text'},required:true}]}});
+    const node=await api(MaterialsApi,host.key,'worker-node-material',first.authorityRef).materialsCapture({subjectId,materialCaptureInput:{kind:'native_model_output',mediaType:'application/json',text:JSON.stringify({content:[{type:'text',text:'Selected original text'}]}),source:{inputs:[draft.ref]}}});
+    const nodeView=await api(ContextsApi,host.key,'worker-node-context',first.authorityRef).contextsPrepare({subjectId,contextPrepareInput:{consumer,model,budget,observed,query:'',latestMaterials:[{ref:node.ref,text:'',selector:{kind:'node',pointer:'/content/0/text'},required:true}]}});
     assert.equal(nodeView.inputPortions[0]!.text,'Selected original text');
     assert.deepEqual(nodeView.inputPortions[0]!.selector,{kind:'node',pointer:'/content/0/text'});
     await assert.rejects(
-      issuer.sourcesResolve({
+      api(SourcesApi,host.key,'host-source').sourcesResolve({
         subjectId,
         sourcesResolveBodyInput: { refs: [draft.ref] },
       }),
@@ -247,16 +248,16 @@ test('Host经正式SDK选择真实Worker子委派；私有来源与撤权仍由�
       }),
     });
     await assert.rejects(
-      api(subjectBridge.key, 'subject-read').sourcesResolve({
+      api(SourcesApi,subjectBridge.key, 'subject-read').sourcesResolve({
         subjectId,
         sourcesResolveBodyInput: { refs: [draft.ref] },
       }),
     );
     await assert.rejects(
-      api(subjectBridge.key, 'wrong-parent', first.authorityRef).identityRead(),
+      api(IdentityApi,subjectBridge.key, 'wrong-parent', first.authorityRef).identityRead(),
     );
     await assert.rejects(
-      api(
+      api(IdentityApi,
         administrator.key,
         'human-selection',
         first.authorityRef,
@@ -286,7 +287,7 @@ test('Host经正式SDK选择真实Worker子委派；私有来源与撤权仍由�
       secretsRevokeRequest: { expectedRevision: 1 },
     });
     await assert.rejects(
-      selected.sourcesResolve({
+      selected(SourcesApi).sourcesResolve({
         subjectId,
         sourcesResolveBodyInput: { refs: [draft.ref] },
       }),

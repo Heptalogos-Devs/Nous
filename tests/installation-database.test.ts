@@ -7,7 +7,7 @@ import test from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
 import {
   Configuration,
-  DefaultApi,
+  HostApi,
   problemMiddleware,
 } from '@nous-wave/client';
 import { createBootstrapSecrets } from '@nous-wave/platform/credentials';
@@ -118,7 +118,7 @@ test('独立CLI安装、配置修订、密钥撤销、重新登录和Host重启�
       return { status: response.status, body: await response.json() };
     };
     await start();
-    const client = new DefaultApi(
+    const client = new HostApi(
       new Configuration({
         basePath: baseURL,
         accessToken: () => apiKey,

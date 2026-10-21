@@ -21,22 +21,39 @@ export type Material = { bytes: Uint8Array; metadata: SecretUseMetadata };
 export type Materials = Map<string, Material>;
 export function materialRefs(
   profile: NetworkProfile,
-): { ref: string; purpose: string }[] {
+): { ref: string; purpose: string; path: string }[] {
   return [
-    ...profile.tls.caFileRefs.map((ref) => ({ ref, purpose: 'network.ca' })),
+    ...profile.tls.caFileRefs.map((ref) => ({
+      ref,
+      purpose: 'network.ca',
+      path: '/tls/caFileRefs',
+    })),
     ...(profile.tls.clientCertificateRef
       ? [
           {
             ref: profile.tls.clientCertificateRef,
             purpose: 'network.client_certificate',
+            path: '/tls/clientCertificateRef',
           },
         ]
       : []),
     ...(profile.tls.clientKeyRef
-      ? [{ ref: profile.tls.clientKeyRef, purpose: 'network.client_key' }]
+      ? [
+          {
+            ref: profile.tls.clientKeyRef,
+            purpose: 'network.client_key',
+            path: '/tls/clientKeyRef',
+          },
+        ]
       : []),
     ...('credentialRef' in profile.proxy && profile.proxy.credentialRef
-      ? [{ ref: profile.proxy.credentialRef, purpose: 'network.proxy' }]
+      ? [
+          {
+            ref: profile.proxy.credentialRef,
+            purpose: 'network.proxy',
+            path: '/proxy/credentialRef',
+          },
+        ]
       : []),
   ];
 }
@@ -44,12 +61,10 @@ export function withMaterials<T>(
   options: NetworkOptions,
   ctx: CallContext,
   resource: ResourceNetworkScope,
-  profileRef: Ref,
-  profile: NetworkProfile,
+  refs: readonly { ref: string; purpose: string; resourceRef: Ref }[],
   use: (materials: Materials) => Promise<T>,
 ): Promise<T> {
-  const refs = materialRefs(profile),
-    values: Materials = new Map();
+  const values: Materials = new Map();
   async function next(index: number): Promise<T> {
     if (index === refs.length) return use(values);
     if (!options.withMaterial)
@@ -61,7 +76,12 @@ export function withMaterials<T>(
     const item = refs[index];
     return options.withMaterial(
       ctx,
-      { ...item, resourceRef: profileRef, useRef: resource.resourceRef },
+      {
+        ref: item.ref,
+        purpose: item.purpose,
+        resourceRef: item.resourceRef,
+        useRef: resource.resourceRef,
+      },
       async (bytes, metadata) => {
         values.set(item.ref, { bytes, metadata });
         try {

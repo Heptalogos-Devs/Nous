@@ -8,7 +8,7 @@
     "node": ">=24.21.0"
   },
   "scripts": {
-    "build": "corepack pnpm -r --if-present run build",
+    "build": "corepack pnpm -r exec node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && corepack pnpm -r --if-present run build",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "dev": "corepack pnpm run build && node apps/server/dist/main.js",
     "nous": "node apps/cli/dist/main.js",
@@ -16,9 +16,10 @@
     "check": "corepack pnpm build && corepack pnpm typecheck && corepack pnpm test",
     "format": "biome check --write .",
     "format:check": "biome check .",
-    "generate": "tsc -p packages/contracts/tsconfig.json && tsc -p packages/platform/tsconfig.json && node --import tsx apps/server/src/generate.ts",
+    "generate": "tsc -p packages/contracts/tsconfig.json && tsc -p packages/platform/tsconfig.json && tsc -p packages/nous/tsconfig.json && node --import tsx apps/server/src/generate.ts",
     "start": "corepack pnpm --filter @nous-wave/server start",
-    "pack": "corepack pnpm --filter \"./packages/**\" -r pack"
+    "pack": "corepack pnpm --filter \"./packages/**\" -r pack",
+    "pack:release": "node scripts/pack-release.mjs"
   },
   "dependencies": {
     "@nous-wave/contracts": "workspace:*",

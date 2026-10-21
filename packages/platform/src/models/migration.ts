@@ -19,7 +19,11 @@ export interface ModelInvocationRow {
  providerRequestId:string|null;problem:JsonColumn<Problem|null>;recordedAt:string;completedAt:string|null;
  nativeIdentity:JsonColumn<unknown>;adoptedAt:string|null;
 }
-export interface ModelsDatabase {modelInvocations:ModelInvocationRow}
+export interface ModelsDatabase {modelInvocations:ModelInvocationRow;modelExportMembers:{selectionId:string;ordinal:ColumnType<string,never,never>;subjectId:string;record:ColumnType<unknown,string,never>}}
+export const modelDataMigration={
+ async up(db:Kysely<unknown>){await sql`create table model_export_members(selection_id uuid not null,ordinal bigint generated always as identity,subject_id uuid not null,record jsonb not null,primary key(selection_id,ordinal));create index model_export_subject on model_export_members(subject_id)`.execute(db);},
+ async down(db:Kysely<unknown>){await sql`drop table model_export_members`.execute(db);},
+};
 export const modelMigration={
  async up(db:Kysely<unknown>){
   await sql`create table model_invocations(

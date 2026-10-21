@@ -167,7 +167,7 @@ export const SeedApplySchema = z.object({
 });
 
 export const ResourceBodySchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('directory'), title: z.string(), root: z.string(), extensions: z.array(z.string()).default([]), maxBytes: z.number().int().positive().default(10_485_760), policy: PolicySchema }),
+  z.object({ kind: z.literal('directory'), title: z.string(), root: z.string(), bindingRequired:z.boolean().optional(), extensions: z.array(z.string()).default([]), maxBytes: z.number().int().positive().default(10_485_760), policy: PolicySchema }),
   z.object({ kind: z.literal('http'), title: z.string(), baseUrl: z.string().url(), allowedOrigins: z.array(z.string().url()).default([]), maxBytes: z.number().int().positive().default(10_485_760), policy: PolicySchema }),
   z.object({ kind: z.literal('mcp'), title: z.string(), connectorId: z.string(), allowedUris: z.array(z.string()).default([]), maxBytes: z.number().int().positive().default(10_485_760), policy: PolicySchema }),
 ]);

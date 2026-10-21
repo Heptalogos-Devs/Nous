@@ -17,6 +17,10 @@
     "start": "node dist/main.js"
   },
   "files": [
-    "dist"
-  ]
+    "dist",
+    "LICENSE",
+    "NOTICE",
+    "LICENSES"
+  ],
+  "license": "AGPL-3.0-only"
 }

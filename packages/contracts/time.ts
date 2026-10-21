@@ -6,6 +6,9 @@ import {
   InstantSchema,
   InstantInputSchema,
   SubjectIdSchema,
+  ActorSchema,
+  ConsumerSchema,
+  canonicalRefKey,
 } from './common.js';
 
 export const ClockRefSchema = RefSchema.omit({ selector: true })
@@ -58,10 +61,7 @@ function consistent(value: z.infer<typeof mapped>, ctx: z.RefinementCtx) {
       message: '映射时间的时域、修订与来源必须一致',
     });
 }
-export const CapturedTimeSchema = z.xor([
-  real,
-  mapped.superRefine(consistent),
-]);
+export const CapturedTimeSchema = z.xor([real, mapped.superRefine(consistent)]);
 export const TimeCaptureReceiptSchema = z.xor([
   real.extend({ captureRef: TimeCaptureRefSchema }),
   mapped
@@ -271,5 +271,45 @@ for (const [id, schema] of Object.entries({
 
 /** Private capability injected only into owners recording an actual physical completion. */
 export interface TimeRecordings {
- captureTerminal(ctx:import('./common.js').CallContext,input:{operationId:string;originRef:import('./common.js').Ref;consumer:import('./common.js').Consumer;observed:TimeCaptureReceipt;realAt?:string}):Promise<TimeCaptureReceipt>;
+  captureTerminal(
+    ctx: import('./common.js').CallContext,
+    input: {
+      operationId: string;
+      originRef: import('./common.js').Ref;
+      consumer: import('./common.js').Consumer;
+      observed: TimeCaptureReceipt;
+      realAt?: string;
+    },
+  ): Promise<TimeCaptureReceipt>;
 }
+
+/** Versioned archive row owned by Nous Time; Clock state remains in Hept. */
+export const TimeCaptureDataRecordSchema = z
+  .strictObject({
+    id: z.uuidv7(),
+    operation_id: z.string().min(1),
+    request_digest: z.string().regex(/^[a-f0-9]{64}$/),
+    capture_key: z.string().min(1),
+    connection_ref: RefSchema.nullable(),
+    subject_id: SubjectIdSchema.nullable(),
+    consumer: ConsumerSchema,
+    actor: ActorSchema,
+    origin_ref: RefSchema.nullable(),
+    receipt: TimeCaptureReceiptSchema,
+    recorded_at: InstantInputSchema,
+  })
+  .superRefine((row, ctx) => {
+    if (row.capture_key !== canonicalRefKey(row.receipt.captureRef))
+      ctx.addIssue({
+        code: 'custom',
+        message: '时间回执的固定身份与存储键不一致',
+      });
+    if (row.origin_ref && (row.origin_ref.subjectId ?? null) !== row.subject_id)
+      ctx.addIssue({ code: 'custom', message: '时间记录的来源与主体不一致' });
+    if (
+      row.receipt.captureRef.subjectId !== undefined &&
+      row.receipt.captureRef.subjectId !== row.subject_id
+    )
+      ctx.addIssue({ code: 'custom', message: '时间回执不属于该主体' });
+  });
+export type TimeCaptureDataRecord = z.infer<typeof TimeCaptureDataRecordSchema>;

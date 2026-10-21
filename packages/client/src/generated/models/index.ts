@@ -137,6 +137,144 @@ export interface AuthenticatedIdentityInput {
 /**
  * 
  * @export
+ * @interface BindingRequirement
+ */
+export interface BindingRequirement {
+    /**
+     * 
+     */
+    id: string;
+    /**
+     * 
+     */
+    kind: BindingRequirementKindEnum;
+    /**
+     * 
+     */
+    logicalName: string;
+    /**
+     * 
+     */
+    sourceRef?: Ref;
+    /**
+     * 
+     */
+    capabilities: Array<string>;
+}
+
+
+/**
+ * @export
+ */
+export const BindingRequirementKindEnum = {
+    Secret: 'secret',
+    Provider: 'provider',
+    ChannelAccount: 'channel_account',
+    TimeAuthority: 'time_authority',
+    NativeRuntime: 'native_runtime',
+    Resource: 'resource',
+} as const;
+export type BindingRequirementKindEnum = typeof BindingRequirementKindEnum[keyof typeof BindingRequirementKindEnum];
+
+/**
+ * 
+ * @export
+ * @interface BindingRequirementInput
+ */
+export interface BindingRequirementInput {
+    /**
+     * 
+     */
+    id: string;
+    /**
+     * 
+     */
+    kind: BindingRequirementInputKindEnum;
+    /**
+     * 
+     */
+    logicalName: string;
+    /**
+     * 
+     */
+    sourceRef?: RefInput;
+    /**
+     * 
+     */
+    capabilities: Array<string>;
+}
+
+
+/**
+ * @export
+ */
+export const BindingRequirementInputKindEnum = {
+    Secret: 'secret',
+    Provider: 'provider',
+    ChannelAccount: 'channel_account',
+    TimeAuthority: 'time_authority',
+    NativeRuntime: 'native_runtime',
+    Resource: 'resource',
+} as const;
+export type BindingRequirementInputKindEnum = typeof BindingRequirementInputKindEnum[keyof typeof BindingRequirementInputKindEnum];
+
+/**
+ * 
+ * @export
+ * @interface BlobExportEntry
+ */
+export interface BlobExportEntry {
+    /**
+     * 
+     */
+    blobRef: Ref;
+    /**
+     * 
+     */
+    digest: string;
+    /**
+     * 
+     */
+    bytes: string;
+    /**
+     * 
+     */
+    mediaType: string;
+    /**
+     * 
+     */
+    path: string;
+}
+/**
+ * 
+ * @export
+ * @interface BlobExportEntryInput
+ */
+export interface BlobExportEntryInput {
+    /**
+     * 
+     */
+    blobRef: RefInput;
+    /**
+     * 
+     */
+    digest: string;
+    /**
+     * 
+     */
+    bytes: string;
+    /**
+     * 
+     */
+    mediaType: string;
+    /**
+     * 
+     */
+    path: string;
+}
+/**
+ * 
+ * @export
  * @interface BlobResult
  */
 export interface BlobResult {
@@ -3500,6 +3638,635 @@ export type CriterionPredicateOperatorEnum = typeof CriterionPredicateOperatorEn
 /**
  * 
  * @export
+ * @interface DataArtifact
+ */
+export interface DataArtifact {
+    /**
+     * 
+     */
+    ref: Ref;
+    /**
+     * 
+     */
+    blobRef: Ref;
+    /**
+     * 
+     */
+    mediaType: string;
+    /**
+     * 
+     */
+    digest: string;
+    /**
+     * 
+     */
+    bytes: string;
+    /**
+     * 
+     */
+    createdAt: TimePoint;
+    /**
+     * 
+     */
+    expiresAt?: TimePoint;
+    /**
+     * 
+     */
+    policy: Policy;
+    /**
+     * 
+     */
+    consumer?: Consumer;
+    /**
+     * 
+     */
+    sourceRefs: Array<Ref>;
+}
+/**
+ * 
+ * @export
+ * @interface DataArtifactInput
+ */
+export interface DataArtifactInput {
+    /**
+     * 
+     */
+    ref: RefInput;
+    /**
+     * 
+     */
+    blobRef: RefInput;
+    /**
+     * 
+     */
+    mediaType: string;
+    /**
+     * 
+     */
+    digest: string;
+    /**
+     * 
+     */
+    bytes: string;
+    /**
+     * 
+     */
+    createdAt: TimePointInput;
+    /**
+     * 
+     */
+    expiresAt?: TimePointInput;
+    /**
+     * 
+     */
+    policy: PolicyInput;
+    /**
+     * 
+     */
+    consumer?: ConsumerInput;
+    /**
+     * 
+     */
+    sourceRefs: Array<RefInput>;
+}
+/**
+ * 
+ * @export
+ * @interface DataArtifactRead
+ */
+export interface DataArtifactRead {
+    /**
+     * 
+     */
+    artifactRef: Ref;
+}
+/**
+ * 
+ * @export
+ * @interface DataArtifactReadInput
+ */
+export interface DataArtifactReadInput {
+    /**
+     * 
+     */
+    artifactRef: RefInput;
+}
+/**
+ * 
+ * @export
+ * @interface DataComponent
+ */
+export interface DataComponent {
+    /**
+     * 
+     */
+    owner: string;
+    /**
+     * 
+     */
+    schemaVersion: number;
+    /**
+     * 
+     */
+    path: string;
+    /**
+     * 
+     */
+    digest: string;
+    /**
+     * 
+     */
+    bytes: string;
+}
+/**
+ * 
+ * @export
+ * @interface DataComponentInput
+ */
+export interface DataComponentInput {
+    /**
+     * 
+     */
+    owner: string;
+    /**
+     * 
+     */
+    schemaVersion: number;
+    /**
+     * 
+     */
+    path: string;
+    /**
+     * 
+     */
+    digest: string;
+    /**
+     * 
+     */
+    bytes: string;
+}
+/**
+ * 
+ * @export
+ * @interface DataExport
+ */
+export interface DataExport {
+    /**
+     * 
+     */
+    subjectId: string;
+    /**
+     * 
+     */
+    mode: DataExportModeEnum;
+}
+
+
+/**
+ * @export
+ */
+export const DataExportModeEnum = {
+    Restore: 'restore',
+} as const;
+export type DataExportModeEnum = typeof DataExportModeEnum[keyof typeof DataExportModeEnum];
+
+/**
+ * 
+ * @export
+ * @interface DataExportInput
+ */
+export interface DataExportInput {
+    /**
+     * 
+     */
+    subjectId: string;
+    /**
+     * 
+     */
+    mode?: DataExportInputModeEnum;
+}
+
+
+/**
+ * @export
+ */
+export const DataExportInputModeEnum = {
+    Restore: 'restore',
+} as const;
+export type DataExportInputModeEnum = typeof DataExportInputModeEnum[keyof typeof DataExportInputModeEnum];
+
+/**
+ * 
+ * @export
+ * @interface DataExportRequest
+ */
+export interface DataExportRequest {
+    /**
+     * 
+     */
+    mode?: DataExportRequestModeEnum;
+}
+
+
+/**
+ * @export
+ */
+export const DataExportRequestModeEnum = {
+    Restore: 'restore',
+} as const;
+export type DataExportRequestModeEnum = typeof DataExportRequestModeEnum[keyof typeof DataExportRequestModeEnum];
+
+/**
+ * 
+ * @export
+ * @interface DataImport
+ */
+export interface DataImport {
+    /**
+     * 
+     */
+    planId: string;
+    /**
+     * 
+     */
+    expectedTargets: Array<ExpectedDataTarget>;
+}
+/**
+ * 
+ * @export
+ * @interface DataImportInput
+ */
+export interface DataImportInput {
+    /**
+     * 
+     */
+    planId: string;
+    /**
+     * 
+     */
+    expectedTargets: Array<ExpectedDataTargetInput>;
+}
+/**
+ * 
+ * @export
+ * @interface DataImportResult
+ */
+export interface DataImportResult {
+    /**
+     * 
+     */
+    subjectId: string;
+    /**
+     * 
+     */
+    status: DataImportResultStatusEnum;
+    /**
+     * 
+     */
+    pending: Array<PendingResource>;
+}
+
+
+/**
+ * @export
+ */
+export const DataImportResultStatusEnum = {
+    Paused: 'paused',
+} as const;
+export type DataImportResultStatusEnum = typeof DataImportResultStatusEnum[keyof typeof DataImportResultStatusEnum];
+
+/**
+ * 
+ * @export
+ * @interface DataImportResultInput
+ */
+export interface DataImportResultInput {
+    /**
+     * 
+     */
+    subjectId: string;
+    /**
+     * 
+     */
+    status: DataImportResultInputStatusEnum;
+    /**
+     * 
+     */
+    pending: Array<PendingResourceInput>;
+}
+
+
+/**
+ * @export
+ */
+export const DataImportResultInputStatusEnum = {
+    Paused: 'paused',
+} as const;
+export type DataImportResultInputStatusEnum = typeof DataImportResultInputStatusEnum[keyof typeof DataImportResultInputStatusEnum];
+
+/**
+ * 
+ * @export
+ * @interface DataPurgeSelection
+ */
+export interface DataPurgeSelection {
+    /**
+     * 
+     */
+    subjectId: string;
+}
+/**
+ * 
+ * @export
+ * @interface DataPurgeSelectionInput
+ */
+export interface DataPurgeSelectionInput {
+    /**
+     * 
+     */
+    subjectId: string;
+}
+/**
+ * @type DataReceipt
+ * 
+ * @export
+ */
+export type DataReceipt = DataReceiptOneOf | DataReceiptOneOf1 | DataReceiptOneOf2;
+/**
+ * @type DataReceiptInput
+ * 
+ * @export
+ */
+export type DataReceiptInput = DataReceiptInputOneOf | DataReceiptInputOneOf1 | DataReceiptInputOneOf2;
+/**
+ * 
+ * @export
+ * @interface DataReceiptInputOneOf
+ */
+export interface DataReceiptInputOneOf {
+    /**
+     * 
+     */
+    operationId: string;
+    /**
+     * 
+     */
+    operationName: DataReceiptInputOneOfOperationNameEnum;
+    /**
+     * 
+     */
+    recordedAt: TimePointInput;
+    /**
+     * 
+     */
+    result: DataArtifactInput;
+}
+
+
+/**
+ * @export
+ */
+export const DataReceiptInputOneOfOperationNameEnum = {
+    DataExport: 'data.export',
+} as const;
+export type DataReceiptInputOneOfOperationNameEnum = typeof DataReceiptInputOneOfOperationNameEnum[keyof typeof DataReceiptInputOneOfOperationNameEnum];
+
+/**
+ * 
+ * @export
+ * @interface DataReceiptInputOneOf1
+ */
+export interface DataReceiptInputOneOf1 {
+    /**
+     * 
+     */
+    operationId: string;
+    /**
+     * 
+     */
+    operationName: DataReceiptInputOneOf1OperationNameEnum;
+    /**
+     * 
+     */
+    recordedAt: TimePointInput;
+    /**
+     * 
+     */
+    result: DataImportResultInput;
+}
+
+
+/**
+ * @export
+ */
+export const DataReceiptInputOneOf1OperationNameEnum = {
+    DataImport: 'data.import',
+} as const;
+export type DataReceiptInputOneOf1OperationNameEnum = typeof DataReceiptInputOneOf1OperationNameEnum[keyof typeof DataReceiptInputOneOf1OperationNameEnum];
+
+/**
+ * 
+ * @export
+ * @interface DataReceiptInputOneOf2
+ */
+export interface DataReceiptInputOneOf2 {
+    /**
+     * 
+     */
+    operationId: string;
+    /**
+     * 
+     */
+    operationName: DataReceiptInputOneOf2OperationNameEnum;
+    /**
+     * 
+     */
+    recordedAt: TimePointInput;
+    /**
+     * 
+     */
+    result: PurgeReceiptInput;
+}
+
+
+/**
+ * @export
+ */
+export const DataReceiptInputOneOf2OperationNameEnum = {
+    DataPurge: 'data.purge',
+} as const;
+export type DataReceiptInputOneOf2OperationNameEnum = typeof DataReceiptInputOneOf2OperationNameEnum[keyof typeof DataReceiptInputOneOf2OperationNameEnum];
+
+/**
+ * 
+ * @export
+ * @interface DataReceiptOneOf
+ */
+export interface DataReceiptOneOf {
+    /**
+     * 
+     */
+    operationId: string;
+    /**
+     * 
+     */
+    operationName: DataReceiptOneOfOperationNameEnum;
+    /**
+     * 
+     */
+    recordedAt: TimePoint;
+    /**
+     * 
+     */
+    result: DataArtifact;
+}
+
+
+/**
+ * @export
+ */
+export const DataReceiptOneOfOperationNameEnum = {
+    DataExport: 'data.export',
+} as const;
+export type DataReceiptOneOfOperationNameEnum = typeof DataReceiptOneOfOperationNameEnum[keyof typeof DataReceiptOneOfOperationNameEnum];
+
+/**
+ * 
+ * @export
+ * @interface DataReceiptOneOf1
+ */
+export interface DataReceiptOneOf1 {
+    /**
+     * 
+     */
+    operationId: string;
+    /**
+     * 
+     */
+    operationName: DataReceiptOneOf1OperationNameEnum;
+    /**
+     * 
+     */
+    recordedAt: TimePoint;
+    /**
+     * 
+     */
+    result: DataImportResult;
+}
+
+
+/**
+ * @export
+ */
+export const DataReceiptOneOf1OperationNameEnum = {
+    DataImport: 'data.import',
+} as const;
+export type DataReceiptOneOf1OperationNameEnum = typeof DataReceiptOneOf1OperationNameEnum[keyof typeof DataReceiptOneOf1OperationNameEnum];
+
+/**
+ * 
+ * @export
+ * @interface DataReceiptOneOf2
+ */
+export interface DataReceiptOneOf2 {
+    /**
+     * 
+     */
+    operationId: string;
+    /**
+     * 
+     */
+    operationName: DataReceiptOneOf2OperationNameEnum;
+    /**
+     * 
+     */
+    recordedAt: TimePoint;
+    /**
+     * 
+     */
+    result: PurgeReceipt;
+}
+
+
+/**
+ * @export
+ */
+export const DataReceiptOneOf2OperationNameEnum = {
+    DataPurge: 'data.purge',
+} as const;
+export type DataReceiptOneOf2OperationNameEnum = typeof DataReceiptOneOf2OperationNameEnum[keyof typeof DataReceiptOneOf2OperationNameEnum];
+
+/**
+ * 
+ * @export
+ * @interface DataReceiptRead
+ */
+export interface DataReceiptRead {
+    /**
+     * 
+     */
+    operationId: string;
+}
+/**
+ * 
+ * @export
+ * @interface DataReceiptReadInput
+ */
+export interface DataReceiptReadInput {
+    /**
+     * 
+     */
+    operationId: string;
+}
+/**
+ * 
+ * @export
+ * @interface DataSettings
+ */
+export interface DataSettings {
+    /**
+     * 
+     */
+    maxBundleBytes: number;
+    /**
+     * 
+     */
+    maxExpandedBytes: number;
+    /**
+     * 
+     */
+    maxEntries: number;
+    /**
+     * 
+     */
+    temporaryRetentionHours: number;
+}
+/**
+ * 
+ * @export
+ * @interface DataSettingsInput
+ */
+export interface DataSettingsInput {
+    /**
+     * 
+     */
+    maxBundleBytes: number;
+    /**
+     * 
+     */
+    maxExpandedBytes: number;
+    /**
+     * 
+     */
+    maxEntries: number;
+    /**
+     * 
+     */
+    temporaryRetentionHours: number;
+}
+/**
+ * 
+ * @export
  * @interface DelegationChildCreateBody
  */
 export interface DelegationChildCreateBody {
@@ -4864,6 +5631,44 @@ export interface ExpansionResultRelationsInner {
 /**
  * 
  * @export
+ * @interface ExpectedDataTarget
+ */
+export interface ExpectedDataTarget {
+    /**
+     * 
+     */
+    ref: Ref;
+    /**
+     * 
+     */
+    expectedRevision?: number;
+    /**
+     * 
+     */
+    expectedCursor?: string;
+}
+/**
+ * 
+ * @export
+ * @interface ExpectedDataTargetInput
+ */
+export interface ExpectedDataTargetInput {
+    /**
+     * 
+     */
+    ref: RefInput;
+    /**
+     * 
+     */
+    expectedRevision?: number;
+    /**
+     * 
+     */
+    expectedCursor?: string;
+}
+/**
+ * 
+ * @export
  * @interface ExperienceItem
  */
 export interface ExperienceItem {
@@ -6069,6 +6874,196 @@ export const HostStopRequestModeEnum = {
 } as const;
 export type HostStopRequestModeEnum = typeof HostStopRequestModeEnum[keyof typeof HostStopRequestModeEnum];
 
+/**
+ * 
+ * @export
+ * @interface ImportArtifactResult
+ */
+export interface ImportArtifactResult {
+    /**
+     * 
+     */
+    artifactRef: Ref;
+    /**
+     * 
+     */
+    digest: string;
+    /**
+     * 
+     */
+    bytes: string;
+}
+/**
+ * 
+ * @export
+ * @interface ImportArtifactResultInput
+ */
+export interface ImportArtifactResultInput {
+    /**
+     * 
+     */
+    artifactRef: RefInput;
+    /**
+     * 
+     */
+    digest: string;
+    /**
+     * 
+     */
+    bytes: string;
+}
+/**
+ * 
+ * @export
+ * @interface ImportPlan
+ */
+export interface ImportPlan {
+    /**
+     * 
+     */
+    id: string;
+    /**
+     * 
+     */
+    artifactRef: Ref;
+    /**
+     * 
+     */
+    manifestDigest: string;
+    /**
+     * 
+     */
+    targetMode: ImportPlanTargetModeEnum;
+    /**
+     * 
+     */
+    subjectId: string;
+    /**
+     * 
+     */
+    ownerValidations: Array<ImportPlanOwnerValidationsInner>;
+    /**
+     * 
+     */
+    expectedTargets: Array<ExpectedDataTarget>;
+    /**
+     * 
+     */
+    requiredBindings: Array<BindingRequirement>;
+    /**
+     * 
+     */
+    pending: Array<PendingResource>;
+}
+
+
+/**
+ * @export
+ */
+export const ImportPlanTargetModeEnum = {
+    Restore: 'restore',
+} as const;
+export type ImportPlanTargetModeEnum = typeof ImportPlanTargetModeEnum[keyof typeof ImportPlanTargetModeEnum];
+
+/**
+ * 
+ * @export
+ * @interface ImportPlanInput
+ */
+export interface ImportPlanInput {
+    /**
+     * 
+     */
+    id: string;
+    /**
+     * 
+     */
+    artifactRef: RefInput;
+    /**
+     * 
+     */
+    manifestDigest: string;
+    /**
+     * 
+     */
+    targetMode: ImportPlanInputTargetModeEnum;
+    /**
+     * 
+     */
+    subjectId: string;
+    /**
+     * 
+     */
+    ownerValidations: Array<ImportPlanInputOwnerValidationsInner>;
+    /**
+     * 
+     */
+    expectedTargets: Array<ExpectedDataTargetInput>;
+    /**
+     * 
+     */
+    requiredBindings: Array<BindingRequirementInput>;
+    /**
+     * 
+     */
+    pending: Array<PendingResourceInput>;
+}
+
+
+/**
+ * @export
+ */
+export const ImportPlanInputTargetModeEnum = {
+    Restore: 'restore',
+} as const;
+export type ImportPlanInputTargetModeEnum = typeof ImportPlanInputTargetModeEnum[keyof typeof ImportPlanInputTargetModeEnum];
+
+/**
+ * 
+ * @export
+ * @interface ImportPlanInputOwnerValidationsInner
+ */
+export interface ImportPlanInputOwnerValidationsInner {
+    /**
+     * 
+     */
+    owner: string;
+    /**
+     * 
+     */
+    schemaVersion: number;
+    /**
+     * 
+     */
+    compatible: boolean;
+    /**
+     * 
+     */
+    problems: Array<ProblemInput>;
+}
+/**
+ * 
+ * @export
+ * @interface ImportPlanOwnerValidationsInner
+ */
+export interface ImportPlanOwnerValidationsInner {
+    /**
+     * 
+     */
+    owner: string;
+    /**
+     * 
+     */
+    schemaVersion: number;
+    /**
+     * 
+     */
+    compatible: boolean;
+    /**
+     * 
+     */
+    problems: Array<Problem>;
+}
 /**
  * 
  * @export
@@ -11880,6 +12875,68 @@ export const OriginIdentityInputOneOf2TypeEnum = {
 export type OriginIdentityInputOneOf2TypeEnum = typeof OriginIdentityInputOneOf2TypeEnum[keyof typeof OriginIdentityInputOneOf2TypeEnum];
 
 /**
+ * 
+ * @export
+ * @interface OwnerCut
+ */
+export interface OwnerCut {
+    /**
+     * 
+     */
+    owner: string;
+    /**
+     * 
+     */
+    schemaVersion: number;
+    /**
+     * 
+     */
+    subjectId: string;
+    /**
+     * 
+     */
+    realRecordedCut: string;
+    /**
+     * 
+     */
+    selectionRef: Ref;
+    /**
+     * 
+     */
+    count: string;
+}
+/**
+ * 
+ * @export
+ * @interface OwnerCutInput
+ */
+export interface OwnerCutInput {
+    /**
+     * 
+     */
+    owner: string;
+    /**
+     * 
+     */
+    schemaVersion: number;
+    /**
+     * 
+     */
+    subjectId: string;
+    /**
+     * 
+     */
+    realRecordedCut: string;
+    /**
+     * 
+     */
+    selectionRef: RefInput;
+    /**
+     * 
+     */
+    count: string;
+}
+/**
  * @type PatchOperation
  * 
  * @export
@@ -12148,6 +13205,52 @@ export const PatchOperationOneOf2OpEnum = {
 } as const;
 export type PatchOperationOneOf2OpEnum = typeof PatchOperationOneOf2OpEnum[keyof typeof PatchOperationOneOf2OpEnum];
 
+/**
+ * 
+ * @export
+ * @interface PendingResource
+ */
+export interface PendingResource {
+    /**
+     * 
+     */
+    owner: string;
+    /**
+     * 
+     */
+    ref?: Ref;
+    /**
+     * 
+     */
+    reasonCode: string;
+    /**
+     * 
+     */
+    operationId?: string;
+}
+/**
+ * 
+ * @export
+ * @interface PendingResourceInput
+ */
+export interface PendingResourceInput {
+    /**
+     * 
+     */
+    owner: string;
+    /**
+     * 
+     */
+    ref?: RefInput;
+    /**
+     * 
+     */
+    reasonCode: string;
+    /**
+     * 
+     */
+    operationId?: string;
+}
 /**
  * 
  * @export
@@ -14223,6 +15326,125 @@ export interface ProvidersRead200Response {
 /**
  * 
  * @export
+ * @interface PurgePlan
+ */
+export interface PurgePlan {
+    /**
+     * 
+     */
+    id: string;
+    /**
+     * 
+     */
+    selectionRef: Ref;
+    /**
+     * 
+     */
+    subjectId: string;
+    /**
+     * 
+     */
+    expectedTargets: Array<ExpectedDataTarget>;
+}
+/**
+ * 
+ * @export
+ * @interface PurgePlanInput
+ */
+export interface PurgePlanInput {
+    /**
+     * 
+     */
+    id: string;
+    /**
+     * 
+     */
+    selectionRef: RefInput;
+    /**
+     * 
+     */
+    subjectId: string;
+    /**
+     * 
+     */
+    expectedTargets: Array<ExpectedDataTargetInput>;
+}
+/**
+ * 
+ * @export
+ * @interface PurgeReceipt
+ */
+export interface PurgeReceipt {
+    /**
+     * 
+     */
+    id: string;
+    /**
+     * 
+     */
+    selectionRef: Ref;
+    /**
+     * 
+     */
+    recordedAt: TimePoint;
+    /**
+     * 
+     */
+    cleared: Array<PurgeReceiptInputClearedInner>;
+    /**
+     * 
+     */
+    pending: Array<PendingResource>;
+}
+/**
+ * 
+ * @export
+ * @interface PurgeReceiptInput
+ */
+export interface PurgeReceiptInput {
+    /**
+     * 
+     */
+    id: string;
+    /**
+     * 
+     */
+    selectionRef: RefInput;
+    /**
+     * 
+     */
+    recordedAt: TimePointInput;
+    /**
+     * 
+     */
+    cleared: Array<PurgeReceiptInputClearedInner>;
+    /**
+     * 
+     */
+    pending: Array<PendingResourceInput>;
+}
+/**
+ * 
+ * @export
+ * @interface PurgeReceiptInputClearedInner
+ */
+export interface PurgeReceiptInputClearedInner {
+    /**
+     * 
+     */
+    owner: string;
+    /**
+     * 
+     */
+    count: string;
+    /**
+     * 
+     */
+    bytes?: string;
+}
+/**
+ * 
+ * @export
  * @interface Query
  */
 export interface Query {
@@ -15497,6 +16719,10 @@ export interface ResourceBodyInputOneOf {
     /**
      * 
      */
+    bindingRequired?: boolean;
+    /**
+     * 
+     */
     extensions?: Array<string>;
     /**
      * 
@@ -15617,6 +16843,10 @@ export interface ResourceBodyOneOf {
      * 
      */
     root: string;
+    /**
+     * 
+     */
+    bindingRequired?: boolean;
     /**
      * 
      */
@@ -18357,6 +19587,228 @@ export const SubjectStatusEnum = {
 } as const;
 export type SubjectStatusEnum = typeof SubjectStatusEnum[keyof typeof SubjectStatusEnum];
 
+/**
+ * 
+ * @export
+ * @interface SubjectBundleManifest
+ */
+export interface SubjectBundleManifest {
+    /**
+     * 
+     */
+    format: SubjectBundleManifestFormatEnum;
+    /**
+     * 
+     */
+    version: SubjectBundleManifestVersionEnum;
+    /**
+     * 
+     */
+    bundleId: string;
+    /**
+     * 
+     */
+    mode: SubjectBundleManifestModeEnum;
+    /**
+     * 
+     */
+    subject: SubjectBundleManifestSubject;
+    /**
+     * 
+     */
+    sources: Array<SubjectBundleManifestInputSourcesInner>;
+    /**
+     * 
+     */
+    createdAt: TimePoint;
+    /**
+     * 
+     */
+    cuts: Array<OwnerCut>;
+    /**
+     * 
+     */
+    components: Array<DataComponent>;
+    /**
+     * 
+     */
+    blobs: Array<BlobExportEntry>;
+    /**
+     * 
+     */
+    requiredBindings: Array<BindingRequirement>;
+    /**
+     * 
+     */
+    pending: Array<PendingResource>;
+}
+
+
+/**
+ * @export
+ */
+export const SubjectBundleManifestFormatEnum = {
+    NousHeptSubject: 'nous-hept-subject',
+} as const;
+export type SubjectBundleManifestFormatEnum = typeof SubjectBundleManifestFormatEnum[keyof typeof SubjectBundleManifestFormatEnum];
+
+/**
+ * @export
+ */
+export const SubjectBundleManifestVersionEnum = {
+    NUMBER_1: 1,
+} as const;
+export type SubjectBundleManifestVersionEnum = typeof SubjectBundleManifestVersionEnum[keyof typeof SubjectBundleManifestVersionEnum];
+
+/**
+ * @export
+ */
+export const SubjectBundleManifestModeEnum = {
+    Restore: 'restore',
+} as const;
+export type SubjectBundleManifestModeEnum = typeof SubjectBundleManifestModeEnum[keyof typeof SubjectBundleManifestModeEnum];
+
+/**
+ * 
+ * @export
+ * @interface SubjectBundleManifestInput
+ */
+export interface SubjectBundleManifestInput {
+    /**
+     * 
+     */
+    format: SubjectBundleManifestInputFormatEnum;
+    /**
+     * 
+     */
+    version: SubjectBundleManifestInputVersionEnum;
+    /**
+     * 
+     */
+    bundleId: string;
+    /**
+     * 
+     */
+    mode: SubjectBundleManifestInputModeEnum;
+    /**
+     * 
+     */
+    subject: SubjectBundleManifestInputSubject;
+    /**
+     * 
+     */
+    sources: Array<SubjectBundleManifestInputSourcesInner>;
+    /**
+     * 
+     */
+    createdAt: TimePointInput;
+    /**
+     * 
+     */
+    cuts: Array<OwnerCutInput>;
+    /**
+     * 
+     */
+    components: Array<DataComponentInput>;
+    /**
+     * 
+     */
+    blobs: Array<BlobExportEntryInput>;
+    /**
+     * 
+     */
+    requiredBindings: Array<BindingRequirementInput>;
+    /**
+     * 
+     */
+    pending: Array<PendingResourceInput>;
+}
+
+
+/**
+ * @export
+ */
+export const SubjectBundleManifestInputFormatEnum = {
+    NousHeptSubject: 'nous-hept-subject',
+} as const;
+export type SubjectBundleManifestInputFormatEnum = typeof SubjectBundleManifestInputFormatEnum[keyof typeof SubjectBundleManifestInputFormatEnum];
+
+/**
+ * @export
+ */
+export const SubjectBundleManifestInputVersionEnum = {
+    NUMBER_1: 1,
+} as const;
+export type SubjectBundleManifestInputVersionEnum = typeof SubjectBundleManifestInputVersionEnum[keyof typeof SubjectBundleManifestInputVersionEnum];
+
+/**
+ * @export
+ */
+export const SubjectBundleManifestInputModeEnum = {
+    Restore: 'restore',
+} as const;
+export type SubjectBundleManifestInputModeEnum = typeof SubjectBundleManifestInputModeEnum[keyof typeof SubjectBundleManifestInputModeEnum];
+
+/**
+ * 
+ * @export
+ * @interface SubjectBundleManifestInputSourcesInner
+ */
+export interface SubjectBundleManifestInputSourcesInner {
+    /**
+     * 
+     */
+    product: SubjectBundleManifestInputSourcesInnerProductEnum;
+    /**
+     * 
+     */
+    installationId: string;
+    /**
+     * 
+     */
+    productVersion: string;
+}
+
+
+/**
+ * @export
+ */
+export const SubjectBundleManifestInputSourcesInnerProductEnum = {
+    Nous: 'nous',
+    Hept: 'hept',
+} as const;
+export type SubjectBundleManifestInputSourcesInnerProductEnum = typeof SubjectBundleManifestInputSourcesInnerProductEnum[keyof typeof SubjectBundleManifestInputSourcesInnerProductEnum];
+
+/**
+ * 
+ * @export
+ * @interface SubjectBundleManifestInputSubject
+ */
+export interface SubjectBundleManifestInputSubject {
+    /**
+     * 
+     */
+    id: string;
+    /**
+     * 
+     */
+    name: string;
+}
+/**
+ * 
+ * @export
+ * @interface SubjectBundleManifestSubject
+ */
+export interface SubjectBundleManifestSubject {
+    /**
+     * 
+     */
+    id: string;
+    /**
+     * 
+     */
+    name: string;
+}
 /**
  * 
  * @export

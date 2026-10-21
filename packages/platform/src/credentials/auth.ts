@@ -180,9 +180,8 @@ export async function createAuthentication(options: AuthenticationOptions) {
         throw error;
       }
     },
-    async disableKey(id) {
-      const ctx = await auth.$context;
-      await ctx.adapter.update({
+    async disableKey(id, database) {
+      await (await adapter(database)).update({
         model: 'apikey',
         where: [{ field: 'id', value: id }],
         update: { enabled: false },
@@ -360,6 +359,7 @@ export async function createAuthentication(options: AuthenticationOptions) {
     currentAuthority: registry.currentAuthority,
     createManagementKey: registry.createManagementKey,
     createRuntimeKey: registry.createRuntimeKey,
+    deleteSubject: registry.deleteSubject,
     delegations: {
       create: registry.create,
       createChild: registry.createChild,

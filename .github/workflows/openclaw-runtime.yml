@@ -1,0 +1,127 @@
+name: OpenClaw runtime
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/openclaw-runtime.yml
+      - .github/scripts/openclaw-local-packages.mjs
+      - integrations/openclaw/**
+      - packages/contracts/**
+      - packages/client/**
+      - packages/platform/src/time/**
+      - package.json
+      - pnpm-lock.yaml
+      - pnpm-workspace.yaml
+  workflow_dispatch:
+    inputs:
+      hept_revision:
+        description: Exact Hept checkpoint commit (40 lowercase hexadecimal characters)
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: openclaw-runtime-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  package:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    container:
+      image: node:24.21.0-bookworm
+      options: --memory=6g --memory-swap=6656m --cpus=2
+    env:
+      HEPT_REVISION: ${{ inputs.hept_revision || '794d99c89bba318b7e4a4c219318a43ce8f6f557' }}
+      NODE_OPTIONS: --max-old-space-size=2048
+      GOMEMLIMIT: 768MiB
+      GOMAXPROCS: '2'
+      RAYON_NUM_THREADS: '2'
+      TOKIO_WORKER_THREADS: '2'
+      npm_config_jobs: '2'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Select temporary paths
+        shell: bash
+        run: |
+          printf 'COREPACK_HOME=%s\nXDG_CACHE_HOME=%s\nnpm_config_cache=%s\nTMPDIR=%s\nNATIVE_TEMP=%s\n' \
+            "$RUNNER_TEMP/native-cache/corepack" "$RUNNER_TEMP/native-cache/xdg" \
+            "$RUNNER_TEMP/native-cache/npm" "$RUNNER_TEMP/native-cache/tmp" \
+            "$RUNNER_TEMP/native-runtime" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/native-cache/tmp" "$RUNNER_TEMP/native-runtime/sdk"
+      - name: Install and build Nous workspace
+        run: |
+          corepack pnpm install --frozen-lockfile --network-concurrency=4 --child-concurrency=1
+          corepack pnpm build
+      - name: Pack current SDK and product dependencies
+        shell: bash
+        run: |
+          for package in packages/contracts packages/client packages/platform integrations/openclaw packages/nous apps/server apps/cli; do
+            corepack pnpm --dir "$package" pack --pack-destination "$NATIVE_TEMP/sdk"
+          done
+      - name: Build the pinned OpenClaw source through its official package owner
+        run: >-
+          node integrations/openclaw/build-upstream.mjs
+          --source "$NATIVE_TEMP/source"
+          --output "$NATIVE_TEMP/artifacts"
+          --cache "$RUNNER_TEMP/native-cache/upstream"
+      - name: Check out the matching Hept source
+        shell: bash
+        run: |
+          [[ "$HEPT_REVISION" =~ ^[0-9a-f]{40}$ ]] || { echo 'An exact coherent Hept checkpoint is required'; exit 1; }
+          git init "$NATIVE_TEMP/hept-source"
+          git -C "$NATIVE_TEMP/hept-source" remote add origin https://github.com/Heptalogos-Devs/Heptalogos.git
+          git -C "$NATIVE_TEMP/hept-source" fetch --depth=1 origin "$HEPT_REVISION"
+          git -C "$NATIVE_TEMP/hept-source" checkout --detach FETCH_HEAD
+          node .github/scripts/openclaw-local-packages.mjs --phase hept --temporary "$NATIVE_TEMP" --hept "$NATIVE_TEMP/hept-source" --runtime-source "$NATIVE_TEMP/source" --runtime-artifacts "$NATIVE_TEMP/artifacts"
+      - name: Build and pack Hept plugin closure
+        shell: bash
+        run: |
+          corepack pnpm --dir "$NATIVE_TEMP/hept-source" install --no-frozen-lockfile --network-concurrency=4 --child-concurrency=1
+          corepack pnpm --dir "$NATIVE_TEMP/hept-source" build
+          for package in packages/contracts packages/client integrations/openclaw; do
+            corepack pnpm --dir "$NATIVE_TEMP/hept-source/$package" pack --pack-destination "$NATIVE_TEMP/sdk"
+          done
+      - name: Install the actual runtime and both plugin packages
+        run: |
+          node .github/scripts/openclaw-local-packages.mjs --phase install --temporary "$NATIVE_TEMP" --hept "$NATIVE_TEMP/hept-source" --runtime-source "$NATIVE_TEMP/source" --runtime-artifacts "$NATIVE_TEMP/artifacts"
+          npm install --prefix "$NATIVE_TEMP/installed" --no-audit --no-fund
+      - name: Initialize an empty Nous installation without acquiring PostgreSQL
+        id: bootstrap
+        shell: bash
+        run: |
+          node "$NATIVE_TEMP/installed/node_modules/@nous-wave/cli/dist/main.js" --instance "$NATIVE_TEMP/nous-empty" --json init --database-mode managed > "$NATIVE_TEMP/bootstrap-result.json"
+          node --input-type=module <<'JS'
+          import {readFile,appendFile} from 'node:fs/promises';
+          const value=JSON.parse(await readFile(`${process.env.NATIVE_TEMP}/bootstrap-result.json`,'utf8'));
+          if(!value.initialized || value.subjectStarted || value.modelCalled)throw new Error('The smoke requires an empty offline installation');
+          await appendFile(process.env.GITHUB_OUTPUT,`installation_id=${value.installationId}\n`);
+          JS
+      - name: Run the installed Gateway with the real plugin packages and zero model calls
+        env:
+          NOUS_INSTALLATION_ID: ${{ steps.bootstrap.outputs.installation_id }}
+        run: >-
+          node integrations/openclaw/smoke-upstream.mjs
+          --root "$NATIVE_TEMP/installed/node_modules/openclaw"
+          --nous-plugin "$NATIVE_TEMP/installed/node_modules/@nous-wave/openclaw"
+          --hept-plugin "$NATIVE_TEMP/installed/node_modules/@heptalogos/openclaw"
+          --nous-installation-id "$NOUS_INSTALLATION_ID"
+          --output "$NATIVE_TEMP/gateway-smoke"
+      - name: Preserve packages and safe runtime evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: openclaw-runtime-linux-x64
+          path: |
+            ${{ runner.temp }}/native-runtime/artifacts/
+            ${{ runner.temp }}/native-runtime/sdk/
+            ${{ runner.temp }}/native-runtime/local-package-installation.json
+            ${{ runner.temp }}/native-runtime/gateway-smoke/gateway-*/result.json
+            ${{ runner.temp }}/native-runtime/gateway-smoke/gateway-*/gateway.log
+            integrations/openclaw/upstream/source.json
+          if-no-files-found: error
+          retention-days: 14

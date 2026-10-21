@@ -20,7 +20,10 @@
   },
   "version": "0.2.0-infrastructure.1",
   "files": [
-    "dist"
+    "dist",
+    "LICENSE",
+    "NOTICE",
+    "LICENSES"
   ],
   "devDependencies": {
     "@types/qs": "6.15.1"
@@ -31,5 +34,6 @@
       "default": "./dist/host.js"
     },
     "./run": "./dist/main.js"
-  }
+  },
+  "license": "AGPL-3.0-only"
 }

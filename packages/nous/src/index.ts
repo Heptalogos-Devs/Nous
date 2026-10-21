@@ -42,7 +42,7 @@ import {
   createNetwork,
   networkSettingsModule,
 } from '@nous-wave/platform/network';
-import { createPrompts, promptsDefinition } from '@nous-wave/platform/prompts';
+import { createPrompts, promptsDefinition,createPromptDataLifecycle } from '@nous-wave/platform/prompts';
 import {
   dbosSystemDatabaseURL,
   describeDurableWorkflow,
@@ -56,7 +56,14 @@ import {
   telemetryDefinition,
 } from '@nous-wave/platform/telemetry';
 import { canonicalize } from 'json-canonicalize';
+import type {Kysely} from 'kysely';
 import { createCognition } from './cognition/index.js';
+import {createData,dataSettingsModule,type Data} from './data/index.js';
+import {createIdentityData} from './identity/data.js';
+import {createMaterialData} from './materials/data.js';
+import {createKnowledgeData} from './knowledge/data.js';
+import {createCognitionData} from './cognition/data.js';
+import {createResourceData} from './resources/data.js';
 import { createIdentity } from './identity/index.js';
 import { createKnowledge } from './knowledge/index.js';
 import { createOrganization } from './knowledge/organization.js';
@@ -162,6 +169,7 @@ export interface Nous {
   settings: ReturnType<typeof createProductSettings>;
   secrets: SecretRegistry;
   prompts: ReturnType<typeof createPrompts>;
+  data:Data&{export:Durable<Data['export']>;import:Durable<Data['import']>;purge:Durable<Data['purge']>};
   network: ReturnType<typeof createNetwork>;
   testModel: ReturnType<typeof createModelTest>;
   models: Models;
@@ -224,6 +232,13 @@ export async function createNous(options: NousOptions): Promise<Nous> {
     const baseURL =
       bootstrap.listen.publicBaseURL ??
       `http://${bootstrap.listen.host}:${bootstrap.listen.port}`;
+    const sourceGuard:NonNullable<import('@nous-wave/platform/credentials').AuthenticationOptions['sourceGuard']>=async(ctx,operation,target,client)=>{
+      if(['subjects.create','data.import','data.purge','operations.read','operations.cancel'].includes(operation))return;
+      const targets=target?('product'in target?[target]:target.kind==='object'?target.refs:target.kind==='workspace'?[target.workspaceRef]:[]):[];
+      const ids=new Set([ctx.subjectId,...targets.map(value=>value.subjectId)].filter((value):value is string=>Boolean(value)));
+      const db:Kysely<any>=client??database.db;
+      for(const id of ids){let query=db.selectFrom('subjects').select('id').where('id','=',id);if(client?.isTransaction)query=query.forKeyShare();if(!await query.executeTakeFirst())throw problem('subjects.not_found','not_found','主体不存在');}
+    };
     const authentication = await createAuthentication({
       pool: database.pool,
       db: database.db,
@@ -234,9 +249,9 @@ export async function createNous(options: NousOptions): Promise<Nous> {
       trustedOrigins: bootstrap.listen.trustedOrigins,
       operationPolicy,
       issuancePolicy: issuancePolicy(installationId),
+      sourceGuard,
     });
-    const authorize: Storage['authorize'] = (ctx, operation, target, db) =>
-      authentication.authorize(ctx, operation, target, db);
+    const authorize: Storage['authorize'] = (ctx, operation, target, db) => authentication.authorize(ctx,operation,target,db);
     const store: Storage = {
       authorize,
       installationId,
@@ -245,20 +260,21 @@ export async function createNous(options: NousOptions): Promise<Nous> {
           ? database.datasource.client
           : database.db;
       },
-      transaction: async (fn) => {
+      transaction: async (fn,options) => {
         if (DBOS.isInTransaction()) return fn(database.datasource.client);
         if (DBOS.isInWorkflow())
-          return database.datasource.runTransaction(() =>
-            fn(database.datasource.client),
+          return database.datasource.runTransaction(
+            () => fn(database.datasource.client),options,
           );
-        return database.db.transaction().execute(fn);
+        const tx=database.db.transaction();
+        return (options?.isolationLevel?tx.setIsolationLevel(options.isolationLevel):tx).execute(fn);
       },
     };
     const owner = <T extends object>(extra: T): Storage & T =>
       Object.assign(Object.create(store), extra);
     const subjects = createIdentity(store);
     let knowledge: ReturnType<typeof createKnowledge>;
-    const { materials, encounters, sourceRepository, recordings } =
+    const { materials, encounters, sourceRepository, recordings,artifactBlobs } =
       createMaterials(
         owner({
           blobPath: paths.blob,
@@ -278,6 +294,7 @@ export async function createNous(options: NousOptions): Promise<Nous> {
     const settings = createProductSettings(store, {
       extraModules: [
         telemetryDefinition,
+        dataSettingsModule,
         timeSettingsModule,
         ...modelSettingsModules(roleCatalog, officialProviderAdapters).modules,
         promptsDefinition,
@@ -701,6 +718,20 @@ export async function createNous(options: NousOptions): Promise<Nous> {
       );
     }
     const prepare = cognition.contexts.prepare;
+    const materialData=createMaterialData(store,{blobRoot:paths.blob,read:materials.read,resolve:knowledge.sources.resolve,externalHolds:modelData.holdsBlob});
+    const promptData=createPromptDataLifecycle(owner({product:'nous' as const}),{overrideRoot:join(paths.config,'prompts')});
+    const data=createData(store,{
+      productVersion:version,processBootId:telemetry.processBootId,tempRoot:paths.temp,settings,models,
+      owners:[createIdentityData(store),materialData,createKnowledgeData(store,{read:knowledge.read}),createCognitionData(store,{resolve:knowledge.sources.resolve}),createResourceData(store),promptData,time.data],
+      materials:materialData,artifactBlobs,
+      async deleteAuthorities(ctx,subjectId,db){await secrets.deleteSubject(ctx,{subjectId},db);await authentication.deleteSubject(ctx,{subjectId},db);},
+      cleanupAuthorities:subjectId=>secrets.cleanupSubject({subjectId}),
+      cleanupPrompts:promptData.cleanupSubject,
+      removeServing:retrieval.removeSubject,
+      rebuildServing:ctx=>{if(options.embedding)throw problem('retrieval.explicit_rebuild_required','unavailable','向量索引须显式选择预算后重建');return retrieval.rebuild(ctx);},
+    });
+    lifetime.defer(()=>data.close());
+    const exportData=workflow('data.export',data.export),importData=workflow('data.import',data.import),purgeData=workflow('data.purge',data.purge);
     const createKnowledgeOperation = async (
       ctx: CallContext,
       input: Parameters<typeof knowledge.create>[1],
@@ -942,6 +973,7 @@ export async function createNous(options: NousOptions): Promise<Nous> {
       settings,
       secrets,
       prompts,
+      data:{...data,export:exportData,import:importData,purge:purgeData},
       network,
       testModel,
       nativeModels: nativeHost.facade,

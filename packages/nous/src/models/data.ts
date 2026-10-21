@@ -19,7 +19,7 @@ export function createModelData(options: {
   materials: ReturnType<typeof createMaterials>['materials'];
   recordings: ReturnType<typeof createMaterials>['recordings'];
   validateSources: ModelData['validateSources'];
-}): ModelData {
+}): ModelData&{holdsBlob(digest:string):Promise<boolean>} {
   const bytes = (value: unknown) =>
     serialize(
       value && typeof value === 'object'
@@ -81,6 +81,7 @@ export function createModelData(options: {
     return [artifactRef(id, direction)];
   }
   return {
+    async holdsBlob(digest){return Boolean(await options.db.selectFrom('modelArtifacts').select('invocationId').where('digest','=',digest).limit(1).executeTakeFirst());},
     validateSources: options.validateSources,
     saveInput: (ctx, input) =>
       ctx.subjectId

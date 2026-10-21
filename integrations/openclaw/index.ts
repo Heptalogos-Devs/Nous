@@ -1,6 +1,6 @@
-import { createHash, randomBytes } from "node:crypto";
+import { createHash } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { Configuration, DefaultApi, problemMiddleware } from "@nous-wave/client";
+import { Configuration, MaterialsApi, ContextsApi, EncountersApi, ModelInvocationsApi, problemMiddleware } from "@nous-wave/client";
 import { ContextPrepareSchema, ContextViewSchema } from "@nous-wave/contracts/cognition";
 import { sameRef, RefSchema, ConsumerSchema, type Ref } from "@nous-wave/contracts/common";
 import {
@@ -149,9 +149,7 @@ export interface NativePluginApi {
 const now = readReal;
 const textOf = (value: unknown): string =>
   typeof value === "string" ? value : JSON.stringify(value);
-const traceHeader = (event: { runId: string; traceparent?: string }) =>
-  event.traceparent ??
-  `00-${createHash("sha256").update(event.runId).digest("hex").slice(0, 32)}-${randomBytes(8).toString("hex")}-01`;
+const traceHeader = (event: { traceparent?: string }) => event.traceparent;
 function latestNativePortion(messages: unknown[]): string {
   const previousResponse = messages.findLastIndex(
     (message) =>
@@ -184,10 +182,12 @@ function currentNativeMessages(messages: unknown[]): unknown[] {
 }
 
 export function registerNousCognition(api: NativePluginApi) {
+  if(typeof api.runtime.modelConfig?.readPublishedModelBinding!=="function")throw new Error("Nous requires the source-built OpenClaw published model metadata API");
   if (api.runtime.modelContext?.version !== 1)
     throw new Error("Nous requires the source-built OpenClaw model context handoff");
   const config = configSchema.parse(api.pluginConfig);
-  function sdk(
+  function sdk<T>(
+    Api: new (configuration: Configuration) => T,
     event: { callId: string; runId: string; traceparent?: string },
     current: z.infer<typeof directBinding>,
     suffix: string,
@@ -197,7 +197,7 @@ export function registerNousCognition(api: NativePluginApi) {
     if (!config.baseURL) throw new Error("Nous Host endpoint is not configured");
     const token = process.env[config.tokenEnv];
     if (!token) throw new Error("Nous Host credential is unavailable");
-    return new DefaultApi(
+    return new Api(
       new Configuration({
         basePath: config.baseURL,
         accessToken: token,
@@ -205,7 +205,7 @@ export function registerNousCognition(api: NativePluginApi) {
         headers: {
           Authorization: `Bearer ${token}`,
           "idempotency-key": submissionId,
-          traceparent: traceHeader(event),
+          ...(event.traceparent ? { traceparent: event.traceparent } : {}),
           "x-purpose": current.purpose,
           "x-audience": JSON.stringify(current.audience),
           ...(!billing ? { "x-delegation-authority": current.authorityRef } : {}),
@@ -398,24 +398,23 @@ export function registerNousCognition(api: NativePluginApi) {
         traceparent: traceHeader(event),
       });
     }
-    const client = sdk(event, current, suffix, false, submissionId);
     if (operation === "capture")
-      return client.materialsCapture({
+      return sdk(MaterialsApi,event,current,suffix,false,submissionId).materialsCapture({
         subjectId: current.subjectId,
         materialCaptureInput: MaterialCaptureSchema.parse(input),
       });
     if (operation === "prepare")
-      return client.contextsPrepare({
+      return sdk(ContextsApi,event,current,suffix,false,submissionId).contextsPrepare({
         subjectId: current.subjectId,
         contextPrepareInput: ContextPrepareSchema.parse(input),
       });
     if (operation === "accept")
-      return client.encountersAccept({
+      return sdk(EncountersApi,event,current,suffix,false,submissionId).encountersAccept({
         subjectId: current.subjectId,
         encounterAcceptInput: EncounterAcceptSchema.parse(input),
       });
     const image = z.strictObject({ data: z.string(), mediaType: z.string() }).parse(input);
-    return client.materialsUploadBlob(
+    return sdk(MaterialsApi,event,current,suffix,false,submissionId).materialsUploadBlob(
       {
         subjectId: current.subjectId,
         body: new Blob([Uint8Array.from(Buffer.from(image.data, "base64"))], {
@@ -610,7 +609,7 @@ export function registerNousCognition(api: NativePluginApi) {
     const modelResourceId =
       config.modelResources[`${facts.prepared.provider}/${facts.prepared.modelId}`];
     if (!modelResourceId) throw new Error("Actual native model resource is not mapped");
-    await sdk(event, current, "invocation", true).modelInvocationsPrepare({
+    await sdk(ModelInvocationsApi,event, current, "invocation", true).modelInvocationsPrepare({
       subjectId: current.subjectId,
       nativeInvocationPrepareInput: NativeInvocationPrepareSchema.parse({
         invocationId,
@@ -627,7 +626,7 @@ export function registerNousCognition(api: NativePluginApi) {
         inputRefs: facts.prepared.inputRefs,
       }),
     });
-    await sdk(event, current, "dispatch", true).modelInvocationsDispatch({
+    await sdk(ModelInvocationsApi,event, current, "dispatch", true).modelInvocationsDispatch({
       subjectId: current.subjectId,
       id: invocationId,
       modelInvocationsDispatchRequest: {},
@@ -646,7 +645,7 @@ export function registerNousCognition(api: NativePluginApi) {
       if (event.outcome === "not_sent") {
         if (current.billing === "nous") {
           try {
-            await sdk(event, current, "completion", true).modelInvocationsComplete({
+            await sdk(ModelInvocationsApi,event, current, "completion", true).modelInvocationsComplete({
               subjectId: current.subjectId,
               id: invocationId,
               nativeInvocationCompletionInput: NativeInvocationCompletionSchema.parse({
@@ -698,12 +697,24 @@ export function registerNousCognition(api: NativePluginApi) {
       let modelCall: z.infer<typeof ModelCallViewSchema> | undefined;
       if (current.billing === "nous")
         modelCall = ModelCallViewSchema.parse(
-          await sdk(event, current, "completion:fact", true).modelInvocationsComplete({
+          await sdk(ModelInvocationsApi,event, current, "completion:fact", true).modelInvocationsComplete({
             subjectId: current.subjectId,
             id: invocationId,
             nativeInvocationCompletionInput: completion,
           }),
         );
+      if (facts.terminal?.outputRef) {
+        const saved = RefSchema.parse(facts.terminal.outputRef);
+        if (saved.product !== "nous" || saved.installationId !== config.installationId || saved.subjectId !== view.subjectId || saved.kind !== "Material")
+          throw new Error("Native accepted output is outside its prepared Nous context");
+        const selectedOutputRefs = (facts.terminal.selectedOutputRefs ?? []).map(value => RefSchema.parse(value));
+        const { selector: _savedSelector, ...base } = saved;
+        for (const ref of selectedOutputRefs) {
+          const { selector: _selectedSelector, ...selectedBase } = ref;
+          if (!sameRef(selectedBase, base)) throw new Error("Native selected output is outside its accepted material");
+        }
+        return { outputRef: saved, selectedOutputRefs };
+      }
       const outputOrigin = source(event, view.subjectId, "output");
       const { modelContext: _nativeMetadata, ...providerOutput } = event.output;
       const output = MaterialViewSchema.parse(
@@ -792,7 +803,7 @@ export function registerNousCognition(api: NativePluginApi) {
         throw new Error("Native output reference is not durably accepted");
       const usage = facts.terminal.usage,
         invocationId = invocationIdentity(facts);
-      await sdk(event, current, "completion:adoption", true).modelInvocationsComplete({
+      await sdk(ModelInvocationsApi,event, current, "completion:adoption", true).modelInvocationsComplete({
         subjectId: current.subjectId,
         id: invocationId,
         nativeInvocationCompletionInput: NativeInvocationCompletionSchema.parse({

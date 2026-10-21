@@ -30,6 +30,7 @@ import type { Kysely } from 'kysely';
 import { v7 as uuid } from 'uuid';
 import { z } from 'zod';
 import type { TimeDatabase } from './migration.js';
+import { createTimeData } from './data.js';
 
 const json = <T>(value: T) => sql<T>`${JSON.stringify(value)}::jsonb`;
 export interface TimeStore {
@@ -341,6 +342,7 @@ export function createTime(store: TimeStore, options: TimeOptions) {
     };
   }
   const time = {
+    data: createTimeData(store),
     sources: {
       async list(ctx: CallContext) {
         await store.authorize(ctx, 'clock.references.read');

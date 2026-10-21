@@ -3,6 +3,10 @@
   "version": "0.2.0-infrastructure.1",
   "type": "module",
   "exports": {
+    "./data": {
+      "types": "./dist/data.d.ts",
+      "default": "./dist/data.js"
+    },
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"

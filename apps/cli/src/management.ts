@@ -1,10 +1,22 @@
 import { readFile } from 'node:fs/promises';
-import type { DefaultApi } from '@nous-wave/client';
+import {
+  CostsApi,
+  ModelsApi,
+  NetworkApi,
+  PromptsApi,
+  ProvidersApi,
+  SettingsApi,
+  TimeApi,
+  type Configuration,
+} from '@nous-wave/client';
 import type { Command } from 'commander';
 
 export function addManagementCommands(options: {
   cli: Command;
-  withClient<T>(use: (client: DefaultApi) => Promise<T>): Promise<T>;
+  withClient<A, T>(
+    Api: new (configuration: Configuration) => A,
+    use: (client: A) => Promise<T>,
+  ): Promise<T>;
   show(value: unknown): void;
 }) {
   const { cli, withClient, show } = options;
@@ -15,20 +27,24 @@ export function addManagementCommands(options: {
     .description('模型提供方与连接配置');
   providers
     .command('list')
-    .action(async () => show(await withClient((c) => c.providersList())));
+    .action(async () =>
+      show(await withClient(ProvidersApi, (c) => c.providersList())),
+    );
   providers
     .command('read <id>')
     .option('--revision <number>', '历史修订', Number)
     .action(async (id, o) =>
       show(
-        await withClient((c) => c.providersRead({ id, revision: o.revision })),
+        await withClient(ProvidersApi, (c) =>
+          c.providersRead({ id, revision: o.revision }),
+        ),
       ),
     );
   providers
     .command('create <file>')
     .action(async (file) =>
       show(
-        await withClient(async (c) =>
+        await withClient(ProvidersApi, async (c) =>
           c.providersCreate({ providersCreateRequest: await input(file) }),
         ),
       ),
@@ -37,14 +53,14 @@ export function addManagementCommands(options: {
     .command('update <id> <file>')
     .action(async (id, file) =>
       show(
-        await withClient(async (c) =>
+        await withClient(ProvidersApi, async (c) =>
           c.providersUpdate({ id, providersCreateRequest: await input(file) }),
         ),
       ),
     );
   providers.command('delete <id> <revision>').action(async (id, revision) =>
     show(
-      await withClient((c) =>
+      await withClient(ProvidersApi, (c) =>
         c.providersDelete({
           id,
           providersDeleteRequest: { expectedRevision: Number(revision) },
@@ -56,18 +72,24 @@ export function addManagementCommands(options: {
   const models = cli.command('models').description('具体模型、能力与真实调用');
   models
     .command('list')
-    .action(async () => show(await withClient((c) => c.modelsList())));
+    .action(async () =>
+      show(await withClient(ModelsApi, (c) => c.modelsList())),
+    );
   models
     .command('read <id>')
     .option('--revision <number>', '历史修订', Number)
     .action(async (id, o) =>
-      show(await withClient((c) => c.modelsRead({ id, revision: o.revision }))),
+      show(
+        await withClient(ModelsApi, (c) =>
+          c.modelsRead({ id, revision: o.revision }),
+        ),
+      ),
     );
   models
     .command('create <file>')
     .action(async (file) =>
       show(
-        await withClient(async (c) =>
+        await withClient(ModelsApi, async (c) =>
           c.modelsCreate({ modelsCreateRequest: await input(file) }),
         ),
       ),
@@ -76,14 +98,14 @@ export function addManagementCommands(options: {
     .command('update <id> <file>')
     .action(async (id, file) =>
       show(
-        await withClient(async (c) =>
+        await withClient(ModelsApi, async (c) =>
           c.modelsUpdate({ id, modelsCreateRequest: await input(file) }),
         ),
       ),
     );
   models.command('delete <id> <revision>').action(async (id, revision) =>
     show(
-      await withClient((c) =>
+      await withClient(ModelsApi, (c) =>
         c.modelsDelete({
           id,
           providersDeleteRequest: { expectedRevision: Number(revision) },
@@ -96,7 +118,7 @@ export function addManagementCommands(options: {
     .description('按正式角色配置调用一次模型；使用当前权限和预算')
     .action(async (file) =>
       show(
-        await withClient(async (c) =>
+        await withClient(ModelsApi, async (c) =>
           c.modelsTest({ modelTestBodyInput: await input(file) }),
         ),
       ),
@@ -108,7 +130,7 @@ export function addManagementCommands(options: {
     .command('list [file]')
     .action(async (file) =>
       show(
-        await withClient(async (c) =>
+        await withClient(ModelsApi, async (c) =>
           c.modelsRoles(file ? await input(file) : {}),
         ),
       ),
@@ -120,7 +142,7 @@ export function addManagementCommands(options: {
     .command('list [file]')
     .action(async (file) =>
       show(
-        await withClient(async (c) =>
+        await withClient(ModelsApi, async (c) =>
           c.modelsInvocationsList(file ? await input(file) : {}),
         ),
       ),
@@ -130,7 +152,7 @@ export function addManagementCommands(options: {
     .option('--subject <id>', '限定主体；安装级调用留空')
     .action(async (id, o) =>
       show(
-        await withClient((c) =>
+        await withClient(ModelsApi, (c) =>
           c.modelsInvocationsRead({ id, subjectId: o.subject }),
         ),
       ),
@@ -139,7 +161,7 @@ export function addManagementCommands(options: {
     .command('reconcile <file>')
     .action(async (file) =>
       show(
-        await withClient(async (c) =>
+        await withClient(ModelsApi, async (c) =>
           c.modelsReconcile({ modelsReconcileRequest: await input(file) }),
         ),
       ),
@@ -149,7 +171,7 @@ export function addManagementCommands(options: {
     .description('按主体、角色或状态读取实际usage与计价事实')
     .action(async (file) =>
       show(
-        await withClient(async (c) =>
+        await withClient(CostsApi, async (c) =>
           c.costsRead(file ? await input(file) : {}),
         ),
       ),
@@ -162,7 +184,7 @@ export function addManagementCommands(options: {
     .command('catalog [file]')
     .action(async (file) =>
       show(
-        await withClient(async (c) =>
+        await withClient(PromptsApi, async (c) =>
           c.promptsDescribe(file ? await input(file) : {}),
         ),
       ),
@@ -170,23 +192,35 @@ export function addManagementCommands(options: {
   prompts
     .command('list <file>')
     .action(async (file) =>
-      show(await withClient(async (c) => c.promptsList(await input(file)))),
+      show(
+        await withClient(PromptsApi, async (c) =>
+          c.promptsList(await input(file)),
+        ),
+      ),
     );
   prompts
     .command('read <file>')
     .action(async (file) =>
-      show(await withClient(async (c) => c.promptsRead(await input(file)))),
+      show(
+        await withClient(PromptsApi, async (c) =>
+          c.promptsRead(await input(file)),
+        ),
+      ),
     );
   prompts
     .command('history <file>')
     .action(async (file) =>
-      show(await withClient(async (c) => c.promptsHistory(await input(file)))),
+      show(
+        await withClient(PromptsApi, async (c) =>
+          c.promptsHistory(await input(file)),
+        ),
+      ),
     );
   prompts
     .command('save <file>')
     .action(async (file) =>
       show(
-        await withClient(async (c) =>
+        await withClient(PromptsApi, async (c) =>
           c.promptsSave({ promptSaveRequestInput: await input(file) }),
         ),
       ),
@@ -195,7 +229,7 @@ export function addManagementCommands(options: {
     .command('activate <file>')
     .action(async (file) =>
       show(
-        await withClient(async (c) =>
+        await withClient(PromptsApi, async (c) =>
           c.promptsActivate({ promptActivateRequestInput: await input(file) }),
         ),
       ),
@@ -204,7 +238,7 @@ export function addManagementCommands(options: {
     .command('reset <file>')
     .action(async (file) =>
       show(
-        await withClient(async (c) =>
+        await withClient(PromptsApi, async (c) =>
           c.promptsReset({ promptResetRequestInput: await input(file) }),
         ),
       ),
@@ -213,7 +247,7 @@ export function addManagementCommands(options: {
     .command('preview <file>')
     .action(async (file) =>
       show(
-        await withClient(async (c) =>
+        await withClient(PromptsApi, async (c) =>
           c.promptsPreview({ promptPreviewRequestInput: await input(file) }),
         ),
       ),
@@ -222,7 +256,7 @@ export function addManagementCommands(options: {
     .command('snapshot <file>')
     .action(async (file) =>
       show(
-        await withClient(async (c) =>
+        await withClient(PromptsApi, async (c) =>
           c.promptsSnapshot({ promptSnapshotRequestInput: await input(file) }),
         ),
       ),
@@ -231,7 +265,7 @@ export function addManagementCommands(options: {
     .command('render <file>')
     .action(async (file) =>
       show(
-        await withClient(async (c) =>
+        await withClient(PromptsApi, async (c) =>
           c.promptsRender({ promptRenderRequestInput: await input(file) }),
         ),
       ),
@@ -244,7 +278,7 @@ export function addManagementCommands(options: {
     .command('inspect [file]')
     .action(async (file) =>
       show(
-        await withClient(async (c) =>
+        await withClient(NetworkApi, async (c) =>
           c.networkInspect(file ? await input(file) : {}),
         ),
       ),
@@ -253,7 +287,7 @@ export function addManagementCommands(options: {
     .command('probe <file>')
     .action(async (file) =>
       show(
-        await withClient(async (c) =>
+        await withClient(NetworkApi, async (c) =>
           c.networkProbe({ networkProbeRequest: await input(file) }),
         ),
       ),
@@ -263,7 +297,7 @@ export function addManagementCommands(options: {
     .command('read [file]')
     .action(async (file) =>
       show(
-        await withClient(async (c) =>
+        await withClient(TimeApi, async (c) =>
           c.timeRead({ timeReadRequest: file ? await input(file) : {} }),
         ),
       ),
@@ -272,7 +306,7 @@ export function addManagementCommands(options: {
     .command('capture <file>')
     .action(async (file) =>
       show(
-        await withClient(async (c) =>
+        await withClient(TimeApi, async (c) =>
           c.timeCapture({ timeCaptureBodyInput: await input(file) }),
         ),
       ),
@@ -280,7 +314,9 @@ export function addManagementCommands(options: {
   time
     .command('receipt <subject> <id>')
     .action(async (subjectId, id) =>
-      show(await withClient((c) => c.timeReadCapture({ subjectId, id }))),
+      show(
+        await withClient(TimeApi, (c) => c.timeReadCapture({ subjectId, id })),
+      ),
     );
 
   const settings = cli
@@ -288,27 +324,41 @@ export function addManagementCommands(options: {
     .description('模块配置、修订与实际生效状态');
   settings
     .command('schema')
-    .action(async () => show(await withClient((c) => c.settingsDescribe({}))));
+    .action(async () =>
+      show(await withClient(SettingsApi, (c) => c.settingsDescribe({}))),
+    );
   settings
     .command('read <file>')
     .action(async (file) =>
-      show(await withClient(async (c) => c.settingsRead(await input(file)))),
+      show(
+        await withClient(SettingsApi, async (c) =>
+          c.settingsRead(await input(file)),
+        ),
+      ),
     );
   settings
     .command('history <file>')
     .action(async (file) =>
-      show(await withClient(async (c) => c.settingsHistory(await input(file)))),
+      show(
+        await withClient(SettingsApi, async (c) =>
+          c.settingsHistory(await input(file)),
+        ),
+      ),
     );
   settings
     .command('applied <file>')
     .action(async (file) =>
-      show(await withClient(async (c) => c.settingsApplied(await input(file)))),
+      show(
+        await withClient(SettingsApi, async (c) =>
+          c.settingsApplied(await input(file)),
+        ),
+      ),
     );
   settings
     .command('update <file>')
     .action(async (file) =>
       show(
-        await withClient(async (c) =>
+        await withClient(SettingsApi, async (c) =>
           c.settingsUpdate({ settingsChangeInput: await input(file) }),
         ),
       ),
@@ -317,7 +367,7 @@ export function addManagementCommands(options: {
     .command('reset <file>')
     .action(async (file) =>
       show(
-        await withClient(async (c) =>
+        await withClient(SettingsApi, async (c) =>
           c.settingsReset({ settingsResetInput: await input(file) }),
         ),
       ),
@@ -326,7 +376,7 @@ export function addManagementCommands(options: {
     .command('restore <file>')
     .action(async (file) =>
       show(
-        await withClient(async (c) =>
+        await withClient(SettingsApi, async (c) =>
           c.settingsRestore({ settingsRestoreInput: await input(file) }),
         ),
       ),
