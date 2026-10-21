@@ -2975,6 +2975,41 @@ index b96b30de..90aca1ba 100644
        fromHook,
      };
    }
+diff --git a/src/channels/message/types.ts b/src/channels/message/types.ts
+index 9253c259..af8b27ed 100644
+--- a/src/channels/message/types.ts
++++ b/src/channels/message/types.ts
+@@ -158,6 +158,12 @@ export type MessageSendContext<TPayload = unknown, TSendResult = unknown> = {
+   fail(error: unknown): Promise<void>;
+ };
+ 
++/** One exact admitted platform call; the adapter retains this scope through its own I/O. */
++export type PhysicalMessageSendAttempt = {
++  readonly callId: string;
++  accepted(input: { platformMessageId?: string; action?: string }): Promise<void>;
++};
++
+ export type ChannelMessageSendTextContext<TConfig = OpenClawConfig> = {
+   cfg: TConfig;
+   to: string;
+@@ -172,6 +178,8 @@ export type ChannelMessageSendTextContext<TConfig = OpenClawConfig> = {
+   /** Live cancellation signal; check before each physical send and after awaited preparation. */
+   signal?: AbortSignal;
+   gatewayClientScopes?: readonly string[];
++  /** @internal Original durable intent identity, retained through batch fanout and recovery. */
++  deliveryIntentId?: string;
+   /** @internal Opaque durable intent id for exact provider-side send reconciliation. */
+   deliveryQueueId?: string;
+   /** @internal Stable platform-send index within one durable payload. */
+@@ -182,6 +190,8 @@ export type ChannelMessageSendTextContext<TConfig = OpenClawConfig> = {
+   preparedMessageId?: string;
+   /** @internal Refresh durable timing before recipient-visible or finalizing platform I/O. */
+   onPlatformSendDispatch?: () => Promise<void>;
++  /** Admits this physical call after asynchronous authority checks; not proof of dispatch. */
++  beginPhysicalSend?: () => Promise<PhysicalMessageSendAttempt>;
+   /** @internal Synchronously fence custody after refresh and immediately before provider I/O. */
+   assertDirectAdapterHandoff?: () => void;
+   /** @internal Report each completed platform sub-send before another fallible step. */
 diff --git a/src/config/sessions/session-accessor.sqlite-archive-read.ts b/src/config/sessions/session-accessor.sqlite-archive-read.ts
 index ad2255e8..aea3ddd7 100644
 --- a/src/config/sessions/session-accessor.sqlite-archive-read.ts
@@ -4043,6 +4078,475 @@ index b39ac70e..b492f549 100644
    "sessions.get",
    "sessions.preview",
    "sessions.branches.list",
+diff --git a/src/infra/delivery-queue-sqlite.kernel.ts b/src/infra/delivery-queue-sqlite.kernel.ts
+index 774017df..66cedcab 100644
+--- a/src/infra/delivery-queue-sqlite.kernel.ts
++++ b/src/infra/delivery-queue-sqlite.kernel.ts
+@@ -269,7 +269,7 @@ export function completeLoadedDeliveryQueueEntryInDatabase(
+     throw new Error(`Invalid bounded delivery completion retention: ${queueName}/${id}`);
+   }
+   const tombstone = projectDeliveryQueueTerminalEntry(
+-    { id, retryCount: 0 },
++    { id, retryCount: 0, physicalReceipt: current?.physicalReceipt },
+     now,
+     "completed",
+     retention,
+diff --git a/src/infra/delivery-queue-sqlite.types.ts b/src/infra/delivery-queue-sqlite.types.ts
+index f94e9112..48ae2bdc 100644
+--- a/src/infra/delivery-queue-sqlite.types.ts
++++ b/src/infra/delivery-queue-sqlite.types.ts
+@@ -82,6 +82,22 @@ export function inferDeliveryQueueFailureRetention(
+   return durable || ambiguous ? "permanent" : undefined;
+ }
+ 
++/** Physical provider evidence retained with the original durable intent. No payload or credentials. */
++export type DeliveryPhysicalReceipt = {
++  channel: string;
++  to: string;
++  accountId?: string;
++  calls: Array<{
++    index: number;
++    callId: string;
++    admittedAt: number;
++    payloadIndex?: number;
++    platformMessageId?: string;
++    acceptedAt?: number;
++    action?: string;
++  }>;
++};
++
+ /** Persisted queue entry fields common to all delivery queue payloads. */
+ export type DeliveryQueueEntryState = {
+   id: string;
+@@ -102,6 +118,7 @@ export type DeliveryQueueEntryState = {
+   /** UUID fencing one platform attempt even when clock timestamps collide. */
+   platformSendAttemptId?: string;
+   platformSendStartedAt?: number;
++  physicalReceipt?: DeliveryPhysicalReceipt;
+   recoveryState?: string;
+ };
+ 
+@@ -130,7 +147,7 @@ export function hasLiveDeliveryQueueClaim(
+ 
+ /** Strip a terminal queue row to the producer policy needed for admission. */
+ export function projectDeliveryQueueTerminalEntry(
+-  entry: Pick<DeliveryQueueEntryState, "id" | "retryCount">,
++  entry: Pick<DeliveryQueueEntryState, "id" | "retryCount" | "physicalReceipt">,
+   terminalAt: number,
+   terminal: "completed" | "failed",
+   completionRetention?: DeliveryQueueCompletionRetention,
+@@ -149,6 +166,7 @@ export function projectDeliveryQueueTerminalEntry(
+     retryCount,
+     ...(terminal === "completed" ? { acknowledgedAt: terminalAt } : { failedAt: terminalAt }),
+     ...(completionRetention ? { completionRetention } : {}),
++    ...(entry.physicalReceipt ? { physicalReceipt: entry.physicalReceipt } : {}),
+     ...(recoveryState ? { recoveryState } : {}),
+   };
+ }
+diff --git a/src/infra/delivery-queue.worker.ts b/src/infra/delivery-queue.worker.ts
+index 47e7c8cb..dc940667 100644
+--- a/src/infra/delivery-queue.worker.ts
++++ b/src/infra/delivery-queue.worker.ts
+@@ -81,6 +81,8 @@ type OutboundDeliveryMutation = {
+   | { kind: "fail" | "fail-before-send" | "fail-after-send"; error: string }
+   | { kind: "start" | "dispatch"; route?: { replyToId?: string | null } }
+   | { kind: "unknown" }
++  | { kind: "physical-admission"; callId: string; payloadIndex?: number }
++  | { kind: "physical-accepted"; callId: string; messageId?: string; action?: string }
+ );
+ 
+ function claimPreparation(
+@@ -151,6 +153,59 @@ function mutateOutbound(database: OpenClawStateDatabase, input: OutboundDelivery
+   const update = (entry: QueuedDelivery): QueuedDelivery => {
+     const now = Date.now();
+     switch (input.kind) {
++      case "physical-admission": {
++        if (!entry.completionRetention) return entry;
++        const receipt = entry.physicalReceipt ?? {
++          channel: entry.channel,
++          to: entry.to,
++          accountId: entry.accountId,
++          calls: [],
++        };
++        return {
++          ...entry,
++          physicalReceipt: {
++            ...receipt,
++            calls: [
++              ...receipt.calls,
++              {
++                index: receipt.calls.length,
++                callId: input.callId,
++                admittedAt: now,
++                payloadIndex: input.payloadIndex,
++              },
++            ],
++          },
++        };
++      }
++      case "physical-accepted": {
++        if (!entry.completionRetention) return entry;
++        const receipt = entry.physicalReceipt;
++        if (!receipt) throw new Error(`Physical delivery was not admitted: ${input.id}`);
++        const call = receipt.calls.find((candidate) => candidate.callId === input.callId);
++        if (!call) throw new Error(`Physical delivery receipt has no admitted call: ${input.id}`);
++        if (call.acceptedAt !== undefined) {
++          if (call.platformMessageId === input.messageId && call.action === input.action)
++            return entry;
++          throw new Error(`Physical delivery receipt changed: ${input.id}/${input.callId}`);
++        }
++        return {
++          ...entry,
++          physicalReceipt: {
++            ...receipt,
++            calls: receipt.calls.map((candidate) =>
++              candidate.callId === input.callId
++                ? {
++                    ...candidate,
++                    platformMessageId: input.messageId,
++                    action: input.action,
++                    acceptedAt: now,
++                  }
++                : candidate,
++            ),
++          },
++        };
++      }
++
+       case "fail":
+       case "fail-before-send":
+       case "fail-after-send":
+@@ -462,6 +517,12 @@ export const deliveryQueueOperations = {
+   ) => executePendingDeliveryFailure(input, { database: open(), ...stateOptions() }),
+   "deliveryQueue.findIntentOwners": readOperation(findDeliveryIntentOwnersInDatabase),
+   "deliveryQueue.inspectReceipt": readOperation(inspectDeliveryQueueReceiptInDatabase),
++  "deliveryQueue.inspectPhysicalReceipt": readOperation((database, input: { id: string }) => {
++    const [owner] = findDeliveryIntentOwnersInDatabase(database, { ids: [input.id] });
++    if (!owner || owner.namespace !== "prepared") return null;
++    const entry = loadDeliveryQueueEntryInDatabase(database, owner.queueName, input.id, "all");
++    return entry ? { status: owner.status, receipt: entry.physicalReceipt ?? null } : null;
++  }),
+   "deliveryQueue.countFailed": (_input: undefined, { open }) =>
+     countFailedDeliveryQueueEntriesInDatabase(open()),
+   "deliveryQueue.countPending": (input: { queueNames: string[] }, { open }) =>
+diff --git a/src/infra/outbound/deliver-channel.ts b/src/infra/outbound/deliver-channel.ts
+index fdaa49d5..3b31c272 100644
+--- a/src/infra/outbound/deliver-channel.ts
++++ b/src/infra/outbound/deliver-channel.ts
+@@ -210,10 +210,12 @@ function createPluginHandler(
+     mediaReadFile: params.mediaAccess?.readFile,
+     gatewayClientScopes: params.gatewayClientScopes,
+     conversationReadOrigin: params.conversationReadOrigin,
++    deliveryIntentId: params.deliveryIntentId,
+     deliveryQueueId: params.deliveryQueueId,
+     preparedMessageId: params.preparedMessageId,
+     assertDirectAdapterHandoff: params.assertDirectAdapterHandoff,
+     onPlatformSendDispatch: params.onPlatformSendDispatch,
++    beginPhysicalSend: params.beginPhysicalSend,
+     onDeliveryResult: params.onDeliveryResult,
+   };
+   const sendText = outbound?.sendText;
+diff --git a/src/infra/outbound/deliver-contracts.ts b/src/infra/outbound/deliver-contracts.ts
+index 61171a98..689d4c2e 100644
+--- a/src/infra/outbound/deliver-contracts.ts
++++ b/src/infra/outbound/deliver-contracts.ts
+@@ -158,6 +158,8 @@ type OutboundChannelContext = {
+   gatewayClientScopes?: readonly string[];
+   conversationReadOrigin?: "delegated" | "direct-operator";
+   /** @internal Opaque durable intent id forwarded to provider reconciliation hooks. */
++  /** Stable producer intent; adapter authority may revalidate its current owner. */
++  deliveryIntentId?: string;
+   deliveryQueueId?: string;
+   /** @internal Channel-valid id reserved before a correlated conversation turn is sent. */
+   preparedMessageId?: string;
+@@ -171,6 +173,9 @@ type OutboundChannelContext = {
+   assertDirectAdapterHandoff?: () => void;
+   /** @internal Refresh durable timing before recipient-visible or finalizing platform I/O. */
+   onPlatformSendDispatch?: () => Promise<void>;
++  beginPhysicalSend?: () => Promise<
++    import("../../channels/message/types.js").PhysicalMessageSendAttempt
++  >;
+   /** @internal Runs after each identified platform result, before further fallible work. */
+   onDeliveryResult?: (result: OutboundDeliveryResult) => Promise<void> | void;
+ };
+@@ -203,8 +208,6 @@ export type DeliverOutboundPayloadsCoreParams = OutboundChannelContext & {
+   onMessageSentEvent?: (event: MessageSentEvent, sourceIndex: number) => void;
+   /** @internal Persists ambiguous-send state immediately before platform I/O. */
+   onPlatformSendStart?: (route: PlatformSendRoute, sourceIndex?: number) => Promise<void>;
+-  /** @internal Stable producer id used to make queue creation idempotent across crashes. */
+-  deliveryIntentId?: string;
+   /** @internal Retain the completed receipt for a producer-owned replayable intent. */
+   completionRetention?: DeliveryQueueCompletionRetention;
+   /** @internal Producer-specific durable recovery attempt budget. */
+diff --git a/src/infra/outbound/deliver-core.ts b/src/infra/outbound/deliver-core.ts
+index 584b9581..61e117a0 100644
+--- a/src/infra/outbound/deliver-core.ts
++++ b/src/infra/outbound/deliver-core.ts
+@@ -81,6 +81,7 @@ export async function deliverOutboundPayloadsCore(
+       deps,
+       accountId,
+       abortSignal,
++      deliveryIntentId: params.deliveryIntentId,
+       deliveryQueueId: params.deliveryQueueId,
+       onPlatformSendStart: async (route) => {
+         // Channel handlers can fan one logical payload into multiple sends.
+@@ -92,6 +93,7 @@ export async function deliverOutboundPayloadsCore(
+       withDirectAdapterHandoff: params.withDirectAdapterHandoff,
+       assertDirectAdapterHandoff: params.assertDirectAdapterHandoff,
+       onPlatformSendDispatch: params.onPlatformSendDispatch,
++      beginPhysicalSend: params.beginPhysicalSend,
+       onDeliveryResult: reportIdentifiedDeliveryResult,
+     });
+   const baseHandler = await createHandler([]);
+diff --git a/src/infra/outbound/deliver-queue-execute.ts b/src/infra/outbound/deliver-queue-execute.ts
+index a7f92d90..37291f6b 100644
+--- a/src/infra/outbound/deliver-queue-execute.ts
++++ b/src/infra/outbound/deliver-queue-execute.ts
+@@ -4,6 +4,7 @@ import { assertSessionWriterDeliveryAuthorized } from "../../auto-reply/reply/se
+ import { createSubsystemLogger } from "../../logging/subsystem.js";
+ import { isProvenDeliveryNotSentError } from "../delivery-recovery.shared.js";
+ import { formatErrorMessage } from "../errors.js";
++import { generateSecureUuid } from "../secure-random.js";
+ import { throwIfAborted } from "./abort.js";
+ import type {
+   InternalDeliverOutboundPayloadsParams,
+@@ -39,6 +40,7 @@ import {
+   failDeliveryAfterPlatformSend,
+   failDeliveryBeforePlatformSend,
+   markDeliveryPlatformSendDispatched,
++  recordDeliveryPhysicalCall,
+ } from "./delivery-queue-storage.js";
+ import { createOutboundMessageSentEmitter, type MessageSentEvent } from "./message-sent-hook.js";
+ import {
+@@ -224,6 +226,7 @@ export async function deliverOutboundPayloadsWithQueueCleanup(
+     ...(exactReconciliationRequired && params.payloads.length === 1
+       ? { deliveryQueueId: platformQueueId }
+       : { deliveryQueueId: undefined }),
++    deliveryIntentId: platformQueueId,
+     requiredUnknownSendReconciliation: exactReconciliationRequired,
+     onPlatformSendStart: async (route, sourceIndex) => {
+       throwIfAborted(params.abortSignal);
+@@ -313,6 +316,37 @@ export async function deliverOutboundPayloadsWithQueueCleanup(
+         platformDispatchedPayloads.add(platformSendSourceIndex);
+       }
+     },
++    beginPhysicalSend: platformQueueId
++      ? async () => {
++          await wrappedParams.onPlatformSendDispatch?.();
++          wrappedParams.assertDirectAdapterHandoff?.();
++          const callId = generateSecureUuid();
++          await recordDeliveryPhysicalCall(
++            platformQueueId,
++            { kind: "physical-admission", callId, payloadIndex: platformSendSourceIndex },
++            platformQueueStateDir,
++            producerClaimId || undefined,
++            params.deliveryQueueStateContext,
++          );
++          return {
++            callId,
++            accepted: async (ack) => {
++              await recordDeliveryPhysicalCall(
++                platformQueueId,
++                {
++                  kind: "physical-accepted",
++                  callId,
++                  messageId: ack.platformMessageId,
++                  action: ack.action,
++                },
++                platformQueueStateDir,
++                producerClaimId || undefined,
++                params.deliveryQueueStateContext,
++              );
++            },
++          };
++        }
++      : undefined,
+     onError: (err: unknown, payload: NormalizedOutboundPayload) => {
+       throwIfProducerLeaseLost();
+       params.onError?.(err, payload);
+diff --git a/src/infra/outbound/delivery-queue-entry-state.test.ts b/src/infra/outbound/delivery-queue-entry-state.test.ts
+index 799af292..dfded92b 100644
+--- a/src/infra/outbound/delivery-queue-entry-state.test.ts
++++ b/src/infra/outbound/delivery-queue-entry-state.test.ts
+@@ -3,7 +3,11 @@ import path from "node:path";
+ import { setImmediate } from "node:timers/promises";
+ import { afterEach, describe, expect, it, vi } from "vitest";
+ import type { ChannelOutboundAdapter } from "../../channels/plugins/types.public.js";
+-import { sendDurableMessageBatch } from "../../plugin-sdk/channel-outbound.js";
++import {
++  sendDurableMessageBatch,
++  inspectDurableMessageBatch,
++  createMessageReceiptFromOutboundResults,
++} from "../../plugin-sdk/channel-outbound.js";
+ import { drainPendingDeliveries } from "../../plugin-sdk/delivery-queue-runtime.js";
+ import { resetPluginRuntimeStateForTest, setActivePluginRegistry } from "../../plugins/runtime.js";
+ import {
+@@ -50,6 +54,81 @@ describe("delivery queue entry state", () => {
+     vi.unstubAllEnvs();
+   });
+ 
++  it("retains each acknowledged physical send with its original native intent", async () => {
++    vi.stubEnv("OPENCLAW_STATE_DIR", fixtures.tmpDir());
++    const sends: string[] = [];
++    installSender(async (ctx) => {
++      expect(ctx.deliveryIntentId).toBe("retained-physical");
++      const attempt = await ctx.beginPhysicalSend!();
++      ctx.assertDirectAdapterHandoff?.();
++      const messageId = `actual-${sends.push(ctx.text)}`;
++      await attempt.accepted({ platformMessageId: messageId, action: "send_text" });
++      await ctx.onDeliveryResult?.({
++        messageId,
++        receipt: createMessageReceiptFromOutboundResults({ results: [{ messageId }] }),
++      });
++      return { channel: "reef", messageId };
++    });
++    const input = {
++      cfg: {},
++      channel: "reef" as const,
++      to: target,
++      payloads: [{ text: "first" }, { text: "second" }],
++      deliveryIntentId: "retained-physical",
++      completionRetention: "permanent" as const,
++      durability: "required" as const,
++    };
++    await expect(sendDurableMessageBatch(input)).resolves.toMatchObject({ status: "sent" });
++    const view = await inspectDurableMessageBatch({
++      id: input.deliveryIntentId,
++      channel: "reef",
++      to: target,
++    });
++    expect(view).toMatchObject({
++      status: "completed",
++      receipt: {
++        channel: "reef",
++        to: target,
++        calls: [
++          { index: 0, payloadIndex: 0, platformMessageId: "actual-1" },
++          { index: 1, payloadIndex: 1, platformMessageId: "actual-2" },
++        ],
++      },
++    });
++    expect(view?.receipt?.calls.every((call) => call.acceptedAt! >= call.admittedAt)).toBe(true);
++    await expect(
++      inspectDurableMessageBatch({ id: input.deliveryIntentId, channel: "reef", to: "other" }),
++    ).rejects.toThrow("scope changed");
++    await sendDurableMessageBatch(input);
++    expect(sends).toEqual(["first", "second"]);
++
++    // One adapter can fan out concurrently and complete in the opposite order.
++    installSender(async (ctx) => {
++      const upload = await ctx.beginPhysicalSend!();
++      const message = await ctx.beginPhysicalSend!();
++      expect(upload.callId).not.toBe(message.callId);
++      await message.accepted({ platformMessageId: "late-second", action: "send_text" });
++      await upload.accepted({ action: "upload_file" });
++      await message.accepted({ platformMessageId: "late-second", action: "send_text" });
++      return { channel: "reef", messageId: "late-second" };
++    });
++    await sendDurableMessageBatch({
++      ...input,
++      deliveryIntentId: "out-of-order",
++      payloads: [{ text: "fanout" }],
++    });
++    const ordered = await inspectDurableMessageBatch({
++      id: "out-of-order",
++      channel: "reef",
++      to: target,
++    });
++    expect(ordered?.receipt?.calls).toEqual([
++      expect.objectContaining({ index: 0, action: "upload_file", acceptedAt: expect.any(Number) }),
++      expect.objectContaining({ index: 1, action: "send_text", platformMessageId: "late-second" }),
++    ]);
++    expect(ordered?.receipt?.calls[0]?.platformMessageId).toBeUndefined();
++  });
++
+   it.each(["sdk", "public-delivery"] as const)(
+     "ignores a recovery-only root and private context for a fresh %s send",
+     async (entrypoint) => {
+diff --git a/src/infra/outbound/delivery-queue-storage.ts b/src/infra/outbound/delivery-queue-storage.ts
+index 7ea70dae..f5f37e1e 100644
+--- a/src/infra/outbound/delivery-queue-storage.ts
++++ b/src/infra/outbound/delivery-queue-storage.ts
+@@ -342,6 +342,37 @@ export const markDeliveryPlatformSendAttemptStarted: (
+ ) => Promise<void> = deliveryPlatformSendRecorder("start");
+ export const markDeliveryPlatformSendDispatched = deliveryPlatformSendRecorder("dispatch");
+ 
++/** The exact current producer records one provider call before and after platform I/O. */
++export async function recordDeliveryPhysicalCall(
++  id: string,
++  outcome:
++    | { kind: "physical-admission"; callId: string; payloadIndex?: number }
++    | { kind: "physical-accepted"; callId: string; messageId?: string; action?: string },
++  stateDir?: string,
++  expectedPlatformSendAttemptId?: string | null,
++  context?: DeliveryQueueStateContext,
++): Promise<void> {
++  await executeDeliveryQueueOperation(context, stateDir, {
++    type: "deliveryQueue.mutateOutbound",
++    input: { id, expectedPlatformSendAttemptId, ...outcome },
++  });
++}
++
++/** Reads only provider evidence from the native queue, including retained terminal rows. */
++export async function inspectDeliveryPhysicalReceipt(
++  id: string,
++  stateDir?: string,
++  context?: DeliveryQueueStateContext,
++) {
++  const captured = context ?? captureDeliveryQueueStateContext(stateDir);
++  const view = await executeDeliveryQueueOperation(captured, stateDir, {
++    type: "deliveryQueue.inspectPhysicalReceipt",
++    input: { id },
++  });
++  captured.workerContext.admission.assertCurrent();
++  return view;
++}
++
+ export async function markDeliveryPlatformOutcomeUnknown(
+   id: string,
+   stateDir?: string,
+diff --git a/src/plugin-sdk/channel-outbound.ts b/src/plugin-sdk/channel-outbound.ts
+index f0e6ca8c..912a516d 100644
+--- a/src/plugin-sdk/channel-outbound.ts
++++ b/src/plugin-sdk/channel-outbound.ts
+@@ -249,6 +249,7 @@ export type {
+   MessageReceiptPart,
+   MessageReceiptPartKind,
+   MessageReceiptSourceResult,
++  PhysicalMessageSendAttempt,
+ } from "../channels/message/types.js";
+ 
+ async function loadChannelDurableDeliveryModule(): Promise<ChannelDurableDeliveryModule> {
+@@ -276,6 +277,29 @@ export const deliverStructuredInboundReplyWithMessageSendContext: ChannelDurable
+     return await mod.deliverStructuredInboundReplyWithMessageSendContextCore(...args);
+   };
+ 
++/** Inspect actual saved provider evidence without replaying or adopting an uncertain send. */
++export async function inspectDurableMessageBatch(input: {
++  id: string;
++  channel: string;
++  to: string;
++  accountId?: string;
++}): Promise<{
++  status: "pending" | "completed" | "failed";
++  receipt: import("../infra/delivery-queue-sqlite.types.js").DeliveryPhysicalReceipt | null;
++} | null> {
++  const { inspectDeliveryPhysicalReceipt } =
++    await import("../infra/outbound/delivery-queue-storage.js");
++  const view = await inspectDeliveryPhysicalReceipt(input.id);
++  if (
++    view?.receipt &&
++    (view.receipt.channel !== input.channel ||
++      view.receipt.to !== input.to ||
++      view.receipt.accountId !== input.accountId)
++  )
++    throw new Error("Durable message receipt scope changed");
++  return view;
++}
++
+ /** Sends a durable message batch without eager-loading channel message runtime internals. */
+ export async function sendDurableMessageBatch(
+   /**
 diff --git a/src/plugins/hook-agent-context.types.ts b/src/plugins/hook-agent-context.types.ts
 index 1f6099db..11f7ae8b 100644
 --- a/src/plugins/hook-agent-context.types.ts
