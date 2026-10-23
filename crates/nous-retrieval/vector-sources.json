@@ -1,0 +1,32 @@
+{
+  "sources": [
+    {
+      "repository": "https://github.com/Heptalogos-Devs/Nous-Wave",
+      "commit": "412b062082afb75ccfae4c3f69fc606d3e3cc862",
+      "license": "Apache-2.0",
+      "sha256": {
+        "crates/retrieval/src/vcp/index.rs": "6df0de8e63154896fc7a97e8b22b08c0d6cc77bfe6170c6b709a2798bdadeef5",
+        "crates/retrieval/src/mechanisms/dense.rs": "af045fc2d2f074e5b8248c35764f53b55530f6b506894c92c7f998ff434d7f11"
+      },
+      "adaptation": "src/vector.rs: immutable candidate/Tag pair, native filtered search, F32 vector readback"
+    },
+    {
+      "repository": "https://github.com/unum-cloud/USearch",
+      "version": "2.26.2",
+      "commit": "f91fe5bc000222aa1af6e91daf78c2bb20b0c90e",
+      "license": "Apache-2.0",
+      "dependency": {
+        "default_features": false,
+        "metric": "Cos",
+        "scalar": "F32",
+        "index": "native HNSW"
+      },
+      "published_source_sha256": {
+        "rust/lib.rs": "7d5eafd002c9ce39ac3548b6aefdb060df8df166d9335360bf92ea721db3c6bb",
+        "rust/lib.cpp": "311b589e95754046f9072230a2ea4a1f5f437f7cb3cdb0b8309b547305d3905b",
+        "build.rs": "92753d20d50bf982c3ebf111db88c5c92e5d2d7c4cad6f19e33f65b58d5c4cb6"
+      },
+      "adaptation": "Published dependency; checked actual native search/filter/header/save/load/get APIs; no engine source copied"
+    }
+  ]
+}

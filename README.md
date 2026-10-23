@@ -99,7 +99,7 @@ while (-not $page.result.complete) {
 
 检查器承接上游 v1/v2 的知识、完整状态和图像包，核对成员校验和、语义摘要、记录引用与内容数量；默认显示 manifest、库存数量和所需领域能力。完整包的事务安装、导出与卸载，以及图谱、Episode、画像和 A-Memorix 兼容 API 按 [合同承接表](docs/首批开发任务.md#当前-a-memorix-合同承接) 继续实施。
 
-[nous-vcp](crates/nous-vcp/README.md) 提供完整 VCP 计算族和旧版数值基线，包含 AGS 几何、传播资产、Pyramid、Sense、双场、RiverMemo、DTSC 与 Thinking。开发者可用 `cargo run -p nous-vcp --example native_pipeline` 重放完整计算和来源映射；真实向量、ANN、资产发布与查询权威的接线继续推进。
+[nous-vcp](crates/nous-vcp/README.md) 提供完整 VCP 计算族和旧版数值基线，包含 AGS 几何、传播资产、Pyramid、Sense、双场、RiverMemo、DTSC 与 Thinking。开发者可用 `cargo run -p nous-vcp --example native_pipeline` 重放完整计算和来源映射。retrieval 已提供真实 USearch 候选/Tag 双索引、成组发布和重启加载；真实模型向量、图资产与统一查询操作继续接入。
 
 停服后按 [模型资源配置](docs/基建实施规划.md#配置授权与模型资源) 设置 `instance.toml` 与凭据引用，再启动服务。配置只保存 SecretRef，密钥内容放入实例的受保护 `credentials` 目录。另开终端执行：
 
@@ -136,4 +136,4 @@ python ./scripts/bundle-smoke.py (Join-Path $env:CARGO_TARGET_DIR 'debug/nous.ex
 python ./scripts/m1-smoke.py (Join-Path $env:CARGO_TARGET_DIR 'debug/nous.exe') --instance ./temp/instances/m1-dev
 ```
 
-恢复试验要求使用新的数据库文件。`smoke.py` 验证基础协议与作用域；`m2-smoke.py` 在无模型配置的新实例中验证导入、生命周期、维护分页、作用域、清除和重启，覆盖 CLI、HTTP、MCP HTTP 与 stdio；`bundle-smoke.py` 用三类真实导出包验证离线检查、完整库存与错误包处理。当前 Windows 的 61 项工作区测试、fmt、clippy 和构建通过，M2 与 bundle 的真实使用检查分别通过 31 项和 10 项，模型调用数为 0。`m1-smoke.py` 从模板复制配置与必要模型凭据到独立开发实例，验证真实形成、两种 MCP、调用中强杀恢复、单次采纳与快照恢复。运行产物与报告集中于 `temp`。Windows 与 Ubuntu 工作流位于 [CI](.github/workflows/ci.yml)，日常 CI 使用本地受控模型协议响应。
+恢复试验要求使用新的数据库文件。`smoke.py` 验证基础协议与作用域；`m2-smoke.py` 在无模型配置的新实例中验证导入、生命周期、维护分页、作用域、清除和重启，覆盖 CLI、HTTP、MCP HTTP 与 stdio；`bundle-smoke.py` 用三类真实导出包验证离线检查、完整库存与错误包处理。当前 Windows 的 66 项工作区测试、fmt、clippy 和构建通过，M2 与 bundle 的真实使用检查分别通过 31 项和 10 项，模型调用数为 0。`m1-smoke.py` 从模板复制配置与必要模型凭据到独立开发实例，验证真实形成、两种 MCP、调用中强杀恢复、单次采纳与快照恢复。运行产物与报告集中于 `temp`。Windows 与 Ubuntu 工作流位于 [CI](.github/workflows/ci.yml)，日常 CI 使用本地受控模型协议响应。

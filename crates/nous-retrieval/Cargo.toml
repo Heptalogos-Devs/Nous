@@ -5,15 +5,16 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+nous-vcp.workspace = true
 anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
+tempfile.workspace = true
 tantivy.workspace = true
 tantivy-jieba = "0.21"
 uuid.workspace = true
-
-[dev-dependencies]
-tempfile.workspace = true
+usearch.workspace = true
 
 [lints]
 workspace = true

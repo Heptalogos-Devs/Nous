@@ -16,3 +16,43 @@ with Tantivy's lowercase and long-token filters. The bridge was inspected from
 the local upstream checkout at commit
 `882dcc4304e415879b9e0169ff439a4806a2bf8e`. Its tokenizer API 0.7 matches Tantivy
 0.27; no tokenizer implementation is copied into Nous.
+
+## Frozen vector generations
+
+`src/vector.rs` adapts the candidate/Tag pair, unique F32 cosine configuration,
+native filtered search and vector readback from the previous Nous
+`crates/retrieval/src/vcp/index.rs` and `mechanisms/dense.rs` at the same
+`412b062082afb75ccfae4c3f69fc606d3e3cc862` commit. The retained Apache-2.0
+license above covers these sources. [vector-sources.json](vector-sources.json)
+records their original hashes and the inspected USearch sources.
+
+USearch 2.26.2 is a published native HNSW dependency, pinned to source commit
+`f91fe5bc000222aa1af6e91daf78c2bb20b0c90e`. Its actual Rust bindings, C++ bridge,
+header metadata, save/load/get and ANN/filter APIs were inspected from the local
+clone and matched against the published crate. Default NumKong SIMD is disabled;
+the same native HNSW index runs with its built-in cosine implementation.
+
+The caller supplies one authorized `VectorSnapshot`, including space, producer,
+generation, signature, watermark, dimension and stable numeric-ID/source-key
+mapping for each lane.
+Numeric IDs and source keys are unique within each lane. Candidate and Tag lanes
+have independent mappings, including when their numeric IDs overlap.
+`VectorGeneration::build` creates the pair in memory;
+`create` stages both files and a checksum manifest, then publishes one complete
+directory. `open` requires the exact expected snapshot and validates identity,
+both file hashes, native headers, counts, IDs and every stored vector once.
+Read-only search uses native ANN; additional candidate restrictions are applied
+inside native filtered search before Top-K. An empty restriction returns no hits.
+`TagSearch` returns cosine similarity as `1 - distance`.
+
+Vectors and queries are normalized in f64 before F32 indexing to keep cosine
+arithmetic finite; zero vectors, non-finite values and wrong dimensions are
+rejected. The manifest binds both original and normalized vector hashes. Source
+keys remain opaque caller-owned references. No business storage or model calls
+are introduced here.
+
+The isolated adapter tests passed on Windows: real dual-lane ANN, restricted and
+empty searches, save/reopen, invalid inputs, incomplete files, checksum changes,
+snapshot mismatches and native readback rejecting substituted IDs. All-target
+Clippy with `-D warnings` also passed. Root workspace and serving integration are
+managed by the application owner.

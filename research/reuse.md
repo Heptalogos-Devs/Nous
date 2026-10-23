@@ -26,6 +26,8 @@ A-Memorix 的 RequestContext、身份解析端口、Namespace 授权、检索范
 
 VCP 与旧 Nous reference 已复制改编到 `crates/nous-vcp`：AGS/几何、传播资产、Sense/Pipeline/Projection、完整 RiverMemo/Thinking，以及独立旧 reference/DTSC 基线。实际原文件映射、固定 commit、原始哈希、许可与修改边界集中于 [组件来源记录](../crates/nous-vcp/UPSTREAM.md)。PR #56 与高级产品能力继续按 [能力续接清单](../docs/能力续接清单.md) 推进。
 
+真实向量 adapter `crates/nous-retrieval/src/vector.rs` 从旧 Nous 的 VCP 双索引及 DenseGeneration 复制改编，直接使用 USearch 2.26.2 原生 HNSW。合法快照、代际与外部身份映射由调用方供给；双索引和元数据完整发布，加载时校验后原生搜索。实际 API、来源、锁定源码和独立测试结果集中于 [检索组件来源记录](../crates/nous-retrieval/UPSTREAM.md#frozen-vector-generations)。
+
 ## 后续复制改编边界
 
 [能力续接清单](../docs/能力续接清单.md) 是后续来源与实施映射的维护位置：master 的媒体派生、结构化领域、managed binding/ProjectionPlanner、NousQL、reference/Native/DTSC；PR #56 的持久 ContextView、来源与独立采纳组；VCP 的 AGS、传播资产、Pyramid/Sense/Fusion/双场、RiverMemo/Thinking 共同续接。已有数值基线与当前上游算法分别保留版本、原始输入、expected 和来源，研发先做本地提取与验证。
