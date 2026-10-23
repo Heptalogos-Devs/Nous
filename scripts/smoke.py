@@ -1,182 +1,142 @@
-"""Exercise the real CLI, HTTP and MCP against an isolated local instance."""
-from __future__ import annotations
+"""Exercise the current CLI, HTTP and MCP without a model resource.
 
+Usage: python scripts/smoke.py <nous-binary>
+The executable copy, fresh instances, datasets, logs, backups and report stay in temp/.
+"""
+from __future__ import annotations
 import argparse
 import json
-import os
 from pathlib import Path
-import queue
-import subprocess
-import tempfile
-import threading
-import time
-import urllib.error
-import urllib.request
+import sys
+sys.dont_write_bytecode = True
+from smoke_runtime import Runner, Mcp, require
 
 
-def main() -> None:
+def exercise(runner):
+    instance = runner.root / "primary"
+    require(runner.cli(instance, "init")["state"] == "initialized", "instance did not initialize")
+    require(runner.cli(instance, "init")["state"] == "already_initialized", "initialization did not replay")
+    require(runner.cli(instance, "status")["state"] == "stopped", "fresh host is already running")
+    require(runner.cli(instance, "config", "validate")["valid"], "bootstrap snapshot is invalid")
+    readiness = runner.cli(instance, "model", "check")
+    require(all(role["state"] == "waiting_configuration" for role in readiness.values()), "fresh instance has model configuration")
+    base = runner.start(instance)
+    namespace_receipt = runner.cli(instance, "namespace", "create", "Protocol research", "--operation-id", "namespace")
+    namespace = namespace_receipt["result"]["id"]
+    require(runner.http(instance, base, "/api/namespaces", {"operation_id": "namespace", "name": "Protocol research"})[1] == namespace_receipt,
+            "HTTP and CLI did not share an operation receipt")
+    subject = runner.cli(instance, "subject", "create", "--namespace", namespace, "--name", "reader")["result"]["id"]
+    first = {"external_id": "coast", "text": "晨星风速站记录海风 NW-COAST-314。", "tags": ["气象"],
+             "source": "smoke:coast", "metadata": {"station": "晨星"}, "structured": {"entities": ["风速站"]}}
+    second = {"external_id": "rain", "text": "山谷测雨站每周五校准 NW-RAIN-315。", "source": "smoke:rain"}
+    content = "\n".join((json.dumps(first, ensure_ascii=False), "not JSON", json.dumps(second, ensure_ascii=False), json.dumps(first, ensure_ascii=False)))
+    dataset = runner.runtime / "records.jsonl"
+    dataset.write_text(content, encoding="utf-8")
+    import_args = ("import", "text", "--namespace", namespace, "--subject", subject, "--file", str(dataset), "--format", "jsonl", "--source", "smoke:records")
+    imported = runner.cli(instance, *import_args)
+    require((imported["accepted"], imported["replayed"], imported["rejected"]) == (2, 1, 1), "partial import outcomes changed")
+    first_result, survivor_result = (imported["items"][index]["receipt"]["result"] for index in (0, 2))
+    memory_id, survivor = first_result["memory_id"], survivor_result["memory_id"]
+    request = {"namespace_id": namespace, "subject_id": subject, "format": "jsonl", "content": content, "source": "smoke:records"}
+    replay = runner.http(instance, base, "/api/imports/text", request)[1]
+    require((replay["accepted"], replay["replayed"], replay["rejected"]) == (0, 3, 1), "external identities did not replay")
+    changed = dict(first, text="same identity, changed payload")
+    rejected = runner.http(instance, base, "/api/imports/text", dict(request, content=json.dumps(changed)))[1]
+    require(rejected["items"][0]["error"]["code"] == "Conflict", "changed external payload did not conflict")
+    memory = runner.cli(instance, "memory", "get", memory_id)
+    require(memory["origin"] == "imported" and memory["model_call_id"] is None, "import invented a model producer")
+    source = runner.cli(instance, "memory", "source", memory_id)
+    require(source["observation"]["kind"] == "import" and source["model_call"] is None, "import claims an actual contact or model call")
+    require(source["material"]["text"] == first["text"] and source["material"]["details"]["structured"] == first["structured"], "source changed imported content")
+    mcp = Mcp(runner, instance, base)
+    names = {tool["name"] for tool in mcp.send("tools/list")["tools"]}
+    require({"query", "cognition", "import_text", "job_cancel", "memory_source"} <= names, "current MCP tools are missing")
+    found = mcp.tool("query", {"subject_id": subject, "text": "晨星", "kinds": ["memory"]})
+    require(memory_id in {hit["reference"]["id"] for hit in found["hits"]}, "import is not immediately queryable")
+    unit = {"content": "灯塔站负责夜间巡检。", "entities": ["灯塔站"], "relations": [{"subject": "灯塔站", "predicate": "负责", "object": "巡检"}]}
+    mature = mcp.tool("import_text", dict(request, format="json", content=json.dumps({"paragraphs": [unit]}, ensure_ascii=False), source="smoke:paragraph"))
+    mature_id = mature["items"][0]["receipt"]["result"]["memory_id"]
+    require(mcp.tool("memory_source", {"memory_id": mature_id})["material"]["details"]["structured"]["payload"] == unit, "structured import lost its payload")
+    observation = runner.cli(instance, "observation", "record", "--subject", subject, "--material", first_result["material_id"])["result"]
+    require(observation["kind"] == "contact", "explicit observation did not record actual contact")
+    formation = runner.cli(instance, "memory", "form", "--subject", subject, "--observation", observation["id"], "--operation-id", "waiting-formation")
+    job_id = formation["job_ids"][0]
+    runner.wait_job(instance, base, job_id, state="waiting", wait_kind="configuration")
+    cancel = runner.http(instance, base, f"/api/jobs/{job_id}/cancel", {"operation_id": "cancel-formation"})[1]
+    require(runner.cli(instance, "job", "cancel", job_id, "--operation-id", "cancel-formation") == cancel, "CLI cancellation did not replay")
+    require(mcp.tool("job_cancel", {"job_id": job_id, "operation_id": "cancel-formation"}) == cancel, "MCP cancellation differs")
+    require(mcp.tool("job_get", {"job_id": job_id})["job"]["state"] == "cancelled", "task did not cancel")
+    runner.report["checks"].update(initialization=True, shared_receipts=True, partial_import=True, source_preserved=True,
+                                    external_id_conflict=True, typed_query=True, mcp_http=True, contact_identity=True, cancel_all_protocols=True)
+    mcp.close()
+    runner.stop(instance)
+    scoped_file = Path(runner.cli(instance, "token", "create", "--namespace", namespace, "--subject", subject, "--name", "reader")["token_file"])
+    base = runner.start(instance)
+    denied = runner.http(instance, base, "/api/status", token_file=scoped_file, expected=403)[1]
+    require(denied["error"]["code"] == "Forbidden", "subject token read administrator status")
+    require(runner.cli(instance, "memory", "source", survivor, token_file=scoped_file)["material"]["text"] == second["text"], "scoped source read failed")
+    with_stdio = Mcp(runner, instance, base, stdio=True)
+    try:
+        require(with_stdio.tool("query", {"subject_id": subject, "text": "NW-RAIN"})["hits"], "stdio query omitted imported cognition")
+        require(with_stdio.tool("memory_source", {"memory_id": survivor})["memory"]["id"] == survivor, "stdio source selected another identity")
+    finally:
+        with_stdio.close()
+    memory = runner.cli(instance, "memory", "get", memory_id)
+    frozen = runner.cli(instance, "memory", "change", memory_id, "--action", "freeze", "--expected-revision", str(memory["revision"]), "--operation-id", "freeze")["result"]
+    require(not runner.cli(instance, "query", "--subject", subject, "晨星")["hits"], "frozen memory remains active")
+    require(runner.cli(instance, "query", "--subject", subject, "--include-inactive", "晨星")["hits"], "inactive retrieval omitted retained memory")
+    restored = runner.cli(instance, "memory", "change", memory_id, "--action", "restore", "--expected-revision", str(frozen["revision"]), "--operation-id", "restore")["result"]
+    trashed = runner.cli(instance, "memory", "change", memory_id, "--action", "trash", "--expected-revision", str(restored["revision"]), "--operation-id", "trash")["result"]
+    require(memory_id in {item["id"] for item in runner.cli(instance, "memory", "recycle-bin", "--subject", subject)}, "trash did not enter recycle bin")
+    runner.cli(instance, "memory", "change", memory_id, "--action", "purge", "--force", "--expected-revision", str(trashed["revision"]), "--operation-id", "purge")
+    require(not runner.cli(instance, "query", "--subject", subject, "--include-inactive", "晨星")["hits"], "purged cognition remains queryable")
+    require(runner.cli(instance, "source", "read", first_result["material_id"])["text"] == first["text"], "purge changed original material")
+    current = runner.cli(instance, "memory", "get", survivor)
+    reference = f"memory:{survivor}@{current['revision']}"
+    exact = runner.cli(instance, "query", "--subject", subject, "--reference", reference)
+    require(exact["hits"][0]["reference"] == {"kind": "memory", "id": survivor, "revision": current["revision"]}, "CLI exact reference changed identity")
+    backup = runner.cli(instance, "backup", "create")["backup"]
+    require(runner.call_count(instance) == 0, "unconfigured workflow created a model call")
+    runner.stop(instance)
+    base = runner.start(instance)
+    require(runner.cli(instance, "job", "get", job_id)["job"]["state"] == "cancelled", "restart resumed cancelled work")
+    require(runner.cli(instance, "query", "--subject", subject, "--reference", reference)["hits"][0]["object"] == current, "restart changed exact cognition")
+    old_token = runner.token(instance)
+    runner.stop(instance)
+    target = runner.root / "restored"
+    runner.cli(target, "backup", "restore", backup)
+    require(runner.token(target) != old_token, "restore reused administrator credentials")
+    base = runner.start(target)
+    require(runner.cli(target, "query", "--subject", subject, "--reference", reference)["hits"][0]["object"] == current, "snapshot restore changed cognition")
+    require(runner.cli(target, "memory", "source", survivor)["material"]["text"] == second["text"], "snapshot restore changed original source")
+    runner.stop(target)
+    fixtures = Path(__file__).resolve().parents[1] / "crates/nous-app/tests/fixtures/bundles"
+    offline = runner.root / "offline"
+    for filename in ("v1-knowledge-1.0.0.amembundle", "v1-full-1.0.0.amembundle", "v2-images-1.0.0.amembundle"):
+        inspected = runner.cli(offline, "import", "bundle", "inspect", "--file", str(fixtures / filename), "--details")
+        require(inspected["knowledge"]["docs"] and inspected["members"], "offline bundle inspection lost records")
+    require(not offline.exists(), "offline bundle inspection initialized an instance")
+    runner.report["checks"].update(scoped_token=True, mcp_stdio=True, lifecycle=True, purge=True, restart=True,
+                                    snapshot_restore=True, new_administrator=True, offline_bundles=True)
+    runner.report.update(namespace_id=namespace, subject_id=subject, cancelled_job=job_id, surviving_reference=reference, model_calls=0)
+
+
+def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("binary", type=Path)
     args = parser.parse_args()
-    binary = args.binary.resolve(strict=True)
-    project = Path(__file__).resolve().parents[1]
-    parent = project / "temp" / "instances" / "smoke"
-    parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(dir=parent) as directory:
-        root = Path(directory)
-        logs = project / "temp" / "runtime" / "smoke.log"
-        logs.parent.mkdir(parents=True, exist_ok=True)
-        instance = root / "instance"
-        flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
-
-        def cli(*command: str, url: str | None = None, token_file: Path | None = None):
-            arguments = [str(binary), "--instance", str(instance)]
-            if url:
-                arguments += ["--url", url]
-            if token_file:
-                arguments += ["--token-file", str(token_file)]
-            result = subprocess.run(arguments + list(command), capture_output=True, text=True,
-                                    encoding="utf-8", timeout=20, creationflags=flags)
-            if result.returncode:
-                raise AssertionError(f"CLI {' '.join(command)}: {result.stderr}")
-            return json.loads(result.stdout)
-
-        assert cli("init")["state"] == "initialized"
-        assert cli("init")["state"] == "already_initialized"
-        assert cli("status")["state"] == "stopped"
-        assert cli("config", "validate")["valid"]
-        admin = (instance / "credentials" / "admin.token").read_text().strip()
-        assert cli("config", "show")["sources"]["server.listen"] == "instance"
-
-        def http(base: str, path: str, data=None, token=admin, method=None, headers=None):
-            request_headers = {"Accept": "application/json, text/event-stream"}
-            if token:
-                request_headers["Authorization"] = "Bearer " + token
-            if headers:
-                request_headers.update(headers)
-            if data is not None:
-                request_headers["Content-Type"] = "application/json"
-                data = json.dumps(data, ensure_ascii=False).encode()
-            request = urllib.request.Request(base + path, data=data, headers=request_headers, method=method)
-            try:
-                response = urllib.request.urlopen(request, timeout=15)
-            except urllib.error.HTTPError as error:
-                return error.code, dict(error.headers), json.load(error)
-            with response:
-                if response.status == 202:
-                    return response.status, dict(response.headers), None
-                if "text/event-stream" in response.headers.get("Content-Type", ""):
-                    for line in response:
-                        if line.startswith(b"data:"):
-                            payload = line[5:].strip()
-                            if payload:
-                                return response.status, dict(response.headers), json.loads(payload)
-                    raise AssertionError("MCP stream ended without a response")
-                return response.status, dict(response.headers), json.load(response)
-
-        def start(log):
-            process = subprocess.Popen([str(binary), "--instance", str(instance), "serve", "--listen", "127.0.0.1:0"],
-                                       stdout=log, stderr=log, creationflags=flags)
-            for _ in range(150):
-                if process.poll() is not None:
-                    raise AssertionError(f"host exited with {process.returncode}; see {logs}")
-                manifest = instance / "run" / "host.json"
-                try:
-                    base = "http://" + json.loads(manifest.read_text())["listen"]
-                    if http(base, "/v1/status")[0] == 200:
-                        return process, base
-                except (OSError, ValueError):
-                    pass
-                time.sleep(0.1)
-            process.kill()
-            process.wait()
-            raise AssertionError("host did not become ready")
-
-        with logs.open("w", encoding="utf-8") as log:
-            host, base = start(log)
-            try:
-                assert http(base, "/v1/status", token=None)[0] == 401
-                competing = subprocess.run([str(binary), "--instance", str(instance), "serve"],
-                                           capture_output=True, text=True, timeout=10, creationflags=flags)
-                assert competing.returncode != 0 and "already in use" in competing.stderr
-                namespace = cli("namespace", "create", "research", "--operation-id", "smoke-ns", url=base)
-                status, _, replay = http(base, "/v1/namespaces", {"name": "research", "operation_id": "smoke-ns"})
-                assert status == 200 and replay == namespace
-                assert http(base, "/v1/namespaces", {"name": "changed", "operation_id": "smoke-ns"})[0] == 409
-                ns = namespace["result"]["id"]
-                subject = cli("subject", "create", "--namespace", ns, "--name", "reader", url=base)["result"]["id"]
-                source = root / "source.txt"
-                source.write_text("Autumn leaves turn red. 秋天的枫叶会变红。", encoding="utf-8")
-                material = cli("material", "put", "--namespace", ns, "--file", str(source), "--source", "smoke:source", url=base)["result"]["id"]
-                hidden = http(base, "/v1/materials", {"operation_id": "hidden", "namespace_id": ns, "text": "private source"})[2]["result"]["id"]
-                cli("observation", "record", "--subject", subject, "--material", material, "--operation-id", "contact-1", url=base)
-                assert cli("source", "read", material, url=base)["text"] == source.read_text(encoding="utf-8")
-                cli("stop", url=base)
-                assert host.wait(timeout=15) == 0
-                token_info = cli("token", "create", "--namespace", ns, "--subject", subject, "--name", "reader")
-                token_file = Path(token_info["token_file"])
-                scoped = token_file.read_text().strip()
-                host, base = start(log)
-                assert cli("source", "read", material, url=base, token_file=token_file)["text"] == source.read_text(encoding="utf-8")
-                assert http(base, "/v1/materials/" + hidden, token=scoped)[0] == 403
-                assert http(base, "/v1/observations", {"operation_id": "self-grant", "subject_id": subject, "material_id": hidden}, token=scoped)[0] == 403
-                assert http(base, "/v1/stop", {}, token=scoped)[0] == 403
-                contacts = cli("observation", "list", "--subject", subject, url=base, token_file=token_file)
-                assert len(contacts) == 1 and contacts[0]["observed_at"] is None
-
-                # Real Streamable HTTP MCP handshake and scope per request.
-                status, headers, initialized = http(base, "/mcp", {
-                    "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
-                        "protocolVersion": "2025-06-18", "capabilities": {},
-                        "clientInfo": {"name": "nous-smoke", "version": "1"}}})
-                assert status == 200 and "result" in initialized
-                session = next(value for key, value in headers.items() if key.lower() == "mcp-session-id")
-                protocol = initialized["result"]["protocolVersion"]
-                mcp_headers = {"Mcp-Session-Id": session, "MCP-Protocol-Version": protocol}
-                http(base, "/mcp", {"jsonrpc": "2.0", "method": "notifications/initialized"}, headers=mcp_headers)
-                tools = http(base, "/mcp", {"jsonrpc": "2.0", "id": 2, "method": "tools/list"}, headers=mcp_headers)[2]
-                assert "material_get" in {tool["name"] for tool in tools["result"]["tools"]}
-                denied = http(base, "/mcp", {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "namespace_list", "arguments": {}}}, token=scoped, headers=mcp_headers)[2]
-                assert denied["result"]["isError"] and denied["result"]["structuredContent"]["error"]["code"] == "Forbidden"
-                memory = http(base, "/mcp", {"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {"name": "material_get", "arguments": {"material_id": material}}}, token=scoped, headers=mcp_headers)[2]
-                assert memory["result"]["structuredContent"]["text"] == source.read_text(encoding="utf-8")
-
-                # The stdio bridge is an actual client of the same running service.
-                bridge = subprocess.Popen([str(binary), "--instance", str(instance), "--url", base, "mcp", "stdio"],
-                                          stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=log,
-                                          text=True, encoding="utf-8", creationflags=flags)
-                messages = queue.Queue()
-                threading.Thread(target=lambda: [messages.put(json.loads(line)) for line in bridge.stdout], daemon=True).start()
-
-                def stdio(message):
-                    bridge.stdin.write(json.dumps(message) + "\n")
-                    bridge.stdin.flush()
-                    if "id" in message:
-                        response = messages.get(timeout=15)
-                        assert response["id"] == message["id"]
-                        return response
-
-                try:
-                    assert "result" in stdio({"jsonrpc": "2.0", "id": 10, "method": "initialize", "params": {
-                        "protocolVersion": protocol, "capabilities": {}, "clientInfo": {"name": "stdio-smoke", "version": "1"}}})
-                    stdio({"jsonrpc": "2.0", "method": "notifications/initialized"})
-                    response = stdio({"jsonrpc": "2.0", "id": 11, "method": "tools/call", "params": {"name": "status", "arguments": {}}})
-                    assert response["result"]["structuredContent"]["storage"]["observations"] == 1
-                finally:
-                    bridge.stdin.close()
-                    try:
-                        bridge.wait(timeout=10)
-                    except subprocess.TimeoutExpired:
-                        bridge.kill()
-                        bridge.wait()
-                cli("stop", url=base)
-                assert host.wait(timeout=15) == 0
-            finally:
-                if host.poll() is None:
-                    host.kill()
-                    host.wait()
-        print(json.dumps({"cli": True, "http": True, "mcp_http": True, "mcp_stdio": True,
-                          "scoped_tokens": True, "replay": True, "restart": True, "graceful_stop": True}))
+    runner = Runner(args.binary.resolve(strict=True))
+    failure = None
+    try:
+        exercise(runner)
+    except Exception as error:
+        failure = error
+    finally:
+        runner.close()
+        report = runner.save(failure)
+    print(json.dumps({"passed": failure is None, "report": str(report)}, ensure_ascii=False))
+    if failure:
+        raise failure
 
 
 if __name__ == "__main__":

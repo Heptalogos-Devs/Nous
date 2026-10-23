@@ -1,5 +1,5 @@
 {
-  "date": "2026-10-23",
+  "date": "2026-10-24",
   "sources": [
     {
       "name": "A_memorix",
@@ -96,6 +96,13 @@
       "commit": "f91fe5bc000222aa1af6e91daf78c2bb20b0c90e",
       "path": "temp/repos/USearch",
       "source_manifest": "crates/nous-retrieval/vector-sources.json"
+    },
+    {
+      "name": "minijinja",
+      "url": "https://github.com/mitsuhiko/minijinja.git",
+      "commit": "6ba9aded9da6d3d4b8de7d13b64c4d9d70b671c4",
+      "path": "temp/repos/minijinja",
+      "package": "minijinja 3.0.3"
     }
   ],
   "previous_rebuild": {

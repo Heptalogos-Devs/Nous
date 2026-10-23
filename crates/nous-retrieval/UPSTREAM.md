@@ -1,7 +1,7 @@
 # Reused source
 
 The index schema, document replacement, literal natural-language term queries,
-scope filters and TopDocs materialization in `src/lib.rs` are adapted from
+scope filters and TopDocs materialization in `src/lexical.rs` are adapted from
 [`crates/retrieval/src/mechanisms/lexical.rs`](https://github.com/Heptalogos-Devs/Nous-Wave/blob/412b062082afb75ccfae4c3f69fc606d3e3cc862/crates/retrieval/src/mechanisms/lexical.rs)
 at commit `412b062082afb75ccfae4c3f69fc606d3e3cc862`. Its Apache-2.0 license is
 retained in [licenses/Nous-LICENSE](licenses/Nous-LICENSE).
@@ -19,96 +19,67 @@ the local upstream checkout at commit
 
 ## Frozen vector generations
 
-`src/vector.rs` adapts the candidate/Tag pair, unique F32 cosine configuration,
-native filtered search and vector readback from the previous Nous
-`crates/retrieval/src/vcp/index.rs` and `mechanisms/dense.rs` at the same
-`412b062082afb75ccfae4c3f69fc606d3e3cc862` commit. The retained Apache-2.0
-license above covers these sources. [vector-sources.json](vector-sources.json)
-records their original hashes and the inspected USearch sources.
+`src/vector/{snapshot,engine,persistence}.rs` adapts the candidate/Tag pair,
+unique F32 cosine configuration, filtered search and vector readback from the
+previous Nous `crates/retrieval/src/vcp/index.rs` and `mechanisms/dense.rs` at
+`412b062082afb75ccfae4c3f69fc606d3e3cc862`. The retained Apache-2.0 license
+covers these adaptations. [vector-sources.json](vector-sources.json) records
+original hashes and the inspected USearch sources.
 
-USearch 2.26.2 is a published native HNSW dependency, pinned to source commit
-`f91fe5bc000222aa1af6e91daf78c2bb20b0c90e`. Its actual Rust bindings, C++ bridge,
-header metadata, save/load/get and ANN/filter APIs were inspected from the local
-clone and matched against the published crate. Default NumKong SIMD is disabled;
-the same native HNSW index runs with its built-in cosine implementation.
+USearch 2.26.2 is a native HNSW dependency pinned to source commit
+`f91fe5bc000222aa1af6e91daf78c2bb20b0c90e`. The actual Rust bindings, C++ bridge,
+metadata and persistence APIs were inspected from the local clone and matched
+against the published crate. Default NumKong SIMD is disabled; native HNSW uses
+its built-in cosine implementation.
 
-The caller supplies one authorized `VectorSnapshot`, including space, producer,
-generation, signature, watermark, dimension and stable numeric-ID/source-key
-mapping for each lane.
-Numeric IDs and source keys are unique within each lane. Candidate and Tag lanes
-have independent mappings, including when their numeric IDs overlap.
-`VectorGeneration::build` creates the pair in memory;
-`create` stages both files and a checksum manifest, then publishes one complete
-directory. `open` requires the exact expected snapshot and validates identity,
-both file hashes, native headers, counts, IDs and every stored vector once.
-Read-only search uses native ANN; additional candidate restrictions are applied
-inside native filtered search before Top-K. An empty restriction returns no hits.
+The caller supplies one authorized `VectorSnapshot`: space, producer, generation,
+signature, watermark, dimension and stable ID/source mappings. IDs and source keys
+are unique within each lane; candidate and Tag lanes have independent mappings.
+`build` creates the pair in memory. `create` stages both indexes and checksums,
+then publishes one complete directory. `open` verifies the expected snapshot,
+file hashes, native headers, counts, IDs and stored vectors once. Search uses
+native ANN; restrictions apply before Top-K, including the empty allowed set.
 `TagSearch` returns cosine similarity as `1 - distance`.
 
-Vectors and queries are normalized in f64 before F32 indexing to keep cosine
-arithmetic finite; zero vectors, non-finite values and wrong dimensions are
-rejected. The manifest binds both original and normalized vector hashes. Source
-keys remain opaque caller-owned references. No business storage or model calls
-are introduced here.
-
-The isolated adapter tests passed on Windows: real dual-lane ANN, restricted and
-empty searches, save/reopen, invalid inputs, incomplete files, checksum changes,
-snapshot mismatches and native readback rejecting substituted IDs. All-target
-Clippy with `-D warnings` also passed. Root workspace and serving integration are
-managed by the application owner.
+The cosine boundary derives unit F32 vectors using f64 accumulation. The manifest
+binds both original and derived vector hashes. Zero, non-finite and wrongly sized
+vectors are rejected. Source keys remain opaque caller-owned identities.
 
 ## Serving snapshots and graph assets
 
-`src/serving.rs` continues the previous Nous
-`vcp/{generation,graph,observation,lane,readout}.rs` implementation at
-`412b062082afb75ccfae4c3f69fc606d3e3cc862`. It preserves frozen generation
-ownership, ordered membership, independent evidence roots, one query observation
-and the original/enhanced/local/transfer candidate union. The formulas execute
-through the pinned [nous-vcp kernels](../nous-vcp/UPSTREAM.md); this module adapts
-identity, source assembly, persistence and result materialization.
+`src/serving/{snapshot,assets,persistence,query}.rs` continues previous Nous
+`vcp/{generation,graph,observation,lane,readout}.rs` at the same commit. It preserves
+frozen generations, ordered membership, independent evidence roots, one query
+observation and the original/enhanced/local/transfer candidate union. Numerical
+computation uses the pinned [nous-vcp kernels](../nous-vcp/UPSTREAM.md).
 
-The app supplies a `ServingSnapshot` after scope, source, time and activation
-filtering. Memory candidate IDs, Tag IDs and source-root file IDs have separate
-sorted mappings. A Memory explicitly names its material root; each Tag occurrence
-must name that same root. Multiple memories from one root share one ordered Tag
-membership and one contribution to geometry/graph evidence. A conflicting
-membership for one root is an explicit input error. Imported literal material
-labels remain source-derived Tags in this projection.
+The caller freezes scope, source, time and lifecycle before supplying
+`ServingSnapshot.candidates`. Each `ServingCandidate` has its exact ID/revision,
+raw vector and nonempty complete `source_refs`. Each Tag occurrence names one of
+those roots. Candidate IDs, Tag IDs and source-root IDs have separate sorted
+mappings. All candidates sharing an original root must agree on its ordered Tags;
+each root contributes geometry and graph evidence once.
 
-`ServingGeneration::create_or_open` hashes the complete raw snapshot, normalization policy,
-caller identity and asset configuration to select an immutable generation. It
-publishes geometry, CSR/provenance, identity mappings and both native ANN indexes
-as one directory. Reopen checks component hashes and native vector contents,
-reuses persisted geometry and graph, and makes no model call. Incomplete or
-changed components return a specific error; a changed snapshot selects a new
-generation. The app owns any cache and publication gate.
+A multi-source candidate has one curve over its source Tags. RiverMemo and
+Thinking exclude every own root when measuring independent edge support. Source
+mappings and independent-root sets survive grouped persistence and restoration.
 
-Dense uses native candidate ANN. VCP prepares one complete pipeline observation,
-offers candidates from its four actual query vectors, and passes the closed
-union to RiverMemo V3. Optional fields and grounded Thinking use that observation.
-An empty Tag lane still executes the VCP pipeline and retains direct candidates.
-Returned numeric IDs resolve through the frozen Memory mapping, and source
-mappings cover returned and planned memories. Normal query diagnostics contain counts;
-the full generation mapping is available through `asset_diagnostics()`.
+`ServingGeneration::create_or_open` derives the generation from actual candidates,
+space, producer, watermark, dimensions, asset configuration and normalization
+policy. Caller generation labels do not enter that content identity. Geometry,
+CSR/provenance, mappings and both ANN indexes publish together. Reopen verifies
+component hashes and native vector contents and reuses accepted raw vectors.
 
-Four standalone serving tests passed: full native save/reopen and query replay;
-graph/provenance restricted to caller-filtered material and unchanged by repeated
-derivation from one root; and no-Tag VCP with explicit corrupt/new-generation
-behavior; and non-unit provider vectors with one derived normalization policy. All-target Clippy with `-D warnings` passed. The app composes these assets with the shared model ledger and durable embedding
-worker; controlled protocol tests and the real gateway exercise cover the complete
-query, source and restart path.
+Dense uses native candidate ANN. VCP executes the complete pipeline and RiverMemo
+readout; optional fields and grounded Thinking share its observation. An empty
+Tag lane preserves direct candidates through that same pipeline. Returned IDs
+resolve through the frozen candidate mapping. Query diagnostics contain counts;
+`asset_diagnostics()` supplies the complete generation mapping.
 
-The serving format `nous-vcp-serving-source-sets-v3` binds its derived vector
-policy. Authoritative model values and ANN raw snapshot hashes remain intact;
-one f64 L2-to-F32 derivation supplies geometry, graph, MemoAssets and readout.
-This makes VCP fusion and ANN use compatible cosine inputs for provider vectors
-whose norms differ slightly from one. Current VCP source keeps raw vectors in
-`storage.rs` and uses them directly in `memo_pipeline.rs` fusion; the adaptation
-records this intentional serving policy separately from the preserved kernels.
+ANN and VCP assets use one shared `raw-f32/l2-f64-to-unit-f32` conversion. Source
+vectors retain their original bytes and hashes. This serving policy adapts the
+upstream raw-vector fusion path so provider vectors with slightly non-unit norms
+use consistent cosine inputs throughout retrieval.
 
-Version 3 also stores complete `source_refs` and separates candidate tag curves
-from their independent original roots. A multi-source cognitive object gets one
-candidate vector and one curve over its ordered source tags; geometry and graph
-memberships still contain each original only once. RiverMemo and Thinking exclude
-all of the candidate's own roots when measuring independent edge support. Source
-mappings, root sets and curves survive the same immutable-generation reload.
+Public behavior checks live in `tests/lexical.rs`, `tests/vector.rs`,
+`tests/serving.rs` and the real ANN-to-VCP wiring case `tests/vector_pipeline.rs`.

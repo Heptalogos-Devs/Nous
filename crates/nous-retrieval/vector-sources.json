@@ -41,5 +41,20 @@
       "crates/retrieval/src/vcp/readout.rs": "2d8d4239cff2420a529e4492a3c5821ffbf5d8e125b7d58103c4a187aaa75068"
     },
     "adaptation": "src/serving.rs: typed frozen source snapshot, independent root/candidate/Tag mappings, persisted current AGS/CSR assets, single-observation multi-query ANN/readout; math delegated to pinned nous-vcp kernels"
+  },
+  "adapted_modules": {
+    "vector": [
+      "src/vector.rs",
+      "src/vector/engine.rs",
+      "src/vector/persistence.rs",
+      "src/vector/snapshot.rs"
+    ],
+    "serving": [
+      "src/serving.rs",
+      "src/serving/assets.rs",
+      "src/serving/persistence.rs",
+      "src/serving/query.rs",
+      "src/serving/snapshot.rs"
+    ]
   }
 }

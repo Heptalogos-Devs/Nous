@@ -2144,6 +2144,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "minijinja"
+version = "3.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "90086695417a271bc96e6cb50618555614ca48fa3bb0d9aa96e3468b0f84431e"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "minimal-lexical"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2279,6 +2288,7 @@ dependencies = [
  "directories",
  "fs2",
  "genai",
+ "minijinja",
  "nous-domain",
  "nous-retrieval",
  "nous-storage",
@@ -2305,6 +2315,7 @@ dependencies = [
  "schemars 1.2.3",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "thiserror",
  "uuid",
 ]

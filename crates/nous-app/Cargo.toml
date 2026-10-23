@@ -11,6 +11,7 @@ nous-retrieval.workspace = true
 apalis.workspace = true
 apalis-core.workspace = true
 genai.workspace = true
+minijinja.workspace = true
 anyhow.workspace = true
 chrono.workspace = true
 directories.workspace = true

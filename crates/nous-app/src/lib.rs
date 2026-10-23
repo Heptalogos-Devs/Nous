@@ -1,27 +1,26 @@
 pub mod backup;
 pub mod bundle_format;
-mod calls;
-mod cognition;
-mod embeddings;
+pub mod cognition;
+pub mod common;
+mod composition;
 pub mod import_format;
-mod imports;
-pub mod instance;
-mod maintenance;
-pub mod model;
-pub mod network;
-mod objects;
-mod semantic;
-pub mod structured;
-mod worker;
+mod lifecycle;
+pub mod retrieval;
 
 use chrono::Utc;
-use instance::InstancePaths;
-use model::ModelRuntime;
+use common::{
+    clock::Clock,
+    content::ObjectStore,
+    instance::{self, InstancePaths},
+    model_calls::ModelCalls,
+    models::ModelRuntime,
+    network,
+    tasks::Tasks,
+};
 use nous_domain::*;
 use nous_retrieval::RetrievalIndex;
 pub use nous_storage::OperationReceipt;
 use nous_storage::{BeginOperation, Database, OperationKey};
-use objects::ObjectStore;
 use serde::Serialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -34,7 +33,11 @@ pub struct App {
     database: Database,
     objects: ObjectStore,
     paths: Arc<InstancePaths>,
+    config: Arc<instance::InstanceConfig>,
     model: Arc<ModelRuntime>,
+    tasks: Tasks,
+    calls: ModelCalls,
+    clock: Clock,
     retrieval: RetrievalIndex,
     index_gate: Arc<tokio::sync::Mutex<()>>,
     semantic_cache: Arc<
@@ -62,17 +65,24 @@ impl App {
                 .map_err(|error| Error::invalid(error.to_string()))?,
         );
         let index_path = paths
-            .resolve("indexes/lexical-v1")
+            .resolve("indexes/lexical")
             .map_err(|error| Error::invalid(error.to_string()))?;
         let retrieval = tokio::task::spawn_blocking(move || RetrievalIndex::open(index_path))
             .await
             .map_err(|error| Error::internal(error.to_string()))?
             .map_err(|error| Error::new(ErrorCode::DependencyUnavailable, error.to_string()))?;
+        let clock = Clock;
+        let tasks = Tasks::new(database.clone(), clock);
+        let calls = ModelCalls::new(database.clone(), tasks.clone(), clock);
         Ok(Self {
             database,
             objects,
             paths,
+            config: Arc::new(config),
             model,
+            tasks,
+            calls,
+            clock,
             retrieval,
             index_gate: Arc::new(tokio::sync::Mutex::new(())),
             semantic_cache: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
@@ -83,20 +93,20 @@ impl App {
         &self.paths
     }
     pub async fn close(&self) {
-        self.database.close().await;
         let index = self.retrieval.clone();
         match tokio::task::spawn_blocking(move || index.close()).await {
             Ok(Ok(())) => {}
             Ok(Err(error)) => tracing::warn!(%error,"index close failed"),
             Err(error) => tracing::warn!(%error,"index close task failed"),
         }
+        self.database.close().await;
     }
 
     pub async fn status(&self) -> Result<Value> {
         Ok(
             json!({"version":env!("CARGO_PKG_VERSION"),"storage":self.database.status().await?,
             "capabilities":{"material":true,"observation":true,"memory_formation":true,"structured_cognition":true,"structured_formation":true,"lexical_query":true,"text_embedding":true,"dense_query":true,"vcp_query":true},
-            "model":self.model.inspect(),"structured_formation":self.model.structured_inspect(),"text_embedding":self.model.embedding_inspect(),"index":self.retrieval.coverage().ok()}),
+            "model":self.model.inspect(),"index":self.retrieval.coverage().ok()}),
         )
     }
 
@@ -219,7 +229,8 @@ impl App {
             time.validate()?;
         }
         self.database.namespace(namespace_id).await?;
-        let hash = format!("{:x}", Sha256::digest(text.as_bytes()));
+        let published = self.objects.publish(text.as_bytes().to_vec()).await?;
+        let hash = published.digest;
         let key = operation_key(
             ctx,
             "material.put",
@@ -227,12 +238,6 @@ impl App {
             operation_id,
             &json!({"namespace_id":namespace_id,"content_hash":hash,"media_type":"text/plain; charset=utf-8","source":source,"event_time":event_time}),
         )?;
-        // Publishing and verifying bytes must not hold SQLite's single writer.
-        let object_store = self.objects.clone();
-        let bytes = text.as_bytes().to_vec();
-        tokio::task::spawn_blocking(move || object_store.publish(&bytes))
-            .await
-            .map_err(|error| Error::internal(error.to_string()))??;
         let mut tx = match self.database.begin_operation(key).await? {
             BeginOperation::Replay(receipt) => return Ok(receipt),
             BeginOperation::New(tx) => tx,
@@ -242,7 +247,7 @@ impl App {
             namespace_id: namespace_id.clone(),
             content_hash: hash,
             media_type: "text/plain; charset=utf-8".into(),
-            byte_len: text.len() as i64,
+            byte_len: published.byte_len,
             source,
             event_time,
             recorded_at: Utc::now().to_rfc3339(),
@@ -279,12 +284,10 @@ impl App {
             ctx.require_namespace(&namespace)?;
         }
         let material = self.database.material(&namespace, id).await?;
-        let store = self.objects.clone();
-        let digest = material.content_hash.clone();
-        let byte_len = material.byte_len;
-        let bytes = tokio::task::spawn_blocking(move || store.read(&digest, byte_len))
-            .await
-            .map_err(|error| Error::internal(error.to_string()))??;
+        let bytes = self
+            .objects
+            .read(&material.content_hash, material.byte_len)
+            .await?;
         let text = String::from_utf8(bytes)
             .map_err(|_| Error::internal("text object contains invalid UTF-8"))?;
         let details = self.database.material_details(&namespace, id).await?;
@@ -368,31 +371,38 @@ impl App {
     }
 
     pub async fn job(&self, ctx: &CallContext, id: &str) -> Result<Value> {
-        let job = self.database.job(id).await?;
-        let namespace: NamespaceId = job.envelope.namespace_id.parse()?;
-        if let Some(subject) = &job.envelope.subject_id {
-            ctx.require_subject(&namespace, &subject.parse()?)?;
-        } else {
-            ctx.require_namespace(&namespace)?;
+        let job = self.tasks.read(ctx, id).await?;
+        let queue = self.database.queue_record(id).await?;
+        let model_calls = self.database.model_calls(id).await?;
+        Ok(json!({"job":job,"queue":queue,"model_calls":model_calls}))
+    }
+    pub async fn read_model_call(&self, ctx: &CallContext, id: &ModelCallId) -> Result<ModelCall> {
+        self.calls.read(ctx, id).await
+    }
+    pub async fn cancel_job(
+        &self,
+        ctx: &CallContext,
+        operation_id: &str,
+        id: &str,
+    ) -> Result<OperationReceipt> {
+        self.tasks.cancel(ctx, operation_id, id).await
+    }
+    pub(crate) async fn worker_transaction(
+        &self,
+        kind: &str,
+        operation_id: &str,
+        scope: &str,
+        payload: &Value,
+    ) -> Result<Option<nous_storage::WriteTransaction>> {
+        let context = CallContext {
+            caller_id: "nous-worker".into(),
+            scope: AccessScope::Admin,
+        };
+        let key = operation_key(&context, kind, scope, operation_id, payload)?;
+        match self.database.begin_operation(key).await? {
+            BeginOperation::Replay(_) => Ok(None),
+            BeginOperation::New(tx) => Ok(Some(tx)),
         }
-        let mut value = serde_json::to_value(&job)?;
-        if job.kind == "memory.form" {
-            let run = self.database.formation(id).await?;
-            value["queue_status"] = value["status"].clone();
-            value["status"] = serde_json::to_value(&run.state)?;
-            value["formation"] = serde_json::to_value(run)?;
-            value["model_calls"] = serde_json::to_value(self.database.model_calls(id).await?)?;
-        }
-        if job.kind == "cognition.form" {
-            let run = self.database.structured_formation(id).await?;
-            value["queue_status"] = value["status"].clone();
-            value["status"] = serde_json::to_value(&run.state)?;
-            value["formation"] = serde_json::to_value(run)?;
-            value["groups"] =
-                serde_json::to_value(self.database.structured_formation_groups(id).await?)?;
-            value["model_calls"] = serde_json::to_value(self.database.model_calls(id).await?)?;
-        }
-        Ok(value)
     }
 }
 
@@ -405,9 +415,8 @@ fn operation_key(
 ) -> Result<OperationKey> {
     validate_name(operation_id, "operation_id")?;
     validate_name(&ctx.caller_id, "caller_id")?;
-    let encoded = serde_json::to_vec(
-        &json!({"schema":"nous.operation.v1","operation":operation,"scope":scope,"payload":payload}),
-    )?;
+    let encoded =
+        serde_json::to_vec(&json!({"operation":operation,"scope":scope,"payload":payload}))?;
     Ok(OperationKey {
         caller_id: ctx.caller_id.clone(),
         operation: operation.into(),

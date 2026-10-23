@@ -6,8 +6,8 @@
 
 | 本地来源与锁定 commit | 许可 | Nous 落点 | 改编内容 |
 | --- | --- | --- | --- |
-| `temp/repos/Nous-previous/crates/persistence/src/mutations.rs`，`412b062082afb75ccfae4c3f69fc606d3e3cc862` | Apache-2.0 | `crates/nous-storage/src/transaction.rs`、`crates/nous-app/src/lib.rs` | MutationEnvelope 的统一提交结构；改用 SQLite `BEGIN IMMEDIATE`、完整 OperationReceipt、实例 commit_seq 和同连接入队 |
-| `temp/repos/apalis-sqlite/src/persist.rs`、`examples/basic.rs`，`9c87189360b0e212b23821a1a177e9cbe2ad1d4a` | MIT | `crates/nous-storage/src/lib.rs`、`transaction.rs`、`examples/transaction_recovery.rs` | 同连接 push_tasks、嵌入迁移和进程恢复 Worker；保留 `crates/nous-storage/LICENSE.apalis` |
+| `temp/repos/Nous-previous/crates/persistence/src/mutations.rs`，`412b062082afb75ccfae4c3f69fc606d3e3cc862` | Apache-2.0 | `crates/nous-storage/src/authority/transaction.rs`、`crates/nous-app/src/lib.rs` | MutationEnvelope 的统一提交结构；改用 SQLite `BEGIN IMMEDIATE`、完整 OperationReceipt、实例 commit_seq 和同连接入队 |
+| `temp/repos/apalis-sqlite/src/persist.rs`、`examples/basic.rs`，`9c87189360b0e212b23821a1a177e9cbe2ad1d4a` | MIT | `crates/nous-storage/src/authority`、`crates/nous-app/src/common/tasks.rs`、`examples/transaction_recovery.rs` | 同连接 push_tasks、上游队列 schema 和进程恢复 Worker；保留 `crates/nous-storage/LICENSE.apalis` |
 | `temp/repos/rmcp/examples/servers/src/counter_streamhttp.rs` 与官方 stdio 示例，`2a401c4ca3eb5880744d2e70fad8073a7fcfb2bc` | Apache-2.0 | `crates/nous` 的 MCP transport | 官方 SDK 服务、Axum 挂载和 CancellationToken 生命周期；工具委派到同一 App |
 
 SQLx、Tokio、Axum、Clap、Reqwest、tracing 与 tempfile 通过 Cargo 依赖使用其正式实现。ObjectStore 的暂存、原子发布与文件生命周期直接使用 tempfile，Nous 负责材料身份、内容摘要、来源和权威引用。
@@ -16,8 +16,8 @@ SQLx、Tokio、Axum、Clap、Reqwest、tracing 与 tempfile 通过 Cargo 依赖�
 
 | 本地来源与锁定 commit | 许可 | Nous 落点 | 改编或使用方式 |
 | --- | --- | --- | --- |
-| genai 0.7.0 发布源码 `temp/repos/genai-0.7.0`，`8fc13af4db80acd0771c87f6180d79b83c9a898d` | MIT OR Apache-2.0，采用 Apache-2.0 | `crates/nous-app/src/model.rs` 与 `src/prompts` | 改编官方 target resolver 与结构化输出用法，SDK 通过发布依赖使用；显式目标、版本 Prompt、输入源版本、预算与结果采纳由 Nous 管理 |
-| 旧 Nous `crates/retrieval/src/mechanisms/lexical.rs`，`412b062082afb75ccfae4c3f69fc606d3e3cc862` | Apache-2.0 | `crates/nous-retrieval/src/lib.rs` | 改编词项 schema、文档替换、范围过滤和候选读取；保留 `crates/nous-retrieval/licenses/Nous-LICENSE` |
+| genai 0.7.0 发布源码 `temp/repos/genai-0.7.0`，`8fc13af4db80acd0771c87f6180d79b83c9a898d` | MIT OR Apache-2.0，采用 Apache-2.0 | `crates/nous-app/src/common/models` 与 `src/prompts` | 改编官方 target resolver 与结构化输出用法，SDK 通过发布依赖使用；实际目标、Prompt 快照、输入源修订、预算与结果采纳由 Nous 管理 |
+| 旧 Nous `crates/retrieval/src/mechanisms/lexical.rs`，`412b062082afb75ccfae4c3f69fc606d3e3cc862` | Apache-2.0 | `crates/nous-retrieval/src/lexical` | 改编词项 schema、文档替换、范围过滤和候选读取；保留 `crates/nous-retrieval/licenses/Nous-LICENSE` |
 | Tantivy 0.27，`67889269cae67063c372bc236b102d632a021568`；tantivy-jieba 0.21，`882dcc4304e415879b9e0169ff439a4806a2bf8e` | MIT | `crates/nous-retrieval` | 直接使用发布依赖；研究 PreparedCommit 原子覆盖发布，以及中文、英文 tokenizer 集成 |
 
 ## 已研究的领域合同
@@ -32,9 +32,9 @@ VCP 与旧 Nous reference 已复制改编到 `crates/nous-vcp`：AGS/几何、�
 
 ## 后续复制改编边界
 
-结构化认知已从 M 的 `core/cognition.rs`、`memory/domain.rs`、`service/tag.rs`、Episode partition 与 Journal/Schema 规则复制改编到 `nous-domain::structured` 和 `nous-app::structured::lineage`，精确原文件 SHA-256 与 Apache-2.0 许可见 [领域来源记录](../crates/nous-domain/UPSTREAM.md)。来源闭包、范围、历史与修订写入复用现有 SQLx 事务。
+结构化认知已从 M 的 `core/cognition.rs`、`memory/domain.rs`、`service/tag.rs`、Episode partition 与 Journal/Schema 规则复制改编到 `nous-domain::structured` 和 `nous-app::cognition::structured`，精确原文件 SHA-256 与 Apache-2.0 许可见 [领域来源记录](../crates/nous-domain/UPSTREAM.md)。来源闭包、范围、历史与修订写入复用现有 SQLx 事务。
 
-结构化模型边界从 M 的 typed schemas/consolidation/concept/longitudinal prompts，以及 P 的 `createCognition.formChanges` 来源目录和独立变更组改编。P Prompt 先复制再按当前领域合同调整；来源版本、12 个原文件摘要和两种许可保存在 [模型来源清单](../crates/nous-app/src/model/structured-sources.json)。模型输出使用显式逐字段引用键解析，实际 provider Schema 从领域/模型 DTO 生成；领域采纳复用共享账本、持久队列和事务。
+结构化模型边界从 M 的 typed schemas/consolidation/concept/longitudinal prompts，以及 P 的 `createCognition.formChanges` 来源目录和独立变更组改编。P Prompt 先复制再按当前领域合同调整；来源版本、12 个原文件摘要和两种许可保存在 [模型来源清单](../crates/nous-app/src/common/models/structured-sources.json)。模型输出使用显式逐字段引用键解析，实际 provider Schema 从领域/模型 DTO 生成；领域采纳复用共享账本、持久队列和事务。
 
 [能力续接清单](../docs/能力续接清单.md) 是后续来源与实施映射的维护位置：master 的媒体派生、结构化领域、managed binding/ProjectionPlanner、NousQL、reference/Native/DTSC；PR #56 的持久 ContextView、来源与独立采纳组；VCP 的 AGS、传播资产、Pyramid/Sense/Fusion/双场、RiverMemo/Thinking 共同续接。已有数值基线与当前上游算法分别保留版本、原始输入、expected 和来源，研发先做本地提取与验证。
 
@@ -58,3 +58,5 @@ VCP 与旧 Nous reference 已复制改编到 `crates/nous-vcp`：AGS/几何、�
 旧 Nous 的可直接改编文件包括 `crates/configuration/src/{registry,service,snapshot}.rs`、`crates/persistence/src/mutations.rs`、`crates/runtime/src/lib.rs::capture_semantic_in`、`crates/core/src/time.rs`、`crates/object-store/src/lib.rs::{put_chunks,reference_guard,stream,read_range}`，以及 PromptRegistry、模型角色资源图与 managed binding。配置保持 active/desired，单次提交捕获同一语义时间，流式对象在完整发布后才登记权威引用。
 
 MaiBot 主仓库许可为 GPL-3.0，`src/llm_models/LICENSE` 为 MIT；实际复制按文件归属保留许可。旧 Nous 相关 Rust 服务沿其 Apache-2.0 来源归档。源码现成的升级适配服务于其已发布产品；Nous 当前内部结构直接更新。
+
+MiniJinja 已克隆于 `temp/repos/minijinja`，固定源码 `6ba9aded9da6d3d4b8de7d13b64c4d9d70b671c4`，Cargo 使用发布依赖 3.0.3。`common/prompts` 直接使用其 Environment/Template、strict undefined 与 Serde 值转换，实现真实模板渲染和预览；模板来源、变量来源和渲染内容由 Nous 保存。具体 API 及项目来源见 [MiniJinja](https://github.com/mitsuhiko/minijinja)，不再维护自制字符串替换渲染器。

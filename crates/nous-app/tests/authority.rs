@@ -1,4 +1,4 @@
-use nous_app::{App, instance::InstancePaths};
+use nous_app::{App, common::instance::InstancePaths};
 use nous_domain::*;
 
 async fn instance() -> (tempfile::TempDir, InstancePaths, App) {

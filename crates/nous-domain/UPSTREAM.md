@@ -1,6 +1,6 @@
 # Typed cognition sources
 
-`src/structured.rs` copies and adapts the previous Nous domains at commit
+`src/structured/` copies and adapts the previous Nous domains at commit
 `412b062082afb75ccfae4c3f69fc606d3e3cc862`. The original Apache-2.0 license is
 retained in [licenses/Nous-LICENSE](licenses/Nous-LICENSE).
 
@@ -25,6 +25,13 @@ cutoffs in the existing operation transaction. Caller inputs contain no asserted
 independent-root field. Model proposal targets are preallocated slots; source and
 output references are checked against the caller's admitted catalog and declared
 group dependencies. Independent adoption remains the application owner's task.
+
+`identity`, `sources`, `content`, `objects`, `proposal` and `lineage` own their
+respective contracts; `validation` holds the pure structural rules. Shared time
+coordinates live in `src/time.rs`. `src/model.rs` owns the common model job
+lifecycle and call ledger, while each role retains its own inputs and results.
+Embedding inputs use one typed target and text; their content hashes and lookup
+keys are derived by the domain.
 
 The typed merge/split/resegmentation requests are executed by
 [`nous-app::structured::lineage`](../nous-app/src/structured/lineage.rs) in one

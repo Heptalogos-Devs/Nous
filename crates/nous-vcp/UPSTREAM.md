@@ -16,6 +16,14 @@ immutable input. Numerical kernels retain their source computation and ordering.
 | `rivermemo_topology_v3.rs` | `graph` and `river`: CSR, full readout, direct anchors, morphology, Omega and scoring copied; candidate/file data replace SQL loads |
 | `memo_thinking.rs` | `thinking`: predecessor-grounded stage planning copied; frozen file metadata replaces host source lookup |
 
+The implementation is organized by computation stages: `geometry/` holds AGS,
+workspace and asset construction; `artifact/` holds matrices, provenance and
+assembly; `sensing/` holds wormholes and propagation; `pipeline/` holds EPA,
+Pyramid, gating, fusion, fields and orchestration; `river/` holds curves,
+topology, anchors, morphology, scoring and readout. Interstage state is private
+to its algorithm owner. Numerical source tests use public computation and the
+existing serialized diagnostics from `tests/`.
+
 Adaptation adds validation at public input boundaries, immutable asset generations,
 structured diagnostics and Rust I/O types. Small Clippy style changes preserve
 formulas and accumulation order. Targeted allowances retain upstream numerical

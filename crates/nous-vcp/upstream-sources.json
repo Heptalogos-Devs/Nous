@@ -76,5 +76,45 @@
     "harness_path": "scripts/compare_memo_geometry.py",
     "harness_sha256": "47b946d06975737a50a2095651f4c1d26dec7f055cea5fc227bc2c9d220705d8",
     "report": "tests/reports/ags-comparison-20261023.txt"
+  },
+  "adapted_modules": {
+    "geometry": [
+      "src/geometry.rs",
+      "src/geometry/ags.rs",
+      "src/geometry/build.rs",
+      "src/geometry/types.rs",
+      "src/geometry/workspace.rs"
+    ],
+    "artifact": [
+      "src/artifact.rs",
+      "src/artifact/build.rs",
+      "src/artifact/matrix.rs",
+      "src/artifact/provenance.rs"
+    ],
+    "sensing": [
+      "src/sensing.rs",
+      "src/sensing/propagation.rs",
+      "src/sensing/wormholes.rs"
+    ],
+    "pipeline": [
+      "src/pipeline.rs",
+      "src/pipeline/epa.rs",
+      "src/pipeline/fields.rs",
+      "src/pipeline/fusion.rs",
+      "src/pipeline/gating.rs",
+      "src/pipeline/output.rs",
+      "src/pipeline/pyramid.rs",
+      "src/pipeline/run.rs"
+    ],
+    "river": [
+      "src/river.rs",
+      "src/river/anchors.rs",
+      "src/river/curves.rs",
+      "src/river/morphology.rs",
+      "src/river/readout.rs",
+      "src/river/scoring.rs",
+      "src/river/topology.rs",
+      "src/river/types.rs"
+    ]
   }
 }

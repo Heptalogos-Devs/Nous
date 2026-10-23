@@ -32,6 +32,7 @@ directories = "6"
 fs2 = "0.4"
 futures = "0.3"
 genai = { version = "=0.7.0", default-features = false, features = ["rustls-tls"] }
+minijinja = { version = "3.0", features = ["fuel", "serde"] }
 nalgebra = { version = "0.35", features = ["serde-serialize"] }
 rayon = "1"
 reqwest = { version = "0.13.2", default-features = false, features = ["json", "rustls"] }

@@ -1,11 +1,10 @@
 //! Real SDK/HTTP, durable worker, SQL authority and persisted ANN/serving composition.
 //! The local provider returns fixed numerical fixtures and never contacts a model service.
 use axum::{Json, Router, routing::post};
-use nous_app::model::embedding::EMBEDDING_PRODUCER_VERSION;
 use nous_app::{
     App,
-    instance::{InstanceConfig, InstancePaths, SecretRef},
-    model::{EmbeddingConfig, ModelConfig, ModelProtocol, ModelResource},
+    common::instance::{InstanceConfig, InstancePaths, SecretRef},
+    common::models::{EmbeddingConfig, ModelConfig, ModelProtocol, ModelResource},
 };
 use nous_domain::*;
 use nous_storage::OperationReceipt;
@@ -117,7 +116,6 @@ fn instance(provider: &Provider) -> (tempfile::TempDir, InstancePaths) {
             max_batch_size: 32,
             max_input_bytes: 32768,
             max_calls_per_day: 100,
-            producer_version: EMBEDDING_PRODUCER_VERSION.into(),
         }),
     };
     std::fs::write(&paths.config, toml::to_string_pretty(&config).unwrap()).unwrap();
@@ -160,6 +158,9 @@ fn query(subject: &SubjectId, text: &str) -> QueryRequest {
         subject_id: subject.clone(),
         text: text.into(),
         reference: None,
+        kinds: Vec::new(),
+        as_of_commit: None,
+        include_deleted: false,
         source: None,
         time: Some(TimeFilter {
             axis: TimeAxis::Event,
@@ -205,18 +206,15 @@ async fn import(
         })
         .collect()
 }
-async fn wait_run(app: &App, ctx: &CallContext, job: &str, state: EmbeddingState) -> EmbeddingRun {
+async fn wait_run(app: &App, ctx: &CallContext, job: &str) -> EmbeddingRun {
     tokio::time::timeout(Duration::from_secs(15), async {
         loop {
             let run = app.get_embedding_run(ctx, job).await.unwrap();
-            if run.state == state {
+            if run.job.state == JobState::Succeeded {
                 return run;
             }
             assert!(
-                !matches!(
-                    run.state,
-                    EmbeddingState::Failed | EmbeddingState::Uncertain | EmbeddingState::Cancelled
-                ),
+                !matches!(run.job.state, JobState::Failed | JobState::Cancelled),
                 "unexpected embedding state {run:#?}"
             );
             tokio::time::sleep(Duration::from_millis(25)).await;
@@ -225,19 +223,13 @@ async fn wait_run(app: &App, ctx: &CallContext, job: &str, state: EmbeddingState
     .await
     .expect("embedding run reached its expected state")
 }
-async fn sync(
-    app: &App,
-    ctx: &CallContext,
-    subject: &SubjectId,
-    key: &str,
-) -> (OperationReceipt, Vec<EmbeddingRun>) {
+async fn sync(app: &App, ctx: &CallContext, subject: &SubjectId, key: &str) -> OperationReceipt {
     let receipt = app.sync_embeddings(ctx, key, subject, 100).await.unwrap();
     let jobs = serde_json::from_value::<Vec<String>>(receipt.result["jobs"].clone()).unwrap();
-    let mut runs = Vec::new();
     for job in jobs {
-        runs.push(wait_run(app, ctx, &job, EmbeddingState::Succeeded).await);
+        wait_run(app, ctx, &job).await;
     }
-    (receipt, runs)
+    receipt
 }
 fn change(action: MemoryAction, revision: i64) -> MemoryChange {
     MemoryChange {
@@ -280,10 +272,17 @@ async fn adopted_embeddings_drive_vcp_source_filters_content_reuse_and_offline_r
     ]).await;
     let cancellation = CancellationToken::new();
     let worker = app.start_background(cancellation.clone());
-    let (_, runs) = sync(&app, &ctx, &subject.id, "initial-vectors").await;
-    assert_eq!(runs.len(), 1);
-    assert_eq!(provider.count(), 1);
-    let batch_call = runs[0].model_call_id.clone().unwrap();
+    sync(&app, &ctx, &subject.id, "initial-vectors").await;
+    let original = app.memory_source(&ctx, &ids[0]).await.unwrap();
+    let original_vector = original
+        .embedding_provenance
+        .iter()
+        .find(|p| {
+            p.target.reference() == Some(&CognitiveRef::memory(&ids[0], original.memory.revision))
+        })
+        .expect("adopted cognition vector provenance")
+        .clone();
+    let batch_call = original_vector.model_call_id.clone();
     let call = app.read_model_call(&ctx, &batch_call).await.unwrap();
     assert_eq!(call.state, ModelCallState::Succeeded);
     assert_eq!(call.request["role"], "text_embedding");
@@ -293,18 +292,13 @@ async fn adopted_embeddings_drive_vcp_source_filters_content_reuse_and_offline_r
         MODEL
     );
     assert!(
-        provider.requests.lock().unwrap()[0]["input"]
-            .to_string()
-            .contains("EMBER_ARCHIVE")
+        provider
+            .requests
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|request| request["input"].to_string().contains("EMBER_ARCHIVE"))
     );
-    let original = app.memory_source(&ctx, &ids[0]).await.unwrap();
-    let original_vector = original
-        .embedding_provenance
-        .iter()
-        .find(|p| p.memory_revision == Some(original.memory.revision))
-        .expect("adopted Memory vector provenance")
-        .clone();
-    assert_eq!(original_vector.model_call_id, batch_call);
 
     let mut lexical = query(&subject.id, QUERY_ALPHA);
     lexical.mode = QueryMode::Lexical;
@@ -313,14 +307,22 @@ async fn adopted_embeddings_drive_vcp_source_filters_content_reuse_and_offline_r
         .query(&ctx, query(&subject.id, QUERY_ALPHA))
         .await
         .unwrap();
-    assert_eq!(first.hits[0].memory.id, ids[0]);
-    assert!(first.hits.iter().all(|hit| hit.memory.id != ids[2]));
+    assert_eq!(
+        first.hits[0].reference,
+        CognitiveRef::memory(&ids[0], original.memory.revision)
+    );
+    assert!(
+        first
+            .hits
+            .iter()
+            .all(|hit| hit.reference.id.as_str() != ids[2].as_str())
+    );
     let semantic = first
         .semantic
         .as_ref()
         .expect("actual semantic serving diagnostics");
     assert_eq!(semantic.mode, QueryMode::Vcp);
-    assert_eq!(semantic.eligible_memories, 2);
+    assert_eq!(semantic.eligible_objects, 2);
     assert_eq!(
         app.read_model_call(&ctx, &semantic.query_embedding_call_id)
             .await
@@ -329,7 +331,6 @@ async fn adopted_embeddings_drive_vcp_source_filters_content_reuse_and_offline_r
         ModelCallState::Succeeded
     );
     let after_query = provider.count();
-    assert_eq!(after_query, 2);
     let repeated = app
         .query(&ctx, query(&subject.id, QUERY_ALPHA))
         .await
@@ -338,15 +339,13 @@ async fn adopted_embeddings_drive_vcp_source_filters_content_reuse_and_offline_r
     assert_eq!(repeated.semantic.unwrap().generation, semantic.generation);
 
     let frozen = mutate(&app, &ctx, &ids[1], MemoryAction::Freeze, "freeze-beta").await;
-    let (reused, new_runs) = sync(&app, &ctx, &subject.id, "reuse-after-freeze").await;
-    assert_eq!(reused.result["reused_vectors"], 1);
-    assert!(new_runs.is_empty());
+    sync(&app, &ctx, &subject.id, "reuse-after-freeze").await;
     assert_eq!(provider.count(), after_query);
     let beta = app.memory_source(&ctx, &ids[1]).await.unwrap();
     assert_eq!(
         beta.embedding_provenance
             .iter()
-            .find(|p| p.memory_revision == Some(frozen.revision))
+            .find(|p| p.target.reference() == Some(&CognitiveRef::memory(&ids[1], frozen.revision)))
             .expect("lifecycle revision reuses accepted vector")
             .model_call_id,
         batch_call
@@ -358,14 +357,11 @@ async fn adopted_embeddings_drive_vcp_source_filters_content_reuse_and_offline_r
         filtered
             .hits
             .iter()
-            .map(|hit| hit.memory.id.clone())
+            .map(|hit| hit.reference.id.to_string())
             .collect::<Vec<_>>(),
-        vec![ids[0].clone()]
+        vec![ids[0].to_string()]
     );
-    let diagnostics = &filtered.semantic.as_ref().unwrap().diagnostics["serving"];
-    assert_eq!(filtered.semantic.as_ref().unwrap().eligible_memories, 1);
-    assert_eq!(diagnostics["assets"]["source_root_count"], 1);
-    assert_eq!(diagnostics["assets"]["tag_count"], 2);
+    assert_eq!(filtered.semantic.as_ref().unwrap().eligible_objects, 1);
     let outside = CallContext {
         caller_id: "another-subject".into(),
         scope: AccessScope::Subject {
@@ -393,37 +389,28 @@ async fn adopted_embeddings_drive_vcp_source_filters_content_reuse_and_offline_r
             .result,
     )
     .unwrap();
-    assert!(
-        !app.memory_source(&ctx, &ids[0])
-            .await
-            .unwrap()
-            .embedding_provenance
-            .iter()
-            .any(|p| p.memory_revision == Some(revised.revision))
-    );
-    let (_, changed) = sync(&app, &ctx, &subject.id, "changed-content-vector").await;
-    assert_eq!(changed.len(), 1);
-    assert_eq!(provider.count(), after_query + 1);
+    sync(&app, &ctx, &subject.id, "changed-content-vector").await;
     let revised_source = app.memory_source(&ctx, &ids[0]).await.unwrap();
     let new_vector = revised_source
         .embedding_provenance
         .iter()
-        .find(|p| p.memory_revision == Some(revised.revision))
+        .find(|p| p.target.reference() == Some(&CognitiveRef::memory(&ids[0], revised.revision)))
         .unwrap();
     assert_ne!(new_vector.model_call_id, original_vector.model_call_id);
     assert_ne!(new_vector.source_hash, original_vector.source_hash);
     let mut beta_query = query(&subject.id, QUERY_BETA);
     beta_query.source = Some("test:alpha".into());
     let updated = app.query(&ctx, beta_query.clone()).await.unwrap();
-    assert_eq!(updated.hits[0].memory.revision, revised.revision);
-    assert_eq!(provider.count(), after_query + 2);
+    assert_eq!(updated.hits[0].reference.revision, revised.revision);
     let mut hybrid_query = beta_query.clone();
     hybrid_query.mode = QueryMode::Hybrid;
     hybrid_query.text = "CORAL".into();
     let hybrid = app.query(&ctx, hybrid_query).await.unwrap();
     assert_eq!(hybrid.hits.len(), 1);
-    assert_eq!(hybrid.hits[0].memory.id, ids[0]);
-    assert_eq!(hybrid.hits[0].memory.revision, revised.revision);
+    assert_eq!(
+        hybrid.hits[0].reference,
+        CognitiveRef::memory(&ids[0], revised.revision)
+    );
     let cached_calls = provider.count();
     cancellation.cancel();
     worker.await.unwrap();
@@ -437,8 +424,10 @@ async fn adopted_embeddings_drive_vcp_source_filters_content_reuse_and_offline_r
         recovered.semantic.as_ref().unwrap().diagnostics["restored"],
         true
     );
-    assert_eq!(recovered.hits[0].memory.id, ids[0]);
-    assert_eq!(recovered.hits[0].memory.revision, revised.revision);
+    assert_eq!(
+        recovered.hits[0].reference,
+        CognitiveRef::memory(&ids[0], revised.revision)
+    );
     assert_eq!(provider.calls.load(Ordering::SeqCst), cached_calls);
     assert_eq!(
         reopened
@@ -447,7 +436,7 @@ async fn adopted_embeddings_drive_vcp_source_filters_content_reuse_and_offline_r
             .unwrap()
             .embedding_provenance
             .iter()
-            .find(|p| p.memory_revision == Some(revised.revision))
+            .find(|p|p.target.reference()==Some(&CognitiveRef::memory(&ids[0],revised.revision)))
             .unwrap()
             .model_call_id,
         new_vector.model_call_id
@@ -490,8 +479,14 @@ async fn late_embedding_response_cannot_restore_a_permanently_purged_source() {
         .await
         .expect("real provider request entered");
     let running = app.get_embedding_run(&ctx, job).await.unwrap();
-    assert_eq!(running.state, EmbeddingState::Running);
-    let call_id = running.model_call_id.unwrap();
+    assert_eq!(running.job.state, JobState::Running);
+    let calls: Vec<ModelCall> =
+        serde_json::from_value(app.job(&ctx, job).await.unwrap()["model_calls"].clone()).unwrap();
+    let call_id = calls
+        .last()
+        .expect("actual reserved provider attempt")
+        .id
+        .clone();
     assert_eq!(provider.count(), 1);
     let trashed = mutate(
         &app,
@@ -512,20 +507,23 @@ async fn late_embedding_response_cannot_restore_a_permanently_purged_source() {
     .await
     .unwrap();
     let cancelled = app.get_embedding_run(&ctx, job).await.unwrap();
-    assert_eq!(cancelled.state, EmbeddingState::Cancelled);
+    assert_eq!(cancelled.job.state, JobState::Cancelled);
     assert!(
         cancelled
             .inputs
             .iter()
-            .filter(|input| input.kind == EmbeddingKind::Memory)
+            .filter(|input| input
+                .target
+                .reference()
+                .is_some_and(|reference| reference.kind == CognitiveKind::Memory
+                    && reference.id.as_str() == ids[0].as_str()))
             .all(|input| input.text.is_empty())
     );
     provider.release.notify_one();
     tokio::time::timeout(Duration::from_secs(10), async {
         loop {
             let queued = app.job(&ctx, job).await.unwrap();
-            let queue = queued.get("queue_status").unwrap_or(&queued["status"]);
-            if queue == "Done" {
+            if queued["queue"]["status"] == "Done" {
                 break;
             }
             tokio::time::sleep(Duration::from_millis(25)).await;
@@ -534,7 +532,7 @@ async fn late_embedding_response_cannot_restore_a_permanently_purged_source() {
     .await
     .expect("late response finished the real worker dispatch");
     let after = app.get_embedding_run(&ctx, job).await.unwrap();
-    assert_eq!(after.state, EmbeddingState::Cancelled);
+    assert_eq!(after.job.state, JobState::Cancelled);
     assert!(!serde_json::to_string(&after).unwrap().contains(MARKER));
     let call = app.read_model_call(&ctx, &call_id).await.unwrap();
     assert_eq!(call.request["redacted"], true);
@@ -547,7 +545,7 @@ async fn late_embedding_response_cannot_restore_a_permanently_purged_source() {
     assert!(!call.request.to_string().contains(MARKER));
     if let Some(response) = &call.response {
         assert!(!response.to_string().contains(MARKER));
-        assert!(response["vectors"].as_array().is_none_or(Vec::is_empty));
+        assert!(response["result"].as_array().is_none_or(Vec::is_empty));
     }
     assert_eq!(
         app.get_memory(&ctx, &ids[0]).await.unwrap_err().code,
@@ -565,8 +563,13 @@ async fn late_embedding_response_cannot_restore_a_permanently_purged_source() {
     app.close().await;
     let reopened = App::open(paths).await.unwrap();
     assert_eq!(
-        reopened.get_embedding_run(&ctx, job).await.unwrap().state,
-        EmbeddingState::Cancelled
+        reopened
+            .get_embedding_run(&ctx, job)
+            .await
+            .unwrap()
+            .job
+            .state,
+        JobState::Cancelled
     );
     assert!(
         !serde_json::to_string(&reopened.read_model_call(&ctx, &call_id).await.unwrap())

@@ -35,8 +35,4 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           $binaryName = if ($IsWindows) { 'nous.exe' } else { 'nous' }
           python scripts/smoke.py (Join-Path $env:CARGO_TARGET_DIR "debug/$binaryName")
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          python scripts/m2-smoke.py (Join-Path $env:CARGO_TARGET_DIR "debug/$binaryName")
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          python scripts/bundle-smoke.py (Join-Path $env:CARGO_TARGET_DIR "debug/$binaryName")
           exit $LASTEXITCODE

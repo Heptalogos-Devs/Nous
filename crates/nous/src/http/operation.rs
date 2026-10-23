@@ -1,0 +1,181 @@
+//! Shared typed dispatch used by HTTP, CLI and MCP.
+use nous_app::App;
+use nous_domain::{CallContext, Capability, Error, MaterialId, NamespaceId, SubjectId, TimePoint};
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
+use std::str::FromStr;
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CreateNamespace {
+    pub operation_id: String,
+    pub name: String,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CreateSubject {
+    pub operation_id: String,
+    pub name: String,
+    #[serde(default = "memory_capability")]
+    pub capabilities: Vec<String>,
+}
+fn memory_capability() -> Vec<String> {
+    vec!["memory".into()]
+}
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PutMaterial {
+    pub operation_id: String,
+    pub namespace_id: String,
+    pub text: String,
+    pub source: Option<String>,
+    pub event_time: Option<WireTime>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RecordObservation {
+    pub operation_id: String,
+    pub subject_id: String,
+    pub material_id: String,
+    pub observed_at: Option<WireTime>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct WireTime {
+    pub domain: String,
+    pub coordinate: i64,
+}
+impl From<WireTime> for TimePoint {
+    fn from(time: WireTime) -> Self {
+        Self {
+            domain: time.domain,
+            coordinate: time.coordinate,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CancelJob {
+    pub operation_id: String,
+}
+
+#[derive(Clone)]
+pub enum Operation {
+    Structured(Box<crate::http::structured::StructuredOperation>),
+    Maintenance(crate::http::maintenance::MaintenanceOperation),
+    CreateBackup,
+    Cognition(crate::http::cognition::CognitionOperation),
+    Status,
+    CreateNamespace(CreateNamespace),
+    ListNamespaces,
+    CreateSubject(String, CreateSubject),
+    ListSubjects(String),
+    PutMaterial(PutMaterial),
+    GetMaterial(String),
+    RecordObservation(RecordObservation),
+    ListObservations(String),
+    GetJob(String),
+    CancelJob(String, CancelJob),
+}
+
+impl Operation {
+    pub async fn execute(&self, app: &App, ctx: &CallContext) -> Result<Value, Error> {
+        match self {
+            Self::Structured(operation) => operation.execute(app, ctx).await,
+            Self::Maintenance(operation) => operation.execute(app, ctx).await,
+            Self::CreateBackup => app.create_backup(ctx).await,
+            Self::Cognition(operation) => operation.execute(app, ctx).await,
+            Self::Status => {
+                ctx.require_admin()?;
+                app.status().await
+            }
+            Self::CreateNamespace(input) => Ok(serde_json::to_value(
+                app.create_namespace(ctx, &input.operation_id, &input.name)
+                    .await?,
+            )?),
+            Self::ListNamespaces => Ok(serde_json::to_value(app.list_namespaces(ctx).await?)?),
+            Self::CreateSubject(namespace, input) => {
+                let capabilities = input
+                    .capabilities
+                    .iter()
+                    .map(|capability| match capability.as_str() {
+                        "memory" => Ok(Capability::Memory),
+                        _ => Err(Error::invalid(format!("unknown capability: {capability}"))),
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(serde_json::to_value(
+                    app.create_subject(
+                        ctx,
+                        &input.operation_id,
+                        &NamespaceId::from_str(namespace)?,
+                        &input.name,
+                        capabilities,
+                    )
+                    .await?,
+                )?)
+            }
+            Self::ListSubjects(namespace) => Ok(serde_json::to_value(
+                app.list_subjects(ctx, &namespace.parse()?).await?,
+            )?),
+            Self::PutMaterial(input) => Ok(serde_json::to_value(
+                app.put_material(
+                    ctx,
+                    &input.operation_id,
+                    &input.namespace_id.parse()?,
+                    &input.text,
+                    input.source.clone(),
+                    input.event_time.clone().map(Into::into),
+                )
+                .await?,
+            )?),
+            Self::GetMaterial(id) => Ok(serde_json::to_value(
+                app.get_material(ctx, &MaterialId::from_str(id)?).await?,
+            )?),
+            Self::RecordObservation(input) => Ok(serde_json::to_value(
+                app.record_observation(
+                    ctx,
+                    &input.operation_id,
+                    &input.subject_id.parse()?,
+                    &input.material_id.parse()?,
+                    input.observed_at.clone().map(Into::into),
+                )
+                .await?,
+            )?),
+            Self::ListObservations(subject) => Ok(serde_json::to_value(
+                app.list_observations(ctx, &SubjectId::from_str(subject)?)
+                    .await?,
+            )?),
+            Self::GetJob(id) => app.job(ctx, id).await,
+            Self::CancelJob(id, input) => {
+                Ok(json!(app.cancel_job(ctx, &input.operation_id, id).await?))
+            }
+        }
+    }
+
+    pub fn request(&self) -> (&'static str, String, Option<Value>) {
+        match self {
+            Self::Structured(operation) => operation.request(),
+            Self::Maintenance(operation) => operation.request(),
+            Self::CreateBackup => ("POST", "/api/backups".into(), None),
+            Self::Cognition(operation) => operation.request(),
+            Self::Status => ("GET", "/api/status".into(), None),
+            Self::CreateNamespace(body) => ("POST", "/api/namespaces".into(), Some(json!(body))),
+            Self::ListNamespaces => ("GET", "/api/namespaces".into(), None),
+            Self::CreateSubject(id, body) => (
+                "POST",
+                format!("/api/namespaces/{id}/subjects"),
+                Some(json!(body)),
+            ),
+            Self::ListSubjects(id) => ("GET", format!("/api/namespaces/{id}/subjects"), None),
+            Self::PutMaterial(body) => ("POST", "/api/materials".into(), Some(json!(body))),
+            Self::GetMaterial(id) => ("GET", format!("/api/materials/{id}"), None),
+            Self::RecordObservation(body) => {
+                ("POST", "/api/observations".into(), Some(json!(body)))
+            }
+            Self::ListObservations(id) => ("GET", format!("/api/subjects/{id}/observations"), None),
+            Self::GetJob(id) => ("GET", format!("/api/jobs/{id}"), None),
+            Self::CancelJob(id, input) => {
+                ("POST", format!("/api/jobs/{id}/cancel"), Some(json!(input)))
+            }
+        }
+    }
+}

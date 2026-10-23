@@ -1,4 +1,4 @@
-use nous_app::{App, instance::InstancePaths};
+use nous_app::{App, common::instance::InstancePaths};
 use nous_domain::*;
 use serde_json::json;
 use std::time::Duration;
@@ -20,6 +20,9 @@ fn query(subject: SubjectId, text: &str, inactive: bool) -> QueryRequest {
         subject_id: subject,
         text: text.into(),
         reference: None,
+        kinds: Vec::new(),
+        as_of_commit: None,
+        include_deleted: false,
         source: None,
         time: None,
         limit: 20,
@@ -92,7 +95,7 @@ async fn imported_memory_is_immediately_searchable_and_lifecycle_purge_survives_
             subject_id: subject.id.clone(),
         },
     };
-    let first = json!({"external_id":"note-a","text":"oldmarkerNW 京都的原始资料","metadata":{"z":2,"a":1},"structured":{"schema_version":1,"entities":["京都"],"relations":[["京都","位于","日本"]]}});
+    let first = json!({"external_id":"note-a","text":"oldmarkerNW 京都的原始资料","metadata":{"z":2,"a":1},"structured":{"entities":["京都"],"relations":[["京都","位于","日本"]]}});
     let second = json!({"external_id":"note-b","text":"独立的第二份材料","tags":["样例"]});
     let content = format!("{first}\n{{broken}}\n{second}");
     let imported = app

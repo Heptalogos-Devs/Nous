@@ -1,8 +1,8 @@
 use axum::{Json, Router, routing::post};
 use nous_app::{
     App,
-    instance::{InstanceConfig, InstancePaths, SecretRef},
-    model::{FORMATION_PROMPT_VERSION, FormationConfig, ModelConfig, ModelProtocol, ModelResource},
+    common::instance::{InstanceConfig, InstancePaths, SecretRef},
+    common::models::{FormationConfig, ModelConfig, ModelProtocol, ModelResource},
 };
 use nous_domain::*;
 use serde_json::{Value, json};
@@ -15,14 +15,17 @@ use std::{
 };
 use tokio_util::sync::CancellationToken;
 
-async fn wait_for(app: &App, id: &str, state: &str) -> Value {
+async fn wait_for(app: &App, id: &str, state: JobState, wait_kind: Option<&str>) -> Value {
     tokio::time::timeout(Duration::from_secs(15), async {
         loop {
             let job = app.job(&CallContext::admin(), id).await.unwrap();
-            if job["status"] == state {
+            let record: JobRecord = serde_json::from_value(job["job"].clone()).unwrap();
+            if record.state == state
+                && record.wait.as_ref().map(|wait| wait.kind.as_str()) == wait_kind
+            {
                 return job;
             }
-            assert_ne!(job["status"], "failed", "{job:#}");
+            assert_ne!(record.state, JobState::Failed, "{job:#}");
             tokio::time::sleep(Duration::from_millis(25)).await;
         }
     })
@@ -36,6 +39,9 @@ fn query(subject_id: SubjectId, text: &str) -> QueryRequest {
         subject_id,
         text: text.into(),
         reference: None,
+        kinds: Vec::new(),
+        as_of_commit: None,
+        include_deleted: false,
         source: None,
         time: None,
         limit: 10,
@@ -102,14 +108,12 @@ async fn waiting_work_resumes_after_configuration_and_keeps_authority_through_qu
     let job_id = &submitted.job_ids[0];
     let cancel = CancellationToken::new();
     let background = app.start_background(cancel.clone());
-    wait_for(&app, job_id, "waiting_for_configuration").await;
+    wait_for(&app, job_id, JobState::Waiting, Some("configuration")).await;
     cancel.cancel();
     background.await.unwrap();
     app.close().await;
 
-    // A real HTTP boundary exercises the SDK request and strict JSON decoder.
-    // The external provider is controlled here; the end-to-end gateway smoke
-    // separately uses the operator's actual subscription.
+    // Exercise the actual provider protocol without an external model request.
     let calls = Arc::new(AtomicUsize::new(0));
     let requests = calls.clone();
     let provider=Router::new().route("/v1/chat/completions",post(move |Json(request):Json<Value>| {
@@ -148,7 +152,7 @@ async fn waiting_work_resumes_after_configuration_and_keeps_authority_through_qu
                     file: "credentials/test-model.token".into(),
                 },
             },
-            prompt_version: FORMATION_PROMPT_VERSION.into(),
+            prompt: Default::default(),
             max_input_bytes: 32768,
             max_output_tokens: 1000,
             max_calls_per_day: 1,
@@ -159,17 +163,17 @@ async fn waiting_work_resumes_after_configuration_and_keeps_authority_through_qu
     let reopened = App::open(paths.clone()).await.unwrap();
     let cancel = CancellationToken::new();
     let background = reopened.start_background(cancel.clone());
-    let completed = wait_for(&reopened, job_id, "succeeded").await;
+    let completed = wait_for(&reopened, job_id, JobState::Succeeded, None).await;
     assert_eq!(calls.load(Ordering::SeqCst), 1);
     assert_eq!(
-        completed["formation"]["memory_ids"]
+        completed["job"]["result"]["memory_ids"]
             .as_array()
             .unwrap()
             .len(),
         1
     );
     let id: MemoryId =
-        serde_json::from_value(completed["formation"]["memory_ids"][0].clone()).unwrap();
+        serde_json::from_value(completed["job"]["result"]["memory_ids"][0].clone()).unwrap();
     let memory = reopened.get_memory(&admin, &id).await.unwrap();
     let source = reopened.memory_source(&admin, &id).await.unwrap();
     assert_eq!(
@@ -199,7 +203,11 @@ async fn waiting_work_resumes_after_configuration_and_keeps_authority_through_qu
         .query(&admin, query(subject.id.clone(), "京都 枫叶"))
         .await
         .unwrap();
-    assert!(hits.hits.iter().any(|hit| hit.memory.id == id));
+    assert!(
+        hits.hits
+            .iter()
+            .any(|hit| hit.reference.id.as_str() == id.as_str())
+    );
     assert_eq!(
         reopened
             .form_memory(&admin, "form", &subject.id, &observation.id)
@@ -212,7 +220,13 @@ async fn waiting_work_resumes_after_configuration_and_keeps_authority_through_qu
         .form_memory(&admin, "form-again", &subject.id, &observation.id)
         .await
         .unwrap();
-    wait_for(&reopened, &extra.job_ids[0], "waiting_for_budget").await;
+    wait_for(
+        &reopened,
+        &extra.job_ids[0],
+        JobState::Waiting,
+        Some("budget"),
+    )
+    .await;
     assert_eq!(calls.load(Ordering::SeqCst), 1);
     reopened
         .delete_memory(&admin, "remove", &id, memory.revision)

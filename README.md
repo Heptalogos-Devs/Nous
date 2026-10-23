@@ -34,7 +34,7 @@ $observation = (& $nous --instance $instance observation record --subject $subje
 
 Linux 使用同一 PowerShell 环境脚本，程序路径为 `debug/nous`。正式部署用 `--instance <path>` 指定持久位置。开发实例、下载、克隆、缓存和编译均位于 `temp`；脚本只修改当前进程环境。已安装工具链继续使用。
 
-HTTP 入口为 `/v1`，Streamable HTTP MCP 为 `/mcp`。`nous mcp stdio` 连接运行中的服务。凭据默认读取实例内受保护文件；远程调用用 `--url` 与 `--token-file`。停服后可通过 `token create --namespace <id> [--subject <id>] --name <name>` 创建范围凭据。Subject 可读取已获授权的材料并记录再次接触；首次材料暴露由 Namespace 或管理员接纳。
+HTTP 入口为 `/api`，Streamable HTTP MCP 为 `/mcp`。`nous mcp stdio` 连接运行中的服务。凭据默认读取实例内受保护文件；远程调用用 `--url` 与 `--token-file`。停服后可通过 `token create --namespace <id> [--subject <id>] --name <name>` 创建范围凭据。Subject 可读取已获授权的材料并记录再次接触；首次材料暴露由 Namespace 或管理员接纳。
 
 材料保存、实际接触和记忆形成各有独立身份。`observation record` 创建 `kind=contact` 的实际接触记录。模型形成请求先持久入队，模型调用在写事务外进行；保存输出后，由同一权威事务采纳 Memory、来源关系与索引任务。Tantivy 索引可重建，查询合并未索引增量，并在返回前读取当前权威修订。
 
@@ -83,16 +83,18 @@ while (-not $page.result.complete) {
 
 | HTTP | MCP 工具 |
 | --- | --- |
-| `POST /v1/imports/text` | `import_text` |
-| `POST /v1/memories/{id}/change` | `memory_change` |
-| `GET /v1/memories/{id}/audit?limit=50` | `memory_audit` |
-| `GET /v1/subjects/{id}/recycle-bin?limit=50` | `memory_recycle_bin` |
-| `POST /v1/subjects/{id}/maintenance` | `memory_maintain` |
-| `POST /v1/embeddings/sync` | `embedding_sync` |
-| `GET /v1/embeddings/runs/{id}` | `embedding_run` |
-| `POST /v1/query` | `query` |
-| `GET /v1/memories/{id}/source` | `memory_source` |
-| `GET /v1/models/calls/{id}` | `model_call` |
+| `POST /api/imports/text` | `import_text` |
+| `POST /api/memories/{id}/change` | `memory_change` |
+| `GET /api/memories/{id}/audit?limit=50` | `memory_audit` |
+| `GET /api/subjects/{id}/recycle-bin?limit=50` | `memory_recycle_bin` |
+| `POST /api/subjects/{id}/maintenance` | `memory_maintain` |
+| `POST /api/embeddings/sync` | `embedding_sync` |
+| `GET /api/embeddings/runs/{id}` | `embedding_run` |
+| `POST /api/query` | `query` |
+| `GET /api/memories/{id}/source` | `memory_source` |
+| `GET /api/models/calls/{id}` | `model_call` |
+| `GET /api/jobs/{id}` | `job_get` |
+| `POST /api/jobs/{id}/cancel` | `job_cancel` |
 
 `.amembundle` 可在本地离线检查，无需启动实例：
 
@@ -106,7 +108,7 @@ while (-not $page.result.complete) {
 
 [nous-vcp](crates/nous-vcp/README.md) 提供完整 VCP 计算族和旧版数值基线，包含 AGS 几何、传播资产、Pyramid、Sense、双场、RiverMemo、DTSC 与 Thinking。开发者可用 `cargo run -p nous-vcp --example native_pipeline` 重放完整计算和来源映射。实际文本查询已接通模型向量、USearch 候选/Tag 双索引、VCP 图资产和来源映射。
 
-停服后按 [模型资源配置](docs/基建实施规划.md#配置授权与模型资源) 设置 `instance.toml` 与凭据引用，再启动服务。配置只保存 SecretRef，密钥内容放入实例的受保护 `credentials` 目录。另开终端执行：
+停服后按 [模型资源配置](docs/基建实施规划.md#配置模型资源与提示词) 通过 `config schema` 查看当前字段，再设置 `instance.toml` 与凭据引用，再启动服务。配置只保存 SecretRef，密钥内容放入实例的受保护 `credentials` 目录。另开终端执行：
 
 ```powershell
 & $nous --instance $instance model status
@@ -114,7 +116,7 @@ $formation = & $nous --instance $instance memory form --subject $subject --obser
 & $nous --instance $instance job get $formation.job_ids[0]
 ```
 
-文本向量职责使用配置中的 `models.text_embedding`，完整样例和各项限制见 [模型资源配置](docs/基建实施规划.md#配置授权与模型资源)。配置就绪后，可显式补齐主体记忆和来源标签的向量，再查询：
+文本向量职责使用配置中的 `models.text_embedding`，用 `config schema` 查看当前字段；职责与资源边界见 [模型资源与提示词](docs/基建实施规划.md#配置模型资源与提示词)。配置就绪后，可显式补齐主体认知和来源标签的向量，再查询：
 
 ```powershell
 $embedding = & $nous --instance $instance memory embed --subject $subject --operation-id first-embedding | ConvertFrom-Json
@@ -124,15 +126,17 @@ $embedding.result.jobs | ForEach-Object { & $nous --instance $instance job get $
 & $nous --instance $instance query --subject $subject --mode hybrid '秋天有哪些植物变化？'
 ```
 
-`memory embed` 返回持久任务 ID；`result.jobs` 包含本次新建和已在处理相同输入的任务。HTTP 提交 `POST /v1/embeddings/sync`，JSON 为 `{"subject_id":"<id>","operation_id":"first-embedding","limit":5000}`；按 ID 读取 `/v1/embeddings/runs/<job_id>`。MCP 使用 `embedding_sync` 和 `embedding_run {job_id}`。查询默认 `lexical`；HTTP/MCP 的 `mode` 同样接受 `dense`、`vcp`、`hybrid`。语义查询会补齐缺少的当前记忆、标签和查询向量并等待结果；当前主体快照上限为 5000 条 Memory，超出时返回 ResourceExhausted。
+`memory embed` 返回持久任务 ID；`result.jobs` 包含本次新建和已在处理相同输入的任务。HTTP 提交 `POST /api/embeddings/sync`，JSON 为 `{"subject_id":"<id>","operation_id":"first-embedding","limit":5000}`；按 ID 读取 `/api/embeddings/runs/<job_id>`。MCP 使用 `embedding_sync` 和 `embedding_run {job_id}`。查询默认 `lexical`；HTTP/MCP 的 `mode` 同样接受 `dense`、`vcp`、`hybrid`。语义查询会补齐缺少的当前认知、标签和查询向量并等待结果；当前主体快照上限为 5000 条认知对象，超出时返回 ResourceExhausted。
 
-标签取自来源 MaterialDetails.tags 的原文，去除首尾空白后生成稳定身份；同一 Material 派生的多条 Memory 在图证据中共用一个来源根。范围、来源、时间和活跃状态先约束候选与构图，命中返回前再读取最新权威修订。候选索引、Tag 索引和完整 VCP 资产按不可变代际一起发布；重启加载已发布资产，恢复与重建复用 SQLite 保存的向量原值。同一模型空间的相同查询复用持久查询向量，重启后再次查询无需远程嵌入。正文未变的生命周期修订也复用原向量和调用来源。
+标签取自来源 MaterialDetails.tags 的原文，去除首尾空白后生成稳定身份；同一 Material 派生的多个认知对象 在图证据中共用一个来源根。范围、来源、时间和活跃状态先约束候选与构图，命中返回前再读取最新权威修订。候选索引、Tag 索引和完整 VCP 资产按不可变代际一起发布；重启加载已发布资产，恢复与重建复用 SQLite 保存的向量原值。同一模型空间的相同查询复用持久查询向量，重启后再次查询无需远程嵌入。正文未变的生命周期修订也复用原向量和调用来源。
 
 任务达到 `succeeded` 后，可查询记忆并读取其原文、实际接触、Prompt、模型参数及 usage：
 
 ```powershell
-$result = & $nous --instance $instance query --subject $subject '枫叶 秋天' | ConvertFrom-Json
-$memory = $result.hits[0].memory
+$result = & $nous --instance $instance query --subject $subject --kind memory '枫叶 秋天' | ConvertFrom-Json
+$memory = $result.hits[0].object
+$reference = $result.hits[0].reference
+& $nous --instance $instance query --subject $subject --reference "$($reference.kind):$($reference.id)@$($reference.revision)"
 & $nous --instance $instance memory source $memory.id
 & $nous --instance $instance memory history $memory.id
 # source 返回 embedding_provenance，可用其 model_call_id 展开实际请求与 usage。
@@ -145,30 +149,30 @@ $backup = & $nous --instance $instance backup create | ConvertFrom-Json
 & $nous --instance ./temp/instances/restored backup restore $backup.backup
 ```
 
-形成与嵌入共用通用 model_jobs、ModelCall 账本和按资源每日调用预留；缺少配置或达到预算时保留等待状态。重启会恢复已接受任务，已保存的成功输出可继续采纳；中断的远程调用保留不确定状态及重试记录。相同范围、模型空间和源输入的活跃任务共用处理权，重复同步返回已有任务。备份包含数据库、已采纳向量、引用对象、配置和校验清单；恢复到新实例时生成新的管理员凭据，模型密钥通过正式凭据入口重新配置。
+所有任务使用统一 JobRecord；形成与嵌入调用同一 ModelCall 服务和按资源每日调用预约。`job get` 返回 `job`、`queue` 和 `model_calls`；等待时 `job.state` 为 `waiting`，`job.wait.kind` 区分 `configuration`、`budget` 等条件。用 `job cancel <id> --operation-id <id>` 取消已接受的工作。重启会恢复已接受任务，已保存的成功输出可继续采纳；中断的远程调用保留不确定状态及重试记录。相同范围、模型空间和源输入的活跃任务共用处理权，重复同步返回已有任务。备份包含数据库、已采纳向量、引用对象、运行时配置快照、绑定的 Prompt 文件和校验清单；恢复到新实例时生成新的管理员凭据，按 SecretRef 重新提供模型凭据。
 
 结构化认知通过同一应用入口创建、修订、查询、展开来源和形成。支持 MemorySemantics、Concept、Episode、Journal、Schema、Association；Concept 可原子合并/拆分，Episode 可按完整来源序列重分段。精确修订证据区分支持、反驳与上下文，同一材料的派生路径共享来源根；Journal 保存写作时的知识截面。
 
-`nous cognition --schema` 输出完整请求 JSON Schema，`nous cognition --file <request.json>` 提交请求。HTTP 使用 `POST /v1/cognition`，MCP 使用 `cognition` 工具，三者接收相同的 `action` 判别请求：`create`、`revise`、`get`、`history`、`set_deleted`、`source`、`concept_resolve`、`merge_concepts`、`split_concept`、`resegment_episodes`、`query`、`form`、`formation_run`。结构化 `query` 支持对象种类、时间轴、`as_of_commit` 和已删除对象；当前使用权威快照与 Tantivy，临时索引集中于实例 `temp` 并随查询清理。结构化对象的 Dense/VCP 接线继续实施。
+`nous cognition --schema` 输出完整请求 JSON Schema，`nous cognition --file <request.json>` 提交请求。HTTP 使用 `POST /api/cognition`，MCP 使用 `cognition` 工具，三者接收相同的 `action` 判别请求：`create`、`revise`、`get`、`history`、`set_deleted`、`source`、`concept_resolve`、`merge_concepts`、`split_concept`、`resegment_episodes`、`form`、`formation_run`。所有认知使用唯一 `query` 用例：CLI 的 `--kind`、`--reference kind:UUID@revision`、`--as-of-commit`、`--include-inactive` 与 `--include-deleted` 对应 HTTP/MCP 的 QueryRequest。HTTP/MCP 的 `reference` 使用包含 `kind`、`id`、`revision` 的对象。命中包含 `reference`、`object`、`score` 和 `source_roots`；Memory、Concept、Episode、Journal、Schema、Association 共用词项及 Dense/VCP/Hybrid 查询。
 
-形成请求的 `input` 包含 `subject_id`、精确 `sources` 和 `targets[{key,kind,existing}]`。服务读取已授权来源并分配稳定目标 ID，模型只从来源键与目标槽位选择。`models.structured_formation` 使用与 `memory_formation` 相同的资源和 SecretRef 结构，Prompt 版本为 `nous.structured.formation.v1`。默认输入预算 64 KiB（含输出 Schema）、输出 8192 tokens、每日 20 次调用。它复用共享 ModelCall 与持久队列；每个提案组独立事务采纳，返回 applied/conflict/rejected/skipped，缺配置等待、重启续接、来源清除退役均保存状态。
+形成请求的 `input` 包含 `subject_id`、精确 `sources` 和 `targets[{key,kind,existing}]`。服务读取已授权来源并分配稳定目标 ID，模型只从来源键与目标槽位选择。`models.structured_formation` 使用与 `memory_formation` 相同的资源和 SecretRef 结构。Prompt 默认使用随包模板，也可通过 `prompt.file` 绑定实例 `prompts` 目录内的文件；调用记录保存模板、渲染文本、变量来源及实际摘要。默认输入预算 64 KiB（含输出 Schema）、输出 8192 tokens、每日 20 次调用。它复用共享 ModelCall 与持久队列；每个提案组独立事务采纳，返回 applied/conflict/rejected/skipped，缺配置等待、重启续接、来源清除退役均保存状态。
 
 形成作业的 `succeeded` 表示全部组已处理，具体成果和冲突读取 `formation_run` 的 `groups`。`source` 返回对象精确修订、证据闭包、原材料和实际模型调用。CLI 交互优化、媒体三策略、原生多模态、managed context/steward 与完整 A-Memorix 合同继续按 [能力续接清单](docs/能力续接清单.md) 推进。
 
-验证入口：
+验证入口需要 Python 3.11 或更新版本：
 
 ```powershell
 . ./scripts/dev-env.ps1
 cargo test --workspace --locked
 cargo run -p nous-storage --example transaction_recovery --locked -- (Join-Path (Get-Location) 'temp/instances/recovery.sqlite')
+cargo build -p nous --locked
 python ./scripts/smoke.py (Join-Path $env:CARGO_TARGET_DIR 'debug/nous.exe')
-python ./scripts/m2-smoke.py (Join-Path $env:CARGO_TARGET_DIR 'debug/nous.exe')
-python ./scripts/bundle-smoke.py (Join-Path $env:CARGO_TARGET_DIR 'debug/nous.exe')
-# 使用已配置模型的实例作为模板，实际调用其模型服务。
-python ./scripts/m1-smoke.py (Join-Path $env:CARGO_TARGET_DIR 'debug/nous.exe') --instance ./temp/instances/m1-dev
-python ./scripts/m3-smoke.py (Join-Path $env:CARGO_TARGET_DIR 'debug/nous.exe') --instance ./temp/instances/m1-dev
+# 可选：调用模板配置的真实模型服务。
+python ./scripts/gateway-smoke.py (Join-Path $env:CARGO_TARGET_DIR 'debug/nous.exe') --template ./temp/instances/m1-dev
 ```
 
-恢复试验要求使用新的数据库文件。`smoke.py` 验证基础协议与作用域；`m2-smoke.py` 在无模型配置的新实例中验证导入、生命周期、维护分页、作用域、清除和重启，覆盖 CLI、HTTP、MCP HTTP 与 stdio；`bundle-smoke.py` 用三类真实导出包验证离线检查、完整库存与错误包处理。当前 Windows 的 81 项工作区测试、fmt、严格 clippy 和构建通过，M2 与 bundle 的真实使用检查分别通过 31 项和 10 项，模型调用数为 0。
+`smoke.py` 在无模型配置的新实例中验证 CLI、HTTP、MCP HTTP 和 stdio：初始化、逐项导入、统一查询、来源、范围凭据、任务取消、记忆生命周期、停服重启、快照恢复和真实导出包的离线检查。它不配置模型资源。Windows 与 Ubuntu 的 [CI](.github/workflows/ci.yml) 运行此入口及工作区集成测试。
 
-`m1-smoke.py` 从模板复制配置与必要模型凭据到独立开发实例，验证真实形成、两种 MCP、调用中强杀恢复、单次采纳与快照恢复。`m3-smoke.py` 使用模板的网关凭据，在独立实例配置实际 2048 维文本嵌入，验证 Dense/VCP/Hybrid、来源和调用记录、范围过滤、修订/清除、缓存重开及调用中断恢复；本轮 26 项真实使用检查通过，包含已持久 Started 后的强杀恢复；成功验收实际转发 5 次 embedding 请求，共报告 480 prompt tokens。运行产物与报告集中于 `temp`。Windows 与 Ubuntu 工作流位于 [CI](.github/workflows/ci.yml)，日常 CI 使用本地受控模型协议响应。
+`gateway-smoke.py` 只读取模板中的模型资源和必要凭据，复制到新隔离实例。它以两份独立资料形成真实 Memory；第一批以独立槽位形成 MemorySemantics、Concept、Episode、Schema、Association，第二批基于已提交的 Episode 写 Journal。随后补齐统一认知向量，验证 Dense/VCP/Hybrid、模型调用与来源、回执重放和重启后的缓存读取。模板需要 `memory_formation` 与 `text_embedding`；未配置 `structured_formation` 时，以已有聊天资源建立该职责的隔离绑定，输入上限 128 KiB、输出上限 8192 tokens，每日调用限额沿用聊天职责。
+
+两个入口均先把可执行文件复制到 `temp/runtime`，所有子进程、实例、输入、日志和报告集中于 `temp`。真实流程记录每组实际结果，合法空提案或部分冲突按原样保存；缺少完整认知成果时，报告列出未完成能力。历史运行报告继续保存在各自的 `temp` 目录。

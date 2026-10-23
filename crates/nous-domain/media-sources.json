@@ -1,0 +1,74 @@
+{
+  "repository": "https://github.com/Heptalogos-Devs/Nous-Wave",
+  "commit": "412b062082afb75ccfae4c3f69fc606d3e3cc862",
+  "license": "Apache-2.0",
+  "files": [
+    {
+      "path": "crates/material/src/domain.rs",
+      "sha256": "4c71a78b5efe0bd5aa45bb812476b09a800bd403eb66c4aeb0ae5d124b0dbde5",
+      "targets": [
+        "src/media.rs",
+        "src/media/regions.rs",
+        "src/media/derivation.rs"
+      ]
+    },
+    {
+      "path": "crates/material/src/service/derivation.rs",
+      "sha256": "f32c961f6d917d82d52b40ddf2273f67aae7b8372b7a0d19c5a64dd9a003defc",
+      "targets": [
+        "src/media/derivation.rs"
+      ]
+    },
+    {
+      "path": "crates/material/src/service/lineage.rs",
+      "sha256": "670a0143e96e58d55019f92894fc94964db114d8f7b75ee94702b9d1d02a41bf",
+      "targets": [
+        "src/media.rs",
+        "src/media/regions.rs"
+      ]
+    },
+    {
+      "path": "crates/core/src/lib.rs",
+      "sha256": "f012c950f0a63978f873b1b449df63a4271de6ca960ee3296a88e24fa144b414",
+      "targets": [
+        "src/media/derivation.rs"
+      ]
+    },
+    {
+      "path": "apps/nous-core/src/model/derivation.ts",
+      "sha256": "55b0d341859d18c979fffdbbfb58d4c73a853c6beff5278d160e3c4dc508a943",
+      "targets": [
+        "src/media/derivation.rs"
+      ]
+    },
+    {
+      "path": "apps/nous-core/src/model/input.ts",
+      "sha256": "f76c054621fb6911a828ec795085bcffcec25e57eec0ad0d8105870cba8729a9",
+      "targets": [
+        "src/media/derivation.rs"
+      ]
+    },
+    {
+      "path": "apps/nous-core/src/model/interpretation.ts",
+      "sha256": "2c40d35134ef2c04614e8041b54a86e1f73d2ef154311caf35c4b4d8923d0b59",
+      "targets": [
+        "src/media/interpretation.rs"
+      ]
+    },
+    {
+      "path": "apps/nous-core/src/model/video.ts",
+      "sha256": "5a316e70b3ae669e41c8894c1b54c06ff6932db34d513517848d695a7c4696a7",
+      "targets": [
+        "src/media/sampling.rs"
+      ]
+    },
+    {
+      "path": "apps/nous-core/src/model/schemas/material-interpretation.ts",
+      "sha256": "af0b7913b217a3db6cbb055081150a83297c5ea9779f1cbec01a597cd05f9dd4",
+      "targets": [
+        "src/media/interpretation.rs"
+      ]
+    }
+  ],
+  "adaptation": "Use current namespace Material identity, typed coordinates/payloads, exact representation refs and an explicit Contact locator. Storage remains the source-root authority; binary transport and media execution belong to App."
+}

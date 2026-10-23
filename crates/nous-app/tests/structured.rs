@@ -1,8 +1,8 @@
 use axum::{Json, Router, routing::post};
 use nous_app::{
     App,
-    instance::{InstanceConfig, InstancePaths},
-    structured::{FormStructuredRequest, FormationTarget, StructuredQuery},
+    cognition::structured::{FormStructuredRequest, FormationTarget},
+    common::instance::{InstanceConfig, InstancePaths},
 };
 use nous_domain::*;
 use serde_json::{Value, json};
@@ -137,10 +137,15 @@ fn request(
         producer_call_id: None,
     }
 }
-fn query(subject: &Subject, text: &str) -> StructuredQuery {
-    StructuredQuery {
+fn query(subject: &Subject, text: &str) -> QueryRequest {
+    QueryRequest {
+        mode: QueryMode::Lexical,
+        reference: None,
+        source: None,
+        min_commit_seq: None,
+        include_inactive: false,
         subject_id: subject.id.clone(),
-        kind: None,
+        kinds: Vec::new(),
         text: text.into(),
         as_of_commit: None,
         include_deleted: false,
@@ -202,31 +207,38 @@ async fn structured_history_queries_and_sources_survive_revisions_and_restart() 
         first.id
     );
     assert_eq!(
-        app.query_structured(&ctx, query(&subject, "scarlet"))
+        app.query(&ctx, query(&subject, "scarlet"))
             .await
-            .unwrap()["hits"][0]["object"]["revision"],
+            .unwrap()
+            .hits[0]
+            .reference
+            .revision,
         2
     );
     let mut historic = query(&subject, "botanical");
     historic.as_of_commit = Some(first.commit_seq);
     assert_eq!(
-        app.query_structured(&ctx, historic.clone()).await.unwrap()["hits"][0]["object"]["revision"],
+        app.query(&ctx, historic.clone()).await.unwrap().hits[0]
+            .reference
+            .revision,
         1
     );
     app.set_structured_deleted(&ctx, "retire", &first.id, 2, true)
         .await
         .unwrap();
-    assert_eq!(
-        app.query_structured(&ctx, query(&subject, "scarlet"))
+    assert!(
+        app.query(&ctx, query(&subject, "scarlet"))
             .await
-            .unwrap()["hits"],
-        json!([])
+            .unwrap()
+            .hits
+            .is_empty()
     );
     let mut deleted = query(&subject, "scarlet");
     deleted.include_deleted = true;
-    assert_eq!(
-        app.query_structured(&ctx, deleted).await.unwrap()["hits"][0]["object"]["deleted"],
-        true
+    assert!(
+        app.query(&ctx, deleted).await.unwrap().hits[0]
+            .object
+            .deleted()
     );
     app.close().await;
     let app = App::open(paths).await.unwrap();
@@ -235,7 +247,9 @@ async fn structured_history_queries_and_sources_survive_revisions_and_restart() 
         3
     );
     assert_eq!(
-        app.query_structured(&ctx, historic).await.unwrap()["hits"][0]["object"]["revision"],
+        app.query(&ctx, historic).await.unwrap().hits[0]
+            .reference
+            .revision,
         1
     );
     app.set_structured_deleted(&ctx, "restore", &first.id, 3, false)
@@ -265,17 +279,19 @@ async fn structured_history_queries_and_sources_survive_revisions_and_restart() 
     app.close().await;
 }
 
-async fn wait(app: &App, id: &str, state: &str) -> Value {
+async fn wait(app: &App, id: &str, state: JobState, wait_kind: Option<&str>) -> Value {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
     loop {
         let value = app.job(&CallContext::admin(), id).await.unwrap();
-        if value["status"] == state {
+        let record: JobRecord = serde_json::from_value(value["job"].clone()).unwrap();
+        if record.state == state && record.wait.as_ref().map(|wait| wait.kind.as_str()) == wait_kind
+        {
             return value;
         }
-        assert_ne!(value["status"], "failed", "{value:#}");
+        assert_ne!(record.state, JobState::Failed, "{value:#}");
         assert!(
             tokio::time::Instant::now() < deadline,
-            "expected {state}, got {value:#}"
+            "expected {state:?}, got {value:#}"
         );
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
@@ -368,7 +384,7 @@ async fn formation_waits_then_applies_independent_groups_with_shared_call_and_re
     let job_id = receipt.job_ids[0].clone();
     let cancel = CancellationToken::new();
     let worker = app.start_background(cancel.clone());
-    wait(&app, &job_id, "waiting_for_configuration").await;
+    wait(&app, &job_id, JobState::Waiting, Some("configuration")).await;
     cancel.cancel();
     worker.await.unwrap();
     app.close().await;
@@ -402,8 +418,9 @@ async fn formation_waits_then_applies_independent_groups_with_shared_call_and_re
     let app = App::open(paths.clone()).await.unwrap();
     let cancel = CancellationToken::new();
     let worker = app.start_background(cancel.clone());
-    let done = wait(&app, &job_id, "succeeded").await;
-    let groups = done["groups"].as_array().unwrap();
+    let done = wait(&app, &job_id, JobState::Succeeded, None).await;
+    let formed = app.structured_formation_run(&ctx, &job_id).await.unwrap();
+    let groups = formed["groups"].as_array().unwrap();
     let states = groups
         .iter()
         .map(|g| g["state"].as_str().unwrap())
@@ -416,11 +433,13 @@ async fn formation_waits_then_applies_independent_groups_with_shared_call_and_re
     );
     assert_eq!(calls.load(Ordering::SeqCst), 1);
     assert_eq!(done["model_calls"].as_array().unwrap().len(), 1);
-    let found = app
-        .query_structured(&ctx, query(&subject, "maple"))
-        .await
-        .unwrap();
-    assert_eq!(found["hits"].as_array().unwrap().len(), 4);
+    let found = app.query(&ctx, query(&subject, "maple")).await.unwrap();
+    assert!(
+        found
+            .hits
+            .iter()
+            .any(|hit| hit.reference.kind == CognitiveKind::Concept)
+    );
     assert_eq!(
         app.concept_by_alias(&ctx, &subject.id, "Must rollback")
             .await
@@ -446,8 +465,12 @@ async fn formation_waits_then_applies_independent_groups_with_shared_call_and_re
         app.structured_source(&ctx, &schema_id, None).await.unwrap()["closure"],
         source["closure"]
     );
-    let reopened = wait(&app, &job_id, "succeeded").await;
-    assert_eq!(done["groups"], reopened["groups"]);
+    let reopened = wait(&app, &job_id, JobState::Succeeded, None).await;
+    assert_eq!(
+        formed["groups"],
+        app.structured_formation_run(&ctx, &job_id).await.unwrap()["groups"]
+    );
+    assert_eq!(done["job"]["id"], reopened["job"]["id"]);
     assert_eq!(calls.load(Ordering::SeqCst), 1);
     cancel.cancel();
     worker.await.unwrap();

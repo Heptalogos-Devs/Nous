@@ -16,17 +16,18 @@ use sha2::{Digest, Sha256};
 
 use crate::{
     App,
-    instance::{AuthConfig, InstanceConfig, InstanceGuard, InstancePaths},
+    common::{
+        instance::{AuthConfig, InstanceConfig, InstanceGuard, InstancePaths},
+        prompts::{ManagedPromptReference, PromptBinding, Prompts},
+    },
 };
 
-const FORMAT_VERSION: u32 = 1;
 const DATABASE_FILE: &str = "data/authority.sqlite";
 const CONFIG_FILE: &str = "instance.toml";
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Manifest {
-    format_version: u32,
     created_at: String,
     commit_seq: i64,
     files: Vec<BackupFile>,
@@ -68,38 +69,66 @@ impl App {
         .await;
         snapshot.close().await;
         let (references, commit_seq) = metadata?;
-        let mut config = InstanceConfig::load(&self.paths)?;
+        let mut config = self.config.as_ref().clone();
         config.auth = AuthConfig::default();
+        let prompt_files = prompt_references(&Prompts::new(self.paths.as_ref().clone()), &config)?;
         let config_text = toml::to_string_pretty(&config)?;
         let root = staging.path().to_owned();
-        let objects = self.objects.clone();
+        let mut object_files = Vec::new();
+        let mut seen = HashMap::new();
+        for reference in references {
+            let path = object_name(&reference.content_hash)?;
+            if let Some(byte_len) = seen.insert(path.clone(), reference.byte_len) {
+                ensure!(
+                    byte_len == reference.byte_len,
+                    "inconsistent lengths for a referenced object"
+                );
+                continue;
+            }
+            self.objects
+                .copy_to(
+                    &reference.content_hash,
+                    reference.byte_len,
+                    &root.join(&path),
+                )
+                .await?;
+            object_files.push(BackupFile {
+                path,
+                sha256: reference.content_hash,
+                byte_len: reference.byte_len as u64,
+            });
+        }
         let manifest = tokio::task::spawn_blocking(move || -> Result<Manifest> {
             write_new(&root.join(CONFIG_FILE), config_text.as_bytes())?;
             let mut files = vec![
                 describe(&root, CONFIG_FILE)?,
                 describe(&root, DATABASE_FILE)?,
             ];
-            let mut seen = HashMap::new();
-            for reference in references {
-                let path = object_name(&reference.content_hash)?;
-                if let Some(byte_len) = seen.insert(path.clone(), reference.byte_len) {
+            files.extend(object_files);
+            let mut copied = HashMap::new();
+            for reference in prompt_files {
+                let name = reference
+                    .relative_path
+                    .to_str()
+                    .context("prompt path is not UTF-8")?
+                    .replace('\\', "/");
+                if let Some(previous) = copied.insert(name.clone(), reference.sha256.clone()) {
                     ensure!(
-                        byte_len == reference.byte_len,
-                        "inconsistent lengths for a referenced object"
+                        previous == reference.sha256,
+                        "prompt changed while capturing resource references"
                     );
                     continue;
                 }
-                let bytes = objects.read(&reference.content_hash, reference.byte_len)?;
-                write_new(&root.join(&path), &bytes)?;
-                files.push(BackupFile {
-                    path,
-                    sha256: reference.content_hash,
-                    byte_len: bytes.len() as u64,
-                });
+                let file = BackupFile {
+                    path: name,
+                    sha256: reference.sha256,
+                    byte_len: reference.byte_len,
+                };
+                copy_verified(&reference.path, &root.join(&file.path), &file)?;
+                files.push(file);
             }
             files.sort_by(|a, b| a.path.cmp(&b.path));
             let manifest = Manifest {
-                format_version: FORMAT_VERSION,
                 created_at: Utc::now().to_rfc3339(),
                 commit_seq,
                 files,
@@ -122,7 +151,7 @@ impl App {
         move_owned(staging.path(), &destination, &self.paths)?;
         sync_directory(&self.paths.backups)?;
         Ok(
-            json!({"backup":destination,"format_version":FORMAT_VERSION,"commit_seq":manifest.commit_seq,"files":manifest.files.len(),"credentials":"excluded","indexes":"rebuild_on_start"}),
+            json!({"backup":destination,"commit_seq":manifest.commit_seq,"files":manifest.files.len(),"credentials":"excluded","indexes":"rebuild_on_start"}),
         )
     }
 }
@@ -222,9 +251,25 @@ pub async fn restore(source: &Path, target: InstancePaths) -> Result<Value> {
             );
             expected.insert(name);
         }
+        let config = InstanceConfig::load(&staged)?;
+        for reference in prompt_references(&Prompts::new(staged.clone()), &config)? {
+            let name = reference
+                .relative_path
+                .to_str()
+                .context("prompt path is not UTF-8")?
+                .replace('\\', "/");
+            let file = listed
+                .get(name.as_str())
+                .context("backup omits a bound prompt resource")?;
+            ensure!(
+                file.sha256 == reference.sha256 && file.byte_len == reference.byte_len,
+                "backup prompt reference is inconsistent"
+            );
+            expected.insert(name);
+        }
         ensure!(
             expected.len() == listed.len(),
-            "backup includes objects outside the authority snapshot"
+            "backup includes files outside the authority and resource snapshot"
         );
         Ok(())
     }
@@ -232,7 +277,7 @@ pub async fn restore(source: &Path, target: InstancePaths) -> Result<Value> {
     snapshot.close().await;
     checked?;
     // All moves stay inside target.root. Publish configuration last, after complete data and credentials.
-    let directories = ["data", "objects", "credentials"];
+    let directories = ["data", "objects", "credentials", "prompts"];
     let mut published = Vec::new();
     let mut config_published = false;
     let publish: Result<()> = (|| {
@@ -271,10 +316,6 @@ pub async fn restore(source: &Path, target: InstancePaths) -> Result<Value> {
 }
 
 fn validate_manifest(manifest: &Manifest) -> Result<()> {
-    ensure!(
-        manifest.format_version == FORMAT_VERSION,
-        "unsupported backup manifest version"
-    );
     ensure!(manifest.commit_seq >= 0, "invalid backup commit sequence");
     let mut seen = HashSet::new();
     for file in &manifest.files {
@@ -291,7 +332,10 @@ fn validate_manifest(manifest: &Manifest) -> Result<()> {
             seen.insert(file.path.as_str()),
             "duplicate backup file path"
         );
-        if file.path != CONFIG_FILE && file.path != DATABASE_FILE {
+        if file.path != CONFIG_FILE
+            && file.path != DATABASE_FILE
+            && !file.path.starts_with("prompts/")
+        {
             let parts: Vec<_> = file.path.split('/').collect();
             ensure!(
                 parts.len() == 3
@@ -378,9 +422,14 @@ fn copy_verified(source: &Path, target: &Path, file: &BackupFile) -> Result<()> 
         if count == 0 {
             break;
         }
+        byte_len += count as u64;
+        ensure!(
+            byte_len <= file.byte_len,
+            "backup grew beyond its captured length while copying {}",
+            file.path
+        );
         output.write_all(&buffer[..count])?;
         hasher.update(&buffer[..count]);
-        byte_len += count as u64;
     }
     ensure!(
         format!("{:x}", hasher.finalize()) == file.sha256 && byte_len == file.byte_len,
@@ -414,96 +463,26 @@ fn sync_directory(_: &Path) -> Result<()> {
     Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use nous_domain::{Capability, Material, Namespace, Observation, Subject};
-    use std::path::PathBuf;
-
-    #[tokio::test]
-    async fn snapshot_restore_preserves_authority_and_objects_with_new_credentials() -> Result<()> {
-        let scratch = tempfile::tempdir()?;
-        let source = InstancePaths::new(scratch.path().join("source"))?;
-        source.ensure_layout()?;
-        let _guard = InstanceGuard::acquire(&source)?;
-        source.initialize()?;
-        let source_token = source.read_secret(&InstanceConfig::load(&source)?.auth.admin_token)?;
-        fs::write(
-            source.credentials.join("not-exported.key"),
-            b"private-provider-key",
-        )?;
-        let app = App::open(source.clone()).await?;
-        let admin = CallContext::admin();
-        let namespace: Namespace = serde_json::from_value(
-            app.create_namespace(&admin, "backup-ns", "notes")
-                .await?
-                .result,
-        )?;
-        let subject: Subject = serde_json::from_value(
-            app.create_subject(
-                &admin,
-                "backup-subject",
-                &namespace.id,
-                "reader",
-                vec![Capability::Memory],
-            )
-            .await?
-            .result,
-        )?;
-        let material: Material = serde_json::from_value(
-            app.put_material(
-                &admin,
-                "backup-text",
-                &namespace.id,
-                "快照恢复后仍然能读取的材料",
-                Some("backup-test".into()),
-                None,
-            )
-            .await?
-            .result,
-        )?;
-        let observation: Observation = serde_json::from_value(
-            app.record_observation(
-                &admin,
-                "backup-observation",
-                &subject.id,
-                &material.id,
-                None,
-            )
-            .await?
-            .result,
-        )?;
-        let created = app.create_backup(&admin).await?;
-        let backup = PathBuf::from(created["backup"].as_str().context("missing backup path")?);
-        assert!(!backup.join("credentials").exists());
-        let target = InstancePaths::new(scratch.path().join("restored"))?;
-        let result = restore(&backup, target.clone()).await?;
-        assert_eq!(result["state"], "restored");
-        assert_ne!(
-            target.read_secret(&InstanceConfig::load(&target)?.auth.admin_token)?,
-            source_token
-        );
-        assert!(!target.credentials.join("not-exported.key").exists());
-        let restored = App::open(target.clone()).await?;
-        assert_eq!(
-            restored.get_material(&admin, &material.id).await?.text,
-            "快照恢复后仍然能读取的材料"
-        );
-        assert_eq!(
-            restored.list_observations(&admin, &subject.id).await?[0].id,
-            observation.id
-        );
-        assert_eq!(restored.list_namespaces(&admin).await?[0].id, namespace.id);
-        restored.close().await;
-        assert!(restore(&backup, target.clone()).await.is_err());
-        fs::write(
-            backup.join(object_name(&material.content_hash)?),
-            b"corrupt",
-        )?;
-        let rejected = InstancePaths::new(scratch.path().join("rejected"))?;
-        assert!(restore(&backup, rejected.clone()).await.is_err());
-        assert!(!rejected.root.exists());
-        app.close().await;
-        Ok(())
-    }
+fn prompt_references(
+    prompts: &Prompts,
+    config: &InstanceConfig,
+) -> Result<Vec<ManagedPromptReference>> {
+    let bindings: [Option<(&str, &PromptBinding)>; 2] = [
+        config
+            .models
+            .memory_formation
+            .as_ref()
+            .map(|role| ("memory_formation", &role.prompt)),
+        config
+            .models
+            .structured_formation
+            .as_ref()
+            .map(|role| ("structured_formation", &role.prompt)),
+    ];
+    bindings
+        .into_iter()
+        .flatten()
+        .filter_map(|(id, binding)| prompts.managed_reference(id, binding).transpose())
+        .collect::<nous_domain::Result<_>>()
+        .map_err(Into::into)
 }

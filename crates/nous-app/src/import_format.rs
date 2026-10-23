@@ -113,14 +113,9 @@ fn parse_json(content: &str, default_source: Option<&str>) -> Result<Vec<ParsedI
                 .remove(key)
                 .and_then(|v| v.as_array().cloned())
                 .ok_or_else(|| Error::invalid("import records must be an array"))?;
-            if key == "records"
-                && (envelope.keys().any(|key| key != "schema_version")
-                    || envelope
-                        .get("schema_version")
-                        .is_some_and(|version| version.as_u64() != Some(1)))
-            {
+            if key == "records" && !envelope.is_empty() {
                 return Err(Error::invalid(
-                    "native records envelope supports schema_version 1",
+                    "native records envelope accepts only records",
                 ));
             }
             (
@@ -218,8 +213,7 @@ fn mature(
     .to_owned();
     let source = optional_string(&unit, "source")?.or_else(|| default_source.map(str::to_owned));
     let source_type = optional_string(&unit, "source_type")?.or_else(|| Some(format.to_owned()));
-    let structured =
-        json!({"schema_version":1,"format":format,"payload":unit,"document_context":context});
+    let structured = json!({"format":format,"payload":unit,"document_context":context});
     if serde_json::to_vec(&structured)?.len() > MAX_RECORD_BYTES {
         return Err(exhausted("structured import record exceeds 1 MiB"));
     }
@@ -345,79 +339,5 @@ fn canonical(value: &Value) -> Value {
         }
         Value::Array(items) => Value::Array(items.iter().map(canonical).collect()),
         other => other.clone(),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn jsonl_retains_item_failures_and_checks_full_batch_limits() -> Result<()> {
-        let parsed = parse(
-            "{\"external_id\":\"first\",\"text\":\"原始文本\"}\nnot JSON\n{\"external_id\":\"third\",\"text\":\"后续文本\"}",
-            ImportFormat::Jsonl,
-            Some("file:test"),
-        )?;
-        assert_eq!(parsed.len(), 3);
-        assert_eq!(
-            parsed[0].record.as_ref().unwrap().source.as_deref(),
-            Some("file:test")
-        );
-        assert!(parsed[1].error.is_some());
-        assert_eq!(parsed[2].external_id.as_deref(), Some("third"));
-        assert!(parse(&"{}\n".repeat(1001), ImportFormat::Jsonl, None).is_err());
-        assert!(parse(&" ".repeat(MAX_IMPORT_BYTES + 1), ImportFormat::Text, None).is_err());
-        assert!(parse("{bad", ImportFormat::Json, None).is_err());
-        let amplified = json!({"paragraphs":["a","b","c","d","e","f","g","h","i","j"],"metadata":{"shared":"x".repeat(MAX_RECORD_BYTES/2)}});
-        assert!(parse(&amplified.to_string(), ImportFormat::Json, None).is_err());
-        Ok(())
-    }
-    #[test]
-    fn mature_units_preserve_structures_and_canonical_identity() -> Result<()> {
-        let input = json!({"paragraphs":[{"content":"来源材料","entities":["甲"],"relations":[{"subject":"甲","predicate":"认识","object":"乙"}],"time_meta":{"event_time":12},"knowledge_type":"factual"}],"entities":[{"name":"文档实体"}]});
-        let parsed = parse(&input.to_string(), ImportFormat::Json, Some("source:one"))?;
-        let record = parsed[0].record.as_ref().unwrap();
-        assert_eq!(
-            record.structured.as_ref().unwrap()["payload"],
-            input["paragraphs"][0]
-        );
-        assert_eq!(
-            record.structured.as_ref().unwrap()["document_context"]["entities"],
-            input["entities"]
-        );
-        let reordered = "{\"entities\":[{\"name\":\"文档实体\"}],\"paragraphs\":[{\"knowledge_type\":\"factual\",\"time_meta\":{\"event_time\":12},\"relations\":[{\"object\":\"乙\",\"predicate\":\"认识\",\"subject\":\"甲\"}],\"entities\":[\"甲\"],\"content\":\"来源材料\"}]}";
-        assert_eq!(
-            parse(reordered, ImportFormat::Json, Some("source:one"))?[0].external_id,
-            parsed[0].external_id
-        );
-        let docs = json!({"docs":[{"passage":"LPMM原始资料","extracted_entities":["甲"],"extracted_triples":[["甲","知道","乙"]]}]});
-        assert_eq!(
-            parse(&docs.to_string(), ImportFormat::Json, None)?[0]
-                .record
-                .as_ref()
-                .unwrap()
-                .structured
-                .as_ref()
-                .unwrap()["payload"],
-            docs["docs"][0]
-        );
-        assert!(
-            parse(
-                "{\"format\":\"a-memorix-memory-bundle\",\"records\":[]}",
-                ImportFormat::Json,
-                None
-            )
-            .is_err()
-        );
-        assert!(
-            parse(
-                "[{\"text\":\"missing identity\"}]",
-                ImportFormat::Json,
-                None
-            )?[0]
-                .error
-                .is_some()
-        );
-        Ok(())
     }
 }

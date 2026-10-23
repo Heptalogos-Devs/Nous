@@ -1,7 +1,6 @@
 //! Transport-independent identities, authority objects and access rules.
 
 use serde::{Deserialize, Serialize};
-use std::{fmt, str::FromStr};
 
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -66,22 +65,24 @@ macro_rules! identity {
             pub fn as_str(&self) -> &str {
                 &self.0
             }
+            pub fn validate(&self) -> $crate::Result<()> {
+                $crate::identity::validate_uuid(&self.0)
+            }
         }
         impl Default for $name {
             fn default() -> Self {
                 Self::new()
             }
         }
-        impl fmt::Display for $name {
-            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        impl std::fmt::Display for $name {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                 f.write_str(&self.0)
             }
         }
-        impl FromStr for $name {
-            type Err = Error;
-            fn from_str(value: &str) -> Result<Self> {
-                let id = uuid::Uuid::parse_str(value)
-                    .map_err(|_| Error::invalid(concat!(stringify!($name), " must be a UUID")))?;
+        impl std::str::FromStr for $name {
+            type Err = $crate::Error;
+            fn from_str(value: &str) -> $crate::Result<Self> {
+                let id = $crate::identity::parse_uuid(value)?;
                 Ok(Self(id.to_string()))
             }
         }
@@ -105,8 +106,19 @@ identity!(MemoryId);
 identity!(ModelCallId);
 identity!(CognitiveId);
 
+mod identity;
+pub mod media;
+
+mod time;
+pub use time::*;
+mod query;
+pub use query::*;
 mod cognition;
 pub use cognition::*;
+mod model;
+pub use model::*;
+mod task;
+pub use task::*;
 mod maintenance;
 pub use maintenance::*;
 mod embedding;
@@ -136,25 +148,6 @@ pub struct Subject {
     pub capabilities: Vec<Capability>,
     pub revision: i64,
     pub commit_seq: i64,
-}
-
-/// Coordinate precision and calendar are owned by the named time domain.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct TimePoint {
-    pub domain: String,
-    pub coordinate: i64,
-}
-
-impl TimePoint {
-    pub fn validate(&self) -> Result<()> {
-        validate_name(&self.domain, "time domain")
-    }
-    pub fn compare(&self, other: &Self) -> Result<std::cmp::Ordering> {
-        if self.domain != other.domain {
-            return Err(Error::invalid("time points require a common time domain"));
-        }
-        Ok(self.coordinate.cmp(&other.coordinate))
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
