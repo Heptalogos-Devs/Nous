@@ -126,6 +126,8 @@ pub struct TimeFilter {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct QueryRequest {
+    #[serde(default)]
+    pub mode: QueryMode,
     pub subject_id: SubjectId,
     #[serde(default)]
     pub text: String,
@@ -137,6 +139,15 @@ pub struct QueryRequest {
     pub min_commit_seq: Option<i64>,
     #[serde(default)]
     pub include_inactive: bool,
+}
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum QueryMode {
+    #[default]
+    Lexical,
+    Dense,
+    Vcp,
+    Hybrid,
 }
 fn default_query_limit() -> usize {
     10
@@ -164,6 +175,31 @@ pub struct QueryCoverage {
 pub struct QueryResult {
     pub hits: Vec<QueryHit>,
     pub coverage: QueryCoverage,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub semantic: Option<SemanticQueryInfo>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SemanticQueryInfo {
+    pub mode: QueryMode,
+    pub space_id: String,
+    pub query_embedding_call_id: ModelCallId,
+    pub generation: String,
+    pub eligible_memories: usize,
+    pub embedded_memories: usize,
+    pub missing_tags: usize,
+    pub provenance: Vec<EmbeddingProvenance>,
+    pub diagnostics: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EmbeddingProvenance {
+    pub space_id: String,
+    pub source_key: String,
+    pub source_hash: String,
+    pub memory_revision: Option<i64>,
+    pub model_call_id: ModelCallId,
+    pub commit_seq: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -172,4 +208,6 @@ pub struct MemorySource {
     pub observation: Observation,
     pub material: MaterialContent,
     pub model_call: Option<ModelCall>,
+    #[serde(default)]
+    pub embedding_provenance: Vec<EmbeddingProvenance>,
 }

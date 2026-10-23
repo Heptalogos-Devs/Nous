@@ -6,6 +6,7 @@
 
 mod backup;
 mod cognition;
+mod embeddings;
 mod management;
 mod records;
 mod transaction;
@@ -26,6 +27,7 @@ use sqlx::{
 
 pub use backup::ObjectReference;
 pub use cognition::MemoryBatch;
+pub use embeddings::{EmbeddingClaim, RetrievalEntry, RetrievalSnapshot};
 pub use management::{MaintenancePage, PurgedMemory};
 pub use transaction::{BeginOperation, WriteTransaction};
 

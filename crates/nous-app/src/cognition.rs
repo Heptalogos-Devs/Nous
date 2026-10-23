@@ -139,17 +139,27 @@ impl App {
             Some(id) => Some(self.database.model_call(id).await?),
             None => None,
         };
+        let embedding_provenance = self
+            .database
+            .embeddings_for_memory(&memory.namespace_id, &memory.id)
+            .await?
+            .iter()
+            .map(crate::embeddings::provenance)
+            .collect();
         Ok(MemorySource {
             memory,
             observation,
             material,
             model_call,
+            embedding_provenance,
         })
     }
 
     pub async fn model_status(&self, ctx: &CallContext) -> Result<Value> {
         ctx.require_admin()?;
-        Ok(self.model.inspect())
+        let mut status = self.model.inspect();
+        status["text_embedding"] = self.model.embedding_inspect();
+        Ok(status)
     }
 
     pub async fn query(&self, ctx: &CallContext, request: QueryRequest) -> Result<QueryResult> {
@@ -186,6 +196,17 @@ impl App {
                 tokio::time::sleep(Duration::from_millis(25)).await;
             }
         }
+        if request.mode != QueryMode::Lexical && request.reference.is_none() {
+            return self.semantic_query(ctx, &namespace, request).await;
+        }
+        self.lexical_query(&namespace, request).await
+    }
+
+    pub(crate) async fn lexical_query(
+        &self,
+        namespace: &NamespaceId,
+        request: QueryRequest,
+    ) -> Result<QueryResult> {
         let text = request.text.clone();
         let subject_id = request.subject_id.clone();
         let ns = namespace.clone();
@@ -200,7 +221,7 @@ impl App {
         let delta = self
             .database
             .subject_memory_changes(
-                &namespace,
+                namespace,
                 &request.subject_id,
                 page.coverage.through_commit_seq,
                 500,
@@ -208,7 +229,7 @@ impl App {
             .await?;
         let mut candidates: HashMap<MemoryId, (Memory, f32)> = HashMap::new();
         if let Some(id) = &request.reference {
-            let memory = self.database.memory(&namespace, id).await?;
+            let memory = self.database.memory(namespace, id).await?;
             if memory.subject_id != request.subject_id {
                 return Err(Error::new(
                     ErrorCode::Forbidden,
@@ -219,7 +240,7 @@ impl App {
         } else {
             for candidate in page.hits {
                 let id: MemoryId = candidate.id.parse()?;
-                let memory = match self.database.memory(&namespace, &id).await {
+                let memory = match self.database.memory(namespace, &id).await {
                     Ok(memory) => memory,
                     Err(error) if error.code == ErrorCode::NotFound => continue,
                     Err(error) => return Err(error),
@@ -243,7 +264,7 @@ impl App {
         }
         let mut hits = Vec::new();
         for (id, (selected, mut score)) in candidates {
-            let memory = match self.database.memory(&namespace, &id).await {
+            let memory = match self.database.memory(namespace, &id).await {
                 Ok(memory) => memory,
                 Err(error) if error.code == ErrorCode::NotFound => continue,
                 Err(error) => return Err(error),
@@ -265,7 +286,7 @@ impl App {
             }
             let material = self
                 .database
-                .material(&namespace, &memory.material_id)
+                .material(namespace, &memory.material_id)
                 .await?;
             if request
                 .source
@@ -291,6 +312,7 @@ impl App {
         });
         hits.truncate(request.limit);
         Ok(QueryResult {
+            semantic: None,
             hits,
             coverage: QueryCoverage {
                 indexed_through: page.coverage.through_commit_seq,
@@ -374,7 +396,7 @@ fn index_error(error: impl std::fmt::Display) -> Error {
         format!("lexical index: {error}"),
     )
 }
-fn matches_time(memory: &Memory, filter: Option<&TimeFilter>) -> bool {
+pub(crate) fn matches_time(memory: &Memory, filter: Option<&TimeFilter>) -> bool {
     let Some(filter) = filter else {
         return true;
     };

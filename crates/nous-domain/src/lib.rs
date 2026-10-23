@@ -54,7 +54,7 @@ impl From<serde_json::Error> for Error {
 
 macro_rules! identity {
     ($name:ident) => {
-        #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
+        #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
         #[serde(transparent)]
         pub struct $name(pub String);
         impl $name {
@@ -106,6 +106,8 @@ mod cognition;
 pub use cognition::*;
 mod maintenance;
 pub use maintenance::*;
+mod embedding;
+pub use embedding::*;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

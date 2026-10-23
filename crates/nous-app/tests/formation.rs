@@ -32,6 +32,7 @@ async fn wait_for(app: &App, id: &str, state: &str) -> Value {
 
 fn query(subject_id: SubjectId, text: &str) -> QueryRequest {
     QueryRequest {
+        mode: QueryMode::Lexical,
         subject_id,
         text: text.into(),
         reference: None,
@@ -134,6 +135,7 @@ async fn waiting_work_resumes_after_configuration_and_keeps_authority_through_qu
     .unwrap();
     let mut config = InstanceConfig::load(&paths).unwrap();
     config.models = ModelConfig {
+        text_embedding: None,
         memory_formation: Some(FormationConfig {
             resource: ModelResource {
                 id: "test-model".into(),

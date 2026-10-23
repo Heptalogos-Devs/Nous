@@ -1,15 +1,27 @@
 use anyhow::Result;
 use clap::{Args, Subcommand};
-use nous_domain::{MemoryId, ObservationId, SubjectId};
+use nous_domain::{MemoryId, ModelCallId, ObservationId, SubjectId};
 
 use crate::{
     api::Operation,
-    cognition_api::{CognitionOperation, DeleteMemory, FormMemory, QueryInput, QueryTimeFilter},
+    cognition_api::{
+        CognitionOperation, DeleteMemory, EmbeddingSync, FormMemory, QueryInput, QueryModeInput,
+        QueryTimeFilter,
+    },
     op_id,
 };
 
 #[derive(Subcommand)]
 pub enum MemoryCommand {
+    /// Queue missing text embeddings for a Subject's current memories and tags.
+    Embed {
+        #[arg(long)]
+        subject: SubjectId,
+        #[arg(long, default_value_t = 5000)]
+        limit: usize,
+        #[arg(long)]
+        operation_id: Option<String>,
+    },
     /// Apply a revision-checked lifecycle or content change.
     Change(crate::maintenance_cli::ChangeArgs),
     RecycleBin {
@@ -67,6 +79,15 @@ pub enum MemoryCommand {
 impl MemoryCommand {
     pub fn operation(self) -> Result<Operation> {
         let operation = match self {
+            Self::Embed {
+                subject,
+                limit,
+                operation_id,
+            } => CognitionOperation::EmbeddingSync(EmbeddingSync {
+                subject_id: subject.to_string(),
+                limit,
+                operation_id: op_id(operation_id),
+            }),
             Self::Change(input) => return input.operation(),
             Self::RecycleBin { subject, limit } => {
                 return Ok(crate::maintenance_cli::recycle(subject, limit));
@@ -117,6 +138,8 @@ impl MemoryCommand {
 
 #[derive(Args)]
 pub struct QueryArgs {
+    #[arg(long, value_enum, default_value = "lexical")]
+    mode: QueryModeInput,
     #[arg(long)]
     include_inactive: bool,
     /// Natural-language intent. Supply --reference for an exact authority read.
@@ -144,6 +167,7 @@ impl QueryArgs {
             .transpose()?;
         Ok(Operation::Cognition(CognitionOperation::Query(
             QueryInput {
+                mode: self.mode,
                 include_inactive: self.include_inactive,
                 subject_id: self.subject.to_string(),
                 text: self.text,
@@ -159,6 +183,8 @@ impl QueryArgs {
 
 #[derive(Subcommand)]
 pub enum ModelCommand {
+    /// Read an authorized model call and its recorded provider evidence.
+    Call { id: ModelCallId },
     /// Inspect the service's configured formation resource and readiness.
     Status,
     /// Check local model resource configuration and credential availability without a model request.

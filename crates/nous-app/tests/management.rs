@@ -16,6 +16,7 @@ fn request(ns: NamespaceId, subject: SubjectId, content: String) -> ImportReques
 }
 fn query(subject: SubjectId, text: &str, inactive: bool) -> QueryRequest {
     QueryRequest {
+        mode: QueryMode::Lexical,
         subject_id: subject,
         text: text.into(),
         reference: None,

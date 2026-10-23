@@ -287,7 +287,9 @@ async fn execute(cli: Cli) -> Result<()> {
             let network = NetworkClients::new(&config.network)?;
             let runtime =
                 nous_app::model::ModelRuntime::new(&paths, &config.models, network.http().clone())?;
-            print_json(runtime.inspect())?;
+            let mut inspection = runtime.inspect();
+            inspection["text_embedding"] = runtime.embedding_inspect();
+            print_json(inspection)?;
         }
         Command::Status => {
             // A local stopped instance needs no token and no SQLite connection.
@@ -357,6 +359,11 @@ async fn execute(cli: Cli) -> Result<()> {
                 Command::Model {
                     command: ModelCommand::Status,
                 } => Operation::Cognition(cognition_api::CognitionOperation::ModelStatus),
+                Command::Model {
+                    command: ModelCommand::Call { id },
+                } => Operation::Cognition(cognition_api::CognitionOperation::ModelCall(
+                    id.to_string(),
+                )),
                 Command::Namespace {
                     command: NamespaceCommand::Create { name, operation_id },
                 } => Operation::CreateNamespace(CreateNamespace {

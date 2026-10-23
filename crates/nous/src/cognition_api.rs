@@ -28,7 +28,31 @@ pub struct DeleteMemory {
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+pub struct EmbeddingSync {
+    pub operation_id: String,
+    pub subject_id: String,
+    #[serde(default = "embedding_limit")]
+    pub limit: usize,
+}
+fn embedding_limit() -> usize {
+    5000
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, JsonSchema, clap::ValueEnum)]
+#[serde(rename_all = "snake_case")]
+pub enum QueryModeInput {
+    #[default]
+    Lexical,
+    Dense,
+    Vcp,
+    Hybrid,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct QueryInput {
+    #[serde(default)]
+    pub mode: QueryModeInput,
     #[serde(default)]
     pub include_inactive: bool,
     pub subject_id: String,
@@ -68,6 +92,9 @@ pub enum CognitionOperation {
     Query(QueryInput),
     Source(String),
     ModelStatus,
+    EmbeddingSync(EmbeddingSync),
+    EmbeddingRun(String),
+    ModelCall(String),
 }
 
 impl CognitionOperation {
@@ -100,6 +127,17 @@ impl CognitionOperation {
             }
             Self::Source(id) => Ok(json!(app.memory_source(ctx, &id.parse()?).await?)),
             Self::ModelStatus => app.model_status(ctx).await,
+            Self::EmbeddingSync(input) => Ok(json!(
+                app.sync_embeddings(
+                    ctx,
+                    &input.operation_id,
+                    &input.subject_id.parse()?,
+                    input.limit
+                )
+                .await?
+            )),
+            Self::EmbeddingRun(id) => Ok(json!(app.get_embedding_run(ctx, id).await?)),
+            Self::ModelCall(id) => Ok(json!(app.read_model_call(ctx, &id.parse()?).await?)),
         }
     }
     pub fn request(&self) -> (&'static str, String, Option<Value>) {
@@ -115,6 +153,11 @@ impl CognitionOperation {
             Self::Query(input) => ("POST", "/v1/query".into(), Some(json!(input))),
             Self::Source(id) => ("GET", format!("/v1/memories/{id}/source"), None),
             Self::ModelStatus => ("GET", "/v1/models/status".into(), None),
+            Self::EmbeddingSync(input) => {
+                ("POST", "/v1/embeddings/sync".into(), Some(json!(input)))
+            }
+            Self::EmbeddingRun(id) => ("GET", format!("/v1/embeddings/runs/{id}"), None),
+            Self::ModelCall(id) => ("GET", format!("/v1/models/calls/{id}"), None),
         }
     }
 }
@@ -128,6 +171,9 @@ pub fn router() -> Router<ApiState> {
         .route("/v1/memories/{memory}/source", get(source))
         .route("/v1/query", post(query))
         .route("/v1/models/status", get(model_status))
+        .route("/v1/embeddings/sync", post(embedding_sync))
+        .route("/v1/embeddings/runs/{id}", get(embedding_run))
+        .route("/v1/models/calls/{id}", get(model_call))
 }
 async fn form(
     State(s): State<ApiState>,
@@ -192,4 +238,41 @@ async fn model_status(
     Extension(c): Extension<CallContext>,
 ) -> Result<Json<Value>, ApiError> {
     run(s, c, Operation::Cognition(CognitionOperation::ModelStatus)).await
+}
+
+async fn embedding_sync(
+    State(s): State<ApiState>,
+    Extension(c): Extension<CallContext>,
+    body: Result<Json<EmbeddingSync>, JsonRejection>,
+) -> Result<Json<Value>, ApiError> {
+    run(
+        s,
+        c,
+        Operation::Cognition(CognitionOperation::EmbeddingSync(decode(body)?)),
+    )
+    .await
+}
+async fn embedding_run(
+    State(s): State<ApiState>,
+    Extension(c): Extension<CallContext>,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    run(
+        s,
+        c,
+        Operation::Cognition(CognitionOperation::EmbeddingRun(id)),
+    )
+    .await
+}
+async fn model_call(
+    State(s): State<ApiState>,
+    Extension(c): Extension<CallContext>,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    run(
+        s,
+        c,
+        Operation::Cognition(CognitionOperation::ModelCall(id)),
+    )
+    .await
 }

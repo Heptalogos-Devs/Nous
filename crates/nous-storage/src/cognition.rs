@@ -21,6 +21,11 @@ pub struct MemoryBatch {
     pub has_more: bool,
 }
 
+pub(crate) enum WaitingJobKind {
+    Formation,
+    Embedding,
+}
+
 impl Database {
     pub async fn formation(&self, job_id: &str) -> Result<FormationRun> {
         let mut tx = self.pool.begin().await.map_err(storage_error)?;
@@ -171,49 +176,65 @@ impl Database {
     /// Resume settled waiting jobs at startup or a new budget period. Each
     /// formation retains its original queue identity.
     pub async fn resume_waiting_formations(&self) -> Result<u64> {
-        self.resume_waiting(true).await
+        self.resume_waiting_jobs(WaitingJobKind::Formation, true)
+            .await
     }
 
     /// Resume configuration waits when the required resource becomes ready.
     /// Budget waits retain their state until the host explicitly resumes them.
     pub async fn resume_waiting_configurations(&self) -> Result<u64> {
-        self.resume_waiting(false).await
+        self.resume_waiting_jobs(WaitingJobKind::Formation, false)
+            .await
     }
 
-    async fn resume_waiting(&self, include_budget: bool) -> Result<u64> {
-        let (operation, request_hash) = if include_budget {
-            (
-                "formation.resume_waiting",
-                "nous.formation.resume_waiting.v1",
-            )
-        } else {
-            (
-                "formation.resume_configurations",
-                "nous.formation.resume_configurations.v1",
-            )
+    pub(crate) async fn resume_waiting_jobs(
+        &self,
+        kind: WaitingJobKind,
+        include_budget: bool,
+    ) -> Result<u64> {
+        let (table, prefix): (&'static str, &'static str) = match kind {
+            WaitingJobKind::Formation => ("formation_runs", "formation"),
+            WaitingJobKind::Embedding => ("embedding_runs", "embedding"),
         };
+        let action = if include_budget {
+            "resume_waiting"
+        } else {
+            "resume_configurations"
+        };
+        let operation = format!("{prefix}.{action}");
+        let request_hash = format!("nous.{operation}.v1");
         let key = OperationKey {
             caller_id: "nous.recovery".into(),
-            operation: operation.into(),
+            operation,
             scope: "instance".into(),
             operation_id: ulid::Ulid::generate().to_string(),
-            request_hash: request_hash.into(),
+            request_hash,
         };
         let BeginOperation::New(mut tx) = self.begin_operation(key).await? else {
             unreachable!("fresh recovery operation")
         };
-        let ids: Vec<String> = sqlx::query_scalar("SELECT f.job_id FROM formation_runs f JOIN Jobs j ON j.id=f.job_id WHERE (f.state='waiting_for_configuration' OR (? AND f.state='waiting_for_budget')) AND j.status IN ('Done','Failed','Killed') ORDER BY f.job_id")
-            .bind(include_budget).fetch_all(&mut *tx.tx).await.map_err(storage_error)?;
+        // The table name comes exclusively from the closed enum above.
+        let mut select = sqlx::QueryBuilder::<sqlx::Sqlite>::new("SELECT f.job_id FROM ");
+        select.push(table).push(" f JOIN Jobs j ON j.id=f.job_id WHERE (f.state='waiting_for_configuration' OR (").push_bind(include_budget).push(" AND f.state='waiting_for_budget')) AND j.status IN ('Done','Failed','Killed') ORDER BY f.job_id");
+        let ids: Vec<String> = select
+            .build_query_scalar()
+            .fetch_all(&mut *tx.tx)
+            .await
+            .map_err(storage_error)?;
         if ids.is_empty() {
             tx.rollback().await?;
             return Ok(0);
         }
-        for id in &ids {
-            sqlx::query("UPDATE Jobs SET status='Pending',attempts=0,lock_by=NULL,lock_at=NULL,done_at=NULL,last_result=NULL,run_at=strftime('%s','now') WHERE id=?")
-                .bind(id).execute(&mut *tx.tx).await.map_err(write_error)?;
-            sqlx::query("UPDATE formation_runs SET state='queued',error=NULL,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE job_id=?")
-                .bind(id).execute(&mut *tx.tx).await.map_err(write_error)?;
-        }
+        let ids_json = serde_json::to_string(&ids)?;
+        sqlx::query("UPDATE Jobs SET status='Pending',attempts=0,lock_by=NULL,lock_at=NULL,done_at=NULL,last_result=NULL,run_at=strftime('%s','now') WHERE id IN (SELECT value FROM json_each(?))")
+            .bind(&ids_json).execute(&mut *tx.tx).await.map_err(write_error)?;
+        let mut update = sqlx::QueryBuilder::<sqlx::Sqlite>::new("UPDATE ");
+        update.push(table).push(" SET state='queued',error=NULL,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE job_id IN (SELECT value FROM json_each(").push_bind(&ids_json).push("))");
+        update
+            .build()
+            .execute(&mut *tx.tx)
+            .await
+            .map_err(write_error)?;
         let count = ids.len() as u64;
         tx.commit(serde_json::json!({"resumed":count})).await?;
         Ok(count)
@@ -278,6 +299,8 @@ impl WriteTransaction {
     }
 
     pub async fn insert_formation(&mut self, run: &FormationRun) -> Result<()> {
+        self.register_model_job(&run.job_id, &run.namespace_id, &run.subject_id, "formation")
+            .await?;
         sqlx::query("INSERT INTO formation_runs(job_id,namespace_id,subject_id,observation_id,material_id,subject_revision,material_hash,state,model_call_id,error,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)")
             .bind(&run.job_id).bind(run.namespace_id.as_str()).bind(run.subject_id.as_str()).bind(run.observation_id.as_str()).bind(run.material_id.as_str())
             .bind(run.subject_revision).bind(&run.material_hash).bind(enum_name(&run.state)?).bind(run.model_call_id.as_ref().map(ModelCallId::as_str))
@@ -343,6 +366,33 @@ impl WriteTransaction {
             .bind(serde_json::to_string(&call.request).map_err(storage_error)?).bind(json_option(&call.response)?).bind(enum_name(&call.state)?).bind(json_option(&call.error)?)
             .bind(call.cost_microunits).bind(&call.created_at).bind(&call.completed_at)
             .execute(&mut *self.tx).await.map_err(write_error)?;
+        Ok(())
+    }
+
+    pub(crate) async fn register_model_job(
+        &mut self,
+        job_id: &str,
+        namespace: &NamespaceId,
+        subject: &SubjectId,
+        kind: &str,
+    ) -> Result<()> {
+        sqlx::query("INSERT INTO model_jobs(job_id,namespace_id,subject_id,kind) VALUES (?,?,?,?) ON CONFLICT(job_id) DO NOTHING")
+            .bind(job_id).bind(namespace.as_str()).bind(subject.as_str()).bind(kind).execute(&mut *self.tx).await.map_err(write_error)?;
+        let existing =
+            sqlx::query("SELECT namespace_id,subject_id,kind FROM model_jobs WHERE job_id=?")
+                .bind(job_id)
+                .fetch_one(&mut *self.tx)
+                .await
+                .map_err(storage_error)?;
+        if existing.get::<String, _>("namespace_id") != namespace.as_str()
+            || existing.get::<String, _>("subject_id") != subject.as_str()
+            || existing.get::<String, _>("kind") != kind
+        {
+            return Err(Error::new(
+                ErrorCode::Conflict,
+                "model job scope and kind are immutable",
+            ));
+        }
         Ok(())
     }
 
@@ -516,6 +566,10 @@ async fn memory(
 }
 
 pub(crate) fn memory_row(row: SqliteRow) -> Result<Memory> {
+    memory_row_ref(&row)
+}
+
+pub(crate) fn memory_row_ref(row: &SqliteRow) -> Result<Memory> {
     Ok(Memory {
         id: MemoryId(row.get("memory_id")),
         namespace_id: NamespaceId(row.get("namespace_id")),
@@ -547,7 +601,7 @@ pub(crate) fn memory_row(row: SqliteRow) -> Result<Memory> {
     })
 }
 
-fn enum_name<T: Serialize>(value: &T) -> Result<String> {
+pub(crate) fn enum_name<T: Serialize>(value: &T) -> Result<String> {
     serde_json::to_value(value)
         .map_err(storage_error)?
         .as_str()
@@ -555,11 +609,11 @@ fn enum_name<T: Serialize>(value: &T) -> Result<String> {
         .ok_or_else(|| Error::internal("stored state must serialize to a string"))
 }
 
-fn parse_enum<T: for<'de> Deserialize<'de>>(value: &str) -> Result<T> {
+pub(crate) fn parse_enum<T: for<'de> Deserialize<'de>>(value: &str) -> Result<T> {
     serde_json::from_value(serde_json::Value::String(value.into())).map_err(storage_error)
 }
 
-fn json_option<T: Serialize>(value: &Option<T>) -> Result<Option<String>> {
+pub(crate) fn json_option<T: Serialize>(value: &Option<T>) -> Result<Option<String>> {
     value
         .as_ref()
         .map(serde_json::to_string)
@@ -567,7 +621,9 @@ fn json_option<T: Serialize>(value: &Option<T>) -> Result<Option<String>> {
         .map_err(storage_error)
 }
 
-fn parse_optional<T: for<'de> Deserialize<'de>>(value: Option<&str>) -> Result<Option<T>> {
+pub(crate) fn parse_optional<T: for<'de> Deserialize<'de>>(
+    value: Option<&str>,
+) -> Result<Option<T>> {
     value
         .map(serde_json::from_str)
         .transpose()

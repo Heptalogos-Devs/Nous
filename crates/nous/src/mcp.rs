@@ -15,7 +15,9 @@ use serde::Deserialize;
 use crate::api::{
     ApiClient, CreateNamespace, CreateSubject, Operation, PutMaterial, RecordObservation,
 };
-use crate::cognition_api::{CognitionOperation, DeleteMemory, FormMemory, QueryInput};
+use crate::cognition_api::{
+    CognitionOperation, DeleteMemory, EmbeddingSync, FormMemory, QueryInput,
+};
 use crate::maintenance_api::{
     ChangeInput, ImportInput, ListInput, MaintainInput, MaintenanceOperation,
 };
@@ -47,6 +49,11 @@ pub struct MaterialRequest {
 #[derive(Deserialize, JsonSchema)]
 pub struct JobRequest {
     pub job_id: String,
+}
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ModelCallRequest {
+    pub model_call_id: String,
 }
 #[derive(Deserialize, JsonSchema)]
 pub struct MemoryRequest {
@@ -270,6 +277,48 @@ impl McpService {
         self.execute(Operation::Cognition(CognitionOperation::Form(input)), ctx)
             .await
     }
+    #[tool(
+        description = "Queue missing text embeddings for a Subject's current memories and tags; returns durable jobs"
+    )]
+    async fn embedding_sync(
+        &self,
+        Parameters(input): Parameters<EmbeddingSync>,
+        ctx: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        self.execute(
+            Operation::Cognition(CognitionOperation::EmbeddingSync(input)),
+            ctx,
+        )
+        .await
+    }
+    #[tool(
+        description = "Read an authorized durable embedding run and its current processing state"
+    )]
+    async fn embedding_run(
+        &self,
+        Parameters(input): Parameters<JobRequest>,
+        ctx: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        self.execute(
+            Operation::Cognition(CognitionOperation::EmbeddingRun(input.job_id)),
+            ctx,
+        )
+        .await
+    }
+    #[tool(
+        description = "Read an authorized model call with its resource, usage and provider evidence"
+    )]
+    async fn model_call(
+        &self,
+        Parameters(input): Parameters<ModelCallRequest>,
+        ctx: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        self.execute(
+            Operation::Cognition(CognitionOperation::ModelCall(input.model_call_id)),
+            ctx,
+        )
+        .await
+    }
     #[tool(description = "Read a current memory and its five time axes by stable memory ID")]
     async fn memory_get(
         &self,
@@ -327,7 +376,7 @@ impl McpService {
         .await
     }
     #[tool(
-        description = "Search a Subject's memories with literal natural-language text, exact reference, source or time filters; returns explicit index coverage"
+        description = "Search a Subject's memories using lexical, dense, VCP or hybrid mode with exact reference, source or time filters; returns index coverage and semantic provenance"
     )]
     async fn query(
         &self,

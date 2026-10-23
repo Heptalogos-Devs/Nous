@@ -1,6 +1,8 @@
 pub mod backup;
 pub mod bundle_format;
+mod calls;
 mod cognition;
+mod embeddings;
 pub mod import_format;
 mod imports;
 pub mod instance;
@@ -8,6 +10,7 @@ mod maintenance;
 pub mod model;
 pub mod network;
 mod objects;
+mod semantic;
 mod worker;
 
 use chrono::Utc;
@@ -33,6 +36,11 @@ pub struct App {
     model: Arc<ModelRuntime>,
     retrieval: RetrievalIndex,
     index_gate: Arc<tokio::sync::Mutex<()>>,
+    semantic_cache: Arc<
+        tokio::sync::Mutex<
+            std::collections::HashMap<String, Arc<nous_retrieval::serving::ServingGeneration>>,
+        >,
+    >,
 }
 
 impl App {
@@ -66,6 +74,7 @@ impl App {
             model,
             retrieval,
             index_gate: Arc::new(tokio::sync::Mutex::new(())),
+            semantic_cache: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
         })
     }
 
@@ -85,8 +94,8 @@ impl App {
     pub async fn status(&self) -> Result<Value> {
         Ok(
             json!({"version":env!("CARGO_PKG_VERSION"),"storage":self.database.status().await?,
-            "capabilities":{"material":true,"observation":true,"memory_formation":true,"lexical_query":true},
-            "model":self.model.inspect(),"index":self.retrieval.coverage().ok()}),
+            "capabilities":{"material":true,"observation":true,"memory_formation":true,"lexical_query":true,"text_embedding":true,"dense_query":true,"vcp_query":true},
+            "model":self.model.inspect(),"text_embedding":self.model.embedding_inspect(),"index":self.retrieval.coverage().ok()}),
         )
     }
 

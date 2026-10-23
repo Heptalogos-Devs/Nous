@@ -28,5 +28,18 @@
       },
       "adaptation": "Published dependency; checked actual native search/filter/header/save/load/get APIs; no engine source copied"
     }
-  ]
+  ],
+  "serving_sources": {
+    "repository": "https://github.com/Heptalogos-Devs/Nous-Wave",
+    "commit": "412b062082afb75ccfae4c3f69fc606d3e3cc862",
+    "license": "Apache-2.0",
+    "sha256": {
+      "crates/retrieval/src/vcp/generation.rs": "364398a70eda226a361c51efca44bc40da89ab02ddc82b05a32408f8a354d748",
+      "crates/retrieval/src/vcp/graph.rs": "6bebe13dc1b1f3e1a3aac4abadccbb5071fb430e2c71bb9f0183358dd5bb3664",
+      "crates/retrieval/src/vcp/observation.rs": "9032a203a5fb06f29eb97440f342b5430993aca52f24015af1f5b243e0b4f201",
+      "crates/retrieval/src/vcp/lane.rs": "04a5baf2adfea708ef714aa9de7c402a4098ad000311435393ce6f3a56911707",
+      "crates/retrieval/src/vcp/readout.rs": "2d8d4239cff2420a529e4492a3c5821ffbf5d8e125b7d58103c4a187aaa75068"
+    },
+    "adaptation": "src/serving.rs: typed frozen source snapshot, independent root/candidate/Tag mappings, persisted current AGS/CSR assets, single-observation multi-query ANN/readout; math delegated to pinned nous-vcp kernels"
+  }
 }

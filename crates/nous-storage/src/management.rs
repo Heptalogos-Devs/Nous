@@ -206,6 +206,7 @@ impl WriteTransaction {
             revision,
             commit_seq: self.commit_seq(),
         };
+        self.purge_memory_embeddings(id).await?;
         sqlx::query("UPDATE model_calls SET response=? WHERE id IN (SELECT DISTINCT model_call_id FROM memory_revisions WHERE memory_id=?)")
             .bind(r#"{"schema_version":1,"redacted":true,"reason":"memory_purged"}"#).bind(id.as_str())
             .execute(&mut *self.tx).await.map_err(write_error)?;

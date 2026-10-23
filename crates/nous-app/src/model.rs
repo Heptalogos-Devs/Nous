@@ -8,7 +8,7 @@ use std::{collections::BTreeMap, error::Error as StdError, fmt};
 use anyhow::{Result as ConfigResult, bail};
 use chrono::Utc;
 use genai::chat::{ChatMessage, ChatOptions, ChatRequest, JsonSpec};
-use genai::resolver::{AuthData, Endpoint, ServiceTargetResolver};
+use genai::resolver::{AuthData, Endpoint};
 use genai::{Client, ModelIden, ServiceTarget, adapter::AdapterKind};
 use nous_domain::{
     Error, ErrorCode, MaterialId, MemoryDraft, NamespaceId, ObservationId, SubjectId,
@@ -19,6 +19,12 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 use crate::instance::{InstancePaths, SecretRef};
+
+pub mod embedding;
+pub use embedding::{
+    EmbeddingCallMetadata, EmbeddingCallRecord, EmbeddingConfig, EmbeddingExecution,
+    PreparedEmbedding,
+};
 
 pub const FORMATION_PROMPT_VERSION: &str = "nous.memory.formation.v1";
 const FORMATION_PROMPT: &str = include_str!("prompts/memory-formation-v1.md");
@@ -37,6 +43,7 @@ const OWNED_REQUEST_FIELDS: &[&str] = &[
 #[serde(default, deny_unknown_fields)]
 pub struct ModelConfig {
     pub memory_formation: Option<FormationConfig>,
+    pub text_embedding: Option<EmbeddingConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -67,10 +74,12 @@ pub struct ModelResource {
     pub credential: SecretRef,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum ModelProtocol {
     #[serde(rename = "openai_chat_completions")]
     OpenAiChatCompletions,
+    #[serde(rename = "openai_embeddings")]
+    OpenAiEmbeddings,
 }
 
 fn prompt_version() -> String {
@@ -92,47 +101,58 @@ fn daily_limit() -> u32 {
 impl ModelConfig {
     /// Configuration validation performs no network or credential access.
     pub fn validate(&self) -> ConfigResult<()> {
-        let Some(config) = &self.memory_formation else {
-            return Ok(());
-        };
-        for (name, value) in [
-            ("resource id", &config.resource.id),
-            ("provider", &config.resource.provider),
-            ("model", &config.resource.model),
-        ] {
-            if value.trim().is_empty() || value.len() > 255 || value.chars().any(char::is_control) {
-                bail!("model {name} must contain 1 to 255 visible bytes");
+        if let Some(config) = &self.memory_formation {
+            validate_resource(&config.resource)?;
+            if config.resource.protocol != ModelProtocol::OpenAiChatCompletions {
+                bail!("memory formation requires openai_chat_completions protocol");
+            }
+            if config.prompt_version != FORMATION_PROMPT_VERSION {
+                bail!("unsupported memory formation prompt version");
+            }
+            if !(1..=1024 * 1024).contains(&config.max_input_bytes) {
+                bail!("models.memory_formation.max_input_bytes must be between 1 and 1048576");
+            }
+            if !(1..=32768).contains(&config.max_output_tokens) || config.max_calls_per_day > 100000
+            {
+                bail!("model output tokens must be 1 to 32768 and daily calls at most 100000");
+            }
+            for field in config.native_parameters.keys() {
+                if OWNED_REQUEST_FIELDS.contains(&field.as_str()) {
+                    bail!("native parameter '{field}' is owned by the formation request contract");
+                }
             }
         }
-        let endpoint = reqwest::Url::parse(&config.resource.endpoint)?;
-        if !matches!(endpoint.scheme(), "http" | "https")
-            || endpoint.host_str().is_none()
-            || !endpoint.username().is_empty()
-            || endpoint.password().is_some()
-            || endpoint.query().is_some()
-            || endpoint.fragment().is_some()
-            || !endpoint.path().ends_with('/')
-        {
-            bail!(
-                "model endpoint must be an HTTP base URL ending with '/', without credentials, query or fragment"
-            );
-        }
-        if config.prompt_version != FORMATION_PROMPT_VERSION {
-            bail!("unsupported memory formation prompt version");
-        }
-        if !(1..=1024 * 1024).contains(&config.max_input_bytes) {
-            bail!("models.memory_formation.max_input_bytes must be between 1 and 1048576");
-        }
-        if !(1..=32768).contains(&config.max_output_tokens) || config.max_calls_per_day > 100000 {
-            bail!("model output tokens must be 1 to 32768 and daily calls at most 100000");
-        }
-        for field in config.native_parameters.keys() {
-            if OWNED_REQUEST_FIELDS.contains(&field.as_str()) {
-                bail!("native parameter '{field}' is owned by the formation request contract");
-            }
+        if let Some(config) = &self.text_embedding {
+            config.validate()?;
         }
         Ok(())
     }
+}
+
+fn validate_resource(resource: &ModelResource) -> ConfigResult<()> {
+    for (name, value) in [
+        ("resource id", &resource.id),
+        ("provider", &resource.provider),
+        ("model", &resource.model),
+    ] {
+        if value.trim().is_empty() || value.len() > 255 || value.chars().any(char::is_control) {
+            bail!("model {name} must contain 1 to 255 visible bytes");
+        }
+    }
+    let endpoint = reqwest::Url::parse(&resource.endpoint)?;
+    if !matches!(endpoint.scheme(), "http" | "https")
+        || endpoint.host_str().is_none()
+        || !endpoint.username().is_empty()
+        || endpoint.password().is_some()
+        || endpoint.query().is_some()
+        || endpoint.fragment().is_some()
+        || !endpoint.path().ends_with('/')
+    {
+        bail!(
+            "model endpoint must be an HTTP base URL ending with '/', without credentials, query or fragment"
+        );
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -194,6 +214,7 @@ pub struct ModelCallMetadata {
 pub struct PreparedFormation {
     pub metadata: ModelCallMetadata,
     client: Client,
+    target: ServiceTarget,
     request: ChatRequest,
     options: ChatOptions,
 }
@@ -238,7 +259,7 @@ impl ModelFailure {
     pub fn to_domain_error(&self) -> Error {
         Error::new(self.info.code, self.info.message.clone())
     }
-    fn new(class: RetryClass, code: ErrorCode, message: impl Into<String>) -> Self {
+    pub(crate) fn new(class: RetryClass, code: ErrorCode, message: impl Into<String>) -> Self {
         Self {
             info: ModelFailureInfo {
                 class,
@@ -250,14 +271,14 @@ impl ModelFailure {
             source: None,
         }
     }
-    fn waiting(message: impl Into<String>) -> Self {
+    pub(crate) fn waiting(message: impl Into<String>) -> Self {
         Self::new(
             RetryClass::WaitingConfiguration,
             ErrorCode::CapabilityUnavailable,
             message,
         )
     }
-    fn provider(error: genai::Error) -> Self {
+    pub(crate) fn provider(error: genai::Error) -> Self {
         let status = error.status().map(|value| value.as_u16());
         let class = match status {
             Some(408) => RetryClass::Uncertain,
@@ -382,6 +403,31 @@ impl ModelRuntime {
             "max_calls_per_day":config.max_calls_per_day,"native_parameters":config.native_parameters,"cost":null})
     }
 
+    fn build_client(
+        &self,
+        resource: &ModelResource,
+    ) -> Result<(Client, ServiceTarget), ModelFailure> {
+        let secret = self
+            .paths
+            .read_secret(&resource.credential)
+            .map_err(|error| {
+                let mut failure =
+                    ModelFailure::waiting("model credential is missing or unreadable");
+                failure.source = Some(error.into_boxed_dyn_error());
+                failure
+            })?;
+        let target = ServiceTarget {
+            endpoint: Endpoint::from_owned(resource.endpoint.clone()),
+            auth: AuthData::from_single(secret),
+            model: ModelIden::new(AdapterKind::OpenAI, resource.model.clone()),
+        };
+        let client = Client::builder()
+            .with_reqwest(self.http.clone())
+            .build()
+            .map_err(ModelFailure::provider)?;
+        Ok((client, target))
+    }
+
     /// Prepare first, then persistently reserve metadata.call_id before execute.
     pub fn prepare(&self, input: FormationInput) -> Result<PreparedFormation, ModelFailure> {
         let config =
@@ -405,33 +451,8 @@ impl ModelRuntime {
                 "formation source exceeds max_input_bytes",
             ));
         }
-        let secret = self
-            .paths
-            .read_secret(&config.resource.credential)
-            .map_err(|error| {
-                let mut failure =
-                    ModelFailure::waiting("model credential is missing or unreadable");
-                failure.source = Some(error.into_boxed_dyn_error());
-                failure
-            })?;
         let resource = &config.resource;
-        let endpoint = Endpoint::from_owned(resource.endpoint.clone());
-        let model = resource.model.clone();
-        // Copied from the upstream target-resolver example; every route component
-        // is explicit, so gateway model names never select an inferred provider.
-        let resolver = ServiceTargetResolver::from_resolver_fn(move |_target: ServiceTarget| {
-            Ok(ServiceTarget {
-                endpoint: endpoint.clone(),
-                auth: AuthData::from_single(secret.clone()),
-                model: ModelIden::new(AdapterKind::OpenAI, model.clone()),
-            })
-        });
-        let client = Client::builder()
-            .with_reqwest(self.http.clone())
-            .with_adapter_kind(AdapterKind::OpenAI)
-            .with_service_target_resolver(resolver)
-            .build()
-            .map_err(ModelFailure::provider)?;
+        let (client, target) = self.build_client(resource)?;
         let rendered_user = serde_json::to_string(
             &json!({"material_text": &input.text,"source_event_kind":input.source_event_kind}),
         )
@@ -476,6 +497,7 @@ impl ModelRuntime {
         Ok(PreparedFormation {
             metadata,
             client,
+            target,
             request,
             options,
         })
@@ -497,10 +519,9 @@ impl ModelRuntime {
             cost: None,
             failure: None,
         };
-        let model = ModelIden::new(AdapterKind::OpenAI, record.metadata.resource.model.clone());
         let result = match prepared
             .client
-            .exec_chat(model, prepared.request, Some(&prepared.options))
+            .exec_chat(prepared.target, prepared.request, Some(&prepared.options))
             .await
         {
             Ok(response) => {

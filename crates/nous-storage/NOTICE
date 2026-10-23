@@ -7,6 +7,12 @@ crates/memory/src/service/lifecycle.rs, commit
 The SQLite implementation preserves minimal purge markers and audit identity,
 redacts derived model output and receipt copies, and invalidates projections.
 
+src/embeddings.rs adapts source/space validation and authority publication from
+Nous-Wave crates/retrieval/src/embedding.rs, commit
+412b062082afb75ccfae4c3f69fc606d3e3cc862, Apache-2.0.
+The SQLite implementation shares the model call ledger and commit transaction,
+stores scoped vectors, and retains source hashes for content-equivalent reuse.
+
 src/transaction.rs adapts the receipt/transaction envelope from
 Nous-Wave crates/persistence/src/mutations.rs, commit
 412b062082afb75ccfae4c3f69fc606d3e3cc862, Apache-2.0.

@@ -1,11 +1,12 @@
 //! Adapted from apalis-sqlite examples/basic.rs and apalis Worker::run_until.
 //! Upstream MIT licenses and pinned sources are recorded in research/reuse.md.
 use super::*;
+use crate::calls::{CallRequest, budget_error, settle_call};
 use apalis::prelude::{BackendExt, Data, WorkerBuilder, WorkerBuilderExt};
 use apalis_core::error::WorkerError;
 use cognition::{index_job, utc_point};
 use model::{FormationInput, RetryClass};
-use nous_storage::{JobEnvelope, WriteTransaction};
+use nous_storage::JobEnvelope;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
@@ -22,8 +23,14 @@ impl App {
             if let Err(error) = app.database.resume_waiting_formations().await {
                 tracing::error!(%error,"cannot resume waiting formations");
             }
+            if let Err(error) = app.database.resume_waiting_embeddings(true).await {
+                tracing::warn!(%error,"cannot resume waiting embeddings");
+            }
             if let Err(error) = app.catch_up_index().await {
                 tracing::warn!(%error,"index catch-up will retry");
+            }
+            if let Err(error) = app.schedule_embedding_catchup().await {
+                tracing::warn!(%error,"embedding catch-up will retry");
             }
             let maintenance_app = app.clone();
             let maintenance_cancel = cancellation.clone();
@@ -34,6 +41,8 @@ impl App {
                         _=maintenance_cancel.cancelled()=>break,
                         _=tokio::time::sleep(Duration::from_secs(60))=>{
                             let today = Utc::now().date_naive();
+                            if (today!=budget_day || maintenance_app.model.embedding_inspect()["state"]=="ready")
+                                && let Err(error)=maintenance_app.database.resume_waiting_embeddings(today!=budget_day).await {tracing::warn!(%error,"embedding resume failed");}
                             if today != budget_day {
                                 budget_day = today;
                                 if let Err(error)=maintenance_app.database.resume_waiting_formations().await {tracing::warn!(%error,"daily budget work resume failed");}
@@ -131,73 +140,50 @@ impl App {
             }
         };
         let metadata = &prepared.metadata;
-        let call_id: ModelCallId = metadata.call_id.parse()?;
-        let previous_calls = self.database.model_calls(job_id).await?;
-        let attempt = previous_calls.len() as i64 + 1;
-        let request = serde_json::to_value(metadata)?;
-        let Some(mut tx) = self
-            .worker_transaction("model.reserve", call_id.as_str(), job_id, &request)
+        let Some(reservation) = self
+            .reserve_call(CallRequest {
+                job_id: &run.job_id,
+                namespace_id: &run.namespace_id,
+                subject_id: &run.subject_id,
+                call_id: metadata.call_id.parse()?,
+                resource_id: &metadata.resource.id,
+                max_calls_per_day: metadata.max_calls_per_day,
+                request: serde_json::to_value(metadata)?,
+            })
             .await?
         else {
             return Ok(());
         };
-        let today = Utc::now().format("%Y-%m-%d").to_string();
-        if tx.daily_model_calls(&metadata.resource.id, &today).await?
-            >= i64::from(metadata.max_calls_per_day)
-        {
+        let mut tx = reservation.transaction;
+        let Some(mut call) = reservation.call else {
             run.state = FormationState::WaitingForBudget;
-            run.error = Some(Error::new(
-                ErrorCode::ResourceExhausted,
-                "daily model-call budget exhausted; waiting for the next UTC day",
-            ));
+            run.error = Some(budget_error());
             run.updated_at = Utc::now().to_rfc3339();
             tx.update_formation(&run).await?;
             tx.commit(json!({"state":run.state})).await?;
             return Ok(());
-        }
-        let mut call = ModelCall {
-            id: call_id,
-            job_id: job_id.into(),
-            namespace_id: run.namespace_id.clone(),
-            subject_id: run.subject_id.clone(),
-            attempt,
-            resource_id: metadata.resource.id.clone(),
-            request,
-            response: None,
-            state: ModelCallState::Started,
-            error: None,
-            cost_microunits: None,
-            created_at: Utc::now().to_rfc3339(),
-            completed_at: None,
         };
+        let attempt = call.attempt;
         run.state = FormationState::Running;
         run.error = None;
         run.model_call_id = Some(call.id.clone());
         run.updated_at = call.created_at.clone();
-        tx.insert_model_call(&call).await?;
         tx.update_formation(&run).await?;
         tx.commit(json!({"model_call_id":call.id})).await?;
 
         // The only network operation runs after its durable reservation commits.
         let execution = self.model.execute(prepared).await;
-        call.completed_at = Some(execution.record.completed_at.clone());
         let record = serde_json::to_value(&execution.record)?;
         let (drafts, failure) = match execution.result {
             Ok(drafts) => (Some(drafts), None),
             Err(error) => (None, Some(error)),
         };
-        call.response = Some(json!({"schema_version":1,"record":record,"memories":drafts}));
-        call.state = if failure
-            .as_ref()
-            .is_some_and(|failure| failure.class() == RetryClass::Uncertain)
-        {
-            ModelCallState::Uncertain
-        } else if failure.is_some() {
-            ModelCallState::Failed
-        } else {
-            ModelCallState::Succeeded
-        };
-        call.error = failure.as_ref().map(|failure| failure.to_domain_error());
+        settle_call(
+            &mut call,
+            execution.record.completed_at.clone(),
+            json!({"schema_version":1,"record":record,"memories":drafts}),
+            failure.as_ref(),
+        );
         let mut completed_run = run.clone();
         if let Some(error) = &failure {
             completed_run.state = if error.class() == RetryClass::Permanent || attempt >= 5 {
@@ -340,28 +326,6 @@ impl App {
         Ok(())
     }
 
-    async fn mark_interrupted_call(&self, mut call: ModelCall) -> Result<()> {
-        if let Some(mut tx) = self
-            .worker_transaction(
-                "model.interrupted",
-                call.id.as_str(),
-                &call.job_id,
-                &json!({"call_id":call.id}),
-            )
-            .await?
-        {
-            call.state = ModelCallState::Uncertain;
-            call.error = Some(Error::new(
-                ErrorCode::DependencyUnavailable,
-                "host stopped before the remote response was saved; the previous request may have completed",
-            ));
-            call.completed_at = Some(Utc::now().to_rfc3339());
-            tx.update_model_call(&call).await?;
-            tx.commit(json!({"state":call.state})).await?;
-        }
-        Ok(())
-    }
-
     async fn set_formation_state(
         &self,
         run: &FormationRun,
@@ -398,30 +362,22 @@ impl App {
         }
         Ok(())
     }
-
-    async fn worker_transaction(
-        &self,
-        kind: &str,
-        operation_id: &str,
-        scope: &str,
-        payload: &Value,
-    ) -> Result<Option<WriteTransaction>> {
-        let context = CallContext {
-            caller_id: "nous-worker:v1".into(),
-            scope: AccessScope::Admin,
-        };
-        let key = operation_key(&context, kind, scope, operation_id, payload)?;
-        match self.database.begin_operation(key).await? {
-            BeginOperation::Replay(_) => Ok(None),
-            BeginOperation::New(tx) => Ok(Some(tx)),
-        }
-    }
 }
 
 async fn dispatch_job(job: JobEnvelope, app: Data<App>) -> Result<()> {
     match job.kind.as_str() {
         "memory.form" => app.process_formation(&job.id).await,
-        "memory.index" => app.catch_up_index().await,
+        "memory.index" => {
+            app.catch_up_index().await?;
+            if app.model.embedding_config().is_some()
+                && let Some(subject) = &job.subject_id
+            {
+                app.sync_embeddings(&CallContext::admin(), &job.id, &subject.parse()?, 5000)
+                    .await?;
+            }
+            Ok(())
+        }
+        "embedding.text" => app.process_embedding(&job.id).await,
         _ => Err(Error::invalid("no handler is registered for this job kind")),
     }
 }

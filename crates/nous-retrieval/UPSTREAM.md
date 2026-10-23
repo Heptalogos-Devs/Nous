@@ -56,3 +56,43 @@ empty searches, save/reopen, invalid inputs, incomplete files, checksum changes,
 snapshot mismatches and native readback rejecting substituted IDs. All-target
 Clippy with `-D warnings` also passed. Root workspace and serving integration are
 managed by the application owner.
+
+## Serving snapshots and graph assets
+
+`src/serving.rs` continues the previous Nous
+`vcp/{generation,graph,observation,lane,readout}.rs` implementation at
+`412b062082afb75ccfae4c3f69fc606d3e3cc862`. It preserves frozen generation
+ownership, ordered membership, independent evidence roots, one query observation
+and the original/enhanced/local/transfer candidate union. The formulas execute
+through the pinned [nous-vcp kernels](../nous-vcp/UPSTREAM.md); this module adapts
+identity, source assembly, persistence and result materialization.
+
+The app supplies a `ServingSnapshot` after scope, source, time and activation
+filtering. Memory candidate IDs, Tag IDs and source-root file IDs have separate
+sorted mappings. A Memory explicitly names its material root; each Tag occurrence
+must name that same root. Multiple memories from one root share one ordered Tag
+membership and one contribution to geometry/graph evidence. A conflicting
+membership for one root is an explicit input error. Imported literal material
+labels remain source-derived Tags in this projection.
+
+`ServingGeneration::create_or_open` hashes the complete normalized snapshot,
+caller identity and asset configuration to select an immutable generation. It
+publishes geometry, CSR/provenance, identity mappings and both native ANN indexes
+as one directory. Reopen checks component hashes and native vector contents,
+reuses persisted geometry and graph, and makes no model call. Incomplete or
+changed components return a specific error; a changed snapshot selects a new
+generation. The app owns any cache and publication gate.
+
+Dense uses native candidate ANN. VCP prepares one complete pipeline observation,
+offers candidates from its four actual query vectors, and passes the closed
+union to RiverMemo V3. Optional fields and grounded Thinking use that observation.
+An empty Tag lane still executes the VCP pipeline and retains direct candidates.
+Returned numeric IDs resolve through the frozen Memory mapping, and source
+mappings cover returned and planned memories. Normal query diagnostics contain counts;
+the full generation mapping is available through `asset_diagnostics()`.
+
+Three standalone serving tests passed: full native save/reopen and query replay;
+graph/provenance restricted to caller-filtered material and unchanged by repeated
+derivation from one root; and no-Tag VCP with explicit corrupt/new-generation
+behavior. All-target Clippy with `-D warnings` passed. The app and protocol owner
+performs serving integration separately.

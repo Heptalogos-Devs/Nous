@@ -900,6 +900,11 @@ async fn m1_snapshots_gain_lifecycle_anchors_without_changing_content() {
         database.observation(&ns, &observation).await.unwrap().kind,
         ObservationKind::Contact
     );
+    assert_eq!(
+        database.memory(&ns, &ids[0]).await.unwrap().model_call_id,
+        Some(call.clone())
+    );
+    assert_eq!(database.model_call(&call).await.unwrap().job_id, job);
     database.close().await;
 }
 
