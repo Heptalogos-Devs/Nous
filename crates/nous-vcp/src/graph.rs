@@ -172,6 +172,12 @@ impl NativeArtifact {
     }
 
     pub fn independent_fraction(&self, source: i64, target: i64, file_id: i64) -> f64 {
+        self.independent_fraction_excluding(source, target, &[file_id])
+    }
+
+    /// Derived candidates can depend on several originals. Exclude all their
+    /// evidence roots while retaining the pinned kernel's weighting and floor.
+    pub fn independent_fraction_excluding(&self, source: i64, target: i64, roots: &[i64]) -> f64 {
         let Some(contributions) = self.provenance.get(&(source, target)) else {
             return 1.0;
         };
@@ -181,9 +187,31 @@ impl NativeArtifact {
         }
         let own: f64 = contributions
             .iter()
-            .filter(|item| item.0 == file_id)
+            .filter(|item| roots.contains(&item.0))
             .map(|item| item.1)
             .sum();
         clamp01(1.0 - own / total).max(0.15)
+    }
+}
+
+#[cfg(test)]
+mod source_tests {
+    use super::*;
+    #[test]
+    fn derivations_exclude_all_own_roots_without_counting_them_twice() {
+        let mut graph = NativeArtifact::default();
+        graph
+            .provenance
+            .insert((1, 2), vec![(10, 2.0), (20, 3.0), (30, 5.0)]);
+        assert_eq!(graph.independent_fraction(1, 2, 10), 0.8);
+        assert_eq!(graph.independent_fraction_excluding(1, 2, &[10, 20]), 0.5);
+        assert_eq!(
+            graph.independent_fraction_excluding(1, 2, &[10, 20, 10]),
+            0.5
+        );
+        assert_eq!(
+            graph.independent_fraction_excluding(1, 2, &[10, 20, 30]),
+            0.15
+        );
     }
 }

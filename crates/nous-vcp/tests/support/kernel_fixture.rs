@@ -92,6 +92,7 @@ pub fn fixture() -> (MemoAssets, PipelineOutput) {
             CandidateData {
                 id: 1001,
                 file_id: 1,
+                source_ids: vec![1],
                 vector: Arc::from(vec![1.0, 0.0]),
             },
         ),
@@ -100,6 +101,7 @@ pub fn fixture() -> (MemoAssets, PipelineOutput) {
             CandidateData {
                 id: 1002,
                 file_id: 2,
+                source_ids: vec![2],
                 vector: Arc::from(vec![0.0, 1.0]),
             },
         ),

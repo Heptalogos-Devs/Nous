@@ -98,10 +98,17 @@ behavior; and non-unit provider vectors with one derived normalization policy. A
 worker; controlled protocol tests and the real gateway exercise cover the complete
 query, source and restart path.
 
-The serving format `nous-vcp-serving-ags-unit-f32-v2` binds its derived vector
+The serving format `nous-vcp-serving-source-sets-v3` binds its derived vector
 policy. Authoritative model values and ANN raw snapshot hashes remain intact;
 one f64 L2-to-F32 derivation supplies geometry, graph, MemoAssets and readout.
 This makes VCP fusion and ANN use compatible cosine inputs for provider vectors
 whose norms differ slightly from one. Current VCP source keeps raw vectors in
 `storage.rs` and uses them directly in `memo_pipeline.rs` fusion; the adaptation
 records this intentional serving policy separately from the preserved kernels.
+
+Version 3 also stores complete `source_refs` and separates candidate tag curves
+from their independent original roots. A multi-source cognitive object gets one
+candidate vector and one curve over its ordered source tags; geometry and graph
+memberships still contain each original only once. RiverMemo and Thinking exclude
+all of the candidate's own roots when measuring independent edge support. Source
+mappings, root sets and curves survive the same immutable-generation reload.

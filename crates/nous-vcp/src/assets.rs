@@ -9,6 +9,8 @@ pub type TagVectorPool = HashMap<i64, Arc<[f32]>>;
 pub struct CandidateData {
     pub id: i64,
     pub file_id: i64,
+    /// Actual independent evidence roots; file_id identifies its retrieval curve.
+    pub source_ids: Vec<i64>,
     pub vector: Arc<[f32]>,
 }
 
@@ -100,6 +102,11 @@ impl MemoAssets {
             if *id <= 0
                 || *id != candidate.id
                 || !input.files.contains_key(&candidate.file_id)
+                || candidate.source_ids.is_empty()
+                || candidate
+                    .source_ids
+                    .iter()
+                    .any(|id| !input.files.contains_key(id))
                 || !vector_valid(&candidate.vector)
             {
                 return Err(format!("MEMO_CANDIDATE_VECTOR_INVALID: {id}"));

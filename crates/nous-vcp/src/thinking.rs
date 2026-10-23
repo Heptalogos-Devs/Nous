@@ -26,6 +26,7 @@ pub struct ThinkingInput {
 struct Module {
     id: i64,
     file_id: i64,
+    source_ids: Vec<i64>,
     relevance: f64,
     tags: HashMap<i64, (usize, f64)>,
 }
@@ -152,6 +153,7 @@ pub fn plan(
             modules.push(Module {
                 id,
                 file_id: data.file_id,
+                source_ids: data.source_ids.clone(),
                 tags,
                 relevance: cosine(&data.vector, &cached.original_query_vector),
             });
@@ -200,10 +202,10 @@ pub fn plan(
                     } else {
                         1.0
                     };
-                    let independent = artifact.independent_fraction(
+                    let independent = artifact.independent_fraction_excluding(
                         edge.source_id,
                         edge.target_id,
-                        module.file_id,
+                        &module.source_ids,
                     );
                     let score = (edge.flow / maximum_flow.max(1e-12))
                         * (a_closure * b_closure).sqrt()

@@ -108,6 +108,7 @@ impl App {
                 commit_seq: entry.memory.commit_seq,
                 vector: record.vector.clone(),
                 source_ref: root,
+                source_refs: Vec::new(),
                 tags: serving_tags,
             });
             records.insert(entry.memory.id.clone(), record.clone());

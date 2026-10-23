@@ -3,7 +3,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // Adapted from previous Nous vcp/{generation,graph,observation,lane,readout}.rs.
 // Source commit 412b062082afb75ccfae4c3f69fc606d3e3cc862.
-// Numerical computation uses the unchanged pinned nous-vcp kernels; see UPSTREAM.md.
+// Numerical computation uses pinned nous-vcp kernels with explicit source sets;
+// see UPSTREAM.md for the evidence-root extension.
 use crate::vector::{VectorGeneration, VectorGenerationIdentity, VectorRecord, VectorSnapshot};
 use anyhow::{Context, Result, ensure};
 use nous_vcp::{
@@ -25,8 +26,8 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-const FORMAT_VERSION: u32 = 2;
-const FORMAT: &str = "nous-vcp-serving-ags-unit-f32-v2";
+const FORMAT_VERSION: u32 = 3;
+const FORMAT: &str = "nous-vcp-serving-source-sets-v3";
 const VECTOR_POLICY: &str = "raw-f32/l2-f64-to-unit-f32-v1";
 fn empty_object() -> Value {
     json!({})
@@ -48,6 +49,9 @@ pub struct ServingMemory {
     pub commit_seq: i64,
     pub vector: Vec<f32>,
     pub source_ref: String,
+    /// Complete independent roots. Empty preserves the single source_ref input.
+    #[serde(default)]
+    pub source_refs: Vec<String>,
     #[serde(default)]
     pub tags: Vec<ServingTag>,
 }
@@ -109,6 +113,7 @@ impl Default for VcpConfig {
 pub struct ServingSourceMapping {
     pub revision: i64,
     pub source_ref: String,
+    pub source_refs: Vec<String>,
 }
 #[derive(Debug, Serialize)]
 pub struct ServingHit {
@@ -133,12 +138,15 @@ struct MemoryMapping {
     commit_seq: i64,
     file_id: i64,
     source_ref: String,
+    source_refs: Vec<String>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 struct Mappings {
     memories: BTreeMap<i64, MemoryMapping>,
     tags: BTreeMap<i64, String>,
     roots: BTreeMap<i64, String>,
+    /// Retrieval curve IDs map to true roots; only roots contribute graph mass.
+    source_sets: BTreeMap<i64, Vec<i64>>,
 }
 
 /// Immutable group. App owns any in-memory generation cache and publication gate.
@@ -284,6 +292,7 @@ impl ServingGeneration {
                 ServingSourceMapping {
                     revision: memory.revision,
                     source_ref: memory.source_ref.clone(),
+                    source_refs: memory.source_refs.clone(),
                 },
             ))
         })
@@ -386,7 +395,7 @@ impl ServingGeneration {
                 top_k: limit,
                 include_trace: config.include_trace,
                 candidates: offered.into_values().collect(),
-                allowed_file_ids: Some(self.mappings.roots.keys().copied().collect()),
+                allowed_file_ids: Some(self.mappings.source_sets.keys().copied().collect()),
                 config: config.readout,
             },
         )
@@ -489,11 +498,24 @@ fn prepare(snapshot: &ServingSnapshot) -> Result<Prepared> {
             "SERVING_MEMORY_INVALID: identity, revision, source root or watermark"
         );
         validate_vector(&memory.vector, snapshot.identity.dimension)?;
+        if memory.source_refs.is_empty() {
+            memory.source_refs.push(memory.source_ref.clone());
+        }
+        memory.source_refs.sort();
+        memory.source_refs.dedup();
+        ensure!(
+            memory.source_refs.contains(&memory.source_ref)
+                && memory
+                    .source_refs
+                    .iter()
+                    .all(|root| !root.trim().is_empty()),
+            "SERVING_SOURCE_SET_INVALID"
+        );
         for tag in &memory.tags {
             ensure!(
                 !tag.key.trim().is_empty()
                     && !tag.label.trim().is_empty()
-                    && tag.source_ref == memory.source_ref,
+                    && memory.source_refs.contains(&tag.source_ref),
                 "SERVING_TAG_INVALID: Tag key/label or source root"
             );
             validate_vector(&tag.vector, snapshot.identity.dimension)?;
@@ -509,19 +531,22 @@ fn prepare(snapshot: &ServingSnapshot) -> Result<Prepared> {
         let mut membership_seen = BTreeSet::new();
         memory
             .tags
-            .retain(|tag| membership_seen.insert(tag.key.clone()));
-        let ordered = memory
-            .tags
-            .iter()
-            .map(|tag| tag.key.clone())
-            .collect::<Vec<_>>();
-        if let Some(old) = root_tags.get(&memory.source_ref) {
-            ensure!(
-                old == &ordered,
-                "SERVING_ROOT_MEMBERSHIP_CONFLICT: one root has different ordered Tags"
-            );
-        } else {
-            root_tags.insert(memory.source_ref.clone(), ordered);
+            .retain(|tag| membership_seen.insert((tag.source_ref.clone(), tag.key.clone())));
+        for root in &memory.source_refs {
+            let ordered = memory
+                .tags
+                .iter()
+                .filter(|tag| &tag.source_ref == root)
+                .map(|tag| tag.key.clone())
+                .collect::<Vec<_>>();
+            if let Some(old) = root_tags.get(root) {
+                ensure!(
+                    old == &ordered,
+                    "SERVING_ROOT_MEMBERSHIP_CONFLICT: one root has different ordered Tags"
+                );
+            } else {
+                root_tags.insert(root.clone(), ordered);
+            }
         }
     }
     let digest = hash(&serde_json::to_vec(
@@ -544,19 +569,41 @@ fn prepare(snapshot: &ServingSnapshot) -> Result<Prepared> {
         .enumerate()
         .map(|(i, key)| Ok((i64::try_from(i + 1)?, key.clone())))
         .collect::<Result<BTreeMap<_, _>>>()?;
+    let mut source_sets = roots
+        .keys()
+        .map(|id| (*id, vec![*id]))
+        .collect::<BTreeMap<_, _>>();
+    let mut set_ids = source_sets
+        .iter()
+        .map(|(id, roots)| (roots.clone(), *id))
+        .collect::<BTreeMap<_, _>>();
     let memories = snapshot
         .memories
         .iter()
         .enumerate()
         .map(|(i, memory)| {
+            let set = memory
+                .source_refs
+                .iter()
+                .map(|root| root_ids[root])
+                .collect::<Vec<_>>();
+            let file_id = if let Some(id) = set_ids.get(&set) {
+                *id
+            } else {
+                let id = i64::try_from(source_sets.len() + 1)?;
+                source_sets.insert(id, set.clone());
+                set_ids.insert(set, id);
+                id
+            };
             Ok((
                 i64::try_from(i + 1)?,
                 MemoryMapping {
                     memory_id: memory.id.clone(),
                     revision: memory.revision,
                     commit_seq: memory.commit_seq,
-                    file_id: root_ids[&memory.source_ref],
+                    file_id,
                     source_ref: memory.source_ref.clone(),
+                    source_refs: memory.source_refs.clone(),
                 },
             ))
         })
@@ -569,7 +616,7 @@ fn prepare(snapshot: &ServingSnapshot) -> Result<Prepared> {
             .zip(memories.keys())
             .map(|(memory, id)| VectorRecord {
                 id: *id,
-                source_key: format!("memory:{}@{}", memory.id, memory.revision),
+                source_key: format!("candidate:{}@{}", memory.id, memory.revision),
                 vector: memory.vector.clone(),
             })
             .collect(),
@@ -614,6 +661,7 @@ fn prepare(snapshot: &ServingSnapshot) -> Result<Prepared> {
             memories,
             tags,
             roots,
+            source_sets,
         },
         tag_definitions,
         root_tags,
@@ -734,6 +782,7 @@ fn assemble_assets(
                 CandidateData {
                     id: *id,
                     file_id: mapping.file_id,
+                    source_ids: prepared.mappings.source_sets[&mapping.file_id].clone(),
                     vector: prepared.unit_candidates[id].clone(),
                 },
             )
@@ -741,18 +790,26 @@ fn assemble_assets(
         .collect();
     let files = prepared
         .mappings
-        .roots
-        .keys()
-        .map(|id| {
+        .source_sets
+        .iter()
+        .map(|(id, roots)| {
+            let mut seen = BTreeSet::new();
+            let tags = roots
+                .iter()
+                .flat_map(|root| rows.iter().filter(move |row| row.file_id == *root))
+                .filter(|row| seen.insert(row.tag_id))
+                .enumerate()
+                .map(|(position, row)| FileTag {
+                    file_id: *id,
+                    tag_id: row.tag_id,
+                    position: position as i64 + 1,
+                })
+                .collect();
             (
                 *id,
                 FileData {
                     diary_name: "authorized-snapshot".into(),
-                    tags: rows
-                        .iter()
-                        .filter(|row| row.file_id == *id)
-                        .cloned()
-                        .collect(),
+                    tags,
                 },
             )
         })
@@ -913,6 +970,7 @@ mod tests {
                 commit_seq: 5,
                 vector,
                 source_ref: root.clone(),
+                source_refs: Vec::new(),
                 tags: members
                     .into_iter()
                     .map(|(key, vector)| ServingTag {
@@ -954,6 +1012,61 @@ mod tests {
         let config=VcpConfig{pipeline:serde_json::from_value(json!({"epaGateMode":"absolute","pyramidTopK":3,"spikeRouting":{"maxSafeHops":2,"firingThreshold":0.0,"minimumInjectedCurrent":0.0,"maxTransitionRecords":128,"dynamicWormholes":false}})).unwrap(),
             core_tags:vec!["alpha".into()],include_trace:true,include_fields:true,thinking:true,..Default::default()};
         ServingProfile::Vcp(Box::new(config))
+    }
+    #[test]
+    fn multiple_source_candidates_share_original_graph_evidence_and_restore() -> Result<()> {
+        let parent = tempfile::tempdir()?;
+        let baseline = snapshot();
+        let base = prepare(&baseline)?;
+        let mut expanded = baseline.clone();
+        let mut joint = expanded.memories[0].clone();
+        joint.id = "schema:combined".into();
+        joint.source_refs = vec![
+            expanded.memories[0].source_ref.clone(),
+            expanded.memories[1].source_ref.clone(),
+        ];
+        joint.tags.extend(expanded.memories[1].tags.clone());
+        expanded.memories.push(joint);
+        let prepared = prepare(&expanded)?;
+        assert_eq!(
+            serde_json::to_value(root_rows(&base))?,
+            serde_json::to_value(root_rows(&prepared))?
+        );
+        assert_eq!(prepared.mappings.roots.len(), 3);
+        let generation = ServingGeneration::create_or_open(parent.path(), &expanded)?;
+        let candidate_id = *generation
+            .mappings
+            .memories
+            .iter()
+            .find(|(_, m)| m.memory_id == "schema:combined")
+            .unwrap()
+            .0;
+        let candidate = &generation.assets.candidates()[&candidate_id];
+        assert_eq!(candidate.source_ids.len(), 2);
+        assert_eq!(generation.assets.files()[&candidate.file_id].tags.len(), 3);
+        let before = generation.search(&[1.0, 0.0, 0.0], 4, profile())?;
+        assert_eq!(
+            before.source_mappings["schema:combined"].source_refs,
+            vec!["material:a", "material:b"]
+        );
+        drop(generation);
+        let restored = ServingGeneration::create_or_open(parent.path(), &expanded)?;
+        assert!(restored.restored());
+        let after = restored.search(&[1.0, 0.0, 0.0], 4, profile())?;
+        assert_eq!(before.source_mappings, after.source_mappings);
+        assert_eq!(
+            before
+                .ranked
+                .iter()
+                .map(|h| (&h.memory_id, h.score))
+                .collect::<Vec<_>>(),
+            after
+                .ranked
+                .iter()
+                .map(|h| (&h.memory_id, h.score))
+                .collect::<Vec<_>>()
+        );
+        Ok(())
     }
     #[test]
     fn provider_nonunit_vectors_use_one_derived_policy_without_rewriting_raw_identity() -> Result<()>

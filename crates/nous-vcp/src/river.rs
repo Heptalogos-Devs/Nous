@@ -421,6 +421,7 @@ struct TagData {
 struct Curve {
     id: i64,
     file_id: i64,
+    source_ids: Vec<i64>,
     tags: Vec<TagData>,
     chunk_vector: Arc<[f32]>,
     query_score: f64,
@@ -1105,8 +1106,11 @@ fn evaluate_topology(
         } else {
             clamp01(input.config.reverse_direction_credit)
         };
-        let independent =
-            artifact.independent_fraction(edge.source_id, edge.target_id, curve.file_id);
+        let independent = artifact.independent_fraction_excluding(
+            edge.source_id,
+            edge.target_id,
+            &curve.source_ids,
+        );
         let endpoint = (source.quality * target.quality).sqrt();
         let edge_quality =
             clamp01(endpoint * distance_similarity * direction_similarity * independent);
@@ -1888,6 +1892,7 @@ fn load_curves(
         curves.push(Curve {
             id: candidate.id,
             file_id: *file_id,
+            source_ids: assets.candidates[&candidate.id].source_ids.clone(),
             tags: Vec::new(),
             chunk_vector: chunk_vector.clone(),
             query_score: 0.0,

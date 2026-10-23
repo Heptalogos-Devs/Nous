@@ -43,3 +43,18 @@ random/degenerate cases, six boundary cases and its alternating-order benchmark.
 The report retains the observed rank differences, source hashes and compiler.
 Current AGS recovered the analytic 3e-7 residual and reduced near-collinear
 orthogonality error to roughly 1e-14 in that run.
+
+## Multiple original sources
+
+`CandidateData.source_ids` carries every original evidence root for a derived
+cognitive candidate. Its `file_id` identifies the retrieval curve. RiverMemo and
+Thinking now call `independent_fraction_excluding` with all these roots; the
+existing contribution weights, normalization and 0.15 floor are preserved. The
+single-source method delegates to that same calculation. This prevents a Schema
+derived from A and B from counting B as independent confirmation of itself.
+
+Serving generations persist source sets separately from original source rows.
+Only original source rows enter geometry and graph construction. Candidate tag
+curves can span these roots without adding graph evidence. The retained golden
+corpus passes unchanged; added tests check multi-root exclusion, unchanged source
+rows, real VCP retrieval and reopening the same complete source mappings.
