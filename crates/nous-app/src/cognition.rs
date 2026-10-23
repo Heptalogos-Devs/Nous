@@ -109,36 +109,23 @@ impl App {
         id: &MemoryId,
         expected_revision: i64,
     ) -> Result<OperationReceipt> {
-        let namespace = self.database.memory_namespace(id).await?;
-        let existing = self.database.memory(&namespace, id).await?;
-        ctx.require_subject(&namespace, &existing.subject_id)?;
-        let scope = format!("namespace:{namespace}/subject:{}", existing.subject_id);
-        let key = operation_key(
+        self.apply_memory_change(
             ctx,
-            "memory.delete",
-            &scope,
             operation_id,
-            &json!({"memory_id":id,"expected_revision":expected_revision}),
-        )?;
-        let mut tx = match self.database.begin_operation(key).await? {
-            BeginOperation::Replay(receipt) => return Ok(receipt),
-            BeginOperation::New(tx) => tx,
-        };
-        let mut memory = tx.memory(&namespace, id).await?;
-        if memory.revision != expected_revision || memory.deleted {
-            return Err(Error::new(
-                ErrorCode::Conflict,
-                "memory revision changed or is already deleted",
-            ));
-        }
-        memory.revision += 1;
-        memory.deleted = true;
-        memory.commit_seq = tx.commit_seq();
-        memory.recorded_at = Utc::now().to_rfc3339();
-        memory.times.recorded = utc_point();
-        tx.save_memory(&memory, Some(expected_revision)).await?;
-        tx.enqueue(index_job(&memory)).await?;
-        tx.commit(serde_json::to_value(memory)?).await
+            id,
+            MemoryChange {
+                action: MemoryAction::Trash,
+                expected_revision,
+                strength: None,
+                hours: None,
+                reason: String::new(),
+                force: false,
+                edit: None,
+            },
+            "memory.delete",
+            json!({"memory_id":id,"expected_revision":expected_revision}),
+        )
+        .await
     }
 
     pub async fn memory_source(&self, ctx: &CallContext, id: &MemoryId) -> Result<MemorySource> {
@@ -148,7 +135,10 @@ impl App {
             .observation(&memory.namespace_id, &memory.observation_id)
             .await?;
         let material = self.get_material(ctx, &memory.material_id).await?;
-        let model_call = self.database.model_call(&memory.model_call_id).await?;
+        let model_call = match &memory.model_call_id {
+            Some(id) => Some(self.database.model_call(id).await?),
+            None => None,
+        };
         Ok(MemorySource {
             memory,
             observation,
@@ -229,7 +219,11 @@ impl App {
         } else {
             for candidate in page.hits {
                 let id: MemoryId = candidate.id.parse()?;
-                let memory = self.database.memory(&namespace, &id).await?;
+                let memory = match self.database.memory(&namespace, &id).await {
+                    Ok(memory) => memory,
+                    Err(error) if error.code == ErrorCode::NotFound => continue,
+                    Err(error) => return Err(error),
+                };
                 if memory.revision == candidate.revision && memory.subject_id == request.subject_id
                 {
                     candidates.insert(id, (memory, candidate.score));
@@ -243,10 +237,17 @@ impl App {
                     candidates.insert(memory.id.clone(), (memory.clone(), score));
                 }
             }
+            for purged in &delta.purged {
+                candidates.remove(&purged.id);
+            }
         }
         let mut hits = Vec::new();
         for (id, (selected, mut score)) in candidates {
-            let memory = self.database.memory(&namespace, &id).await?;
+            let memory = match self.database.memory(&namespace, &id).await {
+                Ok(memory) => memory,
+                Err(error) if error.code == ErrorCode::NotFound => continue,
+                Err(error) => return Err(error),
+            };
             if request.reference.is_none() && memory.revision != selected.revision {
                 let Some(current_score) = match_score(&request.text, &memory_text(&memory)) else {
                     continue;
@@ -255,6 +256,9 @@ impl App {
             }
             if memory.deleted
                 || memory.subject_id != request.subject_id
+                || (!request.include_inactive
+                    && request.reference.is_none()
+                    && memory.lifecycle.activation != MemoryActivation::Active)
                 || !matches_time(&memory, request.time.as_ref())
             {
                 continue;
@@ -311,7 +315,7 @@ impl App {
             if batch.through_commit_seq <= covered {
                 return Ok(());
             }
-            let docs = batch
+            let mut docs = batch
                 .memories
                 .iter()
                 .map(|memory| IndexDocument {
@@ -324,6 +328,15 @@ impl App {
                     deleted: memory.deleted,
                 })
                 .collect::<Vec<_>>();
+            docs.extend(batch.purged.iter().map(|purged| IndexDocument {
+                id: purged.id.to_string(),
+                namespace_id: purged.namespace_id.to_string(),
+                subject_id: purged.subject_id.to_string(),
+                revision: purged.revision,
+                commit_seq: purged.commit_seq,
+                text: String::new(),
+                deleted: true,
+            }));
             let index = self.retrieval.clone();
             tokio::task::spawn_blocking(move || index.apply(&docs, batch.through_commit_seq))
                 .await

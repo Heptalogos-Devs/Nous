@@ -29,6 +29,8 @@ pub struct DeleteMemory {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct QueryInput {
+    #[serde(default)]
+    pub include_inactive: bool,
     pub subject_id: String,
     #[serde(default)]
     pub text: String,

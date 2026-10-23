@@ -6,6 +6,7 @@
 
 mod backup;
 mod cognition;
+mod management;
 mod records;
 mod transaction;
 
@@ -25,6 +26,7 @@ use sqlx::{
 
 pub use backup::ObjectReference;
 pub use cognition::MemoryBatch;
+pub use management::{MaintenancePage, PurgedMemory};
 pub use transaction::{BeginOperation, WriteTransaction};
 
 /// Versioned wire contract consumed by the worker, independent of Rust type names.
@@ -225,7 +227,7 @@ impl Database {
             .ok_or_else(not_found)
     }
 
-    pub async fn material_is_observed(
+    pub async fn subject_has_material_access(
         &self,
         namespace: &NamespaceId,
         subject: &SubjectId,

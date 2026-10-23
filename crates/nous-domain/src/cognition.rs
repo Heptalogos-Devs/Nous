@@ -37,11 +37,15 @@ pub struct Memory {
     pub epistemic_status: String,
     pub observation_id: ObservationId,
     pub material_id: MaterialId,
-    pub model_call_id: ModelCallId,
-    pub prompt_version: String,
+    pub model_call_id: Option<ModelCallId>,
+    pub prompt_version: Option<String>,
+    #[serde(default)]
+    pub origin: MemoryOrigin,
     pub times: CognitiveTimes,
     pub recorded_at: String,
     pub deleted: bool,
+    #[serde(default)]
+    pub lifecycle: MemoryLifecycle,
     pub commit_seq: i64,
 }
 
@@ -131,6 +135,8 @@ pub struct QueryRequest {
     #[serde(default = "default_query_limit")]
     pub limit: usize,
     pub min_commit_seq: Option<i64>,
+    #[serde(default)]
+    pub include_inactive: bool,
 }
 fn default_query_limit() -> usize {
     10
@@ -165,5 +171,5 @@ pub struct MemorySource {
     pub memory: Memory,
     pub observation: Observation,
     pub material: MaterialContent,
-    pub model_call: ModelCall,
+    pub model_call: Option<ModelCall>,
 }

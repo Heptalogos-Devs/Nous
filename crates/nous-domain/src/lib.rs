@@ -104,6 +104,8 @@ identity!(ModelCallId);
 
 mod cognition;
 pub use cognition::*;
+mod maintenance;
+pub use maintenance::*;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -170,12 +172,16 @@ pub struct Observation {
     pub observed_at: Option<TimePoint>,
     pub recorded_at: String,
     pub commit_seq: i64,
+    #[serde(default)]
+    pub kind: ObservationKind,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MaterialContent {
     pub material: Material,
     pub text: String,
+    #[serde(default)]
+    pub details: MaterialDetails,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

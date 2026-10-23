@@ -30,10 +30,10 @@ def require(condition, message):
 
 
 class Runner:
-    def __init__(self, binary: Path, project: Path, timeout: float):
+    def __init__(self, binary: Path, project: Path, timeout: float, label="m1-smoke"):
         self.run_id = time.strftime("%Y%m%dT%H%M%S") + "-" + uuid.uuid4().hex[:8]
-        self.runtime = project / "temp" / "runtime" / "m1-smoke" / self.run_id
-        self.root = project / "temp" / "instances" / "m1-smoke" / self.run_id
+        self.runtime = project / "temp" / "runtime" / label / self.run_id
+        self.root = project / "temp" / "instances" / label / self.run_id
         self.runtime.mkdir(parents=True)
         self.root.mkdir(parents=True)
         self.binary = self.runtime / binary.name

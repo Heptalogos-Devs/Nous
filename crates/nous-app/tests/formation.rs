@@ -39,6 +39,7 @@ fn query(subject_id: SubjectId, text: &str) -> QueryRequest {
         time: None,
         limit: 10,
         min_commit_seq: None,
+        include_inactive: false,
     }
 }
 
@@ -174,10 +175,23 @@ async fn waiting_work_resumes_after_configuration_and_keeps_authority_through_qu
     );
     assert_eq!(source.observation.id, observation.id);
     assert_eq!(
-        source.model_call.response.as_ref().unwrap()["record"]["usage"]["total_tokens"],
+        source
+            .model_call
+            .as_ref()
+            .unwrap()
+            .response
+            .as_ref()
+            .unwrap()["record"]["usage"]["total_tokens"],
         170
     );
-    assert!(source.model_call.cost_microunits.is_none());
+    assert!(
+        source
+            .model_call
+            .as_ref()
+            .unwrap()
+            .cost_microunits
+            .is_none()
+    );
     let hits = reopened
         .query(&admin, query(subject.id.clone(), "京都 枫叶"))
         .await

@@ -7,7 +7,7 @@ use apalis::prelude::{TaskBuilder, TaskId};
 use apalis_sqlite::queries::push_tasks;
 use nous_domain::{
     Error, ErrorCode, Material, MaterialId, Namespace, NamespaceId, Observation, ObservationId,
-    Result, Subject, SubjectId,
+    ObservationKind, Result, Subject, SubjectId,
 };
 use serde_json::Value;
 use sqlx::{Row, Sqlite, Transaction};
@@ -133,10 +133,14 @@ impl WriteTransaction {
 
     pub async fn insert_observation(&mut self, value: &Observation) -> Result<()> {
         self.check_sequence(value.commit_seq)?;
-        sqlx::query("INSERT INTO observations(id,namespace_id,subject_id,material_id,observed_at_domain,observed_at_coordinate,recorded_at,commit_seq) VALUES (?,?,?,?,?,?,?,?)")
+        let kind = match &value.kind {
+            ObservationKind::Contact => "contact",
+            ObservationKind::Import => "import",
+        };
+        sqlx::query("INSERT INTO observations(id,namespace_id,subject_id,material_id,observed_at_domain,observed_at_coordinate,recorded_at,commit_seq,kind) VALUES (?,?,?,?,?,?,?,?,?)")
             .bind(value.id.as_str()).bind(value.namespace_id.as_str()).bind(value.subject_id.as_str()).bind(value.material_id.as_str())
             .bind(value.observed_at.as_ref().map(|t| t.domain.as_str())).bind(value.observed_at.as_ref().map(|t| t.coordinate))
-            .bind(&value.recorded_at).bind(self.commit_seq).execute(&mut *self.tx).await.map_err(write_error)?;
+            .bind(&value.recorded_at).bind(self.commit_seq).bind(kind).execute(&mut *self.tx).await.map_err(write_error)?;
         Ok(())
     }
 

@@ -1,6 +1,8 @@
 mod api;
 mod cognition_api;
 mod cognition_cli;
+mod maintenance_api;
+mod maintenance_cli;
 mod mcp;
 
 use std::{net::SocketAddr, path::PathBuf, sync::Arc};
@@ -40,6 +42,11 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Import bounded source records; returns per-item acceptance and formation jobs.
+    Import {
+        #[command(subcommand)]
+        command: maintenance_cli::ImportCommand,
+    },
     /// Initialize an instance and its protected administrator credential.
     Init,
     /// Start the sole runtime host for this instance.
@@ -331,10 +338,11 @@ async fn execute(cli: Cli) -> Result<()> {
         }
         command => {
             let operation = match command {
+                Command::Import { command } => command.operation()?,
                 Command::Backup {
                     command: BackupCommand::Create,
                 } => Operation::CreateBackup,
-                Command::Memory { command } => command.operation(),
+                Command::Memory { command } => command.operation()?,
                 Command::Query(input) => input.operation()?,
                 Command::Model {
                     command: ModelCommand::Status,

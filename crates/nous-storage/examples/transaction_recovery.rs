@@ -175,6 +175,7 @@ async fn main() -> TestResult<()> {
     .await?;
     for _ in 0..2 {
         tx.insert_observation(&Observation {
+            kind: ObservationKind::Contact,
             id: ObservationId::new(),
             namespace_id: ns_id.clone(),
             subject_id: subject_id.clone(),
@@ -189,7 +190,7 @@ async fn main() -> TestResult<()> {
     assert_eq!(database.list_observations(&subject_id).await?.len(), 2);
     assert!(
         database
-            .material_is_observed(&ns_id, &subject_id, &material_id)
+            .subject_has_material_access(&ns_id, &subject_id, &material_id)
             .await?
     );
     assert_eq!(
@@ -213,6 +214,7 @@ async fn main() -> TestResult<()> {
     let mut tx = transaction(&database, "cross-scope").await?;
     let error = tx
         .insert_observation(&Observation {
+            kind: ObservationKind::Contact,
             id: ObservationId::new(),
             namespace_id: other,
             subject_id,

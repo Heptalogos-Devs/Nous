@@ -143,6 +143,8 @@ pub struct FormationInput {
     pub material_commit_seq: i64,
     pub observation_id: ObservationId,
     pub observation_commit_seq: i64,
+    #[serde(default)]
+    pub source_event_kind: nous_domain::ObservationKind,
     pub text: String,
 }
 
@@ -430,8 +432,10 @@ impl ModelRuntime {
             .with_service_target_resolver(resolver)
             .build()
             .map_err(ModelFailure::provider)?;
-        let rendered_user = serde_json::to_string(&json!({"material_text": &input.text}))
-            .expect("formation text has a JSON representation");
+        let rendered_user = serde_json::to_string(
+            &json!({"material_text": &input.text,"source_event_kind":input.source_event_kind}),
+        )
+        .expect("formation text has a JSON representation");
         if FORMATION_PROMPT.len() + rendered_user.len() > config.max_input_bytes {
             return Err(ModelFailure::new(
                 RetryClass::Permanent,

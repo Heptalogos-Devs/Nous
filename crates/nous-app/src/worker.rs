@@ -115,6 +115,7 @@ impl App {
             material_commit_seq: source.material.commit_seq,
             observation_id: run.observation_id.clone(),
             observation_commit_seq: observation.commit_seq,
+            source_event_kind: observation.kind,
             text: source.text,
         }) {
             Ok(prepared) => prepared,
@@ -308,8 +309,9 @@ impl App {
                 epistemic_status: draft.epistemic_status,
                 observation_id: run.observation_id.clone(),
                 material_id: run.material_id.clone(),
-                model_call_id: call.id.clone(),
-                prompt_version: prompt_version.clone(),
+                model_call_id: Some(call.id.clone()),
+                prompt_version: Some(prompt_version.clone()),
+                origin: MemoryOrigin::Model,
                 times: CognitiveTimes {
                     event: material.event_time.clone(),
                     observation: observation.observed_at.clone(),
@@ -322,6 +324,7 @@ impl App {
                 },
                 recorded_at: Utc::now().to_rfc3339(),
                 deleted: false,
+                lifecycle: MemoryLifecycle::new(formed),
                 commit_seq: tx.commit_seq(),
             };
             tx.save_memory(&memory, None).await?;

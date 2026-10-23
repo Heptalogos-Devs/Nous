@@ -10,6 +10,31 @@ use crate::{
 
 #[derive(Subcommand)]
 pub enum MemoryCommand {
+    /// Apply a revision-checked lifecycle or content change.
+    Change(crate::maintenance_cli::ChangeArgs),
+    RecycleBin {
+        #[arg(long)]
+        subject: SubjectId,
+        #[arg(long, default_value_t = 50)]
+        limit: usize,
+    },
+    Audit {
+        id: MemoryId,
+        #[arg(long, default_value_t = 50)]
+        limit: usize,
+    },
+    Maintain {
+        #[arg(long)]
+        subject: SubjectId,
+        #[arg(long, default_value_t = 50)]
+        limit: usize,
+        #[arg(long)]
+        operation_id: Option<String>,
+        #[arg(long)]
+        after: Option<MemoryId>,
+        #[arg(long)]
+        snapshot_seq: Option<i64>,
+    },
     /// Queue model formation from a real recorded contact.
     Form {
         #[arg(long)]
@@ -40,8 +65,28 @@ pub enum MemoryCommand {
 }
 
 impl MemoryCommand {
-    pub fn operation(self) -> Operation {
-        Operation::Cognition(match self {
+    pub fn operation(self) -> Result<Operation> {
+        let operation = match self {
+            Self::Change(input) => return input.operation(),
+            Self::RecycleBin { subject, limit } => {
+                return Ok(crate::maintenance_cli::recycle(subject, limit));
+            }
+            Self::Audit { id, limit } => return Ok(crate::maintenance_cli::audit(id, limit)),
+            Self::Maintain {
+                subject,
+                limit,
+                operation_id,
+                after,
+                snapshot_seq,
+            } => {
+                return Ok(crate::maintenance_cli::maintain(
+                    subject,
+                    limit,
+                    operation_id,
+                    after,
+                    snapshot_seq,
+                ));
+            }
             Self::Form {
                 subject,
                 observation,
@@ -65,12 +110,15 @@ impl MemoryCommand {
                 },
             ),
             Self::Source { id } => CognitionOperation::Source(id.to_string()),
-        })
+        };
+        Ok(Operation::Cognition(operation))
     }
 }
 
 #[derive(Args)]
 pub struct QueryArgs {
+    #[arg(long)]
+    include_inactive: bool,
     /// Natural-language intent. Supply --reference for an exact authority read.
     #[arg(default_value = "")]
     text: String,
@@ -96,6 +144,7 @@ impl QueryArgs {
             .transpose()?;
         Ok(Operation::Cognition(CognitionOperation::Query(
             QueryInput {
+                include_inactive: self.include_inactive,
                 subject_id: self.subject.to_string(),
                 text: self.text,
                 reference: self.reference.map(|id| id.to_string()),

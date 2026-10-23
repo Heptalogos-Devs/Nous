@@ -32,6 +32,12 @@
       "path": "temp/repos/Nous-previous"
     },
     {
+      "name": "Architecture-Vault",
+      "url": "https://github.com/Heptalogos-Devs/Architecture-Vault.git",
+      "commit": "60122d8f4d10e867b47ad14fea2b119274ce473f",
+      "path": "temp/repos/Architecture-Vault"
+    },
+    {
       "name": "rmcp",
       "url": "https://github.com/modelcontextprotocol/rust-sdk.git",
       "commit": "2a401c4ca3eb5880744d2e70fad8073a7fcfb2bc",
@@ -85,7 +91,8 @@
   "previous_rebuild": {
     "commit": "584517a4abddea6d1140b64ab20914e793093a70",
     "repo": "Nous-previous",
-    "ref": "refs/pull/56/head"
+    "ref": "refs/pull/56/head",
+    "worktree_path": "temp/repos/Nous-pr56"
   },
   "requirements": {
     "sha256": "7483D5DCFF5195EB3548CE4BAEB8699BBAAA6C2531C1278E2FFA11F35172A653",

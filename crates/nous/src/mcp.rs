@@ -16,6 +16,9 @@ use crate::api::{
     ApiClient, CreateNamespace, CreateSubject, Operation, PutMaterial, RecordObservation,
 };
 use crate::cognition_api::{CognitionOperation, DeleteMemory, FormMemory, QueryInput};
+use crate::maintenance_api::{
+    ChangeInput, ImportInput, ListInput, MaintainInput, MaintenanceOperation,
+};
 
 #[derive(Clone)]
 enum Backend {
@@ -56,6 +59,33 @@ pub struct DeleteMemoryRequest {
     pub expected_revision: i64,
 }
 #[derive(Deserialize, JsonSchema)]
+pub struct ChangeMemoryRequest {
+    pub memory_id: String,
+    #[serde(flatten)]
+    pub change: ChangeInput,
+}
+#[derive(Deserialize, JsonSchema)]
+pub struct SubjectListRequest {
+    pub subject_id: String,
+    #[serde(default = "management_limit")]
+    pub limit: usize,
+}
+#[derive(Deserialize, JsonSchema)]
+pub struct MemoryAuditRequest {
+    pub memory_id: String,
+    #[serde(default = "management_limit")]
+    pub limit: usize,
+}
+#[derive(Deserialize, JsonSchema)]
+pub struct MaintainSubjectRequest {
+    pub subject_id: String,
+    #[serde(flatten)]
+    pub input: MaintainInput,
+}
+fn management_limit() -> usize {
+    50
+}
+#[derive(Deserialize, JsonSchema)]
 pub struct CreateSubjectRequest {
     pub namespace_id: String,
     pub operation_id: String,
@@ -68,13 +98,13 @@ impl McpService {
     pub fn local(app: App) -> Self {
         Self {
             backend: Backend::Local(app),
-            tool_router: Self::tool_router(),
+            tool_router: Self::tool_router() + Self::maintenance_tool_router(),
         }
     }
     pub fn remote(client: ApiClient) -> Self {
         Self {
             backend: Backend::Remote(client),
-            tool_router: Self::tool_router(),
+            tool_router: Self::tool_router() + Self::maintenance_tool_router(),
         }
     }
 
@@ -316,6 +346,85 @@ impl McpService {
     ) -> Result<CallToolResult, ErrorData> {
         self.execute(Operation::Cognition(CognitionOperation::ModelStatus), ctx)
             .await
+    }
+}
+
+#[tool_router(router = maintenance_tool_router)]
+impl McpService {
+    #[tool(
+        description = "Apply a revision-checked memory action: reinforce, weaken, protect, unprotect, freeze, forget, restore, trash, purge, revise or decay"
+    )]
+    async fn memory_change(
+        &self,
+        Parameters(input): Parameters<ChangeMemoryRequest>,
+        ctx: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        self.execute(
+            Operation::Maintenance(MaintenanceOperation::Change(input.memory_id, input.change)),
+            ctx,
+        )
+        .await
+    }
+    #[tool(description = "List a Subject's soft-deleted memories from the recycle bin")]
+    async fn memory_recycle_bin(
+        &self,
+        Parameters(input): Parameters<SubjectListRequest>,
+        ctx: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        self.execute(
+            Operation::Maintenance(MaintenanceOperation::Recycle(
+                input.subject_id,
+                ListInput { limit: input.limit },
+            )),
+            ctx,
+        )
+        .await
+    }
+    #[tool(description = "Read the durable actor, reason and revision audit for a memory")]
+    async fn memory_audit(
+        &self,
+        Parameters(input): Parameters<MemoryAuditRequest>,
+        ctx: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        self.execute(
+            Operation::Maintenance(MaintenanceOperation::Audit(
+                input.memory_id,
+                ListInput { limit: input.limit },
+            )),
+            ctx,
+        )
+        .await
+    }
+    #[tool(
+        description = "Run bounded lifecycle maintenance for a Subject using an idempotent operation ID"
+    )]
+    async fn memory_maintain(
+        &self,
+        Parameters(input): Parameters<MaintainSubjectRequest>,
+        ctx: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        self.execute(
+            Operation::Maintenance(MaintenanceOperation::Maintain(
+                input.subject_id,
+                input.input,
+            )),
+            ctx,
+        )
+        .await
+    }
+    #[tool(
+        description = "Import faithful memories from bounded text, JSON or JSONL source records, preserving structured paragraph/LPMM units; returns per-item results and optional asynchronous model formation jobs"
+    )]
+    async fn import_text(
+        &self,
+        Parameters(input): Parameters<ImportInput>,
+        ctx: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        self.execute(
+            Operation::Maintenance(MaintenanceOperation::Import(input)),
+            ctx,
+        )
+        .await
     }
 }
 

@@ -1,6 +1,9 @@
 pub mod backup;
 mod cognition;
+pub mod import_format;
+mod imports;
 pub mod instance;
+mod maintenance;
 pub mod model;
 pub mod network;
 mod objects;
@@ -253,12 +256,12 @@ impl App {
             ctx.require_subject(&namespace, subject_id)?;
             if !self
                 .database
-                .material_is_observed(namespace_id, subject_id, id)
+                .subject_has_material_access(namespace_id, subject_id, id)
                 .await?
             {
                 return Err(Error::new(
                     ErrorCode::Forbidden,
-                    "material has not been observed by this subject",
+                    "material access has not been granted to this subject",
                 ));
             }
         } else {
@@ -273,7 +276,12 @@ impl App {
             .map_err(|error| Error::internal(error.to_string()))??;
         let text = String::from_utf8(bytes)
             .map_err(|_| Error::internal("text object contains invalid UTF-8"))?;
-        Ok(MaterialContent { material, text })
+        let details = self.database.material_details(&namespace, id).await?;
+        Ok(MaterialContent {
+            material,
+            text,
+            details,
+        })
     }
 
     pub async fn record_observation(
@@ -291,7 +299,7 @@ impl App {
         if matches!(ctx.scope, AccessScope::Subject { .. })
             && !self
                 .database
-                .material_is_observed(&namespace, subject_id, material_id)
+                .subject_has_material_access(&namespace, subject_id, material_id)
                 .await?
         {
             return Err(Error::new(
@@ -324,6 +332,7 @@ impl App {
             observed_at,
             recorded_at: Utc::now().to_rfc3339(),
             commit_seq: tx.commit_seq(),
+            kind: ObservationKind::Contact,
         };
         tx.subject(&observation.namespace_id, subject_id).await?;
         tx.material(&observation.namespace_id, material_id).await?;
@@ -338,7 +347,13 @@ impl App {
     ) -> Result<Vec<Observation>> {
         let namespace = self.database.subject_namespace(subject_id).await?;
         ctx.require_subject(&namespace, subject_id)?;
-        self.database.list_observations(subject_id).await
+        Ok(self
+            .database
+            .list_observations(subject_id)
+            .await?
+            .into_iter()
+            .filter(|event| event.kind == ObservationKind::Contact)
+            .collect())
     }
 
     pub async fn job(&self, ctx: &CallContext, id: &str) -> Result<Value> {

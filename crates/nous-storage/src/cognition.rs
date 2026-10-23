@@ -1,21 +1,23 @@
 //! Formation records and memory revisions use the same authority transaction
 //! as their source objects, operation receipts, and durable queue messages.
 use nous_domain::{
-    Error, ErrorCode, FormationRun, Memory, MemoryId, ModelCall, ModelCallId, NamespaceId,
-    ObservationId, Result, SubjectId,
+    Error, ErrorCode, FormationRun, Memory, MemoryId, MemoryLifecycle, MemoryOrigin, ModelCall,
+    ModelCallId, NamespaceId, ObservationId, Result, SubjectId,
 };
 use serde::{Deserialize, Serialize};
 use sqlx::{Row, SqliteConnection, sqlite::SqliteRow};
 
 use crate::{
-    BeginOperation, Database, JOB_QUEUE, OperationKey, WriteTransaction, not_found, storage_error,
-    write_error,
+    BeginOperation, Database, JOB_QUEUE, OperationKey, WriteTransaction,
+    management::{PurgedMemory, purge_row},
+    not_found, storage_error, write_error,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryBatch {
     pub through_commit_seq: i64,
     pub memories: Vec<Memory>,
+    pub purged: Vec<PurgedMemory>,
     pub has_more: bool,
 }
 
@@ -43,7 +45,8 @@ impl Database {
     }
 
     pub async fn memory_namespace(&self, id: &MemoryId) -> Result<NamespaceId> {
-        sqlx::query_scalar::<_, String>("SELECT namespace_id FROM memories WHERE id=?")
+        sqlx::query_scalar::<_, String>("SELECT namespace_id FROM memories WHERE id=? UNION ALL SELECT namespace_id FROM memory_purges WHERE memory_id=? LIMIT 1")
+            .bind(id.as_str())
             .bind(id.as_str())
             .fetch_optional(&self.pool)
             .await
@@ -137,7 +140,7 @@ impl Database {
         let (namespace, subject) = scope
             .map(|(ns, subject)| (Some(ns.as_str()), Some(subject.as_str())))
             .unwrap_or((None, None));
-        let sequences: Vec<i64> = sqlx::query_scalar("SELECT DISTINCT commit_seq FROM memory_revisions WHERE commit_seq>? AND commit_seq<=? AND (? IS NULL OR namespace_id=?) AND (? IS NULL OR subject_id=?) ORDER BY commit_seq LIMIT ?")
+        let sequences: Vec<i64> = sqlx::query_scalar("WITH changes AS (SELECT commit_seq,namespace_id,subject_id FROM memory_revisions UNION ALL SELECT commit_seq,namespace_id,subject_id FROM memory_purges) SELECT DISTINCT commit_seq FROM changes WHERE commit_seq>? AND commit_seq<=? AND (? IS NULL OR namespace_id=?) AND (? IS NULL OR subject_id=?) ORDER BY commit_seq LIMIT ?")
             .bind(after_seq).bind(upper).bind(namespace).bind(namespace).bind(subject).bind(subject).bind(limit)
             .fetch_all(&mut *tx).await.map_err(storage_error)?;
         let has_more = sequences.len() > commit_limit;
@@ -153,10 +156,14 @@ impl Database {
             .into_iter()
             .map(memory_row)
             .collect::<Result<Vec<_>>>()?;
+        let purged = sqlx::query("SELECT * FROM memory_purges WHERE commit_seq>? AND commit_seq<=? AND (? IS NULL OR namespace_id=?) AND (? IS NULL OR subject_id=?) ORDER BY commit_seq,memory_id")
+            .bind(after_seq).bind(through).bind(namespace).bind(namespace).bind(subject).bind(subject)
+            .fetch_all(&mut *tx).await.map_err(storage_error)?.into_iter().map(purge_row).collect::<Result<Vec<_>>>()?;
         tx.commit().await.map_err(storage_error)?;
         Ok(MemoryBatch {
             through_commit_seq: through,
             memories,
+            purged,
             has_more,
         })
     }
@@ -368,6 +375,22 @@ impl WriteTransaction {
         expected_revision: Option<i64>,
     ) -> Result<()> {
         self.check_sequence(value.commit_seq)?;
+        let has_model = value.model_call_id.is_some() && value.prompt_version.is_some();
+        let has_neither = value.model_call_id.is_none() && value.prompt_version.is_none();
+        if match &value.origin {
+            MemoryOrigin::Model => !has_model,
+            MemoryOrigin::Imported | MemoryOrigin::Manual => !has_neither,
+        } {
+            return Err(Error::invalid(
+                "model Memory requires a real model call and prompt; imported/manual Memory requires neither",
+            ));
+        }
+        if !value.lifecycle.strength.is_finite() || !(0.0..=1.0).contains(&value.lifecycle.strength)
+        {
+            return Err(Error::invalid(
+                "memory retention strength must be finite and within [0, 1]",
+            ));
+        }
         let revision = expected_revision
             .unwrap_or(0)
             .checked_add(1)
@@ -380,6 +403,19 @@ impl WriteTransaction {
         }
         match expected_revision {
             None => {
+                let was_purged: bool = sqlx::query_scalar(
+                    "SELECT EXISTS(SELECT 1 FROM memory_purges WHERE memory_id=?)",
+                )
+                .bind(value.id.as_str())
+                .fetch_one(&mut *self.tx)
+                .await
+                .map_err(storage_error)?;
+                if was_purged {
+                    return Err(Error::new(
+                        ErrorCode::Conflict,
+                        "permanently purged memory identity cannot be reused",
+                    ));
+                }
                 sqlx::query("INSERT INTO memories(id,namespace_id,subject_id,current_revision,commit_seq) VALUES (?,?,?,?,?)")
                     .bind(value.id.as_str()).bind(value.namespace_id.as_str()).bind(value.subject_id.as_str()).bind(value.revision).bind(value.commit_seq)
                     .execute(&mut *self.tx).await.map_err(write_error)?;
@@ -396,10 +432,13 @@ impl WriteTransaction {
                 }
             }
         }
-        sqlx::query("INSERT INTO memory_revisions(memory_id,namespace_id,subject_id,revision,title,content,epistemic_status,observation_id,material_id,model_call_id,prompt_version,times,recorded_at,deleted,commit_seq) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+        sqlx::query("INSERT INTO memory_revisions(memory_id,namespace_id,subject_id,revision,title,content,epistemic_status,observation_id,material_id,model_call_id,prompt_version,times,recorded_at,deleted,commit_seq,lifecycle_strength,lifecycle_anchor_unix_ms,lifecycle_activation,lifecycle_pinned,lifecycle_protected_until_unix_ms,lifecycle_inactive_since_unix_ms,lifecycle_last_reinforced_unix_ms,origin) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
             .bind(value.id.as_str()).bind(value.namespace_id.as_str()).bind(value.subject_id.as_str()).bind(value.revision).bind(&value.title).bind(&value.content).bind(&value.epistemic_status)
-            .bind(value.observation_id.as_str()).bind(value.material_id.as_str()).bind(value.model_call_id.as_str()).bind(&value.prompt_version)
+            .bind(value.observation_id.as_str()).bind(value.material_id.as_str()).bind(value.model_call_id.as_ref().map(ModelCallId::as_str)).bind(&value.prompt_version)
             .bind(serde_json::to_string(&value.times).map_err(storage_error)?).bind(&value.recorded_at).bind(value.deleted).bind(value.commit_seq)
+            .bind(value.lifecycle.strength).bind(value.lifecycle.anchor_unix_ms).bind(enum_name(&value.lifecycle.activation)?).bind(value.lifecycle.pinned)
+            .bind(value.lifecycle.protected_until_unix_ms).bind(value.lifecycle.inactive_since_unix_ms).bind(value.lifecycle.last_reinforced_unix_ms)
+            .bind(enum_name(&value.origin)?)
             .execute(&mut *self.tx).await.map_err(write_error)?;
         Ok(())
     }
@@ -476,7 +515,7 @@ async fn memory(
         .bind(namespace.as_str()).bind(id.as_str()).fetch_optional(connection).await.map_err(storage_error)?.ok_or_else(not_found)?)
 }
 
-fn memory_row(row: SqliteRow) -> Result<Memory> {
+pub(crate) fn memory_row(row: SqliteRow) -> Result<Memory> {
     Ok(Memory {
         id: MemoryId(row.get("memory_id")),
         namespace_id: NamespaceId(row.get("namespace_id")),
@@ -487,12 +526,24 @@ fn memory_row(row: SqliteRow) -> Result<Memory> {
         epistemic_status: row.get("epistemic_status"),
         observation_id: ObservationId(row.get("observation_id")),
         material_id: nous_domain::MaterialId(row.get("material_id")),
-        model_call_id: ModelCallId(row.get("model_call_id")),
+        model_call_id: row
+            .get::<Option<String>, _>("model_call_id")
+            .map(ModelCallId),
         prompt_version: row.get("prompt_version"),
         times: serde_json::from_str(row.get("times")).map_err(storage_error)?,
         recorded_at: row.get("recorded_at"),
         deleted: row.get("deleted"),
         commit_seq: row.get("commit_seq"),
+        origin: parse_enum(row.get("origin"))?,
+        lifecycle: MemoryLifecycle {
+            strength: row.get("lifecycle_strength"),
+            anchor_unix_ms: row.get("lifecycle_anchor_unix_ms"),
+            activation: parse_enum(row.get("lifecycle_activation"))?,
+            pinned: row.get("lifecycle_pinned"),
+            protected_until_unix_ms: row.get("lifecycle_protected_until_unix_ms"),
+            inactive_since_unix_ms: row.get("lifecycle_inactive_since_unix_ms"),
+            last_reinforced_unix_ms: row.get("lifecycle_last_reinforced_unix_ms"),
+        },
     })
 }
 
