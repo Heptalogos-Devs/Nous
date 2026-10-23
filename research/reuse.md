@@ -1,6 +1,6 @@
 # 源码复用与改编记录
 
-日期：2026-10-23。Nous 本批沿用 Apache-2.0。研究源码先克隆到 `temp/repos`，统一版本见 [sources.lock.json](sources.lock.json)；临时克隆可由锁定清单恢复。
+日期：2026-10-23。组件的复制改编保留各自来源许可，整体产品发行许可证由项目另行确定。研究克隆与发布源码包位于 `temp/repos`，统一版本见 [sources.lock.json](sources.lock.json)，临时内容可由锁定清单恢复。
 
 ## M0 的实际来源
 
@@ -11,6 +11,14 @@
 | `temp/repos/rmcp/examples/servers/src/counter_streamhttp.rs` 与官方 stdio 示例，`2a401c4ca3eb5880744d2e70fad8073a7fcfb2bc` | Apache-2.0 | `crates/nous` 的 MCP transport | 官方 SDK 服务、Axum 挂载和 CancellationToken 生命周期；工具委派到同一 App |
 
 SQLx、Tokio、Axum、Clap、Reqwest、tracing 与 tempfile 通过 Cargo 依赖使用其正式实现。ObjectStore 的暂存、原子发布与文件生命周期直接使用 tempfile，Nous 负责材料身份、内容摘要、来源和权威引用。
+
+## M1 的实际来源
+
+| 本地来源与锁定 commit | 许可 | Nous 落点 | 改编或使用方式 |
+| --- | --- | --- | --- |
+| genai 0.7.0 发布源码 `temp/repos/genai-0.7.0`，`8fc13af4db80acd0771c87f6180d79b83c9a898d` | MIT OR Apache-2.0，采用 Apache-2.0 | `crates/nous-app/src/model.rs` 与 `src/prompts` | 改编官方 target resolver 与结构化输出用法，SDK 通过发布依赖使用；显式目标、版本 Prompt、输入源版本、预算与结果采纳由 Nous 管理 |
+| 旧 Nous `crates/retrieval/src/mechanisms/lexical.rs`，`412b062082afb75ccfae4c3f69fc606d3e3cc862` | Apache-2.0 | `crates/nous-retrieval/src/lib.rs` | 改编词项 schema、文档替换、范围过滤和候选读取；保留 `crates/nous-retrieval/licenses/Nous-LICENSE` |
+| Tantivy 0.27，`67889269cae67063c372bc236b102d632a021568`；tantivy-jieba 0.21，`882dcc4304e415879b9e0169ff439a4806a2bf8e` | MIT | `crates/nous-retrieval` | 直接使用发布依赖；研究 PreparedCommit 原子覆盖发布，以及中文、英文 tokenizer 集成 |
 
 ## 已研究的领域合同
 

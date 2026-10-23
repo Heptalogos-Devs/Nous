@@ -1,10 +1,15 @@
+mod cognition;
 pub mod instance;
+pub mod model;
 pub mod network;
 mod objects;
+mod worker;
 
 use chrono::Utc;
 use instance::InstancePaths;
+use model::ModelRuntime;
 use nous_domain::*;
+use nous_retrieval::RetrievalIndex;
 pub use nous_storage::OperationReceipt;
 use nous_storage::{BeginOperation, Database, OperationKey};
 use objects::ObjectStore;
@@ -20,6 +25,9 @@ pub struct App {
     database: Database,
     objects: ObjectStore,
     paths: Arc<InstancePaths>,
+    model: Arc<ModelRuntime>,
+    retrieval: RetrievalIndex,
+    index_gate: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl App {
@@ -27,10 +35,32 @@ impl App {
         let paths = Arc::new(paths);
         let database = Database::open(&paths.database).await?;
         let objects = ObjectStore::new(paths.clone());
+        let config = if paths.config.exists() {
+            instance::InstanceConfig::load(&paths)
+                .map_err(|error| Error::invalid(error.to_string()))?
+        } else {
+            instance::InstanceConfig::default()
+        };
+        let network = network::NetworkClients::new(&config.network)
+            .map_err(|error| Error::new(ErrorCode::DependencyUnavailable, error.to_string()))?;
+        let model = Arc::new(
+            ModelRuntime::new(&paths, &config.models, network.http().clone())
+                .map_err(|error| Error::invalid(error.to_string()))?,
+        );
+        let index_path = paths
+            .resolve("indexes/lexical-v1")
+            .map_err(|error| Error::invalid(error.to_string()))?;
+        let retrieval = tokio::task::spawn_blocking(move || RetrievalIndex::open(index_path))
+            .await
+            .map_err(|error| Error::internal(error.to_string()))?
+            .map_err(|error| Error::new(ErrorCode::DependencyUnavailable, error.to_string()))?;
         Ok(Self {
             database,
             objects,
             paths,
+            model,
+            retrieval,
+            index_gate: Arc::new(tokio::sync::Mutex::new(())),
         })
     }
 
@@ -39,12 +69,19 @@ impl App {
     }
     pub async fn close(&self) {
         self.database.close().await;
+        let index = self.retrieval.clone();
+        match tokio::task::spawn_blocking(move || index.close()).await {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => tracing::warn!(%error,"index close failed"),
+            Err(error) => tracing::warn!(%error,"index close task failed"),
+        }
     }
 
     pub async fn status(&self) -> Result<Value> {
         Ok(
             json!({"version":env!("CARGO_PKG_VERSION"),"storage":self.database.status().await?,
-            "capabilities":{"material":true,"observation":true,"memory_formation":false}}),
+            "capabilities":{"material":true,"observation":true,"memory_formation":true,"lexical_query":true},
+            "model":self.model.inspect(),"index":self.retrieval.coverage().ok()}),
         )
     }
 
@@ -311,7 +348,15 @@ impl App {
         } else {
             ctx.require_namespace(&namespace)?;
         }
-        Ok(serde_json::to_value(job)?)
+        let mut value = serde_json::to_value(&job)?;
+        if job.kind == "memory.form" {
+            let run = self.database.formation(id).await?;
+            value["queue_status"] = value["status"].clone();
+            value["status"] = serde_json::to_value(&run.state)?;
+            value["formation"] = serde_json::to_value(run)?;
+            value["model_calls"] = serde_json::to_value(self.database.model_calls(id).await?)?;
+        }
+        Ok(value)
     }
 }
 

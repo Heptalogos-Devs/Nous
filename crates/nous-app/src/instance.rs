@@ -280,6 +280,7 @@ pub struct InstanceConfig {
     pub server: ServerConfig,
     pub auth: AuthConfig,
     pub network: NetworkConfig,
+    pub models: crate::model::ModelConfig,
 }
 
 impl Default for InstanceConfig {
@@ -289,6 +290,7 @@ impl Default for InstanceConfig {
             server: ServerConfig::default(),
             auth: AuthConfig::default(),
             network: NetworkConfig::default(),
+            models: crate::model::ModelConfig::default(),
         }
     }
 }
@@ -317,6 +319,7 @@ impl InstanceConfig {
         if self.network.connect_timeout_seconds == 0 || self.network.request_timeout_seconds == 0 {
             bail!("network timeouts must be positive");
         }
+        self.models.validate()?;
         Ok(())
     }
 
@@ -330,7 +333,7 @@ impl InstanceConfig {
             "format_version": CONFIG_VERSION,
             "values": values,
             "sources": sources,
-            "restart_required": ["server", "auth", "network"],
+            "restart_required": ["server", "auth", "network", "models"],
             "file": paths.config,
         }))
     }

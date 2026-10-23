@@ -1,4 +1,6 @@
 mod api;
+mod cognition_api;
+mod cognition_cli;
 mod mcp;
 
 use std::{net::SocketAddr, path::PathBuf, sync::Arc};
@@ -18,6 +20,7 @@ use api::{
     ApiClient, ApiState, CreateNamespace, CreateSubject, Operation, PutMaterial, RecordObservation,
     WireTime,
 };
+use cognition_cli::{MemoryCommand, ModelCommand, QueryArgs};
 
 #[derive(Parser)]
 #[command(version, about = "Nous Wave native cognition service")]
@@ -72,6 +75,15 @@ enum Command {
     Material {
         #[command(subcommand)]
         command: MaterialCommand,
+    },
+    Memory {
+        #[command(subcommand)]
+        command: MemoryCommand,
+    },
+    Query(QueryArgs),
+    Model {
+        #[command(subcommand)]
+        command: ModelCommand,
     },
     Observation {
         #[command(subcommand)]
@@ -235,6 +247,15 @@ async fn execute(cli: Cli) -> Result<()> {
                 print_json(json!({"valid":true,"config":paths.config}))?;
             }
         },
+        Command::Model {
+            command: ModelCommand::Check,
+        } => {
+            let config = InstanceConfig::load(&paths)?;
+            let network = NetworkClients::new(&config.network)?;
+            let runtime =
+                nous_app::model::ModelRuntime::new(&paths, &config.models, network.http().clone())?;
+            print_json(runtime.inspect())?;
+        }
         Command::Status => {
             // A local stopped instance needs no token and no SQLite connection.
             if cli.url.is_none() && !InstanceGuard::is_running(&paths)? {
@@ -294,6 +315,11 @@ async fn execute(cli: Cli) -> Result<()> {
         }
         command => {
             let operation = match command {
+                Command::Memory { command } => command.operation(),
+                Command::Query(input) => input.operation()?,
+                Command::Model {
+                    command: ModelCommand::Status,
+                } => Operation::Cognition(cognition_api::CognitionOperation::ModelStatus),
                 Command::Namespace {
                     command: NamespaceCommand::Create { name, operation_id },
                 } => Operation::CreateNamespace(CreateNamespace {
@@ -506,6 +532,7 @@ async fn serve(paths: InstancePaths, listen: Option<SocketAddr>) -> Result<()> {
         )?,
     )?;
     tracing::info!(instance=%paths.root.display(),listen=%address,"Nous Wave is serving");
+    let background = app.start_background(cancellation.child_token());
     // Axum startup and cancellation wiring adapted from rmcp counter_streamhttp.rs.
     let shutdown = cancellation.clone();
     let result = axum::serve(listener, router)
@@ -515,6 +542,9 @@ async fn serve(paths: InstancePaths, listen: Option<SocketAddr>) -> Result<()> {
         })
         .await;
     cancellation.cancel();
+    background
+        .await
+        .context("background runtime stopped unexpectedly")?;
     app.close().await;
     let _ = std::fs::remove_file(run_path);
     result?;

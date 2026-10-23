@@ -15,6 +15,7 @@ use serde::Deserialize;
 use crate::api::{
     ApiClient, CreateNamespace, CreateSubject, Operation, PutMaterial, RecordObservation,
 };
+use crate::cognition_api::{CognitionOperation, DeleteMemory, FormMemory, QueryInput};
 
 #[derive(Clone)]
 enum Backend {
@@ -43,6 +44,16 @@ pub struct MaterialRequest {
 #[derive(Deserialize, JsonSchema)]
 pub struct JobRequest {
     pub job_id: String,
+}
+#[derive(Deserialize, JsonSchema)]
+pub struct MemoryRequest {
+    pub memory_id: String,
+}
+#[derive(Deserialize, JsonSchema)]
+pub struct DeleteMemoryRequest {
+    pub memory_id: String,
+    pub operation_id: String,
+    pub expected_revision: i64,
 }
 #[derive(Deserialize, JsonSchema)]
 pub struct CreateSubjectRequest {
@@ -206,6 +217,95 @@ impl McpService {
         ctx: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
         self.execute(Operation::GetJob(input.job_id), ctx).await
+    }
+
+    #[tool(
+        description = "Queue model formation from a real recorded Subject contact; returns a durable job"
+    )]
+    async fn memory_form(
+        &self,
+        Parameters(input): Parameters<FormMemory>,
+        ctx: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        self.execute(Operation::Cognition(CognitionOperation::Form(input)), ctx)
+            .await
+    }
+    #[tool(description = "Read a current memory and its five time axes by stable memory ID")]
+    async fn memory_get(
+        &self,
+        Parameters(input): Parameters<MemoryRequest>,
+        ctx: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        self.execute(
+            Operation::Cognition(CognitionOperation::Get(input.memory_id)),
+            ctx,
+        )
+        .await
+    }
+    #[tool(description = "Read retained revisions of a memory")]
+    async fn memory_history(
+        &self,
+        Parameters(input): Parameters<MemoryRequest>,
+        ctx: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        self.execute(
+            Operation::Cognition(CognitionOperation::History(input.memory_id)),
+            ctx,
+        )
+        .await
+    }
+    #[tool(
+        description = "Soft-delete a memory with an explicit expected current revision; keeps retained history"
+    )]
+    async fn memory_delete(
+        &self,
+        Parameters(input): Parameters<DeleteMemoryRequest>,
+        ctx: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        self.execute(
+            Operation::Cognition(CognitionOperation::Delete(
+                input.memory_id,
+                DeleteMemory {
+                    operation_id: input.operation_id,
+                    expected_revision: input.expected_revision,
+                },
+            )),
+            ctx,
+        )
+        .await
+    }
+    #[tool(description = "Trace a memory to original material, real contact and actual model call")]
+    async fn memory_source(
+        &self,
+        Parameters(input): Parameters<MemoryRequest>,
+        ctx: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        self.execute(
+            Operation::Cognition(CognitionOperation::Source(input.memory_id)),
+            ctx,
+        )
+        .await
+    }
+    #[tool(
+        description = "Search a Subject's memories with literal natural-language text, exact reference, source or time filters; returns explicit index coverage"
+    )]
+    async fn query(
+        &self,
+        Parameters(input): Parameters<QueryInput>,
+        ctx: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        self.execute(Operation::Cognition(CognitionOperation::Query(input)), ctx)
+            .await
+    }
+    #[tool(
+        description = "Inspect model formation configuration and readiness; administrator scope required"
+    )]
+    async fn model_status(
+        &self,
+        ctx: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        self.execute(Operation::Cognition(CognitionOperation::ModelStatus), ctx)
+            .await
     }
 }
 

@@ -99,6 +99,11 @@ identity!(NamespaceId);
 identity!(SubjectId);
 identity!(MaterialId);
 identity!(ObservationId);
+identity!(MemoryId);
+identity!(ModelCallId);
+
+mod cognition;
+pub use cognition::*;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

@@ -27,7 +27,7 @@ pub enum BeginOperation {
 /// back authority changes, its commit sequence allocation, receipt, and jobs.
 #[derive(Debug)]
 pub struct WriteTransaction {
-    tx: Transaction<'static, Sqlite>,
+    pub(crate) tx: Transaction<'static, Sqlite>,
     key: OperationKey,
     commit_seq: i64,
     job_ids: Vec<String>,
@@ -192,7 +192,7 @@ impl WriteTransaction {
         self.tx.rollback().await.map_err(storage_error)
     }
 
-    fn check_sequence(&self, sequence: i64) -> Result<()> {
+    pub(crate) fn check_sequence(&self, sequence: i64) -> Result<()> {
         if sequence != self.commit_seq {
             return Err(Error::new(
                 ErrorCode::InvalidArgument,

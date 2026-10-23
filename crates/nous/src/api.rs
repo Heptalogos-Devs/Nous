@@ -110,6 +110,7 @@ impl From<WireTime> for TimePoint {
 
 #[derive(Clone)]
 pub enum Operation {
+    Cognition(crate::cognition_api::CognitionOperation),
     Status,
     CreateNamespace(CreateNamespace),
     ListNamespaces,
@@ -125,6 +126,7 @@ pub enum Operation {
 impl Operation {
     pub async fn execute(&self, app: &App, ctx: &CallContext) -> Result<Value, Error> {
         match self {
+            Self::Cognition(operation) => operation.execute(app, ctx).await,
             Self::Status => {
                 ctx.require_admin()?;
                 app.status().await
@@ -191,6 +193,7 @@ impl Operation {
 
     pub fn request(&self) -> (&'static str, String, Option<Value>) {
         match self {
+            Self::Cognition(operation) => operation.request(),
             Self::Status => ("GET", "/v1/status".into(), None),
             Self::CreateNamespace(body) => ("POST", "/v1/namespaces".into(), Some(json!(body))),
             Self::ListNamespaces => ("GET", "/v1/namespaces".into(), None),
@@ -242,6 +245,7 @@ pub fn router(state: ApiState, config: &InstanceConfig, cancellation: Cancellati
             get(list_observations),
         )
         .route("/v1/jobs/{job}", get(get_job))
+        .merge(crate::cognition_api::router())
         .nest_service("/mcp", mcp)
         .fallback(|| async {
             ApiError(
@@ -287,14 +291,14 @@ async fn authenticate(
     Ok(response)
 }
 
-async fn run(
+pub(crate) async fn run(
     state: ApiState,
     ctx: CallContext,
     operation: Operation,
 ) -> Result<Json<Value>, ApiError> {
     Ok(Json(operation.execute(&state.app, &ctx).await?))
 }
-fn decode<T>(body: Result<Json<T>, JsonRejection>) -> Result<T, ApiError> {
+pub(crate) fn decode<T>(body: Result<Json<T>, JsonRejection>) -> Result<T, ApiError> {
     body.map(|Json(body)| body).map_err(|rejection| {
         let status = rejection.status();
         let code = if status == StatusCode::PAYLOAD_TOO_LARGE {

@@ -44,6 +44,29 @@
       "path": "temp/repos/rust-genai"
     },
     {
+      "name": "genai-release",
+      "url": "https://github.com/jeremychone/rust-genai.git",
+      "version": "0.7.0",
+      "commit": "8fc13af4db80acd0771c87f6180d79b83c9a898d",
+      "path": "temp/repos/genai-0.7.0",
+      "source_archive": "https://crates.io/api/v1/crates/genai/0.7.0/download",
+      "archive_sha256": "53e68820b008ab7e00fde0474c2cfc81315296a1bb0d014943dd74bfcb062e28"
+    },
+    {
+      "name": "tantivy",
+      "url": "https://github.com/quickwit-oss/tantivy.git",
+      "version": "0.27.0",
+      "commit": "67889269cae67063c372bc236b102d632a021568",
+      "path": "temp/repos/tantivy"
+    },
+    {
+      "name": "tantivy-jieba",
+      "url": "https://github.com/jiegec/tantivy-jieba.git",
+      "version": "0.21.0",
+      "commit": "882dcc4304e415879b9e0169ff439a4806a2bf8e",
+      "path": "temp/repos/tantivy-jieba"
+    },
+    {
       "name": "VCPToolBox",
       "url": "https://github.com/lioensky/VCPToolBox.git",
       "commit": "d1b40c863273cbbba082fb7657671424768c4a53",

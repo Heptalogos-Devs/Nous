@@ -7,6 +7,10 @@ rust-version.workspace = true
 [dependencies]
 nous-domain.workspace = true
 nous-storage.workspace = true
+nous-retrieval.workspace = true
+apalis.workspace = true
+apalis-core.workspace = true
+genai.workspace = true
 anyhow.workspace = true
 chrono.workspace = true
 directories.workspace = true
@@ -19,11 +23,14 @@ sha2.workspace = true
 subtle.workspace = true
 tempfile.workspace = true
 tokio.workspace = true
+tokio-util.workspace = true
 toml.workspace = true
 tracing.workspace = true
 uuid.workspace = true
+ulid.workspace = true
 
 [dev-dependencies]
+axum.workspace = true
 
 [lints]
 workspace = true

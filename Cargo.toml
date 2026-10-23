@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/nous-domain", "crates/nous-storage", "crates/nous-app", "crates/nous"]
+members = ["crates/nous-domain", "crates/nous-storage", "crates/nous-app", "crates/nous-retrieval", "crates/nous"]
 resolver = "3"
 
 [workspace.package]
@@ -12,6 +12,7 @@ repository = "https://github.com/Heptalogos-Devs/Nous-Wave"
 nous-domain = { path = "crates/nous-domain" }
 nous-storage = { path = "crates/nous-storage" }
 nous-app = { path = "crates/nous-app" }
+nous-retrieval = { path = "crates/nous-retrieval" }
 anyhow = "1"
 apalis = { version = "1.0.0", features = ["retry", "task-context"] }
 apalis-core = "1.0.0"
@@ -22,6 +23,7 @@ clap = { version = "4", features = ["derive", "env"] }
 directories = "6"
 fs2 = "0.4"
 futures = "0.3"
+genai = { version = "=0.7.0", default-features = false, features = ["rustls-tls"] }
 reqwest = { version = "0.13.2", default-features = false, features = ["json", "rustls"] }
 rmcp = { version = "3.7.0", features = ["server", "macros", "transport-streamable-http-server", "transport-io"] }
 schemars = "1"
@@ -31,6 +33,7 @@ sha2 = "0.10"
 sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "sqlite", "migrate", "macros"] }
 subtle = "2"
 tempfile = "3"
+tantivy = "0.27"
 thiserror = "2"
 tokio = { version = "1", features = ["full"] }
 tokio-util = "0.7"
