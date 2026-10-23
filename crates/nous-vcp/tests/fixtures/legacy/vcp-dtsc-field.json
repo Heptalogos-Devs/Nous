@@ -1,0 +1,895 @@
+{
+  "source": {
+    "commit": "e03b891d42055cdf3cab5dc961cc71dd5facd65a",
+    "owner": "memo_dtsc run field preparation + sample_field",
+    "probe": "actual original run local field statistics captured;original sample_field evaluated with controlled tags;persisted graph/vector asset unchanged"
+  },
+  "tolerance": {
+    "absolute": 1e-12,
+    "relative": 1e-12
+  },
+  "cases": [
+    {
+      "name": "full-field-exact-and-semantic",
+      "input": {
+        "dimension": 3,
+        "nodes": [
+          {
+            "id": 1,
+            "energy": 1,
+            "normalizedEnergy": 1,
+            "sourceType": "seed"
+          },
+          {
+            "id": 2,
+            "energy": 0.6,
+            "normalizedEnergy": 0.6,
+            "sourceType": "core"
+          },
+          {
+            "id": 3,
+            "energy": 0.3,
+            "normalizedEnergy": 0.3,
+            "sourceType": "emergent"
+          },
+          {
+            "id": 4,
+            "energy": 0.1,
+            "normalizedEnergy": 0.1,
+            "sourceType": "emergent"
+          }
+        ],
+        "source_field": [],
+        "tag_vectors": [
+          [
+            1,
+            [
+              1,
+              0,
+              0
+            ]
+          ],
+          [
+            2,
+            [
+              0.800000011920929,
+              0.6000000238418579,
+              0
+            ]
+          ],
+          [
+            3,
+            [
+              0.20280805230140686,
+              0.9126362204551697,
+              0.3549140989780426
+            ]
+          ],
+          [
+            4,
+            [
+              0,
+              0.30113136768341064,
+              0.9535826444625854
+            ]
+          ],
+          [
+            5,
+            [
+              -0.5000377297401428,
+              0.5000377297401428,
+              0.7070533633232117
+            ]
+          ],
+          [
+            6,
+            [
+              0,
+              1,
+              0
+            ]
+          ],
+          [
+            7,
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          [
+            8,
+            [
+              0.9999499917030334,
+              0.009999499656260014,
+              0
+            ]
+          ],
+          [
+            9,
+            [
+              -1,
+              0,
+              0
+            ]
+          ],
+          [
+            10,
+            [
+              0.10045813024044037,
+              0.20091626048088074,
+              0.9744438529014587
+            ]
+          ]
+        ],
+        "inbound": [
+          [
+            1,
+            1.009051341433607
+          ],
+          [
+            10,
+            0.6906895312263831
+          ],
+          [
+            8,
+            0.14686829453710723
+          ],
+          [
+            4,
+            0.6279307791887215
+          ],
+          [
+            2,
+            1.8076090508843574
+          ],
+          [
+            9,
+            0.684191035725854
+          ],
+          [
+            7,
+            0.526518833242631
+          ],
+          [
+            3,
+            1.9779136283406487
+          ],
+          [
+            6,
+            0.5541080723729264
+          ],
+          [
+            5,
+            1.4751194330477626
+          ]
+        ],
+        "sample_tags": [
+          [
+            1,
+            [
+              1,
+              0,
+              0
+            ]
+          ],
+          [
+            2,
+            [
+              0.800000011920929,
+              0.6000000238418579,
+              0
+            ]
+          ],
+          [
+            8,
+            [
+              0.9999499917030334,
+              0.009999499656260014,
+              0
+            ]
+          ],
+          [
+            99,
+            [
+              1,
+              0,
+              0
+            ]
+          ],
+          [
+            100,
+            [
+              0,
+              0,
+              0
+            ]
+          ]
+        ],
+        "config": {}
+      },
+      "expected": {
+        "exactField": [
+          {
+            "exact": true,
+            "id": 1,
+            "potential": 1,
+            "sourceType": "seed"
+          },
+          {
+            "exact": true,
+            "id": 2,
+            "potential": 0.6,
+            "sourceType": "core"
+          },
+          {
+            "exact": true,
+            "id": 3,
+            "potential": 0.3,
+            "sourceType": "emergent"
+          },
+          {
+            "exact": true,
+            "id": 4,
+            "potential": 0.1,
+            "sourceType": "emergent"
+          }
+        ],
+        "fieldEntropy": 0.8238654610595805,
+        "fieldNodes": [
+          {
+            "id": 1,
+            "potential": 1,
+            "sourceType": "seed",
+            "vector": [
+              1,
+              0,
+              0
+            ]
+          },
+          {
+            "id": 2,
+            "potential": 0.6,
+            "sourceType": "core",
+            "vector": [
+              0.800000011920929,
+              0.6000000238418579,
+              0
+            ]
+          },
+          {
+            "id": 3,
+            "potential": 0.3,
+            "sourceType": "emergent",
+            "vector": [
+              0.20280805230140686,
+              0.9126362204551697,
+              0.3549140989780426
+            ]
+          }
+        ],
+        "fieldTrusted": true,
+        "maxEnergy": 1,
+        "samples": [
+          {
+            "exact": true,
+            "id": 1,
+            "potential": 1,
+            "sourceType": "seed"
+          },
+          {
+            "exact": true,
+            "id": 2,
+            "potential": 0.6,
+            "sourceType": "core"
+          },
+          {
+            "exact": false,
+            "id": 8,
+            "potential": 0.3030401786139065,
+            "sourceType": "seed"
+          },
+          {
+            "exact": false,
+            "id": 99,
+            "potential": 0.3009446435239532,
+            "sourceType": "seed"
+          },
+          {
+            "exact": false,
+            "id": 100,
+            "potential": 0,
+            "sourceType": "unknown"
+          }
+        ],
+        "totalEnergy": 2
+      }
+    },
+    {
+      "name": "mass-ratio-retention",
+      "input": {
+        "dimension": 3,
+        "nodes": [
+          {
+            "id": 1,
+            "energy": 1,
+            "normalizedEnergy": 1,
+            "sourceType": "seed"
+          },
+          {
+            "id": 2,
+            "energy": 0.6,
+            "normalizedEnergy": 0.6,
+            "sourceType": "core"
+          },
+          {
+            "id": 3,
+            "energy": 0.3,
+            "normalizedEnergy": 0.3,
+            "sourceType": "emergent"
+          },
+          {
+            "id": 4,
+            "energy": 0.1,
+            "normalizedEnergy": 0.1,
+            "sourceType": "emergent"
+          }
+        ],
+        "source_field": [],
+        "tag_vectors": [
+          [
+            1,
+            [
+              1,
+              0,
+              0
+            ]
+          ],
+          [
+            2,
+            [
+              0.800000011920929,
+              0.6000000238418579,
+              0
+            ]
+          ],
+          [
+            3,
+            [
+              0.20280805230140686,
+              0.9126362204551697,
+              0.3549140989780426
+            ]
+          ],
+          [
+            4,
+            [
+              0,
+              0.30113136768341064,
+              0.9535826444625854
+            ]
+          ],
+          [
+            5,
+            [
+              -0.5000377297401428,
+              0.5000377297401428,
+              0.7070533633232117
+            ]
+          ],
+          [
+            6,
+            [
+              0,
+              1,
+              0
+            ]
+          ],
+          [
+            7,
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          [
+            8,
+            [
+              0.9999499917030334,
+              0.009999499656260014,
+              0
+            ]
+          ],
+          [
+            9,
+            [
+              -1,
+              0,
+              0
+            ]
+          ],
+          [
+            10,
+            [
+              0.10045813024044037,
+              0.20091626048088074,
+              0.9744438529014587
+            ]
+          ]
+        ],
+        "inbound": [
+          [
+            1,
+            1.009051341433607
+          ],
+          [
+            10,
+            0.6906895312263831
+          ],
+          [
+            8,
+            0.14686829453710723
+          ],
+          [
+            4,
+            0.6279307791887215
+          ],
+          [
+            2,
+            1.8076090508843574
+          ],
+          [
+            9,
+            0.684191035725854
+          ],
+          [
+            7,
+            0.526518833242631
+          ],
+          [
+            3,
+            1.9779136283406487
+          ],
+          [
+            6,
+            0.5541080723729264
+          ],
+          [
+            5,
+            1.4751194330477626
+          ]
+        ],
+        "sample_tags": [
+          [
+            1,
+            [
+              1,
+              0,
+              0
+            ]
+          ],
+          [
+            2,
+            [
+              0.800000011920929,
+              0.6000000238418579,
+              0
+            ]
+          ],
+          [
+            8,
+            [
+              0.9999499917030334,
+              0.009999499656260014,
+              0
+            ]
+          ],
+          [
+            99,
+            [
+              1,
+              0,
+              0
+            ]
+          ],
+          [
+            100,
+            [
+              0,
+              0,
+              0
+            ]
+          ]
+        ],
+        "config": {
+          "minFieldTags": 2,
+          "maxFieldNodes": 8,
+          "fieldEnergyMassRatio": 0.5
+        }
+      },
+      "expected": {
+        "exactField": [
+          {
+            "exact": true,
+            "id": 1,
+            "potential": 1,
+            "sourceType": "seed"
+          },
+          {
+            "exact": true,
+            "id": 2,
+            "potential": 0.6,
+            "sourceType": "core"
+          },
+          {
+            "exact": true,
+            "id": 3,
+            "potential": 0.3,
+            "sourceType": "emergent"
+          },
+          {
+            "exact": true,
+            "id": 4,
+            "potential": 0.1,
+            "sourceType": "emergent"
+          }
+        ],
+        "fieldEntropy": 0.8238654610595805,
+        "fieldNodes": [
+          {
+            "id": 1,
+            "potential": 1,
+            "sourceType": "seed",
+            "vector": [
+              1,
+              0,
+              0
+            ]
+          },
+          {
+            "id": 2,
+            "potential": 0.6,
+            "sourceType": "core",
+            "vector": [
+              0.800000011920929,
+              0.6000000238418579,
+              0
+            ]
+          }
+        ],
+        "fieldTrusted": true,
+        "maxEnergy": 1,
+        "samples": [
+          {
+            "exact": true,
+            "id": 1,
+            "potential": 1,
+            "sourceType": "seed"
+          },
+          {
+            "exact": true,
+            "id": 2,
+            "potential": 0.6,
+            "sourceType": "core"
+          },
+          {
+            "exact": false,
+            "id": 8,
+            "potential": 0.3030401786139065,
+            "sourceType": "seed"
+          },
+          {
+            "exact": false,
+            "id": 99,
+            "potential": 0.3009446435239532,
+            "sourceType": "seed"
+          },
+          {
+            "exact": false,
+            "id": 100,
+            "potential": 0,
+            "sourceType": "unknown"
+          }
+        ],
+        "totalEnergy": 2
+      }
+    },
+    {
+      "name": "entropy-low-trust",
+      "input": {
+        "dimension": 3,
+        "nodes": [
+          {
+            "id": 1,
+            "energy": 1000,
+            "normalizedEnergy": 1,
+            "sourceType": "seed"
+          },
+          {
+            "id": 2,
+            "energy": 0.001,
+            "normalizedEnergy": 0.6,
+            "sourceType": "core"
+          },
+          {
+            "id": 3,
+            "energy": 0.001,
+            "normalizedEnergy": 0.3,
+            "sourceType": "emergent"
+          },
+          {
+            "id": 4,
+            "energy": 0.001,
+            "normalizedEnergy": 0.1,
+            "sourceType": "emergent"
+          }
+        ],
+        "source_field": [],
+        "tag_vectors": [
+          [
+            1,
+            [
+              1,
+              0,
+              0
+            ]
+          ],
+          [
+            2,
+            [
+              0.800000011920929,
+              0.6000000238418579,
+              0
+            ]
+          ],
+          [
+            3,
+            [
+              0.20280805230140686,
+              0.9126362204551697,
+              0.3549140989780426
+            ]
+          ],
+          [
+            4,
+            [
+              0,
+              0.30113136768341064,
+              0.9535826444625854
+            ]
+          ],
+          [
+            5,
+            [
+              -0.5000377297401428,
+              0.5000377297401428,
+              0.7070533633232117
+            ]
+          ],
+          [
+            6,
+            [
+              0,
+              1,
+              0
+            ]
+          ],
+          [
+            7,
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          [
+            8,
+            [
+              0.9999499917030334,
+              0.009999499656260014,
+              0
+            ]
+          ],
+          [
+            9,
+            [
+              -1,
+              0,
+              0
+            ]
+          ],
+          [
+            10,
+            [
+              0.10045813024044037,
+              0.20091626048088074,
+              0.9744438529014587
+            ]
+          ]
+        ],
+        "inbound": [
+          [
+            1,
+            1.009051341433607
+          ],
+          [
+            10,
+            0.6906895312263831
+          ],
+          [
+            8,
+            0.14686829453710723
+          ],
+          [
+            4,
+            0.6279307791887215
+          ],
+          [
+            2,
+            1.8076090508843574
+          ],
+          [
+            9,
+            0.684191035725854
+          ],
+          [
+            7,
+            0.526518833242631
+          ],
+          [
+            3,
+            1.9779136283406487
+          ],
+          [
+            6,
+            0.5541080723729264
+          ],
+          [
+            5,
+            1.4751194330477626
+          ]
+        ],
+        "sample_tags": [
+          [
+            1,
+            [
+              1,
+              0,
+              0
+            ]
+          ],
+          [
+            2,
+            [
+              0.800000011920929,
+              0.6000000238418579,
+              0
+            ]
+          ],
+          [
+            8,
+            [
+              0.9999499917030334,
+              0.009999499656260014,
+              0
+            ]
+          ],
+          [
+            99,
+            [
+              1,
+              0,
+              0
+            ]
+          ],
+          [
+            100,
+            [
+              0,
+              0,
+              0
+            ]
+          ]
+        ],
+        "config": {}
+      },
+      "expected": {
+        "exactField": [
+          {
+            "exact": true,
+            "id": 1,
+            "potential": 1,
+            "sourceType": "seed"
+          },
+          {
+            "exact": true,
+            "id": 2,
+            "potential": 1e-06,
+            "sourceType": "core"
+          },
+          {
+            "exact": true,
+            "id": 3,
+            "potential": 1e-06,
+            "sourceType": "emergent"
+          },
+          {
+            "exact": true,
+            "id": 4,
+            "potential": 1e-06,
+            "sourceType": "emergent"
+          }
+        ],
+        "fieldEntropy": 3.2061302477418984e-05,
+        "fieldNodes": [
+          {
+            "id": 1,
+            "potential": 1,
+            "sourceType": "seed",
+            "vector": [
+              1,
+              0,
+              0
+            ]
+          },
+          {
+            "id": 2,
+            "potential": 1e-06,
+            "sourceType": "core",
+            "vector": [
+              0.800000011920929,
+              0.6000000238418579,
+              0
+            ]
+          },
+          {
+            "id": 3,
+            "potential": 1e-06,
+            "sourceType": "emergent",
+            "vector": [
+              0.20280805230140686,
+              0.9126362204551697,
+              0.3549140989780426
+            ]
+          }
+        ],
+        "fieldTrusted": false,
+        "maxEnergy": 1000,
+        "samples": [
+          {
+            "exact": true,
+            "id": 1,
+            "potential": 1,
+            "sourceType": "seed"
+          },
+          {
+            "exact": true,
+            "id": 2,
+            "potential": 0.0890954937664669,
+            "sourceType": "core"
+          },
+          {
+            "exact": false,
+            "id": 8,
+            "potential": 0.24743797480018753,
+            "sourceType": "seed"
+          },
+          {
+            "exact": false,
+            "id": 99,
+            "potential": 0.24748746251074177,
+            "sourceType": "seed"
+          },
+          {
+            "exact": false,
+            "id": 100,
+            "potential": 0,
+            "sourceType": "unknown"
+          }
+        ],
+        "totalEnergy": 1000.0029999999999
+      }
+    }
+  ]
+}

@@ -1,0 +1,430 @@
+{
+  "source": {
+    "commit": "e03b891d42055cdf3cab5dc961cc71dd5facd65a",
+    "owners": [
+      "memo_pipeline.rs analyze_epa",
+      "memo_pipeline.rs solve_dual_fields"
+    ],
+    "probe": "direct calls to frozen math with in-memory generated EPA cache and neutral CSR; generated training energies zero deliberately ignored"
+  },
+  "tolerance": {
+    "absolute": 1e-10,
+    "relative": 1e-10
+  },
+  "cases": [
+    {
+      "name": "orthogonal-balanced",
+      "input": {
+        "epa": {
+          "query": [
+            1,
+            1,
+            1
+          ],
+          "mean": [
+            0,
+            0,
+            0
+          ],
+          "basis": [
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              1,
+              0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ]
+        },
+        "transport": {
+          "node_ids": [
+            1,
+            2,
+            3
+          ],
+          "row_offsets": [
+            0,
+            1,
+            2,
+            2
+          ],
+          "targets": [
+            1,
+            2
+          ],
+          "weights": [
+            0.9,
+            0.9
+          ]
+        },
+        "source_field": [
+          [
+            1,
+            1
+          ]
+        ],
+        "config": {
+          "local_alpha": 0.15,
+          "transfer_alpha": 0.55,
+          "max_iterations": 80,
+          "local_tolerance": 1e-09,
+          "transfer_tolerance": 1e-09,
+          "local_mass_ratio": 0.8,
+          "transfer_mass_ratio": 0.9
+        }
+      },
+      "expected": {
+        "epa": {
+          "basisCount": 3,
+          "bridges": [
+            {
+              "balance": 1,
+              "from": "axis-0",
+              "strength": 0.3333333333333333,
+              "to": "axis-1"
+            },
+            {
+              "balance": 1,
+              "from": "axis-0",
+              "strength": 0.3333333333333333,
+              "to": "axis-2"
+            }
+          ],
+          "cacheAvailable": true,
+          "dominantAxes": [
+            {
+              "energy": 0.3333333333333333,
+              "index": 0,
+              "label": "axis-0",
+              "projection": 1,
+              "score": 0.3333333333333333
+            },
+            {
+              "energy": 0.3333333333333333,
+              "index": 1,
+              "label": "axis-1",
+              "projection": 1,
+              "score": 0.3333333333333333
+            },
+            {
+              "energy": 0.3333333333333333,
+              "index": 2,
+              "label": "axis-2",
+              "projection": 1,
+              "score": 0.3333333333333333
+            }
+          ],
+          "entropy": 1,
+          "logicDepth": 0,
+          "resonance": 0.6666666666666666
+        },
+        "iterations": 4,
+        "local_converged": true,
+        "local_domain": [
+          1
+        ],
+        "local_field": [
+          [
+            1,
+            0.85
+          ],
+          [
+            2,
+            0.11474999999999999
+          ],
+          [
+            3,
+            0.015491249999999998
+          ]
+        ],
+        "local_residual": 0,
+        "transfer_converged": true,
+        "transfer_domain": [
+          1,
+          2,
+          3
+        ],
+        "transfer_field": [
+          [
+            1,
+            0.44999999999999996
+          ],
+          [
+            2,
+            0.22275
+          ],
+          [
+            3,
+            0.11026125000000002
+          ]
+        ],
+        "transfer_residual": 0
+      }
+    },
+    {
+      "name": "zero-centered-energy",
+      "input": {
+        "epa": {
+          "query": [
+            1,
+            0.5,
+            0.25
+          ],
+          "mean": [
+            1,
+            0.5,
+            0.25
+          ],
+          "basis": [
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              1,
+              0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ]
+        },
+        "transport": {
+          "node_ids": [
+            1,
+            2,
+            3
+          ],
+          "row_offsets": [
+            0,
+            1,
+            2,
+            2
+          ],
+          "targets": [
+            1,
+            2
+          ],
+          "weights": [
+            0.9,
+            0.9
+          ]
+        },
+        "source_field": [
+          [
+            1,
+            1
+          ]
+        ],
+        "config": {
+          "local_alpha": 0.15,
+          "transfer_alpha": 0.55,
+          "max_iterations": 80,
+          "local_tolerance": 1e-09,
+          "transfer_tolerance": 1e-09,
+          "local_mass_ratio": 0.8,
+          "transfer_mass_ratio": 0.9
+        }
+      },
+      "expected": {
+        "epa": {
+          "basisCount": 0,
+          "bridges": [],
+          "cacheAvailable": false,
+          "dominantAxes": [],
+          "entropy": 1,
+          "logicDepth": 0,
+          "resonance": 0
+        },
+        "iterations": 4,
+        "local_converged": true,
+        "local_domain": [
+          1
+        ],
+        "local_field": [
+          [
+            1,
+            0.85
+          ],
+          [
+            2,
+            0.11474999999999999
+          ],
+          [
+            3,
+            0.015491249999999998
+          ]
+        ],
+        "local_residual": 0,
+        "transfer_converged": true,
+        "transfer_domain": [
+          1,
+          2,
+          3
+        ],
+        "transfer_field": [
+          [
+            1,
+            0.44999999999999996
+          ],
+          [
+            2,
+            0.22275
+          ],
+          [
+            3,
+            0.11026125000000002
+          ]
+        ],
+        "transfer_residual": 0
+      }
+    },
+    {
+      "name": "immediate-return",
+      "input": {
+        "epa": {
+          "query": [
+            1,
+            0.5,
+            0.25
+          ],
+          "mean": [
+            0,
+            0,
+            0
+          ],
+          "basis": [
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              1,
+              0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ]
+        },
+        "transport": {
+          "node_ids": [
+            1,
+            2,
+            3
+          ],
+          "row_offsets": [
+            0,
+            1,
+            2,
+            2
+          ],
+          "targets": [
+            1,
+            0
+          ],
+          "weights": [
+            0.9,
+            0.9
+          ]
+        },
+        "source_field": [
+          [
+            1,
+            1
+          ]
+        ],
+        "config": {
+          "local_alpha": 0.15,
+          "transfer_alpha": 0.55,
+          "max_iterations": 80,
+          "local_tolerance": 1e-09,
+          "transfer_tolerance": 1e-09,
+          "local_mass_ratio": 0.8,
+          "transfer_mass_ratio": 0.9
+        }
+      },
+      "expected": {
+        "epa": {
+          "basisCount": 3,
+          "bridges": [
+            {
+              "balance": 0.25,
+              "from": "axis-0",
+              "strength": 0.38095238095238093,
+              "to": "axis-1"
+            }
+          ],
+          "cacheAvailable": true,
+          "dominantAxes": [
+            {
+              "energy": 0.7619047619047619,
+              "index": 0,
+              "label": "axis-0",
+              "projection": 1,
+              "score": 0.7619047619047619
+            },
+            {
+              "energy": 0.19047619047619047,
+              "index": 1,
+              "label": "axis-1",
+              "projection": 0.5,
+              "score": 0.19047619047619047
+            }
+          ],
+          "entropy": 0.6080560226307111,
+          "logicDepth": 0.3919439773692889,
+          "resonance": 0.38095238095238093
+        },
+        "iterations": 31,
+        "local_converged": true,
+        "local_domain": [
+          1
+        ],
+        "local_field": [
+          [
+            1,
+            0.8657788189441088
+          ],
+          [
+            2,
+            0.11688014059817045
+          ]
+        ],
+        "local_residual": 5.730367846901174e-10,
+        "transfer_converged": true,
+        "transfer_domain": [
+          1,
+          2
+        ],
+        "transfer_field": [
+          [
+            1,
+            0.596046226595637
+          ],
+          [
+            2,
+            0.2950428823523933
+          ]
+        ],
+        "transfer_residual": 7.199001395008509e-10
+      }
+    }
+  ]
+}

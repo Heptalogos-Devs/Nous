@@ -1,0 +1,190 @@
+{
+  "source": {
+    "commit": "e03b891d42055cdf3cab5dc961cc71dd5facd65a",
+    "owner": "memo_pipeline gate_tags",
+    "probe": "original gate_tags with controlled EPA/pyramid/levels/core names; no candidate text or copied source"
+  },
+  "tolerance": {
+    "absolute": 1e-12,
+    "relative": 1e-12
+  },
+  "cases": [
+    {
+      "name": "unknown-language-core-layers",
+      "input": {
+        "levels": [
+          [
+            {
+              "id": 1,
+              "name": "Docker engine",
+              "contribution": 0.8,
+              "similarity": 0.7
+            },
+            {
+              "id": 2,
+              "name": "项目规划",
+              "contribution": 0.3,
+              "similarity": 0.7
+            },
+            {
+              "id": 3,
+              "name": "NASA",
+              "contribution": 0.2,
+              "similarity": 0
+            }
+          ],
+          [
+            {
+              "id": 4,
+              "name": "sensor.4",
+              "contribution": 0.4,
+              "similarity": 0.7
+            },
+            {
+              "id": 1,
+              "name": "Docker engine",
+              "contribution": 0.9,
+              "similarity": 0.7
+            }
+          ]
+        ],
+        "logic_depth": 0.7,
+        "entropy": 0.4,
+        "resonance": 0.2,
+        "world": "Unknown",
+        "activation": 0.6,
+        "coverage": 0.7,
+        "core_tags": [
+          "项目规划"
+        ],
+        "config": {}
+      },
+      "expected": {
+        "dynamicCoreBoost": 1.2999999999999998,
+        "effectiveBoost": 0.45519379936567256,
+        "tags": [
+          {
+            "id": 1,
+            "isCore": false,
+            "name": "Docker engine",
+            "weight": 0.04000000000000001
+          },
+          {
+            "id": 2,
+            "isCore": true,
+            "name": "项目规划",
+            "weight": 0.39779999999999993
+          },
+          {
+            "id": 3,
+            "isCore": false,
+            "name": "NASA",
+            "weight": 0.010000000000000002
+          },
+          {
+            "id": 4,
+            "isCore": false,
+            "name": "sensor.4",
+            "weight": 0.013999999999999999
+          }
+        ]
+      }
+    },
+    {
+      "name": "empty-pyramid",
+      "input": {
+        "levels": [],
+        "logic_depth": 0.7,
+        "entropy": 0.4,
+        "resonance": 0.2,
+        "world": "Unknown",
+        "activation": 0.6,
+        "coverage": 0.7,
+        "core_tags": [
+          "项目规划"
+        ],
+        "config": {}
+      },
+      "expected": {
+        "dynamicCoreBoost": 1.2999999999999998,
+        "effectiveBoost": 0.45519379936567256,
+        "tags": []
+      }
+    },
+    {
+      "name": "first-duplicate-zero-contribution",
+      "input": {
+        "levels": [
+          [
+            {
+              "id": 1,
+              "name": "Docker engine",
+              "contribution": 0,
+              "similarity": 0.7
+            },
+            {
+              "id": 2,
+              "name": "项目规划",
+              "contribution": 0.3,
+              "similarity": 0.7
+            },
+            {
+              "id": 3,
+              "name": "NASA",
+              "contribution": 0.2,
+              "similarity": 0
+            }
+          ],
+          [
+            {
+              "id": 4,
+              "name": "sensor.4",
+              "contribution": 0.4,
+              "similarity": 0.7
+            },
+            {
+              "id": 1,
+              "name": "Docker engine",
+              "contribution": 0.9,
+              "similarity": 0.7
+            }
+          ]
+        ],
+        "logic_depth": 0.7,
+        "entropy": 0.4,
+        "resonance": 0.2,
+        "world": "Unknown",
+        "activation": 0.6,
+        "coverage": 0.7,
+        "core_tags": [
+          "项目规划"
+        ],
+        "config": {}
+      },
+      "expected": {
+        "dynamicCoreBoost": 1.2999999999999998,
+        "effectiveBoost": 0.45519379936567256,
+        "tags": [
+          {
+            "id": 2,
+            "isCore": true,
+            "name": "项目规划",
+            "weight": 0.39779999999999993
+          },
+          {
+            "id": 3,
+            "isCore": false,
+            "name": "NASA",
+            "weight": 0.010000000000000002
+          },
+          {
+            "id": 4,
+            "isCore": false,
+            "name": "sensor.4",
+            "weight": 0.013999999999999999
+          }
+        ]
+      }
+    }
+  ]
+}

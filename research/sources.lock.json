@@ -85,7 +85,9 @@
       "name": "VCPToolBox",
       "url": "https://github.com/lioensky/VCPToolBox.git",
       "commit": "d1b40c863273cbbba082fb7657671424768c4a53",
-      "path": "temp/repos/VCPToolBox"
+      "path": "temp/repos/VCPToolBox",
+      "adapted_component": "crates/nous-vcp",
+      "source_manifest": "crates/nous-vcp/upstream-sources.json"
     }
   ],
   "previous_rebuild": {

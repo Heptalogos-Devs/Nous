@@ -1,0 +1,2569 @@
+{
+  "source": {
+    "commit": "e03b891d42055cdf3cab5dc961cc71dd5facd65a",
+    "owner": "memo_dtsc run/score_curve",
+    "probe": "actual native DTSC calls using frozen persisted graph/vectors; complete numerical/discrete curve/reward/fallback/order outputs; text tag labels excluded from neutral kernel"
+  },
+  "tolerance": {
+    "absolute": 1e-12,
+    "relative": 1e-12
+  },
+  "cases": [
+    {
+      "name": "native-default",
+      "input": {
+        "dimension": 3,
+        "nodes": [
+          {
+            "energy": 0.4355072841140201,
+            "hop": 0,
+            "id": 2,
+            "normalizedEnergy": 1,
+            "originType": null,
+            "seedId": 2,
+            "sourceType": "seed",
+            "strongestParent": {
+              "flow": 0.03086723561974163,
+              "hop": 1,
+              "parentId": 8,
+              "wormhole": false
+            }
+          },
+          {
+            "energy": 0.06809700611715253,
+            "hop": 0,
+            "id": 3,
+            "normalizedEnergy": 0.1563624963373151,
+            "originType": null,
+            "seedId": 3,
+            "sourceType": "seed",
+            "strongestParent": {
+              "flow": 0.08116397441894373,
+              "hop": 1,
+              "parentId": 2,
+              "wormhole": false
+            }
+          },
+          {
+            "energy": 0.06578764384730199,
+            "hop": 0,
+            "id": 8,
+            "normalizedEnergy": 0.1510598014018019,
+            "originType": null,
+            "seedId": 8,
+            "sourceType": "seed",
+            "strongestParent": {
+              "flow": 0.036187806302905155,
+              "hop": 1,
+              "parentId": 2,
+              "wormhole": false
+            }
+          },
+          {
+            "energy": 0.017688125095499687,
+            "hop": 1,
+            "id": 1,
+            "normalizedEnergy": 0.04061499254021377,
+            "originType": "seed",
+            "seedId": 2,
+            "sourceType": "emergent",
+            "strongestParent": {
+              "flow": 0.06796956870030679,
+              "hop": 1,
+              "parentId": 2,
+              "wormhole": false
+            }
+          },
+          {
+            "energy": 0.012687842159226139,
+            "hop": 1,
+            "id": 4,
+            "normalizedEnergy": 0.029133478639829905,
+            "originType": "seed",
+            "seedId": 2,
+            "sourceType": "emergent",
+            "strongestParent": {
+              "flow": 0.04875514813718631,
+              "hop": 1,
+              "parentId": 2,
+              "wormhole": false
+            }
+          }
+        ],
+        "source_field": [
+          [
+            2,
+            0.7261263617908664
+          ],
+          [
+            3,
+            0.11353893058595231
+          ],
+          [
+            8,
+            0.10968850400474123
+          ],
+          [
+            1,
+            0.029491616767388606
+          ],
+          [
+            4,
+            0.021154586851051607
+          ]
+        ],
+        "tag_vectors": [
+          [
+            1,
+            [
+              1,
+              0,
+              0
+            ]
+          ],
+          [
+            2,
+            [
+              0.800000011920929,
+              0.6000000238418579,
+              0
+            ]
+          ],
+          [
+            3,
+            [
+              0.20280805230140686,
+              0.9126362204551697,
+              0.3549140989780426
+            ]
+          ],
+          [
+            4,
+            [
+              0,
+              0.30113136768341064,
+              0.9535826444625854
+            ]
+          ],
+          [
+            5,
+            [
+              -0.5000377297401428,
+              0.5000377297401428,
+              0.7070533633232117
+            ]
+          ],
+          [
+            6,
+            [
+              0,
+              1,
+              0
+            ]
+          ],
+          [
+            7,
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          [
+            8,
+            [
+              0.9999499917030334,
+              0.009999499656260014,
+              0
+            ]
+          ],
+          [
+            9,
+            [
+              -1,
+              0,
+              0
+            ]
+          ],
+          [
+            10,
+            [
+              0.10045813024044037,
+              0.20091626048088074,
+              0.9744438529014587
+            ]
+          ]
+        ],
+        "inbound": [
+          [
+            1,
+            1.009051341433607
+          ],
+          [
+            10,
+            0.6906895312263831
+          ],
+          [
+            8,
+            0.14686829453710723
+          ],
+          [
+            4,
+            0.6279307791887215
+          ],
+          [
+            2,
+            1.8076090508843574
+          ],
+          [
+            9,
+            0.684191035725854
+          ],
+          [
+            7,
+            0.526518833242631
+          ],
+          [
+            3,
+            1.9779136283406487
+          ],
+          [
+            6,
+            0.5541080723729264
+          ],
+          [
+            5,
+            1.4751194330477626
+          ]
+        ],
+        "anchor_gain": [
+          [
+            4,
+            0.7500000000000003
+          ],
+          [
+            7,
+            0.7500000000000002
+          ],
+          [
+            1,
+            0.7500000000000002
+          ],
+          [
+            2,
+            0.7500000000000001
+          ],
+          [
+            3,
+            0.7500000000000002
+          ],
+          [
+            6,
+            0.7500000000000001
+          ]
+        ],
+        "edges": [
+          [
+            1,
+            2,
+            0.3496170296754039
+          ],
+          [
+            1,
+            3,
+            0.25057983580959625
+          ],
+          [
+            1,
+            4,
+            0.12245662122553495
+          ],
+          [
+            1,
+            6,
+            0.14784524204831226
+          ],
+          [
+            1,
+            7,
+            0.0795012712411526
+          ],
+          [
+            2,
+            1,
+            0.27585464981985935
+          ],
+          [
+            2,
+            3,
+            0.32940417556636176
+          ],
+          [
+            2,
+            4,
+            0.19787288007667161
+          ],
+          [
+            2,
+            8,
+            0.14686829453710723
+          ],
+          [
+            3,
+            1,
+            0.18104236825863843
+          ],
+          [
+            3,
+            2,
+            0.24314224549347677
+          ],
+          [
+            3,
+            4,
+            0.307601277886515
+          ],
+          [
+            3,
+            6,
+            0.07295671627054763
+          ],
+          [
+            3,
+            7,
+            0.14525739209082209
+          ],
+          [
+            4,
+            1,
+            0.17947776247451067
+          ],
+          [
+            4,
+            2,
+            0.2648497757154769
+          ],
+          [
+            4,
+            3,
+            0.5056724618100124
+          ],
+          [
+            5,
+            9,
+            0.5314003644826233
+          ],
+          [
+            5,
+            10,
+            0.41859963551737667
+          ],
+          [
+            6,
+            1,
+            0.12109842860074195
+          ],
+          [
+            6,
+            3,
+            0.5271414014886016
+          ],
+          [
+            6,
+            7,
+            0.3017601699106564
+          ],
+          [
+            7,
+            1,
+            0.2515781322798567
+          ],
+          [
+            7,
+            3,
+            0.36511575366607674
+          ],
+          [
+            7,
+            6,
+            0.3333061140540665
+          ],
+          [
+            8,
+            2,
+            0.9499999999999998
+          ],
+          [
+            9,
+            5,
+            0.6779101042909935
+          ],
+          [
+            9,
+            10,
+            0.27208989570900644
+          ],
+          [
+            10,
+            5,
+            0.7972093287567691
+          ],
+          [
+            10,
+            9,
+            0.15279067124323076
+          ]
+        ],
+        "candidates": [
+          {
+            "curve": {
+              "id": 1,
+              "chunk_vector": [
+                0.6671152710914612,
+                0.6041477918624878,
+                0.43584713339805603
+              ],
+              "tags": [
+                {
+                  "id": 1,
+                  "vector": [
+                    1,
+                    0,
+                    0
+                  ],
+                  "position": 1
+                },
+                {
+                  "id": 2,
+                  "vector": [
+                    0.800000011920929,
+                    0.6000000238418579,
+                    0
+                  ],
+                  "position": 2
+                },
+                {
+                  "id": 3,
+                  "vector": [
+                    0.20280805230140686,
+                    0.9126362204551697,
+                    0.3549140989780426
+                  ],
+                  "position": 3
+                },
+                {
+                  "id": 4,
+                  "vector": [
+                    0,
+                    0.30113136768341064,
+                    0.9535826444625854
+                  ],
+                  "position": 4
+                }
+              ]
+            },
+            "score": 0.9
+          },
+          {
+            "curve": {
+              "id": 2,
+              "chunk_vector": [
+                0.6671152710914612,
+                0.6041477918624878,
+                0.43584713339805603
+              ],
+              "tags": [
+                {
+                  "id": 4,
+                  "vector": [
+                    0,
+                    0.30113136768341064,
+                    0.9535826444625854
+                  ],
+                  "position": 1
+                },
+                {
+                  "id": 3,
+                  "vector": [
+                    0.20280805230140686,
+                    0.9126362204551697,
+                    0.3549140989780426
+                  ],
+                  "position": 2
+                },
+                {
+                  "id": 2,
+                  "vector": [
+                    0.800000011920929,
+                    0.6000000238418579,
+                    0
+                  ],
+                  "position": 3
+                },
+                {
+                  "id": 1,
+                  "vector": [
+                    1,
+                    0,
+                    0
+                  ],
+                  "position": 4
+                }
+              ]
+            },
+            "score": 0.87
+          },
+          {
+            "curve": {
+              "id": 3,
+              "chunk_vector": [
+                0.456556111574173,
+                0.7259892821311951,
+                0.5142918229103088
+              ],
+              "tags": [
+                {
+                  "id": 1,
+                  "vector": [
+                    1,
+                    0,
+                    0
+                  ],
+                  "position": 1
+                },
+                {
+                  "id": 6,
+                  "vector": [
+                    0,
+                    1,
+                    0
+                  ],
+                  "position": 2
+                },
+                {
+                  "id": 3,
+                  "vector": [
+                    0.20280805230140686,
+                    0.9126362204551697,
+                    0.3549140989780426
+                  ],
+                  "position": 3
+                },
+                {
+                  "id": 7,
+                  "vector": [
+                    0,
+                    0,
+                    1
+                  ],
+                  "position": 4
+                }
+              ]
+            },
+            "score": 0.8400000000000001
+          },
+          {
+            "curve": {
+              "id": 4,
+              "chunk_vector": [
+                0.9470903873443604,
+                0.32096704840660095,
+                0
+              ],
+              "tags": [
+                {
+                  "id": 8,
+                  "vector": [
+                    0.9999499917030334,
+                    0.009999499656260014,
+                    0
+                  ],
+                  "position": 1
+                },
+                {
+                  "id": 2,
+                  "vector": [
+                    0.800000011920929,
+                    0.6000000238418579,
+                    0
+                  ],
+                  "position": 2
+                }
+              ]
+            },
+            "score": 0.81
+          },
+          {
+            "curve": {
+              "id": 5,
+              "chunk_vector": [
+                -0.6092277765274048,
+                0.30512064695358276,
+                0.7319446206092834
+              ],
+              "tags": [
+                {
+                  "id": 5,
+                  "vector": [
+                    -0.5000377297401428,
+                    0.5000377297401428,
+                    0.7070533633232117
+                  ],
+                  "position": 1
+                },
+                {
+                  "id": 9,
+                  "vector": [
+                    -1,
+                    0,
+                    0
+                  ],
+                  "position": 2
+                },
+                {
+                  "id": 10,
+                  "vector": [
+                    0.10045813024044037,
+                    0.20091626048088074,
+                    0.9744438529014587
+                  ],
+                  "position": 3
+                }
+              ]
+            },
+            "score": 0.78
+          },
+          {
+            "curve": {
+              "id": 6,
+              "chunk_vector": [
+                0.6671152710914612,
+                0.6041477918624878,
+                0.43584713339805603
+              ],
+              "tags": [
+                {
+                  "id": 1,
+                  "vector": [
+                    1,
+                    0,
+                    0
+                  ],
+                  "position": 1
+                },
+                {
+                  "id": 2,
+                  "vector": [
+                    0.800000011920929,
+                    0.6000000238418579,
+                    0
+                  ],
+                  "position": 2
+                },
+                {
+                  "id": 3,
+                  "vector": [
+                    0.20280805230140686,
+                    0.9126362204551697,
+                    0.3549140989780426
+                  ],
+                  "position": 3
+                },
+                {
+                  "id": 4,
+                  "vector": [
+                    0,
+                    0.30113136768341064,
+                    0.9535826444625854
+                  ],
+                  "position": 4
+                }
+              ]
+            },
+            "score": 0.75
+          }
+        ],
+        "original_vector": [
+          0.8664485812187195,
+          0.4873773157596588,
+          0.10830607265233994
+        ],
+        "enhanced_vector": [
+          0.8346753120422363,
+          0.5458837151527405,
+          0.072994165122509
+        ],
+        "query_geometry_state": {
+          "epa": {
+            "logicDepth": 0.8580593794486938,
+            "entropy": 0.1419406205513062,
+            "resonance": 0,
+            "dominantAxes": [
+              {
+                "index": 0,
+                "label": "Tag1",
+                "energy": 0.9698934160751049,
+                "projection": 0.7629822564200919,
+                "score": 0.9698934160751049
+              }
+            ],
+            "bridges": [],
+            "basisCount": 3,
+            "cacheAvailable": true
+          },
+          "pyramid": {
+            "depth": 1,
+            "coverage": 1,
+            "novelty": 0.17272880507642094,
+            "coherence": 0.7174864461079213,
+            "activation": 0.6314936923533274,
+            "expansionSignal": 0.17272880507642094
+          }
+        },
+        "config": {
+          "field": {},
+          "curve": {},
+          "sparse": {},
+          "reward": {},
+          "trust": {},
+          "auxiliary": {}
+        },
+        "top_k": 0
+      },
+      "expected": {
+        "results": [
+          {
+            "id": 1,
+            "score": 1.08,
+            "originalKnnScore": 0.9,
+            "geoScore": 0.4117275275018295,
+            "normalizedGeo": 1,
+            "geoBonus": 0.18,
+            "geoBaseBonus": 0.18,
+            "geoAuxBonus": 0,
+            "geoEffect": "boost",
+            "geoEvidenceClass": "direct",
+            "geoRewardEligible": true,
+            "geoConfidence": 0.7955690822471878,
+            "geoExactHits": 4,
+            "geoDirectExactHits": 2,
+            "geoEmergentExactHits": 2,
+            "geoDirectSemanticHits": 0,
+            "geoDirectSemanticStrength": 0,
+            "geoStrongHits": 2,
+            "geoHitCount": 3,
+            "geoWeightedCoverage": 0.7955690822471878,
+            "geoMeanPotential": 0.48559710594112104,
+            "geoMaxPotential": 1,
+            "geoContinuity": 0.25760763532383885,
+            "geoIsolatedRatio": 0,
+            "geoRawIsolatedRatio": 0,
+            "geoSparseAssociationConfidence": 0,
+            "geoSparseAssociationPairs": 0,
+            "geoActionQuality": 0.08826956409471756,
+            "geoClosureQuality": 0.7138980583110145,
+            "geoDirectionConsistency": 0.5546895826598689,
+            "geoVectorLift": -0.0006202706631399657,
+            "geoDirectScore": 0.8637860878548909,
+            "geoStructuralScore": 0.5223439677955357,
+            "geoThematicScore": 0.7312130193155042,
+            "geoClosureScore": 0.8395443492916425,
+            "geoFusedShadowScore": 0.4909195754262205
+          },
+          {
+            "id": 2,
+            "score": 1.05,
+            "originalKnnScore": 0.87,
+            "geoScore": 0.3975323416096898,
+            "normalizedGeo": 1,
+            "geoBonus": 0.18,
+            "geoBaseBonus": 0.18,
+            "geoAuxBonus": 0,
+            "geoEffect": "boost",
+            "geoEvidenceClass": "direct",
+            "geoRewardEligible": true,
+            "geoConfidence": 0.7730448863842004,
+            "geoExactHits": 4,
+            "geoDirectExactHits": 2,
+            "geoEmergentExactHits": 2,
+            "geoDirectSemanticHits": 0,
+            "geoDirectSemanticStrength": 0,
+            "geoStrongHits": 2,
+            "geoHitCount": 3,
+            "geoWeightedCoverage": 0.7730448863842004,
+            "geoMeanPotential": 0.4831916373656253,
+            "geoMaxPotential": 1,
+            "geoContinuity": 0.2512490454712687,
+            "geoIsolatedRatio": 0,
+            "geoRawIsolatedRatio": 0,
+            "geoSparseAssociationConfidence": 0,
+            "geoSparseAssociationPairs": 0,
+            "geoActionQuality": 0.08260448898770674,
+            "geoClosureQuality": 0.7109618413231534,
+            "geoDirectionConsistency": 0.4463320740944579,
+            "geoVectorLift": -0.0006202706631399657,
+            "geoDirectScore": 0.8633049941397917,
+            "geoStructuralScore": 0.5029272464780002,
+            "geoThematicScore": 0.7221674776426308,
+            "geoClosureScore": 0.8386634841952841,
+            "geoFusedShadowScore": 0.4867363507345005
+          },
+          {
+            "id": 4,
+            "score": 0.99,
+            "originalKnnScore": 0.81,
+            "geoScore": 0.5925587419998108,
+            "normalizedGeo": 1,
+            "geoBonus": 0.18,
+            "geoBaseBonus": 0.18,
+            "geoAuxBonus": 0,
+            "geoEffect": "boost",
+            "geoEvidenceClass": "direct",
+            "geoRewardEligible": true,
+            "geoConfidence": 1,
+            "geoExactHits": 2,
+            "geoDirectExactHits": 2,
+            "geoEmergentExactHits": 0,
+            "geoDirectSemanticHits": 0,
+            "geoDirectSemanticStrength": 0,
+            "geoStrongHits": 1,
+            "geoHitCount": 2,
+            "geoWeightedCoverage": 1,
+            "geoMeanPotential": 0.37041505133667296,
+            "geoMaxPotential": 1,
+            "geoContinuity": 0.38521970575349423,
+            "geoIsolatedRatio": 0,
+            "geoRawIsolatedRatio": 0,
+            "geoSparseAssociationConfidence": 0,
+            "geoSparseAssociationPairs": 0,
+            "geoActionQuality": 0.42478625217396254,
+            "geoClosureQuality": 0.9378156508134381,
+            "geoDirectionConsistency": 0.8661021607894249,
+            "geoVectorLift": -0.005656779607711493,
+            "geoDirectScore": 0.8407496769340012,
+            "geoStructuralScore": 0.6351831819469288,
+            "geoThematicScore": 0.8017968630230177,
+            "geoClosureScore": 0.919647580230626,
+            "geoFusedShadowScore": 0.553863696674748
+          },
+          {
+            "id": 6,
+            "score": 0.9299999999999999,
+            "originalKnnScore": 0.75,
+            "geoScore": 0.4117275275018295,
+            "normalizedGeo": 1,
+            "geoBonus": 0.18,
+            "geoBaseBonus": 0.18,
+            "geoAuxBonus": 0,
+            "geoEffect": "boost",
+            "geoEvidenceClass": "direct",
+            "geoRewardEligible": true,
+            "geoConfidence": 0.7955690822471878,
+            "geoExactHits": 4,
+            "geoDirectExactHits": 2,
+            "geoEmergentExactHits": 2,
+            "geoDirectSemanticHits": 0,
+            "geoDirectSemanticStrength": 0,
+            "geoStrongHits": 2,
+            "geoHitCount": 3,
+            "geoWeightedCoverage": 0.7955690822471878,
+            "geoMeanPotential": 0.48559710594112104,
+            "geoMaxPotential": 1,
+            "geoContinuity": 0.25760763532383885,
+            "geoIsolatedRatio": 0,
+            "geoRawIsolatedRatio": 0,
+            "geoSparseAssociationConfidence": 0,
+            "geoSparseAssociationPairs": 0,
+            "geoActionQuality": 0.08826956409471756,
+            "geoClosureQuality": 0.7138980583110145,
+            "geoDirectionConsistency": 0.5546895826598689,
+            "geoVectorLift": -0.0006202706631399657,
+            "geoDirectScore": 0.8637860878548909,
+            "geoStructuralScore": 0.5223439677955357,
+            "geoThematicScore": 0.7312130193155042,
+            "geoClosureScore": 0.8395443492916425,
+            "geoFusedShadowScore": 0.4909195754262205
+          },
+          {
+            "id": 3,
+            "score": 0.8438689099726021,
+            "originalKnnScore": 0.8400000000000001,
+            "geoScore": 0.03086597958593586,
+            "normalizedGeo": 0.06751480674866324,
+            "geoBonus": 0.003868909972601981,
+            "geoBaseBonus": 0.003868909972601981,
+            "geoAuxBonus": 0,
+            "geoEffect": "boost",
+            "geoEvidenceClass": "direct",
+            "geoRewardEligible": true,
+            "geoConfidence": 0.16372746995039547,
+            "geoExactHits": 2,
+            "geoDirectExactHits": 1,
+            "geoEmergentExactHits": 1,
+            "geoDirectSemanticHits": 0,
+            "geoDirectSemanticStrength": 0,
+            "geoStrongHits": 1,
+            "geoHitCount": 2,
+            "geoWeightedCoverage": 0.46779277128684427,
+            "geoMeanPotential": 0.1591949257223831,
+            "geoMaxPotential": 0.16678853278376474,
+            "geoContinuity": 0.044489157645011504,
+            "geoIsolatedRatio": 1,
+            "geoRawIsolatedRatio": 1,
+            "geoSparseAssociationConfidence": 0,
+            "geoSparseAssociationPairs": 0,
+            "geoActionQuality": 0.003162766614724041,
+            "geoClosureQuality": 0.653546927993797,
+            "geoDirectionConsistency": 0.6413342355070196,
+            "geoVectorLift": 0.004904044886625547,
+            "geoDirectScore": 0.5568694516737511,
+            "geoStructuralScore": 0.2726536839259868,
+            "geoThematicScore": 0.30951798686617993,
+            "geoClosureScore": 0.7917667259795965,
+            "geoFusedShadowScore": 0.29804061691376876
+          },
+          {
+            "id": 5,
+            "score": 0.78,
+            "originalKnnScore": 0.78,
+            "geoScore": 0,
+            "normalizedGeo": 0,
+            "geoBonus": 0,
+            "geoBaseBonus": 0,
+            "geoAuxBonus": 0,
+            "geoEffect": "neutral",
+            "geoEvidenceClass": "neutral",
+            "geoRewardEligible": false,
+            "geoConfidence": 0,
+            "geoExactHits": 0,
+            "geoDirectExactHits": 0,
+            "geoEmergentExactHits": 0,
+            "geoDirectSemanticHits": 0,
+            "geoDirectSemanticStrength": 0,
+            "geoStrongHits": 0,
+            "geoHitCount": 0,
+            "geoWeightedCoverage": 0,
+            "geoMeanPotential": 0,
+            "geoMaxPotential": 0,
+            "geoContinuity": 0,
+            "geoIsolatedRatio": 1,
+            "geoRawIsolatedRatio": 1,
+            "geoSparseAssociationConfidence": 0,
+            "geoSparseAssociationPairs": 0,
+            "geoActionQuality": 0,
+            "geoClosureQuality": 0,
+            "geoDirectionConsistency": 0,
+            "geoVectorLift": 0.005681158033740974,
+            "geoDirectScore": 0,
+            "geoStructuralScore": 0,
+            "geoThematicScore": 0,
+            "geoClosureScore": 0.38828503482784715,
+            "geoFusedShadowScore": 0
+          }
+        ],
+        "diagnostics": {
+          "offeredCandidates": 6,
+          "projectedCandidates": 6,
+          "fieldNodes": 4,
+          "contributingCandidates": 5,
+          "returnedCandidates": 6,
+          "fieldTrusted": true,
+          "fieldEntropy": 0.5637441931985923,
+          "fallbackUsed": false,
+          "fallbackReason": null
+        }
+      }
+    },
+    {
+      "name": "empty-field",
+      "input": {
+        "dimension": 3,
+        "nodes": [],
+        "source_field": [],
+        "tag_vectors": [
+          [
+            1,
+            [
+              1,
+              0,
+              0
+            ]
+          ],
+          [
+            2,
+            [
+              0.800000011920929,
+              0.6000000238418579,
+              0
+            ]
+          ],
+          [
+            3,
+            [
+              0.20280805230140686,
+              0.9126362204551697,
+              0.3549140989780426
+            ]
+          ],
+          [
+            4,
+            [
+              0,
+              0.30113136768341064,
+              0.9535826444625854
+            ]
+          ],
+          [
+            5,
+            [
+              -0.5000377297401428,
+              0.5000377297401428,
+              0.7070533633232117
+            ]
+          ],
+          [
+            6,
+            [
+              0,
+              1,
+              0
+            ]
+          ],
+          [
+            7,
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          [
+            8,
+            [
+              0.9999499917030334,
+              0.009999499656260014,
+              0
+            ]
+          ],
+          [
+            9,
+            [
+              -1,
+              0,
+              0
+            ]
+          ],
+          [
+            10,
+            [
+              0.10045813024044037,
+              0.20091626048088074,
+              0.9744438529014587
+            ]
+          ]
+        ],
+        "inbound": [
+          [
+            1,
+            1.009051341433607
+          ],
+          [
+            10,
+            0.6906895312263831
+          ],
+          [
+            8,
+            0.14686829453710723
+          ],
+          [
+            4,
+            0.6279307791887215
+          ],
+          [
+            2,
+            1.8076090508843574
+          ],
+          [
+            9,
+            0.684191035725854
+          ],
+          [
+            7,
+            0.526518833242631
+          ],
+          [
+            3,
+            1.9779136283406487
+          ],
+          [
+            6,
+            0.5541080723729264
+          ],
+          [
+            5,
+            1.4751194330477626
+          ]
+        ],
+        "anchor_gain": [
+          [
+            4,
+            0.7500000000000003
+          ],
+          [
+            7,
+            0.7500000000000002
+          ],
+          [
+            1,
+            0.7500000000000002
+          ],
+          [
+            2,
+            0.7500000000000001
+          ],
+          [
+            3,
+            0.7500000000000002
+          ],
+          [
+            6,
+            0.7500000000000001
+          ]
+        ],
+        "edges": [
+          [
+            1,
+            2,
+            0.3496170296754039
+          ],
+          [
+            1,
+            3,
+            0.25057983580959625
+          ],
+          [
+            1,
+            4,
+            0.12245662122553495
+          ],
+          [
+            1,
+            6,
+            0.14784524204831226
+          ],
+          [
+            1,
+            7,
+            0.0795012712411526
+          ],
+          [
+            2,
+            1,
+            0.27585464981985935
+          ],
+          [
+            2,
+            3,
+            0.32940417556636176
+          ],
+          [
+            2,
+            4,
+            0.19787288007667161
+          ],
+          [
+            2,
+            8,
+            0.14686829453710723
+          ],
+          [
+            3,
+            1,
+            0.18104236825863843
+          ],
+          [
+            3,
+            2,
+            0.24314224549347677
+          ],
+          [
+            3,
+            4,
+            0.307601277886515
+          ],
+          [
+            3,
+            6,
+            0.07295671627054763
+          ],
+          [
+            3,
+            7,
+            0.14525739209082209
+          ],
+          [
+            4,
+            1,
+            0.17947776247451067
+          ],
+          [
+            4,
+            2,
+            0.2648497757154769
+          ],
+          [
+            4,
+            3,
+            0.5056724618100124
+          ],
+          [
+            5,
+            9,
+            0.5314003644826233
+          ],
+          [
+            5,
+            10,
+            0.41859963551737667
+          ],
+          [
+            6,
+            1,
+            0.12109842860074195
+          ],
+          [
+            6,
+            3,
+            0.5271414014886016
+          ],
+          [
+            6,
+            7,
+            0.3017601699106564
+          ],
+          [
+            7,
+            1,
+            0.2515781322798567
+          ],
+          [
+            7,
+            3,
+            0.36511575366607674
+          ],
+          [
+            7,
+            6,
+            0.3333061140540665
+          ],
+          [
+            8,
+            2,
+            0.9499999999999998
+          ],
+          [
+            9,
+            5,
+            0.6779101042909935
+          ],
+          [
+            9,
+            10,
+            0.27208989570900644
+          ],
+          [
+            10,
+            5,
+            0.7972093287567691
+          ],
+          [
+            10,
+            9,
+            0.15279067124323076
+          ]
+        ],
+        "candidates": [
+          {
+            "curve": {
+              "id": 1,
+              "chunk_vector": [
+                0.6671152710914612,
+                0.6041477918624878,
+                0.43584713339805603
+              ],
+              "tags": [
+                {
+                  "id": 1,
+                  "vector": [
+                    1,
+                    0,
+                    0
+                  ],
+                  "position": 1
+                },
+                {
+                  "id": 2,
+                  "vector": [
+                    0.800000011920929,
+                    0.6000000238418579,
+                    0
+                  ],
+                  "position": 2
+                },
+                {
+                  "id": 3,
+                  "vector": [
+                    0.20280805230140686,
+                    0.9126362204551697,
+                    0.3549140989780426
+                  ],
+                  "position": 3
+                },
+                {
+                  "id": 4,
+                  "vector": [
+                    0,
+                    0.30113136768341064,
+                    0.9535826444625854
+                  ],
+                  "position": 4
+                }
+              ]
+            },
+            "score": 0.9
+          },
+          {
+            "curve": {
+              "id": 2,
+              "chunk_vector": [
+                0.6671152710914612,
+                0.6041477918624878,
+                0.43584713339805603
+              ],
+              "tags": [
+                {
+                  "id": 4,
+                  "vector": [
+                    0,
+                    0.30113136768341064,
+                    0.9535826444625854
+                  ],
+                  "position": 1
+                },
+                {
+                  "id": 3,
+                  "vector": [
+                    0.20280805230140686,
+                    0.9126362204551697,
+                    0.3549140989780426
+                  ],
+                  "position": 2
+                },
+                {
+                  "id": 2,
+                  "vector": [
+                    0.800000011920929,
+                    0.6000000238418579,
+                    0
+                  ],
+                  "position": 3
+                },
+                {
+                  "id": 1,
+                  "vector": [
+                    1,
+                    0,
+                    0
+                  ],
+                  "position": 4
+                }
+              ]
+            },
+            "score": 0.87
+          },
+          {
+            "curve": {
+              "id": 3,
+              "chunk_vector": [
+                0.456556111574173,
+                0.7259892821311951,
+                0.5142918229103088
+              ],
+              "tags": [
+                {
+                  "id": 1,
+                  "vector": [
+                    1,
+                    0,
+                    0
+                  ],
+                  "position": 1
+                },
+                {
+                  "id": 6,
+                  "vector": [
+                    0,
+                    1,
+                    0
+                  ],
+                  "position": 2
+                },
+                {
+                  "id": 3,
+                  "vector": [
+                    0.20280805230140686,
+                    0.9126362204551697,
+                    0.3549140989780426
+                  ],
+                  "position": 3
+                },
+                {
+                  "id": 7,
+                  "vector": [
+                    0,
+                    0,
+                    1
+                  ],
+                  "position": 4
+                }
+              ]
+            },
+            "score": 0.8400000000000001
+          },
+          {
+            "curve": {
+              "id": 4,
+              "chunk_vector": [
+                0.9470903873443604,
+                0.32096704840660095,
+                0
+              ],
+              "tags": [
+                {
+                  "id": 8,
+                  "vector": [
+                    0.9999499917030334,
+                    0.009999499656260014,
+                    0
+                  ],
+                  "position": 1
+                },
+                {
+                  "id": 2,
+                  "vector": [
+                    0.800000011920929,
+                    0.6000000238418579,
+                    0
+                  ],
+                  "position": 2
+                }
+              ]
+            },
+            "score": 0.81
+          },
+          {
+            "curve": {
+              "id": 5,
+              "chunk_vector": [
+                -0.6092277765274048,
+                0.30512064695358276,
+                0.7319446206092834
+              ],
+              "tags": [
+                {
+                  "id": 5,
+                  "vector": [
+                    -0.5000377297401428,
+                    0.5000377297401428,
+                    0.7070533633232117
+                  ],
+                  "position": 1
+                },
+                {
+                  "id": 9,
+                  "vector": [
+                    -1,
+                    0,
+                    0
+                  ],
+                  "position": 2
+                },
+                {
+                  "id": 10,
+                  "vector": [
+                    0.10045813024044037,
+                    0.20091626048088074,
+                    0.9744438529014587
+                  ],
+                  "position": 3
+                }
+              ]
+            },
+            "score": 0.78
+          },
+          {
+            "curve": {
+              "id": 6,
+              "chunk_vector": [
+                0.6671152710914612,
+                0.6041477918624878,
+                0.43584713339805603
+              ],
+              "tags": [
+                {
+                  "id": 1,
+                  "vector": [
+                    1,
+                    0,
+                    0
+                  ],
+                  "position": 1
+                },
+                {
+                  "id": 2,
+                  "vector": [
+                    0.800000011920929,
+                    0.6000000238418579,
+                    0
+                  ],
+                  "position": 2
+                },
+                {
+                  "id": 3,
+                  "vector": [
+                    0.20280805230140686,
+                    0.9126362204551697,
+                    0.3549140989780426
+                  ],
+                  "position": 3
+                },
+                {
+                  "id": 4,
+                  "vector": [
+                    0,
+                    0.30113136768341064,
+                    0.9535826444625854
+                  ],
+                  "position": 4
+                }
+              ]
+            },
+            "score": 0.75
+          }
+        ],
+        "original_vector": [
+          0.8664485812187195,
+          0.4873773157596588,
+          0.10830607265233994
+        ],
+        "enhanced_vector": [
+          0.8346753120422363,
+          0.5458837151527405,
+          0.072994165122509
+        ],
+        "query_geometry_state": {
+          "epa": {
+            "logicDepth": 0.8580593794486938,
+            "entropy": 0.1419406205513062,
+            "resonance": 0,
+            "dominantAxes": [
+              {
+                "index": 0,
+                "label": "Tag1",
+                "energy": 0.9698934160751049,
+                "projection": 0.7629822564200919,
+                "score": 0.9698934160751049
+              }
+            ],
+            "bridges": [],
+            "basisCount": 3,
+            "cacheAvailable": true
+          },
+          "pyramid": {
+            "depth": 1,
+            "coverage": 1,
+            "novelty": 0.17272880507642094,
+            "coherence": 0.7174864461079213,
+            "activation": 0.6314936923533274,
+            "expansionSignal": 0.17272880507642094
+          }
+        },
+        "config": {
+          "field": {},
+          "curve": {},
+          "sparse": {},
+          "reward": {},
+          "trust": {},
+          "auxiliary": {}
+        },
+        "top_k": 0
+      },
+      "expected": {
+        "results": [
+          {
+            "id": 1,
+            "score": 0.9,
+            "originalKnnScore": 0.9,
+            "geoScore": 0,
+            "normalizedGeo": 0,
+            "geoBonus": 0,
+            "geoBaseBonus": 0,
+            "geoAuxBonus": 0,
+            "geoEffect": "neutral",
+            "geoEvidenceClass": "neutral",
+            "geoRewardEligible": false,
+            "geoConfidence": 0,
+            "geoExactHits": 0,
+            "geoDirectExactHits": 0,
+            "geoEmergentExactHits": 0,
+            "geoDirectSemanticHits": 0,
+            "geoDirectSemanticStrength": 0,
+            "geoStrongHits": 0,
+            "geoHitCount": 0,
+            "geoWeightedCoverage": 0,
+            "geoMeanPotential": 0,
+            "geoMaxPotential": 0,
+            "geoContinuity": 0,
+            "geoIsolatedRatio": 1,
+            "geoRawIsolatedRatio": 1,
+            "geoSparseAssociationConfidence": 0,
+            "geoSparseAssociationPairs": 0,
+            "geoActionQuality": 0,
+            "geoClosureQuality": 0,
+            "geoDirectionConsistency": 0,
+            "geoVectorLift": -0.0006202706631399657,
+            "geoDirectScore": 0,
+            "geoStructuralScore": 0,
+            "geoThematicScore": 0,
+            "geoClosureScore": 0.8669701566877899,
+            "geoFusedShadowScore": 0
+          },
+          {
+            "id": 2,
+            "score": 0.87,
+            "originalKnnScore": 0.87,
+            "geoScore": 0,
+            "normalizedGeo": 0,
+            "geoBonus": 0,
+            "geoBaseBonus": 0,
+            "geoAuxBonus": 0,
+            "geoEffect": "neutral",
+            "geoEvidenceClass": "neutral",
+            "geoRewardEligible": false,
+            "geoConfidence": 0,
+            "geoExactHits": 0,
+            "geoDirectExactHits": 0,
+            "geoEmergentExactHits": 0,
+            "geoDirectSemanticHits": 0,
+            "geoDirectSemanticStrength": 0,
+            "geoStrongHits": 0,
+            "geoHitCount": 0,
+            "geoWeightedCoverage": 0,
+            "geoMeanPotential": 0,
+            "geoMaxPotential": 0,
+            "geoContinuity": 0,
+            "geoIsolatedRatio": 1,
+            "geoRawIsolatedRatio": 1,
+            "geoSparseAssociationConfidence": 0,
+            "geoSparseAssociationPairs": 0,
+            "geoActionQuality": 0,
+            "geoClosureQuality": 0,
+            "geoDirectionConsistency": 0,
+            "geoVectorLift": -0.0006202706631399657,
+            "geoDirectScore": 0,
+            "geoStructuralScore": 0,
+            "geoThematicScore": 0,
+            "geoClosureScore": 0.8669701566877899,
+            "geoFusedShadowScore": 0
+          },
+          {
+            "id": 3,
+            "score": 0.8400000000000001,
+            "originalKnnScore": 0.8400000000000001,
+            "geoScore": 0,
+            "normalizedGeo": 0,
+            "geoBonus": 0,
+            "geoBaseBonus": 0,
+            "geoAuxBonus": 0,
+            "geoEffect": "neutral",
+            "geoEvidenceClass": "neutral",
+            "geoRewardEligible": false,
+            "geoConfidence": 0,
+            "geoExactHits": 0,
+            "geoDirectExactHits": 0,
+            "geoEmergentExactHits": 0,
+            "geoDirectSemanticHits": 0,
+            "geoDirectSemanticStrength": 0,
+            "geoStrongHits": 0,
+            "geoHitCount": 0,
+            "geoWeightedCoverage": 0,
+            "geoMeanPotential": 0,
+            "geoMaxPotential": 0,
+            "geoContinuity": 0,
+            "geoIsolatedRatio": 1,
+            "geoRawIsolatedRatio": 1,
+            "geoSparseAssociationConfidence": 0,
+            "geoSparseAssociationPairs": 0,
+            "geoActionQuality": 0,
+            "geoClosureQuality": 0,
+            "geoDirectionConsistency": 0,
+            "geoVectorLift": 0.004904044886625547,
+            "geoDirectScore": 0,
+            "geoStructuralScore": 0,
+            "geoThematicScore": 0,
+            "geoClosureScore": 0.8291564776560412,
+            "geoFusedShadowScore": 0
+          },
+          {
+            "id": 4,
+            "score": 0.81,
+            "originalKnnScore": 0.81,
+            "geoScore": 0,
+            "normalizedGeo": 0,
+            "geoBonus": 0,
+            "geoBaseBonus": 0,
+            "geoAuxBonus": 0,
+            "geoEffect": "neutral",
+            "geoEvidenceClass": "neutral",
+            "geoRewardEligible": false,
+            "geoConfidence": 0,
+            "geoExactHits": 0,
+            "geoDirectExactHits": 0,
+            "geoEmergentExactHits": 0,
+            "geoDirectSemanticHits": 0,
+            "geoDirectSemanticStrength": 0,
+            "geoStrongHits": 0,
+            "geoHitCount": 0,
+            "geoWeightedCoverage": 0,
+            "geoMeanPotential": 0,
+            "geoMaxPotential": 0,
+            "geoContinuity": 0,
+            "geoIsolatedRatio": 1,
+            "geoRawIsolatedRatio": 1,
+            "geoSparseAssociationConfidence": 0,
+            "geoSparseAssociationPairs": 0,
+            "geoActionQuality": 0,
+            "geoClosureQuality": 0,
+            "geoDirectionConsistency": 0,
+            "geoVectorLift": -0.005656779607711493,
+            "geoDirectScore": 0,
+            "geoStructuralScore": 0,
+            "geoThematicScore": 0,
+            "geoClosureScore": 0.8826125331063506,
+            "geoFusedShadowScore": 0
+          },
+          {
+            "id": 5,
+            "score": 0.78,
+            "originalKnnScore": 0.78,
+            "geoScore": 0,
+            "normalizedGeo": 0,
+            "geoBonus": 0,
+            "geoBaseBonus": 0,
+            "geoAuxBonus": 0,
+            "geoEffect": "neutral",
+            "geoEvidenceClass": "neutral",
+            "geoRewardEligible": false,
+            "geoConfidence": 0,
+            "geoExactHits": 0,
+            "geoDirectExactHits": 0,
+            "geoEmergentExactHits": 0,
+            "geoDirectSemanticHits": 0,
+            "geoDirectSemanticStrength": 0,
+            "geoStrongHits": 0,
+            "geoHitCount": 0,
+            "geoWeightedCoverage": 0,
+            "geoMeanPotential": 0,
+            "geoMaxPotential": 0,
+            "geoContinuity": 0,
+            "geoIsolatedRatio": 1,
+            "geoRawIsolatedRatio": 1,
+            "geoSparseAssociationConfidence": 0,
+            "geoSparseAssociationPairs": 0,
+            "geoActionQuality": 0,
+            "geoClosureQuality": 0,
+            "geoDirectionConsistency": 0,
+            "geoVectorLift": 0.005681158033740974,
+            "geoDirectScore": 0,
+            "geoStructuralScore": 0,
+            "geoThematicScore": 0,
+            "geoClosureScore": 0.38828503482784715,
+            "geoFusedShadowScore": 0
+          },
+          {
+            "id": 6,
+            "score": 0.75,
+            "originalKnnScore": 0.75,
+            "geoScore": 0,
+            "normalizedGeo": 0,
+            "geoBonus": 0,
+            "geoBaseBonus": 0,
+            "geoAuxBonus": 0,
+            "geoEffect": "neutral",
+            "geoEvidenceClass": "neutral",
+            "geoRewardEligible": false,
+            "geoConfidence": 0,
+            "geoExactHits": 0,
+            "geoDirectExactHits": 0,
+            "geoEmergentExactHits": 0,
+            "geoDirectSemanticHits": 0,
+            "geoDirectSemanticStrength": 0,
+            "geoStrongHits": 0,
+            "geoHitCount": 0,
+            "geoWeightedCoverage": 0,
+            "geoMeanPotential": 0,
+            "geoMaxPotential": 0,
+            "geoContinuity": 0,
+            "geoIsolatedRatio": 1,
+            "geoRawIsolatedRatio": 1,
+            "geoSparseAssociationConfidence": 0,
+            "geoSparseAssociationPairs": 0,
+            "geoActionQuality": 0,
+            "geoClosureQuality": 0,
+            "geoDirectionConsistency": 0,
+            "geoVectorLift": -0.0006202706631399657,
+            "geoDirectScore": 0,
+            "geoStructuralScore": 0,
+            "geoThematicScore": 0,
+            "geoClosureScore": 0.8669701566877899,
+            "geoFusedShadowScore": 0
+          }
+        ],
+        "diagnostics": {
+          "offeredCandidates": 6,
+          "projectedCandidates": 6,
+          "fieldNodes": 0,
+          "contributingCandidates": 0,
+          "returnedCandidates": 6,
+          "fieldTrusted": false,
+          "fieldEntropy": 0,
+          "fallbackUsed": true,
+          "fallbackReason": "query-energy-field-low-trust"
+        }
+      }
+    },
+    {
+      "name": "zero-dimension-rejected",
+      "input": {
+        "dimension": 0,
+        "nodes": [
+          {
+            "energy": 0.4355072841140201,
+            "hop": 0,
+            "id": 2,
+            "normalizedEnergy": 1,
+            "originType": null,
+            "seedId": 2,
+            "sourceType": "seed",
+            "strongestParent": {
+              "flow": 0.03086723561974163,
+              "hop": 1,
+              "parentId": 8,
+              "wormhole": false
+            }
+          },
+          {
+            "energy": 0.06809700611715253,
+            "hop": 0,
+            "id": 3,
+            "normalizedEnergy": 0.1563624963373151,
+            "originType": null,
+            "seedId": 3,
+            "sourceType": "seed",
+            "strongestParent": {
+              "flow": 0.08116397441894373,
+              "hop": 1,
+              "parentId": 2,
+              "wormhole": false
+            }
+          },
+          {
+            "energy": 0.06578764384730199,
+            "hop": 0,
+            "id": 8,
+            "normalizedEnergy": 0.1510598014018019,
+            "originType": null,
+            "seedId": 8,
+            "sourceType": "seed",
+            "strongestParent": {
+              "flow": 0.036187806302905155,
+              "hop": 1,
+              "parentId": 2,
+              "wormhole": false
+            }
+          },
+          {
+            "energy": 0.017688125095499687,
+            "hop": 1,
+            "id": 1,
+            "normalizedEnergy": 0.04061499254021377,
+            "originType": "seed",
+            "seedId": 2,
+            "sourceType": "emergent",
+            "strongestParent": {
+              "flow": 0.06796956870030679,
+              "hop": 1,
+              "parentId": 2,
+              "wormhole": false
+            }
+          },
+          {
+            "energy": 0.012687842159226139,
+            "hop": 1,
+            "id": 4,
+            "normalizedEnergy": 0.029133478639829905,
+            "originType": "seed",
+            "seedId": 2,
+            "sourceType": "emergent",
+            "strongestParent": {
+              "flow": 0.04875514813718631,
+              "hop": 1,
+              "parentId": 2,
+              "wormhole": false
+            }
+          }
+        ],
+        "source_field": [
+          [
+            2,
+            0.7261263617908664
+          ],
+          [
+            3,
+            0.11353893058595231
+          ],
+          [
+            8,
+            0.10968850400474123
+          ],
+          [
+            1,
+            0.029491616767388606
+          ],
+          [
+            4,
+            0.021154586851051607
+          ]
+        ],
+        "tag_vectors": [
+          [
+            1,
+            [
+              1,
+              0,
+              0
+            ]
+          ],
+          [
+            2,
+            [
+              0.800000011920929,
+              0.6000000238418579,
+              0
+            ]
+          ],
+          [
+            3,
+            [
+              0.20280805230140686,
+              0.9126362204551697,
+              0.3549140989780426
+            ]
+          ],
+          [
+            4,
+            [
+              0,
+              0.30113136768341064,
+              0.9535826444625854
+            ]
+          ],
+          [
+            5,
+            [
+              -0.5000377297401428,
+              0.5000377297401428,
+              0.7070533633232117
+            ]
+          ],
+          [
+            6,
+            [
+              0,
+              1,
+              0
+            ]
+          ],
+          [
+            7,
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          [
+            8,
+            [
+              0.9999499917030334,
+              0.009999499656260014,
+              0
+            ]
+          ],
+          [
+            9,
+            [
+              -1,
+              0,
+              0
+            ]
+          ],
+          [
+            10,
+            [
+              0.10045813024044037,
+              0.20091626048088074,
+              0.9744438529014587
+            ]
+          ]
+        ],
+        "inbound": [
+          [
+            1,
+            1.009051341433607
+          ],
+          [
+            10,
+            0.6906895312263831
+          ],
+          [
+            8,
+            0.14686829453710723
+          ],
+          [
+            4,
+            0.6279307791887215
+          ],
+          [
+            2,
+            1.8076090508843574
+          ],
+          [
+            9,
+            0.684191035725854
+          ],
+          [
+            7,
+            0.526518833242631
+          ],
+          [
+            3,
+            1.9779136283406487
+          ],
+          [
+            6,
+            0.5541080723729264
+          ],
+          [
+            5,
+            1.4751194330477626
+          ]
+        ],
+        "anchor_gain": [
+          [
+            4,
+            0.7500000000000003
+          ],
+          [
+            7,
+            0.7500000000000002
+          ],
+          [
+            1,
+            0.7500000000000002
+          ],
+          [
+            2,
+            0.7500000000000001
+          ],
+          [
+            3,
+            0.7500000000000002
+          ],
+          [
+            6,
+            0.7500000000000001
+          ]
+        ],
+        "edges": [
+          [
+            1,
+            2,
+            0.3496170296754039
+          ],
+          [
+            1,
+            3,
+            0.25057983580959625
+          ],
+          [
+            1,
+            4,
+            0.12245662122553495
+          ],
+          [
+            1,
+            6,
+            0.14784524204831226
+          ],
+          [
+            1,
+            7,
+            0.0795012712411526
+          ],
+          [
+            2,
+            1,
+            0.27585464981985935
+          ],
+          [
+            2,
+            3,
+            0.32940417556636176
+          ],
+          [
+            2,
+            4,
+            0.19787288007667161
+          ],
+          [
+            2,
+            8,
+            0.14686829453710723
+          ],
+          [
+            3,
+            1,
+            0.18104236825863843
+          ],
+          [
+            3,
+            2,
+            0.24314224549347677
+          ],
+          [
+            3,
+            4,
+            0.307601277886515
+          ],
+          [
+            3,
+            6,
+            0.07295671627054763
+          ],
+          [
+            3,
+            7,
+            0.14525739209082209
+          ],
+          [
+            4,
+            1,
+            0.17947776247451067
+          ],
+          [
+            4,
+            2,
+            0.2648497757154769
+          ],
+          [
+            4,
+            3,
+            0.5056724618100124
+          ],
+          [
+            5,
+            9,
+            0.5314003644826233
+          ],
+          [
+            5,
+            10,
+            0.41859963551737667
+          ],
+          [
+            6,
+            1,
+            0.12109842860074195
+          ],
+          [
+            6,
+            3,
+            0.5271414014886016
+          ],
+          [
+            6,
+            7,
+            0.3017601699106564
+          ],
+          [
+            7,
+            1,
+            0.2515781322798567
+          ],
+          [
+            7,
+            3,
+            0.36511575366607674
+          ],
+          [
+            7,
+            6,
+            0.3333061140540665
+          ],
+          [
+            8,
+            2,
+            0.9499999999999998
+          ],
+          [
+            9,
+            5,
+            0.6779101042909935
+          ],
+          [
+            9,
+            10,
+            0.27208989570900644
+          ],
+          [
+            10,
+            5,
+            0.7972093287567691
+          ],
+          [
+            10,
+            9,
+            0.15279067124323076
+          ]
+        ],
+        "candidates": [
+          {
+            "curve": {
+              "id": 1,
+              "chunk_vector": [
+                0.6671152710914612,
+                0.6041477918624878,
+                0.43584713339805603
+              ],
+              "tags": [
+                {
+                  "id": 1,
+                  "vector": [
+                    1,
+                    0,
+                    0
+                  ],
+                  "position": 1
+                },
+                {
+                  "id": 2,
+                  "vector": [
+                    0.800000011920929,
+                    0.6000000238418579,
+                    0
+                  ],
+                  "position": 2
+                },
+                {
+                  "id": 3,
+                  "vector": [
+                    0.20280805230140686,
+                    0.9126362204551697,
+                    0.3549140989780426
+                  ],
+                  "position": 3
+                },
+                {
+                  "id": 4,
+                  "vector": [
+                    0,
+                    0.30113136768341064,
+                    0.9535826444625854
+                  ],
+                  "position": 4
+                }
+              ]
+            },
+            "score": 0.9
+          },
+          {
+            "curve": {
+              "id": 2,
+              "chunk_vector": [
+                0.6671152710914612,
+                0.6041477918624878,
+                0.43584713339805603
+              ],
+              "tags": [
+                {
+                  "id": 4,
+                  "vector": [
+                    0,
+                    0.30113136768341064,
+                    0.9535826444625854
+                  ],
+                  "position": 1
+                },
+                {
+                  "id": 3,
+                  "vector": [
+                    0.20280805230140686,
+                    0.9126362204551697,
+                    0.3549140989780426
+                  ],
+                  "position": 2
+                },
+                {
+                  "id": 2,
+                  "vector": [
+                    0.800000011920929,
+                    0.6000000238418579,
+                    0
+                  ],
+                  "position": 3
+                },
+                {
+                  "id": 1,
+                  "vector": [
+                    1,
+                    0,
+                    0
+                  ],
+                  "position": 4
+                }
+              ]
+            },
+            "score": 0.87
+          },
+          {
+            "curve": {
+              "id": 3,
+              "chunk_vector": [
+                0.456556111574173,
+                0.7259892821311951,
+                0.5142918229103088
+              ],
+              "tags": [
+                {
+                  "id": 1,
+                  "vector": [
+                    1,
+                    0,
+                    0
+                  ],
+                  "position": 1
+                },
+                {
+                  "id": 6,
+                  "vector": [
+                    0,
+                    1,
+                    0
+                  ],
+                  "position": 2
+                },
+                {
+                  "id": 3,
+                  "vector": [
+                    0.20280805230140686,
+                    0.9126362204551697,
+                    0.3549140989780426
+                  ],
+                  "position": 3
+                },
+                {
+                  "id": 7,
+                  "vector": [
+                    0,
+                    0,
+                    1
+                  ],
+                  "position": 4
+                }
+              ]
+            },
+            "score": 0.8400000000000001
+          },
+          {
+            "curve": {
+              "id": 4,
+              "chunk_vector": [
+                0.9470903873443604,
+                0.32096704840660095,
+                0
+              ],
+              "tags": [
+                {
+                  "id": 8,
+                  "vector": [
+                    0.9999499917030334,
+                    0.009999499656260014,
+                    0
+                  ],
+                  "position": 1
+                },
+                {
+                  "id": 2,
+                  "vector": [
+                    0.800000011920929,
+                    0.6000000238418579,
+                    0
+                  ],
+                  "position": 2
+                }
+              ]
+            },
+            "score": 0.81
+          },
+          {
+            "curve": {
+              "id": 5,
+              "chunk_vector": [
+                -0.6092277765274048,
+                0.30512064695358276,
+                0.7319446206092834
+              ],
+              "tags": [
+                {
+                  "id": 5,
+                  "vector": [
+                    -0.5000377297401428,
+                    0.5000377297401428,
+                    0.7070533633232117
+                  ],
+                  "position": 1
+                },
+                {
+                  "id": 9,
+                  "vector": [
+                    -1,
+                    0,
+                    0
+                  ],
+                  "position": 2
+                },
+                {
+                  "id": 10,
+                  "vector": [
+                    0.10045813024044037,
+                    0.20091626048088074,
+                    0.9744438529014587
+                  ],
+                  "position": 3
+                }
+              ]
+            },
+            "score": 0.78
+          },
+          {
+            "curve": {
+              "id": 6,
+              "chunk_vector": [
+                0.6671152710914612,
+                0.6041477918624878,
+                0.43584713339805603
+              ],
+              "tags": [
+                {
+                  "id": 1,
+                  "vector": [
+                    1,
+                    0,
+                    0
+                  ],
+                  "position": 1
+                },
+                {
+                  "id": 2,
+                  "vector": [
+                    0.800000011920929,
+                    0.6000000238418579,
+                    0
+                  ],
+                  "position": 2
+                },
+                {
+                  "id": 3,
+                  "vector": [
+                    0.20280805230140686,
+                    0.9126362204551697,
+                    0.3549140989780426
+                  ],
+                  "position": 3
+                },
+                {
+                  "id": 4,
+                  "vector": [
+                    0,
+                    0.30113136768341064,
+                    0.9535826444625854
+                  ],
+                  "position": 4
+                }
+              ]
+            },
+            "score": 0.75
+          }
+        ],
+        "original_vector": [
+          0.8664485812187195,
+          0.4873773157596588,
+          0.10830607265233994
+        ],
+        "enhanced_vector": [
+          0.8346753120422363,
+          0.5458837151527405,
+          0.072994165122509
+        ],
+        "query_geometry_state": {
+          "epa": {
+            "logicDepth": 0.8580593794486938,
+            "entropy": 0.1419406205513062,
+            "resonance": 0,
+            "dominantAxes": [
+              {
+                "index": 0,
+                "label": "Tag1",
+                "energy": 0.9698934160751049,
+                "projection": 0.7629822564200919,
+                "score": 0.9698934160751049
+              }
+            ],
+            "bridges": [],
+            "basisCount": 3,
+            "cacheAvailable": true
+          },
+          "pyramid": {
+            "depth": 1,
+            "coverage": 1,
+            "novelty": 0.17272880507642094,
+            "coherence": 0.7174864461079213,
+            "activation": 0.6314936923533274,
+            "expansionSignal": 0.17272880507642094
+          }
+        },
+        "config": {
+          "field": {},
+          "curve": {},
+          "sparse": {},
+          "reward": {},
+          "trust": {},
+          "auxiliary": {}
+        },
+        "top_k": 0
+      },
+      "error": "DTSC dimension must be positive"
+    }
+  ]
+}

@@ -1,0 +1,167 @@
+{
+  "source": {
+    "commit": "e03b891d42055cdf3cab5dc961cc71dd5facd65a",
+    "owner": "rivermemo_topology_v3 select_superset",
+    "probe": "neutral channel scores through original frozen private candidate selector"
+  },
+  "tolerance": {
+    "absolute": 1e-12,
+    "relative": 1e-12
+  },
+  "cases": [
+    {
+      "name": "seven-channel-union",
+      "input": {
+        "signals": [
+          {
+            "id": 1,
+            "query": 0.9,
+            "denoised": 0.7,
+            "local": 0.8,
+            "transfer": 0,
+            "bm25": 0,
+            "time": 0,
+            "anchor": 0
+          },
+          {
+            "id": 2,
+            "query": 0.8,
+            "denoised": 0,
+            "local": 0,
+            "transfer": 0.9,
+            "bm25": 2,
+            "time": 0,
+            "anchor": 0
+          },
+          {
+            "id": 3,
+            "query": 0.7,
+            "denoised": 0,
+            "local": 0.8,
+            "transfer": 0,
+            "bm25": 0,
+            "time": 0,
+            "anchor": 1
+          },
+          {
+            "id": 4,
+            "query": 0,
+            "denoised": 0,
+            "local": 0,
+            "transfer": 0,
+            "bm25": 0,
+            "time": 0.8,
+            "anchor": 0
+          },
+          {
+            "id": 5,
+            "query": -0.1,
+            "denoised": -0.3,
+            "local": 0,
+            "transfer": 0,
+            "bm25": 0,
+            "time": 0,
+            "anchor": 0
+          }
+        ],
+        "config": {}
+      },
+      "expected": [
+        {
+          "id": 1,
+          "sources": [
+            "query_knn",
+            "denoised_field_knn",
+            "local_field_knn"
+          ],
+          "unionRank": 1,
+          "unionScore": 1
+        },
+        {
+          "id": 2,
+          "sources": [
+            "query_knn",
+            "transfer_field_knn",
+            "bm25"
+          ],
+          "unionRank": 2,
+          "unionScore": 1
+        },
+        {
+          "id": 3,
+          "sources": [
+            "query_knn",
+            "local_field_knn",
+            "anchor_direct"
+          ],
+          "unionRank": 3,
+          "unionScore": 0.966977453770156
+        },
+        {
+          "id": 4,
+          "sources": [
+            "time"
+          ],
+          "unionRank": 4,
+          "unionScore": 0.8319672131147541
+        }
+      ]
+    },
+    {
+      "name": "empty",
+      "input": {
+        "signals": [],
+        "config": {}
+      },
+      "expected": []
+    },
+    {
+      "name": "multisource-outranks-single",
+      "input": {
+        "signals": [
+          {
+            "id": 1,
+            "query": 0.9,
+            "denoised": 0,
+            "local": 0,
+            "transfer": 0,
+            "bm25": 0,
+            "time": 0,
+            "anchor": 0
+          },
+          {
+            "id": 2,
+            "query": 0.1,
+            "denoised": 0,
+            "local": 0.2,
+            "transfer": 0.3,
+            "bm25": 0,
+            "time": 0,
+            "anchor": 0
+          }
+        ],
+        "config": {}
+      },
+      "expected": [
+        {
+          "id": 2,
+          "sources": [
+            "query_knn",
+            "local_field_knn",
+            "transfer_field_knn"
+          ],
+          "unionRank": 1,
+          "unionScore": 1
+        },
+        {
+          "id": 1,
+          "sources": [
+            "query_knn"
+          ],
+          "unionRank": 2,
+          "unionScore": 0.8319672131147541
+        }
+      ]
+    }
+  ]
+}

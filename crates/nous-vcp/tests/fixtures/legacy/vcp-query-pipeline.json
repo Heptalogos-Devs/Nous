@@ -1,0 +1,370 @@
+{
+  "source": {
+    "commit": "e03b891d42055cdf3cab5dc961cc71dd5facd65a",
+    "owner": "memo_pipeline run_pipeline",
+    "probe": "actual full native pipeline output; original gating bridge; ANN return ordering frozen input, no ANN recall parity claimed"
+  },
+  "input": {
+    "epa": {
+      "query": [0.8664485812187195,0.4873773157596588,0.10830607265233994],
+      "mean": [0.16080430150032043,0.35692110657691956,0.4002985954284668],
+      "basis": [
+        [0.9294319152832031,-0.00460701622068882,-0.36896488070487976],
+        [0.2850266396999359,-0.6260706782341003,0.7258066534996033],
+        [0.23434194922447205,0.7797527313232422,0.5805768966674805]
+      ]
+    },
+    "epa_labels": ["Tag1","Tag6","Tag10"],
+    "core_tags": ["Tag1"],
+    "ghosts": [],
+    "tag_vectors": [
+      {"id":1,"name":"Tag1","vector":[1,0,0]},
+      {"id":2,"name":"Tag2","vector":[0.800000011920929,0.6000000238418579,0]},
+      {"id":3,"name":"Tag3","vector":[0.20280805230140686,0.9126362204551697,0.3549140989780426]},
+      {"id":4,"name":"Tag4","vector":[0,0.30113136768341064,0.9535826444625854]},
+      {"id":5,"name":"Tag5","vector":[-0.5000377297401428,0.5000377297401428,0.7070533633232117]},
+      {"id":6,"name":"Tag6","vector":[0,1,0]},
+      {"id":7,"name":"Tag7","vector":[0,0,1]},
+      {"id":8,"name":"Tag8","vector":[0.9999499917030334,0.009999499656260014,0]},
+      {"id":9,"name":"Tag9","vector":[-1,0,0]},
+      {"id":10,"name":"Tag10","vector":[0.10045813024044037,0.20091626048088074,0.9744438529014587]}
+    ],
+    "graph": {
+      "node_ids": [1,2,3,4,5,6,7,8,9,10],
+      "edges": [
+        [1,2,0.3496170296754039],
+        [1,3,0.25057983580959625],
+        [1,4,0.12245662122553495],
+        [1,6,0.14784524204831226],
+        [1,7,0.0795012712411526],
+        [2,1,0.27585464981985935],
+        [2,3,0.32940417556636176],
+        [2,4,0.19787288007667161],
+        [2,8,0.14686829453710723],
+        [3,1,0.18104236825863843],
+        [3,2,0.24314224549347677],
+        [3,4,0.307601277886515],
+        [3,6,0.07295671627054763],
+        [3,7,0.14525739209082209],
+        [4,1,0.17947776247451067],
+        [4,2,0.2648497757154769],
+        [4,3,0.5056724618100124],
+        [5,9,0.5314003644826233],
+        [5,10,0.41859963551737667],
+        [6,1,0.12109842860074195],
+        [6,3,0.5271414014886016],
+        [6,7,0.3017601699106564],
+        [7,1,0.2515781322798567],
+        [7,3,0.36511575366607674],
+        [7,6,0.3333061140540665],
+        [8,2,0.9499999999999998],
+        [9,5,0.6779101042909935],
+        [9,10,0.27208989570900644],
+        [10,5,0.7972093287567691],
+        [10,9,0.15279067124323076]
+      ],
+      "anchor_gain": [[4,0.7500000000000003],[7,0.7500000000000002],[1,0.7500000000000002],[2,0.7500000000000001],[3,0.7500000000000002],[6,0.7500000000000001]],
+      "wormholes": []
+    },
+    "transport": {
+      "node_ids": [1,2,3,4,5,6,7,8,9,10],
+      "row_offsets": [0,5,9,14,17,19,22,25,26,28,30],
+      "targets": [1,2,3,5,6,0,2,3,7,0,1,3,5,6,0,1,2,8,9,0,2,6,0,2,5,1,4,9,4,8],
+      "weights": [
+        0.3496170296754039,
+        0.25057983580959625,
+        0.12245662122553495,
+        0.14784524204831226,
+        0.0795012712411526,
+        0.27585464981985935,
+        0.32940417556636176,
+        0.19787288007667161,
+        0.14686829453710723,
+        0.18104236825863843,
+        0.24314224549347677,
+        0.307601277886515,
+        0.07295671627054763,
+        0.14525739209082209,
+        0.17947776247451067,
+        0.2648497757154769,
+        0.5056724618100124,
+        0.5314003644826233,
+        0.41859963551737667,
+        0.12109842860074195,
+        0.5271414014886016,
+        0.3017601699106564,
+        0.2515781322798567,
+        0.36511575366607674,
+        0.3333061140540665,
+        0.9499999999999998,
+        0.6779101042909935,
+        0.27208989570900644,
+        0.7972093287567691,
+        0.15279067124323076
+      ]
+    },
+    "pyramid_config": {"max_levels":3,"top_k":10,"min_energy_ratio":0.1},
+    "gating_config": {},
+    "sense_config": {"maxTransitionRecords":16000},
+    "fusion_config": {},
+    "field_config": {
+      "local_alpha": 0.15,
+      "transfer_alpha": 0.55,
+      "max_iterations": 80,
+      "local_tolerance": 1e-09,
+      "transfer_tolerance": 1e-09,
+      "local_mass_ratio": 0.8,
+      "transfer_mass_ratio": 0.9
+    }
+  },
+  "search_results": [
+    [
+      {"id":2,"name":"Tag2","vector":[0.800000011920929,0.6000000238418579,0],"similarity":0.9719783571183235},
+      {"id":8,"name":"Tag8","vector":[0.9999499917030334,0.009999499656260014,0],"similarity":0.7952650461455881},
+      {"id":1,"name":"Tag1","vector":[1,0,0],"similarity":0.7892019261227696},
+      {"id":3,"name":"Tag3","vector":[0.20280805230140686,0.9126362204551697,0.3549140989780426],"similarity":0.5945022660566963},
+      {"id":6,"name":"Tag6","vector":[0,1,0],"similarity":0.4937673163619497},
+      {"id":10,"name":"Tag10","vector":[0.10045813024044037,0.20091626048088074,0.9744438529014587],"similarity":0.4133946520524409},
+      {"id":4,"name":"Tag4","vector":[0,0.30113136768341064,0.9535826444625854],"similarity":0.40001388598008125},
+      {"id":7,"name":"Tag7","vector":[0,0,1],"similarity":0.35927439370415976},
+      {"id":5,"name":"Tag5","vector":[-0.5000377297401428,0.5000377297401428,0.7070533633232117],"similarity":0.30998682392812493},
+      {"id":9,"name":"Tag9","vector":[-1,0,0],"similarity":0.21128707015844375}
+    ]
+  ],
+  "expected": {
+    "epa": {
+      "logicDepth": 0.8580593794486938,
+      "entropy": 0.1419406205513062,
+      "resonance": 0,
+      "dominantAxes": [{"index":0,"label":"Tag1","energy":0.9698934160751049,"projection":0.7629822564200919,"score":0.9698934160751049}],
+      "bridges": [],
+      "basisCount": 3,
+      "cacheAvailable": true
+    },
+    "pyramid": {
+      "levels": [
+        {
+          "level": 0,
+          "tags": [
+            {"id":2,"name":"Tag2","similarity":0.9719783571183235,"contribution":0.9855852528814399,"handshakeMagnitude":0.1697924972160591},
+            {"id":8,"name":"Tag8","similarity":0.7952650461455881,"contribution":0.12996730787259636,"handshakeMagnitude":0.5073878180884359},
+            {"id":1,"name":"Tag1","similarity":0.7892019261227696,"contribution":0,"handshakeMagnitude":0.5168199248761188},
+            {"id":3,"name":"Tag3","similarity":0.5945022660566963,"contribution":0.10830607265234064,"handshakeMagnitude":0.8258809617989336},
+            {"id":6,"name":"Tag6","similarity":0.4937673163619497,"contribution":0,"handshakeMagnitude":1.0125440218685666},
+            {"id":10,"name":"Tag10","similarity":0.4133946520524409,"contribution":0,"handshakeMagnitude":1.191216175783091},
+            {"id":4,"name":"Tag4","similarity":0.40001388598008125,"contribution":0,"handshakeMagnitude":1.2247094421571352},
+            {"id":7,"name":"Tag7","similarity":0.35927439370415976,"contribution":0,"handshakeMagnitude":1.33543546895518},
+            {"id":5,"name":"Tag5","similarity":0.30998682392812493,"contribution":0,"handshakeMagnitude":1.491959607017535},
+            {"id":9,"name":"Tag9","similarity":0.21128707015844375,"contribution":0,"handshakeMagnitude":1.9320707497713037}
+          ],
+          "projectionMagnitude": 0.999999998593198,
+          "residualMagnitude": 0,
+          "residualEnergyRatio": 0,
+          "energyExplained": 1,
+          "handshakeFeatures": {
+            "directionCoherence": 0.5757626835880698,
+            "patternStrength": 0.7174864461079213,
+            "noveltySignal": 0.5757626835880698,
+            "noiseSignal": 0.11985279195317267
+          }
+        }
+      ],
+      "totalExplainedEnergy": 1,
+      "features": {
+        "depth": 1,
+        "coverage": 1,
+        "novelty": 0.17272880507642094,
+        "coherence": 0.7174864461079213,
+        "activation": 0.6314936923533274,
+        "expansionSignal": 0.17272880507642094
+      }
+    },
+    "gating": {
+      "dynamicCoreBoost": 1.2858059379448694,
+      "effectiveBoost": 0.5439303589625638,
+      "tags": [
+        {"id":2,"isCore":false,"name":"Tag2","weight":0.98558525288144},
+        {"id":8,"isCore":false,"name":"Tag8","weight":0.12996730787259636},
+        {"id":3,"isCore":false,"name":"Tag3","weight":0.10830607265234064}
+      ]
+    },
+    "sense": {
+      "algorithmVersion": "tagmemo.spike-v9.1-rust-shared",
+      "artifactSig": "8edc11b7f78fb35ad0f38fa5703b878766d15e0ce6dae609",
+      "diagnostics": {
+        "activeEdges": 5,
+        "artifactEdges": 30,
+        "artifactNodes": 10,
+        "backend": "rust-shared-memo-runtime",
+        "elapsedMs": 0.07765899999999999,
+        "hopInFlightMass": [0.2649437331790836,0],
+        "maximumEdgeFlow": 0.08116397441894373,
+        "maximumNodeEnergy": 0.4355072841140201,
+        "reachedNodes": 5,
+        "returnFlowSuppressedMass": 0,
+        "seedNodes": 3,
+        "stateTruncations": 0
+      },
+      "edges": [
+        {
+          "conductance": 0.32940417556636176,
+          "flow": 0.08116397441894373,
+          "immediateReturn": false,
+          "maxFlow": 0.08116397441894373,
+          "minHop": 1,
+          "normalizedFlow": 1,
+          "sourceId": 2,
+          "targetId": 3,
+          "wormhole": false
+        },
+        {
+          "conductance": 0.27585464981985935,
+          "flow": 0.06796956870030679,
+          "immediateReturn": false,
+          "maxFlow": 0.06796956870030679,
+          "minHop": 1,
+          "normalizedFlow": 0.8374351944554683,
+          "sourceId": 2,
+          "targetId": 1,
+          "wormhole": false
+        },
+        {
+          "conductance": 0.19787288007667161,
+          "flow": 0.04875514813718631,
+          "immediateReturn": false,
+          "maxFlow": 0.04875514813718631,
+          "minHop": 1,
+          "normalizedFlow": 0.600699367992098,
+          "sourceId": 2,
+          "targetId": 4,
+          "wormhole": false
+        },
+        {
+          "conductance": 0.14686829453710723,
+          "flow": 0.036187806302905155,
+          "immediateReturn": false,
+          "maxFlow": 0.036187806302905155,
+          "minHop": 1,
+          "normalizedFlow": 0.44586045178264333,
+          "sourceId": 2,
+          "targetId": 8,
+          "wormhole": false
+        },
+        {
+          "conductance": 0.9499999999999998,
+          "flow": 0.03086723561974163,
+          "immediateReturn": false,
+          "maxFlow": 0.03086723561974163,
+          "minHop": 1,
+          "normalizedFlow": 0.3803070985707816,
+          "sourceId": 8,
+          "targetId": 2,
+          "wormhole": false
+        }
+      ],
+      "nodes": [
+        {
+          "energy": 0.4355072841140201,
+          "hop": 0,
+          "id": 2,
+          "normalizedEnergy": 1,
+          "originType": null,
+          "seedId": 2,
+          "sourceType": "seed",
+          "strongestParent": {"flow":0.03086723561974163,"hop":1,"parentId":8,"wormhole":false}
+        },
+        {
+          "energy": 0.06809700611715253,
+          "hop": 0,
+          "id": 3,
+          "normalizedEnergy": 0.1563624963373151,
+          "originType": null,
+          "seedId": 3,
+          "sourceType": "seed",
+          "strongestParent": {"flow":0.08116397441894373,"hop":1,"parentId":2,"wormhole":false}
+        },
+        {
+          "energy": 0.06578764384730199,
+          "hop": 0,
+          "id": 8,
+          "normalizedEnergy": 0.1510598014018019,
+          "originType": null,
+          "seedId": 8,
+          "sourceType": "seed",
+          "strongestParent": {"flow":0.036187806302905155,"hop":1,"parentId":2,"wormhole":false}
+        },
+        {
+          "energy": 0.017688125095499687,
+          "hop": 1,
+          "id": 1,
+          "normalizedEnergy": 0.04061499254021377,
+          "originType": "seed",
+          "seedId": 2,
+          "sourceType": "emergent",
+          "strongestParent": {"flow":0.06796956870030679,"hop":1,"parentId":2,"wormhole":false}
+        },
+        {
+          "energy": 0.012687842159226139,
+          "hop": 1,
+          "id": 4,
+          "normalizedEnergy": 0.029133478639829905,
+          "originType": "seed",
+          "seedId": 2,
+          "sourceType": "emergent",
+          "strongestParent": {"flow":0.04875514813718631,"hop":1,"parentId":2,"wormhole":false}
+        }
+      ],
+      "queryId": "fixture-query",
+      "schema": "vexus-unified-memo-observation-v1",
+      "sourceField": [[2,0.7261263617908664],[3,0.11353893058595231],[8,0.10968850400474123],[1,0.029491616767388606],[4,0.021154586851051607]],
+      "transitions": [
+        {"flow":0.08116397441894373,"hop":1,"immediateReturn":false,"previousId":null,"sourceId":2,"targetId":3,"wormhole":false},
+        {"flow":0.06796956870030679,"hop":1,"immediateReturn":false,"previousId":null,"sourceId":2,"targetId":1,"wormhole":false},
+        {"flow":0.04875514813718631,"hop":1,"immediateReturn":false,"previousId":null,"sourceId":2,"targetId":4,"wormhole":false},
+        {"flow":0.036187806302905155,"hop":1,"immediateReturn":false,"previousId":null,"sourceId":2,"targetId":8,"wormhole":false},
+        {"flow":0.03086723561974163,"hop":1,"immediateReturn":false,"previousId":null,"sourceId":8,"targetId":2,"wormhole":false}
+      ],
+      "transitionsTruncated": false
+    },
+    "enhanced_vector": [0.8346753120422363,0.5458837151527405,0.072994165122509],
+    "fusion_diagnostics": {
+      "requestedCount": 5,
+      "foundCount": 5,
+      "deduplicatedCount": 4,
+      "totalWeight": 1.2400841005847032,
+      "selectedTagIds": [2,8,3,4],
+      "emergentCount": 2,
+      "supplementedCoreCount": 0,
+      "ghostCount": 0
+    },
+    "fields": {
+      "local_field": [
+        [1,0.056666965121949575],
+        [2,0.6421327858396005],
+        [3,0.1341587709911219],
+        [4,0.04427149655844141],
+        [6,0.0029113773551169017],
+        [7,0.00373067800576115],
+        [8,0.10738157047307512]
+      ],
+      "transfer_field": [
+        [1,0.11029505228331932],
+        [2,0.4298224461747605],
+        [3,0.1808557642881075],
+        [4,0.09432298008446081],
+        [6,0.020378533875849526],
+        [7,0.02265376488627971],
+        [8,0.08407983610640016]
+      ],
+      "local_domain": [2,3,8],
+      "transfer_domain": [2,3,1,4,8],
+      "iterations": 28,
+      "local_converged": true,
+      "transfer_converged": true,
+      "local_residual": 1.8171683298720542e-10,
+      "transfer_residual": 6.724540681235514e-10
+    },
+    "local_vector": [0.7975021004676819,0.5939590334892273,0.10584452003240585],
+    "transfer_vector": [0.7515957355499268,0.6178088188171387,0.23111920058727264]
+  }
+}

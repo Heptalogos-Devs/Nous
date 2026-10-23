@@ -1,0 +1,265 @@
+{
+  "baseline_commit": "d7ae4836d6bd5a5ad3fc78cc7ac9990305ddfc06",
+  "expected": {
+    "conductance": [
+      [
+        [
+          1,
+          0.46274035393829116
+        ],
+        [
+          2,
+          0.4372596460617089
+        ]
+      ],
+      [
+        [
+          0,
+          0.5043191862242351
+        ],
+        [
+          3,
+          0.39568081377576486
+        ]
+      ],
+      [
+        [
+          3,
+          0.9
+        ]
+      ],
+      [
+        [
+          1,
+          0.9
+        ]
+      ]
+    ],
+    "deduplicated_root_support": 1.3,
+    "empty_seed": {
+      "candidate_order": [],
+      "complete": true,
+      "discarded_state_mass": 0.0,
+      "edges": [],
+      "generated_state_mass": -0.0,
+      "max_hops": 4,
+      "node_potential": {},
+      "provenance": [],
+      "source_field": {},
+      "total_edge_flow": -0.0
+    },
+    "full": {
+      "candidate_order": [
+        "memory_revision:00000000-0000-0000-0000-000000000001",
+        "memory_revision:00000000-0000-0000-0000-000000000002",
+        "memory_revision:00000000-0000-0000-0000-000000000003",
+        "memory_revision:00000000-0000-0000-0000-000000000004"
+      ],
+      "complete": false,
+      "discarded_state_mass": 0.0,
+      "edges": [
+        {
+          "flow": 0.46705992109959826,
+          "from": 0,
+          "immediate_return": true,
+          "max_single_hop_flow": 0.46274035393829116,
+          "minimum_hop": 1,
+          "to": 1
+        },
+        {
+          "flow": 0.45766820122680263,
+          "from": 0,
+          "immediate_return": false,
+          "max_single_hop_flow": 0.4372596460617089,
+          "minimum_hop": 1,
+          "to": 2
+        },
+        {
+          "flow": 0.24235050621395401,
+          "from": 1,
+          "immediate_return": true,
+          "max_single_hop_flow": 0.19524105034857306,
+          "minimum_hop": 2,
+          "to": 0
+        },
+        {
+          "flow": 0.2154432543347634,
+          "from": 1,
+          "immediate_return": true,
+          "max_single_hop_flow": 0.1830974798131885,
+          "minimum_hop": 2,
+          "to": 3
+        },
+        {
+          "flow": 0.4119013811041224,
+          "from": 2,
+          "immediate_return": false,
+          "max_single_hop_flow": 0.393533681455538,
+          "minimum_hop": 2,
+          "to": 3
+        },
+        {
+          "flow": 0.38713785967635816,
+          "from": 3,
+          "immediate_return": true,
+          "max_single_hop_flow": 0.35418031330998423,
+          "minimum_hop": 3,
+          "to": 1
+        }
+      ],
+      "generated_state_mass": 3.1815611236555985,
+      "max_hops": 4,
+      "node_potential": {
+        "0": 0.489022757993444,
+        "1": 0.15145885325515318,
+        "2": 0.11556598064900946,
+        "3": 0.08485269006705445
+      },
+      "provenance": [
+        {
+          "emergent": false,
+          "first_hop": 0,
+          "node": 0,
+          "origin_seeds": [
+            "fixed-root"
+          ],
+          "potential": 0.489022757993444,
+          "strongest_parent": 1
+        },
+        {
+          "emergent": true,
+          "first_hop": 1,
+          "node": 1,
+          "origin_seeds": [
+            "fixed-root"
+          ],
+          "potential": 0.15145885325515318,
+          "strongest_parent": 0
+        },
+        {
+          "emergent": true,
+          "first_hop": 1,
+          "node": 2,
+          "origin_seeds": [
+            "fixed-root"
+          ],
+          "potential": 0.11556598064900946,
+          "strongest_parent": 0
+        },
+        {
+          "emergent": true,
+          "first_hop": 2,
+          "node": 3,
+          "origin_seeds": [
+            "fixed-root"
+          ],
+          "potential": 0.08485269006705445,
+          "strongest_parent": 2
+        }
+      ],
+      "source_field": {
+        "0": 1.0
+      },
+      "total_edge_flow": 2.181561123655599
+    },
+    "state_truncated": {
+      "candidate_order": [
+        "memory_revision:00000000-0000-0000-0000-000000000001",
+        "memory_revision:00000000-0000-0000-0000-000000000002",
+        "memory_revision:00000000-0000-0000-0000-000000000004"
+      ],
+      "complete": false,
+      "discarded_state_mass": 0.4865415475612235,
+      "edges": [
+        {
+          "flow": 0.46274035393829116,
+          "from": 0,
+          "immediate_return": false,
+          "max_single_hop_flow": 0.46274035393829116,
+          "minimum_hop": 1,
+          "to": 1
+        },
+        {
+          "flow": 0.4372596460617089,
+          "from": 0,
+          "immediate_return": false,
+          "max_single_hop_flow": 0.4372596460617089,
+          "minimum_hop": 1,
+          "to": 2
+        },
+        {
+          "flow": 0.06329489070969191,
+          "from": 1,
+          "immediate_return": true,
+          "max_single_hop_flow": 0.04667376774625471,
+          "minimum_hop": 2,
+          "to": 0
+        },
+        {
+          "flow": 0.18570561356644835,
+          "from": 1,
+          "immediate_return": true,
+          "max_single_hop_flow": 0.1830974798131885,
+          "minimum_hop": 2,
+          "to": 3
+        },
+        {
+          "flow": 0.03295754636637393,
+          "from": 3,
+          "immediate_return": true,
+          "max_single_hop_flow": 0.03295754636637393,
+          "minimum_hop": 3,
+          "to": 1
+        }
+      ],
+      "generated_state_mass": 2.1819580506425145,
+      "max_hops": 4,
+      "node_potential": {
+        "0": 0.4745687238422787,
+        "1": 0.12319598956006912,
+        "3": 0.02624501503862846
+      },
+      "provenance": [
+        {
+          "emergent": false,
+          "first_hop": 0,
+          "node": 0,
+          "origin_seeds": [
+            "fixed-root"
+          ],
+          "potential": 0.4745687238422787,
+          "strongest_parent": 1
+        },
+        {
+          "emergent": true,
+          "first_hop": 1,
+          "node": 1,
+          "origin_seeds": [
+            "fixed-root"
+          ],
+          "potential": 0.12319598956006912,
+          "strongest_parent": 0
+        },
+        {
+          "emergent": true,
+          "first_hop": 2,
+          "node": 3,
+          "origin_seeds": [
+            "fixed-root"
+          ],
+          "potential": 0.02624501503862846,
+          "strongest_parent": 1
+        }
+      ],
+      "source_field": {
+        "0": 1.0
+      },
+      "total_edge_flow": 1.1819580506425142
+    }
+  },
+  "mechanism": "experimental-node-potential-v1",
+  "tolerance": {
+    "absolute": 1e-12,
+    "relative": 1e-12
+  }
+}

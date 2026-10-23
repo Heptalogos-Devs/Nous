@@ -1,0 +1,384 @@
+{
+  "source": {
+    "commit": "e03b891d42055cdf3cab5dc961cc71dd5facd65a",
+    "owner": "rust-vexus-lite/src/memo_pipeline.rs analyze_pyramid",
+    "search": "each actual ANN result frozen as neutral conditional kernel input"
+  },
+  "tolerance": {
+    "absolute": 1e-10,
+    "relative": 1e-10
+  },
+  "cases": [
+    {
+      "name": "duplicate-directions",
+      "query": [
+        0.8664485812187195,
+        0.4873773157596588,
+        0.10830607265233994
+      ],
+      "config": {
+        "max_levels": 3,
+        "top_k": 10,
+        "min_energy_ratio": 0.1
+      },
+      "search_results": [
+        [
+          {
+            "id": 2,
+            "name": "Tag2",
+            "vector": [
+              0.800000011920929,
+              0.6000000238418579,
+              0
+            ],
+            "similarity": 0.9719783571183235
+          },
+          {
+            "id": 8,
+            "name": "Tag8",
+            "vector": [
+              0.9999499917030334,
+              0.009999499656260014,
+              0
+            ],
+            "similarity": 0.7952650461455881
+          },
+          {
+            "id": 1,
+            "name": "Tag1",
+            "vector": [
+              1,
+              0,
+              0
+            ],
+            "similarity": 0.7892019261227696
+          },
+          {
+            "id": 3,
+            "name": "Tag3",
+            "vector": [
+              0.20280805230140686,
+              0.9126362204551697,
+              0.3549140989780426
+            ],
+            "similarity": 0.5945022660566963
+          },
+          {
+            "id": 6,
+            "name": "Tag6",
+            "vector": [
+              0,
+              1,
+              0
+            ],
+            "similarity": 0.4937673163619497
+          },
+          {
+            "id": 10,
+            "name": "Tag10",
+            "vector": [
+              0.10045813024044037,
+              0.20091626048088074,
+              0.9744438529014587
+            ],
+            "similarity": 0.4133946520524409
+          },
+          {
+            "id": 4,
+            "name": "Tag4",
+            "vector": [
+              0,
+              0.30113136768341064,
+              0.9535826444625854
+            ],
+            "similarity": 0.40001388598008125
+          },
+          {
+            "id": 7,
+            "name": "Tag7",
+            "vector": [
+              0,
+              0,
+              1
+            ],
+            "similarity": 0.35927439370415976
+          },
+          {
+            "id": 5,
+            "name": "Tag5",
+            "vector": [
+              -0.5000377297401428,
+              0.5000377297401428,
+              0.7070533633232117
+            ],
+            "similarity": 0.30998682392812493
+          },
+          {
+            "id": 9,
+            "name": "Tag9",
+            "vector": [
+              -1,
+              0,
+              0
+            ],
+            "similarity": 0.21128707015844375
+          }
+        ]
+      ],
+      "expected": {
+        "levels": [
+          {
+            "level": 0,
+            "tags": [
+              {
+                "id": 2,
+                "name": "Tag2",
+                "similarity": 0.9719783571183235,
+                "contribution": 0.9855852528814399,
+                "handshakeMagnitude": 0.1697924972160591
+              },
+              {
+                "id": 8,
+                "name": "Tag8",
+                "similarity": 0.7952650461455881,
+                "contribution": 0.12996730787259636,
+                "handshakeMagnitude": 0.5073878180884359
+              },
+              {
+                "id": 1,
+                "name": "Tag1",
+                "similarity": 0.7892019261227696,
+                "contribution": 0,
+                "handshakeMagnitude": 0.5168199248761188
+              },
+              {
+                "id": 3,
+                "name": "Tag3",
+                "similarity": 0.5945022660566963,
+                "contribution": 0.10830607265234064,
+                "handshakeMagnitude": 0.8258809617989336
+              },
+              {
+                "id": 6,
+                "name": "Tag6",
+                "similarity": 0.4937673163619497,
+                "contribution": 0,
+                "handshakeMagnitude": 1.0125440218685666
+              },
+              {
+                "id": 10,
+                "name": "Tag10",
+                "similarity": 0.4133946520524409,
+                "contribution": 0,
+                "handshakeMagnitude": 1.191216175783091
+              },
+              {
+                "id": 4,
+                "name": "Tag4",
+                "similarity": 0.40001388598008125,
+                "contribution": 0,
+                "handshakeMagnitude": 1.2247094421571352
+              },
+              {
+                "id": 7,
+                "name": "Tag7",
+                "similarity": 0.35927439370415976,
+                "contribution": 0,
+                "handshakeMagnitude": 1.33543546895518
+              },
+              {
+                "id": 5,
+                "name": "Tag5",
+                "similarity": 0.30998682392812493,
+                "contribution": 0,
+                "handshakeMagnitude": 1.491959607017535
+              },
+              {
+                "id": 9,
+                "name": "Tag9",
+                "similarity": 0.21128707015844375,
+                "contribution": 0,
+                "handshakeMagnitude": 1.9320707497713037
+              }
+            ],
+            "projectionMagnitude": 0.999999998593198,
+            "residualMagnitude": 0,
+            "residualEnergyRatio": 0,
+            "energyExplained": 1,
+            "handshakeFeatures": {
+              "directionCoherence": 0.5757626835880698,
+              "patternStrength": 0.7174864461079213,
+              "noveltySignal": 0.5757626835880698,
+              "noiseSignal": 0.11985279195317267
+            }
+          }
+        ],
+        "totalExplainedEnergy": 1,
+        "features": {
+          "depth": 1,
+          "coverage": 1,
+          "novelty": 0.17272880507642094,
+          "coherence": 0.7174864461079213,
+          "activation": 0.6314936923533274,
+          "expansionSignal": 0.17272880507642094
+        }
+      }
+    },
+    {
+      "name": "empty-query",
+      "query": [
+        0,
+        0,
+        0
+      ],
+      "config": {
+        "max_levels": 3,
+        "top_k": 1,
+        "min_energy_ratio": 0.1
+      },
+      "search_results": [],
+      "expected": {
+        "levels": [],
+        "totalExplainedEnergy": 0,
+        "features": {
+          "depth": 0,
+          "coverage": 0,
+          "novelty": 1,
+          "coherence": 0,
+          "activation": 0,
+          "expansionSignal": 1
+        }
+      }
+    },
+    {
+      "name": "weak-residual",
+      "query": [
+        0.9805335402488708,
+        0.1961067169904709,
+        0.009805334731936455
+      ],
+      "config": {
+        "max_levels": 3,
+        "top_k": 1,
+        "min_energy_ratio": 1e-05
+      },
+      "search_results": [
+        [
+          {
+            "id": 8,
+            "name": "Tag8",
+            "vector": [
+              0.9999499917030334,
+              0.009999499656260014,
+              0
+            ],
+            "similarity": 0.9660817961588544
+          }
+        ],
+        [
+          {
+            "id": 6,
+            "name": "Tag6",
+            "vector": [
+              0,
+              1,
+              0
+            ],
+            "similarity": 0.6015995162308577
+          }
+        ],
+        [
+          {
+            "id": 7,
+            "name": "Tag7",
+            "vector": [
+              0,
+              0,
+              1
+            ],
+            "similarity": 0.5049258149020629
+          }
+        ]
+      ],
+      "expected": {
+        "levels": [
+          {
+            "level": 0,
+            "tags": [
+              {
+                "id": 8,
+                "name": "Tag8",
+                "similarity": 0.9660817961588544,
+                "contribution": 0.9824454863238754,
+                "handshakeMagnitude": 0.18737406401850837
+              }
+            ],
+            "projectionMagnitude": 0.9824454827963525,
+            "residualMagnitude": 0.18654993733430147,
+            "residualEnergyRatio": 0.03480087868125498,
+            "energyExplained": 0.965199121318745,
+            "handshakeFeatures": {
+              "directionCoherence": 1,
+              "patternStrength": 0,
+              "noveltySignal": 1,
+              "noiseSignal": 0
+            }
+          },
+          {
+            "level": 1,
+            "tags": [
+              {
+                "id": 6,
+                "name": "Tag6",
+                "similarity": 0.6015995162308577,
+                "contribution": 0.18628275394439697,
+                "handshakeMagnitude": 0.813778453407706
+              }
+            ],
+            "projectionMagnitude": 0.18628275394439697,
+            "residualMagnitude": 0.00998071652352987,
+            "residualEnergyRatio": 9.961470106881644e-05,
+            "energyExplained": 0.03470126398018617,
+            "handshakeFeatures": {
+              "directionCoherence": 0.9999999999999998,
+              "patternStrength": 0,
+              "noveltySignal": 0.9999999999999998,
+              "noiseSignal": 2.220446049250313e-16
+            }
+          },
+          {
+            "level": 2,
+            "tags": [
+              {
+                "id": 7,
+                "name": "Tag7",
+                "similarity": 0.5049258149020629,
+                "contribution": 0.009805334731936455,
+                "handshakeMagnitude": 0.9901964305428436
+              }
+            ],
+            "projectionMagnitude": 0.009805334731936455,
+            "residualMagnitude": 0.0018628239631652832,
+            "residualEnergyRatio": 3.4701130740507227e-06,
+            "energyExplained": 9.614458799476572e-05,
+            "handshakeFeatures": {
+              "directionCoherence": 1,
+              "patternStrength": 0,
+              "noveltySignal": 1,
+              "noiseSignal": 0
+            }
+          }
+        ],
+        "totalExplainedEnergy": 0.9999965298869259,
+        "features": {
+          "depth": 3,
+          "coverage": 0.9999965298869259,
+          "novelty": 0.30000242907915187,
+          "coherence": 0,
+          "activation": 0,
+          "expansionSignal": 0.30000242907915187
+        }
+      }
+    }
+  ]
+}

@@ -6,7 +6,7 @@ use crate::{
     },
     op_id,
 };
-use anyhow::{Context, Result, ensure};
+use anyhow::{Context, Result, bail, ensure};
 use clap::{Args, Subcommand};
 use nous_domain::{MemoryId, NamespaceId, SubjectId};
 use std::{io::Read, path::PathBuf};
@@ -59,6 +59,11 @@ impl ChangeArgs {
 }
 #[derive(Subcommand)]
 pub enum ImportCommand {
+    /// Inspect local A-Memorix memory bundles.
+    Bundle {
+        #[command(subcommand)]
+        command: crate::bundle_cli::BundleCommand,
+    },
     /// Import faithful memories from source records; model-derived formation is optional.
     Text {
         #[arg(long)]
@@ -84,7 +89,10 @@ impl ImportCommand {
             format,
             source,
             form_memory,
-        } = self;
+        } = self
+        else {
+            bail!("bundle inspection runs locally");
+        };
         let mut bytes = Vec::new();
         std::fs::File::open(&file)
             .context("cannot open import file")?

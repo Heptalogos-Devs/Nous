@@ -1,0 +1,344 @@
+{
+  "source": {
+    "commit": "e03b891d42055cdf3cab5dc961cc71dd5facd65a",
+    "owner": "rust-vexus-lite/src/rivermemo_topology_v3.rs evaluate_topology",
+    "probe": "neutral curve/query/edge/file provenance; original frozen evaluate_topology via read-only export"
+  },
+  "tolerance": {
+    "absolute": 1e-12,
+    "relative": 1e-12
+  },
+  "cases": [
+    {
+      "name": "forward-curve",
+      "input": {
+        "curve": {
+          "id": 1,
+          "chunk_vector": [
+            0.6,
+            0.6,
+            0.2
+          ],
+          "tags": [
+            {
+              "id": 1,
+              "vector": [
+                1,
+                0,
+                0
+              ],
+              "position": 1
+            },
+            {
+              "id": 2,
+              "vector": [
+                0.8,
+                0.6,
+                0
+              ],
+              "position": 2
+            },
+            {
+              "id": 3,
+              "vector": [
+                0.2,
+                0.9,
+                0.35
+              ],
+              "position": 3
+            }
+          ]
+        },
+        "file_id": 1,
+        "river": {
+          "riverNodes": [
+            {
+              "id": 1,
+              "energy": 1,
+              "normalizedEnergy": 1,
+              "hop": 0
+            },
+            {
+              "id": 2,
+              "energy": 0.5,
+              "normalizedEnergy": 0.5,
+              "hop": 1
+            },
+            {
+              "id": 3,
+              "energy": 0.3333333333333333,
+              "normalizedEnergy": 0.3333333333333333,
+              "hop": 2
+            }
+          ],
+          "riverEdges": [
+            {
+              "sourceId": 1,
+              "targetId": 2,
+              "flow": 1,
+              "normalizedFlow": 1
+            },
+            {
+              "sourceId": 2,
+              "targetId": 3,
+              "flow": 0.5,
+              "normalizedFlow": 0.5
+            }
+          ],
+          "completeObservation": true
+        },
+        "query_tag_vectors": [
+          [
+            1,
+            [
+              1,
+              0,
+              0
+            ]
+          ],
+          [
+            2,
+            [
+              0.8,
+              0.6,
+              0
+            ]
+          ],
+          [
+            3,
+            [
+              0.2,
+              0.9,
+              0.35
+            ]
+          ]
+        ],
+        "provenance": [],
+        "config": {}
+      },
+      "expected": {
+        "score": 0.9456219445138734,
+        "reliability": 0.9411511436724594,
+        "reliabilityMode": "edge_topology",
+        "nodeAlignmentScore": 0.8877645662482765,
+        "edgeGraphScore": 0.9456219445138734,
+        "nodeGraphScore": 0.8602763125629496,
+        "relativeDistanceScore": 1,
+        "directionScore": 1,
+        "edgeTopologyScore": 0.9186293394980557,
+        "motifScore": 0.9186293394980557,
+        "matchedNodeCoverage": 1,
+        "matchedEdgeCoverage": 1,
+        "meanClosure": 0.8336391900439205,
+        "matchedNodes": 3,
+        "matchedEdges": 2,
+        "queryNodes": 3,
+        "queryEdges": 2
+      }
+    },
+    {
+      "name": "empty-river",
+      "input": {
+        "curve": {
+          "id": 1,
+          "chunk_vector": [
+            0.6,
+            0.6,
+            0.2
+          ],
+          "tags": [
+            {
+              "id": 1,
+              "vector": [
+                1,
+                0,
+                0
+              ],
+              "position": 1
+            },
+            {
+              "id": 2,
+              "vector": [
+                0.8,
+                0.6,
+                0
+              ],
+              "position": 2
+            },
+            {
+              "id": 3,
+              "vector": [
+                0.2,
+                0.9,
+                0.35
+              ],
+              "position": 3
+            }
+          ]
+        },
+        "file_id": 1,
+        "river": {
+          "riverNodes": [],
+          "riverEdges": [],
+          "completeObservation": false
+        },
+        "query_tag_vectors": [
+          [
+            1,
+            [
+              1,
+              0,
+              0
+            ]
+          ],
+          [
+            2,
+            [
+              0.8,
+              0.6,
+              0
+            ]
+          ],
+          [
+            3,
+            [
+              0.2,
+              0.9,
+              0.35
+            ]
+          ]
+        ],
+        "provenance": [],
+        "config": {}
+      },
+      "expected": {
+        "score": 0,
+        "reliability": 0,
+        "reliabilityMode": "unavailable",
+        "nodeAlignmentScore": 0,
+        "edgeGraphScore": 0,
+        "nodeGraphScore": 0,
+        "relativeDistanceScore": 0,
+        "directionScore": 0,
+        "edgeTopologyScore": 0,
+        "motifScore": 0,
+        "matchedNodeCoverage": 0,
+        "matchedEdgeCoverage": 0,
+        "meanClosure": 0,
+        "matchedNodes": 0,
+        "matchedEdges": 0,
+        "queryNodes": 0,
+        "queryEdges": 0
+      }
+    },
+    {
+      "name": "same-candidate-node-collision",
+      "input": {
+        "curve": {
+          "id": 1,
+          "chunk_vector": [
+            0.6,
+            0.6,
+            0.2
+          ],
+          "tags": [
+            {
+              "id": 1,
+              "vector": [
+                1,
+                0,
+                0
+              ],
+              "position": 1
+            }
+          ]
+        },
+        "file_id": 1,
+        "river": {
+          "riverNodes": [
+            {
+              "id": 1,
+              "energy": 1,
+              "normalizedEnergy": 1,
+              "hop": 0
+            },
+            {
+              "id": 2,
+              "energy": 0.5,
+              "normalizedEnergy": 0.5,
+              "hop": 1
+            },
+            {
+              "id": 3,
+              "energy": 0.3333333333333333,
+              "normalizedEnergy": 0.3333333333333333,
+              "hop": 2
+            }
+          ],
+          "riverEdges": [
+            {
+              "sourceId": 1,
+              "targetId": 2,
+              "flow": 1,
+              "normalizedFlow": 1
+            },
+            {
+              "sourceId": 2,
+              "targetId": 3,
+              "flow": 0.5,
+              "normalizedFlow": 0.5
+            }
+          ],
+          "completeObservation": true
+        },
+        "query_tag_vectors": [
+          [
+            1,
+            [
+              1,
+              0,
+              0
+            ]
+          ],
+          [
+            2,
+            [
+              1,
+              0,
+              0
+            ]
+          ],
+          [
+            3,
+            [
+              1,
+              0,
+              0
+            ]
+          ]
+        ],
+        "provenance": [],
+        "config": {}
+      },
+      "expected": {
+        "score": 0.7556285196392394,
+        "reliability": 0.2,
+        "reliabilityMode": "node_alignment_fallback",
+        "nodeAlignmentScore": 0.829606655295934,
+        "edgeGraphScore": 0.14932919795326813,
+        "nodeGraphScore": 0.7556285196392394,
+        "relativeDistanceScore": 0,
+        "directionScore": 0,
+        "edgeTopologyScore": 0,
+        "motifScore": 0,
+        "matchedNodeCoverage": 1,
+        "matchedEdgeCoverage": 0,
+        "meanClosure": 0.6882472025113064,
+        "matchedNodes": 3,
+        "matchedEdges": 0,
+        "queryNodes": 3,
+        "queryEdges": 2
+      }
+    }
+  ]
+}

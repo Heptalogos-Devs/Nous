@@ -1,0 +1,598 @@
+{
+  "source": {
+    "commit": "e03b891d42055cdf3cab5dc961cc71dd5facd65a",
+    "owner": "rivermemo_topology_v3 evaluate_observables and run_native pure score",
+    "probe": "actual persisted f32 tag/chunk vectors plus cached observation and same native run results; pool/geometry/topology supplied as conditional inputs"
+  },
+  "tolerance": {
+    "absolute": 1e-12,
+    "relative": 1e-12
+  },
+  "cases": [
+    {
+      "name": "native-selected-curve-4",
+      "input": {
+        "curve": {
+          "id": 4,
+          "chunk_vector": [
+            0.9470903873443604,
+            0.32096704840660095,
+            0
+          ],
+          "tags": [
+            {
+              "id": 8,
+              "vector": [
+                0.9999499917030334,
+                0.009999499656260014,
+                0
+              ],
+              "position": 1
+            },
+            {
+              "id": 2,
+              "vector": [
+                0.800000011920929,
+                0.6000000238418579,
+                0
+              ],
+              "position": 2
+            }
+          ]
+        },
+        "query_vector": [
+          0.8664485812187195,
+          0.4873773157596588,
+          0.10830607265233994
+        ],
+        "source_ids": [
+          2,
+          3,
+          8,
+          1,
+          4
+        ],
+        "local_field": [
+          [
+            1,
+            0.056666965121949575
+          ],
+          [
+            2,
+            0.6421327858396005
+          ],
+          [
+            3,
+            0.1341587709911219
+          ],
+          [
+            4,
+            0.04427149655844141
+          ],
+          [
+            6,
+            0.0029113773551169017
+          ],
+          [
+            7,
+            0.00373067800576115
+          ],
+          [
+            8,
+            0.10738157047307512
+          ]
+        ],
+        "transfer_field": [
+          [
+            1,
+            0.11029505228331932
+          ],
+          [
+            2,
+            0.4298224461747605
+          ],
+          [
+            3,
+            0.1808557642881075
+          ],
+          [
+            4,
+            0.09432298008446081
+          ],
+          [
+            6,
+            0.020378533875849526
+          ],
+          [
+            7,
+            0.02265376488627971
+          ],
+          [
+            8,
+            0.08407983610640016
+          ]
+        ],
+        "local_domain": [
+          2,
+          3,
+          8
+        ],
+        "transfer_domain": [
+          2,
+          3,
+          1,
+          4,
+          8
+        ],
+        "geometry": {
+          "pathQuality": 0.3436408535582597,
+          "pathCore": 0.3479684926420672,
+          "tagClosure": 0.9502525179685265,
+          "supportCoverage": 1,
+          "segmentCount": 1,
+          "supportedSegments": 1,
+          "transferSegments": 1,
+          "meanDirection": 0.8661021607894249,
+          "meanContinuity": 0.784012162551811,
+          "meanLocalPotential": 0.40893327756638514,
+          "meanTransferPotential": 0.44228415665169024
+        },
+        "visible": true
+      },
+      "local_vector": [
+        0.7975021004676819,
+        0.5939590334892273,
+        0.10584452003240585
+      ],
+      "transfer_vector": [
+        0.7515957355499268,
+        0.6178088188171387,
+        0.23111920058727264
+      ],
+      "topology": {
+        "score": 0.5341819585558063,
+        "reliability": 0.7797178449040696,
+        "reliabilityMode": "edge_topology",
+        "nodeAlignmentScore": 0.9369077923675263,
+        "edgeGraphScore": 0.5341819585558063,
+        "nodeGraphScore": 0.9435565636471273,
+        "relativeDistanceScore": 1,
+        "directionScore": 0.4214533862234353,
+        "edgeTopologyScore": 0.1658974914510315,
+        "motifScore": 0.1658974914510315,
+        "matchedNodeCoverage": 0.9788454131489485,
+        "matchedEdgeCoverage": 0.5096350421381218,
+        "meanClosure": 0.9502525179685265,
+        "matchedNodes": 4,
+        "matchedEdges": 3,
+        "queryNodes": 5,
+        "queryEdges": 5
+      },
+      "morphology": {
+        "atomicWeight": 0.45889031695509575,
+        "propositionalWeight": 0.2532664811388848,
+        "narrativeWeight": 0.2878432019060195,
+        "confidence": 0.4647385714810097,
+        "effectiveDepth": 0.028525916959526887,
+        "depthVariance": 0.13600023844322773,
+        "energyConcentration": 0.4418742774517913,
+        "shallowEnergyRatio": 1,
+        "forwardFlowRatio": 0.44056417352055377,
+        "sameLevelFlowRatio": 0.5594358264794461,
+        "chainness": 0.24461968111985846,
+        "branching": 0,
+        "merging": 0,
+        "growthPersistence": 0.16889617212810623,
+        "dominantMode": "atomic"
+      },
+      "config": {},
+      "expected": {
+        "observables": {
+          "direct": 0.9677576473839554,
+          "structural": 0.3436408535582597,
+          "thematic": 0.8535549032196098,
+          "closure": 0.9676625345374744,
+          "queryChunkScore": 0.9770371588438309,
+          "semanticBoundaryScore": 0.9677576473839554,
+          "localCoverage": 1,
+          "transferCoverage": 1,
+          "localPotential": 0.5836132127505931,
+          "transferPotential": 0.5978076376125484,
+          "tailOnlyRatio": 0
+        },
+        "pureScore": 0.991707477041447
+      }
+    },
+    {
+      "name": "zero-query",
+      "input": {
+        "curve": {
+          "id": 4,
+          "chunk_vector": [
+            0.9470903873443604,
+            0.32096704840660095,
+            0
+          ],
+          "tags": [
+            {
+              "id": 8,
+              "vector": [
+                0.9999499917030334,
+                0.009999499656260014,
+                0
+              ],
+              "position": 1
+            },
+            {
+              "id": 2,
+              "vector": [
+                0.800000011920929,
+                0.6000000238418579,
+                0
+              ],
+              "position": 2
+            }
+          ]
+        },
+        "query_vector": [
+          0,
+          0,
+          0
+        ],
+        "source_ids": [
+          2,
+          3,
+          8,
+          1,
+          4
+        ],
+        "local_field": [
+          [
+            1,
+            0.056666965121949575
+          ],
+          [
+            2,
+            0.6421327858396005
+          ],
+          [
+            3,
+            0.1341587709911219
+          ],
+          [
+            4,
+            0.04427149655844141
+          ],
+          [
+            6,
+            0.0029113773551169017
+          ],
+          [
+            7,
+            0.00373067800576115
+          ],
+          [
+            8,
+            0.10738157047307512
+          ]
+        ],
+        "transfer_field": [
+          [
+            1,
+            0.11029505228331932
+          ],
+          [
+            2,
+            0.4298224461747605
+          ],
+          [
+            3,
+            0.1808557642881075
+          ],
+          [
+            4,
+            0.09432298008446081
+          ],
+          [
+            6,
+            0.020378533875849526
+          ],
+          [
+            7,
+            0.02265376488627971
+          ],
+          [
+            8,
+            0.08407983610640016
+          ]
+        ],
+        "local_domain": [
+          2,
+          3,
+          8
+        ],
+        "transfer_domain": [
+          2,
+          3,
+          1,
+          4,
+          8
+        ],
+        "geometry": {
+          "pathQuality": 0.3436408535582597,
+          "pathCore": 0.3479684926420672,
+          "tagClosure": 0.9502525179685265,
+          "supportCoverage": 1,
+          "segmentCount": 1,
+          "supportedSegments": 1,
+          "transferSegments": 1,
+          "meanDirection": 0.8661021607894249,
+          "meanContinuity": 0.784012162551811,
+          "meanLocalPotential": 0.40893327756638514,
+          "meanTransferPotential": 0.44228415665169024
+        },
+        "visible": true
+      },
+      "local_vector": [
+        0.7975021004676819,
+        0.5939590334892273,
+        0.10584452003240585
+      ],
+      "transfer_vector": [
+        0.7515957355499268,
+        0.6178088188171387,
+        0.23111920058727264
+      ],
+      "topology": {
+        "score": 0.5341819585558063,
+        "reliability": 0.7797178449040696,
+        "reliabilityMode": "edge_topology",
+        "nodeAlignmentScore": 0.9369077923675263,
+        "edgeGraphScore": 0.5341819585558063,
+        "nodeGraphScore": 0.9435565636471273,
+        "relativeDistanceScore": 1,
+        "directionScore": 0.4214533862234353,
+        "edgeTopologyScore": 0.1658974914510315,
+        "motifScore": 0.1658974914510315,
+        "matchedNodeCoverage": 0.9788454131489485,
+        "matchedEdgeCoverage": 0.5096350421381218,
+        "meanClosure": 0.9502525179685265,
+        "matchedNodes": 4,
+        "matchedEdges": 3,
+        "queryNodes": 5,
+        "queryEdges": 5
+      },
+      "morphology": {
+        "atomicWeight": 0.45889031695509575,
+        "propositionalWeight": 0.2532664811388848,
+        "narrativeWeight": 0.2878432019060195,
+        "confidence": 0.4647385714810097,
+        "effectiveDepth": 0.028525916959526887,
+        "depthVariance": 0.13600023844322773,
+        "energyConcentration": 0.4418742774517913,
+        "shallowEnergyRatio": 1,
+        "forwardFlowRatio": 0.44056417352055377,
+        "sameLevelFlowRatio": 0.5594358264794461,
+        "chainness": 0.24461968111985846,
+        "branching": 0,
+        "merging": 0,
+        "growthPersistence": 0.16889617212810623,
+        "dominantMode": "atomic"
+      },
+      "config": {},
+      "expected": {
+        "observables": {
+          "direct": 0.30000000000000004,
+          "structural": 0.3436408535582597,
+          "thematic": 0.8535549032196098,
+          "closure": 0.3325883812889842,
+          "queryChunkScore": 0,
+          "semanticBoundaryScore": 0,
+          "localCoverage": 1,
+          "transferCoverage": 1,
+          "localPotential": 0.5836132127505931,
+          "transferPotential": 0.5978076376125484,
+          "tailOnlyRatio": 0
+        }
+      }
+    },
+    {
+      "name": "duplicate-source-ids",
+      "input": {
+        "curve": {
+          "id": 4,
+          "chunk_vector": [
+            0.9470903873443604,
+            0.32096704840660095,
+            0
+          ],
+          "tags": [
+            {
+              "id": 8,
+              "vector": [
+                0.9999499917030334,
+                0.009999499656260014,
+                0
+              ],
+              "position": 1
+            },
+            {
+              "id": 2,
+              "vector": [
+                0.800000011920929,
+                0.6000000238418579,
+                0
+              ],
+              "position": 2
+            }
+          ]
+        },
+        "query_vector": [
+          0.8664485812187195,
+          0.4873773157596588,
+          0.10830607265233994
+        ],
+        "source_ids": [
+          2,
+          3,
+          8,
+          1,
+          4,
+          2,
+          3,
+          8,
+          1,
+          4
+        ],
+        "local_field": [
+          [
+            1,
+            0.056666965121949575
+          ],
+          [
+            2,
+            0.6421327858396005
+          ],
+          [
+            3,
+            0.1341587709911219
+          ],
+          [
+            4,
+            0.04427149655844141
+          ],
+          [
+            6,
+            0.0029113773551169017
+          ],
+          [
+            7,
+            0.00373067800576115
+          ],
+          [
+            8,
+            0.10738157047307512
+          ]
+        ],
+        "transfer_field": [
+          [
+            1,
+            0.11029505228331932
+          ],
+          [
+            2,
+            0.4298224461747605
+          ],
+          [
+            3,
+            0.1808557642881075
+          ],
+          [
+            4,
+            0.09432298008446081
+          ],
+          [
+            6,
+            0.020378533875849526
+          ],
+          [
+            7,
+            0.02265376488627971
+          ],
+          [
+            8,
+            0.08407983610640016
+          ]
+        ],
+        "local_domain": [
+          2,
+          3,
+          8
+        ],
+        "transfer_domain": [
+          2,
+          3,
+          1,
+          4,
+          8
+        ],
+        "geometry": {
+          "pathQuality": 0.3436408535582597,
+          "pathCore": 0.3479684926420672,
+          "tagClosure": 0.9502525179685265,
+          "supportCoverage": 1,
+          "segmentCount": 1,
+          "supportedSegments": 1,
+          "transferSegments": 1,
+          "meanDirection": 0.8661021607894249,
+          "meanContinuity": 0.784012162551811,
+          "meanLocalPotential": 0.40893327756638514,
+          "meanTransferPotential": 0.44228415665169024
+        },
+        "visible": true
+      },
+      "local_vector": [
+        0.7975021004676819,
+        0.5939590334892273,
+        0.10584452003240585
+      ],
+      "transfer_vector": [
+        0.7515957355499268,
+        0.6178088188171387,
+        0.23111920058727264
+      ],
+      "topology": {
+        "score": 0.5341819585558063,
+        "reliability": 0.7797178449040696,
+        "reliabilityMode": "edge_topology",
+        "nodeAlignmentScore": 0.9369077923675263,
+        "edgeGraphScore": 0.5341819585558063,
+        "nodeGraphScore": 0.9435565636471273,
+        "relativeDistanceScore": 1,
+        "directionScore": 0.4214533862234353,
+        "edgeTopologyScore": 0.1658974914510315,
+        "motifScore": 0.1658974914510315,
+        "matchedNodeCoverage": 0.9788454131489485,
+        "matchedEdgeCoverage": 0.5096350421381218,
+        "meanClosure": 0.9502525179685265,
+        "matchedNodes": 4,
+        "matchedEdges": 3,
+        "queryNodes": 5,
+        "queryEdges": 5
+      },
+      "morphology": {
+        "atomicWeight": 0.45889031695509575,
+        "propositionalWeight": 0.2532664811388848,
+        "narrativeWeight": 0.2878432019060195,
+        "confidence": 0.4647385714810097,
+        "effectiveDepth": 0.028525916959526887,
+        "depthVariance": 0.13600023844322773,
+        "energyConcentration": 0.4418742774517913,
+        "shallowEnergyRatio": 1,
+        "forwardFlowRatio": 0.44056417352055377,
+        "sameLevelFlowRatio": 0.5594358264794461,
+        "chainness": 0.24461968111985846,
+        "branching": 0,
+        "merging": 0,
+        "growthPersistence": 0.16889617212810623,
+        "dominantMode": "atomic"
+      },
+      "config": {},
+      "expected": {
+        "observables": {
+          "direct": 0.9677576473839554,
+          "structural": 0.3436408535582597,
+          "thematic": 0.8535549032196098,
+          "closure": 0.9676625345374743,
+          "queryChunkScore": 0.9770371588438309,
+          "semanticBoundaryScore": 0.9677576473839554,
+          "localCoverage": 1,
+          "transferCoverage": 1,
+          "localPotential": 0.5836132127505931,
+          "transferPotential": 0.5978076376125484,
+          "tailOnlyRatio": 0
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,443 @@
+{
+  "source": {
+    "commit": "e03b891d42055cdf3cab5dc961cc71dd5facd65a",
+    "owner": "rust-vexus-lite/src/rivermemo_topology_v3.rs compute_query_morphology / compute_omega",
+    "probe": "read-only query shape export; original functions unchanged"
+  },
+  "tolerance": {
+    "absolute": 1e-12,
+    "relative": 1e-12
+  },
+  "cases": [
+    {
+      "name": "chain",
+      "input": {
+        "riverNodes": [
+          {
+            "id": 1,
+            "energy": 0.4337265787647467,
+            "normalizedEnergy": 1,
+            "hop": 0
+          },
+          {
+            "id": 2,
+            "energy": 0.05204718945176961,
+            "normalizedEnergy": 0.12000000000000001,
+            "hop": 1
+          },
+          {
+            "id": 3,
+            "energy": 0.005464954892435807,
+            "normalizedEnergy": 0.012599999999999997,
+            "hop": 2
+          }
+        ],
+        "riverEdges": [
+          {
+            "sourceId": 1,
+            "targetId": 2,
+            "flow": 0.2,
+            "normalizedFlow": 1
+          },
+          {
+            "sourceId": 2,
+            "targetId": 3,
+            "flow": 0.034999999999999996,
+            "normalizedFlow": 0.17499999999999996
+          }
+        ],
+        "completeObservation": true
+      },
+      "config": {},
+      "expected": {
+        "morphology": {
+          "atomicWeight": 0.3796892440626414,
+          "branching": 0,
+          "chainness": 0.3959150238957344,
+          "confidence": 0.263004499308687,
+          "depthVariance": 0.21655438677147665,
+          "dominantMode": "atomic",
+          "effectiveDepth": 0.07063849830112989,
+          "energyConcentration": 0.6863568699660416,
+          "forwardFlowRatio": 1,
+          "growthPersistence": 0.26577904037212924,
+          "merging": 0,
+          "narrativeWeight": 0.34581736974581756,
+          "propositionalWeight": 0.27449338619154107,
+          "sameLevelFlowRatio": 0,
+          "shallowEnergyRatio": 0.9888751545117429
+        },
+        "omega": {
+          "activeEdges": 2,
+          "completeObservation": true,
+          "emergentNodes": 2,
+          "omega": 0.846779813508977,
+          "omegaEdge": 1,
+          "omegaEmerge": 1,
+          "omegaFlow": 0.6071716548713028,
+          "reachedNodes": 3,
+          "regime": "dense",
+          "seedNodes": 1
+        }
+      }
+    },
+    {
+      "name": "empty-seeds",
+      "input": {
+        "riverNodes": [],
+        "riverEdges": [],
+        "completeObservation": true
+      },
+      "config": {},
+      "expected": {
+        "morphology": {
+          "atomicWeight": 0.3333333333333333,
+          "branching": 0,
+          "chainness": 0,
+          "confidence": 0,
+          "depthVariance": 0,
+          "dominantMode": "atomic",
+          "effectiveDepth": 0,
+          "energyConcentration": 1,
+          "forwardFlowRatio": 0,
+          "growthPersistence": 0,
+          "merging": 0,
+          "narrativeWeight": 0.3333333333333333,
+          "propositionalWeight": 0.3333333333333333,
+          "sameLevelFlowRatio": 0,
+          "shallowEnergyRatio": 1
+        },
+        "omega": {
+          "activeEdges": 0,
+          "completeObservation": true,
+          "emergentNodes": 0,
+          "omega": 0.02,
+          "omegaEdge": 0,
+          "omegaEmerge": 0,
+          "omegaFlow": 0,
+          "reachedNodes": 0,
+          "regime": "collapsed",
+          "seedNodes": 0
+        }
+      }
+    },
+    {
+      "name": "merge",
+      "input": {
+        "riverNodes": [
+          {
+            "id": 1,
+            "energy": 0.4337265787647467,
+            "normalizedEnergy": 1,
+            "hop": 0
+          },
+          {
+            "id": 2,
+            "energy": 0.260235947258848,
+            "normalizedEnergy": 0.6,
+            "hop": 0
+          },
+          {
+            "id": 3,
+            "energy": 0.07937196391394864,
+            "normalizedEnergy": 0.183,
+            "hop": 1
+          },
+          {
+            "id": 4,
+            "energy": 0.007143476752255377,
+            "normalizedEnergy": 0.01647,
+            "hop": 2
+          },
+          {
+            "id": 5,
+            "energy": 0.0005357607564191533,
+            "normalizedEnergy": 0.0012352499999999998,
+            "hop": 3
+          }
+        ],
+        "riverEdges": [
+          {
+            "sourceId": 1,
+            "targetId": 3,
+            "flow": 0.2,
+            "normalizedFlow": 1
+          },
+          {
+            "sourceId": 2,
+            "targetId": 3,
+            "flow": 0.105,
+            "normalizedFlow": 0.5249999999999999
+          },
+          {
+            "sourceId": 3,
+            "targetId": 4,
+            "flow": 0.04575,
+            "normalizedFlow": 0.22874999999999998
+          },
+          {
+            "sourceId": 4,
+            "targetId": 5,
+            "flow": 0.00571875,
+            "normalizedFlow": 0.028593749999999998
+          }
+        ],
+        "completeObservation": true
+      },
+      "config": {},
+      "expected": {
+        "morphology": {
+          "atomicWeight": 0.37746555679222726,
+          "branching": 0,
+          "chainness": 0.2625087216006162,
+          "confidence": 0.4276217711093836,
+          "depthVariance": 0.21330497250710834,
+          "dominantMode": "atomic",
+          "effectiveDepth": 0.06732781907834529,
+          "energyConcentration": 0.2872956254092787,
+          "forwardFlowRatio": 1,
+          "growthPersistence": 0.25947604721504697,
+          "merging": 0.3333333333333333,
+          "narrativeWeight": 0.3692967748008357,
+          "propositionalWeight": 0.25323766840693696,
+          "sameLevelFlowRatio": 0,
+          "shallowEnergyRatio": 0.9901676023880088
+        },
+        "omega": {
+          "activeEdges": 4,
+          "completeObservation": true,
+          "emergentNodes": 3,
+          "omega": 0.9010276818310823,
+          "omegaEdge": 1,
+          "omegaEmerge": 1,
+          "omegaFlow": 0.7315001194857494,
+          "reachedNodes": 5,
+          "regime": "dense",
+          "seedNodes": 2
+        }
+      }
+    },
+    {
+      "name": "deep-narrative",
+      "input": {
+        "riverNodes": [
+          {
+            "id": 1,
+            "energy": 1,
+            "normalizedEnergy": 1,
+            "hop": 0
+          },
+          {
+            "id": 2,
+            "energy": 1,
+            "normalizedEnergy": 1,
+            "hop": 1
+          },
+          {
+            "id": 3,
+            "energy": 1,
+            "normalizedEnergy": 1,
+            "hop": 2
+          },
+          {
+            "id": 4,
+            "energy": 1,
+            "normalizedEnergy": 1,
+            "hop": 3
+          },
+          {
+            "id": 5,
+            "energy": 1,
+            "normalizedEnergy": 1,
+            "hop": 4
+          },
+          {
+            "id": 6,
+            "energy": 1,
+            "normalizedEnergy": 1,
+            "hop": 5
+          },
+          {
+            "id": 7,
+            "energy": 1,
+            "normalizedEnergy": 1,
+            "hop": 6
+          },
+          {
+            "id": 8,
+            "energy": 1,
+            "normalizedEnergy": 1,
+            "hop": 7
+          }
+        ],
+        "riverEdges": [
+          {
+            "sourceId": 1,
+            "targetId": 2,
+            "flow": 1,
+            "normalizedFlow": 1
+          },
+          {
+            "sourceId": 2,
+            "targetId": 3,
+            "flow": 1,
+            "normalizedFlow": 1
+          },
+          {
+            "sourceId": 3,
+            "targetId": 4,
+            "flow": 1,
+            "normalizedFlow": 1
+          },
+          {
+            "sourceId": 4,
+            "targetId": 5,
+            "flow": 1,
+            "normalizedFlow": 1
+          },
+          {
+            "sourceId": 5,
+            "targetId": 6,
+            "flow": 1,
+            "normalizedFlow": 1
+          },
+          {
+            "sourceId": 6,
+            "targetId": 7,
+            "flow": 1,
+            "normalizedFlow": 1
+          },
+          {
+            "sourceId": 7,
+            "targetId": 8,
+            "flow": 1,
+            "normalizedFlow": 1
+          }
+        ],
+        "completeObservation": true
+      },
+      "config": {},
+      "expected": {
+        "morphology": {
+          "atomicWeight": 0.13360732442617812,
+          "branching": 0,
+          "chainness": 0.9120320658962018,
+          "confidence": 0.6071354922873293,
+          "depthVariance": 0.7829277934369568,
+          "dominantMode": "narrative",
+          "effectiveDepth": 0.8646647167633873,
+          "energyConcentration": 0,
+          "forwardFlowRatio": 1,
+          "growthPersistence": 0.9298734950321937,
+          "merging": 0,
+          "narrativeWeight": 0.7164433775483353,
+          "propositionalWeight": 0.14994929802548657,
+          "sameLevelFlowRatio": 0,
+          "shallowEnergyRatio": 0.25
+        },
+        "omega": {
+          "activeEdges": 7,
+          "completeObservation": true,
+          "emergentNodes": 7,
+          "omega": 1,
+          "omegaEdge": 1,
+          "omegaEmerge": 1,
+          "omegaFlow": 0.9999999999999999,
+          "reachedNodes": 8,
+          "regime": "dense",
+          "seedNodes": 1
+        }
+      }
+    },
+    {
+      "name": "omega-scale-override",
+      "input": {
+        "riverNodes": [
+          {
+            "id": 1,
+            "energy": 0.4337265787647467,
+            "normalizedEnergy": 1,
+            "hop": 0
+          },
+          {
+            "id": 2,
+            "energy": 0.03578244274809161,
+            "normalizedEnergy": 0.08250000000000002,
+            "hop": 1
+          },
+          {
+            "id": 3,
+            "energy": 0.0227706453851492,
+            "normalizedEnergy": 0.0525,
+            "hop": 1
+          },
+          {
+            "id": 4,
+            "energy": 0.003757156488549618,
+            "normalizedEnergy": 0.0086625,
+            "hop": 2
+          }
+        ],
+        "riverEdges": [
+          {
+            "sourceId": 1,
+            "targetId": 2,
+            "flow": 0.1375,
+            "normalizedFlow": 1
+          },
+          {
+            "sourceId": 1,
+            "targetId": 3,
+            "flow": 0.0875,
+            "normalizedFlow": 0.6363636363636362
+          },
+          {
+            "sourceId": 2,
+            "targetId": 4,
+            "flow": 0.0240625,
+            "normalizedFlow": 0.175
+          }
+        ],
+        "completeObservation": true
+      },
+      "config": {
+        "kappaEdge": 4,
+        "kappaRatio": 3,
+        "omegaEpsilon": 0.03,
+        "collapsedThreshold": 0.1,
+        "sparseThreshold": 0.3
+      },
+      "expected": {
+        "morphology": {
+          "atomicWeight": 0.39526549031192937,
+          "branching": 0,
+          "chainness": 0.3976350469912294,
+          "confidence": 0.3507735468573746,
+          "depthVariance": 0.21409840258921953,
+          "dominantMode": "atomic",
+          "effectiveDepth": 0.07328468767881458,
+          "energyConcentration": 0.6958872521092269,
+          "forwardFlowRatio": 1,
+          "growthPersistence": 0.27071144726223634,
+          "merging": 0,
+          "narrativeWeight": 0.35000854999681824,
+          "propositionalWeight": 0.25472595969125233,
+          "sameLevelFlowRatio": 0,
+          "shallowEnergyRatio": 0.9924256500497306
+        },
+        "omega": {
+          "activeEdges": 3,
+          "completeObservation": true,
+          "emergentNodes": 3,
+          "omega": 0.8567748920084091,
+          "omegaEdge": 0.75,
+          "omegaEmerge": 1,
+          "omegaFlow": 0.8385692430033213,
+          "reachedNodes": 4,
+          "regime": "dense",
+          "seedNodes": 1
+        }
+      }
+    }
+  ]
+}

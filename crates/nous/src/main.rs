@@ -1,4 +1,5 @@
 mod api;
+mod bundle_cli;
 mod cognition_api;
 mod cognition_cli;
 mod maintenance_api;
@@ -237,6 +238,15 @@ async fn main() {
 }
 
 async fn execute(cli: Cli) -> Result<()> {
+    if let Command::Import {
+        command:
+            maintenance_cli::ImportCommand::Bundle {
+                command: bundle_cli::BundleCommand::Inspect { file, details },
+            },
+    } = &cli.command
+    {
+        return print_json(bundle_cli::inspect(file, *details)?);
+    }
     let root = cli
         .instance
         .clone()

@@ -1,0 +1,330 @@
+{
+  "source": {
+    "commit": "e03b891d42055cdf3cab5dc961cc71dd5facd65a",
+    "owner": "rust-vexus-lite/src/rivermemo_topology_v3.rs evaluate_path",
+    "probe": "read-only native evaluate_path export on neutral fields/CSR/curves"
+  },
+  "tolerance": {
+    "absolute": 1e-12,
+    "relative": 1e-12
+  },
+  "cases": [
+    {
+      "name": "ordered-local-transfer",
+      "input": {
+        "curve": {
+          "id": 1,
+          "chunk_vector": [
+            0.6,
+            0.6,
+            0.2
+          ],
+          "tags": [
+            {
+              "id": 1,
+              "vector": [
+                1,
+                0,
+                0
+              ],
+              "position": 1
+            },
+            {
+              "id": 2,
+              "vector": [
+                0.8,
+                0.6,
+                0
+              ],
+              "position": 2
+            },
+            {
+              "id": 3,
+              "vector": [
+                0.2,
+                0.9,
+                0.35
+              ],
+              "position": 3
+            }
+          ]
+        },
+        "local_field": [
+          [
+            1,
+            1
+          ],
+          [
+            2,
+            0.7
+          ],
+          [
+            3,
+            0.2
+          ]
+        ],
+        "transfer_field": [
+          [
+            1,
+            0.3
+          ],
+          [
+            2,
+            0.7
+          ],
+          [
+            3,
+            1
+          ]
+        ],
+        "local_domain": [
+          1,
+          2
+        ],
+        "transfer_domain": [
+          1,
+          2,
+          3
+        ],
+        "edges": [
+          [
+            1,
+            2,
+            0.8
+          ],
+          [
+            2,
+            1,
+            0.2
+          ],
+          [
+            2,
+            3,
+            0.7
+          ],
+          [
+            3,
+            2,
+            0.3
+          ]
+        ],
+        "config": {}
+      },
+      "expected": {
+        "pathQuality": 0.47890374016473464,
+        "pathCore": 0.4996857726292683,
+        "tagClosure": 0.8336391900439205,
+        "supportCoverage": 1,
+        "segmentCount": 2,
+        "supportedSegments": 2,
+        "transferSegments": 1,
+        "meanDirection": 0.75,
+        "meanContinuity": 0.8587227224885741,
+        "meanLocalPotential": 0.6054128826057348,
+        "meanTransferPotential": 0.6474587980148298
+      }
+    },
+    {
+      "name": "empty-curve",
+      "input": {
+        "curve": {
+          "id": 1,
+          "chunk_vector": [
+            0.6,
+            0.6,
+            0.2
+          ],
+          "tags": []
+        },
+        "local_field": [
+          [
+            1,
+            1
+          ],
+          [
+            2,
+            0.7
+          ],
+          [
+            3,
+            0.2
+          ]
+        ],
+        "transfer_field": [
+          [
+            1,
+            0.3
+          ],
+          [
+            2,
+            0.7
+          ],
+          [
+            3,
+            1
+          ]
+        ],
+        "local_domain": [
+          1,
+          2
+        ],
+        "transfer_domain": [
+          1,
+          2,
+          3
+        ],
+        "edges": [
+          [
+            1,
+            2,
+            0.8
+          ],
+          [
+            2,
+            1,
+            0.2
+          ],
+          [
+            2,
+            3,
+            0.7
+          ],
+          [
+            3,
+            2,
+            0.3
+          ]
+        ],
+        "config": {}
+      },
+      "expected": {
+        "pathQuality": 0,
+        "pathCore": 0,
+        "tagClosure": 0,
+        "supportCoverage": 0,
+        "segmentCount": 0,
+        "supportedSegments": 0,
+        "transferSegments": 0,
+        "meanDirection": 0,
+        "meanContinuity": 0,
+        "meanLocalPotential": 0,
+        "meanTransferPotential": 0
+      }
+    },
+    {
+      "name": "reversed-curve",
+      "input": {
+        "curve": {
+          "id": 1,
+          "chunk_vector": [
+            0.6,
+            0.6,
+            0.2
+          ],
+          "tags": [
+            {
+              "id": 3,
+              "vector": [
+                0.2,
+                0.9,
+                0.35
+              ],
+              "position": 3
+            },
+            {
+              "id": 2,
+              "vector": [
+                0.8,
+                0.6,
+                0
+              ],
+              "position": 2
+            },
+            {
+              "id": 1,
+              "vector": [
+                1,
+                0,
+                0
+              ],
+              "position": 1
+            }
+          ]
+        },
+        "local_field": [
+          [
+            1,
+            1
+          ],
+          [
+            2,
+            0.7
+          ],
+          [
+            3,
+            0.2
+          ]
+        ],
+        "transfer_field": [
+          [
+            1,
+            0.3
+          ],
+          [
+            2,
+            0.7
+          ],
+          [
+            3,
+            1
+          ]
+        ],
+        "local_domain": [
+          1,
+          2
+        ],
+        "transfer_domain": [
+          1,
+          2,
+          3
+        ],
+        "edges": [
+          [
+            1,
+            2,
+            0.8
+          ],
+          [
+            2,
+            1,
+            0.2
+          ],
+          [
+            2,
+            3,
+            0.7
+          ],
+          [
+            3,
+            2,
+            0.3
+          ]
+        ],
+        "config": {}
+      },
+      "expected": {
+        "pathQuality": 0.27199125668042073,
+        "pathCore": 0.2837943199107422,
+        "tagClosure": 0.8336391900439205,
+        "supportCoverage": 1,
+        "segmentCount": 2,
+        "supportedSegments": 2,
+        "transferSegments": 1,
+        "meanDirection": 0.25,
+        "meanContinuity": 0.8587227224885742,
+        "meanLocalPotential": 0.6054128826057348,
+        "meanTransferPotential": 0.6474587980148298
+      }
+    }
+  ]
+}
