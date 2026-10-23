@@ -67,6 +67,15 @@
       "path": "temp/repos/tantivy-jieba"
     },
     {
+      "name": "new-api",
+      "url": "https://github.com/QuantumNous/new-api.git",
+      "version": "v1.0.0-rc.40",
+      "commit": "0aec08fee811ec6136828fda790551b49e410301",
+      "path": "temp/repos/new-api",
+      "runtime_image": "calciumion/new-api:latest",
+      "runtime_image_id": "sha256:f5bb9a5099015bc1d89e0cf8571ee4ecf45f31ff42a78d4dc38df8bb5f778812"
+    },
+    {
       "name": "VCPToolBox",
       "url": "https://github.com/lioensky/VCPToolBox.git",
       "commit": "d1b40c863273cbbba082fb7657671424768c4a53",

@@ -22,6 +22,6 @@ SQLx、Tokio、Axum、Clap、Reqwest、tracing 与 tempfile 通过 Cargo 依赖�
 
 ## 已研究的领域合同
 
-A-Memorix 的 RequestContext、身份解析端口、Namespace 授权、检索范围集合与工具合同用于确定 Nous 的消费者需求。当前 Namespace、Subject、Material 和 Observation 依宪纲组织；A-Memorix 完整功能和公共接口继续按 [合同清单](a-memorix-contracts.json) 实施。
+A-Memorix 的 RequestContext、身份解析端口、Namespace 授权、检索范围集合与工具合同用于确定 Nous 的消费者需求。M1 已建立 Namespace、Subject、Material、Observation、Memory 与模型调用的统一认知链路；M2 继续按 [合同清单](a-memorix-contracts.json) 承接 A-Memorix 的完整功能、维护、导入和公共接口。
 
 VCP、旧 Nous 检索实现与 PR #56 保留为算法和产品研究源码。后续每项复制改编在真正接入时补充文件、commit、许可与产品落点；TagMemo、RiverMemo 和高级认知按 [基建实施规划](../docs/基建实施规划.md) 推进。

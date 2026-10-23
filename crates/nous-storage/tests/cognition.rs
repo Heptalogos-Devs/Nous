@@ -383,13 +383,16 @@ async fn waiting_resume_and_startup_recovery_preserve_formation_outcomes() {
     let (mut waiting, call) = fixture(&database).await;
     let (mut completed, _) = fixture(&database).await;
     let (mut active_waiting, _) = fixture(&database).await;
+    let (mut settled_configuration, _) = fixture(&database).await;
     let mut tx = transaction(&database).await;
     waiting.state = FormationState::WaitingForBudget;
     completed.state = FormationState::Succeeded;
     active_waiting.state = FormationState::WaitingForConfiguration;
+    settled_configuration.state = FormationState::WaitingForConfiguration;
     tx.update_formation(&waiting).await.unwrap();
     tx.update_formation(&completed).await.unwrap();
     tx.update_formation(&active_waiting).await.unwrap();
+    tx.update_formation(&settled_configuration).await.unwrap();
     tx.insert_model_call(&call).await.unwrap();
     tx.commit(json!({"fixture":true})).await.unwrap();
     let pool = SqlitePool::connect_with(
@@ -401,11 +404,13 @@ async fn waiting_resume_and_startup_recovery_preserve_formation_outcomes() {
     .unwrap();
     sqlx::query("INSERT INTO Workers(id,worker_type,storage_name,last_seen,started_at) VALUES ('departed',?,'SqliteStorage',strftime('%s','now'),strftime('%s','now'))")
         .bind(JOB_QUEUE).execute(&pool).await.unwrap();
-    sqlx::query("UPDATE Jobs SET status='Done',lock_by='departed' WHERE id=?")
-        .bind(&waiting.job_id)
-        .execute(&pool)
-        .await
-        .unwrap();
+    for id in [&waiting.job_id, &settled_configuration.job_id] {
+        sqlx::query("UPDATE Jobs SET status='Done',lock_by='departed' WHERE id=?")
+            .bind(id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
     for id in [&completed.job_id, &active_waiting.job_id] {
         sqlx::query("UPDATE Jobs SET status='Running',lock_by='departed' WHERE id=?")
             .bind(id)
@@ -413,6 +418,25 @@ async fn waiting_resume_and_startup_recovery_preserve_formation_outcomes() {
             .await
             .unwrap();
     }
+    assert_eq!(database.resume_waiting_configurations().await.unwrap(), 1);
+    assert_eq!(
+        database
+            .formation(&settled_configuration.job_id)
+            .await
+            .unwrap()
+            .state,
+        FormationState::Queued
+    );
+    assert_eq!(
+        database.formation(&waiting.job_id).await.unwrap().state,
+        FormationState::WaitingForBudget
+    );
+    let unchanged_sequence = database.status().await.unwrap().commit_seq;
+    assert_eq!(database.resume_waiting_configurations().await.unwrap(), 0);
+    assert_eq!(
+        database.status().await.unwrap().commit_seq,
+        unchanged_sequence
+    );
     assert_eq!(database.resume_waiting_formations().await.unwrap(), 1);
     assert_eq!(
         database.formation(&waiting.job_id).await.unwrap().state,

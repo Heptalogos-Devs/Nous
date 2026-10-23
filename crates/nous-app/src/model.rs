@@ -3,7 +3,7 @@
 //! Upstream: jeremychone/rust-genai, Apache-2.0 OR MIT; release 0.7.0,
 //! commit 8fc13af4db80acd0771c87f6180d79b83c9a898d.
 
-use std::{error::Error as StdError, fmt};
+use std::{collections::BTreeMap, error::Error as StdError, fmt};
 
 use anyhow::{Result as ConfigResult, bail};
 use chrono::Utc;
@@ -22,6 +22,16 @@ use crate::instance::{InstancePaths, SecretRef};
 
 pub const FORMATION_PROMPT_VERSION: &str = "nous.memory.formation.v1";
 const FORMATION_PROMPT: &str = include_str!("prompts/memory-formation-v1.md");
+const OWNED_REQUEST_FIELDS: &[&str] = &[
+    "model",
+    "messages",
+    "stream",
+    "tools",
+    "tool_choice",
+    "response_format",
+    "max_tokens",
+    "max_completion_tokens",
+];
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
@@ -41,6 +51,8 @@ pub struct FormationConfig {
     pub max_output_tokens: u32,
     #[serde(default = "daily_limit")]
     pub max_calls_per_day: u32,
+    #[serde(default)]
+    pub native_parameters: BTreeMap<String, Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -113,6 +125,11 @@ impl ModelConfig {
         }
         if !(1..=32768).contains(&config.max_output_tokens) || config.max_calls_per_day > 100000 {
             bail!("model output tokens must be 1 to 32768 and daily calls at most 100000");
+        }
+        for field in config.native_parameters.keys() {
+            if OWNED_REQUEST_FIELDS.contains(&field.as_str()) {
+                bail!("native parameter '{field}' is owned by the formation request contract");
+            }
         }
         Ok(())
     }
@@ -360,7 +377,7 @@ impl ModelRuntime {
             "reason":if ready {None} else {Some("model credential is missing or unreadable")},
             "resource":ResourceMetadata::from(&config.resource),"prompt_version":config.prompt_version,
             "max_input_bytes":config.max_input_bytes,"max_output_tokens":config.max_output_tokens,
-            "max_calls_per_day":config.max_calls_per_day,"cost":null})
+            "max_calls_per_day":config.max_calls_per_day,"native_parameters":config.native_parameters,"cost":null})
     }
 
     /// Prepare first, then persistently reserve metadata.call_id before execute.
@@ -428,6 +445,11 @@ impl ModelRuntime {
             .with_max_tokens(config.max_output_tokens)
             .with_capture_raw_body(true)
             .with_response_format(JsonSpec::new("nous_memory_formation_v1", output_schema()));
+        let options = if config.native_parameters.is_empty() {
+            options
+        } else {
+            options.with_extra_body(json!(&config.native_parameters))
+        };
         let metadata = ModelCallMetadata {
             schema_version: 1,
             call_id: uuid::Uuid::new_v4().to_string(),
@@ -443,6 +465,7 @@ impl ModelRuntime {
             rendered_user,
             parameters: json!({"max_output_tokens":config.max_output_tokens,
                 "max_input_bytes":config.max_input_bytes,"response_format":"json_schema",
+                "native_parameters":&config.native_parameters,
                 "genai_chat_options":&options}),
             max_calls_per_day: config.max_calls_per_day,
         };
@@ -578,6 +601,31 @@ fn parse_drafts(text: &str) -> Result<Vec<MemoryDraft>, ModelFailure> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_parameters_keep_provider_controls_and_protect_owned_fields() {
+        let config: ModelConfig = serde_json::from_value(json!({"memory_formation":{
+            "resource":{"provider":"new-api","protocol":"openai_chat_completions",
+                "endpoint":"http://127.0.0.1:3000/v1/","model":"doubao-seed-2.1-lite",
+                "credential":{"file":"credentials/model-gateway.token"}},
+            "native_parameters":{"thinking":{"type":"disabled"}}
+        }}))
+        .unwrap();
+        config.validate().unwrap();
+        for field in OWNED_REQUEST_FIELDS {
+            let mut invalid = config.clone();
+            invalid
+                .memory_formation
+                .as_mut()
+                .unwrap()
+                .native_parameters
+                .insert((*field).into(), json!("override"));
+            assert!(invalid.validate().is_err(), "reserved field {field}");
+        }
+        let parameters = &config.memory_formation.unwrap().native_parameters;
+        let options = ChatOptions::default().with_extra_body(json!(parameters));
+        assert_eq!(options.extra_body.unwrap()["thinking"]["type"], "disabled");
+    }
 
     #[test]
     fn formation_requires_bounded_strict_structured_output() {

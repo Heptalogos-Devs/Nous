@@ -1,3 +1,4 @@
+pub mod backup;
 mod cognition;
 pub mod instance;
 pub mod model;

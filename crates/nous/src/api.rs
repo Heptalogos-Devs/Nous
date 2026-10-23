@@ -110,6 +110,7 @@ impl From<WireTime> for TimePoint {
 
 #[derive(Clone)]
 pub enum Operation {
+    CreateBackup,
     Cognition(crate::cognition_api::CognitionOperation),
     Status,
     CreateNamespace(CreateNamespace),
@@ -126,6 +127,7 @@ pub enum Operation {
 impl Operation {
     pub async fn execute(&self, app: &App, ctx: &CallContext) -> Result<Value, Error> {
         match self {
+            Self::CreateBackup => app.create_backup(ctx).await,
             Self::Cognition(operation) => operation.execute(app, ctx).await,
             Self::Status => {
                 ctx.require_admin()?;
@@ -193,6 +195,7 @@ impl Operation {
 
     pub fn request(&self) -> (&'static str, String, Option<Value>) {
         match self {
+            Self::CreateBackup => ("POST", "/v1/backups".into(), None),
             Self::Cognition(operation) => operation.request(),
             Self::Status => ("GET", "/v1/status".into(), None),
             Self::CreateNamespace(body) => ("POST", "/v1/namespaces".into(), Some(json!(body))),
@@ -229,6 +232,7 @@ pub fn router(state: ApiState, config: &InstanceConfig, cancellation: Cancellati
     Router::new()
         .route("/v1/status", get(status))
         .route("/v1/stop", post(stop))
+        .route("/v1/backups", post(create_backup))
         .route(
             "/v1/namespaces",
             get(list_namespaces).post(create_namespace),
@@ -322,6 +326,12 @@ async fn stop(
     c.require_admin()?;
     s.shutdown.cancel();
     Ok(Json(json!({"state":"stopping"})))
+}
+async fn create_backup(
+    State(s): State<ApiState>,
+    Extension(c): Extension<CallContext>,
+) -> Result<Json<Value>, ApiError> {
+    run(s, c, Operation::CreateBackup).await
 }
 async fn list_namespaces(
     State(s): State<ApiState>,

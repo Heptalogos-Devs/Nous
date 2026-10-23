@@ -161,21 +161,42 @@ impl Database {
         })
     }
 
-    /// Called before workers start while the application owns the instance lock.
-    /// A waiting formation is retried with its original queue identity.
+    /// Resume settled waiting jobs at startup or a new budget period. Each
+    /// formation retains its original queue identity.
     pub async fn resume_waiting_formations(&self) -> Result<u64> {
+        self.resume_waiting(true).await
+    }
+
+    /// Resume configuration waits when the required resource becomes ready.
+    /// Budget waits retain their state until the host explicitly resumes them.
+    pub async fn resume_waiting_configurations(&self) -> Result<u64> {
+        self.resume_waiting(false).await
+    }
+
+    async fn resume_waiting(&self, include_budget: bool) -> Result<u64> {
+        let (operation, request_hash) = if include_budget {
+            (
+                "formation.resume_waiting",
+                "nous.formation.resume_waiting.v1",
+            )
+        } else {
+            (
+                "formation.resume_configurations",
+                "nous.formation.resume_configurations.v1",
+            )
+        };
         let key = OperationKey {
             caller_id: "nous.recovery".into(),
-            operation: "formation.resume_waiting".into(),
+            operation: operation.into(),
             scope: "instance".into(),
             operation_id: ulid::Ulid::generate().to_string(),
-            request_hash: "nous.formation.resume_waiting.v1".into(),
+            request_hash: request_hash.into(),
         };
         let BeginOperation::New(mut tx) = self.begin_operation(key).await? else {
             unreachable!("fresh recovery operation")
         };
-        let ids: Vec<String> = sqlx::query_scalar("SELECT f.job_id FROM formation_runs f JOIN Jobs j ON j.id=f.job_id WHERE f.state IN ('waiting_for_configuration','waiting_for_budget') AND j.status IN ('Done','Failed','Killed') ORDER BY f.job_id")
-            .fetch_all(&mut *tx.tx).await.map_err(storage_error)?;
+        let ids: Vec<String> = sqlx::query_scalar("SELECT f.job_id FROM formation_runs f JOIN Jobs j ON j.id=f.job_id WHERE (f.state='waiting_for_configuration' OR (? AND f.state='waiting_for_budget')) AND j.status IN ('Done','Failed','Killed') ORDER BY f.job_id")
+            .bind(include_budget).fetch_all(&mut *tx.tx).await.map_err(storage_error)?;
         if ids.is_empty() {
             tx.rollback().await?;
             return Ok(0);

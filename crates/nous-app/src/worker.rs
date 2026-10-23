@@ -28,11 +28,19 @@ impl App {
             let maintenance_app = app.clone();
             let maintenance_cancel = cancellation.clone();
             let maintenance = async move {
+                let mut budget_day = Utc::now().date_naive();
                 loop {
                     tokio::select! {
                         _=maintenance_cancel.cancelled()=>break,
                         _=tokio::time::sleep(Duration::from_secs(60))=>{
-                            if let Err(error)=maintenance_app.database.resume_waiting_formations().await {tracing::warn!(%error,"waiting work resume failed");}
+                            let today = Utc::now().date_naive();
+                            if today != budget_day {
+                                budget_day = today;
+                                if let Err(error)=maintenance_app.database.resume_waiting_formations().await {tracing::warn!(%error,"daily budget work resume failed");}
+                            } else if maintenance_app.model.inspect()["state"] == "ready"
+                                && let Err(error)=maintenance_app.database.resume_waiting_configurations().await {
+                                tracing::warn!(%error,"configuration work resume failed");
+                            }
                             if let Err(error)=maintenance_app.catch_up_index().await {tracing::warn!(%error,"index catch-up failed");}
                         }
                     }
@@ -357,6 +365,13 @@ impl App {
         state: FormationState,
         error: Error,
     ) -> Result<()> {
+        if run.state == state
+            && run.error.as_ref().is_some_and(|previous| {
+                previous.code == error.code && previous.message == error.message
+            })
+        {
+            return Ok(());
+        }
         let id = format!("{}:{}", run.job_id, ulid::Ulid::generate());
         if let Some(mut tx) = self
             .worker_transaction(

@@ -237,10 +237,10 @@ impl App {
             }
             for memory in &delta.memories {
                 candidates.remove(&memory.id);
-                if !memory.deleted {
-                    if let Some(score) = match_score(&request.text, &memory_text(memory)) {
-                        candidates.insert(memory.id.clone(), (memory.clone(), score));
-                    }
+                if !memory.deleted
+                    && let Some(score) = match_score(&request.text, &memory_text(memory))
+                {
+                    candidates.insert(memory.id.clone(), (memory.clone(), score));
                 }
             }
         }

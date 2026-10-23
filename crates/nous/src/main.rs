@@ -64,6 +64,11 @@ enum Command {
         #[command(subcommand)]
         command: TokenCommand,
     },
+    /// Create a complete snapshot or restore it into a new instance.
+    Backup {
+        #[command(subcommand)]
+        command: BackupCommand,
+    },
     Namespace {
         #[command(subcommand)]
         command: NamespaceCommand,
@@ -110,6 +115,14 @@ enum ConfigCommand {
     Show,
     Schema,
     Validate,
+}
+#[derive(Subcommand)]
+enum BackupCommand {
+    Create,
+    /// Restore into the empty target selected with --instance; creates a new admin credential.
+    Restore {
+        source: PathBuf,
+    },
 }
 #[derive(Subcommand)]
 enum TokenCommand {
@@ -235,6 +248,9 @@ async fn execute(cli: Cli) -> Result<()> {
             )?;
         }
         Command::Serve { listen } => serve(paths, listen).await?,
+        Command::Backup {
+            command: BackupCommand::Restore { source },
+        } => print_json(nous_app::backup::restore(&source, paths).await?)?,
         Command::Stop => print_json(connect(&paths, cli.url, cli.token_file)?.stop().await?)?,
         Command::Paths => print_json(serde_json::to_value(paths)?)?,
         Command::Config { command } => match command.unwrap_or(ConfigCommand::Show) {
@@ -315,6 +331,9 @@ async fn execute(cli: Cli) -> Result<()> {
         }
         command => {
             let operation = match command {
+                Command::Backup {
+                    command: BackupCommand::Create,
+                } => Operation::CreateBackup,
                 Command::Memory { command } => command.operation(),
                 Command::Query(input) => input.operation()?,
                 Command::Model {

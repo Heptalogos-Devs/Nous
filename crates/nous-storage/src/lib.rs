@@ -4,6 +4,7 @@
 //! `examples/basic.rs`, commit 9c87189360b0e212b23821a1a177e9cbe2ad1d4a.
 //! The upstream MIT license is retained in LICENSE.apalis.
 
+mod backup;
 mod cognition;
 mod records;
 mod transaction;
@@ -22,6 +23,7 @@ use sqlx::{
     sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous},
 };
 
+pub use backup::ObjectReference;
 pub use cognition::MemoryBatch;
 pub use transaction::{BeginOperation, WriteTransaction};
 

@@ -148,6 +148,7 @@ async fn waiting_work_resumes_after_configuration_and_keeps_authority_through_qu
             max_input_bytes: 32768,
             max_output_tokens: 1000,
             max_calls_per_day: 1,
+            native_parameters: Default::default(),
         }),
     };
     std::fs::write(&paths.config, toml::to_string_pretty(&config).unwrap()).unwrap();

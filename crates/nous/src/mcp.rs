@@ -116,6 +116,16 @@ impl McpService {
         self.execute(Operation::Status, ctx).await
     }
 
+    #[tool(
+        description = "Create a complete authority-and-object snapshot with configuration and integrity manifest; administrator scope required; credentials excluded"
+    )]
+    async fn backup_create(
+        &self,
+        ctx: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        self.execute(Operation::CreateBackup, ctx).await
+    }
+
     #[tool(description = "Create an isolated Namespace using an idempotent operation ID")]
     async fn namespace_create(
         &self,
