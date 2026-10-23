@@ -1,0 +1,45 @@
+[workspace]
+members = ["crates/nous-domain", "crates/nous-storage", "crates/nous-app", "crates/nous"]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97"
+repository = "https://github.com/Heptalogos-Devs/Nous-Wave"
+
+[workspace.dependencies]
+nous-domain = { path = "crates/nous-domain" }
+nous-storage = { path = "crates/nous-storage" }
+nous-app = { path = "crates/nous-app" }
+anyhow = "1"
+apalis = { version = "1.0.0", features = ["retry", "task-context"] }
+apalis-core = "1.0.0"
+apalis-sqlite = "1.0.0"
+axum = "0.8"
+chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4", features = ["derive", "env"] }
+directories = "6"
+fs2 = "0.4"
+futures = "0.3"
+reqwest = { version = "0.13.2", default-features = false, features = ["json", "rustls"] }
+rmcp = { version = "3.7.0", features = ["server", "macros", "transport-streamable-http-server", "transport-io"] }
+schemars = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "sqlite", "migrate", "macros"] }
+subtle = "2"
+tempfile = "3"
+thiserror = "2"
+tokio = { version = "1", features = ["full"] }
+tokio-util = "0.7"
+toml = "1"
+tower = "0.5"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+ulid = { version = "3", features = ["serde"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"

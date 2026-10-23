@@ -1,0 +1,63 @@
+{
+  "date": "2026-10-23",
+  "sources": [
+    {
+      "name": "A_memorix",
+      "url": "https://github.com/A-Dawn/A_memorix.git",
+      "commit": "28db65dd96f546f736d65c043a39254cbae2c4e9",
+      "path": "temp/repos/A_memorix"
+    },
+    {
+      "name": "apalis",
+      "url": "https://github.com/geofmureithi/apalis.git",
+      "commit": "9179240cc8daf300bf2652a17e40e98b2bb624f4",
+      "path": "temp/repos/apalis"
+    },
+    {
+      "name": "apalis-sqlite",
+      "url": "https://github.com/apalis-dev/apalis-sqlite.git",
+      "commit": "9c87189360b0e212b23821a1a177e9cbe2ad1d4a",
+      "path": "temp/repos/apalis-sqlite"
+    },
+    {
+      "name": "MaiBot",
+      "url": "https://github.com/Mai-with-u/MaiBot.git",
+      "commit": "c602a2780f4f4dda4a6be46d67abc1cfb1ad420c",
+      "path": "temp/repos/MaiBot"
+    },
+    {
+      "name": "Nous-previous",
+      "url": "https://github.com/Heptalogos-Devs/Nous-Wave.git",
+      "commit": "412b062082afb75ccfae4c3f69fc606d3e3cc862",
+      "path": "temp/repos/Nous-previous"
+    },
+    {
+      "name": "rmcp",
+      "url": "https://github.com/modelcontextprotocol/rust-sdk.git",
+      "commit": "2a401c4ca3eb5880744d2e70fad8073a7fcfb2bc",
+      "path": "temp/repos/rmcp"
+    },
+    {
+      "name": "rust-genai",
+      "url": "https://github.com/jeremychone/rust-genai.git",
+      "commit": "518fdb4542dc8561373affbf71ccc1c8390d1d46",
+      "path": "temp/repos/rust-genai"
+    },
+    {
+      "name": "VCPToolBox",
+      "url": "https://github.com/lioensky/VCPToolBox.git",
+      "commit": "d1b40c863273cbbba082fb7657671424768c4a53",
+      "path": "temp/repos/VCPToolBox"
+    }
+  ],
+  "previous_rebuild": {
+    "commit": "584517a4abddea6d1140b64ab20914e793093a70",
+    "repo": "Nous-previous",
+    "ref": "refs/pull/56/head"
+  },
+  "requirements": {
+    "sha256": "7483D5DCFF5195EB3548CE4BAEB8699BBAAA6C2531C1278E2FFA11F35172A653",
+    "libraryFileId": "libfile_28b4eae2738881918b98792eb0f9582e",
+    "version": 3
+  }
+}

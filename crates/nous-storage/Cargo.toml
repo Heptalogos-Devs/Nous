@@ -1,0 +1,16 @@
+[package]
+name = "nous-storage"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+nous-domain = { path = "../nous-domain" }
+apalis.workspace = true
+apalis-sqlite.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sqlx.workspace = true
+ulid.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true

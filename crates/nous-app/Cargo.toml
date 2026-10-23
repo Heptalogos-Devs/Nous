@@ -1,0 +1,29 @@
+[package]
+name = "nous-app"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+nous-domain.workspace = true
+nous-storage.workspace = true
+anyhow.workspace = true
+chrono.workspace = true
+directories.workspace = true
+fs2.workspace = true
+reqwest.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+subtle.workspace = true
+tempfile.workspace = true
+tokio.workspace = true
+toml.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+
+[lints]
+workspace = true

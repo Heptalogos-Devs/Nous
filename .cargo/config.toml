@@ -1,0 +1,3 @@
+[build]
+# Keep direct Cargo invocations and editor checks inside the managed temp tree.
+target-dir = "temp/build/cargo"

@@ -1,0 +1,219 @@
+//! Adapted from rmcp official examples/servers/src/common/counter.rs and counter_stdio.rs.
+//! Copyright Model Context Protocol contributors. Apache-2.0; see ../UPSTREAM.md.
+use nous_app::App;
+use nous_domain::{CallContext, Error, ErrorCode};
+use rmcp::{
+    ErrorData, RoleServer, ServerHandler,
+    handler::server::{router::tool::ToolRouter, wrapper::Parameters},
+    model::{CallToolResult, Implementation, ServerCapabilities, ServerConfig},
+    service::RequestContext,
+    tool, tool_handler, tool_router,
+};
+use schemars::JsonSchema;
+use serde::Deserialize;
+
+use crate::api::{
+    ApiClient, CreateNamespace, CreateSubject, Operation, PutMaterial, RecordObservation,
+};
+
+#[derive(Clone)]
+enum Backend {
+    Local(App),
+    Remote(ApiClient),
+}
+
+#[derive(Clone)]
+pub struct McpService {
+    backend: Backend,
+    tool_router: ToolRouter<Self>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct NamespaceRequest {
+    pub namespace_id: String,
+}
+#[derive(Deserialize, JsonSchema)]
+pub struct SubjectRequest {
+    pub subject_id: String,
+}
+#[derive(Deserialize, JsonSchema)]
+pub struct MaterialRequest {
+    pub material_id: String,
+}
+#[derive(Deserialize, JsonSchema)]
+pub struct JobRequest {
+    pub job_id: String,
+}
+#[derive(Deserialize, JsonSchema)]
+pub struct CreateSubjectRequest {
+    pub namespace_id: String,
+    pub operation_id: String,
+    pub name: String,
+    #[serde(default)]
+    pub capabilities: Vec<String>,
+}
+
+impl McpService {
+    pub fn local(app: App) -> Self {
+        Self {
+            backend: Backend::Local(app),
+            tool_router: Self::tool_router(),
+        }
+    }
+    pub fn remote(client: ApiClient) -> Self {
+        Self {
+            backend: Backend::Remote(client),
+            tool_router: Self::tool_router(),
+        }
+    }
+
+    async fn execute(
+        &self,
+        operation: Operation,
+        request: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let result = match &self.backend {
+            Backend::Local(app) => {
+                let context = request
+                    .extensions
+                    .get::<axum::http::request::Parts>()
+                    .and_then(|parts| parts.extensions.get::<CallContext>())
+                    .cloned();
+                match context {
+                    Some(context) => operation.execute(app, &context).await,
+                    None => Err(Error::new(
+                        ErrorCode::Unauthorized,
+                        "authenticated HTTP context is required",
+                    )),
+                }
+            }
+            Backend::Remote(client) => client.execute_domain(&operation).await,
+        };
+        Ok(match result {
+            Ok(value) => CallToolResult::structured(value),
+            Err(error) => CallToolResult::structured_error(serde_json::json!({"error":error})),
+        })
+    }
+}
+
+#[tool_router]
+impl McpService {
+    #[tool(
+        description = "Read Nous instance storage and capability status; administrator scope required"
+    )]
+    async fn status(&self, ctx: RequestContext<RoleServer>) -> Result<CallToolResult, ErrorData> {
+        self.execute(Operation::Status, ctx).await
+    }
+
+    #[tool(description = "Create an isolated Namespace using an idempotent operation ID")]
+    async fn namespace_create(
+        &self,
+        Parameters(input): Parameters<CreateNamespace>,
+        ctx: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        self.execute(Operation::CreateNamespace(input), ctx).await
+    }
+
+    #[tool(description = "List Namespaces visible to this credential")]
+    async fn namespace_list(
+        &self,
+        ctx: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        self.execute(Operation::ListNamespaces, ctx).await
+    }
+
+    #[tool(description = "Create a Subject in a Namespace; supported capability is memory")]
+    async fn subject_create(
+        &self,
+        Parameters(input): Parameters<CreateSubjectRequest>,
+        ctx: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let capabilities = if input.capabilities.is_empty() {
+            vec!["memory".into()]
+        } else {
+            input.capabilities
+        };
+        self.execute(
+            Operation::CreateSubject(
+                input.namespace_id,
+                CreateSubject {
+                    operation_id: input.operation_id,
+                    name: input.name,
+                    capabilities,
+                },
+            ),
+            ctx,
+        )
+        .await
+    }
+
+    #[tool(description = "List Subjects in a Namespace")]
+    async fn subject_list(
+        &self,
+        Parameters(input): Parameters<NamespaceRequest>,
+        ctx: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        self.execute(Operation::ListSubjects(input.namespace_id), ctx)
+            .await
+    }
+
+    #[tool(
+        description = "Save UTF-8 material with immutable content and optional provenance; recording a Subject contact is a separate operation"
+    )]
+    async fn material_put(
+        &self,
+        Parameters(input): Parameters<PutMaterial>,
+        ctx: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        self.execute(Operation::PutMaterial(input), ctx).await
+    }
+
+    #[tool(description = "Read material text and its source metadata by stable material ID")]
+    async fn material_get(
+        &self,
+        Parameters(input): Parameters<MaterialRequest>,
+        ctx: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        self.execute(Operation::GetMaterial(input.material_id), ctx)
+            .await
+    }
+
+    #[tool(
+        description = "Record a real Subject contact with saved material using an idempotent operation ID"
+    )]
+    async fn observation_record(
+        &self,
+        Parameters(input): Parameters<RecordObservation>,
+        ctx: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        self.execute(Operation::RecordObservation(input), ctx).await
+    }
+
+    #[tool(description = "List a Subject's recorded contacts with material")]
+    async fn observation_list(
+        &self,
+        Parameters(input): Parameters<SubjectRequest>,
+        ctx: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        self.execute(Operation::ListObservations(input.subject_id), ctx)
+            .await
+    }
+
+    #[tool(description = "Read a durable job and its current processing state")]
+    async fn job_get(
+        &self,
+        Parameters(input): Parameters<JobRequest>,
+        ctx: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        self.execute(Operation::GetJob(input.job_id), ctx).await
+    }
+}
+
+#[tool_handler(router = self.tool_router)]
+impl ServerHandler for McpService {
+    fn get_info(&self) -> ServerConfig {
+        ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
+            .with_server_info(Implementation::from_build_env())
+            .with_instructions("Nous Wave provides isolated identity, immutable material, real contacts and durable work. Supply a stable operation_id for retries. Material storage and Subject contact are separate operations.")
+    }
+}

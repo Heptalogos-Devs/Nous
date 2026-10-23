@@ -1,0 +1,12 @@
+{
+  "includeIgnored": [
+    "temp/repos/apalis/",
+    "temp/repos/apalis-sqlite/",
+    "temp/repos/A_memorix/",
+    "temp/repos/MaiBot/",
+    "temp/repos/Nous-previous/",
+    "temp/repos/rmcp/",
+    "temp/repos/rust-genai/",
+    "temp/repos/VCPToolBox/"
+  ]
+}

@@ -1,0 +1,432 @@
+{
+  "source_lock": "sources.lock.json",
+  "tools": [
+    {
+      "name": "search_memory",
+      "line": 106,
+      "signature": "self, query: str='', limit: int=5, mode: str='search', chat_id: str='', person_id: str='', time_start: str | float | None=None, time_end: str | float | None=None, respect_filter: bool=True, **kwargs",
+      "declaration": "Tool('search_memory', description='搜索长期记忆', parameters=[_tool_param('query', ToolParamType.STRING, '查询文本', False), _tool_param('limit', ToolParamType.INTEGER, '返回条数', False), _tool_param('mode', ToolParamType.STRING, 'search/time/hybrid/episode/aggregate', False), _tool_param('chat_id', ToolParamType.STRING, '聊天流 ID', False), _tool_param('person_id', ToolParamType.STRING, '人物 ID', False), _tool_param('time_start', ToolParamType.FLOAT, '起始时间戳', False), _tool_param('time_end', ToolParamType.FLOAT, '结束时间戳', False), _tool_param('respect_filter', ToolParamType.BOOLEAN, '是否应用聊天过滤配置', False)])"
+    },
+    {
+      "name": "ingest_summary",
+      "line": 146,
+      "signature": "self, external_id: str, chat_id: str, text: str, participants: Optional[List[str]]=None, time_start: float | None=None, time_end: float | None=None, tags: Optional[List[str]]=None, metadata: Optional[Dict[str, Any]]=None, respect_filter: bool=True, **kwargs",
+      "declaration": "Tool('ingest_summary', description='写入聊天摘要到长期记忆', parameters=[_tool_param('external_id', ToolParamType.STRING, '外部幂等 ID', True), _tool_param('chat_id', ToolParamType.STRING, '聊天流 ID', True), _tool_param('text', ToolParamType.STRING, '摘要文本', True), _tool_param('time_start', ToolParamType.FLOAT, '起始时间戳', False), _tool_param('time_end', ToolParamType.FLOAT, '结束时间戳', False), _tool_param('respect_filter', ToolParamType.BOOLEAN, '是否应用聊天过滤配置', False)])"
+    },
+    {
+      "name": "ingest_text",
+      "line": 186,
+      "signature": "self, external_id: str, source_type: str, text: str, chat_id: str='', person_ids: Optional[List[str]]=None, participants: Optional[List[str]]=None, timestamp: float | None=None, time_start: float | None=None, time_end: float | None=None, tags: Optional[List[str]]=None, metadata: Optional[Dict[str, Any]]=None, respect_filter: bool=True, **kwargs",
+      "declaration": "Tool('ingest_text', description='写入普通长期记忆文本', parameters=[_tool_param('external_id', ToolParamType.STRING, '外部幂等 ID', True), _tool_param('source_type', ToolParamType.STRING, '来源类型', True), _tool_param('text', ToolParamType.STRING, '原始文本', True), _tool_param('chat_id', ToolParamType.STRING, '聊天流 ID', False), _tool_param('timestamp', ToolParamType.FLOAT, '时间戳', False), _tool_param('respect_filter', ToolParamType.BOOLEAN, '是否应用聊天过滤配置', False)])"
+    },
+    {
+      "name": "get_person_profile",
+      "line": 233,
+      "signature": "self, person_id: str, chat_id: str='', limit: int=10, **kwargs",
+      "declaration": "Tool('get_person_profile', description='获取人物画像', parameters=[_tool_param('person_id', ToolParamType.STRING, '人物 ID', True), _tool_param('chat_id', ToolParamType.STRING, '聊天流 ID', False), _tool_param('limit', ToolParamType.INTEGER, '证据条数', False)])"
+    },
+    {
+      "name": "maintain_memory",
+      "line": 248,
+      "signature": "self, action: str, target: str='', hours: float | None=None, reason: str='', limit: int=50, **kwargs",
+      "declaration": "Tool('maintain_memory', description='维护长期记忆关系状态', parameters=[_tool_param('action', ToolParamType.STRING, 'reinforce/protect/restore/freeze/recycle_bin', True), _tool_param('target', ToolParamType.STRING, '目标哈希或查询文本', False), _tool_param('hours', ToolParamType.FLOAT, '保护时长（小时）', False), _tool_param('limit', ToolParamType.INTEGER, '查询条数（用于 recycle_bin）', False)])"
+    },
+    {
+      "name": "memory_stats",
+      "line": 262,
+      "signature": "self, **kwargs",
+      "declaration": "Tool('memory_stats', description='获取长期记忆统计', parameters=[])"
+    },
+    {
+      "name": "memory_graph_admin",
+      "line": 268,
+      "signature": "self, action: str, **kwargs",
+      "declaration": "Tool('memory_graph_admin', description='长期记忆图谱管理接口', parameters=_ADMIN_TOOL_PARAMS)"
+    },
+    {
+      "name": "memory_source_admin",
+      "line": 272,
+      "signature": "self, action: str, **kwargs",
+      "declaration": "Tool('memory_source_admin', description='长期记忆来源管理接口', parameters=_ADMIN_TOOL_PARAMS)"
+    },
+    {
+      "name": "memory_episode_admin",
+      "line": 276,
+      "signature": "self, action: str, **kwargs",
+      "declaration": "Tool('memory_episode_admin', description='Episode 管理接口', parameters=_ADMIN_TOOL_PARAMS)"
+    },
+    {
+      "name": "memory_profile_admin",
+      "line": 280,
+      "signature": "self, action: str, **kwargs",
+      "declaration": "Tool('memory_profile_admin', description='人物画像管理接口', parameters=_ADMIN_TOOL_PARAMS)"
+    },
+    {
+      "name": "memory_fact_admin",
+      "line": 284,
+      "signature": "self, action: str, **kwargs",
+      "declaration": "Tool('memory_fact_admin', description='结构化事实账本管理接口', parameters=_ADMIN_TOOL_PARAMS)"
+    },
+    {
+      "name": "memory_runtime_admin",
+      "line": 288,
+      "signature": "self, action: str, **kwargs",
+      "declaration": "Tool('memory_runtime_admin', description='长期记忆运行时管理接口', parameters=_ADMIN_TOOL_PARAMS)"
+    },
+    {
+      "name": "memory_import_admin",
+      "line": 292,
+      "signature": "self, action: str, **kwargs",
+      "declaration": "Tool('memory_import_admin', description='长期记忆导入管理接口', parameters=_ADMIN_TOOL_PARAMS)"
+    },
+    {
+      "name": "memory_bundle_admin",
+      "line": 296,
+      "signature": "self, action: str, **kwargs",
+      "declaration": "Tool('memory_bundle_admin', description='可分享记忆包管理接口', parameters=_ADMIN_TOOL_PARAMS)"
+    },
+    {
+      "name": "memory_tuning_admin",
+      "line": 300,
+      "signature": "self, action: str, **kwargs",
+      "declaration": "Tool('memory_tuning_admin', description='长期记忆调优管理接口', parameters=_ADMIN_TOOL_PARAMS)"
+    },
+    {
+      "name": "memory_v5_admin",
+      "line": 304,
+      "signature": "self, action: str, **kwargs",
+      "declaration": "Tool('memory_v5_admin', description='长期记忆 V5 管理接口', parameters=_ADMIN_TOOL_PARAMS)"
+    },
+    {
+      "name": "memory_delete_admin",
+      "line": 308,
+      "signature": "self, action: str, **kwargs",
+      "declaration": "Tool('memory_delete_admin', description='长期记忆删除管理接口', parameters=_ADMIN_TOOL_PARAMS)"
+    },
+    {
+      "name": "memory_correction_admin",
+      "line": 312,
+      "signature": "self, action: str, **kwargs",
+      "declaration": "Tool('memory_correction_admin', description='长期记忆修正管理接口', parameters=_ADMIN_TOOL_PARAMS)"
+    },
+    {
+      "name": "memory_fuzzy_modify_admin",
+      "line": 316,
+      "signature": "self, action: str, **kwargs",
+      "declaration": "Tool('memory_fuzzy_modify_admin', description='长期记忆修正管理兼容接口', parameters=_ADMIN_TOOL_PARAMS)"
+    }
+  ],
+  "admin_action_sets": {
+    "_GRAPH_ACTIONS": [
+      "create_edge",
+      "create_node",
+      "delete_edge",
+      "delete_node",
+      "edge_detail",
+      "get_graph",
+      "node_detail",
+      "rename_node",
+      "search",
+      "update_edge_weight"
+    ],
+    "_SOURCE_ACTIONS": [
+      "batch_delete",
+      "delete",
+      "list"
+    ],
+    "_EPISODE_ACTIONS": [
+      "discard_migration_backfill",
+      "get",
+      "list",
+      "process_sources",
+      "query",
+      "rebuild",
+      "status"
+    ],
+    "_PROFILE_ACTIONS": [
+      "correct_evidence",
+      "delete_aliases",
+      "delete_override",
+      "evidence",
+      "get_aliases",
+      "list",
+      "process_pending",
+      "query",
+      "set_aliases",
+      "set_override",
+      "status"
+    ],
+    "_FEEDBACK_ACTIONS": [
+      "get",
+      "list",
+      "rollback"
+    ],
+    "_FACT_ACTIONS": [
+      "create",
+      "get",
+      "list",
+      "restore",
+      "retract",
+      "update"
+    ],
+    "_RUNTIME_ACTIONS": [
+      "get_config",
+      "paragraph_backfill_once",
+      "rebuild_all_vectors",
+      "recover_embedding",
+      "refresh_self_check",
+      "save",
+      "self_check",
+      "set_auto_save"
+    ],
+    "_IMPORT_ACTIONS": [
+      "cancel",
+      "chunks",
+      "create_lpmm_convert",
+      "create_lpmm_openie",
+      "create_maibot_migration",
+      "create_paste",
+      "create_raw_scan",
+      "create_temporal_backfill",
+      "create_upload",
+      "get",
+      "get_chunks",
+      "get_guide",
+      "get_path_aliases",
+      "get_settings",
+      "list",
+      "path_aliases",
+      "resolve",
+      "resolve_path",
+      "retry_failed",
+      "settings"
+    ],
+    "_BUNDLE_ACTIONS": [
+      "export",
+      "import",
+      "inspect",
+      "list",
+      "resolve_file",
+      "uninstall"
+    ],
+    "_TUNING_ACTIONS": [
+      "apply_best",
+      "apply_profile",
+      "cancel",
+      "create_task",
+      "export_profile",
+      "get_profile",
+      "get_report",
+      "get_rounds",
+      "get_settings",
+      "get_task",
+      "list_tasks",
+      "rollback_profile",
+      "settings"
+    ],
+    "_V5_ACTIONS": [
+      "forget",
+      "recycle_bin",
+      "reinforce",
+      "remember_forever",
+      "restore",
+      "status",
+      "weaken"
+    ],
+    "_DELETE_ACTIONS": [
+      "execute",
+      "get_operation",
+      "list_operations",
+      "preview",
+      "purge",
+      "restore"
+    ],
+    "_CORRECTION_ACTIONS": [
+      "execute",
+      "get",
+      "list",
+      "plan",
+      "preview",
+      "rollback"
+    ]
+  },
+  "standalone_rpcs": {
+    "auth.proto": [
+      [
+        "CreateApiKey",
+        "CreateApiKeyRequest",
+        "CreateApiKeyResponse"
+      ],
+      [
+        "ListApiKeys",
+        "ListApiKeysRequest",
+        "ListApiKeysResponse"
+      ],
+      [
+        "RevokeApiKey",
+        "RevokeApiKeyRequest",
+        "RevokeApiKeyResponse"
+      ]
+    ],
+    "backup.proto": [
+      [
+        "CreateNamespaceBackup",
+        "CreateNamespaceBackupRequest",
+        "CreateNamespaceBackupResponse"
+      ],
+      [
+        "GetNamespaceBackup",
+        "GetNamespaceBackupRequest",
+        "GetNamespaceBackupResponse"
+      ],
+      [
+        "ListNamespaceBackups",
+        "ListNamespaceBackupsRequest",
+        "ListNamespaceBackupsResponse"
+      ],
+      [
+        "DeleteNamespaceBackup",
+        "DeleteNamespaceBackupRequest",
+        "DeleteNamespaceBackupResponse"
+      ],
+      [
+        "DownloadNamespaceBackup",
+        "DownloadNamespaceBackupRequest",
+        "DownloadNamespaceBackupResponse"
+      ],
+      [
+        "BeginNamespaceBackupUpload",
+        "BeginNamespaceBackupUploadRequest",
+        "BeginNamespaceBackupUploadResponse"
+      ],
+      [
+        "UploadNamespaceBackupChunk",
+        "UploadNamespaceBackupChunkRequest",
+        "UploadNamespaceBackupChunkResponse"
+      ],
+      [
+        "CompleteNamespaceBackupUpload",
+        "CompleteNamespaceBackupUploadRequest",
+        "CompleteNamespaceBackupUploadResponse"
+      ],
+      [
+        "AbortNamespaceBackupUpload",
+        "AbortNamespaceBackupUploadRequest",
+        "AbortNamespaceBackupUploadResponse"
+      ],
+      [
+        "RestoreNamespaceFromBackup",
+        "RestoreNamespaceFromBackupRequest",
+        "RestoreNamespaceFromBackupResponse"
+      ]
+    ],
+    "common.proto": [],
+    "job.proto": [
+      [
+        "SubmitDeleteBySource",
+        "SubmitDeleteBySourceRequest",
+        "SubmitDeleteBySourceResponse"
+      ],
+      [
+        "GetJob",
+        "GetJobRequest",
+        "GetJobResponse"
+      ],
+      [
+        "ListJobs",
+        "ListJobsRequest",
+        "ListJobsResponse"
+      ],
+      [
+        "CancelJob",
+        "CancelJobRequest",
+        "CancelJobResponse"
+      ]
+    ],
+    "memory.proto": [
+      [
+        "IngestText",
+        "IngestTextRequest",
+        "IngestTextResponse"
+      ],
+      [
+        "BatchIngestText",
+        "BatchIngestTextRequest",
+        "BatchIngestTextResponse"
+      ],
+      [
+        "GetMemory",
+        "GetMemoryRequest",
+        "GetMemoryResponse"
+      ],
+      [
+        "DeleteMemory",
+        "DeleteMemoryRequest",
+        "DeleteMemoryResponse"
+      ],
+      [
+        "SearchMemory",
+        "SearchMemoryRequest",
+        "SearchMemoryResponse"
+      ]
+    ],
+    "namespace.proto": [
+      [
+        "CreateNamespace",
+        "CreateNamespaceRequest",
+        "CreateNamespaceResponse"
+      ],
+      [
+        "GetNamespace",
+        "GetNamespaceRequest",
+        "GetNamespaceResponse"
+      ],
+      [
+        "ListNamespaces",
+        "ListNamespacesRequest",
+        "ListNamespacesResponse"
+      ],
+      [
+        "UpdateNamespaceConfig",
+        "UpdateNamespaceConfigRequest",
+        "UpdateNamespaceConfigResponse"
+      ],
+      [
+        "GetNamespaceCapabilities",
+        "GetNamespaceCapabilitiesRequest",
+        "GetNamespaceCapabilitiesResponse"
+      ],
+      [
+        "DisableNamespace",
+        "DisableNamespaceRequest",
+        "DisableNamespaceResponse"
+      ],
+      [
+        "EnableNamespace",
+        "EnableNamespaceRequest",
+        "EnableNamespaceResponse"
+      ],
+      [
+        "DeleteNamespace",
+        "DeleteNamespaceRequest",
+        "DeleteNamespaceResponse"
+      ],
+      [
+        "RestoreNamespace",
+        "RestoreNamespaceRequest",
+        "RestoreNamespaceResponse"
+      ],
+      [
+        "PurgeNamespace",
+        "PurgeNamespaceRequest",
+        "PurgeNamespaceResponse"
+      ],
+      [
+        "GetNamespaceHealth",
+        "GetNamespaceHealthRequest",
+        "GetNamespaceHealthResponse"
+      ]
+    ]
+  },
+  "coverage": "Static signatures and actions; response/error semantics require corresponding runtime and consumer inspection."
+}

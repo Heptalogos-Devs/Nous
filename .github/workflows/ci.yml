@@ -1,0 +1,38 @@
+name: Native foundation
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  foundation:
+    strategy:
+      matrix:
+        os: [windows-2025, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@1.97.1
+        with:
+          components: rustfmt, clippy
+      - name: Format, tests and real process recovery
+        run: |
+          . ./scripts/dev-env.ps1
+          cargo fmt --all --check
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cargo test --workspace --locked
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cargo clippy --workspace --all-targets --locked -- -D warnings
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $recoveryFile = Join-Path (Get-Location) 'temp/instances/ci-recovery.sqlite'
+          New-Item -ItemType Directory -Force -Path (Split-Path $recoveryFile) | Out-Null
+          cargo run -p nous-storage --example transaction_recovery --locked -- $recoveryFile
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cargo build -p nous --locked
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $binaryName = if ($IsWindows) { 'nous.exe' } else { 'nous' }
+          python scripts/smoke.py (Join-Path $env:CARGO_TARGET_DIR "debug/$binaryName")
+          exit $LASTEXITCODE

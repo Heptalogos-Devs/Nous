@@ -1,0 +1,28 @@
+[package]
+name = "nous"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+nous-domain.workspace = true
+nous-app.workspace = true
+anyhow.workspace = true
+axum.workspace = true
+clap.workspace = true
+reqwest.workspace = true
+rmcp.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true
