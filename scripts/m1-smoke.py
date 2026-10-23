@@ -40,6 +40,8 @@ class Runner:
         shutil.copy2(binary, self.binary)
         self.flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
         self.timeout = timeout
+        self.command_timeout = 40
+        self.request_timeout = 20
         self.host = None
         self.children = []
         self.host_number = 0
@@ -54,7 +56,7 @@ class Runner:
 
     def cli(self, instance: Path, *command: str, allow_failure=False):
         result = subprocess.run([str(self.binary), "--instance", str(instance), *command],
-                                capture_output=True, text=True, encoding="utf-8", timeout=40,
+                                capture_output=True, text=True, encoding="utf-8", timeout=self.command_timeout,
                                 creationflags=self.flags, env=self.environment, cwd=self.runtime)
         if result.returncode:
             if allow_failure:
@@ -117,7 +119,7 @@ class Runner:
             encoded = json.dumps(data, ensure_ascii=False).encode("utf-8")
         request = urllib.request.Request(base + path, data=encoded, headers=request_headers)
         try:
-            response = urllib.request.urlopen(request, timeout=20)
+            response = urllib.request.urlopen(request, timeout=self.request_timeout)
         except urllib.error.HTTPError as error:
             raise AssertionError(f"HTTP {path} returned {error.code}: {error.read().decode('utf-8', 'replace')}") from None
         with response:

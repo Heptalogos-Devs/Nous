@@ -416,6 +416,13 @@ async fn adopted_embeddings_drive_vcp_source_filters_content_reuse_and_offline_r
     let updated = app.query(&ctx, beta_query.clone()).await.unwrap();
     assert_eq!(updated.hits[0].memory.revision, revised.revision);
     assert_eq!(provider.count(), after_query + 2);
+    let mut hybrid_query = beta_query.clone();
+    hybrid_query.mode = QueryMode::Hybrid;
+    hybrid_query.text = "CORAL".into();
+    let hybrid = app.query(&ctx, hybrid_query).await.unwrap();
+    assert_eq!(hybrid.hits.len(), 1);
+    assert_eq!(hybrid.hits[0].memory.id, ids[0]);
+    assert_eq!(hybrid.hits[0].memory.revision, revised.revision);
     let cached_calls = provider.count();
     cancellation.cancel();
     worker.await.unwrap();

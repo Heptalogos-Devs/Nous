@@ -169,27 +169,72 @@ impl App {
         .map_err(|error| Error::internal(error.to_string()))?
         .map_err(semantic_error)?;
         let (serving, restored) = serving;
+        let frozen: BTreeMap<_, _> = entries
+            .iter()
+            .map(|entry| (entry.memory.id.clone(), entry))
+            .collect();
         let mut hits = Vec::new();
-        let mut selected_provenance = Vec::new();
-        let mut current_complete = true;
         for candidate in serving.ranked {
             let id: MemoryId = candidate.memory_id.parse()?;
-            let current = match self.database.memory(namespace, &id).await {
+            let entry = frozen
+                .get(&id)
+                .ok_or_else(|| Error::internal("serving candidate exceeds its query snapshot"))?;
+            if entry.memory.revision != candidate.revision {
+                return Err(Error::internal(
+                    "serving candidate revision differs from its snapshot",
+                ));
+            }
+            hits.push(QueryHit {
+                reference: format!("memory:{}@{}", id, entry.memory.revision),
+                material_id: entry.memory.material_id.clone(),
+                observation_id: entry.memory.observation_id.clone(),
+                source: entry.material.source.clone(),
+                memory: entry.memory.clone(),
+                score: candidate.score as f32,
+            });
+        }
+        let mut complete = embedded_memories == eligible_memories && missing_tags.is_empty();
+        let authority = snapshot.watermark;
+        if mode == QueryMode::Hybrid {
+            let mut lexical_request = request.clone();
+            lexical_request.mode = QueryMode::Lexical;
+            lexical_request.limit = limit;
+            let lexical = self.lexical_query(namespace, lexical_request).await?;
+            complete &= lexical.coverage.complete;
+            let lexical_hits = lexical
+                .hits
+                .into_iter()
+                .filter(|hit| {
+                    frozen
+                        .get(&hit.memory.id)
+                        .is_some_and(|entry| entry.memory.revision == hit.memory.revision)
+                })
+                .collect();
+            hits = fuse(hits, lexical_hits, request.limit);
+        } else {
+            hits.truncate(request.limit);
+        }
+        // Every lane shares the frozen identities; final authority policy is
+        // applied once after fusion, immediately before publishing source bodies.
+        let mut current_hits = Vec::new();
+        let mut selected_provenance = Vec::new();
+        for mut hit in hits {
+            let current = match self.database.memory(namespace, &hit.memory.id).await {
                 Ok(memory) => memory,
                 Err(error) if error.code == ErrorCode::NotFound => {
-                    current_complete = false;
+                    complete = false;
                     continue;
                 }
                 Err(error) => return Err(error),
             };
             if current.subject_id != request.subject_id
-                || current.revision != candidate.revision
+                || current.revision != hit.memory.revision
                 || current.deleted
                 || (!request.include_inactive
                     && current.lifecycle.activation != MemoryActivation::Active)
                 || !crate::cognition::matches_time(&current, request.time.as_ref())
             {
-                current_complete = false;
+                complete = false;
                 continue;
             }
             let material = self
@@ -201,39 +246,17 @@ impl App {
                 .as_ref()
                 .is_some_and(|source| material.source.as_ref() != Some(source))
             {
+                complete = false;
                 continue;
             }
-            if let Some(record) = records.get(&id) {
+            if let Some(record) = records.get(&current.id) {
                 selected_provenance.push(provenance(record));
             }
-            hits.push(QueryHit {
-                reference: format!("memory:{}@{}", id, current.revision),
-                material_id: current.material_id.clone(),
-                observation_id: current.observation_id.clone(),
-                source: material.source,
-                memory: current,
-                score: candidate.score as f32,
-            });
+            hit.memory = current;
+            hit.source = material.source;
+            current_hits.push(hit);
         }
-        let mut complete =
-            current_complete && embedded_memories == eligible_memories && missing_tags.is_empty();
-        let mut authority = snapshot.watermark;
-        if mode == QueryMode::Hybrid {
-            let mut lexical_request = request.clone();
-            lexical_request.mode = QueryMode::Lexical;
-            lexical_request.limit = limit;
-            let lexical = self.lexical_query(namespace, lexical_request).await?;
-            complete &= lexical.coverage.complete;
-            authority = authority.max(lexical.coverage.authority_commit_seq);
-            hits = fuse(hits, lexical.hits, request.limit);
-        } else {
-            hits.truncate(request.limit);
-        }
-        let ids: BTreeSet<_> = hits
-            .iter()
-            .map(|hit| format!("memory:{}@{}", hit.memory.id, hit.memory.revision))
-            .collect();
-        selected_provenance.retain(|record| ids.contains(&record.source_key));
+        let hits = current_hits;
         Ok(QueryResult {
             hits,
             coverage: QueryCoverage {

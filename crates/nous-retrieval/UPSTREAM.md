@@ -75,7 +75,7 @@ membership and one contribution to geometry/graph evidence. A conflicting
 membership for one root is an explicit input error. Imported literal material
 labels remain source-derived Tags in this projection.
 
-`ServingGeneration::create_or_open` hashes the complete normalized snapshot,
+`ServingGeneration::create_or_open` hashes the complete raw snapshot, normalization policy,
 caller identity and asset configuration to select an immutable generation. It
 publishes geometry, CSR/provenance, identity mappings and both native ANN indexes
 as one directory. Reopen checks component hashes and native vector contents,
@@ -91,8 +91,17 @@ Returned numeric IDs resolve through the frozen Memory mapping, and source
 mappings cover returned and planned memories. Normal query diagnostics contain counts;
 the full generation mapping is available through `asset_diagnostics()`.
 
-Three standalone serving tests passed: full native save/reopen and query replay;
+Four standalone serving tests passed: full native save/reopen and query replay;
 graph/provenance restricted to caller-filtered material and unchanged by repeated
 derivation from one root; and no-Tag VCP with explicit corrupt/new-generation
-behavior. All-target Clippy with `-D warnings` passed. The app and protocol owner
-performs serving integration separately.
+behavior; and non-unit provider vectors with one derived normalization policy. All-target Clippy with `-D warnings` passed. The app composes these assets with the shared model ledger and durable embedding
+worker; controlled protocol tests and the real gateway exercise cover the complete
+query, source and restart path.
+
+The serving format `nous-vcp-serving-ags-unit-f32-v2` binds its derived vector
+policy. Authoritative model values and ANN raw snapshot hashes remain intact;
+one f64 L2-to-F32 derivation supplies geometry, graph, MemoAssets and readout.
+This makes VCP fusion and ANN use compatible cosine inputs for provider vectors
+whose norms differ slightly from one. Current VCP source keeps raw vectors in
+`storage.rs` and uses them directly in `memo_pipeline.rs` fusion; the adaptation
+records this intentional serving policy separately from the preserved kernels.

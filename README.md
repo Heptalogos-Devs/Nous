@@ -1,6 +1,6 @@
 # Nous Wave
 
-长期认知基础设施与人格中心。当前支持材料接纳、忠实文本导入、持久模型形成、Memory 修订与生命周期维护、中文词项查询、来源追溯及快照恢复。CLI、HTTP 和 MCP 共用 Rust 应用操作，SQLite 统一保存权威状态、回执和后续工作。
+长期认知基础设施与人格中心。当前支持材料接纳、忠实文本导入、持久模型形成、Memory 修订与生命周期维护、中文词项和 Dense/VCP/Hybrid 查询、来源追溯及快照恢复。CLI、HTTP 和 MCP 共用 Rust 应用操作，SQLite 统一保存权威状态、回执、已采纳向量和后续工作。
 
 工程方向见 [基建实施规划](docs/基建实施规划.md)，当前进度与 [合同覆盖](docs/首批开发任务.md#当前-a-memorix-合同承接) 见首批开发任务。[能力续接清单](docs/能力续接清单.md) 保留结构化认知、多模态、managed context/steward 和完整 A-Memorix 产品的后续目标。源码复用入口见 [源码研究](docs/源码研究.md)、[实际复用记录](research/reuse.md) 和 [研究仓库锁定清单](research/sources.lock.json)。
 
@@ -88,6 +88,11 @@ while (-not $page.result.complete) {
 | `GET /v1/memories/{id}/audit?limit=50` | `memory_audit` |
 | `GET /v1/subjects/{id}/recycle-bin?limit=50` | `memory_recycle_bin` |
 | `POST /v1/subjects/{id}/maintenance` | `memory_maintain` |
+| `POST /v1/embeddings/sync` | `embedding_sync` |
+| `GET /v1/embeddings/runs/{id}` | `embedding_run` |
+| `POST /v1/query` | `query` |
+| `GET /v1/memories/{id}/source` | `memory_source` |
+| `GET /v1/models/calls/{id}` | `model_call` |
 
 `.amembundle` 可在本地离线检查，无需启动实例：
 
@@ -99,7 +104,7 @@ while (-not $page.result.complete) {
 
 检查器承接上游 v1/v2 的知识、完整状态和图像包，核对成员校验和、语义摘要、记录引用与内容数量；默认显示 manifest、库存数量和所需领域能力。完整包的事务安装、导出与卸载，以及图谱、Episode、画像和 A-Memorix 兼容 API 按 [合同承接表](docs/首批开发任务.md#当前-a-memorix-合同承接) 继续实施。
 
-[nous-vcp](crates/nous-vcp/README.md) 提供完整 VCP 计算族和旧版数值基线，包含 AGS 几何、传播资产、Pyramid、Sense、双场、RiverMemo、DTSC 与 Thinking。开发者可用 `cargo run -p nous-vcp --example native_pipeline` 重放完整计算和来源映射。retrieval 已提供真实 USearch 候选/Tag 双索引、成组发布和重启加载；真实模型向量、图资产与统一查询操作继续接入。
+[nous-vcp](crates/nous-vcp/README.md) 提供完整 VCP 计算族和旧版数值基线，包含 AGS 几何、传播资产、Pyramid、Sense、双场、RiverMemo、DTSC 与 Thinking。开发者可用 `cargo run -p nous-vcp --example native_pipeline` 重放完整计算和来源映射。实际文本查询已接通模型向量、USearch 候选/Tag 双索引、VCP 图资产和来源映射。
 
 停服后按 [模型资源配置](docs/基建实施规划.md#配置授权与模型资源) 设置 `instance.toml` 与凭据引用，再启动服务。配置只保存 SecretRef，密钥内容放入实例的受保护 `credentials` 目录。另开终端执行：
 
@@ -109,6 +114,20 @@ $formation = & $nous --instance $instance memory form --subject $subject --obser
 & $nous --instance $instance job get $formation.job_ids[0]
 ```
 
+文本向量职责使用配置中的 `models.text_embedding`，完整样例和各项限制见 [模型资源配置](docs/基建实施规划.md#配置授权与模型资源)。配置就绪后，可显式补齐主体记忆和来源标签的向量，再查询：
+
+```powershell
+$embedding = & $nous --instance $instance memory embed --subject $subject --operation-id first-embedding | ConvertFrom-Json
+$embedding.result.jobs | ForEach-Object { & $nous --instance $instance job get $_ }
+& $nous --instance $instance query --subject $subject --mode dense '秋天有哪些植物变化？'
+& $nous --instance $instance query --subject $subject --mode vcp '秋天有哪些植物变化？'
+& $nous --instance $instance query --subject $subject --mode hybrid '秋天有哪些植物变化？'
+```
+
+`memory embed` 返回持久任务 ID；`result.jobs` 包含本次新建和已在处理相同输入的任务。HTTP 提交 `POST /v1/embeddings/sync`，JSON 为 `{"subject_id":"<id>","operation_id":"first-embedding","limit":5000}`；按 ID 读取 `/v1/embeddings/runs/<job_id>`。MCP 使用 `embedding_sync` 和 `embedding_run {job_id}`。查询默认 `lexical`；HTTP/MCP 的 `mode` 同样接受 `dense`、`vcp`、`hybrid`。语义查询会补齐缺少的当前记忆、标签和查询向量并等待结果；当前主体快照上限为 5000 条 Memory，超出时返回 ResourceExhausted。
+
+标签取自来源 MaterialDetails.tags 的原文，去除首尾空白后生成稳定身份；同一 Material 派生的多条 Memory 在图证据中共用一个来源根。范围、来源、时间和活跃状态先约束候选与构图，命中返回前再读取最新权威修订。候选索引、Tag 索引和完整 VCP 资产按不可变代际一起发布；重启加载已发布资产，恢复与重建复用 SQLite 保存的向量原值。同一模型空间的相同查询复用持久查询向量，重启后再次查询无需远程嵌入。正文未变的生命周期修订也复用原向量和调用来源。
+
 任务达到 `succeeded` 后，可查询记忆并读取其原文、实际接触、Prompt、模型参数及 usage：
 
 ```powershell
@@ -116,12 +135,17 @@ $result = & $nous --instance $instance query --subject $subject '枫叶 秋天' 
 $memory = $result.hits[0].memory
 & $nous --instance $instance memory source $memory.id
 & $nous --instance $instance memory history $memory.id
+# source 返回 embedding_provenance，可用其 model_call_id 展开实际请求与 usage。
+$source = & $nous --instance $instance memory source $memory.id | ConvertFrom-Json
+if ($source.embedding_provenance.Count -gt 0) {
+    & $nous --instance $instance model call $source.embedding_provenance[0].model_call_id
+}
 $backup = & $nous --instance $instance backup create | ConvertFrom-Json
 & $nous --instance $instance stop
 & $nous --instance ./temp/instances/restored backup restore $backup.backup
 ```
 
-形成在缺少配置或达到每日调用预算时保留等待状态。重启会恢复已接受任务，已保存的成功输出可继续采纳；中断的远程调用保留不确定状态及重试记录。备份包含数据库、引用对象、配置和校验清单；恢复到新实例时生成新的管理员凭据，模型密钥通过正式凭据入口重新配置。
+形成与嵌入共用通用 model_jobs、ModelCall 账本和按资源每日调用预留；缺少配置或达到预算时保留等待状态。重启会恢复已接受任务，已保存的成功输出可继续采纳；中断的远程调用保留不确定状态及重试记录。相同范围、模型空间和源输入的活跃任务共用处理权，重复同步返回已有任务。备份包含数据库、已采纳向量、引用对象、配置和校验清单；恢复到新实例时生成新的管理员凭据，模型密钥通过正式凭据入口重新配置。
 
 验证入口：
 
@@ -134,6 +158,9 @@ python ./scripts/m2-smoke.py (Join-Path $env:CARGO_TARGET_DIR 'debug/nous.exe')
 python ./scripts/bundle-smoke.py (Join-Path $env:CARGO_TARGET_DIR 'debug/nous.exe')
 # 使用已配置模型的实例作为模板，实际调用其模型服务。
 python ./scripts/m1-smoke.py (Join-Path $env:CARGO_TARGET_DIR 'debug/nous.exe') --instance ./temp/instances/m1-dev
+python ./scripts/m3-smoke.py (Join-Path $env:CARGO_TARGET_DIR 'debug/nous.exe') --instance ./temp/instances/m1-dev
 ```
 
-恢复试验要求使用新的数据库文件。`smoke.py` 验证基础协议与作用域；`m2-smoke.py` 在无模型配置的新实例中验证导入、生命周期、维护分页、作用域、清除和重启，覆盖 CLI、HTTP、MCP HTTP 与 stdio；`bundle-smoke.py` 用三类真实导出包验证离线检查、完整库存与错误包处理。当前 Windows 的 66 项工作区测试、fmt、clippy 和构建通过，M2 与 bundle 的真实使用检查分别通过 31 项和 10 项，模型调用数为 0。`m1-smoke.py` 从模板复制配置与必要模型凭据到独立开发实例，验证真实形成、两种 MCP、调用中强杀恢复、单次采纳与快照恢复。运行产物与报告集中于 `temp`。Windows 与 Ubuntu 工作流位于 [CI](.github/workflows/ci.yml)，日常 CI 使用本地受控模型协议响应。
+恢复试验要求使用新的数据库文件。`smoke.py` 验证基础协议与作用域；`m2-smoke.py` 在无模型配置的新实例中验证导入、生命周期、维护分页、作用域、清除和重启，覆盖 CLI、HTTP、MCP HTTP 与 stdio；`bundle-smoke.py` 用三类真实导出包验证离线检查、完整库存与错误包处理。当前 Windows 的 81 项工作区测试、fmt、严格 clippy 和构建通过，M2 与 bundle 的真实使用检查分别通过 31 项和 10 项，模型调用数为 0。
+
+`m1-smoke.py` 从模板复制配置与必要模型凭据到独立开发实例，验证真实形成、两种 MCP、调用中强杀恢复、单次采纳与快照恢复。`m3-smoke.py` 使用模板的网关凭据，在独立实例配置实际 2048 维文本嵌入，验证 Dense/VCP/Hybrid、来源和调用记录、范围过滤、修订/清除、缓存重开及调用中断恢复；本轮 26 项真实使用检查通过，包含已持久 Started 后的强杀恢复；成功验收实际转发 5 次 embedding 请求，共报告 480 prompt tokens。运行产物与报告集中于 `temp`。Windows 与 Ubuntu 工作流位于 [CI](.github/workflows/ci.yml)，日常 CI 使用本地受控模型协议响应。
