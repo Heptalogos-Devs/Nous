@@ -99,6 +99,7 @@ fn instance(provider: &Provider) -> (tempfile::TempDir, InstancePaths) {
     .unwrap();
     let mut config = InstanceConfig::load(&paths).unwrap();
     config.models = ModelConfig {
+        structured_formation: None,
         memory_formation: None,
         text_embedding: Some(EmbeddingConfig {
             resource: ModelResource {

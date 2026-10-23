@@ -110,6 +110,7 @@ impl From<WireTime> for TimePoint {
 
 #[derive(Clone)]
 pub enum Operation {
+    Structured(Box<crate::structured_api::StructuredOperation>),
     Maintenance(crate::maintenance_api::MaintenanceOperation),
     CreateBackup,
     Cognition(crate::cognition_api::CognitionOperation),
@@ -128,6 +129,7 @@ pub enum Operation {
 impl Operation {
     pub async fn execute(&self, app: &App, ctx: &CallContext) -> Result<Value, Error> {
         match self {
+            Self::Structured(operation) => operation.execute(app, ctx).await,
             Self::Maintenance(operation) => operation.execute(app, ctx).await,
             Self::CreateBackup => app.create_backup(ctx).await,
             Self::Cognition(operation) => operation.execute(app, ctx).await,
@@ -197,6 +199,7 @@ impl Operation {
 
     pub fn request(&self) -> (&'static str, String, Option<Value>) {
         match self {
+            Self::Structured(operation) => operation.request(),
             Self::Maintenance(operation) => operation.request(),
             Self::CreateBackup => ("POST", "/v1/backups".into(), None),
             Self::Cognition(operation) => operation.request(),
@@ -253,6 +256,7 @@ pub fn router(state: ApiState, config: &InstanceConfig, cancellation: Cancellati
         )
         .route("/v1/jobs/{job}", get(get_job))
         .merge(crate::cognition_api::router())
+        .merge(crate::structured_api::router())
         .merge(crate::maintenance_api::router())
         .nest_service("/mcp", mcp)
         .fallback(|| async {

@@ -147,6 +147,14 @@ $backup = & $nous --instance $instance backup create | ConvertFrom-Json
 
 形成与嵌入共用通用 model_jobs、ModelCall 账本和按资源每日调用预留；缺少配置或达到预算时保留等待状态。重启会恢复已接受任务，已保存的成功输出可继续采纳；中断的远程调用保留不确定状态及重试记录。相同范围、模型空间和源输入的活跃任务共用处理权，重复同步返回已有任务。备份包含数据库、已采纳向量、引用对象、配置和校验清单；恢复到新实例时生成新的管理员凭据，模型密钥通过正式凭据入口重新配置。
 
+结构化认知通过同一应用入口创建、修订、查询、展开来源和形成。支持 MemorySemantics、Concept、Episode、Journal、Schema、Association；Concept 可原子合并/拆分，Episode 可按完整来源序列重分段。精确修订证据区分支持、反驳与上下文，同一材料的派生路径共享来源根；Journal 保存写作时的知识截面。
+
+`nous cognition --schema` 输出完整请求 JSON Schema，`nous cognition --file <request.json>` 提交请求。HTTP 使用 `POST /v1/cognition`，MCP 使用 `cognition` 工具，三者接收相同的 `action` 判别请求：`create`、`revise`、`get`、`history`、`set_deleted`、`source`、`concept_resolve`、`merge_concepts`、`split_concept`、`resegment_episodes`、`query`、`form`、`formation_run`。结构化 `query` 支持对象种类、时间轴、`as_of_commit` 和已删除对象；当前使用权威快照与 Tantivy，临时索引集中于实例 `temp` 并随查询清理。结构化对象的 Dense/VCP 接线继续实施。
+
+形成请求的 `input` 包含 `subject_id`、精确 `sources` 和 `targets[{key,kind,existing}]`。服务读取已授权来源并分配稳定目标 ID，模型只从来源键与目标槽位选择。`models.structured_formation` 使用与 `memory_formation` 相同的资源和 SecretRef 结构，Prompt 版本为 `nous.structured.formation.v1`。默认输入预算 64 KiB（含输出 Schema）、输出 8192 tokens、每日 20 次调用。它复用共享 ModelCall 与持久队列；每个提案组独立事务采纳，返回 applied/conflict/rejected/skipped，缺配置等待、重启续接、来源清除退役均保存状态。
+
+形成作业的 `succeeded` 表示全部组已处理，具体成果和冲突读取 `formation_run` 的 `groups`。`source` 返回对象精确修订、证据闭包、原材料和实际模型调用。CLI 交互优化、媒体三策略、原生多模态、managed context/steward 与完整 A-Memorix 合同继续按 [能力续接清单](docs/能力续接清单.md) 推进。
+
 验证入口：
 
 ```powershell

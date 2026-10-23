@@ -438,6 +438,7 @@ mod tests {
             &ModelConfig {
                 memory_formation: None,
                 text_embedding: Some(config(endpoint)),
+                structured_formation: None,
             },
             reqwest::Client::builder()
                 .no_proxy()

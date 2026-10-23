@@ -24,6 +24,7 @@ pub struct MemoryBatch {
 pub(crate) enum WaitingJobKind {
     Formation,
     Embedding,
+    StructuredFormation,
 }
 
 impl Database {
@@ -195,6 +196,9 @@ impl Database {
         let (table, prefix): (&'static str, &'static str) = match kind {
             WaitingJobKind::Formation => ("formation_runs", "formation"),
             WaitingJobKind::Embedding => ("embedding_runs", "embedding"),
+            WaitingJobKind::StructuredFormation => {
+                ("structured_formation_runs", "structured_formation")
+            }
         };
         let action = if include_budget {
             "resume_waiting"

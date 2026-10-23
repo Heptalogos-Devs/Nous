@@ -10,14 +10,14 @@ pub struct MemoryDraft {
     pub epistemic_status: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TimeRange {
     pub domain: String,
     pub start: Option<i64>,
     pub end: Option<i64>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CognitiveTimes {
     pub event: Option<TimePoint>,
     pub observation: Option<TimePoint>,
@@ -107,7 +107,7 @@ pub struct ModelCall {
     pub completed_at: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum TimeAxis {
     Event,
@@ -117,7 +117,7 @@ pub enum TimeAxis {
     Validity,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TimeFilter {
     pub axis: TimeAxis,
     pub range: TimeRange,

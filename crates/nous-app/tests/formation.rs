@@ -135,6 +135,7 @@ async fn waiting_work_resumes_after_configuration_and_keeps_authority_through_qu
     .unwrap();
     let mut config = InstanceConfig::load(&paths).unwrap();
     config.models = ModelConfig {
+        structured_formation: None,
         text_embedding: None,
         memory_formation: Some(FormationConfig {
             resource: ModelResource {

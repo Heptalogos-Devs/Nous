@@ -19,6 +19,14 @@ Nous-Wave crates/persistence/src/mutations.rs, commit
 The SQLite implementation adds namespace scoping, complete receipt replay,
 one database-wide commit sequence, and apalis jobs in the same connection.
 
+src/structured.rs adapts exact scoped revision binding, revision creation and
+source dependency traversal from Nous-Wave crates/persistence/src/references.rs
+and crates/memory/src/service/{provenance.rs,episode/mutation.rs,
+journal/mutations.rs,schema/mutation.rs}, commit
+412b062082afb75ccfae4c3f69fc606d3e3cc862, Apache-2.0.
+The SQLite implementation shares one scoped revision owner, typed payloads,
+independent evidence edges, exact history and deduplicated source roots.
+
 Queue integration adapts apalis-sqlite src/persist.rs and examples/basic.rs,
 commit 9c87189360b0e212b23821a1a177e9cbe2ad1d4a, MIT.
 Its license is retained in LICENSE.apalis.

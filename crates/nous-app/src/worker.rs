@@ -26,6 +26,13 @@ impl App {
             if let Err(error) = app.database.resume_waiting_embeddings(true).await {
                 tracing::warn!(%error,"cannot resume waiting embeddings");
             }
+            if let Err(error) = app
+                .database
+                .resume_waiting_structured_formations(true)
+                .await
+            {
+                tracing::warn!(%error,"cannot resume waiting structured formation");
+            }
             if let Err(error) = app.catch_up_index().await {
                 tracing::warn!(%error,"index catch-up will retry");
             }
@@ -41,6 +48,8 @@ impl App {
                         _=maintenance_cancel.cancelled()=>break,
                         _=tokio::time::sleep(Duration::from_secs(60))=>{
                             let today = Utc::now().date_naive();
+                            if (today!=budget_day || maintenance_app.model.structured_inspect()["state"]=="ready")
+                                && let Err(error)=maintenance_app.database.resume_waiting_structured_formations(today!=budget_day).await {tracing::warn!(%error,"structured formation resume failed");}
                             if (today!=budget_day || maintenance_app.model.embedding_inspect()["state"]=="ready")
                                 && let Err(error)=maintenance_app.database.resume_waiting_embeddings(today!=budget_day).await {tracing::warn!(%error,"embedding resume failed");}
                             if today != budget_day {
@@ -367,6 +376,7 @@ impl App {
 async fn dispatch_job(job: JobEnvelope, app: Data<App>) -> Result<()> {
     match job.kind.as_str() {
         "memory.form" => app.process_formation(&job.id).await,
+        "cognition.form" => app.process_structured_formation(&job.id).await,
         "memory.index" => {
             app.catch_up_index().await?;
             if app.model.embedding_config().is_some()

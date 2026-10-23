@@ -9,6 +9,8 @@ mod cognition;
 mod embeddings;
 mod management;
 mod records;
+mod structured;
+mod structured_formation;
 mod transaction;
 
 use std::{collections::HashSet, path::Path, time::Duration};
@@ -29,6 +31,10 @@ pub use backup::ObjectReference;
 pub use cognition::MemoryBatch;
 pub use embeddings::{EmbeddingClaim, RetrievalEntry, RetrievalSnapshot};
 pub use management::{MaintenancePage, PurgedMemory};
+pub use structured::{SourceClosure, SourceNode, SourceRoot, SourceStatus, StructuredSnapshot};
+pub use structured_formation::{
+    StructuredFormationGroup, StructuredFormationRun, StructuredGroupState,
+};
 pub use transaction::{BeginOperation, WriteTransaction};
 
 /// Versioned wire contract consumed by the worker, independent of Rust type names.

@@ -54,7 +54,9 @@ impl From<serde_json::Error> for Error {
 
 macro_rules! identity {
     ($name:ident) => {
-        #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+        #[derive(
+            Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, schemars::JsonSchema,
+        )]
         #[serde(transparent)]
         pub struct $name(pub String);
         impl $name {
@@ -101,6 +103,7 @@ identity!(MaterialId);
 identity!(ObservationId);
 identity!(MemoryId);
 identity!(ModelCallId);
+identity!(CognitiveId);
 
 mod cognition;
 pub use cognition::*;
@@ -108,6 +111,8 @@ mod maintenance;
 pub use maintenance::*;
 mod embedding;
 pub use embedding::*;
+mod structured;
+pub use structured::*;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -134,7 +139,7 @@ pub struct Subject {
 }
 
 /// Coordinate precision and calendar are owned by the named time domain.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TimePoint {
     pub domain: String,
     pub coordinate: i64,

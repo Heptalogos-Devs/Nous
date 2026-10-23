@@ -147,6 +147,16 @@ impl McpService {
 #[tool_router]
 impl McpService {
     #[tool(
+        description = "Create, revise, retire, restore, inspect or search typed Concept, Episode, Journal, Schema, Association and Memory semantics. Source returns exact revision evidence and original material; revisions use optimistic concurrency."
+    )]
+    async fn cognition(
+        &self,
+        Parameters(input): Parameters<crate::structured_api::StructuredOperation>,
+        ctx: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        self.execute(Operation::Structured(Box::new(input)), ctx).await
+    }
+    #[tool(
         description = "Read Nous instance storage and capability status; administrator scope required"
     )]
     async fn status(&self, ctx: RequestContext<RoleServer>) -> Result<CallToolResult, ErrorData> {

@@ -21,9 +21,14 @@ use sha2::{Digest, Sha256};
 use crate::instance::{InstancePaths, SecretRef};
 
 pub mod embedding;
+pub mod structured;
 pub use embedding::{
     EmbeddingCallMetadata, EmbeddingCallRecord, EmbeddingConfig, EmbeddingExecution,
     PreparedEmbedding,
+};
+pub use structured::{
+    PreparedStructured, StructuredCallMetadata, StructuredCallRecord, StructuredExecution,
+    StructuredFormationConfig, StructuredFormationInput,
 };
 
 pub const FORMATION_PROMPT_VERSION: &str = "nous.memory.formation.v1";
@@ -44,6 +49,7 @@ const OWNED_REQUEST_FIELDS: &[&str] = &[
 pub struct ModelConfig {
     pub memory_formation: Option<FormationConfig>,
     pub text_embedding: Option<EmbeddingConfig>,
+    pub structured_formation: Option<StructuredFormationConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -123,6 +129,9 @@ impl ModelConfig {
             }
         }
         if let Some(config) = &self.text_embedding {
+            config.validate()?;
+        }
+        if let Some(config) = &self.structured_formation {
             config.validate()?;
         }
         Ok(())
@@ -349,9 +358,9 @@ impl StdError for ModelFailure {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct ModelCallRecord {
+pub struct ModelCallRecord<M = ModelCallMetadata> {
     pub schema_version: u32,
-    pub metadata: ModelCallMetadata,
+    pub metadata: M,
     pub started_at: String,
     pub completed_at: String,
     pub status: String,
@@ -505,9 +514,33 @@ impl ModelRuntime {
 
     /// Exactly one SDK invocation. Durable retry and uncertain-result handling belong to the worker.
     pub async fn execute(&self, prepared: PreparedFormation) -> FormationExecution {
+        let (mut record, text) = self
+            .call_chat(
+                prepared.metadata,
+                prepared.client,
+                prepared.target,
+                prepared.request,
+                prepared.options,
+            )
+            .await;
+        let result = text.and_then(|text| parse_drafts(&text));
+        complete_call(&mut record, &result);
+        FormationExecution { record, result }
+    }
+
+    /// Shared mechanical chat invocation; role-owned parsing and adoption remain
+    /// outside this helper. The caller must reserve the call in the same ledger.
+    async fn call_chat<M>(
+        &self,
+        metadata: M,
+        client: Client,
+        target: ServiceTarget,
+        request: ChatRequest,
+        options: ChatOptions,
+    ) -> (ModelCallRecord<M>, Result<String, ModelFailure>) {
         let mut record = ModelCallRecord {
             schema_version: 1,
-            metadata: prepared.metadata,
+            metadata,
             started_at: Utc::now().to_rfc3339(),
             completed_at: String::new(),
             status: "started".into(),
@@ -519,11 +552,7 @@ impl ModelRuntime {
             cost: None,
             failure: None,
         };
-        let result = match prepared
-            .client
-            .exec_chat(prepared.target, prepared.request, Some(&prepared.options))
-            .await
-        {
+        let result = match client.exec_chat(target, request, Some(&options)).await {
             Ok(response) => {
                 record.provider_response = response.captured_raw_body.clone();
                 record.provider_model = Some(response.provider_model_iden.model_name.to_string());
@@ -541,7 +570,7 @@ impl ModelRuntime {
                         "model output was truncated by max_output_tokens",
                     ))
                 } else {
-                    parse_drafts(record.raw_output.as_deref().unwrap_or_default())
+                    Ok(record.raw_output.clone().unwrap_or_default())
                 }
             }
             Err(error) => {
@@ -551,16 +580,19 @@ impl ModelRuntime {
                 Err(ModelFailure::provider(error))
             }
         };
-        record.completed_at = Utc::now().to_rfc3339();
-        record.status = match &result {
-            Ok(_) => "succeeded",
-            Err(error) if error.class() == RetryClass::Uncertain => "uncertain",
-            Err(_) => "failed",
-        }
-        .into();
-        record.failure = result.as_ref().err().map(|error| error.info.clone());
-        FormationExecution { record, result }
+        (record, result)
     }
+}
+
+fn complete_call<M, T>(record: &mut ModelCallRecord<M>, result: &Result<T, ModelFailure>) {
+    record.completed_at = Utc::now().to_rfc3339();
+    record.status = match result {
+        Ok(_) => "succeeded",
+        Err(error) if error.class() == RetryClass::Uncertain => "uncertain",
+        Err(_) => "failed",
+    }
+    .into();
+    record.failure = result.as_ref().err().map(|error| error.info.clone());
 }
 
 fn output_schema() -> Value {

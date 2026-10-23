@@ -11,6 +11,7 @@ pub mod model;
 pub mod network;
 mod objects;
 mod semantic;
+pub mod structured;
 mod worker;
 
 use chrono::Utc;
@@ -94,8 +95,8 @@ impl App {
     pub async fn status(&self) -> Result<Value> {
         Ok(
             json!({"version":env!("CARGO_PKG_VERSION"),"storage":self.database.status().await?,
-            "capabilities":{"material":true,"observation":true,"memory_formation":true,"lexical_query":true,"text_embedding":true,"dense_query":true,"vcp_query":true},
-            "model":self.model.inspect(),"text_embedding":self.model.embedding_inspect(),"index":self.retrieval.coverage().ok()}),
+            "capabilities":{"material":true,"observation":true,"memory_formation":true,"structured_cognition":true,"structured_formation":true,"lexical_query":true,"text_embedding":true,"dense_query":true,"vcp_query":true},
+            "model":self.model.inspect(),"structured_formation":self.model.structured_inspect(),"text_embedding":self.model.embedding_inspect(),"index":self.retrieval.coverage().ok()}),
         )
     }
 
@@ -380,6 +381,15 @@ impl App {
             value["queue_status"] = value["status"].clone();
             value["status"] = serde_json::to_value(&run.state)?;
             value["formation"] = serde_json::to_value(run)?;
+            value["model_calls"] = serde_json::to_value(self.database.model_calls(id).await?)?;
+        }
+        if job.kind == "cognition.form" {
+            let run = self.database.structured_formation(id).await?;
+            value["queue_status"] = value["status"].clone();
+            value["status"] = serde_json::to_value(&run.state)?;
+            value["formation"] = serde_json::to_value(run)?;
+            value["groups"] =
+                serde_json::to_value(self.database.structured_formation_groups(id).await?)?;
             value["model_calls"] = serde_json::to_value(self.database.model_calls(id).await?)?;
         }
         Ok(value)

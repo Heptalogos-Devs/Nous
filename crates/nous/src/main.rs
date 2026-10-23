@@ -5,6 +5,7 @@ mod cognition_cli;
 mod maintenance_api;
 mod maintenance_cli;
 mod mcp;
+mod structured_api;
 
 use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 
@@ -43,6 +44,13 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Execute a typed cognition request from JSON, or print its JSON Schema.
+    Cognition {
+        #[arg(long, conflicts_with = "schema", required_unless_present = "schema")]
+        file: Option<PathBuf>,
+        #[arg(long)]
+        schema: bool,
+    },
     /// Import bounded source records; returns per-item acceptance and formation jobs.
     Import {
         #[command(subcommand)]
@@ -254,6 +262,9 @@ async fn execute(cli: Cli) -> Result<()> {
         .unwrap_or_else(InstancePaths::default_path)?;
     let paths = InstancePaths::new(root)?;
     match cli.command {
+        Command::Cognition { schema: true, .. } => print_json(serde_json::to_value(
+            schemars::schema_for!(structured_api::StructuredOperation),
+        )?)?,
         Command::Init => {
             paths.ensure_layout()?;
             let _guard = InstanceGuard::acquire(&paths)?;
@@ -351,6 +362,15 @@ async fn execute(cli: Cli) -> Result<()> {
         command => {
             let operation = match command {
                 Command::Import { command } => command.operation()?,
+                Command::Cognition {
+                    file: Some(file), ..
+                } => {
+                    let input =
+                        std::fs::read_to_string(&file).context("cannot read cognition request")?;
+                    Operation::Structured(
+                        serde_json::from_str(&input).context("invalid typed cognition request")?,
+                    )
+                }
                 Command::Backup {
                     command: BackupCommand::Create,
                 } => Operation::CreateBackup,

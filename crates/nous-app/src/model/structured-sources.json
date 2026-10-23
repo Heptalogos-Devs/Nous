@@ -1,0 +1,107 @@
+{
+  "schema_version": 1,
+  "module": "src/model/structured.rs",
+  "prompt": "src/prompts/structured-formation-v1.md",
+  "licenses": [
+    "licenses/Nous-previous-LICENSE-APACHE",
+    "licenses/Nous-pr56-LICENSE"
+  ],
+  "sources": [
+    {
+      "repository": "Nous-previous",
+      "commit": "412b062082afb75ccfae4c3f69fc606d3e3cc862",
+      "path": "apps/nous-core/src/model/schemas/material-interpretation.ts",
+      "sha256": "af0b7913b217a3db6cbb055081150a83297c5ea9779f1cbec01a597cd05f9dd4",
+      "license": "Apache-2.0",
+      "adaptation": "strict evidence selectors, source fidelity, bounded interpretation validation"
+    },
+    {
+      "repository": "Nous-previous",
+      "commit": "412b062082afb75ccfae4c3f69fc606d3e3cc862",
+      "path": "apps/nous-core/src/model/schemas/consolidation.ts",
+      "sha256": "43565e80415d837eb1595b35f33a777e533a7e7b634567abf64bd39b2ac77d95",
+      "license": "Apache-2.0",
+      "adaptation": "typed cognition roles, formation mode, schema support/counterexamples and bounded actions"
+    },
+    {
+      "repository": "Nous-previous",
+      "commit": "412b062082afb75ccfae4c3f69fc606d3e3cc862",
+      "path": "apps/nous-core/src/model/schemas/concept-maintenance.ts",
+      "sha256": "83901663bb66a0b78c605f894b17e8ae03600f1b985bc3c2b102e8f00a480f7e",
+      "license": "Apache-2.0",
+      "adaptation": "typed concept/association proposals and source-key closure"
+    },
+    {
+      "repository": "Nous-previous",
+      "commit": "412b062082afb75ccfae4c3f69fc606d3e3cc862",
+      "path": "apps/nous-core/src/model/schemas/longitudinal.ts",
+      "sha256": "1b6e00f032990a2cdf8e495eaecf2707b712c4bca55f49bda7dcb7e0c169c3b2",
+      "license": "Apache-2.0",
+      "adaptation": "Episode member order and supported Journal points"
+    },
+    {
+      "repository": "Nous-previous",
+      "commit": "412b062082afb75ccfae4c3f69fc606d3e3cc862",
+      "path": "apps/nous-core/src/model/schemas/provider.ts",
+      "sha256": "0b9b533e148c6598821285ffdac00446609a45233fb15ac0fa8503fb442bab6d",
+      "license": "Apache-2.0",
+      "adaptation": "typed schema as contract, digest and local owner validation"
+    },
+    {
+      "repository": "Nous-previous",
+      "commit": "412b062082afb75ccfae4c3f69fc606d3e3cc862",
+      "path": "prompts/memory/consolidation.md",
+      "sha256": "25973a6126e1846d578c743075d6786e9d6fcc7fd49d7becea5667bf5e52947f",
+      "license": "Apache-2.0",
+      "adaptation": "identity continuity, qualifications, schema scope and independent roots"
+    },
+    {
+      "repository": "Nous-previous",
+      "commit": "412b062082afb75ccfae4c3f69fc606d3e3cc862",
+      "path": "prompts/memory/concept-maintenance.md",
+      "sha256": "b3d13a9318d8d8783dd4b70cc356a793b569918603d40acab0f9e15d68101aff",
+      "license": "Apache-2.0",
+      "adaptation": "concept reuse, supported relations and meaningful use"
+    },
+    {
+      "repository": "Nous-previous",
+      "commit": "412b062082afb75ccfae4c3f69fc606d3e3cc862",
+      "path": "prompts/episode/segmentation.md",
+      "sha256": "20be2f109ee31558fb1318427bd1d90c47eb41f8fdf57df8d48706cd19b93555",
+      "license": "Apache-2.0",
+      "adaptation": "episode order and meaningful boundaries"
+    },
+    {
+      "repository": "Nous-previous",
+      "commit": "412b062082afb75ccfae4c3f69fc606d3e3cc862",
+      "path": "prompts/journal/synthesis.md",
+      "sha256": "1b324f22e5071309158bac02ecfc9f4bc33d5729ca2785de964454b8c9a69f52",
+      "license": "Apache-2.0",
+      "adaptation": "source-supported subjective narrative and honest coverage"
+    },
+    {
+      "repository": "Nous-pr56",
+      "commit": "584517a4abddea6d1140b64ab20914e793093a70",
+      "path": "packages/nous/src/cognition/index.ts",
+      "sha256": "d9a7cb7f7a5d064f5a486a9ce76a8b6ecac107326e6198a855cbae24ee64ace7",
+      "license": "AGPL-3.0-only",
+      "adaptation": "formChanges catalog selector compilation and atomic independent groups"
+    },
+    {
+      "repository": "Nous-pr56",
+      "commit": "584517a4abddea6d1140b64ab20914e793093a70",
+      "path": "packages/contracts/cognition.ts",
+      "sha256": "818edc6d9670b84c3c035b704175fb74c593b14532d8f1d57a30beecfb2ef793",
+      "license": "AGPL-3.0-only",
+      "adaptation": "grouped revision-checked changes and persisted formation artifacts"
+    },
+    {
+      "repository": "Nous-pr56",
+      "commit": "584517a4abddea6d1140b64ab20914e793093a70",
+      "path": "packages/nous/prompts/en/memory/formation.md",
+      "sha256": "27f6d6962f6c59314c43c85ae2dac541e8b4c52209a7bacf04ab32ea9593fa5c",
+      "license": "AGPL-3.0-only",
+      "adaptation": "copied initial prompt then adapted to six typed bodies and preallocated slots"
+    }
+  ]
+}

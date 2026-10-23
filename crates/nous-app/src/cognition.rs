@@ -159,6 +159,7 @@ impl App {
         ctx.require_admin()?;
         let mut status = self.model.inspect();
         status["text_embedding"] = self.model.embedding_inspect();
+        status["structured_formation"] = self.model.structured_inspect();
         Ok(status)
     }
 
@@ -397,21 +398,24 @@ fn index_error(error: impl std::fmt::Display) -> Error {
     )
 }
 pub(crate) fn matches_time(memory: &Memory, filter: Option<&TimeFilter>) -> bool {
+    matches_times(&memory.times, filter)
+}
+pub(crate) fn matches_times(times: &CognitiveTimes, filter: Option<&TimeFilter>) -> bool {
     let Some(filter) = filter else {
         return true;
     };
     if matches!(filter.axis, TimeAxis::Validity) {
-        return memory.times.validity.as_ref().is_some_and(|range| {
+        return times.validity.as_ref().is_some_and(|range| {
             range.domain == filter.range.domain
                 && !matches!((range.end,filter.range.start),(Some(end),Some(start)) if end<start)
                 && !matches!((range.start,filter.range.end),(Some(start),Some(end)) if start>end)
         });
     }
     let point = match filter.axis {
-        TimeAxis::Event => memory.times.event.as_ref(),
-        TimeAxis::Observation => memory.times.observation.as_ref(),
-        TimeAxis::Formation => Some(&memory.times.formation),
-        TimeAxis::Recorded => Some(&memory.times.recorded),
+        TimeAxis::Event => times.event.as_ref(),
+        TimeAxis::Observation => times.observation.as_ref(),
+        TimeAxis::Formation => Some(&times.formation),
+        TimeAxis::Recorded => Some(&times.recorded),
         TimeAxis::Validity => None,
     };
     point.is_some_and(|point| {
