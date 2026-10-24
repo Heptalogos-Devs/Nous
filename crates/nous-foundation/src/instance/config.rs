@@ -3,7 +3,7 @@ use super::{
     InstancePaths, SecretRef,
     credentials::{protect_credentials_directory, protect_secret_file},
 };
-use crate::common::network::NetworkConfig;
+use crate::network::NetworkConfig;
 use anyhow::{Context, Result, bail};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -19,7 +19,7 @@ pub struct InstanceConfig {
     pub server: ServerConfig,
     pub auth: AuthConfig,
     pub network: NetworkConfig,
-    pub models: crate::common::models::ModelsDeployment,
+    pub models: crate::models::ModelsDeployment,
 }
 
 impl InstanceConfig {

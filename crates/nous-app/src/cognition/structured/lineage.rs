@@ -329,9 +329,9 @@ fn revise_stamp(object: &mut StructuredObject, commit_seq: i64) -> Result<()> {
         .revision
         .checked_add(1)
         .ok_or_else(|| Error::invalid("revision overflow"))?;
-    object.times.formation = crate::common::clock::Clock.capture();
-    object.times.recorded = crate::common::clock::Clock.capture();
-    object.recorded_at = crate::common::clock::Clock.recorded();
+    object.times.formation = nous_foundation::clock::Clock.capture();
+    object.times.recorded = nous_foundation::clock::Clock.capture();
+    object.recorded_at = nous_foundation::clock::Clock.recorded();
     object.commit_seq = commit_seq;
     object.producer_call_id = None;
     Ok(())
@@ -343,8 +343,8 @@ fn new_object(
     commit_seq: i64,
 ) -> StructuredObject {
     let mut times = source.times.clone();
-    times.formation = crate::common::clock::Clock.capture();
-    times.recorded = crate::common::clock::Clock.capture();
+    times.formation = nous_foundation::clock::Clock.capture();
+    times.recorded = nous_foundation::clock::Clock.capture();
     StructuredObject {
         id: CognitiveId::new(),
         namespace_id: source.namespace_id.clone(),
@@ -354,7 +354,7 @@ fn new_object(
         evidence,
         times,
         producer_call_id: None,
-        recorded_at: crate::common::clock::Clock.recorded(),
+        recorded_at: nous_foundation::clock::Clock.recorded(),
         commit_seq,
         deleted: false,
     }

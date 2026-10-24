@@ -1,6 +1,6 @@
 //! Role-specific input validation and adoption; ModelCalls owns every external attempt.
 use super::*;
-use crate::common::models::ModelFailure;
+use nous_foundation::models::ModelFailure;
 use tokio_util::sync::CancellationToken;
 
 impl App {

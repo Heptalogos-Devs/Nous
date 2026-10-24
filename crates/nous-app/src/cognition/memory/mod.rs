@@ -1,8 +1,9 @@
 mod decoder;
 pub mod model;
-use crate::{App, operation_key};
+use crate::App;
 use model::FormationInput;
 use nous_domain::*;
+use nous_storage::operation_key;
 use nous_storage::{BeginOperation, OperationReceipt};
 use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;

@@ -1,6 +1,7 @@
 //! Portable messages, output requirements and complete invocation snapshots.
 use super::{ResolvedModel, ResourceMetadata};
-use crate::common::{configuration::ConfigSource, prompts::PromptSnapshot};
+use crate::configuration::ConfigSource;
+use crate::prompts::PromptSnapshot;
 use nous_domain::media::{ChannelAccess, MediaReference};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

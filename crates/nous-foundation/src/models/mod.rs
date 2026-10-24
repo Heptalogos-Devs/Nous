@@ -29,7 +29,9 @@ pub use roles::{
     RoleRegistry, RoleRegistryBuilder, register_configuration,
 };
 
-use crate::common::{configuration::Configuration, instance::InstancePaths, prompts::Prompts};
+use crate::configuration::Configuration;
+use crate::instance::InstancePaths;
+use crate::prompts::Prompts;
 use execution::{CallExecutor, ProviderOutput};
 use nous_domain::ConfigScope;
 use serde::Serialize;

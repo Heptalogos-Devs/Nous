@@ -14,13 +14,13 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
-use crate::{
-    App,
-    common::{
-        instance::{AuthConfig, InstanceConfig, InstanceGuard, InstancePaths},
-        prompts::{ManagedPromptReference, Prompts},
-    },
-};
+use crate::App;
+use nous_foundation::instance::AuthConfig;
+use nous_foundation::instance::InstanceConfig;
+use nous_foundation::instance::InstanceGuard;
+use nous_foundation::instance::InstancePaths;
+use nous_foundation::prompts::ManagedPromptReference;
+use nous_foundation::prompts::Prompts;
 
 const DATABASE_FILE: &str = "data/authority.sqlite";
 const CONFIG_FILE: &str = "instance.toml";
@@ -285,7 +285,7 @@ pub async fn restore(source: &Path, target: InstancePaths) -> Result<Value> {
     .await;
     let finalization: Result<i64> = async {
         checked?;
-        crate::common::configuration::reset_restored_auth(&snapshot).await?;
+        nous_foundation::configuration::reset_restored_auth(&snapshot).await?;
         Ok(snapshot.status().await?.commit_seq)
     }
     .await;

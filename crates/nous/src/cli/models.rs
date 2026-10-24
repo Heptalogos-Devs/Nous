@@ -2,10 +2,9 @@
 use super::cognition::ModelCommand;
 use crate::http::Operation;
 use anyhow::{Context, Result, bail, ensure};
-use nous_app::{
-    common::models::InvocationEdits,
-    model_management::{ModelContractRequest, ModelPreviewRequest},
-};
+use nous_app::administration::models::ModelContractRequest;
+use nous_app::administration::models::ModelPreviewRequest;
+use nous_foundation::models::InvocationEdits;
 use std::path::Path;
 
 pub(super) fn operation(command: ModelCommand) -> Result<Operation> {

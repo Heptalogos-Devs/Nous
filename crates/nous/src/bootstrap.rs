@@ -1,13 +1,12 @@
 //! Process lifecycle and connecting a client to an existing instance.
 use crate::http::{self, ApiClient, ApiState};
 use anyhow::{Context, Result};
-use nous_app::{
-    App,
-    common::{
-        instance::{InstanceConfig, InstanceGuard, InstancePaths, TokenStore},
-        network::NetworkClients,
-    },
-};
+use nous_app::App;
+use nous_foundation::instance::InstanceConfig;
+use nous_foundation::instance::InstanceGuard;
+use nous_foundation::instance::InstancePaths;
+use nous_foundation::instance::TokenStore;
+use nous_foundation::network::NetworkClients;
 use serde_json::{Value, json};
 use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 use tokio_util::sync::CancellationToken;
@@ -36,9 +35,7 @@ pub(crate) fn connect(
     let active_auth = running_state
         .as_ref()
         .and_then(|state| state.get("auth"))
-        .map(|value| {
-            serde_json::from_value::<nous_app::common::instance::AuthConfig>(value.clone())
-        })
+        .map(|value| serde_json::from_value::<nous_foundation::instance::AuthConfig>(value.clone()))
         .transpose()?;
     let base_url = url
         .or_else(|| {

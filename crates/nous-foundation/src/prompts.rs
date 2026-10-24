@@ -1,7 +1,7 @@
 //! Prompt resource loading and strict bounded rendering share one owner.
 //! Minijinja Template/Environment APIs own template parsing and execution.
 
-use crate::common::instance::InstancePaths;
+use crate::instance::InstancePaths;
 use minijinja::{
     Environment, UndefinedBehavior,
     value::{Serde, Value as TemplateValue},

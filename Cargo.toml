@@ -2,6 +2,7 @@
 members = [
     "crates/nous-domain",
     "crates/nous-storage",
+    "crates/nous-foundation",
     "crates/nous-app",
     "crates/nous-retrieval",
     "crates/nous-vcp",
@@ -18,6 +19,7 @@ repository = "https://github.com/Heptalogos-Devs/Nous-Wave"
 [workspace.dependencies]
 nous-domain = { path = "crates/nous-domain" }
 nous-storage = { path = "crates/nous-storage" }
+nous-foundation = { path = "crates/nous-foundation" }
 nous-app = { path = "crates/nous-app" }
 nous-retrieval = { path = "crates/nous-retrieval" }
 nous-vcp = { path = "crates/nous-vcp" }

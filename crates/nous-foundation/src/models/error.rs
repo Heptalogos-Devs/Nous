@@ -34,7 +34,7 @@ impl ModelFailure {
     pub fn to_domain_error(&self) -> Error {
         Error::new(self.info.code, self.info.message.clone())
     }
-    pub(crate) fn new(class: RetryClass, code: ErrorCode, message: impl Into<String>) -> Self {
+    pub fn new(class: RetryClass, code: ErrorCode, message: impl Into<String>) -> Self {
         Self {
             info: ModelFailureInfo {
                 class,
@@ -62,10 +62,10 @@ impl ModelFailure {
         };
         Self::new(class, error.code, error.message)
     }
-    pub(crate) fn domain(error: Error) -> Self {
+    pub fn domain(error: Error) -> Self {
         Self::new(RetryClass::Permanent, error.code, error.message)
     }
-    pub(crate) fn with_source(mut self, source: Box<dyn StdError + Send + Sync>) -> Self {
+    pub fn with_source(mut self, source: Box<dyn StdError + Send + Sync>) -> Self {
         self.source = Some(source);
         self
     }

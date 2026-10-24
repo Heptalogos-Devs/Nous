@@ -5,24 +5,16 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-base64.workspace = true
+nous-foundation.workspace = true
 nous-domain.workspace = true
 nous-storage.workspace = true
 nous-retrieval.workspace = true
-apalis.workspace = true
-apalis-core.workspace = true
-genai.workspace = true
-minijinja.workspace = true
 anyhow.workspace = true
 chrono.workspace = true
-directories.workspace = true
-fs2.workspace = true
-reqwest.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
-subtle.workspace = true
 tempfile.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true

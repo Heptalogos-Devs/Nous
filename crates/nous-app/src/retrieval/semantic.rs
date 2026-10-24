@@ -1,7 +1,7 @@
 //! One frozen candidate/source graph for Dense, VCP and Hybrid discovery.
 use super::view::QueryView;
 use super::*;
-use crate::common::models::ResolvedModel;
+use nous_foundation::models::ResolvedModel;
 use nous_retrieval::{
     serving::{ServingCandidate, ServingGeneration, ServingProfile, ServingSnapshot, ServingTag},
     vector::VectorGenerationIdentity,

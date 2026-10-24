@@ -1,16 +1,26 @@
 use super::{
     MAX_OUTPUT_BYTES, RawStructuredProposal, StructuredFormationInput, structured_output_schema,
 };
-use crate::common::{
-    configuration::ConfigKey,
-    models::{
-        AttemptContext, InvocationDraft, InvocationEdits, InvocationMetadata, InvocationPlan,
-        ModelExecution, ModelFailure, ModelMessage, ModelOutput, ModelRequirements, ModelRuntime,
-        OutputContract, PreparedCall, RoleContract, RoleDefinition,
-    },
-    prompts::{PromptArgument, PromptArguments, PromptDefinition},
-};
 use nous_domain::{CognitiveKind, Error, ErrorCode, EvidenceSource};
+use nous_foundation::configuration::ConfigKey;
+use nous_foundation::models::AttemptContext;
+use nous_foundation::models::InvocationDraft;
+use nous_foundation::models::InvocationEdits;
+use nous_foundation::models::InvocationMetadata;
+use nous_foundation::models::InvocationPlan;
+use nous_foundation::models::ModelExecution;
+use nous_foundation::models::ModelFailure;
+use nous_foundation::models::ModelMessage;
+use nous_foundation::models::ModelOutput;
+use nous_foundation::models::ModelRequirements;
+use nous_foundation::models::ModelRuntime;
+use nous_foundation::models::OutputContract;
+use nous_foundation::models::PreparedCall;
+use nous_foundation::models::RoleContract;
+use nous_foundation::models::RoleDefinition;
+use nous_foundation::prompts::PromptArgument;
+use nous_foundation::prompts::PromptArguments;
+use nous_foundation::prompts::PromptDefinition;
 use serde_json::json;
 
 const TASKS: [(CognitiveKind, &str, &str, &str); 6] = [

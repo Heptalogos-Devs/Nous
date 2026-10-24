@@ -117,8 +117,13 @@ impl Tasks {
         id: &str,
     ) -> Result<nous_storage::OperationReceipt> {
         let job = self.read(ctx, id).await?;
-        let key =
-            crate::operation_key(ctx, "task.cancel", id, operation_id, &json!({"job_id":id}))?;
+        let key = nous_storage::operation_key(
+            ctx,
+            "task.cancel",
+            id,
+            operation_id,
+            &json!({"job_id":id}),
+        )?;
         let mut tx = match self.database.begin_operation(key).await? {
             BeginOperation::Replay(receipt) => return Ok(receipt),
             BeginOperation::New(tx) => tx,

@@ -1,6 +1,7 @@
 //! Authorized read-only access to the model owner's actual invocation contracts and builder.
-use crate::{App, common::models::InvocationEdits};
+use crate::App;
 use nous_domain::{CallContext, ConfigScope, Result, validate_name};
+use nous_foundation::models::InvocationEdits;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};

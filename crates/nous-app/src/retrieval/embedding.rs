@@ -1,6 +1,6 @@
 //! Shared admission and content reuse for every typed cognitive vector target.
 use super::*;
-use crate::common::models::ResolvedModel;
+use nous_foundation::models::ResolvedModel;
 use nous_storage::{OperationKey, WriteTransaction};
 use std::time::Duration;
 

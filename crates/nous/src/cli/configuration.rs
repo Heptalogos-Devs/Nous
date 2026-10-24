@@ -2,10 +2,11 @@
 use super::{connect, print_json, scope::ScopeArgs};
 use anyhow::{Context, Result, ensure};
 use clap::Subcommand;
-use nous_app::common::{
-    configuration::{ConfigChangeRequest, ConfigEdit, ConfigRequest},
-    instance::{InstanceConfig, InstancePaths},
-};
+use nous_app::administration::configuration::ConfigChangeRequest;
+use nous_app::administration::configuration::ConfigRequest;
+use nous_foundation::configuration::ConfigEdit;
+use nous_foundation::instance::InstanceConfig;
+use nous_foundation::instance::InstancePaths;
 use std::path::PathBuf;
 
 #[derive(Subcommand)]

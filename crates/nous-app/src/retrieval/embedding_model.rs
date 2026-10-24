@@ -1,13 +1,19 @@
 //! The indexing consumer owns CognitiveRef projection inputs and declares its role.
-use crate::common::{
-    configuration::ConfigKey,
-    models::{
-        AttemptContext, InvocationDraft, InvocationMetadata, InvocationPlan, ModelExecution,
-        ModelFailure, ModelOutput, ModelRequirements, ModelRuntime, PreparedCall, RoleBinding,
-        RoleContract, RoleDefinition,
-    },
-};
 use nous_domain::{EmbeddingInputItem, EmbeddingSpace, Error};
+use nous_foundation::configuration::ConfigKey;
+use nous_foundation::models::AttemptContext;
+use nous_foundation::models::InvocationDraft;
+use nous_foundation::models::InvocationMetadata;
+use nous_foundation::models::InvocationPlan;
+use nous_foundation::models::ModelExecution;
+use nous_foundation::models::ModelFailure;
+use nous_foundation::models::ModelOutput;
+use nous_foundation::models::ModelRequirements;
+use nous_foundation::models::ModelRuntime;
+use nous_foundation::models::PreparedCall;
+use nous_foundation::models::RoleBinding;
+use nous_foundation::models::RoleContract;
+use nous_foundation::models::RoleDefinition;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;

@@ -1,16 +1,28 @@
 //! Memory formation declares its role, source input, prompt arguments and draft decoder.
-use crate::common::{
-    configuration::ConfigKey,
-    models::{
-        AttemptContext, InvocationDraft, InvocationMetadata, InvocationPlan, MessagePart,
-        MessageRole, ModelExecution, ModelFailure, ModelMessage, ModelOutput, ModelRequirements,
-        ModelRuntime, OutputContract, PreparedCall, RoleBinding, RoleContract, RoleDefinition,
-        SourceAccess,
-    },
-    prompts::{PromptArgument, PromptArguments, PromptDefinition},
-};
 use nous_domain::media::{ChannelAccess, ChannelMode, MediaReference};
 use nous_domain::{Error, MaterialId, MemoryDraft, NamespaceId, ObservationId, SubjectId};
+use nous_foundation::configuration::ConfigKey;
+use nous_foundation::models::AttemptContext;
+use nous_foundation::models::InvocationDraft;
+use nous_foundation::models::InvocationMetadata;
+use nous_foundation::models::InvocationPlan;
+use nous_foundation::models::MessagePart;
+use nous_foundation::models::MessageRole;
+use nous_foundation::models::ModelExecution;
+use nous_foundation::models::ModelFailure;
+use nous_foundation::models::ModelMessage;
+use nous_foundation::models::ModelOutput;
+use nous_foundation::models::ModelRequirements;
+use nous_foundation::models::ModelRuntime;
+use nous_foundation::models::OutputContract;
+use nous_foundation::models::PreparedCall;
+use nous_foundation::models::RoleBinding;
+use nous_foundation::models::RoleContract;
+use nous_foundation::models::RoleDefinition;
+use nous_foundation::models::SourceAccess;
+use nous_foundation::prompts::PromptArgument;
+use nous_foundation::prompts::PromptArguments;
+use nous_foundation::prompts::PromptDefinition;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::json;

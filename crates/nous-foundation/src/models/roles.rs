@@ -1,9 +1,10 @@
 //! Role definitions are registered by consumers; resource bindings are Configuration values.
 use super::{ModelCapability, ModelCatalog, ModelModality, RoleContract};
-use crate::common::{
-    configuration::{ConfigDefinition, ConfigKey, ConfigRegistryBuilder},
-    prompts::{PromptBinding, PromptDefinition},
-};
+use crate::configuration::ConfigDefinition;
+use crate::configuration::ConfigKey;
+use crate::configuration::ConfigRegistryBuilder;
+use crate::prompts::PromptBinding;
+use crate::prompts::PromptDefinition;
 use nous_domain::{ConfigApplyMode, ConfigLevel, Error, Result};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

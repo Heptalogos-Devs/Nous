@@ -4,7 +4,7 @@ pub(crate) mod records;
 mod transaction;
 pub use backup::ObjectReference;
 pub use database::*;
-pub use transaction::{BeginOperation, WriteTransaction};
+pub use transaction::{BeginOperation, WriteTransaction, operation_key};
 mod read_view;
 pub(crate) mod tasks;
 pub use read_view::ReadView;

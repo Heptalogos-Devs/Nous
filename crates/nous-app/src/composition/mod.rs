@@ -1,8 +1,9 @@
 //! Register actual domain consumers and own their runtime lifetime.
 use crate::App;
-use crate::common::models::{RoleRegistry, RoleRegistryBuilder};
-use crate::common::tasks::TaskRegistry;
 use nous_domain::Result;
+use nous_foundation::models::RoleRegistry;
+use nous_foundation::models::RoleRegistryBuilder;
+use nous_foundation::tasks::TaskRegistry;
 use tokio_util::sync::CancellationToken;
 
 pub fn model_roles() -> Result<RoleRegistry> {

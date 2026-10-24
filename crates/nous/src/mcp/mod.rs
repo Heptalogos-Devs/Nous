@@ -153,7 +153,7 @@ impl McpService {
     )]
     async fn model_contract(
         &self,
-        Parameters(input): Parameters<nous_app::model_management::ModelContractRequest>,
+        Parameters(input): Parameters<nous_app::administration::models::ModelContractRequest>,
         ctx: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
         self.execute(Operation::ModelContract(input), ctx).await
@@ -163,7 +163,7 @@ impl McpService {
     )]
     async fn model_preview(
         &self,
-        Parameters(input): Parameters<nous_app::model_management::ModelPreviewRequest>,
+        Parameters(input): Parameters<nous_app::administration::models::ModelPreviewRequest>,
         ctx: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
         self.execute(Operation::ModelPreview(input), ctx).await
@@ -173,7 +173,7 @@ impl McpService {
     )]
     async fn config(
         &self,
-        Parameters(input): Parameters<nous_app::common::configuration::ConfigRequest>,
+        Parameters(input): Parameters<nous_app::administration::configuration::ConfigRequest>,
         ctx: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
         self.execute(Operation::Configuration(input), ctx).await

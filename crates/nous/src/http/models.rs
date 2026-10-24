@@ -5,7 +5,8 @@ use axum::{
     extract::{Extension, State, rejection::JsonRejection},
     routing::post,
 };
-use nous_app::model_management::{ModelContractRequest, ModelPreviewRequest};
+use nous_app::administration::models::ModelContractRequest;
+use nous_app::administration::models::ModelPreviewRequest;
 use nous_domain::CallContext;
 use serde_json::Value;
 

@@ -1,7 +1,10 @@
 //! Authenticated configuration catalog, snapshots, atomic edits and immutable history.
-use super::{ConfigChangeSet, ConfigDescriptor, ConfigEdit, ConfigurationView};
-use crate::{App, operation_key};
+use crate::App;
 use nous_domain::{CallContext, ConfigEntry, ConfigScope, Result};
+use nous_foundation::configuration::{
+    ConfigChangeSet, ConfigDescriptor, ConfigEdit, ConfigurationView,
+};
+use nous_storage::operation_key;
 use nous_storage::{BeginOperation, OperationReceipt};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

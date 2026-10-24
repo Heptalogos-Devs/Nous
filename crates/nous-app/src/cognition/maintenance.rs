@@ -1,8 +1,9 @@
 //! memory_maintenance_service.py at 28db65dd96f546f736d65c043a39254cbae2c4e9.
 
-use crate::common::clock::Clock;
-use crate::{App, operation_key};
+use crate::App;
 use nous_domain::*;
+use nous_foundation::clock::Clock;
+use nous_storage::operation_key;
 use nous_storage::{BeginOperation, OperationReceipt};
 use serde_json::{Value, json};
 

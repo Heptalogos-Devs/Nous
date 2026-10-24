@@ -1,17 +1,16 @@
-//! Core configuration definitions and acknowledgement by the running resource owner.
+//! Bootstrap configuration definitions and restored credential binding.
 use super::*;
 use crate::{
-    App,
-    common::{
-        clock::Clock,
-        instance::{AuthConfig, ServerConfig},
-        network::NetworkConfig,
-    },
+    clock::Clock,
+    instance::{AuthConfig, ServerConfig},
+    network::NetworkConfig,
 };
 use nous_domain::{
     AccessScope, CallContext, ConfigApplyMode, ConfigEntry, ConfigLevel, ConfigScope, Result,
 };
-use nous_storage::{BeginOperation, Database};
+use nous_storage::BeginOperation;
+use nous_storage::Database;
+use nous_storage::operation_key;
 use serde_json::json;
 
 pub const SERVER: ConfigKey<ServerConfig> = ConfigKey::new("server");
@@ -66,63 +65,6 @@ pub fn register_core(builder: &mut ConfigRegistryBuilder) -> Result<()> {
     )
 }
 
-impl App {
-    /// Called after listener binding and token loading succeed.
-    pub async fn activate_bootstrap_configuration(&self, server: &ServerConfig) -> Result<()> {
-        let values = [
-            (SERVER.path(), serde_json::to_value(server)?),
-            (
-                AUTH.path(),
-                serde_json::to_value(&self.bootstrap_config().auth)?,
-            ),
-            (
-                NETWORK.path(),
-                serde_json::to_value(&self.bootstrap_config().network)?,
-            ),
-        ];
-        let body = json!(values);
-        let ctx = CallContext {
-            caller_id: "runtime".into(),
-            scope: AccessScope::Admin,
-        };
-        let key = crate::operation_key(
-            &ctx,
-            "configuration.core.applied",
-            "instance",
-            &ulid::Ulid::generate().to_string(),
-            &body,
-        )?;
-        let mut tx = match self.database.begin_operation(key).await? {
-            BeginOperation::Replay(_) => return Ok(()),
-            BeginOperation::New(tx) => tx,
-        };
-        let heads = tx.configuration_entries(&[ConfigScope::Instance]).await?;
-        let applied = values
-            .into_iter()
-            .map(|(key, applied)| ConfigActivation {
-                expected_revision: heads
-                    .iter()
-                    .find(|entry| entry.key == key)
-                    .map_or(0, |entry| entry.revision),
-                key: key.into(),
-                applied,
-            })
-            .collect::<Vec<_>>();
-        let change = self
-            .configuration
-            .activate_in(&mut tx, &ConfigScope::Instance, &applied)
-            .await?;
-        if change.changes.is_empty() {
-            tx.rollback().await?;
-            return Ok(());
-        }
-        tx.commit(json!(change)).await?;
-        self.configuration.committed(&change);
-        self.tasks.notify_wake();
-        Ok(())
-    }
-}
-
 /// Restore has installed a new administrator credential; preserve history and reset its binding.
 pub async fn reset_restored_auth(database: &Database) -> Result<()> {
     let value = serde_json::to_value(AuthConfig::default())?;
@@ -130,7 +72,7 @@ pub async fn reset_restored_auth(database: &Database) -> Result<()> {
         caller_id: "restore".into(),
         scope: AccessScope::Admin,
     };
-    let key = crate::operation_key(
+    let key = operation_key(
         &ctx,
         "configuration.restore_auth",
         "instance",

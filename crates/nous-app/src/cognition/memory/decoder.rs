@@ -1,5 +1,6 @@
-use crate::common::models::{ModelFailure, RetryClass};
 use nous_domain::{ErrorCode, MemoryDraft};
+use nous_foundation::models::ModelFailure;
+use nous_foundation::models::RetryClass;
 use serde::Deserialize;
 use serde_json::{Value, json};
 pub(super) fn output_schema() -> Value {

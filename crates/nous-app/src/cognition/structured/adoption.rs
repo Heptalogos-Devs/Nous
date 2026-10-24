@@ -17,7 +17,7 @@ impl App {
         {
             return Ok(());
         }
-        let metadata: crate::common::models::InvocationMetadata<StructuredFormationInput> =
+        let metadata: nous_foundation::models::InvocationMetadata<StructuredFormationInput> =
             serde_json::from_value(call.request.clone())?;
         let input = metadata.input;
         let accepted: StructuredFormationInput = serde_json::from_value(run.input.clone())?;

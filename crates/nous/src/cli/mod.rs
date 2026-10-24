@@ -17,11 +17,11 @@ use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use cognition::{MemoryCommand, ModelCommand, QueryArgs};
 use configuration::ConfigCommand;
-use nous_app::{
-    App,
-    common::instance::{InstanceConfig, InstanceGuard, InstancePaths},
-};
+use nous_app::App;
 use nous_domain::{AccessScope, CallContext, NamespaceId, SubjectId};
+use nous_foundation::instance::InstanceConfig;
+use nous_foundation::instance::InstanceGuard;
+use nous_foundation::instance::InstancePaths;
 use serde_json::{Value, json};
 use std::{net::SocketAddr, path::PathBuf};
 #[derive(Parser)]

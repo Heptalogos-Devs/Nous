@@ -7,6 +7,7 @@ rust-version.workspace = true
 [dependencies]
 nous-domain.workspace = true
 nous-app.workspace = true
+nous-foundation.workspace = true
 anyhow.workspace = true
 axum.workspace = true
 clap.workspace = true

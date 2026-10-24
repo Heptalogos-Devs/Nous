@@ -4,7 +4,8 @@ use nous_domain::{
     Error, ErrorCode, Material, MaterialId, Namespace, NamespaceId, Observation, ObservationId,
     ObservationKind, Result, Subject, SubjectId,
 };
-use serde_json::Value;
+use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use sqlx::{Row, Sqlite, Transaction};
 
 use crate::{
@@ -186,4 +187,24 @@ impl WriteTransaction {
         }
         Ok(())
     }
+}
+
+pub fn operation_key(
+    ctx: &nous_domain::CallContext,
+    operation: &str,
+    scope: &str,
+    operation_id: &str,
+    payload: &impl serde::Serialize,
+) -> nous_domain::Result<OperationKey> {
+    nous_domain::validate_name(operation_id, "operation_id")?;
+    nous_domain::validate_name(&ctx.caller_id, "caller_id")?;
+    let encoded =
+        serde_json::to_vec(&json!({"operation":operation,"scope":scope,"payload":payload}))?;
+    Ok(OperationKey {
+        caller_id: ctx.caller_id.clone(),
+        operation: operation.into(),
+        scope: scope.into(),
+        operation_id: operation_id.into(),
+        request_hash: format!("{:x}", Sha256::digest(encoded)),
+    })
 }

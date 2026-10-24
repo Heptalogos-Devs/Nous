@@ -60,9 +60,9 @@ pub struct CancelJob {
 
 #[derive(Clone)]
 pub enum Operation {
-    ModelContract(nous_app::model_management::ModelContractRequest),
-    ModelPreview(nous_app::model_management::ModelPreviewRequest),
-    Configuration(nous_app::common::configuration::ConfigRequest),
+    ModelContract(nous_app::administration::models::ModelContractRequest),
+    ModelPreview(nous_app::administration::models::ModelPreviewRequest),
+    Configuration(nous_app::administration::configuration::ConfigRequest),
     Structured(Box<crate::http::structured::StructuredOperation>),
     Maintenance(crate::http::maintenance::MaintenanceOperation),
     CreateBackup,

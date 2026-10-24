@@ -1,8 +1,7 @@
 use super::{ModelFailure, catalog::*, roles::*};
-use crate::common::{
-    configuration::{ConfigSnapshot, ConfigSource},
-    instance::InstancePaths,
-};
+use crate::configuration::ConfigSnapshot;
+use crate::configuration::ConfigSource;
+use crate::instance::InstancePaths;
 use genai::{
     ModelIden, ServiceTarget,
     adapter::AdapterKind,
@@ -39,7 +38,7 @@ pub struct ResolvedModel {
     pub binding: RoleBinding,
     pub config_digest: String,
     pub config_sources: BTreeMap<String, ConfigSource>,
-    pub prompt_template: Option<crate::common::prompts::PromptTemplate>,
+    pub prompt_template: Option<crate::prompts::PromptTemplate>,
 }
 impl ResolvedModel {
     pub fn primary(&self) -> &ResolvedRoute {

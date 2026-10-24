@@ -16,11 +16,10 @@ use axum::{
     routing::{get, post},
 };
 pub use client::ApiClient;
-use nous_app::{
-    App,
-    common::instance::{InstanceConfig, TokenStore},
-};
+use nous_app::App;
 use nous_domain::{CallContext, Error, ErrorCode};
+use nous_foundation::instance::InstanceConfig;
+use nous_foundation::instance::TokenStore;
 pub use operation::*;
 use serde_json::{Value, json};
 use std::sync::Arc;

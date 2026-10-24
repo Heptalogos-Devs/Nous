@@ -1,6 +1,6 @@
 //! Authority-backed configuration snapshots and committed change notifications.
 use super::{ConfigRegistry, ConfigSnapshot};
-use crate::common::clock::Clock;
+use crate::clock::Clock;
 use nous_domain::{ConfigEntry, ConfigScope, Result};
 use nous_storage::{Database, ReadView};
 use serde::Serialize;

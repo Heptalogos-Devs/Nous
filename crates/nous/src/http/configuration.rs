@@ -5,7 +5,7 @@ use axum::{
     extract::{Extension, State, rejection::JsonRejection},
     routing::get,
 };
-use nous_app::common::configuration::ConfigRequest;
+use nous_app::administration::configuration::ConfigRequest;
 use nous_domain::CallContext;
 use serde_json::Value;
 

@@ -1,6 +1,6 @@
 //! Immutable local objects published before authority transactions commit.
 
-use crate::common::instance::InstancePaths;
+use crate::instance::InstancePaths;
 use nous_domain::{Error, ErrorCode, Result};
 use sha2::{Digest, Sha256};
 use std::{

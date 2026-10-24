@@ -1,31 +1,27 @@
+pub mod administration;
 pub mod backup;
 pub mod bundle_format;
 pub mod cognition;
-pub mod common;
 mod composition;
 pub mod import_format;
 mod lifecycle;
-pub mod model_management;
 pub mod retrieval;
 
 use chrono::Utc;
-use common::{
-    clock::Clock,
-    configuration::Configuration,
-    content::ObjectStore,
-    instance::{self, InstancePaths},
-    model_calls::ModelCalls,
-    models::ModelRuntime,
-    network,
-    tasks::Tasks,
-};
 use nous_domain::*;
+use nous_foundation::clock::Clock;
+use nous_foundation::configuration::Configuration;
+use nous_foundation::content::ObjectStore;
+use nous_foundation::instance;
+use nous_foundation::instance::InstancePaths;
+use nous_foundation::model_calls::ModelCalls;
+use nous_foundation::models::ModelRuntime;
+use nous_foundation::network;
+use nous_foundation::tasks::Tasks;
 use nous_retrieval::RetrievalIndex;
 pub use nous_storage::OperationReceipt;
-use nous_storage::{BeginOperation, Database, OperationKey};
-use serde::Serialize;
+use nous_storage::{BeginOperation, Database, operation_key};
 use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
 use std::sync::Arc;
 
 /// The shared entrypoint used by every transport. Domain rules live here;
@@ -63,9 +59,9 @@ impl App {
         };
         let clock = Clock;
         let roles = composition::model_roles()?;
-        let mut registry = common::configuration::ConfigRegistryBuilder::new();
-        common::configuration::register_core(&mut registry)?;
-        common::models::register_configuration(&mut registry, &roles)?;
+        let mut registry = nous_foundation::configuration::ConfigRegistryBuilder::new();
+        nous_foundation::configuration::register_core(&mut registry)?;
+        nous_foundation::models::register_configuration(&mut registry, &roles)?;
         let configuration = Configuration::new(
             database.clone(),
             registry.finish(),
@@ -74,9 +70,9 @@ impl App {
         )
         .await?;
         let desired = configuration.snapshot(&ConfigScope::Instance, true).await?;
-        config.server = desired.get(common::configuration::SERVER)?;
-        config.auth = desired.get(common::configuration::AUTH)?;
-        config.network = desired.get(common::configuration::NETWORK)?;
+        config.server = desired.get(nous_foundation::configuration::SERVER)?;
+        config.auth = desired.get(nous_foundation::configuration::AUTH)?;
+        config.network = desired.get(nous_foundation::configuration::NETWORK)?;
         let network = network::NetworkClients::new(&config.network)
             .map_err(|error| Error::new(ErrorCode::DependencyUnavailable, error.to_string()))?;
         let model = Arc::new(
@@ -426,24 +422,4 @@ impl App {
             BeginOperation::New(tx) => Ok(Some(tx)),
         }
     }
-}
-
-fn operation_key(
-    ctx: &CallContext,
-    operation: &str,
-    scope: &str,
-    operation_id: &str,
-    payload: &impl Serialize,
-) -> Result<OperationKey> {
-    validate_name(operation_id, "operation_id")?;
-    validate_name(&ctx.caller_id, "caller_id")?;
-    let encoded =
-        serde_json::to_vec(&json!({"operation":operation,"scope":scope,"payload":payload}))?;
-    Ok(OperationKey {
-        caller_id: ctx.caller_id.clone(),
-        operation: operation.into(),
-        scope: scope.into(),
-        operation_id: operation_id.into(),
-        request_hash: format!("{:x}", Sha256::digest(encoded)),
-    })
 }

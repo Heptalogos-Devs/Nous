@@ -1,6 +1,6 @@
 //! Consumers register their typed input contract and pure message/output builder.
 use super::{ModelInput, ModelMessage, OutputContract};
-use crate::common::prompts::PromptArguments;
+use crate::prompts::PromptArguments;
 use nous_domain::{Error, Result};
 use schemars::JsonSchema;
 use serde::{Serialize, de::DeserializeOwned};
@@ -77,8 +77,8 @@ pub struct RoleContractView {
     pub requirements: super::ModelRequirements,
     pub prompt_id: Option<String>,
     pub binding: Option<super::RoleBinding>,
-    pub binding_source: Option<crate::common::configuration::ConfigSource>,
-    pub prompt: Option<crate::common::prompts::PromptTemplate>,
+    pub binding_source: Option<crate::configuration::ConfigSource>,
+    pub prompt: Option<crate::prompts::PromptTemplate>,
     pub prompt_error: Option<Error>,
     pub draft: Option<InvocationDraft>,
 }
