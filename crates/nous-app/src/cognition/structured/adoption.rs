@@ -275,10 +275,10 @@ impl App {
                         coordinate: formed,
                     },
                     validity: None,
-                    recorded: self.clock.capture(),
+                    recorded: tx.time().point(),
                 },
                 producer_call_id: Some(call_id.clone()),
-                recorded_at: self.clock.recorded(),
+                recorded_at: tx.time().recorded(),
                 commit_seq: tx.commit_seq(),
                 deleted: false,
             };

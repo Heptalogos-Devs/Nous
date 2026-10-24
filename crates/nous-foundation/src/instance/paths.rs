@@ -104,6 +104,13 @@ impl InstancePaths {
         self.check_with_root(&path, &resolve_existing_ancestor(&self.root)?)?;
         Ok(path)
     }
+
+    pub fn resolve_in(&self, owner_root: &str, relative: impl AsRef<Path>) -> Result<PathBuf> {
+        let path = self.resolve(relative)?;
+        let owner = self.resolve(owner_root)?;
+        self.check_with_root(&path, &resolve_existing_ancestor(&owner)?)?;
+        Ok(path)
+    }
 }
 
 pub(super) fn resolve_existing_ancestor(path: &Path) -> Result<PathBuf> {

@@ -56,6 +56,44 @@ CREATE TABLE IF NOT EXISTS prompt_revisions (
     PRIMARY KEY(scope,id,revision)
 );
 
+CREATE TABLE IF NOT EXISTS access_grants (
+    id TEXT PRIMARY KEY NOT NULL,
+    current_revision INTEGER NOT NULL CHECK(current_revision>0),
+    FOREIGN KEY(id,current_revision) REFERENCES grant_revisions(grant_id,revision) DEFERRABLE INITIALLY DEFERRED
+);
+CREATE TABLE IF NOT EXISTS grant_revisions (
+    grant_id TEXT NOT NULL REFERENCES access_grants(id),
+    revision INTEGER NOT NULL CHECK(revision>0),
+    kind TEXT NOT NULL CHECK(kind IN('bootstrap','issued')),
+    name TEXT NOT NULL,
+    caller_id TEXT NOT NULL,
+    scope_kind TEXT NOT NULL CHECK(scope_kind IN('admin','namespace','subject')),
+    namespace_id TEXT REFERENCES namespaces(id),
+    subject_id TEXT,
+    parent_id TEXT,
+    parent_revision INTEGER,
+    can_delegate INTEGER NOT NULL CHECK(can_delegate IN(0,1)),
+    expires_at_unix_ms INTEGER CHECK(expires_at_unix_ms>=0),
+    state TEXT NOT NULL CHECK(state IN('active','revoked')),
+    credential_hash TEXT NOT NULL CHECK(length(credential_hash)=64 AND credential_hash NOT GLOB '*[^0-9a-f]*'),
+    secret_ref TEXT NOT NULL CHECK(json_valid(secret_ref)),
+    created_at TEXT NOT NULL,
+    recorded_at TEXT NOT NULL,
+    actor TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    commit_seq INTEGER NOT NULL CHECK(commit_seq=revision),
+    PRIMARY KEY(grant_id,revision),
+    FOREIGN KEY(namespace_id,subject_id) REFERENCES subjects(namespace_id,id),
+    FOREIGN KEY(parent_id,parent_revision) REFERENCES grant_revisions(grant_id,revision),
+    CHECK((parent_id IS NULL)=(parent_revision IS NULL)),
+    CHECK(parent_id IS NULL OR parent_id<>grant_id),
+    CHECK((scope_kind='admin' AND namespace_id IS NULL AND subject_id IS NULL)
+        OR(scope_kind='namespace' AND namespace_id IS NOT NULL AND subject_id IS NULL)
+        OR(scope_kind='subject' AND namespace_id IS NOT NULL AND subject_id IS NOT NULL))
+);
+CREATE INDEX IF NOT EXISTS grant_history_by_scope ON grant_revisions(scope_kind,namespace_id,subject_id,commit_seq);
+CREATE INDEX IF NOT EXISTS grant_secret_references ON grant_revisions(secret_ref);
+
 CREATE TABLE IF NOT EXISTS materials (
     id TEXT PRIMARY KEY NOT NULL,
     namespace_id TEXT NOT NULL REFERENCES namespaces(id),
@@ -212,7 +250,8 @@ CREATE TABLE IF NOT EXISTS model_calls (
     response TEXT CHECK (response IS NULL OR json_valid(response)),
     state TEXT NOT NULL CHECK (state IN ('started','succeeded','failed','uncertain')),
     error TEXT CHECK (error IS NULL OR json_valid(error)),
-    cost_microunits INTEGER CHECK (cost_microunits IS NULL OR cost_microunits >= 0),
+    usage TEXT CHECK (usage IS NULL OR json_valid(usage)),
+    cost TEXT CHECK (cost IS NULL OR json_valid(cost)),
     created_at TEXT NOT NULL,
     completed_at TEXT,
     UNIQUE(job_id, step_key, attempt),

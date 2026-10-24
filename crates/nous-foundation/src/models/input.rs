@@ -138,6 +138,20 @@ impl<T: Serialize> super::CallMetadata for InvocationMetadata<T> {
     fn role(&self) -> &str {
         &self.role
     }
+    fn pricing_snapshot(&self) -> Option<nous_domain::ModelPriceSnapshot> {
+        let route = self
+            .plan
+            .routes
+            .iter()
+            .find(|route| route.id == self.route)?;
+        Some(nous_domain::ModelPriceSnapshot {
+            resource_id: self.resource.id.clone(),
+            provider_id: self.resource.provider.clone(),
+            request_model: self.resource.model.clone(),
+            config_digest: self.config_digest.clone(),
+            pricing: route.pricing.clone()?,
+        })
+    }
     fn reservation_fields(&self) -> (&str, &ResourceMetadata) {
         (&self.call_id, &self.resource)
     }

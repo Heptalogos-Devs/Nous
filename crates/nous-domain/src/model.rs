@@ -28,7 +28,8 @@ pub struct ModelCall {
     pub response: Option<Value>,
     pub state: ModelCallState,
     pub error: Option<Error>,
-    pub cost_microunits: Option<i64>,
+    pub usage: Option<crate::ModelUsage>,
+    pub cost: Option<crate::ModelCost>,
     pub created_at: String,
     pub completed_at: Option<String>,
 }

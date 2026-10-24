@@ -274,8 +274,11 @@ pub(super) fn prepare(
                             .with_encoding_format("float")
                             .with_capture_raw_body(true),
                     ),
-                    space: route.space()?,
-                    count: texts.len(),
+                    contract: super::openai_embedding::ResponseContract {
+                        space: route.space()?,
+                        inputs: texts.len(),
+                        max_bytes: route.parameters.max_response_bytes,
+                    },
                 },
                 no_access(),
             ))

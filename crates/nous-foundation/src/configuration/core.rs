@@ -1,7 +1,6 @@
 //! Bootstrap configuration definitions and restored credential binding.
 use super::*;
 use crate::{
-    clock::Clock,
     instance::{AuthConfig, ServerConfig},
     network::NetworkConfig,
 };
@@ -87,7 +86,7 @@ pub async fn reset_restored_auth(database: &Database) -> Result<()> {
         active: Some(value.clone()),
         desired: Some(value),
         apply_mode: ConfigApplyMode::Restart,
-        recorded_at: Clock.recorded(),
+        recorded_at: tx.time().recorded(),
         commit_seq: tx.commit_seq(),
     };
     tx.insert_configuration_change(&entry).await?;

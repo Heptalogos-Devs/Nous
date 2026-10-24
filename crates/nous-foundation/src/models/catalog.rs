@@ -58,13 +58,7 @@ pub struct Model {
     #[serde(default = "daily")]
     pub max_calls_per_day: u32,
 }
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct TokenPricing {
-    pub currency: String,
-    pub input_per_million: f64,
-    pub output_per_million: f64,
-}
+pub use nous_domain::TokenPricing;
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct EmbeddingProfile {
@@ -76,6 +70,7 @@ pub struct EmbeddingProfile {
 pub struct RouteParameters {
     pub max_input_bytes: usize,
     pub max_media_bytes: usize,
+    pub max_response_bytes: usize,
     pub max_output_tokens: u32,
     pub max_batch_size: usize,
     pub native_parameters: BTreeMap<String, Value>,
@@ -85,6 +80,7 @@ impl Default for RouteParameters {
         Self {
             max_input_bytes: 32 * 1024,
             max_media_bytes: 64 * 1024 * 1024,
+            max_response_bytes: 64 * 1024 * 1024,
             max_output_tokens: 1200,
             max_batch_size: 32,
             native_parameters: BTreeMap::new(),
@@ -168,16 +164,8 @@ impl ModelCatalog {
                     ));
                 }
             }
-            if let Some(price) = &model.pricing
-                && (price.currency.trim().is_empty()
-                    || !price.input_per_million.is_finite()
-                    || !price.output_per_million.is_finite()
-                    || price.input_per_million < 0.0
-                    || price.output_per_million < 0.0)
-            {
-                return Err(Error::invalid(
-                    "model pricing must use finite nonnegative amounts",
-                ));
+            if let Some(price) = &model.pricing {
+                price.validate()?;
             }
         }
         for (id, route) in &self.routes {
@@ -189,6 +177,8 @@ impl ModelCatalog {
             if !(1..=1024 * 1024).contains(&p.max_input_bytes)
                 || p.max_media_bytes == 0
                 || p.max_media_bytes > 64 * 1024 * 1024
+                || p.max_response_bytes == 0
+                || p.max_response_bytes > 1024 * 1024 * 1024
                 || p.max_output_tokens == 0
                 || p.max_output_tokens > 65536
                 || !(1..=256).contains(&p.max_batch_size)

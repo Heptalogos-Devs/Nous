@@ -27,6 +27,7 @@ pub struct OperationKey {
 pub struct OperationReceipt {
     pub operation_id: String,
     pub trace_id: nous_domain::TraceId,
+    pub time: nous_domain::OperationTime,
     pub commit_seq: i64,
     pub result: Value,
     pub job_ids: Vec<String>,
@@ -63,10 +64,14 @@ pub struct StorageStatus {
 #[derive(Clone, Debug)]
 pub struct Database {
     pub(crate) pool: SqlitePool,
+    pub(crate) operation_time: fn() -> nous_domain::OperationTime,
 }
 
 impl Database {
-    pub async fn open(path: impl AsRef<Path>) -> Result<Self> {
+    pub async fn open(
+        path: impl AsRef<Path>,
+        operation_time: fn() -> nous_domain::OperationTime,
+    ) -> Result<Self> {
         let path = path.as_ref();
         if !path.is_absolute() {
             return Err(Error::new(
@@ -101,7 +106,10 @@ impl Database {
             .await
             .map_err(storage_error)?;
         tx.commit().await.map_err(storage_error)?;
-        Ok(Self { pool })
+        Ok(Self {
+            pool,
+            operation_time,
+        })
     }
 
     pub async fn close(&self) {

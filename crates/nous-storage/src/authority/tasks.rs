@@ -38,7 +38,7 @@ impl Database {
             .fetch_one(&mut *tx.tx)
             .await
             .map_err(storage_error)?;
-        let count=sqlx::query("UPDATE Jobs SET status='Pending',attempts=attempts+1,done_at=NULL,run_at=strftime('%s','now') WHERE job_type=? AND status IN('Running','Queued')").bind(JOB_QUEUE).execute(&mut *tx.tx).await.map_err(write_error)?.rows_affected();
+        let count=sqlx::query("UPDATE Jobs SET status='Pending',attempts=attempts+1,done_at=NULL,run_at=? WHERE job_type=? AND status IN('Running','Queued')").bind(tx.time().utc().timestamp()).bind(JOB_QUEUE).execute(&mut *tx.tx).await.map_err(write_error)?.rows_affected();
         sqlx::query(
             "UPDATE Jobs SET lock_by=NULL,lock_at=NULL WHERE job_type=? AND lock_by IS NOT NULL",
         )
@@ -156,8 +156,8 @@ impl WriteTransaction {
                 .as_deref()
                 .is_some_and(|state| matches!(state, "Done" | "Failed" | "Killed"))
             {
-                sqlx::query("UPDATE Jobs SET status='Pending',attempts=0,lock_by=NULL,lock_at=NULL,done_at=NULL,last_result=NULL,run_at=strftime('%s','now') WHERE id=? AND job_type=?")
-                    .bind(&value.id).bind(JOB_QUEUE).execute(&mut *self.tx).await.map_err(write_error)?;
+                sqlx::query("UPDATE Jobs SET status='Pending',attempts=0,lock_by=NULL,lock_at=NULL,done_at=NULL,last_result=NULL,run_at=? WHERE id=? AND job_type=?")
+                    .bind(self.time().utc().timestamp()).bind(&value.id).bind(JOB_QUEUE).execute(&mut *self.tx).await.map_err(write_error)?;
             } else {
                 return Err(Error::new(
                     ErrorCode::Conflict,

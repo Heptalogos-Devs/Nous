@@ -6,8 +6,8 @@ impl WriteTransaction {
         value: &StructuredObject,
     ) -> Result<()> {
         let error = Error::new(ErrorCode::Conflict, "embedding source was retired");
-        sqlx::query("UPDATE task_records SET state='cancelled',wait=NULL,error=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE namespace_id=? AND subject_id=? AND state IN('queued','waiting','running') AND job_id IN(SELECT job_id FROM embedding_inputs WHERE cognition_id=?)")
-   .bind(serde_json::to_string(&error)?).bind(value.namespace_id.as_str()).bind(value.subject_id.as_str()).bind(value.id.as_str()).execute(&mut *self.tx).await.map_err(write_error)?;
+        sqlx::query("UPDATE task_records SET state='cancelled',wait=NULL,error=?,updated_at=? WHERE namespace_id=? AND subject_id=? AND state IN('queued','waiting','running') AND job_id IN(SELECT job_id FROM embedding_inputs WHERE cognition_id=?)")
+   .bind(serde_json::to_string(&error)?).bind(self.time().recorded()).bind(value.namespace_id.as_str()).bind(value.subject_id.as_str()).bind(value.id.as_str()).execute(&mut *self.tx).await.map_err(write_error)?;
         Ok(())
     }
     pub(crate) async fn purge_memory_embeddings(&mut self, id: &MemoryId) -> Result<()> {
@@ -18,7 +18,7 @@ impl WriteTransaction {
                 ErrorCode::NotFound,
                 "embedding source was permanently purged",
             );
-            sqlx::query("UPDATE task_records SET state=CASE WHEN state IN('queued','waiting','running') THEN 'cancelled' ELSE state END,wait=NULL,error=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE job_id=?").bind(serde_json::to_string(&error)?).bind(&job).execute(&mut *self.tx).await.map_err(write_error)?;
+            sqlx::query("UPDATE task_records SET state=CASE WHEN state IN('queued','waiting','running') THEN 'cancelled' ELSE state END,wait=NULL,error=?,updated_at=? WHERE job_id=?").bind(serde_json::to_string(&error)?).bind(self.time().recorded()).bind(&job).execute(&mut *self.tx).await.map_err(write_error)?;
             sqlx::query(
                 "UPDATE embedding_inputs SET text='' WHERE job_id=? AND target_kind='cognition'",
             )

@@ -153,21 +153,27 @@ impl App {
         let subject = request.subject_id.to_string();
         let text = request.text.clone();
         let watermark = view.watermark;
-        let _guard = self.index_gate.lock().await;
-        tokio::task::spawn_blocking(move || {
-            let coverage = index.sync_scope(&namespace, &subject, &documents, watermark)?;
-            let page = index.search_allowed(&text, &namespace, &subject, limit, &allowed)?;
-            Ok::<_, anyhow::Error>((
-                page.hits
-                    .into_iter()
-                    .map(|hit| (hit.id, hit.score))
-                    .collect(),
-                coverage.generation,
-            ))
-        })
+        let guard = self.index_gate.clone().lock_owned().await;
+        nous_foundation::execution::blocking(
+            &tokio_util::sync::CancellationToken::new(),
+            move |_| {
+                let _guard = guard;
+                let coverage = index
+                    .sync_scope(&namespace, &subject, &documents, watermark)
+                    .map_err(engine_error)?;
+                let page = index
+                    .search_allowed(&text, &namespace, &subject, limit, &allowed)
+                    .map_err(engine_error)?;
+                Ok((
+                    page.hits
+                        .into_iter()
+                        .map(|hit| (hit.id, hit.score))
+                        .collect(),
+                    coverage.generation,
+                ))
+            },
+        )
         .await
-        .map_err(|error| Error::internal(error.to_string()))?
-        .map_err(engine_error)
     }
 }
 

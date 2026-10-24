@@ -1,11 +1,12 @@
 use super::{ModelFailure, ModelFailureInfo, RetryClass};
-use chrono::Utc;
+use crate::clock::Clock;
 use genai::{
     Client, ServiceTarget,
     chat::{ChatOptions, ChatRequest},
-    embed::{EmbedOptions, EmbedRequest, EmbedResponse},
+    embed::{EmbedOptions, EmbedRequest},
 };
 use nous_domain::ErrorCode;
+use nous_domain::{ModelCost, ModelPriceSnapshot, ModelUsage, UsageKind};
 use serde::Serialize;
 use serde_json::Value;
 use std::fmt;
@@ -27,8 +28,7 @@ pub(super) enum PreparedRequest {
     Embedding {
         request: EmbedRequest,
         options: Box<EmbedOptions>,
-        space: nous_domain::EmbeddingSpace,
-        count: usize,
+        contract: super::openai_embedding::ResponseContract,
     },
 }
 pub(super) enum ProviderOutput {
@@ -58,6 +58,7 @@ pub struct AttemptContext {
 pub trait CallMetadata: Serialize {
     fn reservation_fields(&self) -> (&str, &super::ResourceMetadata);
     fn role(&self) -> &str;
+    fn pricing_snapshot(&self) -> Option<ModelPriceSnapshot>;
 }
 impl<M: CallMetadata> PreparedCall<M> {
     pub fn reservation(&self) -> CallReservation {
@@ -86,11 +87,11 @@ pub struct ModelCallRecord<M> {
     pub completed_at: String,
     pub status: String,
     pub provider_model: Option<String>,
-    pub usage: Option<Value>,
+    pub usage: Option<ModelUsage>,
     pub raw_output: Option<String>,
     pub provider_response: Option<Value>,
     pub stop_reason: Option<String>,
-    pub cost: Option<Value>,
+    pub cost: Option<ModelCost>,
     pub failure: Option<ModelFailureInfo>,
 }
 pub struct ModelExecution<M, T> {
@@ -116,7 +117,7 @@ impl<M> ModelCallRecord<M> {
     fn started(metadata: M) -> Self {
         Self {
             metadata,
-            started_at: Utc::now().to_rfc3339(),
+            started_at: Clock::operation_snapshot().recorded(),
             completed_at: String::new(),
             status: "started".into(),
             provider_model: None,
@@ -129,7 +130,9 @@ impl<M> ModelCallRecord<M> {
         }
     }
     fn complete<T>(&mut self, result: &Result<T, ModelFailure>) {
-        self.completed_at = Utc::now().to_rfc3339();
+        if self.completed_at.is_empty() {
+            self.completed_at = Clock::operation_snapshot().recorded();
+        }
         self.status = match result {
             Ok(_) => "succeeded",
             Err(error) if error.class() == RetryClass::Uncertain => "uncertain",
@@ -156,15 +159,27 @@ impl<M> ModelCallRecord<M> {
 #[derive(Clone)]
 pub(super) struct CallExecutor {
     client: Client,
+    network: crate::network::NetworkClients,
 }
 impl CallExecutor {
-    pub fn new(http: reqwest::Client) -> anyhow::Result<Self> {
+    pub fn new(network: crate::network::NetworkClients) -> anyhow::Result<Self> {
         Ok(Self {
-            client: Client::builder().with_reqwest(http).build()?,
+            client: Client::builder()
+                .with_reqwest(network.http().clone())
+                .build()?,
+            network,
         })
     }
     /// Exactly one external attempt. ModelCalls owns reservations and retry policy.
-    pub async fn invoke<M>(&self, prepared: PreparedCall<M>) -> ModelExecution<M, ProviderOutput> {
+    pub async fn invoke<M: CallMetadata>(
+        &self,
+        prepared: PreparedCall<M>,
+    ) -> ModelExecution<M, ProviderOutput> {
+        let pricing = prepared.metadata.pricing_snapshot();
+        let kind = match &prepared.request {
+            PreparedRequest::Chat { .. } => UsageKind::Chat,
+            PreparedRequest::Embedding { .. } => UsageKind::Embedding,
+        };
         let mut record = ModelCallRecord::started(prepared.metadata);
         let result = match prepared.request {
             PreparedRequest::Chat { request, options } => {
@@ -174,20 +189,28 @@ impl CallExecutor {
             PreparedRequest::Embedding {
                 request,
                 options,
-                space,
-                count,
-            } => {
-                self.embed(
-                    prepared.target,
-                    request,
-                    *options,
-                    &mut record,
-                    &space,
-                    count,
-                )
-                .await
-            }
+                contract,
+            } => super::openai_embedding::execute(
+                &self.network,
+                prepared.target,
+                request,
+                *options,
+                &mut record,
+                &contract,
+            )
+            .await
+            .map(ProviderOutput::Vectors),
         };
+        if record.usage.is_none() {
+            record.usage =
+                super::accounting::normalize_usage(kind, None, record.provider_response.as_ref());
+        }
+        record.cost = Some(super::accounting::cost(
+            kind,
+            record.usage.as_ref(),
+            pricing,
+            record.provider_response.as_ref(),
+        ));
         record.complete(&result);
         ModelExecution { record, result }
     }
@@ -202,7 +225,11 @@ impl CallExecutor {
             Ok(response) => {
                 record.provider_response = response.captured_raw_body.clone();
                 record.provider_model = Some(response.provider_model_iden.model_name.to_string());
-                record.usage = serde_json::to_value(&response.usage).ok();
+                record.usage = super::accounting::normalize_usage(
+                    UsageKind::Chat,
+                    Some(&response.usage),
+                    response.captured_raw_body.as_ref(),
+                );
                 record.stop_reason = response.stop_reason.as_ref().map(ToString::to_string);
                 record.raw_output = response.first_text().map(str::to_owned);
                 if response
@@ -227,83 +254,8 @@ impl CallExecutor {
             }
         }
     }
-    async fn embed<M>(
-        &self,
-        target: ServiceTarget,
-        request: EmbedRequest,
-        options: EmbedOptions,
-        record: &mut ModelCallRecord<M>,
-        space: &nous_domain::EmbeddingSpace,
-        count: usize,
-    ) -> Result<ProviderOutput, ModelFailure> {
-        match self
-            .client
-            .exec_embed(target, request, Some(&options))
-            .await
-        {
-            Ok(response) => {
-                record.provider_model = Some(response.provider_model_iden.model_name.to_string());
-                record.usage = serde_json::to_value(&response.usage).ok();
-                record.provider_response = response.captured_raw_body.clone();
-                record.raw_output = response.captured_raw_body.as_ref().map(Value::to_string);
-                validate_embeddings(response, space, count).map(ProviderOutput::Vectors)
-            }
-            Err(error) => {
-                record.capture_error(&error);
-                let invalid = matches!(&error, genai::Error::StreamParse { .. });
-                let mut failure = ModelFailure::provider(error);
-                if invalid {
-                    failure.info.error.code = ErrorCode::InvalidArgument;
-                    failure.info.error.message =
-                        "embedding response does not match the embedding JSON contract".into();
-                }
-                Err(failure)
-            }
-        }
-    }
 }
-fn validate_embeddings(
-    response: EmbedResponse,
-    space: &nous_domain::EmbeddingSpace,
-    count: usize,
-) -> Result<Vec<Vec<f32>>, ModelFailure> {
-    let invalid =
-        |message| ModelFailure::new(RetryClass::Permanent, ErrorCode::InvalidArgument, message);
-    if response.provider_model_iden.model_name != space.provider_model {
-        return Err(ModelFailure::new(
-            RetryClass::Permanent,
-            ErrorCode::Conflict,
-            "embedding provider model differs from the configured immutable space",
-        ));
-    }
-    if response.embeddings.len() != count {
-        return Err(invalid(
-            "embedding response must cover every input exactly once",
-        ));
-    }
-    let mut ordered = vec![None; count];
-    for embedding in response.embeddings {
-        if embedding.index >= count || ordered[embedding.index].is_some() {
-            return Err(invalid(
-                "embedding response contains a duplicate or out-of-range index",
-            ));
-        }
-        let vector = embedding.vector;
-        if vector.len() != space.dimension
-            || !vector.iter().all(|v| v.is_finite())
-            || !vector.iter().any(|v| *v != 0.0)
-        {
-            return Err(invalid(
-                "embedding response must contain finite nonzero vectors with the configured dimension",
-            ));
-        }
-        ordered[embedding.index] = Some(vector);
-    }
-    ordered
-        .into_iter()
-        .map(|v| v.ok_or_else(|| invalid("embedding response is missing an input index")))
-        .collect()
-}
+
 fn error_body(error: &genai::Error) -> Option<&str> {
     match error {
         genai::Error::HttpError { body, .. } => Some(body),

@@ -99,13 +99,13 @@ impl App {
                     .cloned()
                     .chain(input.evidence.iter().cloned()),
             );
-            revise_stamp(source, tx.commit_seq())?;
+            revise_stamp(source, &tx)?;
             tx.save_structured(source, Some(expected)).await?;
         }
         let expected = survivor.revision;
         survivor.body = CognitiveContent::Concept(merged);
         survivor.evidence = merged_evidence(evidence);
-        revise_stamp(&mut survivor, tx.commit_seq())?;
+        revise_stamp(&mut survivor, &tx)?;
         tx.save_structured(&survivor, Some(expected)).await?;
         tx.commit(json!({"survivor":survivor,"retired":retired}))
             .await
@@ -157,12 +157,7 @@ impl App {
                     .cloned()
                     .chain(input.evidence.iter().cloned()),
             );
-            let child = new_object(
-                &parent,
-                CognitiveContent::Concept(content),
-                evidence,
-                tx.commit_seq(),
-            );
+            let child = new_object(&parent, CognitiveContent::Concept(content), evidence, &tx);
             tx.save_structured(&child, None).await?;
             children.push(child);
         }
@@ -231,7 +226,7 @@ impl App {
             if !unchanged {
                 object.body = CognitiveContent::Episode(content);
                 object.evidence = evidence;
-                revise_stamp(&mut object, tx.commit_seq())?;
+                revise_stamp(&mut object, &tx)?;
                 tx.save_structured(&object, Some(expected)).await?;
             }
             return tx.commit(json!({"retired":[],"episodes":[object]})).await;
@@ -241,7 +236,7 @@ impl App {
         for source in &mut sources {
             let expected = source.revision;
             source.deleted = true;
-            revise_stamp(source, tx.commit_seq())?;
+            revise_stamp(source, &tx)?;
             tx.save_structured(source, Some(expected)).await?;
         }
         let mut episodes = Vec::new();
@@ -273,7 +268,7 @@ impl App {
                 &source_snapshot[0],
                 CognitiveContent::Episode(segment),
                 merged_evidence(evidence),
-                tx.commit_seq(),
+                &tx,
             );
             tx.save_structured(&object, None).await?;
             episodes.push(object);
@@ -324,15 +319,15 @@ fn episode(object: &StructuredObject) -> Result<&EpisodeContent> {
         _ => Err(Error::invalid("operation requires Episode")),
     }
 }
-fn revise_stamp(object: &mut StructuredObject, commit_seq: i64) -> Result<()> {
+fn revise_stamp(object: &mut StructuredObject, tx: &WriteTransaction) -> Result<()> {
     object.revision = object
         .revision
         .checked_add(1)
         .ok_or_else(|| Error::invalid("revision overflow"))?;
-    object.times.formation = nous_foundation::clock::Clock.capture();
-    object.times.recorded = nous_foundation::clock::Clock.capture();
-    object.recorded_at = nous_foundation::clock::Clock.recorded();
-    object.commit_seq = commit_seq;
+    object.times.formation = tx.time().point();
+    object.times.recorded = tx.time().point();
+    object.recorded_at = tx.time().recorded();
+    object.commit_seq = tx.commit_seq();
     object.producer_call_id = None;
     Ok(())
 }
@@ -340,11 +335,11 @@ fn new_object(
     source: &StructuredObject,
     body: CognitiveContent,
     evidence: Vec<EvidenceLink>,
-    commit_seq: i64,
+    tx: &WriteTransaction,
 ) -> StructuredObject {
     let mut times = source.times.clone();
-    times.formation = nous_foundation::clock::Clock.capture();
-    times.recorded = nous_foundation::clock::Clock.capture();
+    times.formation = tx.time().point();
+    times.recorded = tx.time().point();
     StructuredObject {
         id: CognitiveId::new(),
         namespace_id: source.namespace_id.clone(),
@@ -354,8 +349,8 @@ fn new_object(
         evidence,
         times,
         producer_call_id: None,
-        recorded_at: nous_foundation::clock::Clock.recorded(),
-        commit_seq,
+        recorded_at: tx.time().recorded(),
+        commit_seq: tx.commit_seq(),
         deleted: false,
     }
 }

@@ -114,23 +114,26 @@ impl App {
             .resolve("indexes/semantic")
             .map_err(|error| Error::invalid(error.to_string()))?;
         let generation = {
-            let mut cache = self.semantic_cache.lock().await;
+            let mut cache = self.semantic_cache.clone().lock_owned().await;
             if let Some(generation) = cache.get(&cache_key) {
                 generation.clone()
             } else {
-                let generation = tokio::task::spawn_blocking(move || {
-                    std::fs::create_dir_all(&parent)?;
-                    ServingGeneration::create_or_open(&parent, &input)
-                })
-                .await
-                .map_err(|error| Error::internal(error.to_string()))?
-                .map_err(engine_error)?;
-                let generation = Arc::new(generation);
-                if cache.len() >= 8 {
-                    cache.clear();
-                }
-                cache.insert(cache_key, generation.clone());
-                generation
+                nous_foundation::execution::blocking(
+                    &tokio_util::sync::CancellationToken::new(),
+                    move |_| {
+                        std::fs::create_dir_all(&parent)?;
+                        let generation = Arc::new(
+                            ServingGeneration::create_or_open(&parent, &input)
+                                .map_err(engine_error)?,
+                        );
+                        if cache.len() >= 8 {
+                            cache.clear();
+                        }
+                        cache.insert(cache_key, generation.clone());
+                        Ok(generation)
+                    },
+                )
+                .await?
             }
         };
         let mode = request.mode;
@@ -140,20 +143,22 @@ impl App {
             request.limit
         };
         let vector = query.vector;
-        let (result, restored) = tokio::task::spawn_blocking(move || {
-            let profile = if mode == QueryMode::Dense {
-                ServingProfile::Dense
-            } else {
-                ServingProfile::Vcp(Box::default())
-            };
-            let restored = generation.restored();
-            generation
-                .search(&vector, limit, profile)
-                .map(|result| (result, restored))
-        })
-        .await
-        .map_err(|error| Error::internal(error.to_string()))?
-        .map_err(engine_error)?;
+        let (result, restored) = nous_foundation::execution::blocking(
+            &tokio_util::sync::CancellationToken::new(),
+            move |_| {
+                let profile = if mode == QueryMode::Dense {
+                    ServingProfile::Dense
+                } else {
+                    ServingProfile::Vcp(Box::default())
+                };
+                let restored = generation.restored();
+                generation
+                    .search(&vector, limit, profile)
+                    .map(|result| (result, restored))
+                    .map_err(engine_error)
+            },
+        )
+        .await?;
         let allowed = eligible
             .iter()
             .map(|entry| (entry.reference().to_string(), entry.reference().revision))

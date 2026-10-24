@@ -54,7 +54,7 @@ impl WriteTransaction {
                     .map(|source| serde_json::to_value(source).expect("typed source serialization"))
                     .collect(),
             );
-            sqlx::query("UPDATE task_records SET state=CASE WHEN state IN('queued','waiting','running') THEN 'cancelled' ELSE state END,wait=NULL,error=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE job_id=?").bind(serde_json::to_string(&error)?).bind(&job).execute(&mut *self.tx).await.map_err(write_error)?;
+            sqlx::query("UPDATE task_records SET state=CASE WHEN state IN('queued','waiting','running') THEN 'cancelled' ELSE state END,wait=NULL,error=?,updated_at=? WHERE job_id=?").bind(serde_json::to_string(&error)?).bind(self.time().recorded()).bind(&job).execute(&mut *self.tx).await.map_err(write_error)?;
             sqlx::query("UPDATE structured_formation_runs SET input=? WHERE job_id=?")
                 .bind(serde_json::to_string(&retired_input)?)
                 .bind(&job)

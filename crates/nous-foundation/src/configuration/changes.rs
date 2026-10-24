@@ -60,7 +60,7 @@ impl Configuration {
             .await?;
         let mut seen = BTreeSet::new();
         let mut candidates = Vec::with_capacity(edits.len());
-        let recorded_at = self.clock.recorded();
+        let recorded_at = tx.time().recorded();
         for edit in edits {
             let key = edit.key();
             if !seen.insert(key) {
@@ -119,7 +119,7 @@ impl Configuration {
         let active = self.resolve(scope, tx.configuration_revision().await?, &entries, false)?;
         let mut seen = BTreeSet::new();
         let mut candidates = Vec::new();
-        let recorded_at = self.clock.recorded();
+        let recorded_at = tx.time().recorded();
         for application in applied {
             if !seen.insert(&application.key) {
                 return Err(Error::invalid("configuration activation repeats a key"));

@@ -21,6 +21,7 @@ pub struct TraceOperation {
     pub scope: String,
     pub operation_id: String,
     pub commit_seq: i64,
+    pub time: OperationTime,
     pub job_ids: Vec<String>,
 }
 
@@ -51,8 +52,8 @@ pub struct TraceModelCall {
     pub resource_id: String,
     pub state: ModelCallState,
     pub provider_model: Option<String>,
-    pub usage: Option<serde_json::Value>,
-    pub cost_microunits: Option<i64>,
+    pub usage: Option<nous_domain::ModelUsage>,
+    pub cost: Option<nous_domain::ModelCost>,
     pub error: Option<Error>,
     pub created_at: String,
     pub completed_at: Option<String>,
@@ -109,7 +110,7 @@ impl Database {
             id.validate()?;
         }
         let fetch_limit = (limit + 1) as i64;
-        let rows = sqlx::query("SELECT caller_id,operation,scope,operation_id,commit_seq,json_extract(receipt,'$.job_ids') AS job_ids FROM operation_receipts WHERE trace_id=? AND commit_seq>? AND commit_seq<=? ORDER BY commit_seq LIMIT ?")
+        let rows = sqlx::query("SELECT caller_id,operation,scope,operation_id,commit_seq,json_extract(receipt,'$.time') AS time,json_extract(receipt,'$.job_ids') AS job_ids FROM operation_receipts WHERE trace_id=? AND commit_seq>? AND commit_seq<=? ORDER BY commit_seq LIMIT ?")
             .bind(trace_id.as_str()).bind(next.operations_after).bind(next.snapshot_seq).bind(fetch_limit)
             .fetch_all(&mut *view.tx).await.map_err(storage_error)?;
         let operations_has_more = rows.len() > limit;
@@ -127,7 +128,7 @@ impl Database {
             .take(limit)
             .map(job_row)
             .collect::<Result<Vec<_>>>()?;
-        let rows = sqlx::query("SELECT id,job_id,reservation_commit_seq,namespace_id,subject_id,step_key,attempt,resource_id,state,json_extract(response,'$.record.provider_model') AS provider_model,json_extract(response,'$.record.usage') AS usage,cost_microunits,error,created_at,completed_at FROM model_calls WHERE trace_id=? AND reservation_commit_seq<=? AND (? IS NULL OR id>?) ORDER BY id LIMIT ?")
+        let rows = sqlx::query("SELECT id,job_id,reservation_commit_seq,namespace_id,subject_id,step_key,attempt,resource_id,state,json_extract(response,'$.record.provider_model') AS provider_model,usage,cost,error,created_at,completed_at FROM model_calls WHERE trace_id=? AND reservation_commit_seq<=? AND (? IS NULL OR id>?) ORDER BY id LIMIT ?")
             .bind(trace_id.as_str()).bind(next.snapshot_seq).bind(next.calls_after.as_ref().map(ModelCallId::as_str)).bind(next.calls_after.as_ref().map(ModelCallId::as_str)).bind(fetch_limit)
             .fetch_all(&mut *view.tx).await.map_err(storage_error)?;
         let calls_has_more = rows.len() > limit;
@@ -169,6 +170,7 @@ fn operation_row(row: SqliteRow) -> Result<TraceOperation> {
         scope: row.get("scope"),
         operation_id: row.get("operation_id"),
         commit_seq: row.get("commit_seq"),
+        time: serde_json::from_value(serde_json::Value::String(row.get("time")))?,
         job_ids: serde_json::from_str(row.get("job_ids"))?,
     })
 }
@@ -204,7 +206,7 @@ fn call_row(row: SqliteRow) -> Result<TraceModelCall> {
         state: parse_enum(row.get("state"))?,
         provider_model: row.get("provider_model"),
         usage: parse_optional(row.get("usage"))?,
-        cost_microunits: row.get("cost_microunits"),
+        cost: parse_optional(row.get("cost"))?,
         error: parse_optional(row.get("error"))?,
         created_at: row.get("created_at"),
         completed_at: row.get("completed_at"),

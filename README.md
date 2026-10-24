@@ -189,6 +189,8 @@ max_calls_per_day = 20
 
 Provider、Model 和角色绑定各有 `max_calls_per_day`。Provider/Model 拥有共享硬额度，角色额度按 Instance、Namespace、Subject 累计检查；降低或提高某个角色额度不会改变公共额度。一次外呼在同一事务预约所有适用额度，失败和不确定尝试保留计次。额度上调可唤醒等待中的任务。
 
+模型的可选 `pricing` 使用明确的 `currency`，`input_per_million`、`output_per_million` 使用十进制字符串。调用记录分别保存规范 `usage`、冻结单价、估算金额和供应商实报金额；计数、币种或计价缺漏通过 `missing`、`invalid_fields` 表达。材料正文、模型生成和计费各自保留其实际结果。
+
 配置只保存 SecretRef，密钥内容放入实例受保护的 `credentials` 目录。文本向量模型使用 `openai_embeddings`、`embedding` 能力和独立 route；其 `max_batch_size` 按 provider 实际限制设置。Prompt 选择为 `{"kind":"default"}`、`{"kind":"file","file":"prompts/custom.md","locale":"zh-CN"}` 或 `{"kind":"managed","reference":{"scope":{"kind":"instance"},"id":"custom","revision":123}}`。调用记录冻结实际模板、变量来源、消息、参数和 usage。
 
 先查看职责输入合同及当前 Prompt，再用领域 typed input 文件构建动态输出 Schema：
@@ -205,6 +207,8 @@ Provider、Model 和角色绑定各有 `max_calls_per_day`。Provider/Model 拥�
 `prompt catalog/read/history/edit/activate/preview` 管理提示词资源。`prompt edit --id <id> --file <正文文件> --expected-revision <修订>` 保存不可变正文；增加 `--activate-role <职责> --binding-revision <职责覆盖修订>` 可在同一事务激活。职责必须已有模型路线。独立激活使用精确资源选择；预览与真实调用使用相同 MiniJinja 渲染器。模板、变量来源、渲染正文和目标输出合同均可审查。
 
 `nous diagnostics` 查看实际日志位置和丢弃记录数。JSON 日志按日保存在实例 `logs` 目录，策略通过 `observability` 配置管理。`nous trace <trace-id>` 按页读取提交、任务和调用关系；继续分页时将 `next_cursor` 传入 `--cursor`。HTTP 接受并回显 `x-nous-trace-id`，任务和调用持久继承接受事务的 trace。诊断、trace 和 Prometheus 指标入口需要管理员权限。
+
+回执的 `time` 是取得写锁后捕获的本次事务时间，同一提交中的记录共用该时刻；幂等重放保留原时间。原始事件时间、主体接触时间和领域语义时间由对应输入与领域维护。
 
 资源配置完成后，提交正式形成任务：
 

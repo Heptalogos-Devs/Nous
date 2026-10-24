@@ -268,7 +268,7 @@ impl ModelCalls {
                 Err(error) => return Err(error),
             };
             let attempts = tx.model_step_calls(job_id, step).await?.len() as i64;
-            let reserved_at = self.clock.utc();
+            let reserved_at = tx.time().utc();
             let mut call = ModelCall {
                 id: reservation.call_id,
                 job_id: job_id.into(),
@@ -288,7 +288,8 @@ impl ModelCalls {
                 response: None,
                 state: ModelCallState::Started,
                 error: None,
-                cost_microunits: None,
+                usage: None,
+                cost: None,
                 created_at: reserved_at.to_rfc3339(),
                 completed_at: None,
             };
@@ -343,6 +344,8 @@ impl ModelCalls {
             match execution {
                 Some(execution) => {
                     call.completed_at = Some(execution.record.completed_at.clone());
+                    call.usage = execution.record.usage.clone();
+                    call.cost = execution.record.cost.clone();
                     let (output, failure) = match execution.result {
                         Ok(output) => (Some(serde_json::to_value(output)?), None),
                         Err(failure) => (None, Some(failure)),
@@ -394,6 +397,7 @@ impl ModelCalls {
             };
             let elapsed = started.elapsed();
             metrics::counter!("nous_model_attempts_total", "role"=>reservation.role.clone(), "status"=>status).increment(1);
+            record_usage_metrics(&reservation.role, call.usage.as_ref());
             metrics::histogram!("nous_model_attempt_duration_seconds", "role"=>reservation.role)
                 .record(elapsed.as_secs_f64());
             tracing::info!(parent:&span, event="model.completed", status, elapsed_ms=elapsed.as_millis() as u64, error=?call.error, "model request completed");
@@ -491,6 +495,29 @@ fn keep_accounting(current: &mut ModelCall, completed: &ModelCall) {
     current.state = completed.state.clone();
     current.error = completed.error.clone();
     current.completed_at = completed.completed_at.clone();
-    current.cost_microunits = completed.cost_microunits;
+    current.usage = completed.usage.clone();
+    current.cost = completed.cost.clone();
     current.response = Some(json!({"redacted":true,"reason":"source_removed","record":accounting}));
+}
+
+fn record_usage_metrics(role: &str, usage: Option<&ModelUsage>) {
+    let Some(usage) = usage else {
+        metrics::counter!("nous_model_usage_missing_total","role"=>role.to_owned()).increment(1);
+        return;
+    };
+    if usage.input_tokens.is_none()
+        || (usage.kind == UsageKind::Chat && usage.output_tokens.is_none())
+    {
+        metrics::counter!("nous_model_usage_incomplete_total","role"=>role.to_owned()).increment(1);
+    }
+    if let Some(count) = usage.input_tokens {
+        metrics::counter!("nous_model_input_tokens_total","role"=>role.to_owned()).increment(count);
+    }
+    if let Some(count) = usage.output_tokens {
+        metrics::counter!("nous_model_output_tokens_total","role"=>role.to_owned())
+            .increment(count);
+    }
+    if let Some(count) = usage.known_total_tokens() {
+        metrics::counter!("nous_model_tokens_total","role"=>role.to_owned()).increment(count);
+    }
 }

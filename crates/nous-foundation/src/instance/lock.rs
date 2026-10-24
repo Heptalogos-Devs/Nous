@@ -33,15 +33,15 @@ impl InstanceGuard {
                 FileExt::unlock(&file)?;
                 Ok(false)
             }
-            Err(e)
-                if e.kind() == std::io::ErrorKind::WouldBlock
-                    || e.raw_os_error() == fs2::lock_contended_error().raw_os_error() =>
-            {
-                Ok(true)
-            }
+            Err(e) if lock_contended(&e) => Ok(true),
             Err(e) => Err(e.into()),
         }
     }
+}
+
+pub(crate) fn lock_contended(error: &std::io::Error) -> bool {
+    error.kind() == std::io::ErrorKind::WouldBlock
+        || error.raw_os_error() == fs2::lock_contended_error().raw_os_error()
 }
 
 impl Drop for InstanceGuard {

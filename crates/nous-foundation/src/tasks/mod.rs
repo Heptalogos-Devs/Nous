@@ -40,7 +40,7 @@ impl Tasks {
         namespace: Option<NamespaceId>,
         subject: Option<SubjectId>,
     ) -> JobRecord {
-        let now = self.clock.recorded();
+        let now = tx.time().recorded();
         JobRecord {
             id: ulid::Ulid::generate().to_string(),
             trace_id: tx.trace_id().clone(),
@@ -105,7 +105,7 @@ impl Tasks {
         job.state = state;
         job.wait = wait;
         job.error = error.map(|error| error.with_trace(job.trace_id.clone()));
-        job.updated_at = self.clock.recorded();
+        job.updated_at = tx.time().recorded();
         tx.update_job_record(job, self.config.max_queue_attempts)
             .await?;
         tracing::debug!(trace_id=%job.trace_id,job_id=%job.id,job_kind=%job.kind,state=?job.state,"task transition staged");

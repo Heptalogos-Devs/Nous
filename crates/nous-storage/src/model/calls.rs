@@ -56,7 +56,8 @@ impl Database {
             ErrorCode::DependencyUnavailable,
             "host stopped before the remote response was saved",
         );
-        let count=sqlx::query("UPDATE model_calls SET state='uncertain',error=json_set(?,'$.trace_id',trace_id),completed_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE state='started'").bind(serde_json::to_string(&error)?).execute(&mut *tx.tx).await.map_err(write_error)?.rows_affected();
+        let processed_at = tx.time().recorded();
+        let count=sqlx::query("UPDATE model_calls SET state='uncertain',error=json_set(?,'$.trace_id',trace_id),completed_at=? WHERE state='started'").bind(serde_json::to_string(&error)?).bind(processed_at).execute(&mut *tx.tx).await.map_err(write_error)?.rows_affected();
         if count == 0 {
             tx.rollback().await?;
         } else {
@@ -136,10 +137,10 @@ impl WriteTransaction {
                     .with_trace(self.trace_id().clone()),
             );
         }
-        sqlx::query("INSERT INTO model_calls(id,job_id,namespace_id,subject_id,step_key,attempt,resource_id,request,response,state,error,cost_microunits,created_at,completed_at,trace_id,reservation_commit_seq) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+        sqlx::query("INSERT INTO model_calls(id,job_id,namespace_id,subject_id,step_key,attempt,resource_id,request,response,state,error,usage,cost,created_at,completed_at,trace_id,reservation_commit_seq) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
             .bind(call.id.as_str()).bind(&call.job_id).bind(call.namespace_id.as_str()).bind(call.subject_id.as_str()).bind(&call.step_key).bind(call.attempt).bind(&call.resource_id)
             .bind(serde_json::to_string(&call.request).map_err(storage_error)?).bind(json_option(&call.response)?).bind(enum_name(&call.state)?).bind(json_option(&call.error)?)
-            .bind(call.cost_microunits).bind(&call.created_at).bind(&call.completed_at).bind(call.trace_id.as_str()).bind(self.commit_seq())
+            .bind(json_option(&call.usage)?).bind(json_option(&call.cost)?).bind(&call.created_at).bind(&call.completed_at).bind(call.trace_id.as_str()).bind(self.commit_seq())
             .execute(&mut *self.tx).await.map_err(write_error)?;
         Ok(())
     }
@@ -161,8 +162,8 @@ impl WriteTransaction {
                 "model call request and reservation identity are immutable",
             ));
         }
-        sqlx::query("UPDATE model_calls SET response=?,state=?,error=?,cost_microunits=?,completed_at=? WHERE id=?")
-            .bind(json_option(&call.response)?).bind(enum_name(&call.state)?).bind(json_option(&call.error)?).bind(call.cost_microunits).bind(&call.completed_at).bind(call.id.as_str())
+        sqlx::query("UPDATE model_calls SET response=?,state=?,error=?,usage=?,cost=?,completed_at=? WHERE id=?")
+            .bind(json_option(&call.response)?).bind(enum_name(&call.state)?).bind(json_option(&call.error)?).bind(json_option(&call.usage)?).bind(json_option(&call.cost)?).bind(&call.completed_at).bind(call.id.as_str())
             .execute(&mut *self.tx).await.map_err(write_error)?;
         Ok(())
     }
@@ -192,7 +193,8 @@ fn model_call_row(row: SqliteRow) -> Result<ModelCall> {
         response: parse_optional(row.get("response"))?,
         state: parse_enum(row.get("state"))?,
         error: parse_optional(row.get("error"))?,
-        cost_microunits: row.get("cost_microunits"),
+        usage: parse_optional(row.get("usage"))?,
+        cost: parse_optional(row.get("cost"))?,
         created_at: row.get("created_at"),
         completed_at: row.get("completed_at"),
     })

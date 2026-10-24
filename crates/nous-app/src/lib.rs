@@ -7,7 +7,6 @@ pub mod import_format;
 mod lifecycle;
 pub mod retrieval;
 
-use chrono::Utc;
 use nous_domain::*;
 use nous_foundation::clock::Clock;
 use nous_foundation::configuration::Configuration;
@@ -36,7 +35,6 @@ pub struct App {
     pub(crate) configuration: Configuration,
     tasks: Tasks,
     calls: ModelCalls,
-    clock: Clock,
     retrieval: RetrievalIndex,
     index_gate: Arc<tokio::sync::Mutex<()>>,
     semantic_cache: Arc<
@@ -49,7 +47,7 @@ pub struct App {
 impl App {
     pub async fn open(paths: InstancePaths) -> Result<Self> {
         let paths = Arc::new(paths);
-        let database = Database::open(&paths.database).await?;
+        let database = Database::open(&paths.database, Clock::operation_snapshot).await?;
         let objects = ObjectStore::new(paths.clone());
         let mut config = if paths.config.exists() {
             instance::InstanceConfig::load(&paths)
@@ -60,13 +58,8 @@ impl App {
         let clock = Clock;
         let roles = composition::model_roles()?;
         let registry = composition::configuration_registry(&roles)?;
-        let configuration = Configuration::new(
-            database.clone(),
-            registry,
-            &serde_json::to_value(&config)?,
-            clock,
-        )
-        .await?;
+        let configuration =
+            Configuration::new(database.clone(), registry, &serde_json::to_value(&config)?).await?;
         let desired = configuration.snapshot(&ConfigScope::Instance, true).await?;
         config.server = desired.get(nous_foundation::configuration::SERVER)?;
         config.auth = desired.get(nous_foundation::configuration::AUTH)?;
@@ -80,7 +73,6 @@ impl App {
         let prompts = nous_foundation::prompts::Prompts::new(
             paths.as_ref().clone(),
             database.clone(),
-            clock,
             roles.definitions().filter_map(|role| role.prompt.clone()),
         );
         let model = Arc::new(
@@ -89,17 +81,23 @@ impl App {
                 configuration.clone(),
                 roles,
                 prompts,
-                network.http().clone(),
+                network.clone(),
             )
             .map_err(|error| Error::invalid(error.to_string()))?,
         );
         let index_path = paths
             .resolve("indexes/lexical")
             .map_err(|error| Error::invalid(error.to_string()))?;
-        let retrieval = tokio::task::spawn_blocking(move || RetrievalIndex::open(index_path))
-            .await
-            .map_err(|error| Error::internal(error.to_string()))?
-            .map_err(|error| Error::new(ErrorCode::DependencyUnavailable, error.to_string()))?;
+        let retrieval = nous_foundation::execution::blocking(
+            &tokio_util::sync::CancellationToken::new(),
+            move |_| {
+                RetrievalIndex::open(index_path).map_err(|error| {
+                    Error::new(ErrorCode::DependencyUnavailable, error.to_string())
+                        .with_cause(error.as_ref())
+                })
+            },
+        )
+        .await?;
         let tasks = Tasks::new(database.clone(), clock, config.tasks.clone())?;
         let calls = ModelCalls::new(database.clone(), tasks.clone(), clock, budgets);
         Ok(Self {
@@ -111,7 +109,6 @@ impl App {
             configuration,
             tasks,
             calls,
-            clock,
             retrieval,
             index_gate: Arc::new(tokio::sync::Mutex::new(())),
             semantic_cache: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
@@ -126,10 +123,18 @@ impl App {
     }
     pub async fn close(&self) {
         let index = self.retrieval.clone();
-        match tokio::task::spawn_blocking(move || index.close()).await {
-            Ok(Ok(())) => {}
-            Ok(Err(error)) => tracing::warn!(%error,"index close failed"),
-            Err(error) => tracing::warn!(%error,"index close task failed"),
+        if let Err(error) = nous_foundation::execution::blocking(
+            &tokio_util::sync::CancellationToken::new(),
+            move |_| {
+                index.close().map_err(|error| {
+                    Error::new(ErrorCode::DependencyUnavailable, error.to_string())
+                        .with_cause(error.as_ref())
+                })
+            },
+        )
+        .await
+        {
+            tracing::warn!(error=?error, "index close failed");
         }
         self.database.close().await;
     }
@@ -261,8 +266,15 @@ impl App {
             time.validate()?;
         }
         self.database.namespace(namespace_id).await?;
-        let published = self.objects.publish(text.as_bytes().to_vec()).await?;
-        let hash = published.digest;
+        let published = self
+            .objects
+            .publish_bytes(
+                text.as_bytes(),
+                8 * 1024 * 1024,
+                &tokio_util::sync::CancellationToken::new(),
+            )
+            .await?;
+        let hash = published.digest.clone();
         let key = operation_key(
             ctx,
             "material.put",
@@ -282,9 +294,10 @@ impl App {
             byte_len: published.byte_len,
             source,
             event_time,
-            recorded_at: Utc::now().to_rfc3339(),
+            recorded_at: tx.time().recorded(),
             commit_seq: tx.commit_seq(),
         };
+        published.protect_in(&mut tx);
         tx.namespace(namespace_id).await?;
         tx.insert_material(&material).await?;
         tx.commit(serde_json::to_value(material)?).await
@@ -318,7 +331,12 @@ impl App {
         let material = self.database.material(&namespace, id).await?;
         let bytes = self
             .objects
-            .read(&material.content_hash, material.byte_len)
+            .read_bytes(
+                &material.content_hash,
+                material.byte_len,
+                8 * 1024 * 1024,
+                &tokio_util::sync::CancellationToken::new(),
+            )
             .await?;
         let text = String::from_utf8(bytes)
             .map_err(|_| Error::internal("text object contains invalid UTF-8"))?;
@@ -376,7 +394,7 @@ impl App {
             subject_id: subject_id.clone(),
             material_id: material_id.clone(),
             observed_at,
-            recorded_at: Utc::now().to_rfc3339(),
+            recorded_at: tx.time().recorded(),
             commit_seq: tx.commit_seq(),
             kind: ObservationKind::Contact,
         };

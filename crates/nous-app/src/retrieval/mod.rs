@@ -18,9 +18,10 @@ use std::{
     sync::Arc,
 };
 
-fn engine_error(error: impl std::fmt::Display) -> Error {
+fn engine_error(error: anyhow::Error) -> Error {
     Error::new(
         ErrorCode::DependencyUnavailable,
         format!("retrieval engine: {error}"),
     )
+    .with_cause(error.as_ref())
 }

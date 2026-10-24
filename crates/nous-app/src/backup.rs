@@ -1,30 +1,27 @@
-//! Complete instance snapshots: authoritative SQLite data, its referenced objects and configuration.
-use std::{
-    collections::{HashMap, HashSet},
-    fs::{self, File, OpenOptions},
-    io::{Read, Write},
-    path::{Component, Path},
-};
-
+//! Complete instance snapshots: authority data, referenced objects and configuration.
+use crate::App;
 use anyhow::{Context, Result, ensure};
-use chrono::Utc;
 use nous_domain::{CallContext, Error, ErrorCode};
+use nous_foundation::{
+    clock::Clock,
+    content, execution,
+    instance::{AuthConfig, InstanceConfig, InstanceGuard, InstancePaths},
+    prompts::{ManagedPromptReference, Prompts},
+};
 use nous_storage::Database;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-
-use crate::App;
-use nous_foundation::instance::AuthConfig;
-use nous_foundation::instance::InstanceConfig;
-use nous_foundation::instance::InstanceGuard;
-use nous_foundation::instance::InstancePaths;
-use nous_foundation::prompts::ManagedPromptReference;
-use nous_foundation::prompts::Prompts;
-
+use std::{
+    collections::{HashMap, HashSet},
+    fs::{self, OpenOptions},
+    io::Write,
+    path::{Component, Path},
+    sync::Arc,
+};
+use tokio_util::sync::CancellationToken;
 const DATABASE_FILE: &str = "data/authority.sqlite";
 const CONFIG_FILE: &str = "instance.toml";
-
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Manifest {
@@ -43,28 +40,35 @@ struct BackupFile {
 impl App {
     pub async fn create_backup(&self, ctx: &CallContext) -> nous_domain::Result<Value> {
         ctx.require_admin()?;
-        self.create_backup_inner().await.map_err(|error| {
-            Error::new(
-                ErrorCode::DependencyUnavailable,
-                format!("backup failed: {error:#}"),
-            )
+        let app = self.clone();
+        execution::owned_async(&CancellationToken::new(), move |cancel| async move {
+            app.create_backup_inner(cancel).await.map_err(backup_error)
         })
+        .await
     }
-
-    async fn create_backup_inner(&self) -> Result<Value> {
+    async fn create_backup_inner(&self, cancel: CancellationToken) -> Result<Value> {
+        let captured = Clock::operation_snapshot();
+        let _protection = self.objects.protect_references(&cancel).await?;
         let staging_root = self.paths.resolve("temp/staging")?;
-        let staging = tempfile::Builder::new()
-            .prefix("backup-")
-            .tempdir_in(staging_root)?;
+        let staging = execution::blocking(&cancel, move |_| {
+            tempfile::Builder::new()
+                .prefix("backup-")
+                .tempdir_in(staging_root)
+                .map_err(Error::from)
+        })
+        .await?;
         let database_path = staging.path().join(DATABASE_FILE);
-        fs::create_dir_all(database_path.parent().context("database has no parent")?)?;
+        tokio::fs::create_dir_all(database_path.parent().context("database has no parent")?)
+            .await?;
         self.database.backup_to(&database_path).await?;
-        let snapshot = Database::open(&database_path).await?;
+        let snapshot = Database::open(&database_path, Clock::operation_snapshot).await?;
         let metadata: Result<_> = async {
+            let entries = snapshot.configuration_entries_all().await?;
+            validate_managed_prompts(&snapshot, self.config.as_ref(), &entries).await?;
             Ok((
                 snapshot.object_references().await?,
                 snapshot.status().await?.commit_seq,
-                snapshot.configuration_entries_all().await?,
+                entries,
             ))
         }
         .await;
@@ -75,13 +79,13 @@ impl App {
         let prompt_files = prompt_references(self.paths.as_ref(), &config, &configuration_entries)?;
         let config_text = toml::to_string_pretty(&config)?;
         let root = staging.path().to_owned();
-        let mut object_files = Vec::new();
+        let mut files = Vec::new();
         let mut seen = HashMap::new();
         for reference in references {
             let path = object_name(&reference.content_hash)?;
-            if let Some(byte_len) = seen.insert(path.clone(), reference.byte_len) {
+            if let Some(length) = seen.insert(path.clone(), reference.byte_len) {
                 ensure!(
-                    byte_len == reference.byte_len,
+                    length == reference.byte_len,
                     "inconsistent lengths for a referenced object"
                 );
                 continue;
@@ -91,154 +95,205 @@ impl App {
                     &reference.content_hash,
                     reference.byte_len,
                     &root.join(&path),
+                    &cancel,
                 )
                 .await?;
-            object_files.push(BackupFile {
+            files.push(BackupFile {
                 path,
                 sha256: reference.content_hash,
                 byte_len: reference.byte_len as u64,
             });
         }
-        let manifest = tokio::task::spawn_blocking(move || -> Result<Manifest> {
-            write_new(&root.join(CONFIG_FILE), config_text.as_bytes())?;
-            let mut files = vec![
-                describe(&root, CONFIG_FILE)?,
-                describe(&root, DATABASE_FILE)?,
-            ];
-            files.extend(object_files);
-            let mut copied = HashMap::new();
-            for reference in prompt_files {
-                let name = reference
-                    .relative_path
-                    .to_str()
-                    .context("prompt path is not UTF-8")?
-                    .replace('\\', "/");
-                if let Some(previous) = copied.insert(name.clone(), reference.sha256.clone()) {
-                    ensure!(
-                        previous == reference.sha256,
-                        "prompt changed while capturing resource references"
-                    );
-                    continue;
-                }
-                let file = BackupFile {
-                    path: name,
-                    sha256: reference.sha256,
-                    byte_len: reference.byte_len,
-                };
-                copy_verified(&reference.path, &root.join(&file.path), &file)?;
-                files.push(file);
+        let mut copied = HashMap::new();
+        for reference in prompt_files {
+            let name = reference
+                .relative_path
+                .to_str()
+                .context("prompt path is not UTF-8")?
+                .replace('\\', "/");
+            if let Some(previous) = copied.insert(name.clone(), reference.sha256.clone()) {
+                ensure!(
+                    previous == reference.sha256,
+                    "prompt changed while capturing resource references"
+                );
+                continue;
             }
-            files.sort_by(|a, b| a.path.cmp(&b.path));
-            let manifest = Manifest {
-                created_at: Utc::now().to_rfc3339(),
-                commit_seq,
-                files,
-            };
+            content::copy_verified(
+                self.paths.clone(),
+                &reference.path,
+                &root.join(&name),
+                &reference.sha256,
+                reference.byte_len,
+                &cancel,
+            )
+            .await?;
+            files.push(BackupFile {
+                path: name,
+                sha256: reference.sha256,
+                byte_len: reference.byte_len,
+            });
+        }
+        let config_root = root.clone();
+        execution::blocking(&cancel, move |_| {
+            write_new(&config_root.join(CONFIG_FILE), config_text.as_bytes()).map_err(backup_error)
+        })
+        .await?;
+        files.extend([
+            describe(&root, CONFIG_FILE, &cancel).await?,
+            describe(&root, DATABASE_FILE, &cancel).await?,
+        ]);
+        files.sort_by(|a, b| a.path.cmp(&b.path));
+        let manifest = Manifest {
+            created_at: captured.recorded(),
+            commit_seq,
+            files,
+        };
+        let manifest_root = root.clone();
+        let manifest = execution::blocking(&cancel, move |_| {
             write_new(
-                &root.join("manifest.json"),
+                &manifest_root.join("manifest.json"),
                 &serde_json::to_vec_pretty(&manifest)?,
-            )?;
+            )
+            .map_err(backup_error)?;
+            sync_directory(&manifest_root).map_err(backup_error)?;
             Ok(manifest)
         })
-        .await
-        .context("backup copy task failed")??;
+        .await?;
         let name = format!(
             "{}-{}",
-            Utc::now().format("%Y%m%dT%H%M%SZ"),
+            captured.utc().format("%Y%m%dT%H%M%SZ"),
             uuid::Uuid::new_v4()
         );
         let destination = self.paths.resolve(format!("backups/{name}"))?;
-        ensure!(!destination.exists(), "backup destination already exists");
-        move_owned(staging.path(), &destination, &self.paths)?;
-        sync_directory(&self.paths.backups)?;
+        let target = destination.clone();
+        let paths = self.paths.clone();
+        execution::blocking(&cancel, move |_| {
+            let result: Result<()> = (|| {
+                ensure!(!target.exists(), "backup destination already exists");
+                move_owned(staging.path(), &target, &paths)?;
+                sync_directory(&paths.backups)
+            })();
+            result.map_err(backup_error)
+        })
+        .await?;
         Ok(
             json!({"backup":destination,"commit_seq":manifest.commit_seq,"files":manifest.files.len(),"credentials":"excluded","indexes":"rebuild_on_start"}),
         )
     }
 }
 
-/// Restore into a new, empty target instance. Credentials are created locally for the new host.
 pub async fn restore(source: &Path, target: InstancePaths) -> Result<Value> {
-    let source = fs::canonicalize(source).context("backup directory cannot be resolved")?;
-    let manifest_path = source.join("manifest.json");
-    ensure!(
-        fs::canonicalize(&manifest_path)?.starts_with(&source),
-        "manifest escapes the backup directory"
-    );
-    let manifest: Manifest =
-        serde_json::from_slice(&fs::read(&manifest_path)?).context("invalid backup manifest")?;
-    validate_manifest(&manifest)?;
-    // Validate the supplied snapshot before creating the target instance's layout.
-    for file in &manifest.files {
-        verify_source(&source, file)?;
-    }
-    ensure!(
-        !target.config.exists() && !target.database.exists(),
-        "refusing to overwrite an existing instance"
-    );
-    if target.root.exists() {
-        ensure!(
-            fs::read_dir(&target.root)?.next().is_none(),
-            "restore target must be an empty directory"
-        );
-    }
-    target.ensure_layout()?;
-    let _guard = InstanceGuard::acquire(&target)?;
-    let staging = tempfile::Builder::new()
-        .prefix("restore-")
-        .tempdir_in(target.resolve("temp/staging")?)?;
-    let staged = InstancePaths::new(staging.path())?;
-    staged.ensure_layout()?;
-    // Initialize before copying the backed configuration so the new admin secret is independent.
-    staged.initialize()?;
-    let copy_root = staged.root.clone();
-    let copy_source = source.clone();
-    let copy_files = manifest.files.clone();
-    tokio::task::spawn_blocking(move || -> Result<()> {
-        for file in copy_files {
-            if file.path == CONFIG_FILE {
-                let bytes = fs::read(copy_source.join(CONFIG_FILE))?;
-                ensure!(
-                    bytes.len() as u64 == file.byte_len
-                        && format!("{:x}", Sha256::digest(&bytes)) == file.sha256,
-                    "backup configuration changed while restoring"
-                );
-                let mut config: InstanceConfig = toml::from_str(std::str::from_utf8(&bytes)?)?;
-                config.auth = AuthConfig::default();
-                config.validate()?;
-                let text = toml::to_string_pretty(&config)?;
-                let mut output = OpenOptions::new()
-                    .write(true)
-                    .truncate(true)
-                    .open(copy_root.join(CONFIG_FILE))?;
-                output.write_all(text.as_bytes())?;
-                output.sync_all()?;
-            } else {
-                copy_verified(
-                    &copy_source.join(&file.path),
-                    &copy_root.join(&file.path),
-                    &file,
-                )?;
-            }
-        }
-        Ok(())
+    let source = source.to_owned();
+    execution::owned_async(&CancellationToken::new(), move |cancel| async move {
+        restore_inner(&source, target, cancel)
+            .await
+            .map_err(backup_error)
     })
     .await
-    .context("restore copy task failed")??;
-    let snapshot = Database::open(&staged.database).await?;
+    .map_err(Into::into)
+}
+async fn restore_inner(
+    source: &Path,
+    target: InstancePaths,
+    cancel: CancellationToken,
+) -> Result<Value> {
+    let source = tokio::fs::canonicalize(source)
+        .await
+        .context("backup directory cannot be resolved")?;
+    let manifest_path = source.join("manifest.json");
+    ensure!(
+        tokio::fs::canonicalize(&manifest_path)
+            .await?
+            .starts_with(&source),
+        "manifest escapes the backup directory"
+    );
+    let manifest: Manifest = serde_json::from_slice(&tokio::fs::read(manifest_path).await?)
+        .context("invalid backup manifest")?;
+    validate_manifest(&manifest)?;
+    for file in &manifest.files {
+        verify_source(&source, file, &cancel).await?;
+    }
+    let (target, _guard, staging, staged) = execution::blocking(&cancel, move |_| {
+        let setup: Result<_> = (|| {
+            ensure!(
+                !target.config.exists() && !target.database.exists(),
+                "refusing to overwrite an existing instance"
+            );
+            if target.root.exists() {
+                ensure!(
+                    fs::read_dir(&target.root)?.next().is_none(),
+                    "restore target must be an empty directory"
+                );
+            }
+            target.ensure_layout()?;
+            let guard = InstanceGuard::acquire(&target)?;
+            let staging = tempfile::Builder::new()
+                .prefix("restore-")
+                .tempdir_in(target.resolve("temp/staging")?)?;
+            let staged = InstancePaths::new(staging.path())?;
+            staged.ensure_layout()?;
+            staged.initialize()?;
+            Ok((target, guard, staging, staged))
+        })();
+        setup.map_err(backup_error)
+    })
+    .await?;
+    let copy_paths = Arc::new(target.clone());
+    let _protection = content::ObjectStore::new(copy_paths.clone())
+        .protect_references(&cancel)
+        .await?;
+    for file in &manifest.files {
+        if file.path == CONFIG_FILE {
+            let config_source = source.join(CONFIG_FILE);
+            let config_target = staged.config.clone();
+            let file = file.clone();
+            execution::blocking(&cancel, move |_| {
+                let update: Result<()> = (|| {
+                    let bytes = fs::read(config_source)?;
+                    ensure!(
+                        bytes.len() as u64 == file.byte_len
+                            && format!("{:x}", Sha256::digest(&bytes)) == file.sha256,
+                        "backup configuration changed while restoring"
+                    );
+                    let mut config: InstanceConfig = toml::from_str(std::str::from_utf8(&bytes)?)?;
+                    config.auth = AuthConfig::default();
+                    config.validate()?;
+                    let text = toml::to_string_pretty(&config)?;
+                    let mut output = OpenOptions::new()
+                        .write(true)
+                        .truncate(true)
+                        .open(config_target)?;
+                    output.write_all(text.as_bytes())?;
+                    output.sync_all()?;
+                    Ok(())
+                })();
+                update.map_err(backup_error)
+            })
+            .await?;
+        } else {
+            content::copy_verified(
+                copy_paths.clone(),
+                &source.join(&file.path),
+                &staged.root.join(&file.path),
+                &file.sha256,
+                file.byte_len,
+                &cancel,
+            )
+            .await?;
+        }
+    }
+    let snapshot = Database::open(&staged.database, Clock::operation_snapshot).await?;
     let checked: Result<()> = async {
         ensure!(
             snapshot.status().await?.commit_seq == manifest.commit_seq,
-            "backup commit sequence does not match its database"
+            "backup commit sequence does not match its authority"
         );
-        let listed: HashMap<&str, &BackupFile> = manifest
+        let listed = manifest
             .files
             .iter()
             .map(|file| (file.path.as_str(), file))
-            .collect();
-        let mut expected: HashSet<String> = [CONFIG_FILE.to_owned(), DATABASE_FILE.to_owned()]
-            .into_iter()
-            .collect();
+            .collect::<HashMap<_, _>>();
+        let mut expected = HashSet::from([CONFIG_FILE.to_owned(), DATABASE_FILE.to_owned()]);
         for reference in snapshot.object_references().await? {
             let name = object_name(&reference.content_hash)?;
             let file = listed
@@ -253,11 +308,9 @@ pub async fn restore(source: &Path, target: InstancePaths) -> Result<Value> {
             expected.insert(name);
         }
         let config = InstanceConfig::load(&staged)?;
-        for reference in prompt_references(
-            &staged,
-            &config,
-            &snapshot.configuration_entries_all().await?,
-        )? {
+        let entries = snapshot.configuration_entries_all().await?;
+        validate_managed_prompts(&snapshot, &config, &entries).await?;
+        for reference in prompt_references(&staged, &config, &entries)? {
             let name = reference
                 .relative_path
                 .to_str()
@@ -268,12 +321,12 @@ pub async fn restore(source: &Path, target: InstancePaths) -> Result<Value> {
                 .context("backup omits a bound prompt resource")?;
             ensure!(
                 file.sha256 == reference.sha256 && file.byte_len == reference.byte_len,
-                "backup prompt reference is inconsistent"
+                "backup prompt metadata is inconsistent"
             );
             expected.insert(name);
         }
         ensure!(
-            expected.len() == listed.len(),
+            expected == listed.keys().map(|key| (*key).to_owned()).collect(),
             "backup includes files outside the authority and resource snapshot"
         );
         Ok(())
@@ -287,45 +340,50 @@ pub async fn restore(source: &Path, target: InstancePaths) -> Result<Value> {
     .await;
     snapshot.close().await;
     let restored_commit_seq = finalization?;
-    // All moves stay inside target.root. Publish configuration last, after complete data and credentials.
-    let directories = ["data", "objects", "credentials", "prompts"];
-    let mut published = Vec::new();
-    let mut config_published = false;
-    let publish: Result<()> = (|| {
-        for directory in directories {
-            let destination = target.resolve(directory)?;
-            ensure!(
-                fs::read_dir(&destination)?.next().is_none(),
-                "restore destination became nonempty"
-            );
-            fs::remove_dir(&destination)?;
-            move_owned(&staged.resolve(directory)?, &destination, &target)?;
-            published.push(directory);
+    let root = target.root.clone();
+    let credential = target.credentials.join("admin.token");
+    execution::blocking(&cancel, move |_| {
+        let directories = ["data", "objects", "credentials", "prompts"];
+        let mut published = Vec::new();
+        let mut config_published = false;
+        let publish: Result<()> = (|| {
+            for directory in directories {
+                let destination = target.resolve(directory)?;
+                ensure!(
+                    fs::read_dir(&destination)?.next().is_none(),
+                    "restore destination became nonempty"
+                );
+                fs::remove_dir(&destination)?;
+                move_owned(&staged.resolve(directory)?, &destination, &target)?;
+                published.push(directory);
+            }
+            move_owned(&staged.config, &target.config, &target)?;
+            config_published = true;
+            sync_directory(&target.root)
+        })();
+        if let Err(error) = publish {
+            if config_published {
+                move_owned(&target.config, &staged.config, &target).map_err(backup_error)?;
+            }
+            for directory in published.into_iter().rev() {
+                let _ = move_owned(
+                    &target
+                        .resolve(directory)
+                        .map_err(backup_error)?,
+                    &staged.root.join(directory),
+                    &target,
+                );
+            }
+            return Err(backup_error(error.context("restore publication failed")));
         }
-        move_owned(&staged.config, &target.config, &target)?;
-        config_published = true;
-        sync_directory(&target.root)?;
+        drop(staging);
         Ok(())
-    })();
-    if let Err(error) = publish {
-        if config_published {
-            move_owned(&target.config, &staged.config, &target)
-                .context("restore publication failed and configuration rollback failed")?;
-        }
-        for directory in published.into_iter().rev() {
-            let _ = move_owned(
-                &target.resolve(directory)?,
-                &staged.root.join(directory),
-                &target,
-            );
-        }
-        return Err(error.context("restore publication failed"));
-    }
+    })
+    .await?;
     Ok(
-        json!({"state":"restored","instance":target.root,"source_commit_seq":manifest.commit_seq,"commit_seq":restored_commit_seq,"administrator_token_file":target.credentials.join("admin.token"),"credentials":"new_administrator","indexes":"rebuild_on_start"}),
+        json!({"state":"restored","instance":root,"source_commit_seq":manifest.commit_seq,"commit_seq":restored_commit_seq,"administrator_token_file":credential,"credentials":"new_administrator","indexes":"rebuild_on_start"}),
     )
 }
-
 fn validate_manifest(manifest: &Manifest) -> Result<()> {
     ensure!(manifest.commit_seq >= 0, "invalid backup commit sequence");
     let mut seen = HashSet::new();
@@ -381,73 +439,21 @@ fn write_new(path: &Path, bytes: &[u8]) -> Result<()> {
     file.sync_all()?;
     Ok(())
 }
-fn describe(root: &Path, name: &str) -> Result<BackupFile> {
-    let (sha256, byte_len) = digest(&root.join(name))?;
+async fn describe(root: &Path, name: &str, cancel: &CancellationToken) -> Result<BackupFile> {
+    let (sha256, byte_len) = content::digest_file(&root.join(name), cancel).await?;
     Ok(BackupFile {
         path: name.to_owned(),
         sha256,
         byte_len,
     })
 }
-fn digest(path: &Path) -> Result<(String, u64)> {
-    let mut file = File::open(path)?;
-    let mut hasher = Sha256::new();
-    let mut byte_len = 0;
-    let mut buffer = [0u8; 64 * 1024];
-    loop {
-        let count = file.read(&mut buffer)?;
-        if count == 0 {
-            break;
-        }
-        hasher.update(&buffer[..count]);
-        byte_len += count as u64;
-    }
-    Ok((format!("{:x}", hasher.finalize()), byte_len))
-}
-fn verify_source(root: &Path, file: &BackupFile) -> Result<()> {
-    let path = fs::canonicalize(root.join(&file.path))?;
+async fn verify_source(root: &Path, file: &BackupFile, cancel: &CancellationToken) -> Result<()> {
+    let path = tokio::fs::canonicalize(root.join(&file.path)).await?;
     ensure!(
         path.starts_with(root),
         "backup file escapes the source directory"
     );
-    let (sha256, byte_len) = digest(&path)?;
-    ensure!(
-        sha256 == file.sha256 && byte_len == file.byte_len,
-        "backup integrity check failed for {}",
-        file.path
-    );
-    Ok(())
-}
-fn copy_verified(source: &Path, target: &Path, file: &BackupFile) -> Result<()> {
-    fs::create_dir_all(target.parent().context("file has no parent")?)?;
-    let mut input = File::open(source)?;
-    let mut output = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(target)?;
-    let mut hasher = Sha256::new();
-    let mut byte_len = 0;
-    let mut buffer = [0u8; 64 * 1024];
-    loop {
-        let count = input.read(&mut buffer)?;
-        if count == 0 {
-            break;
-        }
-        byte_len += count as u64;
-        ensure!(
-            byte_len <= file.byte_len,
-            "backup grew beyond its captured length while copying {}",
-            file.path
-        );
-        output.write_all(&buffer[..count])?;
-        hasher.update(&buffer[..count]);
-    }
-    ensure!(
-        format!("{:x}", hasher.finalize()) == file.sha256 && byte_len == file.byte_len,
-        "backup changed while copying {}",
-        file.path
-    );
-    output.sync_all()?;
+    content::verify_file(&path, &file.sha256, file.byte_len, cancel).await?;
     Ok(())
 }
 fn move_owned(source: &Path, target: &Path, instance: &InstancePaths) -> Result<()> {
@@ -466,7 +472,7 @@ fn move_owned(source: &Path, target: &Path, instance: &InstancePaths) -> Result<
 }
 #[cfg(unix)]
 fn sync_directory(path: &Path) -> Result<()> {
-    File::open(path)?.sync_all()?;
+    fs::File::open(path)?.sync_all()?;
     Ok(())
 }
 #[cfg(not(unix))]
@@ -486,4 +492,25 @@ fn prompt_references(
         .filter_map(|(_, binding)| Prompts::file_reference(paths, &binding).transpose())
         .collect::<nous_domain::Result<_>>()
         .map_err(Into::into)
+}
+
+async fn validate_managed_prompts(
+    snapshot: &Database,
+    config: &InstanceConfig,
+    entries: &[nous_domain::ConfigEntry],
+) -> Result<()> {
+    let bindings = crate::composition::model_roles()?
+        .prompt_bindings(&config.models, entries)?
+        .into_iter()
+        .map(|(_, binding)| binding)
+        .collect::<Vec<_>>();
+    Prompts::validate_managed_bindings(snapshot, &bindings).await?;
+    Ok(())
+}
+fn backup_error(error: anyhow::Error) -> Error {
+    match error.downcast_ref::<Error>() {
+        Some(error) => error.clone(),
+        None => Error::new(ErrorCode::DependencyUnavailable, "backup operation failed")
+            .with_cause(error.as_ref()),
+    }
 }

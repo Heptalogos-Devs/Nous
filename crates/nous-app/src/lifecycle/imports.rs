@@ -116,7 +116,11 @@ impl App {
         let key = operation_key(ctx, "import.record", &scope, &record.external_id, &payload)?;
         let published = self
             .objects
-            .publish(record.text.as_bytes().to_vec())
+            .publish_bytes(
+                record.text.as_bytes(),
+                1024 * 1024,
+                &tokio_util::sync::CancellationToken::new(),
+            )
             .await?;
         let mut tx = match self.database.begin_operation(key).await? {
             BeginOperation::Replay(receipt) => return Ok((receipt, true)),
@@ -125,18 +129,15 @@ impl App {
         let subject = tx
             .subject(&request.namespace_id, &request.subject_id)
             .await?;
+        published.protect_in(&mut tx);
         if !subject.capabilities.contains(&Capability::Memory) {
             return Err(Error::new(
                 ErrorCode::CapabilityUnavailable,
                 "subject has no memory capability",
             ));
         }
-        let now = self.clock.utc();
-        let recorded_at = now.to_rfc3339();
-        let clock = TimePoint {
-            domain: "unix_ms".into(),
-            coordinate: now.timestamp_millis(),
-        };
+        let recorded_at = tx.time().recorded();
+        let clock = tx.time().point();
         let material = Material {
             id: MaterialId::new(),
             namespace_id: request.namespace_id.clone(),

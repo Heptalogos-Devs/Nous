@@ -6,4 +6,5 @@ mod paths;
 pub use config::{AuthConfig, InstanceConfig, ServerConfig};
 pub use credentials::{SecretRef, TokenRecord, TokenStore};
 pub use lock::InstanceGuard;
+pub(crate) use lock::lock_contended;
 pub use paths::InstancePaths;

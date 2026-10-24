@@ -5,6 +5,8 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+chrono.workspace = true
+rust_decimal.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 uuid.workspace = true

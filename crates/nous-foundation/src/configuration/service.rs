@@ -1,6 +1,5 @@
 //! Authority-backed configuration snapshots and committed change notifications.
 use super::{ConfigRegistry, ConfigSnapshot};
-use crate::clock::Clock;
 use nous_domain::{ConfigEntry, ConfigScope, Result};
 use nous_storage::{Database, ReadView, WriteTransaction};
 use serde::Serialize;
@@ -38,7 +37,6 @@ pub struct Configuration {
     pub(super) registry: ConfigRegistry,
     pub(super) deployment: Arc<BTreeMap<String, Value>>,
     changes: watch::Sender<i64>,
-    pub(super) clock: Clock,
 }
 
 impl Configuration {
@@ -46,7 +44,6 @@ impl Configuration {
         database: Database,
         registry: ConfigRegistry,
         deployment_document: &Value,
-        clock: Clock,
     ) -> Result<Self> {
         let deployment = registry.deployment_values(deployment_document)?;
         let mut view = database.read_view().await?;
@@ -57,7 +54,6 @@ impl Configuration {
             registry,
             deployment: Arc::new(deployment),
             changes,
-            clock,
         };
         for scope in view.configuration_scopes().await? {
             let entries = view

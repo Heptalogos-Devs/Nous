@@ -1,5 +1,6 @@
 //! Shared model resources and SDK-independent invocation preparation/execution.
 //! Domain consumers own their prompt arguments, input/output DTOs and adoption.
+pub mod accounting;
 mod budgets;
 mod catalog;
 pub use budgets::ModelBudgets;
@@ -7,6 +8,7 @@ mod contract;
 mod error;
 mod execution;
 mod input;
+mod openai_embedding;
 mod preview;
 mod request;
 mod resource;
@@ -52,13 +54,13 @@ impl ModelRuntime {
         configuration: Configuration,
         roles: RoleRegistry,
         prompts: Prompts,
-        http: reqwest::Client,
+        network: crate::network::NetworkClients,
     ) -> anyhow::Result<Self> {
         Ok(Self {
             configuration,
             resources: ModelResources::new(paths, roles),
             prompts,
-            executor: CallExecutor::new(http)?,
+            executor: CallExecutor::new(network)?,
         })
     }
     pub fn resources(&self) -> &ModelResources {
@@ -276,7 +278,10 @@ impl ModelRuntime {
             },
         })
     }
-    pub async fn execute<M>(&self, prepared: PreparedCall<M>) -> ModelExecution<M, ModelOutput> {
+    pub async fn execute<M: CallMetadata>(
+        &self,
+        prepared: PreparedCall<M>,
+    ) -> ModelExecution<M, ModelOutput> {
         self.executor.invoke(prepared).await.map(|output, _| {
             Ok(match output {
                 ProviderOutput::Text(text) => ModelOutput::Text(text),

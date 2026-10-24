@@ -1,5 +1,5 @@
 use super::*;
-use crate::{clock::Clock, instance::InstancePaths};
+use crate::instance::InstancePaths;
 use nous_domain::{
     CallContext, ConfigScope, Error, ErrorCode, PromptRef, PromptRevision, Result, validate_name,
     validate_prompt_locale,
@@ -11,20 +11,17 @@ use std::{collections::BTreeMap, sync::Arc};
 pub struct Prompts {
     paths: InstancePaths,
     database: Database,
-    clock: Clock,
     bundled: Arc<BTreeMap<String, &'static str>>,
 }
 impl Prompts {
     pub fn new(
         paths: InstancePaths,
         database: Database,
-        clock: Clock,
         definitions: impl IntoIterator<Item = PromptDefinition>,
     ) -> Self {
         Self {
             paths,
             database,
-            clock,
             bundled: Arc::new(
                 definitions
                     .into_iter()
@@ -93,9 +90,10 @@ impl Prompts {
                 let paths = self.paths.clone();
                 let file = file.clone();
                 let locale = locale.clone();
-                tokio::task::spawn_blocking(move || files::template(&paths, &file, locale))
-                    .await
-                    .map_err(Error::dependency)?
+                crate::execution::blocking(&tokio_util::sync::CancellationToken::new(), move |_| {
+                    files::template(&paths, &file, locale)
+                })
+                .await
             }
             PromptBinding::Managed { .. } => {
                 unreachable!("managed resources are read in their authority snapshot")
@@ -166,7 +164,7 @@ impl Prompts {
             body,
             author: ctx.caller_id.clone(),
             reason,
-            recorded_at: self.clock.recorded(),
+            recorded_at: tx.time().recorded(),
         };
         tx.insert_prompt_revision(&revision, expected_revision)
             .await?;
@@ -210,9 +208,10 @@ impl Prompts {
         }
         let paths = self.paths.clone();
         let (files, files_complete) =
-            tokio::task::spawn_blocking(move || files::catalog(&paths, limit + 1))
-                .await
-                .map_err(Error::dependency)??;
+            crate::execution::blocking(&tokio_util::sync::CancellationToken::new(), move |_| {
+                files::catalog(&paths, limit + 1)
+            })
+            .await?;
         resources.extend(files);
         for revision in managed {
             resources.push(PromptCatalogEntry {

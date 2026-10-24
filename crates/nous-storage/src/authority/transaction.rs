@@ -28,6 +28,7 @@ pub struct WriteTransaction {
     key: Arc<OperationKey>,
     commit_seq: i64,
     job_ids: Vec<String>,
+    time: nous_domain::OperationTime,
     lifecycle: OperationLifecycle,
     retained_guards: Vec<Box<dyn std::fmt::Debug + Send + Sync>>,
 }
@@ -64,6 +65,7 @@ impl Database {
             tracing::info!(event="operation.replay_origin", trace_id=%key.trace_id, original_trace_id=%receipt.trace_id, operation_id=%key.operation_id, commit_seq=receipt.commit_seq);
             return Ok(BeginOperation::Replay(receipt));
         }
+        let time = (self.operation_time)();
         let commit_seq = sqlx::query_scalar("UPDATE authority_state SET commit_seq=commit_seq+1 WHERE singleton=1 RETURNING commit_seq")
             .fetch_one(&mut *tx).await.map_err(|error| operation_error(storage_error(error), &key, None))?;
         operation_event("started", &key, commit_seq);
@@ -77,12 +79,16 @@ impl Database {
             key,
             commit_seq,
             job_ids: vec![],
+            time,
             retained_guards: vec![],
         }))
     }
 }
 
 impl WriteTransaction {
+    pub fn time(&self) -> &nous_domain::OperationTime {
+        &self.time
+    }
     pub fn retain_until_end(&mut self, guard: impl std::fmt::Debug + Send + Sync + 'static) {
         self.retained_guards.push(Box::new(guard));
     }
@@ -180,6 +186,11 @@ impl WriteTransaction {
         let task = TaskBuilder::new(serde_json::to_vec(&JobEnvelope { id: id.into() })?)
             .task_id(TaskId::from(id.to_owned()))
             .max_attempts(max_queue_attempts as usize)
+            .run_at_timestamp(
+                u64::try_from(self.time().utc().timestamp()).map_err(|error| {
+                    Error::invalid("queue run time is before the Unix epoch").with_cause(&error)
+                })?,
+            )
             .build();
         push_tasks(&mut *self.tx, JOB_QUEUE, &[task])
             .await
@@ -194,10 +205,18 @@ impl WriteTransaction {
         self.job_ids.push(id.into());
     }
 
-    pub async fn commit(mut self, result: Value) -> Result<OperationReceipt> {
+    pub async fn commit(self, result: Value) -> Result<OperationReceipt> {
+        use tracing::Instrument;
+        tokio::spawn(self.commit_inner(result).in_current_span())
+            .await
+            .map_err(Error::dependency)?
+    }
+
+    async fn commit_inner(mut self, result: Value) -> Result<OperationReceipt> {
         let receipt = OperationReceipt {
             operation_id: self.key.operation_id.clone(),
             trace_id: self.key.trace_id.clone(),
+            time: self.time,
             commit_seq: self.commit_seq,
             result,
             job_ids: self.job_ids,
@@ -215,7 +234,14 @@ impl WriteTransaction {
         Ok(receipt)
     }
 
-    pub async fn rollback(mut self) -> Result<()> {
+    pub async fn rollback(self) -> Result<()> {
+        use tracing::Instrument;
+        tokio::spawn(self.rollback_inner().in_current_span())
+            .await
+            .map_err(Error::dependency)?
+    }
+
+    async fn rollback_inner(mut self) -> Result<()> {
         self.tx.rollback().await.map_err(|error| {
             operation_error(storage_error(error), &self.key, Some(self.commit_seq))
         })?;

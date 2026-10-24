@@ -48,7 +48,7 @@ impl App {
             ));
         }
         let mut times = input.times;
-        times.recorded = self.clock.capture();
+        times.recorded = tx.time().point();
         let object = StructuredObject {
             id: CognitiveId::new(),
             namespace_id: input.namespace_id,
@@ -58,7 +58,7 @@ impl App {
             evidence: input.evidence,
             times,
             producer_call_id: None,
-            recorded_at: self.clock.recorded(),
+            recorded_at: tx.time().recorded(),
             commit_seq: tx.commit_seq(),
             deleted: false,
         };
@@ -109,8 +109,8 @@ impl App {
         current.body = input.body;
         current.evidence = input.evidence;
         current.times = input.times;
-        current.times.recorded = self.clock.capture();
-        current.recorded_at = self.clock.recorded();
+        current.times.recorded = tx.time().point();
+        current.recorded_at = tx.time().recorded();
         current.commit_seq = tx.commit_seq();
         current.producer_call_id = None;
         tx.save_structured(&current, Some(input.expected_revision))
@@ -182,8 +182,8 @@ impl App {
             .ok_or_else(|| Error::invalid("revision overflow"))?;
         object.deleted = deleted;
         object.commit_seq = tx.commit_seq();
-        object.recorded_at = self.clock.recorded();
-        object.times.recorded = self.clock.capture();
+        object.recorded_at = tx.time().recorded();
+        object.times.recorded = tx.time().point();
         object.producer_call_id = None;
         tx.save_structured(&object, Some(expected_revision)).await?;
         tx.commit(serde_json::to_value(object)?).await

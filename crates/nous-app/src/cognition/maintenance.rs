@@ -2,7 +2,6 @@
 
 use crate::App;
 use nous_domain::*;
-use nous_foundation::clock::Clock;
 use nous_storage::operation_key;
 use nous_storage::{BeginOperation, OperationReceipt};
 use serde_json::{Value, json};
@@ -63,7 +62,7 @@ impl App {
         if memory.revision != change.expected_revision {
             return Err(Error::new(ErrorCode::Conflict, "memory revision changed"));
         }
-        let now = self.clock.utc().timestamp_millis();
+        let now = tx.time().unix_ms();
         let before = memory.revision;
         if change.action == MemoryAction::Purge {
             if !memory.deleted {
@@ -86,9 +85,10 @@ impl App {
                 "purge",
                 &change.reason,
                 before,
-                marker.revision,
                 json!({"force":change.force}),
+                tx.time(),
             );
+            event.revision = marker.revision;
             event.commit_seq = marker.commit_seq;
             tx.append_memory_audit(&event).await?;
             return tx
@@ -98,8 +98,8 @@ impl App {
         apply_to_memory(&mut memory, &change, now)?;
         memory.revision += 1;
         memory.commit_seq = tx.commit_seq();
-        memory.recorded_at = Clock.recorded();
-        memory.times.recorded = self.clock.capture();
+        memory.recorded_at = tx.time().recorded();
+        memory.times.recorded = tx.time().point();
         tx.save_memory(&memory, Some(before)).await?;
         tx.append_memory_audit(&audit(
             ctx,
@@ -107,8 +107,8 @@ impl App {
             &action_name(change.action),
             &change.reason,
             before,
-            memory.revision,
             json!({"lifecycle":memory.lifecycle,"deleted":memory.deleted}),
+            tx.time(),
         ))
         .await?;
         tx.commit(serde_json::to_value(memory)?).await
@@ -176,7 +176,7 @@ impl App {
             BeginOperation::Replay(receipt) => return Ok(receipt),
             BeginOperation::New(tx) => tx,
         };
-        let now = self.clock.utc().timestamp_millis();
+        let now = tx.time().unix_ms();
         let mut changed = Vec::new();
         for candidate in &page.memories {
             let mut memory = match tx.memory(&namespace, &candidate.id).await {
@@ -204,8 +204,8 @@ impl App {
             }
             memory.revision += 1;
             memory.commit_seq = tx.commit_seq();
-            memory.recorded_at = Clock.recorded();
-            memory.times.recorded = self.clock.capture();
+            memory.recorded_at = tx.time().recorded();
+            memory.times.recorded = tx.time().point();
             tx.save_memory(&memory, Some(before)).await?;
             tx.append_memory_audit(&audit(
                 ctx,
@@ -213,8 +213,8 @@ impl App {
                 if archive { "auto_archive" } else { "decay" },
                 "lifecycle evaluation",
                 before,
-                memory.revision,
                 json!({"lifecycle":memory.lifecycle}),
+                tx.time(),
             ))
             .await?;
             changed.push(memory.id);
@@ -411,8 +411,8 @@ fn audit(
     action: &str,
     reason: &str,
     previous_revision: i64,
-    revision: i64,
     details: Value,
+    time: &OperationTime,
 ) -> MemoryAudit {
     MemoryAudit {
         id: ulid::Ulid::generate().to_string(),
@@ -423,8 +423,8 @@ fn audit(
         actor: ctx.caller_id.clone(),
         reason: reason.into(),
         previous_revision,
-        revision,
-        recorded_at: Clock.recorded(),
+        revision: memory.revision,
+        recorded_at: time.recorded(),
         commit_seq: memory.commit_seq,
         details,
     }

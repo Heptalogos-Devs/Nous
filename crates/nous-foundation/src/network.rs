@@ -46,6 +46,32 @@ impl NetworkClients {
         let span = tracing::info_span!("network.request",method=%request.method(),host=request.url().host_str().unwrap_or(""));
         self.http.execute(request).instrument(span).await
     }
+    pub async fn read_bytes(
+        &self,
+        mut response: reqwest::Response,
+        max_bytes: usize,
+    ) -> nous_domain::Result<Vec<u8>> {
+        if max_bytes == 0 {
+            return Err(nous_domain::Error::invalid(
+                "response byte limit must be positive",
+            ));
+        }
+        let mut body = Vec::new();
+        while let Some(chunk) = response.chunk().await.map_err(|error| {
+            nous_domain::Error::dependency(error.without_url())
+                .with_context("phase", "response_body")
+        })? {
+            if body.len().saturating_add(chunk.len()) > max_bytes {
+                return Err(nous_domain::Error::new(
+                    nous_domain::ErrorCode::ResourceExhausted,
+                    "HTTP response exceeds its byte limit",
+                )
+                .with_context("max_bytes", max_bytes as u64));
+            }
+            body.extend_from_slice(&chunk);
+        }
+        Ok(body)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
