@@ -1,6 +1,3 @@
-// Copyright 2026 Aravine Zhu
-// SPDX-License-Identifier: Apache-2.0
-
 use super::{ReferenceCurve, anchors::reference_cosine};
 use super::{positive, unit};
 use serde::{Deserialize, Serialize};

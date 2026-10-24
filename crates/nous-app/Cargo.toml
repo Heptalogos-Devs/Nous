@@ -31,8 +31,5 @@ uuid.workspace = true
 ulid.workspace = true
 zip.workspace = true
 
-[dev-dependencies]
-axum.workspace = true
-
 [lints]
 workspace = true

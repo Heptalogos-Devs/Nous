@@ -1,7 +1,4 @@
 //! Rebuildable lexical projections. SQLite remains the authority for every returned hit.
-//!
-//! Schema, literal term queries, scope filtering and TopDocs are adapted from
-//! Nous Wave's previous lexical.rs; see UPSTREAM.md and licenses/Nous-LICENSE.
 use std::{
     collections::{BTreeMap, BTreeSet, HashSet},
     path::Path,

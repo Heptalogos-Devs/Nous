@@ -1,7 +1,6 @@
 //! Bounded text import decoding before any authority writes.
 //!
-//! Paragraph/LPMM unit mapping is adapted from A_memorix's web_import_manager.py
-//! `_detect_json_schema` and `_build_json_units`. See licenses/A_memorix-LICENSE.
+
 use nous_domain::{
     Error, ErrorCode, ImportFormat, ImportRecord, ParsedImportRecord, Result, validate_name,
 };

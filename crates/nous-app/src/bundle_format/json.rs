@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: AGPL-3.0-only. Upstream source and license: mod.rs.
 use super::Images;
 use anyhow::Result;
 use serde::de::{self, DeserializeSeed, MapAccess, SeqAccess, Visitor};

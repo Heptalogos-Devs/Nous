@@ -1,8 +1,4 @@
 //! Immutable native USearch candidate/Tag generations.
-// Copyright 2026 Aravine Zhu
-// SPDX-License-Identifier: Apache-2.0
-// Adapted from Nous Wave 412b062082afb75ccfae4c3f69fc606d3e3cc862:
-// crates/retrieval/src/vcp/index.rs and mechanisms/dense.rs. See ../UPSTREAM.md.
 // The query authority supplies an already-authorized snapshot and owns source refs.
 
 use anyhow::{Context, Result, ensure};

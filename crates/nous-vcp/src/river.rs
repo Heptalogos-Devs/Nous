@@ -1,7 +1,6 @@
-//! Complete RiverMemo topology V3 readout copied and adapted from VCPToolBox.
-//! Commit d1b40c863273cbbba082fb7657671424768c4a53, CC BY-NC-SA 4.0.
+//! Complete RiverMemo topology V3 readout.
 //! Host observation handles and SQLite reads are immutable typed parameters.
-// Retain the upstream numerical decomposition and floating-point accumulation order.
+// Preserve numerical decomposition and floating-point accumulation order.
 #![allow(clippy::type_complexity)]
 
 use crate::assets::{MemoAssets, TagVectorPool, ensure_tag_vectors_loaded};

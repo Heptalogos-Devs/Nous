@@ -1,8 +1,3 @@
-//! Atomic semantic maintenance adapted from old Nous tag.rs and episode/partition.rs.
-// Copyright 2026 Aravine Zhu
-// SPDX-License-Identifier: Apache-2.0
-// Source commit 412b062082afb75ccfae4c3f69fc606d3e3cc862.
-// Stable IDs, exact revision fences and whole-operation replay use current authority.
 use super::*;
 use nous_storage::WriteTransaction;
 use std::collections::BTreeSet;

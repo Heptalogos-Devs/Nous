@@ -1,6 +1,3 @@
-// Copyright 2026 Aravine Zhu
-// SPDX-License-Identifier: Apache-2.0
-// Adapted from Nous 412b062082afb75ccfae4c3f69fc606d3e3cc862; see NOTICE.
 use super::{SourceClosure, closure::closure, references::reference};
 use crate::cognition::structured::read::object;
 use crate::{Database, storage_error};

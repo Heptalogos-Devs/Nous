@@ -1,7 +1,6 @@
-//! Complete query pipeline adapted from VCPToolBox memo_pipeline.rs.
-//! Commit d1b40c863273cbbba082fb7657671424768c4a53, CC BY-NC-SA 4.0.
-//! N-API, SQLite loads and host observation handles are replaced by typed snapshots.
-// Retain the upstream numerical decomposition and floating-point accumulation order.
+//! Complete query pipeline.
+//! Query execution consumes immutable typed snapshots.
+// Preserve numerical decomposition and floating-point accumulation order.
 #![allow(
     clippy::type_complexity,
     clippy::too_many_arguments,

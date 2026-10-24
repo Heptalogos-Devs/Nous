@@ -129,11 +129,7 @@
       "search",
       "update_edge_weight"
     ],
-    "_SOURCE_ACTIONS": [
-      "batch_delete",
-      "delete",
-      "list"
-    ],
+    "_SOURCE_ACTIONS": ["batch_delete", "delete", "list"],
     "_EPISODE_ACTIONS": [
       "discard_migration_backfill",
       "get",
@@ -156,19 +152,8 @@
       "set_override",
       "status"
     ],
-    "_FEEDBACK_ACTIONS": [
-      "get",
-      "list",
-      "rollback"
-    ],
-    "_FACT_ACTIONS": [
-      "create",
-      "get",
-      "list",
-      "restore",
-      "retract",
-      "update"
-    ],
+    "_FEEDBACK_ACTIONS": ["get", "list", "rollback"],
+    "_FACT_ACTIONS": ["create", "get", "list", "restore", "retract", "update"],
     "_RUNTIME_ACTIONS": [
       "get_config",
       "paragraph_backfill_once",
@@ -201,14 +186,7 @@
       "retry_failed",
       "settings"
     ],
-    "_BUNDLE_ACTIONS": [
-      "export",
-      "import",
-      "inspect",
-      "list",
-      "resolve_file",
-      "uninstall"
-    ],
+    "_BUNDLE_ACTIONS": ["export", "import", "inspect", "list", "resolve_file", "uninstall"],
     "_TUNING_ACTIONS": [
       "apply_best",
       "apply_profile",
@@ -241,54 +219,19 @@
       "purge",
       "restore"
     ],
-    "_CORRECTION_ACTIONS": [
-      "execute",
-      "get",
-      "list",
-      "plan",
-      "preview",
-      "rollback"
-    ]
+    "_CORRECTION_ACTIONS": ["execute", "get", "list", "plan", "preview", "rollback"]
   },
   "standalone_rpcs": {
     "auth.proto": [
-      [
-        "CreateApiKey",
-        "CreateApiKeyRequest",
-        "CreateApiKeyResponse"
-      ],
-      [
-        "ListApiKeys",
-        "ListApiKeysRequest",
-        "ListApiKeysResponse"
-      ],
-      [
-        "RevokeApiKey",
-        "RevokeApiKeyRequest",
-        "RevokeApiKeyResponse"
-      ]
+      ["CreateApiKey", "CreateApiKeyRequest", "CreateApiKeyResponse"],
+      ["ListApiKeys", "ListApiKeysRequest", "ListApiKeysResponse"],
+      ["RevokeApiKey", "RevokeApiKeyRequest", "RevokeApiKeyResponse"]
     ],
     "backup.proto": [
-      [
-        "CreateNamespaceBackup",
-        "CreateNamespaceBackupRequest",
-        "CreateNamespaceBackupResponse"
-      ],
-      [
-        "GetNamespaceBackup",
-        "GetNamespaceBackupRequest",
-        "GetNamespaceBackupResponse"
-      ],
-      [
-        "ListNamespaceBackups",
-        "ListNamespaceBackupsRequest",
-        "ListNamespaceBackupsResponse"
-      ],
-      [
-        "DeleteNamespaceBackup",
-        "DeleteNamespaceBackupRequest",
-        "DeleteNamespaceBackupResponse"
-      ],
+      ["CreateNamespaceBackup", "CreateNamespaceBackupRequest", "CreateNamespaceBackupResponse"],
+      ["GetNamespaceBackup", "GetNamespaceBackupRequest", "GetNamespaceBackupResponse"],
+      ["ListNamespaceBackups", "ListNamespaceBackupsRequest", "ListNamespaceBackupsResponse"],
+      ["DeleteNamespaceBackup", "DeleteNamespaceBackupRequest", "DeleteNamespaceBackupResponse"],
       [
         "DownloadNamespaceBackup",
         "DownloadNamespaceBackupRequest",
@@ -322,110 +265,34 @@
     ],
     "common.proto": [],
     "job.proto": [
-      [
-        "SubmitDeleteBySource",
-        "SubmitDeleteBySourceRequest",
-        "SubmitDeleteBySourceResponse"
-      ],
-      [
-        "GetJob",
-        "GetJobRequest",
-        "GetJobResponse"
-      ],
-      [
-        "ListJobs",
-        "ListJobsRequest",
-        "ListJobsResponse"
-      ],
-      [
-        "CancelJob",
-        "CancelJobRequest",
-        "CancelJobResponse"
-      ]
+      ["SubmitDeleteBySource", "SubmitDeleteBySourceRequest", "SubmitDeleteBySourceResponse"],
+      ["GetJob", "GetJobRequest", "GetJobResponse"],
+      ["ListJobs", "ListJobsRequest", "ListJobsResponse"],
+      ["CancelJob", "CancelJobRequest", "CancelJobResponse"]
     ],
     "memory.proto": [
-      [
-        "IngestText",
-        "IngestTextRequest",
-        "IngestTextResponse"
-      ],
-      [
-        "BatchIngestText",
-        "BatchIngestTextRequest",
-        "BatchIngestTextResponse"
-      ],
-      [
-        "GetMemory",
-        "GetMemoryRequest",
-        "GetMemoryResponse"
-      ],
-      [
-        "DeleteMemory",
-        "DeleteMemoryRequest",
-        "DeleteMemoryResponse"
-      ],
-      [
-        "SearchMemory",
-        "SearchMemoryRequest",
-        "SearchMemoryResponse"
-      ]
+      ["IngestText", "IngestTextRequest", "IngestTextResponse"],
+      ["BatchIngestText", "BatchIngestTextRequest", "BatchIngestTextResponse"],
+      ["GetMemory", "GetMemoryRequest", "GetMemoryResponse"],
+      ["DeleteMemory", "DeleteMemoryRequest", "DeleteMemoryResponse"],
+      ["SearchMemory", "SearchMemoryRequest", "SearchMemoryResponse"]
     ],
     "namespace.proto": [
-      [
-        "CreateNamespace",
-        "CreateNamespaceRequest",
-        "CreateNamespaceResponse"
-      ],
-      [
-        "GetNamespace",
-        "GetNamespaceRequest",
-        "GetNamespaceResponse"
-      ],
-      [
-        "ListNamespaces",
-        "ListNamespacesRequest",
-        "ListNamespacesResponse"
-      ],
-      [
-        "UpdateNamespaceConfig",
-        "UpdateNamespaceConfigRequest",
-        "UpdateNamespaceConfigResponse"
-      ],
+      ["CreateNamespace", "CreateNamespaceRequest", "CreateNamespaceResponse"],
+      ["GetNamespace", "GetNamespaceRequest", "GetNamespaceResponse"],
+      ["ListNamespaces", "ListNamespacesRequest", "ListNamespacesResponse"],
+      ["UpdateNamespaceConfig", "UpdateNamespaceConfigRequest", "UpdateNamespaceConfigResponse"],
       [
         "GetNamespaceCapabilities",
         "GetNamespaceCapabilitiesRequest",
         "GetNamespaceCapabilitiesResponse"
       ],
-      [
-        "DisableNamespace",
-        "DisableNamespaceRequest",
-        "DisableNamespaceResponse"
-      ],
-      [
-        "EnableNamespace",
-        "EnableNamespaceRequest",
-        "EnableNamespaceResponse"
-      ],
-      [
-        "DeleteNamespace",
-        "DeleteNamespaceRequest",
-        "DeleteNamespaceResponse"
-      ],
-      [
-        "RestoreNamespace",
-        "RestoreNamespaceRequest",
-        "RestoreNamespaceResponse"
-      ],
-      [
-        "PurgeNamespace",
-        "PurgeNamespaceRequest",
-        "PurgeNamespaceResponse"
-      ],
-      [
-        "GetNamespaceHealth",
-        "GetNamespaceHealthRequest",
-        "GetNamespaceHealthResponse"
-      ]
+      ["DisableNamespace", "DisableNamespaceRequest", "DisableNamespaceResponse"],
+      ["EnableNamespace", "EnableNamespaceRequest", "EnableNamespaceResponse"],
+      ["DeleteNamespace", "DeleteNamespaceRequest", "DeleteNamespaceResponse"],
+      ["RestoreNamespace", "RestoreNamespaceRequest", "RestoreNamespaceResponse"],
+      ["PurgeNamespace", "PurgeNamespaceRequest", "PurgeNamespaceResponse"],
+      ["GetNamespaceHealth", "GetNamespaceHealthRequest", "GetNamespaceHealthResponse"]
     ]
   },
   "coverage": "Static signatures and actions; response/error semantics require corresponding runtime and consumer inspection."

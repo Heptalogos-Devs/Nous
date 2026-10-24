@@ -1,8 +1,4 @@
 //! Original media locators and ordered derivation provenance.
-// Copyright 2026 Aravine Zhu
-// SPDX-License-Identifier: Apache-2.0
-// Copied/adapted from Nous Wave 412b062082afb75ccfae4c3f69fc606d3e3cc862
-// material/domain.rs, service/derivation.rs, model/derivation.ts and input.ts.
 use crate::identity::validate_uuid;
 use crate::{
     Error, Material, MaterialId, ModelCallId, NamespaceId, ObservationId, Result, SubjectId,

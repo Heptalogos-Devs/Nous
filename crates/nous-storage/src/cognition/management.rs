@@ -1,9 +1,4 @@
 //! Memory lifecycle commits, source metadata, and content-free purge markers.
-// Copyright 2026 Aravine Zhu
-// SPDX-License-Identifier: Apache-2.0
-// Purge transaction shape adapted from Nous memory/src/service/lifecycle.rs,
-// commit 412b062082afb75ccfae4c3f69fc606d3e3cc862; see LICENSE.nous and NOTICE.
-// Modified for SQLite revision snapshots, durable apalis work and JSON receipts.
 use nous_domain::{
     Error, ErrorCode, MaterialDetails, MaterialId, Memory, MemoryAudit, MemoryId, NamespaceId,
     Result, SubjectId,

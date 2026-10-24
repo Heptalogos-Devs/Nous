@@ -1,5 +1,3 @@
-//! Adapted from rmcp official examples/servers/src/common/counter.rs and counter_stdio.rs.
-//! Copyright Model Context Protocol contributors. Apache-2.0; see ../../UPSTREAM.md.
 use nous_app::App;
 use nous_domain::{CallContext, Error, ErrorCode, QueryRequest};
 use rmcp::{

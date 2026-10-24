@@ -1,5 +1,4 @@
 //! Native VCP kernels with typed, immutable input and output.
-//! Current VCP adaptations retain CC BY-NC-SA 4.0; baseline modules retain Apache-2.0.
 
 pub mod artifact;
 pub mod assets;

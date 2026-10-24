@@ -4,21 +4,21 @@
 
 ## M0 的实际来源
 
-| 本地来源与锁定 commit | 许可 | Nous 落点 | 改编内容 |
-| --- | --- | --- | --- |
-| `temp/repos/Nous-previous/crates/persistence/src/mutations.rs`，`412b062082afb75ccfae4c3f69fc606d3e3cc862` | Apache-2.0 | `crates/nous-storage/src/authority/transaction.rs`、`crates/nous-app/src/lib.rs` | MutationEnvelope 的统一提交结构；改用 SQLite `BEGIN IMMEDIATE`、完整 OperationReceipt、实例 commit_seq 和同连接入队 |
-| `temp/repos/apalis-sqlite/src/persist.rs`、`examples/basic.rs`，`9c87189360b0e212b23821a1a177e9cbe2ad1d4a` | MIT | `crates/nous-storage/src/authority`、`crates/nous-app/src/common/tasks.rs`、`examples/transaction_recovery.rs` | 同连接 push_tasks、上游队列 schema 和进程恢复 Worker；保留 `crates/nous-storage/LICENSE.apalis` |
-| `temp/repos/rmcp/examples/servers/src/counter_streamhttp.rs` 与官方 stdio 示例，`2a401c4ca3eb5880744d2e70fad8073a7fcfb2bc` | Apache-2.0 | `crates/nous` 的 MCP transport | 官方 SDK 服务、Axum 挂载和 CancellationToken 生命周期；工具委派到同一 App |
+| 本地来源与锁定 commit                                                                                                      | 许可       | Nous 落点                                                                                                      | 改编内容                                                                                                            |
+| -------------------------------------------------------------------------------------------------------------------------- | ---------- | -------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `temp/repos/Nous-previous/crates/persistence/src/mutations.rs`，`412b062082afb75ccfae4c3f69fc606d3e3cc862`                 | Apache-2.0 | `crates/nous-storage/src/authority/transaction.rs`、`crates/nous-app/src/lib.rs`                               | MutationEnvelope 的统一提交结构；改用 SQLite `BEGIN IMMEDIATE`、完整 OperationReceipt、实例 commit_seq 和同连接入队 |
+| `temp/repos/apalis-sqlite/src/persist.rs`、`examples/basic.rs`，`9c87189360b0e212b23821a1a177e9cbe2ad1d4a`                 | MIT        | `crates/nous-storage/src/authority`、`crates/nous-app/src/common/tasks.rs`、`examples/transaction_recovery.rs` | 同连接 push_tasks、上游队列 schema 和进程恢复 Worker；保留 `crates/nous-storage/LICENSE.apalis`                     |
+| `temp/repos/rmcp/examples/servers/src/counter_streamhttp.rs` 与官方 stdio 示例，`2a401c4ca3eb5880744d2e70fad8073a7fcfb2bc` | Apache-2.0 | `crates/nous` 的 MCP transport                                                                                 | 官方 SDK 服务、Axum 挂载和 CancellationToken 生命周期；工具委派到同一 App                                           |
 
 SQLx、Tokio、Axum、Clap、Reqwest、tracing 与 tempfile 通过 Cargo 依赖使用其正式实现。ObjectStore 的暂存、原子发布与文件生命周期直接使用 tempfile，Nous 负责材料身份、内容摘要、来源和权威引用。
 
 ## M1 的实际来源
 
-| 本地来源与锁定 commit | 许可 | Nous 落点 | 改编或使用方式 |
-| --- | --- | --- | --- |
-| genai 0.7.0 发布源码 `temp/repos/genai-0.7.0`，`8fc13af4db80acd0771c87f6180d79b83c9a898d` | MIT OR Apache-2.0，采用 Apache-2.0 | `crates/nous-app/src/common/models` 与 `src/prompts` | 改编官方 target resolver 与结构化输出用法，SDK 通过发布依赖使用；实际目标、Prompt 快照、输入源修订、预算与结果采纳由 Nous 管理 |
-| 旧 Nous `crates/retrieval/src/mechanisms/lexical.rs`，`412b062082afb75ccfae4c3f69fc606d3e3cc862` | Apache-2.0 | `crates/nous-retrieval/src/lexical` | 改编词项 schema、文档替换、范围过滤和候选读取；保留 `crates/nous-retrieval/licenses/Nous-LICENSE` |
-| Tantivy 0.27，`67889269cae67063c372bc236b102d632a021568`；tantivy-jieba 0.21，`882dcc4304e415879b9e0169ff439a4806a2bf8e` | MIT | `crates/nous-retrieval` | 直接使用发布依赖；研究 PreparedCommit 原子覆盖发布，以及中文、英文 tokenizer 集成 |
+| 本地来源与锁定 commit                                                                                                    | 许可                               | Nous 落点                                            | 改编或使用方式                                                                                                                 |
+| ------------------------------------------------------------------------------------------------------------------------ | ---------------------------------- | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| genai 0.7.0 发布源码 `temp/repos/genai-0.7.0`，`8fc13af4db80acd0771c87f6180d79b83c9a898d`                                | MIT OR Apache-2.0，采用 Apache-2.0 | `crates/nous-app/src/common/models` 与 `src/prompts` | 改编官方 target resolver 与结构化输出用法，SDK 通过发布依赖使用；实际目标、Prompt 快照、输入源修订、预算与结果采纳由 Nous 管理 |
+| 旧 Nous `crates/retrieval/src/mechanisms/lexical.rs`，`412b062082afb75ccfae4c3f69fc606d3e3cc862`                         | Apache-2.0                         | `crates/nous-retrieval/src/lexical`                  | 改编词项 schema、文档替换、范围过滤和候选读取；保留 `crates/nous-retrieval/licenses/Nous-LICENSE`                              |
+| Tantivy 0.27，`67889269cae67063c372bc236b102d632a021568`；tantivy-jieba 0.21，`882dcc4304e415879b9e0169ff439a4806a2bf8e` | MIT                                | `crates/nous-retrieval`                              | 直接使用发布依赖；研究 PreparedCommit 原子覆盖发布，以及中文、英文 tokenizer 集成                                              |
 
 ## 已研究的领域合同
 
@@ -42,14 +42,14 @@ VCP 与旧 Nous reference 已复制改编到 `crates/nous-vcp`：AGS/几何、�
 
 本轮在已克隆的 MaiBot `c602a2780f4f4dda4a6be46d67abc1cfb1ad420c` 与旧 Nous `412b062082afb75ccfae4c3f69fc606d3e3cc862` 上追踪公共接口和实际消费者，结论用于 [基础服务设计](../docs/基建实施规划.md)。以下为源码事实及具体采用边界。
 
-| 实际消费链 | 统一入口承担的责任 | Nous 采用方式 |
-| --- | --- | --- |
-| `services/memory_flow_service.py:421` → `LLMServiceClient.generate_response` → `LLMOrchestrator._execute_request` → client registry → `OpenaiClient._execute_chat_request` → usage recorder | 业务给角色与输入；公共层选模型、管理 SDK client、参数、重试和规范结果 | 复制角色资源解析、客户端生命周期和单一重试 owner；调用前持久预约，成功/失败/不确定都有账本 |
-| `maisaka/builtin_tool/send_emoji.py:329` → `PromptManager.get_prompt/render_prompt` → `common.prompt_i18n.load_prompt_template`；WebUI edit/activate → cache revision | 默认/自定义/语言资源、模板克隆、变量渲染、管理与失效 | Prompt owner 保存产品历史、原子激活并返回实际正文/摘要；实际调用绑定不可变快照 |
-| `web_search/provider.py:90` → `WebSearchService.execute` → `TavilyAdapter` → `HTTPAdapter.post` → `common.http_client` | 配置冻结、协议适配、TLS、超时、受限流读取、原文与预览结果 | 受管 Reqwest 连接池统一请求策略；模型端点与任意资料 URL 使用各自目标政策 |
-| `agent/messaging.py:31` → `message_service` → `common.message_repository.find_messages` → `get_db_session` | 查询合同、时间字段、数据库连接、返回 SessionMessage | 异步仓储与冻结 ReadView；错误保留类型和原因，业务事务内复用当前事务 |
-| `AgentSession.save` / `AgentHistory.append` → `common.async_work.run_sync_work` → `agent.persistence.write_json` | 取消时等待真实线程结束、锁生命周期、同目录临时文件、原子替换、Windows 文件语义 | 统一阻塞工作收尾与 Objects.publish；数据库权威、回执和持久任务仍同事务提交 |
-| 模型配置修改 → `ConfigManager.reload_config` → `ExpressionVectorService.on_config_reload` → 后台补建 → `EmbeddingServiceClient.embed_texts` | 配置通知、资源签名变化、任务唤醒、批量向量调用 | 配置 owner 处理快照/生效/通知；作业和调用服务统一执行；领域只保留投影与采纳规则 |
+| 实际消费链                                                                                                                                                                                  | 统一入口承担的责任                                                             | Nous 采用方式                                                                              |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------ |
+| `services/memory_flow_service.py:421` → `LLMServiceClient.generate_response` → `LLMOrchestrator._execute_request` → client registry → `OpenaiClient._execute_chat_request` → usage recorder | 业务给角色与输入；公共层选模型、管理 SDK client、参数、重试和规范结果          | 复制角色资源解析、客户端生命周期和单一重试 owner；调用前持久预约，成功/失败/不确定都有账本 |
+| `maisaka/builtin_tool/send_emoji.py:329` → `PromptManager.get_prompt/render_prompt` → `common.prompt_i18n.load_prompt_template`；WebUI edit/activate → cache revision                       | 默认/自定义/语言资源、模板克隆、变量渲染、管理与失效                           | Prompt owner 保存产品历史、原子激活并返回实际正文/摘要；实际调用绑定不可变快照             |
+| `web_search/provider.py:90` → `WebSearchService.execute` → `TavilyAdapter` → `HTTPAdapter.post` → `common.http_client`                                                                      | 配置冻结、协议适配、TLS、超时、受限流读取、原文与预览结果                      | 受管 Reqwest 连接池统一请求策略；模型端点与任意资料 URL 使用各自目标政策                   |
+| `agent/messaging.py:31` → `message_service` → `common.message_repository.find_messages` → `get_db_session`                                                                                  | 查询合同、时间字段、数据库连接、返回 SessionMessage                            | 异步仓储与冻结 ReadView；错误保留类型和原因，业务事务内复用当前事务                        |
+| `AgentSession.save` / `AgentHistory.append` → `common.async_work.run_sync_work` → `agent.persistence.write_json`                                                                            | 取消时等待真实线程结束、锁生命周期、同目录临时文件、原子替换、Windows 文件语义 | 统一阻塞工作收尾与 Objects.publish；数据库权威、回执和持久任务仍同事务提交                 |
+| 模型配置修改 → `ConfigManager.reload_config` → `ExpressionVectorService.on_config_reload` → 后台补建 → `EmbeddingServiceClient.embed_texts`                                                 | 配置通知、资源签名变化、任务唤醒、批量向量调用                                 | 配置 owner 处理快照/生效/通知；作业和调用服务统一执行；领域只保留投影与采纳规则            |
 
 `common.paths` 区分程序只读资源和实例目录，且不导入配置、日志或数据库。`common.i18n.I18nManager` 以 ContextVar 支持请求级 locale、统一目录缓存和格式化。这两点分别进入实例与语言服务。
 

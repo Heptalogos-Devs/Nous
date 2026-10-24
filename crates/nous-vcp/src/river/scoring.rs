@@ -1,6 +1,4 @@
-//! Upstream topology readout score assignment.
-// Adapted from VCPToolBox d1b40c863273cbbba082fb7657671424768c4a53.
-// CC BY-NC-SA 4.0; see LICENSE-VCP and UPSTREAM.md.
+//! Topology readout score assignment.
 use super::*;
 
 pub(super) fn assign_v3_scores(

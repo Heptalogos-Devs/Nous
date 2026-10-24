@@ -1,7 +1,5 @@
-//! Typed port of schemas/material-interpretation.ts at the pinned previous Nous.
-// Copyright 2026 Aravine Zhu
-// SPDX-License-Identifier: Apache-2.0
-// Same source channels, coverage/basis distinctions, exact support and local bounds.
+//! Typed material interpretation, evidence channels and coverage.
+// Source channels, coverage/basis distinctions, exact support and local bounds.
 use super::*;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]

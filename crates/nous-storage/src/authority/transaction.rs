@@ -1,8 +1,3 @@
-// Copyright 2026 Aravine Zhu
-// SPDX-License-Identifier: Apache-2.0
-// Adapted from Nous persistence/src/mutations.rs at
-// 412b062082afb75ccfae4c3f69fc606d3e3cc862. Modified for SQLite, namespace
-// scoping, complete result replay, and transactional apalis job insertion.
 use apalis::prelude::{TaskBuilder, TaskId};
 use apalis_sqlite::queries::push_tasks;
 use nous_domain::{

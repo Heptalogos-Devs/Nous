@@ -1,6 +1,4 @@
 //! Ordered derivation graph, producer identity and three interpretation strategies.
-// Copyright 2026 Aravine Zhu
-// SPDX-License-Identifier: Apache-2.0
 use super::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

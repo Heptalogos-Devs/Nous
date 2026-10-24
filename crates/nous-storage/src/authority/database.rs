@@ -1,6 +1,3 @@
-// Copyright 2026 Aravine Zhu
-// SPDX-License-Identifier: Apache-2.0
-// Adapted from Nous 412b062082afb75ccfae4c3f69fc606d3e3cc862; see NOTICE.
 use crate::{not_found, storage_error};
 use apalis_sqlite::{Config, SqliteStorage};
 use nous_domain::*;

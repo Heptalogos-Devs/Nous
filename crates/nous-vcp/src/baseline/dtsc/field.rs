@@ -1,6 +1,3 @@
-// Copyright 2026 Aravine Zhu
-// SPDX-License-Identifier: Apache-2.0
-
 use crate::baseline::anchors::reference_cosine;
 use crate::baseline::unit;
 use serde::{Deserialize, Serialize};

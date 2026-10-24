@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: AGPL-3.0-only. Upstream source and license: mod.rs.
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::collections::{BTreeMap, BTreeSet};

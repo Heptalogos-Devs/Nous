@@ -2268,7 +2268,6 @@ dependencies = [
  "schemars 1.2.3",
  "serde",
  "serde_json",
- "tempfile",
  "tokio",
  "tokio-util",
  "tracing",
@@ -2283,7 +2282,6 @@ dependencies = [
  "anyhow",
  "apalis",
  "apalis-core",
- "axum",
  "chrono",
  "directories",
  "fs2",
@@ -2347,8 +2345,6 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "sqlx",
- "tempfile",
- "tokio",
  "ulid",
 ]
 

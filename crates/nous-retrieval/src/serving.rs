@@ -1,10 +1,5 @@
 //! Frozen VCP serving assembled from authority-filtered source material.
-// Copyright 2026 Aravine Zhu
-// SPDX-License-Identifier: Apache-2.0
-// Adapted from previous Nous vcp/{generation,graph,observation,lane,readout}.rs.
-// Source commit 412b062082afb75ccfae4c3f69fc606d3e3cc862.
 // Numerical computation uses pinned nous-vcp kernels with explicit source sets;
-// see UPSTREAM.md for the evidence-root extension.
 use crate::vector::{
     VectorGeneration, VectorGenerationIdentity, VectorRecord, VectorSnapshot, unit_vector,
 };

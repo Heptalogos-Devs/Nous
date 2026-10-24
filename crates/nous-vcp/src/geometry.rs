@@ -1,11 +1,8 @@
-//! Adapted from VCPToolBox rust-vexus-lite/src/memo_geometry.rs
-//! Upstream commit d1b40c863273cbbba082fb7657671424768c4a53.
-//! CC BY-NC-SA 4.0; see LICENSE-VCP and UPSTREAM.md.
-//! Host/database access is replaced by immutable typed inputs.
+//! Consumes immutable typed inputs.
 //! Unified anchored greedy Gram-Schmidt geometry.
 //! All floating-point reductions use ID order, never Rayon reduction order.
 
-// Retain the upstream numerical decomposition and floating-point accumulation order.
+// Preserve numerical decomposition and floating-point accumulation order.
 #![allow(clippy::too_many_arguments)]
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};

@@ -1,6 +1,4 @@
-//! Actual preprocessing coverage from the upstream bounded video sampling path.
-// Copyright 2026 Aravine Zhu
-// SPDX-License-Identifier: Apache-2.0
+//! Actual preprocessing coverage for bounded video sampling.
 use super::*;
 
 /// Runtime sampling facts are recorded separately from a model's interpretation.

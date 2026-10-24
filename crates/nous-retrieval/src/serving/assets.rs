@@ -1,7 +1,4 @@
 //! Geometry, independent-root CSR and immutable numerical asset assembly.
-// Copyright 2026 Aravine Zhu
-// SPDX-License-Identifier: Apache-2.0
-// Adapted from Nous 412b062082afb75ccfae4c3f69fc606d3e3cc862; see UPSTREAM.md.
 use super::*;
 
 pub(super) fn root_rows(prepared: &Prepared) -> Vec<FileTag> {

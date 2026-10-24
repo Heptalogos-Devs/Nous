@@ -1,7 +1,4 @@
 //! Dense and complete VCP multi-lane query execution.
-// Copyright 2026 Aravine Zhu
-// SPDX-License-Identifier: Apache-2.0
-// Adapted from Nous 412b062082afb75ccfae4c3f69fc606d3e3cc862; see UPSTREAM.md.
 use super::*;
 
 impl ServingGeneration {

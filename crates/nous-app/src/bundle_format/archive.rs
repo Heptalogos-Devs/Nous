@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: AGPL-3.0-only. Upstream source and license: mod.rs.
 use super::{Limits, Member, MemberKind, json::bounded_json};
 use anyhow::{Context, Result, ensure};
 use serde_json::Value;

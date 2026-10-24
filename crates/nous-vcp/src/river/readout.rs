@@ -1,6 +1,4 @@
 //! Complete coordinated candidate readout and result materialization.
-// Adapted from VCPToolBox d1b40c863273cbbba082fb7657671424768c4a53.
-// CC BY-NC-SA 4.0; see LICENSE-VCP and UPSTREAM.md.
 use super::*;
 
 #[derive(Serialize, Deserialize)]

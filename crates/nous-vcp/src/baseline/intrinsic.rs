@@ -1,6 +1,3 @@
-// Copyright 2026 Aravine Zhu
-// SPDX-License-Identifier: Apache-2.0
-
 use super::ReferenceFileTags;
 use nalgebra::DMatrix;
 use serde::{Deserialize, Serialize};

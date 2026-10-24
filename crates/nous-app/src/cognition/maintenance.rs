@@ -1,6 +1,5 @@
-//! Lifecycle transitions adapted from A-Memorix memory_lifecycle_policy.py and
 //! memory_maintenance_service.py at 28db65dd96f546f736d65c043a39254cbae2c4e9.
-//! SPDX-License-Identifier: AGPL-3.0-only
+
 use crate::common::clock::Clock;
 use crate::{App, operation_key};
 use nous_domain::*;

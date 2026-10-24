@@ -1,0 +1,14 @@
+{
+  "name": "nous-wave-development",
+  "private": true,
+  "scripts": {
+    "format": "npm exec --yes -- prettier --write .",
+    "format:check": "npm exec --yes -- prettier --check ."
+  },
+  "devDependencies": {
+    "prettier": "3.9.10"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

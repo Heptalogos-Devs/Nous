@@ -81,20 +81,20 @@ while (-not $page.result.complete) {
 
 本批原生接口与 MCP 工具如下，均进入相同应用用例：
 
-| HTTP | MCP 工具 |
-| --- | --- |
-| `POST /api/imports/text` | `import_text` |
-| `POST /api/memories/{id}/change` | `memory_change` |
-| `GET /api/memories/{id}/audit?limit=50` | `memory_audit` |
+| HTTP                                          | MCP 工具             |
+| --------------------------------------------- | -------------------- |
+| `POST /api/imports/text`                      | `import_text`        |
+| `POST /api/memories/{id}/change`              | `memory_change`      |
+| `GET /api/memories/{id}/audit?limit=50`       | `memory_audit`       |
 | `GET /api/subjects/{id}/recycle-bin?limit=50` | `memory_recycle_bin` |
-| `POST /api/subjects/{id}/maintenance` | `memory_maintain` |
-| `POST /api/embeddings/sync` | `embedding_sync` |
-| `GET /api/embeddings/runs/{id}` | `embedding_run` |
-| `POST /api/query` | `query` |
-| `GET /api/memories/{id}/source` | `memory_source` |
-| `GET /api/models/calls/{id}` | `model_call` |
-| `GET /api/jobs/{id}` | `job_get` |
-| `POST /api/jobs/{id}/cancel` | `job_cancel` |
+| `POST /api/subjects/{id}/maintenance`         | `memory_maintain`    |
+| `POST /api/embeddings/sync`                   | `embedding_sync`     |
+| `GET /api/embeddings/runs/{id}`               | `embedding_run`      |
+| `POST /api/query`                             | `query`              |
+| `GET /api/memories/{id}/source`               | `memory_source`      |
+| `GET /api/models/calls/{id}`                  | `model_call`         |
+| `GET /api/jobs/{id}`                          | `job_get`            |
+| `POST /api/jobs/{id}/cancel`                  | `job_cancel`         |
 
 `.amembundle` 可在本地离线检查，无需启动实例：
 
@@ -159,20 +159,20 @@ $backup = & $nous --instance $instance backup create | ConvertFrom-Json
 
 形成作业的 `succeeded` 表示全部组已处理，具体成果和冲突读取 `formation_run` 的 `groups`。`source` 返回对象精确修订、证据闭包、原材料和实际模型调用。CLI 交互优化、媒体三策略、原生多模态、managed context/steward 与完整 A-Memorix 合同继续按 [能力续接清单](docs/能力续接清单.md) 推进。
 
-验证入口需要 Python 3.11 或更新版本：
+## 开发工具
+
+`rust-toolchain.toml` 固定 Rust 与组件，本地和 CI 由 rustup 读取同一文件。Rust 使用 rustfmt 和 Clippy；编辑器配置提供 rust-analyzer。`.editorconfig` 统一缩进与文件结尾，`.gitattributes` 统一 Git 换行和二进制文件处理。
+
+Markdown、JSON、YAML 使用固定版本的 Prettier。Node.js 24 可直接运行以下命令，npm 将工具下载到项目 `temp/cache/npm`，无需在仓库根目录安装 `node_modules`：
 
 ```powershell
 . ./scripts/dev-env.ps1
-cargo test --workspace --locked
-cargo run -p nous-storage --example transaction_recovery --locked -- (Join-Path (Get-Location) 'temp/instances/recovery.sqlite')
-cargo build -p nous --locked
-python ./scripts/smoke.py (Join-Path $env:CARGO_TARGET_DIR 'debug/nous.exe')
-# 可选：调用模板配置的真实模型服务。
-python ./scripts/gateway-smoke.py (Join-Path $env:CARGO_TARGET_DIR 'debug/nous.exe') --template ./temp/instances/m1-dev
+npm run format
+npm run format:check
+cargo fmt --all
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo build --workspace --locked
 ```
 
-`smoke.py` 在无模型配置的新实例中验证 CLI、HTTP、MCP HTTP 和 stdio：初始化、逐项导入、统一查询、来源、范围凭据、任务取消、记忆生命周期、停服重启、快照恢复和真实导出包的离线检查。它不配置模型资源。Windows 与 Ubuntu 的 [CI](.github/workflows/ci.yml) 运行此入口及工作区集成测试。
-
-`gateway-smoke.py` 只读取模板中的模型资源和必要凭据，复制到新隔离实例。它以两份独立资料形成真实 Memory；第一批以独立槽位形成 MemorySemantics、Concept、Episode、Schema、Association，第二批基于已提交的 Episode 写 Journal。随后补齐统一认知向量，验证 Dense/VCP/Hybrid、模型调用与来源、回执重放和重启后的缓存读取。模板需要 `memory_formation` 与 `text_embedding`；未配置 `structured_formation` 时，以已有聊天资源建立该职责的隔离绑定，输入上限 128 KiB、输出上限 8192 tokens，每日调用限额沿用聊天职责。
-
-两个入口均先把可执行文件复制到 `temp/runtime`，所有子进程、实例、输入、日志和报告集中于 `temp`。真实流程记录每组实际结果，合法空提案或部分冲突按原样保存；缺少完整认知成果时，报告列出未完成能力。历史运行报告继续保存在各自的 `temp` 目录。
+格式检查已接入 CI。Cargo 构建、编辑器检查和工具缓存使用项目内的受管临时目录。

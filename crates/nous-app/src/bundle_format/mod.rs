@@ -1,9 +1,8 @@
 //! A_Memorix v1/v2 archive inspection, without installation or filesystem extraction.
 //!
-//! Adapted from MaiBot/src/A_memorix/core/runtime/services/bundle_admin_service.py
 //! at c602a2780f4f4dda4a6be46d67abc1cfb1ad420c: _load_bundle, member hashing,
 //! _canonical_json_bytes, _canonical_image_semantics and RESOURCE_PRIMARY_KEYS.
-//! SPDX-License-Identifier: AGPL-3.0-only. See licenses/A_memorix-LICENSE.
+
 mod archive;
 mod json;
 mod manifest;

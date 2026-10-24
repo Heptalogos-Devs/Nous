@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: AGPL-3.0-only. Upstream source and license: mod.rs.
 use super::{
     archive::ArchiveContents,
     json::{canonical_images, canonical_json},

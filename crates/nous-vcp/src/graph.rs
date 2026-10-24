@@ -1,7 +1,4 @@
-//! Adapted from VCPToolBox rust-vexus-lite/src/rivermemo_topology_v3.rs
-//! Upstream commit d1b40c863273cbbba082fb7657671424768c4a53.
-//! CC BY-NC-SA 4.0; see LICENSE-VCP and UPSTREAM.md.
-//! Host/database access is replaced by immutable typed inputs.
+//! Consumes immutable typed inputs.
 
 use std::collections::{HashMap, HashSet};
 fn positive(value: f64) -> f64 {

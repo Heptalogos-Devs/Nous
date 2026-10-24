@@ -1,7 +1,6 @@
-//! Native directed artifact computation adapted from memo_artifact_builder.rs.
-//! VCPToolBox d1b40c863273cbbba082fb7657671424768c4a53, CC BY-NC-SA 4.0.
-//! SQLite loading and publication are replaced by typed input/output.
-// Retain the upstream numerical decomposition and floating-point accumulation order.
+//! Native directed artifact computation.
+//! Computation consumes typed input and returns typed output.
+// Preserve numerical decomposition and floating-point accumulation order.
 #![allow(clippy::type_complexity)]
 
 use crate::{assets::TagVectorPool, graph::NativeArtifact};

@@ -1,7 +1,4 @@
-//! Adapted from VCPToolBox rust-vexus-lite/src/memo_projection.rs
-//! Upstream commit d1b40c863273cbbba082fb7657671424768c4a53.
-//! CC BY-NC-SA 4.0; see LICENSE-VCP and UPSTREAM.md.
-//! Host/database access is replaced by immutable typed inputs.
+//! Consumes immutable typed inputs.
 //! Request-local seed-basin projection. Never modifies Sense, scalar fields or Omega.
 use crate::graph::NativeArtifact;
 use crate::sensing::SenseOutput;

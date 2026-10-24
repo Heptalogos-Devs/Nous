@@ -1,5 +1,4 @@
-//! Grounded method-stage planning adapted from VCPToolBox memo_thinking.rs.
-//! Commit d1b40c863273cbbba082fb7657671424768c4a53, CC BY-NC-SA 4.0.
+//! Grounded method-stage planning.
 use crate::assets::MemoAssets;
 use crate::pipeline::PipelineOutput;
 use crate::sensing::ObservationTransition;

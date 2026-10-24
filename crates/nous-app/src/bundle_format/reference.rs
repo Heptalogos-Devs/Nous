@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: AGPL-3.0-only. Upstream source and license: mod.rs.
 use super::{
     Images, Knowledge, Member, MemberKind, ReferenceIndex, STATE_TABLES, State,
     json::canonical_json, valid_hash,
