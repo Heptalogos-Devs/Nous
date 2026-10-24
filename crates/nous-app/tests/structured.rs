@@ -299,8 +299,8 @@ async fn wait(app: &App, id: &str, state: JobState, wait_kind: Option<&str>) -> 
 fn raw_evidence(source: &str) -> Value {
     json!([{"source":source,"polarity":"support","relation":null,"explanation":"Field record"}])
 }
-fn raw_concept(slot: &str, label: &str) -> Value {
-    json!({"slot_key":slot,"body":{"kind":"concept","content":{"label":label,"description":"Maple NW-S-314 concept","aliases":[],"canonical":null,"members":[],"lineage":[]}},"evidence":raw_evidence("s0")})
+fn raw_concept(group: &str, label: &str) -> Value {
+    json!({"group_key":group,"body":{"kind":"concept","content":{"label":label,"description":"Maple NW-S-314 concept","aliases":[],"canonical":null,"members":[],"lineage":[]}},"evidence":raw_evidence("s0")})
 }
 
 #[tokio::test]
@@ -345,7 +345,7 @@ async fn formation_waits_then_applies_independent_groups_with_shared_call_and_re
     let targets = [
         ("maple", CognitiveKind::Concept),
         ("rollback", CognitiveKind::Concept),
-        ("collision", CognitiveKind::Concept),
+        ("z_collision", CognitiveKind::Concept),
         ("dependent", CognitiveKind::Concept),
         ("journal", CognitiveKind::Journal),
         ("schema", CognitiveKind::Schema),
@@ -388,14 +388,23 @@ async fn formation_waits_then_applies_independent_groups_with_shared_call_and_re
     cancel.cancel();
     worker.await.unwrap();
     app.close().await;
+    // Slot ordering makes the first write precede the conflicting alias in one transaction.
     let output = json!({"groups":[
-        {"key":"concept","depends_on":[],"changes":[raw_concept("maple","Maple")]},
-        {"key":"conflict","depends_on":[],"changes":[raw_concept("rollback","Must rollback"),raw_concept("collision","Maple")]},
-        {"key":"dependent","depends_on":["conflict"],"changes":[raw_concept("dependent","Must skip")]},
-        {"key":"journal","depends_on":[],"changes":[{"slot_key":"journal","body":{"kind":"journal","content":{"title":"Field journal","narrative":"The field visit recorded red maple.","period":{"domain":"unix_ms","start":90,"end":110},"perspective":{"class":"reported","attribution":"Field record","confidence":0.9},"points":[{"role":"summary","text":"Red maple was recorded.","evidence":raw_evidence("s0")}],"episodes":["s2"],"lineage":[]}},"evidence":raw_evidence("s0")}]},
-        {"key":"schema","depends_on":[],"changes":[{"slot_key":"schema","body":{"kind":"schema","content":{"title":"Maple pattern","claim":"Two botanical records describe red maple.","scope":{"description":"These two records","about":[],"concepts":[],"validity":null},"boundary":"No global biological rule inferred","formation_mode":"synthesized","epistemic":{"class":"derived","attribution":"Two records","confidence":0.8},"support":["s0","s1"],"counterexamples":[],"boundary_cases":[],"lineage":[]}},"evidence":raw_evidence("s0")}]},
-        {"key":"association","depends_on":["concept"],"changes":[{"slot_key":"association","body":{"kind":"association","content":{"from":"maple","to":"s2","relation":"documented_in","polarity":"positive","basis_class":"source_evidence","description":"Maple documented in the field episode"}},"evidence":raw_evidence("s0")}]}
-    ]});
+        {"key":"concept","depends_on":[]},
+        {"key":"conflict","depends_on":[]},
+        {"key":"dependent","depends_on":["conflict"]},
+        {"key":"journal","depends_on":[]},
+        {"key":"schema","depends_on":[]},
+        {"key":"association","depends_on":["concept"]}
+    ],"changes":{
+        "maple":raw_concept("concept","Maple"),
+        "rollback":raw_concept("conflict","Must rollback"),
+        "z_collision":raw_concept("conflict","Maple"),
+        "dependent":raw_concept("dependent","Must skip"),
+        "journal":{"group_key":"journal","body":{"kind":"journal","content":{"title":"Field journal","narrative":"The field visit recorded red maple.","period":{"domain":"unix_ms","start":90,"end":110},"perspective":{"class":"reported","attribution":"Field record","confidence":0.9},"points":[{"role":"summary","text":"Red maple was recorded.","evidence":raw_evidence("s0")}],"episodes":["s2"],"lineage":[]}},"evidence":raw_evidence("s0")},
+        "schema":{"group_key":"schema","body":{"kind":"schema","content":{"title":"Maple pattern","claim":"Two botanical records describe red maple.","scope":{"description":"These two records","about":[],"concepts":[],"validity":null},"boundary":"No global biological rule inferred","formation_mode":"synthesized","epistemic":{"class":"derived","attribution":"Two records","confidence":0.8},"support":["s0","s1"],"counterexamples":[],"boundary_cases":[],"lineage":[]}},"evidence":raw_evidence("s0")},
+        "association":{"group_key":"association","body":{"kind":"association","content":{"from":"maple","to":"s2","relation":"documented_in","polarity":"positive","basis_class":"source_evidence","description":"Maple documented in the field episode"}},"evidence":raw_evidence("s0")}
+    }});
     let calls = Arc::new(AtomicUsize::new(0));
     let requests = calls.clone();
     let provider=Router::new().route("/v1/chat/completions",post(move |Json(request):Json<Value>|{let output=output.clone();let requests=requests.clone();async move{

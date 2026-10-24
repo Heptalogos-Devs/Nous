@@ -6,6 +6,7 @@ use nous_domain as d;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::collections::BTreeMap;
 
 macro_rules! catalog_key {
     ($name:ident) => {
@@ -150,7 +151,7 @@ pub enum RawCognitiveContent {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RawProposalChange {
-    pub slot_key: String,
+    pub group_key: String,
     pub body: RawCognitiveContent,
     pub evidence: Vec<RawEvidenceLink>,
 }
@@ -159,11 +160,11 @@ pub struct RawProposalChange {
 pub struct RawProposalGroup {
     pub key: String,
     pub depends_on: Vec<String>,
-    pub changes: Vec<RawProposalChange>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RawStructuredProposal {
     pub groups: Vec<RawProposalGroup>,
+    pub changes: BTreeMap<String, Option<RawProposalChange>>,
 }

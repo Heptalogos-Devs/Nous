@@ -18,9 +18,10 @@ pub struct ModelFailureInfo {
     pub http_status: Option<u16>,
     pub retry_after_seconds: Option<u64>,
     pub message: String,
+    pub cause: Option<String>,
 }
 
-/// Typed causes stay inspectable in process; only the redacted info is persisted.
+/// SDK errors stay inspectable in process; persisted diagnostics omit request URLs.
 pub struct ModelFailure {
     pub info: ModelFailureInfo,
     source: Option<Box<dyn StdError + Send + Sync>>,
@@ -41,6 +42,7 @@ impl ModelFailure {
                 http_status: None,
                 retry_after_seconds: None,
                 message: message.into(),
+                cause: None,
             },
             source: None,
         }
@@ -102,10 +104,35 @@ impl ModelFailure {
             .and_then(|headers| headers.get("retry-after"))
             .and_then(|value| value.to_str().ok())
             .and_then(|value| value.parse().ok());
-        let message = status.map_or_else(
-            || "model request failed; typed provider cause retained".into(),
-            |status| format!("model provider returned HTTP {status}"),
-        );
+        let transport = match &error {
+            genai::Error::WebModelCall {
+                webc_error: genai::webc::Error::Reqwest(error),
+                ..
+            }
+            | genai::Error::WebAdapterCall {
+                webc_error: genai::webc::Error::Reqwest(error),
+                ..
+            } => Some(error),
+            _ => None,
+        };
+        let cause = transport.and_then(|error| {
+            let mut source = error.source()?;
+            while let Some(inner) = source.source() {
+                source = inner;
+            }
+            Some(source.to_string().chars().take(1024).collect())
+        });
+        let message = if let Some(status) = status {
+            format!("model provider returned HTTP {status}")
+        } else if transport.is_some_and(|error| error.is_connect()) {
+            "cannot connect to model provider".into()
+        } else if transport.is_some_and(|error| error.is_timeout()) {
+            "model provider request timed out".into()
+        } else if transport.is_some_and(|error| error.is_builder()) {
+            "cannot construct model provider request".into()
+        } else {
+            "model provider request failed".into()
+        };
         Self {
             info: ModelFailureInfo {
                 class,
@@ -113,6 +140,7 @@ impl ModelFailure {
                 http_status: status,
                 retry_after_seconds,
                 message,
+                cause,
             },
             source: Some(Box::new(error)),
         }

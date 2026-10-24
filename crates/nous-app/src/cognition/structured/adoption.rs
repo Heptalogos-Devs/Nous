@@ -24,12 +24,12 @@ impl App {
             .map(|s| (s.key.clone(), s))
             .collect::<HashMap<_, _>>();
         let owners = proposal
-            .groups
+            .changes
             .iter()
-            .flat_map(|g| {
-                g.changes
-                    .iter()
-                    .map(move |c| (c.slot_key.clone(), g.key.clone()))
+            .filter_map(|(slot, change)| {
+                change
+                    .as_ref()
+                    .map(|change| (slot.clone(), change.group_key.clone()))
             })
             .collect::<HashMap<_, _>>();
         let call_id = &call.id;
@@ -73,7 +73,7 @@ impl App {
                     "dependent proposal group was not applied",
                 ))
             } else {
-                match group.compile(&input) {
+                match group.compile(&input, &proposal.changes) {
                     Err(error) => Err(error),
                     Ok(compiled) => {
                         self.apply_structured_group(

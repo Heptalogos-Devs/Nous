@@ -8,7 +8,7 @@ use super::{
     input::{StructuredFormationInput, validate_key},
 };
 use nous_domain as d;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 impl RawEvidenceLink {
     fn compile(&self, input: &StructuredFormationInput) -> d::Result<d::EvidenceLink> {
@@ -169,21 +169,23 @@ impl RawProposalGroup {
     pub fn compile(
         &self,
         input: &StructuredFormationInput,
+        proposals: &BTreeMap<String, Option<RawProposalChange>>,
     ) -> d::Result<d::StructuredProposalGroup> {
         input.validate()?;
-        let mut assigned = BTreeSet::new();
-        let changes = self
-            .changes
+        let changes = proposals
             .iter()
-            .map(|change| {
+            .filter_map(|(key, value)| {
+                value
+                    .as_ref()
+                    .filter(|change| change.group_key == self.key)
+                    .map(|change| (key, change))
+            })
+            .map(|(slot_key, change)| {
                 let slot = input
                     .slots
                     .iter()
-                    .find(|slot| slot.key == change.slot_key)
+                    .find(|slot| slot.key == *slot_key)
                     .ok_or_else(|| d::Error::invalid("proposal selected an unknown target slot"))?;
-                if !assigned.insert(slot.key.as_str()) {
-                    return Err(d::Error::invalid("proposal group repeats a target slot"));
-                }
                 let body = change.body.compile(input)?;
                 if body.kind() != slot.kind {
                     return Err(d::Error::invalid(
@@ -200,7 +202,10 @@ impl RawProposalGroup {
                         .collect::<d::Result<_>>()?,
                 })
             })
-            .collect::<d::Result<_>>()?;
+            .collect::<d::Result<Vec<_>>>()?;
+        if changes.is_empty() || changes.len() > 16 {
+            return Err(d::Error::invalid("proposal group needs 1 to 16 changes"));
+        }
         Ok(d::StructuredProposalGroup {
             key: self.key.clone(),
             depends_on: self.depends_on.clone(),
@@ -211,44 +216,33 @@ impl RawProposalGroup {
 
 impl RawStructuredProposal {
     pub fn validate_envelope(&self) -> d::Result<()> {
-        if self.groups.len() > MAX_GROUPS
-            || self
-                .groups
-                .iter()
-                .map(|group| group.changes.len())
-                .sum::<usize>()
-                > MAX_CHANGES
-        {
+        if self.groups.len() > MAX_GROUPS || self.changes.len() > MAX_CHANGES {
             return Err(d::Error::invalid(
                 "structured proposal exceeds its group/change envelope",
             ));
         }
         let mut prior = BTreeSet::new();
-        let mut assigned_slots = BTreeSet::new();
         for group in &self.groups {
             validate_key(&group.key)?;
             let mut dependencies = BTreeSet::new();
-            if group.changes.is_empty()
-                || group.changes.len() > 16
-                || prior.contains(&group.key)
+            if prior.contains(&group.key)
                 || group
                     .depends_on
                     .iter()
                     .any(|key| !prior.contains(key) || !dependencies.insert(key))
             {
                 return Err(d::Error::invalid(
-                    "structured groups need unique keys, nonempty bounded changes and distinct earlier dependencies",
+                    "structured groups need unique keys and distinct earlier dependencies",
                 ));
             }
             prior.insert(group.key.clone());
-            if group
-                .changes
-                .iter()
-                .any(|change| !assigned_slots.insert(change.slot_key.as_str()))
+        }
+        for (slot_key, change) in &self.changes {
+            validate_key(slot_key)?;
+            if let Some(change) = change
+                && !prior.contains(&change.group_key)
             {
-                return Err(d::Error::invalid(
-                    "one proposal may write each target slot only once",
-                ));
+                return Err(d::Error::invalid("proposal change has no declared group"));
             }
         }
         Ok(())

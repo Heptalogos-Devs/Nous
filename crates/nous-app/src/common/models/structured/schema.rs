@@ -69,7 +69,7 @@ pub fn structured_output_schema(input: &StructuredFormationInput) -> ConfigResul
         .get("RawProposalChange")
         .ok_or_else(|| anyhow::anyhow!("structured change schema is missing"))?
         .clone();
-    let mut choices = Vec::new();
+    let mut changes = serde_json::Map::new();
     for slot in &input.slots {
         let kind = serde_json::to_value(slot.kind)?;
         let body = variants
@@ -82,18 +82,19 @@ pub fn structured_output_schema(input: &StructuredFormationInput) -> ConfigResul
             })
             .ok_or_else(|| anyhow::anyhow!("target slot has no typed output schema"))?;
         let mut choice = change.clone();
-        choice["properties"]["slot_key"] = json!({"type":"string","const":slot.key});
         choice["properties"]["body"] = body.clone();
         choice["properties"]["evidence"]["minItems"] = json!(1);
         choice["properties"]["evidence"]["maxItems"] = json!(32);
-        choices.push(choice);
+        changes.insert(slot.key.clone(), json!({"anyOf":[choice,{"type":"null"}]}));
     }
-    defs.insert("RawProposalChange".into(), json!({"anyOf":choices}));
     if let Some(group) = defs.get_mut("RawProposalGroup") {
-        group["properties"]["changes"]["minItems"] = json!(1);
-        group["properties"]["changes"]["maxItems"] = json!(16);
         group["properties"]["depends_on"]["maxItems"] = json!(MAX_GROUPS - 1);
     }
+    schema["properties"]["changes"] = json!({
+        "type":"object", "additionalProperties":false,
+        "required":input.slots.iter().map(|slot| &slot.key).collect::<Vec<_>>(),
+        "properties":changes,
+    });
     schema["properties"]["groups"]["maxItems"] = json!(MAX_GROUPS);
     prune_definitions(&mut schema)?;
     // The pinned SDK's mature provider sanitizer handles nullable required
