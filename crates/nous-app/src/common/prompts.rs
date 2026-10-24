@@ -1,11 +1,6 @@
 //! Prompt resource loading and strict bounded rendering share one owner.
 //! Minijinja Template/Environment APIs own template parsing and execution.
-//! Instance-root resource loading adapted from Nous-previous model/prompts.ts
-//! (Apache-2.0; source commit and license in models/structured-sources.json).
-//! Source SHA-256: 466a564983b23377e5b4f99fca1f8375ed5ec9615bd8706297ffc953ed94aefb.
-//! MiniJinja API source: commit 6ba9aded9da6d3d4b8de7d13b64c4d9d70b671c4,
-//! environment.rs SHA-256 ed7c7f62a2ed35cb3a404f3d19063d40bf9c019b07fce6ff3ca48051a2e2d67e;
-//! template.rs SHA-256 a467968cf73d9d67d61f3af44953a225cd930a721631f19ca3f50bb0259a73af.
+
 use crate::common::instance::InstancePaths;
 use minijinja::{
     Environment, UndefinedBehavior,
@@ -48,7 +43,7 @@ pub struct ManagedPromptReference {
     pub sha256: String,
     pub byte_len: u64,
 }
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PromptTemplate {
     pub id: String,
     pub revision: Option<String>,
@@ -57,7 +52,7 @@ pub struct PromptTemplate {
     pub text: String,
     pub sha256: String,
 }
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PromptSnapshot {
     pub id: String,
     /// Managed product revision; direct file bindings are identified by content hash.
@@ -73,10 +68,31 @@ pub struct PromptSnapshot {
 #[derive(Clone)]
 pub struct Prompts {
     paths: InstancePaths,
+    bundled: BTreeMap<String, &'static str>,
+}
+#[derive(Clone)]
+pub struct PromptDefinition {
+    pub id: &'static str,
+    pub template: &'static str,
 }
 impl Prompts {
     pub fn new(paths: InstancePaths) -> Self {
-        Self { paths }
+        Self {
+            paths,
+            bundled: BTreeMap::new(),
+        }
+    }
+    pub fn with_definitions(
+        paths: InstancePaths,
+        definitions: impl IntoIterator<Item = PromptDefinition>,
+    ) -> Self {
+        Self {
+            paths,
+            bundled: definitions
+                .into_iter()
+                .map(|definition| (definition.id.into(), definition.template))
+                .collect(),
+        }
     }
     /// Render and preview use identical assets, arguments, strictness and limits.
     pub fn render(
@@ -86,7 +102,21 @@ impl Prompts {
         arguments: &PromptArguments,
     ) -> Result<PromptSnapshot> {
         let asset = self.read(id, binding)?;
-        let source = asset.text;
+        self.render_template(&asset, arguments)
+    }
+    pub fn render_template(
+        &self,
+        asset: &PromptTemplate,
+        arguments: &PromptArguments,
+    ) -> Result<PromptSnapshot> {
+        if asset.text.trim().is_empty() || asset.text.len() > MAX_TEMPLATE_BYTES {
+            return Err(Error::new(
+                ErrorCode::ResourceExhausted,
+                "instruction template must contain 1..131072 UTF-8 bytes",
+            ));
+        }
+        let id = &asset.id;
+        let source = asset.text.clone();
         if serde_json::to_vec(arguments)?.len() > 1024 * 1024 {
             return Err(Error::new(
                 ErrorCode::ResourceExhausted,
@@ -114,10 +144,10 @@ impl Prompts {
             return Err(Error::invalid("rendered prompt must be nonempty"));
         }
         Ok(PromptSnapshot {
-            id: id.into(),
-            revision: None,
-            locale: binding.locale.clone(),
-            file: binding.file.clone(),
+            id: id.clone(),
+            revision: asset.revision.clone(),
+            locale: asset.locale.clone(),
+            file: asset.file.clone(),
             template_sha256: digest(&source),
             template: source,
             arguments: arguments.clone(),
@@ -205,17 +235,16 @@ impl Prompts {
                 )
             })?
         } else {
-            match id {
-                "memory_formation" => include_str!("../prompts/memory-formation.md"),
-                "structured_formation" => include_str!("../prompts/structured-formation.md"),
-                _ => {
-                    return Err(Error::new(
+            self.bundled
+                .get(id)
+                .copied()
+                .ok_or_else(|| {
+                    Error::new(
                         ErrorCode::CapabilityUnavailable,
-                        "prompt resource is not bound to a file or bundled asset",
-                    ));
-                }
-            }
-            .to_owned()
+                        "prompt resource is not bound to a file or registered asset",
+                    )
+                })?
+                .to_owned()
         };
         if text.trim().is_empty() || text.len() > MAX_TEMPLATE_BYTES {
             return Err(Error::new(

@@ -149,6 +149,36 @@ impl McpService {
 #[tool_router]
 impl McpService {
     #[tool(
+        description = "Read a registered model role's typed input contract, requirements and Prompt binding without invoking a provider. Optional input builds the consumer's actual messages and dynamic output schema even without a configured route. Scope defaults to this credential's scope."
+    )]
+    async fn model_contract(
+        &self,
+        Parameters(input): Parameters<nous_app::model_management::ModelContractRequest>,
+        ctx: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        self.execute(Operation::ModelContract(input), ctx).await
+    }
+    #[tool(
+        description = "Preview the actual invocation messages, media access, variables, Prompt, output contract and target JSON Schema using typed role input. Optional edits.prompt changes only this preview; no provider call or model budget reservation occurs."
+    )]
+    async fn model_preview(
+        &self,
+        Parameters(input): Parameters<nous_app::model_management::ModelPreviewRequest>,
+        ctx: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        self.execute(Operation::ModelPreview(input), ctx).await
+    }
+    #[tool(
+        description = "Read scoped active/desired configuration and its sources, inspect typed definitions/history, or apply one atomic CAS set/clear batch. Instance, Namespace and Subject permissions are enforced; restart changes remain pending until their owner applies them."
+    )]
+    async fn config(
+        &self,
+        Parameters(input): Parameters<nous_app::common::configuration::ConfigRequest>,
+        ctx: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        self.execute(Operation::Configuration(input), ctx).await
+    }
+    #[tool(
         description = "Create, revise, retire, restore, inspect typed Concept, Episode, Journal, Schema, Association and Memory semantics. Source returns exact revision evidence and original material; revisions use optimistic concurrency."
     )]
     async fn cognition(

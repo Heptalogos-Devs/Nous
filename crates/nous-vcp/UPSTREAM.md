@@ -6,15 +6,15 @@ CC BY-NC-SA 4.0 license in `LICENSE-VCP`. Exact source hashes are recorded in
 `upstream-sources.json`. Database, N-API and host access are replaced with typed
 immutable input. Numerical kernels retain their source computation and ordering.
 
-| Original source in `rust-vexus-lite/src` | Adapted module and boundary |
-| --- | --- |
-| `memo_geometry.rs` | `geometry`: AGS core copied; local/global asset orchestration takes explicit vectors, memberships, model signature and timestamp |
-| `memo_artifact_builder.rs` | `artifact`: fact, transport, provenance and signature computation copied; input rows replace SQL and `buildThreads` replaces environment lookup |
-| `memo_sensing.rs` | `sensing`: state propagation and dynamic residual wormholes copied; in-memory vector pool replaces database reads |
-| `memo_projection.rs` | `projection`: basin and bounded growth computation plus all eight source tests copied |
-| `memo_pipeline.rs` | `pipeline`: EPA, Pyramid, gating, fusion and dual-field computation copied; typed assets/search replace handles, global caches and host reads |
-| `rivermemo_topology_v3.rs` | `graph` and `river`: CSR, full readout, direct anchors, morphology, Omega and scoring copied; candidate/file data replace SQL loads |
-| `memo_thinking.rs` | `thinking`: predecessor-grounded stage planning copied; frozen file metadata replaces host source lookup |
+| Original source in `rust-vexus-lite/src` | Adapted module and boundary                                                                                                                     |
+| ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `memo_geometry.rs`                       | `geometry`: AGS core copied; local/global asset orchestration takes explicit vectors, memberships, model signature and timestamp                |
+| `memo_artifact_builder.rs`               | `artifact`: fact, transport, provenance and signature computation copied; input rows replace SQL and `buildThreads` replaces environment lookup |
+| `memo_sensing.rs`                        | `sensing`: state propagation and dynamic residual wormholes copied; in-memory vector pool replaces database reads                               |
+| `memo_projection.rs`                     | `projection`: basin and bounded growth computation plus all eight source tests copied                                                           |
+| `memo_pipeline.rs`                       | `pipeline`: EPA, Pyramid, gating, fusion and dual-field computation copied; typed assets/search replace handles, global caches and host reads   |
+| `rivermemo_topology_v3.rs`               | `graph` and `river`: CSR, full readout, direct anchors, morphology, Omega and scoring copied; candidate/file data replace SQL loads             |
+| `memo_thinking.rs`                       | `thinking`: predecessor-grounded stage planning copied; frozen file metadata replaces host source lookup                                        |
 
 The implementation is organized by computation stages: `geometry/` holds AGS,
 workspace and asset construction; `artifact/` holds matrices, provenance and

@@ -15,6 +15,7 @@ use std::{
 };
 impl InstancePaths {
     pub fn read_secret(&self, reference: &SecretRef) -> Result<String> {
+        reference.validate()?;
         let path = self.resolve(&reference.file)?;
         if !is_within(
             &resolve_existing_ancestor(&path)?,
@@ -133,6 +134,21 @@ fn token_digest(token: &str) -> String {
 #[serde(deny_unknown_fields)]
 pub struct SecretRef {
     pub file: PathBuf,
+}
+impl SecretRef {
+    pub fn validate(&self) -> Result<()> {
+        if self.file.is_absolute()
+            || !self.file.starts_with("credentials")
+            || self.file.components().count() < 2
+            || self
+                .file
+                .components()
+                .any(|component| !matches!(component, std::path::Component::Normal(_)))
+        {
+            bail!("credential references must name a relative file inside credentials");
+        }
+        Ok(())
+    }
 }
 
 #[cfg(unix)]

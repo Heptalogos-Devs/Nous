@@ -1,5 +1,3 @@
-//! Provider I/O adapted from rust-genai's explicit target and options examples.
-//! genai 0.7.0, MIT OR Apache-2.0; source commit in resource.rs.
 use super::{ModelFailure, ModelFailureInfo, RetryClass};
 use chrono::Utc;
 use genai::{
@@ -16,6 +14,7 @@ use std::fmt;
 #[derive(Clone)]
 pub struct PreparedCall<M> {
     pub metadata: M,
+    pub attempt_policy: AttemptPolicy,
     pub(super) target: ServiceTarget,
     pub(super) request: PreparedRequest,
 }
@@ -27,12 +26,14 @@ pub(super) enum PreparedRequest {
     },
     Embedding {
         request: EmbedRequest,
-        options: EmbedOptions,
+        options: Box<EmbedOptions>,
+        space: nous_domain::EmbeddingSpace,
+        count: usize,
     },
 }
 pub(super) enum ProviderOutput {
     Text(String),
-    Embeddings(Box<EmbedResponse>),
+    Vectors(Vec<Vec<f32>>),
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -41,6 +42,18 @@ pub struct CallReservation {
     pub resource_id: String,
     pub max_calls_per_day: u32,
     pub request: Value,
+    pub attempt_policy: AttemptPolicy,
+}
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct AttemptPolicy {
+    pub max_attempts: u32,
+    pub has_fallback: bool,
+    pub retry_uncertain: bool,
+}
+#[derive(Debug, Clone)]
+pub struct AttemptContext {
+    pub index: u32,
+    pub previous_request: Option<Value>,
 }
 pub trait CallMetadata: Serialize {
     fn reservation_fields(&self) -> (&str, &str, u32);
@@ -54,6 +67,7 @@ impl<M: CallMetadata> PreparedCall<M> {
             max_calls_per_day,
             request: serde_json::to_value(&self.metadata)
                 .expect("prepared metadata is serializable"),
+            attempt_policy: self.attempt_policy,
         }
     }
 }
@@ -83,7 +97,7 @@ pub struct ModelExecution<M, T> {
     pub result: Result<T, ModelFailure>,
 }
 impl<M, T> ModelExecution<M, T> {
-    pub(super) fn map<U>(
+    pub fn map<U>(
         mut self,
         parse: impl FnOnce(T, &M) -> Result<U, ModelFailure>,
     ) -> ModelExecution<M, U> {
@@ -152,9 +166,21 @@ impl CallExecutor {
                 self.chat(prepared.target, request, *options, &mut record)
                     .await
             }
-            PreparedRequest::Embedding { request, options } => {
-                self.embed(prepared.target, request, options, &mut record)
-                    .await
+            PreparedRequest::Embedding {
+                request,
+                options,
+                space,
+                count,
+            } => {
+                self.embed(
+                    prepared.target,
+                    request,
+                    *options,
+                    &mut record,
+                    &space,
+                    count,
+                )
+                .await
             }
         };
         record.complete(&result);
@@ -202,6 +228,8 @@ impl CallExecutor {
         request: EmbedRequest,
         options: EmbedOptions,
         record: &mut ModelCallRecord<M>,
+        space: &nous_domain::EmbeddingSpace,
+        count: usize,
     ) -> Result<ProviderOutput, ModelFailure> {
         match self
             .client
@@ -213,7 +241,7 @@ impl CallExecutor {
                 record.usage = serde_json::to_value(&response.usage).ok();
                 record.provider_response = response.captured_raw_body.clone();
                 record.raw_output = response.captured_raw_body.as_ref().map(Value::to_string);
-                Ok(ProviderOutput::Embeddings(Box::new(response)))
+                validate_embeddings(response, space, count).map(ProviderOutput::Vectors)
             }
             Err(error) => {
                 record.capture_error(&error);
@@ -228,6 +256,48 @@ impl CallExecutor {
             }
         }
     }
+}
+fn validate_embeddings(
+    response: EmbedResponse,
+    space: &nous_domain::EmbeddingSpace,
+    count: usize,
+) -> Result<Vec<Vec<f32>>, ModelFailure> {
+    let invalid =
+        |message| ModelFailure::new(RetryClass::Permanent, ErrorCode::InvalidArgument, message);
+    if response.provider_model_iden.model_name != space.provider_model {
+        return Err(ModelFailure::new(
+            RetryClass::Permanent,
+            ErrorCode::Conflict,
+            "embedding provider model differs from the configured immutable space",
+        ));
+    }
+    if response.embeddings.len() != count {
+        return Err(invalid(
+            "embedding response must cover every input exactly once",
+        ));
+    }
+    let mut ordered = vec![None; count];
+    for embedding in response.embeddings {
+        if embedding.index >= count || ordered[embedding.index].is_some() {
+            return Err(invalid(
+                "embedding response contains a duplicate or out-of-range index",
+            ));
+        }
+        let vector = embedding.vector;
+        if vector.len() != space.dimension
+            || !vector.iter().all(|v| v.is_finite())
+            || !vector.iter().any(|v| *v != 0.0)
+        {
+            return Err(invalid(
+                "embedding response must contain finite nonzero vectors with the configured dimension",
+            ));
+        }
+        ordered[embedding.index] = Some(vector);
+    }
+    ordered
+        .into_iter()
+        .map(|v| v.ok_or_else(|| invalid("embedding response is missing an input index")))
+        .collect()
 }
 fn error_body(error: &genai::Error) -> Option<&str> {
     match error {

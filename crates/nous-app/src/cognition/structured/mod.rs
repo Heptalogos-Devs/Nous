@@ -6,6 +6,7 @@ use serde_json::{Value, json};
 mod adoption;
 mod formation;
 mod lineage;
+pub mod model;
 pub use formation::{FormStructuredRequest, FormationTarget};
 impl App {
     pub async fn create_structured(

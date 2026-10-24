@@ -1,6 +1,12 @@
 Copyright 2026 Aravine Zhu
 SPDX-License-Identifier: Apache-2.0
 
+src/configuration/ adapts immutable resolved state, active/desired publication
+and configuration change history from Nous-Wave
+crates/configuration/src/{snapshot.rs,service.rs}, commit
+412b062082afb75ccfae4c3f69fc606d3e3cc862, Apache-2.0.
+Configuration history shares the operation receipt and commit sequence owner.
+
 src/cognition/management.rs adapts the purge transaction shape from Nous-Wave
 crates/memory/src/service/lifecycle.rs, commit
 412b062082afb75ccfae4c3f69fc606d3e3cc862, Apache-2.0.

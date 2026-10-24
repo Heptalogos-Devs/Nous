@@ -250,24 +250,20 @@ impl Database {
             .collect()
     }
 
-    pub async fn queue_record(&self, id: &str) -> Result<QueueRecord> {
+    pub async fn queue_record(&self, id: &str) -> Result<Option<QueueRecord>> {
         let row = sqlx::query("SELECT * FROM Jobs WHERE id=? AND job_type=?")
             .bind(id)
             .bind(JOB_QUEUE)
             .fetch_optional(&self.pool)
             .await
             .map_err(storage_error)?;
-        row.map(|row| {
-            Ok::<_, Error>(QueueRecord {
-                id: row.get("id"),
+        Ok(row.map(|row| QueueRecord {
+            id: row.get("id"),
 
-                status: row.get("status"),
-                attempts: row.get("attempts"),
-                max_attempts: row.get("max_attempts"),
-                last_result: row.get("last_result"),
-            })
-        })
-        .transpose()?
-        .ok_or_else(not_found)
+            status: row.get("status"),
+            attempts: row.get("attempts"),
+            max_attempts: row.get("max_attempts"),
+            last_result: row.get("last_result"),
+        }))
     }
 }

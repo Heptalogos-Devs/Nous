@@ -19,6 +19,7 @@ pub struct Tasks {
     database: Database,
     clock: Clock,
     running: Arc<Mutex<HashMap<String, CancellationToken>>>,
+    wake: Arc<tokio::sync::Notify>,
 }
 impl Tasks {
     pub fn new(database: Database, clock: Clock) -> Self {
@@ -26,6 +27,7 @@ impl Tasks {
             database,
             clock,
             running: Arc::default(),
+            wake: Arc::default(),
         }
     }
     pub fn new_job(
@@ -40,6 +42,7 @@ impl Tasks {
             namespace_id: namespace,
             subject_id: subject,
             kind: kind.into(),
+            dependencies: Vec::new(),
             state: JobState::Queued,
             wait: None,
             checkpoint: None,
@@ -49,8 +52,34 @@ impl Tasks {
             updated_at: now,
         }
     }
+    pub fn notify_wake(&self) {
+        self.wake.notify_one();
+    }
     pub async fn submit_in(&self, tx: &mut WriteTransaction, job: &JobRecord) -> Result<()> {
         tx.insert_job_record(job).await
+    }
+    pub async fn submit_after_in(
+        &self,
+        tx: &mut WriteTransaction,
+        job: &mut JobRecord,
+        dependencies: Vec<String>,
+    ) -> Result<()> {
+        job.dependencies = dependencies;
+        if !job.dependencies.is_empty() {
+            job.state = JobState::Waiting;
+            job.wait = Some(WaitCondition {
+                kind: "dependencies".into(),
+                details: json!({}),
+            });
+        }
+        tx.insert_job_record(job).await
+    }
+    pub async fn dependencies(&self, job: &JobRecord) -> Result<Vec<JobRecord>> {
+        let mut dependencies = Vec::with_capacity(job.dependencies.len());
+        for id in &job.dependencies {
+            dependencies.push(self.database.job_record(id).await?);
+        }
+        Ok(dependencies)
     }
     pub async fn read(&self, ctx: &CallContext, id: &str) -> Result<JobRecord> {
         let job = self.database.job_record(id).await?;
@@ -140,9 +169,14 @@ impl Tasks {
             let stop = shutdown.clone();
             let wake = async move {
                 loop {
-                    tokio::select! {_=stop.cancelled()=>break,_=tokio::time::sleep(Duration::from_secs(30))=>{
-                        if let Err(error)=maintenance.wake_ready().await{tracing::warn!(%error,"waiting task wake failed");}
-                    }}
+                    tokio::select! {
+                        _=stop.cancelled()=>break,
+                        _=tokio::time::sleep(Duration::from_secs(30))=>{},
+                        _=maintenance.tasks.wake.notified()=>{},
+                    }
+                    if let Err(error) = maintenance.wake_ready().await {
+                        tracing::warn!(%error,"waiting task wake failed");
+                    }
                 }
             };
             let backend = runtime
@@ -173,17 +207,19 @@ impl Tasks {
 
 type TaskFuture = Pin<Box<dyn Future<Output = Result<()>> + Send>>;
 type Handler = Arc<dyn Fn(JobRecord, CancellationToken) -> TaskFuture + Send + Sync>;
-type Readiness = Arc<dyn Fn(&WaitCondition) -> bool + Send + Sync>;
+type ReadyFuture = Pin<Box<dyn Future<Output = bool> + Send>>;
+type Readiness = Arc<dyn Fn(JobRecord) -> ReadyFuture + Send + Sync>;
 #[derive(Default)]
 pub struct TaskRegistry {
     handlers: HashMap<String, (Handler, Readiness)>,
 }
 impl TaskRegistry {
-    pub fn register<F, Fut, R>(&mut self, kind: &str, handler: F, ready: R) -> Result<()>
+    pub fn register<F, Fut, R, RFut>(&mut self, kind: &str, handler: F, ready: R) -> Result<()>
     where
         F: Fn(JobRecord, CancellationToken) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = Result<()>> + Send + 'static,
-        R: Fn(&WaitCondition) -> bool + Send + Sync + 'static,
+        R: Fn(JobRecord) -> RFut + Send + Sync + 'static,
+        RFut: Future<Output = bool> + Send + 'static,
     {
         validate_name(kind, "task kind")?;
         if self.handlers.contains_key(kind) {
@@ -193,7 +229,7 @@ impl TaskRegistry {
             kind.into(),
             (
                 Arc::new(move |job, cancel| Box::pin(handler(job, cancel))),
-                Arc::new(ready),
+                Arc::new(move |job| Box::pin(ready(job))),
             ),
         );
         Ok(())
@@ -215,12 +251,48 @@ impl TaskRuntime {
             let Some((_, ready)) = self.registry.handlers.get(&job.kind) else {
                 continue;
             };
-            let due = wait
-                .details
-                .get("not_before_ms")
-                .and_then(Value::as_i64)
-                .is_some_and(|at| self.tasks.clock.utc().timestamp_millis() >= at);
-            if !due && wait.kind != "capability" && !ready(wait) {
+            let not_before = wait.details.get("not_before_ms").and_then(Value::as_i64);
+            if wait.kind == "dependencies" {
+                let dependencies = self.tasks.dependencies(&job).await?;
+                if dependencies.iter().any(|dependency| {
+                    matches!(dependency.state, JobState::Failed | JobState::Cancelled)
+                }) {
+                    let mut tx = self
+                        .tasks
+                        .operation("task.dependency_failed", &job.id)
+                        .await?;
+                    let mut current = tx.job_record(&job.id).await?;
+                    if current.state == JobState::Waiting {
+                        self.tasks
+                            .change_in(
+                                &mut tx,
+                                &mut current,
+                                JobState::Failed,
+                                None,
+                                Some(Error::new(
+                                    ErrorCode::Conflict,
+                                    "required task did not complete",
+                                )),
+                            )
+                            .await?;
+                        tx.commit(json!({"state":current.state})).await?;
+                        self.tasks.notify_wake();
+                    } else {
+                        tx.rollback().await?;
+                    }
+                    continue;
+                }
+                if dependencies
+                    .iter()
+                    .any(|dependency| dependency.state != JobState::Succeeded)
+                {
+                    continue;
+                }
+            } else if let Some(at) = not_before {
+                if self.tasks.clock.utc().timestamp_millis() < at {
+                    continue;
+                }
+            } else if wait.kind != "capability" && !ready(job.clone()).await {
                 continue;
             }
             let mut tx = self.tasks.operation("task.wake", &job.id).await?;
@@ -290,7 +362,13 @@ impl TaskRuntime {
             .expect("task registry lock")
             .remove(id);
         if let Err(error) = result {
-            let attempts = self.tasks.database.queue_record(id).await?.attempts;
+            let attempts = self
+                .tasks
+                .database
+                .queue_record(id)
+                .await?
+                .ok_or_else(|| Error::internal("running task has no queue record"))?
+                .attempts;
             let mut tx = self.tasks.operation("task.failure", id).await?;
             let mut job = tx.job_record(id).await?;
             if terminal(job.state) || job.state == JobState::Waiting {
@@ -319,6 +397,7 @@ impl TaskRuntime {
                 return Err(error);
             }
         }
+        self.tasks.notify_wake();
         Ok(())
     }
 }

@@ -106,8 +106,10 @@ identity!(MemoryId);
 identity!(ModelCallId);
 identity!(CognitiveId);
 
+mod configuration;
 mod identity;
 pub mod media;
+pub use configuration::*;
 
 mod time;
 pub use time::*;

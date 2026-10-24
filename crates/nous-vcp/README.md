@@ -4,15 +4,15 @@ Typed Rust computation copied and adapted from pinned VCP sources. The crate
 accepts immutable numerical assets and an actual Tag search adapter. Host storage,
 model calls, source authority and native ANN are supplied by their owners.
 
-| Module | Computation |
-| --- | --- |
-| `geometry/` | Anchored greedy Gram-Schmidt, local/global intrinsic residuals, anchor gains and EPA assets |
-| `artifact/`, `graph` | Fact/transport matrices, CSR, source provenance, wormholes and content signatures |
+| Module                   | Computation                                                                                               |
+| ------------------------ | --------------------------------------------------------------------------------------------------------- |
+| `geometry/`              | Anchored greedy Gram-Schmidt, local/global intrinsic residuals, anchor gains and EPA assets               |
+| `artifact/`, `graph`     | Fact/transport matrices, CSR, source provenance, wormholes and content signatures                         |
 | `sensing/`, `projection` | Finite-hop predecessor states, FIR/return-current suppression, dynamic wormholes and bounded basin growth |
-| `pipeline/` | EPA, residual Pyramid, gates, sensing, fusion and local/transfer fields |
-| `river/` | Curve selection, topology, direct anchors, morphology, Omega and readout scores |
-| `thinking` | Grounded stage plans using actual predecessor transitions and candidate closure |
-| `baseline/` | Preserved previous Nous reference, including SVD EPA, DTSC and topology scoring |
+| `pipeline/`              | EPA, residual Pyramid, gates, sensing, fusion and local/transfer fields                                   |
+| `river/`                 | Curve selection, topology, direct anchors, morphology, Omega and readout scores                           |
+| `thinking`               | Grounded stage plans using actual predecessor transitions and candidate closure                           |
+| `baseline/`              | Preserved previous Nous reference, including SVD EPA, DTSC and topology scoring                           |
 
 `MemoAssets::try_new` validates the frozen dimension, generation, signature, CSR,
 Tags, files and candidate vectors. Missing vectors for declared Tags are reported

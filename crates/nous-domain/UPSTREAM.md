@@ -4,14 +4,14 @@
 `412b062082afb75ccfae4c3f69fc606d3e3cc862`. The original Apache-2.0 license is
 retained in [licenses/Nous-LICENSE](licenses/Nous-LICENSE).
 
-| Original file | Preserved contract |
-| --- | --- |
-| `crates/core/src/cognition.rs` and `lib.rs` | Exact revision support, positive/counter/context evidence, epistemic classes, source dependence |
-| `crates/memory/src/domain.rs` | CognitiveRole, FormationMode, grounded/synthesized support, Association, Schema scope and evidence roles |
-| `crates/memory/src/service/tag.rs` | Stable concept meaning, aliases, canonical identity, merge/split lineage and bounded exact inputs |
-| `crates/memory/src/service/episode/{mod,partition}.rs` | Tracks, exact ordered members, parent episodes, bounded complete repartition and source lineage |
-| `crates/memory/src/service/journal/{mod,mutations}.rs` | Supported narrative points, writing-time stance and knowledge snapshot fence |
-| `crates/memory/src/service/schema/{mod,lineage}.rs` | Structural claim, applicability, boundaries, support/counterexamples and refinement lineage |
+| Original file                                          | Preserved contract                                                                                       |
+| ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------- |
+| `crates/core/src/cognition.rs` and `lib.rs`            | Exact revision support, positive/counter/context evidence, epistemic classes, source dependence          |
+| `crates/memory/src/domain.rs`                          | CognitiveRole, FormationMode, grounded/synthesized support, Association, Schema scope and evidence roles |
+| `crates/memory/src/service/tag.rs`                     | Stable concept meaning, aliases, canonical identity, merge/split lineage and bounded exact inputs        |
+| `crates/memory/src/service/episode/{mod,partition}.rs` | Tracks, exact ordered members, parent episodes, bounded complete repartition and source lineage          |
+| `crates/memory/src/service/journal/{mod,mutations}.rs` | Supported narrative points, writing-time stance and knowledge snapshot fence                             |
+| `crates/memory/src/service/schema/{mod,lineage}.rs`    | Structural claim, applicability, boundaries, support/counterexamples and refinement lineage              |
 
 The adapted types use current UUID identities, revision numbers and named-domain
 `CognitiveTimes`. Existing Memory rows remain authoritative; `MemorySemantics`

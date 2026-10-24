@@ -1,7 +1,9 @@
 //! Authenticated HTTP transport and stable error mapping.
 mod client;
 pub mod cognition;
+pub mod configuration;
 pub mod maintenance;
+pub mod models;
 mod operation;
 pub mod structured;
 use crate::mcp::McpService;
@@ -97,6 +99,8 @@ pub fn router(state: ApiState, config: &InstanceConfig, cancellation: Cancellati
         .route("/api/jobs/{job}", get(get_job))
         .route("/api/jobs/{job}/cancel", post(cancel_job))
         .merge(crate::http::cognition::router())
+        .merge(crate::http::configuration::router())
+        .merge(crate::http::models::router())
         .merge(crate::http::structured::router())
         .merge(crate::http::maintenance::router())
         .nest_service("/mcp", mcp)

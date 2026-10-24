@@ -1,201 +1,58 @@
-//! Explicit provider targets adapted from rust-genai c06-target-resolver.rs.
-//! genai 0.7.0, MIT OR Apache-2.0, commit 8fc13af4db80acd0771c87f6180d79b83c9a898d.
-use super::{
-    EmbeddingConfig, FormationConfig, ModelFailure, RetryClass, StructuredFormationConfig,
+use super::{ModelFailure, catalog::*, roles::*};
+use crate::common::{
+    configuration::{ConfigSnapshot, ConfigSource},
+    instance::InstancePaths,
 };
-use crate::common::instance::{InstancePaths, SecretRef};
-use anyhow::{Result, bail};
 use genai::{
     ModelIden, ServiceTarget,
     adapter::AdapterKind,
     resolver::{AuthData, Endpoint},
 };
-use nous_domain::{ErrorCode, ModelRole};
-use schemars::JsonSchema;
+use nous_domain::{EmbeddingSpace, Error, Result};
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
-#[serde(default, deny_unknown_fields)]
-pub struct ModelConfig {
-    pub memory_formation: Option<FormationConfig>,
-    pub text_embedding: Option<EmbeddingConfig>,
-    pub structured_formation: Option<StructuredFormationConfig>,
-}
-impl ModelConfig {
-    /// Validation does not access credentials or the network.
-    pub fn validate(&self) -> Result<()> {
-        if let Some(config) = &self.memory_formation {
-            config.validate()?;
-        }
-        if let Some(config) = &self.text_embedding {
-            config.validate()?;
-        }
-        if let Some(config) = &self.structured_formation {
-            config.validate()?;
-        }
-        Ok(())
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ModelResource {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResolvedRoute {
     pub id: String,
-    pub provider: String,
-    pub protocol: ModelProtocol,
-    pub endpoint: String,
-    pub model: String,
-    pub credential: SecretRef,
-}
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub enum ModelProtocol {
-    #[serde(rename = "openai_chat_completions")]
-    OpenAiChatCompletions,
-    #[serde(rename = "openai_embeddings")]
-    OpenAiEmbeddings,
-}
-#[derive(Debug, Clone, Serialize)]
-pub struct ResourceMetadata {
-    pub id: String,
-    pub provider: String,
-    pub protocol: ModelProtocol,
-    pub endpoint: String,
-    pub model: String,
-}
-impl From<&ModelResource> for ResourceMetadata {
-    fn from(value: &ModelResource) -> Self {
-        Self {
-            id: value.id.clone(),
-            provider: value.provider.clone(),
-            protocol: value.protocol,
-            endpoint: value.endpoint.clone(),
-            model: value.model.clone(),
-        }
-    }
-}
-
-pub(super) fn validate_resource(resource: &ModelResource) -> Result<()> {
-    for (name, value) in [
-        ("resource id", &resource.id),
-        ("provider", &resource.provider),
-        ("model", &resource.model),
-    ] {
-        if value.trim().is_empty() || value.len() > 255 || value.chars().any(char::is_control) {
-            bail!("model {name} must contain 1 to 255 visible bytes");
-        }
-    }
-    let endpoint = reqwest::Url::parse(&resource.endpoint)?;
-    if !matches!(endpoint.scheme(), "http" | "https")
-        || endpoint.host_str().is_none()
-        || !endpoint.username().is_empty()
-        || endpoint.password().is_some()
-        || endpoint.query().is_some()
-        || endpoint.fragment().is_some()
-        || !endpoint.path().ends_with('/')
-    {
-        bail!(
-            "model endpoint must be an HTTP base URL ending with '/', without credentials, query or fragment"
-        );
-    }
-    Ok(())
-}
-
-pub(super) fn validate_chat(
-    resource: &ModelResource,
-    input: usize,
-    output: u32,
-    daily: u32,
-    native: &BTreeMap<String, Value>,
-) -> Result<()> {
-    validate_resource(resource)?;
-    if resource.protocol != ModelProtocol::OpenAiChatCompletions {
-        bail!("chat role requires openai_chat_completions protocol");
-    }
-    if !(1..=1024 * 1024).contains(&input) || !(1..=32768).contains(&output) || daily > 100000 {
-        bail!(
-            "chat input bytes must be 1..1048576, output tokens 1..32768 and daily calls at most 100000"
-        );
-    }
-    const OWNED: &[&str] = &[
-        "model",
-        "messages",
-        "stream",
-        "tools",
-        "tool_choice",
-        "response_format",
-        "max_tokens",
-        "max_completion_tokens",
-    ];
-    if native.keys().any(|key| OWNED.contains(&key.as_str())) {
-        bail!("native parameters cannot override owned chat request fields");
-    }
-    Ok(())
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ModelModality {
-    Text,
-    Image,
-    Audio,
-    Video,
-}
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ModelCapability {
-    TextGeneration,
-    StructuredOutput,
-    Embedding,
-    Tools,
-}
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ModelRequirements {
+    pub resource: ResourceMetadata,
+    pub parameters: RouteParameters,
     pub input_modalities: Vec<ModelModality>,
     pub capabilities: Vec<ModelCapability>,
+    pub embedding: Option<EmbeddingProfile>,
+    pub pricing: Option<TokenPricing>,
+    provider: Provider,
 }
-impl ModelRequirements {
-    pub fn structured_text() -> Self {
-        Self {
-            input_modalities: vec![ModelModality::Text],
-            capabilities: vec![
-                ModelCapability::TextGeneration,
-                ModelCapability::StructuredOutput,
-            ],
-        }
-    }
-    pub fn text_embedding() -> Self {
-        Self {
-            input_modalities: vec![ModelModality::Text],
-            capabilities: vec![ModelCapability::Embedding],
-        }
-    }
-    fn validate(&self, protocol: ModelProtocol) -> Result<(), ModelFailure> {
-        let supported = self
-            .input_modalities
-            .iter()
-            .all(|m| matches!(m, ModelModality::Text))
-            && self.capabilities.iter().all(|capability| match capability {
-                ModelCapability::Embedding => protocol == ModelProtocol::OpenAiEmbeddings,
-                ModelCapability::TextGeneration | ModelCapability::StructuredOutput => {
-                    protocol == ModelProtocol::OpenAiChatCompletions
-                }
-                ModelCapability::Tools => false,
-            });
-        if !supported {
-            return Err(ModelFailure::new(
-                RetryClass::Permanent,
-                ErrorCode::CapabilityUnavailable,
-                "the configured model protocol does not support the requested modality or capability",
-            ));
-        }
-        Ok(())
+impl ResolvedRoute {
+    pub fn space(&self) -> Result<EmbeddingSpace> {
+        self.embedding
+            .as_ref()
+            .map(|profile| embedding_space(&self.resource, profile))
+            .ok_or_else(|| Error::invalid("selected model has no embedding space"))
     }
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResolvedModel {
+    pub scope: nous_domain::ConfigScope,
+    pub role: String,
+    pub routes: Vec<ResolvedRoute>,
+    pub binding: RoleBinding,
+    pub config_digest: String,
+    pub config_sources: BTreeMap<String, ConfigSource>,
+    pub prompt_template: Option<crate::common::prompts::PromptTemplate>,
+}
+impl ResolvedModel {
+    pub fn primary(&self) -> &ResolvedRoute {
+        &self.routes[0]
+    }
+    pub fn route(&self, attempt: usize) -> &ResolvedRoute {
+        &self.routes[attempt.min(self.routes.len() - 1)]
+    }
+    pub fn space(&self) -> Result<EmbeddingSpace> {
+        self.primary().space()
+    }
+}
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ModelReadinessState {
     Ready,
@@ -203,133 +60,182 @@ pub enum ModelReadinessState {
 }
 #[derive(Debug, Clone, Serialize)]
 pub struct ModelReadiness {
-    pub role: ModelRole,
+    pub role: String,
     pub state: ModelReadinessState,
-    pub resource: Option<ResourceMetadata>,
+    pub routes: Vec<String>,
     pub reason: Option<String>,
 }
 impl ModelReadiness {
     pub fn is_ready(&self) -> bool {
-        self.state == ModelReadinessState::Ready
+        matches!(self.state, ModelReadinessState::Ready)
     }
 }
-
-/// Immutable selected route; authentication and SDK targets stay inside the owner.
-#[derive(Clone, Serialize)]
-pub struct ResolvedModel {
-    pub role: ModelRole,
-    pub resource: ResourceMetadata,
-    pub parameters: Value,
-    pub max_calls_per_day: u32,
-    pub fingerprint: String,
-    #[serde(skip)]
-    target: ServiceTarget,
-}
-impl std::fmt::Debug for ResolvedModel {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ResolvedModel")
-            .field("role", &self.role)
-            .field("resource", &self.resource)
-            .field("parameters", &self.parameters)
-            .field("fingerprint", &self.fingerprint)
-            .finish_non_exhaustive()
-    }
-}
-impl ResolvedModel {
-    pub(super) fn into_target(self) -> ServiceTarget {
-        self.target
-    }
-}
-
 #[derive(Clone)]
 pub struct ModelResources {
     paths: InstancePaths,
-    config: ModelConfig,
+    roles: RoleRegistry,
 }
 impl ModelResources {
-    pub fn new(paths: &InstancePaths, config: &ModelConfig) -> Result<Self> {
-        config.validate()?;
-        Ok(Self {
+    pub fn new(paths: &InstancePaths, roles: RoleRegistry) -> Self {
+        Self {
             paths: paths.clone(),
-            config: config.clone(),
-        })
-    }
-    fn binding(&self, role: ModelRole) -> Option<(&ModelResource, Value, u32)> {
-        match role {
-            ModelRole::MemoryFormation=>self.config.memory_formation.as_ref().map(|c|(&c.resource,
-                json!({"max_input_bytes":c.max_input_bytes,"max_output_tokens":c.max_output_tokens,"native_parameters":c.native_parameters}),c.max_calls_per_day)),
-            ModelRole::StructuredFormation=>self.config.structured_formation.as_ref().map(|c|(&c.resource,
-                json!({"max_input_bytes":c.max_input_bytes,"max_output_tokens":c.max_output_tokens,"native_parameters":c.native_parameters}),c.max_calls_per_day)),
-            ModelRole::TextEmbedding=>self.config.text_embedding.as_ref().map(|c|(&c.resource,
-                json!({"max_input_bytes":c.max_input_bytes,"max_batch_size":c.max_batch_size,"dimension":c.dimension,"expected_provider_model":c.expected_provider_model}),c.max_calls_per_day)),
+            roles,
         }
     }
-    /// Local configuration and protected credential readiness; zero provider calls.
-    pub fn readiness(&self, role: ModelRole) -> ModelReadiness {
-        let Some((resource, _, _)) = self.binding(role) else {
-            return ModelReadiness {
-                role,
-                state: ModelReadinessState::WaitingConfiguration,
-                resource: None,
-                reason: Some("model role is not configured".into()),
-            };
-        };
-        let ready = self.paths.read_secret(&resource.credential).is_ok();
+    pub fn roles(&self) -> &RoleRegistry {
+        &self.roles
+    }
+    /// Pure resolution: signatures and cache lookup remain available without credentials.
+    pub fn resolve(&self, snapshot: &ConfigSnapshot, role: &str) -> Result<ResolvedModel> {
+        resolve_registered(snapshot, &self.roles, role)
+    }
+    pub fn readiness(&self, snapshot: &ConfigSnapshot, role: &str) -> ModelReadiness {
+        let resolved = self.resolve(snapshot, role);
+        let ready = resolved.as_ref().is_ok_and(|model| {
+            model.routes.iter().any(|route| {
+                route.provider.enabled && self.paths.read_secret(&route.provider.credential).is_ok()
+            })
+        });
         ModelReadiness {
-            role,
+            role: role.into(),
             state: if ready {
                 ModelReadinessState::Ready
             } else {
                 ModelReadinessState::WaitingConfiguration
             },
-            resource: Some(resource.into()),
+            routes: resolved
+                .as_ref()
+                .map(|m| m.routes.iter().map(|r| r.id.clone()).collect())
+                .unwrap_or_default(),
             reason: if ready {
                 None
             } else {
-                Some("model credential is missing or unreadable".into())
+                Some(resolved.err().map_or_else(
+                    || "model credentials are missing, unreadable or provider is disabled".into(),
+                    |e| e.message,
+                ))
             },
         }
     }
-    pub fn resolve(
+    pub fn ready_resolved(&self, model: &ResolvedModel) -> bool {
+        model.routes.iter().any(|route| {
+            route.provider.enabled && self.paths.read_secret(&route.provider.credential).is_ok()
+        })
+    }
+    pub(super) fn target(
         &self,
-        role: ModelRole,
-        requirements: &ModelRequirements,
-    ) -> Result<ResolvedModel, ModelFailure> {
-        let (resource, parameters, max_calls_per_day) = self
-            .binding(role)
-            .ok_or_else(|| ModelFailure::waiting("model role is not configured"))?;
-        requirements.validate(resource.protocol)?;
+        route: &ResolvedRoute,
+    ) -> std::result::Result<ServiceTarget, ModelFailure> {
+        if !route.provider.enabled {
+            return Err(ModelFailure::waiting("provider is disabled"));
+        }
         let secret = self
             .paths
-            .read_secret(&resource.credential)
+            .read_secret(&route.provider.credential)
             .map_err(|error| {
                 ModelFailure::waiting("model credential is missing or unreadable")
                     .with_source(error.into_boxed_dyn_error())
             })?;
-        let resource_metadata = ResourceMetadata::from(resource);
-        let fingerprint = format!(
-            "{:x}",
-            Sha256::digest(
-                serde_json::to_vec(&(&resource_metadata, &parameters, max_calls_per_day))
-                    .expect("resolved model metadata is serializable")
-            )
-        );
-        Ok(ResolvedModel {
-            role,
-            resource: resource_metadata,
-            parameters,
-            max_calls_per_day,
-            fingerprint,
-            target: ServiceTarget {
-                endpoint: Endpoint::from_owned(resource.endpoint.clone()),
-                auth: AuthData::from_single(secret),
-                model: ModelIden::new(AdapterKind::OpenAI, resource.model.clone()),
-            },
+        Ok(ServiceTarget {
+            endpoint: Endpoint::from_owned(route.resource.endpoint.clone()),
+            auth: AuthData::from_single(secret),
+            model: ModelIden::new(AdapterKind::OpenAI, route.resource.model.clone()),
         })
     }
-    pub(super) fn inspect(&self, resource: &ModelResource) -> Value {
-        let ready = self.paths.read_secret(&resource.credential).is_ok();
-        json!({"state":if ready {"ready"}else{"waiting_configuration"},
-            "reason":if ready {None}else{Some("model credential is missing or unreadable")},"resource":ResourceMetadata::from(resource)})
+}
+
+pub fn validate_snapshot(snapshot: &ConfigSnapshot, roles: &RoleRegistry) -> Result<()> {
+    for role in roles.definitions() {
+        if snapshot.get(role.binding_key)?.is_some() {
+            resolve_registered(snapshot, roles, role.id)?;
+        }
     }
+    Ok(())
+}
+fn resolve_registered(
+    snapshot: &ConfigSnapshot,
+    roles: &RoleRegistry,
+    role: &str,
+) -> Result<ResolvedModel> {
+    let definition = roles.get(role)?;
+    let catalog = snapshot.get(CATALOG)?;
+    catalog.validate()?;
+    let binding = snapshot.get(definition.binding_key)?.ok_or_else(|| {
+        Error::new(
+            nous_domain::ErrorCode::CapabilityUnavailable,
+            "model role is not configured",
+        )
+    })?;
+    binding.validate()?;
+    let mut routes = Vec::new();
+    for id in &binding.routes {
+        let route = catalog
+            .routes
+            .get(id)
+            .ok_or_else(|| Error::invalid("role references a missing route"))?;
+        let model = &catalog.models[&route.model];
+        let provider = &catalog.providers[&model.provider];
+        if !definition
+            .requirements
+            .input_modalities
+            .iter()
+            .all(|m| model.input_modalities.contains(m))
+            || !definition
+                .requirements
+                .capabilities
+                .iter()
+                .all(|c| model.capabilities.contains(c))
+        {
+            return Err(Error::invalid(
+                "route model does not meet the registered role requirements",
+            ));
+        }
+        routes.push(ResolvedRoute {
+            id: id.clone(),
+            resource: ResourceMetadata {
+                id: route.model.clone(),
+                provider: model.provider.clone(),
+                endpoint: provider.endpoint.clone(),
+                protocol: model.protocol,
+                model: model.request_model.clone(),
+            },
+            parameters: route.parameters.clone(),
+            input_modalities: model.input_modalities.clone(),
+            capabilities: model.capabilities.clone(),
+            embedding: model.embedding.clone(),
+            pricing: model.pricing.clone(),
+            provider: provider.clone(),
+        });
+    }
+    // Fallback preserves the complete immutable vector space.
+    if routes[0].embedding.is_some() {
+        let expected = routes[0].space()?;
+        if routes
+            .iter()
+            .skip(1)
+            .any(|route| !route.space().is_ok_and(|space| space == expected))
+        {
+            return Err(Error::invalid(
+                "embedding routes require identical complete space signatures",
+            ));
+        }
+    }
+    let keys = [CATALOG.path(), definition.binding_key.path()];
+    Ok(ResolvedModel {
+        scope: snapshot.scope.clone(),
+        role: role.into(),
+        routes,
+        binding,
+        prompt_template: None,
+        config_digest: snapshot.digest_for(&keys)?,
+        config_sources: keys
+            .iter()
+            .filter_map(|key| {
+                snapshot
+                    .source(key)
+                    .cloned()
+                    .map(|source| ((*key).into(), source))
+            })
+            .collect(),
+    })
 }

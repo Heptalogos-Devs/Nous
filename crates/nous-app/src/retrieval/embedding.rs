@@ -1,6 +1,6 @@
 //! Shared admission and content reuse for every typed cognitive vector target.
 use super::*;
-use crate::common::models::EmbeddingConfig;
+use crate::common::models::ResolvedModel;
 use nous_storage::{OperationKey, WriteTransaction};
 use std::time::Duration;
 
@@ -27,10 +27,10 @@ impl App {
         }
         let namespace = self.database.subject_namespace(subject).await?;
         ctx.require_subject(&namespace, subject)?;
-        let config = self.embedding_configuration()?;
+        let config = self.embedding_configuration(&namespace, subject).await?;
         let snapshot = self
             .database
-            .cognitive_retrieval_snapshot(&namespace, subject, &config.space().id, None, limit)
+            .cognitive_retrieval_snapshot(&namespace, subject, &config.space()?.id, None, limit)
             .await?;
         let view = super::view::QueryView::from_snapshot(snapshot)?;
         let request = QueryRequest {
@@ -54,7 +54,7 @@ impl App {
             "embedding.sync",
             &scope,
             operation_id,
-            &json!({"subject_id":subject,"limit":limit,"space":config.space()}),
+            &json!({"subject_id":subject,"limit":limit,"space":config.space()?}),
         )?;
         self.admit_embedding_inputs(&namespace, subject, inputs, key, &config)
             .await
@@ -67,9 +67,9 @@ impl App {
         namespace: &NamespaceId,
         subject: &SubjectId,
         inputs: Vec<EmbeddingInputItem>,
+        config: &ResolvedModel,
     ) -> Result<OperationReceipt> {
         ctx.require_subject(namespace, subject)?;
-        let config = self.embedding_configuration()?;
         let mut targets = inputs
             .iter()
             .map(|input| Ok((input.source_key()?, input.source_hash())))
@@ -80,19 +80,27 @@ impl App {
             "embedding.inputs",
             &format!("namespace:{namespace}/subject:{subject}"),
             operation_id,
-            &json!({"space":config.space(),"inputs":targets}),
+            &json!({"space":config.space()?,"inputs":targets}),
         )?;
-        self.admit_embedding_inputs(namespace, subject, inputs, key, &config)
+        self.admit_embedding_inputs(namespace, subject, inputs, key, config)
             .await
     }
 
-    fn embedding_configuration(&self) -> Result<EmbeddingConfig> {
-        self.model.embedding_config().cloned().ok_or_else(|| {
-            Error::new(
-                ErrorCode::CapabilityUnavailable,
-                "text embedding resource is not configured",
+    pub(super) async fn embedding_configuration(
+        &self,
+        namespace: &NamespaceId,
+        subject: &SubjectId,
+    ) -> Result<ResolvedModel> {
+        self.model
+            .resolve(
+                &ConfigScope::Subject {
+                    namespace_id: namespace.clone(),
+                    subject_id: subject.clone(),
+                },
+                super::embedding_model::ROLE,
             )
-        })
+            .await
+            .map_err(|error| error.to_domain_error())
     }
 
     async fn admit_embedding_inputs(
@@ -101,13 +109,13 @@ impl App {
         subject: &SubjectId,
         inputs: Vec<EmbeddingInputItem>,
         key: OperationKey,
-        config: &EmbeddingConfig,
+        config: &ResolvedModel,
     ) -> Result<OperationReceipt> {
         let mut tx = match self.database.begin_operation(key).await? {
             BeginOperation::Replay(receipt) => return Ok(receipt),
             BeginOperation::New(tx) => tx,
         };
-        let space = config.space();
+        let space = config.space()?;
         tx.save_embedding_space(&space).await?;
         let mut unique = BTreeMap::<String, EmbeddingInputItem>::new();
         for input in inputs {
@@ -182,18 +190,29 @@ impl App {
                 fresh.push(input);
             }
         }
+        let max_input_bytes = config
+            .routes
+            .iter()
+            .map(|route| route.parameters.max_input_bytes)
+            .min()
+            .expect("resolved routes nonempty");
+        let max_batch_size = config
+            .routes
+            .iter()
+            .map(|route| route.parameters.max_batch_size)
+            .min()
+            .expect("resolved routes nonempty");
         let mut batch = Vec::new();
         let mut bytes = 0;
         for input in fresh {
-            if input.text.len() > config.max_input_bytes {
+            if input.text.len() > max_input_bytes {
                 return Err(Error::new(
                     ErrorCode::ResourceExhausted,
                     "embedding input exceeds max_input_bytes",
                 ));
             }
             if !batch.is_empty()
-                && (batch.len() >= config.max_batch_size
-                    || bytes + input.text.len() > config.max_input_bytes)
+                && (batch.len() >= max_batch_size || bytes + input.text.len() > max_input_bytes)
             {
                 jobs.insert(
                     self.queue_embedding_batch(
@@ -286,8 +305,9 @@ impl App {
         namespace: &NamespaceId,
         subject: &SubjectId,
         text: &str,
+        config: &ResolvedModel,
     ) -> Result<EmbeddingRecord> {
-        let space = self.embedding_configuration()?.space();
+        let space = config.space()?;
         let input = EmbeddingInputItem::query(text)?;
         if let Some(record) = self
             .database
@@ -309,6 +329,7 @@ impl App {
                 namespace,
                 subject,
                 vec![input.clone()],
+                config,
             )
             .await?;
         let jobs: Vec<String> = serde_json::from_value(receipt.result["jobs"].clone())?;

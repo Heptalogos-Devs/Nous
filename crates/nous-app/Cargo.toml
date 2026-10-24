@@ -5,6 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+base64.workspace = true
 nous-domain.workspace = true
 nous-storage.workspace = true
 nous-retrieval.workspace = true

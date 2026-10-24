@@ -1,7 +1,10 @@
 //! Command parsing and presentation; application decisions remain in App services.
 pub mod bundle;
 pub mod cognition;
+mod configuration;
 pub mod maintenance;
+mod models;
+mod scope;
 use crate::{
     bootstrap::{connect, serve},
     http::{
@@ -13,12 +16,10 @@ use crate::{
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use cognition::{MemoryCommand, ModelCommand, QueryArgs};
+use configuration::ConfigCommand;
 use nous_app::{
     App,
-    common::{
-        instance::{InstanceConfig, InstanceGuard, InstancePaths},
-        network::NetworkClients,
-    },
+    common::instance::{InstanceConfig, InstanceGuard, InstancePaths},
 };
 use nous_domain::{AccessScope, CallContext, NamespaceId, SubjectId};
 use serde_json::{Value, json};
@@ -67,7 +68,7 @@ enum Command {
     Stop,
     /// Show all resolved managed paths without opening storage.
     Paths,
-    /// Read effective bootstrap configuration, its source, or JSON Schema.
+    /// Manage scoped configuration; bootstrap schema and validation remain offline.
     Config {
         #[command(subcommand)]
         command: Option<ConfigCommand>,
@@ -123,12 +124,6 @@ enum Command {
     },
 }
 
-#[derive(Subcommand)]
-enum ConfigCommand {
-    Show,
-    Schema,
-    Validate,
-}
 #[derive(Subcommand)]
 enum BackupCommand {
     Create,
@@ -268,27 +263,28 @@ pub(crate) async fn execute(cli: Cli) -> Result<()> {
         } => print_json(nous_app::backup::restore(&source, paths).await?)?,
         Command::Stop => print_json(connect(&paths, cli.url, cli.token_file)?.stop().await?)?,
         Command::Paths => print_json(serde_json::to_value(paths)?)?,
-        Command::Config { command } => match command.unwrap_or(ConfigCommand::Show) {
-            ConfigCommand::Schema => {
-                print_json(serde_json::to_value(schemars::schema_for!(InstanceConfig))?)?
-            }
-            ConfigCommand::Show => print_json(InstanceConfig::effective(&paths)?)?,
-            ConfigCommand::Validate => {
-                InstanceConfig::load(&paths)?;
-                print_json(json!({"valid":true,"config":paths.config}))?;
-            }
-        },
+        Command::Config { command } => {
+            configuration::execute(&paths, cli.url, cli.token_file, command.unwrap_or_default())
+                .await?
+        }
         Command::Model {
             command: ModelCommand::Check,
         } => {
-            let config = InstanceConfig::load(&paths)?;
-            let network = NetworkClients::new(&config.network)?;
-            let runtime = nous_app::common::models::ModelRuntime::new(
-                &paths,
-                &config.models,
-                network.http().clone(),
+            let _guard = InstanceGuard::acquire(&paths)?;
+            let app = nous_app::App::open(paths).await?;
+            let value = app.model_status(&nous_domain::CallContext::admin()).await?;
+            app.close().await;
+            print_json(value)?;
+        }
+        Command::Model {
+            command: command @ (ModelCommand::Contract { .. } | ModelCommand::Preview { .. }),
+        } => {
+            let operation = models::operation(command)?;
+            print_json(
+                connect(&paths, cli.url, cli.token_file)?
+                    .execute(&operation)
+                    .await?,
             )?;
-            print_json(runtime.inspect())?;
         }
         Command::Status => {
             // A local stopped instance needs no token and no SQLite connection.

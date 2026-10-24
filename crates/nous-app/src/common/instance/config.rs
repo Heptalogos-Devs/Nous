@@ -1,4 +1,4 @@
-//! Bootstrap configuration is one current validated snapshot with field provenance.
+//! Bootstrap file decoding; effective policy and provenance belong to Configuration.
 use super::{
     InstancePaths, SecretRef,
     credentials::{protect_credentials_directory, protect_secret_file},
@@ -19,7 +19,7 @@ pub struct InstanceConfig {
     pub server: ServerConfig,
     pub auth: AuthConfig,
     pub network: NetworkConfig,
-    pub models: crate::common::models::ModelConfig,
+    pub models: crate::common::models::ModelsDeployment,
 }
 
 impl InstanceConfig {
@@ -36,59 +36,11 @@ impl InstanceConfig {
     }
 
     pub fn validate(&self) -> Result<()> {
-        if self.server.max_body_bytes == 0 || self.server.max_body_bytes > 64 * 1024 * 1024 {
-            bail!("server.max_body_bytes must be between 1 and 67108864");
-        }
-        if self.network.connect_timeout_seconds == 0 || self.network.request_timeout_seconds == 0 {
-            bail!("network timeouts must be positive");
-        }
+        self.server.validate()?;
+        self.auth.validate()?;
+        self.network.validate()?;
         self.models.validate()?;
         Ok(())
-    }
-
-    pub fn effective(paths: &InstancePaths) -> Result<serde_json::Value> {
-        let text = fs::read_to_string(&paths.config)?;
-        let config = Self::parse(&text, paths)?;
-        let explicit: toml::Value = toml::from_str(&text)?;
-        let values = serde_json::to_value(&config)?;
-        let mut sources = serde_json::Map::new();
-        collect_sources("", &values, &explicit, &mut sources);
-        Ok(serde_json::json!({
-            "values": values,
-            "sources": sources,
-            "restart_required": ["server", "auth", "network", "models"],
-            "file": paths.config,
-        }))
-    }
-}
-
-fn collect_sources(
-    prefix: &str,
-    value: &serde_json::Value,
-    explicit: &toml::Value,
-    output: &mut serde_json::Map<String, serde_json::Value>,
-) {
-    if let serde_json::Value::Object(fields) = value {
-        for (name, child) in fields {
-            let key = if prefix.is_empty() {
-                name.clone()
-            } else {
-                format!("{prefix}.{name}")
-            };
-            collect_sources(&key, child, explicit, output);
-        }
-    } else {
-        let found = prefix
-            .split('.')
-            .try_fold(explicit, |current, key| current.get(key));
-        output.insert(
-            prefix.to_owned(),
-            serde_json::json!(if found.is_some() {
-                "instance"
-            } else {
-                "builtin"
-            }),
-        );
     }
 }
 
@@ -97,6 +49,14 @@ fn collect_sources(
 pub struct ServerConfig {
     pub listen: SocketAddr,
     pub max_body_bytes: usize,
+}
+impl ServerConfig {
+    pub fn validate(&self) -> Result<()> {
+        if self.max_body_bytes == 0 || self.max_body_bytes > 64 * 1024 * 1024 {
+            bail!("server.max_body_bytes must be between 1 and 67108864");
+        }
+        Ok(())
+    }
 }
 
 impl Default for ServerConfig {
@@ -112,6 +72,11 @@ impl Default for ServerConfig {
 #[serde(default, deny_unknown_fields)]
 pub struct AuthConfig {
     pub admin_token: SecretRef,
+}
+impl AuthConfig {
+    pub fn validate(&self) -> Result<()> {
+        self.admin_token.validate()
+    }
 }
 
 impl Default for AuthConfig {

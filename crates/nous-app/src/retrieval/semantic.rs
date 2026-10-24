@@ -1,6 +1,7 @@
 //! One frozen candidate/source graph for Dense, VCP and Hybrid discovery.
 use super::view::QueryView;
 use super::*;
+use crate::common::models::ResolvedModel;
 use nous_retrieval::{
     serving::{ServingCandidate, ServingGeneration, ServingProfile, ServingSnapshot, ServingTag},
     vector::VectorGenerationIdentity,
@@ -14,7 +15,7 @@ impl App {
         namespace: &NamespaceId,
         request: &QueryRequest,
         view: &mut QueryView,
-        space: &str,
+        config: &ResolvedModel,
     ) -> Result<()> {
         let inputs = view.pending_inputs(request)?;
         if inputs.is_empty() {
@@ -27,11 +28,14 @@ impl App {
                 namespace,
                 &request.subject_id,
                 inputs,
+                config,
             )
             .await?;
         let jobs: Vec<String> = serde_json::from_value(receipt.result["jobs"].clone())?;
         self.wait_embeddings(ctx, &jobs).await?;
-        *view = self.query_view(namespace, request, space).await?;
+        *view = self
+            .query_view(namespace, request, &config.space()?.id)
+            .await?;
         Ok(())
     }
 
@@ -41,16 +45,11 @@ impl App {
         namespace: &NamespaceId,
         request: &QueryRequest,
         view: &QueryView,
+        config: &ResolvedModel,
     ) -> Result<(Vec<(String, f32)>, SemanticQueryInfo, bool)> {
-        let config = self.model.embedding_config().ok_or_else(|| {
-            Error::new(
-                ErrorCode::CapabilityUnavailable,
-                "text embedding resource is not configured",
-            )
-        })?;
-        let space = config.space();
+        let space = config.space()?;
         let query = self
-            .query_embedding(ctx, namespace, &request.subject_id, &request.text)
+            .query_embedding(ctx, namespace, &request.subject_id, &request.text, config)
             .await?;
         let eligible = view.selected(request).collect::<Vec<_>>();
         let mut candidates = Vec::new();

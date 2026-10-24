@@ -9,7 +9,9 @@ use sha2::{Digest, Sha256};
 mod projection;
 pub use projection::cognitive_embedding_text;
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(
     tag = "kind",
     content = "reference",
@@ -40,7 +42,7 @@ impl EmbeddingTarget {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct EmbeddingInputItem {
     pub target: EmbeddingTarget,
@@ -115,7 +117,7 @@ pub struct EmbeddingRun {
     pub inputs: Vec<EmbeddingInputItem>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct EmbeddingSpace {
     pub id: String,
     pub resource_id: String,

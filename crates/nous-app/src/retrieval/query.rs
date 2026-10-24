@@ -7,20 +7,19 @@ impl App {
         request.validate()?;
         let namespace = self.database.subject_namespace(&request.subject_id).await?;
         ctx.require_subject(&namespace, &request.subject_id)?;
-        let space = if request.mode == QueryMode::Lexical || request.reference.is_some() {
-            String::new()
+        let model = if request.mode == QueryMode::Lexical || request.reference.is_some() {
+            None
         } else {
-            self.model
-                .embedding_config()
-                .ok_or_else(|| {
-                    Error::new(
-                        ErrorCode::CapabilityUnavailable,
-                        "text embedding resource is not configured",
-                    )
-                })?
-                .space()
-                .id
+            Some(
+                self.embedding_configuration(&namespace, &request.subject_id)
+                    .await?,
+            )
         };
+        let space = model
+            .as_ref()
+            .map(|model| model.space().map(|space| space.id))
+            .transpose()?
+            .unwrap_or_default();
         let mut view = self.query_view(&namespace, &request, &space).await?;
         if request
             .min_commit_seq
@@ -43,10 +42,11 @@ impl App {
                 .await?;
             (ranks, generation, true)
         } else {
-            self.ensure_query_vectors(ctx, &namespace, &request, &mut view, &space)
+            let model = model.as_ref().expect("semantic query resolved its model");
+            self.ensure_query_vectors(ctx, &namespace, &request, &mut view, model)
                 .await?;
             let (mut ranks, info, is_complete) = self
-                .semantic_ranks(ctx, &namespace, &request, &view)
+                .semantic_ranks(ctx, &namespace, &request, &view, model)
                 .await?;
             if request.mode == QueryMode::Hybrid {
                 let (lexical, _) = self

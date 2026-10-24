@@ -1,5 +1,5 @@
 use super::*;
-use crate::common::models::structured::{RawStructuredProposal, StructuredFormationInput};
+use crate::cognition::structured::model::{RawStructuredProposal, StructuredFormationInput};
 use nous_storage::{StructuredFormationRun, StructuredGroupState};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 impl App {
@@ -17,7 +17,28 @@ impl App {
         {
             return Ok(());
         }
-        let input: StructuredFormationInput = serde_json::from_value(run.input.clone())?;
+        let metadata: crate::common::models::InvocationMetadata<StructuredFormationInput> =
+            serde_json::from_value(call.request.clone())?;
+        let input = metadata.input;
+        let accepted: StructuredFormationInput = serde_json::from_value(run.input.clone())?;
+        if input.namespace_id != accepted.namespace_id
+            || input.subject_id != accepted.subject_id
+            || input.slots.len() != accepted.slots.len()
+            || input
+                .slots
+                .iter()
+                .zip(&accepted.slots)
+                .any(|(actual, expected)| {
+                    actual.key != expected.key
+                        || actual.id != expected.id
+                        || actual.kind != expected.kind
+                        || actual.expected_revision != expected.expected_revision
+                })
+        {
+            return Err(Error::invalid(
+                "producer input differs from accepted formation targets",
+            ));
+        }
         let slots = input
             .slots
             .iter()
@@ -132,7 +153,23 @@ impl App {
             }
             let mut current = tx.structured_formation(&run.job.id).await?;
             let groups = tx.structured_formation_groups(&run.job.id).await?;
-            let result = json!({"model_call_id":call.id,"group_keys":groups.iter().map(|group|&group.key).collect::<Vec<_>>()});
+            let mut objects = Vec::new();
+            for group in &groups {
+                if group.state == StructuredGroupState::Applied {
+                    let outcome = group
+                        .result
+                        .as_ref()
+                        .ok_or_else(|| Error::internal("adopted group has no result"))?;
+                    let adopted: Vec<StructuredObject> =
+                        serde_json::from_value(outcome["objects"].clone())?;
+                    objects.extend(adopted.iter().map(StructuredObject::reference));
+                }
+            }
+            let result = serde_json::to_value(super::formation::FormationOutcome {
+                model_call_id: call.id.clone(),
+                group_keys: groups.iter().map(|group| group.key.clone()).collect(),
+                objects,
+            })?;
             self.tasks
                 .complete_in(&mut tx, &mut current.job, result.clone())
                 .await?;

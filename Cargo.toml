@@ -22,6 +22,7 @@ nous-app = { path = "crates/nous-app" }
 nous-retrieval = { path = "crates/nous-retrieval" }
 nous-vcp = { path = "crates/nous-vcp" }
 anyhow = "1"
+base64 = "0.23"
 apalis = { version = "1.0.0", features = ["retry", "task-context"] }
 apalis-core = "1.0.0"
 apalis-sqlite = "1.0.0"

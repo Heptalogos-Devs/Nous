@@ -21,19 +21,25 @@ pub(crate) fn connect(
     } else {
         None
     };
-    let running_address = if url.is_none() && InstanceGuard::is_running(paths)? {
-        let state = std::fs::read(paths.resolve("run/host.json")?)
+    let running_state = if url.is_none() && InstanceGuard::is_running(paths)? {
+        std::fs::read(paths.resolve("run/host.json")?)
             .ok()
-            .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok());
-        state.and_then(|state| {
-            state
-                .get("listen")
-                .and_then(Value::as_str)
-                .and_then(|address| address.parse::<SocketAddr>().ok())
-        })
+            .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
     } else {
         None
     };
+    let running_address = running_state
+        .as_ref()
+        .and_then(|state| state.get("listen"))
+        .and_then(Value::as_str)
+        .and_then(|address| address.parse::<SocketAddr>().ok());
+    let active_auth = running_state
+        .as_ref()
+        .and_then(|state| state.get("auth"))
+        .map(|value| {
+            serde_json::from_value::<nous_app::common::instance::AuthConfig>(value.clone())
+        })
+        .transpose()?;
     let base_url = url
         .or_else(|| {
             running_address
@@ -61,13 +67,11 @@ pub(crate) fn connect(
         );
         token
     } else {
-        paths.read_secret(
-            &config
-                .as_ref()
-                .context("--token-file is required for a remote service")?
-                .auth
-                .admin_token,
-        )?
+        let auth = active_auth
+            .as_ref()
+            .or_else(|| config.as_ref().map(|config| &config.auth))
+            .context("--token-file is required for a remote service")?;
+        paths.read_secret(&auth.admin_token)?
     };
     let network = config.map(|c| c.network).unwrap_or_default();
     ApiClient::new(
@@ -78,18 +82,23 @@ pub(crate) fn connect(
 }
 
 pub(crate) async fn serve(paths: InstancePaths, listen: Option<SocketAddr>) -> Result<()> {
-    let mut config = InstanceConfig::load(&paths)?;
+    anyhow::ensure!(
+        paths.config.exists(),
+        "instance is not initialized; run nous init"
+    );
     paths.ensure_layout()?;
     let _guard = InstanceGuard::acquire(&paths)?;
+    let app = App::open(paths.clone()).await?;
+    let mut config = app.bootstrap_config().clone();
     if let Some(listen) = listen {
         config.server.listen = listen;
     }
     let tokens = Arc::new(TokenStore::load(&paths, &config)?);
-    let app = App::open(paths.clone()).await?;
     let listener = tokio::net::TcpListener::bind(config.server.listen)
         .await
         .context("cannot bind instance listener")?;
     let address = listener.local_addr()?;
+    app.activate_bootstrap_configuration(&config.server).await?;
     let cancellation = CancellationToken::new();
     let router = http::router(
         ApiState {
@@ -104,7 +113,7 @@ pub(crate) async fn serve(paths: InstancePaths, listen: Option<SocketAddr>) -> R
     std::fs::write(
         &run_path,
         serde_json::to_vec_pretty(
-            &json!({"pid":std::process::id(),"version":env!("CARGO_PKG_VERSION"),"listen":address}),
+            &json!({"pid":std::process::id(),"version":env!("CARGO_PKG_VERSION"),"listen":address,"auth":config.auth}),
         )?,
     )?;
     tracing::info!(instance=%paths.root.display(),listen=%address,"Nous Wave is serving");

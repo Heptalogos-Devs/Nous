@@ -60,6 +60,9 @@ pub struct CancelJob {
 
 #[derive(Clone)]
 pub enum Operation {
+    ModelContract(nous_app::model_management::ModelContractRequest),
+    ModelPreview(nous_app::model_management::ModelPreviewRequest),
+    Configuration(nous_app::common::configuration::ConfigRequest),
     Structured(Box<crate::http::structured::StructuredOperation>),
     Maintenance(crate::http::maintenance::MaintenanceOperation),
     CreateBackup,
@@ -80,6 +83,9 @@ pub enum Operation {
 impl Operation {
     pub async fn execute(&self, app: &App, ctx: &CallContext) -> Result<Value, Error> {
         match self {
+            Self::ModelContract(request) => app.model_contract(ctx, request.clone()).await,
+            Self::ModelPreview(request) => app.model_preview(ctx, request.clone()).await,
+            Self::Configuration(request) => app.configuration_request(ctx, request.clone()).await,
             Self::Structured(operation) => operation.execute(app, ctx).await,
             Self::Maintenance(operation) => operation.execute(app, ctx).await,
             Self::CreateBackup => app.create_backup(ctx).await,
@@ -153,6 +159,13 @@ impl Operation {
 
     pub fn request(&self) -> (&'static str, String, Option<Value>) {
         match self {
+            Self::ModelContract(request) => {
+                ("POST", "/api/models/contract".into(), Some(json!(request)))
+            }
+            Self::ModelPreview(request) => {
+                ("POST", "/api/models/preview".into(), Some(json!(request)))
+            }
+            Self::Configuration(request) => ("POST", "/api/config".into(), Some(json!(request))),
             Self::Structured(operation) => operation.request(),
             Self::Maintenance(operation) => operation.request(),
             Self::CreateBackup => ("POST", "/api/backups".into(), None),

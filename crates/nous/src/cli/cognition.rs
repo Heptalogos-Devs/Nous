@@ -192,6 +192,27 @@ impl QueryArgs {
 
 #[derive(Subcommand)]
 pub enum ModelCommand {
+    /// Show the role's typed input contract, requirements and Prompt binding.
+    Contract {
+        #[arg(long)]
+        role: String,
+        /// Typed role input used to build the dynamic messages and output contract.
+        #[arg(long)]
+        file: Option<std::path::PathBuf>,
+        #[command(flatten)]
+        scope: super::scope::ScopeArgs,
+    },
+    /// Build the actual invocation locally in the service without a provider call.
+    Preview {
+        #[arg(long)]
+        role: String,
+        #[arg(long)]
+        file: std::path::PathBuf,
+        #[arg(long)]
+        prompt_file: Option<std::path::PathBuf>,
+        #[command(flatten)]
+        scope: super::scope::ScopeArgs,
+    },
     /// Read an authorized model call and its recorded provider evidence.
     Call { id: ModelCallId },
     /// Inspect the service's configured formation resource and readiness.

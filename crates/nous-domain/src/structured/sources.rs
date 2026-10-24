@@ -77,26 +77,31 @@ impl EvidenceLink {
     pub fn validate(&self) -> Result<()> {
         self.source.validate()?;
         optional_text(&self.explanation, "evidence explanation", 65536)?;
-        let compatible = match self.relation {
-            Some(
-                EpistemicRelation::Supports
-                | EpistemicRelation::Corroborates
-                | EpistemicRelation::InferredFrom,
-            ) => self.polarity == EvidencePolarity::Support,
-            Some(
-                EpistemicRelation::Contradicts
-                | EpistemicRelation::Weakens
-                | EpistemicRelation::Counterexample,
-            ) => self.polarity == EvidencePolarity::Contradict,
-            Some(EpistemicRelation::Corrects) => self.polarity != EvidencePolarity::Context,
-            None => true,
-        };
-        if !compatible {
+        if !self.polarity.accepts(self.relation) {
             return Err(Error::invalid(
                 "epistemic relation disagrees with evidence polarity",
             ));
         }
         Ok(())
+    }
+}
+
+impl EvidencePolarity {
+    pub fn accepts(self, relation: Option<EpistemicRelation>) -> bool {
+        match relation {
+            Some(
+                EpistemicRelation::Supports
+                | EpistemicRelation::Corroborates
+                | EpistemicRelation::InferredFrom,
+            ) => self == EvidencePolarity::Support,
+            Some(
+                EpistemicRelation::Contradicts
+                | EpistemicRelation::Weakens
+                | EpistemicRelation::Counterexample,
+            ) => self == EvidencePolarity::Contradict,
+            Some(EpistemicRelation::Corrects) => self != EvidencePolarity::Context,
+            None => true,
+        }
     }
 }
 

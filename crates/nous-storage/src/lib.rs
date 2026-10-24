@@ -2,6 +2,7 @@
 mod authority;
 mod codec;
 mod cognition;
+mod configuration;
 mod model;
 mod source;
 mod vector;

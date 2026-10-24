@@ -1,5 +1,7 @@
-use crate::common::models::FormationInput;
+mod decoder;
+pub mod model;
 use crate::{App, operation_key};
+use model::FormationInput;
 use nous_domain::*;
 use nous_storage::{BeginOperation, OperationReceipt};
 use serde_json::{Value, json};
@@ -127,7 +129,7 @@ impl App {
     }
     pub async fn model_status(&self, ctx: &CallContext) -> Result<Value> {
         ctx.require_admin()?;
-        Ok(self.model.inspect())
+        self.model.inspect(&ConfigScope::Instance).await
     }
 
     pub(crate) async fn run_memory_formation(
@@ -160,14 +162,21 @@ impl App {
             source_event_kind: observation.kind,
             text: source.text,
         };
+        let plan = self.model.plan(
+            ConfigScope::Subject {
+                namespace_id: namespace.clone(),
+                subject_id: subject.clone(),
+            },
+            model::ROLE,
+        );
         let Some(call) = self
             .calls
             .invoke(
                 &job.id,
                 "formation",
                 &cancel,
-                || async { self.model.prepare_memory(input) },
-                |prepared| self.model.execute_memory(prepared),
+                |attempt| model::prepare(&plan, attempt, input.clone()),
+                |prepared| model::execute(&self.model, prepared),
             )
             .await?
         else {

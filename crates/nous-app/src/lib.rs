@@ -5,11 +5,13 @@ pub mod common;
 mod composition;
 pub mod import_format;
 mod lifecycle;
+pub mod model_management;
 pub mod retrieval;
 
 use chrono::Utc;
 use common::{
     clock::Clock,
+    configuration::Configuration,
     content::ObjectStore,
     instance::{self, InstancePaths},
     model_calls::ModelCalls,
@@ -35,6 +37,7 @@ pub struct App {
     paths: Arc<InstancePaths>,
     config: Arc<instance::InstanceConfig>,
     model: Arc<ModelRuntime>,
+    pub(crate) configuration: Configuration,
     tasks: Tasks,
     calls: ModelCalls,
     clock: Clock,
@@ -52,16 +55,32 @@ impl App {
         let paths = Arc::new(paths);
         let database = Database::open(&paths.database).await?;
         let objects = ObjectStore::new(paths.clone());
-        let config = if paths.config.exists() {
+        let mut config = if paths.config.exists() {
             instance::InstanceConfig::load(&paths)
                 .map_err(|error| Error::invalid(error.to_string()))?
         } else {
             instance::InstanceConfig::default()
         };
+        let clock = Clock;
+        let roles = composition::model_roles()?;
+        let mut registry = common::configuration::ConfigRegistryBuilder::new();
+        common::configuration::register_core(&mut registry)?;
+        common::models::register_configuration(&mut registry, &roles)?;
+        let configuration = Configuration::new(
+            database.clone(),
+            registry.finish(),
+            &serde_json::to_value(&config)?,
+            clock,
+        )
+        .await?;
+        let desired = configuration.snapshot(&ConfigScope::Instance, true).await?;
+        config.server = desired.get(common::configuration::SERVER)?;
+        config.auth = desired.get(common::configuration::AUTH)?;
+        config.network = desired.get(common::configuration::NETWORK)?;
         let network = network::NetworkClients::new(&config.network)
             .map_err(|error| Error::new(ErrorCode::DependencyUnavailable, error.to_string()))?;
         let model = Arc::new(
-            ModelRuntime::new(&paths, &config.models, network.http().clone())
+            ModelRuntime::new(&paths, configuration.clone(), roles, network.http().clone())
                 .map_err(|error| Error::invalid(error.to_string()))?,
         );
         let index_path = paths
@@ -71,7 +90,6 @@ impl App {
             .await
             .map_err(|error| Error::internal(error.to_string()))?
             .map_err(|error| Error::new(ErrorCode::DependencyUnavailable, error.to_string()))?;
-        let clock = Clock;
         let tasks = Tasks::new(database.clone(), clock);
         let calls = ModelCalls::new(database.clone(), tasks.clone(), clock);
         Ok(Self {
@@ -80,6 +98,7 @@ impl App {
             paths,
             config: Arc::new(config),
             model,
+            configuration,
             tasks,
             calls,
             clock,
@@ -89,6 +108,9 @@ impl App {
         })
     }
 
+    pub fn bootstrap_config(&self) -> &instance::InstanceConfig {
+        &self.config
+    }
     pub fn paths(&self) -> &InstancePaths {
         &self.paths
     }
@@ -106,7 +128,7 @@ impl App {
         Ok(
             json!({"version":env!("CARGO_PKG_VERSION"),"storage":self.database.status().await?,
             "capabilities":{"material":true,"observation":true,"memory_formation":true,"structured_cognition":true,"structured_formation":true,"lexical_query":true,"text_embedding":true,"dense_query":true,"vcp_query":true},
-            "model":self.model.inspect(),"index":self.retrieval.coverage().ok()}),
+            "model":self.model.inspect(&ConfigScope::Instance).await?,"index":self.retrieval.coverage().ok()}),
         )
     }
 

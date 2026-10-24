@@ -91,11 +91,7 @@
       "src/artifact/matrix.rs",
       "src/artifact/provenance.rs"
     ],
-    "sensing": [
-      "src/sensing.rs",
-      "src/sensing/propagation.rs",
-      "src/sensing/wormholes.rs"
-    ],
+    "sensing": ["src/sensing.rs", "src/sensing/propagation.rs", "src/sensing/wormholes.rs"],
     "pipeline": [
       "src/pipeline.rs",
       "src/pipeline/epa.rs",

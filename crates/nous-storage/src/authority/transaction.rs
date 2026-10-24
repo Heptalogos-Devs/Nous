@@ -140,12 +140,7 @@ impl WriteTransaction {
     }
 
     pub(crate) async fn enqueue_task(&mut self, id: &str) -> Result<String> {
-        let parsed = id
-            .parse::<ulid::Ulid>()
-            .map_err(|_| Error::invalid("job ID must be a ULID"))?;
-        if parsed.to_string() != id {
-            return Err(Error::invalid("job ID must be canonical ULID"));
-        }
+        super::tasks::validate_job_id(id)?;
         let task = TaskBuilder::new(serde_json::to_vec(&JobEnvelope { id: id.into() })?)
             .task_id(TaskId::from(id.to_owned()))
             .max_attempts(5)
@@ -156,8 +151,11 @@ impl WriteTransaction {
                 apalis_sqlite::Error::Database(error) => write_error(error),
                 error => storage_error(error),
             })?;
-        self.job_ids.push(id.into());
         Ok(id.into())
+    }
+
+    pub(crate) fn record_task(&mut self, id: &str) {
+        self.job_ids.push(id.into());
     }
 
     pub async fn commit(mut self, result: Value) -> Result<OperationReceipt> {

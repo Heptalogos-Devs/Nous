@@ -18,7 +18,7 @@ use crate::{
     App,
     common::{
         instance::{AuthConfig, InstanceConfig, InstanceGuard, InstancePaths},
-        prompts::{ManagedPromptReference, PromptBinding, Prompts},
+        prompts::{ManagedPromptReference, Prompts},
     },
 };
 
@@ -64,14 +64,19 @@ impl App {
             Ok((
                 snapshot.object_references().await?,
                 snapshot.status().await?.commit_seq,
+                snapshot.configuration_entries_all().await?,
             ))
         }
         .await;
         snapshot.close().await;
-        let (references, commit_seq) = metadata?;
+        let (references, commit_seq, configuration_entries) = metadata?;
         let mut config = self.config.as_ref().clone();
         config.auth = AuthConfig::default();
-        let prompt_files = prompt_references(&Prompts::new(self.paths.as_ref().clone()), &config)?;
+        let prompt_files = prompt_references(
+            &Prompts::new(self.paths.as_ref().clone()),
+            &config,
+            &configuration_entries,
+        )?;
         let config_text = toml::to_string_pretty(&config)?;
         let root = staging.path().to_owned();
         let mut object_files = Vec::new();
@@ -252,7 +257,11 @@ pub async fn restore(source: &Path, target: InstancePaths) -> Result<Value> {
             expected.insert(name);
         }
         let config = InstanceConfig::load(&staged)?;
-        for reference in prompt_references(&Prompts::new(staged.clone()), &config)? {
+        for reference in prompt_references(
+            &Prompts::new(staged.clone()),
+            &config,
+            &snapshot.configuration_entries_all().await?,
+        )? {
             let name = reference
                 .relative_path
                 .to_str()
@@ -274,8 +283,14 @@ pub async fn restore(source: &Path, target: InstancePaths) -> Result<Value> {
         Ok(())
     }
     .await;
+    let finalization: Result<i64> = async {
+        checked?;
+        crate::common::configuration::reset_restored_auth(&snapshot).await?;
+        Ok(snapshot.status().await?.commit_seq)
+    }
+    .await;
     snapshot.close().await;
-    checked?;
+    let restored_commit_seq = finalization?;
     // All moves stay inside target.root. Publish configuration last, after complete data and credentials.
     let directories = ["data", "objects", "credentials", "prompts"];
     let mut published = Vec::new();
@@ -311,7 +326,7 @@ pub async fn restore(source: &Path, target: InstancePaths) -> Result<Value> {
         return Err(error.context("restore publication failed"));
     }
     Ok(
-        json!({"state":"restored","instance":target.root,"commit_seq":manifest.commit_seq,"administrator_token_file":target.credentials.join("admin.token"),"credentials":"new_administrator","indexes":"rebuild_on_start"}),
+        json!({"state":"restored","instance":target.root,"source_commit_seq":manifest.commit_seq,"commit_seq":restored_commit_seq,"administrator_token_file":target.credentials.join("admin.token"),"credentials":"new_administrator","indexes":"rebuild_on_start"}),
     )
 }
 
@@ -466,23 +481,13 @@ fn sync_directory(_: &Path) -> Result<()> {
 fn prompt_references(
     prompts: &Prompts,
     config: &InstanceConfig,
+    entries: &[nous_domain::ConfigEntry],
 ) -> Result<Vec<ManagedPromptReference>> {
-    let bindings: [Option<(&str, &PromptBinding)>; 2] = [
-        config
-            .models
-            .memory_formation
-            .as_ref()
-            .map(|role| ("memory_formation", &role.prompt)),
-        config
-            .models
-            .structured_formation
-            .as_ref()
-            .map(|role| ("structured_formation", &role.prompt)),
-    ];
-    bindings
+    let roles = crate::composition::model_roles()?;
+    roles
+        .prompt_bindings(&config.models, entries)?
         .into_iter()
-        .flatten()
-        .filter_map(|(id, binding)| prompts.managed_reference(id, binding).transpose())
+        .filter_map(|(id, binding)| prompts.managed_reference(&id, &binding).transpose())
         .collect::<nous_domain::Result<_>>()
         .map_err(Into::into)
 }

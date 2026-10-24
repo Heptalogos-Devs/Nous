@@ -64,8 +64,9 @@ impl WriteTransaction {
     }
     pub async fn insert_job_record(&mut self, value: &JobRecord) -> Result<()> {
         value.validate()?;
-        if value.state != JobState::Queued {
-            return Err(Error::invalid("new task must be queued"));
+        validate_job_id(&value.id)?;
+        if !matches!(value.state, JobState::Queued | JobState::Waiting) {
+            return Err(Error::invalid("new task must be queued or waiting"));
         }
         if let Some(namespace) = &value.namespace_id {
             self.namespace(namespace).await?;
@@ -73,9 +74,20 @@ impl WriteTransaction {
                 self.subject(namespace, subject).await?;
             }
         }
-        sqlx::query("INSERT INTO task_records(job_id,namespace_id,subject_id,kind,state,wait,checkpoint,result,error,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)")
-   .bind(&value.id).bind(value.namespace_id.as_ref().map(NamespaceId::as_str)).bind(value.subject_id.as_ref().map(SubjectId::as_str)).bind(&value.kind).bind(enum_name(&value.state)?).bind(json_option(&value.wait)?).bind(json_option(&value.checkpoint)?).bind(json_option(&value.result)?).bind(json_option(&value.error)?).bind(&value.created_at).bind(&value.updated_at).execute(&mut *self.tx).await.map_err(write_error)?;
-        self.enqueue_task(&value.id).await?;
+        for id in &value.dependencies {
+            let dependency = self.job_record(id).await?;
+            if dependency.namespace_id != value.namespace_id
+                || dependency.subject_id != value.subject_id
+            {
+                return Err(Error::invalid("task dependency belongs to another scope"));
+            }
+        }
+        sqlx::query("INSERT INTO task_records(job_id,namespace_id,subject_id,kind,dependencies,state,wait,checkpoint,result,error,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)")
+   .bind(&value.id).bind(value.namespace_id.as_ref().map(NamespaceId::as_str)).bind(value.subject_id.as_ref().map(SubjectId::as_str)).bind(&value.kind).bind(serde_json::to_string(&value.dependencies)?).bind(enum_name(&value.state)?).bind(json_option(&value.wait)?).bind(json_option(&value.checkpoint)?).bind(json_option(&value.result)?).bind(json_option(&value.error)?).bind(&value.created_at).bind(&value.updated_at).execute(&mut *self.tx).await.map_err(write_error)?;
+        if value.state == JobState::Queued {
+            self.enqueue_task(&value.id).await?;
+        }
+        self.record_task(&value.id);
         Ok(())
     }
     pub async fn update_job_record(&mut self, value: &JobRecord) -> Result<()> {
@@ -84,6 +96,7 @@ impl WriteTransaction {
         if old.namespace_id != value.namespace_id
             || old.subject_id != value.subject_id
             || old.kind != value.kind
+            || old.dependencies != value.dependencies
             || old.created_at != value.created_at
         {
             return Err(Error::new(
@@ -99,8 +112,22 @@ impl WriteTransaction {
         if matches!(old.state, JobState::Waiting | JobState::Failed)
             && value.state == JobState::Queued
         {
-            let changed=sqlx::query("UPDATE Jobs SET status='Pending',attempts=0,lock_by=NULL,lock_at=NULL,done_at=NULL,last_result=NULL,run_at=strftime('%s','now') WHERE id=? AND status IN('Done','Failed','Killed')").bind(&value.id).execute(&mut *self.tx).await.map_err(write_error)?.rows_affected();
-            if changed == 0 {
+            let status: Option<String> =
+                sqlx::query_scalar("SELECT status FROM Jobs WHERE id=? AND job_type=?")
+                    .bind(&value.id)
+                    .bind(JOB_QUEUE)
+                    .fetch_optional(&mut *self.tx)
+                    .await
+                    .map_err(storage_error)?;
+            if status.is_none() {
+                self.enqueue_task(&value.id).await?;
+            } else if status
+                .as_deref()
+                .is_some_and(|state| matches!(state, "Done" | "Failed" | "Killed"))
+            {
+                sqlx::query("UPDATE Jobs SET status='Pending',attempts=0,lock_by=NULL,lock_at=NULL,done_at=NULL,last_result=NULL,run_at=strftime('%s','now') WHERE id=? AND job_type=?")
+                    .bind(&value.id).bind(JOB_QUEUE).execute(&mut *self.tx).await.map_err(write_error)?;
+            } else {
                 return Err(Error::new(
                     ErrorCode::Conflict,
                     "waiting task has not been acknowledged by its active worker",
@@ -138,6 +165,7 @@ fn row(row: SqliteRow) -> Result<JobRecord> {
             .map(NamespaceId),
         subject_id: row.get::<Option<String>, _>("subject_id").map(SubjectId),
         kind: row.get("kind"),
+        dependencies: serde_json::from_str(row.get("dependencies"))?,
         state: parse_enum(row.get("state"))?,
         wait: parse_optional(row.get("wait"))?,
         checkpoint: parse_optional(row.get("checkpoint"))?,
@@ -146,6 +174,16 @@ fn row(row: SqliteRow) -> Result<JobRecord> {
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
     })
+}
+
+pub(crate) fn validate_job_id(id: &str) -> Result<()> {
+    let parsed = id
+        .parse::<ulid::Ulid>()
+        .map_err(|_| Error::invalid("job ID must be a ULID"))?;
+    if parsed.to_string() != id {
+        return Err(Error::invalid("job ID must be canonical ULID"));
+    }
+    Ok(())
 }
 
 impl crate::ReadView {

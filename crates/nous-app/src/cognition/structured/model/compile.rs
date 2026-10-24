@@ -1,7 +1,3 @@
-// Copyright 2026 Aravine Zhu
-// SPDX-License-Identifier: Apache-2.0 AND AGPL-3.0-only
-// Adapted sources and licenses: ../structured-sources.json.
-
 use super::{
     MAX_CHANGES, MAX_GROUPS,
     dto::*,

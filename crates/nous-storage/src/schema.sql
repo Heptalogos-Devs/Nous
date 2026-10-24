@@ -23,6 +23,27 @@ CREATE TABLE IF NOT EXISTS subjects (
 );
 CREATE INDEX IF NOT EXISTS subjects_by_namespace ON subjects(namespace_id, commit_seq, id);
 
+CREATE TABLE IF NOT EXISTS configuration_changes (
+    scope_kind TEXT NOT NULL CHECK (scope_kind IN ('instance','namespace','subject')),
+    namespace_id TEXT REFERENCES namespaces(id),
+    subject_id TEXT,
+    key TEXT NOT NULL CHECK (length(key) > 0),
+    revision INTEGER NOT NULL CHECK (revision > 0),
+    active TEXT CHECK (active IS NULL OR json_valid(active)),
+    desired TEXT CHECK (desired IS NULL OR json_valid(desired)),
+    apply_mode TEXT NOT NULL CHECK (apply_mode IN ('live','restart')),
+    recorded_at TEXT NOT NULL,
+    commit_seq INTEGER NOT NULL CHECK (commit_seq = revision),
+    FOREIGN KEY(namespace_id, subject_id) REFERENCES subjects(namespace_id, id),
+    CHECK ((scope_kind='instance' AND namespace_id IS NULL AND subject_id IS NULL)
+        OR (scope_kind='namespace' AND namespace_id IS NOT NULL AND subject_id IS NULL)
+        OR (scope_kind='subject' AND namespace_id IS NOT NULL AND subject_id IS NOT NULL)),
+    CHECK (apply_mode <> 'live' OR active IS desired)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS configuration_by_scope_key_revision
+ON configuration_changes(scope_kind,coalesce(namespace_id,''),coalesce(subject_id,''),key,commit_seq DESC);
+CREATE INDEX IF NOT EXISTS configuration_by_commit ON configuration_changes(commit_seq);
+
 CREATE TABLE IF NOT EXISTS materials (
     id TEXT PRIMARY KEY NOT NULL,
     namespace_id TEXT NOT NULL REFERENCES namespaces(id),
@@ -285,13 +306,13 @@ CREATE TABLE IF NOT EXISTS structured_formation_groups (
 
 CREATE TABLE IF NOT EXISTS task_records (
  job_id TEXT PRIMARY KEY NOT NULL,namespace_id TEXT,subject_id TEXT,kind TEXT NOT NULL,
+ dependencies TEXT NOT NULL CHECK(json_valid(dependencies) AND json_type(dependencies)='array'),
  state TEXT NOT NULL CHECK(state IN('queued','waiting','running','succeeded','failed','cancelled')),
  wait TEXT CHECK(wait IS NULL OR json_valid(wait)),checkpoint TEXT CHECK(checkpoint IS NULL OR json_valid(checkpoint)),result TEXT CHECK(result IS NULL OR json_valid(result)),
  error TEXT CHECK(error IS NULL OR json_valid(error)),created_at TEXT NOT NULL,updated_at TEXT NOT NULL,
  UNIQUE(job_id,namespace_id,subject_id),
  CHECK(subject_id IS NULL OR namespace_id IS NOT NULL),CHECK((state='waiting')=(wait IS NOT NULL)),
- FOREIGN KEY(namespace_id) REFERENCES namespaces(id),FOREIGN KEY(namespace_id,subject_id) REFERENCES subjects(namespace_id,id),
- FOREIGN KEY(job_id) REFERENCES Jobs(id) DEFERRABLE INITIALLY DEFERRED
+ FOREIGN KEY(namespace_id) REFERENCES namespaces(id),FOREIGN KEY(namespace_id,subject_id) REFERENCES subjects(namespace_id,id)
 );
 CREATE INDEX IF NOT EXISTS tasks_waiting ON task_records(state,kind,job_id);
 CREATE TABLE IF NOT EXISTS formation_runs (

@@ -1,10 +1,7 @@
 {
-  "module": "src/common/models/structured/",
+  "module": "src/cognition/structured/model/",
   "prompt": "src/prompts/structured-formation.md",
-  "licenses": [
-    "licenses/Nous-previous-LICENSE-APACHE",
-    "licenses/Nous-pr56-LICENSE"
-  ],
+  "licenses": ["licenses/Nous-previous-LICENSE-APACHE", "licenses/Nous-pr56-LICENSE"],
   "sources": [
     {
       "repository": "Nous-previous",

@@ -1,7 +1,3 @@
-// Copyright 2026 Aravine Zhu
-// SPDX-License-Identifier: Apache-2.0 AND AGPL-3.0-only
-// Adapted sources and licenses: ../structured-sources.json.
-
 use super::{MAX_GROUPS, RawStructuredProposal, StructuredFormationInput};
 use anyhow::Result as ConfigResult;
 use nous_domain as d;
@@ -59,6 +55,32 @@ pub fn structured_output_schema(input: &StructuredFormationInput) -> ConfigResul
     {
         memory["properties"]["grounding_observation"] = json!({"type":"null"});
     }
+    let polarities: Vec<d::EvidencePolarity> =
+        serde_json::from_value(defs["EvidencePolarity"]["enum"].clone())?;
+    let relations: Vec<d::EpistemicRelation> =
+        serde_json::from_value(defs["EpistemicRelation"]["enum"].clone())?;
+    let evidence = defs
+        .get("RawEvidenceLink")
+        .ok_or_else(|| anyhow::anyhow!("evidence schema is missing"))?
+        .clone();
+    let evidence_choices = polarities
+        .into_iter()
+        .map(|polarity| {
+            let mut choice = evidence.clone();
+            choice["properties"]["polarity"] = json!({"type":"string","const":polarity});
+            let allowed = relations
+                .iter()
+                .filter(|relation| polarity.accepts(Some(**relation)))
+                .collect::<Vec<_>>();
+            choice["properties"]["relation"] = if allowed.is_empty() {
+                json!({"type":"null"})
+            } else {
+                json!({"anyOf":[{"type":"null"},{"type":"string","enum":allowed}]})
+            };
+            choice
+        })
+        .collect::<Vec<_>>();
+    defs.insert("RawEvidenceLink".into(), json!({"anyOf":evidence_choices}));
     let variants = defs
         .get("RawCognitiveContent")
         .and_then(|body| body.get("oneOf").or_else(|| body.get("anyOf")))
@@ -97,12 +119,7 @@ pub fn structured_output_schema(input: &StructuredFormationInput) -> ConfigResul
     });
     schema["properties"]["groups"]["maxItems"] = json!(MAX_GROUPS);
     prune_definitions(&mut schema)?;
-    // The pinned SDK's mature provider sanitizer handles nullable required
-    // properties and discriminated unions for OpenAI's strict JSON dialect.
-    Ok(genai::chat::sanitize_json_schema(
-        &schema,
-        genai::chat::JsonSchemaDialect::OpenAiStrict,
-    ))
+    Ok(schema)
 }
 
 fn prune_definitions(schema: &mut Value) -> ConfigResult<()> {

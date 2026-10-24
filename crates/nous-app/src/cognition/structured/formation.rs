@@ -1,5 +1,5 @@
 use super::*;
-use crate::common::models::structured::{
+use crate::cognition::structured::model::{
     RawStructuredProposal, SourceCatalogEntry, StructuredFormationInput,
 };
 use nous_storage::{StructuredFormationGroup, StructuredFormationRun, StructuredGroupState};
@@ -20,6 +20,22 @@ pub struct FormStructuredRequest {
     pub sources: Vec<EvidenceSource>,
     pub targets: Vec<FormationTarget>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(super) struct FormationOutcome {
+    pub model_call_id: ModelCallId,
+    pub group_keys: Vec<String>,
+    pub objects: Vec<CognitiveRef>,
+}
+
+const FORMATION_ORDER: [CognitiveKind; 6] = [
+    CognitiveKind::Concept,
+    CognitiveKind::MemorySemantics,
+    CognitiveKind::Episode,
+    CognitiveKind::Schema,
+    CognitiveKind::Journal,
+    CognitiveKind::Association,
+];
 
 impl App {
     pub async fn form_structured(
@@ -126,20 +142,44 @@ impl App {
             slots,
         };
         input.validate()?;
-        let input = serde_json::to_value(input)?;
         if serde_json::to_vec(&input)?.len() > 1024 * 1024 {
             return Err(Error::new(
                 ErrorCode::ResourceExhausted,
                 "structured input exceeds one MiB",
             ));
         }
-        let job = self
-            .tasks
-            .new_job("cognition.form", Some(namespace), Some(request.subject_id));
-        let run = StructuredFormationRun { job, input };
-        self.tasks.submit_in(&mut tx, &run.job).await?;
-        tx.insert_structured_formation(&run).await?;
-        tx.commit(json!(run)).await
+        let mut jobs = Vec::new();
+        for kind in FORMATION_ORDER {
+            let slots = input
+                .slots
+                .iter()
+                .filter(|slot| slot.kind == kind)
+                .cloned()
+                .collect::<Vec<_>>();
+            if slots.is_empty() {
+                continue;
+            }
+            let step_input = StructuredFormationInput {
+                slots,
+                ..input.clone()
+            };
+            let mut job = self.tasks.new_job(
+                "cognition.form",
+                Some(namespace.clone()),
+                Some(request.subject_id.clone()),
+            );
+            self.tasks
+                .submit_after_in(&mut tx, &mut job, jobs.clone())
+                .await?;
+            let run = StructuredFormationRun {
+                job,
+                input: serde_json::to_value(step_input)?,
+            };
+            tx.insert_structured_formation(&run).await?;
+            jobs.push(run.job.id.clone());
+        }
+        tx.commit(json!({"subject_id":request.subject_id,"jobs":jobs}))
+            .await
     }
 
     async fn formation_source(
@@ -165,7 +205,10 @@ impl App {
                 }
                 event_kind = Some(observation.kind);
                 let material = self.get_material(ctx, &observation.material_id).await?;
-                serde_json::to_string(&json!({"observation":observation,"material":material}))?
+                serde_json::to_string(&json!({
+                    "text":material.text,"observed_at":observation.observed_at,
+                    "event_time":material.material.event_time,"source":material.material.source,
+                }))?
             }
             EvidenceSource::MemoryRevision {
                 memory_id,
@@ -191,7 +234,8 @@ impl App {
                         "deleted Memory cannot supply a formation input",
                     ));
                 }
-                serde_json::to_string(&memory)?
+                serde_json::to_string(&json!({"title":memory.title,"content":memory.content,
+                    "epistemic_status":memory.epistemic_status,"times":memory.times}))?
             }
             EvidenceSource::CognitiveRevision { reference } => {
                 if reference.kind == CognitiveKind::Memory {
@@ -203,7 +247,7 @@ impl App {
                 if object.kind() != reference.kind || object.deleted {
                     return Err(Error::invalid("source cognition kind or lifecycle differs"));
                 }
-                serde_json::to_string(&object)?
+                serde_json::to_string(&json!({"body":object.body,"times":object.times}))?
             }
         };
         Ok(SourceCatalogEntry {
@@ -232,15 +276,23 @@ impl App {
         if run.is_retired() {
             return Ok(());
         }
-        let input: StructuredFormationInput = serde_json::from_value(run.input.clone())?;
+        let input = self.structured_step_input(&run).await?;
+        let kind = input.slots[0].kind;
+        let plan = self.model.plan(
+            ConfigScope::Subject {
+                namespace_id: input.namespace_id.clone(),
+                subject_id: input.subject_id.clone(),
+            },
+            super::model::role(kind)?,
+        );
         let Some(call) = self
             .calls
             .invoke(
                 &job.id,
                 "proposal",
                 &cancel,
-                || async { self.model.prepare_structured(input) },
-                |prepared| self.model.execute_structured(prepared),
+                |attempt| super::model::prepare(&plan, attempt, input.clone()),
+                |prepared| super::model::execute(&self.model, prepared),
             )
             .await?
         else {
@@ -285,5 +337,73 @@ impl App {
                 .await?;
         }
         self.adopt_structured_groups(&run, &call, &proposal).await
+    }
+
+    pub(crate) async fn structured_formation_ready(&self, job: &JobRecord) -> bool {
+        let Ok(run) = self.database.structured_formation(&job.id).await else {
+            return false;
+        };
+        let Ok(input) = serde_json::from_value::<StructuredFormationInput>(run.input) else {
+            return false;
+        };
+        let Some(slot) = input.slots.first() else {
+            return false;
+        };
+        let Ok(role) = super::model::role(slot.kind) else {
+            return false;
+        };
+        self.calls.ready(job, "proposal", &self.model, role).await
+    }
+
+    async fn structured_step_input(
+        &self,
+        run: &StructuredFormationRun,
+    ) -> Result<StructuredFormationInput> {
+        let mut input: StructuredFormationInput = serde_json::from_value(run.input.clone())?;
+        let context = CallContext {
+            caller_id: "nous-worker".into(),
+            scope: AccessScope::Subject {
+                namespace_id: input.namespace_id.clone(),
+                subject_id: input.subject_id.clone(),
+            },
+        };
+        for dependency in self.tasks.dependencies(&run.job).await? {
+            let outcome: FormationOutcome = serde_json::from_value(
+                dependency
+                    .result
+                    .ok_or_else(|| Error::internal("formation prerequisite has no result"))?,
+            )?;
+            for reference in outcome.objects {
+                let source = EvidenceSource::CognitiveRevision { reference };
+                if input.sources.iter().any(|entry| entry.source == source) {
+                    continue;
+                }
+                let mut ordinal = input.sources.len();
+                let key = loop {
+                    let key = format!("source_{ordinal}");
+                    if !input.sources.iter().any(|entry| entry.key == key)
+                        && !input.slots.iter().any(|slot| slot.key == key)
+                    {
+                        break key;
+                    }
+                    ordinal += 1;
+                };
+                input.sources.push(
+                    self.formation_source(
+                        &context,
+                        &input.namespace_id,
+                        &input.subject_id,
+                        key,
+                        source,
+                    )
+                    .await?,
+                );
+            }
+        }
+        let view = self.database.read_view().await?;
+        input.knowledge_cutoff = view.watermark;
+        view.finish().await?;
+        input.validate()?;
+        Ok(input)
     }
 }

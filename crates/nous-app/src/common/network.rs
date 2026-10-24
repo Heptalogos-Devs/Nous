@@ -13,6 +13,7 @@ pub struct NetworkClients {
 
 impl NetworkClients {
     pub fn new(config: &NetworkConfig) -> Result<Self> {
+        config.validate()?;
         let mut builder = reqwest::Client::builder()
             .user_agent(concat!("NousWave/", env!("CARGO_PKG_VERSION")))
             .connect_timeout(Duration::from_secs(config.connect_timeout_seconds))
@@ -47,5 +48,18 @@ impl Default for NetworkConfig {
             connect_timeout_seconds: 10,
             request_timeout_seconds: 120,
         }
+    }
+}
+
+impl NetworkConfig {
+    pub fn validate(&self) -> Result<()> {
+        anyhow::ensure!(
+            self.connect_timeout_seconds > 0 && self.request_timeout_seconds > 0,
+            "network timeouts must be positive"
+        );
+        if let Some(proxy) = &self.proxy {
+            reqwest::Proxy::all(proxy).context("invalid network.proxy")?;
+        }
+        Ok(())
     }
 }

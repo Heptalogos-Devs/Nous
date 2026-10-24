@@ -1,5 +1,6 @@
 //! Authority-frozen discovery and shared cognitive embedding work.
 mod embedding;
+pub mod embedding_model;
 mod embedding_worker;
 mod query;
 mod semantic;

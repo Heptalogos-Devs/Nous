@@ -2,6 +2,7 @@
 use crate::{Error, NamespaceId, Result, SubjectId, validate_name};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::BTreeSet;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -27,6 +28,7 @@ pub struct JobRecord {
     pub namespace_id: Option<NamespaceId>,
     pub subject_id: Option<SubjectId>,
     pub kind: String,
+    pub dependencies: Vec<String>,
     pub state: JobState,
     pub wait: Option<WaitCondition>,
     pub checkpoint: Option<Value>,
@@ -46,6 +48,15 @@ impl JobRecord {
     pub fn validate(&self) -> Result<()> {
         validate_name(&self.id, "job ID")?;
         validate_name(&self.kind, "task kind")?;
+        let mut dependencies = BTreeSet::new();
+        for dependency in &self.dependencies {
+            validate_name(dependency, "task dependency")?;
+            if dependency == &self.id || !dependencies.insert(dependency) {
+                return Err(Error::invalid(
+                    "task dependencies must be distinct other tasks",
+                ));
+            }
+        }
         if self.subject_id.is_some() && self.namespace_id.is_none() {
             return Err(Error::invalid("Subject task requires a Namespace"));
         }
@@ -58,6 +69,13 @@ impl JobRecord {
             validate_name(&wait.kind, "wait condition kind")?;
             if !wait.details.is_object() {
                 return Err(Error::invalid("wait condition details must be an object"));
+            }
+            if wait.kind == "dependencies"
+                && (self.dependencies.is_empty() || wait.details != serde_json::json!({}))
+            {
+                return Err(Error::invalid(
+                    "dependency waiting requires task dependencies and empty details",
+                ));
             }
         }
         validate_name(&self.created_at, "job created_at")?;

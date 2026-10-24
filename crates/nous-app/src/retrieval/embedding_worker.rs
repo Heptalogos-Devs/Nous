@@ -29,25 +29,39 @@ impl App {
                 return Err(error);
             }
         }
+        let plan = self.model.plan(
+            ConfigScope::Subject {
+                namespace_id: namespace.clone(),
+                subject_id: subject.clone(),
+            },
+            super::embedding_model::ROLE,
+        );
         let Some(call) = self
             .calls
             .invoke(
                 &job.id,
                 "embedding",
                 &cancel,
-                || async {
-                    let prepared = self.model.prepare_embedding(run.inputs.clone())?;
-                    if prepared.metadata.space.id != run.space_id
-                        || prepared.metadata.producer_signature != run.producer_signature
-                    {
-                        return Err(ModelFailure::domain(Error::new(
-                            ErrorCode::Conflict,
-                            "configured embedding producer differs from this accepted task",
-                        )));
+                |attempt| {
+                    let plan = &plan;
+                    let run = &run;
+                    async move {
+                        let prepared =
+                            super::embedding_model::prepare(plan, attempt, run.inputs.clone())
+                                .await?;
+                        if prepared.metadata.input.space.id != run.space_id
+                            || prepared.metadata.input.space.producer_signature
+                                != run.producer_signature
+                        {
+                            return Err(ModelFailure::domain(Error::new(
+                                ErrorCode::Conflict,
+                                "configured embedding producer differs from this accepted task",
+                            )));
+                        }
+                        Ok(prepared)
                     }
-                    Ok(prepared)
                 },
-                |prepared| self.model.execute_embedding(prepared),
+                |prepared| super::embedding_model::execute(&self.model, prepared),
             )
             .await?
         else {

@@ -1,13 +1,9 @@
-// Copyright 2026 Aravine Zhu
-// SPDX-License-Identifier: Apache-2.0 AND AGPL-3.0-only
-// Adapted sources and licenses: ../structured-sources.json.
-
 use super::MAX_CHANGES;
 use nous_domain as d;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SourceCatalogEntry {
     pub key: String,
@@ -30,7 +26,7 @@ impl SourceCatalogEntry {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct StructuredFormationInput {
     pub namespace_id: d::NamespaceId,

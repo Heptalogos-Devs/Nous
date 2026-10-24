@@ -1,8 +1,8 @@
 # Nous Wave
 
-长期认知基础设施与人格中心。当前支持材料接纳、忠实文本导入、持久模型形成、Memory 修订与生命周期维护、中文词项和 Dense/VCP/Hybrid 查询、来源追溯及快照恢复。CLI、HTTP 和 MCP 共用 Rust 应用操作，SQLite 统一保存权威状态、回执、已采纳向量和后续工作。
+长期认知基础设施与人格中心。当前支持材料接纳、忠实文本导入、持久模型形成、结构化认知、Memory 修订与生命周期维护、中文词项和 Dense/VCP/Hybrid 查询、来源追溯及快照恢复。CLI、HTTP 和 MCP 共用 Rust 应用操作，SQLite 统一保存权威状态、回执、已采纳向量和后续工作。
 
-工程方向见 [基建实施规划](docs/基建实施规划.md)，当前进度与 [合同覆盖](docs/首批开发任务.md#当前-a-memorix-合同承接) 见首批开发任务。[能力续接清单](docs/能力续接清单.md) 保留结构化认知、多模态、managed context/steward 和完整 A-Memorix 产品的后续目标。源码复用入口见 [源码研究](docs/源码研究.md)、[实际复用记录](research/reuse.md) 和 [研究仓库锁定清单](research/sources.lock.json)。
+工程方向见 [基建实施规划](docs/基建实施规划.md)，当前进度与 [合同覆盖](docs/首批开发任务.md#当前-a-memorix-合同承接) 见首批开发任务。[能力续接清单](docs/能力续接清单.md) 保留多模态、managed context/steward 和完整 A-Memorix 产品的后续目标。源码复用入口见 [源码研究](docs/源码研究.md)、[实际复用记录](research/reuse.md) 和 [研究仓库锁定清单](research/sources.lock.json)。
 
 需求以用户提供的《项目宪纲》附件 v3 为准，正文快照位于 [项目宪纲](docs/requirements/项目宪纲.md)。该文件供本次开发定位需求；Library 原件仍由原 Library 条目维护。
 
@@ -36,7 +36,7 @@ Linux 使用同一 PowerShell 环境脚本，程序路径为 `debug/nous`。正�
 
 HTTP 入口为 `/api`，Streamable HTTP MCP 为 `/mcp`。`nous mcp stdio` 连接运行中的服务。凭据默认读取实例内受保护文件；远程调用用 `--url` 与 `--token-file`。停服后可通过 `token create --namespace <id> [--subject <id>] --name <name>` 创建范围凭据。Subject 可读取已获授权的材料并记录再次接触；首次材料暴露由 Namespace 或管理员接纳。
 
-材料保存、实际接触和记忆形成各有独立身份。`observation record` 创建 `kind=contact` 的实际接触记录。模型形成请求先持久入队，模型调用在写事务外进行；保存输出后，由同一权威事务采纳 Memory、来源关系与索引任务。Tantivy 索引可重建，查询合并未索引增量，并在返回前读取当前权威修订。
+材料保存、实际接触和记忆形成各有独立身份。`observation record` 创建 `kind=contact` 的实际接触记录。模型形成请求先持久入队，模型调用在写事务外进行；保存输出后，由同一权威事务采纳 Memory 与来源关系。检索服务按合法快照维护 Tantivy 索引，并在返回前读取当前权威修订。
 
 文本导入可直接生成可查询的忠实记忆，无需模型配置。准备 UTF-8 JSONL 文件并导入：
 
@@ -79,7 +79,7 @@ while (-not $page.result.complete) {
 
 维护跳过受保护对象；自动衰减达到阈值后进入 Decayed，持续 24 小时仍低于阈值时归档到回收站。手动 Frozen、Forgotten 和 Weakened 保留各自状态。
 
-本批原生接口与 MCP 工具如下，均进入相同应用用例：
+HTTP 接口与 MCP 工具进入相同应用用例：
 
 | HTTP                                          | MCP 工具             |
 | --------------------------------------------- | -------------------- |
@@ -93,6 +93,9 @@ while (-not $page.result.complete) {
 | `POST /api/query`                             | `query`              |
 | `GET /api/memories/{id}/source`               | `memory_source`      |
 | `GET /api/models/calls/{id}`                  | `model_call`         |
+| `POST /api/models/contract`                   | `model_contract`     |
+| `POST /api/models/preview`                    | `model_preview`      |
+| `GET /api/config`、`POST /api/config`         | `config`             |
 | `GET /api/jobs/{id}`                          | `job_get`            |
 | `POST /api/jobs/{id}/cancel`                  | `job_cancel`         |
 
@@ -108,7 +111,92 @@ while (-not $page.result.complete) {
 
 [nous-vcp](crates/nous-vcp/README.md) 提供完整 VCP 计算族和旧版数值基线，包含 AGS 几何、传播资产、Pyramid、Sense、双场、RiverMemo、DTSC 与 Thinking。开发者可用 `cargo run -p nous-vcp --example native_pipeline` 重放完整计算和来源映射。实际文本查询已接通模型向量、USearch 候选/Tag 双索引、VCP 图资产和来源映射。
 
-停服后按 [模型资源配置](docs/基建实施规划.md#配置模型资源与提示词) 通过 `config schema` 查看当前字段，再设置 `instance.toml` 与凭据引用，再启动服务。配置只保存 SecretRef，密钥内容放入实例的受保护 `credentials` 目录。另开终端执行：
+## 配置与模型资源
+
+`instance.toml` 提供部署基线。启动时按注册的 typed 默认值、部署值、Instance、Namespace、Subject 覆盖顺序解析配置；每个 key 整体替换。运行中的配置管理返回 active、desired、值来源和修订号：
+
+```powershell
+& $nous --instance $instance config schema
+& $nous --instance $instance config validate
+& $nous --instance $instance config catalog
+& $nous --instance $instance config show --namespace $namespace --subject $subject
+& $nous --instance $instance config history --key models.catalog
+& $nous --instance $instance config set --file ./temp/config-change.json
+& $nous --instance $instance config clear --file ./temp/config-clear.json
+```
+
+`schema`、`validate` 离线读取部署文件；其余命令连接服务。省略范围参数时使用当前凭据范围。变更文件包含 `operation_id`、`scope` 和 `edits`，同一批可设置或清除多个 key：
+
+```json
+{
+  "operation_id": "set-formation-route",
+  "scope": { "kind": "instance" },
+  "edits": [
+    {
+      "op": "set",
+      "key": "models.roles.memory_formation",
+      "expected_revision": 0,
+      "value": { "routes": ["chat"], "max_calls_per_day": 20 }
+    }
+  ]
+}
+```
+
+`expected_revision` 取 `config show` 的目标 scope/key 覆盖记录修订；首次覆盖使用 0。清除项为 `{"op":"clear","key":"...","expected_revision":123}`，恢复继承。服务对完整候选快照及受影响下级范围一起校验，然后原子提交。模型配置为 Live；server、auth、network 为 Instance/Restart，待重启并由实际资源 owner 成功应用后更新 active。
+
+模型配置使用资源图，职责通过有序 route 列表选择资源：
+
+| 配置 key                            | 内容                                                                                                                                              |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `models.catalog`                    | `providers` 保存 endpoint 和 SecretRef；`models` 保存 provider、协议、实际模型名、模态与能力；`routes` 绑定模型和调用参数。只允许 Instance 覆盖。 |
+| `models.roles.memory_formation`     | Memory 形成职责的 routes、Prompt、每日调用预算与重试策略。                                                                                        |
+| `models.roles.structured_formation` | 结构化认知形成职责的同类绑定。                                                                                                                    |
+| `models.roles.text_embedding`       | 文本向量职责的同类绑定；模型定义还需实际维度和 `expected_provider_model`。                                                                        |
+
+职责绑定可在 Instance、Namespace、Subject 继承或覆盖。以下部署片段将两个形成职责绑定到同一条 route；`request_model` 替换为服务商实际模型名：
+
+```toml
+[models.catalog.providers.gateway]
+endpoint = "http://127.0.0.1:3000/v1/"
+credential = { file = "credentials/model-gateway.token" }
+
+[models.catalog.models.chat]
+provider = "gateway"
+protocol = "openai_chat_completions"
+request_model = "<chat-model>"
+input_modalities = ["text"]
+capabilities = ["text_generation", "structured_output"]
+
+[models.catalog.routes.chat]
+model = "chat"
+
+[models.catalog.routes.chat.parameters]
+max_input_bytes = 65536
+max_output_tokens = 8192
+
+[models.roles.memory_formation]
+routes = ["chat"]
+max_calls_per_day = 20
+
+[models.roles.structured_formation]
+routes = ["chat"]
+max_calls_per_day = 20
+```
+
+配置只保存 SecretRef，密钥内容放入实例受保护的 `credentials` 目录。文本向量模型使用 `openai_embeddings`、`embedding` 能力和独立 route；其 `max_batch_size` 按 provider 实际限制设置。Prompt 默认使用随包模板，也可在职责绑定的 `prompt.file` 指定实例 `prompts` 目录内文件，`prompt.locale` 选择语言。调用记录冻结实际模板、变量来源、消息、参数和 usage。
+
+先查看职责输入合同及当前 Prompt，再用领域 typed input 文件构建动态输出 Schema：
+
+```powershell
+& $nous --instance $instance model contract --role structured_formation
+& $nous --instance $instance model contract --role structured_formation --file ./temp/structured-input.json --namespace $namespace --subject $subject
+& $nous --instance $instance model preview --role structured_formation --file ./temp/structured-input.json --namespace $namespace --subject $subject
+& $nous --instance $instance model preview --role structured_formation --file ./temp/structured-input.json --prompt-file ./temp/formation-prompt.md --namespace $namespace --subject $subject
+```
+
+`contract --file` 通过正式领域构建器返回 messages、变量和动态 output Schema，未配置模型绑定时也可使用。`preview` 使用当前生效资源图与同一调用构建器，返回实际消息、媒体通道、Prompt、变量、输出合同和目标 JSON Schema；`--prompt-file` 仅替换本次预览。两者均为只读本地构建，不调用 provider。HTTP 对应 `/api/models/contract` 的 `{role,scope,input?}` 与 `/api/models/preview` 的 `{role,scope,input,edits:{prompt?}}`；MCP 工具接收相同请求。
+
+资源配置完成后，提交正式形成任务：
 
 ```powershell
 & $nous --instance $instance model status
@@ -116,7 +204,7 @@ $formation = & $nous --instance $instance memory form --subject $subject --obser
 & $nous --instance $instance job get $formation.job_ids[0]
 ```
 
-文本向量职责使用配置中的 `models.text_embedding`，用 `config schema` 查看当前字段；职责与资源边界见 [模型资源与提示词](docs/基建实施规划.md#配置模型资源与提示词)。配置就绪后，可显式补齐主体认知和来源标签的向量，再查询：
+文本向量职责通过 `models.roles.text_embedding` 绑定资源图中的 route。配置就绪后，可显式补齐主体认知和来源标签的向量，再查询：
 
 ```powershell
 $embedding = & $nous --instance $instance memory embed --subject $subject --operation-id first-embedding | ConvertFrom-Json
@@ -155,7 +243,7 @@ $backup = & $nous --instance $instance backup create | ConvertFrom-Json
 
 `nous cognition --schema` 输出完整请求 JSON Schema，`nous cognition --file <request.json>` 提交请求。HTTP 使用 `POST /api/cognition`，MCP 使用 `cognition` 工具，三者接收相同的 `action` 判别请求：`create`、`revise`、`get`、`history`、`set_deleted`、`source`、`concept_resolve`、`merge_concepts`、`split_concept`、`resegment_episodes`、`form`、`formation_run`。所有认知使用唯一 `query` 用例：CLI 的 `--kind`、`--reference kind:UUID@revision`、`--as-of-commit`、`--include-inactive` 与 `--include-deleted` 对应 HTTP/MCP 的 QueryRequest。HTTP/MCP 的 `reference` 使用包含 `kind`、`id`、`revision` 的对象。命中包含 `reference`、`object`、`score` 和 `source_roots`；Memory、Concept、Episode、Journal、Schema、Association 共用词项及 Dense/VCP/Hybrid 查询。
 
-形成请求的 `input` 包含 `subject_id`、精确 `sources` 和 `targets[{key,kind,existing}]`。服务读取已授权来源并分配稳定目标 ID，模型只从来源键与目标槽位选择。`models.structured_formation` 使用与 `memory_formation` 相同的资源和 SecretRef 结构。Prompt 默认使用随包模板，也可通过 `prompt.file` 绑定实例 `prompts` 目录内的文件；调用记录保存模板、渲染文本、变量来源及实际摘要。默认输入预算 64 KiB（含输出 Schema）、输出 8192 tokens、每日 20 次调用。它复用共享 ModelCall 与持久队列；每个提案组独立事务采纳，返回 applied/conflict/rejected/skipped，缺配置等待、重启续接、来源清除退役均保存状态。
+形成请求的 `input` 包含 `subject_id`、精确 `sources` 和 `targets[{key,kind,existing}]`。服务读取已授权来源并分配稳定目标 ID，模型只从来源键与目标槽位选择。`models.roles.structured_formation` 选择执行 route，输入输出预算取 route 参数，每日调用与重试取职责绑定。形成复用共享 ModelCall 与持久队列；每个提案组独立事务采纳，返回 applied/conflict/rejected/skipped，缺配置等待、重启续接、来源清除退役均保存状态。
 
 形成作业的 `succeeded` 表示全部组已处理，具体成果和冲突读取 `formation_run` 的 `groups`。`source` 返回对象精确修订、证据闭包、原材料和实际模型调用。CLI 交互优化、媒体三策略、原生多模态、managed context/steward 与完整 A-Memorix 合同继续按 [能力续接清单](docs/能力续接清单.md) 推进。
 
