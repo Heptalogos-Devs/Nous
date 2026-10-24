@@ -247,6 +247,7 @@ impl App {
         inputs: Vec<EmbeddingInputItem>,
     ) -> Result<String> {
         let job = self.tasks.new_job(
+            tx,
             "embedding.text",
             Some(namespace.clone()),
             Some(subject.clone()),

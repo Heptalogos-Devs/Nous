@@ -16,6 +16,17 @@ pub fn model_roles() -> Result<RoleRegistry> {
     Ok(registry.finish())
 }
 
+pub fn configuration_registry(
+    roles: &RoleRegistry,
+) -> Result<nous_foundation::configuration::ConfigRegistry> {
+    let mut registry = nous_foundation::configuration::ConfigRegistryBuilder::new();
+    nous_foundation::configuration::register_core(&mut registry)?;
+    nous_foundation::observability::register_configuration(&mut registry)?;
+    nous_foundation::tasks::register_configuration(&mut registry)?;
+    nous_foundation::models::register_configuration(&mut registry, roles)?;
+    Ok(registry.finish())
+}
+
 impl App {
     fn task_handlers(&self) -> Result<TaskRegistry> {
         let mut registry = TaskRegistry::default();

@@ -10,6 +10,15 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+/// Validate the offline deployment through the same registered consumers as a running App.
+pub fn deployment_snapshot(
+    config: &nous_foundation::instance::InstanceConfig,
+) -> Result<nous_foundation::configuration::ConfigSnapshot> {
+    let roles = crate::composition::model_roles()?;
+    crate::composition::configuration_registry(&roles)?
+        .deployment_snapshot(&serde_json::to_value(config)?)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ConfigChangeRequest {

@@ -44,9 +44,12 @@ impl App {
             ));
         }
         let material = tx.material(&namespace, &observation.material_id).await?;
-        let job = self
-            .tasks
-            .new_job("memory.form", Some(namespace), Some(subject_id.clone()));
+        let job = self.tasks.new_job(
+            &tx,
+            "memory.form",
+            Some(namespace),
+            Some(subject_id.clone()),
+        );
         let run = FormationRun {
             job,
             observation_id: observation.id,
@@ -146,7 +149,7 @@ impl App {
             .observation(namespace, &run.observation_id)
             .await?;
         let source = self
-            .get_material(&CallContext::admin(), &run.material_id)
+            .get_material(&job.call_context("nous-worker")?, &run.material_id)
             .await?;
         if current.revision != run.subject_revision
             || source.material.content_hash != run.material_hash
@@ -185,6 +188,7 @@ impl App {
         };
         let Some(mut tx) = self
             .worker_transaction(
+                &job,
                 "memory.adopt",
                 &job.id,
                 &job.id,

@@ -95,6 +95,10 @@ HTTP 接口与 MCP 工具进入相同应用用例：
 | `GET /api/models/calls/{id}`                  | `model_call`         |
 | `POST /api/models/contract`                   | `model_contract`     |
 | `POST /api/models/preview`                    | `model_preview`      |
+| `POST /api/prompts`                           | `prompts`            |
+| `GET /api/diagnostics`                        | `diagnostics`        |
+| `POST /api/traces/query`                      | `trace_records`      |
+| `GET /api/metrics`                            | Prometheus 文本      |
 | `GET /api/config`、`POST /api/config`         | `config`             |
 | `GET /api/jobs/{id}`                          | `job_get`            |
 | `POST /api/jobs/{id}/cancel`                  | `job_cancel`         |
@@ -142,16 +146,16 @@ HTTP 接口与 MCP 工具进入相同应用用例：
 }
 ```
 
-`expected_revision` 取 `config show` 的目标 scope/key 覆盖记录修订；首次覆盖使用 0。清除项为 `{"op":"clear","key":"...","expected_revision":123}`，恢复继承。服务对完整候选快照及受影响下级范围一起校验，然后原子提交。模型配置为 Live；server、auth、network 为 Instance/Restart，待重启并由实际资源 owner 成功应用后更新 active。
+`expected_revision` 取 `config show` 的目标 scope/key 覆盖记录修订；首次覆盖使用 0。清除项为 `{"op":"clear","key":"...","expected_revision":123}`，恢复继承。服务对完整候选快照及受影响下级范围一起校验，然后原子提交。模型配置为 Live；server、auth、network、tasks、observability 为 Instance/Restart，待重启并由实际资源 owner 成功应用后更新 active。
 
 模型配置使用资源图，职责通过有序 route 列表选择资源：
 
-| 配置 key                            | 内容                                                                                                                                              |
-| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `models.catalog`                    | `providers` 保存 endpoint 和 SecretRef；`models` 保存 provider、协议、实际模型名、模态与能力；`routes` 绑定模型和调用参数。只允许 Instance 覆盖。 |
-| `models.roles.memory_formation`     | Memory 形成职责的 routes、Prompt、每日调用预算与重试策略。                                                                                        |
-| `models.roles.structured_formation` | 结构化认知形成职责的同类绑定。                                                                                                                    |
-| `models.roles.text_embedding`       | 文本向量职责的同类绑定；模型定义还需实际维度和 `expected_provider_model`。                                                                        |
+| 配置 key                        | 内容                                                                                                                                              |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `models.catalog`                | `providers` 保存 endpoint 和 SecretRef；`models` 保存 provider、协议、实际模型名、模态与能力；`routes` 绑定模型和调用参数。只允许 Instance 覆盖。 |
+| `models.roles.memory_formation` | Memory 形成职责的 routes、Prompt、每日调用预算与重试策略。                                                                                        |
+| `models.roles.<formation_role>` | Concept、MemorySemantics、Episode、Schema、Journal、Association 各自注册形成职责。                                                                |
+| `models.roles.text_embedding`   | 文本向量职责的同类绑定；模型定义还需实际维度和 `expected_provider_model`。                                                                        |
 
 职责绑定可在 Instance、Namespace、Subject 继承或覆盖。以下部署片段将两个形成职责绑定到同一条 route；`request_model` 替换为服务商实际模型名：
 
@@ -178,23 +182,29 @@ max_output_tokens = 8192
 routes = ["chat"]
 max_calls_per_day = 20
 
-[models.roles.structured_formation]
+[models.roles.concept_formation]
 routes = ["chat"]
 max_calls_per_day = 20
 ```
 
-配置只保存 SecretRef，密钥内容放入实例受保护的 `credentials` 目录。文本向量模型使用 `openai_embeddings`、`embedding` 能力和独立 route；其 `max_batch_size` 按 provider 实际限制设置。Prompt 默认使用随包模板，也可在职责绑定的 `prompt.file` 指定实例 `prompts` 目录内文件，`prompt.locale` 选择语言。调用记录冻结实际模板、变量来源、消息、参数和 usage。
+Provider、Model 和角色绑定各有 `max_calls_per_day`。Provider/Model 拥有共享硬额度，角色额度按 Instance、Namespace、Subject 累计检查；降低或提高某个角色额度不会改变公共额度。一次外呼在同一事务预约所有适用额度，失败和不确定尝试保留计次。额度上调可唤醒等待中的任务。
+
+配置只保存 SecretRef，密钥内容放入实例受保护的 `credentials` 目录。文本向量模型使用 `openai_embeddings`、`embedding` 能力和独立 route；其 `max_batch_size` 按 provider 实际限制设置。Prompt 选择为 `{"kind":"default"}`、`{"kind":"file","file":"prompts/custom.md","locale":"zh-CN"}` 或 `{"kind":"managed","reference":{"scope":{"kind":"instance"},"id":"custom","revision":123}}`。调用记录冻结实际模板、变量来源、消息、参数和 usage。
 
 先查看职责输入合同及当前 Prompt，再用领域 typed input 文件构建动态输出 Schema：
 
 ```powershell
-& $nous --instance $instance model contract --role structured_formation
-& $nous --instance $instance model contract --role structured_formation --file ./temp/structured-input.json --namespace $namespace --subject $subject
-& $nous --instance $instance model preview --role structured_formation --file ./temp/structured-input.json --namespace $namespace --subject $subject
-& $nous --instance $instance model preview --role structured_formation --file ./temp/structured-input.json --prompt-file ./temp/formation-prompt.md --namespace $namespace --subject $subject
+& $nous --instance $instance model contract --role concept_formation
+& $nous --instance $instance model contract --role concept_formation --file ./temp/structured-input.json --namespace $namespace --subject $subject
+& $nous --instance $instance model preview --role concept_formation --file ./temp/structured-input.json --namespace $namespace --subject $subject
+& $nous --instance $instance model preview --role concept_formation --file ./temp/structured-input.json --prompt-file ./temp/formation-prompt.md --namespace $namespace --subject $subject
 ```
 
 `contract --file` 通过正式领域构建器返回 messages、变量和动态 output Schema，未配置模型绑定时也可使用。`preview` 使用当前生效资源图与同一调用构建器，返回实际消息、媒体通道、Prompt、变量、输出合同和目标 JSON Schema；`--prompt-file` 仅替换本次预览。两者均为只读本地构建，不调用 provider。HTTP 对应 `/api/models/contract` 的 `{role,scope,input?}` 与 `/api/models/preview` 的 `{role,scope,input,edits:{prompt?}}`；MCP 工具接收相同请求。
+
+`prompt catalog/read/history/edit/activate/preview` 管理提示词资源。`prompt edit --id <id> --file <正文文件> --expected-revision <修订>` 保存不可变正文；增加 `--activate-role <职责> --binding-revision <职责覆盖修订>` 可在同一事务激活。职责必须已有模型路线。独立激活使用精确资源选择；预览与真实调用使用相同 MiniJinja 渲染器。模板、变量来源、渲染正文和目标输出合同均可审查。
+
+`nous diagnostics` 查看实际日志位置和丢弃记录数。JSON 日志按日保存在实例 `logs` 目录，策略通过 `observability` 配置管理。`nous trace <trace-id>` 按页读取提交、任务和调用关系；继续分页时将 `next_cursor` 传入 `--cursor`。HTTP 接受并回显 `x-nous-trace-id`，任务和调用持久继承接受事务的 trace。诊断、trace 和 Prometheus 指标入口需要管理员权限。
 
 资源配置完成后，提交正式形成任务：
 
@@ -243,7 +253,7 @@ $backup = & $nous --instance $instance backup create | ConvertFrom-Json
 
 `nous cognition --schema` 输出完整请求 JSON Schema，`nous cognition --file <request.json>` 提交请求。HTTP 使用 `POST /api/cognition`，MCP 使用 `cognition` 工具，三者接收相同的 `action` 判别请求：`create`、`revise`、`get`、`history`、`set_deleted`、`source`、`concept_resolve`、`merge_concepts`、`split_concept`、`resegment_episodes`、`form`、`formation_run`。所有认知使用唯一 `query` 用例：CLI 的 `--kind`、`--reference kind:UUID@revision`、`--as-of-commit`、`--include-inactive` 与 `--include-deleted` 对应 HTTP/MCP 的 QueryRequest。HTTP/MCP 的 `reference` 使用包含 `kind`、`id`、`revision` 的对象。命中包含 `reference`、`object`、`score` 和 `source_roots`；Memory、Concept、Episode、Journal、Schema、Association 共用词项及 Dense/VCP/Hybrid 查询。
 
-形成请求的 `input` 包含 `subject_id`、精确 `sources` 和 `targets[{key,kind,existing}]`。服务读取已授权来源并分配稳定目标 ID，模型只从来源键与目标槽位选择。`models.roles.structured_formation` 选择执行 route，输入输出预算取 route 参数，每日调用与重试取职责绑定。形成复用共享 ModelCall 与持久队列；每个提案组独立事务采纳，返回 applied/conflict/rejected/skipped，缺配置等待、重启续接、来源清除退役均保存状态。
+形成请求的 `input` 包含 `subject_id`、精确 `sources` 和 `targets[{key,kind,existing}]`。服务读取已授权来源并分配稳定目标 ID，模型只从来源键与目标槽位选择。Concept、MemorySemantics、Episode、Schema、Journal、Association 分别通过 `concept_formation`、`memory_semantics`、`episode_formation`、`schema_formation`、`journal_formation`、`association_formation` 职责选择 route，按顺序创建有依赖的任务；后续任务读取前序已采纳对象。输入输出预算取 route 参数，重试取职责绑定。形成复用共享 ModelCall 与持久队列；每个提案组独立事务采纳，返回 applied/conflict/rejected/skipped，缺配置等待、重启续接、来源清除退役均保存状态。
 
 形成作业的 `succeeded` 表示全部组已处理，具体成果和冲突读取 `formation_run` 的 `groups`。`source` 返回对象精确修订、证据闭包、原材料和实际模型调用。CLI 交互优化、媒体三策略、原生多模态、managed context/steward 与完整 A-Memorix 合同继续按 [能力续接清单](docs/能力续接清单.md) 推进。
 

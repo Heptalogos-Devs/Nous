@@ -1,157 +1,17 @@
-//! Durable task state and registered execution, independent of business handlers.
-use super::clock::Clock;
+//! Queue execution and recovery use the instance's frozen task policy.
+use super::{TaskRegistry, Tasks, terminal};
 use apalis::prelude::{BackendExt, Data, WorkerBuilder, WorkerBuilderExt};
 use apalis_core::error::WorkerError;
-use nous_domain::*;
-use nous_storage::{BeginOperation, Database, OperationKey, WriteTransaction};
-use serde_json::{Value, json};
+use nous_domain::{Error, ErrorCode, JobRecord, JobState, Result, ResumeCondition, WaitCondition};
+use serde_json::json;
 use std::{
-    collections::HashMap,
-    future::Future,
-    pin::Pin,
-    sync::{Arc, Mutex},
-    time::Duration,
+    sync::Arc,
+    time::{Duration, Instant},
 };
 use tokio_util::sync::CancellationToken;
+use tracing::Instrument;
 
-#[derive(Clone)]
-pub struct Tasks {
-    database: Database,
-    clock: Clock,
-    running: Arc<Mutex<HashMap<String, CancellationToken>>>,
-    wake: Arc<tokio::sync::Notify>,
-}
 impl Tasks {
-    pub fn new(database: Database, clock: Clock) -> Self {
-        Self {
-            database,
-            clock,
-            running: Arc::default(),
-            wake: Arc::default(),
-        }
-    }
-    pub fn new_job(
-        &self,
-        kind: &str,
-        namespace: Option<NamespaceId>,
-        subject: Option<SubjectId>,
-    ) -> JobRecord {
-        let now = self.clock.recorded();
-        JobRecord {
-            id: ulid::Ulid::generate().to_string(),
-            namespace_id: namespace,
-            subject_id: subject,
-            kind: kind.into(),
-            dependencies: Vec::new(),
-            state: JobState::Queued,
-            wait: None,
-            checkpoint: None,
-            result: None,
-            error: None,
-            created_at: now.clone(),
-            updated_at: now,
-        }
-    }
-    pub fn notify_wake(&self) {
-        self.wake.notify_one();
-    }
-    pub async fn submit_in(&self, tx: &mut WriteTransaction, job: &JobRecord) -> Result<()> {
-        tx.insert_job_record(job).await
-    }
-    pub async fn submit_after_in(
-        &self,
-        tx: &mut WriteTransaction,
-        job: &mut JobRecord,
-        dependencies: Vec<String>,
-    ) -> Result<()> {
-        job.dependencies = dependencies;
-        if !job.dependencies.is_empty() {
-            job.state = JobState::Waiting;
-            job.wait = Some(WaitCondition {
-                kind: "dependencies".into(),
-                details: json!({}),
-            });
-        }
-        tx.insert_job_record(job).await
-    }
-    pub async fn dependencies(&self, job: &JobRecord) -> Result<Vec<JobRecord>> {
-        let mut dependencies = Vec::with_capacity(job.dependencies.len());
-        for id in &job.dependencies {
-            dependencies.push(self.database.job_record(id).await?);
-        }
-        Ok(dependencies)
-    }
-    pub async fn read(&self, ctx: &CallContext, id: &str) -> Result<JobRecord> {
-        let job = self.database.job_record(id).await?;
-        authorize(ctx, &job)?;
-        Ok(job)
-    }
-    pub async fn change_in(
-        &self,
-        tx: &mut WriteTransaction,
-        job: &mut JobRecord,
-        state: JobState,
-        wait: Option<WaitCondition>,
-        error: Option<Error>,
-    ) -> Result<()> {
-        job.state = state;
-        job.wait = wait;
-        job.error = error;
-        job.updated_at = self.clock.recorded();
-        tx.update_job_record(job).await
-    }
-    pub async fn complete_in(
-        &self,
-        tx: &mut WriteTransaction,
-        job: &mut JobRecord,
-        result: Value,
-    ) -> Result<()> {
-        job.result = Some(result);
-        self.change_in(tx, job, JobState::Succeeded, None, None)
-            .await
-    }
-    pub async fn cancel(
-        &self,
-        ctx: &CallContext,
-        operation_id: &str,
-        id: &str,
-    ) -> Result<nous_storage::OperationReceipt> {
-        let job = self.read(ctx, id).await?;
-        let key = nous_storage::operation_key(
-            ctx,
-            "task.cancel",
-            id,
-            operation_id,
-            &json!({"job_id":id}),
-        )?;
-        let mut tx = match self.database.begin_operation(key).await? {
-            BeginOperation::Replay(receipt) => return Ok(receipt),
-            BeginOperation::New(tx) => tx,
-        };
-        let mut current = tx.job_record(&job.id).await?;
-        if !terminal(current.state) {
-            self.change_in(&mut tx, &mut current, JobState::Cancelled, None, None)
-                .await?;
-        }
-        let receipt = tx.commit(json!(current)).await?;
-        if let Some(token) = self.running.lock().expect("task registry lock").get(id) {
-            token.cancel();
-        }
-        Ok(receipt)
-    }
-    pub async fn operation(&self, action: &str, id: &str) -> Result<WriteTransaction> {
-        let key = OperationKey {
-            caller_id: "nous-worker".into(),
-            operation: action.into(),
-            scope: id.into(),
-            operation_id: ulid::Ulid::generate().to_string(),
-            request_hash: action.into(),
-        };
-        match self.database.begin_operation(key).await? {
-            BeginOperation::New(tx) => Ok(tx),
-            BeginOperation::Replay(_) => unreachable!("fresh task operation"),
-        }
-    }
     pub fn start(
         &self,
         registry: TaskRegistry,
@@ -176,7 +36,7 @@ impl Tasks {
                 loop {
                     tokio::select! {
                         _=stop.cancelled()=>break,
-                        _=tokio::time::sleep(Duration::from_secs(30))=>{},
+                        _=tokio::time::sleep(Duration::from_millis(maintenance.tasks.config.wake_interval_ms))=>{},
                         _=maintenance.tasks.wake.notified()=>{},
                     }
                     if let Err(error) = maintenance.wake_ready().await {
@@ -188,11 +48,12 @@ impl Tasks {
                 .tasks
                 .database
                 .queue_backend()
-                .poll_with_interval(Duration::from_millis(250));
+                .poll_with_interval(Duration::from_millis(runtime.tasks.config.poll_interval_ms));
+            let concurrency = runtime.tasks.config.concurrency;
             let worker = WorkerBuilder::new(format!("nous-{}", ulid::Ulid::generate()))
                 .backend(backend)
                 .data(runtime)
-                .concurrency(1)
+                .concurrency(concurrency)
                 .build(dispatch);
             let execute = async move {
                 if let Err(error) = worker
@@ -207,37 +68,6 @@ impl Tasks {
             };
             tokio::join!(execute, wake);
         })
-    }
-}
-
-type TaskFuture = Pin<Box<dyn Future<Output = Result<()>> + Send>>;
-type Handler = Arc<dyn Fn(JobRecord, CancellationToken) -> TaskFuture + Send + Sync>;
-type ReadyFuture = Pin<Box<dyn Future<Output = bool> + Send>>;
-type Readiness = Arc<dyn Fn(JobRecord) -> ReadyFuture + Send + Sync>;
-#[derive(Default)]
-pub struct TaskRegistry {
-    handlers: HashMap<String, (Handler, Readiness)>,
-}
-impl TaskRegistry {
-    pub fn register<F, Fut, R, RFut>(&mut self, kind: &str, handler: F, ready: R) -> Result<()>
-    where
-        F: Fn(JobRecord, CancellationToken) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = Result<()>> + Send + 'static,
-        R: Fn(JobRecord) -> RFut + Send + Sync + 'static,
-        RFut: Future<Output = bool> + Send + 'static,
-    {
-        validate_name(kind, "task kind")?;
-        if self.handlers.contains_key(kind) {
-            return Err(Error::invalid("task handler is already registered"));
-        }
-        self.handlers.insert(
-            kind.into(),
-            (
-                Arc::new(move |job, cancel| Box::pin(handler(job, cancel))),
-                Arc::new(move |job| Box::pin(ready(job))),
-            ),
-        );
-        Ok(())
     }
 }
 
@@ -256,12 +86,9 @@ impl TaskRuntime {
             let Some((_, ready)) = self.registry.handlers.get(&job.kind) else {
                 continue;
             };
-            let not_before = wait.details.get("not_before_ms").and_then(Value::as_i64);
-            if wait.kind == "dependencies" {
+            if !job.dependencies.is_empty() {
                 let dependencies = self.tasks.dependencies(&job).await?;
-                if dependencies.iter().any(|dependency| {
-                    matches!(dependency.state, JobState::Failed | JobState::Cancelled)
-                }) {
+                if matches!(dependency_state(&dependencies), DependencyState::Failed) {
                     let mut tx = self
                         .tasks
                         .operation("task.dependency_failed", &job.id)
@@ -287,17 +114,19 @@ impl TaskRuntime {
                     }
                     continue;
                 }
-                if dependencies
-                    .iter()
-                    .any(|dependency| dependency.state != JobState::Succeeded)
-                {
+                if matches!(dependency_state(&dependencies), DependencyState::Pending) {
                     continue;
                 }
-            } else if let Some(at) = not_before {
-                if self.tasks.clock.utc().timestamp_millis() < at {
-                    continue;
+            }
+            let now = self.tasks.clock.utc().timestamp_millis();
+            let resumed = match wait.resume {
+                ResumeCondition::Ready => ready(job.clone()).await,
+                ResumeCondition::NotBefore { unix_ms } => now >= unix_ms,
+                ResumeCondition::ReadyOrNotBefore { unix_ms } => {
+                    now >= unix_ms || ready(job.clone()).await
                 }
-            } else if wait.kind != "capability" && !ready(job.clone()).await {
+            };
+            if !resumed {
                 continue;
             }
             let mut tx = self.tasks.operation("task.wake", &job.id).await?;
@@ -323,10 +152,66 @@ impl TaskRuntime {
         Ok(())
     }
     async fn execute(&self, id: &str) -> Result<()> {
+        let job = self.tasks.database.job_record(id).await?;
+        let span = tracing::info_span!(
+            "task.execute", trace_id=%job.trace_id, job_id=%job.id, job_kind=%job.kind,
+            namespace_id=job.namespace_id.as_ref().map(|id|id.as_str()).unwrap_or(""),
+            subject_id=job.subject_id.as_ref().map(|id|id.as_str()).unwrap_or(""),
+        );
+        crate::observability::in_trace(job.trace_id.clone(), async {
+            let start = Instant::now();
+            let result = self.execute_job(id).await;
+            let state = self.tasks.database.job_record(id).await.ok()
+                .and_then(|job|serde_json::to_value(job.state).ok())
+                .and_then(|state|state.as_str().map(str::to_owned))
+                .unwrap_or_else(||"unknown".into());
+            let elapsed = start.elapsed();
+            metrics::counter!("nous_tasks_total", "kind"=>job.kind.clone(), "state"=>state.clone()).increment(1);
+            metrics::histogram!("nous_task_duration_seconds", "kind"=>job.kind.clone()).record(elapsed.as_secs_f64());
+            match &result {
+                Ok(()) => tracing::info!(state,elapsed_ms=elapsed.as_millis() as u64,"task dispatch completed"),
+                Err(error) => tracing::warn!(%error,state,elapsed_ms=elapsed.as_millis() as u64,"task dispatch failed"),
+            }
+            result
+        }).instrument(span).await
+    }
+
+    async fn execute_job(&self, id: &str) -> Result<()> {
         let mut tx = self.tasks.operation("task.start", id).await?;
         let mut job = tx.job_record(id).await?;
         if terminal(job.state) || job.state == JobState::Waiting {
             tx.rollback().await?;
+            return Ok(());
+        }
+        let mut dependencies = Vec::new();
+        for dependency in &job.dependencies {
+            dependencies.push(tx.job_record(dependency).await?);
+        }
+        let dependency_state = dependency_state(&dependencies);
+        if !matches!(dependency_state, DependencyState::Ready) {
+            let failed = matches!(dependency_state, DependencyState::Failed);
+            let wait = (!failed).then(|| WaitCondition {
+                kind: "dependencies".into(),
+                resume: ResumeCondition::Ready,
+                details: json!({}),
+            });
+            let error =
+                failed.then(|| Error::new(ErrorCode::Conflict, "required task did not complete"));
+            self.tasks
+                .change_in(
+                    &mut tx,
+                    &mut job,
+                    if failed {
+                        JobState::Failed
+                    } else {
+                        JobState::Waiting
+                    },
+                    wait,
+                    error,
+                )
+                .await?;
+            tx.commit(json!({"state":job.state})).await?;
+            self.tasks.notify_wake();
             return Ok(());
         }
         let Some((handler, _)) = self.registry.handlers.get(&job.kind) else {
@@ -336,6 +221,7 @@ impl TaskRuntime {
             );
             let wait = WaitCondition {
                 kind: "capability".into(),
+                resume: ResumeCondition::Ready,
                 details: json!({"task_kind":job.kind}),
             };
             self.tasks
@@ -383,7 +269,7 @@ impl TaskRuntime {
             let retry = matches!(
                 error.code,
                 ErrorCode::Internal | ErrorCode::DependencyUnavailable
-            ) && attempts < 5;
+            ) && attempts < i64::from(self.tasks.config.max_queue_attempts);
             self.tasks
                 .change_in(
                     &mut tx,
@@ -409,16 +295,25 @@ impl TaskRuntime {
 async fn dispatch(job: nous_storage::JobEnvelope, runtime: Data<TaskRuntime>) -> Result<()> {
     runtime.execute(&job.id).await
 }
-fn terminal(state: JobState) -> bool {
-    matches!(
-        state,
-        JobState::Succeeded | JobState::Failed | JobState::Cancelled
-    )
+
+#[derive(Clone, Copy)]
+enum DependencyState {
+    Ready,
+    Pending,
+    Failed,
 }
-fn authorize(ctx: &CallContext, job: &JobRecord) -> Result<()> {
-    match (&job.namespace_id, &job.subject_id) {
-        (Some(ns), Some(subject)) => ctx.require_subject(ns, subject),
-        (Some(ns), None) => ctx.require_namespace(ns),
-        _ => ctx.require_admin(),
+fn dependency_state(dependencies: &[JobRecord]) -> DependencyState {
+    if dependencies
+        .iter()
+        .any(|job| matches!(job.state, JobState::Failed | JobState::Cancelled))
+    {
+        DependencyState::Failed
+    } else if dependencies
+        .iter()
+        .any(|job| job.state != JobState::Succeeded)
+    {
+        DependencyState::Pending
+    } else {
+        DependencyState::Ready
     }
 }

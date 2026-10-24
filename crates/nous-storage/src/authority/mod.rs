@@ -8,3 +8,5 @@ pub use transaction::{BeginOperation, WriteTransaction, operation_key};
 mod read_view;
 pub(crate) mod tasks;
 pub use read_view::ReadView;
+mod trace;
+pub use trace::{TraceCursor, TraceJob, TraceModelCall, TraceOperation, TraceRecords};

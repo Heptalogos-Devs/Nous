@@ -121,6 +121,7 @@ impl App {
                 state.error = Some(error);
                 if let Some(mut tx) = self
                     .worker_transaction(
+                        &run.job,
                         "cognition.group.reject",
                         &format!("{}:{}", run.job.id, group.key),
                         &run.job.id,
@@ -140,6 +141,7 @@ impl App {
         }
         if let Some(mut tx) = self
             .worker_transaction(
+                &run.job,
                 "cognition.formation.finish",
                 &run.job.id,
                 &run.job.id,
@@ -213,6 +215,7 @@ impl App {
         }
         let Some(mut tx) = self
             .worker_transaction(
+                &run.job,
                 "cognition.group.apply",
                 &format!("{}:{}", run.job.id, group.key),
                 &run.job.id,

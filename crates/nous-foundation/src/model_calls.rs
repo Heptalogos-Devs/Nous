@@ -2,8 +2,8 @@
 use super::{
     clock::Clock,
     models::{
-        AttemptContext, CallMetadata, ModelExecution, ModelFailure, ModelRuntime, PreparedCall,
-        RetryClass,
+        AttemptContext, CallMetadata, ModelBudgets, ModelExecution, ModelFailure, ModelRuntime,
+        PreparedCall, RetryClass,
     },
     tasks::Tasks,
 };
@@ -11,21 +11,27 @@ use nous_domain::*;
 use nous_storage::Database;
 use serde::Serialize;
 use serde_json::{Value, json};
-use std::{future::Future, time::Duration};
+use std::{
+    future::Future,
+    time::{Duration, Instant},
+};
 use tokio_util::sync::CancellationToken;
+use tracing::Instrument;
 
 #[derive(Clone)]
 pub struct ModelCalls {
     database: Database,
     tasks: Tasks,
     clock: Clock,
+    budgets: ModelBudgets,
 }
 impl ModelCalls {
-    pub fn new(database: Database, tasks: Tasks, clock: Clock) -> Self {
+    pub fn new(database: Database, tasks: Tasks, clock: Clock, budgets: ModelBudgets) -> Self {
         Self {
             database,
             tasks,
             clock,
+            budgets,
         }
     }
     pub async fn recover(&self) -> Result<()> {
@@ -62,8 +68,8 @@ impl ModelCalls {
         else {
             return false;
         };
-        runtime
-            .ready_plan(
+        let Ok(mut resources) = runtime
+            .ready_resources(
                 &ConfigScope::Subject {
                     namespace_id: namespace.clone(),
                     subject_id: subject.clone(),
@@ -75,6 +81,38 @@ impl ModelCalls {
                 },
             )
             .await
+        else {
+            return false;
+        };
+        if let Some(resource) = job
+            .wait
+            .as_ref()
+            .filter(|wait| wait.kind == "budget")
+            .and_then(|wait| wait.details.get("resource"))
+            .and_then(|value| {
+                serde_json::from_value::<super::models::ResourceMetadata>(value.clone()).ok()
+            })
+            && resources
+                .iter()
+                .any(|ready| ready.id == resource.id && ready.provider == resource.provider)
+        {
+            resources = vec![resource];
+        }
+        let day = self.clock.utc().date_naive().to_string();
+        for resource in resources {
+            match self
+                .budgets
+                .has_capacity(&self.database, job, role, &resource, &day)
+                .await
+            {
+                Ok(true) => return true,
+                Ok(false) => {}
+                Err(error) => {
+                    tracing::debug!(trace_id=%job.trace_id,job_id=%job.id,%error,"model budget readiness unavailable")
+                }
+            }
+        }
+        false
     }
     /// Preparation is lazy: a completed step is reused before reading current
     /// credentials or making another provider request.
@@ -136,6 +174,7 @@ impl ModelCalls {
                     let wait = (failure.class() == RetryClass::WaitingConfiguration).then(|| {
                         WaitCondition {
                             kind: "configuration".into(),
+                            resume: ResumeCondition::Ready,
                             details: json!({"task_kind":job.kind}),
                         }
                     });
@@ -202,44 +241,38 @@ impl ModelCalls {
                     ));
                 }
             }
-            if tx
-                .daily_model_calls(&reservation.resource_id, &self.clock.budget_day())
-                .await?
-                >= i64::from(reservation.max_calls_per_day)
+            let budget_plan = match self
+                .budgets
+                .plan_in(&mut tx, &job, &reservation.role, &reservation.resource)
+                .await
             {
-                let tomorrow = self
-                    .clock
-                    .utc()
-                    .date_naive()
-                    .succ_opt()
-                    .expect("next UTC date")
-                    .and_hms_opt(0, 0, 0)
-                    .expect("midnight")
-                    .and_utc()
-                    .timestamp_millis();
-                let wait = WaitCondition {
-                    kind: "budget".into(),
-                    details: json!({"resource_id":reservation.resource_id,"not_before_ms":tomorrow}),
-                };
-                self.tasks
-                    .change_in(
-                        &mut tx,
-                        &mut job,
-                        JobState::Waiting,
-                        Some(wait),
-                        Some(Error::new(
-                            ErrorCode::ResourceExhausted,
-                            "daily model call budget is exhausted",
-                        )),
-                    )
-                    .await?;
-                tx.commit(json!({"state":job.state})).await?;
-                return Ok(None);
-            }
+                Ok(plan) => plan,
+                Err(error) if error.code == ErrorCode::CapabilityUnavailable => {
+                    let wait = WaitCondition {
+                        kind: "configuration".into(),
+                        resume: ResumeCondition::Ready,
+                        details: json!({"role":reservation.role,"resource_id":reservation.resource.id}),
+                    };
+                    self.tasks
+                        .change_in(
+                            &mut tx,
+                            &mut job,
+                            JobState::Waiting,
+                            Some(wait),
+                            Some(error),
+                        )
+                        .await?;
+                    tx.commit(json!({"state":job.state})).await?;
+                    return Ok(None);
+                }
+                Err(error) => return Err(error),
+            };
             let attempts = tx.model_step_calls(job_id, step).await?.len() as i64;
+            let reserved_at = self.clock.utc();
             let mut call = ModelCall {
                 id: reservation.call_id,
                 job_id: job_id.into(),
+                trace_id: job.trace_id.clone(),
                 step_key: step.into(),
                 namespace_id: job
                     .namespace_id
@@ -250,20 +283,61 @@ impl ModelCalls {
                     .clone()
                     .ok_or_else(|| Error::invalid("model invocation needs subject scope"))?,
                 attempt: attempts + 1,
-                resource_id: reservation.resource_id,
+                resource_id: reservation.resource.id.clone(),
                 request: reservation.request,
                 response: None,
                 state: ModelCallState::Started,
                 error: None,
                 cost_microunits: None,
-                created_at: self.clock.recorded(),
+                created_at: reserved_at.to_rfc3339(),
                 completed_at: None,
             };
-            tx.insert_model_call(&call).await?;
+            match tx.reserve_model_call(&call, &budget_plan).await? {
+                nous_storage::ModelBudgetAdmission::Reserved => {}
+                nous_storage::ModelBudgetAdmission::AlreadyReserved => {
+                    return Err(Error::new(
+                        ErrorCode::Conflict,
+                        "model call is already reserved",
+                    ));
+                }
+                nous_storage::ModelBudgetAdmission::Exhausted(buckets) => {
+                    let tomorrow = reserved_at
+                        .date_naive()
+                        .succ_opt()
+                        .expect("next UTC date")
+                        .and_hms_opt(0, 0, 0)
+                        .expect("midnight")
+                        .and_utc()
+                        .timestamp_millis();
+                    let wait = WaitCondition {
+                        kind: "budget".into(),
+                        resume: ResumeCondition::ReadyOrNotBefore { unix_ms: tomorrow },
+                        details: json!({"buckets":buckets,"resource":reservation.resource,"role":reservation.role}),
+                    };
+                    self.tasks
+                        .change_in(
+                            &mut tx,
+                            &mut job,
+                            JobState::Waiting,
+                            Some(wait),
+                            Some(Error::new(
+                                ErrorCode::ResourceExhausted,
+                                "daily model call budget is exhausted",
+                            )),
+                        )
+                        .await?;
+                    tx.commit(json!({"state":job.state})).await?;
+                    return Ok(None);
+                }
+            }
             tx.commit(json!({"call_id":call.id})).await?;
 
-            let execution =
-                tokio::select! {result=execute(prepared)=>Some(result),_=cancel.cancelled()=>None};
+            let started = Instant::now();
+            let span = tracing::info_span!("model.attempt", trace_id=%call.trace_id, job_id=%call.job_id, call_id=%call.id, step=%call.step_key, role=%reservation.role, resource=%call.resource_id, attempt=call.attempt);
+            let execution = crate::observability::in_trace(call.trace_id.clone(), async {
+                tracing::info!(event="model.dispatched", "model request dispatched");
+                tokio::select! {result=execute(prepared)=>Some(result),_=cancel.cancelled()=>None}
+            }.instrument(span.clone())).await;
             let interrupted = execution.is_none();
             let mut retry_delay = None;
             match execution {
@@ -292,22 +366,37 @@ impl ModelCalls {
                             retry_delay =
                                 Some(failure.info.retry_after_seconds.unwrap_or(2).min(30));
                         }
-                        call.error = Some(failure.to_domain_error());
+                        call.error =
+                            Some(failure.to_domain_error().with_trace(call.trace_id.clone()));
                     }
                 }
                 None => {
                     call.completed_at = Some(self.clock.recorded());
                     call.state = ModelCallState::Uncertain;
-                    call.error = Some(Error::new(
-                        ErrorCode::DependencyUnavailable,
-                        "model request was interrupted after dispatch",
-                    ));
+                    call.error = Some(
+                        Error::new(
+                            ErrorCode::DependencyUnavailable,
+                            "model request was interrupted after dispatch",
+                        )
+                        .with_trace(call.trace_id.clone()),
+                    );
                     call.response = Some(
                         json!({"record":{"started_at":call.created_at,"completed_at":call.completed_at,"status":"uncertain","usage":null,"cost":null},"result":null}),
                     );
                     retry_delay = Some(0);
                 }
             }
+            let status = match call.state {
+                ModelCallState::Started => "started",
+                ModelCallState::Succeeded => "succeeded",
+                ModelCallState::Failed => "failed",
+                ModelCallState::Uncertain => "uncertain",
+            };
+            let elapsed = started.elapsed();
+            metrics::counter!("nous_model_attempts_total", "role"=>reservation.role.clone(), "status"=>status).increment(1);
+            metrics::histogram!("nous_model_attempt_duration_seconds", "role"=>reservation.role)
+                .record(elapsed.as_secs_f64());
+            tracing::info!(parent:&span, event="model.completed", status, elapsed_ms=elapsed.as_millis() as u64, error=?call.error, "model request completed");
             let mut tx = self.tasks.operation("model.complete", job_id).await?;
             let mut job = tx.job_record(job_id).await?;
             if job.state == JobState::Cancelled {

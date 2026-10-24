@@ -6,5 +6,6 @@ pub mod instance;
 pub mod model_calls;
 pub mod models;
 pub mod network;
+pub mod observability;
 pub mod prompts;
 pub mod tasks;

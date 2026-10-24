@@ -72,11 +72,7 @@ impl App {
         let (references, commit_seq, configuration_entries) = metadata?;
         let mut config = self.config.as_ref().clone();
         config.auth = AuthConfig::default();
-        let prompt_files = prompt_references(
-            &Prompts::new(self.paths.as_ref().clone()),
-            &config,
-            &configuration_entries,
-        )?;
+        let prompt_files = prompt_references(self.paths.as_ref(), &config, &configuration_entries)?;
         let config_text = toml::to_string_pretty(&config)?;
         let root = staging.path().to_owned();
         let mut object_files = Vec::new();
@@ -258,7 +254,7 @@ pub async fn restore(source: &Path, target: InstancePaths) -> Result<Value> {
         }
         let config = InstanceConfig::load(&staged)?;
         for reference in prompt_references(
-            &Prompts::new(staged.clone()),
+            &staged,
             &config,
             &snapshot.configuration_entries_all().await?,
         )? {
@@ -479,7 +475,7 @@ fn sync_directory(_: &Path) -> Result<()> {
 }
 
 fn prompt_references(
-    prompts: &Prompts,
+    paths: &InstancePaths,
     config: &InstanceConfig,
     entries: &[nous_domain::ConfigEntry],
 ) -> Result<Vec<ManagedPromptReference>> {
@@ -487,7 +483,7 @@ fn prompt_references(
     roles
         .prompt_bindings(&config.models, entries)?
         .into_iter()
-        .filter_map(|(id, binding)| prompts.managed_reference(&id, &binding).transpose())
+        .filter_map(|(_, binding)| Prompts::file_reference(paths, &binding).transpose())
         .collect::<nous_domain::Result<_>>()
         .map_err(Into::into)
 }

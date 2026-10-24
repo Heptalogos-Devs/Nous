@@ -4,7 +4,7 @@ use super::{
     paths::{is_within, resolve_existing_ancestor},
 };
 use anyhow::{Context, Result, bail};
-use nous_domain::{AccessScope, CallContext};
+use nous_domain::{AccessScope, CallerIdentity};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -67,14 +67,14 @@ impl InstancePaths {
         } else {
             Vec::new()
         };
-        let context = CallContext {
+        let identity = CallerIdentity {
             caller_id: format!("token:{id}"),
             scope,
         };
         entries.push(TokenRecord {
             name: name.to_owned(),
             digest: token_digest(&token),
-            context: context.clone(),
+            identity: identity.clone(),
         });
         let mut pending = tempfile::NamedTempFile::new_in(self.resolve("temp/staging")?)?;
         protect_secret_file(pending.path())?;
@@ -82,7 +82,7 @@ impl InstancePaths {
         pending.as_file().sync_all()?;
         pending.persist(&registry_path).map_err(|e| e.error)?;
         Ok(
-            serde_json::json!({ "id": id, "name": name, "context": context, "token_file": path, "secret_ref": reference }),
+            serde_json::json!({ "id": id, "name": name, "identity": identity, "token_file": path, "secret_ref": reference }),
         )
     }
 }
@@ -91,7 +91,7 @@ impl InstancePaths {
 pub struct TokenRecord {
     pub name: String,
     pub digest: String,
-    pub context: CallContext,
+    pub identity: CallerIdentity,
 }
 
 /// Snapshot loaded by the sole instance host. Offline token edits require stopping that host.
@@ -105,7 +105,10 @@ impl TokenStore {
         let mut records = vec![TokenRecord {
             name: "administrator".into(),
             digest: token_digest(&paths.read_secret(&config.auth.admin_token)?),
-            context: CallContext::admin(),
+            identity: CallerIdentity {
+                caller_id: "admin".into(),
+                scope: AccessScope::Admin,
+            },
         }];
         let path = paths.resolve("credentials/tokens.json")?;
         if path.exists() {
@@ -116,13 +119,13 @@ impl TokenStore {
         Ok(Self { records })
     }
 
-    pub fn authenticate(&self, token: &str) -> Option<CallContext> {
+    pub fn authenticate(&self, token: &str) -> Option<CallerIdentity> {
         use subtle::ConstantTimeEq;
         let digest = token_digest(token);
         self.records
             .iter()
             .find(|record| bool::from(record.digest.as_bytes().ct_eq(digest.as_bytes())))
-            .map(|record| record.context.clone())
+            .map(|record| record.identity.clone())
     }
 }
 

@@ -15,6 +15,10 @@ impl App {
         let values = [
             (SERVER.path(), serde_json::to_value(server)?),
             (
+                nous_foundation::observability::OBSERVABILITY.path(),
+                serde_json::to_value(&self.bootstrap_config().observability)?,
+            ),
+            (
                 AUTH.path(),
                 serde_json::to_value(&self.bootstrap_config().auth)?,
             ),
@@ -22,12 +26,13 @@ impl App {
                 NETWORK.path(),
                 serde_json::to_value(&self.bootstrap_config().network)?,
             ),
+            (
+                nous_foundation::tasks::TASK_RUNTIME.path(),
+                serde_json::to_value(&self.bootstrap_config().tasks)?,
+            ),
         ];
         let body = json!(values);
-        let ctx = CallContext {
-            caller_id: "runtime".into(),
-            scope: AccessScope::Admin,
-        };
+        let ctx = CallContext::new("runtime", AccessScope::Admin);
         let key = operation_key(
             &ctx,
             "configuration.core.applied",

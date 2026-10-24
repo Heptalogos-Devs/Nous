@@ -117,9 +117,22 @@ impl ModelResources {
         }
     }
     pub fn ready_resolved(&self, model: &ResolvedModel) -> bool {
-        model.routes.iter().any(|route| {
-            route.provider.enabled && self.paths.read_secret(&route.provider.credential).is_ok()
-        })
+        !self.ready_resources(model, 0).is_empty()
+    }
+    pub(super) fn ready_resources(
+        &self,
+        model: &ResolvedModel,
+        start: usize,
+    ) -> Vec<ResourceMetadata> {
+        model
+            .routes
+            .iter()
+            .skip(start)
+            .filter(|route| {
+                route.provider.enabled && self.paths.read_secret(&route.provider.credential).is_ok()
+            })
+            .map(|route| route.resource.clone())
+            .collect()
     }
     pub(super) fn target(
         &self,
@@ -166,6 +179,7 @@ fn resolve_registered(
         )
     })?;
     binding.validate()?;
+    binding.prompt.validate_for_scope(&snapshot.scope)?;
     let mut routes = Vec::new();
     for id in &binding.routes {
         let route = catalog

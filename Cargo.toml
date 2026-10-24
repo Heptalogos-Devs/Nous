@@ -36,6 +36,8 @@ fs2 = "0.4"
 futures = "0.3"
 genai = { version = "=0.7.0", default-features = false, features = ["rustls-tls"] }
 minijinja = { version = "3.0", features = ["fuel", "serde"] }
+metrics = "0.24"
+metrics-exporter-prometheus = { version = "0.18", default-features = false }
 nalgebra = { version = "0.35", features = ["serde-serialize"] }
 rayon = "1"
 reqwest = { version = "0.13.2", default-features = false, features = ["json", "rustls"] }
@@ -54,6 +56,7 @@ tokio-util = "0.7"
 toml = "1"
 tower = "0.5"
 tracing = "0.1"
+tracing-appender = "0.2"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 ulid = { version = "3", features = ["serde"] }
 usearch = { version = "=2.26.2", default-features = false }

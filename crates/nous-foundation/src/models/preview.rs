@@ -25,16 +25,10 @@ pub(super) fn build(
     let draft = role.contract.build(input).map_err(ModelFailure::domain)?;
     let (arguments, mut invocation) = draft.input();
     let prompt = if let Some(template) = &model.prompt_template {
-        let mut template = template.clone();
-        if let Some(override_text) = &edits.prompt {
-            template.text = override_text.clone();
-            template.revision = None;
-            template.file = None;
-        }
         Some(
             runtime
                 .prompts()
-                .render_template(&template, &arguments)
+                .preview_template(template, &arguments, edits.prompt.as_deref())
                 .map_err(ModelFailure::prompt)?,
         )
     } else {

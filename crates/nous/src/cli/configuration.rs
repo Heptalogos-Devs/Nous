@@ -64,7 +64,8 @@ pub(super) async fn execute(
             return print_json(serde_json::to_value(schemars::schema_for!(InstanceConfig))?);
         }
         ConfigCommand::Validate => {
-            InstanceConfig::load(paths)?;
+            let config = InstanceConfig::load(paths)?;
+            nous_app::administration::configuration::deployment_snapshot(&config)?;
             return print_json(serde_json::json!({"valid":true,"config":paths.config}));
         }
         ConfigCommand::Show { scope } => ConfigRequest::Show {

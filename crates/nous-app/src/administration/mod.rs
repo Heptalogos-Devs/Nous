@@ -2,3 +2,6 @@
 mod bootstrap;
 pub mod configuration;
 pub mod models;
+pub mod observability;
+
+pub mod prompts;

@@ -42,6 +42,7 @@ impl Database {
         let crate::BeginOperation::New(mut tx) = self
             .begin_operation(crate::OperationKey {
                 caller_id: "nous.recovery".into(),
+                trace_id: TraceId::new(),
                 operation: "calls.recover".into(),
                 scope: "instance".into(),
                 operation_id: ulid::Ulid::generate().to_string(),
@@ -55,7 +56,7 @@ impl Database {
             ErrorCode::DependencyUnavailable,
             "host stopped before the remote response was saved",
         );
-        let count=sqlx::query("UPDATE model_calls SET state='uncertain',error=?,completed_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE state='started'").bind(serde_json::to_string(&error)?).execute(&mut *tx.tx).await.map_err(write_error)?.rows_affected();
+        let count=sqlx::query("UPDATE model_calls SET state='uncertain',error=json_set(?,'$.trace_id',trace_id),completed_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE state='started'").bind(serde_json::to_string(&error)?).execute(&mut *tx.tx).await.map_err(write_error)?.rows_affected();
         if count == 0 {
             tx.rollback().await?;
         } else {
@@ -126,24 +127,19 @@ impl WriteTransaction {
         model_call(&mut self.tx, id).await
     }
 
-    /// Every persisted call consumes one attempt, including failed and uncertain
-    /// network outcomes. Call IDs and (job, step, attempt) are unique reservations.
-    pub async fn daily_model_calls(&mut self, resource_id: &str, date_prefix: &str) -> Result<i64> {
-        sqlx::query_scalar(
-            "SELECT count(*) FROM model_calls WHERE resource_id=? AND substr(created_at,1,10)=?",
-        )
-        .bind(resource_id)
-        .bind(date_prefix)
-        .fetch_one(&mut *self.tx)
-        .await
-        .map_err(storage_error)
-    }
-
-    pub async fn insert_model_call(&mut self, call: &ModelCall) -> Result<()> {
-        sqlx::query("INSERT INTO model_calls(id,job_id,namespace_id,subject_id,step_key,attempt,resource_id,request,response,state,error,cost_microunits,created_at,completed_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+    pub(crate) async fn insert_model_call(&mut self, call: &ModelCall) -> Result<()> {
+        call.trace_id.validate()?;
+        let job = self.job_record(&call.job_id).await?;
+        if call.trace_id != job.trace_id {
+            return Err(
+                Error::invalid("model call trace differs from its accepted task")
+                    .with_trace(self.trace_id().clone()),
+            );
+        }
+        sqlx::query("INSERT INTO model_calls(id,job_id,namespace_id,subject_id,step_key,attempt,resource_id,request,response,state,error,cost_microunits,created_at,completed_at,trace_id,reservation_commit_seq) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
             .bind(call.id.as_str()).bind(&call.job_id).bind(call.namespace_id.as_str()).bind(call.subject_id.as_str()).bind(&call.step_key).bind(call.attempt).bind(&call.resource_id)
             .bind(serde_json::to_string(&call.request).map_err(storage_error)?).bind(json_option(&call.response)?).bind(enum_name(&call.state)?).bind(json_option(&call.error)?)
-            .bind(call.cost_microunits).bind(&call.created_at).bind(&call.completed_at)
+            .bind(call.cost_microunits).bind(&call.created_at).bind(&call.completed_at).bind(call.trace_id.as_str()).bind(self.commit_seq())
             .execute(&mut *self.tx).await.map_err(write_error)?;
         Ok(())
     }
@@ -158,6 +154,7 @@ impl WriteTransaction {
             || previous.subject_id != call.subject_id
             || previous.created_at != call.created_at
             || previous.step_key != call.step_key
+            || previous.trace_id != call.trace_id
         {
             return Err(Error::new(
                 ErrorCode::Conflict,
@@ -184,6 +181,7 @@ async fn model_call(connection: &mut SqliteConnection, id: &ModelCallId) -> Resu
 fn model_call_row(row: SqliteRow) -> Result<ModelCall> {
     Ok(ModelCall {
         id: ModelCallId(row.get("id")),
+        trace_id: TraceId(row.get("trace_id")),
         job_id: row.get("job_id"),
         step_key: row.get("step_key"),
         namespace_id: NamespaceId(row.get("namespace_id")),

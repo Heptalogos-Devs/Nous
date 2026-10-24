@@ -59,12 +59,10 @@ impl App {
         };
         let clock = Clock;
         let roles = composition::model_roles()?;
-        let mut registry = nous_foundation::configuration::ConfigRegistryBuilder::new();
-        nous_foundation::configuration::register_core(&mut registry)?;
-        nous_foundation::models::register_configuration(&mut registry, &roles)?;
+        let registry = composition::configuration_registry(&roles)?;
         let configuration = Configuration::new(
             database.clone(),
-            registry.finish(),
+            registry,
             &serde_json::to_value(&config)?,
             clock,
         )
@@ -73,11 +71,27 @@ impl App {
         config.server = desired.get(nous_foundation::configuration::SERVER)?;
         config.auth = desired.get(nous_foundation::configuration::AUTH)?;
         config.network = desired.get(nous_foundation::configuration::NETWORK)?;
+        config.observability = desired.get(nous_foundation::observability::OBSERVABILITY)?;
+        config.tasks = desired.get(nous_foundation::tasks::TASK_RUNTIME)?;
         let network = network::NetworkClients::new(&config.network)
             .map_err(|error| Error::new(ErrorCode::DependencyUnavailable, error.to_string()))?;
+        let budgets =
+            nous_foundation::models::ModelBudgets::new(configuration.clone(), roles.clone());
+        let prompts = nous_foundation::prompts::Prompts::new(
+            paths.as_ref().clone(),
+            database.clone(),
+            clock,
+            roles.definitions().filter_map(|role| role.prompt.clone()),
+        );
         let model = Arc::new(
-            ModelRuntime::new(&paths, configuration.clone(), roles, network.http().clone())
-                .map_err(|error| Error::invalid(error.to_string()))?,
+            ModelRuntime::new(
+                &paths,
+                configuration.clone(),
+                roles,
+                prompts,
+                network.http().clone(),
+            )
+            .map_err(|error| Error::invalid(error.to_string()))?,
         );
         let index_path = paths
             .resolve("indexes/lexical")
@@ -86,8 +100,8 @@ impl App {
             .await
             .map_err(|error| Error::internal(error.to_string()))?
             .map_err(|error| Error::new(ErrorCode::DependencyUnavailable, error.to_string()))?;
-        let tasks = Tasks::new(database.clone(), clock);
-        let calls = ModelCalls::new(database.clone(), tasks.clone(), clock);
+        let tasks = Tasks::new(database.clone(), clock, config.tasks.clone())?;
+        let calls = ModelCalls::new(database.clone(), tasks.clone(), clock, budgets);
         Ok(Self {
             database,
             objects,
@@ -407,15 +421,13 @@ impl App {
     }
     pub(crate) async fn worker_transaction(
         &self,
+        job: &JobRecord,
         kind: &str,
         operation_id: &str,
         scope: &str,
         payload: &Value,
     ) -> Result<Option<nous_storage::WriteTransaction>> {
-        let context = CallContext {
-            caller_id: "nous-worker".into(),
-            scope: AccessScope::Admin,
-        };
+        let context = job.call_context("nous-worker")?;
         let key = operation_key(&context, kind, scope, operation_id, payload)?;
         match self.database.begin_operation(key).await? {
             BeginOperation::Replay(_) => Ok(None),

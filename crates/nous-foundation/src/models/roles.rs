@@ -56,9 +56,10 @@ fn daily() -> u32 {
 }
 impl RoleBinding {
     pub fn validate(&self) -> Result<()> {
+        self.prompt.validate()?;
+        nous_domain::validate_daily_call_limit(self.max_calls_per_day)?;
         if self.routes.is_empty()
             || self.routes.len() > 4
-            || self.max_calls_per_day > 100000
             || !(1..=16).contains(&self.retry.max_attempts)
         {
             return Err(Error::invalid(

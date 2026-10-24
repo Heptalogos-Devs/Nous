@@ -1,5 +1,5 @@
 //! Whole-key inheritance and complete owner validation for a selected scope.
-use super::{ConfigSnapshot, ConfigSource, Configuration, ResolvedConfigValue};
+use super::{ConfigRegistry, ConfigSnapshot, ConfigSource, Configuration, ResolvedConfigValue};
 use nous_domain::{ConfigEntry, ConfigScope, Error, Result};
 use std::collections::BTreeMap;
 
@@ -11,55 +11,80 @@ impl Configuration {
         entries: &[ConfigEntry],
         desired: bool,
     ) -> Result<ConfigSnapshot> {
-        let mut values = self
-            .registry
-            .descriptors()
-            .map(|definition| {
-                let value = match self.deployment.get(&definition.key) {
-                    Some(value) => ResolvedConfigValue {
-                        json: value.clone(),
-                        source: ConfigSource::Deployment,
-                    },
-                    None => ResolvedConfigValue {
-                        json: definition.default.clone(),
-                        source: ConfigSource::Builtin,
-                    },
-                };
-                (definition.key.clone(), value)
-            })
-            .collect::<BTreeMap<_, _>>();
-        for layer in hierarchy(scope) {
-            for entry in entries.iter().filter(|entry| entry.scope == layer) {
-                let definition = self.registry.descriptor(&entry.key)?;
-                if definition.apply_mode != entry.apply_mode
-                    || !definition.scopes.contains(&entry.scope.level())
-                {
-                    return Err(Error::invalid(
-                        "persisted configuration does not match its owner definition",
-                    ));
-                }
-                if let Some(value) = if desired {
-                    &entry.desired
-                } else {
-                    &entry.active
-                } {
-                    values.insert(
-                        entry.key.clone(),
-                        ResolvedConfigValue {
-                            json: self.registry.normalize(&entry.key, value.clone())?,
-                            source: ConfigSource::Override {
-                                scope: entry.scope.clone(),
-                                revision: entry.revision,
-                            },
+        resolve(
+            &self.registry,
+            &self.deployment,
+            scope,
+            revision,
+            entries,
+            desired,
+        )
+    }
+}
+
+impl ConfigRegistry {
+    /// Resolve the deployment baseline through the same owner validators, without Authority.
+    pub fn deployment_snapshot(&self, document: &serde_json::Value) -> Result<ConfigSnapshot> {
+        let deployment = self.deployment_values(document)?;
+        resolve(self, &deployment, &ConfigScope::Instance, 0, &[], true)
+    }
+}
+
+fn resolve(
+    registry: &ConfigRegistry,
+    deployment: &BTreeMap<String, serde_json::Value>,
+    scope: &ConfigScope,
+    revision: i64,
+    entries: &[ConfigEntry],
+    desired: bool,
+) -> Result<ConfigSnapshot> {
+    let mut values = registry
+        .descriptors()
+        .map(|definition| {
+            let value = match deployment.get(&definition.key) {
+                Some(value) => ResolvedConfigValue {
+                    json: value.clone(),
+                    source: ConfigSource::Deployment,
+                },
+                None => ResolvedConfigValue {
+                    json: definition.default.clone(),
+                    source: ConfigSource::Builtin,
+                },
+            };
+            (definition.key.clone(), value)
+        })
+        .collect::<BTreeMap<_, _>>();
+    for layer in hierarchy(scope) {
+        for entry in entries.iter().filter(|entry| entry.scope == layer) {
+            let definition = registry.descriptor(&entry.key)?;
+            if definition.apply_mode != entry.apply_mode
+                || !definition.scopes.contains(&entry.scope.level())
+            {
+                return Err(Error::invalid(
+                    "persisted configuration does not match its owner definition",
+                ));
+            }
+            if let Some(value) = if desired {
+                &entry.desired
+            } else {
+                &entry.active
+            } {
+                values.insert(
+                    entry.key.clone(),
+                    ResolvedConfigValue {
+                        json: registry.normalize(&entry.key, value.clone())?,
+                        source: ConfigSource::Override {
+                            scope: entry.scope.clone(),
+                            revision: entry.revision,
                         },
-                    );
-                }
+                    },
+                );
             }
         }
-        let snapshot = ConfigSnapshot::new(scope.clone(), revision, desired, values)?;
-        self.registry.validate_snapshot(&snapshot)?;
-        Ok(snapshot)
     }
+    let snapshot = ConfigSnapshot::new(scope.clone(), revision, desired, values)?;
+    registry.validate_snapshot(&snapshot)?;
+    Ok(snapshot)
 }
 
 pub(super) fn hierarchy(scope: &ConfigScope) -> Vec<ConfigScope> {

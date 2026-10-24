@@ -36,9 +36,14 @@ pub struct Provider {
     pub credential: SecretRef,
     #[serde(default = "enabled")]
     pub enabled: bool,
+    #[serde(default = "daily")]
+    pub max_calls_per_day: u32,
 }
 fn enabled() -> bool {
     true
+}
+fn daily() -> u32 {
+    20
 }
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -50,6 +55,8 @@ pub struct Model {
     pub capabilities: Vec<ModelCapability>,
     pub embedding: Option<EmbeddingProfile>,
     pub pricing: Option<TokenPricing>,
+    #[serde(default = "daily")]
+    pub max_calls_per_day: u32,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -105,6 +112,7 @@ impl ModelCatalog {
         }
         for (id, provider) in &self.providers {
             identifier(id)?;
+            nous_domain::validate_daily_call_limit(provider.max_calls_per_day)?;
             provider
                 .credential
                 .validate()
@@ -125,6 +133,7 @@ impl ModelCatalog {
         }
         for (id, model) in &self.models {
             identifier(id)?;
+            nous_domain::validate_daily_call_limit(model.max_calls_per_day)?;
             if !self.providers.contains_key(&model.provider)
                 || model.request_model.trim().is_empty()
             {

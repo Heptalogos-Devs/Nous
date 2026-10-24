@@ -5,7 +5,9 @@ pub mod configuration;
 pub mod maintenance;
 pub mod models;
 mod operation;
+pub mod prompts;
 pub mod structured;
+mod trace;
 use crate::mcp::McpService;
 use axum::{
     Json, Router,
@@ -17,7 +19,7 @@ use axum::{
 };
 pub use client::ApiClient;
 use nous_app::App;
-use nous_domain::{CallContext, Error, ErrorCode};
+use nous_domain::{CallContext, Error, ErrorCode, TraceId};
 use nous_foundation::instance::InstanceConfig;
 use nous_foundation::instance::TokenStore;
 pub use operation::*;
@@ -39,7 +41,8 @@ impl From<Error> for ApiError {
     }
 }
 impl IntoResponse for ApiError {
-    fn into_response(self) -> Response {
+    fn into_response(mut self) -> Response {
+        self.0 = nous_foundation::observability::contextualize(self.0);
         let status = self.1.unwrap_or(match self.0.code {
             ErrorCode::InvalidArgument => StatusCode::BAD_REQUEST,
             ErrorCode::Unauthorized => StatusCode::UNAUTHORIZED,
@@ -50,7 +53,9 @@ impl IntoResponse for ApiError {
             ErrorCode::ResourceExhausted => StatusCode::TOO_MANY_REQUESTS,
             ErrorCode::DependencyUnavailable => StatusCode::SERVICE_UNAVAILABLE,
             ErrorCode::Internal => StatusCode::INTERNAL_SERVER_ERROR,
+            ErrorCode::Cancelled => StatusCode::from_u16(499).expect("cancellation status"),
         });
+        tracing::warn!(event="request.rejected", error_code=?self.0.code, error=%self.0, details=?self.0.context, cause=?self.0.cause, "request failed");
         let mut response = (status, Json(json!({"error":self.0}))).into_response();
         if status == StatusCode::UNAUTHORIZED {
             response.headers_mut().insert(
@@ -63,8 +68,6 @@ impl IntoResponse for ApiError {
 }
 
 pub fn router(state: ApiState, config: &InstanceConfig, cancellation: CancellationToken) -> Router {
-    // Adapted from the official rmcp counter_streamhttp and simple_auth_streamhttp examples.
-    // Source and Apache-2.0 license: ../../UPSTREAM.md and ../../licenses/rmcp-LICENSE.
     use rmcp::transport::streamable_http_server::{
         StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
     };
@@ -78,6 +81,9 @@ pub fn router(state: ApiState, config: &InstanceConfig, cancellation: Cancellati
     );
     Router::new()
         .route("/api/status", get(status))
+        .route("/api/diagnostics", get(diagnostics))
+        .route("/api/traces/query", post(trace_records))
+        .route("/api/metrics", get(metrics))
         .route("/api/stop", post(stop))
         .route("/api/backups", post(create_backup))
         .route(
@@ -100,6 +106,7 @@ pub fn router(state: ApiState, config: &InstanceConfig, cancellation: Cancellati
         .merge(crate::http::cognition::router())
         .merge(crate::http::configuration::router())
         .merge(crate::http::models::router())
+        .merge(crate::http::prompts::router())
         .merge(crate::http::structured::router())
         .merge(crate::http::maintenance::router())
         .nest_service("/mcp", mcp)
@@ -120,6 +127,7 @@ pub fn router(state: ApiState, config: &InstanceConfig, cancellation: Cancellati
             state.tokens.clone(),
             authenticate,
         ))
+        .layer(middleware::from_fn(trace::trace_request))
         .with_state(state)
 }
 
@@ -133,18 +141,19 @@ async fn authenticate(
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "));
-    let ctx = token
+    let identity = token
         .and_then(|token| tokens.authenticate(token))
         .ok_or_else(|| Error::new(ErrorCode::Unauthorized, "a valid bearer token is required"))?;
-    let request_id = uuid::Uuid::new_v4().to_string();
-    let span = tracing::info_span!("request", request_id=%request_id, caller=%ctx.caller_id, method=%request.method(), path=%request.uri().path());
+    let trace_id = request
+        .extensions()
+        .get::<TraceId>()
+        .cloned()
+        .ok_or_else(|| Error::internal("request trace middleware is missing"))?;
+    let ctx = identity.begin_call(trace_id);
+    let span = tracing::info_span!("authenticated", caller=%ctx.caller_id);
     request.extensions_mut().insert(ctx);
     use tracing::Instrument;
-    let mut response = next.run(request).instrument(span).await;
-    response
-        .headers_mut()
-        .insert("x-request-id", request_id.parse().expect("UUID header"));
-    Ok(response)
+    Ok(next.run(request).instrument(span).await)
 }
 
 pub(crate) async fn run(
@@ -170,6 +179,32 @@ async fn status(
     Extension(c): Extension<CallContext>,
 ) -> Result<Json<Value>, ApiError> {
     run(s, c, Operation::Status).await
+}
+
+async fn trace_records(
+    State(s): State<ApiState>,
+    Extension(c): Extension<CallContext>,
+    body: Result<Json<nous_app::administration::observability::TraceRequest>, JsonRejection>,
+) -> Result<Json<Value>, ApiError> {
+    run(s, c, Operation::Trace(decode(body)?)).await
+}
+
+async fn diagnostics(
+    State(s): State<ApiState>,
+    Extension(c): Extension<CallContext>,
+) -> Result<Json<Value>, ApiError> {
+    run(s, c, Operation::Diagnostics).await
+}
+
+async fn metrics(Extension(c): Extension<CallContext>) -> Result<impl IntoResponse, ApiError> {
+    c.require_admin()?;
+    Ok((
+        [(
+            header::CONTENT_TYPE,
+            "text/plain; version=0.0.4; charset=utf-8",
+        )],
+        nous_foundation::observability::Observability::current()?.metrics(),
+    ))
 }
 async fn stop(
     State(s): State<ApiState>,

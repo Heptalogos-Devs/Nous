@@ -70,12 +70,14 @@ pub(crate) fn connect(
             .context("--token-file is required for a remote service")?;
         paths.read_secret(&auth.admin_token)?
     };
-    let network = config.map(|c| c.network).unwrap_or_default();
-    ApiClient::new(
-        NetworkClients::new(&network)?.http().clone(),
-        base_url,
-        token,
-    )
+    let network = running_state
+        .as_ref()
+        .and_then(|state| state.get("network"))
+        .map(|value| serde_json::from_value(value.clone()))
+        .transpose()?
+        .or_else(|| config.map(|c| c.network))
+        .unwrap_or_default();
+    ApiClient::new(NetworkClients::new(&network)?, base_url, token)
 }
 
 pub(crate) async fn serve(paths: InstancePaths, listen: Option<SocketAddr>) -> Result<()> {
@@ -87,6 +89,8 @@ pub(crate) async fn serve(paths: InstancePaths, listen: Option<SocketAddr>) -> R
     let _guard = InstanceGuard::acquire(&paths)?;
     let app = App::open(paths.clone()).await?;
     let mut config = app.bootstrap_config().clone();
+    nous_foundation::observability::Observability::current()?
+        .configure(&paths, &config.observability)?;
     if let Some(listen) = listen {
         config.server.listen = listen;
     }
@@ -110,7 +114,7 @@ pub(crate) async fn serve(paths: InstancePaths, listen: Option<SocketAddr>) -> R
     std::fs::write(
         &run_path,
         serde_json::to_vec_pretty(
-            &json!({"pid":std::process::id(),"version":env!("CARGO_PKG_VERSION"),"listen":address,"auth":config.auth}),
+            &json!({"pid":std::process::id(),"version":env!("CARGO_PKG_VERSION"),"listen":address,"auth":config.auth,"network":config.network}),
         )?,
     )?;
     tracing::info!(instance=%paths.root.display(),listen=%address,"Nous Wave is serving");

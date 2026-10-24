@@ -44,6 +44,18 @@ CREATE UNIQUE INDEX IF NOT EXISTS configuration_by_scope_key_revision
 ON configuration_changes(scope_kind,coalesce(namespace_id,''),coalesce(subject_id,''),key,commit_seq DESC);
 CREATE INDEX IF NOT EXISTS configuration_by_commit ON configuration_changes(commit_seq);
 
+CREATE TABLE IF NOT EXISTS prompt_revisions (
+    scope TEXT NOT NULL CHECK(json_valid(scope)),
+    id TEXT NOT NULL,
+    revision INTEGER NOT NULL CHECK(revision > 0),
+    locale TEXT,
+    body TEXT NOT NULL CHECK(length(CAST(body AS BLOB)) BETWEEN 1 AND 131072),
+    author TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    recorded_at TEXT NOT NULL,
+    PRIMARY KEY(scope,id,revision)
+);
+
 CREATE TABLE IF NOT EXISTS materials (
     id TEXT PRIMARY KEY NOT NULL,
     namespace_id TEXT NOT NULL REFERENCES namespaces(id),
@@ -79,6 +91,7 @@ ON observations(namespace_id, subject_id, id, material_id);
 
 CREATE TABLE IF NOT EXISTS operation_receipts (
     caller_id TEXT NOT NULL,
+    trace_id TEXT NOT NULL,
     operation TEXT NOT NULL,
     scope TEXT NOT NULL,
     operation_id TEXT NOT NULL,
@@ -87,6 +100,7 @@ CREATE TABLE IF NOT EXISTS operation_receipts (
     receipt TEXT NOT NULL CHECK (json_valid(receipt)),
     PRIMARY KEY(caller_id, operation, scope, operation_id)
 );
+CREATE INDEX IF NOT EXISTS operations_by_trace ON operation_receipts(trace_id,commit_seq);
 
 
 CREATE TABLE IF NOT EXISTS memories (
@@ -186,6 +200,8 @@ CREATE TABLE IF NOT EXISTS material_details (
 
 CREATE TABLE IF NOT EXISTS model_calls (
     id TEXT PRIMARY KEY NOT NULL,
+    trace_id TEXT NOT NULL,
+    reservation_commit_seq INTEGER NOT NULL CHECK(reservation_commit_seq > 0),
     job_id TEXT NOT NULL,
     namespace_id TEXT NOT NULL,
     subject_id TEXT NOT NULL,
@@ -202,10 +218,18 @@ CREATE TABLE IF NOT EXISTS model_calls (
     UNIQUE(job_id, step_key, attempt),
     UNIQUE(job_id, id),
     UNIQUE(namespace_id, subject_id, id),
-    FOREIGN KEY(job_id, namespace_id, subject_id)
-        REFERENCES task_records(job_id, namespace_id, subject_id)
+    FOREIGN KEY(job_id, namespace_id, subject_id, trace_id)
+        REFERENCES task_records(job_id, namespace_id, subject_id, trace_id)
 );
-CREATE INDEX IF NOT EXISTS model_calls_daily_resource ON model_calls(resource_id, created_at);
+
+CREATE TABLE IF NOT EXISTS model_budget_charges (
+    call_id TEXT NOT NULL REFERENCES model_calls(id),
+    bucket TEXT NOT NULL CHECK (json_valid(bucket)),
+    day TEXT NOT NULL,
+    max_calls_per_day INTEGER NOT NULL CHECK (max_calls_per_day BETWEEN 0 AND 100000),
+    PRIMARY KEY(call_id,bucket)
+);
+CREATE INDEX IF NOT EXISTS model_budget_daily ON model_budget_charges(bucket,day);
 
 CREATE TABLE IF NOT EXISTS embedding_spaces (
     id TEXT PRIMARY KEY NOT NULL,
@@ -306,15 +330,20 @@ CREATE TABLE IF NOT EXISTS structured_formation_groups (
 
 CREATE TABLE IF NOT EXISTS task_records (
  job_id TEXT PRIMARY KEY NOT NULL,namespace_id TEXT,subject_id TEXT,kind TEXT NOT NULL,
+ trace_id TEXT NOT NULL,
+ accepted_commit_seq INTEGER NOT NULL CHECK(accepted_commit_seq > 0),
  dependencies TEXT NOT NULL CHECK(json_valid(dependencies) AND json_type(dependencies)='array'),
  state TEXT NOT NULL CHECK(state IN('queued','waiting','running','succeeded','failed','cancelled')),
  wait TEXT CHECK(wait IS NULL OR json_valid(wait)),checkpoint TEXT CHECK(checkpoint IS NULL OR json_valid(checkpoint)),result TEXT CHECK(result IS NULL OR json_valid(result)),
  error TEXT CHECK(error IS NULL OR json_valid(error)),created_at TEXT NOT NULL,updated_at TEXT NOT NULL,
  UNIQUE(job_id,namespace_id,subject_id),
+ UNIQUE(job_id,namespace_id,subject_id,trace_id),
  CHECK(subject_id IS NULL OR namespace_id IS NOT NULL),CHECK((state='waiting')=(wait IS NOT NULL)),
  FOREIGN KEY(namespace_id) REFERENCES namespaces(id),FOREIGN KEY(namespace_id,subject_id) REFERENCES subjects(namespace_id,id)
 );
 CREATE INDEX IF NOT EXISTS tasks_waiting ON task_records(state,kind,job_id);
+CREATE INDEX IF NOT EXISTS tasks_by_trace ON task_records(trace_id,job_id);
+CREATE INDEX IF NOT EXISTS calls_by_trace ON model_calls(trace_id,job_id,step_key,attempt);
 CREATE TABLE IF NOT EXISTS formation_runs (
  job_id TEXT PRIMARY KEY NOT NULL REFERENCES task_records(job_id),
  observation_id TEXT NOT NULL REFERENCES observations(id),material_id TEXT NOT NULL REFERENCES materials(id),

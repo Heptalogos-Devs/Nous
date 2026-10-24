@@ -132,11 +132,13 @@ pub struct InvocationMetadata<T> {
     pub input: T,
     pub preview: InvocationPreview,
     pub actual_access: ChannelAccess,
-    pub max_calls_per_day: u32,
     pub plan: ResolvedModel,
 }
 impl<T: Serialize> super::CallMetadata for InvocationMetadata<T> {
-    fn reservation_fields(&self) -> (&str, &str, u32) {
-        (&self.call_id, &self.resource.id, self.max_calls_per_day)
+    fn role(&self) -> &str {
+        &self.role
+    }
+    fn reservation_fields(&self) -> (&str, &ResourceMetadata) {
+        (&self.call_id, &self.resource)
     }
 }

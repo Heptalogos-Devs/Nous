@@ -55,13 +55,10 @@ impl App {
                 "structured formation needs 1..128 sources and 1..32 target slots",
             ));
         }
-        let source_context = CallContext {
-            caller_id: ctx.caller_id.clone(),
-            scope: AccessScope::Subject {
-                namespace_id: namespace.clone(),
-                subject_id: request.subject_id.clone(),
-            },
-        };
+        let source_context = ctx.narrow(AccessScope::Subject {
+            namespace_id: namespace.clone(),
+            subject_id: request.subject_id.clone(),
+        })?;
         let mut sources = Vec::new();
         let mut identities = BTreeSet::new();
         for (ordinal, source) in request.sources.iter().enumerate() {
@@ -164,6 +161,7 @@ impl App {
                 ..input.clone()
             };
             let mut job = self.tasks.new_job(
+                &tx,
                 "cognition.form",
                 Some(namespace.clone()),
                 Some(request.subject_id.clone()),
@@ -306,6 +304,7 @@ impl App {
         )?;
         if let Some(mut tx) = self
             .worker_transaction(
+                &job,
                 "cognition.proposal",
                 &job.id,
                 &job.id,
@@ -360,13 +359,7 @@ impl App {
         run: &StructuredFormationRun,
     ) -> Result<StructuredFormationInput> {
         let mut input: StructuredFormationInput = serde_json::from_value(run.input.clone())?;
-        let context = CallContext {
-            caller_id: "nous-worker".into(),
-            scope: AccessScope::Subject {
-                namespace_id: input.namespace_id.clone(),
-                subject_id: input.subject_id.clone(),
-            },
-        };
+        let context = run.job.call_context("nous-worker")?;
         for dependency in self.tasks.dependencies(&run.job).await? {
             let outcome: FormationOutcome = serde_json::from_value(
                 dependency

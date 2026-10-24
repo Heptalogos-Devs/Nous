@@ -5,6 +5,7 @@ use anyhow::{Context, Result};
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use tracing::Instrument;
 
 #[derive(Clone)]
 pub struct NetworkClients {
@@ -15,6 +16,7 @@ impl NetworkClients {
     pub fn new(config: &NetworkConfig) -> Result<Self> {
         config.validate()?;
         let mut builder = reqwest::Client::builder()
+            .no_proxy()
             .user_agent(concat!("NousWave/", env!("CARGO_PKG_VERSION")))
             .connect_timeout(Duration::from_secs(config.connect_timeout_seconds))
             .timeout(Duration::from_secs(config.request_timeout_seconds));
@@ -30,6 +32,19 @@ impl NetworkClients {
 
     pub fn http(&self) -> &reqwest::Client {
         &self.http
+    }
+
+    pub fn request(&self, method: reqwest::Method, url: &str) -> reqwest::RequestBuilder {
+        self.http.request(method, url)
+    }
+
+    pub async fn send(
+        &self,
+        request: reqwest::RequestBuilder,
+    ) -> std::result::Result<reqwest::Response, reqwest::Error> {
+        let request = request.build()?;
+        let span = tracing::info_span!("network.request",method=%request.method(),host=request.url().host_str().unwrap_or(""));
+        self.http.execute(request).instrument(span).await
     }
 }
 

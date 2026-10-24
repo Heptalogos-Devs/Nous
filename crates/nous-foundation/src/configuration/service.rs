@@ -2,7 +2,7 @@
 use super::{ConfigRegistry, ConfigSnapshot};
 use crate::clock::Clock;
 use nous_domain::{ConfigEntry, ConfigScope, Result};
-use nous_storage::{Database, ReadView};
+use nous_storage::{Database, ReadView, WriteTransaction};
 use serde::Serialize;
 use serde_json::Value;
 use std::{collections::BTreeMap, sync::Arc};
@@ -108,6 +108,18 @@ impl Configuration {
             &entries,
             desired,
         )
+    }
+    pub async fn snapshot_in_transaction(
+        &self,
+        tx: &mut WriteTransaction,
+        scope: &ConfigScope,
+        desired: bool,
+    ) -> Result<ConfigSnapshot> {
+        tx.validate_configuration_scope(scope).await?;
+        let entries = tx
+            .configuration_entries(&super::resolution::hierarchy(scope))
+            .await?;
+        self.resolve(scope, tx.configuration_revision().await?, &entries, desired)
     }
     pub async fn view(&self, scope: &ConfigScope) -> Result<ConfigurationView> {
         let mut view = self.database.read_view().await?;

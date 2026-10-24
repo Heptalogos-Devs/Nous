@@ -23,6 +23,7 @@ impl Database {
         let BeginOperation::New(mut tx) = self
             .begin_operation(OperationKey {
                 caller_id: "nous.recovery".into(),
+                trace_id: TraceId::new(),
                 operation: "work.recover".into(),
                 scope: "instance".into(),
                 operation_id: ulid::Ulid::generate().to_string(),
@@ -62,8 +63,22 @@ impl WriteTransaction {
     pub async fn job_record(&mut self, id: &str) -> Result<JobRecord> {
         read(&mut self.tx, id).await
     }
-    pub async fn insert_job_record(&mut self, value: &JobRecord) -> Result<()> {
+    pub async fn insert_job_record(
+        &mut self,
+        value: &JobRecord,
+        max_queue_attempts: u32,
+    ) -> Result<()> {
         value.validate()?;
+        if value.trace_id != *self.trace_id() {
+            return Err(
+                Error::invalid("accepted task trace differs from its operation")
+                    .with_trace(self.trace_id().clone()),
+            );
+        }
+        if max_queue_attempts == 0 {
+            return Err(Error::invalid("maximum queue attempts must be positive")
+                .with_trace(self.trace_id().clone()));
+        }
         validate_job_id(&value.id)?;
         if !matches!(value.state, JobState::Queued | JobState::Waiting) {
             return Err(Error::invalid("new task must be queued or waiting"));
@@ -82,21 +97,30 @@ impl WriteTransaction {
                 return Err(Error::invalid("task dependency belongs to another scope"));
             }
         }
-        sqlx::query("INSERT INTO task_records(job_id,namespace_id,subject_id,kind,dependencies,state,wait,checkpoint,result,error,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)")
-   .bind(&value.id).bind(value.namespace_id.as_ref().map(NamespaceId::as_str)).bind(value.subject_id.as_ref().map(SubjectId::as_str)).bind(&value.kind).bind(serde_json::to_string(&value.dependencies)?).bind(enum_name(&value.state)?).bind(json_option(&value.wait)?).bind(json_option(&value.checkpoint)?).bind(json_option(&value.result)?).bind(json_option(&value.error)?).bind(&value.created_at).bind(&value.updated_at).execute(&mut *self.tx).await.map_err(write_error)?;
+        sqlx::query("INSERT INTO task_records(job_id,namespace_id,subject_id,kind,dependencies,state,wait,checkpoint,result,error,created_at,updated_at,trace_id,accepted_commit_seq) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+   .bind(&value.id).bind(value.namespace_id.as_ref().map(NamespaceId::as_str)).bind(value.subject_id.as_ref().map(SubjectId::as_str)).bind(&value.kind).bind(serde_json::to_string(&value.dependencies)?).bind(enum_name(&value.state)?).bind(json_option(&value.wait)?).bind(json_option(&value.checkpoint)?).bind(json_option(&value.result)?).bind(json_option(&value.error)?).bind(&value.created_at).bind(&value.updated_at).bind(value.trace_id.as_str()).bind(self.commit_seq()).execute(&mut *self.tx).await.map_err(write_error)?;
         if value.state == JobState::Queued {
-            self.enqueue_task(&value.id).await?;
+            self.enqueue_task(&value.id, max_queue_attempts).await?;
         }
         self.record_task(&value.id);
         Ok(())
     }
-    pub async fn update_job_record(&mut self, value: &JobRecord) -> Result<()> {
+    pub async fn update_job_record(
+        &mut self,
+        value: &JobRecord,
+        max_queue_attempts: u32,
+    ) -> Result<()> {
         value.validate()?;
+        if max_queue_attempts == 0 {
+            return Err(Error::invalid("maximum queue attempts must be positive")
+                .with_trace(self.trace_id().clone()));
+        }
         let old = self.job_record(&value.id).await?;
         if old.namespace_id != value.namespace_id
             || old.subject_id != value.subject_id
             || old.kind != value.kind
             || old.dependencies != value.dependencies
+            || old.trace_id != value.trace_id
             || old.created_at != value.created_at
         {
             return Err(Error::new(
@@ -109,6 +133,13 @@ impl WriteTransaction {
         {
             return Err(Error::new(ErrorCode::Conflict, "task is terminal"));
         }
+        sqlx::query("UPDATE Jobs SET max_attempts=? WHERE id=? AND job_type=?")
+            .bind(i64::from(max_queue_attempts))
+            .bind(&value.id)
+            .bind(JOB_QUEUE)
+            .execute(&mut *self.tx)
+            .await
+            .map_err(write_error)?;
         if matches!(old.state, JobState::Waiting | JobState::Failed)
             && value.state == JobState::Queued
         {
@@ -120,7 +151,7 @@ impl WriteTransaction {
                     .await
                     .map_err(storage_error)?;
             if status.is_none() {
-                self.enqueue_task(&value.id).await?;
+                self.enqueue_task(&value.id, max_queue_attempts).await?;
             } else if status
                 .as_deref()
                 .is_some_and(|state| matches!(state, "Done" | "Failed" | "Killed"))
@@ -160,6 +191,7 @@ pub(crate) async fn read(conn: &mut SqliteConnection, id: &str) -> Result<JobRec
 fn row(row: SqliteRow) -> Result<JobRecord> {
     Ok(JobRecord {
         id: row.get("job_id"),
+        trace_id: TraceId(row.get("trace_id")),
         namespace_id: row
             .get::<Option<String>, _>("namespace_id")
             .map(NamespaceId),

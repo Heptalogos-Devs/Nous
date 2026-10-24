@@ -4,6 +4,7 @@ pub mod cognition;
 mod configuration;
 pub mod maintenance;
 mod models;
+mod prompts;
 mod scope;
 use crate::{
     bootstrap::{connect, serve},
@@ -42,6 +43,11 @@ pub(crate) struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Manage immutable Prompt resources and exact role bindings.
+    Prompt {
+        #[command(subcommand)]
+        command: prompts::PromptCommand,
+    },
     /// Execute a typed cognition request from JSON, or print its JSON Schema.
     Cognition {
         #[arg(long, conflicts_with = "schema", required_unless_present = "schema")]
@@ -64,6 +70,17 @@ enum Command {
     },
     /// Read the running service's status. Offline instances report stopped without opening storage.
     Status,
+    /// Inspect active log destinations and process diagnostics.
+    Diagnostics,
+    /// Follow committed operations, durable jobs and model attempts for one trace.
+    Trace {
+        trace_id: nous_domain::TraceId,
+        /// next_cursor JSON returned by the previous page.
+        #[arg(long)]
+        cursor: Option<String>,
+        #[arg(long, default_value_t = 100)]
+        limit: usize,
+    },
     /// Gracefully stop the running instance; administrator credential required.
     Stop,
     /// Show all resolved managed paths without opening storage.
@@ -262,7 +279,30 @@ pub(crate) async fn execute(cli: Cli) -> Result<()> {
             command: BackupCommand::Restore { source },
         } => print_json(nous_app::backup::restore(&source, paths).await?)?,
         Command::Stop => print_json(connect(&paths, cli.url, cli.token_file)?.stop().await?)?,
+        Command::Diagnostics => print_json(
+            connect(&paths, cli.url, cli.token_file)?
+                .execute(&Operation::Diagnostics)
+                .await?,
+        )?,
         Command::Paths => print_json(serde_json::to_value(paths)?)?,
+        Command::Trace {
+            trace_id,
+            cursor,
+            limit,
+        } => {
+            let request = nous_app::administration::observability::TraceRequest {
+                trace_id,
+                cursor: cursor
+                    .map(|value| serde_json::from_str(&value))
+                    .transpose()?,
+                limit,
+            };
+            print_json(
+                connect(&paths, cli.url, cli.token_file)?
+                    .execute(&Operation::Trace(request))
+                    .await?,
+            )?;
+        }
         Command::Config { command } => {
             configuration::execute(&paths, cli.url, cli.token_file, command.unwrap_or_default())
                 .await?
@@ -360,6 +400,7 @@ pub(crate) async fn execute(cli: Cli) -> Result<()> {
                 } => Operation::CreateBackup,
                 Command::Memory { command } => command.operation()?,
                 Command::Query(input) => input.operation()?,
+                Command::Prompt { command } => command.operation()?,
                 Command::Model {
                     command: ModelCommand::Status,
                 } => Operation::Cognition(crate::http::cognition::CognitionOperation::ModelStatus),

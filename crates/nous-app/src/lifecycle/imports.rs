@@ -204,6 +204,7 @@ impl App {
         tx.append_memory_audit(&MemoryAudit {id:ulid::Ulid::generate().to_string(),namespace_id:memory.namespace_id.clone(),subject_id:memory.subject_id.clone(),memory_id:memory.id.clone(),action:"import".into(),actor:ctx.caller_id.clone(),reason:"faithful source admission".into(),previous_revision:0,revision:1,recorded_at:recorded_at.clone(),commit_seq:tx.commit_seq(),details:json!({"external_id":record.external_id,"origin":"imported","structured_preserved":structured_preserved})}).await?;
         let formation_job_id = if request.form_memory {
             let job = self.tasks.new_job(
+                &tx,
                 "memory.form",
                 Some(request.namespace_id.clone()),
                 Some(request.subject_id.clone()),

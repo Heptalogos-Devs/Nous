@@ -19,6 +19,8 @@ pub struct InstanceConfig {
     pub server: ServerConfig,
     pub auth: AuthConfig,
     pub network: NetworkConfig,
+    pub observability: crate::observability::ObservabilityConfig,
+    pub tasks: crate::tasks::TaskRuntimeConfig,
     pub models: crate::models::ModelsDeployment,
 }
 
@@ -39,6 +41,8 @@ impl InstanceConfig {
         self.server.validate()?;
         self.auth.validate()?;
         self.network.validate()?;
+        self.observability.validate()?;
+        self.tasks.validate()?;
         self.models.validate()?;
         Ok(())
     }

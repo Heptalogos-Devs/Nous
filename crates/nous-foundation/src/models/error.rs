@@ -1,4 +1,4 @@
-use nous_domain::{Error, ErrorCode};
+use nous_domain::{Error, ErrorCause, ErrorCode};
 use serde::Serialize;
 use std::{error::Error as StdError, fmt};
 
@@ -14,16 +14,14 @@ pub enum RetryClass {
 #[derive(Debug, Clone, Serialize)]
 pub struct ModelFailureInfo {
     pub class: RetryClass,
-    pub code: ErrorCode,
     pub http_status: Option<u16>,
     pub retry_after_seconds: Option<u64>,
-    pub message: String,
-    pub cause: Option<String>,
+    pub error: Error,
 }
 
 /// SDK errors stay inspectable in process; persisted diagnostics omit request URLs.
 pub struct ModelFailure {
-    pub info: ModelFailureInfo,
+    pub info: Box<ModelFailureInfo>,
     source: Option<Box<dyn StdError + Send + Sync>>,
 }
 
@@ -32,18 +30,16 @@ impl ModelFailure {
         self.info.class
     }
     pub fn to_domain_error(&self) -> Error {
-        Error::new(self.info.code, self.info.message.clone())
+        self.info.error.clone()
     }
     pub fn new(class: RetryClass, code: ErrorCode, message: impl Into<String>) -> Self {
         Self {
-            info: ModelFailureInfo {
+            info: Box::new(ModelFailureInfo {
                 class,
-                code,
                 http_status: None,
                 retry_after_seconds: None,
-                message: message.into(),
-                cause: None,
-            },
+                error: Error::new(code, message),
+            }),
             source: None,
         }
     }
@@ -60,12 +56,24 @@ impl ModelFailure {
         } else {
             RetryClass::WaitingConfiguration
         };
-        Self::new(class, error.code, error.message)
+        Self::from_domain(class, error)
     }
     pub fn domain(error: Error) -> Self {
-        Self::new(RetryClass::Permanent, error.code, error.message)
+        Self::from_domain(RetryClass::Permanent, error)
+    }
+    fn from_domain(class: RetryClass, error: Error) -> Self {
+        Self {
+            info: Box::new(ModelFailureInfo {
+                class,
+                http_status: None,
+                retry_after_seconds: None,
+                error,
+            }),
+            source: None,
+        }
     }
     pub fn with_source(mut self, source: Box<dyn StdError + Send + Sync>) -> Self {
+        self.info.error = self.info.error.clone().with_cause(source.as_ref());
         self.source = Some(source);
         self
     }
@@ -133,15 +141,18 @@ impl ModelFailure {
         } else {
             "model provider request failed".into()
         };
+        let mut diagnostic = Error::new(ErrorCode::DependencyUnavailable, message);
+        diagnostic.cause = cause.map(|message| ErrorCause {
+            message,
+            source: None,
+        });
         Self {
-            info: ModelFailureInfo {
+            info: Box::new(ModelFailureInfo {
                 class,
-                code: ErrorCode::DependencyUnavailable,
                 http_status: status,
                 retry_after_seconds,
-                message,
-                cause,
-            },
+                error: diagnostic,
+            }),
             source: Some(Box::new(error)),
         }
     }
@@ -153,7 +164,7 @@ impl fmt::Debug for ModelFailure {
 }
 impl fmt::Display for ModelFailure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.info.message.fmt(f)
+        self.info.error.message.fmt(f)
     }
 }
 impl StdError for ModelFailure {

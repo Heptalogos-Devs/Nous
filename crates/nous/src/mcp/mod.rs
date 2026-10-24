@@ -1,4 +1,5 @@
 use nous_app::App;
+mod observability;
 use nous_domain::{CallContext, Error, ErrorCode, QueryRequest};
 use rmcp::{
     ErrorData, RoleServer, ServerHandler,
@@ -9,6 +10,7 @@ use rmcp::{
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
+use std::sync::Arc;
 
 use crate::http::cognition::{CognitionOperation, DeleteMemory, EmbeddingSync, FormMemory};
 use crate::http::maintenance::{
@@ -20,7 +22,7 @@ use crate::http::{
 
 #[derive(Clone)]
 enum Backend {
-    Local(App),
+    Local(Arc<App>),
     Remote(ApiClient),
 }
 
@@ -106,14 +108,18 @@ pub struct CreateSubjectRequest {
 impl McpService {
     pub fn local(app: App) -> Self {
         Self {
-            backend: Backend::Local(app),
-            tool_router: Self::tool_router() + Self::maintenance_tool_router(),
+            backend: Backend::Local(Arc::new(app)),
+            tool_router: Self::tool_router()
+                + Self::maintenance_tool_router()
+                + Self::observability_tool_router(),
         }
     }
     pub fn remote(client: ApiClient) -> Self {
         Self {
             backend: Backend::Remote(client),
-            tool_router: Self::tool_router() + Self::maintenance_tool_router(),
+            tool_router: Self::tool_router()
+                + Self::maintenance_tool_router()
+                + Self::observability_tool_router(),
         }
     }
 
@@ -148,6 +154,17 @@ impl McpService {
 
 #[tool_router]
 impl McpService {
+    #[tool(
+        description = "List, read, preview, edit immutable scoped Prompt resources and history, or activate a default/file/exact managed revision in a role. Editing and optional activation share one CAS operation; no provider call is made."
+    )]
+    async fn prompts(
+        &self,
+        Parameters(input): Parameters<nous_app::administration::prompts::PromptRequest>,
+        ctx: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        self.execute(Operation::Prompt(input), ctx).await
+    }
+
     #[tool(
         description = "Read a registered model role's typed input contract, requirements and Prompt binding without invoking a provider. Optional input builds the consumer's actual messages and dynamic output schema even without a configured route. Scope defaults to this credential's scope."
     )]

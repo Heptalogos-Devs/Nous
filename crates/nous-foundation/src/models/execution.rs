@@ -39,8 +39,8 @@ pub(super) enum ProviderOutput {
 #[derive(Debug, Clone, Serialize)]
 pub struct CallReservation {
     pub call_id: nous_domain::ModelCallId,
-    pub resource_id: String,
-    pub max_calls_per_day: u32,
+    pub role: String,
+    pub resource: super::ResourceMetadata,
     pub request: Value,
     pub attempt_policy: AttemptPolicy,
 }
@@ -56,15 +56,16 @@ pub struct AttemptContext {
     pub previous_request: Option<Value>,
 }
 pub trait CallMetadata: Serialize {
-    fn reservation_fields(&self) -> (&str, &str, u32);
+    fn reservation_fields(&self) -> (&str, &super::ResourceMetadata);
+    fn role(&self) -> &str;
 }
 impl<M: CallMetadata> PreparedCall<M> {
     pub fn reservation(&self) -> CallReservation {
-        let (call_id, resource_id, max_calls_per_day) = self.metadata.reservation_fields();
+        let (call_id, resource) = self.metadata.reservation_fields();
         CallReservation {
             call_id: nous_domain::ModelCallId(call_id.into()),
-            resource_id: resource_id.into(),
-            max_calls_per_day,
+            role: self.metadata.role().into(),
+            resource: resource.clone(),
             request: serde_json::to_value(&self.metadata)
                 .expect("prepared metadata is serializable"),
             attempt_policy: self.attempt_policy,
@@ -135,7 +136,11 @@ impl<M> ModelCallRecord<M> {
             Err(_) => "failed",
         }
         .into();
-        self.failure = result.as_ref().err().map(|error| error.info.clone());
+        self.failure = result.as_ref().err().map(|error| {
+            let mut info = (*error.info).clone();
+            info.error = crate::observability::contextualize(info.error);
+            info
+        });
     }
     fn capture_error(&mut self, error: &genai::Error) {
         if let genai::Error::ChatResponseGeneration { response_body, .. } = error {
@@ -248,8 +253,8 @@ impl CallExecutor {
                 let invalid = matches!(&error, genai::Error::StreamParse { .. });
                 let mut failure = ModelFailure::provider(error);
                 if invalid {
-                    failure.info.code = ErrorCode::InvalidArgument;
-                    failure.info.message =
+                    failure.info.error.code = ErrorCode::InvalidArgument;
+                    failure.info.error.message =
                         "embedding response does not match the embedding JSON contract".into();
                 }
                 Err(failure)

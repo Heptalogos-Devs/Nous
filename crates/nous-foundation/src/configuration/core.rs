@@ -68,10 +68,7 @@ pub fn register_core(builder: &mut ConfigRegistryBuilder) -> Result<()> {
 /// Restore has installed a new administrator credential; preserve history and reset its binding.
 pub async fn reset_restored_auth(database: &Database) -> Result<()> {
     let value = serde_json::to_value(AuthConfig::default())?;
-    let ctx = CallContext {
-        caller_id: "restore".into(),
-        scope: AccessScope::Admin,
-    };
+    let ctx = CallContext::new("restore", AccessScope::Admin);
     let key = operation_key(
         &ctx,
         "configuration.restore_auth",

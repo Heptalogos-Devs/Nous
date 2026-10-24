@@ -16,6 +16,7 @@ pub const JOB_QUEUE: &str = "nous.work";
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct OperationKey {
     pub caller_id: String,
+    pub trace_id: nous_domain::TraceId,
     pub operation: String,
     pub scope: String,
     pub operation_id: String,
@@ -25,6 +26,7 @@ pub struct OperationKey {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct OperationReceipt {
     pub operation_id: String,
+    pub trace_id: nous_domain::TraceId,
     pub commit_seq: i64,
     pub result: Value,
     pub job_ids: Vec<String>,

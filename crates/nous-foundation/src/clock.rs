@@ -21,7 +21,4 @@ impl Clock {
             coordinate: self.utc().timestamp_millis(),
         }
     }
-    pub fn budget_day(&self) -> String {
-        self.utc().format("%Y-%m-%d").to_string()
-    }
 }

@@ -1,6 +1,8 @@
 //! Shared model resources and SDK-independent invocation preparation/execution.
 //! Domain consumers own their prompt arguments, input/output DTOs and adoption.
+mod budgets;
 mod catalog;
+pub use budgets::ModelBudgets;
 mod contract;
 mod error;
 mod execution;
@@ -49,12 +51,9 @@ impl ModelRuntime {
         paths: &InstancePaths,
         configuration: Configuration,
         roles: RoleRegistry,
+        prompts: Prompts,
         http: reqwest::Client,
     ) -> anyhow::Result<Self> {
-        let prompts = Prompts::with_definitions(
-            paths.clone(),
-            roles.definitions().filter_map(|r| r.prompt.clone()),
-        );
         Ok(Self {
             configuration,
             resources: ModelResources::new(paths, roles),
@@ -91,7 +90,8 @@ impl ModelRuntime {
         {
             resolved.prompt_template = Some(
                 self.prompts
-                    .read(prompt.id, &resolved.binding.prompt)
+                    .read(scope, prompt.id, &resolved.binding.prompt)
+                    .await
                     .map_err(ModelFailure::prompt)?,
             );
         }
@@ -116,7 +116,8 @@ impl ModelRuntime {
         {
             Some(definition) => self
                 .prompts
-                .read(definition.id, &resolved.binding.prompt)
+                .read(scope, definition.id, &resolved.binding.prompt)
+                .await
                 .is_ok(),
             None => true,
         }
@@ -130,7 +131,11 @@ impl ModelRuntime {
             if let Ok(resolved) = self.resources.resolve(&snapshot, definition.id) {
                 value["resolved"] = json!(resolved);
                 if let Some(prompt) = &definition.prompt {
-                    match self.prompts.read(prompt.id, &resolved.binding.prompt) {
+                    match self
+                        .prompts
+                        .read(scope, prompt.id, &resolved.binding.prompt)
+                        .await
+                    {
                         Ok(asset) => value["prompt"] = json!(asset),
                         Err(error) => {
                             value["state"] = json!("waiting_configuration");
@@ -156,13 +161,19 @@ impl ModelRuntime {
             .transpose()?;
         let snapshot = self.configuration.snapshot(scope, false).await?;
         let binding = snapshot.get(definition.binding_key)?;
-        let prompt = definition.prompt.as_ref().map(|definition| {
+        let prompt = if let Some(definition) = &definition.prompt {
             let prompt_binding = binding
                 .as_ref()
                 .map(|binding| binding.prompt.clone())
                 .unwrap_or_default();
-            self.prompts.read(definition.id, &prompt_binding)
-        });
+            Some(
+                self.prompts
+                    .read(scope, definition.id, &prompt_binding)
+                    .await,
+            )
+        } else {
+            None
+        };
         let (prompt, prompt_error) = match prompt {
             Some(Ok(prompt)) => (Some(prompt), None),
             Some(Err(error)) => (None, Some(error)),
@@ -198,17 +209,17 @@ impl ModelRuntime {
             resolved: tokio::sync::OnceCell::new(),
         }
     }
-    pub async fn ready_plan(
+    pub async fn ready_resources(
         &self,
         scope: &ConfigScope,
         role: &str,
         attempt: AttemptContext,
-    ) -> bool {
+    ) -> Result<Vec<ResourceMetadata>, ModelFailure> {
         let plan = self.plan(scope.clone(), role);
-        let Ok(resolved) = plan.resolve(&attempt).await else {
-            return false;
-        };
-        self.resources.ready_resolved(resolved)
+        let resolved = plan.resolve(&attempt).await?;
+        Ok(self
+            .resources
+            .ready_resources(resolved, next_route(resolved, &attempt)?))
     }
     /// A single attempt freezes metadata and resolves its credential only after cache reuse.
     fn prepare<T: Serialize>(
@@ -221,27 +232,7 @@ impl ModelRuntime {
         let source =
             serde_json::to_value(&input).map_err(|error| ModelFailure::domain(error.into()))?;
         let built = preview::build(self, model, &source, edits)?;
-        let start = if let Some(previous) = &attempt.previous_request {
-            let previous: InvocationMetadata<Value> = serde_json::from_value(previous.clone())
-                .map_err(|error| {
-                    ModelFailure::domain(nous_domain::Error::invalid(
-                        "saved invocation metadata is invalid",
-                    ))
-                    .with_source(Box::new(error))
-                })?;
-            let position = model
-                .routes
-                .iter()
-                .position(|route| route.id == previous.route)
-                .ok_or_else(|| {
-                    ModelFailure::domain(nous_domain::Error::invalid(
-                        "saved attempt route is absent from its plan",
-                    ))
-                })?;
-            (position + 1).min(model.routes.len() - 1)
-        } else {
-            0
-        };
+        let start = next_route(model, attempt)?;
         let mut selected = None;
         let mut unavailable = ModelFailure::waiting("no executable model route is available");
         for (index, request) in built.requests.into_iter().enumerate().skip(start) {
@@ -272,7 +263,6 @@ impl ModelRuntime {
             input,
             preview: built.preview,
             actual_access: access,
-            max_calls_per_day: model.binding.max_calls_per_day,
             plan: model.clone(),
         };
         Ok(PreparedCall {
@@ -347,4 +337,28 @@ impl InvocationPlan {
         self.runtime
             .prepare(self.resolve(&attempt).await?, &attempt, input, edits)
     }
+}
+
+fn next_route(model: &ResolvedModel, attempt: &AttemptContext) -> Result<usize, ModelFailure> {
+    Ok(if let Some(previous) = &attempt.previous_request {
+        let previous: InvocationMetadata<Value> = serde_json::from_value(previous.clone())
+            .map_err(|error| {
+                ModelFailure::domain(nous_domain::Error::invalid(
+                    "saved invocation metadata is invalid",
+                ))
+                .with_source(Box::new(error))
+            })?;
+        let position = model
+            .routes
+            .iter()
+            .position(|route| route.id == previous.route)
+            .ok_or_else(|| {
+                ModelFailure::domain(nous_domain::Error::invalid(
+                    "saved attempt route is absent from its plan",
+                ))
+            })?;
+        (position + 1).min(model.routes.len() - 1)
+    } else {
+        0
+    })
 }
