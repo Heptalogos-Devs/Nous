@@ -117,6 +117,7 @@ pub struct RoutePreview {
     pub parameters: super::RouteParameters,
     pub embedding_space: Option<nous_domain::EmbeddingSpace>,
     pub embedding_producer: Option<nous_domain::EmbeddingProducer>,
+    pub invocation_digest: String,
     pub actual_access: ChannelAccess,
     pub rejection: Option<nous_domain::Error>,
 }
@@ -126,6 +127,7 @@ pub struct InvocationPreview {
     pub config_digest: String,
     pub prompt: Option<PromptSnapshot>,
     pub input: ModelInput,
+    pub sources: Option<Vec<nous_domain::SourceReadRef>>,
     pub output_schema_sha256: Option<String>,
     pub edits: InvocationEdits,
     pub routes: Vec<RoutePreview>,
@@ -146,6 +148,9 @@ pub struct InvocationMetadata<T> {
     pub plan: ResolvedModel,
 }
 impl<T: Serialize> super::CallMetadata for InvocationMetadata<T> {
+    fn source_requirements(&self) -> Option<&[nous_domain::SourceReadRef]> {
+        self.preview.sources.as_deref()
+    }
     fn role(&self) -> &str {
         &self.role
     }

@@ -41,6 +41,7 @@ pub fn parse(
                     source_type: Some("text".into()),
                     event_time: None,
                     observed_at: None,
+                    origin: None,
                     tags: Vec::new(),
                     metadata: json!({}),
                     structured: None,
@@ -175,6 +176,7 @@ fn native(value: Value, default_source: Option<&str>) -> Result<ImportRecord> {
         "source_type",
         "event_time",
         "observed_at",
+        "origin",
         "tags",
         "metadata",
         "structured",
@@ -237,6 +239,7 @@ fn mature(
         source_type,
         event_time: None,
         observed_at: None,
+        origin: None,
         tags,
         metadata,
         structured: Some(structured),
@@ -251,6 +254,9 @@ fn optional_string(value: &Value, key: &str) -> Result<Option<String>> {
     }
 }
 fn validate(mut record: ImportRecord) -> Result<ImportRecord> {
+    if let Some(origin) = &record.origin {
+        origin.validate()?;
+    }
     validate_name(&record.external_id, "external_id")?;
     if record.text.trim().is_empty() {
         return Err(Error::invalid("import text is empty"));

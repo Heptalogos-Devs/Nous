@@ -139,6 +139,14 @@ impl App {
                 "cognitive object is deleted",
             ));
         }
+        self.database
+            .require_source_read(
+                ctx,
+                &namespace,
+                &object.subject_id,
+                &RetrievalTarget::Cognition(object.reference()),
+            )
+            .await?;
         Ok(object)
     }
 
@@ -150,7 +158,18 @@ impl App {
         let namespace = self.database.structured_namespace(id).await?;
         let object = self.database.structured_object(&namespace, id).await?;
         ctx.require_subject(&namespace, &object.subject_id)?;
-        self.database.structured_history(&namespace, id).await
+        let history = self.database.structured_history(&namespace, id).await?;
+        for object in &history {
+            self.database
+                .require_source_read(
+                    ctx,
+                    &namespace,
+                    &object.subject_id,
+                    &RetrievalTarget::Cognition(object.reference()),
+                )
+                .await?;
+        }
+        Ok(history)
     }
 
     pub async fn set_structured_deleted(
@@ -177,6 +196,19 @@ impl App {
             BeginOperation::New(tx) => tx,
         };
         let mut object = tx.structured_object(&namespace, id).await?;
+        if object.revision != expected_revision {
+            return Err(Error::new(
+                ErrorCode::Conflict,
+                "cognitive revision changed",
+            ));
+        }
+        if deleted {
+            let targets = tx
+                .cognition_source_dependents(&namespace, &object.subject_id, &object.reference())
+                .await?;
+            tx.invalidate_context_history(&namespace, &object.subject_id, &targets)
+                .await?;
+        }
         object.revision = expected_revision
             .checked_add(1)
             .ok_or_else(|| Error::invalid("revision overflow"))?;
@@ -218,12 +250,14 @@ impl App {
                 Ok(source) => materials.push(nous_domain::media::MediaOriginal {
                     material: source.material,
                     details: source.details,
+                    details_redacted: false,
                 }),
                 Err(error) if error.code == ErrorCode::NotFound => {}
                 Err(error) => return Err(error),
             }
         }
         let mut media_sources = Vec::new();
+        let mut expanded_media = std::collections::BTreeSet::new();
         for node in &closure.nodes {
             if let EvidenceSource::MemoryRevision {
                 memory_id,
@@ -249,9 +283,34 @@ impl App {
                     )
                     .await
                 {
-                    Ok(lineage) => media_sources.push(
+                    Ok(lineage) => {
+                        expanded_media.insert(memory.source.clone());
+                        media_sources.push(
                         json!({"memory_id":memory.id,"revision":memory.revision,"source":lineage}),
-                    ),
+                    );
+                    }
+                    Err(error) if error.code == ErrorCode::NotFound => {}
+                    Err(error) => return Err(error),
+                }
+            }
+        }
+        for node in &closure.nodes {
+            if let EvidenceSource::Media { reference } = &node.source
+                && expanded_media.insert(reference.clone())
+            {
+                match self
+                    .sources
+                    .lineage(
+                        &source_context,
+                        &object.namespace_id,
+                        &object.subject_id,
+                        reference,
+                    )
+                    .await
+                {
+                    Ok(lineage) => {
+                        media_sources.push(json!({"reference":reference,"source":lineage}))
+                    }
                     Err(error) if error.code == ErrorCode::NotFound => {}
                     Err(error) => return Err(error),
                 }
@@ -274,6 +333,15 @@ impl App {
     ) -> Result<StructuredObject> {
         let ns = self.database.subject_namespace(subject).await?;
         ctx.require_subject(&ns, subject)?;
-        self.database.concept_by_alias(&ns, subject, alias).await
+        let object = self.database.concept_by_alias(&ns, subject, alias).await?;
+        self.database
+            .require_source_read(
+                ctx,
+                &ns,
+                subject,
+                &RetrievalTarget::Cognition(object.reference()),
+            )
+            .await?;
+        Ok(object)
     }
 }

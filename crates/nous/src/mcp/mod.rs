@@ -1,8 +1,13 @@
 use nous_app::App;
+mod contexts;
 mod identity;
 mod media;
 mod observability;
-use nous_domain::{CallContext, Error, ErrorCode, QueryRequest};
+mod presentation;
+mod query;
+mod tasks;
+mod schema;
+use nous_domain::{CallContext, Error, ErrorCode};
 use rmcp::{
     ErrorData, RoleServer, ServerHandler,
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
@@ -115,7 +120,10 @@ impl McpService {
                 + Self::maintenance_tool_router()
                 + Self::observability_tool_router()
                 + Self::identity_tool_router()
-                + Self::media_tool_router(),
+                + Self::media_tool_router()
+                + Self::query_tool_router()
+                + Self::context_tool_router()
+                + Self::task_wait_tool_router(),
         }
     }
     pub fn remote(client: ApiClient) -> Self {
@@ -125,42 +133,18 @@ impl McpService {
                 + Self::maintenance_tool_router()
                 + Self::observability_tool_router()
                 + Self::identity_tool_router()
-                + Self::media_tool_router(),
+                + Self::media_tool_router()
+                + Self::query_tool_router()
+                + Self::context_tool_router()
+                + Self::task_wait_tool_router(),
         }
-    }
-
-    async fn execute(
-        &self,
-        operation: Operation,
-        request: RequestContext<RoleServer>,
-    ) -> Result<CallToolResult, ErrorData> {
-        let result = match &self.backend {
-            Backend::Local(app) => {
-                let context = request
-                    .extensions
-                    .get::<axum::http::request::Parts>()
-                    .and_then(|parts| parts.extensions.get::<CallContext>())
-                    .cloned();
-                match context {
-                    Some(context) => operation.execute(app, &context).await,
-                    None => Err(Error::new(
-                        ErrorCode::Unauthorized,
-                        "authenticated HTTP context is required",
-                    )),
-                }
-            }
-            Backend::Remote(client) => client.execute_domain(&operation).await,
-        };
-        Ok(match result {
-            Ok(value) => CallToolResult::structured(value),
-            Err(error) => CallToolResult::structured_error(serde_json::json!({"error":error})),
-        })
     }
 }
 
 #[tool_router]
 impl McpService {
     #[tool(
+        input_schema = schema::object_input::<nous_app::administration::prompts::PromptRequest>(),
         description = "List, read, preview, edit immutable scoped Prompt resources and history, or activate a default/file/exact managed revision in a role. Editing and optional activation share one CAS operation; no provider call is made."
     )]
     async fn prompts(
@@ -192,6 +176,7 @@ impl McpService {
         self.execute(Operation::ModelPreview(input), ctx).await
     }
     #[tool(
+        input_schema = schema::object_input::<nous_app::administration::configuration::ConfigRequest>(),
         description = "Read scoped active/desired configuration and its sources, inspect typed definitions/history, or apply one atomic CAS set/clear batch. Instance, Namespace and Subject permissions are enforced; restart changes remain pending until their owner applies them."
     )]
     async fn config(
@@ -202,6 +187,7 @@ impl McpService {
         self.execute(Operation::Configuration(input), ctx).await
     }
     #[tool(
+        input_schema = schema::object_input::<crate::http::structured::StructuredOperation>(),
         description = "Create, revise, retire, restore, inspect typed Concept, Episode, Journal, Schema, Association and Memory semantics. Source returns exact revision evidence and original material; revisions use optimistic concurrency."
     )]
     async fn cognition(
@@ -460,17 +446,7 @@ impl McpService {
         )
         .await
     }
-    #[tool(
-        description = "Query a Subject's cognition using lexical, dense, VCP or hybrid mode, with exact typed reference, kind, source, time or historical cutoff filters; returns coverage and semantic provenance"
-    )]
-    async fn query(
-        &self,
-        Parameters(input): Parameters<QueryRequest>,
-        ctx: RequestContext<RoleServer>,
-    ) -> Result<CallToolResult, ErrorData> {
-        self.execute(Operation::Cognition(CognitionOperation::Query(input)), ctx)
-            .await
-    }
+
     #[tool(
         description = "Inspect model formation configuration and readiness; administrator scope required"
     )]

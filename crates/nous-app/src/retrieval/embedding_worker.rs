@@ -1,8 +1,39 @@
-//! Role-specific input validation and adoption; ModelCalls owns every external attempt.
+//! Actual content calls and independent target subscriptions meet only during adoption.
 use super::*;
-use nous_foundation::models::ModelFailure;
+use nous_foundation::{
+    model_calls::{AdmissionDecision, AdmissionFuture, CallAdmission},
+    models::{InvocationMetadata, ModelFailure},
+};
 use tokio_util::sync::CancellationToken;
-
+type EmbeddingMetadata = InvocationMetadata<super::embedding_model::EmbeddingInput>;
+struct EmbeddingAdmission {
+    job_id: String,
+}
+impl CallAdmission<EmbeddingMetadata> for EmbeddingAdmission {
+    fn validate<'a>(
+        &'a self,
+        tx: &'a mut nous_storage::WriteTransaction,
+        metadata: &'a EmbeddingMetadata,
+    ) -> AdmissionFuture<'a> {
+        Box::pin(async move {
+            match tx
+                .validate_embedding_reservation(&self.job_id, &metadata.input.inputs)
+                .await
+            {
+                Ok(()) => Ok(AdmissionDecision::Ready),
+                Err(error)
+                    if matches!(
+                        error.code,
+                        ErrorCode::NotFound | ErrorCode::Conflict | ErrorCode::Forbidden
+                    ) =>
+                {
+                    Ok(AdmissionDecision::Refresh)
+                }
+                Err(error) => Err(error),
+            }
+        })
+    }
+}
 impl App {
     pub(crate) async fn run_embedding_job(
         &self,
@@ -17,18 +48,6 @@ impl App {
             return Ok(());
         }
         let (namespace, subject) = run.job.subject_scope()?;
-        for input in &run.inputs {
-            if let Err(error) = self
-                .database
-                .validate_embedding_input(namespace, subject, input)
-                .await
-            {
-                if matches!(error.code, ErrorCode::NotFound | ErrorCode::Conflict) {
-                    return self.cancel_embedding(&job.id, error).await;
-                }
-                return Err(error);
-            }
-        }
         let plan = self.model.plan(
             ConfigScope::Subject {
                 namespace_id: namespace.clone(),
@@ -37,6 +56,9 @@ impl App {
             super::embedding_model::ROLE,
             cancel.clone(),
         );
+        let guard = EmbeddingAdmission {
+            job_id: job.id.clone(),
+        };
         let Some(call) = self
             .calls
             .invoke(
@@ -46,7 +68,18 @@ impl App {
                 |attempt| {
                     let plan = &plan;
                     let run = &run;
+                    let owner = self;
                     async move {
+                        let inputs = owner
+                            .select_embedding_inputs(&run.job.id)
+                            .await
+                            .map_err(ModelFailure::domain)?;
+                        if inputs.is_empty() {
+                            return Err(ModelFailure::domain(Error::new(
+                                ErrorCode::Cancelled,
+                                "embedding content has no live consumers",
+                            )));
+                        }
                         if plan
                             .resolve(&attempt)
                             .await?
@@ -57,12 +90,11 @@ impl App {
                         {
                             return Err(ModelFailure::domain(Error::new(
                                 ErrorCode::Conflict,
-                                "configured embedding space differs from this accepted task",
+                                "configured embedding space differs from this accepted work",
                             )));
                         }
                         let prepared =
-                            super::embedding_model::prepare(plan, attempt, run.inputs.clone())
-                                .await?;
+                            super::embedding_model::prepare(plan, attempt, inputs).await?;
                         if prepared
                             .metadata
                             .embedding_space
@@ -72,13 +104,14 @@ impl App {
                         {
                             return Err(ModelFailure::domain(Error::new(
                                 ErrorCode::Conflict,
-                                "actual embedding space differs from this accepted task",
+                                "actual embedding space differs from this accepted work",
                             )));
                         }
                         Ok(prepared)
                     }
                 },
                 |prepared| super::embedding_model::execute(&self.model, prepared),
+                Some(&guard),
             )
             .await?
         else {
@@ -86,26 +119,14 @@ impl App {
         };
         self.adopt_embedding_call(&job.id, &call).await
     }
-
-    async fn cancel_embedding(&self, id: &str, error: Error) -> Result<()> {
-        let mut tx = self.tasks.operation("embedding.retire", id).await?;
-        let mut job = tx.job_record(id).await?;
-        if matches!(job.state, JobState::Succeeded | JobState::Cancelled) {
-            tx.rollback().await?;
-            return Ok(());
-        }
-        self.tasks
-            .change_in(&mut tx, &mut job, JobState::Cancelled, None, Some(error))
-            .await?;
-        tx.commit(json!({"job_id":id,"state":job.state})).await?;
-        Ok(())
-    }
-
     async fn adopt_embedding_call(&self, id: &str, call: &ModelCall) -> Result<()> {
         let mut tx = self.tasks.operation("embedding.adopt", id).await?;
         let run = tx.embedding_run(id).await?;
         let mut job = run.job.clone();
-        if matches!(job.state, JobState::Succeeded | JobState::Cancelled) {
+        if matches!(
+            job.state,
+            JobState::Succeeded | JobState::Cancelled | JobState::Failed
+        ) {
             tx.rollback().await?;
             return Ok(());
         }
@@ -116,96 +137,96 @@ impl App {
         {
             return Err(Error::new(
                 ErrorCode::Conflict,
-                "embedding call is unavailable for this task step",
+                "embedding call is unavailable for this work step",
             ));
         }
-        let metadata: nous_foundation::models::InvocationMetadata<
-            super::embedding_model::EmbeddingInput,
-        > = serde_json::from_value(saved.request.clone())?;
-        let space = metadata
-            .embedding_space
-            .as_ref()
-            .ok_or_else(|| Error::invalid("embedding call has no actual space"))?;
-        let producer = metadata
-            .embedding_producer
-            .as_ref()
-            .ok_or_else(|| Error::invalid("embedding call has no actual producer"))?;
+        let space: EmbeddingSpace = serde_json::from_value(
+            saved
+                .request
+                .get("embedding_space")
+                .cloned()
+                .ok_or_else(|| Error::invalid("embedding call has no actual space"))?,
+        )?;
+        let producer: EmbeddingProducer = serde_json::from_value(
+            saved
+                .request
+                .get("embedding_producer")
+                .cloned()
+                .ok_or_else(|| Error::invalid("embedding call has no actual producer"))?,
+        )?;
         if space.id != run.space_id
             || producer.space_id != run.space_id
             || producer.resource_id != saved.resource_id
-            || metadata.input.inputs != run.inputs
         {
             return Err(Error::new(
                 ErrorCode::Conflict,
-                "actual embedding request differs from its accepted input or space",
+                "actual embedding producer differs from accepted work",
             ));
         }
-        let vectors: Vec<Vec<f32>> = serde_json::from_value(
-            saved
-                .response
-                .as_ref()
-                .ok_or_else(|| Error::internal("embedding call has no result"))?["result"]
-                .clone(),
-        )?;
-        if vectors.len() != run.inputs.len() {
-            return Err(Error::internal(
-                "embedding result count differs from accepted inputs",
-            ));
+        let contents = nous_storage::embedding_call_contents(&saved)?;
+        if contents
+            .iter()
+            .any(|content| !run.content_hashes.contains(&content.source_hash))
+        {
+            return Err(Error::invalid("embedding call contains unaccepted content"));
         }
         let (namespace, subject) = job.subject_scope()?;
         let namespace = namespace.clone();
         let subject = subject.clone();
-        for input in &run.inputs {
-            if let Err(error) = tx
-                .validate_embedding_input(&namespace, &subject, input)
-                .await
-            {
-                if matches!(error.code, ErrorCode::NotFound | ErrorCode::Conflict) {
-                    self.tasks
-                        .change_in(&mut tx, &mut job, JobState::Cancelled, None, Some(error))
-                        .await?;
-                    tx.commit(json!({"state":job.state})).await?;
-                    return Ok(());
-                }
-                return Err(error);
-            }
-        }
-        let mut promoted = 0;
-        for (input, vector) in run.inputs.iter().zip(vectors) {
-            let mut record = EmbeddingRecord {
-                namespace_id: namespace.clone(),
-                subject_id: subject.clone(),
-                space_id: run.space_id.clone(),
-                target: input.target.clone(),
-                source_hash: input.source_hash(),
-                vector,
-                model_call_id: saved.id.clone(),
-                commit_seq: tx.commit_seq(),
+        let mut adopted = BTreeSet::new();
+        let mut retired = 0;
+        for content in &contents {
+            let Some(vector) = &content.vector else {
+                continue;
             };
-            tx.save_embedding_record(&record, input).await?;
-            if let Some(reference) = input.target.item().and_then(RetrievalTarget::cognition) {
-                match tx
-                    .current_embedding_input(&namespace, &subject, reference)
-                    .await
-                {
-                    Ok(current)
-                        if current.target != input.target
-                            && current.source_hash() == input.source_hash() =>
+            let accepted = tx
+                .save_embedding_content(&EmbeddingContent {
+                    namespace_id: namespace.clone(),
+                    subject_id: subject.clone(),
+                    space_id: run.space_id.clone(),
+                    source_hash: content.source_hash.clone(),
+                    vector: vector.clone(),
+                    model_call_id: saved.id.clone(),
+                    commit_seq: tx.commit_seq(),
+                })
+                .await?;
+            let subscriptions = tx
+                .embedding_subscriptions(&namespace, &subject, &run.space_id, &content.source_hash)
+                .await?;
+            for subscription in subscriptions {
+                let input = &subscription.input;
+                match tx.validate_embedding_subscription(&subscription).await {
+                    Ok(()) => {}
+                    Err(error)
+                        if matches!(
+                            error.code,
+                            ErrorCode::NotFound | ErrorCode::Conflict | ErrorCode::Forbidden
+                        ) =>
                     {
-                        record.target = current.target.clone();
-                        tx.save_embedding_record(&record, &current).await?;
-                        promoted += 1;
+                        tx.unsubscribe_embedding(&subscription).await?;
+                        retired += 1;
+                        continue;
                     }
-                    Ok(_)
-                    | Err(Error {
-                        code: ErrorCode::NotFound | ErrorCode::Conflict,
-                        ..
-                    }) => {}
                     Err(error) => return Err(error),
                 }
+                let record = EmbeddingRecord {
+                    namespace_id: namespace.clone(),
+                    subject_id: subject.clone(),
+                    space_id: run.space_id.clone(),
+                    target: input.target.clone(),
+                    source_hash: content.source_hash.clone(),
+                    vector: accepted.vector.clone(),
+                    model_call_id: accepted.model_call_id.clone(),
+                    commit_seq: tx.commit_seq(),
+                };
+                tx.save_embedding_record(&record, input).await?;
+                adopted.insert(input.source_key()?);
             }
         }
-        self.tasks.complete_in(&mut tx,&mut job,json!({"space_id":run.space_id,"vectors":run.inputs.len(),"promoted_revisions":promoted,"model_call_id":saved.id})).await?;
+        for hash in &run.content_hashes {
+            tx.release_embedding_claim(id, hash).await?;
+        }
+        self.tasks.complete_in(&mut tx,&mut job,json!({"space_id":run.space_id,"remote_contents":contents.len(),"targets":adopted.len(),"retired_subscriptions":retired,"model_call_id":saved.id})).await?;
         tx.commit(json!({"job_id":job.id,"state":job.state}))
             .await?;
         Ok(())

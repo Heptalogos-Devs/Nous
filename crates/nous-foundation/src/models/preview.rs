@@ -23,7 +23,12 @@ pub(super) fn build(
         .get(&model.role)
         .map_err(ModelFailure::domain)?;
     let draft = role.contract.build(input).map_err(ModelFailure::domain)?;
-    let (arguments, mut invocation) = draft.input();
+    let (arguments, mut invocation, sources) = draft.input();
+    if let Some(sources) = &sources {
+        for reference in sources {
+            reference.validate().map_err(ModelFailure::domain)?;
+        }
+    }
     let prompt = if let Some(template) = &model.prompt_template {
         Some(
             runtime
@@ -82,6 +87,8 @@ pub(super) fn build(
                 .map(|_| route.producer())
                 .transpose()
                 .map_err(ModelFailure::domain)?,
+            invocation_digest: request::invocation_digest(route, &invocation)
+                .map_err(ModelFailure::domain)?,
             actual_access: access,
             rejection,
         });
@@ -93,6 +100,7 @@ pub(super) fn build(
             config_digest: model.config_digest.clone(),
             prompt,
             input: invocation,
+            sources,
             output_schema_sha256: schema_hash,
             edits,
             routes,

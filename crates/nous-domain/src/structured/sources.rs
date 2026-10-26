@@ -6,10 +6,22 @@ use super::*;
 )]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum EvidenceSource {
-    Material { material_id: MaterialId },
-    Observation { observation_id: ObservationId },
-    MemoryRevision { memory_id: MemoryId, revision: i64 },
-    CognitiveRevision { reference: CognitiveRef },
+    Material {
+        material_id: MaterialId,
+    },
+    Media {
+        reference: crate::media::MediaReference,
+    },
+    Observation {
+        observation_id: ObservationId,
+    },
+    MemoryRevision {
+        memory_id: MemoryId,
+        revision: i64,
+    },
+    CognitiveRevision {
+        reference: CognitiveRef,
+    },
 }
 impl EvidenceSource {
     pub fn cognitive_ref(&self) -> Option<CognitiveRef> {
@@ -25,6 +37,7 @@ impl EvidenceSource {
     pub fn validate(&self) -> Result<()> {
         match self {
             Self::Material { material_id } => validate_uuid(material_id.as_str()),
+            Self::Media { reference } => reference.validate(),
             Self::Observation { observation_id } => validate_uuid(observation_id.as_str()),
             Self::MemoryRevision {
                 memory_id,

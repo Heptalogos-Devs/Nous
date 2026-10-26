@@ -12,6 +12,9 @@ impl App {
         request: ImportRequest,
     ) -> Result<ImportResult> {
         ctx.require_subject(&request.namespace_id, &request.subject_id)?;
+        if let Some(origin) = &request.origin {
+            origin.validate()?;
+        }
         self.database
             .subject(&request.namespace_id, &request.subject_id)
             .await?;
@@ -73,8 +76,14 @@ impl App {
         &self,
         ctx: &CallContext,
         request: &ImportRequest,
-        record: ImportRecord,
+        mut record: ImportRecord,
     ) -> Result<(OperationReceipt, bool)> {
+        if record.origin.is_none() {
+            record.origin = request.origin.clone();
+        }
+        if let Some(origin) = &record.origin {
+            origin.validate()?;
+        }
         validate_name(&record.external_id, "external_id")?;
         if record.text.trim().is_empty() || record.text.len() > 1024 * 1024 {
             return Err(Error::invalid("import text must contain 1 byte to 1 MiB"));
@@ -156,6 +165,7 @@ impl App {
             subject_id: request.subject_id.clone(),
             material_id: material.id.clone(),
             observed_at: record.observed_at,
+            origin: record.origin,
             recorded_at: recorded_at.clone(),
             commit_seq: tx.commit_seq(),
             kind: ObservationKind::Import,

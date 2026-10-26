@@ -19,11 +19,43 @@ pub struct InstanceConfig {
     pub observability: crate::observability::ObservabilityConfig,
     pub tasks: crate::tasks::TaskRuntimeConfig,
     pub platform: crate::platform::PlatformConfig,
+    pub installation: crate::platform::installation::InstallationPolicy,
+    pub service: crate::platform::service::ServicePolicy,
+    pub localization: crate::localization::LocalizationPolicy,
     pub media: crate::media::MediaPolicy,
     pub models: crate::models::ModelsDeployment,
 }
 
 impl InstanceConfig {
+    pub fn from_snapshot(
+        snapshot: &crate::configuration::ConfigSnapshot,
+    ) -> nous_domain::Result<Self> {
+        let mut roles = std::collections::BTreeMap::new();
+        for (key, value) in snapshot.values() {
+            if let Some(role) = key.strip_prefix("models.roles.")
+                && !value.json.is_null()
+            {
+                roles.insert(role.to_owned(), serde_json::from_value(value.json.clone())?);
+            }
+        }
+        Ok(Self {
+            server: snapshot.get(crate::configuration::SERVER)?,
+            auth: snapshot.get(crate::configuration::AUTH)?,
+            network: snapshot.get(crate::configuration::NETWORK)?,
+            observability: snapshot.get(crate::observability::OBSERVABILITY)?,
+            tasks: snapshot.get(crate::tasks::TASK_RUNTIME)?,
+            platform: snapshot.get(crate::platform::PLATFORM)?,
+            installation: snapshot.get(crate::platform::installation::INSTALLATION)?,
+            service: snapshot.get(crate::platform::service::SERVICE)?,
+            media: snapshot.get(crate::media::MEDIA)?,
+            localization: snapshot.get(crate::localization::LOCALIZATION)?,
+            models: crate::models::ModelsDeployment {
+                catalog: snapshot.get(crate::models::CATALOG)?,
+                roles,
+            },
+        })
+    }
+
     pub fn load(paths: &InstancePaths) -> Result<Self> {
         let text = fs::read_to_string(&paths.config)
             .context("instance is not initialized; run nous init --instance <path>")?;
@@ -43,6 +75,9 @@ impl InstanceConfig {
         self.observability.validate()?;
         self.tasks.validate()?;
         self.platform.validate()?;
+        self.installation.validate()?;
+        self.service.validate()?;
+        self.localization.validate()?;
         self.media.validate()?;
         self.models.validate()?;
         Ok(())
@@ -77,9 +112,20 @@ impl Default for ServerConfig {
 /// The caller holds InstanceGuard; all paths remain instance managed.
 pub fn initialize(paths: &InstancePaths) -> Result<bool> {
     paths.ensure_layout()?;
+    let secrets = Secrets::new(std::sync::Arc::new(paths.clone()))?;
+    initialize_with_store(paths, &secrets)
+}
+
+pub fn initialize_staging(instance: &InstancePaths, paths: &InstancePaths) -> Result<bool> {
+    paths.ensure_layout()?;
+    let secrets = Secrets::for_staging(instance, std::sync::Arc::new(paths.clone()))?;
+    initialize_with_store(paths, &secrets)
+}
+
+fn initialize_with_store(paths: &InstancePaths, secrets: &Secrets) -> Result<bool> {
     if paths.config.exists() {
         let config = InstanceConfig::load(paths)?;
-        let value = Secrets::read_bootstrap_blocking(paths, &config.auth.admin_token)?;
+        let value = secrets.read_bootstrap_blocking(&config.auth.admin_token)?;
         anyhow::ensure!(
             value.expose().len() >= 32,
             "bootstrap credential must contain at least 32 bytes"
@@ -87,7 +133,7 @@ pub fn initialize(paths: &InstancePaths) -> Result<bool> {
         return Ok(false);
     }
     let config = InstanceConfig::default();
-    Secrets::ensure_bootstrap_blocking(paths, &config.auth.admin_token)?;
+    secrets.ensure_bootstrap_blocking(&config.auth.admin_token)?;
     let mut file = OpenOptions::new()
         .write(true)
         .create_new(true)

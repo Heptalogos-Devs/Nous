@@ -3,6 +3,7 @@ mod authority;
 mod codec;
 mod cognition;
 mod configuration;
+mod context;
 mod identity;
 mod media;
 mod model;

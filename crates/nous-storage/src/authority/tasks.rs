@@ -96,8 +96,8 @@ impl WriteTransaction {
                 return Err(Error::invalid("task dependency belongs to another scope"));
             }
         }
-        sqlx::query("INSERT INTO task_records(job_id,namespace_id,subject_id,kind,dependencies,state,wait,checkpoint,result,error,created_at,updated_at,trace_id,accepted_commit_seq) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
-   .bind(&value.id).bind(value.namespace_id.as_ref().map(NamespaceId::as_str)).bind(value.subject_id.as_ref().map(SubjectId::as_str)).bind(&value.kind).bind(serde_json::to_string(&value.dependencies)?).bind(enum_name(&value.state)?).bind(json_option(&value.wait)?).bind(json_option(&value.checkpoint)?).bind(json_option(&value.result)?).bind(json_option(&value.error)?).bind(&value.created_at).bind(&value.updated_at).bind(value.trace_id.as_str()).bind(self.commit_seq()).execute(&mut *self.tx).await.map_err(write_error)?;
+        sqlx::query("INSERT INTO task_records(job_id,namespace_id,subject_id,source_read,kind,dependencies,state,wait,checkpoint,result,error,created_at,updated_at,trace_id,accepted_commit_seq) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+   .bind(&value.id).bind(value.namespace_id.as_ref().map(NamespaceId::as_str)).bind(value.subject_id.as_ref().map(SubjectId::as_str)).bind(serde_json::to_string(&value.source_read)?).bind(&value.kind).bind(serde_json::to_string(&value.dependencies)?).bind(enum_name(&value.state)?).bind(json_option(&value.wait)?).bind(json_option(&value.checkpoint)?).bind(json_option(&value.result)?).bind(json_option(&value.error)?).bind(&value.created_at).bind(&value.updated_at).bind(value.trace_id.as_str()).bind(self.commit_seq()).execute(&mut *self.tx).await.map_err(write_error)?;
         if value.state == JobState::Queued {
             self.enqueue_task(&value.id, max_queue_attempts).await?;
         }
@@ -120,6 +120,7 @@ impl WriteTransaction {
             || old.kind != value.kind
             || old.dependencies != value.dependencies
             || old.trace_id != value.trace_id
+            || old.source_read != value.source_read
             || old.created_at != value.created_at
         {
             return Err(Error::new(
@@ -195,6 +196,7 @@ fn row(row: SqliteRow) -> Result<JobRecord> {
             .get::<Option<String>, _>("namespace_id")
             .map(NamespaceId),
         subject_id: row.get::<Option<String>, _>("subject_id").map(SubjectId),
+        source_read: serde_json::from_str(row.get("source_read"))?,
         kind: row.get("kind"),
         dependencies: serde_json::from_str(row.get("dependencies"))?,
         state: parse_enum(row.get("state"))?,

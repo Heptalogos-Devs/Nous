@@ -78,6 +78,10 @@ pub enum ImportCommand {
         source: Option<String>,
         #[arg(long)]
         form_memory: bool,
+        #[arg(long)]
+        conversation_ref: Option<nous_domain::ConversationRef>,
+        #[arg(long)]
+        external_object_ref: Option<nous_domain::ExternalObjectRef>,
     },
 }
 impl ImportCommand {
@@ -89,6 +93,8 @@ impl ImportCommand {
             format,
             source,
             form_memory,
+            conversation_ref,
+            external_object_ref,
         } = self
         else {
             bail!("bundle inspection runs locally");
@@ -112,6 +118,10 @@ impl ImportCommand {
                 content,
                 form_memory,
                 source,
+                origin: nous_domain::ObservationOrigin::from_refs(
+                    conversation_ref,
+                    external_object_ref,
+                )?,
             },
         )))
     }

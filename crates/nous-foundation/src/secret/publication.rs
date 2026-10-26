@@ -42,25 +42,22 @@ impl Drop for CredentialGuard {
                 return;
             }
         }
-        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
-            return;
-        };
         let owner = self.owner.clone();
         let database = self.database.clone();
         let reference = self.reference.clone();
         let trace = self.trace.clone();
         let future = async move {
             let cleanup = async move {
-                if let Err(error) = reconcile_one(&owner, &database, &reference).await {
-                    tracing::warn!(event="secret.reconcile_deferred",error=?error);
-                }
+                reconcile_one(&owner, &database, &reference)
+                    .await
+                    .map(|_| ())
             };
             match trace {
                 Some(trace) => in_trace(trace, cleanup).await,
                 None => cleanup.await,
             }
         };
-        let _cleanup = runtime.spawn(future.instrument(self.span.clone()));
+        execution::cleanup(future.instrument(self.span.clone()));
     }
 }
 
@@ -89,6 +86,7 @@ pub(super) async fn prepare(
     });
     let digest = Secrets::digest(&value);
     let paths = owner.inner.paths.clone();
+    let permissions = owner.inner.permissions.clone();
     let intent_reference = reference.clone();
     let publishing_guard = guard.clone();
     execution::blocking(&CancellationToken::new(), move |_| {
@@ -98,7 +96,9 @@ pub(super) async fn prepare(
             .parent()
             .ok_or_else(|| Error::invalid("secret intent needs a parent"))?;
         std::fs::create_dir_all(parent)?;
+        permissions.protect_directory(parent)?;
         let mut staging = tempfile::NamedTempFile::new_in(parent)?;
+        permissions.protect_file(staging.path())?;
         staging.write_all(&serde_json::to_vec(&Intent {
             reference: intent_reference.clone(),
         })?)?;
@@ -106,7 +106,7 @@ pub(super) async fn prepare(
         staging
             .persist_noclobber(&marker)
             .map_err(|error| Error::from(error.error))?;
-        files::write_new(&paths, &intent_reference, &value)
+        files::write_new(&paths, &permissions, &intent_reference, &value)
     })
     .await?;
     Ok(PreparedCredential {
@@ -183,9 +183,9 @@ async fn reconcile_one(
             return Ok(false);
         }
         if !referenced {
-            remove_if_present(files::path(&paths, &reference)?)?;
+            remove_if_present(&owner.inner.permissions, files::path(&paths, &reference)?)?;
         }
-        remove_if_present(marker(&paths, &reference)?)?;
+        remove_if_present(&owner.inner.permissions, marker(&paths, &reference)?)?;
         Ok(!referenced)
     })
     .await
@@ -226,7 +226,13 @@ fn marker(paths: &crate::instance::InstancePaths, reference: &SecretRef) -> Resu
         .resolve(format!("temp/staging/secret-publications/{name}.json"))
         .map_err(files::path_error)
 }
-fn remove_if_present(path: PathBuf) -> Result<()> {
+fn remove_if_present(
+    permissions: &crate::platform::permissions::PrivatePermissions,
+    path: PathBuf,
+) -> Result<()> {
+    if path.exists() {
+        permissions.protect_file(&path)?;
+    }
     match std::fs::remove_file(path) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),

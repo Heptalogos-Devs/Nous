@@ -57,6 +57,7 @@ pub trait CallMetadata: Serialize {
     fn reservation_fields(&self) -> (&str, &super::ResourceMetadata);
     fn role(&self) -> &str;
     fn pricing_snapshot(&self) -> Option<ModelPriceSnapshot>;
+    fn source_requirements(&self) -> Option<&[nous_domain::SourceReadRef]>;
 }
 impl<M: CallMetadata> PreparedCall<M> {
     pub fn reservation(&self) -> CallReservation {

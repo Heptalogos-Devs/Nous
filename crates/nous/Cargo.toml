@@ -9,6 +9,7 @@ nous-domain.workspace = true
 nous-app.workspace = true
 nous-foundation.workspace = true
 anyhow.workspace = true
+base64.workspace = true
 axum.workspace = true
 clap.workspace = true
 futures.workspace = true

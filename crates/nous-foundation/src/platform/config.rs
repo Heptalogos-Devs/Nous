@@ -31,7 +31,7 @@ pub struct PlatformConfig {
 impl Default for PlatformConfig {
     fn default() -> Self {
         Self {
-            executables: BTreeMap::new(),
+            executables: native_management_resources(),
             max_parallel: 4,
             max_runtime_ms: 300_000,
             stop_grace_ms: 5_000,
@@ -41,6 +41,31 @@ impl Default for PlatformConfig {
             max_argument_bytes: 1024 * 1024,
         }
     }
+}
+fn native_management_resources() -> BTreeMap<String, ExecutableResource> {
+    let entries = if cfg!(windows) {
+        let system_root = std::env::var_os("SystemRoot")
+            .map(PathBuf::from)
+            .filter(|path| path.is_absolute())
+            .unwrap_or_else(|| PathBuf::from(r"C:\Windows"));
+        vec![(
+            "powershell",
+            system_root.join("System32/WindowsPowerShell/v1.0/powershell.exe"),
+        )]
+    } else if cfg!(target_os = "linux") {
+        vec![("systemctl", PathBuf::from("/usr/bin/systemctl"))]
+    } else if cfg!(target_os = "macos") {
+        vec![
+            ("launchctl", PathBuf::from("/bin/launchctl")),
+            ("id", PathBuf::from("/usr/bin/id")),
+        ]
+    } else {
+        Vec::new()
+    };
+    entries
+        .into_iter()
+        .map(|(key, path)| (key.into(), ExecutableResource::External { path }))
+        .collect()
 }
 impl PlatformConfig {
     pub fn validate(&self) -> Result<()> {

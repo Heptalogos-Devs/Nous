@@ -169,6 +169,7 @@ impl QueryArgs {
             .transpose()?;
         Ok(Operation::Cognition(CognitionOperation::Query(
             QueryRequest {
+                source_read: None,
                 mode: self.mode.unwrap_or(if self.media.is_empty() {
                     QueryMode::Lexical
                 } else {

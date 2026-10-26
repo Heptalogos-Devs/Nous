@@ -125,6 +125,7 @@ impl App {
         job_id: &str,
     ) -> Result<MediaDerivationRun> {
         let run = self.database.media_derivation(job_id).await?;
+        self.tasks.read(ctx, job_id).await?;
         let (namespace, subject) = run.job.subject_scope()?;
         ctx.require_subject(namespace, subject)?;
         Ok(run)

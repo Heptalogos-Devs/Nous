@@ -45,6 +45,26 @@ pub struct ConfigActivation {
 }
 
 impl Configuration {
+    pub async fn apply(
+        &self,
+        ctx: &nous_domain::CallContext,
+        operation_id: &str,
+        scope: &ConfigScope,
+        edits: &[ConfigEdit],
+    ) -> Result<nous_storage::OperationReceipt> {
+        scope.require_access(ctx)?;
+        let key=nous_storage::operation_key(ctx,"configuration.change",&serde_json::to_string(scope)?,operation_id,
+            &serde_json::json!({"scope":scope,"edits":edits}))?;
+        let mut tx=match self.database.begin_operation(key).await? {
+            nous_storage::BeginOperation::Replay(receipt)=>return Ok(receipt),
+            nous_storage::BeginOperation::New(tx)=>tx,
+        };
+        let change=self.change_in(&mut tx,scope,edits).await?;
+        let receipt=tx.commit(serde_json::to_value(&change)?).await?;
+        self.committed(&change);
+        Ok(receipt)
+    }
+
     pub async fn change_in(
         &self,
         tx: &mut WriteTransaction,

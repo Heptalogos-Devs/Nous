@@ -67,6 +67,30 @@ pub struct Database {
 }
 
 impl Database {
+    pub async fn open_read_only(
+        path: impl AsRef<Path>,
+        operation_time: fn() -> nous_domain::OperationTime,
+    ) -> Result<Self> {
+        let path = path.as_ref();
+        if !path.is_absolute() {
+            return Err(Error::invalid("database path must be absolute"));
+        }
+        let options = SqliteConnectOptions::new()
+            .filename(path)
+            .read_only(true)
+            .foreign_keys(true)
+            .busy_timeout(Duration::from_secs(5));
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(options)
+            .await
+            .map_err(storage_error)?;
+        Ok(Self {
+            pool,
+            operation_time,
+        })
+    }
+
     pub async fn open(
         path: impl AsRef<Path>,
         operation_time: fn() -> nous_domain::OperationTime,
@@ -101,6 +125,10 @@ impl Database {
             .await
             .map_err(storage_error)?;
         sqlx::raw_sql(include_str!("../schema.sql"))
+            .execute(&mut *tx)
+            .await
+            .map_err(storage_error)?;
+        sqlx::raw_sql(include_str!("../context/schema.sql"))
             .execute(&mut *tx)
             .await
             .map_err(storage_error)?;

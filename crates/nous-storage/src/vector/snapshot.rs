@@ -1,5 +1,5 @@
 use crate::source::materials::material_details;
-use crate::{Database, ReadView, SourceClosure, SourceStatus, storage_error};
+use crate::{Database, ReadView, SourceClosure, SourceReadView, SourceStatus, storage_error};
 use nous_domain::media::MediaOriginal;
 use nous_domain::*;
 use serde::{Deserialize, Serialize};
@@ -38,6 +38,10 @@ enum Selection<'a> {
     Scope(usize),
     Exact(&'a CognitiveRef),
 }
+struct MemoryFilter<'a> {
+    reference: Option<&'a CognitiveRef>,
+    authorized: Option<&'a str>,
+}
 impl Database {
     pub async fn cognitive_retrieval_snapshot(
         &self,
@@ -49,7 +53,7 @@ impl Database {
     ) -> Result<CognitiveRetrievalSnapshot> {
         let mut view = self.read_view().await?;
         let result = view
-            .cognitive_retrieval_snapshot(namespace, subject, space_id, as_of_commit, limit)
+            .cognitive_retrieval_snapshot(namespace, subject, space_id, as_of_commit, limit, None)
             .await?;
         view.finish().await?;
         Ok(result)
@@ -64,7 +68,14 @@ impl Database {
     ) -> Result<CognitiveRetrievalSnapshot> {
         let mut view = self.read_view().await?;
         let result = view
-            .cognitive_reference_snapshot(namespace, subject, space_id, reference, as_of_commit)
+            .cognitive_reference_snapshot(
+                namespace,
+                subject,
+                space_id,
+                reference,
+                as_of_commit,
+                None,
+            )
             .await?;
         view.finish().await?;
         Ok(result)
@@ -78,6 +89,7 @@ impl ReadView {
         space_id: &str,
         as_of_commit: Option<i64>,
         limit: usize,
+        source_read: Option<&SourceReadView>,
     ) -> Result<CognitiveRetrievalSnapshot> {
         snapshot_in(
             &mut self.tx,
@@ -86,6 +98,7 @@ impl ReadView {
             space_id,
             as_of_commit,
             Selection::Scope(limit),
+            source_read,
         )
         .await
     }
@@ -96,6 +109,7 @@ impl ReadView {
         space_id: &str,
         reference: &CognitiveRef,
         as_of_commit: Option<i64>,
+        source_read: Option<&SourceReadView>,
     ) -> Result<CognitiveRetrievalSnapshot> {
         snapshot_in(
             &mut self.tx,
@@ -104,6 +118,7 @@ impl ReadView {
             space_id,
             as_of_commit,
             Selection::Exact(reference),
+            source_read,
         )
         .await
     }
@@ -115,6 +130,7 @@ async fn snapshot_in(
     space_id: &str,
     as_of_commit: Option<i64>,
     selection: Selection<'_>,
+    source_read: Option<&SourceReadView>,
 ) -> Result<CognitiveRetrievalSnapshot> {
     let (limit, reference) = match selection {
         Selection::Scope(limit) => (limit, None),
@@ -135,6 +151,36 @@ async fn snapshot_in(
         ));
     }
 
+    let authorized = if let Some(view) = source_read.filter(|view| view.is_restricted()) {
+        if let Some(reference) = reference {
+            if !crate::source::read_scope::target_allowed(
+                conn,
+                view,
+                &RetrievalTarget::Cognition(reference.clone()),
+            )
+            .await?
+            {
+                return Err(Error::new(
+                    ErrorCode::Forbidden,
+                    "exact cognition reference is outside the source-read scope",
+                ));
+            }
+            Some(serde_json::to_string(&[reference.to_string()])?)
+        } else {
+            Some(
+                crate::source::read_scope::candidates::cognitive_keys(
+                    conn,
+                    namespace,
+                    subject,
+                    as_of_commit,
+                    view,
+                )
+                .await?,
+            )
+        }
+    } else {
+        None
+    };
     let memory = memory_snapshot_in(
         conn,
         namespace,
@@ -142,14 +188,17 @@ async fn snapshot_in(
         space_id,
         limit,
         as_of_commit,
-        reference,
+        MemoryFilter {
+            reference,
+            authorized: authorized.as_deref(),
+        },
     )
     .await?;
     let remaining = limit.saturating_sub(memory.entries.len());
-    let rows=sqlx::query("SELECT o.id,(SELECT max(r.revision) FROM structured_revisions r WHERE r.object_id=o.id AND r.commit_seq<=? AND (? IS NULL OR r.revision=?)) AS selected_revision FROM structured_objects o WHERE o.namespace_id=? AND o.subject_id=? AND selected_revision IS NOT NULL AND (? IS NULL OR o.id=?) ORDER BY o.kind,o.id LIMIT ?")
-            .bind(memory.watermark).bind(reference.map(|r|r.revision)).bind(reference.map(|r|r.revision)).bind(namespace.as_str()).bind(subject.as_str()).bind(reference.map(|r| if r.kind == CognitiveKind::Memory { "" } else {r.id.as_str()})).bind(reference.map(|r| if r.kind == CognitiveKind::Memory { "" } else {r.id.as_str()})).bind((remaining+1) as i64).fetch_all(&mut *conn).await.map_err(storage_error)?;
+    let rows=sqlx::query("SELECT o.id,(SELECT max(r.revision) FROM structured_revisions r WHERE r.object_id=o.id AND r.commit_seq<=? AND (? IS NULL OR r.revision=?)) AS selected_revision FROM structured_objects o WHERE o.namespace_id=? AND o.subject_id=? AND selected_revision IS NOT NULL AND (? IS NULL OR o.id=?) AND (? IS NULL OR o.kind||':'||o.id||'@'||selected_revision IN(SELECT value FROM json_each(?))) ORDER BY o.kind,o.id LIMIT ?")
+            .bind(memory.watermark).bind(reference.map(|r|r.revision)).bind(reference.map(|r|r.revision)).bind(namespace.as_str()).bind(subject.as_str()).bind(reference.map(|r| if r.kind == CognitiveKind::Memory { "" } else {r.id.as_str()})).bind(reference.map(|r| if r.kind == CognitiveKind::Memory { "" } else {r.id.as_str()})).bind(authorized.as_deref()).bind(authorized.as_deref()).bind((remaining+1) as i64).fetch_all(&mut *conn).await.map_err(storage_error)?;
     let complete = memory.complete && rows.len() <= remaining;
-    let records=sqlx::query("SELECT e.* FROM embedding_records e WHERE e.namespace_id=? AND e.subject_id=? AND e.space_id=? AND json_extract(e.target,'$.target.kind')='cognition'")
+    let records=sqlx::query("SELECT e.*,c.vector,c.model_call_id FROM embedding_records e JOIN embedding_contents c USING(namespace_id,subject_id,space_id,source_hash) WHERE e.namespace_id=? AND e.subject_id=? AND e.space_id=? AND json_extract(e.target,'$.target.kind')='cognition'")
             .bind(namespace.as_str()).bind(subject.as_str()).bind(space_id).fetch_all(&mut *conn).await.map_err(storage_error)?.into_iter().map(super::records::row).collect::<Result<Vec<_>>>()?;
     let mut by_key = records
         .into_iter()
@@ -198,7 +247,7 @@ async fn snapshot_in(
         .into_iter()
         .map(|record| Ok((record.source_key()?, record)))
         .collect::<Result<BTreeMap<_, _>>>()?;
-    let rows=sqlx::query("SELECT * FROM embedding_records WHERE namespace_id=? AND subject_id=? AND space_id=? AND json_extract(target,'$.kind')='tag' AND source_hash IN (SELECT value FROM json_each(?)) ORDER BY source_hash")
+    let rows=sqlx::query("SELECT r.*,c.vector,c.model_call_id FROM embedding_records r JOIN embedding_contents c USING(namespace_id,subject_id,space_id,source_hash) WHERE namespace_id=? AND subject_id=? AND space_id=? AND json_extract(target,'$.kind')='tag' AND source_hash IN (SELECT value FROM json_each(?)) ORDER BY source_hash")
             .bind(namespace.as_str()).bind(subject.as_str()).bind(space_id).bind(serde_json::to_string(&tag_keys)?).fetch_all(&mut *conn).await.map_err(storage_error)?;
     for row in rows {
         let record = super::records::row(row)?;
@@ -220,8 +269,12 @@ async fn memory_snapshot_in(
     space_id: &str,
     limit: usize,
     as_of_commit: Option<i64>,
-    reference: Option<&CognitiveRef>,
+    filter: MemoryFilter<'_>,
 ) -> Result<MemorySnapshot> {
+    let MemoryFilter {
+        reference,
+        authorized,
+    } = filter;
     let limit = i64::try_from(limit)
         .ok()
         .filter(|v| *v > 0)
@@ -237,7 +290,7 @@ async fn memory_snapshot_in(
             "retrieval cutoff refers to uncommitted authority",
         ));
     }
-    let mut rows = sqlx::query("SELECT r.* FROM memories m JOIN memory_revisions r ON r.memory_id=m.id AND r.revision=(SELECT max(h.revision) FROM memory_revisions h WHERE h.memory_id=m.id AND h.commit_seq<=? AND (? IS NULL OR h.revision=?)) WHERE m.namespace_id=? AND m.subject_id=? AND (? IS NULL OR m.id=?) ORDER BY m.id LIMIT ?")
+    let mut rows = sqlx::query("SELECT r.* FROM memories m JOIN memory_revisions r ON r.memory_id=m.id AND r.revision=(SELECT max(h.revision) FROM memory_revisions h WHERE h.memory_id=m.id AND h.commit_seq<=? AND (? IS NULL OR h.revision=?)) WHERE m.namespace_id=? AND m.subject_id=? AND (? IS NULL OR m.id=?) AND (? IS NULL OR 'memory:'||m.id||'@'||r.revision IN(SELECT value FROM json_each(?))) ORDER BY m.id LIMIT ?")
         .bind(watermark)
         .bind(reference.map(|r| r.revision))
         .bind(reference.map(|r| r.revision))
@@ -257,6 +310,7 @@ async fn memory_snapshot_in(
                 ""
             }
         }))
+        .bind(authorized).bind(authorized)
         .bind(limit)
         .fetch_all(&mut *conn)
         .await
@@ -289,7 +343,7 @@ async fn memory_snapshot_in(
         .iter()
         .map(|entry| entry.memory.id.to_string())
         .collect::<Vec<_>>();
-    let records=sqlx::query("SELECT * FROM embedding_records WHERE namespace_id=? AND subject_id=? AND space_id=? AND json_extract(target,'$.target.kind')='cognition' AND json_extract(target,'$.target.reference.kind')='memory' AND json_extract(target,'$.target.reference.id') IN(SELECT value FROM json_each(?))").bind(namespace.as_str()).bind(subject.as_str()).bind(space_id).bind(serde_json::to_string(&ids)?).fetch_all(&mut *conn).await.map_err(storage_error)?;
+    let records=sqlx::query("SELECT r.*,c.vector,c.model_call_id FROM embedding_records r JOIN embedding_contents c USING(namespace_id,subject_id,space_id,source_hash) WHERE namespace_id=? AND subject_id=? AND space_id=? AND json_extract(target,'$.target.kind')='cognition' AND json_extract(target,'$.target.reference.kind')='memory' AND json_extract(target,'$.target.reference.id') IN(SELECT value FROM json_each(?))").bind(namespace.as_str()).bind(subject.as_str()).bind(space_id).bind(serde_json::to_string(&ids)?).fetch_all(&mut *conn).await.map_err(storage_error)?;
     let mut by_key = records
         .into_iter()
         .map(super::records::row)
@@ -301,7 +355,7 @@ async fn memory_snapshot_in(
         let input = EmbeddingInputItem::for_memory(&entry.memory)?;
         entry.embedding = by_key.remove(&(input.source_key()?, input.source_hash()));
     }
-    let tag_embeddings=sqlx::query("SELECT * FROM embedding_records WHERE namespace_id=? AND subject_id=? AND space_id=? AND json_extract(target,'$.kind')='tag' AND source_hash IN (SELECT value FROM json_each(?)) ORDER BY source_hash")
+    let tag_embeddings=sqlx::query("SELECT r.*,c.vector,c.model_call_id FROM embedding_records r JOIN embedding_contents c USING(namespace_id,subject_id,space_id,source_hash) WHERE namespace_id=? AND subject_id=? AND space_id=? AND json_extract(target,'$.kind')='tag' AND source_hash IN (SELECT value FROM json_each(?)) ORDER BY source_hash")
             .bind(namespace.as_str()).bind(subject.as_str()).bind(space_id).bind(serde_json::to_string(&tags)?).fetch_all(&mut *conn).await.map_err(storage_error)?
             .into_iter().map(super::records::row).collect::<Result<Vec<_>>>()?;
     Ok(MemorySnapshot {
@@ -334,7 +388,11 @@ async fn root_materials(
                 tags.insert(EmbeddingInputItem::tag(label)?.source_hash());
             }
         }
-        materials.push(MediaOriginal { material, details });
+        materials.push(MediaOriginal {
+            material,
+            details,
+            details_redacted: false,
+        });
     }
     Ok(materials)
 }

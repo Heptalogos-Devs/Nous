@@ -31,6 +31,7 @@ impl App {
         let mut policy = self.retrieval_policy(&namespace, subject).await?;
         policy.max_snapshot_entries = policy.max_snapshot_entries.min(limit);
         let request = QueryRequest {
+            source_read: None,
             mode: QueryMode::Lexical,
             subject_id: subject.clone(),
             input: QueryInput::default(),
@@ -129,13 +130,15 @@ impl App {
             .embedding_claims(namespace, subject, &space.id)
             .await?
             .into_iter()
-            .map(|claim| Ok(((claim.source_key()?, claim.source_hash.clone()), claim)))
-            .collect::<Result<BTreeMap<_, _>>>()?;
-        let mut fresh = Vec::new();
+            .map(|claim| (claim.source_hash.clone(), claim))
+            .collect::<BTreeMap<_, _>>();
+        let mut fresh = BTreeMap::new();
         let mut jobs = BTreeSet::new();
         let mut reused = 0;
         let mut pending = 0;
-        for (key, input) in unique {
+        for (_, input) in unique {
+            tx.subscribe_embedding(namespace, subject, &space.id, &input)
+                .await?;
             if let Some(record) = tx
                 .embedding_record(
                     namespace,
@@ -156,21 +159,29 @@ impl App {
             }
             tx.validate_embedding_input(namespace, subject, &input)
                 .await?;
-            if let Some(mut record) = tx
+            if let Some(content) = tx
                 .matching_embedding(namespace, subject, &space.id, &input.source_hash())
                 .await?
             {
-                record.target = input.target.clone();
-                record.commit_seq = tx.commit_seq();
+                let record = EmbeddingRecord {
+                    namespace_id: content.namespace_id,
+                    subject_id: content.subject_id,
+                    space_id: content.space_id,
+                    target: input.target.clone(),
+                    source_hash: content.source_hash,
+                    vector: content.vector,
+                    model_call_id: content.model_call_id,
+                    commit_seq: tx.commit_seq(),
+                };
                 tx.save_embedding_record(&record, &input).await?;
                 reused += 1;
                 continue;
             }
             pending += 1;
-            if let Some(claim) = claims.get(&key) {
+            if let Some(claim) = claims.get(&input.source_hash()) {
                 jobs.insert(claim.job_id.clone());
             } else {
-                fresh.push(input);
+                fresh.entry(input.source_hash()).or_insert(input);
             }
         }
         let max_batch_size = config
@@ -180,7 +191,7 @@ impl App {
             .min()
             .expect("resolved routes nonempty");
         let mut batch = Vec::new();
-        for input in fresh {
+        for input in fresh.into_values() {
             let mut candidate = batch.clone();
             candidate.push(input.clone());
             let admitted = validate_batch(config, &candidate);
@@ -222,17 +233,20 @@ impl App {
         space: &EmbeddingSpace,
         inputs: Vec<EmbeddingInputItem>,
     ) -> Result<String> {
-        let job = self.tasks.new_job(
+        let mut job = self.tasks.new_job(
             tx,
             "embedding",
             Some(namespace.clone()),
             Some(subject.clone()),
         );
+        // Shared mathematical content owns no one subscriber's source-read selection.
+        // Each accepted subscription is revalidated before representation and adoption.
+        job.source_read.clear();
         self.tasks.submit_in(tx, &job).await?;
         tx.insert_embedding_run(&EmbeddingRun {
             job: job.clone(),
             space_id: space.id.clone(),
-            inputs,
+            content_hashes: inputs.iter().map(EmbeddingInputItem::source_hash).collect(),
         })
         .await?;
         Ok(job.id)

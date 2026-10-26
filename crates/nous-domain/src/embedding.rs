@@ -33,7 +33,7 @@ impl EmbeddingTarget {
         }
     }
     pub fn source_key(&self, source_hash: &str) -> Result<String> {
-        validate_hash(source_hash)?;
+        validate_embedding_hash(source_hash)?;
         match self {
             Self::Item(target) => target.key(),
             Self::Tag => Ok(format!("tag:{source_hash}")),
@@ -83,6 +83,7 @@ impl EmbeddingPart {
 pub struct EmbeddingInputItem {
     pub target: EmbeddingTarget,
     pub parts: Vec<EmbeddingPart>,
+    pub read_requirements: Vec<crate::SourceReadRef>,
 }
 impl EmbeddingInputItem {
     pub fn for_memory(value: &Memory) -> Result<Self> {
@@ -119,11 +120,23 @@ impl EmbeddingInputItem {
         Self::new(target, vec![EmbeddingPart::Text { text, source: None }])
     }
     pub fn new(target: EmbeddingTarget, parts: Vec<EmbeddingPart>) -> Result<Self> {
-        let value = Self { target, parts };
+        let value = Self {
+            target,
+            parts,
+            read_requirements: Vec::new(),
+        };
         value.validate()?;
         Ok(value)
     }
     pub fn validate(&self) -> Result<()> {
+        if self.read_requirements.len() > 1024 {
+            return Err(Error::invalid(
+                "embedding source requirements exceed 1024 references",
+            ));
+        }
+        for reference in &self.read_requirements {
+            reference.validate()?;
+        }
         if self.parts.is_empty() {
             return Err(Error::invalid("embedding input needs at least one part"));
         }
@@ -195,7 +208,25 @@ pub fn cognitive_embedding_key(reference: &CognitiveRef) -> Result<String> {
 pub struct EmbeddingRun {
     pub job: JobRecord,
     pub space_id: String,
-    pub inputs: Vec<EmbeddingInputItem>,
+    pub content_hashes: Vec<String>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EmbeddingSubscription {
+    pub namespace_id: NamespaceId,
+    pub subject_id: SubjectId,
+    pub space_id: String,
+    pub input: EmbeddingInputItem,
+    pub accepted_commit_seq: i64,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EmbeddingContent {
+    pub namespace_id: NamespaceId,
+    pub subject_id: SubjectId,
+    pub space_id: String,
+    pub source_hash: String,
+    pub vector: Vec<f32>,
+    pub model_call_id: ModelCallId,
+    pub commit_seq: i64,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EmbeddingRecord {
@@ -226,7 +257,7 @@ impl EmbeddingProvenance {
         self.target.source_key(&self.source_hash)
     }
 }
-fn validate_hash(value: &str) -> Result<()> {
+pub fn validate_embedding_hash(value: &str) -> Result<()> {
     if value.len() != 64
         || !value
             .bytes()

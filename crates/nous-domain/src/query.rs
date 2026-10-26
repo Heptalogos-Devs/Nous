@@ -95,6 +95,7 @@ pub struct QueryRequest {
     #[serde(default)]
     pub mode: QueryMode,
     pub subject_id: SubjectId,
+    pub source_read: Option<crate::SourceReadScope>,
     #[serde(default)]
     pub input: QueryInput,
     pub reference: Option<RetrievalTarget>,
@@ -116,6 +117,14 @@ pub struct QueryRequest {
 
 impl QueryRequest {
     pub fn validate(&self) -> Result<()> {
+        if let Some(scope) = &self.source_read {
+            scope.validate()?;
+            if scope.subject_id != self.subject_id {
+                return Err(Error::invalid(
+                    "query source-read scope belongs to another subject",
+                ));
+            }
+        }
         if self.limit == 0 || self.input.text.contains('\0') {
             return Err(Error::invalid(
                 "query limit must be positive and text may not contain NUL",

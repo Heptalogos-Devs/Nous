@@ -188,8 +188,30 @@ impl App {
         key: String,
         source: EvidenceSource,
     ) -> Result<SourceCatalogEntry> {
+        let mut read = self.database.read_view().await?;
+        read.require_source_requirements(
+            ctx,
+            namespace,
+            subject,
+            &[SourceReadRef::evidence(&source)],
+        )
+        .await?;
+        read.finish().await?;
         let mut event_kind = None;
         let text = match &source {
+            EvidenceSource::Media { reference } => {
+                let snapshot = self
+                    .sources
+                    .resolve(ctx, namespace, subject, reference)
+                    .await?;
+                event_kind = snapshot.source_event_kind;
+                let text=self.sources.text(&snapshot,&CancellationToken::new()).await.map_err(|error|{
+                    if error.code==ErrorCode::CapabilityUnavailable {Error::new(ErrorCode::CapabilityUnavailable,"structured formation requires an existing text description, transcript, extracted text or interpretation for non-text media").with_cause(&error)}else{error}
+                })?;
+                serde_json::to_string(
+                    &json!({"source":reference,"source_access":snapshot.access,"quality":snapshot.quality,"timeline":snapshot.timeline,"text":text,"source_event_kind":snapshot.source_event_kind}),
+                )?
+            }
             EvidenceSource::Material { material_id } => {
                 self.get_material(ctx, material_id).await?.text
             }
@@ -202,10 +224,24 @@ impl App {
                     ));
                 }
                 event_kind = Some(observation.kind);
-                let material = self.get_material(ctx, &observation.material_id).await?;
+                let reference = nous_domain::media::MediaReference::Original {
+                    material_id: observation.material_id.clone(),
+                };
+                let snapshot = self
+                    .sources
+                    .resolve_for_event(ctx, namespace, subject, &reference, observation_id)
+                    .await?;
+                let text = self
+                    .sources
+                    .text(&snapshot, &CancellationToken::new())
+                    .await?;
+                let material = self
+                    .database
+                    .material(namespace, &observation.material_id)
+                    .await?;
                 serde_json::to_string(&json!({
-                    "text":material.text,"observed_at":observation.observed_at,
-                    "event_time":material.material.event_time,"source":material.material.source,
+                    "text":text,"observed_at":observation.observed_at,
+                    "event_time":material.event_time,"source":material.source,
                 }))?
             }
             EvidenceSource::MemoryRevision {
@@ -260,6 +296,7 @@ impl App {
 
     pub async fn structured_formation_run(&self, ctx: &CallContext, job_id: &str) -> Result<Value> {
         let run = self.database.structured_formation(job_id).await?;
+        self.tasks.read(ctx, job_id).await?;
         let (namespace, subject) = run.job.subject_scope()?;
         ctx.require_subject(namespace, subject)?;
         let groups = self.database.structured_formation_groups(job_id).await?;
@@ -293,6 +330,7 @@ impl App {
                 &cancel,
                 |attempt| super::model::prepare(&plan, attempt, input.clone()),
                 |prepared| super::model::execute(&self.model, prepared),
+                None,
             )
             .await?
         else {

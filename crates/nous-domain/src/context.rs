@@ -1,5 +1,5 @@
 //! Persistent caller identity and a single traced invocation have separate lifetimes.
-use crate::{Error, ErrorCode, GrantRef, NamespaceId, Result, SubjectId, TraceId};
+use crate::{Error, ErrorCode, GrantRef, NamespaceId, Result, SourceReadScope, SubjectId, TraceId};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -29,6 +29,7 @@ impl CallerIdentity {
             scope: self.scope.clone(),
             trace_id,
             authorization: self.authorization.clone(),
+            source_read: Vec::new(),
         }
     }
     pub fn new_call(&self) -> CallContext {
@@ -42,9 +43,38 @@ pub struct CallContext {
     pub scope: AccessScope,
     pub trace_id: TraceId,
     pub authorization: Option<GrantRef>,
+    #[serde(default)]
+    pub source_read: Vec<SourceReadScope>,
 }
 
 impl CallContext {
+    pub fn source_read_identity(&self) -> Result<Vec<SourceReadScope>> {
+        let mut scopes = self
+            .source_read
+            .iter()
+            .map(|scope| {
+                scope.validate()?;
+                let scope = scope.canonical();
+                Ok((serde_json::to_string(&scope)?, scope))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        scopes.sort_by(|a, b| a.0.cmp(&b.0));
+        scopes.dedup_by(|a, b| a.0 == b.0);
+        Ok(scopes.into_iter().map(|(_, scope)| scope).collect())
+    }
+    pub fn with_source_read(&self, scope: SourceReadScope) -> Result<Self> {
+        scope.validate()?;
+        if let AccessScope::Subject { subject_id, .. } = &self.scope
+            && subject_id != &scope.subject_id
+        {
+            return Err(self.forbidden("source-read scope belongs to another subject"));
+        }
+        let mut narrowed = self.clone();
+        if !narrowed.source_read.contains(&scope) {
+            narrowed.source_read.push(scope);
+        }
+        Ok(narrowed)
+    }
     pub fn new(caller_id: impl Into<String>, scope: AccessScope) -> Self {
         CallerIdentity {
             caller_id: caller_id.into(),

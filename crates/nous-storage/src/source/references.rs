@@ -42,6 +42,11 @@ pub(crate) fn source_parts(source: &EvidenceSource) -> Result<(String, String, O
         EvidenceSource::Material { material_id } => {
             ("material".into(), material_id.to_string(), None)
         }
+        EvidenceSource::Media { reference } => (
+            "media".into(),
+            RetrievalTarget::Media(reference.clone()).key()?,
+            None,
+        ),
         EvidenceSource::Observation { observation_id } => {
             ("observation".into(), observation_id.to_string(), None)
         }
@@ -91,13 +96,64 @@ pub(crate) async fn validate_source(
     source: &EvidenceSource,
 ) -> Result<i64> {
     match source {
-        EvidenceSource::CognitiveRevision{reference}=>validate_reference(conn,namespace,subject,reference).await,
-        EvidenceSource::MemoryRevision{memory_id,revision}=>validate_reference(conn,namespace,subject,&CognitiveRef{kind:CognitiveKind::Memory,id:memory_id.to_string(),revision:*revision}).await,
-        EvidenceSource::Material{material_id}=>sqlx::query_scalar("SELECT m.commit_seq FROM materials m WHERE m.namespace_id=? AND m.id=? AND EXISTS(SELECT 1 FROM observations o WHERE o.namespace_id=m.namespace_id AND o.subject_id=? AND o.material_id=m.id)")
-            .bind(namespace.as_str()).bind(material_id.as_str()).bind(subject.as_str()).fetch_optional(conn).await.map_err(storage_error)?.ok_or_else(not_found),
-        EvidenceSource::Observation{observation_id}=>sqlx::query_scalar("SELECT commit_seq FROM observations WHERE namespace_id=? AND subject_id=? AND id=?")
-            .bind(namespace.as_str()).bind(subject.as_str()).bind(observation_id.as_str()).fetch_optional(conn).await.map_err(storage_error)?.ok_or_else(not_found),
+        EvidenceSource::CognitiveRevision { reference } => {
+            validate_reference(conn, namespace, subject, reference).await
+        }
+        EvidenceSource::MemoryRevision {
+            memory_id,
+            revision,
+        } => {
+            validate_reference(
+                conn,
+                namespace,
+                subject,
+                &CognitiveRef {
+                    kind: CognitiveKind::Memory,
+                    id: memory_id.to_string(),
+                    revision: *revision,
+                },
+            )
+            .await
+        }
+        EvidenceSource::Material { material_id } => {
+            material_source(conn, namespace, subject, material_id).await
+        }
+        EvidenceSource::Media { reference } => media_source(conn, namespace, subject, reference)
+            .await?
+            .commit_seq(),
+        EvidenceSource::Observation { observation_id } => sqlx::query_scalar(
+            "SELECT commit_seq FROM observations WHERE namespace_id=? AND subject_id=? AND id=?",
+        )
+        .bind(namespace.as_str())
+        .bind(subject.as_str())
+        .bind(observation_id.as_str())
+        .fetch_optional(conn)
+        .await
+        .map_err(storage_error)?
+        .ok_or_else(not_found),
     }
+}
+
+async fn material_source(
+    conn: &mut SqliteConnection,
+    namespace: &NamespaceId,
+    subject: &SubjectId,
+    id: &MaterialId,
+) -> Result<i64> {
+    sqlx::query_scalar("SELECT m.commit_seq FROM materials m WHERE m.namespace_id=? AND m.id=? AND EXISTS(SELECT 1 FROM observations o WHERE o.namespace_id=m.namespace_id AND o.subject_id=? AND o.material_id=m.id)")
+        .bind(namespace.as_str()).bind(id.as_str()).bind(subject.as_str()).fetch_optional(conn).await.map_err(storage_error)?.ok_or_else(not_found)
+}
+pub(crate) async fn media_source(
+    conn: &mut SqliteConnection,
+    namespace: &NamespaceId,
+    subject: &SubjectId,
+    reference: &media::MediaReference,
+) -> Result<media::MediaSourceLineage> {
+    let lineage = crate::media::lineage_in(conn, namespace, subject, reference, 0).await?;
+    for root in &lineage.materials {
+        material_source(conn, namespace, subject, &root.material.id).await?;
+    }
+    Ok(lineage)
 }
 
 pub(crate) fn source_row(row: &sqlx::sqlite::SqliteRow) -> Result<EvidenceSource> {
@@ -105,6 +161,14 @@ pub(crate) fn source_row(row: &sqlx::sqlite::SqliteRow) -> Result<EvidenceSource
     let kind: &str = row.get("source_kind");
     let id: String = row.get("source_id");
     let revision: Option<i64> = row.get("source_revision");
+    source_from_parts(kind, id, revision)
+}
+
+pub(crate) fn source_from_parts(
+    kind: &str,
+    id: String,
+    revision: Option<i64>,
+) -> Result<EvidenceSource> {
     Ok(match kind {
         "material" => EvidenceSource::Material {
             material_id: MaterialId(id),
@@ -112,6 +176,15 @@ pub(crate) fn source_row(row: &sqlx::sqlite::SqliteRow) -> Result<EvidenceSource
         "observation" => EvidenceSource::Observation {
             observation_id: ObservationId(id),
         },
+        "media" => {
+            let target: RetrievalTarget = id.parse()?;
+            let RetrievalTarget::Media(reference) = target else {
+                return Err(Error::internal(
+                    "persisted media evidence key names a cognition",
+                ));
+            };
+            EvidenceSource::Media { reference }
+        }
         "memory" => EvidenceSource::MemoryRevision {
             memory_id: MemoryId(id),
             revision: revision.ok_or_else(|| Error::internal("missing exact source revision"))?,

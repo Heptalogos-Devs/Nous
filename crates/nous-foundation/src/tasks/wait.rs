@@ -63,8 +63,24 @@ impl Tasks {
         let mut view = self.database.read_view().await?;
         let mut jobs = Vec::with_capacity(ids.len());
         for id in ids {
-            let job = view.job_record(id).await?;
-            authorize(ctx, &job)?;
+            let mut job = view.job_record(id).await?;
+            // Waiting exposes lifecycle facts, while full task bodies use read().
+            match (&job.namespace_id, &job.subject_id) {
+                (Some(namespace), Some(subject)) => ctx.require_subject(namespace, subject)?,
+                (Some(namespace), None) => ctx.require_namespace(namespace)?,
+                _ => ctx.require_admin()?,
+            }
+            if authorize(ctx, &job).is_err() {
+                job.checkpoint = None;
+                job.result = None;
+                if let Some(wait) = &mut job.wait {
+                    wait.details = json!({});
+                }
+                job.error = job.error.map(|error| {
+                    Error::new(error.code, "shared task did not complete")
+                        .with_trace(job.trace_id.clone())
+                });
+            }
             jobs.push(job);
         }
         view.finish().await?;

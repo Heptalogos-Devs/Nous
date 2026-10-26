@@ -1,0 +1,75 @@
+# Nous Wave Python SDK
+
+异步客户端面向 Agent、MaiBot 集成和普通 Python 程序。HTTP 连接、代理、凭据、超时、Trace 和错误解析由一个 transport 管理；模型调用与持久作业继续由 Nous 服务执行。
+
+```powershell
+. ./scripts/dev-env.ps1
+uv pip install --python <虚拟环境中的Python> -e sdk/python
+```
+
+使用已有实例与受保护的凭据文件：
+
+```python
+from nous_wave import ClientOptions, NousClient
+
+async with NousClient(
+    service_url,
+    credential_file=credential_file,
+    options=ClientOptions(language="zh-CN"),
+) as client:
+    identity = await client.identity({"action": "whoami"})
+    result = await client.query(subject_id, "本轮开发尚未完成的工作")
+```
+
+`configuration`、`identity`、`prompts`、`media`、`cognition`、`contexts` 接收与 HTTP/MCP 相同的正式操作对象。常用材料、记忆、查询、向量、任务和备份有具名方法。`request` 用于直接调用其他公开操作。写入方法接受 `operation_id`；重试同一个实际动作时保留此值，网络异常的 `context.operation_id` 可供继续。
+
+`upload_file` 与 `download_material` 流式传输原件。`query(..., media=[...])` 接受精确 MediaReference，文字与媒体一起构成联合查询。`with_source_read(scope)` 创建共享连接池的受限客户端，所有操作沿相同请求元数据追加范围；调用参数继续在此范围内收窄。
+
+## 每次模型调用的上下文
+
+会话使用 `contexts` 的 `open_session` 操作建立。宿主保存自己的真实历史、工具状态、会话 ID 和历史代次；每个独立执行者使用自己的 `consumer_id` / `instance_id`。
+
+```python
+binding = client.managed(
+    subject_id=subject_id,
+    session_id=session_id,
+    consumer_id=consumer_id,
+    instance_id=worker_id,
+    source_read=trusted_source_scope,
+)
+
+prepared = await binding.prepare(
+    usage=actual_usage,
+    max_items=contribution_item_limit,
+    max_text_bytes=contribution_byte_budget,
+    current_sources=actually_supplied_sources,
+    query=optional_query,
+)
+applied = binding.apply(clean_host_input, prepared, renderer, serialize_input)
+measurement = host_measure_complete_input(applied.input)
+await binding.admit(
+    applied,
+    invocation_id=invocation_id,
+    history_generation=history_generation,
+    measurement=measurement,
+)
+```
+
+`renderer(base, segments, usage, epistemic_view)` 返回完整模型输入，输入参数已独立复制。`serialize_input` 返回该输入的实际序列化字节。宿主用自己的测量器生成 `HostInputMeasurement`，包含完整输入 token、预留输出、窗口上限与测量来源；SDK 和服务都会拒绝超过窗口的接纳。
+
+模型调用结束后，用实际结果和时间报告：
+
+```python
+await binding.report(
+    applied,
+    invocation_id=invocation_id,
+    outcome=actual_outcome,
+    occurred_at=actual_completion_time,
+    uses=actual_meaningful_uses,
+)
+await binding.close()
+```
+
+`apply` 管理自身的 RESET/APPEND 片段与游标；工具续轮、模型切换和压缩后继续对净化后的宿主输入执行同一流程。`admit` 记录实际呈现，`report` 记录实际结果及明确使用事件。失败的报告可保留同一调用 ID、完成时间和事件再次提交。
+
+读取范围来自可信宿主接纳的来源或会话 origin。普通查询继承已认证权限；managed binding 没有显式范围时由服务采用空读取范围。精确引用和派生来源保持独立身份，资料文本不会成为对 SDK 或宿主的执行指令。

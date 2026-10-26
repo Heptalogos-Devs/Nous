@@ -61,7 +61,7 @@ pub(super) async fn validate(
             ));
         }
         let lineage = crate::media::lineage_in(conn, namespace, subject, source, 0).await?;
-        if target.is_some_and(|target| !contains(&lineage, target)) {
+        if target.is_some_and(|target| !lineage.contains(target)) {
             return Err(Error::invalid(
                 "embedding part is not derived from its exact target",
             ));
@@ -119,27 +119,6 @@ pub(super) async fn validate(
         }
     }
     Ok(())
-}
-fn contains(lineage: &MediaSourceLineage, target: &MediaReference) -> bool {
-    if &lineage.source == target {
-        return true;
-    }
-    match target {
-        MediaReference::Original { material_id } => lineage
-            .materials
-            .iter()
-            .any(|row| row.material.id == *material_id),
-        MediaReference::SourceRegion { id } => {
-            lineage.source_regions.iter().any(|row| row.id == *id)
-        }
-        MediaReference::Representation { reference } => lineage
-            .representations
-            .iter()
-            .any(|row| row.reference() == *reference),
-        MediaReference::DerivedRegion { id } => {
-            lineage.derived_regions.iter().any(|row| row.id == *id)
-        }
-    }
 }
 fn text_matches(
     lineage: &MediaSourceLineage,

@@ -202,6 +202,9 @@ impl App {
         let _protection = self.objects.protect_references(&cancel).await?;
         let mut read = self.database.read_view().await?;
         read.subject(namespace, &request.subject_id).await?;
+        let source_read = read
+            .source_read_view(ctx, namespace, &request.subject_id)
+            .await?;
         let mut output = QueryView::new(read.watermark);
         let mut media_entries = Vec::new();
         let exact = request.reference.as_ref();
@@ -215,6 +218,7 @@ impl App {
                     space,
                     reference,
                     request.as_of_commit,
+                    Some(&source_read),
                 )
                 .await?
             } else {
@@ -224,6 +228,7 @@ impl App {
                     space,
                     request.as_of_commit,
                     policy.max_snapshot_entries,
+                    Some(&source_read),
                 )
                 .await?
             };
@@ -240,6 +245,7 @@ impl App {
                     space,
                     reference,
                     request.as_of_commit,
+                    Some(&source_read),
                 )
                 .await?
             } else {
@@ -249,6 +255,7 @@ impl App {
                     space,
                     request.as_of_commit,
                     policy.max_snapshot_entries,
+                    Some(&source_read),
                 )
                 .await?
             };
@@ -266,7 +273,14 @@ impl App {
                 let reference = entry.source.source.clone();
                 let source = self
                     .sources
-                    .resolve_in(ctx, &mut read, namespace, &request.subject_id, &reference)
+                    .resolve_in(
+                        ctx,
+                        &mut read,
+                        namespace,
+                        &request.subject_id,
+                        &reference,
+                        None,
+                    )
                     .await?;
                 let recorded = OperationTime::parse(object.recorded_at())?.point();
                 let candidate = Entry {

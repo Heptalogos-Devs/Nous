@@ -70,6 +70,16 @@ fn description_draft(input: MediaModelInput) -> Result<InvocationDraft> {
             parts: input.messages(),
         }],
         OutputContract::Text,
+    )
+    .with_sources(
+        input
+            .catalog
+            .iter()
+            .map(|entry| SourceReadRef::Media {
+                reference: entry.source.clone(),
+                observation_id: None,
+            })
+            .collect(),
     ))
 }
 fn structured_draft(input: MediaModelInput) -> Result<InvocationDraft> {
@@ -112,6 +122,16 @@ fn structured_draft(input: MediaModelInput) -> Result<InvocationDraft> {
             name: "media_interpretation".into(),
             schema: super::output::schema(&input),
         },
+    )
+    .with_sources(
+        input
+            .catalog
+            .iter()
+            .map(|entry| SourceReadRef::Media {
+                reference: entry.source.clone(),
+                observation_id: None,
+            })
+            .collect(),
     ))
 }
 pub async fn prepare(

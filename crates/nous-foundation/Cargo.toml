@@ -8,16 +8,21 @@ rust-version.workspace = true
 nous-domain.workspace = true
 nous-storage.workspace = true
 anyhow.workspace = true
+accept-language.workspace = true
 apalis.workspace = true
 apalis-core.workspace = true
 base64.workspace = true
 chrono.workspace = true
 directories.workspace = true
 fs2.workspace = true
+fluent-bundle.workspace = true
+fluent-langneg.workspace = true
 genai.workspace = true
 infer.workspace = true
 minijinja.workspace = true
 process-wrap.workspace = true
+plist.workspace = true
+xml-rs.workspace = true
 metrics.workspace = true
 metrics-exporter-prometheus.workspace = true
 reqwest.workspace = true
@@ -35,6 +40,7 @@ tracing.workspace = true
 tracing-appender.workspace = true
 tracing-subscriber.workspace = true
 ulid.workspace = true
+unic-langid.workspace = true
 uuid.workspace = true
 
 [target.'cfg(windows)'.dependencies]
@@ -43,3 +49,6 @@ windows-permissions = "=0.2.4"
 
 [lints]
 workspace = true
+
+[target.'cfg(unix)'.dependencies]
+uzers.workspace = true

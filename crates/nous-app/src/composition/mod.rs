@@ -13,6 +13,7 @@ pub fn model_roles() -> Result<RoleRegistry> {
         registry.register(definition)?;
     }
     registry.register(crate::retrieval::embedding_model::definition())?;
+    registry.register(crate::contexts::model::definition())?;
     for definition in crate::materials::derivation::model::definitions() {
         registry.register(definition)?;
     }
@@ -27,8 +28,12 @@ pub fn configuration_registry(
     nous_foundation::observability::register_configuration(&mut registry)?;
     nous_foundation::tasks::register_configuration(&mut registry)?;
     nous_foundation::platform::register_configuration(&mut registry)?;
+    nous_foundation::platform::installation::register_configuration(&mut registry)?;
+    nous_foundation::platform::service::register_configuration(&mut registry)?;
+    nous_foundation::localization::register_configuration(&mut registry)?;
     nous_foundation::media::register_configuration(&mut registry)?;
     crate::retrieval::config::register_configuration(&mut registry)?;
+    crate::contexts::config::register_configuration(&mut registry)?;
     nous_foundation::models::register_configuration(&mut registry, roles)?;
     Ok(registry.finish())
 }
@@ -110,6 +115,32 @@ impl App {
             move |job| {
                 let owner = readiness.clone();
                 async move { owner.media_derivation_ready(&job).await }
+            },
+        )?;
+        let contexts = self.clone();
+        let readiness = self.clone();
+        registry.register(
+            "context.prepare",
+            move |job, cancel| {
+                let owner = contexts.clone();
+                async move { owner.run_context_preparation(job, cancel).await }
+            },
+            move |job| {
+                let owner = readiness.clone();
+                async move { owner.context_preparation_ready(&job).await }
+            },
+        )?;
+        let steward = self.clone();
+        let readiness = self.clone();
+        registry.register(
+            "context.steward",
+            move |job, cancel| {
+                let owner = steward.clone();
+                async move { owner.run_context_steward(job, cancel).await }
+            },
+            move |job| {
+                let owner = readiness.clone();
+                async move { owner.context_steward_ready(&job).await }
             },
         )?;
         Ok(registry)

@@ -163,6 +163,7 @@ pub struct ImportRequest {
     #[serde(default)]
     pub form_memory: bool,
     pub source: Option<String>,
+    pub origin: Option<crate::ObservationOrigin>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -174,6 +175,7 @@ pub struct ImportRecord {
     pub source_type: Option<String>,
     pub event_time: Option<TimePoint>,
     pub observed_at: Option<TimePoint>,
+    pub origin: Option<crate::ObservationOrigin>,
     #[serde(default)]
     pub tags: Vec<String>,
     #[serde(default = "empty_object")]

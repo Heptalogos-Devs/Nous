@@ -6,7 +6,7 @@ use nous_domain::{
 };
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use sqlx::{Row, Sqlite, Transaction};
+use sqlx::{Row, Sqlite, SqliteConnection, Transaction};
 use std::sync::Arc;
 
 use crate::{
@@ -34,6 +34,22 @@ pub struct WriteTransaction {
 }
 
 impl Database {
+    pub async fn lookup_operation(&self, key: &OperationKey) -> Result<Option<OperationReceipt>> {
+        key.context.trace_id.validate()?;
+        if let Some(authorization) = &key.context.authorization {
+            authorization.validate()?;
+        }
+        let mut connection = self
+            .pool
+            .acquire()
+            .await
+            .map_err(|error| operation_error(storage_error(error), key, None))?;
+        let receipt = lookup_receipt(&mut connection, key).await?;
+        if let Some(receipt) = &receipt {
+            replay_event(key, receipt);
+        }
+        Ok(receipt)
+    }
     pub async fn begin_operation(&self, key: OperationKey) -> Result<BeginOperation> {
         let key = Arc::new(key);
         key.context.trace_id.validate()?;
@@ -47,25 +63,11 @@ impl Database {
             .begin_with("BEGIN IMMEDIATE")
             .await
             .map_err(|error| operation_error(storage_error(error), &key, None))?;
-        let stored = sqlx::query("SELECT request_hash, receipt FROM operation_receipts WHERE caller_id=? AND operation=? AND scope=? AND operation_id=?")
-            .bind(&key.context.caller_id).bind(&key.operation).bind(&key.scope).bind(&key.operation_id)
-            .fetch_optional(&mut *tx).await.map_err(|error| operation_error(storage_error(error), &key, None))?;
-        if let Some(row) = stored {
-            if row.get::<String, _>("request_hash") != key.request_hash {
-                return Err(Error::new(
-                    ErrorCode::Conflict,
-                    "operation ID was already used with a different request",
-                )
-                .with_trace(key.context.trace_id.clone())
-                .with_context("operation_id", key.operation_id.clone()));
-            }
-            let receipt: OperationReceipt = serde_json::from_str(row.get("receipt"))
-                .map_err(|error| operation_error(storage_error(error), &key, None))?;
+        if let Some(receipt) = lookup_receipt(&mut tx, &key).await? {
             tx.rollback()
                 .await
                 .map_err(|error| operation_error(storage_error(error), &key, None))?;
-            operation_event("replayed", &key, receipt.commit_seq);
-            tracing::info!(event="operation.replay_origin", trace_id=%key.context.trace_id, original_trace_id=%receipt.context.trace_id, operation_id=%key.operation_id, commit_seq=receipt.commit_seq);
+            replay_event(&key, &receipt);
             return Ok(BeginOperation::Replay(receipt));
         }
         let time = (self.operation_time)();
@@ -86,6 +88,32 @@ impl Database {
             retained_guards: vec![],
         }))
     }
+}
+
+async fn lookup_receipt(
+    connection: &mut SqliteConnection,
+    key: &OperationKey,
+) -> Result<Option<OperationReceipt>> {
+    let stored=sqlx::query("SELECT request_hash,receipt FROM operation_receipts WHERE caller_id=? AND operation=? AND scope=? AND operation_id=?")
+        .bind(&key.context.caller_id).bind(&key.operation).bind(&key.scope).bind(&key.operation_id).fetch_optional(connection).await.map_err(|error|operation_error(storage_error(error),key,None))?;
+    stored
+        .map(|row| {
+            if row.get::<String, _>("request_hash") != key.request_hash {
+                return Err(Error::new(
+                    ErrorCode::Conflict,
+                    "operation ID was already used with a different request",
+                )
+                .with_trace(key.context.trace_id.clone())
+                .with_context("operation_id", key.operation_id.clone()));
+            }
+            serde_json::from_str(row.get("receipt"))
+                .map_err(|error| operation_error(storage_error(error), key, None))
+        })
+        .transpose()
+}
+fn replay_event(key: &OperationKey, receipt: &OperationReceipt) {
+    operation_event("replayed", key, receipt.commit_seq);
+    tracing::info!(event="operation.replay_origin",trace_id=%key.context.trace_id,original_trace_id=%receipt.context.trace_id,operation_id=%key.operation_id,commit_seq=receipt.commit_seq);
 }
 
 impl WriteTransaction {
@@ -166,14 +194,17 @@ impl WriteTransaction {
 
     pub async fn insert_observation(&mut self, value: &Observation) -> Result<()> {
         self.check_sequence(value.commit_seq)?;
+        if let Some(origin) = &value.origin {
+            origin.validate()?;
+        }
         let kind = match &value.kind {
             ObservationKind::Contact => "contact",
             ObservationKind::Import => "import",
         };
-        sqlx::query("INSERT INTO observations(id,namespace_id,subject_id,material_id,observed_at_domain,observed_at_coordinate,recorded_at,commit_seq,kind) VALUES (?,?,?,?,?,?,?,?,?)")
+        sqlx::query("INSERT INTO observations(id,namespace_id,subject_id,material_id,observed_at_domain,observed_at_coordinate,recorded_at,commit_seq,kind,origin) VALUES (?,?,?,?,?,?,?,?,?,?)")
             .bind(value.id.as_str()).bind(value.namespace_id.as_str()).bind(value.subject_id.as_str()).bind(value.material_id.as_str())
             .bind(value.observed_at.as_ref().map(|t| t.domain.as_str())).bind(value.observed_at.as_ref().map(|t| t.coordinate))
-            .bind(&value.recorded_at).bind(self.commit_seq).bind(kind).execute(&mut *self.tx).await.map_err(write_error)?;
+            .bind(&value.recorded_at).bind(self.commit_seq).bind(kind).bind(value.origin.as_ref().map(serde_json::to_string).transpose()?).execute(&mut *self.tx).await.map_err(write_error)?;
         Ok(())
     }
 
@@ -275,7 +306,7 @@ pub fn operation_key(
     nous_domain::validate_name(operation_id, "operation_id")?;
     nous_domain::validate_name(&ctx.caller_id, "caller_id")?;
     let encoded =
-        serde_json::to_vec(&json!({"operation":operation,"scope":scope,"payload":payload}))?;
+        serde_json::to_vec(&json!({"operation":operation,"scope":scope,"source_read":ctx.source_read_identity()?,"payload":payload}))?;
     Ok(OperationKey {
         context: ctx.clone(),
         operation: operation.into(),

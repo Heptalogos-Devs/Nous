@@ -1,4 +1,4 @@
-use super::{op_id, print_json};
+use super::{op_id, print_result};
 use crate::http::{ApiClient, Operation};
 use anyhow::{Context, Result};
 use clap::Subcommand;
@@ -66,13 +66,13 @@ impl MaterialCommand {
                         .transpose()
                         .context("event time must have domain and coordinate")?,
                 };
-                print_json(
+                print_result(
                     client
                         .upload_material(op_id(operation_id), request, reader)
                         .await?,
                 )
             }
-            Self::Get { id, output: None } => print_json(
+            Self::Get { id, output: None } => print_result(
                 client
                     .execute(&Operation::GetMaterial(id.to_string()))
                     .await?,
@@ -103,7 +103,7 @@ impl MaterialCommand {
                         return Err(error).context("material download failed");
                     }
                 };
-                print_json(json!({"material_id":id,"output":path,"byte_len":length,
+                print_result(json!({"material_id":id,"output":path,"byte_len":length,
                     "content_hash":headers.get("x-nous-content-sha256").and_then(|value|value.to_str().ok()),
                     "media_type":headers.get("content-type").and_then(|value|value.to_str().ok())}))
             }

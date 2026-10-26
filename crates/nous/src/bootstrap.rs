@@ -58,7 +58,7 @@ pub(crate) async fn connect(
     } else {
         let reference = active_credential.as_ref()
             .context("a running local identity or explicit --token-file is required; bootstrap seed is for local initialization/reset")?;
-        Secrets::new(Arc::new(paths.clone()))
+        Secrets::new(Arc::new(paths.clone()))?
             .read(reference)
             .await?
             .into_string()
@@ -70,7 +70,14 @@ pub(crate) async fn connect(
         .transpose()?
         .or_else(|| config.map(|c| c.network))
         .unwrap_or_default();
-    ApiClient::new(NetworkClients::new(&network)?, base_url, token)
+    let mut client = ApiClient::new(NetworkClients::new(&network)?, base_url, token)?;
+    for scope in crate::cli::source_scopes() {
+        client = client.with_source_read(scope.clone())?;
+    }
+    Ok(match crate::presentation::cli_language() {
+        Some(language) => client.with_language(language),
+        None => client,
+    })
 }
 
 pub(crate) async fn serve(paths: InstancePaths, listen: Option<SocketAddr>) -> Result<()> {

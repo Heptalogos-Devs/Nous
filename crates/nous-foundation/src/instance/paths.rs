@@ -137,7 +137,7 @@ pub(super) fn resolve_existing_ancestor(path: &Path) -> Result<PathBuf> {
     Ok(resolved)
 }
 
-pub(super) fn is_within(path: &Path, root: &Path) -> bool {
+pub(crate) fn is_within(path: &Path, root: &Path) -> bool {
     #[cfg(windows)]
     {
         path.to_string_lossy().to_lowercase() == root.to_string_lossy().to_lowercase()

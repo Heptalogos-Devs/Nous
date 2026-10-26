@@ -68,6 +68,17 @@ impl SourceReader {
         let protection = self.objects.protect_references(cancel).await?;
         let mut view = self.database.read_view().await?;
         let material = view.material_by_id(id).await?;
+        for scope in &ctx.source_read {
+            view.require_source_read(
+                ctx,
+                &material.namespace_id,
+                &scope.subject_id,
+                &RetrievalTarget::Media(MediaReference::Original {
+                    material_id: id.clone(),
+                }),
+            )
+            .await?;
+        }
         match &ctx.scope {
             AccessScope::Subject { subject_id, .. } => {
                 ctx.require_subject(&material.namespace_id, subject_id)?;
@@ -143,6 +154,28 @@ impl SourceReader {
         subject: &SubjectId,
         reference: &MediaReference,
     ) -> Result<MediaSourceLineage> {
+        self.lineage_selected(ctx, namespace, subject, reference, None)
+            .await
+    }
+    pub async fn lineage_for_event(
+        &self,
+        ctx: &CallContext,
+        namespace: &NamespaceId,
+        subject: &SubjectId,
+        reference: &MediaReference,
+        observation: &ObservationId,
+    ) -> Result<MediaSourceLineage> {
+        self.lineage_selected(ctx, namespace, subject, reference, Some(observation))
+            .await
+    }
+    async fn lineage_selected(
+        &self,
+        ctx: &CallContext,
+        namespace: &NamespaceId,
+        subject: &SubjectId,
+        reference: &MediaReference,
+        observation: Option<&ObservationId>,
+    ) -> Result<MediaSourceLineage> {
         ctx.require_subject(namespace, subject)?;
         reference.validate()?;
         let _protection = self
@@ -151,8 +184,29 @@ impl SourceReader {
             .await?;
         let mut view = self.database.read_view().await?;
         view.subject(namespace, subject).await?;
-        let lineage = view.media_lineage(namespace, subject, reference).await?;
-        for original in &lineage.materials {
+        let mut lineage = view.media_lineage(namespace, subject, reference).await?;
+        view.require_source_requirements(
+            ctx,
+            namespace,
+            subject,
+            &[SourceReadRef::Media {
+                reference: reference.clone(),
+                observation_id: observation.cloned(),
+            }],
+        )
+        .await?;
+        for representation in &lineage.representations {
+            view.require_source_read(
+                ctx,
+                namespace,
+                subject,
+                &RetrievalTarget::Media(MediaReference::Representation {
+                    reference: representation.reference(),
+                }),
+            )
+            .await?;
+        }
+        for original in &mut lineage.materials {
             if !view
                 .subject_has_material_access(namespace, subject, &original.material.id)
                 .await?
@@ -161,6 +215,26 @@ impl SourceReader {
                     ErrorCode::Forbidden,
                     "media source has not been made accessible to this subject",
                 ));
+            }
+            if !ctx.source_read.is_empty() {
+                let requirement = SourceReadRef::Media {
+                    reference: MediaReference::Original {
+                        material_id: original.material.id.clone(),
+                    },
+                    observation_id: observation.cloned(),
+                };
+                match view
+                    .require_source_requirements(ctx, namespace, subject, &[requirement])
+                    .await
+                {
+                    Ok(()) => {}
+                    Err(error) if error.code == ErrorCode::Forbidden => {
+                        original.details.metadata = serde_json::json!({});
+                        original.details.structured = None;
+                        original.details_redacted = true;
+                    }
+                    Err(error) => return Err(error),
+                }
             }
         }
         view.finish().await?;
@@ -176,7 +250,29 @@ impl SourceReader {
     ) -> Result<SourceSnapshot> {
         let mut view = self.database.read_view().await?;
         let snapshot = self
-            .resolve_in(ctx, &mut view, namespace, subject, reference)
+            .resolve_in(ctx, &mut view, namespace, subject, reference, None)
+            .await?;
+        view.finish().await?;
+        Ok(snapshot)
+    }
+    pub async fn resolve_for_event(
+        &self,
+        ctx: &CallContext,
+        namespace: &NamespaceId,
+        subject: &SubjectId,
+        reference: &MediaReference,
+        observation: &ObservationId,
+    ) -> Result<SourceSnapshot> {
+        let mut view = self.database.read_view().await?;
+        let snapshot = self
+            .resolve_in(
+                ctx,
+                &mut view,
+                namespace,
+                subject,
+                reference,
+                Some(observation),
+            )
             .await?;
         view.finish().await?;
         Ok(snapshot)
@@ -189,6 +285,7 @@ impl SourceReader {
         namespace: &NamespaceId,
         subject: &SubjectId,
         reference: &MediaReference,
+        observation: Option<&ObservationId>,
     ) -> Result<SourceSnapshot> {
         ctx.require_subject(namespace, subject)?;
         reference.validate()?;
@@ -197,6 +294,16 @@ impl SourceReader {
             .protect_references(&CancellationToken::new())
             .await?;
         view.subject(namespace, subject).await?;
+        view.require_source_requirements(
+            ctx,
+            namespace,
+            subject,
+            &[SourceReadRef::Media {
+                reference: reference.clone(),
+                observation_id: observation.cloned(),
+            }],
+        )
+        .await?;
         let roots = view.media_roots(namespace, subject, reference).await?;
         for material in &roots {
             if !view

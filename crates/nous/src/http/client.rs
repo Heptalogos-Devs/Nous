@@ -8,6 +8,8 @@ pub struct ApiClient {
     network: NetworkClients,
     base_url: String,
     token: Arc<String>,
+    language: Option<String>,
+    source_read: Vec<nous_domain::SourceReadScope>,
 }
 impl ApiClient {
     pub fn new(network: NetworkClients, base_url: String, token: String) -> anyhow::Result<Self> {
@@ -24,7 +26,24 @@ impl ApiClient {
             network,
             base_url: base_url.trim_end_matches('/').to_owned(),
             token: Arc::new(token),
+            language: None,
+            source_read: Vec::new(),
         })
+    }
+    pub fn with_language(&self, language: &str) -> Self {
+        Self {
+            language: Some(language.to_owned()),
+            ..self.clone()
+        }
+    }
+    pub fn with_source_read(&self, scope: nous_domain::SourceReadScope) -> Result<Self, Error> {
+        scope.validate()?;
+        let mut client = self.clone();
+        let scope = scope.canonical();
+        if !client.source_read.contains(&scope) {
+            client.source_read.push(scope);
+        }
+        Ok(client)
     }
     pub async fn execute(&self, operation: &Operation) -> anyhow::Result<Value> {
         Ok(self.execute_domain(operation).await?)
@@ -55,7 +74,7 @@ impl ApiClient {
         };
         let trace_id = TraceId::new();
         let mut request = self
-            .authorized_request("POST", "/api/media/materials", &trace_id)
+            .authorized_request("POST", "/api/media/materials", &trace_id)?
             .query(&query)
             .header(reqwest::header::CONTENT_TYPE, input.media_type)
             .body(reqwest::Body::wrap_stream(
@@ -74,7 +93,7 @@ impl ApiClient {
     ) -> Result<reqwest::Response, Error> {
         let trace_id = TraceId::new();
         let request =
-            self.authorized_request("GET", &format!("/api/materials/{id}/content"), &trace_id);
+            self.authorized_request("GET", &format!("/api/materials/{id}/content"), &trace_id)?;
         let response = self.send(request, &trace_id).await?;
         if response.status().is_success() {
             Ok(response)
@@ -89,14 +108,27 @@ impl ApiClient {
         method: &str,
         path: &str,
         trace_id: &TraceId,
-    ) -> reqwest::RequestBuilder {
-        self.network
+    ) -> Result<reqwest::RequestBuilder, Error> {
+        let request = self
+            .network
             .request(
                 method.parse().expect("constant HTTP method"),
                 &format!("{}{path}", self.base_url),
             )
             .bearer_auth(self.token.as_str())
-            .header("x-nous-trace-id", trace_id.as_str())
+            .header("x-nous-trace-id", trace_id.as_str());
+        let request = match &self.language {
+            Some(language) => request.header(reqwest::header::ACCEPT_LANGUAGE, language),
+            None => request,
+        };
+        Ok(if self.source_read.is_empty() {
+            request
+        } else {
+            request.header(
+                super::source_read::HEADER,
+                super::source_read::encode(&self.source_read)?,
+            )
+        })
     }
 
     async fn send(
@@ -112,7 +144,7 @@ impl ApiClient {
 
     async fn request(&self, method: &str, path: &str, body: Option<Value>) -> Result<Value, Error> {
         let trace_id = TraceId::new();
-        let mut request = self.authorized_request(method, path, &trace_id);
+        let mut request = self.authorized_request(method, path, &trace_id)?;
         if let Some(body) = body {
             request = request.json(&body);
         }

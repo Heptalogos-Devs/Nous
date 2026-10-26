@@ -1,4 +1,4 @@
-//! memory_maintenance_service.py at 28db65dd96f546f736d65c043a39254cbae2c4e9.
+//! Memory lifecycle mutations and context source withdrawal.
 
 use crate::App;
 use nous_domain::*;
@@ -78,6 +78,9 @@ impl App {
                     "purge grace period is 24 hours; namespace authority may explicitly force it",
                 ));
             }
+            let targets = tx.memory_source_dependents(&namespace, id).await?;
+            self.purge_context_dependencies_in(&mut tx, &namespace, &subject_id, &targets)
+                .await?;
             let marker = tx.purge_memory(&namespace, id, before).await?;
             let mut event = audit(
                 ctx,
@@ -95,7 +98,16 @@ impl App {
                 .commit(json!({"id":id,"purged":true,"revision":marker.revision}))
                 .await;
         }
+        let previous_activation = memory.lifecycle.activation.clone();
+        let previously_deleted = memory.deleted;
         apply_to_memory(&mut memory, &change, now)?;
+        if (memory.deleted && !previously_deleted)
+            || (memory.lifecycle.activation != previous_activation && !memory.is_active())
+        {
+            let targets = tx.memory_source_dependents(&namespace, id).await?;
+            tx.invalidate_context_history(&namespace, &subject_id, &targets)
+                .await?;
+        }
         memory.revision += 1;
         memory.commit_seq = tx.commit_seq();
         memory.recorded_at = tx.time().recorded();
@@ -201,6 +213,11 @@ impl App {
             }
             if memory.lifecycle == old && !archive {
                 continue;
+            }
+            if archive || (memory.lifecycle.activation != old.activation && !memory.is_active()) {
+                let targets = tx.memory_source_dependents(&namespace, &memory.id).await?;
+                tx.invalidate_context_history(&namespace, subject, &targets)
+                    .await?;
             }
             memory.revision += 1;
             memory.commit_seq = tx.commit_seq();

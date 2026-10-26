@@ -6,6 +6,7 @@ $nousEnvPaths = @{
     CARGO_HOME = 'cache/cargo'; CARGO_TARGET_DIR = 'build/cargo'
     UV_CACHE_DIR = 'cache/uv'; PIP_CACHE_DIR = 'cache/pip'
     npm_config_cache = 'cache/npm'; XDG_CACHE_HOME = 'cache/xdg'
+    RUFF_CACHE_DIR = 'cache/ruff'; PYTHONPYCACHEPREFIX = 'cache/python-bytecode'
 }
 foreach ($nousEntry in $nousEnvPaths.GetEnumerator()) {
     $nousPath = Join-Path $nousTempRoot $nousEntry.Value

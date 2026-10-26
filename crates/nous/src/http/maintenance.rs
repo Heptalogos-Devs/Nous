@@ -90,6 +90,8 @@ pub struct ImportInput {
     #[serde(default)]
     pub form_memory: bool,
     pub source: Option<String>,
+    /// Captured origin for records without their own origin fact.
+    pub origin: Option<nous_domain::ObservationOrigin>,
 }
 
 #[derive(Clone)]

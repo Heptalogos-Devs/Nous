@@ -37,6 +37,7 @@ pub struct RecordObservation {
     pub subject_id: String,
     pub material_id: String,
     pub observed_at: Option<WireTime>,
+    pub origin: Option<nous_domain::ObservationOrigin>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct WireTime {
@@ -60,6 +61,8 @@ pub struct CancelJob {
 
 #[derive(Clone)]
 pub enum Operation {
+    WaitJobs(super::tasks::WaitJobs),
+    Context(Box<super::contexts::ContextOperation>),
     Media(Box<super::media::MediaOperation>),
     Identity(nous_app::administration::identity::IdentityRequest),
     Prompt(nous_app::administration::prompts::PromptRequest),
@@ -100,6 +103,8 @@ impl Operation {
 
     async fn dispatch(&self, app: &App, ctx: &CallContext) -> Result<Value, Error> {
         match self {
+            Self::WaitJobs(request)=>Ok(json!(app.wait_jobs(ctx,&request.ids,request.timeout_ms,&tokio_util::sync::CancellationToken::new()).await?)),
+            Self::Context(operation) => operation.execute(app, ctx).await,
             Self::Media(operation) => operation.execute(app, ctx).await,
             Self::Identity(request) => app.identity_request(ctx, request.clone()).await,
             Self::Trace(request) => app.trace_records(ctx, request).await,
@@ -168,6 +173,7 @@ impl Operation {
                     &input.subject_id.parse()?,
                     &input.material_id.parse()?,
                     input.observed_at.clone().map(Into::into),
+                    input.origin.clone(),
                 )
                 .await?,
             )?),
@@ -184,6 +190,8 @@ impl Operation {
 
     pub fn request(&self) -> (&'static str, String, Option<Value>) {
         match self {
+            Self::WaitJobs(request)=>("POST","/api/jobs/wait".into(),Some(json!(request))),
+            Self::Context(operation) => ("POST", "/api/contexts".into(), Some(json!(operation))),
             Self::Media(operation) => ("POST", "/api/media".into(), Some(json!(operation))),
             Self::Identity(request) => ("POST", "/api/identity".into(), Some(json!(request))),
             Self::Prompt(request) => ("POST", "/api/prompts".into(), Some(json!(request))),

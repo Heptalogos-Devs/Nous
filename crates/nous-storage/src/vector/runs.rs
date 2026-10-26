@@ -1,4 +1,3 @@
-use super::target_row;
 use crate::{Database, WriteTransaction, codec::*, not_found, storage_error, write_error};
 use nous_domain::*;
 use serde::{Deserialize, Serialize};
@@ -6,14 +5,8 @@ use sqlx::{Row, SqliteConnection};
 use std::collections::HashSet;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EmbeddingClaim {
-    pub target: EmbeddingTarget,
     pub source_hash: String,
     pub job_id: String,
-}
-impl EmbeddingClaim {
-    pub fn source_key(&self) -> Result<String> {
-        self.target.source_key(&self.source_hash)
-    }
 }
 impl Database {
     pub async fn embedding_space(&self, id: &str) -> Result<EmbeddingSpace> {
@@ -51,57 +44,70 @@ impl WriteTransaction {
         subject: &SubjectId,
         space: &str,
     ) -> Result<Vec<EmbeddingClaim>> {
-        let rows=sqlx::query("SELECT i.* FROM embedding_inputs i JOIN embedding_runs r ON r.job_id=i.job_id JOIN task_records t ON t.job_id=r.job_id WHERE t.namespace_id=? AND t.subject_id=? AND r.space_id=? AND t.state IN('queued','waiting','running') ORDER BY i.job_id,i.ordinal")
-            .bind(namespace.as_str()).bind(subject.as_str()).bind(space).fetch_all(&mut *self.tx).await.map_err(storage_error)?;
-        rows.into_iter()
-            .map(|row| {
-                Ok(EmbeddingClaim {
-                    target: target_row(&row)?,
-                    source_hash: row.get("source_hash"),
-                    job_id: row.get("job_id"),
-                })
-            })
-            .collect()
+        sqlx::query("SELECT c.source_hash,c.job_id FROM embedding_content_claims c JOIN task_records j ON j.job_id=c.job_id WHERE c.namespace_id=? AND c.subject_id=? AND c.space_id=? AND j.state IN('queued','waiting','running') ORDER BY c.source_hash")
+            .bind(namespace.as_str()).bind(subject.as_str()).bind(space).fetch_all(&mut *self.tx).await.map_err(storage_error)?.into_iter().map(|row|Ok(EmbeddingClaim{source_hash:row.get("source_hash"),job_id:row.get("job_id")})).collect()
+    }
+    pub async fn claimed_embedding_hashes(&mut self, job: &str) -> Result<Vec<String>> {
+        sqlx::query_scalar(
+            "SELECT source_hash FROM embedding_content_claims WHERE job_id=? ORDER BY source_hash",
+        )
+        .bind(job)
+        .fetch_all(&mut *self.tx)
+        .await
+        .map_err(storage_error)
+    }
+    pub async fn release_embedding_claim(&mut self, job: &str, hash: &str) -> Result<()> {
+        sqlx::query("DELETE FROM embedding_content_claims WHERE job_id=? AND source_hash=?")
+            .bind(job)
+            .bind(hash)
+            .execute(&mut *self.tx)
+            .await
+            .map_err(write_error)?;
+        Ok(())
     }
     pub async fn insert_embedding_run(&mut self, value: &EmbeddingRun) -> Result<()> {
         let job = self.require_subject_job(&value.job).await?;
         let (namespace, subject) = job.subject_scope()?;
         self.embedding_space(&value.space_id).await?;
-        if value.inputs.is_empty() {
-            return Err(Error::invalid("embedding input batch must be nonempty"));
+        if value.content_hashes.is_empty() {
+            return Err(Error::invalid("embedding work needs content hashes"));
         }
         let claims = self
             .embedding_claims(namespace, subject, &value.space_id)
             .await?;
-        let mut identities = HashSet::new();
-        for input in &value.inputs {
-            let key = input.source_key()?;
-            if !identities.insert((key.clone(), input.source_hash())) {
-                return Err(Error::invalid(
-                    "embedding batch repeats a source projection",
-                ));
+        let mut hashes = HashSet::new();
+        for hash in &value.content_hashes {
+            validate_embedding_hash(hash)?;
+            if !hashes.insert(hash) {
+                return Err(Error::invalid("embedding work repeats content"));
             }
-            if let Some(claim) = claims.iter().find(|claim| {
-                claim.source_key().ok().as_ref() == Some(&key)
-                    && claim.source_hash == input.source_hash()
-            }) {
+            if let Some(claim) = claims.iter().find(|claim| claim.source_hash == *hash) {
                 return Err(Error::new(
                     ErrorCode::Conflict,
-                    format!("embedding source already belongs to {}", claim.job_id),
+                    format!("embedding content already belongs to {}", claim.job_id),
                 ));
             }
-            super::source::validate_input(&mut self.tx, namespace, subject, input).await?;
+            if self
+                .embedding_subscriptions(namespace, subject, &value.space_id, hash)
+                .await?
+                .is_empty()
+            {
+                return Err(Error::invalid(
+                    "embedding content work has no accepted target subscription",
+                ));
+            }
         }
-        sqlx::query("INSERT INTO embedding_runs(job_id,space_id) VALUES(?,?)")
+        sqlx::query("INSERT INTO embedding_runs(job_id,space_id,content_hashes) VALUES(?,?,?)")
             .bind(&job.id)
             .bind(&value.space_id)
+            .bind(serde_json::to_string(&value.content_hashes)?)
             .execute(&mut *self.tx)
             .await
             .map_err(write_error)?;
-        for (ordinal, input) in value.inputs.iter().enumerate() {
-            let hash = input.source_hash();
-            sqlx::query("INSERT INTO embedding_inputs(job_id,ordinal,target,source_key,identity_key,source_hash,parts) VALUES(?,?,?,?,?,?,?)")
-                .bind(&job.id).bind(ordinal as i64).bind(serde_json::to_string(&input.target)?).bind(input.source_key()?).bind(input.target.identity_key(&hash)?).bind(hash).bind(serde_json::to_string(&input.parts)?).execute(&mut *self.tx).await.map_err(write_error)?;
+        for hash in &value.content_hashes {
+            sqlx::query("DELETE FROM embedding_content_claims WHERE namespace_id=? AND subject_id=? AND space_id=? AND source_hash=? AND EXISTS(SELECT 1 FROM task_records j WHERE j.job_id=embedding_content_claims.job_id AND j.state NOT IN('queued','waiting','running'))")
+                .bind(namespace.as_str()).bind(subject.as_str()).bind(&value.space_id).bind(hash).execute(&mut *self.tx).await.map_err(write_error)?;
+            sqlx::query("INSERT INTO embedding_content_claims(namespace_id,subject_id,space_id,source_hash,job_id) VALUES(?,?,?,?,?)").bind(namespace.as_str()).bind(subject.as_str()).bind(&value.space_id).bind(hash).bind(&job.id).execute(&mut *self.tx).await.map_err(write_error)?;
         }
         Ok(())
     }
@@ -113,23 +119,10 @@ pub(crate) async fn read(conn: &mut SqliteConnection, id: &str) -> Result<Embedd
         .await
         .map_err(storage_error)?
         .ok_or_else(not_found)?;
-    let inputs = sqlx::query("SELECT * FROM embedding_inputs WHERE job_id=? ORDER BY ordinal")
-        .bind(id)
-        .fetch_all(&mut *conn)
-        .await
-        .map_err(storage_error)?
-        .into_iter()
-        .map(|row| {
-            Ok(EmbeddingInputItem {
-                target: target_row(&row)?,
-                parts: serde_json::from_str(row.get("parts"))?,
-            })
-        })
-        .collect::<Result<Vec<_>>>()?;
     Ok(EmbeddingRun {
         job: crate::authority::tasks::read(conn, id).await?,
         space_id: row.get("space_id"),
-        inputs,
+        content_hashes: serde_json::from_str(row.get("content_hashes"))?,
     })
 }
 pub(crate) async fn space(conn: &mut SqliteConnection, id: &str) -> Result<EmbeddingSpace> {

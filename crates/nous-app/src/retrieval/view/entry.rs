@@ -108,7 +108,10 @@ impl Entry {
                 if label.trim().is_empty() {
                     continue;
                 }
-                let input = EmbeddingInputItem::tag(label)?;
+                let mut input = EmbeddingInputItem::tag(label)?;
+                input
+                    .read_requirements
+                    .push(SourceReadRef::target(&self.reference()));
                 let source = format!("material:{}", root.material.id);
                 if seen.insert((source.clone(), input.source_key()?)) {
                     tags.push((source, input));

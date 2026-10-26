@@ -2,14 +2,18 @@
 mod client;
 pub mod cognition;
 pub mod configuration;
+pub mod contexts;
 pub mod identity;
+mod locale;
 pub mod maintenance;
 pub mod materials;
 pub mod media;
 pub mod models;
 mod operation;
 pub mod prompts;
+pub(crate) mod source_read;
 pub mod structured;
+pub mod tasks;
 mod trace;
 use crate::mcp::McpService;
 use axum::{
@@ -56,7 +60,17 @@ impl IntoResponse for ApiError {
             ErrorCode::Cancelled => StatusCode::from_u16(499).expect("cancellation status"),
         });
         tracing::warn!(event="request.rejected", error_code=?self.0.code, error=%self.0, details=?self.0.context, cause=?self.0.cause, "request failed");
-        let mut response = (status, Json(json!({"error":self.0}))).into_response();
+        let presentation = crate::presentation::current();
+        let mut response = (
+            status,
+            Json(crate::presentation::error_document(&self.0, &presentation)),
+        )
+            .into_response();
+        if let Ok(language) = presentation.locale().parse() {
+            response
+                .headers_mut()
+                .insert(header::CONTENT_LANGUAGE, language);
+        }
         if status == StatusCode::UNAUTHORIZED {
             response.headers_mut().insert(
                 header::WWW_AUTHENTICATE,
@@ -105,10 +119,12 @@ pub fn router(state: ApiState, config: &InstanceConfig, cancellation: Cancellati
         .route("/api/jobs/{job}/cancel", post(cancel_job))
         .merge(crate::http::cognition::router())
         .merge(crate::http::configuration::router())
+        .merge(crate::http::contexts::router())
         .merge(crate::http::identity::router())
         .merge(crate::http::models::router())
         .merge(crate::http::prompts::router())
         .merge(crate::http::structured::router())
+        .merge(crate::http::tasks::router())
         .merge(crate::http::maintenance::router())
         .merge(crate::http::materials::router())
         .merge(crate::http::media::router())
@@ -129,6 +145,10 @@ pub fn router(state: ApiState, config: &InstanceConfig, cancellation: Cancellati
         .layer(middleware::from_fn_with_state(
             state.app.clone(),
             authenticate,
+        ))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            locale::language,
         ))
         .layer(middleware::from_fn(trace::trace_request))
         .with_state(state)
@@ -152,11 +172,22 @@ async fn authenticate(
         .get::<TraceId>()
         .cloned()
         .ok_or_else(|| Error::internal("request trace middleware is missing"))?;
-    let ctx = identity.begin_call(trace_id);
+    let ctx = source_read::bind_headers(identity.begin_call(trace_id), request.headers())?;
     let span = tracing::info_span!("authenticated", caller=%ctx.caller_id);
+    let language_preferences = locale::preference(request.headers());
+    let presentation = locale::authenticated(&app, &ctx, &language_preferences).await?;
+    request.extensions_mut().insert(presentation.clone());
     request.extensions_mut().insert(ctx);
     use tracing::Instrument;
-    Ok(next.run(request).instrument(span).await)
+    let language = presentation.locale().to_owned();
+    let mut response =
+        crate::presentation::in_language(presentation, next.run(request).instrument(span)).await;
+    if let Ok(language) = language.parse() {
+        response
+            .headers_mut()
+            .insert(header::CONTENT_LANGUAGE, language);
+    }
+    Ok(response)
 }
 
 pub(crate) async fn run(

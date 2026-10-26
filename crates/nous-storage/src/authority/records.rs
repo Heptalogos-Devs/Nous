@@ -118,6 +118,10 @@ pub(crate) fn observation_row(row: SqliteRow) -> Result<Observation> {
         kind: serde_json::from_value(serde_json::Value::String(row.get("kind")))
             .map_err(storage_error)?,
         observed_at: time_point(&row, "observed_at_domain", "observed_at_coordinate"),
+        origin: row
+            .get::<Option<&str>, _>("origin")
+            .map(serde_json::from_str)
+            .transpose()?,
         recorded_at: row.get("recorded_at"),
         commit_seq: row.get("commit_seq"),
     })

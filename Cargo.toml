@@ -24,6 +24,7 @@ nous-app = { path = "crates/nous-app" }
 nous-retrieval = { path = "crates/nous-retrieval" }
 nous-vcp = { path = "crates/nous-vcp" }
 anyhow = "1"
+accept-language = "3.1"
 base64 = "0.23"
 apalis = { version = "1.0.0", features = ["retry", "task-context"] }
 apalis-core = "1.0.0"
@@ -33,6 +34,8 @@ chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive", "env"] }
 directories = "6"
 fs2 = "0.4"
+fluent-bundle = { version = "0.16", default-features = false }
+fluent-langneg = { version = "0.13", default-features = false }
 futures = "0.3"
 genai = { version = "=0.7.0", default-features = false, features = ["rustls-tls"] }
 http-body = "1"
@@ -41,6 +44,7 @@ minijinja = { version = "3.0", features = ["fuel", "serde"] }
 metrics = "0.24"
 metrics-exporter-prometheus = { version = "0.18", default-features = false }
 process-wrap = { version = "=10.0.1", features = ["tokio1"] }
+plist = "1"
 nalgebra = { version = "0.35", features = ["serde-serialize"] }
 rayon = "1"
 reqwest = { version = "0.13.2", default-features = false, features = ["json", "rustls", "stream", "query"] }
@@ -63,9 +67,12 @@ tracing = "0.1"
 tracing-appender = "0.2"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 ulid = { version = "3", features = ["serde"] }
+unic-langid = { version = "0.9", default-features = false }
 usearch = { version = "=2.26.2", default-features = false }
 uuid = { version = "1", features = ["v4", "serde"] }
+uzers = { version = "=0.12.2", default-features = false }
 windows = { version = "0.62", features = ["Win32_System_Threading"] }
+xml-rs = "0.8"
 zip = { version = "9.0.5", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
 [workspace.lints.rust]

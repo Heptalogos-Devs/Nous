@@ -74,13 +74,32 @@ impl App {
         if memory.deleted {
             return Err(Error::new(ErrorCode::NotFound, "memory is deleted"));
         }
+        self.database
+            .require_source_read(
+                ctx,
+                &namespace,
+                &memory.subject_id,
+                &RetrievalTarget::Cognition(CognitiveRef::memory(id, memory.revision)),
+            )
+            .await?;
         Ok(memory)
     }
     pub async fn memory_history(&self, ctx: &CallContext, id: &MemoryId) -> Result<Vec<Memory>> {
         let namespace = self.database.memory_namespace(id).await?;
         let memory = self.database.memory(&namespace, id).await?;
         ctx.require_subject(&namespace, &memory.subject_id)?;
-        self.database.memory_history(&namespace, id).await
+        let history = self.database.memory_history(&namespace, id).await?;
+        for memory in &history {
+            self.database
+                .require_source_read(
+                    ctx,
+                    &namespace,
+                    &memory.subject_id,
+                    &RetrievalTarget::Cognition(CognitiveRef::memory(id, memory.revision)),
+                )
+                .await?;
+        }
+        Ok(history)
     }
     pub async fn delete_memory(
         &self,
@@ -115,11 +134,12 @@ impl App {
             .await?;
         let source = self
             .sources
-            .lineage(
+            .lineage_for_event(
                 ctx,
                 &memory.namespace_id,
                 &memory.subject_id,
                 &memory.source,
+                &memory.observation_id,
             )
             .await?;
         let model_call = match &memory.model_call_id {
@@ -165,11 +185,12 @@ impl App {
         let material = self.database.material(namespace, &run.material_id).await?;
         let source = self
             .sources
-            .resolve(
+            .resolve_for_event(
                 &job.call_context("nous-worker")?,
                 namespace,
                 subject,
                 &run.source,
+                &run.observation_id,
             )
             .await?;
         if current.revision != run.subject_revision
@@ -208,6 +229,7 @@ impl App {
                 &cancel,
                 |attempt| model::prepare(&plan, attempt, input.clone()),
                 |prepared| model::execute(&self.model, prepared),
+                None,
             )
             .await?
         else {

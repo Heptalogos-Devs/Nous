@@ -27,9 +27,29 @@ pub fn definition() -> RoleDefinition {
         prompt: None,
         contract: RoleContract::new::<EmbeddingInput>(|input| {
             validate_inputs(&input.inputs)?;
-            Ok(InvocationDraft::embedding(
+            let mut requirements = Vec::new();
+            for item in &input.inputs {
+                requirements.extend(item.read_requirements.clone());
+                if let Some(target) = item.target.item() {
+                    requirements.push(nous_domain::SourceReadRef::target(target));
+                }
+                for part in &item.parts {
+                    let source = match part {
+                        nous_domain::EmbeddingPart::Text { source, .. } => source.as_ref(),
+                        nous_domain::EmbeddingPart::Media { source, .. } => Some(source),
+                    };
+                    if let Some(reference) = source {
+                        requirements.push(nous_domain::SourceReadRef::Media {
+                            reference: reference.clone(),
+                            observation_id: None,
+                        });
+                    }
+                }
+            }
+            let draft = InvocationDraft::embedding(
                 input.inputs.into_iter().map(|item| item.parts).collect(),
-            ))
+            );
+            Ok(draft.with_sources(requirements))
         }),
     }
 }

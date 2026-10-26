@@ -25,7 +25,7 @@ impl Database {
     ) -> Result<MediaRetrievalSnapshot> {
         let mut view = self.read_view().await?;
         let result = view
-            .media_retrieval_snapshot(namespace, subject, space, as_of_commit, limit)
+            .media_retrieval_snapshot(namespace, subject, space, as_of_commit, limit, None)
             .await?;
         view.finish().await?;
         Ok(result)
@@ -40,7 +40,7 @@ impl Database {
     ) -> Result<MediaRetrievalSnapshot> {
         let mut view = self.read_view().await?;
         let result = view
-            .media_reference_snapshot(namespace, subject, space, reference, as_of_commit)
+            .media_reference_snapshot(namespace, subject, space, reference, as_of_commit, None)
             .await?;
         view.finish().await?;
         Ok(result)
@@ -54,8 +54,9 @@ impl ReadView {
         _space: &str,
         as_of_commit: Option<i64>,
         limit: usize,
+        source_read: Option<&crate::SourceReadView>,
     ) -> Result<MediaRetrievalSnapshot> {
-        let request_limit = i64::try_from(limit)
+        let _request_limit = i64::try_from(limit)
             .ok()
             .filter(|limit| *limit > 0)
             .and_then(|limit| limit.checked_add(1))
@@ -64,11 +65,11 @@ impl ReadView {
             })?;
         self.subject(namespace, subject).await?;
         let watermark = cutoff(self.watermark, as_of_commit)?;
-        let rows=sqlx::query("SELECT 'original' AS kind,m.id,0 AS revision FROM materials m WHERE m.namespace_id=?1 AND m.commit_seq<=?3 AND EXISTS(SELECT 1 FROM observations o WHERE o.namespace_id=m.namespace_id AND o.material_id=m.id AND o.subject_id=?2) UNION ALL SELECT 'source_region',r.id,0 FROM source_regions r WHERE r.namespace_id=?1 AND r.commit_seq<=?3 AND EXISTS(SELECT 1 FROM observations o WHERE o.namespace_id=r.namespace_id AND o.material_id=r.material_id AND o.subject_id=?2) UNION ALL SELECT 'representation',r.id,r.revision FROM media_representations r WHERE r.namespace_id=?1 AND r.subject_id=?2 AND r.revision=(SELECT max(h.revision) FROM media_representations h WHERE h.id=r.id AND h.commit_seq<=?3) UNION ALL SELECT 'derived_region',r.id,0 FROM derived_regions r WHERE r.namespace_id=?1 AND r.subject_id=?2 AND r.commit_seq<=?3 ORDER BY kind,id LIMIT ?4")
-            .bind(namespace.as_str()).bind(subject.as_str()).bind(watermark).bind(request_limit).fetch_all(&mut *self.tx).await.map_err(storage_error)?;
-        let complete = rows.len() <= limit;
+        let rows=sqlx::query("SELECT 'original' AS kind,m.id,0 AS revision FROM materials m WHERE m.namespace_id=?1 AND m.commit_seq<=?3 AND EXISTS(SELECT 1 FROM observations o WHERE o.namespace_id=m.namespace_id AND o.material_id=m.id AND o.subject_id=?2) UNION ALL SELECT 'source_region',r.id,0 FROM source_regions r WHERE r.namespace_id=?1 AND r.commit_seq<=?3 AND EXISTS(SELECT 1 FROM observations o WHERE o.namespace_id=r.namespace_id AND o.material_id=r.material_id AND o.subject_id=?2) UNION ALL SELECT 'representation',r.id,r.revision FROM media_representations r WHERE r.namespace_id=?1 AND r.subject_id=?2 AND r.revision=(SELECT max(h.revision) FROM media_representations h WHERE h.id=r.id AND h.commit_seq<=?3) UNION ALL SELECT 'derived_region',r.id,0 FROM derived_regions r WHERE r.namespace_id=?1 AND r.subject_id=?2 AND r.commit_seq<=?3 ORDER BY kind,id")
+            .bind(namespace.as_str()).bind(subject.as_str()).bind(watermark).fetch_all(&mut *self.tx).await.map_err(storage_error)?;
+        let mut complete = true;
         let mut entries = Vec::new();
-        for row in rows.into_iter().take(limit) {
+        for row in rows {
             let id: String = row.get("id");
             let reference = match row.get::<&str, _>("kind") {
                 "original" => MediaReference::Original {
@@ -84,6 +85,17 @@ impl ReadView {
                 "derived_region" => MediaReference::DerivedRegion { id: id.parse()? },
                 _ => return Err(Error::internal("invalid media candidate kind")),
             };
+            if let Some(view) = source_read
+                && !self
+                    .source_read_allowed(view, &RetrievalTarget::Media(reference.clone()))
+                    .await?
+            {
+                continue;
+            }
+            if entries.len() == limit {
+                complete = false;
+                break;
+            }
             if let Some(entry) = self
                 .media_entry(namespace, subject, &reference, watermark)
                 .await?
@@ -104,9 +116,20 @@ impl ReadView {
         _space: &str,
         reference: &MediaReference,
         as_of_commit: Option<i64>,
+        source_read: Option<&crate::SourceReadView>,
     ) -> Result<MediaRetrievalSnapshot> {
         self.subject(namespace, subject).await?;
         let watermark = cutoff(self.watermark, as_of_commit)?;
+        if let Some(view) = source_read
+            && !self
+                .source_read_allowed(view, &RetrievalTarget::Media(reference.clone()))
+                .await?
+        {
+            return Err(Error::new(
+                ErrorCode::Forbidden,
+                "exact media reference is outside the source-read scope",
+            ));
+        }
         let entry = self
             .media_entry(namespace, subject, reference, watermark)
             .await?

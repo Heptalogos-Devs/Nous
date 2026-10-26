@@ -66,6 +66,7 @@ impl App {
                     &cancel,
                     |attempt| model::prepare(&plan, attempt, input.clone()),
                     |prepared| model::describe(&self.model, prepared),
+                    None,
                 )
                 .await?
             else {
@@ -103,6 +104,7 @@ impl App {
                 &cancel,
                 |attempt| model::prepare(&plan, attempt, input.clone()),
                 |prepared| model::structure(&self.model, prepared),
+                None,
             )
             .await?
         else {

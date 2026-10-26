@@ -5,6 +5,7 @@ pub mod content;
 pub mod execution;
 pub mod identity;
 pub mod instance;
+pub mod localization;
 pub mod media;
 pub mod model_calls;
 pub mod models;

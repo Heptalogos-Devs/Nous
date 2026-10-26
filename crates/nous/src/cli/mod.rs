@@ -2,24 +2,29 @@
 pub mod bundle;
 pub mod cognition;
 mod configuration;
+mod contexts;
 mod embedding;
 mod identity;
+mod invocation;
 pub mod maintenance;
 mod materials;
 mod media;
 mod models;
+mod platform;
 mod prompts;
 mod scope;
 mod secrets;
+mod tasks;
 use crate::{
     bootstrap::{connect, serve},
-    http::{CancelJob, CreateNamespace, CreateSubject, Operation, RecordObservation, WireTime},
+    http::{CreateNamespace, CreateSubject, Operation, RecordObservation, WireTime},
     mcp,
 };
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use cognition::{MemoryCommand, ModelCommand, QueryArgs};
 use configuration::ConfigCommand;
+pub(crate) use invocation::scopes as source_scopes;
 use materials::MaterialCommand;
 use nous_app::App;
 use nous_domain::{CallContext, NamespaceId, SubjectId};
@@ -27,9 +32,19 @@ use nous_foundation::instance::InstanceGuard;
 use nous_foundation::instance::InstancePaths;
 use serde_json::{Value, json};
 use std::{net::SocketAddr, path::PathBuf};
+use tasks::JobCommand;
 #[derive(Parser)]
 #[command(version, about = "Nous Wave native cognition service")]
 pub(crate) struct Cli {
+    /// Emit the complete machine-readable JSON result.
+    #[arg(long, global = true)]
+    json: bool,
+    /// Language used for human-readable output, for example zh-CN or en-US.
+    #[arg(long, global = true)]
+    language: Option<String>,
+    /// JSON file containing one additional SourceReadScope; repeat to intersect scopes.
+    #[arg(long = "source-scope-file", global = true)]
+    source_scope_files: Vec<PathBuf>,
     /// Instance directory. All persistent and temporary product data stays here.
     #[arg(long, global = true, env = "NOUS_INSTANCE")]
     instance: Option<PathBuf>,
@@ -45,6 +60,26 @@ pub(crate) struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Manage WorkContexts, resident cognition and per-call context preparation.
+    Context {
+        #[command(subcommand)]
+        command: contexts::ContextCommand,
+    },
+    /// Install, inspect, relocate or remove program files separately from instance data.
+    Installation {
+        #[command(subcommand)]
+        command: platform::InstallationCommand,
+    },
+    /// Stage, activate or roll back installed executable updates.
+    Update {
+        #[command(subcommand)]
+        command: platform::UpdateCommand,
+    },
+    /// Manage the native operating-system service for this instance.
+    Service {
+        #[command(subcommand)]
+        command: platform::ServiceCommand,
+    },
     /// Import protected credentials into the selected local instance.
     Secret {
         #[command(subcommand)]
@@ -203,23 +238,15 @@ enum ObservationCommand {
         #[arg(long)]
         observed_at: Option<String>,
         #[arg(long)]
+        conversation_ref: Option<nous_domain::ConversationRef>,
+        #[arg(long)]
+        external_object_ref: Option<nous_domain::ExternalObjectRef>,
+        #[arg(long)]
         operation_id: Option<String>,
     },
     List {
         #[arg(long)]
         subject: SubjectId,
-    },
-}
-#[derive(Subcommand)]
-enum JobCommand {
-    Get {
-        id: String,
-    },
-    /// Cancel accepted work in its authorized scope.
-    Cancel {
-        id: String,
-        #[arg(long)]
-        operation_id: Option<String>,
     },
 }
 #[derive(Subcommand)]
@@ -232,6 +259,20 @@ enum McpCommand {
 }
 
 pub(crate) async fn execute(cli: Cli) -> Result<()> {
+    OUTPUT_JSON.store(cli.json, std::sync::atomic::Ordering::Relaxed);
+    invocation::initialize(&cli.source_scope_files)?;
+    let root = cli
+        .instance
+        .clone()
+        .map(Ok)
+        .unwrap_or_else(InstancePaths::default_path)?;
+    let paths = InstancePaths::new(root)?;
+    let policy = App::desired_instance_configuration(&paths)
+        .await?
+        .localization;
+    let localizer = nous_foundation::localization::Localizer::new(policy)?;
+    let requested = cli.language.as_deref().into_iter().collect::<Vec<_>>();
+    crate::presentation::set_cli(localizer.select(&requested)?, cli.language.clone())?;
     if let Command::Import {
         command:
             maintenance::ImportCommand::Bundle {
@@ -239,20 +280,38 @@ pub(crate) async fn execute(cli: Cli) -> Result<()> {
             },
     } = &cli.command
     {
-        return print_json(bundle::inspect(file, *details)?);
+        return print_result(bundle::inspect(file, *details)?);
     }
-    let root = cli
-        .instance
-        .clone()
-        .map(Ok)
-        .unwrap_or_else(InstancePaths::default_path)?;
-    let paths = InstancePaths::new(root)?;
     match cli.command {
+        Command::Context { command } => match command.operation()? {
+            Some(operation) => {
+                contexts::execute(connect(&paths, cli.url, cli.token_file).await?, operation)
+                    .await?
+            }
+            None => print_result(serde_json::to_value(schemars::schema_for!(
+                crate::http::contexts::ContextOperation
+            ))?)?,
+        },
+        Command::Installation { command } => {
+            anyhow::ensure!(cli.url.is_none(), "installation uses local --instance");
+            platform::installation(paths, command).await?;
+        }
+        Command::Update { command } => {
+            anyhow::ensure!(cli.url.is_none(), "software update uses local --instance");
+            platform::update(paths, command).await?;
+        }
+        Command::Service { command } => {
+            anyhow::ensure!(
+                cli.url.is_none(),
+                "service management uses local --instance"
+            );
+            platform::service(paths, command).await?;
+        }
         Command::Secret { command } => {
             anyhow::ensure!(cli.url.is_none(), "secret import uses local --instance");
             command.execute(paths).await?;
         }
-        Command::Cognition { schema: true, .. } => print_json(serde_json::to_value(
+        Command::Cognition { schema: true, .. } => print_result(serde_json::to_value(
             schemars::schema_for!(crate::http::structured::StructuredOperation),
         )?)?,
         Command::Init => {
@@ -263,27 +322,27 @@ pub(crate) async fn execute(cli: Cli) -> Result<()> {
             let credential = app.bootstrap_credential().await;
             app.close().await;
             let credential = credential?;
-            print_json(
+            print_result(
                 json!({"state":if created {"initialized"} else {"already_initialized"},"instance":paths.root,"config":paths.config,"administrator_token_file":paths.resolve(&credential.file)?}),
             )?;
         }
         Command::Serve { listen } => serve(paths, listen).await?,
         Command::Backup {
             command: BackupCommand::Restore { source },
-        } => print_json(nous_app::backup::restore(&source, paths).await?)?,
-        Command::Stop => print_json(
+        } => print_result(nous_app::backup::restore(&source, paths).await?)?,
+        Command::Stop => print_result(
             connect(&paths, cli.url, cli.token_file)
                 .await?
                 .stop()
                 .await?,
         )?,
-        Command::Diagnostics => print_json(
+        Command::Diagnostics => print_result(
             connect(&paths, cli.url, cli.token_file)
                 .await?
                 .execute(&Operation::Diagnostics)
                 .await?,
         )?,
-        Command::Paths => print_json(serde_json::to_value(paths)?)?,
+        Command::Paths => print_result(serde_json::to_value(paths)?)?,
         Command::Trace {
             trace_id,
             cursor,
@@ -296,7 +355,7 @@ pub(crate) async fn execute(cli: Cli) -> Result<()> {
                     .transpose()?,
                 limit,
             };
-            print_json(
+            print_result(
                 connect(&paths, cli.url, cli.token_file)
                     .await?
                     .execute(&Operation::Trace(request))
@@ -313,13 +372,13 @@ pub(crate) async fn execute(cli: Cli) -> Result<()> {
                 .await?;
         }
         Command::Media { command } => match command.operation()? {
-            Some(operation) => print_json(
+            Some(operation) => print_result(
                 connect(&paths, cli.url, cli.token_file)
                     .await?
                     .execute(&Operation::Media(Box::new(operation)))
                     .await?,
             )?,
-            None => print_json(serde_json::to_value(schemars::schema_for!(
+            None => print_result(serde_json::to_value(schemars::schema_for!(
                 crate::http::media::MediaOperation
             ))?)?,
         },
@@ -330,13 +389,13 @@ pub(crate) async fn execute(cli: Cli) -> Result<()> {
             let app = nous_app::App::open(paths).await?;
             let value = app.model_status(&nous_domain::CallContext::admin()).await?;
             app.close().await;
-            print_json(value)?;
+            print_result(value)?;
         }
         Command::Model {
             command: command @ (ModelCommand::Contract { .. } | ModelCommand::Preview { .. }),
         } => {
             let operation = models::operation(command)?;
-            print_json(
+            print_result(
                 connect(&paths, cli.url, cli.token_file)
                     .await?
                     .execute(&operation)
@@ -346,12 +405,12 @@ pub(crate) async fn execute(cli: Cli) -> Result<()> {
         Command::Status => {
             // A local stopped instance needs no token and no SQLite connection.
             if cli.url.is_none() && !InstanceGuard::is_running(&paths)? {
-                print_json(
+                print_result(
                     json!({"state":"stopped","instance":paths.root,"initialized":paths.config.exists()}),
                 )?;
             } else {
                 let client = connect(&paths, cli.url, cli.token_file).await?;
-                print_json(client.execute(&Operation::Status).await?)?;
+                print_result(client.execute(&Operation::Status).await?)?;
             }
         }
         Command::Identity {
@@ -372,7 +431,7 @@ pub(crate) async fn execute(cli: Cli) -> Result<()> {
                 .reset_bootstrap(&CallContext::admin(), &op_id(operation_id), &reason)
                 .await;
             app.close().await;
-            print_json(serde_json::to_value(result?)?)?;
+            print_result(serde_json::to_value(result?)?)?;
         }
         Command::Mcp {
             command: McpCommand::Stdio,
@@ -452,6 +511,8 @@ pub(crate) async fn execute(cli: Cli) -> Result<()> {
                             subject,
                             material,
                             observed_at,
+                            conversation_ref,
+                            external_object_ref,
                             operation_id,
                         },
                 } => {
@@ -461,25 +522,19 @@ pub(crate) async fn execute(cli: Cli) -> Result<()> {
                         subject_id: subject.to_string(),
                         material_id: material,
                         observed_at: parse_time(observed_at)?,
+                        origin: nous_domain::ObservationOrigin::from_refs(
+                            conversation_ref,
+                            external_object_ref,
+                        )?,
                     })
                 }
                 Command::Observation {
                     command: ObservationCommand::List { subject },
                 } => Operation::ListObservations(subject.to_string()),
-                Command::Job {
-                    command: JobCommand::Get { id },
-                } => Operation::GetJob(id),
-                Command::Job {
-                    command: JobCommand::Cancel { id, operation_id },
-                } => Operation::CancelJob(
-                    id,
-                    CancelJob {
-                        operation_id: op_id(operation_id),
-                    },
-                ),
+                Command::Job { command } => command.operation(),
                 _ => bail!("unsupported command"),
             };
-            print_json(
+            print_result(
                 connect(&paths, cli.url, cli.token_file)
                     .await?
                     .execute(&operation)
@@ -501,7 +556,20 @@ fn parse_time(value: Option<String>) -> Result<Option<WireTime>> {
         })
         .transpose()
 }
-fn print_json(value: Value) -> Result<()> {
-    println!("{}", serde_json::to_string_pretty(&value)?);
-    Ok(())
+static OUTPUT_JSON: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+pub(crate) fn json_output() -> bool {
+    OUTPUT_JSON.load(std::sync::atomic::Ordering::Relaxed)
+}
+fn print_result(value: Value) -> Result<()> {
+    use std::io::Write;
+    let text = if json_output() {
+        serde_json::to_string_pretty(&value)?
+    } else {
+        crate::presentation::render(&value, &crate::presentation::current())
+    };
+    match writeln!(std::io::stdout().lock(), "{text}") {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => Ok(()),
+        Err(error) => Err(error.into()),
+    }
 }

@@ -162,6 +162,40 @@ pub(crate) async fn source_node(
     as_of_commit: Option<i64>,
 ) -> Result<(SourceStatus, Option<i64>, Vec<EvidenceSource>)> {
     let (kind, id, revision) = source_parts(source)?;
+    if let EvidenceSource::Media { reference } = source {
+        let lineage = match media_source(conn, namespace, subject, reference).await {
+            Ok(lineage) => lineage,
+            Err(error) if error.code == ErrorCode::NotFound => {
+                return Ok((SourceStatus::Missing, None, vec![]));
+            }
+            Err(error) => return Err(error),
+        };
+        let sequence = lineage.commit_seq()?;
+        if as_of_commit.is_some_and(|upper| sequence > upper) {
+            return Ok((SourceStatus::Missing, None, vec![]));
+        }
+        let mut children = if let media::MediaReference::Original { material_id } = reference {
+            vec![EvidenceSource::Material {
+                material_id: material_id.clone(),
+            }]
+        } else {
+            lineage
+                .source_references()?
+                .into_iter()
+                .map(|reference| EvidenceSource::Media { reference })
+                .collect()
+        };
+        if let media::MediaReference::Representation { reference } = reference
+            && let Some(observation_id) = lineage
+                .representations
+                .iter()
+                .find(|value| value.reference() == *reference)
+                .and_then(|value| value.observation_id.clone())
+        {
+            children.push(EvidenceSource::Observation { observation_id });
+        }
+        return Ok((SourceStatus::Available, Some(sequence), children));
+    }
     if kind == "material" {
         let sequence = validate_source(conn, namespace, subject, source).await;
         return match sequence {
@@ -196,25 +230,14 @@ pub(crate) async fn source_node(
         return Ok(if let Some(row) = row {
             let reference: nous_domain::media::MediaReference =
                 serde_json::from_str(row.get("source"))?;
-            let mut children = vec![EvidenceSource::Observation {
-                observation_id: nous_domain::ObservationId(row.get("observation_id")),
-            }];
-            let missing = match crate::media::roots_in(conn, namespace, subject, &reference).await {
-                Ok(roots) => {
-                    children.extend(
-                        roots
-                            .into_iter()
-                            .map(|material_id| EvidenceSource::Material { material_id }),
-                    );
-                    false
-                }
-                Err(error) if error.code == ErrorCode::NotFound => true,
-                Err(error) => return Err(error),
-            };
+            let children = vec![
+                EvidenceSource::Observation {
+                    observation_id: nous_domain::ObservationId(row.get("observation_id")),
+                },
+                EvidenceSource::Media { reference },
+            ];
             (
-                if missing {
-                    SourceStatus::Missing
-                } else if row.get::<bool, _>("retired") {
+                if row.get::<bool, _>("retired") {
                     SourceStatus::Retired
                 } else {
                     SourceStatus::Available

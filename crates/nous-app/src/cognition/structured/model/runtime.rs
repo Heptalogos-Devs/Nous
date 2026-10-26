@@ -96,6 +96,11 @@ fn draft(
     }
     let schema =
         structured_output_schema(&input).map_err(|error| Error::internal(error.to_string()))?;
+    let requirements = input
+        .sources
+        .iter()
+        .map(|entry| nous_domain::SourceReadRef::evidence(&entry.source))
+        .collect();
     let sources = input
         .sources
         .iter()
@@ -105,6 +110,7 @@ fn draft(
                 EvidenceSource::CognitiveRevision { reference } => json!(reference.kind),
                 EvidenceSource::Observation { .. } => json!("observation"),
                 EvidenceSource::Material { .. } => json!("material"),
+                EvidenceSource::Media { .. } => json!("media"),
             };
             json!({"key":entry.key,"kind":source_kind,"text":entry.text,
             "source_event_kind":entry.source_event_kind,"truncated":entry.truncated})
@@ -142,7 +148,8 @@ fn draft(
             name: format!("nous_{}", role(kind)?),
             schema,
         },
-    ))
+    )
+    .with_sources(requirements))
 }
 
 pub type PreparedStructured = PreparedCall<InvocationMetadata<StructuredFormationInput>>;

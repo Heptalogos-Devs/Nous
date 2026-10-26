@@ -20,6 +20,7 @@ pub struct ProcessSpec {
     pub args: Vec<OsString>,
     pub stdin: Option<Vec<u8>>,
     pub timeout: Option<Duration>,
+    pub(super) host_session: bool,
 }
 impl ProcessSpec {
     pub fn new(executable: impl Into<String>) -> Self {
@@ -28,6 +29,7 @@ impl ProcessSpec {
             args: Vec::new(),
             stdin: None,
             timeout: None,
+            host_session: false,
         }
     }
 }
@@ -150,7 +152,8 @@ impl Platform {
             .prefix("process-")
             .tempdir_in(parent)
             .map_err(Error::dependency)?;
-        super::permissions::protect_directory(directory.path())?;
+        super::permissions::PrivatePermissions::for_instance(&self.state.paths.root)?
+            .protect_directory(directory.path())?;
         Ok(ProcessWorkspace {
             directory,
             owner: self.state.paths.root.clone(),
@@ -224,6 +227,22 @@ impl Platform {
             })
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped());
+        if spec.host_session {
+            // Native adapters need the actual user manager and its registration directory.
+            for name in ["XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS"] {
+                if let Some(value) = std::env::var_os(name) {
+                    command.env(name, value);
+                }
+            }
+            #[cfg(unix)]
+            for name in ["HOME", "XDG_CONFIG_HOME"] {
+                if let Some(value) = std::env::var_os(name) {
+                    command.env(name, value);
+                } else {
+                    command.env_remove(name);
+                }
+            }
+        }
         let mut command = CommandWrap::from(command);
         runner::wrap(&mut command);
         let started_at = Clock::operation_snapshot();

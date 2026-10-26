@@ -91,7 +91,11 @@ pub(super) async fn lineage(
     for material in graph.materials {
         let details =
             crate::source::materials::material_details(conn, namespace, &material.id).await?;
-        materials.push(MediaOriginal { material, details });
+        materials.push(MediaOriginal {
+            material,
+            details,
+            details_redacted: false,
+        });
     }
     Ok(MediaSourceLineage {
         source: reference.clone(),

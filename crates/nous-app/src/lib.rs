@@ -3,6 +3,7 @@ pub mod backup;
 pub mod bundle_format;
 pub mod cognition;
 mod composition;
+pub mod contexts;
 pub mod import_format;
 mod lifecycle;
 pub mod materials;
@@ -67,12 +68,7 @@ impl App {
         let configuration =
             Configuration::new(database.clone(), registry, &serde_json::to_value(&config)?).await?;
         let desired = configuration.snapshot(&ConfigScope::Instance, true).await?;
-        config.server = desired.get(nous_foundation::configuration::SERVER)?;
-        config.auth = desired.get(nous_foundation::configuration::AUTH)?;
-        config.network = desired.get(nous_foundation::configuration::NETWORK)?;
-        config.observability = desired.get(nous_foundation::observability::OBSERVABILITY)?;
-        config.tasks = desired.get(nous_foundation::tasks::TASK_RUNTIME)?;
-        config.platform = desired.get(nous_foundation::platform::PLATFORM)?;
+        config = instance::InstanceConfig::from_snapshot(&desired)?;
         let platform = nous_foundation::platform::Platform::new(
             paths.as_ref().clone(),
             config.platform.clone(),
@@ -82,7 +78,7 @@ impl App {
             configuration.clone(),
             platform.clone(),
         );
-        let secrets = Secrets::new(paths.clone());
+        let secrets = Secrets::new(paths.clone())?;
         secrets.reconcile(&database).await?;
         let identity = Identity::new(database.clone(), secrets.clone(), clock);
         identity
@@ -280,6 +276,7 @@ impl App {
         subject_id: &SubjectId,
         material_id: &MaterialId,
         observed_at: Option<TimePoint>,
+        origin: Option<ObservationOrigin>,
     ) -> Result<OperationReceipt> {
         let namespace = self.database.material_namespace(material_id).await?;
         ctx.require_subject(&namespace, subject_id)?;
@@ -301,13 +298,16 @@ impl App {
         if let Some(time) = &observed_at {
             time.validate()?;
         }
+        if let Some(origin) = &origin {
+            origin.validate()?;
+        }
         let scope = format!("namespace:{namespace}/subject:{subject_id}");
         let key = operation_key(
             ctx,
             "observation.record",
             &scope,
             operation_id,
-            &json!({"subject_id":subject_id,"material_id":material_id,"observed_at":observed_at}),
+            &json!({"subject_id":subject_id,"material_id":material_id,"observed_at":observed_at,"origin":origin}),
         )?;
         let mut tx = match self.database.begin_operation(key).await? {
             BeginOperation::Replay(receipt) => return Ok(receipt),
@@ -319,6 +319,7 @@ impl App {
             subject_id: subject_id.clone(),
             material_id: material_id.clone(),
             observed_at,
+            origin,
             recorded_at: tx.time().recorded(),
             commit_seq: tx.commit_seq(),
             kind: ObservationKind::Contact,

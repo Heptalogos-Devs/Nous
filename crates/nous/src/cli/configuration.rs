@@ -1,5 +1,5 @@
 //! Online configuration management and offline bootstrap schema validation.
-use super::{connect, print_json, scope::ScopeArgs};
+use super::{connect, print_result, scope::ScopeArgs};
 use anyhow::{Context, Result, ensure};
 use clap::Subcommand;
 use nous_app::administration::configuration::ConfigChangeRequest;
@@ -34,11 +34,16 @@ pub(super) enum ConfigCommand {
     Set {
         #[arg(long)]
         file: PathBuf,
+        /// Apply to a stopped local instance using the same configuration owner.
+        #[arg(long)]
+        offline: bool,
     },
     /// Apply a JSON batch containing only {op:"clear", key, expected_revision} edits.
     Clear {
         #[arg(long)]
         file: PathBuf,
+        #[arg(long)]
+        offline: bool,
     },
     /// Print the bootstrap instance.toml schema without connecting to a host.
     Schema,
@@ -61,12 +66,12 @@ pub(super) async fn execute(
 ) -> Result<()> {
     let request = match command {
         ConfigCommand::Schema => {
-            return print_json(serde_json::to_value(schemars::schema_for!(InstanceConfig))?);
+            return print_result(serde_json::to_value(schemars::schema_for!(InstanceConfig))?);
         }
         ConfigCommand::Validate => {
             let config = InstanceConfig::load(paths)?;
             nous_app::administration::configuration::deployment_snapshot(&config)?;
-            return print_json(serde_json::json!({"valid":true,"config":paths.config}));
+            return print_result(serde_json::json!({"valid":true,"config":paths.config}));
         }
         ConfigCommand::Show { scope } => ConfigRequest::Show {
             scope: scope.scope(),
@@ -79,8 +84,12 @@ pub(super) async fn execute(
             key,
             limit,
         },
-        ConfigCommand::Set { file } => ConfigRequest::Change(read_change(file)?),
-        ConfigCommand::Clear { file } => {
+        ConfigCommand::Set { file, offline } => {
+            let request=read_change(file)?;
+            if offline { return apply_offline(paths,url,request).await; }
+            ConfigRequest::Change(request)
+        },
+        ConfigCommand::Clear { file, offline } => {
             let input = read_change(file)?;
             ensure!(
                 input
@@ -89,15 +98,20 @@ pub(super) async fn execute(
                     .all(|edit| matches!(edit, ConfigEdit::Clear { .. })),
                 "config clear accepts only clear edits"
             );
+            if offline { return apply_offline(paths,url,input).await; }
             ConfigRequest::Change(input)
         }
     };
-    print_json(
+    print_result(
         connect(paths, url, token_file)
             .await?
             .execute(&crate::http::Operation::Configuration(request))
             .await?,
     )
+}
+async fn apply_offline(paths:&InstancePaths,url:Option<String>,request:ConfigChangeRequest)->Result<()> {
+    ensure!(url.is_none(),"offline configuration uses --instance");
+    print_result(serde_json::to_value(nous_app::App::change_offline_configuration(paths,request).await?)?)
 }
 fn read_change(file: PathBuf) -> Result<ConfigChangeRequest> {
     ensure!(

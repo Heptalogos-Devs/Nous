@@ -6,6 +6,8 @@ mod error;
 pub use error::*;
 mod context;
 pub use context::*;
+mod origin;
+pub use origin::*;
 
 macro_rules! identity {
     ($name:ident) => {
@@ -63,6 +65,7 @@ identity!(ModelCallId);
 identity!(CognitiveId);
 identity!(TraceId);
 identity!(GrantId);
+pub mod context_work;
 mod grant;
 pub use grant::*;
 mod secret;
@@ -79,6 +82,8 @@ mod operation_time;
 pub use operation_time::OperationTime;
 mod query;
 pub use query::*;
+mod source_read;
+pub use source_read::*;
 mod cognition;
 pub use cognition::*;
 mod model;
@@ -141,6 +146,7 @@ pub struct Observation {
     pub subject_id: SubjectId,
     pub material_id: MaterialId,
     pub observed_at: Option<TimePoint>,
+    pub origin: Option<ObservationOrigin>,
     pub recorded_at: String,
     pub commit_seq: i64,
     #[serde(default)]

@@ -234,7 +234,7 @@ async fn restore_inner(
                 .tempdir_in(target.resolve("temp/staging")?)?;
             let staged = InstancePaths::new(staging.path())?;
             staged.ensure_layout()?;
-            nous_foundation::instance::initialize(&staged)?;
+            nous_foundation::instance::initialize_staging(&target, &staged)?;
             Ok((target, guard, staging, staged))
         })();
         setup.map_err(backup_error)
@@ -337,7 +337,7 @@ async fn restore_inner(
     let finalization: Result<i64> = async {
         checked?;
         let auth=AuthConfig::default();
-        let secrets=Secrets::new(Arc::new(staged.clone()));
+        let secrets=Secrets::for_staging(&target,Arc::new(staged.clone()))?;
         let value=secrets.read(&auth.admin_token).await?;
         let identity=Identity::new(snapshot.clone(),secrets,Clock);
         let ctx=CallContext::new("restore",nous_domain::AccessScope::Admin);
@@ -354,6 +354,13 @@ async fn restore_inner(
     .await;
     snapshot.close().await;
     let restored_commit_seq = finalization?;
+    let permissions =
+        nous_foundation::platform::permissions::PrivatePermissions::for_instance(&target.root)?;
+    let private_staging = staged.root.clone();
+    execution::blocking(&cancel, move |_| {
+        permissions.protect_private_tree(&private_staging)
+    })
+    .await?;
     let root = target.root.clone();
     let credential = target.credentials.join("admin.token");
     execution::blocking(&cancel, move |_| {

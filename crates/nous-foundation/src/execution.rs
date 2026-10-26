@@ -16,6 +16,30 @@ pub fn check_cancelled(cancel: &CancellationToken) -> Result<()> {
     }
 }
 
+/// Finish resource cleanup independently of the future that released its last guard.
+pub fn cleanup<F>(work: F)
+where
+    F: Future<Output = Result<()>> + Send + 'static,
+{
+    let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+        return;
+    };
+    let trace = current_trace();
+    let span = tracing::Span::current();
+    let _cleanup = runtime.spawn(
+        async move {
+            let result = match trace {
+                Some(trace) => in_trace(trace, work).await,
+                None => work.await,
+            };
+            if let Err(error) = result {
+                tracing::warn!(event="execution.cleanup_failed",error=?error);
+            }
+        }
+        .instrument(span),
+    );
+}
+
 pub async fn owned_async<T, F, Fut>(cancel: &CancellationToken, work: F) -> Result<T>
 where
     T: Send + 'static,

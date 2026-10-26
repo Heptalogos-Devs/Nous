@@ -1,3 +1,4 @@
+use super::references::{source_from_parts, validate_source};
 use crate::StructuredFormationRun;
 use crate::codec::*;
 use crate::{WriteTransaction, storage_error};
@@ -26,6 +27,15 @@ impl WriteTransaction {
                 source_dependencies(&mut self.tx, namespace, subject, &source).await?;
             for dependency in dependencies {
                 match dependency {
+                    EvidenceSource::Media { reference } => {
+                        validate_source(
+                            &mut self.tx,
+                            namespace,
+                            subject,
+                            &EvidenceSource::Media { reference },
+                        )
+                        .await?;
+                    }
                     EvidenceSource::Material { material_id } => {
                         self.material(namespace, &material_id).await?;
                         let exposed:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM observations WHERE namespace_id=? AND subject_id=? AND material_id=?)")
@@ -135,31 +145,6 @@ async fn source_dependencies(
         ));
     }
     rows.into_iter()
-        .map(|row| {
-            let kind: String = row.get("kind");
-            let id: String = row.get("id");
-            let revision: Option<i64> = row.get("revision");
-            Ok(match kind.as_str() {
-                "material" => EvidenceSource::Material {
-                    material_id: nous_domain::MaterialId(id),
-                },
-                "observation" => EvidenceSource::Observation {
-                    observation_id: nous_domain::ObservationId(id),
-                },
-                "memory" => EvidenceSource::MemoryRevision {
-                    memory_id: MemoryId(id),
-                    revision: revision
-                        .ok_or_else(|| Error::invalid("source revision is missing"))?,
-                },
-                _ => EvidenceSource::CognitiveRevision {
-                    reference: CognitiveRef {
-                        kind: parse_enum::<CognitiveKind>(&kind)?,
-                        id,
-                        revision: revision
-                            .ok_or_else(|| Error::invalid("source revision is missing"))?,
-                    },
-                },
-            })
-        })
+        .map(|row| source_from_parts(row.get("kind"), row.get("id"), row.get("revision")))
         .collect()
 }

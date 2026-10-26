@@ -11,11 +11,13 @@ use std::sync::Arc;
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum InvocationDraft {
     Chat {
+        sources: Option<Vec<nous_domain::SourceReadRef>>,
         arguments: PromptArguments,
         messages: Vec<ModelMessage>,
         output: OutputContract,
     },
     Embedding {
+        sources: Option<Vec<nous_domain::SourceReadRef>>,
         inputs: Vec<Vec<nous_domain::EmbeddingPart>>,
     },
 }
@@ -26,24 +28,45 @@ impl InvocationDraft {
         output: OutputContract,
     ) -> Self {
         Self::Chat {
+            sources: None,
             arguments,
             messages,
             output,
         }
     }
     pub fn embedding(inputs: Vec<Vec<nous_domain::EmbeddingPart>>) -> Self {
-        Self::Embedding { inputs }
+        Self::Embedding {
+            inputs,
+            sources: None,
+        }
     }
-    pub(super) fn input(self) -> (PromptArguments, ModelInput) {
+    pub fn with_sources(mut self, requirements: Vec<nous_domain::SourceReadRef>) -> Self {
+        match &mut self {
+            Self::Chat { sources, .. } | Self::Embedding { sources, .. } => {
+                *sources = Some(requirements)
+            }
+        }
+        self
+    }
+    pub(super) fn input(
+        self,
+    ) -> (
+        PromptArguments,
+        ModelInput,
+        Option<Vec<nous_domain::SourceReadRef>>,
+    ) {
         match self {
             Self::Chat {
+                sources,
                 arguments,
                 messages,
                 output,
-            } => (arguments, ModelInput::Chat { messages, output }),
-            Self::Embedding { inputs } => {
-                (PromptArguments::new(), ModelInput::Embedding { inputs })
-            }
+            } => (arguments, ModelInput::Chat { messages, output }, sources),
+            Self::Embedding { inputs, sources } => (
+                PromptArguments::new(),
+                ModelInput::Embedding { inputs },
+                sources,
+            ),
         }
     }
 }

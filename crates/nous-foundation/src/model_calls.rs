@@ -1,4 +1,5 @@
 //! Paid invocation lifecycle shared by every model consumer.
+mod admission;
 use super::{
     clock::Clock,
     models::{
@@ -7,6 +8,7 @@ use super::{
     },
     tasks::Tasks,
 };
+pub use admission::{AdmissionDecision, AdmissionFuture, CallAdmission};
 use nous_domain::*;
 use nous_storage::Database;
 use serde::Serialize;
@@ -41,6 +43,25 @@ impl ModelCalls {
     pub async fn read(&self, ctx: &CallContext, id: &ModelCallId) -> Result<ModelCall> {
         let call = self.database.model_call(id).await?;
         ctx.require_subject(&call.namespace_id, &call.subject_id)?;
+        if !ctx.source_read.is_empty() {
+            let metadata: super::models::InvocationMetadata<Value> =
+                serde_json::from_value(call.request.clone()).map_err(|_| {
+                    Error::new(
+                        ErrorCode::Forbidden,
+                        "model call has no available source requirements",
+                    )
+                })?;
+            let sources = metadata.preview.sources.as_ref().ok_or_else(|| {
+                Error::new(
+                    ErrorCode::Forbidden,
+                    "model call contains input without an attributable source catalog",
+                )
+            })?;
+            let mut view = self.database.read_view().await?;
+            view.require_source_requirements(ctx, &call.namespace_id, &call.subject_id, sources)
+                .await?;
+            view.finish().await?;
+        }
         Ok(call)
     }
     pub async fn ready(
@@ -125,6 +146,7 @@ impl ModelCalls {
         cancel: &CancellationToken,
         mut prepare: P,
         execute: E,
+        admission: Option<&dyn CallAdmission<M>>,
     ) -> Result<Option<ModelCall>>
     where
         M: CallMetadata + Serialize,
@@ -245,6 +267,27 @@ impl ModelCalls {
                         "model step is already running",
                     ));
                 }
+            }
+            if let Some(admission) = admission
+                && matches!(
+                    admission.validate(&mut tx, &prepared.metadata).await?,
+                    AdmissionDecision::Refresh
+                )
+            {
+                tx.rollback().await?;
+                continue;
+            }
+            if !job.source_read.is_empty() {
+                let sources = prepared.metadata.source_requirements().ok_or_else(|| {
+                    Error::new(
+                        ErrorCode::Forbidden,
+                        "scoped model execution requires an attributable source catalog",
+                    )
+                })?;
+                let context = job.call_context("model-source")?;
+                let (namespace, subject) = job.subject_scope()?;
+                tx.require_source_requirements(&context, namespace, subject, sources)
+                    .await?;
             }
             let budget_plan = match self
                 .budgets
@@ -408,20 +451,12 @@ impl ModelCalls {
             tracing::info!(parent:&span, event="model.completed", status, elapsed_ms=elapsed.as_millis() as u64, error=?call.error, "model request completed");
             let mut tx = self.tasks.operation("model.complete", job_id).await?;
             let mut job = tx.job_record(job_id).await?;
+            call = tx.merge_model_call_completion(&call).await?;
             if job.state == JobState::Cancelled {
-                let mut retired = tx.model_call(&call.id).await?;
-                let source_retired = retired.request.get("redacted") == Some(&Value::Bool(true));
-                if source_retired {
-                    keep_accounting(&mut retired, &call);
-                } else {
-                    retired = call.clone();
-                }
-                tx.update_model_call(&retired).await?;
-                tx.commit(json!({"call_id":call.id,"source_retired":source_retired}))
+                tx.commit(json!({"call_id":call.id,"state":job.state}))
                     .await?;
                 return Ok(None);
             }
-            tx.update_model_call(&call).await?;
             if call.state != ModelCallState::Succeeded {
                 self.tasks
                     .change_in(
@@ -481,28 +516,6 @@ impl ModelCalls {
         tx.commit(json!({"state":job.state})).await?;
         Err(error)
     }
-}
-
-fn keep_accounting(current: &mut ModelCall, completed: &ModelCall) {
-    let record = &completed.response.as_ref().unwrap_or(&Value::Null)["record"];
-    let accounting: serde_json::Map<String, Value> = [
-        "provider_model",
-        "usage",
-        "cost",
-        "started_at",
-        "completed_at",
-        "status",
-        "failure",
-    ]
-    .into_iter()
-    .filter_map(|key| record.get(key).map(|value| (key.into(), value.clone())))
-    .collect();
-    current.state = completed.state.clone();
-    current.error = completed.error.clone();
-    current.completed_at = completed.completed_at.clone();
-    current.usage = completed.usage.clone();
-    current.cost = completed.cost.clone();
-    current.response = Some(json!({"redacted":true,"reason":"source_removed","record":accounting}));
 }
 
 fn record_usage_metrics(role: &str, usage: Option<&ModelUsage>) {

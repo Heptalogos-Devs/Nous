@@ -59,6 +59,22 @@ pub(super) fn normalize(input: &mut ModelInput) {
             genai::chat::sanitize_json_schema(schema, genai::chat::JsonSchemaDialect::OpenAiStrict);
     }
 }
+pub(super) fn invocation_digest(route: &ResolvedRoute, input: &ModelInput) -> Result<String> {
+    use sha2::{Digest, Sha256};
+    let controls = match input {
+        ModelInput::Chat { .. } => {
+            serde_json::json!({"max_output_tokens":route.parameters.max_output_tokens,"parameters":route.parameters.native_parameters})
+        }
+        ModelInput::Embedding { .. } => {
+            serde_json::json!({"space":route.embedding.as_ref().map(|_|route.space()).transpose()?})
+        }
+    };
+    let identity = serde_json::json!({"protocol":route.resource.protocol,"endpoint":route.resource.endpoint,"model":route.resource.model,"input":input,"controls":controls});
+    Ok(format!(
+        "{:x}",
+        Sha256::digest(serde_json::to_vec(&identity)?)
+    ))
+}
 pub(super) fn no_access() -> ChannelAccess {
     ChannelAccess {
         visual: ChannelMode::Unavailable,

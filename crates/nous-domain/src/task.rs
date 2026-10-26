@@ -37,6 +37,7 @@ pub struct JobRecord {
     pub trace_id: TraceId,
     pub namespace_id: Option<NamespaceId>,
     pub subject_id: Option<SubjectId>,
+    pub source_read: Vec<crate::SourceReadScope>,
     pub kind: String,
     pub dependencies: Vec<String>,
     pub state: JobState,
@@ -61,12 +62,14 @@ impl JobRecord {
             },
             (None, Some(_)) => return Err(Error::invalid("Subject task requires a Namespace")),
         };
-        Ok(crate::CallerIdentity {
+        let mut context = crate::CallerIdentity {
             caller_id: caller_id.into(),
             scope,
             authorization: None,
         }
-        .begin_call(self.trace_id.clone()))
+        .begin_call(self.trace_id.clone());
+        context.source_read = self.source_read.clone();
+        Ok(context)
     }
 
     pub fn subject_scope(&self) -> Result<(&NamespaceId, &SubjectId)> {
@@ -76,6 +79,14 @@ impl JobRecord {
             .ok_or_else(|| Error::invalid("task requires a Namespace and Subject scope"))
     }
     pub fn validate(&self) -> Result<()> {
+        for scope in &self.source_read {
+            scope.validate()?;
+            if self.subject_id.as_ref() != Some(&scope.subject_id) {
+                return Err(Error::invalid(
+                    "task source-read scope differs from its subject",
+                ));
+            }
+        }
         self.trace_id.validate()?;
         validate_name(&self.id, "job ID")?;
         validate_name(&self.kind, "task kind")?;

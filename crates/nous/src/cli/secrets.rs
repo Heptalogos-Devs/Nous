@@ -1,4 +1,4 @@
-use super::print_json;
+use super::print_result;
 use anyhow::Result;
 use clap::Subcommand;
 use nous_domain::SecretRef;
@@ -20,13 +20,14 @@ impl SecretCommand {
     pub async fn execute(self, paths: InstancePaths) -> Result<()> {
         match self {
             Self::Import { file, reference } => {
+                paths.ensure_layout()?;
                 let reference = SecretRef { file: reference };
                 reference.validate()?;
                 let value = Secrets::read_token_file(&file).await?;
-                Secrets::new(Arc::new(paths))
+                Secrets::new(Arc::new(paths))?
                     .write_new(&reference, value)
                     .await?;
-                print_json(serde_json::to_value(reference)?)
+                print_result(serde_json::to_value(reference)?)
             }
         }
     }

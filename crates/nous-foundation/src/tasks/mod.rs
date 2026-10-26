@@ -1,4 +1,5 @@
 //! Durable task authority, submission and cancellation.
+mod cancellation;
 mod config;
 mod registry;
 mod runtime;
@@ -49,6 +50,7 @@ impl Tasks {
             trace_id: tx.context().trace_id.clone(),
             namespace_id: namespace,
             subject_id: subject,
+            source_read: tx.context().source_read.clone(),
             kind: kind.into(),
             dependencies: Vec::new(),
             state: JobState::Queued,
@@ -127,35 +129,6 @@ impl Tasks {
         self.change_in(tx, job, JobState::Succeeded, None, None)
             .await
     }
-    pub async fn cancel(
-        &self,
-        ctx: &CallContext,
-        operation_id: &str,
-        id: &str,
-    ) -> Result<nous_storage::OperationReceipt> {
-        let job = self.read(ctx, id).await?;
-        let key = nous_storage::operation_key(
-            ctx,
-            "task.cancel",
-            id,
-            operation_id,
-            &json!({"job_id":id}),
-        )?;
-        let mut tx = match self.database.begin_operation(key).await? {
-            BeginOperation::Replay(receipt) => return Ok(receipt),
-            BeginOperation::New(tx) => tx,
-        };
-        let mut current = tx.job_record(&job.id).await?;
-        if !terminal(current.state) {
-            self.change_in(&mut tx, &mut current, JobState::Cancelled, None, None)
-                .await?;
-        }
-        let receipt = tx.commit(json!(current)).await?;
-        if let Some(token) = self.running.lock().expect("task registry lock").get(id) {
-            token.cancel();
-        }
-        Ok(receipt)
-    }
     pub async fn operation(&self, action: &str, id: &str) -> Result<WriteTransaction> {
         let job = self.database.job_record(id).await?;
         let ctx = job.call_context("nous-worker")?;
@@ -180,6 +153,17 @@ fn terminal(state: JobState) -> bool {
     )
 }
 fn authorize(ctx: &CallContext, job: &JobRecord) -> Result<()> {
+    let accepted = job.call_context("task-read")?.source_read_identity()?;
+    if ctx
+        .source_read_identity()?
+        .iter()
+        .any(|constraint| !accepted.contains(constraint))
+    {
+        return Err(Error::new(
+            ErrorCode::Forbidden,
+            "task body belongs to a different accepted source-read scope",
+        ));
+    }
     match (&job.namespace_id, &job.subject_id) {
         (Some(ns), Some(subject)) => ctx.require_subject(ns, subject),
         (Some(ns), None) => ctx.require_namespace(ns),

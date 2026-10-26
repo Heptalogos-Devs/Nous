@@ -2,6 +2,7 @@
 mod files;
 mod publication;
 mod value;
+use crate::platform::permissions::PrivatePermissions;
 use crate::{execution, instance::InstancePaths};
 pub use nous_domain::SecretRef;
 use nous_domain::{Error, GrantId, Result};
@@ -22,45 +23,88 @@ pub struct Secrets {
 #[derive(Debug)]
 struct Inner {
     paths: Arc<InstancePaths>,
+    permissions: PrivatePermissions,
     active: Mutex<BTreeSet<SecretRef>>,
 }
 
 impl Secrets {
-    pub fn new(paths: Arc<InstancePaths>) -> Self {
+    pub fn new(paths: Arc<InstancePaths>) -> Result<Self> {
+        let permissions = PrivatePermissions::for_instance(&paths.root)?;
+        Ok(Self::owned(paths, permissions))
+    }
+    pub fn for_staging(instance: &InstancePaths, paths: Arc<InstancePaths>) -> Result<Self> {
+        let root = std::fs::canonicalize(&paths.root)?;
+        let staging = std::fs::canonicalize(
+            instance
+                .resolve("temp/staging")
+                .map_err(files::path_error)?,
+        )?;
+        if !crate::instance::is_within(&root, &staging) {
+            return Err(Error::invalid(
+                "secret staging must belong to its final instance",
+            ));
+        }
+        Ok(Self::owned(
+            paths,
+            PrivatePermissions::for_instance(&instance.root)?,
+        ))
+    }
+    fn owned(paths: Arc<InstancePaths>, permissions: PrivatePermissions) -> Self {
         Self {
             inner: Arc::new(Inner {
                 paths,
+                permissions,
                 active: Mutex::new(BTreeSet::new()),
             }),
         }
     }
+    pub async fn prepare_runtime(&self) -> Result<()> {
+        let paths = self.inner.paths.clone();
+        let permissions = self.inner.permissions.clone();
+        execution::blocking(&CancellationToken::new(), move |_| {
+            files::prepare(&paths, &permissions)
+        })
+        .await
+    }
+    pub async fn prepare_instance_access(&self) -> Result<()> {
+        let owner = self.clone();
+        execution::blocking(&CancellationToken::new(), move |_| {
+            owner.prepare_instance_access_blocking()
+        })
+        .await
+    }
+    fn prepare_instance_access_blocking(&self) -> Result<()> {
+        self.inner.permissions.protect_root()?;
+        self.inner
+            .permissions
+            .protect_directory(&self.inner.paths.root)?;
+        files::prepare(&self.inner.paths, &self.inner.permissions)
+    }
     pub async fn read(&self, reference: &SecretRef) -> Result<SecretValue> {
         let paths = self.inner.paths.clone();
+        let permissions = self.inner.permissions.clone();
         let reference = reference.clone();
         execution::blocking(&CancellationToken::new(), move |_| {
-            files::read(&paths, &reference)
+            files::read(&paths, &permissions, &reference)
         })
         .await
     }
     pub async fn ensure_bootstrap(&self, reference: &SecretRef) -> Result<SecretValue> {
         let paths = self.inner.paths.clone();
+        let permissions = self.inner.permissions.clone();
         let reference = reference.clone();
         execution::blocking(&CancellationToken::new(), move |_| {
-            files::ensure_bootstrap(&paths, &reference)
+            files::ensure_bootstrap(&paths, &permissions, &reference)
         })
         .await
     }
-    pub fn ensure_bootstrap_blocking(
-        paths: &InstancePaths,
-        reference: &SecretRef,
-    ) -> Result<SecretValue> {
-        files::ensure_bootstrap(paths, reference)
+    pub(crate) fn ensure_bootstrap_blocking(&self, reference: &SecretRef) -> Result<SecretValue> {
+        self.prepare_instance_access_blocking()?;
+        files::ensure_bootstrap(&self.inner.paths, &self.inner.permissions, reference)
     }
-    pub fn read_bootstrap_blocking(
-        paths: &InstancePaths,
-        reference: &SecretRef,
-    ) -> Result<SecretValue> {
-        files::read(paths, reference)
+    pub(crate) fn read_bootstrap_blocking(&self, reference: &SecretRef) -> Result<SecretValue> {
+        files::prepare(&self.inner.paths, &self.inner.permissions)?;
+        files::read(&self.inner.paths, &self.inner.permissions, reference)
     }
     pub async fn read_token_file(source: &Path) -> Result<SecretValue> {
         let source = source.to_owned();
@@ -81,9 +125,10 @@ impl Secrets {
             ));
         }
         let paths = self.inner.paths.clone();
+        let permissions = self.inner.permissions.clone();
         let reference = reference.clone();
         execution::blocking(&CancellationToken::new(), move |_| {
-            files::write_new(&paths, &reference, &value)
+            files::write_new(&paths, &permissions, &reference, &value)
         })
         .await
     }
@@ -97,6 +142,7 @@ impl Secrets {
         publication::prepare(self.clone(), database, value).await
     }
     pub async fn reconcile(&self, database: &Database) -> Result<u64> {
+        self.prepare_runtime().await?;
         publication::reconcile(self, database).await
     }
     pub fn digest(value: &SecretValue) -> String {

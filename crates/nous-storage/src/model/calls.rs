@@ -73,14 +73,14 @@ impl WriteTransaction {
         latest(&mut self.tx, job, step).await
     }
     pub(crate) async fn redact_job_calls(&mut self, job: &str, reason: &str) -> Result<()> {
-        let calls = sqlx::query("SELECT id,request,response FROM model_calls WHERE job_id=?")
+        let ids: Vec<String> = sqlx::query_scalar("SELECT id FROM model_calls WHERE job_id=?")
             .bind(job)
             .fetch_all(&mut *self.tx)
             .await
             .map_err(storage_error)?;
-        for row in calls {
-            let request: Value = serde_json::from_str(row.get("request"))?;
-            let response: Option<Value> = parse_optional(row.get("response"))?;
+        for id in ids {
+            let id = ModelCallId(id);
+            let call = self.model_call(&id).await?;
             let mut metadata = serde_json::Map::new();
             for key in [
                 "resource",
@@ -89,40 +89,20 @@ impl WriteTransaction {
                 "parameters",
                 "prompt_digest",
             ] {
-                if let Some(value) = request.get(key) {
+                if let Some(value) = call.request.get(key) {
                     metadata.insert(key.into(), value.clone());
                 }
             }
             metadata.insert("redacted".into(), Value::Bool(true));
             metadata.insert("reason".into(), Value::String(reason.into()));
-            let response = response.map(|response| {
-                let record = response.get("record");
-                let mut details = serde_json::Map::new();
-                for key in [
-                    "provider_model",
-                    "usage",
-                    "cost",
-                    "started_at",
-                    "completed_at",
-                    "status",
-                ] {
-                    if let Some(value) = record.and_then(|record| record.get(key)) {
-                        details.insert(key.into(), value.clone());
-                    }
-                }
-                serde_json::json!({"redacted":true,"reason":reason,"record":details})
-            });
-            sqlx::query("UPDATE model_calls SET request=?,response=? WHERE id=?")
-                .bind(serde_json::to_string(&metadata)?)
-                .bind(json_option(&response)?)
-                .bind(row.get::<String, _>("id"))
-                .execute(&mut *self.tx)
-                .await
-                .map_err(write_error)?;
+            self.redact_model_call(&id,&[
+                super::CallRedaction{document:super::CallDocument::Request,pointer:String::new(),replacement:Value::Object(metadata)},
+                super::CallRedaction{document:super::CallDocument::Response,pointer:String::new(),replacement:serde_json::json!({"redacted":true,"reason":reason,"record":{}})},
+                super::CallRedaction{document:super::CallDocument::Error,pointer:String::new(),replacement:Value::String("model error detail was permanently redacted".into())},
+            ],reason).await?;
         }
         Ok(())
     }
-
     pub async fn model_call(&mut self, id: &ModelCallId) -> Result<ModelCall> {
         model_call(&mut self.tx, id).await
     }

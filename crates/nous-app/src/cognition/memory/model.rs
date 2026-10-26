@@ -48,6 +48,10 @@ fn draft(input: FormationInput) -> nous_domain::Result<InvocationDraft> {
             "formation requires source text and positive source versions",
         ));
     }
+    let requirements = vec![nous_domain::SourceReadRef::Media {
+        reference: input.source.clone(),
+        observation_id: Some(input.observation_id.clone()),
+    }];
     let arguments = PromptArguments::from([
         (
             "source_text".into(),
@@ -93,7 +97,8 @@ fn draft(input: FormationInput) -> nous_domain::Result<InvocationDraft> {
             name: "nous_memory_formation".into(),
             schema: super::decoder::output_schema(),
         },
-    ))
+    )
+    .with_sources(requirements))
 }
 pub async fn prepare(
     plan: &InvocationPlan,

@@ -5,6 +5,8 @@ use nous_retrieval::IndexDocument;
 impl App {
     pub async fn query(&self, ctx: &CallContext, request: QueryRequest) -> Result<QueryResult> {
         request.validate()?;
+        let context = if let Some(scope) = &request.source_read { ctx.with_source_read(scope.clone())? } else { ctx.clone() };
+        let ctx = &context;
         let namespace = self.database.subject_namespace(&request.subject_id).await?;
         ctx.require_subject(&namespace, &request.subject_id)?;
         let policy = self
