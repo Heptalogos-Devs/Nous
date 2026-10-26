@@ -99,7 +99,7 @@ impl Tasks {
     }
     pub async fn read(&self, ctx: &CallContext, id: &str) -> Result<JobRecord> {
         let job = self.database.job_record(id).await?;
-        authorize(ctx, &job)?;
+        job.require_read(ctx)?;
         Ok(job)
     }
     pub async fn change_in(
@@ -152,22 +152,4 @@ fn terminal(state: JobState) -> bool {
         state,
         JobState::Succeeded | JobState::Failed | JobState::Cancelled
     )
-}
-fn authorize(ctx: &CallContext, job: &JobRecord) -> Result<()> {
-    let accepted = job.call_context("task-read")?.source_read_identity()?;
-    if ctx
-        .source_read_identity()?
-        .iter()
-        .any(|constraint| !accepted.contains(constraint))
-    {
-        return Err(Error::new(
-            ErrorCode::Forbidden,
-            "task body belongs to a different accepted source-read scope",
-        ));
-    }
-    match (&job.namespace_id, &job.subject_id) {
-        (Some(ns), Some(subject)) => ctx.require_subject(ns, subject),
-        (Some(ns), None) => ctx.require_namespace(ns),
-        _ => ctx.require_admin(),
-    }
 }

@@ -1,5 +1,5 @@
 //! Task cancellation becomes effective only after its authority transaction finishes.
-use super::{Tasks, authorize, terminal};
+use super::{Tasks, terminal};
 use crate::{execution, observability::in_trace};
 use nous_domain::*;
 use nous_storage::{BeginOperation, OperationReceipt, WriteTransaction, operation_key};
@@ -12,7 +12,7 @@ impl Tasks {
         job: &mut JobRecord,
         error: Option<Error>,
     ) -> Result<()> {
-        authorize(tx.context(), job)?;
+        job.require_read(tx.context())?;
         if !terminal(job.state) {
             self.change_in(tx, job, JobState::Cancelled, None, error)
                 .await?;

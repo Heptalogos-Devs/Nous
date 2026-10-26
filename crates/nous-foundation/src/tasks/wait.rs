@@ -1,4 +1,4 @@
-use super::{Tasks, authorize, terminal};
+use super::{Tasks, terminal};
 use nous_domain::{CallContext, Error, ErrorCode, JobRecord, JobState, Result};
 use nous_storage::WriteTransaction;
 use serde_json::json;
@@ -76,7 +76,7 @@ impl Tasks {
                 (Some(namespace), None) => ctx.require_namespace(namespace)?,
                 _ => ctx.require_admin()?,
             }
-            if authorize(ctx, &job).is_err() {
+            if job.require_read(ctx).is_err() {
                 job.checkpoint = None;
                 job.result = None;
                 if let Some(wait) = &mut job.wait {

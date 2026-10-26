@@ -34,10 +34,10 @@ pub(super) fn load(path: &Path, limits: &Limits) -> Result<Option<Loaded>> {
     {
         return Ok(None);
     }
-    let package: SubjectPackage =
-        serde_json::from_value(contents.json_documents["knowledge.json"].clone())?;
-    package.validate()?;
-    let expected = digest(&package)?;
+    let knowledge = &contents.json_documents["knowledge.json"];
+    // Integrity belongs to the transmitted document; domain decoding may choose
+    // a different JSON number spelling inside opaque provider payloads.
+    let expected = digest(knowledge)?;
     if contents.json_documents["manifest.json"]
         .get("content_digest")
         .and_then(Value::as_str)
@@ -45,6 +45,8 @@ pub(super) fn load(path: &Path, limits: &Limits) -> Result<Option<Loaded>> {
     {
         return Err(Error::invalid("subject package semantic digest mismatch"));
     }
+    let package: SubjectPackage = serde_json::from_value(knowledge.clone())?;
+    package.validate()?;
     let checksums: Checksums =
         serde_json::from_value(contents.json_documents["checksums.json"].clone())?;
     if checksums.algorithm != "sha256" {
@@ -95,9 +97,9 @@ pub(super) fn write(
     cancel: &CancellationToken,
 ) -> Result<PathBuf> {
     execution::check_cancelled(cancel)?;
-    let digest = digest(package)?;
     let mut knowledge = serde_json::to_value(package)?;
     knowledge.sort_all_objects();
+    let digest = digest(&knowledge)?;
     let knowledge = serde_json::to_vec(&knowledge)?;
     let manifest = serde_json::to_vec(
         &json!({"format":FORMAT,"package_id":package.package_id,"content_digest":digest}),

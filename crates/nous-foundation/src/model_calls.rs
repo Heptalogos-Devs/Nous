@@ -42,6 +42,11 @@ impl ModelCalls {
     }
     pub async fn read(&self, ctx: &CallContext, id: &ModelCallId) -> Result<ModelCall> {
         let mut view = self.database.read_view().await?;
+        let call=self.read_in(&mut view,ctx,id).await?;
+        view.finish().await?;
+        Ok(call)
+    }
+    pub async fn read_in(&self,view:&mut nous_storage::ReadView,ctx:&CallContext,id:&ModelCallId)->Result<ModelCall> {
         let call = view.model_call(id).await?;
         ctx.require_subject(&call.namespace_id, &call.subject_id)?;
         if !ctx.source_read.is_empty() || matches!(&call.origin, ModelCallOrigin::Imported { .. }) {
@@ -62,7 +67,6 @@ impl ModelCalls {
             view.require_source_requirements(ctx, &call.namespace_id, &call.subject_id, &mapped)
                 .await?;
         }
-        view.finish().await?;
         Ok(call)
     }
     pub async fn ready(
