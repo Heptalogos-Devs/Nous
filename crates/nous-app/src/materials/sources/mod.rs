@@ -174,13 +174,28 @@ impl SourceReader {
         subject: &SubjectId,
         reference: &MediaReference,
     ) -> Result<SourceSnapshot> {
+        let mut view = self.database.read_view().await?;
+        let snapshot = self
+            .resolve_in(ctx, &mut view, namespace, subject, reference)
+            .await?;
+        view.finish().await?;
+        Ok(snapshot)
+    }
+
+    pub(crate) async fn resolve_in(
+        &self,
+        ctx: &CallContext,
+        view: &mut nous_storage::ReadView,
+        namespace: &NamespaceId,
+        subject: &SubjectId,
+        reference: &MediaReference,
+    ) -> Result<SourceSnapshot> {
         ctx.require_subject(namespace, subject)?;
         reference.validate()?;
         let protection = self
             .objects
             .protect_references(&CancellationToken::new())
             .await?;
-        let mut view = self.database.read_view().await?;
         view.subject(namespace, subject).await?;
         let roots = view.media_roots(namespace, subject, reference).await?;
         for material in &roots {
@@ -238,7 +253,6 @@ impl SourceReader {
         if let RepresentationPayload::Artifact { metadata, .. } = &snapshot.payload {
             snapshot.access = physical_access(metadata);
         }
-        view.finish().await?;
         Ok(snapshot)
     }
     pub async fn text(
@@ -246,11 +260,10 @@ impl SourceReader {
         source: &SourceSnapshot,
         cancel: &CancellationToken,
     ) -> Result<String> {
+        if let Some(text) = representation_text(&source.payload, None)? {
+            return Ok(text);
+        }
         match &source.payload {
-            RepresentationPayload::Text { text } => Ok(text.clone()),
-            RepresentationPayload::Interpretation { value } => {
-                serde_json::to_string(value).map_err(Error::from)
-            }
             RepresentationPayload::Artifact {
                 blob,
                 metadata: MediaMetadata::Text,
@@ -278,13 +291,7 @@ fn original_snapshot(
     watermark: i64,
     protection: ReferenceLease,
 ) -> Result<SourceSnapshot> {
-    let duration = match &coordinate {
-        SourceCoordinate::Whole | SourceCoordinate::ImageRect { .. } => {
-            material.metadata.duration_ms()
-        }
-        SourceCoordinate::TimeSpan { start_ms, end_ms } => Some(end_ms - start_ms),
-        _ => None,
-    };
+    let duration = coordinate.duration_ms(&material.metadata);
     let timeline = duration.map(|_| reference.clone());
     let access = physical_access(&material.metadata);
     Ok(SourceSnapshot {

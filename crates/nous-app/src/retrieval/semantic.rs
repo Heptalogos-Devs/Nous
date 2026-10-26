@@ -32,10 +32,16 @@ impl App {
             )
             .await?;
         let jobs: Vec<String> = serde_json::from_value(receipt.result["jobs"].clone())?;
-        self.wait_embeddings(ctx, &jobs).await?;
-        *view = self
-            .query_view(namespace, request, &config.space()?.id)
+        self.wait_embeddings(ctx, namespace, &request.subject_id, &jobs)
             .await?;
+        view.refresh_embeddings(
+            &self.database,
+            namespace,
+            &request.subject_id,
+            &config.space()?.id,
+        )
+        .await?;
+        view.admit_routes(config)?;
         Ok(())
     }
 
@@ -46,10 +52,30 @@ impl App {
         request: &QueryRequest,
         view: &QueryView,
         config: &ResolvedModel,
+        policy: &super::config::RetrievalPolicy,
     ) -> Result<(Vec<(String, f32)>, SemanticQueryInfo, bool)> {
         let space = config.space()?;
+        let mut parts = Vec::new();
+        if !request.input.text.trim().is_empty() {
+            parts.push(EmbeddingPart::Text {
+                text: request.input.text.trim().to_owned(),
+                source: None,
+            });
+        }
+        for reference in &request.input.media {
+            parts.extend(
+                self.embedding_media_parts(
+                    ctx,
+                    namespace,
+                    &request.subject_id,
+                    reference,
+                    &tokio_util::sync::CancellationToken::new(),
+                )
+                .await?,
+            );
+        }
         let query = self
-            .query_embedding(ctx, namespace, &request.subject_id, &request.text, config)
+            .query_embedding(ctx, namespace, &request.subject_id, parts, config)
             .await?;
         let eligible = view.selected(request).collect::<Vec<_>>();
         let mut candidates = Vec::new();
@@ -72,7 +98,10 @@ impl App {
                     watermark = watermark.max(record.commit_seq);
                     tags.push(ServingTag {
                         key,
-                        label: input.text,
+                        label: input
+                            .text_content()
+                            .expect("tag has one text part")
+                            .to_owned(),
                         vector: record.vector.clone(),
                         source_ref: source,
                     });
@@ -85,7 +114,6 @@ impl App {
                 .max(record.commit_seq);
             candidates.push(ServingCandidate {
                 id: entry.reference().to_string(),
-                revision: entry.reference().revision,
                 commit_seq: entry.object.commit_seq(),
                 vector: record.vector.clone(),
                 source_refs: entry
@@ -100,7 +128,6 @@ impl App {
         let input = ServingSnapshot::new(
             VectorGenerationIdentity {
                 space: space.id.clone(),
-                producer: space.producer_signature.clone(),
                 generation: String::new(),
                 signature: String::new(),
                 watermark,
@@ -113,6 +140,7 @@ impl App {
             .paths
             .resolve("indexes/semantic")
             .map_err(|error| Error::invalid(error.to_string()))?;
+        let cache_capacity = policy.semantic_cache_generations;
         let generation = {
             let mut cache = self.semantic_cache.clone().lock_owned().await;
             if let Some(generation) = cache.get(&cache_key) {
@@ -126,7 +154,7 @@ impl App {
                             ServingGeneration::create_or_open(&parent, &input)
                                 .map_err(engine_error)?,
                         );
-                        if cache.len() >= 8 {
+                        if cache.len() >= cache_capacity {
                             cache.clear();
                         }
                         cache.insert(cache_key, generation.clone());
@@ -138,7 +166,7 @@ impl App {
         };
         let mode = request.mode;
         let limit = if mode == QueryMode::Hybrid {
-            (request.limit * 8).min(800)
+            policy.candidates(request.limit)
         } else {
             request.limit
         };
@@ -161,11 +189,11 @@ impl App {
         .await?;
         let allowed = eligible
             .iter()
-            .map(|entry| (entry.reference().to_string(), entry.reference().revision))
-            .collect::<BTreeMap<_, _>>();
+            .map(|entry| entry.reference().to_string())
+            .collect::<BTreeSet<_>>();
         let mut ranks = Vec::new();
         for hit in result.ranked {
-            if allowed.get(&hit.id) != Some(&hit.revision) {
+            if !allowed.contains(&hit.id) {
                 return Err(Error::internal(
                     "semantic candidate escaped the frozen authority view",
                 ));

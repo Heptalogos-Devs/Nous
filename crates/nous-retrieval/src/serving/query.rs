@@ -44,7 +44,6 @@ impl ServingGeneration {
             Ok((
                 candidate.id.clone(),
                 ServingSourceMapping {
-                    revision: candidate.revision,
                     source_refs: candidate.source_refs.clone(),
                 },
             ))
@@ -72,7 +71,6 @@ impl ServingGeneration {
         );
         Ok(ServingHit {
             id: candidate.id.clone(),
-            revision: candidate.revision,
             commit_seq: candidate.commit_seq,
             score,
             trace,

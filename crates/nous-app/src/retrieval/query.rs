@@ -1,4 +1,4 @@
-use super::view::QueryView;
+use super::view::{Entry, QueryView};
 use super::*;
 use nous_retrieval::IndexDocument;
 
@@ -7,6 +7,10 @@ impl App {
         request.validate()?;
         let namespace = self.database.subject_namespace(&request.subject_id).await?;
         ctx.require_subject(&namespace, &request.subject_id)?;
+        let policy = self
+            .retrieval_policy(&namespace, &request.subject_id)
+            .await?;
+        policy.admit(&request)?;
         let model = if request.mode == QueryMode::Lexical || request.reference.is_some() {
             None
         } else {
@@ -20,7 +24,12 @@ impl App {
             .map(|model| model.space().map(|space| space.id))
             .transpose()?
             .unwrap_or_default();
-        let mut view = self.query_view(&namespace, &request, &space).await?;
+        let mut view = self
+            .query_view(ctx, &namespace, &request, &space, &policy)
+            .await?;
+        if let Some(model) = &model {
+            view.admit_routes(model)?;
+        }
         if request
             .min_commit_seq
             .is_some_and(|required| required > view.watermark)
@@ -46,13 +55,18 @@ impl App {
             self.ensure_query_vectors(ctx, &namespace, &request, &mut view, model)
                 .await?;
             let (mut ranks, info, is_complete) = self
-                .semantic_ranks(ctx, &namespace, &request, &view, model)
+                .semantic_ranks(ctx, &namespace, &request, &view, model, &policy)
                 .await?;
             if request.mode == QueryMode::Hybrid {
                 let (lexical, _) = self
-                    .lexical_ranks(&namespace, &request, &view, (request.limit * 8).min(800))
+                    .lexical_ranks(
+                        &namespace,
+                        &request,
+                        &view,
+                        policy.candidates(request.limit),
+                    )
                     .await?;
-                ranks = fuse(ranks, lexical, request.limit);
+                ranks = fuse(ranks, lexical, request.limit, policy.rrf_constant);
             }
             let generation = info.generation.clone();
             semantic = Some(info);
@@ -60,7 +74,9 @@ impl App {
         };
         // Recreate the same authority view immediately before returning bodies.
         // Current queries require current exact heads; historical/exact reads retain their selected revisions.
-        let current = self.query_view(&namespace, &request, &space).await?;
+        let current = self
+            .query_view(ctx, &namespace, &request, "", &policy)
+            .await?;
         let available = current
             .selected(&request)
             .map(|entry| (entry.reference().to_string(), entry))
@@ -76,7 +92,10 @@ impl App {
                 complete = false;
                 continue;
             };
-            if let Some(record) = entry.accepted_embedding() {
+            if let Some(record) = frozen
+                .get(&key)
+                .and_then(|entry| entry.accepted_embedding())
+            {
                 evidence.push(super::embedding::provenance(record));
             }
             if !entry.sources_complete {
@@ -95,6 +114,12 @@ impl App {
         if let Some(info) = &mut semantic {
             info.provenance = evidence;
         }
+        let selected = view
+            .selected(&request)
+            .map(Entry::reference)
+            .collect::<BTreeSet<_>>();
+        view.issues.retain(|issue| selected.contains(&issue.target));
+        complete &= view.issues.is_empty();
         Ok(QueryResult {
             hits,
             semantic,
@@ -103,6 +128,7 @@ impl App {
                 authority_commit_seq: current.watermark,
                 complete,
                 generation,
+                projection_issues: view.issues,
             },
         })
     }
@@ -114,7 +140,7 @@ impl App {
         view: &QueryView,
         limit: usize,
     ) -> Result<(Vec<(String, f32)>, String)> {
-        if request.text.trim().is_empty() {
+        if request.input.text.trim().is_empty() {
             let mut entries = view.selected(request).collect::<Vec<_>>();
             entries.sort_by(|a, b| {
                 b.object
@@ -137,13 +163,12 @@ impl App {
             .entries
             .iter()
             .filter_map(|entry| {
-                entry.input.as_ref().map(|input| IndexDocument {
+                entry.lexical_text.as_ref().map(|text| IndexDocument {
                     id: entry.reference().to_string(),
                     namespace_id: namespace.to_string(),
                     subject_id: request.subject_id.to_string(),
-                    revision: entry.reference().revision,
                     commit_seq: entry.object.commit_seq(),
-                    text: input.text.clone(),
+                    text: text.clone(),
                     deleted: false,
                 })
             })
@@ -151,7 +176,7 @@ impl App {
         let index = self.retrieval.clone();
         let namespace = namespace.to_string();
         let subject = request.subject_id.to_string();
-        let text = request.text.clone();
+        let text = request.input.text.clone();
         let watermark = view.watermark;
         let guard = self.index_gate.clone().lock_owned().await;
         nous_foundation::execution::blocking(
@@ -181,11 +206,12 @@ fn fuse(
     semantic: Vec<(String, f32)>,
     lexical: Vec<(String, f32)>,
     limit: usize,
+    constant: f32,
 ) -> Vec<(String, f32)> {
     let mut scores = BTreeMap::<String, f32>::new();
     for lane in [semantic, lexical] {
         for (rank, (id, _)) in lane.into_iter().enumerate() {
-            *scores.entry(id).or_default() += 1.0 / (60.0 + rank as f32 + 1.0);
+            *scores.entry(id).or_default() += 1.0 / (constant + rank as f32 + 1.0);
         }
     }
     let mut ranks = scores.into_iter().collect::<Vec<_>>();

@@ -1,9 +1,8 @@
 use crate::secret::SecretRef;
-use nous_domain::{EmbeddingSpace, Error, Result};
+use nous_domain::{EmbeddingNormalization, Error, Result};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -11,6 +10,7 @@ use std::collections::BTreeMap;
 pub enum ModelProtocol {
     OpenaiChatCompletions,
     OpenaiEmbeddings,
+    ArkMultimodalEmbeddings,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -64,6 +64,54 @@ pub use nous_domain::TokenPricing;
 pub struct EmbeddingProfile {
     pub expected_provider_model: String,
     pub dimension: usize,
+    #[serde(default)]
+    pub normalization: EmbeddingNormalization,
+    #[serde(default)]
+    pub parameters: BTreeMap<String, Value>,
+}
+impl EmbeddingProfile {
+    pub fn validate(&self) -> Result<()> {
+        if self.expected_provider_model.trim().is_empty() || !(1..=65536).contains(&self.dimension)
+        {
+            return Err(Error::invalid(
+                "embedding space requires its actual model and dimension",
+            ));
+        }
+        if self.parameters.len() > 32
+            || serde_json::to_vec(&self.parameters)?.len() > 16 * 1024
+            || self.parameters.keys().any(|key| {
+                matches!(
+                    key.as_str(),
+                    "model"
+                        | "input"
+                        | "dimensions"
+                        | "encoding_format"
+                        | "headers"
+                        | "authorization"
+                        | "api_key"
+                        | "token"
+                        | "credential"
+                        | "endpoint"
+                        | "base_url"
+                        | "user"
+                        | "timeout"
+                        | "max_retries"
+                )
+            })
+        {
+            return Err(Error::invalid(
+                "embedding parameters cannot override model, input, dimension, encoding or credentials",
+            ));
+        }
+        if self
+            .parameters
+            .get("instructions")
+            .is_some_and(|value| !value.is_string())
+        {
+            return Err(Error::invalid("embedding instructions must be a string"));
+        }
+        Ok(())
+    }
 }
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
@@ -144,6 +192,8 @@ impl ModelCatalog {
                         .input_modalities
                         .iter()
                         .any(|m| !matches!(m, ModelModality::Text)))
+                || (model.protocol == ModelProtocol::ArkMultimodalEmbeddings
+                    && model.input_modalities.contains(&ModelModality::Audio))
                 || model
                     .capabilities
                     .iter()
@@ -154,9 +204,10 @@ impl ModelCatalog {
                 ));
             }
             match (&model.protocol, &model.embedding) {
-                (ModelProtocol::OpenaiEmbeddings, Some(space))
-                    if !space.expected_provider_model.trim().is_empty()
-                        && (1..=65536).contains(&space.dimension) => {}
+                (
+                    ModelProtocol::OpenaiEmbeddings | ModelProtocol::ArkMultimodalEmbeddings,
+                    Some(space),
+                ) => space.validate()?,
                 (ModelProtocol::OpenaiChatCompletions, None) => {}
                 _ => {
                     return Err(Error::invalid(
@@ -174,6 +225,21 @@ impl ModelCatalog {
                 return Err(Error::invalid("route model does not exist"));
             }
             let p = &route.parameters;
+            let protocol = self.models[&route.model].protocol;
+            if matches!(
+                protocol,
+                ModelProtocol::OpenaiEmbeddings | ModelProtocol::ArkMultimodalEmbeddings
+            ) && !p.native_parameters.is_empty()
+            {
+                return Err(Error::invalid(
+                    "embedding semantic parameters belong to the model's embedding profile",
+                ));
+            }
+            if protocol == ModelProtocol::ArkMultimodalEmbeddings && p.max_batch_size != 1 {
+                return Err(Error::invalid(
+                    "Ark multimodal embedding encodes one joint item per request; max_batch_size must be 1",
+                ));
+            }
             if !(1..=1024 * 1024).contains(&p.max_input_bytes)
                 || p.max_media_bytes == 0
                 || p.max_media_bytes > 64 * 1024 * 1024
@@ -227,7 +293,10 @@ pub(super) fn adapter_supports(protocol: ModelProtocol, capability: ModelCapabil
         (
             ModelProtocol::OpenaiChatCompletions,
             ModelCapability::TextGeneration | ModelCapability::StructuredOutput
-        ) | (ModelProtocol::OpenaiEmbeddings, ModelCapability::Embedding)
+        ) | (
+            ModelProtocol::OpenaiEmbeddings | ModelProtocol::ArkMultimodalEmbeddings,
+            ModelCapability::Embedding
+        )
     )
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -237,22 +306,4 @@ pub struct ResourceMetadata {
     pub protocol: ModelProtocol,
     pub endpoint: String,
     pub model: String,
-}
-pub fn embedding_space(resource: &ResourceMetadata, profile: &EmbeddingProfile) -> EmbeddingSpace {
-    let material = serde_json::to_vec(&(
-        "text",
-        resource,
-        &profile.expected_provider_model,
-        profile.dimension,
-    ))
-    .expect("embedding space is serializable");
-    let digest = format!("{:x}", Sha256::digest(material));
-    EmbeddingSpace {
-        id: format!("embspace_{digest}"),
-        resource_id: resource.id.clone(),
-        provider_model: profile.expected_provider_model.clone(),
-        dimension: profile.dimension,
-        producer_signature: format!("embproducer_{digest}"),
-        modality: "text".into(),
-    }
 }

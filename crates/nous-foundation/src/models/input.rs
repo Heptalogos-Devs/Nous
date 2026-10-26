@@ -95,7 +95,7 @@ pub enum ModelInput {
         output: OutputContract,
     },
     Embedding {
-        texts: Vec<String>,
+        inputs: Vec<Vec<nous_domain::EmbeddingPart>>,
     },
 }
 #[derive(Debug, Clone)]
@@ -115,6 +115,8 @@ pub struct RoutePreview {
     pub route: String,
     pub resource: ResourceMetadata,
     pub parameters: super::RouteParameters,
+    pub embedding_space: Option<nous_domain::EmbeddingSpace>,
+    pub embedding_producer: Option<nous_domain::EmbeddingProducer>,
     pub actual_access: ChannelAccess,
     pub rejection: Option<nous_domain::Error>,
 }
@@ -139,6 +141,8 @@ pub struct InvocationMetadata<T> {
     pub input: T,
     pub preview: InvocationPreview,
     pub actual_access: ChannelAccess,
+    pub embedding_space: Option<nous_domain::EmbeddingSpace>,
+    pub embedding_producer: Option<nous_domain::EmbeddingProducer>,
     pub plan: ResolvedModel,
 }
 impl<T: Serialize> super::CallMetadata for InvocationMetadata<T> {

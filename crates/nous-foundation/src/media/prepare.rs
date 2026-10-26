@@ -1,4 +1,4 @@
-use super::{Media, MediaPolicy, PreparationRequest, PreparedItem, PreparedMedia};
+use super::{Media, MediaPolicy, PreparationPlan, PreparationRequest, PreparedItem, PreparedMedia};
 use crate::execution;
 use nous_domain::{
     CallContext, Error, Result,
@@ -14,11 +14,23 @@ impl Media {
         request: PreparationRequest,
         cancel: &CancellationToken,
     ) -> Result<PreparedMedia> {
+        let plan = self.freeze_preparation(request).await?;
+        self.prepare_frozen(ctx, plan, cancel).await
+    }
+
+    pub async fn prepare_frozen(
+        &self,
+        ctx: &CallContext,
+        plan: PreparationPlan,
+        cancel: &CancellationToken,
+    ) -> Result<PreparedMedia> {
+        let PreparationPlan {
+            request, policy, ..
+        } = plan;
         request.validate()?;
         let service = self.clone();
         let ctx = ctx.clone();
         execution::owned_async(cancel, move |local| async move {
-            let policy = service.policy().await?;
             if matches!(request.delivery, MediaDelivery::SampledFrames) {
                 return service.sample(&ctx, &request, &policy, &local).await;
             }

@@ -172,7 +172,7 @@ impl App {
     pub async fn status(&self) -> Result<Value> {
         Ok(
             json!({"version":env!("CARGO_PKG_VERSION"),"storage":self.database.status().await?,
-            "capabilities":{"material":true,"observation":true,"memory_formation":true,"structured_cognition":true,"structured_formation":true,"lexical_query":true,"text_embedding":true,"dense_query":true,"vcp_query":true},
+            "capabilities":{"material":true,"media_derivation":true,"observation":true,"memory_formation":true,"structured_cognition":true,"structured_formation":true,"lexical_query":true,"embedding":true,"dense_query":true,"vcp_query":true},
             "model":self.model.inspect(&ConfigScope::Instance).await?,"platform":self.platform.status()?,"index":self.retrieval.coverage().ok()}),
         )
     }

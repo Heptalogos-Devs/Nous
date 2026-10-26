@@ -70,6 +70,18 @@ pub(super) fn build(
             route: route.id.clone(),
             resource: route.resource.clone(),
             parameters: route.parameters.clone(),
+            embedding_space: route
+                .embedding
+                .as_ref()
+                .map(|_| route.space())
+                .transpose()
+                .map_err(ModelFailure::domain)?,
+            embedding_producer: route
+                .embedding
+                .as_ref()
+                .map(|_| route.producer())
+                .transpose()
+                .map_err(ModelFailure::domain)?,
             actual_access: access,
             rejection,
         });

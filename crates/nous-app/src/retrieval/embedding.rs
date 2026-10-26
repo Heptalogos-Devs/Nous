@@ -22,31 +22,33 @@ impl App {
         subject: &SubjectId,
         limit: usize,
     ) -> Result<OperationReceipt> {
-        if !(1..=10000).contains(&limit) {
-            return Err(Error::invalid("embedding snapshot limit must be 1..10000"));
+        if limit == 0 {
+            return Err(Error::invalid("embedding snapshot limit must be positive"));
         }
         let namespace = self.database.subject_namespace(subject).await?;
         ctx.require_subject(&namespace, subject)?;
         let config = self.embedding_configuration(&namespace, subject).await?;
-        let snapshot = self
-            .database
-            .cognitive_retrieval_snapshot(&namespace, subject, &config.space()?.id, None, limit)
-            .await?;
-        let view = super::view::QueryView::from_snapshot(snapshot)?;
+        let mut policy = self.retrieval_policy(&namespace, subject).await?;
+        policy.max_snapshot_entries = policy.max_snapshot_entries.min(limit);
         let request = QueryRequest {
             mode: QueryMode::Lexical,
             subject_id: subject.clone(),
-            text: String::new(),
+            input: QueryInput::default(),
+            domains: vec![],
             reference: None,
             kinds: vec![],
             source: None,
             time: None,
-            limit: 100,
+            limit: policy.max_results,
             min_commit_seq: None,
             as_of_commit: None,
             include_inactive: true,
             include_deleted: false,
         };
+        let mut view = self
+            .query_view(ctx, &namespace, &request, &config.space()?.id, &policy)
+            .await?;
+        view.admit_routes(&config)?;
         let inputs = view.pending_inputs(&request)?;
         let scope = format!("namespace:{namespace}/subject:{subject}");
         let key = operation_key(
@@ -117,23 +119,17 @@ impl App {
         };
         let space = config.space()?;
         tx.save_embedding_space(&space).await?;
-        let mut unique = BTreeMap::<String, EmbeddingInputItem>::new();
+        let mut unique = BTreeMap::<(String, String), EmbeddingInputItem>::new();
         for input in inputs {
             input.validate()?;
-            let key = input.source_key()?;
-            if let Some(previous) = unique.insert(key, input.clone())
-                && previous != input
-            {
-                return Err(Error::invalid(
-                    "embedding identity has inconsistent source text",
-                ));
-            }
+            let key = (input.source_key()?, input.source_hash());
+            unique.entry(key).or_insert(input);
         }
         let claims = tx
             .embedding_claims(namespace, subject, &space.id)
             .await?
             .into_iter()
-            .map(|claim| Ok((claim.source_key()?, claim)))
+            .map(|claim| Ok(((claim.source_key()?, claim.source_hash.clone()), claim)))
             .collect::<Result<BTreeMap<_, _>>>()?;
         let mut fresh = Vec::new();
         let mut jobs = BTreeSet::new();
@@ -160,42 +156,23 @@ impl App {
             }
             tx.validate_embedding_input(namespace, subject, &input)
                 .await?;
-            if let Some(reference) = input.target.reference()
-                && let Some(mut record) = tx
-                    .embeddings_for_cognition(namespace, reference)
-                    .await?
-                    .into_iter()
-                    .find(|record| {
-                        record.subject_id == *subject
-                            && record.space_id == space.id
-                            && record.source_hash == input.source_hash()
-                    })
+            if let Some(mut record) = tx
+                .matching_embedding(namespace, subject, &space.id, &input.source_hash())
+                .await?
             {
                 record.target = input.target.clone();
                 record.commit_seq = tx.commit_seq();
-                tx.save_embedding_record(&record).await?;
+                tx.save_embedding_record(&record, &input).await?;
                 reused += 1;
                 continue;
             }
             pending += 1;
             if let Some(claim) = claims.get(&key) {
-                if claim.source_hash != input.source_hash() {
-                    return Err(Error::new(
-                        ErrorCode::Conflict,
-                        "pending vector target has changed source text",
-                    ));
-                }
                 jobs.insert(claim.job_id.clone());
             } else {
                 fresh.push(input);
             }
         }
-        let max_input_bytes = config
-            .routes
-            .iter()
-            .map(|route| route.parameters.max_input_bytes)
-            .min()
-            .expect("resolved routes nonempty");
         let max_batch_size = config
             .routes
             .iter()
@@ -203,16 +180,13 @@ impl App {
             .min()
             .expect("resolved routes nonempty");
         let mut batch = Vec::new();
-        let mut bytes = 0;
         for input in fresh {
-            if input.text.len() > max_input_bytes {
-                return Err(Error::new(
-                    ErrorCode::ResourceExhausted,
-                    "embedding input exceeds max_input_bytes",
-                ));
-            }
+            let mut candidate = batch.clone();
+            candidate.push(input.clone());
+            let admitted = validate_batch(config, &candidate);
             if !batch.is_empty()
-                && (batch.len() >= max_batch_size || bytes + input.text.len() > max_input_bytes)
+                && (candidate.len() > max_batch_size
+                    || matches!(&admitted,Err(error) if matches!(error.code,ErrorCode::ResourceExhausted|ErrorCode::CapabilityUnavailable)))
             {
                 jobs.insert(
                     self.queue_embedding_batch(
@@ -224,10 +198,12 @@ impl App {
                     )
                     .await?,
                 );
-                bytes = 0;
+                validate_batch(config, std::slice::from_ref(&input))?;
+                batch.push(input);
+            } else {
+                admitted?;
+                batch = candidate;
             }
-            bytes += input.text.len();
-            batch.push(input);
         }
         if !batch.is_empty() {
             jobs.insert(
@@ -248,14 +224,13 @@ impl App {
     ) -> Result<String> {
         let job = self.tasks.new_job(
             tx,
-            "embedding.text",
+            "embedding",
             Some(namespace.clone()),
             Some(subject.clone()),
         );
         self.tasks.submit_in(tx, &job).await?;
         tx.insert_embedding_run(&EmbeddingRun {
             job: job.clone(),
-            producer_signature: space.producer_signature.clone(),
             space_id: space.id.clone(),
             inputs,
         })
@@ -268,36 +243,34 @@ impl App {
         self.database.embedding_run(id).await
     }
 
-    pub(super) async fn wait_embeddings(&self, ctx: &CallContext, jobs: &[String]) -> Result<()> {
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(45);
-        loop {
-            let mut complete = true;
-            for id in jobs {
-                let job = self.tasks.read(ctx, id).await?;
-                match job.state {
-                    JobState::Succeeded => {}
-                    JobState::Failed | JobState::Cancelled | JobState::Waiting => {
-                        return Err(job.error.unwrap_or_else(|| {
-                            Error::new(
-                                ErrorCode::DependencyUnavailable,
-                                format!("embedding task {id} is {:?}", job.state),
-                            )
-                        }));
-                    }
-                    _ => complete = false,
-                }
+    pub(super) async fn wait_embeddings(
+        &self,
+        ctx: &CallContext,
+        namespace: &NamespaceId,
+        subject: &SubjectId,
+        jobs: &[String],
+    ) -> Result<()> {
+        let policy = self.retrieval_policy(namespace, subject).await?;
+        let states = self
+            .tasks
+            .wait_all(
+                ctx,
+                jobs,
+                Duration::from_millis(policy.embedding_wait_ms),
+                &tokio_util::sync::CancellationToken::new(),
+            )
+            .await?;
+        for job in states {
+            if job.state != JobState::Succeeded {
+                return Err(job.error.unwrap_or_else(|| {
+                    Error::new(
+                        ErrorCode::DependencyUnavailable,
+                        format!("embedding task {} is {:?}", job.id, job.state),
+                    )
+                }));
             }
-            if complete {
-                return Ok(());
-            }
-            if tokio::time::Instant::now() >= deadline {
-                return Err(Error::new(
-                    ErrorCode::DependencyUnavailable,
-                    format!("embedding tasks are still pending: {}", jobs.join(",")),
-                ));
-            }
-            tokio::time::sleep(Duration::from_millis(50)).await;
         }
+        Ok(())
     }
 
     pub(super) async fn query_embedding(
@@ -305,11 +278,11 @@ impl App {
         ctx: &CallContext,
         namespace: &NamespaceId,
         subject: &SubjectId,
-        text: &str,
+        parts: Vec<EmbeddingPart>,
         config: &ResolvedModel,
     ) -> Result<EmbeddingRecord> {
         let space = config.space()?;
-        let input = EmbeddingInputItem::query(text)?;
+        let input = EmbeddingInputItem::query_parts(parts)?;
         if let Some(record) = self
             .database
             .embedding_record(
@@ -334,7 +307,7 @@ impl App {
             )
             .await?;
         let jobs: Vec<String> = serde_json::from_value(receipt.result["jobs"].clone())?;
-        self.wait_embeddings(ctx, &jobs).await?;
+        self.wait_embeddings(ctx, namespace, subject, &jobs).await?;
         self.database
             .embedding_record(
                 namespace,
@@ -346,4 +319,26 @@ impl App {
             .await?
             .ok_or_else(|| Error::internal("successful query vector is missing"))
     }
+}
+
+fn validate_batch(config: &ResolvedModel, inputs: &[EmbeddingInputItem]) -> Result<()> {
+    let parts = inputs
+        .iter()
+        .map(|input| input.parts.clone())
+        .collect::<Vec<_>>();
+    let mut supported = false;
+    for route in &config.routes {
+        match route.validate_embedding_inputs(&parts) {
+            Ok(()) => supported = true,
+            Err(error) if error.code == ErrorCode::CapabilityUnavailable => {}
+            Err(error) => return Err(error),
+        }
+    }
+    if !supported {
+        return Err(Error::new(
+            ErrorCode::CapabilityUnavailable,
+            "no embedding route supports these input parts",
+        ));
+    }
+    Ok(())
 }

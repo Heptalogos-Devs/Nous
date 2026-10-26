@@ -1,5 +1,5 @@
 //! The indexing consumer owns CognitiveRef projection inputs and declares its role.
-use nous_domain::{EmbeddingInputItem, EmbeddingSpace, Error};
+use nous_domain::{EmbeddingInputItem, Error};
 use nous_foundation::configuration::ConfigKey;
 use nous_foundation::models::AttemptContext;
 use nous_foundation::models::InvocationDraft;
@@ -17,18 +17,18 @@ use nous_foundation::models::RoleDefinition;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
-pub const ROLE: &str = "text_embedding";
-pub const BINDING: ConfigKey<Option<RoleBinding>> = ConfigKey::new("models.roles.text_embedding");
+pub const ROLE: &str = "embedding";
+pub const BINDING: ConfigKey<Option<RoleBinding>> = ConfigKey::new("models.roles.embedding");
 pub fn definition() -> RoleDefinition {
     RoleDefinition {
         id: ROLE,
         binding_key: BINDING,
-        requirements: ModelRequirements::text_embedding(),
+        requirements: ModelRequirements::embedding(),
         prompt: None,
         contract: RoleContract::new::<EmbeddingInput>(|input| {
             validate_inputs(&input.inputs)?;
             Ok(InvocationDraft::embedding(
-                input.inputs.into_iter().map(|item| item.text).collect(),
+                input.inputs.into_iter().map(|item| item.parts).collect(),
             ))
         }),
     }
@@ -36,7 +36,6 @@ pub fn definition() -> RoleDefinition {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct EmbeddingInput {
-    pub space: EmbeddingSpace,
     pub inputs: Vec<EmbeddingInputItem>,
 }
 pub type PreparedEmbedding = PreparedCall<InvocationMetadata<EmbeddingInput>>;
@@ -45,24 +44,14 @@ pub async fn prepare(
     attempt: AttemptContext,
     inputs: Vec<EmbeddingInputItem>,
 ) -> Result<PreparedEmbedding, ModelFailure> {
-    let space = plan
-        .resolve(&attempt)
-        .await?
-        .route(attempt.index as usize)
-        .space()
-        .map_err(ModelFailure::domain)?;
-    plan.prepare(
-        attempt,
-        EmbeddingInput { space, inputs },
-        Default::default(),
-    )
-    .await
+    plan.prepare(attempt, EmbeddingInput { inputs }, Default::default())
+        .await
 }
 fn validate_inputs(inputs: &[EmbeddingInputItem]) -> nous_domain::Result<()> {
     let mut keys = BTreeSet::new();
     for input in inputs {
         input.validate()?;
-        if !keys.insert(input.source_key()?) {
+        if !keys.insert((input.source_key()?, input.source_hash())) {
             return Err(Error::invalid("embedding targets must be unique"));
         }
     }

@@ -111,7 +111,7 @@ impl DerivationProducer {
         Ok(())
     }
 }
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct BlobReference {
     pub content_hash: String,

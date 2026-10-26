@@ -22,6 +22,41 @@ pub trait ModelMediaReader: Send + Sync {
     ) -> MediaReadFuture;
 }
 
+pub(super) async fn load_blob(
+    scope: &ConfigScope,
+    source: MediaReference,
+    blob: BlobReference,
+    reader: &dyn ModelMediaReader,
+    max_bytes: usize,
+    cancel: &CancellationToken,
+) -> Result<Vec<u8>> {
+    crate::execution::check_cancelled(cancel)?;
+    source.validate()?;
+    blob.validate()?;
+    if blob.byte_len > max_bytes as u64 {
+        return Err(Error::new(
+            ErrorCode::ResourceExhausted,
+            "source media exceeds the frozen byte limit",
+        ));
+    }
+    let bytes = reader
+        .read(
+            scope.clone(),
+            source,
+            blob.clone(),
+            max_bytes,
+            cancel.clone(),
+        )
+        .await?;
+    if bytes.len() as u64 != blob.byte_len || bytes.len() > max_bytes {
+        return Err(Error::new(
+            ErrorCode::Conflict,
+            "source media bytes differ from the admitted blob length",
+        ));
+    }
+    Ok(bytes)
+}
+
 pub(super) async fn encode(
     messages: Vec<ModelMessage>,
     scope: &ConfigScope,
@@ -58,21 +93,9 @@ pub(super) async fn encode(
                                     "stored model media requires an exact source locator",
                                 )
                             })?;
-                            let bytes = reader
-                                .read(
-                                    scope.clone(),
-                                    source.reference,
-                                    blob.clone(),
-                                    max_bytes,
-                                    cancel.clone(),
-                                )
-                                .await?;
-                            if bytes.len() as u64 != blob.byte_len || bytes.len() > max_bytes {
-                                return Err(Error::new(
-                                    ErrorCode::Conflict,
-                                    "source media bytes differ from the admitted blob length",
-                                ));
-                            }
+                            let bytes =
+                                load_blob(scope, source.reference, blob, reader, max_bytes, cancel)
+                                    .await?;
                             ContentPart::from_binary_base64(mime, STANDARD.encode(bytes), None)
                         }
                     }

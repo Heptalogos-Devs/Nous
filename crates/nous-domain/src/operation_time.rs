@@ -8,6 +8,13 @@ use serde::{Deserialize, Serialize};
 pub struct OperationTime(DateTime<Utc>);
 
 impl OperationTime {
+    pub fn parse(value: &str) -> crate::Result<Self> {
+        DateTime::parse_from_rfc3339(value)
+            .map(|time| Self(time.with_timezone(&Utc)))
+            .map_err(|error| {
+                crate::Error::invalid("invalid recorded UTC timestamp").with_cause(&error)
+            })
+    }
     pub fn new(utc: DateTime<Utc>) -> Self {
         Self(utc)
     }

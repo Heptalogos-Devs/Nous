@@ -7,7 +7,7 @@ use genai::{
     adapter::AdapterKind,
     resolver::{AuthData, Endpoint},
 };
-use nous_domain::{EmbeddingSpace, Error, Result};
+use nous_domain::{EmbeddingProducer, EmbeddingSpace, Error, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -23,11 +23,38 @@ pub struct ResolvedRoute {
     provider: Provider,
 }
 impl ResolvedRoute {
+    pub fn validate_embedding_inputs(
+        &self,
+        inputs: &[Vec<nous_domain::EmbeddingPart>],
+    ) -> Result<()> {
+        super::embedding_request::validate(self, inputs).map(|_| ())
+    }
     pub fn space(&self) -> Result<EmbeddingSpace> {
         self.embedding
             .as_ref()
-            .map(|profile| embedding_space(&self.resource, profile))
-            .ok_or_else(|| Error::invalid("selected model has no embedding space"))
+            .map(|profile| {
+                EmbeddingSpace::new(
+                    profile.expected_provider_model.clone(),
+                    profile.dimension,
+                    profile.normalization,
+                    profile.parameters.clone(),
+                )
+            })
+            .ok_or_else(|| Error::invalid("selected model has no embedding space"))?
+    }
+    pub fn producer(&self) -> Result<EmbeddingProducer> {
+        let protocol = serde_json::to_value(self.resource.protocol)?
+            .as_str()
+            .ok_or_else(|| Error::internal("model protocol has no wire name"))?
+            .to_owned();
+        EmbeddingProducer::new(
+            self.space()?.id,
+            self.resource.id.clone(),
+            self.resource.provider.clone(),
+            protocol,
+            self.resource.endpoint.clone(),
+            self.resource.model.clone(),
+        )
     }
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -49,6 +76,9 @@ impl ResolvedModel {
     }
     pub fn space(&self) -> Result<EmbeddingSpace> {
         self.primary().space()
+    }
+    pub fn producer(&self) -> Result<EmbeddingProducer> {
+        self.primary().producer()
     }
 }
 #[derive(Debug, Clone, Serialize)]

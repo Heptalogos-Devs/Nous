@@ -91,6 +91,8 @@ mod maintenance;
 pub use maintenance::*;
 mod embedding;
 pub use embedding::*;
+mod retrieval_target;
+pub use retrieval_target::*;
 mod structured;
 pub use structured::*;
 

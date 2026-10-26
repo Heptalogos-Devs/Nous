@@ -1,5 +1,6 @@
-use super::{input::MediaModelInput, preparation::digest};
+use super::input::MediaModelInput;
 use crate::App;
+use crate::materials::preparation::digest;
 use nous_domain::{media::*, *};
 use nous_foundation::models::InvocationMetadata;
 use serde_json::json;

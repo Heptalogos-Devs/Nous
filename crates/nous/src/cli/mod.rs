@@ -2,6 +2,7 @@
 pub mod bundle;
 pub mod cognition;
 mod configuration;
+mod embedding;
 mod identity;
 pub mod maintenance;
 mod materials;
@@ -126,6 +127,11 @@ enum Command {
     Memory {
         #[command(subcommand)]
         command: MemoryCommand,
+    },
+    /// Manage the shared text and media vector workload.
+    Embedding {
+        #[command(subcommand)]
+        command: embedding::EmbeddingCommand,
     },
     Query(QueryArgs),
     Model {
@@ -395,6 +401,7 @@ pub(crate) async fn execute(cli: Cli) -> Result<()> {
                     command: BackupCommand::Create,
                 } => Operation::CreateBackup,
                 Command::Memory { command } => command.operation()?,
+                Command::Embedding { command } => command.operation(),
                 Command::Query(input) => input.operation()?,
                 Command::Prompt { command } => command.operation()?,
                 Command::Model {

@@ -9,17 +9,19 @@ pub(crate) async fn validate_input(
     input: &EmbeddingInputItem,
 ) -> Result<()> {
     input.validate()?;
-    if let Some(reference) = input.target.reference() {
+    if let Some(reference) = input.target.item().and_then(RetrievalTarget::cognition) {
         validate_reference(conn, namespace, subject, reference).await?;
-        if input.text != text(conn, namespace, subject, reference).await? {
+        if input.text_content() != Some(text(conn, namespace, subject, reference).await?.as_str()) {
             return Err(Error::new(
                 ErrorCode::Conflict,
                 "embedding text differs from its authority revision",
             ));
         }
     }
+    super::media_source::validate(conn, namespace, subject, input).await?;
     Ok(())
 }
+
 pub(crate) async fn text(
     conn: &mut SqliteConnection,
     namespace: &NamespaceId,

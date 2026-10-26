@@ -1,5 +1,6 @@
 use crate::source::materials::material_details;
 use crate::{Database, ReadView, SourceClosure, SourceStatus, storage_error};
+use nous_domain::media::MediaOriginal;
 use nous_domain::*;
 use serde::{Deserialize, Serialize};
 use sqlx::{Row, SqliteConnection};
@@ -8,7 +9,7 @@ use std::collections::{BTreeMap, BTreeSet};
 pub struct MemoryRetrievalEntry {
     pub memory: Memory,
     pub source: SourceClosure,
-    pub materials: Vec<RootMaterial>,
+    pub materials: Vec<MediaOriginal>,
     pub embedding: Option<EmbeddingRecord>,
 }
 struct MemorySnapshot {
@@ -18,17 +19,12 @@ struct MemorySnapshot {
     complete: bool,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RootMaterial {
-    pub material: Material,
-    pub details: MaterialDetails,
-}
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StructuredRetrievalEntry {
     pub object: StructuredObject,
     pub embedding: Option<EmbeddingRecord>,
     pub source: SourceClosure,
     pub base_memory: Option<Memory>,
-    pub materials: Vec<RootMaterial>,
+    pub materials: Vec<MediaOriginal>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CognitiveRetrievalSnapshot {
@@ -133,9 +129,9 @@ async fn snapshot_in(
             (1, Some(reference))
         }
     };
-    if limit == 0 || limit > 10000 {
+    if limit == 0 {
         return Err(Error::invalid(
-            "cognitive retrieval snapshot limit must be 1..10000",
+            "cognitive retrieval snapshot limit must be positive",
         ));
     }
 
@@ -153,11 +149,11 @@ async fn snapshot_in(
     let rows=sqlx::query("SELECT o.id,(SELECT max(r.revision) FROM structured_revisions r WHERE r.object_id=o.id AND r.commit_seq<=? AND (? IS NULL OR r.revision=?)) AS selected_revision FROM structured_objects o WHERE o.namespace_id=? AND o.subject_id=? AND selected_revision IS NOT NULL AND (? IS NULL OR o.id=?) ORDER BY o.kind,o.id LIMIT ?")
             .bind(memory.watermark).bind(reference.map(|r|r.revision)).bind(reference.map(|r|r.revision)).bind(namespace.as_str()).bind(subject.as_str()).bind(reference.map(|r| if r.kind == CognitiveKind::Memory { "" } else {r.id.as_str()})).bind(reference.map(|r| if r.kind == CognitiveKind::Memory { "" } else {r.id.as_str()})).bind((remaining+1) as i64).fetch_all(&mut *conn).await.map_err(storage_error)?;
     let complete = memory.complete && rows.len() <= remaining;
-    let records=sqlx::query("SELECT e.* FROM embedding_records e WHERE e.namespace_id=? AND e.subject_id=? AND e.space_id=? AND e.target_kind='cognition'")
+    let records=sqlx::query("SELECT e.* FROM embedding_records e WHERE e.namespace_id=? AND e.subject_id=? AND e.space_id=? AND json_extract(e.target,'$.target.kind')='cognition'")
             .bind(namespace.as_str()).bind(subject.as_str()).bind(space_id).fetch_all(&mut *conn).await.map_err(storage_error)?.into_iter().map(super::records::row).collect::<Result<Vec<_>>>()?;
     let mut by_key = records
         .into_iter()
-        .map(|record| Ok((record.source_key()?, record)))
+        .map(|record| Ok(((record.source_key()?, record.source_hash.clone()), record)))
         .collect::<Result<BTreeMap<_, _>>>()?;
     let mut structured = Vec::with_capacity(rows.len().min(remaining));
     let mut tag_keys = BTreeSet::new();
@@ -179,9 +175,18 @@ async fn snapshot_in(
         )
         .await?;
         let base_memory = super::source::base_memory(conn, &object).await?;
+        let embedding = if matches!(object.body, CognitiveContent::MemorySemantics(_))
+            && base_memory.is_none()
+        {
+            None
+        } else {
+            let hash =
+                EmbeddingInputItem::for_cognition(&object, base_memory.as_ref())?.source_hash();
+            by_key.remove(&(cognitive_embedding_key(&reference)?, hash))
+        };
         let root_materials = root_materials(conn, namespace, &source, &mut tag_keys).await?;
         structured.push(StructuredRetrievalEntry {
-            embedding: by_key.remove(&cognitive_embedding_key(&reference)?),
+            embedding,
             object,
             source,
             base_memory,
@@ -193,7 +198,7 @@ async fn snapshot_in(
         .into_iter()
         .map(|record| Ok((record.source_key()?, record)))
         .collect::<Result<BTreeMap<_, _>>>()?;
-    let rows=sqlx::query("SELECT * FROM embedding_records WHERE namespace_id=? AND subject_id=? AND space_id=? AND target_kind='tag' AND source_hash IN (SELECT value FROM json_each(?)) ORDER BY source_hash")
+    let rows=sqlx::query("SELECT * FROM embedding_records WHERE namespace_id=? AND subject_id=? AND space_id=? AND json_extract(target,'$.kind')='tag' AND source_hash IN (SELECT value FROM json_each(?)) ORDER BY source_hash")
             .bind(namespace.as_str()).bind(subject.as_str()).bind(space_id).bind(serde_json::to_string(&tag_keys)?).fetch_all(&mut *conn).await.map_err(storage_error)?;
     for row in rows {
         let record = super::records::row(row)?;
@@ -284,21 +289,19 @@ async fn memory_snapshot_in(
         .iter()
         .map(|entry| entry.memory.id.to_string())
         .collect::<Vec<_>>();
-    let records=sqlx::query("SELECT * FROM embedding_records WHERE namespace_id=? AND subject_id=? AND space_id=? AND target_kind='cognition' AND cognition_kind='memory' AND cognition_id IN(SELECT value FROM json_each(?))").bind(namespace.as_str()).bind(subject.as_str()).bind(space_id).bind(serde_json::to_string(&ids)?).fetch_all(&mut *conn).await.map_err(storage_error)?;
+    let records=sqlx::query("SELECT * FROM embedding_records WHERE namespace_id=? AND subject_id=? AND space_id=? AND json_extract(target,'$.target.kind')='cognition' AND json_extract(target,'$.target.reference.kind')='memory' AND json_extract(target,'$.target.reference.id') IN(SELECT value FROM json_each(?))").bind(namespace.as_str()).bind(subject.as_str()).bind(space_id).bind(serde_json::to_string(&ids)?).fetch_all(&mut *conn).await.map_err(storage_error)?;
     let mut by_key = records
         .into_iter()
         .map(super::records::row)
         .collect::<Result<Vec<_>>>()?
         .into_iter()
-        .map(|e| Ok((e.source_key()?, e)))
+        .map(|e| Ok(((e.source_key()?, e.source_hash.clone()), e)))
         .collect::<Result<BTreeMap<_, _>>>()?;
     for entry in &mut entries {
-        entry.embedding = by_key.remove(&cognitive_embedding_key(&CognitiveRef::memory(
-            &entry.memory.id,
-            entry.memory.revision,
-        ))?);
+        let input = EmbeddingInputItem::for_memory(&entry.memory)?;
+        entry.embedding = by_key.remove(&(input.source_key()?, input.source_hash()));
     }
-    let tag_embeddings=sqlx::query("SELECT * FROM embedding_records WHERE namespace_id=? AND subject_id=? AND space_id=? AND target_kind='tag' AND source_hash IN (SELECT value FROM json_each(?)) ORDER BY source_hash")
+    let tag_embeddings=sqlx::query("SELECT * FROM embedding_records WHERE namespace_id=? AND subject_id=? AND space_id=? AND json_extract(target,'$.kind')='tag' AND source_hash IN (SELECT value FROM json_each(?)) ORDER BY source_hash")
             .bind(namespace.as_str()).bind(subject.as_str()).bind(space_id).bind(serde_json::to_string(&tags)?).fetch_all(&mut *conn).await.map_err(storage_error)?
             .into_iter().map(super::records::row).collect::<Result<Vec<_>>>()?;
     Ok(MemorySnapshot {
@@ -314,7 +317,7 @@ async fn root_materials(
     namespace: &NamespaceId,
     source: &SourceClosure,
     tags: &mut BTreeSet<String>,
-) -> Result<Vec<RootMaterial>> {
+) -> Result<Vec<MediaOriginal>> {
     let mut materials = Vec::new();
     for root in &source.roots {
         if root.status == SourceStatus::Missing {
@@ -331,7 +334,7 @@ async fn root_materials(
                 tags.insert(EmbeddingInputItem::tag(label)?.source_hash());
             }
         }
-        materials.push(RootMaterial { material, details });
+        materials.push(MediaOriginal { material, details });
     }
     Ok(materials)
 }

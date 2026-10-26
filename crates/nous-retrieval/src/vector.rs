@@ -23,7 +23,6 @@ const MANIFEST_FILE: &str = "manifest.json";
 #[serde(deny_unknown_fields)]
 pub struct VectorGenerationIdentity {
     pub space: String,
-    pub producer: String,
     pub generation: String,
     pub signature: String,
     pub watermark: i64,

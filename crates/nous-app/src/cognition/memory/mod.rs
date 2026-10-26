@@ -128,9 +128,10 @@ impl App {
         };
         let embedding_provenance = self
             .database
-            .embeddings_for_cognition(
+            .embeddings_for_target(
                 &memory.namespace_id,
-                &CognitiveRef::memory(id, memory.revision),
+                &memory.subject_id,
+                &RetrievalTarget::Cognition(CognitiveRef::memory(id, memory.revision)),
             )
             .await?
             .iter()

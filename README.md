@@ -150,7 +150,7 @@ HTTP 接口与 MCP 工具进入相同应用用例：
 | `models.catalog`                | `providers` 保存 endpoint 和 SecretRef；`models` 保存 provider、协议、实际模型名、模态与能力；`routes` 绑定模型和调用参数。只允许 Instance 覆盖。 |
 | `models.roles.memory_formation` | Memory 形成职责的 routes、Prompt、每日调用预算与重试策略。                                                                                        |
 | `models.roles.<formation_role>` | Concept、MemorySemantics、Episode、Schema、Journal、Association 各自注册形成职责。                                                                |
-| `models.roles.text_embedding`   | 文本向量职责的同类绑定；模型定义还需实际维度和 `expected_provider_model`。                                                                        |
+| `models.roles.embedding`        | 文字、媒体与联合输入共用的向量职责；模型定义包含实际模型、维度、归一化和语义参数。                                                                |
 
 职责绑定可在 Instance、Namespace、Subject 继承或覆盖。以下部署片段将两个形成职责绑定到同一条 route；`request_model` 替换为服务商实际模型名：
 
@@ -186,7 +186,7 @@ Provider、Model 和角色绑定各有 `max_calls_per_day`。Provider/Model 拥�
 
 模型的可选 `pricing` 使用明确的 `currency`，`input_per_million`、`output_per_million` 使用十进制字符串。调用记录分别保存规范 `usage`、冻结单价、估算金额和供应商实报金额；计数、币种或计价缺漏通过 `missing`、`invalid_fields` 表达。材料正文、模型生成和计费各自保留其实际结果。
 
-配置只保存 SecretRef，密钥内容放入实例受保护的 `credentials` 目录。文本向量模型使用 `openai_embeddings`、`embedding` 能力和独立 route；其 `max_batch_size` 按 provider 实际限制设置。Prompt 选择为 `{"kind":"default"}`、`{"kind":"file","file":"prompts/custom.md","locale":"zh-CN"}` 或 `{"kind":"managed","reference":{"scope":{"kind":"instance"},"id":"custom","revision":123}}`。调用记录冻结实际模板、变量来源、消息、参数和 usage。
+配置只保存 SecretRef，密钥内容放入实例受保护的 `credentials` 目录。向量模型使用 `embedding` 能力与独立 route。`openai_embeddings` 接受文本批次；`ark_multimodal_embeddings` 接受一项由文本、图像等部分组成的联合输入，每次返回一个向量，因此 route 的 `max_batch_size` 设为 1。Prompt 选择为 `{"kind":"default"}`、`{"kind":"file","file":"prompts/custom.md","locale":"zh-CN"}` 或 `{"kind":"managed","reference":{"scope":{"kind":"instance"},"id":"custom","revision":123}}`。调用记录冻结实际模板、变量来源、消息、参数和 usage。
 
 先查看职责输入合同及当前 Prompt，再用领域 typed input 文件构建动态输出 Schema：
 
@@ -213,10 +213,10 @@ $formation = & $nous --instance $instance memory form --subject $subject --obser
 & $nous --instance $instance job get $formation.job_ids[0]
 ```
 
-文本向量职责通过 `models.roles.text_embedding` 绑定资源图中的 route。配置就绪后，可显式补齐主体认知和来源标签的向量，再查询：
+文本向量职责通过 `models.roles.embedding` 绑定资源图中的 route。配置就绪后，可显式补齐主体认知和来源标签的向量，再查询：
 
 ```powershell
-$embedding = & $nous --instance $instance memory embed --subject $subject --operation-id first-embedding | ConvertFrom-Json
+$embedding = & $nous --instance $instance embedding sync --subject $subject --operation-id first-embedding | ConvertFrom-Json
 $embedding.result.jobs | ForEach-Object { & $nous --instance $instance job get $_ }
 & $nous --instance $instance query --subject $subject --mode dense '秋天有哪些植物变化？'
 & $nous --instance $instance query --subject $subject --mode vcp '秋天有哪些植物变化？'
@@ -254,7 +254,7 @@ $backup = & $nous --instance $instance backup create | ConvertFrom-Json
 
 形成请求的 `input` 包含 `subject_id`、精确 `sources` 和 `targets[{key,kind,existing}]`。服务读取已授权来源并分配稳定目标 ID，模型只从来源键与目标槽位选择。Concept、MemorySemantics、Episode、Schema、Journal、Association 分别通过 `concept_formation`、`memory_semantics`、`episode_formation`、`schema_formation`、`journal_formation`、`association_formation` 职责选择 route，按顺序创建有依赖的任务；后续任务读取前序已采纳对象。输入输出预算取 route 参数，重试取职责绑定。形成复用共享 ModelCall 与持久队列；每个提案组独立事务采纳，返回 applied/conflict/rejected/skipped，缺配置等待、重启续接、来源清除退役均保存状态。
 
-形成作业的 `succeeded` 表示全部组已处理，具体成果和冲突读取 `formation_run` 的 `groups`。`source` 返回对象精确修订、证据闭包、原材料和实际模型调用。CLI 交互优化、原生多模态向量、managed context/steward 与完整 A-Memorix 合同继续按 [能力续接清单](docs/能力续接清单.md) 推进。
+形成作业的 `succeeded` 表示全部组已处理，具体成果和冲突读取 `formation_run` 的 `groups`。`source` 返回对象精确修订、证据闭包、原材料和实际模型调用。CLI 交互优化、managed context/steward 与完整 A-Memorix 合同继续按 [能力续接清单](docs/能力续接清单.md) 推进。
 
 ## 媒体与精确来源
 
@@ -282,6 +282,48 @@ $reference = @{ kind = 'representation'; reference = $run.result } | ConvertTo-J
 `media region` 管理原件和派生区域，`media representation/history` 读取精确修订及历史；`media source` 返回所选内容与实际通道。HTTP `POST /api/media` 与 MCP `media` 接收同一操作合同。每个 paid step 使用共享调用账本；第二段可以复用已持久的第一段描述。Memory、结构化认知和查询展开完整来源图，备份包含全部保留修订引用的派生文件。
 
 提供模型密钥时可使用 `secret import --file <已有密钥文件> --reference credentials/new-api.token`，返回可用于模型配置的 SecretRef。文件发布与权限由密钥服务管理。
+
+## 原生多模态检索
+
+检索目标统一为认知对象与精确媒体引用。`query --domain cognition`、`--domain media` 限定范围，省略时查询两类。`--reference` 接受认知引用及 `material:UUID`、`source-region:UUID`、`representation:UUID@revision`、`derived-region:UUID`。文字、原图和区域可组成同一查询输入：
+
+```powershell
+& $nous --instance $instance embedding sync --subject $subject
+& $nous --instance $instance query --subject $subject --domain media --media "source-region:$region" '请求趋势折线图'
+& $nous --instance $instance query --subject $subject --mode hybrid 'MaiBot WebUI 主题'
+```
+
+CLI 的文字查询默认使用 Lexical，提供 `--media` 时默认使用 Dense，可显式选择 Dense/VCP/Hybrid。HTTP 和 MCP 使用 `input: {text, media}`；`media` 是精确 MediaReference 数组。区域经共用材料服务实际裁切、持久化后送模型；调用记录保留裁切文件引用与完整派生关系。
+
+Ark 原生向量资源的部署配置示例：
+
+```toml
+[models.catalog.models.vision_embedding]
+provider = "gateway"
+protocol = "ark_multimodal_embeddings"
+request_model = "doubao-embedding-vision"
+input_modalities = ["text", "image"]
+capabilities = ["embedding"]
+
+[models.catalog.models.vision_embedding.embedding]
+expected_provider_model = "doubao-embedding-vision-251215"
+dimension = 2048
+normalization = "none"
+parameters = {}
+
+[models.catalog.routes.vision_embedding]
+model = "vision_embedding"
+
+[models.catalog.routes.vision_embedding.parameters]
+max_batch_size = 1
+
+[models.roles.embedding]
+routes = ["vision_embedding"]
+```
+
+Provider 的 endpoint 为支持原生协议的基础地址，适配器追加 `/embeddings/multimodal`。`embedding.parameters` 保存 `instructions` 等实际语义参数；输出模型、维度、归一化与这些参数共同定义 Space，真实调用路线单独记录为 Producer。`normalization = "l2"` 会在公共模型输出层实际执行归一化。相同主体和空间中的相同内容可复用已采纳向量及原 ModelCall。
+
+`retrieval` 配置管理输入、结果、快照、候选集、缓存、等待和融合参数，支持 Instance/Namespace/Subject 继承。本次查询先固定授权候选；材料准备和向量生成在读事务外执行，之后仅刷新该集合的向量。不可处理的投影通过 `coverage.projection_issues` 返回。向量代际、精确来源和实际用量随调用与备份持久保存。
 
 ## 开发工具
 

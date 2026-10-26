@@ -6,14 +6,9 @@ pub(super) fn snapshot_metadata(snapshot: &VectorSnapshot) -> Result<FrozenMetad
     ensure!(
         identity.dimension > 0
             && identity.watermark >= 0
-            && [
-                &identity.space,
-                &identity.producer,
-                &identity.generation,
-                &identity.signature
-            ]
-            .iter()
-            .all(|value| !value.trim().is_empty()),
+            && [&identity.space, &identity.generation, &identity.signature]
+                .iter()
+                .all(|value| !value.trim().is_empty()),
         "VECTOR_IDENTITY_INVALID: dimension, nonnegative watermark and all signatures required"
     );
     let candidates = record_metadata(&snapshot.candidates, identity.dimension)?;

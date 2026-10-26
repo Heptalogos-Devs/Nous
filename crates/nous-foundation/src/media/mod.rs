@@ -2,7 +2,9 @@
 mod capture;
 mod crop;
 mod document;
+mod plan;
 mod policy;
+pub use plan::PreparationPlan;
 mod prepare;
 mod probe;
 mod readiness;

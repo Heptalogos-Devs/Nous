@@ -26,9 +26,7 @@ impl RetrievalIndex {
                 "scoped projection contains a duplicate or foreign identity"
             );
             ensure!(
-                document.revision > 0
-                    && document.commit_seq > 0
-                    && document.commit_seq <= watermark,
+                document.commit_seq > 0 && document.commit_seq <= watermark,
                 "scoped projection exceeds its authority view"
             );
         }
@@ -79,7 +77,6 @@ impl RetrievalIndex {
                 row.add_text(self.inner.fields.id, &document.id);
                 row.add_text(self.inner.fields.namespace, namespace);
                 row.add_text(self.inner.fields.subject, subject);
-                row.add_i64(self.inner.fields.revision, document.revision);
                 row.add_text(self.inner.fields.body, &document.text);
                 writer.add_document(row)?;
             }

@@ -40,7 +40,6 @@ pub struct ServingTag {
 #[serde(deny_unknown_fields)]
 pub struct ServingCandidate {
     pub id: String,
-    pub revision: i64,
     pub commit_seq: i64,
     pub vector: Vec<f32>,
     pub source_refs: Vec<String>,
@@ -103,13 +102,11 @@ impl Default for VcpConfig {
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ServingSourceMapping {
-    pub revision: i64,
     pub source_refs: Vec<String>,
 }
 #[derive(Debug, Serialize)]
 pub struct ServingHit {
     pub id: String,
-    pub revision: i64,
     pub commit_seq: i64,
     pub score: f64,
     pub trace: Option<Value>,
@@ -125,7 +122,6 @@ pub struct ServingResult {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 struct CandidateMapping {
     id: String,
-    revision: i64,
     commit_seq: i64,
     file_id: i64,
     source_refs: Vec<String>,

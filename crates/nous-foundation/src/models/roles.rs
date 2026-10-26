@@ -91,9 +91,9 @@ impl ModelRequirements {
             ],
         }
     }
-    pub fn text_embedding() -> Self {
+    pub fn embedding() -> Self {
         Self {
-            input_modalities: vec![ModelModality::Text],
+            input_modalities: Vec::new(),
             capabilities: vec![ModelCapability::Embedding],
         }
     }

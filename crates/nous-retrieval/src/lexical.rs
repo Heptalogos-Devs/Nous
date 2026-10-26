@@ -27,7 +27,6 @@ pub struct IndexDocument {
     pub id: String,
     pub namespace_id: String,
     pub subject_id: String,
-    pub revision: i64,
     pub commit_seq: i64,
     pub text: String,
     pub deleted: bool,
@@ -43,7 +42,6 @@ pub struct IndexCoverage {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchHit {
     pub id: String,
-    pub revision: i64,
     pub score: f32,
 }
 
@@ -69,7 +67,6 @@ struct Fields {
     id: Field,
     namespace: Field,
     subject: Field,
-    revision: Field,
     body: Field,
 }
 struct Inner {
@@ -101,7 +98,6 @@ impl RetrievalIndex {
             id: schema.get_field("id")?,
             namespace: schema.get_field("namespace")?,
             subject: schema.get_field("subject")?,
-            revision: schema.get_field("revision")?,
             body: schema.get_field("body")?,
         };
         let reader = index
@@ -200,10 +196,8 @@ impl RetrievalIndex {
                 "index document requires stable identity and scope"
             );
             ensure!(
-                document.revision > 0
-                    && document.commit_seq > 0
-                    && document.commit_seq <= through_commit_seq,
-                "index document has an invalid revision or commit sequence"
+                document.commit_seq > 0 && document.commit_seq <= through_commit_seq,
+                "index document has an invalid commit sequence"
             );
         }
         let mut writer_guard = self
@@ -241,7 +235,6 @@ impl RetrievalIndex {
                     indexed.add_text(self.inner.fields.id, &document.id);
                     indexed.add_text(self.inner.fields.namespace, &document.namespace_id);
                     indexed.add_text(self.inner.fields.subject, &document.subject_id);
-                    indexed.add_i64(self.inner.fields.revision, document.revision);
                     indexed.add_text(self.inner.fields.body, &document.text);
                     writer.add_document(indexed)?;
                 }
@@ -380,15 +373,7 @@ impl RetrievalIndex {
                     .and_then(|v| v.as_str())
                     .context("lexical document has no identity")?
                     .to_owned();
-                let revision = document
-                    .get_first(self.inner.fields.revision)
-                    .and_then(|v| v.as_i64())
-                    .context("lexical document has no revision")?;
-                Ok(SearchHit {
-                    id,
-                    revision,
-                    score,
-                })
+                Ok(SearchHit { id, score })
             })
             .collect::<Result<Vec<_>>>()?;
         Ok(SearchPage { hits, coverage })
@@ -432,7 +417,6 @@ fn schema() -> Schema {
     builder.add_text_field("id", STRING | STORED);
     builder.add_text_field("namespace", STRING);
     builder.add_text_field("subject", STRING);
-    builder.add_i64_field("revision", STORED);
     builder.add_text_field(
         "body",
         TextOptions::default().set_indexing_options(

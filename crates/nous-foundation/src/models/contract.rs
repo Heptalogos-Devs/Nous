@@ -16,7 +16,7 @@ pub enum InvocationDraft {
         output: OutputContract,
     },
     Embedding {
-        texts: Vec<String>,
+        inputs: Vec<Vec<nous_domain::EmbeddingPart>>,
     },
 }
 impl InvocationDraft {
@@ -31,8 +31,8 @@ impl InvocationDraft {
             output,
         }
     }
-    pub fn embedding(texts: Vec<String>) -> Self {
-        Self::Embedding { texts }
+    pub fn embedding(inputs: Vec<Vec<nous_domain::EmbeddingPart>>) -> Self {
+        Self::Embedding { inputs }
     }
     pub(super) fn input(self) -> (PromptArguments, ModelInput) {
         match self {
@@ -41,7 +41,9 @@ impl InvocationDraft {
                 messages,
                 output,
             } => (arguments, ModelInput::Chat { messages, output }),
-            Self::Embedding { texts } => (PromptArguments::new(), ModelInput::Embedding { texts }),
+            Self::Embedding { inputs } => {
+                (PromptArguments::new(), ModelInput::Embedding { inputs })
+            }
         }
     }
 }

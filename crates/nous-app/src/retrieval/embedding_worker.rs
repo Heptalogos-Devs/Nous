@@ -47,16 +47,32 @@ impl App {
                     let plan = &plan;
                     let run = &run;
                     async move {
-                        let prepared =
-                            super::embedding_model::prepare(plan, attempt, run.inputs.clone())
-                                .await?;
-                        if prepared.metadata.input.space.id != run.space_id
-                            || prepared.metadata.input.space.producer_signature
-                                != run.producer_signature
+                        if plan
+                            .resolve(&attempt)
+                            .await?
+                            .space()
+                            .map_err(ModelFailure::domain)?
+                            .id
+                            != run.space_id
                         {
                             return Err(ModelFailure::domain(Error::new(
                                 ErrorCode::Conflict,
-                                "configured embedding producer differs from this accepted task",
+                                "configured embedding space differs from this accepted task",
+                            )));
+                        }
+                        let prepared =
+                            super::embedding_model::prepare(plan, attempt, run.inputs.clone())
+                                .await?;
+                        if prepared
+                            .metadata
+                            .embedding_space
+                            .as_ref()
+                            .map(|space| space.id.as_str())
+                            != Some(run.space_id.as_str())
+                        {
+                            return Err(ModelFailure::domain(Error::new(
+                                ErrorCode::Conflict,
+                                "actual embedding space differs from this accepted task",
                             )));
                         }
                         Ok(prepared)
@@ -103,6 +119,27 @@ impl App {
                 "embedding call is unavailable for this task step",
             ));
         }
+        let metadata: nous_foundation::models::InvocationMetadata<
+            super::embedding_model::EmbeddingInput,
+        > = serde_json::from_value(saved.request.clone())?;
+        let space = metadata
+            .embedding_space
+            .as_ref()
+            .ok_or_else(|| Error::invalid("embedding call has no actual space"))?;
+        let producer = metadata
+            .embedding_producer
+            .as_ref()
+            .ok_or_else(|| Error::invalid("embedding call has no actual producer"))?;
+        if space.id != run.space_id
+            || producer.space_id != run.space_id
+            || producer.resource_id != saved.resource_id
+            || metadata.input.inputs != run.inputs
+        {
+            return Err(Error::new(
+                ErrorCode::Conflict,
+                "actual embedding request differs from its accepted input or space",
+            ));
+        }
         let vectors: Vec<Vec<f32>> = serde_json::from_value(
             saved
                 .response
@@ -145,8 +182,8 @@ impl App {
                 model_call_id: saved.id.clone(),
                 commit_seq: tx.commit_seq(),
             };
-            tx.save_embedding_record(&record).await?;
-            if let Some(reference) = input.target.reference() {
+            tx.save_embedding_record(&record, input).await?;
+            if let Some(reference) = input.target.item().and_then(RetrievalTarget::cognition) {
                 match tx
                     .current_embedding_input(&namespace, &subject, reference)
                     .await
@@ -155,8 +192,8 @@ impl App {
                         if current.target != input.target
                             && current.source_hash() == input.source_hash() =>
                     {
-                        record.target = current.target;
-                        tx.save_embedding_record(&record).await?;
+                        record.target = current.target.clone();
+                        tx.save_embedding_record(&record, &current).await?;
                         promoted += 1;
                     }
                     Ok(_)

@@ -18,9 +18,7 @@ pub(super) fn prepare(snapshot: &ServingSnapshot) -> Result<Prepared> {
     ensure!(
         snapshot.identity.dimension > 0
             && snapshot.identity.watermark >= 0
-            && [&snapshot.identity.space, &snapshot.identity.producer,]
-                .iter()
-                .all(|s| !s.trim().is_empty()),
+            && !snapshot.identity.space.trim().is_empty(),
         "SERVING_IDENTITY_INVALID"
     );
     let mut tag_definitions = BTreeMap::<String, ServingTag>::new();
@@ -30,11 +28,10 @@ pub(super) fn prepare(snapshot: &ServingSnapshot) -> Result<Prepared> {
         ensure!(
             !candidate.id.trim().is_empty()
                 && seen.insert(candidate.id.clone())
-                && candidate.revision > 0
                 && candidate.commit_seq >= 0
                 && candidate.commit_seq <= snapshot.identity.watermark
                 && !candidate.source_refs.is_empty(),
-            "SERVING_CANDIDATE_INVALID: identity, revision, source root or watermark"
+            "SERVING_CANDIDATE_INVALID: identity, source root or watermark"
         );
         validate_vector(&candidate.vector, snapshot.identity.dimension)?;
         candidate.source_refs.sort();
@@ -85,7 +82,7 @@ pub(super) fn prepare(snapshot: &ServingSnapshot) -> Result<Prepared> {
         }
     }
     let digest = hash(&serde_json::to_vec(
-        &json!({"vector_policy":VECTOR_POLICY,"space":snapshot.identity.space,"producer":snapshot.identity.producer,"watermark":snapshot.identity.watermark,"dimension":snapshot.identity.dimension,"candidates":snapshot.candidates,"geometry_config":snapshot.geometry_config,"artifact_config":snapshot.artifact_config}),
+        &json!({"vector_policy":VECTOR_POLICY,"space":snapshot.identity.space,"watermark":snapshot.identity.watermark,"dimension":snapshot.identity.dimension,"candidates":snapshot.candidates,"geometry_config":snapshot.geometry_config,"artifact_config":snapshot.artifact_config}),
     )?);
     let mut identity = snapshot.identity.clone();
     identity.generation = format!("g-{}", &digest[..24]);
@@ -134,7 +131,6 @@ pub(super) fn prepare(snapshot: &ServingSnapshot) -> Result<Prepared> {
                 i64::try_from(i + 1)?,
                 CandidateMapping {
                     id: candidate.id.clone(),
-                    revision: candidate.revision,
                     commit_seq: candidate.commit_seq,
                     file_id,
                     source_refs: candidate.source_refs.clone(),
@@ -150,7 +146,7 @@ pub(super) fn prepare(snapshot: &ServingSnapshot) -> Result<Prepared> {
             .zip(candidates.keys())
             .map(|(candidate, id)| VectorRecord {
                 id: *id,
-                source_key: format!("candidate:{}@{}", candidate.id, candidate.revision),
+                source_key: candidate.id.clone(),
                 vector: candidate.vector.clone(),
             })
             .collect(),

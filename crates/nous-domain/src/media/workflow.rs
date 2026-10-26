@@ -42,6 +42,7 @@ pub struct MediaPreparedInput {
     pub source: MediaReference,
     pub role: DerivationInputRole,
     pub at_ms: Option<u64>,
+    pub text_source: Option<RepresentationRef>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -49,6 +50,32 @@ pub struct MediaPreparedGraph {
     pub inputs: Vec<MediaPreparedInput>,
     pub quality: DerivationQuality,
     pub preprocessing_digest: String,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MediaPreparationRecord {
+    pub namespace_id: NamespaceId,
+    pub subject_id: SubjectId,
+    pub source: MediaReference,
+    pub plan_digest: String,
+    pub graph: MediaPreparedGraph,
+    pub recorded_at: String,
+    pub commit_seq: i64,
+}
+impl MediaPreparationRecord {
+    pub fn validate(&self, duration_ms: Option<u64>) -> Result<()> {
+        validate_uuid(self.namespace_id.as_str())?;
+        self.subject_id.validate()?;
+        self.source.validate()?;
+        valid_digest(&self.plan_digest)?;
+        self.graph.validate(duration_ms)?;
+        bounded_text(&self.recorded_at, 128, "recorded_at", true)?;
+        if self.commit_seq < 1 {
+            return Err(Error::invalid(
+                "media preparation requires a committed authority sequence",
+            ));
+        }
+        Ok(())
+    }
 }
 impl MediaPreparedGraph {
     pub fn validate(&self, duration_ms: Option<u64>) -> Result<()> {
@@ -60,6 +87,12 @@ impl MediaPreparedGraph {
         let mut seen = BTreeSet::new();
         for input in &self.inputs {
             input.source.validate()?;
+            if let Some(reference) = &input.text_source {
+                MediaReference::Representation {
+                    reference: reference.clone(),
+                }
+                .validate()?;
+            }
             if !seen.insert(&input.source)
                 || !matches!(
                     input.role,

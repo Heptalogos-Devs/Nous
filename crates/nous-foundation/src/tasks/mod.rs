@@ -2,6 +2,7 @@
 mod config;
 mod registry;
 mod runtime;
+mod wait;
 use crate::clock::Clock;
 pub use config::{TASK_RUNTIME, TaskRuntimeConfig, register_configuration};
 use nous_domain::*;
@@ -21,6 +22,7 @@ pub struct Tasks {
     config: TaskRuntimeConfig,
     running: Arc<Mutex<HashMap<String, CancellationToken>>>,
     wake: Arc<tokio::sync::Notify>,
+    changed: Arc<tokio::sync::Notify>,
 }
 impl Tasks {
     pub fn new(database: Database, clock: Clock, config: TaskRuntimeConfig) -> Result<Self> {
@@ -31,6 +33,7 @@ impl Tasks {
             config,
             running: Arc::default(),
             wake: Arc::default(),
+            changed: Arc::default(),
         })
     }
     pub fn new_job(
@@ -59,10 +62,13 @@ impl Tasks {
     }
     pub fn notify_wake(&self) {
         self.wake.notify_one();
+        self.changed.notify_waiters();
     }
     pub async fn submit_in(&self, tx: &mut WriteTransaction, job: &JobRecord) -> Result<()> {
         tx.insert_job_record(job, self.config.max_queue_attempts)
-            .await
+            .await?;
+        self.observe_transaction(tx);
+        Ok(())
     }
     pub async fn submit_after_in(
         &self,
@@ -79,8 +85,7 @@ impl Tasks {
                 details: json!({}),
             });
         }
-        tx.insert_job_record(job, self.config.max_queue_attempts)
-            .await
+        self.submit_in(tx, job).await
     }
     pub async fn dependencies(&self, job: &JobRecord) -> Result<Vec<JobRecord>> {
         let mut dependencies = Vec::with_capacity(job.dependencies.len());
@@ -108,6 +113,7 @@ impl Tasks {
         job.updated_at = tx.time().recorded();
         tx.update_job_record(job, self.config.max_queue_attempts)
             .await?;
+        self.observe_transaction(tx);
         tracing::debug!(trace_id=%job.trace_id,job_id=%job.id,job_kind=%job.kind,state=?job.state,"task transition staged");
         Ok(())
     }

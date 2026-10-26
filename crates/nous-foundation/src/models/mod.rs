@@ -10,6 +10,10 @@ mod execution;
 mod input;
 mod media_input;
 pub use media_input::{MediaReadFuture, ModelMediaReader};
+mod ark_embedding;
+mod embedding;
+mod embedding_http;
+mod embedding_request;
 mod openai_embedding;
 mod preview;
 mod request;
@@ -304,6 +308,18 @@ impl ModelRuntime {
             input,
             preview: built.preview,
             actual_access: access,
+            embedding_space: route
+                .embedding
+                .as_ref()
+                .map(|_| route.space())
+                .transpose()
+                .map_err(ModelFailure::domain)?,
+            embedding_producer: route
+                .embedding
+                .as_ref()
+                .map(|_| route.producer())
+                .transpose()
+                .map_err(ModelFailure::domain)?,
             plan: model.clone(),
         };
         Ok(PreparedCall {

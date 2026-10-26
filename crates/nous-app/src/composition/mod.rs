@@ -28,6 +28,7 @@ pub fn configuration_registry(
     nous_foundation::tasks::register_configuration(&mut registry)?;
     nous_foundation::platform::register_configuration(&mut registry)?;
     nous_foundation::media::register_configuration(&mut registry)?;
+    crate::retrieval::config::register_configuration(&mut registry)?;
     nous_foundation::models::register_configuration(&mut registry, roles)?;
     Ok(registry.finish())
 }
@@ -77,7 +78,7 @@ impl App {
         let model = self.model.clone();
         let calls = self.calls.clone();
         registry.register(
-            "embedding.text",
+            "embedding",
             move |job, cancel| {
                 let owner = embedding.clone();
                 async move { owner.run_embedding_job(job, cancel).await }

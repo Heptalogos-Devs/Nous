@@ -11,6 +11,8 @@ mod interpretation;
 pub use interpretation::*;
 mod lineage;
 pub use lineage::*;
+mod text;
+pub use text::representation_text;
 
 mod regions;
 pub use regions::*;

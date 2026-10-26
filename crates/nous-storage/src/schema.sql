@@ -275,12 +275,10 @@ CREATE INDEX IF NOT EXISTS model_budget_daily ON model_budget_charges(bucket,day
 
 CREATE TABLE IF NOT EXISTS embedding_spaces (
     id TEXT PRIMARY KEY NOT NULL,
-    resource_id TEXT NOT NULL,
     provider_model TEXT NOT NULL,
     dimension INTEGER NOT NULL CHECK (dimension > 0),
-    producer_signature TEXT NOT NULL,
-    modality TEXT NOT NULL CHECK (modality='text'),
-    UNIQUE(id, producer_signature),
+    normalization TEXT NOT NULL CHECK(normalization IN('none','l2')),
+    parameters TEXT NOT NULL CHECK(json_valid(parameters) AND json_type(parameters)='object'),
     UNIQUE(id, dimension)
 );
 
@@ -398,40 +396,44 @@ CREATE TABLE IF NOT EXISTS structured_formation_runs (
 );
 CREATE TABLE IF NOT EXISTS embedding_runs (
  job_id TEXT PRIMARY KEY NOT NULL REFERENCES task_records(job_id),
- producer_signature TEXT NOT NULL,space_id TEXT NOT NULL,
- FOREIGN KEY(space_id,producer_signature) REFERENCES embedding_spaces(id,producer_signature)
+ space_id TEXT NOT NULL REFERENCES embedding_spaces(id)
 );
 CREATE TABLE IF NOT EXISTS embedding_inputs (
  job_id TEXT NOT NULL REFERENCES embedding_runs(job_id),ordinal INTEGER NOT NULL CHECK(ordinal>=0),
- target_kind TEXT NOT NULL CHECK(target_kind IN('cognition','tag','query')),
- cognition_kind TEXT,cognition_id TEXT,cognition_revision INTEGER,text TEXT NOT NULL,
+ target TEXT NOT NULL CHECK(json_valid(target)),source_key TEXT NOT NULL,identity_key TEXT NOT NULL,
+ source_hash TEXT NOT NULL,parts TEXT NOT NULL CHECK(json_valid(parts) AND json_type(parts)='array'),
  PRIMARY KEY(job_id,ordinal),
- CHECK((target_kind='cognition' AND cognition_kind IS NOT NULL AND cognition_id IS NOT NULL AND cognition_revision IS NOT NULL AND cognition_revision>0)
- OR(target_kind IN('tag','query') AND cognition_kind IS NULL AND cognition_id IS NULL AND cognition_revision IS NULL))
+ UNIQUE(job_id,source_key,source_hash)
 );
-CREATE UNIQUE INDEX IF NOT EXISTS input_cognition ON embedding_inputs(job_id,cognition_kind,cognition_id,cognition_revision) WHERE target_kind='cognition';
-CREATE UNIQUE INDEX IF NOT EXISTS input_text ON embedding_inputs(job_id,target_kind,text) WHERE target_kind IN('tag','query');
+CREATE INDEX IF NOT EXISTS input_identity ON embedding_inputs(identity_key,job_id);
 CREATE TABLE IF NOT EXISTS embedding_records (
  namespace_id TEXT NOT NULL,subject_id TEXT NOT NULL,space_id TEXT NOT NULL,
- target_kind TEXT NOT NULL CHECK(target_kind IN('cognition','tag','query')),
- cognition_kind TEXT,cognition_id TEXT,cognition_revision INTEGER,source_hash TEXT NOT NULL,
+ target TEXT NOT NULL CHECK(json_valid(target)),source_key TEXT NOT NULL,identity_key TEXT NOT NULL,source_hash TEXT NOT NULL,
  dimension INTEGER NOT NULL CHECK(dimension>0),vector BLOB NOT NULL CHECK(length(vector)=dimension*4),
  model_call_id TEXT NOT NULL,commit_seq INTEGER NOT NULL CHECK(commit_seq>0),
- CHECK((target_kind='cognition' AND cognition_kind IS NOT NULL AND cognition_id IS NOT NULL AND cognition_revision IS NOT NULL AND cognition_revision>0)
- OR(target_kind IN('tag','query') AND cognition_kind IS NULL AND cognition_id IS NULL AND cognition_revision IS NULL)),
+ PRIMARY KEY(namespace_id,subject_id,space_id,source_key,source_hash),
  FOREIGN KEY(namespace_id,subject_id) REFERENCES subjects(namespace_id,id),
  FOREIGN KEY(space_id,dimension) REFERENCES embedding_spaces(id,dimension),
  FOREIGN KEY(namespace_id,subject_id,model_call_id) REFERENCES model_calls(namespace_id,subject_id,id)
 );
-CREATE UNIQUE INDEX IF NOT EXISTS record_cognition ON embedding_records(namespace_id,subject_id,space_id,cognition_kind,cognition_id,cognition_revision) WHERE target_kind='cognition';
-CREATE UNIQUE INDEX IF NOT EXISTS record_text ON embedding_records(namespace_id,subject_id,space_id,target_kind,source_hash) WHERE target_kind IN('tag','query');
-CREATE INDEX IF NOT EXISTS record_cognition_history ON embedding_records(namespace_id,subject_id,cognition_id,space_id,cognition_revision);
+CREATE INDEX IF NOT EXISTS record_identity_history ON embedding_records(namespace_id,subject_id,identity_key,space_id,commit_seq);
+CREATE INDEX IF NOT EXISTS record_content ON embedding_records(namespace_id,subject_id,space_id,source_hash,commit_seq);
 INSERT OR IGNORE INTO authority_state VALUES(1,0);
 
-CREATE TRIGGER IF NOT EXISTS embedding_record_reference BEFORE INSERT ON embedding_records WHEN NEW.target_kind='cognition' BEGIN
+CREATE TABLE IF NOT EXISTS media_preparations (
+ namespace_id TEXT NOT NULL,subject_id TEXT NOT NULL,
+ source TEXT NOT NULL CHECK(json_valid(source) AND json_type(source)='object'),
+ plan_digest TEXT NOT NULL CHECK(length(plan_digest)=64 AND plan_digest NOT GLOB '*[^0-9a-f]*'),
+ graph TEXT NOT NULL CHECK(json_valid(graph) AND json_type(graph)='object'),
+ recorded_at TEXT NOT NULL,commit_seq INTEGER NOT NULL CHECK(commit_seq>0),
+ PRIMARY KEY(namespace_id,subject_id,source,plan_digest),
+ FOREIGN KEY(namespace_id,subject_id) REFERENCES subjects(namespace_id,id)
+);
+
+CREATE TRIGGER IF NOT EXISTS embedding_record_reference BEFORE INSERT ON embedding_records WHEN json_extract(NEW.target,'$.kind')='item' AND json_extract(NEW.target,'$.target.kind')='cognition' BEGIN
  SELECT RAISE(ABORT,'embedding reference is outside scope') WHERE
- (NEW.cognition_kind='memory' AND NOT EXISTS(SELECT 1 FROM memory_revisions WHERE namespace_id=NEW.namespace_id AND subject_id=NEW.subject_id AND memory_id=NEW.cognition_id AND revision=NEW.cognition_revision)) OR
- (NEW.cognition_kind<>'memory' AND NOT EXISTS(SELECT 1 FROM structured_revisions WHERE namespace_id=NEW.namespace_id AND subject_id=NEW.subject_id AND kind=NEW.cognition_kind AND object_id=NEW.cognition_id AND revision=NEW.cognition_revision));
+ (json_extract(NEW.target,'$.target.reference.kind')='memory' AND NOT EXISTS(SELECT 1 FROM memory_revisions WHERE namespace_id=NEW.namespace_id AND subject_id=NEW.subject_id AND memory_id=json_extract(NEW.target,'$.target.reference.id') AND revision=json_extract(NEW.target,'$.target.reference.revision'))) OR
+ (json_extract(NEW.target,'$.target.reference.kind')<>'memory' AND NOT EXISTS(SELECT 1 FROM structured_revisions WHERE namespace_id=NEW.namespace_id AND subject_id=NEW.subject_id AND kind=json_extract(NEW.target,'$.target.reference.kind') AND object_id=json_extract(NEW.target,'$.target.reference.id') AND revision=json_extract(NEW.target,'$.target.reference.revision')));
 END;
 
 CREATE TABLE IF NOT EXISTS source_regions (

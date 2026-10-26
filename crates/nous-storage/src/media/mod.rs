@@ -1,5 +1,6 @@
 //! Exact media locators and immutable derivation graphs inside Authority snapshots.
 mod graph;
+mod preparation;
 mod read;
 mod references;
 mod workflow;
@@ -15,6 +16,16 @@ pub(crate) async fn roots_in(
     reference: &MediaReference,
 ) -> Result<BTreeSet<MaterialId>> {
     graph::roots(connection, namespace, subject, reference).await
+}
+
+pub(crate) async fn lineage_in(
+    connection: &mut sqlx::SqliteConnection,
+    namespace: &NamespaceId,
+    subject: &SubjectId,
+    reference: &MediaReference,
+    watermark: i64,
+) -> Result<MediaSourceLineage> {
+    graph::lineage(connection, namespace, subject, reference, watermark).await
 }
 
 macro_rules! snapshot_reads {

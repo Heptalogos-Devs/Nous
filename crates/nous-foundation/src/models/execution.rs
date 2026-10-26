@@ -3,7 +3,6 @@ use crate::clock::Clock;
 use genai::{
     Client, ServiceTarget,
     chat::{ChatOptions, ChatRequest},
-    embed::{EmbedOptions, EmbedRequest},
 };
 use nous_domain::ErrorCode;
 use nous_domain::{ModelCost, ModelPriceSnapshot, ModelUsage, UsageKind};
@@ -26,9 +25,8 @@ pub(super) enum PreparedRequest {
         options: Box<ChatOptions>,
     },
     Embedding {
-        request: EmbedRequest,
-        options: Box<EmbedOptions>,
-        contract: super::openai_embedding::ResponseContract,
+        request: super::embedding::PreparedEmbeddingRequest,
+        contract: super::embedding::ResponseContract,
     },
 }
 pub(super) enum ProviderOutput {
@@ -186,19 +184,28 @@ impl CallExecutor {
                 self.chat(prepared.target, request, *options, &mut record)
                     .await
             }
-            PreparedRequest::Embedding {
-                request,
-                options,
-                contract,
-            } => super::openai_embedding::execute(
-                &self.network,
-                prepared.target,
-                request,
-                *options,
-                &mut record,
-                &contract,
-            )
-            .await
+            PreparedRequest::Embedding { request, contract } => match request {
+                super::embedding::PreparedEmbeddingRequest::Openai(request) => {
+                    super::openai_embedding::execute(
+                        &self.network,
+                        prepared.target,
+                        request,
+                        &mut record,
+                        &contract,
+                    )
+                    .await
+                }
+                super::embedding::PreparedEmbeddingRequest::Ark(request) => {
+                    super::ark_embedding::execute(
+                        &self.network,
+                        prepared.target,
+                        request,
+                        &mut record,
+                        &contract,
+                    )
+                    .await
+                }
+            }
             .map(ProviderOutput::Vectors),
         };
         if record.usage.is_none() {

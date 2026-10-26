@@ -140,6 +140,7 @@ impl App {
                 source: MediaReference::Representation { reference },
                 role: DerivationInputRole::Description,
                 at_ms: None,
+                text_source: None,
             });
         }
         let mut catalog = Vec::new();

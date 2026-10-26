@@ -6,6 +6,9 @@ use std::{
 };
 
 impl Platform {
+    pub fn resource_configuration(&self, key: &str) -> Option<ExecutableResource> {
+        self.state.config.executables.get(key).cloned()
+    }
     pub fn executable(&self, key: &str) -> Result<PathBuf> {
         let resource = self.state.config.executables.get(key).ok_or_else(|| {
             Error::new(

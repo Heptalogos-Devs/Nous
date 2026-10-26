@@ -1,27 +1,18 @@
 use anyhow::Result;
 use clap::{Args, Subcommand};
 use nous_domain::{
-    CognitiveKind, CognitiveRef, MemoryId, ModelCallId, ObservationId, QueryMode, QueryRequest,
-    SubjectId, TimeFilter,
+    CognitiveKind, MemoryId, ModelCallId, ObservationId, QueryMode, QueryRequest, SubjectId,
+    TimeFilter,
 };
 
 use crate::{
     cli::op_id,
     http::Operation,
-    http::cognition::{CognitionOperation, DeleteMemory, EmbeddingSync, FormMemory},
+    http::cognition::{CognitionOperation, DeleteMemory, FormMemory},
 };
 
 #[derive(Subcommand)]
 pub enum MemoryCommand {
-    /// Queue missing text embeddings for a Subject's current cognition and tags.
-    Embed {
-        #[arg(long)]
-        subject: SubjectId,
-        #[arg(long, default_value_t = 5000)]
-        limit: usize,
-        #[arg(long)]
-        operation_id: Option<String>,
-    },
     /// Apply a revision-checked lifecycle or content change.
     Change(crate::cli::maintenance::ChangeArgs),
     RecycleBin {
@@ -82,15 +73,6 @@ pub enum MemoryCommand {
 impl MemoryCommand {
     pub fn operation(self) -> Result<Operation> {
         let operation = match self {
-            Self::Embed {
-                subject,
-                limit,
-                operation_id,
-            } => CognitionOperation::EmbeddingSync(EmbeddingSync {
-                subject_id: subject.to_string(),
-                limit,
-                operation_id: op_id(operation_id),
-            }),
             Self::Change(input) => return input.operation(),
             Self::RecycleBin { subject, limit } => {
                 return Ok(crate::cli::maintenance::recycle(subject, limit));
@@ -145,8 +127,9 @@ impl MemoryCommand {
 
 #[derive(Args)]
 pub struct QueryArgs {
-    #[arg(long, value_parser=parse_query_mode, default_value = "lexical")]
-    mode: QueryMode,
+    /// Defaults to lexical for text, dense when media is supplied.
+    #[arg(long, value_parser=parse_query_mode)]
+    mode: Option<QueryMode>,
     #[arg(long)]
     include_inactive: bool,
     /// Natural-language intent. Exact references use kind:UUID@revision.
@@ -155,7 +138,13 @@ pub struct QueryArgs {
     #[arg(long)]
     subject: SubjectId,
     #[arg(long)]
-    reference: Option<CognitiveRef>,
+    reference: Option<nous_domain::RetrievalTarget>,
+    /// Exact media input, e.g. material:UUID or representation:UUID@revision. Repeat for joint input.
+    #[arg(long, value_parser=parse_media_reference)]
+    media: Vec<nous_domain::media::MediaReference>,
+    /// Restrict discovery to cognition or media. Omit to search both.
+    #[arg(long="domain", value_parser=parse_query_domain)]
+    domains: Vec<nous_domain::QueryDomain>,
     #[arg(long)]
     source: Option<String>,
     #[arg(long="kind", value_parser=parse_kind)]
@@ -180,10 +169,18 @@ impl QueryArgs {
             .transpose()?;
         Ok(Operation::Cognition(CognitionOperation::Query(
             QueryRequest {
-                mode: self.mode,
+                mode: self.mode.unwrap_or(if self.media.is_empty() {
+                    QueryMode::Lexical
+                } else {
+                    QueryMode::Dense
+                }),
                 include_inactive: self.include_inactive,
                 subject_id: self.subject,
-                text: self.text,
+                input: nous_domain::QueryInput {
+                    text: self.text,
+                    media: self.media,
+                },
+                domains: self.domains,
                 reference: self.reference,
                 kinds: self.kinds,
                 as_of_commit: self.as_of_commit,
@@ -233,4 +230,13 @@ fn parse_query_mode(value: &str) -> Result<QueryMode, String> {
 }
 fn parse_kind(value: &str) -> Result<CognitiveKind, String> {
     serde_json::from_value(serde_json::json!(value)).map_err(|error| error.to_string())
+}
+fn parse_query_domain(value: &str) -> Result<nous_domain::QueryDomain, String> {
+    serde_json::from_value(serde_json::json!(value)).map_err(|error| error.to_string())
+}
+fn parse_media_reference(value: &str) -> Result<nous_domain::media::MediaReference, String> {
+    match value.parse::<nous_domain::RetrievalTarget>().map_err(|error|error.to_string())? {
+        nous_domain::RetrievalTarget::Media(reference)=>Ok(reference),
+        _=>Err("media input requires a material, source-region, representation or derived-region reference".into()),
+    }
 }

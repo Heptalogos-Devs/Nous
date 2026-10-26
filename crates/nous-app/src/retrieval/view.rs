@@ -1,87 +1,41 @@
-//! One typed projection shared by lexical, vector, graph and exact-reference reads.
-use super::*;
-use nous_storage::{CognitiveRetrievalSnapshot, RootMaterial};
+use super::{config::RetrievalPolicy, *};
+use nous_domain::media::{MediaMetadata, RepresentationPayload};
+use nous_foundation::models::ResolvedModel;
+use nous_storage::CognitiveRetrievalSnapshot;
+use tokio_util::sync::CancellationToken;
+mod entry;
+pub(crate) use entry::Entry;
 
-pub(super) struct Entry {
-    pub object: CognitiveRecord,
-    pub input: Option<EmbeddingInputItem>,
-    pub embedding: Option<EmbeddingRecord>,
-    pub roots: Vec<MaterialId>,
-    pub materials: Vec<RootMaterial>,
-    pub sources_complete: bool,
-}
-impl Entry {
-    pub fn reference(&self) -> CognitiveRef {
-        self.object.reference()
-    }
-    pub fn eligible(&self, request: &QueryRequest) -> bool {
-        let reference = self.reference();
-        (request.kinds.is_empty() || request.kinds.contains(&reference.kind))
-            && request
-                .reference
-                .as_ref()
-                .is_none_or(|requested| requested == &reference)
-            && (request.include_deleted || !self.object.deleted())
-            && (request.include_inactive
-                || request.reference.is_some()
-                || (request.include_deleted && self.object.deleted())
-                || self.object.is_active())
-            && request
-                .time
-                .as_ref()
-                .is_none_or(|filter| filter.matches(self.object.times()))
-            && request.source.as_ref().is_none_or(|source| {
-                self.materials
-                    .iter()
-                    .any(|root| root.material.source.as_ref() == Some(source))
-            })
-    }
-    pub fn can_embed(&self) -> bool {
-        !self.object.deleted() && self.sources_complete && self.input.is_some()
-    }
-    pub fn accepted_embedding(&self) -> Option<&EmbeddingRecord> {
-        self.embedding.as_ref().filter(|record| {
-            self.input.as_ref().is_some_and(|input| {
-                record.target == input.target && record.source_hash == input.source_hash()
-            })
-        })
-    }
-    pub fn tags(&self) -> Result<Vec<(String, EmbeddingInputItem)>> {
-        let mut tags = Vec::new();
-        let mut seen = BTreeSet::new();
-        for root in &self.materials {
-            for label in &root.details.tags {
-                if label.trim().is_empty() {
-                    continue;
-                }
-                let input = EmbeddingInputItem::tag(label)?;
-                let source = format!("material:{}", root.material.id);
-                if seen.insert((source.clone(), input.source_key()?)) {
-                    tags.push((source, input));
-                }
-            }
-        }
-        Ok(tags)
-    }
-}
-
-pub(super) struct QueryView {
+pub(crate) struct QueryView {
     pub watermark: i64,
     pub entries: Vec<Entry>,
     pub tags: BTreeMap<String, EmbeddingRecord>,
+    pub issues: Vec<ProjectionIssue>,
 }
 impl QueryView {
-    pub(super) fn from_snapshot(snapshot: CognitiveRetrievalSnapshot) -> Result<Self> {
+    fn new(watermark: i64) -> Self {
+        Self {
+            watermark,
+            entries: Vec::new(),
+            tags: BTreeMap::new(),
+            issues: Vec::new(),
+        }
+    }
+    fn add_cognition(&mut self, snapshot: CognitiveRetrievalSnapshot) -> Result<()> {
         if !snapshot.complete {
             return Err(Error::new(
                 ErrorCode::ResourceExhausted,
-                "cognitive snapshot exceeds 10000 objects",
+                "cognition exceeds the configured snapshot limit",
             ));
         }
-        let mut entries = Vec::with_capacity(snapshot.memories.len() + snapshot.structured.len());
         for entry in snapshot.memories {
             let input = EmbeddingInputItem::for_memory(&entry.memory)?;
-            entries.push(Entry {
+            self.entries.push(Entry {
+                recorded: entry.memory.times.recorded.clone(),
+                object: RetrievalRecord::Memory(entry.memory),
+                lexical_text: input.text_content().map(str::to_owned),
+                input: Some(input),
+                embedding: entry.embedding,
                 roots: entry
                     .source
                     .roots
@@ -90,9 +44,8 @@ impl QueryView {
                     .collect(),
                 materials: entry.materials,
                 sources_complete: entry.source.complete,
-                object: CognitiveRecord::Memory(entry.memory),
-                input: Some(input),
-                embedding: entry.embedding,
+                media_source: None,
+                observations: Vec::new(),
             });
         }
         for entry in snapshot.structured {
@@ -106,7 +59,15 @@ impl QueryView {
                     entry.base_memory.as_ref(),
                 )?)
             };
-            entries.push(Entry {
+            self.entries.push(Entry {
+                recorded: entry.object.times.recorded.clone(),
+                object: RetrievalRecord::Structured(entry.object),
+                lexical_text: input
+                    .as_ref()
+                    .and_then(EmbeddingInputItem::text_content)
+                    .map(str::to_owned),
+                input,
+                embedding: entry.embedding,
                 roots: entry
                     .source
                     .roots
@@ -115,21 +76,56 @@ impl QueryView {
                     .collect(),
                 materials: entry.materials,
                 sources_complete: entry.source.complete,
-                object: CognitiveRecord::Structured(entry.object),
-                input,
-                embedding: entry.embedding,
+                media_source: None,
+                observations: Vec::new(),
             });
         }
-        entries.sort_by_key(Entry::reference);
-        Ok(Self {
-            watermark: snapshot.watermark,
-            entries,
-            tags: snapshot
-                .tag_embeddings
-                .into_iter()
-                .map(|record| Ok((record.source_key()?, record)))
-                .collect::<Result<_>>()?,
-        })
+        for record in snapshot.tag_embeddings {
+            self.tags.insert(record.source_key()?, record);
+        }
+        Ok(())
+    }
+    pub fn admit_routes(&mut self, model: &ResolvedModel) -> Result<()> {
+        for entry in &mut self.entries {
+            if entry.accepted_embedding().is_some() {
+                continue;
+            }
+            let Some(input) = entry.input.as_ref() else {
+                continue;
+            };
+            let mut rejection = None;
+            let mut accepted = false;
+            for route in &model.routes {
+                match route.validate_embedding_inputs(std::slice::from_ref(&input.parts)) {
+                    Ok(()) => {
+                        accepted = true;
+                        break;
+                    }
+                    Err(error)
+                        if matches!(
+                            error.code,
+                            ErrorCode::CapabilityUnavailable | ErrorCode::ResourceExhausted
+                        ) =>
+                    {
+                        rejection = Some(error);
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
+            if !accepted {
+                self.issues.push(ProjectionIssue {
+                    target: entry.reference(),
+                    error: rejection.unwrap_or_else(|| {
+                        Error::new(
+                            ErrorCode::CapabilityUnavailable,
+                            "no embedding route is available for this projection",
+                        )
+                    }),
+                });
+                entry.input = None;
+            }
+        }
+        Ok(())
     }
     pub fn selected<'a>(&'a self, request: &'a QueryRequest) -> impl Iterator<Item = &'a Entry> {
         self.entries.iter().filter(|entry| entry.eligible(request))
@@ -150,35 +146,229 @@ impl QueryView {
         }
         Ok(pending.into_values().collect())
     }
+
+    pub async fn refresh_embeddings(
+        &mut self,
+        database: &nous_storage::Database,
+        namespace: &NamespaceId,
+        subject: &SubjectId,
+        space: &str,
+    ) -> Result<()> {
+        let mut read = database.read_view().await?;
+        let mut tags = BTreeMap::new();
+        for entry in &mut self.entries {
+            if let Some(input) = &entry.input {
+                entry.embedding = read
+                    .embedding_record(
+                        namespace,
+                        subject,
+                        space,
+                        &input.target,
+                        &input.source_hash(),
+                    )
+                    .await?;
+            }
+            for (_, tag) in entry.tags()? {
+                tags.insert(tag.source_key()?, tag);
+            }
+        }
+        for (key, input) in tags {
+            if let Some(record) = read
+                .embedding_record(
+                    namespace,
+                    subject,
+                    space,
+                    &input.target,
+                    &input.source_hash(),
+                )
+                .await?
+            {
+                self.tags.insert(key, record);
+            }
+        }
+        read.finish().await
+    }
 }
 impl App {
-    pub(super) async fn query_view(
+    pub(crate) async fn query_view(
         &self,
+        ctx: &CallContext,
         namespace: &NamespaceId,
         request: &QueryRequest,
         space: &str,
+        policy: &RetrievalPolicy,
     ) -> Result<QueryView> {
-        let mut view = self.database.read_view().await?;
-        let snapshot = if let Some(reference) = &request.reference {
-            view.cognitive_reference_snapshot(
-                namespace,
-                &request.subject_id,
-                space,
-                reference,
-                request.as_of_commit,
-            )
-            .await?
-        } else {
-            view.cognitive_retrieval_snapshot(
-                namespace,
-                &request.subject_id,
-                space,
-                request.as_of_commit,
-                10000,
-            )
-            .await?
-        };
-        view.finish().await?;
-        QueryView::from_snapshot(snapshot)
+        let cancel = CancellationToken::new();
+        let _protection = self.objects.protect_references(&cancel).await?;
+        let mut read = self.database.read_view().await?;
+        read.subject(namespace, &request.subject_id).await?;
+        let mut output = QueryView::new(read.watermark);
+        let mut media_entries = Vec::new();
+        let exact = request.reference.as_ref();
+        if request.wants_domain(QueryDomain::Cognition)
+            && exact.is_none_or(|value| value.cognition().is_some())
+        {
+            let snapshot = if let Some(reference) = exact.and_then(RetrievalTarget::cognition) {
+                read.cognitive_reference_snapshot(
+                    namespace,
+                    &request.subject_id,
+                    space,
+                    reference,
+                    request.as_of_commit,
+                )
+                .await?
+            } else {
+                read.cognitive_retrieval_snapshot(
+                    namespace,
+                    &request.subject_id,
+                    space,
+                    request.as_of_commit,
+                    policy.max_snapshot_entries,
+                )
+                .await?
+            };
+            output.add_cognition(snapshot)?;
+        }
+        if request.wants_domain(QueryDomain::Media)
+            && request.kinds.is_empty()
+            && exact.is_none_or(|value| value.media().is_some())
+        {
+            let snapshot = if let Some(reference) = exact.and_then(RetrievalTarget::media) {
+                read.media_reference_snapshot(
+                    namespace,
+                    &request.subject_id,
+                    space,
+                    reference,
+                    request.as_of_commit,
+                )
+                .await?
+            } else {
+                read.media_retrieval_snapshot(
+                    namespace,
+                    &request.subject_id,
+                    space,
+                    request.as_of_commit,
+                    policy.max_snapshot_entries,
+                )
+                .await?
+            };
+            if !snapshot.complete
+                || output.entries.len().saturating_add(snapshot.entries.len())
+                    > policy.max_snapshot_entries
+            {
+                return Err(Error::new(
+                    ErrorCode::ResourceExhausted,
+                    "media and cognition exceed the configured snapshot limit",
+                ));
+            }
+            for entry in snapshot.entries {
+                let object = MediaRecord::from_lineage(&entry.source)?;
+                let reference = entry.source.source.clone();
+                let source = self
+                    .sources
+                    .resolve_in(ctx, &mut read, namespace, &request.subject_id, &reference)
+                    .await?;
+                let recorded = OperationTime::parse(object.recorded_at())?.point();
+                let candidate = Entry {
+                    object: RetrievalRecord::Media(object),
+                    lexical_text: None,
+                    input: None,
+                    embedding: None,
+                    roots: entry
+                        .source
+                        .materials
+                        .iter()
+                        .map(|root| root.material.id.clone())
+                        .collect(),
+                    materials: entry.source.materials.clone(),
+                    sources_complete: true,
+                    media_source: Some(entry.source),
+                    observations: entry.observations,
+                    recorded,
+                };
+                media_entries.push((candidate, source));
+            }
+        }
+        read.finish().await?;
+        // Frozen semantic facts remain in memory; mechanical I/O and writes hold no SQL read transaction.
+        for (mut entry, source) in media_entries {
+            if !entry.eligible(request) {
+                output.entries.push(entry);
+                continue;
+            }
+            let target = entry.reference();
+            let is_text = matches!(
+                source.payload,
+                RepresentationPayload::Text { .. }
+                    | RepresentationPayload::Interpretation { .. }
+                    | RepresentationPayload::Artifact {
+                        metadata: MediaMetadata::Text,
+                        ..
+                    }
+            );
+            entry.lexical_text = if is_text {
+                match self.sources.text(&source, &cancel).await {
+                    Ok(text) => Some(text),
+                    Err(error) if error.code == ErrorCode::ResourceExhausted => {
+                        output.issues.push(ProjectionIssue {
+                            target: target.clone(),
+                            error,
+                        });
+                        None
+                    }
+                    Err(error) => return Err(error),
+                }
+            } else {
+                None
+            };
+            entry.input = if space.is_empty() || (is_text && entry.lexical_text.is_none()) {
+                None
+            } else {
+                match self
+                    .embedding_media_parts(
+                        ctx,
+                        namespace,
+                        &request.subject_id,
+                        &source.reference,
+                        &cancel,
+                    )
+                    .await
+                {
+                    Ok(parts) => Some(EmbeddingInputItem::new(
+                        EmbeddingTarget::Item(target.clone()),
+                        parts,
+                    )?),
+                    Err(error)
+                        if matches!(
+                            error.code,
+                            ErrorCode::CapabilityUnavailable | ErrorCode::ResourceExhausted
+                        ) =>
+                    {
+                        output.issues.push(ProjectionIssue {
+                            target: target.clone(),
+                            error,
+                        });
+                        None
+                    }
+                    Err(error) => return Err(error),
+                }
+            };
+            entry.embedding = if let Some(input) = &entry.input {
+                self.database
+                    .embedding_record(
+                        namespace,
+                        &request.subject_id,
+                        space,
+                        &input.target,
+                        &input.source_hash(),
+                    )
+                    .await?
+            } else {
+                None
+            };
+            output.entries.push(entry);
+        }
+        output.entries.sort_by_key(Entry::reference);
+        Ok(output)
     }
 }

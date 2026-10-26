@@ -1,64 +1,92 @@
-//! One discovery contract for Memory and structured cognition.
+//! Discovery over cognition and exact media, with one retrieval identity.
 use crate::*;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+mod media;
+pub use media::MediaRecord;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
-pub enum CognitiveRecord {
+pub enum RetrievalRecord {
     Memory(Memory),
     Structured(StructuredObject),
+    Media(MediaRecord),
 }
 
-impl CognitiveRecord {
+impl RetrievalRecord {
     pub fn is_active(&self) -> bool {
         match self {
             Self::Memory(value) => value.is_active(),
             Self::Structured(value) => value.is_active(),
+            Self::Media(_) => true,
         }
     }
-    pub fn reference(&self) -> CognitiveRef {
+    pub fn reference(&self) -> RetrievalTarget {
         match self {
-            Self::Memory(value) => CognitiveRef::memory(&value.id, value.revision),
-            Self::Structured(value) => value.reference(),
+            Self::Memory(value) => {
+                RetrievalTarget::Cognition(CognitiveRef::memory(&value.id, value.revision))
+            }
+            Self::Structured(value) => RetrievalTarget::Cognition(value.reference()),
+            Self::Media(value) => RetrievalTarget::Media(value.reference()),
         }
     }
-    pub fn times(&self) -> &CognitiveTimes {
+    pub fn cognitive_times(&self) -> Option<&CognitiveTimes> {
         match self {
-            Self::Memory(value) => &value.times,
-            Self::Structured(value) => &value.times,
+            Self::Memory(value) => Some(&value.times),
+            Self::Structured(value) => Some(&value.times),
+            Self::Media(_) => None,
         }
     }
     pub fn deleted(&self) -> bool {
         match self {
             Self::Memory(value) => value.deleted,
             Self::Structured(value) => value.deleted,
+            Self::Media(_) => false,
         }
     }
     pub fn namespace_id(&self) -> &NamespaceId {
         match self {
             Self::Memory(value) => &value.namespace_id,
             Self::Structured(value) => &value.namespace_id,
+            Self::Media(value) => value.namespace_id(),
         }
     }
-    pub fn subject_id(&self) -> &SubjectId {
+    pub fn subject_id(&self) -> Option<&SubjectId> {
         match self {
-            Self::Memory(value) => &value.subject_id,
-            Self::Structured(value) => &value.subject_id,
+            Self::Memory(value) => Some(&value.subject_id),
+            Self::Structured(value) => Some(&value.subject_id),
+            Self::Media(value) => value.subject_id(),
         }
     }
     pub fn commit_seq(&self) -> i64 {
         match self {
             Self::Memory(value) => value.commit_seq,
             Self::Structured(value) => value.commit_seq,
+            Self::Media(value) => value.commit_seq(),
         }
     }
     pub fn recorded_at(&self) -> &str {
         match self {
             Self::Memory(value) => &value.recorded_at,
             Self::Structured(value) => &value.recorded_at,
+            Self::Media(value) => value.recorded_at(),
         }
     }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(default, deny_unknown_fields)]
+pub struct QueryInput {
+    pub text: String,
+    pub media: Vec<crate::media::MediaReference>,
+}
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum QueryDomain {
+    Cognition,
+    Media,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -68,8 +96,10 @@ pub struct QueryRequest {
     pub mode: QueryMode,
     pub subject_id: SubjectId,
     #[serde(default)]
-    pub text: String,
-    pub reference: Option<CognitiveRef>,
+    pub input: QueryInput,
+    pub reference: Option<RetrievalTarget>,
+    #[serde(default)]
+    pub domains: Vec<QueryDomain>,
     #[serde(default)]
     pub kinds: Vec<CognitiveKind>,
     pub source: Option<String>,
@@ -86,10 +116,21 @@ pub struct QueryRequest {
 
 impl QueryRequest {
     pub fn validate(&self) -> Result<()> {
-        if !(1..=100).contains(&self.limit) || self.text.len() > 4096 {
+        if self.limit == 0 || self.input.text.contains('\0') {
             return Err(Error::invalid(
-                "query limit must be 1..100 and text at most 4096 bytes",
+                "query limit must be positive and text may not contain NUL",
             ));
+        }
+        let mut media = std::collections::BTreeSet::new();
+        for reference in &self.input.media {
+            reference.validate()?;
+            if !media.insert(reference) {
+                return Err(Error::invalid("query media references must be unique"));
+            }
+        }
+        let domains: std::collections::BTreeSet<_> = self.domains.iter().collect();
+        if domains.len() != self.domains.len() {
+            return Err(Error::invalid("query domains must be unique"));
         }
         if let Some(reference) = &self.reference {
             reference.validate()?;
@@ -107,6 +148,9 @@ impl QueryRequest {
             return Err(Error::invalid("query commit bounds must be nonnegative"));
         }
         Ok(())
+    }
+    pub fn wants_domain(&self, domain: QueryDomain) -> bool {
+        self.domains.is_empty() || self.domains.contains(&domain)
     }
 }
 
@@ -127,8 +171,8 @@ fn default_query_limit() -> usize {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QueryHit {
-    pub reference: CognitiveRef,
-    pub object: CognitiveRecord,
+    pub reference: RetrievalTarget,
+    pub object: RetrievalRecord,
     pub score: f32,
     pub source_roots: Vec<MaterialId>,
 }
@@ -139,6 +183,14 @@ pub struct QueryCoverage {
     pub authority_commit_seq: i64,
     pub complete: bool,
     pub generation: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub projection_issues: Vec<ProjectionIssue>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectionIssue {
+    pub target: RetrievalTarget,
+    pub error: Error,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

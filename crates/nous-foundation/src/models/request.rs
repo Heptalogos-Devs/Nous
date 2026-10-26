@@ -5,10 +5,7 @@ use super::{
     OutputContract, ResolvedRoute,
 };
 use base64::{Engine, engine::general_purpose::STANDARD};
-use genai::{
-    chat::{ChatOptions, JsonSpec},
-    embed::{EmbedOptions, EmbedRequest},
-};
+use genai::chat::{ChatOptions, JsonSpec};
 use tokio_util::sync::CancellationToken;
 
 pub(super) enum ValidatedRequest {
@@ -17,11 +14,7 @@ pub(super) enum ValidatedRequest {
         options: Box<ChatOptions>,
         max_media_bytes: usize,
     },
-    Embedding {
-        request: EmbedRequest,
-        options: Box<EmbedOptions>,
-        contract: super::openai_embedding::ResponseContract,
-    },
+    Embedding(Box<super::embedding_request::ValidatedEmbedding>),
 }
 impl ValidatedRequest {
     pub async fn encode(
@@ -47,15 +40,7 @@ impl ValidatedRequest {
                 .await?,
                 options,
             },
-            Self::Embedding {
-                request,
-                options,
-                contract,
-            } => PreparedRequest::Embedding {
-                request,
-                options,
-                contract,
-            },
+            Self::Embedding(request) => request.encode(scope, reader, cancel).await?,
         })
     }
 }
@@ -311,33 +296,12 @@ pub(super) fn prepare(
                 access,
             ))
         }
-        (ModelInput::Embedding { texts }, ModelProtocol::OpenaiEmbeddings) => {
-            if texts.is_empty()
-                || texts.len() > route.parameters.max_batch_size
-                || texts.iter().any(|text| text.trim().is_empty())
-                || texts.iter().map(String::len).sum::<usize>() > route.parameters.max_input_bytes
-            {
-                return Err(Error::new(
-                    ErrorCode::ResourceExhausted,
-                    "embedding input exceeds route batch or byte limits",
-                ));
-            }
-            Ok((
-                ValidatedRequest::Embedding {
-                    request: EmbedRequest::new_batch(texts.clone()),
-                    options: Box::new(
-                        EmbedOptions::new()
-                            .with_encoding_format("float")
-                            .with_capture_raw_body(true),
-                    ),
-                    contract: super::openai_embedding::ResponseContract {
-                        space: route.space()?,
-                        inputs: texts.len(),
-                        max_bytes: route.parameters.max_response_bytes,
-                    },
-                },
-                no_access(),
-            ))
+        (
+            ModelInput::Embedding { inputs },
+            ModelProtocol::OpenaiEmbeddings | ModelProtocol::ArkMultimodalEmbeddings,
+        ) => {
+            let (request, access) = super::embedding_request::validate(route, inputs)?;
+            Ok((ValidatedRequest::Embedding(Box::new(request)), access))
         }
         _ => Err(Error::new(
             ErrorCode::CapabilityUnavailable,
@@ -351,7 +315,7 @@ fn downgrade(mode: ChannelMode) -> ChannelMode {
         mode => mode,
     }
 }
-fn merge(target: &mut ChannelAccess, source: ChannelAccess) {
+pub(super) fn merge(target: &mut ChannelAccess, source: ChannelAccess) {
     let combine = |a, b| match (a, b) {
         (ChannelMode::Original, _) | (_, ChannelMode::Original) => ChannelMode::Original,
         (ChannelMode::Representation, _) | (_, ChannelMode::Representation) => {

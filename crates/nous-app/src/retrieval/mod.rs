@@ -1,4 +1,5 @@
 //! Authority-frozen discovery and shared cognitive embedding work.
+pub(crate) mod config;
 mod embedding;
 pub mod embedding_model;
 mod embedding_worker;
