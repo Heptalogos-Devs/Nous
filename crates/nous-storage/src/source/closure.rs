@@ -191,19 +191,36 @@ pub(crate) async fn source_node(
         });
     }
     if kind == "memory" {
-        let row=sqlx::query("SELECT r.observation_id,r.commit_seq,r.deleted OR c.deleted AS retired FROM memory_revisions r JOIN memories m ON m.id=r.memory_id JOIN memory_revisions c ON c.memory_id=m.id AND c.revision=(SELECT max(h.revision) FROM memory_revisions h WHERE h.memory_id=m.id AND (? IS NULL OR h.commit_seq<=?)) WHERE r.namespace_id=? AND r.subject_id=? AND r.memory_id=? AND r.revision=? AND (? IS NULL OR r.commit_seq<=?)")
-            .bind(as_of_commit).bind(as_of_commit).bind(namespace.as_str()).bind(subject.as_str()).bind(id).bind(revision).bind(as_of_commit).bind(as_of_commit).fetch_optional(conn).await.map_err(storage_error)?;
+        let row=sqlx::query("SELECT r.observation_id,r.source,r.commit_seq,r.deleted OR c.deleted AS retired FROM memory_revisions r JOIN memories m ON m.id=r.memory_id JOIN memory_revisions c ON c.memory_id=m.id AND c.revision=(SELECT max(h.revision) FROM memory_revisions h WHERE h.memory_id=m.id AND (? IS NULL OR h.commit_seq<=?)) WHERE r.namespace_id=? AND r.subject_id=? AND r.memory_id=? AND r.revision=? AND (? IS NULL OR r.commit_seq<=?)")
+            .bind(as_of_commit).bind(as_of_commit).bind(namespace.as_str()).bind(subject.as_str()).bind(id).bind(revision).bind(as_of_commit).bind(as_of_commit).fetch_optional(&mut *conn).await.map_err(storage_error)?;
         return Ok(if let Some(row) = row {
+            let reference: nous_domain::media::MediaReference =
+                serde_json::from_str(row.get("source"))?;
+            let mut children = vec![EvidenceSource::Observation {
+                observation_id: nous_domain::ObservationId(row.get("observation_id")),
+            }];
+            let missing = match crate::media::roots_in(conn, namespace, subject, &reference).await {
+                Ok(roots) => {
+                    children.extend(
+                        roots
+                            .into_iter()
+                            .map(|material_id| EvidenceSource::Material { material_id }),
+                    );
+                    false
+                }
+                Err(error) if error.code == ErrorCode::NotFound => true,
+                Err(error) => return Err(error),
+            };
             (
-                if row.get::<bool, _>("retired") {
+                if missing {
+                    SourceStatus::Missing
+                } else if row.get::<bool, _>("retired") {
                     SourceStatus::Retired
                 } else {
                     SourceStatus::Available
                 },
                 Some(row.get("commit_seq")),
-                vec![EvidenceSource::Observation {
-                    observation_id: nous_domain::ObservationId(row.get("observation_id")),
-                }],
+                children,
             )
         } else {
             (SourceStatus::Missing, None, vec![])

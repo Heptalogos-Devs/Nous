@@ -214,13 +214,8 @@ impl App {
             } => {
                 let memory = self
                     .database
-                    .memory_history(namespace, memory_id)
-                    .await?
-                    .into_iter()
-                    .find(|m| m.revision == *revision)
-                    .ok_or_else(|| {
-                        Error::new(ErrorCode::NotFound, "source Memory revision not found")
-                    })?;
+                    .memory_revision(namespace, memory_id, *revision)
+                    .await?;
                 if memory.subject_id != *subject {
                     return Err(Error::new(
                         ErrorCode::Forbidden,
@@ -232,8 +227,14 @@ impl App {
                         "deleted Memory cannot supply a formation input",
                     ));
                 }
+                let observation = self
+                    .database
+                    .observation(namespace, &memory.observation_id)
+                    .await?;
+                event_kind = Some(observation.kind);
                 serde_json::to_string(&json!({"title":memory.title,"content":memory.content,
-                    "epistemic_status":memory.epistemic_status,"times":memory.times}))?
+                    "epistemic_status":memory.epistemic_status,"times":memory.times,
+                    "source":memory.source,"source_event_kind":observation.kind}))?
             }
             EvidenceSource::CognitiveRevision { reference } => {
                 if reference.kind == CognitiveKind::Memory {
@@ -352,7 +353,15 @@ impl App {
         let Ok(role) = super::model::role(slot.kind) else {
             return false;
         };
-        self.calls.ready(job, "proposal", &self.model, role,serde_json::to_value(input).ok()).await
+        self.calls
+            .ready(
+                job,
+                "proposal",
+                &self.model,
+                role,
+                serde_json::to_value(input).ok(),
+            )
+            .await
     }
 
     async fn structured_step_input(

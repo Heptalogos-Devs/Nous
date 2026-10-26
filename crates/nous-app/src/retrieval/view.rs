@@ -82,12 +82,14 @@ impl QueryView {
         for entry in snapshot.memories {
             let input = EmbeddingInputItem::for_memory(&entry.memory)?;
             entries.push(Entry {
-                roots: vec![entry.material.id.clone()],
-                materials: vec![RootMaterial {
-                    material: entry.material,
-                    details: entry.details,
-                }],
-                sources_complete: true,
+                roots: entry
+                    .source
+                    .roots
+                    .into_iter()
+                    .map(|root| root.material_id)
+                    .collect(),
+                materials: entry.materials,
+                sources_complete: entry.source.complete,
                 object: CognitiveRecord::Memory(entry.memory),
                 input: Some(input),
                 embedding: entry.embedding,

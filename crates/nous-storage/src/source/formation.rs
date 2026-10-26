@@ -60,6 +60,23 @@ impl WriteTransaction {
                             &CognitiveRef::memory(&memory_id, revision),
                         )
                         .await?;
+                        let exact = crate::vector::source::memory(
+                            &mut self.tx,
+                            namespace,
+                            subject,
+                            &memory_id,
+                            revision,
+                        )
+                        .await?
+                        .ok_or_else(crate::not_found)?;
+                        self.validate_memory_source(
+                            namespace,
+                            subject,
+                            &exact.observation_id,
+                            &exact.material_id,
+                            &exact.source,
+                        )
+                        .await?;
                         let current = self.memory(namespace, &memory_id).await?;
                         let deleted: bool = sqlx::query_scalar(
                             "SELECT deleted FROM memory_revisions WHERE memory_id=? AND revision=?",

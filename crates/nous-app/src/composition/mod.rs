@@ -13,6 +13,9 @@ pub fn model_roles() -> Result<RoleRegistry> {
         registry.register(definition)?;
     }
     registry.register(crate::retrieval::embedding_model::definition())?;
+    for definition in crate::materials::derivation::model::definitions() {
+        registry.register(definition)?;
+    }
     Ok(registry.finish())
 }
 
@@ -93,6 +96,19 @@ impl App {
                         )
                         .await
                 }
+            },
+        )?;
+        let media = self.clone();
+        let readiness = self.clone();
+        registry.register(
+            "media.derive",
+            move |job, cancel| {
+                let owner = media.clone();
+                async move { owner.run_media_derivation(job, cancel).await }
+            },
+            move |job| {
+                let owner = readiness.clone();
+                async move { owner.media_derivation_ready(&job).await }
             },
         )?;
         Ok(registry)

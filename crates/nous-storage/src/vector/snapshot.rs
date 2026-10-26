@@ -1,4 +1,4 @@
-use crate::source::materials::{details_from_columns, material_details};
+use crate::source::materials::material_details;
 use crate::{Database, ReadView, SourceClosure, SourceStatus, storage_error};
 use nous_domain::*;
 use serde::{Deserialize, Serialize};
@@ -7,8 +7,8 @@ use std::collections::{BTreeMap, BTreeSet};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryRetrievalEntry {
     pub memory: Memory,
-    pub material: Material,
-    pub details: MaterialDetails,
+    pub source: SourceClosure,
+    pub materials: Vec<RootMaterial>,
     pub embedding: Option<EmbeddingRecord>,
 }
 struct MemorySnapshot {
@@ -179,25 +179,7 @@ async fn snapshot_in(
         )
         .await?;
         let base_memory = super::source::base_memory(conn, &object).await?;
-        let mut root_materials = Vec::new();
-        for root in &source.roots {
-            if root.status == SourceStatus::Missing {
-                continue;
-            }
-            let Some(material) =
-                crate::authority::records::material(conn, namespace, &root.material_id).await?
-            else {
-                continue;
-            };
-            let details = material_details(conn, namespace, &root.material_id).await?;
-            for tag in &details.tags {
-                let tag = tag.trim();
-                if !tag.is_empty() {
-                    tag_keys.insert(EmbeddingInputItem::tag(tag)?.source_hash());
-                }
-            }
-            root_materials.push(RootMaterial { material, details });
-        }
+        let root_materials = root_materials(conn, namespace, &source, &mut tag_keys).await?;
         structured.push(StructuredRetrievalEntry {
             embedding: by_key.remove(&cognitive_embedding_key(&reference)?),
             object,
@@ -250,10 +232,7 @@ async fn memory_snapshot_in(
             "retrieval cutoff refers to uncommitted authority",
         ));
     }
-    let source_columns = crate::authority::records::material_columns("s", "source_");
-    let mut query = sqlx::QueryBuilder::<sqlx::Sqlite>::new("SELECT r.*,");
-    query.push(source_columns).push(",d.source_type AS detail_source_type,d.tags AS detail_tags,d.metadata AS detail_metadata,d.structured AS detail_structured FROM memories m JOIN memory_revisions r ON r.memory_id=m.id AND r.revision=(SELECT max(h.revision) FROM memory_revisions h WHERE h.memory_id=m.id AND h.commit_seq<=? AND (? IS NULL OR h.revision=?)) JOIN materials s ON s.id=r.material_id LEFT JOIN material_details d ON d.namespace_id=s.namespace_id AND d.material_id=s.id WHERE m.namespace_id=? AND m.subject_id=? AND (? IS NULL OR m.id=?) ORDER BY m.id LIMIT ?");
-    let mut rows = query.build()
+    let mut rows = sqlx::query("SELECT r.* FROM memories m JOIN memory_revisions r ON r.memory_id=m.id AND r.revision=(SELECT max(h.revision) FROM memory_revisions h WHERE h.memory_id=m.id AND h.commit_seq<=? AND (? IS NULL OR h.revision=?)) WHERE m.namespace_id=? AND m.subject_id=? AND (? IS NULL OR m.id=?) ORDER BY m.id LIMIT ?")
         .bind(watermark)
         .bind(reference.map(|r| r.revision))
         .bind(reference.map(|r| r.revision))
@@ -285,23 +264,19 @@ async fn memory_snapshot_in(
     let mut tags = BTreeSet::new();
     for row in rows {
         let memory = crate::cognition::memory::memory_row_ref(&row)?;
-        let material = crate::authority::records::material_row_ref(&row, "source_")?;
-        let details = details_from_columns(
-            row.get("detail_source_type"),
-            row.get("detail_tags"),
-            row.get("detail_metadata"),
-            row.get("detail_structured"),
-        )?;
-        for tag in &details.tags {
-            let text = tag.trim();
-            if !text.is_empty() {
-                tags.insert(EmbeddingInputItem::tag(text)?.source_hash());
-            }
-        }
+        let source = crate::source::closure::closure_at(
+            conn,
+            namespace,
+            subject,
+            CognitiveRef::memory(&memory.id, memory.revision),
+            as_of_commit,
+        )
+        .await?;
+        let materials = root_materials(conn, namespace, &source, &mut tags).await?;
         entries.push(MemoryRetrievalEntry {
             memory,
-            material,
-            details,
+            source,
+            materials,
             embedding: None,
         });
     }
@@ -332,4 +307,31 @@ async fn memory_snapshot_in(
         tag_embeddings,
         complete,
     })
+}
+
+async fn root_materials(
+    conn: &mut SqliteConnection,
+    namespace: &NamespaceId,
+    source: &SourceClosure,
+    tags: &mut BTreeSet<String>,
+) -> Result<Vec<RootMaterial>> {
+    let mut materials = Vec::new();
+    for root in &source.roots {
+        if root.status == SourceStatus::Missing {
+            continue;
+        }
+        let Some(material) =
+            crate::authority::records::material(conn, namespace, &root.material_id).await?
+        else {
+            continue;
+        };
+        let details = material_details(conn, namespace, &root.material_id).await?;
+        for label in &details.tags {
+            if !label.trim().is_empty() {
+                tags.insert(EmbeddingInputItem::tag(label)?.source_hash());
+            }
+        }
+        materials.push(RootMaterial { material, details });
+    }
+    Ok(materials)
 }

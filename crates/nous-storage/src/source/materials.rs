@@ -1,5 +1,8 @@
 //! Original source reads and visibility checks share the authority snapshot.
-use crate::{Database, ReadView, WriteTransaction,codec::parse_optional, not_found, storage_error,write_error};
+use crate::{
+    Database, ReadView, WriteTransaction, codec::parse_optional, not_found, storage_error,
+    write_error,
+};
 use nous_domain::{Material, MaterialDetails, MaterialId, NamespaceId, Result, SubjectId};
 use sqlx::{Row, SqliteConnection};
 
@@ -100,8 +103,22 @@ pub(crate) fn details_from_columns(
 }
 
 impl WriteTransaction {
-    pub async fn set_material_details(&mut self,namespace:&NamespaceId,id:&MaterialId,details:&MaterialDetails)->Result<()> {
-        self.material(namespace,id).await?;
+    pub async fn subject_has_material_access(
+        &mut self,
+        namespace: &NamespaceId,
+        subject: &SubjectId,
+        material: &MaterialId,
+    ) -> Result<bool> {
+        material_access(&mut self.tx, namespace, subject, material).await
+    }
+
+    pub async fn set_material_details(
+        &mut self,
+        namespace: &NamespaceId,
+        id: &MaterialId,
+        details: &MaterialDetails,
+    ) -> Result<()> {
+        self.material(namespace, id).await?;
         sqlx::query("INSERT INTO material_details(material_id,namespace_id,source_type,tags,metadata,structured) VALUES (?,?,?,?,?,?) ON CONFLICT(material_id) DO UPDATE SET source_type=excluded.source_type,tags=excluded.tags,metadata=excluded.metadata,structured=excluded.structured")
             .bind(id.as_str()).bind(namespace.as_str()).bind(&details.source_type).bind(serde_json::to_string(&details.tags).map_err(storage_error)?)
             .bind(serde_json::to_string(&details.metadata).map_err(storage_error)?).bind(details.structured.as_ref().map(serde_json::to_string).transpose().map_err(storage_error)?)

@@ -74,13 +74,22 @@ impl WriteTransaction {
                 "prepared media needs 1..64 committed inputs",
             ));
         }
+        let admitted_roots = self
+            .media_roots(namespace, subject, &run.request.source)
+            .await?;
+        let mut prepared_roots = std::collections::BTreeSet::new();
         for input in &prepared.inputs {
-            self.media_roots(namespace, subject, &input.source).await?;
+            prepared_roots.extend(self.media_roots(namespace, subject, &input.source).await?);
+        }
+        if prepared_roots != admitted_roots {
+            return Err(Error::invalid(
+                "prepared media directory differs from admitted original roots",
+            ));
         }
         let duration = self
             .media_duration(namespace, subject, &run.request.source)
             .await?;
-        prepared.quality.validate(duration)?;
+        prepared.validate(duration)?;
         sqlx::query("UPDATE media_derivations SET prepared=? WHERE job_id=? AND prepared IS NULL")
             .bind(serde_json::to_string(prepared)?)
             .bind(id)

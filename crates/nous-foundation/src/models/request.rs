@@ -12,17 +12,50 @@ use genai::{
 use tokio_util::sync::CancellationToken;
 
 pub(super) enum ValidatedRequest {
-    Chat { messages:Vec<super::ModelMessage>,options:Box<ChatOptions>,max_media_bytes:usize },
-    Embedding { request:EmbedRequest,options:Box<EmbedOptions>,contract:super::openai_embedding::ResponseContract },
+    Chat {
+        messages: Vec<super::ModelMessage>,
+        options: Box<ChatOptions>,
+        max_media_bytes: usize,
+    },
+    Embedding {
+        request: EmbedRequest,
+        options: Box<EmbedOptions>,
+        contract: super::openai_embedding::ResponseContract,
+    },
 }
 impl ValidatedRequest {
-    pub async fn encode(self,scope:&nous_domain::ConfigScope,reader:&dyn super::ModelMediaReader,cancel:&CancellationToken)->Result<PreparedRequest> {
+    pub async fn encode(
+        self,
+        scope: &nous_domain::ConfigScope,
+        reader: &dyn super::ModelMediaReader,
+        cancel: &CancellationToken,
+    ) -> Result<PreparedRequest> {
         crate::execution::check_cancelled(cancel)?;
         Ok(match self {
-            Self::Chat {messages,options,max_media_bytes}=>PreparedRequest::Chat {
-                request:super::media_input::encode(messages,scope,reader,max_media_bytes,cancel).await?,options,
+            Self::Chat {
+                messages,
+                options,
+                max_media_bytes,
+            } => PreparedRequest::Chat {
+                request: super::media_input::encode(
+                    messages,
+                    scope,
+                    reader,
+                    max_media_bytes,
+                    cancel,
+                )
+                .await?,
+                options,
             },
-            Self::Embedding {request,options,contract}=>PreparedRequest::Embedding {request,options,contract},
+            Self::Embedding {
+                request,
+                options,
+                contract,
+            } => PreparedRequest::Embedding {
+                request,
+                options,
+                contract,
+            },
         })
     }
 }
@@ -155,21 +188,35 @@ pub(super) fn prepare(
                                 if source.is_none() {
                                     supplied.visual = ChannelMode::Original;
                                 }
-                                if !route.input_modalities.contains(&ModelModality::Audio) && supplied.audio != ChannelMode::Unavailable {
-                                    return Err(Error::new(ErrorCode::CapabilityUnavailable,"model route cannot consume the declared video audio channel"));
+                                if !route.input_modalities.contains(&ModelModality::Audio)
+                                    && supplied.audio != ChannelMode::Unavailable
+                                {
+                                    return Err(Error::new(
+                                        ErrorCode::CapabilityUnavailable,
+                                        "model route cannot consume the declared video audio channel",
+                                    ));
                                 }
                             }
                             supplied.source_text = ChannelMode::Unavailable;
                             merge(&mut access, supplied);
                             match data {
-                                MediaData::Blob{blob}=>{
+                                MediaData::Blob { blob } => {
                                     blob.validate()?;
-                                    if source.is_none() || canonical_media_type(&blob.media_type)?!=mime {
-                                        return Err(Error::invalid("stored media requires a matching MIME type and exact source locator"));
+                                    if source.is_none()
+                                        || canonical_media_type(&blob.media_type)? != mime
+                                    {
+                                        return Err(Error::invalid(
+                                            "stored media requires a matching MIME type and exact source locator",
+                                        ));
                                     }
-                                    let bytes=usize::try_from(blob.byte_len).map_err(|_|Error::new(ErrorCode::ResourceExhausted,"media length exceeds the platform range"))?;
-                                    media_bytes=media_bytes.saturating_add(bytes);
-                                },
+                                    let bytes = usize::try_from(blob.byte_len).map_err(|_| {
+                                        Error::new(
+                                            ErrorCode::ResourceExhausted,
+                                            "media length exceeds the platform range",
+                                        )
+                                    })?;
+                                    media_bytes = media_bytes.saturating_add(bytes);
+                                }
                                 MediaData::Base64 { data } => {
                                     if data.len()
                                         > route
@@ -258,7 +305,7 @@ pub(super) fn prepare(
             Ok((
                 ValidatedRequest::Chat {
                     messages: messages.clone(),
-                    max_media_bytes:route.parameters.max_media_bytes,
+                    max_media_bytes: route.parameters.max_media_bytes,
                     options: Box::new(options),
                 },
                 access,

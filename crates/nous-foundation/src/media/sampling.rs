@@ -14,24 +14,6 @@ impl Media {
         policy: &MediaPolicy,
         cancel: &CancellationToken,
     ) -> Result<PreparedMedia> {
-        if !matches!(
-            request.coordinate,
-            SourceCoordinate::Whole
-                | SourceCoordinate::TimeSpan { .. }
-                | SourceCoordinate::ImageRect { .. }
-        ) {
-            return Err(Error::invalid(
-                "frame sampling requires a whole, temporal or spatial media locator",
-            ));
-        }
-        if !matches!(
-            request.metadata,
-            MediaMetadata::Video { .. } | MediaMetadata::Image { frames: 2.., .. }
-        ) {
-            return Err(Error::invalid(
-                "frame sampling requires video or an animated image",
-            ));
-        }
         let (start, source_duration) = transform::span(request)?;
         let bounded = source_duration.min(policy.max_sample_duration_ms);
         let version = self.ffmpeg_version(ctx, policy, cancel).await?;
@@ -108,7 +90,7 @@ impl Media {
             } else {
                 at.saturating_add(pts)
             };
-            if actual >= bounded || sampled.contains(&actual) {
+            if actual >= bounded || sampled.last().is_some_and(|previous| actual <= *previous) {
                 omitted.push(at);
                 workspace = result.workspace;
                 continue;
@@ -186,7 +168,7 @@ impl Media {
                     {
                         Ok(mut item) => {
                             if let Some(actual) = item.metadata.duration_ms()
-                                && actual.saturating_add(20) >= bounded
+                                && actual >= bounded
                             {
                                 let actual = actual.min(bounded);
                                 item.coordinate = SourceCoordinate::TimeSpan {

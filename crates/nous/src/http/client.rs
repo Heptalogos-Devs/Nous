@@ -36,24 +36,91 @@ impl ApiClient {
     pub async fn stop(&self) -> anyhow::Result<Value> {
         Ok(self.request("POST", "/api/stop", None).await?)
     }
-    async fn request(&self, method: &str, path: &str, body: Option<Value>) -> Result<Value, Error> {
+    pub async fn upload_material<R: tokio::io::AsyncRead + Send + Sync + 'static>(
+        &self,
+        operation_id: String,
+        input: nous_domain::media::PutMediaRequest,
+        reader: R,
+    ) -> Result<Value, Error> {
+        input.validate()?;
+        let query = super::materials::UploadQuery {
+            operation_id,
+            namespace_id: input.namespace_id,
+            source: input.source,
+            event_time: input
+                .event_time
+                .map(|time| serde_json::to_string(&time))
+                .transpose()?,
+            expected_content_hash: input.expected_content_hash,
+        };
         let trace_id = TraceId::new();
         let mut request = self
-            .network
+            .authorized_request("POST", "/api/media/materials", &trace_id)
+            .query(&query)
+            .header(reqwest::header::CONTENT_TYPE, input.media_type)
+            .body(reqwest::Body::wrap_stream(
+                tokio_util::io::ReaderStream::new(reader),
+            ));
+        if let Some(length) = input.declared_byte_len {
+            request = request.header(reqwest::header::CONTENT_LENGTH, length);
+        }
+        let response = self.send(request, &trace_id).await?;
+        Self::decode(response, trace_id).await
+    }
+
+    pub async fn download_material(
+        &self,
+        id: &nous_domain::MaterialId,
+    ) -> Result<reqwest::Response, Error> {
+        let trace_id = TraceId::new();
+        let request =
+            self.authorized_request("GET", &format!("/api/materials/{id}/content"), &trace_id);
+        let response = self.send(request, &trace_id).await?;
+        if response.status().is_success() {
+            Ok(response)
+        } else {
+            Self::decode(response, trace_id).await?;
+            Err(Error::internal("unsuccessful download lacked an error"))
+        }
+    }
+
+    fn authorized_request(
+        &self,
+        method: &str,
+        path: &str,
+        trace_id: &TraceId,
+    ) -> reqwest::RequestBuilder {
+        self.network
             .request(
                 method.parse().expect("constant HTTP method"),
                 &format!("{}{path}", self.base_url),
             )
             .bearer_auth(self.token.as_str())
-            .header("x-nous-trace-id", trace_id.as_str());
+            .header("x-nous-trace-id", trace_id.as_str())
+    }
+
+    async fn send(
+        &self,
+        request: reqwest::RequestBuilder,
+        trace_id: &TraceId,
+    ) -> Result<reqwest::Response, Error> {
+        self.network
+            .send(request)
+            .await
+            .map_err(|error| Error::dependency(error.without_url()).with_trace(trace_id.clone()))
+    }
+
+    async fn request(&self, method: &str, path: &str, body: Option<Value>) -> Result<Value, Error> {
+        let trace_id = TraceId::new();
+        let mut request = self.authorized_request(method, path, &trace_id);
         if let Some(body) = body {
             request = request.json(&body);
         }
-        let response = self
-            .network
-            .send(request)
-            .await
-            .map_err(|error| Error::dependency(error).with_trace(trace_id.clone()))?;
+        let response = self.send(request, &trace_id).await?;
+        Self::decode(response, trace_id).await
+    }
+
+    async fn decode(response: reqwest::Response, trace_id: TraceId) -> Result<Value, Error> {
         let trace_id = response
             .headers()
             .get("x-nous-trace-id")

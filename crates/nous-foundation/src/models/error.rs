@@ -50,8 +50,8 @@ impl ModelFailure {
             message,
         )
     }
-    pub(crate) fn configuration(error:Error)->Self {
-        Self::from_domain(RetryClass::WaitingConfiguration,error)
+    pub(crate) fn configuration(error: Error) -> Self {
+        Self::from_domain(RetryClass::WaitingConfiguration, error)
     }
     pub(crate) fn prompt(error: Error) -> Self {
         let class = if error.code == ErrorCode::ResourceExhausted {

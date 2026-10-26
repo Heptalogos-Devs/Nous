@@ -5,8 +5,8 @@ pub mod cognition;
 mod composition;
 pub mod import_format;
 mod lifecycle;
-pub mod retrieval;
 pub mod materials;
+pub mod retrieval;
 
 use nous_domain::*;
 use nous_foundation::clock::Clock;
@@ -31,7 +31,7 @@ use std::sync::Arc;
 pub struct App {
     database: Database,
     objects: ObjectStore,
-    sources:materials::sources::SourceReader,
+    sources: materials::sources::SourceReader,
     paths: Arc<InstancePaths>,
     config: Arc<instance::InstanceConfig>,
     model: Arc<ModelRuntime>,
@@ -97,7 +97,8 @@ impl App {
             database.clone(),
             roles.definitions().filter_map(|role| role.prompt.clone()),
         );
-        let sources=materials::sources::SourceReader::new(database.clone(),objects.clone(),media.clone());
+        let sources =
+            materials::sources::SourceReader::new(database.clone(), objects.clone(), media.clone());
         let model = Arc::new(
             ModelRuntime::new(
                 secrets,
@@ -270,75 +271,6 @@ impl App {
                 self.database.list_subjects(namespace_id).await
             }
         }
-    }
-
-    pub async fn put_material(
-        &self,
-        ctx: &CallContext,
-        operation_id: &str,
-        namespace_id: &NamespaceId,
-        text: &str,
-        source: Option<String>,
-        event_time: Option<TimePoint>,
-    ) -> Result<OperationReceipt> {
-        ctx.require_namespace(namespace_id)?;
-        if text.is_empty() || text.len() > 8 * 1024 * 1024 {
-            return Err(Error::new(
-                ErrorCode::ResourceExhausted,
-                "text must contain 1 byte to 8 MiB",
-            ));
-        }
-        if source.as_ref().is_some_and(|value| value.len() > 4096) {
-            return Err(Error::invalid("source is limited to 4096 bytes"));
-        }
-        if let Some(time) = &event_time {
-            time.validate()?;
-        }
-        self.database.namespace(namespace_id).await?;
-        let published = self
-            .objects
-            .publish_bytes(
-                text.as_bytes(),
-                8 * 1024 * 1024,
-                &tokio_util::sync::CancellationToken::new(),
-            )
-            .await?;
-        let hash = published.digest.clone();
-        let key = operation_key(
-            ctx,
-            "material.put",
-            namespace_id.as_str(),
-            operation_id,
-            &json!({"namespace_id":namespace_id,"content_hash":hash,"media_type":"text/plain; charset=utf-8","source":source,"event_time":event_time}),
-        )?;
-        let mut tx = match self.database.begin_operation(key).await? {
-            BeginOperation::Replay(receipt) => return Ok(receipt),
-            BeginOperation::New(tx) => tx,
-        };
-        let material = Material {
-            id: MaterialId::new(),
-            namespace_id: namespace_id.clone(),
-            content_hash: hash,
-            media_type: "text/plain; charset=utf-8".into(),
-            metadata: nous_domain::media::MediaMetadata::Text,
-            byte_len: published.byte_len,
-            source,
-            event_time,
-            recorded_at: tx.time().recorded(),
-            commit_seq: tx.commit_seq(),
-        };
-        published.protect_in(&mut tx);
-        tx.namespace(namespace_id).await?;
-        tx.insert_material(&material).await?;
-        tx.commit(serde_json::to_value(material)?).await
-    }
-
-    pub async fn get_material(
-        &self,
-        ctx: &CallContext,
-        id: &MaterialId,
-    ) -> Result<MaterialContent> {
-        self.sources.original_text(ctx,id,&tokio_util::sync::CancellationToken::new()).await
     }
 
     pub async fn record_observation(

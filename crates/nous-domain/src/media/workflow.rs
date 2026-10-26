@@ -50,6 +50,37 @@ pub struct MediaPreparedGraph {
     pub quality: DerivationQuality,
     pub preprocessing_digest: String,
 }
+impl MediaPreparedGraph {
+    pub fn validate(&self, duration_ms: Option<u64>) -> Result<()> {
+        valid_digest(&self.preprocessing_digest)?;
+        self.quality.validate(duration_ms)?;
+        if self.inputs.is_empty() || self.inputs.len() > 64 {
+            return Err(Error::invalid("prepared media requires 1..64 exact inputs"));
+        }
+        let mut seen = BTreeSet::new();
+        for input in &self.inputs {
+            input.source.validate()?;
+            if !seen.insert(&input.source)
+                || !matches!(
+                    input.role,
+                    DerivationInputRole::Source | DerivationInputRole::SampledFrame
+                )
+            {
+                return Err(Error::invalid(
+                    "prepared media inputs must be distinct physical source deliveries",
+                ));
+            }
+            if let Some(at_ms) = input.at_ms
+                && duration_ms.is_none_or(|duration| at_ms > duration)
+            {
+                return Err(Error::invalid(
+                    "prepared frame time is outside selected media duration",
+                ));
+            }
+        }
+        Ok(())
+    }
+}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MediaDerivationRun {
     pub job: JobRecord,
@@ -60,4 +91,22 @@ pub struct MediaDerivationRun {
     pub prepared: Option<MediaPreparedGraph>,
     pub description: Option<RepresentationRef>,
     pub result: Option<RepresentationRef>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SourceRegionRequest {
+    pub subject_id: SubjectId,
+    pub material_id: MaterialId,
+    pub parent: Option<SourceRegionId>,
+    pub coordinate: SourceCoordinate,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DerivedRegionRequest {
+    pub subject_id: SubjectId,
+    pub representation: RepresentationRef,
+    pub parent: Option<DerivedRegionId>,
+    pub selector: DerivedSelector,
 }

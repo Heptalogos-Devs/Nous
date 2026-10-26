@@ -39,7 +39,12 @@ impl Media {
         if blob.media_type.starts_with("image/") {
             spec.args.push("-count_frames".into());
         }
-        spec.args.extend(["-max_alloc".into(),policy.max_decoder_allocation_bytes.to_string().into(),"-threads".into(),policy.process_threads.to_string().into()]);
+        spec.args.extend([
+            "-max_alloc".into(),
+            policy.max_decoder_allocation_bytes.to_string().into(),
+            "-threads".into(),
+            policy.process_threads.to_string().into(),
+        ]);
         spec.args.push(input.into_os_string());
         let output = self
             .platform

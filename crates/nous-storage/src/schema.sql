@@ -176,6 +176,7 @@ CREATE TABLE IF NOT EXISTS memory_revisions (
     epistemic_status TEXT NOT NULL,
     observation_id TEXT NOT NULL,
     material_id TEXT NOT NULL,
+    source TEXT NOT NULL CHECK(json_valid(source) AND json_type(source)='object'),
     model_call_id TEXT,
     times TEXT NOT NULL CHECK (json_valid(times)),
     recorded_at TEXT NOT NULL,
@@ -388,6 +389,7 @@ CREATE INDEX IF NOT EXISTS calls_by_trace ON model_calls(trace_id,job_id,step_ke
 CREATE TABLE IF NOT EXISTS formation_runs (
  job_id TEXT PRIMARY KEY NOT NULL REFERENCES task_records(job_id),
  observation_id TEXT NOT NULL REFERENCES observations(id),material_id TEXT NOT NULL REFERENCES materials(id),
+ source TEXT NOT NULL CHECK(json_valid(source) AND json_type(source)='object'),
  subject_revision INTEGER NOT NULL CHECK(subject_revision>0),material_hash TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS structured_formation_runs (
@@ -431,3 +433,53 @@ CREATE TRIGGER IF NOT EXISTS embedding_record_reference BEFORE INSERT ON embeddi
  (NEW.cognition_kind='memory' AND NOT EXISTS(SELECT 1 FROM memory_revisions WHERE namespace_id=NEW.namespace_id AND subject_id=NEW.subject_id AND memory_id=NEW.cognition_id AND revision=NEW.cognition_revision)) OR
  (NEW.cognition_kind<>'memory' AND NOT EXISTS(SELECT 1 FROM structured_revisions WHERE namespace_id=NEW.namespace_id AND subject_id=NEW.subject_id AND kind=NEW.cognition_kind AND object_id=NEW.cognition_id AND revision=NEW.cognition_revision));
 END;
+
+CREATE TABLE IF NOT EXISTS source_regions (
+ id TEXT PRIMARY KEY NOT NULL,namespace_id TEXT NOT NULL,material_id TEXT NOT NULL,parent_id TEXT,
+ coordinate_hash TEXT NOT NULL,body TEXT NOT NULL CHECK(json_valid(body)),commit_seq INTEGER NOT NULL CHECK(commit_seq>0),
+ FOREIGN KEY(namespace_id,material_id) REFERENCES materials(namespace_id,id),
+ FOREIGN KEY(parent_id) REFERENCES source_regions(id),
+ UNIQUE(namespace_id,coordinate_hash),
+ CHECK(json_extract(body,'$.id') IS id AND json_extract(body,'$.namespace_id') IS namespace_id
+   AND json_extract(body,'$.material_id') IS material_id AND json_extract(body,'$.parent') IS parent_id
+   AND json_extract(body,'$.coordinate_hash') IS coordinate_hash AND json_extract(body,'$.commit_seq') IS commit_seq)
+);
+CREATE TABLE IF NOT EXISTS media_representations (
+ id TEXT NOT NULL,revision INTEGER NOT NULL CHECK(revision>0),namespace_id TEXT NOT NULL,subject_id TEXT NOT NULL,
+ derivation_key TEXT NOT NULL,body TEXT NOT NULL CHECK(json_valid(body)),commit_seq INTEGER NOT NULL CHECK(commit_seq>0),
+ model_call_id TEXT GENERATED ALWAYS AS(json_extract(body,'$.producer.model_call_id')) STORED REFERENCES model_calls(id),
+ PRIMARY KEY(id,revision),
+ FOREIGN KEY(namespace_id,subject_id) REFERENCES subjects(namespace_id,id),
+ UNIQUE(namespace_id,subject_id,model_call_id),
+ CHECK(json_extract(body,'$.id') IS id AND json_extract(body,'$.revision') IS revision
+   AND json_extract(body,'$.namespace_id') IS namespace_id AND json_extract(body,'$.subject_id') IS subject_id
+   AND json_extract(body,'$.commit_seq') IS commit_seq)
+);
+CREATE INDEX IF NOT EXISTS media_representations_by_derivation ON media_representations(namespace_id,subject_id,derivation_key);
+CREATE INDEX IF NOT EXISTS media_representations_by_scope ON media_representations(namespace_id,subject_id,id,revision DESC);
+CREATE TABLE IF NOT EXISTS derived_regions (
+ id TEXT PRIMARY KEY NOT NULL,namespace_id TEXT NOT NULL,subject_id TEXT NOT NULL,
+ representation_id TEXT NOT NULL,representation_revision INTEGER NOT NULL,parent_id TEXT,
+ selector TEXT NOT NULL CHECK(json_valid(selector)),body TEXT NOT NULL CHECK(json_valid(body)),commit_seq INTEGER NOT NULL CHECK(commit_seq>0),
+ FOREIGN KEY(representation_id,representation_revision) REFERENCES media_representations(id,revision),
+ FOREIGN KEY(namespace_id,subject_id) REFERENCES subjects(namespace_id,id),FOREIGN KEY(parent_id) REFERENCES derived_regions(id),
+ CHECK(json_extract(body,'$.id') IS id AND json_extract(body,'$.namespace_id') IS namespace_id
+   AND json_extract(body,'$.subject_id') IS subject_id AND json_extract(body,'$.representation.id') IS representation_id
+   AND json_extract(body,'$.representation.revision') IS representation_revision AND json_extract(body,'$.parent') IS parent_id
+   AND json_extract(body,'$.commit_seq') IS commit_seq)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS derived_regions_by_selector ON derived_regions(namespace_id,subject_id,representation_id,representation_revision,coalesce(parent_id,''),selector);
+CREATE TABLE IF NOT EXISTS media_derivations (
+ job_id TEXT PRIMARY KEY NOT NULL REFERENCES task_records(job_id),request TEXT NOT NULL CHECK(json_valid(request)),
+ source_event_kind TEXT NOT NULL CHECK(source_event_kind IN('contact','import')),
+ description_target TEXT CHECK(description_target IS NULL OR json_valid(description_target)),
+ result_target TEXT NOT NULL CHECK(json_valid(result_target)),prepared TEXT CHECK(prepared IS NULL OR json_valid(prepared)),
+ description TEXT CHECK(description IS NULL OR json_valid(description)),result TEXT CHECK(result IS NULL OR json_valid(result))
+);
+CREATE TABLE IF NOT EXISTS media_exposures (
+ observation_id TEXT NOT NULL REFERENCES observations(id),namespace_id TEXT NOT NULL,subject_id TEXT NOT NULL,
+ locator TEXT NOT NULL CHECK(json_valid(locator)),body TEXT NOT NULL CHECK(json_valid(body)),commit_seq INTEGER NOT NULL CHECK(commit_seq>0),
+ PRIMARY KEY(observation_id,locator),FOREIGN KEY(namespace_id,subject_id) REFERENCES subjects(namespace_id,id),
+ CHECK(json_extract(body,'$.observation_id') IS observation_id AND json_extract(body,'$.namespace_id') IS namespace_id
+   AND json_extract(body,'$.subject_id') IS subject_id AND json_extract(body,'$.commit_seq') IS commit_seq)
+);

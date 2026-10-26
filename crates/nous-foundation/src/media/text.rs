@@ -40,8 +40,22 @@ impl Media {
         range: Option<Range<u64>>,
         cancel: &CancellationToken,
     ) -> Result<String> {
-        blob.validate()?;
         let max = self.policy().await?.max_buffered_text_bytes;
+        self.read_text_bounded(blob, range, max, cancel).await
+    }
+    pub(super) async fn read_text_bounded(
+        &self,
+        blob: &BlobReference,
+        range: Option<Range<u64>>,
+        max: u64,
+        cancel: &CancellationToken,
+    ) -> Result<String> {
+        blob.validate()?;
+        if let Some(range) = &range
+            && (range.start >= range.end || range.end > blob.byte_len)
+        {
+            return Err(Error::invalid("text range is outside the blob"));
+        }
         let length = range
             .as_ref()
             .map_or(blob.byte_len, |range| range.end - range.start);

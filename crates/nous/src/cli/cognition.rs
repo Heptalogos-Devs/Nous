@@ -47,12 +47,15 @@ pub enum MemoryCommand {
         #[arg(long)]
         snapshot_seq: Option<i64>,
     },
-    /// Queue model formation from a real recorded contact.
+    /// Queue formation from a recorded contact or import and an optional exact media source.
     Form {
         #[arg(long)]
         subject: SubjectId,
         #[arg(long)]
         observation: ObservationId,
+        /// JSON MediaReference; omitted selects the observation's original material.
+        #[arg(long)]
+        source: Option<String>,
         #[arg(long)]
         operation_id: Option<String>,
     },
@@ -111,11 +114,15 @@ impl MemoryCommand {
             Self::Form {
                 subject,
                 observation,
+                source,
                 operation_id,
             } => CognitionOperation::Form(FormMemory {
                 operation_id: op_id(operation_id),
                 subject_id: subject.to_string(),
                 observation_id: observation.to_string(),
+                source: source
+                    .map(|value| serde_json::from_str(&value))
+                    .transpose()?,
             }),
             Self::Get { id } => CognitionOperation::Get(id.to_string()),
             Self::History { id } => CognitionOperation::History(id.to_string()),

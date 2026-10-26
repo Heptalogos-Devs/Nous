@@ -9,6 +9,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 mod interpretation;
 pub use interpretation::*;
+mod lineage;
+pub use lineage::*;
 
 mod regions;
 pub use regions::*;

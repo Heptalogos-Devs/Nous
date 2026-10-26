@@ -4,6 +4,8 @@ pub mod cognition;
 pub mod configuration;
 pub mod identity;
 pub mod maintenance;
+pub mod materials;
+pub mod media;
 pub mod models;
 mod operation;
 pub mod prompts;
@@ -108,6 +110,8 @@ pub fn router(state: ApiState, config: &InstanceConfig, cancellation: Cancellati
         .merge(crate::http::prompts::router())
         .merge(crate::http::structured::router())
         .merge(crate::http::maintenance::router())
+        .merge(crate::http::materials::router())
+        .merge(crate::http::media::router())
         .nest_service("/mcp", mcp)
         .fallback(|| async {
             ApiError(

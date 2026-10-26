@@ -4,24 +4,24 @@ pub mod cognition;
 mod configuration;
 mod identity;
 pub mod maintenance;
+mod materials;
+mod media;
 mod models;
 mod prompts;
 mod scope;
+mod secrets;
 use crate::{
     bootstrap::{connect, serve},
-    http::{
-        CancelJob, CreateNamespace, CreateSubject, Operation, PutMaterial, RecordObservation,
-        WireTime,
-    },
+    http::{CancelJob, CreateNamespace, CreateSubject, Operation, RecordObservation, WireTime},
     mcp,
 };
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use cognition::{MemoryCommand, ModelCommand, QueryArgs};
 use configuration::ConfigCommand;
+use materials::MaterialCommand;
 use nous_app::App;
 use nous_domain::{CallContext, NamespaceId, SubjectId};
-use nous_foundation::instance::InstanceConfig;
 use nous_foundation::instance::InstanceGuard;
 use nous_foundation::instance::InstancePaths;
 use serde_json::{Value, json};
@@ -44,6 +44,11 @@ pub(crate) struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Import protected credentials into the selected local instance.
+    Secret {
+        #[command(subcommand)]
+        command: secrets::SecretCommand,
+    },
     /// Manage immutable Prompt resources and exact role bindings.
     Prompt {
         #[command(subcommand)]
@@ -113,6 +118,11 @@ enum Command {
         #[command(subcommand)]
         command: MaterialCommand,
     },
+    /// Manage media sources, regions and persistent interpretation jobs.
+    Media {
+        #[command(subcommand)]
+        command: media::MediaCommand,
+    },
     Memory {
         #[command(subcommand)]
         command: MemoryCommand,
@@ -177,25 +187,6 @@ enum SubjectCommand {
     },
 }
 #[derive(Subcommand)]
-enum MaterialCommand {
-    Put {
-        #[arg(long)]
-        namespace: NamespaceId,
-        #[arg(long)]
-        file: PathBuf,
-        #[arg(long)]
-        source: Option<String>,
-        /// JSON time point, for example {"domain":"utc","coordinate":123}.
-        #[arg(long)]
-        event_time: Option<String>,
-        #[arg(long)]
-        operation_id: Option<String>,
-    },
-    Get {
-        id: String,
-    },
-}
-#[derive(Subcommand)]
 enum ObservationCommand {
     Record {
         #[arg(long)]
@@ -251,6 +242,10 @@ pub(crate) async fn execute(cli: Cli) -> Result<()> {
         .unwrap_or_else(InstancePaths::default_path)?;
     let paths = InstancePaths::new(root)?;
     match cli.command {
+        Command::Secret { command } => {
+            anyhow::ensure!(cli.url.is_none(), "secret import uses local --instance");
+            command.execute(paths).await?;
+        }
         Command::Cognition { schema: true, .. } => print_json(serde_json::to_value(
             schemars::schema_for!(crate::http::structured::StructuredOperation),
         )?)?,
@@ -259,9 +254,11 @@ pub(crate) async fn execute(cli: Cli) -> Result<()> {
             let _guard = InstanceGuard::acquire(&paths)?;
             let created = nous_foundation::instance::initialize(&paths)?;
             let app = App::open(paths.clone()).await?;
+            let credential = app.bootstrap_credential().await;
             app.close().await;
+            let credential = credential?;
             print_json(
-                json!({"state":if created {"initialized"} else {"already_initialized"},"instance":paths.root,"config":paths.config,"administrator_token_file":paths.credentials.join("admin.token")}),
+                json!({"state":if created {"initialized"} else {"already_initialized"},"instance":paths.root,"config":paths.config,"administrator_token_file":paths.resolve(&credential.file)?}),
             )?;
         }
         Command::Serve { listen } => serve(paths, listen).await?,
@@ -304,6 +301,22 @@ pub(crate) async fn execute(cli: Cli) -> Result<()> {
             configuration::execute(&paths, cli.url, cli.token_file, command.unwrap_or_default())
                 .await?
         }
+        Command::Material { command } => {
+            command
+                .execute(connect(&paths, cli.url, cli.token_file).await?)
+                .await?;
+        }
+        Command::Media { command } => match command.operation()? {
+            Some(operation) => print_json(
+                connect(&paths, cli.url, cli.token_file)
+                    .await?
+                    .execute(&Operation::Media(Box::new(operation)))
+                    .await?,
+            )?,
+            None => print_json(serde_json::to_value(schemars::schema_for!(
+                crate::http::media::MediaOperation
+            ))?)?,
+        },
         Command::Model {
             command: ModelCommand::Check,
         } => {
@@ -353,7 +366,7 @@ pub(crate) async fn execute(cli: Cli) -> Result<()> {
                 .reset_bootstrap(&CallContext::admin(), &op_id(operation_id), &reason)
                 .await;
             app.close().await;
-            print_json(result?)?;
+            print_json(serde_json::to_value(result?)?)?;
         }
         Command::Mcp {
             command: McpCommand::Stdio,
@@ -420,36 +433,7 @@ pub(crate) async fn execute(cli: Cli) -> Result<()> {
                 Command::Subject {
                     command: SubjectCommand::List { namespace },
                 } => Operation::ListSubjects(namespace.to_string()),
-                Command::Material {
-                    command:
-                        MaterialCommand::Put {
-                            namespace,
-                            file,
-                            source,
-                            event_time,
-                            operation_id,
-                        },
-                } => {
-                    let metadata = std::fs::metadata(&file)
-                        .with_context(|| format!("cannot read {}", file.display()))?;
-                    anyhow::ensure!(
-                        metadata.len() <= 4 * 1024 * 1024,
-                        "material file exceeds the 4 MiB CLI text limit"
-                    );
-                    let text = std::fs::read_to_string(&file)
-                        .context("material file must contain UTF-8 text")?;
-                    Operation::PutMaterial(PutMaterial {
-                        operation_id: op_id(operation_id),
-                        namespace_id: namespace.to_string(),
-                        text,
-                        source: source.or_else(|| Some(file.to_string_lossy().into_owned())),
-                        event_time: parse_time(event_time)?,
-                    })
-                }
-                Command::Material {
-                    command: MaterialCommand::Get { id },
-                }
-                | Command::Source {
+                Command::Source {
                     command: SourceCommand::Read { id },
                 } => {
                     let _: nous_domain::MaterialId = id.parse()?;

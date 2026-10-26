@@ -9,7 +9,7 @@ mod error;
 mod execution;
 mod input;
 mod media_input;
-pub use media_input::{ModelMediaReader,MediaReadFuture};
+pub use media_input::{MediaReadFuture, ModelMediaReader};
 mod openai_embedding;
 mod preview;
 mod request;
@@ -210,7 +210,12 @@ impl ModelRuntime {
         let model = self.resolve(scope, role).await?;
         Ok(preview::build(self, &model, &input, edits)?.preview)
     }
-    pub fn plan(&self, scope: ConfigScope, role: &str, cancel:CancellationToken) -> InvocationPlan {
+    pub fn plan(
+        &self,
+        scope: ConfigScope,
+        role: &str,
+        cancel: CancellationToken,
+    ) -> InvocationPlan {
         InvocationPlan {
             runtime: self.clone(),
             scope,
@@ -224,18 +229,23 @@ impl ModelRuntime {
         scope: &ConfigScope,
         role: &str,
         attempt: AttemptContext,
-        input:Option<&Value>,
+        input: Option<&Value>,
     ) -> Result<Vec<ResourceMetadata>, ModelFailure> {
         let plan = self.plan(scope.clone(), role, CancellationToken::new());
         let resolved = plan.resolve(&attempt).await?;
-        let start=next_route(resolved,&attempt)?;
-        let preview=input.map(|input|preview::build(self,resolved,input,InvocationEdits::default())).transpose()?;
-        let mut resources=self
-            .resources
-            .ready_resources(resolved, start)
-            .await;
-        if let Some(built)=preview {
-            resources.retain(|resource|built.preview.routes.iter().skip(start).any(|route|route.rejection.is_none() && route.resource.id==resource.id && route.resource.provider==resource.provider));
+        let start = next_route(resolved, &attempt)?;
+        let preview = input
+            .map(|input| preview::build(self, resolved, input, InvocationEdits::default()))
+            .transpose()?;
+        let mut resources = self.resources.ready_resources(resolved, start).await;
+        if let Some(built) = preview {
+            resources.retain(|resource| {
+                built.preview.routes.iter().skip(start).any(|route| {
+                    route.rejection.is_none()
+                        && route.resource.id == resource.id
+                        && route.resource.provider == resource.provider
+                })
+            });
         }
         Ok(resources)
     }
@@ -246,7 +256,7 @@ impl ModelRuntime {
         attempt: &AttemptContext,
         input: T,
         edits: InvocationEdits,
-        cancel:&CancellationToken,
+        cancel: &CancellationToken,
     ) -> Result<PreparedCall<InvocationMetadata<T>>, ModelFailure> {
         let source =
             serde_json::to_value(&input).map_err(|error| ModelFailure::domain(error.into()))?;
@@ -257,9 +267,15 @@ impl ModelRuntime {
         for (index, request) in built.requests.into_iter().enumerate().skip(start) {
             let Some(request) = request else {
                 if let Some(error) = &built.preview.routes[index].rejection {
-                    unavailable = if matches!(error.code,nous_domain::ErrorCode::CapabilityUnavailable|nous_domain::ErrorCode::ResourceExhausted) {
+                    unavailable = if matches!(
+                        error.code,
+                        nous_domain::ErrorCode::CapabilityUnavailable
+                            | nous_domain::ErrorCode::ResourceExhausted
+                    ) {
                         ModelFailure::configuration(error.clone())
-                    } else { ModelFailure::domain(error.clone()) };
+                    } else {
+                        ModelFailure::domain(error.clone())
+                    };
                 }
                 continue;
             };
@@ -272,7 +288,10 @@ impl ModelRuntime {
             }
         }
         let (index, request, target) = selected.ok_or(unavailable)?;
-        let request=request.encode(&model.scope,self.media_reader.as_ref(),cancel).await.map_err(ModelFailure::domain)?;
+        let request = request
+            .encode(&model.scope, self.media_reader.as_ref(), cancel)
+            .await
+            .map_err(ModelFailure::domain)?;
         let route = &model.routes[index];
         let access = built.preview.routes[index].actual_access;
         let metadata = InvocationMetadata {
@@ -361,7 +380,13 @@ impl InvocationPlan {
         edits: InvocationEdits,
     ) -> Result<PreparedCall<InvocationMetadata<T>>, ModelFailure> {
         self.runtime
-            .prepare(self.resolve(&attempt).await?, &attempt, input, edits,&self.cancel)
+            .prepare(
+                self.resolve(&attempt).await?,
+                &attempt,
+                input,
+                edits,
+                &self.cancel,
+            )
             .await
     }
 }

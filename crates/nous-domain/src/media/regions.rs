@@ -67,6 +67,13 @@ pub enum SourceCoordinate {
     },
 }
 impl SourceCoordinate {
+    pub fn duration_ms(&self, metadata: &MediaMetadata) -> Option<u64> {
+        match self {
+            Self::Whole | Self::ImageRect { .. } => metadata.duration_ms(),
+            Self::TimeSpan { start_ms, end_ms } => end_ms.checked_sub(*start_ms),
+            _ => None,
+        }
+    }
     pub fn validate_bounds(&self, byte_len: u64, metadata: &MediaMetadata) -> Result<()> {
         let valid = match self {
             Self::Whole => true,
@@ -136,7 +143,7 @@ impl SourceCoordinate {
                 a <= c && d <= b
             }
             (Self::ImageRect { rect: a }, Self::ImageRect { rect: b }) => a.contains(b),
-            (Self::ImageRect {rect:a},Self::VideoFrame {rect:Some(b),..})=>a.contains(b),
+            (Self::ImageRect { rect: a }, Self::VideoFrame { rect: Some(b), .. }) => a.contains(b),
             (
                 Self::TimeSpan {
                     start_ms: a,

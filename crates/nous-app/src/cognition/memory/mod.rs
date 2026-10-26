@@ -1,7 +1,7 @@
 mod decoder;
 pub mod model;
 use crate::App;
-use model::FormationInput;
+use nous_domain::media::MediaReference;
 use nous_domain::*;
 use nous_storage::operation_key;
 use nous_storage::{BeginOperation, OperationReceipt};
@@ -15,6 +15,7 @@ impl App {
         operation_id: &str,
         subject_id: &SubjectId,
         observation_id: &ObservationId,
+        source: Option<MediaReference>,
     ) -> Result<OperationReceipt> {
         let namespace = self.database.subject_namespace(subject_id).await?;
         ctx.require_subject(&namespace, subject_id)?;
@@ -23,7 +24,7 @@ impl App {
             "memory.form",
             &format!("namespace:{namespace}/subject:{subject_id}"),
             operation_id,
-            &json!({"subject_id":subject_id,"observation_id":observation_id}),
+            &json!({"subject_id":subject_id,"observation_id":observation_id,"source":source}),
         )?;
         let mut tx = match self.database.begin_operation(key).await? {
             BeginOperation::Replay(receipt) => return Ok(receipt),
@@ -44,6 +45,9 @@ impl App {
             ));
         }
         let material = tx.material(&namespace, &observation.material_id).await?;
+        let source = source.unwrap_or_else(|| MediaReference::Original {
+            material_id: material.id.clone(),
+        });
         let job = self.tasks.new_job(
             &tx,
             "memory.form",
@@ -54,6 +58,7 @@ impl App {
             job,
             observation_id: observation.id,
             material_id: material.id,
+            source,
             subject_revision: subject.revision,
             material_hash: material.content_hash,
             memory_ids: vec![],
@@ -108,7 +113,15 @@ impl App {
             .database
             .observation(&memory.namespace_id, &memory.observation_id)
             .await?;
-        let material = self.get_material(ctx, &memory.material_id).await?;
+        let source = self
+            .sources
+            .lineage(
+                ctx,
+                &memory.namespace_id,
+                &memory.subject_id,
+                &memory.source,
+            )
+            .await?;
         let model_call = match &memory.model_call_id {
             Some(id) => Some(self.calls.read(ctx, id).await?),
             None => None,
@@ -126,7 +139,7 @@ impl App {
         Ok(MemorySource {
             memory,
             observation,
-            material,
+            source,
             model_call,
             embedding_provenance,
         })
@@ -148,23 +161,35 @@ impl App {
             .database
             .observation(namespace, &run.observation_id)
             .await?;
+        let material = self.database.material(namespace, &run.material_id).await?;
         let source = self
-            .get_material(&job.call_context("nous-worker")?, &run.material_id)
+            .sources
+            .resolve(
+                &job.call_context("nous-worker")?,
+                namespace,
+                subject,
+                &run.source,
+            )
             .await?;
         if current.revision != run.subject_revision
-            || source.material.content_hash != run.material_hash
+            || material.content_hash != run.material_hash
+            || observation.subject_id != *subject
+            || observation.material_id != run.material_id
+            || !source.roots.contains(&run.material_id)
         {
             return Err(Error::new(ErrorCode::Conflict, "formation input changed"));
         }
         let input = FormationInput {
             namespace_id: namespace.clone(),
             subject_id: subject.clone(),
+            source: run.source.clone(),
+            source_access: source.access,
             material_id: run.material_id.clone(),
-            material_commit_seq: source.material.commit_seq,
+            material_commit_seq: material.commit_seq,
             observation_id: run.observation_id.clone(),
             observation_commit_seq: observation.commit_seq,
             source_event_kind: observation.kind,
-            text: source.text,
+            text: self.sources.text(&source, &cancel).await?,
         };
         let plan = self.model.plan(
             ConfigScope::Subject {
@@ -248,6 +273,7 @@ impl App {
                 epistemic_status: draft.epistemic_status,
                 observation_id: observation.id.clone(),
                 material_id: material.id.clone(),
+                source: run.source.clone(),
                 model_call_id: Some(saved.id.clone()),
                 origin: MemoryOrigin::Model,
                 times: CognitiveTimes {

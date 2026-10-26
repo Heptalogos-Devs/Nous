@@ -9,6 +9,21 @@ pub struct MemoryDraft {
     pub epistemic_status: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct FormationInput {
+    pub namespace_id: NamespaceId,
+    pub subject_id: SubjectId,
+    pub source: media::MediaReference,
+    pub source_access: media::ChannelAccess,
+    pub material_id: MaterialId,
+    pub material_commit_seq: i64,
+    pub observation_id: ObservationId,
+    pub observation_commit_seq: i64,
+    pub source_event_kind: ObservationKind,
+    pub text: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Memory {
     pub id: MemoryId,
@@ -20,6 +35,7 @@ pub struct Memory {
     pub epistemic_status: String,
     pub observation_id: ObservationId,
     pub material_id: MaterialId,
+    pub source: media::MediaReference,
     pub model_call_id: Option<ModelCallId>,
     #[serde(default)]
     pub origin: MemoryOrigin,
@@ -42,6 +58,7 @@ pub struct FormationRun {
     pub job: JobRecord,
     pub observation_id: ObservationId,
     pub material_id: MaterialId,
+    pub source: media::MediaReference,
     pub subject_revision: i64,
     pub material_hash: String,
     pub memory_ids: Vec<MemoryId>,
@@ -51,7 +68,7 @@ pub struct FormationRun {
 pub struct MemorySource {
     pub memory: Memory,
     pub observation: Observation,
-    pub material: MaterialContent,
+    pub source: media::MediaSourceLineage,
     pub model_call: Option<ModelCall>,
     #[serde(default)]
     pub embedding_provenance: Vec<EmbeddingProvenance>,

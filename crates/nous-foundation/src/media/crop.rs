@@ -52,14 +52,31 @@ impl Media {
         match &request.coordinate {
             SourceCoordinate::ByteRange { start, end }
             | SourceCoordinate::TextSpan { start, end } => {
-                let object = if matches!(request.coordinate, SourceCoordinate::TextSpan { .. }) {
+                if matches!(request.metadata, MediaMetadata::Text) {
                     let text = self
-                        .read_text_range(&request.blob, *start..*end, cancel)
+                        .read_text_bounded(
+                            &request.blob,
+                            Some(*start..*end),
+                            policy.max_buffered_text_bytes,
+                            cancel,
+                        )
                         .await?;
-                    self.objects
-                        .publish_bytes(text.as_bytes(), policy.max_derivative_bytes, cancel)
-                        .await?
-                } else {
+                    let captured = self
+                        .publish_text(&text, policy.max_derivative_bytes, cancel)
+                        .await?;
+                    return Ok(PreparedItem {
+                        blob: nous_domain::media::BlobReference {
+                            content_hash: captured.object.digest.clone(),
+                            media_type: captured.media_type,
+                            byte_len: captured.object.byte_len as u64,
+                        },
+                        object: Some(captured.object),
+                        metadata: captured.metadata,
+                        coordinate: request.coordinate.clone(),
+                        at_ms: None,
+                    });
+                }
+                let object = {
                     let source = self
                         .objects
                         .read_range(

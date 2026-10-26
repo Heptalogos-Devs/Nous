@@ -299,16 +299,22 @@ impl DerivedRepresentation {
                     ));
                 }
                 if self.strategy == DerivationStrategy::DescribeThenStructure
-                    && (!self.inputs.iter().any(|input| {
-                        matches!(
-                            input.role,
-                            DerivationInputRole::Description | DerivationInputRole::Transcript
-                        )
-                    }) || self.access.visual == ChannelMode::Original
-                        || self.access.audio == ChannelMode::Original)
+                    && (!self.access.has_original()
+                        || !self.inputs.iter().any(|input| {
+                            matches!(
+                                input.role,
+                                DerivationInputRole::Description | DerivationInputRole::Transcript
+                            )
+                        })
+                        || !self.inputs.iter().any(|input| {
+                            matches!(
+                                input.role,
+                                DerivationInputRole::Source | DerivationInputRole::SampledFrame
+                            )
+                        }))
                 {
                     return Err(Error::invalid(
-                        "second-stage media structuring requires committed description/transcript and represented media access",
+                        "second-stage media structuring requires both exact media and committed description inputs",
                     ));
                 }
                 value.validate(self.access, &seen, duration_ms)?;

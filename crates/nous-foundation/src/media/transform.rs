@@ -115,10 +115,17 @@ impl Media {
         Ok(version.into())
     }
 }
-pub(super) fn base_args(policy:&MediaPolicy)->Vec<OsString> {
-    vec!["-nostdin".into(),"-hide_banner".into(),"-protocol_whitelist".into(),"file,pipe".into(),
-        "-max_alloc".into(),policy.max_decoder_allocation_bytes.to_string().into(),
-        "-threads".into(),policy.process_threads.to_string().into()]
+pub(super) fn base_args(policy: &MediaPolicy) -> Vec<OsString> {
+    vec![
+        "-nostdin".into(),
+        "-hide_banner".into(),
+        "-protocol_whitelist".into(),
+        "file,pipe".into(),
+        "-max_alloc".into(),
+        policy.max_decoder_allocation_bytes.to_string().into(),
+        "-threads".into(),
+        policy.process_threads.to_string().into(),
+    ]
 }
 
 pub(super) fn seconds(ms: u64) -> String {
@@ -160,17 +167,18 @@ pub(super) fn actual_pts(stderr: &[u8]) -> Result<u64> {
         .ok_or_else(|| Error::invalid("FFmpeg did not report a valid decoded frame timestamp"))
 }
 pub(super) fn span(request: &PreparationRequest) -> Result<(u64, u64)> {
-    match request.coordinate {
-        SourceCoordinate::TimeSpan { start_ms, end_ms } => Ok((start_ms, end_ms - start_ms)),
-        _ => request
-            .metadata
-            .duration_ms()
-            .filter(|duration| *duration > 0)
-            .map(|duration| (0, duration))
-            .ok_or_else(|| {
-                Error::invalid("temporal preparation requires the actual source duration")
-            }),
-    }
+    let duration = request
+        .coordinate
+        .duration_ms(&request.metadata)
+        .filter(|duration| *duration > 0)
+        .ok_or_else(|| {
+            Error::invalid("temporal preparation requires the actual source duration")
+        })?;
+    let start = match request.coordinate {
+        SourceCoordinate::TimeSpan { start_ms, .. } => start_ms,
+        _ => 0,
+    };
+    Ok((start, duration))
 }
 pub(super) fn has_audio(metadata: &MediaMetadata) -> bool {
     matches!(

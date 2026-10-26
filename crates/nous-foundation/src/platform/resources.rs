@@ -22,9 +22,25 @@ impl Platform {
                 .map_err(super::process::path_error)?,
             ExecutableResource::External { path } => path.clone(),
         };
-        let path = std::fs::canonicalize(path).map_err(Error::dependency)?;
-        if !path.is_file() {
-            return Err(Error::invalid("executable resource is not a file"));
+        let path = std::fs::canonicalize(path).map_err(|error| executable_error(key, error))?;
+        let metadata = std::fs::metadata(&path).map_err(|error| executable_error(key, error))?;
+        if !metadata.is_file() {
+            return Err(Error::new(
+                ErrorCode::CapabilityUnavailable,
+                "executable resource is not a file",
+            )
+            .with_context("resource", key));
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if metadata.permissions().mode() & 0o111 == 0 {
+                return Err(Error::new(
+                    ErrorCode::CapabilityUnavailable,
+                    "executable resource has no execution permission",
+                )
+                .with_context("resource", key));
+            }
         }
         #[cfg(windows)]
         if path
@@ -38,6 +54,20 @@ impl Platform {
         }
         Ok(path)
     }
+}
+
+fn executable_error(key: &str, error: std::io::Error) -> Error {
+    let code = if matches!(
+        error.kind(),
+        std::io::ErrorKind::NotFound | std::io::ErrorKind::PermissionDenied
+    ) {
+        ErrorCode::CapabilityUnavailable
+    } else {
+        ErrorCode::DependencyUnavailable
+    };
+    Error::new(code, "registered executable is unavailable")
+        .with_context("resource", key)
+        .with_cause(&error)
 }
 
 pub(super) fn environment(work: &Path) -> Vec<(OsString, OsString)> {

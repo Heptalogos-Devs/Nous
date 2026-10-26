@@ -11,6 +11,7 @@ nous-foundation.workspace = true
 anyhow.workspace = true
 axum.workspace = true
 clap.workspace = true
+futures.workspace = true
 http-body.workspace = true
 reqwest.workspace = true
 rmcp.workspace = true

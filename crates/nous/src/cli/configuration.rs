@@ -93,7 +93,8 @@ pub(super) async fn execute(
         }
     };
     print_json(
-        connect(paths, url, token_file)?
+        connect(paths, url, token_file)
+            .await?
             .execute(&crate::http::Operation::Configuration(request))
             .await?,
     )

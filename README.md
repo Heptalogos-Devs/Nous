@@ -1,6 +1,6 @@
 # Nous Wave
 
-长期认知基础设施与人格中心。当前支持材料接纳、忠实文本导入、持久模型形成、结构化认知、Memory 修订与生命周期维护、中文词项和 Dense/VCP/Hybrid 查询、来源追溯及快照恢复。CLI、HTTP 和 MCP 共用 Rust 应用操作，SQLite 统一保存权威状态、回执、已采纳向量和后续工作。
+长期认知基础设施与人格中心。当前支持流式材料接纳、媒体描述与结构化转述、忠实文本导入、持久模型形成、结构化认知、Memory 修订与生命周期维护、中文词项和 Dense/VCP/Hybrid 查询、来源追溯及快照恢复。CLI、HTTP 和 MCP 共用 Rust 应用操作，SQLite 统一保存权威状态、回执、已采纳向量和后续工作。
 
 工程方向见 [基建实施规划](docs/基建实施规划.md)，当前进度与 [合同覆盖](docs/首批开发任务.md#当前-a-memorix-合同承接) 见首批开发任务。[能力续接清单](docs/能力续接清单.md) 保留多模态、managed context/steward 和完整 A-Memorix 产品的后续目标。源码复用入口见 [源码研究](docs/源码研究.md)、[实际复用记录](research/reuse.md) 和 [研究仓库锁定清单](research/sources.lock.json)。
 
@@ -26,29 +26,24 @@ $instance = Join-Path (Get-Location) 'temp/instances/dev'
 & $nous --instance $instance status
 $namespace = (& $nous --instance $instance namespace create research --operation-id first-namespace | ConvertFrom-Json).result.id
 $subject = (& $nous --instance $instance subject create --namespace $namespace --name reader | ConvertFrom-Json).result.id
-Set-Content -LiteralPath ./temp/example.txt -Value '秋天的枫叶会变红。' -Encoding utf8
-$material = (& $nous --instance $instance material put --namespace $namespace --file ./temp/example.txt | ConvertFrom-Json).result.id
+$material = (& $nous --instance $instance material put --namespace $namespace --file ./docs/requirements/项目宪纲.md | ConvertFrom-Json).result.id
 $observation = (& $nous --instance $instance observation record --subject $subject --material $material | ConvertFrom-Json).result.id
 & $nous --instance $instance source read $material
 ```
 
 Linux 使用同一 PowerShell 环境脚本，程序路径为 `debug/nous`。正式部署用 `--instance <path>` 指定持久位置。开发实例、下载、克隆、缓存和编译均位于 `temp`；脚本只修改当前进程环境。已安装工具链继续使用。
 
-HTTP 入口为 `/api`，Streamable HTTP MCP 为 `/mcp`。`nous mcp stdio` 连接运行中的服务。凭据默认读取实例内受保护文件；远程调用用 `--url` 与 `--token-file`。停服后可通过 `token create --namespace <id> [--subject <id>] --name <name>` 创建范围凭据。Subject 可读取已获授权的材料并记录再次接触；首次材料暴露由 Namespace 或管理员接纳。
+HTTP 入口为 `/api`，Streamable HTTP MCP 为 `/mcp`。`nous mcp stdio` 连接运行中的服务。凭据默认读取实例内当前受保护文件；远程调用用 `--url` 与 `--token-file`。运行中通过 `identity issue --namespace <id> [--subject <id>] --name <name>` 创建范围凭据，`identity rotate/revoke/history` 管理轮换、撤销和历史；本地停服恢复使用 `identity reset-bootstrap`。Subject 可读取已获授权的材料并记录再次接触；首次材料暴露由 Namespace 或管理员接纳。
 
 材料保存、实际接触和记忆形成各有独立身份。`observation record` 创建 `kind=contact` 的实际接触记录。模型形成请求先持久入队，模型调用在写事务外进行；保存输出后，由同一权威事务采纳 Memory 与来源关系。检索服务按合法快照维护 Tantivy 索引，并在返回前读取当前权威修订。
 
-文本导入可直接生成可查询的忠实记忆，无需模型配置。准备 UTF-8 JSONL 文件并导入：
+文本导入可直接生成可查询的忠实记忆，无需模型配置。将实际资料导出为 UTF-8 JSONL，每行包含 `external_id`、`text`，可带 `source`、`tags`、`metadata` 和 `structured`：
 
 ```powershell
-@'
-{"external_id":"leaf-001","text":"秋天的枫叶会变红。","source":"field-notes","tags":["植物"],"metadata":{"collection":"秋季观察"}}
-{"external_id":"leaf-002","text":"银杏叶在秋天变黄。","source":"field-notes"}
-'@ | Set-Content -LiteralPath ./temp/import.jsonl -Encoding utf8
 $imported = & $nous --instance $instance import text --namespace $namespace --subject $subject --file ./temp/import.jsonl --format jsonl | ConvertFrom-Json
 $imported.items | Select-Object index, status, error
 $importedMemory = $imported.items[0].receipt.result.memory_id
-& $nous --instance $instance query --subject $subject '秋天 枫叶'
+& $nous --instance $instance query --subject $subject '<实际资料中的主题>'
 & $nous --instance $instance memory source $importedMemory
 ```
 
@@ -146,7 +141,7 @@ HTTP 接口与 MCP 工具进入相同应用用例：
 }
 ```
 
-`expected_revision` 取 `config show` 的目标 scope/key 覆盖记录修订；首次覆盖使用 0。清除项为 `{"op":"clear","key":"...","expected_revision":123}`，恢复继承。服务对完整候选快照及受影响下级范围一起校验，然后原子提交。模型配置为 Live；server、auth、network、tasks、observability 为 Instance/Restart，待重启并由实际资源 owner 成功应用后更新 active。
+`expected_revision` 取 `config show` 的目标 scope/key 覆盖记录修订；首次覆盖使用 0。清除项为 `{"op":"clear","key":"...","expected_revision":123}`，恢复继承。服务对完整候选快照及受影响下级范围一起校验，然后原子提交。模型和媒体策略为 Live；server、network、tasks、platform、observability 为 Instance/Restart，待重启并由实际资源 owner 成功应用后更新 active。auth 的引导凭据由本地身份恢复入口管理。
 
 模型配置使用资源图，职责通过有序 route 列表选择资源：
 
@@ -259,7 +254,34 @@ $backup = & $nous --instance $instance backup create | ConvertFrom-Json
 
 形成请求的 `input` 包含 `subject_id`、精确 `sources` 和 `targets[{key,kind,existing}]`。服务读取已授权来源并分配稳定目标 ID，模型只从来源键与目标槽位选择。Concept、MemorySemantics、Episode、Schema、Journal、Association 分别通过 `concept_formation`、`memory_semantics`、`episode_formation`、`schema_formation`、`journal_formation`、`association_formation` 职责选择 route，按顺序创建有依赖的任务；后续任务读取前序已采纳对象。输入输出预算取 route 参数，重试取职责绑定。形成复用共享 ModelCall 与持久队列；每个提案组独立事务采纳，返回 applied/conflict/rejected/skipped，缺配置等待、重启续接、来源清除退役均保存状态。
 
-形成作业的 `succeeded` 表示全部组已处理，具体成果和冲突读取 `formation_run` 的 `groups`。`source` 返回对象精确修订、证据闭包、原材料和实际模型调用。CLI 交互优化、媒体三策略、原生多模态、managed context/steward 与完整 A-Memorix 合同继续按 [能力续接清单](docs/能力续接清单.md) 推进。
+形成作业的 `succeeded` 表示全部组已处理，具体成果和冲突读取 `formation_run` 的 `groups`。`source` 返回对象精确修订、证据闭包、原材料和实际模型调用。CLI 交互优化、原生多模态向量、managed context/steward 与完整 A-Memorix 合同继续按 [能力续接清单](docs/能力续接清单.md) 推进。
+
+## 媒体与精确来源
+
+`material put --file` 流式接纳文本、图像、音频、视频和文档；媒体服务统一执行大小策略、类型识别与元数据探测。`media inspect <material-id>` 读取元数据；`material get <material-id> --output <path>` 下载原件。HTTP 对应 `POST /api/media/materials` 和 `GET /api/materials/{id}/content`。
+
+媒体工具在 `platform.executables` 注册为 `managed` 的实例 `bin` 相对路径或 `external` 的绝对路径。`media` 配置指定 ffprobe、ffmpeg、可选文档工具及采样、音轨和大小策略。进程工作目录、临时文件、取消与进程树收尾由 Platform 管理。
+
+三种派生策略分别是 `description-only`（自由描述）、`direct-structured`（媒体直接形成结构解释）、`describe-then-structure`（先保存自由描述，再同时输入媒体与该描述形成结构解释）。对应模型职责是 `media_description`、`media_direct_structuring`、`media_structuring`；每个职责独立绑定模型和提示词。`--delivery sampled-frames` 使用有时间定位的采样帧和配置的音轨，实际覆盖随结果保存。
+
+```powershell
+& $nous media schema
+$derived = & $nous --instance $instance media derive --subject $subject --observation $observation --material $material --strategy describe-then-structure | ConvertFrom-Json
+& $nous --instance $instance media run $derived.job_ids[0]
+```
+
+任务完成后，用它的精确结果形成记忆或展开来源：
+
+```powershell
+$run = & $nous --instance $instance media run $derived.job_ids[0] | ConvertFrom-Json
+$reference = @{ kind = 'representation'; reference = $run.result } | ConvertTo-Json -Compress
+& $nous --instance $instance memory form --subject $subject --observation $observation --source $reference
+& $nous --instance $instance media lineage --subject $subject $reference
+```
+
+`media region` 管理原件和派生区域，`media representation/history` 读取精确修订及历史；`media source` 返回所选内容与实际通道。HTTP `POST /api/media` 与 MCP `media` 接收同一操作合同。每个 paid step 使用共享调用账本；第二段可以复用已持久的第一段描述。Memory、结构化认知和查询展开完整来源图，备份包含全部保留修订引用的派生文件。
+
+提供模型密钥时可使用 `secret import --file <已有密钥文件> --reference credentials/new-api.token`，返回可用于模型配置的 SecretRef。文件发布与权限由密钥服务管理。
 
 ## 开发工具
 

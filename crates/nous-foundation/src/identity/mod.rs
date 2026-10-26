@@ -53,10 +53,10 @@ impl Identity {
             .split_once('.')
             .and_then(|(id, _)| id.parse::<GrantId>().ok());
         let mut ids = vec![GrantId::bootstrap()];
-        if let Some(id) = candidate {
-            if id != GrantId::bootstrap() {
-                ids.insert(0, id);
-            }
+        if let Some(id) = candidate
+            && id != GrantId::bootstrap()
+        {
+            ids.insert(0, id);
         }
         let digest = Secrets::digest(&value);
         let mut view = self.database.read_view().await?;

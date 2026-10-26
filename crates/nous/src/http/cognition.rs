@@ -18,6 +18,7 @@ pub struct FormMemory {
     pub operation_id: String,
     pub subject_id: String,
     pub observation_id: String,
+    pub source: Option<nous_domain::media::MediaReference>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -60,7 +61,8 @@ impl CognitionOperation {
                     ctx,
                     &input.operation_id,
                     &input.subject_id.parse()?,
-                    &input.observation_id.parse()?
+                    &input.observation_id.parse()?,
+                    input.source.clone()
                 )
                 .await?
             )),

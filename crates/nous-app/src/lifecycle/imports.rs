@@ -189,6 +189,9 @@ impl App {
             observation_id: observation.id.clone(),
             material_id: material.id.clone(),
             model_call_id: None,
+            source: nous_domain::media::MediaReference::Original {
+                material_id: material.id.clone(),
+            },
             origin: MemoryOrigin::Imported,
             times: CognitiveTimes {
                 event: material.event_time.clone(),
@@ -216,6 +219,9 @@ impl App {
                 job,
                 observation_id: observation.id.clone(),
                 material_id: material.id.clone(),
+                source: nous_domain::media::MediaReference::Original {
+                    material_id: material.id.clone(),
+                },
                 subject_revision: subject.revision,
                 material_hash: material.content_hash.clone(),
                 memory_ids: vec![],

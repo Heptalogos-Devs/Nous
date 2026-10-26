@@ -30,9 +30,15 @@ pub struct SourceAccess {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum MediaData {
-    Blob { blob: nous_domain::media::BlobReference },
-    Base64 { data: String },
-    Url { url: String },
+    Blob {
+        blob: nous_domain::media::BlobReference,
+    },
+    Base64 {
+        data: String,
+    },
+    Url {
+        url: String,
+    },
 }
 impl MediaData {
     pub fn from_bytes(bytes: &[u8]) -> Self {

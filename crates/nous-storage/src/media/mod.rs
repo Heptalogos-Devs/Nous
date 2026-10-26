@@ -1,11 +1,21 @@
 //! Exact media locators and immutable derivation graphs inside Authority snapshots.
 mod graph;
 mod read;
+mod references;
 mod workflow;
 mod write;
 use crate::{Database, ReadView, WriteTransaction};
 use nous_domain::{media::*, *};
 use std::collections::BTreeSet;
+
+pub(crate) async fn roots_in(
+    connection: &mut sqlx::SqliteConnection,
+    namespace: &NamespaceId,
+    subject: &SubjectId,
+    reference: &MediaReference,
+) -> Result<BTreeSet<MaterialId>> {
+    graph::roots(connection, namespace, subject, reference).await
+}
 
 macro_rules! snapshot_reads {
     ($owner:ty) => {
@@ -70,6 +80,17 @@ macro_rules! snapshot_reads {
 }
 snapshot_reads!(ReadView);
 snapshot_reads!(WriteTransaction);
+impl ReadView {
+    pub async fn media_lineage(
+        &mut self,
+        namespace: &NamespaceId,
+        subject: &SubjectId,
+        reference: &MediaReference,
+    ) -> Result<MediaSourceLineage> {
+        let watermark = self.watermark;
+        graph::lineage(&mut self.tx, namespace, subject, reference, watermark).await
+    }
+}
 impl Database {
     pub async fn source_region(
         &self,

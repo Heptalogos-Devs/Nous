@@ -1,5 +1,6 @@
 use nous_app::App;
 mod identity;
+mod media;
 mod observability;
 use nous_domain::{CallContext, Error, ErrorCode, QueryRequest};
 use rmcp::{
@@ -113,7 +114,8 @@ impl McpService {
             tool_router: Self::tool_router()
                 + Self::maintenance_tool_router()
                 + Self::observability_tool_router()
-                + Self::identity_tool_router(),
+                + Self::identity_tool_router()
+                + Self::media_tool_router(),
         }
     }
     pub fn remote(client: ApiClient) -> Self {
@@ -122,7 +124,8 @@ impl McpService {
             tool_router: Self::tool_router()
                 + Self::maintenance_tool_router()
                 + Self::observability_tool_router()
-                + Self::identity_tool_router(),
+                + Self::identity_tool_router()
+                + Self::media_tool_router(),
         }
     }
 
@@ -349,7 +352,7 @@ impl McpService {
         .await
     }
     #[tool(
-        description = "Queue model formation from a real recorded Subject contact; returns a durable job"
+        description = "Queue Memory formation from a recorded contact or import. An optional exact MediaReference selects an original, region, committed description or interpretation; omitted selects the observation's original. Preserves all source roots and the actual source event kind."
     )]
     async fn memory_form(
         &self,

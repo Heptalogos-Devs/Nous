@@ -1,6 +1,5 @@
 //! Memory formation declares its role, source input, prompt arguments and draft decoder.
-use nous_domain::media::{ChannelAccess, ChannelMode, MediaReference};
-use nous_domain::{Error, MaterialId, MemoryDraft, NamespaceId, ObservationId, SubjectId};
+use nous_domain::{Error, FormationInput, MemoryDraft};
 use nous_foundation::configuration::ConfigKey;
 use nous_foundation::models::AttemptContext;
 use nous_foundation::models::InvocationDraft;
@@ -23,8 +22,6 @@ use nous_foundation::models::SourceAccess;
 use nous_foundation::prompts::PromptArgument;
 use nous_foundation::prompts::PromptArguments;
 use nous_foundation::prompts::PromptDefinition;
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
 use serde_json::json;
 pub const ROLE: &str = "memory_formation";
 pub const BINDING: ConfigKey<Option<RoleBinding>> = ConfigKey::new("models.roles.memory_formation");
@@ -40,21 +37,9 @@ pub fn definition() -> RoleDefinition {
         }),
     }
 }
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct FormationInput {
-    pub namespace_id: NamespaceId,
-    pub subject_id: SubjectId,
-    pub material_id: MaterialId,
-    pub material_commit_seq: i64,
-    pub observation_id: ObservationId,
-    pub observation_commit_seq: i64,
-    #[serde(default)]
-    pub source_event_kind: nous_domain::ObservationKind,
-    pub text: String,
-}
 pub type PreparedFormation = PreparedCall<InvocationMetadata<FormationInput>>;
 fn draft(input: FormationInput) -> nous_domain::Result<InvocationDraft> {
+    input.source.validate()?;
     if input.text.trim().is_empty()
         || input.material_commit_seq <= 0
         || input.observation_commit_seq <= 0
@@ -65,13 +50,17 @@ fn draft(input: FormationInput) -> nous_domain::Result<InvocationDraft> {
     }
     let arguments = PromptArguments::from([
         (
-            "material_text".into(),
+            "source_text".into(),
             PromptArgument {
                 value: json!(input.text),
-                source: Some(format!(
-                    "material:{}@{}",
-                    input.material_id, input.material_commit_seq
-                )),
+                source: Some(serde_json::to_string(&input.source)?),
+            },
+        ),
+        (
+            "source".into(),
+            PromptArgument {
+                value: json!(input.source),
+                source: None,
             },
         ),
         (
@@ -86,20 +75,14 @@ fn draft(input: FormationInput) -> nous_domain::Result<InvocationDraft> {
         ),
     ]);
     let user =
-        json!({"material_text":input.text,"source_event_kind":input.source_event_kind}).to_string();
+        json!({"source_text":input.text,"source":input.source,"source_access":input.source_access,"source_event_kind":input.source_event_kind}).to_string();
     let message = ModelMessage {
         role: MessageRole::User,
         parts: vec![MessagePart::Text {
             text: user,
             source: Some(SourceAccess {
-                reference: MediaReference::Original {
-                    material_id: input.material_id,
-                },
-                channels: ChannelAccess {
-                    visual: ChannelMode::Unavailable,
-                    audio: ChannelMode::Unavailable,
-                    source_text: ChannelMode::Original,
-                },
+                reference: input.source,
+                channels: input.source_access,
             }),
         }],
     };

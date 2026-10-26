@@ -49,7 +49,7 @@ impl ModelCalls {
         step: &str,
         runtime: &ModelRuntime,
         role: &str,
-        input:Option<Value>,
+        input: Option<Value>,
     ) -> bool {
         let Ok(previous) = self.database.latest_model_call(&job.id, step).await else {
             return false;

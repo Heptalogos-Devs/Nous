@@ -9,10 +9,36 @@ pub(super) async fn roots(
     subject: &SubjectId,
     reference: &MediaReference,
 ) -> Result<BTreeSet<MaterialId>> {
+    Ok(load(conn, namespace, subject, reference)
+        .await?
+        .materials
+        .into_iter()
+        .map(|material| material.id)
+        .collect())
+}
+
+struct LoadedGraph {
+    materials: Vec<Material>,
+    source_regions: Vec<SourceRegion>,
+    representations: Vec<DerivedRepresentation>,
+    derived_regions: Vec<DerivedRegion>,
+}
+
+async fn load(
+    conn: &mut SqliteConnection,
+    namespace: &NamespaceId,
+    subject: &SubjectId,
+    reference: &MediaReference,
+) -> Result<LoadedGraph> {
     reference.validate()?;
     let mut pending = vec![reference.clone()];
     let mut visited = BTreeSet::new();
-    let mut roots = BTreeSet::new();
+    let mut graph = LoadedGraph {
+        materials: Vec::new(),
+        source_regions: Vec::new(),
+        representations: Vec::new(),
+        derived_regions: Vec::new(),
+    };
     while let Some(reference) = pending.pop() {
         if !visited.insert(reference.clone()) {
             continue;
@@ -25,32 +51,56 @@ pub(super) async fn roots(
         }
         match reference {
             MediaReference::Original { material_id } => {
-                records::material(conn, namespace, &material_id)
+                let material = records::material(conn, namespace, &material_id)
                     .await?
                     .ok_or_else(crate::not_found)?;
-                roots.insert(material_id);
+                graph.materials.push(material);
             }
-            MediaReference::SourceRegion { id } => pending.extend(
-                read::source_region(conn, namespace, &id)
-                    .await?
-                    .source_references(),
-            ),
-            MediaReference::Representation { reference } => pending.extend(
-                read::representation(conn, namespace, subject, &reference)
-                    .await?
-                    .source_references(),
-            ),
-            MediaReference::DerivedRegion { id } => pending.extend(
-                read::derived_region(conn, namespace, subject, &id)
-                    .await?
-                    .source_references(),
-            ),
+            MediaReference::SourceRegion { id } => {
+                let value = read::source_region(conn, namespace, &id).await?;
+                pending.extend(value.source_references());
+                graph.source_regions.push(value);
+            }
+            MediaReference::Representation { reference } => {
+                let value = read::representation(conn, namespace, subject, &reference).await?;
+                pending.extend(value.source_references());
+                graph.representations.push(value);
+            }
+            MediaReference::DerivedRegion { id } => {
+                let value = read::derived_region(conn, namespace, subject, &id).await?;
+                pending.extend(value.source_references());
+                graph.derived_regions.push(value);
+            }
         }
     }
-    if roots.is_empty() {
+    if graph.materials.is_empty() {
         return Err(Error::invalid("media reference has no original source"));
     }
-    Ok(roots)
+    Ok(graph)
+}
+
+pub(super) async fn lineage(
+    conn: &mut SqliteConnection,
+    namespace: &NamespaceId,
+    subject: &SubjectId,
+    reference: &MediaReference,
+    watermark: i64,
+) -> Result<MediaSourceLineage> {
+    let graph = load(conn, namespace, subject, reference).await?;
+    let mut materials = Vec::new();
+    for material in graph.materials {
+        let details =
+            crate::source::materials::material_details(conn, namespace, &material.id).await?;
+        materials.push(MediaOriginal { material, details });
+    }
+    Ok(MediaSourceLineage {
+        source: reference.clone(),
+        materials,
+        source_regions: graph.source_regions,
+        representations: graph.representations,
+        derived_regions: graph.derived_regions,
+        watermark,
+    })
 }
 pub(super) async fn duration(
     conn: &mut SqliteConnection,
@@ -72,7 +122,7 @@ pub(super) async fn duration(
                 .await?
                 .ok_or_else(crate::not_found)?
                 .metadata;
-            Ok(coordinate_duration(&region.coordinate, &metadata))
+            Ok(region.coordinate.duration_ms(&metadata))
         }
         MediaReference::Representation { reference } => Ok(representation_duration(
             &read::representation(conn, namespace, subject, reference).await?,
@@ -85,7 +135,7 @@ pub(super) async fn duration(
                 (
                     DerivedSelector::Artifact { coordinate },
                     RepresentationPayload::Artifact { metadata, .. },
-                ) => coordinate_duration(coordinate, metadata),
+                ) => coordinate.duration_ms(metadata),
                 _ => representation_duration(&representation),
             })
         }
@@ -95,12 +145,5 @@ fn representation_duration(representation: &DerivedRepresentation) -> Option<u64
     match &representation.payload {
         RepresentationPayload::Artifact { metadata, .. } => metadata.duration_ms(),
         _ => representation.quality.source_duration_ms,
-    }
-}
-fn coordinate_duration(coordinate: &SourceCoordinate, metadata: &MediaMetadata) -> Option<u64> {
-    match coordinate {
-        SourceCoordinate::Whole | SourceCoordinate::ImageRect { .. } => metadata.duration_ms(),
-        SourceCoordinate::TimeSpan { start_ms, end_ms } => Some(end_ms - start_ms),
-        _ => None,
     }
 }

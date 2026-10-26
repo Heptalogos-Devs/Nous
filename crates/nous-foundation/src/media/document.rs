@@ -127,6 +127,7 @@ impl Media {
         })?;
         let mut spec = ProcessSpec::new(resource);
         spec.args = vec!["-v".into()];
+        spec.timeout = Some(Duration::from_millis(policy.probe_timeout_ms));
         let result = self.platform.run(ctx, spec, cancel.clone()).await?;
         if !result.exit.success || !matches!(result.reason, StopReason::Exited) {
             return Err(Error::new(

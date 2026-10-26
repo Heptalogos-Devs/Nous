@@ -8,6 +8,36 @@ use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio_util::sync::CancellationToken;
 
 impl Media {
+    pub async fn capture_text(
+        &self,
+        text: &str,
+        cancel: &CancellationToken,
+    ) -> Result<CapturedMedia> {
+        let policy = self.policy().await?;
+        let max = policy
+            .max_buffered_text_bytes
+            .min(policy.max_original_bytes);
+        self.publish_text(text, max, cancel).await
+    }
+    pub(super) async fn publish_text(
+        &self,
+        text: &str,
+        max: u64,
+        cancel: &CancellationToken,
+    ) -> Result<CapturedMedia> {
+        if text.is_empty() {
+            return Err(Error::invalid("text media must contain UTF-8 bytes"));
+        }
+        let object = self
+            .objects
+            .publish_bytes(text.as_bytes(), max, cancel)
+            .await?;
+        Ok(CapturedMedia {
+            object,
+            media_type: "text/plain".into(),
+            metadata: MediaMetadata::Text,
+        })
+    }
     pub async fn capture<R: AsyncRead + Unpin + Send + 'static>(
         &self,
         ctx: &CallContext,
@@ -95,25 +125,6 @@ impl Media {
         } else {
             MediaMetadata::Binary
         };
-        if media_type == "image/jpeg" {
-            if object.byte_len < 4 {
-                return Err(Error::invalid("JPEG image is incomplete"));
-            }
-            let mut tail = self
-                .objects
-                .read_range(
-                    &object.digest,
-                    object.byte_len,
-                    (object.byte_len as u64 - 2)..object.byte_len as u64,
-                    cancel,
-                )
-                .await?;
-            let mut marker = [0; 2];
-            tail.read_exact(&mut marker).await?;
-            if marker != [0xff, 0xd9] {
-                return Err(Error::invalid("JPEG image is incomplete"));
-            }
-        }
         metadata.validate(&media_type)?;
         Ok((media_type, metadata))
     }

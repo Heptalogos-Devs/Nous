@@ -52,6 +52,31 @@ impl Database {
         }
         rows.into_iter().map(memory_row).collect()
     }
+
+    pub async fn memory_revision(
+        &self,
+        namespace: &NamespaceId,
+        id: &MemoryId,
+        revision: i64,
+    ) -> Result<Memory> {
+        if revision <= 0 {
+            return Err(Error::invalid(
+                "Memory source requires a positive exact revision",
+            ));
+        }
+        sqlx::query(
+            "SELECT * FROM memory_revisions WHERE namespace_id=? AND memory_id=? AND revision=?",
+        )
+        .bind(namespace.as_str())
+        .bind(id.as_str())
+        .bind(revision)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(storage_error)?
+        .map(memory_row)
+        .transpose()?
+        .ok_or_else(not_found)
+    }
 }
 
 impl WriteTransaction {
@@ -67,6 +92,14 @@ impl WriteTransaction {
         expected_revision: Option<i64>,
     ) -> Result<()> {
         self.check_sequence(value.commit_seq)?;
+        self.validate_memory_source(
+            &value.namespace_id,
+            &value.subject_id,
+            &value.observation_id,
+            &value.material_id,
+            &value.source,
+        )
+        .await?;
         let has_model = value.model_call_id.is_some();
         let has_neither = value.model_call_id.is_none();
         if match &value.origin {
@@ -124,14 +157,48 @@ impl WriteTransaction {
                 }
             }
         }
-        sqlx::query("INSERT INTO memory_revisions(memory_id,namespace_id,subject_id,revision,title,content,epistemic_status,observation_id,material_id,model_call_id,times,recorded_at,deleted,commit_seq,lifecycle_strength,lifecycle_anchor_unix_ms,lifecycle_activation,lifecycle_pinned,lifecycle_protected_until_unix_ms,lifecycle_inactive_since_unix_ms,lifecycle_last_reinforced_unix_ms,origin) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+        sqlx::query("INSERT INTO memory_revisions(memory_id,namespace_id,subject_id,revision,title,content,epistemic_status,observation_id,material_id,source,model_call_id,times,recorded_at,deleted,commit_seq,lifecycle_strength,lifecycle_anchor_unix_ms,lifecycle_activation,lifecycle_pinned,lifecycle_protected_until_unix_ms,lifecycle_inactive_since_unix_ms,lifecycle_last_reinforced_unix_ms,origin) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
             .bind(value.id.as_str()).bind(value.namespace_id.as_str()).bind(value.subject_id.as_str()).bind(value.revision).bind(&value.title).bind(&value.content).bind(&value.epistemic_status)
-            .bind(value.observation_id.as_str()).bind(value.material_id.as_str()).bind(value.model_call_id.as_ref().map(ModelCallId::as_str))
+            .bind(value.observation_id.as_str()).bind(value.material_id.as_str()).bind(serde_json::to_string(&value.source)?).bind(value.model_call_id.as_ref().map(ModelCallId::as_str))
             .bind(serde_json::to_string(&value.times).map_err(storage_error)?).bind(&value.recorded_at).bind(value.deleted).bind(value.commit_seq)
             .bind(value.lifecycle.strength).bind(value.lifecycle.anchor_unix_ms).bind(enum_name(&value.lifecycle.activation)?).bind(value.lifecycle.pinned)
             .bind(value.lifecycle.protected_until_unix_ms).bind(value.lifecycle.inactive_since_unix_ms).bind(value.lifecycle.last_reinforced_unix_ms)
             .bind(enum_name(&value.origin)?)
             .execute(&mut *self.tx).await.map_err(write_error)?;
+        Ok(())
+    }
+
+    pub(crate) async fn validate_memory_source(
+        &mut self,
+        namespace: &NamespaceId,
+        subject: &SubjectId,
+        observation: &ObservationId,
+        material: &MaterialId,
+        source: &media::MediaReference,
+    ) -> Result<()> {
+        let observed = self.observation(namespace, observation).await?;
+        if observed.subject_id != *subject || observed.material_id != *material {
+            return Err(Error::invalid(
+                "memory source event differs from its subject or material",
+            ));
+        }
+        let roots = self.media_roots(namespace, subject, source).await?;
+        if !roots.contains(material) {
+            return Err(Error::invalid(
+                "memory source does not contain its observation material",
+            ));
+        }
+        for root in roots {
+            if !self
+                .subject_has_material_access(namespace, subject, &root)
+                .await?
+            {
+                return Err(Error::new(
+                    ErrorCode::Forbidden,
+                    "memory source root is not accessible to this subject",
+                ));
+            }
+        }
         Ok(())
     }
 }
@@ -160,6 +227,7 @@ pub(crate) fn memory_row_ref(row: &SqliteRow) -> Result<Memory> {
         epistemic_status: row.get("epistemic_status"),
         observation_id: ObservationId(row.get("observation_id")),
         material_id: nous_domain::MaterialId(row.get("material_id")),
+        source: serde_json::from_str(row.get("source"))?,
         model_call_id: row
             .get::<Option<String>, _>("model_call_id")
             .map(ModelCallId),

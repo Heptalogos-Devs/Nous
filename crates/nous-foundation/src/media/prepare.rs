@@ -14,11 +14,7 @@ impl Media {
         request: PreparationRequest,
         cancel: &CancellationToken,
     ) -> Result<PreparedMedia> {
-        request.blob.validate()?;
-        request.metadata.validate(&request.blob.media_type)?;
-        request
-            .coordinate
-            .validate_bounds(request.blob.byte_len, &request.metadata)?;
+        request.validate()?;
         let service = self.clone();
         let ctx = ctx.clone();
         execution::owned_async(cancel, move |local| async move {
@@ -77,13 +73,10 @@ impl Media {
                     "decoded frame timestamp differs from the fixed source frame locator",
                 ));
             }
-            let source_duration = match request.coordinate {
-                SourceCoordinate::TimeSpan { start_ms, end_ms } => Some(end_ms - start_ms),
-                _ => request.metadata.duration_ms(),
-            };
+            let source_duration = request.coordinate.duration_ms(&request.metadata);
             let shortened = source_duration
                 .zip(item.metadata.duration_ms())
-                .is_some_and(|(source, output)| output.saturating_add(2) < source);
+                .is_some_and(|(source, output)| output < source);
             if matches!(
                 request.coordinate,
                 SourceCoordinate::Whole | SourceCoordinate::TimeSpan { .. }

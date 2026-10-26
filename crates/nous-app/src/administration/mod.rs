@@ -1,7 +1,7 @@
 //! Application commands for configuring and inspecting shared services.
 mod bootstrap;
-pub mod identity;
 pub mod configuration;
+pub mod identity;
 pub mod models;
 pub mod observability;
 

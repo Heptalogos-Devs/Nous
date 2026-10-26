@@ -23,9 +23,9 @@ pub struct MediaPolicy {
     pub audio_channels: u16,
     pub audio_sample_rate: u32,
     pub audio_stream_index: u16,
-    pub process_threads:u16,
-    pub max_decoder_allocation_bytes:u64,
-    pub jpeg_quality:u8,
+    pub process_threads: u16,
+    pub max_decoder_allocation_bytes: u64,
+    pub jpeg_quality: u8,
 }
 impl Default for MediaPolicy {
     fn default() -> Self {
@@ -46,7 +46,9 @@ impl Default for MediaPolicy {
             audio_channels: 1,
             audio_sample_rate: 16_000,
             audio_stream_index: 0,
-            process_threads:1,max_decoder_allocation_bytes:64*1024*1024,jpeg_quality:3,
+            process_threads: 1,
+            max_decoder_allocation_bytes: 64 * 1024 * 1024,
+            jpeg_quality: 3,
         }
     }
 }

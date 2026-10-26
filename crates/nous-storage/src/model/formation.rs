@@ -24,13 +24,22 @@ impl WriteTransaction {
         {
             return Err(Error::invalid("formation source is outside its job"));
         }
-        sqlx::query("INSERT INTO formation_runs(job_id,observation_id,material_id,subject_revision,material_hash) VALUES(?,?,?,?,?)").bind(&job.id).bind(value.observation_id.as_str()).bind(value.material_id.as_str()).bind(value.subject_revision).bind(&value.material_hash).execute(&mut *self.tx).await.map_err(write_error)?;
+        self.validate_memory_source(
+            namespace,
+            subject,
+            &value.observation_id,
+            &value.material_id,
+            &value.source,
+        )
+        .await?;
+        sqlx::query("INSERT INTO formation_runs(job_id,observation_id,material_id,source,subject_revision,material_hash) VALUES(?,?,?,?,?,?)").bind(&job.id).bind(value.observation_id.as_str()).bind(value.material_id.as_str()).bind(serde_json::to_string(&value.source)?).bind(value.subject_revision).bind(&value.material_hash).execute(&mut *self.tx).await.map_err(write_error)?;
         self.replace_memories(value).await
     }
     pub async fn update_formation(&mut self, value: &FormationRun) -> Result<()> {
         let old = self.formation(&value.job.id).await?;
         if old.observation_id != value.observation_id
             || old.material_id != value.material_id
+            || old.source != value.source
             || old.subject_revision != value.subject_revision
             || old.material_hash != value.material_hash
         {
@@ -47,7 +56,11 @@ impl WriteTransaction {
             .map_err(write_error)?;
         for (ordinal, id) in value.memory_ids.iter().enumerate() {
             let memory = self.memory(namespace, id).await?;
-            if memory.subject_id != *subject {
+            if memory.subject_id != *subject
+                || memory.observation_id != value.observation_id
+                || memory.material_id != value.material_id
+                || memory.source != value.source
+            {
                 return Err(Error::invalid("formation result is outside its subject"));
             }
             sqlx::query("INSERT INTO formation_memories(job_id,memory_id,ordinal) VALUES(?,?,?)")
@@ -79,6 +92,7 @@ async fn read(conn: &mut SqliteConnection, id: &str) -> Result<FormationRun> {
         job: crate::authority::tasks::read(conn, id).await?,
         observation_id: ObservationId(row.get("observation_id")),
         material_id: MaterialId(row.get("material_id")),
+        source: serde_json::from_str(row.get("source"))?,
         subject_revision: row.get("subject_revision"),
         material_hash: row.get("material_hash"),
         memory_ids: ids.into_iter().map(MemoryId).collect(),

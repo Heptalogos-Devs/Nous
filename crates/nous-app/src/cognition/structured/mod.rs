@@ -201,18 +201,69 @@ impl App {
             .source_closure(&object.namespace_id, id, Some(object.revision))
             .await?;
         let mut materials = Vec::new();
+        let source_context = ctx.narrow(AccessScope::Subject {
+            namespace_id: object.namespace_id.clone(),
+            subject_id: object.subject_id.clone(),
+        })?;
         for root in &closure.roots {
-            match self.get_material(ctx, &root.material_id).await {
-                Ok(material) => materials.push(material),
+            match self
+                .sources
+                .original_metadata(
+                    &source_context,
+                    &root.material_id,
+                    &tokio_util::sync::CancellationToken::new(),
+                )
+                .await
+            {
+                Ok(source) => materials.push(nous_domain::media::MediaOriginal {
+                    material: source.material,
+                    details: source.details,
+                }),
                 Err(error) if error.code == ErrorCode::NotFound => {}
                 Err(error) => return Err(error),
+            }
+        }
+        let mut media_sources = Vec::new();
+        for node in &closure.nodes {
+            if let EvidenceSource::MemoryRevision {
+                memory_id,
+                revision,
+            } = &node.source
+            {
+                let memory = match self
+                    .database
+                    .memory_revision(&object.namespace_id, memory_id, *revision)
+                    .await
+                {
+                    Ok(memory) => memory,
+                    Err(error) if error.code == ErrorCode::NotFound => continue,
+                    Err(error) => return Err(error),
+                };
+                match self
+                    .sources
+                    .lineage(
+                        &source_context,
+                        &object.namespace_id,
+                        &object.subject_id,
+                        &memory.source,
+                    )
+                    .await
+                {
+                    Ok(lineage) => media_sources.push(
+                        json!({"memory_id":memory.id,"revision":memory.revision,"source":lineage}),
+                    ),
+                    Err(error) if error.code == ErrorCode::NotFound => {}
+                    Err(error) => return Err(error),
+                }
             }
         }
         let producer = match &object.producer_call_id {
             Some(id) => Some(self.read_model_call(ctx, id).await?),
             None => None,
         };
-        Ok(json!({"object":object,"closure":closure,"materials":materials,"producer":producer}))
+        Ok(
+            json!({"object":object,"closure":closure,"materials":materials,"media_sources":media_sources,"producer":producer}),
+        )
     }
 
     pub async fn concept_by_alias(

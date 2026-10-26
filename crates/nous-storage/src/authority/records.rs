@@ -88,26 +88,6 @@ pub(crate) fn material_row(row: SqliteRow) -> Result<Material> {
     material_row_ref(&row, "")
 }
 
-pub(crate) fn material_columns(table: &'static str, prefix: &'static str) -> String {
-    [
-        "id",
-        "namespace_id",
-        "content_hash",
-        "media_type",
-        "metadata",
-        "byte_len",
-        "source",
-        "event_time_domain",
-        "event_time_coordinate",
-        "recorded_at",
-        "commit_seq",
-    ]
-    .into_iter()
-    .map(|field| format!("{table}.{field} AS {prefix}{field}"))
-    .collect::<Vec<_>>()
-    .join(",")
-}
-
 pub(crate) fn material_row_ref(row: &SqliteRow, prefix: &'static str) -> Result<Material> {
     let column = |name: &str| format!("{prefix}{name}");
     Ok(Material {
