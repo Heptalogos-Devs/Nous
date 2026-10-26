@@ -15,8 +15,7 @@ pub const JOB_QUEUE: &str = "nous.work";
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct OperationKey {
-    pub caller_id: String,
-    pub trace_id: nous_domain::TraceId,
+    pub context: CallContext,
     pub operation: String,
     pub scope: String,
     pub operation_id: String,
@@ -26,7 +25,7 @@ pub struct OperationKey {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct OperationReceipt {
     pub operation_id: String,
-    pub trace_id: nous_domain::TraceId,
+    pub context: CallContext,
     pub time: nous_domain::OperationTime,
     pub commit_seq: i64,
     pub result: Value,
@@ -204,17 +203,6 @@ impl Database {
             .map_err(storage_error)?
             .map(NamespaceId)
             .ok_or_else(not_found)
-    }
-
-    pub async fn subject_has_material_access(
-        &self,
-        namespace: &NamespaceId,
-        subject: &SubjectId,
-        material: &MaterialId,
-    ) -> Result<bool> {
-        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM observations WHERE namespace_id=? AND subject_id=? AND material_id=?)")
-            .bind(namespace.as_str()).bind(subject.as_str()).bind(material.as_str())
-            .fetch_one(&self.pool).await.map_err(storage_error)
     }
 
     pub async fn list_namespaces(&self) -> Result<Vec<Namespace>> {

@@ -23,6 +23,8 @@ pub fn configuration_registry(
     nous_foundation::configuration::register_core(&mut registry)?;
     nous_foundation::observability::register_configuration(&mut registry)?;
     nous_foundation::tasks::register_configuration(&mut registry)?;
+    nous_foundation::platform::register_configuration(&mut registry)?;
+    nous_foundation::media::register_configuration(&mut registry)?;
     nous_foundation::models::register_configuration(&mut registry, roles)?;
     Ok(registry.finish())
 }
@@ -49,6 +51,7 @@ impl App {
                             "formation",
                             &model,
                             crate::cognition::memory::model::ROLE,
+                            None,
                         )
                         .await
                 }
@@ -86,6 +89,7 @@ impl App {
                             "embedding",
                             &model,
                             crate::retrieval::embedding_model::ROLE,
+                            None,
                         )
                         .await
                 }

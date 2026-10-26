@@ -1,4 +1,5 @@
 use nous_app::App;
+mod identity;
 mod observability;
 use nous_domain::{CallContext, Error, ErrorCode, QueryRequest};
 use rmcp::{
@@ -111,7 +112,8 @@ impl McpService {
             backend: Backend::Local(Arc::new(app)),
             tool_router: Self::tool_router()
                 + Self::maintenance_tool_router()
-                + Self::observability_tool_router(),
+                + Self::observability_tool_router()
+                + Self::identity_tool_router(),
         }
     }
     pub fn remote(client: ApiClient) -> Self {
@@ -119,7 +121,8 @@ impl McpService {
             backend: Backend::Remote(client),
             tool_router: Self::tool_router()
                 + Self::maintenance_tool_router()
-                + Self::observability_tool_router(),
+                + Self::observability_tool_router()
+                + Self::identity_tool_router(),
         }
     }
 

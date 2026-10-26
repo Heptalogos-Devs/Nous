@@ -22,8 +22,7 @@ impl Database {
     pub async fn recover_interrupted_jobs(&self) -> Result<u64> {
         let BeginOperation::New(mut tx) = self
             .begin_operation(OperationKey {
-                caller_id: "nous.recovery".into(),
-                trace_id: TraceId::new(),
+                context: CallContext::new("nous.recovery", AccessScope::Admin),
                 operation: "work.recover".into(),
                 scope: "instance".into(),
                 operation_id: ulid::Ulid::generate().to_string(),
@@ -69,15 +68,15 @@ impl WriteTransaction {
         max_queue_attempts: u32,
     ) -> Result<()> {
         value.validate()?;
-        if value.trace_id != *self.trace_id() {
+        if value.trace_id != self.context().trace_id {
             return Err(
                 Error::invalid("accepted task trace differs from its operation")
-                    .with_trace(self.trace_id().clone()),
+                    .with_trace(self.context().trace_id.clone()),
             );
         }
         if max_queue_attempts == 0 {
             return Err(Error::invalid("maximum queue attempts must be positive")
-                .with_trace(self.trace_id().clone()));
+                .with_trace(self.context().trace_id.clone()));
         }
         validate_job_id(&value.id)?;
         if !matches!(value.state, JobState::Queued | JobState::Waiting) {
@@ -113,7 +112,7 @@ impl WriteTransaction {
         value.validate()?;
         if max_queue_attempts == 0 {
             return Err(Error::invalid("maximum queue attempts must be positive")
-                .with_trace(self.trace_id().clone()));
+                .with_trace(self.context().trace_id.clone()));
         }
         let old = self.job_record(&value.id).await?;
         if old.namespace_id != value.namespace_id

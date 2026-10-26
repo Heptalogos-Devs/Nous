@@ -6,6 +6,7 @@ mod composition;
 pub mod import_format;
 mod lifecycle;
 pub mod retrieval;
+pub mod materials;
 
 use nous_domain::*;
 use nous_foundation::clock::Clock;
@@ -17,6 +18,7 @@ use nous_foundation::model_calls::ModelCalls;
 use nous_foundation::models::ModelRuntime;
 use nous_foundation::network;
 use nous_foundation::tasks::Tasks;
+use nous_foundation::{identity::Identity, secret::Secrets};
 use nous_retrieval::RetrievalIndex;
 pub use nous_storage::OperationReceipt;
 use nous_storage::{BeginOperation, Database, operation_key};
@@ -29,12 +31,16 @@ use std::sync::Arc;
 pub struct App {
     database: Database,
     objects: ObjectStore,
+    sources:materials::sources::SourceReader,
     paths: Arc<InstancePaths>,
     config: Arc<instance::InstanceConfig>,
     model: Arc<ModelRuntime>,
     pub(crate) configuration: Configuration,
     tasks: Tasks,
     calls: ModelCalls,
+    identity: Identity,
+    pub(crate) platform: nous_foundation::platform::Platform,
+    pub(crate) media: nous_foundation::media::Media,
     retrieval: RetrievalIndex,
     index_gate: Arc<tokio::sync::Mutex<()>>,
     semantic_cache: Arc<
@@ -66,6 +72,22 @@ impl App {
         config.network = desired.get(nous_foundation::configuration::NETWORK)?;
         config.observability = desired.get(nous_foundation::observability::OBSERVABILITY)?;
         config.tasks = desired.get(nous_foundation::tasks::TASK_RUNTIME)?;
+        config.platform = desired.get(nous_foundation::platform::PLATFORM)?;
+        let platform = nous_foundation::platform::Platform::new(
+            paths.as_ref().clone(),
+            config.platform.clone(),
+        )?;
+        let media = nous_foundation::media::Media::new(
+            objects.clone(),
+            configuration.clone(),
+            platform.clone(),
+        );
+        let secrets = Secrets::new(paths.clone());
+        secrets.reconcile(&database).await?;
+        let identity = Identity::new(database.clone(), secrets.clone(), clock);
+        identity
+            .initialize_bootstrap(&config.auth.admin_token)
+            .await?;
         let network = network::NetworkClients::new(&config.network)
             .map_err(|error| Error::new(ErrorCode::DependencyUnavailable, error.to_string()))?;
         let budgets =
@@ -75,13 +97,15 @@ impl App {
             database.clone(),
             roles.definitions().filter_map(|role| role.prompt.clone()),
         );
+        let sources=materials::sources::SourceReader::new(database.clone(),objects.clone(),media.clone());
         let model = Arc::new(
             ModelRuntime::new(
-                &paths,
+                secrets,
                 configuration.clone(),
                 roles,
                 prompts,
                 network.clone(),
+                Arc::new(sources.clone()),
             )
             .map_err(|error| Error::invalid(error.to_string()))?,
         );
@@ -103,12 +127,16 @@ impl App {
         Ok(Self {
             database,
             objects,
+            sources,
             paths,
             config: Arc::new(config),
             model,
             configuration,
             tasks,
             calls,
+            identity,
+            platform,
+            media,
             retrieval,
             index_gate: Arc::new(tokio::sync::Mutex::new(())),
             semantic_cache: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
@@ -122,6 +150,7 @@ impl App {
         &self.paths
     }
     pub async fn close(&self) {
+        self.platform.shutdown().await;
         let index = self.retrieval.clone();
         if let Err(error) = nous_foundation::execution::blocking(
             &tokio_util::sync::CancellationToken::new(),
@@ -143,7 +172,7 @@ impl App {
         Ok(
             json!({"version":env!("CARGO_PKG_VERSION"),"storage":self.database.status().await?,
             "capabilities":{"material":true,"observation":true,"memory_formation":true,"structured_cognition":true,"structured_formation":true,"lexical_query":true,"text_embedding":true,"dense_query":true,"vcp_query":true},
-            "model":self.model.inspect(&ConfigScope::Instance).await?,"index":self.retrieval.coverage().ok()}),
+            "model":self.model.inspect(&ConfigScope::Instance).await?,"platform":self.platform.status()?,"index":self.retrieval.coverage().ok()}),
         )
     }
 
@@ -291,6 +320,7 @@ impl App {
             namespace_id: namespace_id.clone(),
             content_hash: hash,
             media_type: "text/plain; charset=utf-8".into(),
+            metadata: nous_domain::media::MediaMetadata::Text,
             byte_len: published.byte_len,
             source,
             event_time,
@@ -308,44 +338,7 @@ impl App {
         ctx: &CallContext,
         id: &MaterialId,
     ) -> Result<MaterialContent> {
-        let namespace = self.database.material_namespace(id).await?;
-        if let AccessScope::Subject {
-            namespace_id,
-            subject_id,
-        } = &ctx.scope
-        {
-            ctx.require_subject(&namespace, subject_id)?;
-            if !self
-                .database
-                .subject_has_material_access(namespace_id, subject_id, id)
-                .await?
-            {
-                return Err(Error::new(
-                    ErrorCode::Forbidden,
-                    "material access has not been granted to this subject",
-                ));
-            }
-        } else {
-            ctx.require_namespace(&namespace)?;
-        }
-        let material = self.database.material(&namespace, id).await?;
-        let bytes = self
-            .objects
-            .read_bytes(
-                &material.content_hash,
-                material.byte_len,
-                8 * 1024 * 1024,
-                &tokio_util::sync::CancellationToken::new(),
-            )
-            .await?;
-        let text = String::from_utf8(bytes)
-            .map_err(|_| Error::internal("text object contains invalid UTF-8"))?;
-        let details = self.database.material_details(&namespace, id).await?;
-        Ok(MaterialContent {
-            material,
-            text,
-            details,
-        })
+        self.sources.original_text(ctx,id,&tokio_util::sync::CancellationToken::new()).await
     }
 
     pub async fn record_observation(

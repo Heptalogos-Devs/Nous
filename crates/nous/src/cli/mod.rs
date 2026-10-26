@@ -2,6 +2,7 @@
 pub mod bundle;
 pub mod cognition;
 mod configuration;
+mod identity;
 pub mod maintenance;
 mod models;
 mod prompts;
@@ -19,7 +20,7 @@ use clap::{Parser, Subcommand};
 use cognition::{MemoryCommand, ModelCommand, QueryArgs};
 use configuration::ConfigCommand;
 use nous_app::App;
-use nous_domain::{AccessScope, CallContext, NamespaceId, SubjectId};
+use nous_domain::{CallContext, NamespaceId, SubjectId};
 use nous_foundation::instance::InstanceConfig;
 use nous_foundation::instance::InstanceGuard;
 use nous_foundation::instance::InstancePaths;
@@ -90,10 +91,10 @@ enum Command {
         #[command(subcommand)]
         command: Option<ConfigCommand>,
     },
-    /// Manage scoped credentials while the instance is stopped.
-    Token {
+    /// Manage live grants and controlled delegation, or reset the stopped bootstrap owner.
+    Identity {
         #[command(subcommand)]
-        command: TokenCommand,
+        command: identity::IdentityCommand,
     },
     /// Create a complete snapshot or restore it into a new instance.
     Backup {
@@ -147,17 +148,6 @@ enum BackupCommand {
     /// Restore into the empty target selected with --instance; creates a new admin credential.
     Restore {
         source: PathBuf,
-    },
-}
-#[derive(Subcommand)]
-enum TokenCommand {
-    Create {
-        #[arg(long)]
-        name: String,
-        #[arg(long)]
-        namespace: NamespaceId,
-        #[arg(long)]
-        subject: Option<SubjectId>,
     },
 }
 #[derive(Subcommand)]
@@ -267,7 +257,7 @@ pub(crate) async fn execute(cli: Cli) -> Result<()> {
         Command::Init => {
             paths.ensure_layout()?;
             let _guard = InstanceGuard::acquire(&paths)?;
-            let created = paths.initialize()?;
+            let created = nous_foundation::instance::initialize(&paths)?;
             let app = App::open(paths.clone()).await?;
             app.close().await;
             print_json(
@@ -278,9 +268,15 @@ pub(crate) async fn execute(cli: Cli) -> Result<()> {
         Command::Backup {
             command: BackupCommand::Restore { source },
         } => print_json(nous_app::backup::restore(&source, paths).await?)?,
-        Command::Stop => print_json(connect(&paths, cli.url, cli.token_file)?.stop().await?)?,
+        Command::Stop => print_json(
+            connect(&paths, cli.url, cli.token_file)
+                .await?
+                .stop()
+                .await?,
+        )?,
         Command::Diagnostics => print_json(
-            connect(&paths, cli.url, cli.token_file)?
+            connect(&paths, cli.url, cli.token_file)
+                .await?
                 .execute(&Operation::Diagnostics)
                 .await?,
         )?,
@@ -298,7 +294,8 @@ pub(crate) async fn execute(cli: Cli) -> Result<()> {
                 limit,
             };
             print_json(
-                connect(&paths, cli.url, cli.token_file)?
+                connect(&paths, cli.url, cli.token_file)
+                    .await?
                     .execute(&Operation::Trace(request))
                     .await?,
             )?;
@@ -321,7 +318,8 @@ pub(crate) async fn execute(cli: Cli) -> Result<()> {
         } => {
             let operation = models::operation(command)?;
             print_json(
-                connect(&paths, cli.url, cli.token_file)?
+                connect(&paths, cli.url, cli.token_file)
+                    .await?
                     .execute(&operation)
                     .await?,
             )?;
@@ -333,51 +331,35 @@ pub(crate) async fn execute(cli: Cli) -> Result<()> {
                     json!({"state":"stopped","instance":paths.root,"initialized":paths.config.exists()}),
                 )?;
             } else {
-                let client = connect(&paths, cli.url, cli.token_file)?;
+                let client = connect(&paths, cli.url, cli.token_file).await?;
                 print_json(client.execute(&Operation::Status).await?)?;
             }
         }
-        Command::Token {
+        Command::Identity {
             command:
-                TokenCommand::Create {
-                    name,
-                    namespace,
-                    subject,
+                identity::IdentityCommand::ResetBootstrap {
+                    reason,
+                    operation_id,
                 },
         } => {
-            let _config = InstanceConfig::load(&paths)?;
+            anyhow::ensure!(
+                cli.url.is_none(),
+                "bootstrap reset uses local --instance; --url is not accepted"
+            );
             paths.ensure_layout()?;
             let _guard = InstanceGuard::acquire(&paths)?;
             let app = App::open(paths.clone()).await?;
-            let namespaces = app.list_namespaces(&CallContext::admin()).await?;
-            anyhow::ensure!(
-                namespaces.iter().any(|value| value.id == namespace),
-                "namespace not found"
-            );
-            let scope = if let Some(subject) = subject {
-                let subjects = app.list_subjects(&CallContext::admin(), &namespace).await?;
-                anyhow::ensure!(
-                    subjects.iter().any(|value| value.id == subject),
-                    "subject not found in this namespace"
-                );
-                AccessScope::Subject {
-                    namespace_id: namespace,
-                    subject_id: subject,
-                }
-            } else {
-                AccessScope::Namespace {
-                    namespace_id: namespace,
-                }
-            };
-            let result = paths.issue_token(&name, scope)?;
+            let result = app
+                .reset_bootstrap(&CallContext::admin(), &op_id(operation_id), &reason)
+                .await;
             app.close().await;
-            print_json(result)?;
+            print_json(result?)?;
         }
         Command::Mcp {
             command: McpCommand::Stdio,
         } => {
             use rmcp::ServiceExt;
-            let client = connect(&paths, cli.url, cli.token_file)?;
+            let client = connect(&paths, cli.url, cli.token_file).await?;
             let service = mcp::McpService::remote(client)
                 .serve(rmcp::transport::stdio())
                 .await?;
@@ -386,6 +368,7 @@ pub(crate) async fn execute(cli: Cli) -> Result<()> {
         command => {
             let operation = match command {
                 Command::Import { command } => command.operation()?,
+                Command::Identity { command } => command.operation()?,
                 Command::Cognition {
                     file: Some(file), ..
                 } => {
@@ -506,7 +489,8 @@ pub(crate) async fn execute(cli: Cli) -> Result<()> {
                 _ => bail!("unsupported command"),
             };
             print_json(
-                connect(&paths, cli.url, cli.token_file)?
+                connect(&paths, cli.url, cli.token_file)
+                    .await?
                     .execute(&operation)
                     .await?,
             )?;

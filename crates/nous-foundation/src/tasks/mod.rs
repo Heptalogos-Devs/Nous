@@ -43,7 +43,7 @@ impl Tasks {
         let now = tx.time().recorded();
         JobRecord {
             id: ulid::Ulid::generate().to_string(),
-            trace_id: tx.trace_id().clone(),
+            trace_id: tx.context().trace_id.clone(),
             namespace_id: namespace,
             subject_id: subject,
             kind: kind.into(),

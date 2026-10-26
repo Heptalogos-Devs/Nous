@@ -1,4 +1,4 @@
-use crate::instance::SecretRef;
+use crate::secret::SecretRef;
 use nous_domain::{EmbeddingSpace, Error, Result};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

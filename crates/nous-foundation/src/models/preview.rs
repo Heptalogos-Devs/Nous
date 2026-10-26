@@ -1,7 +1,7 @@
 //! One provider-free builder feeds both review and actual invocation admission.
 use super::{
     InvocationEdits, InvocationPreview, ModelFailure, ModelInput, ModelMessage, ModelRuntime,
-    OutputContract, ResolvedModel, RoutePreview, execution::PreparedRequest, request,
+    OutputContract, ResolvedModel, RoutePreview, request,
 };
 use nous_domain::Error;
 use serde_json::Value;
@@ -9,7 +9,7 @@ use sha2::{Digest, Sha256};
 
 pub(super) struct BuiltInvocation {
     pub preview: InvocationPreview,
-    pub requests: Vec<Option<PreparedRequest>>,
+    pub requests: Vec<Option<request::ValidatedRequest>>,
 }
 pub(super) fn build(
     runtime: &ModelRuntime,

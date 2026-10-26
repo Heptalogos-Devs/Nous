@@ -5,8 +5,10 @@ use nous_domain::{CallContext, Error, ErrorCode};
 use nous_foundation::{
     clock::Clock,
     content, execution,
-    instance::{AuthConfig, InstanceConfig, InstanceGuard, InstancePaths},
+    identity::{AuthConfig, Identity},
+    instance::{InstanceConfig, InstanceGuard, InstancePaths},
     prompts::{ManagedPromptReference, Prompts},
+    secret::Secrets,
 };
 use nous_storage::Database;
 use serde::{Deserialize, Serialize};
@@ -232,7 +234,7 @@ async fn restore_inner(
                 .tempdir_in(target.resolve("temp/staging")?)?;
             let staged = InstancePaths::new(staging.path())?;
             staged.ensure_layout()?;
-            staged.initialize()?;
+            nous_foundation::instance::initialize(&staged)?;
             Ok((target, guard, staging, staged))
         })();
         setup.map_err(backup_error)
@@ -334,7 +336,19 @@ async fn restore_inner(
     .await;
     let finalization: Result<i64> = async {
         checked?;
-        nous_foundation::configuration::reset_restored_auth(&snapshot).await?;
+        let auth=AuthConfig::default();
+        let secrets=Secrets::new(Arc::new(staged.clone()));
+        let value=secrets.read(&auth.admin_token).await?;
+        let identity=Identity::new(snapshot.clone(),secrets,Clock);
+        let ctx=CallContext::new("restore",nous_domain::AccessScope::Admin);
+        let key=nous_storage::operation_key(&ctx,"identity.restore","instance",&uuid::Uuid::new_v4().to_string(),&json!({"seed":auth.admin_token}))?;
+        let mut operation=match snapshot.begin_operation(key).await?{
+            nous_storage::BeginOperation::New(operation)=>operation,
+            nous_storage::BeginOperation::Replay(_)=>unreachable!("fresh restore identity operation"),
+        };
+        let grant=identity.reset_restored_in(&mut operation,&auth.admin_token,Secrets::digest(&value)).await?;
+        let seed=nous_foundation::configuration::install_bootstrap_seed_in(&mut operation,&auth).await?;
+        operation.commit(json!({"grant":grant.reference(),"seed_revision":seed.revision,"issued_credentials_revoked":true})).await?;
         Ok(snapshot.status().await?.commit_seq)
     }
     .await;
@@ -367,9 +381,7 @@ async fn restore_inner(
             }
             for directory in published.into_iter().rev() {
                 let _ = move_owned(
-                    &target
-                        .resolve(directory)
-                        .map_err(backup_error)?,
+                    &target.resolve(directory).map_err(backup_error)?,
                     &staged.root.join(directory),
                     &target,
                 );

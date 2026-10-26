@@ -30,6 +30,10 @@ impl App {
                 nous_foundation::tasks::TASK_RUNTIME.path(),
                 serde_json::to_value(&self.bootstrap_config().tasks)?,
             ),
+            (
+                nous_foundation::platform::PLATFORM.path(),
+                serde_json::to_value(&self.bootstrap_config().platform)?,
+            ),
         ];
         let body = json!(values);
         let ctx = CallContext::new("runtime", AccessScope::Admin);

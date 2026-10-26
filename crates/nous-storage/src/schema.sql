@@ -99,6 +99,7 @@ CREATE TABLE IF NOT EXISTS materials (
     namespace_id TEXT NOT NULL REFERENCES namespaces(id),
     content_hash TEXT NOT NULL,
     media_type TEXT NOT NULL,
+    metadata TEXT NOT NULL CHECK(json_valid(metadata)),
     byte_len INTEGER NOT NULL CHECK (byte_len >= 0),
     source TEXT,
     event_time_domain TEXT,
@@ -129,6 +130,7 @@ ON observations(namespace_id, subject_id, id, material_id);
 
 CREATE TABLE IF NOT EXISTS operation_receipts (
     caller_id TEXT NOT NULL,
+    authorization TEXT CHECK(authorization IS NULL OR json_valid(authorization)),
     trace_id TEXT NOT NULL,
     operation TEXT NOT NULL,
     scope TEXT NOT NULL,

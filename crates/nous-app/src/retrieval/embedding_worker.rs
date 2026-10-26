@@ -35,6 +35,7 @@ impl App {
                 subject_id: subject.clone(),
             },
             super::embedding_model::ROLE,
+            cancel.clone(),
         );
         let Some(call) = self
             .calls

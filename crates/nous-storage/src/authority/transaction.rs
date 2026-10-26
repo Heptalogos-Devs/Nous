@@ -2,7 +2,7 @@ use apalis::prelude::{TaskBuilder, TaskId};
 use apalis_sqlite::queries::push_tasks;
 use nous_domain::{
     Error, ErrorCode, Material, MaterialId, Namespace, NamespaceId, Observation, ObservationId,
-    ObservationKind, Result, Subject, SubjectId, TraceId,
+    ObservationKind, Result, Subject, SubjectId,
 };
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -36,7 +36,10 @@ pub struct WriteTransaction {
 impl Database {
     pub async fn begin_operation(&self, key: OperationKey) -> Result<BeginOperation> {
         let key = Arc::new(key);
-        key.trace_id.validate()?;
+        key.context.trace_id.validate()?;
+        if let Some(authorization) = &key.context.authorization {
+            authorization.validate()?;
+        }
         // Acquire the writer before reading the receipt so concurrent retries
         // serialize and see the committed receipt rather than upgrade a snapshot.
         let mut tx = self
@@ -45,7 +48,7 @@ impl Database {
             .await
             .map_err(|error| operation_error(storage_error(error), &key, None))?;
         let stored = sqlx::query("SELECT request_hash, receipt FROM operation_receipts WHERE caller_id=? AND operation=? AND scope=? AND operation_id=?")
-            .bind(&key.caller_id).bind(&key.operation).bind(&key.scope).bind(&key.operation_id)
+            .bind(&key.context.caller_id).bind(&key.operation).bind(&key.scope).bind(&key.operation_id)
             .fetch_optional(&mut *tx).await.map_err(|error| operation_error(storage_error(error), &key, None))?;
         if let Some(row) = stored {
             if row.get::<String, _>("request_hash") != key.request_hash {
@@ -53,7 +56,7 @@ impl Database {
                     ErrorCode::Conflict,
                     "operation ID was already used with a different request",
                 )
-                .with_trace(key.trace_id.clone())
+                .with_trace(key.context.trace_id.clone())
                 .with_context("operation_id", key.operation_id.clone()));
             }
             let receipt: OperationReceipt = serde_json::from_str(row.get("receipt"))
@@ -62,7 +65,7 @@ impl Database {
                 .await
                 .map_err(|error| operation_error(storage_error(error), &key, None))?;
             operation_event("replayed", &key, receipt.commit_seq);
-            tracing::info!(event="operation.replay_origin", trace_id=%key.trace_id, original_trace_id=%receipt.trace_id, operation_id=%key.operation_id, commit_seq=receipt.commit_seq);
+            tracing::info!(event="operation.replay_origin", trace_id=%key.context.trace_id, original_trace_id=%receipt.context.trace_id, operation_id=%key.operation_id, commit_seq=receipt.commit_seq);
             return Ok(BeginOperation::Replay(receipt));
         }
         let time = (self.operation_time)();
@@ -86,15 +89,15 @@ impl Database {
 }
 
 impl WriteTransaction {
+    pub fn context(&self) -> &nous_domain::CallContext {
+        &self.key.context
+    }
+
     pub fn time(&self) -> &nous_domain::OperationTime {
         &self.time
     }
     pub fn retain_until_end(&mut self, guard: impl std::fmt::Debug + Send + Sync + 'static) {
         self.retained_guards.push(Box::new(guard));
-    }
-
-    pub fn trace_id(&self) -> &TraceId {
-        &self.key.trace_id
     }
 
     pub fn commit_seq(&self) -> i64 {
@@ -153,8 +156,9 @@ impl WriteTransaction {
 
     pub async fn insert_material(&mut self, value: &Material) -> Result<()> {
         self.check_sequence(value.commit_seq)?;
-        sqlx::query("INSERT INTO materials(id,namespace_id,content_hash,media_type,byte_len,source,event_time_domain,event_time_coordinate,recorded_at,commit_seq) VALUES (?,?,?,?,?,?,?,?,?,?)")
-            .bind(value.id.as_str()).bind(value.namespace_id.as_str()).bind(&value.content_hash).bind(&value.media_type).bind(value.byte_len)
+        value.metadata.validate(&value.media_type)?;
+        sqlx::query("INSERT INTO materials(id,namespace_id,content_hash,media_type,metadata,byte_len,source,event_time_domain,event_time_coordinate,recorded_at,commit_seq) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
+            .bind(value.id.as_str()).bind(value.namespace_id.as_str()).bind(&value.content_hash).bind(&value.media_type).bind(serde_json::to_string(&value.metadata).map_err(storage_error)?).bind(value.byte_len)
             .bind(&value.source).bind(value.event_time.as_ref().map(|t| t.domain.as_str())).bind(value.event_time.as_ref().map(|t| t.coordinate))
             .bind(&value.recorded_at).bind(self.commit_seq).execute(&mut *self.tx).await.map_err(write_error)?;
         Ok(())
@@ -181,7 +185,7 @@ impl WriteTransaction {
         super::tasks::validate_job_id(id)?;
         if max_queue_attempts == 0 {
             return Err(Error::invalid("maximum queue attempts must be positive")
-                .with_trace(self.trace_id().clone()));
+                .with_trace(self.context().trace_id.clone()));
         }
         let task = TaskBuilder::new(serde_json::to_vec(&JobEnvelope { id: id.into() })?)
             .task_id(TaskId::from(id.to_owned()))
@@ -215,16 +219,16 @@ impl WriteTransaction {
     async fn commit_inner(mut self, result: Value) -> Result<OperationReceipt> {
         let receipt = OperationReceipt {
             operation_id: self.key.operation_id.clone(),
-            trace_id: self.key.trace_id.clone(),
+            context: self.key.context.clone(),
             time: self.time,
             commit_seq: self.commit_seq,
             result,
             job_ids: self.job_ids,
         };
-        sqlx::query("INSERT INTO operation_receipts(caller_id,operation,scope,operation_id,request_hash,commit_seq,receipt,trace_id) VALUES (?,?,?,?,?,?,?,?)")
-            .bind(&self.key.caller_id).bind(&self.key.operation).bind(&self.key.scope).bind(&self.key.operation_id)
+        sqlx::query("INSERT INTO operation_receipts(caller_id,operation,scope,operation_id,request_hash,commit_seq,receipt,trace_id,authorization) VALUES (?,?,?,?,?,?,?,?,?)")
+            .bind(&self.key.context.caller_id).bind(&self.key.operation).bind(&self.key.scope).bind(&self.key.operation_id)
             .bind(&self.key.request_hash).bind(self.commit_seq).bind(serde_json::to_string(&receipt).map_err(|error| operation_error(storage_error(error), &self.key, Some(self.commit_seq)))?)
-            .bind(self.key.trace_id.as_str())
+            .bind(self.key.context.trace_id.as_str()).bind(crate::codec::json_option(&self.key.context.authorization)?)
             .execute(&mut *self.tx).await.map_err(|error| operation_error(write_error(error), &self.key, Some(self.commit_seq)))?;
         self.tx.commit().await.map_err(|error| {
             operation_error(storage_error(error), &self.key, Some(self.commit_seq))
@@ -273,8 +277,7 @@ pub fn operation_key(
     let encoded =
         serde_json::to_vec(&json!({"operation":operation,"scope":scope,"payload":payload}))?;
     Ok(OperationKey {
-        caller_id: ctx.caller_id.clone(),
-        trace_id: ctx.trace_id.clone(),
+        context: ctx.clone(),
         operation: operation.into(),
         scope: scope.into(),
         operation_id: operation_id.into(),
@@ -284,7 +287,7 @@ pub fn operation_key(
 
 fn operation_error(error: Error, key: &OperationKey, commit_seq: Option<i64>) -> Error {
     let mut error = error
-        .with_trace(key.trace_id.clone())
+        .with_trace(key.context.trace_id.clone())
         .with_context("operation", key.operation.clone())
         .with_context("operation_id", key.operation_id.clone());
     if let Some(sequence) = commit_seq {
@@ -302,7 +305,7 @@ fn operation_event(state: &'static str, key: &OperationKey, commit_seq: i64) {
         "abandoned" => "operation.abandoned",
         _ => unreachable!("known operation event"),
     };
-    tracing::info!(event, trace_id=%key.trace_id, operation=%key.operation,
+    tracing::info!(event, trace_id=%key.context.trace_id, operation=%key.operation,
         operation_id=%key.operation_id, scope=%key.scope, commit_seq);
     metrics::counter!("nous_operations_total", "operation" => key.operation.clone(), "state" => state).increment(1);
 }

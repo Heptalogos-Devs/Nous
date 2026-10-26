@@ -35,6 +35,8 @@ directories = "6"
 fs2 = "0.4"
 futures = "0.3"
 genai = { version = "=0.7.0", default-features = false, features = ["rustls-tls"] }
+http-body = "1"
+infer = "0.22"
 minijinja = { version = "3.0", features = ["fuel", "serde"] }
 metrics = "0.24"
 metrics-exporter-prometheus = { version = "0.18", default-features = false }

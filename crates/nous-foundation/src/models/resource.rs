@@ -1,7 +1,7 @@
 use super::{ModelFailure, catalog::*, roles::*};
 use crate::configuration::ConfigSnapshot;
 use crate::configuration::ConfigSource;
-use crate::instance::InstancePaths;
+use crate::secret::Secrets;
 use genai::{
     ModelIden, ServiceTarget,
     adapter::AdapterKind,
@@ -71,15 +71,12 @@ impl ModelReadiness {
 }
 #[derive(Clone)]
 pub struct ModelResources {
-    paths: InstancePaths,
+    secrets: Secrets,
     roles: RoleRegistry,
 }
 impl ModelResources {
-    pub fn new(paths: &InstancePaths, roles: RoleRegistry) -> Self {
-        Self {
-            paths: paths.clone(),
-            roles,
-        }
+    pub fn new(secrets: Secrets, roles: RoleRegistry) -> Self {
+        Self { secrets, roles }
     }
     pub fn roles(&self) -> &RoleRegistry {
         &self.roles
@@ -88,13 +85,13 @@ impl ModelResources {
     pub fn resolve(&self, snapshot: &ConfigSnapshot, role: &str) -> Result<ResolvedModel> {
         resolve_registered(snapshot, &self.roles, role)
     }
-    pub fn readiness(&self, snapshot: &ConfigSnapshot, role: &str) -> ModelReadiness {
+    pub async fn readiness(&self, snapshot: &ConfigSnapshot, role: &str) -> ModelReadiness {
         let resolved = self.resolve(snapshot, role);
-        let ready = resolved.as_ref().is_ok_and(|model| {
-            model.routes.iter().any(|route| {
-                route.provider.enabled && self.paths.read_secret(&route.provider.credential).is_ok()
-            })
-        });
+        let ready = if let Ok(model) = &resolved {
+            !self.ready_resources(model, 0).await.is_empty()
+        } else {
+            false
+        };
         ModelReadiness {
             role: role.into(),
             state: if ready {
@@ -116,25 +113,25 @@ impl ModelResources {
             },
         }
     }
-    pub fn ready_resolved(&self, model: &ResolvedModel) -> bool {
-        !self.ready_resources(model, 0).is_empty()
+    pub async fn ready_resolved(&self, model: &ResolvedModel) -> bool {
+        !self.ready_resources(model, 0).await.is_empty()
     }
-    pub(super) fn ready_resources(
+    pub(super) async fn ready_resources(
         &self,
         model: &ResolvedModel,
         start: usize,
     ) -> Vec<ResourceMetadata> {
-        model
-            .routes
-            .iter()
-            .skip(start)
-            .filter(|route| {
-                route.provider.enabled && self.paths.read_secret(&route.provider.credential).is_ok()
-            })
-            .map(|route| route.resource.clone())
-            .collect()
+        let mut resources = Vec::new();
+        for route in model.routes.iter().skip(start) {
+            if route.provider.enabled && self.secrets.read(&route.provider.credential).await.is_ok()
+            {
+                resources.push(route.resource.clone());
+            }
+        }
+        resources
     }
-    pub(super) fn target(
+
+    pub(super) async fn target(
         &self,
         route: &ResolvedRoute,
     ) -> std::result::Result<ServiceTarget, ModelFailure> {
@@ -142,15 +139,16 @@ impl ModelResources {
             return Err(ModelFailure::waiting("provider is disabled"));
         }
         let secret = self
-            .paths
-            .read_secret(&route.provider.credential)
+            .secrets
+            .read(&route.provider.credential)
+            .await
             .map_err(|error| {
                 ModelFailure::waiting("model credential is missing or unreadable")
-                    .with_source(error.into_boxed_dyn_error())
+                    .with_source(Box::new(error))
             })?;
         Ok(ServiceTarget {
             endpoint: Endpoint::from_owned(route.resource.endpoint.clone()),
-            auth: AuthData::from_single(secret),
+            auth: AuthData::from_single(secret.into_string()),
             model: ModelIden::new(AdapterKind::OpenAI, route.resource.model.clone()),
         })
     }

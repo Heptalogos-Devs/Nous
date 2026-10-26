@@ -41,8 +41,7 @@ impl Database {
     pub async fn recover_interrupted_calls(&self) -> Result<u64> {
         let crate::BeginOperation::New(mut tx) = self
             .begin_operation(crate::OperationKey {
-                caller_id: "nous.recovery".into(),
-                trace_id: TraceId::new(),
+                context: CallContext::new("nous.recovery", AccessScope::Admin),
                 operation: "calls.recover".into(),
                 scope: "instance".into(),
                 operation_id: ulid::Ulid::generate().to_string(),
@@ -134,7 +133,7 @@ impl WriteTransaction {
         if call.trace_id != job.trace_id {
             return Err(
                 Error::invalid("model call trace differs from its accepted task")
-                    .with_trace(self.trace_id().clone()),
+                    .with_trace(self.context().trace_id.clone()),
             );
         }
         sqlx::query("INSERT INTO model_calls(id,job_id,namespace_id,subject_id,step_key,attempt,resource_id,request,response,state,error,usage,cost,created_at,completed_at,trace_id,reservation_commit_seq) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")

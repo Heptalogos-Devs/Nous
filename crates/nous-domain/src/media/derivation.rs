@@ -85,7 +85,6 @@ impl ChannelAccess {
 pub struct DerivationProducer {
     pub signature: String,
     pub implementation: String,
-    pub implementation_revision: String,
     pub model_call_id: Option<ModelCallId>,
     pub prompt_digest: Option<String>,
     pub schema_digest: Option<String>,
@@ -97,12 +96,6 @@ impl DerivationProducer {
         valid_digest(&self.signature)?;
         valid_digest(&self.config_digest)?;
         bounded_text(&self.implementation, 256, "producer implementation", true)?;
-        bounded_text(
-            &self.implementation_revision,
-            128,
-            "producer revision",
-            true,
-        )?;
         if let Some(id) = &self.model_call_id {
             validate_uuid(id.as_str())?;
         }
@@ -163,10 +156,13 @@ pub struct DerivedRepresentation {
     pub producer: DerivationProducer,
     pub access: ChannelAccess,
     pub observation_id: Option<ObservationId>,
+    pub source_event_kind: Option<crate::ObservationKind>,
+    /// Media timestamps are relative to this exact supplied locator, independent of UTC.
+    pub timeline: Option<MediaReference>,
     pub formed_at: TimePoint,
     pub recorded_at: String,
     pub commit_seq: i64,
-    pub supersedes: Option<RepresentationRef>,
+    pub previous: Option<RepresentationRef>,
     #[serde(default)]
     pub quality: DerivationQuality,
 }
@@ -178,10 +174,17 @@ impl DerivedRepresentation {
         }
     }
     pub fn source_references(&self) -> Vec<MediaReference> {
-        self.inputs
+        let mut references = self
+            .inputs
             .iter()
             .map(|input| input.source.clone())
-            .collect()
+            .collect::<Vec<_>>();
+        if let Some(timeline) = &self.timeline
+            && !references.contains(timeline)
+        {
+            references.push(timeline.clone());
+        }
+        references
     }
     /// Stable replay material excludes result bytes, model attempt IDs and clocks.
     /// Storage hashes this after binding inputs/producer to the admitted snapshot.
@@ -194,12 +197,14 @@ impl DerivedRepresentation {
             self.kind,
             &self.producer.signature,
             &self.producer.implementation,
-            &self.producer.implementation_revision,
             &self.producer.prompt_digest,
             &self.producer.schema_digest,
             &self.producer.config_digest,
             &self.producer.preprocessing_digest,
-            &self.supersedes,
+            &self.previous,
+            &self.timeline,
+            &self.observation_id,
+            &self.source_event_kind,
         ))?)
     }
     pub fn validate(&self, duration_ms: Option<u64>) -> Result<()> {
@@ -239,11 +244,11 @@ impl DerivedRepresentation {
                 ));
             }
         }
-        if let Some(previous) = &self.supersedes {
+        if let Some(previous) = &self.previous {
             previous.id.validate()?;
-            if previous.id == self.id || previous.revision.checked_add(1) != Some(self.revision) {
+            if previous.id != self.id || previous.revision.checked_add(1) != Some(self.revision) {
                 return Err(Error::invalid(
-                    "supersession must name another exact representation and the next chain revision",
+                    "revision history requires the same representation identity and next revision",
                 ));
             }
         } else if self.revision != 1 {
@@ -253,6 +258,14 @@ impl DerivedRepresentation {
         }
         if let Some(observation) = &self.observation_id {
             validate_uuid(observation.as_str())?;
+        }
+        if self.observation_id.is_some() != self.source_event_kind.is_some() {
+            return Err(Error::invalid(
+                "derivation source event id and kind must be supplied together",
+            ));
+        }
+        if let Some(timeline) = &self.timeline {
+            timeline.validate()?;
         }
         self.quality.validate(duration_ms)?;
         match (&self.kind, &self.payload) {

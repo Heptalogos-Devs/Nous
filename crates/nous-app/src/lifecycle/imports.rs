@@ -143,6 +143,7 @@ impl App {
             namespace_id: request.namespace_id.clone(),
             content_hash: published.digest,
             media_type: "text/plain; charset=utf-8".into(),
+            metadata: nous_domain::media::MediaMetadata::Text,
             byte_len: published.byte_len,
             source: record.source,
             event_time: record.event_time,

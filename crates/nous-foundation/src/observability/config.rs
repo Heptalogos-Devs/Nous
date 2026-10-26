@@ -50,6 +50,7 @@ pub fn register_configuration(registry: &mut ConfigRegistryBuilder) -> Result<()
     registry.register(
         OBSERVABILITY,
         ConfigDefinition {
+            write_policy: crate::configuration::ConfigWritePolicy::Scoped,
             owner: "observability".into(),
             description: "Process-wide trace filtering, JSON log outputs and daily log retention"
                 .into(),

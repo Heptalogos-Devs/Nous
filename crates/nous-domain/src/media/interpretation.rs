@@ -336,7 +336,8 @@ fn validate_basis(
     Ok(())
 }
 fn validate_time(start: Option<u64>, end: Option<u64>, duration: Option<u64>) -> Result<()> {
-    if matches!((start,end),(Some(a),Some(b))if a>b)
+    if (duration.is_none() && (start.is_some() || end.is_some()))
+        || matches!((start,end),(Some(a),Some(b))if a>b)
         || start
             .into_iter()
             .chain(end)

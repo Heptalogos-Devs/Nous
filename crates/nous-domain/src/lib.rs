@@ -62,6 +62,11 @@ identity!(MemoryId);
 identity!(ModelCallId);
 identity!(CognitiveId);
 identity!(TraceId);
+identity!(GrantId);
+mod grant;
+pub use grant::*;
+mod secret;
+pub use secret::*;
 
 mod configuration;
 mod identity;
@@ -119,6 +124,7 @@ pub struct Material {
     pub namespace_id: NamespaceId,
     pub content_hash: String,
     pub media_type: String,
+    pub metadata: media::MediaMetadata,
     pub byte_len: i64,
     pub source: Option<String>,
     pub event_time: Option<TimePoint>,

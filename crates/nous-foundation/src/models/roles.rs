@@ -174,6 +174,7 @@ pub fn register_configuration(
     builder.register(
         CATALOG,
         ConfigDefinition {
+            write_policy: crate::configuration::ConfigWritePolicy::Scoped,
             owner: "models".into(),
             description: "Provider, model and route catalog".into(),
             default: ModelCatalog::default(),
@@ -186,6 +187,7 @@ pub fn register_configuration(
         builder.register(
             role.binding_key,
             ConfigDefinition {
+                write_policy: crate::configuration::ConfigWritePolicy::Scoped,
                 owner: "models".into(),
                 description: format!("Execution binding for {}", role.id),
                 default: None,

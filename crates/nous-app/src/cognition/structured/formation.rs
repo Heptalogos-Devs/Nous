@@ -282,6 +282,7 @@ impl App {
                 subject_id: input.subject_id.clone(),
             },
             super::model::role(kind)?,
+            cancel.clone(),
         );
         let Some(call) = self
             .calls
@@ -351,7 +352,7 @@ impl App {
         let Ok(role) = super::model::role(slot.kind) else {
             return false;
         };
-        self.calls.ready(job, "proposal", &self.model, role).await
+        self.calls.ready(job, "proposal", &self.model, role,serde_json::to_value(input).ok()).await
     }
 
     async fn structured_step_input(

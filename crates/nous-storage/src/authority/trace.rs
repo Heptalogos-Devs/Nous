@@ -16,7 +16,7 @@ pub struct TraceCursor {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct TraceOperation {
-    pub caller_id: String,
+    pub context: CallContext,
     pub operation: String,
     pub scope: String,
     pub operation_id: String,
@@ -110,7 +110,7 @@ impl Database {
             id.validate()?;
         }
         let fetch_limit = (limit + 1) as i64;
-        let rows = sqlx::query("SELECT caller_id,operation,scope,operation_id,commit_seq,json_extract(receipt,'$.time') AS time,json_extract(receipt,'$.job_ids') AS job_ids FROM operation_receipts WHERE trace_id=? AND commit_seq>? AND commit_seq<=? ORDER BY commit_seq LIMIT ?")
+        let rows = sqlx::query("SELECT json_extract(receipt,'$.context') AS context,operation,scope,operation_id,commit_seq,json_extract(receipt,'$.time') AS time,json_extract(receipt,'$.job_ids') AS job_ids FROM operation_receipts WHERE trace_id=? AND commit_seq>? AND commit_seq<=? ORDER BY commit_seq LIMIT ?")
             .bind(trace_id.as_str()).bind(next.operations_after).bind(next.snapshot_seq).bind(fetch_limit)
             .fetch_all(&mut *view.tx).await.map_err(storage_error)?;
         let operations_has_more = rows.len() > limit;
@@ -165,7 +165,7 @@ impl Database {
 
 fn operation_row(row: SqliteRow) -> Result<TraceOperation> {
     Ok(TraceOperation {
-        caller_id: row.get("caller_id"),
+        context: serde_json::from_str(row.get("context"))?,
         operation: row.get("operation"),
         scope: row.get("scope"),
         operation_id: row.get("operation_id"),

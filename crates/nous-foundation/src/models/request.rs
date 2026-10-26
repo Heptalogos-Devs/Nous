@@ -6,9 +6,26 @@ use super::{
 };
 use base64::{Engine, engine::general_purpose::STANDARD};
 use genai::{
-    chat::{ChatMessage, ChatOptions, ChatRequest, ContentPart, JsonSpec, MessageContent},
+    chat::{ChatOptions, JsonSpec},
     embed::{EmbedOptions, EmbedRequest},
 };
+use tokio_util::sync::CancellationToken;
+
+pub(super) enum ValidatedRequest {
+    Chat { messages:Vec<super::ModelMessage>,options:Box<ChatOptions>,max_media_bytes:usize },
+    Embedding { request:EmbedRequest,options:Box<EmbedOptions>,contract:super::openai_embedding::ResponseContract },
+}
+impl ValidatedRequest {
+    pub async fn encode(self,scope:&nous_domain::ConfigScope,reader:&dyn super::ModelMediaReader,cancel:&CancellationToken)->Result<PreparedRequest> {
+        crate::execution::check_cancelled(cancel)?;
+        Ok(match self {
+            Self::Chat {messages,options,max_media_bytes}=>PreparedRequest::Chat {
+                request:super::media_input::encode(messages,scope,reader,max_media_bytes,cancel).await?,options,
+            },
+            Self::Embedding {request,options,contract}=>PreparedRequest::Embedding {request,options,contract},
+        })
+    }
+}
 use nous_domain::{
     Error, ErrorCode, Result,
     media::{ChannelAccess, ChannelMode, canonical_media_type},
@@ -34,7 +51,7 @@ pub(super) fn no_access() -> ChannelAccess {
 pub(super) fn prepare(
     route: &ResolvedRoute,
     input: &ModelInput,
-) -> Result<(PreparedRequest, ChannelAccess)> {
+) -> Result<(ValidatedRequest, ChannelAccess)> {
     match (input, route.resource.protocol) {
         (ModelInput::Chat { messages, output }, ModelProtocol::OpenaiChatCompletions) => {
             if !route
@@ -52,12 +69,10 @@ pub(super) fn prepare(
             let mut access = no_access();
             let mut text_bytes = 0usize;
             let mut media_bytes = 0usize;
-            let mut wire = Vec::new();
             for message in messages {
                 if message.parts.is_empty() || message.parts.len() > 128 {
                     return Err(Error::invalid("message requires 1..128 content parts"));
                 }
-                let mut parts = Vec::new();
                 for part in &message.parts {
                     match part {
                         MessagePart::Text { text, source } => {
@@ -75,7 +90,6 @@ pub(super) fn prepare(
                                 supplied.audio = downgrade(supplied.audio);
                                 merge(&mut access, supplied);
                             }
-                            parts.push(ContentPart::from_text(text));
                         }
                         MessagePart::Media {
                             media_type,
@@ -141,13 +155,21 @@ pub(super) fn prepare(
                                 if source.is_none() {
                                     supplied.visual = ChannelMode::Original;
                                 }
-                                if !route.input_modalities.contains(&ModelModality::Audio) {
-                                    supplied.audio = ChannelMode::Unavailable;
+                                if !route.input_modalities.contains(&ModelModality::Audio) && supplied.audio != ChannelMode::Unavailable {
+                                    return Err(Error::new(ErrorCode::CapabilityUnavailable,"model route cannot consume the declared video audio channel"));
                                 }
                             }
                             supplied.source_text = ChannelMode::Unavailable;
                             merge(&mut access, supplied);
-                            let part = match data {
+                            match data {
+                                MediaData::Blob{blob}=>{
+                                    blob.validate()?;
+                                    if source.is_none() || canonical_media_type(&blob.media_type)?!=mime {
+                                        return Err(Error::invalid("stored media requires a matching MIME type and exact source locator"));
+                                    }
+                                    let bytes=usize::try_from(blob.byte_len).map_err(|_|Error::new(ErrorCode::ResourceExhausted,"media length exceeds the platform range"))?;
+                                    media_bytes=media_bytes.saturating_add(bytes);
+                                },
                                 MediaData::Base64 { data } => {
                                     if data.len()
                                         > route
@@ -173,12 +195,6 @@ pub(super) fn prepare(
                                         ));
                                     }
                                     media_bytes = media_bytes.saturating_add(bytes.len());
-                                    let sdk_mime = match mime.as_str() {
-                                        "audio/x-wav" => "audio/wav",
-                                        "audio/mp4" => "audio/m4a",
-                                        _ => &mime,
-                                    };
-                                    ContentPart::from_binary_base64(sdk_mime, data.as_str(), None)
                                 }
                                 MediaData::Url { url } => {
                                     if matches!(modality, ModelModality::Audio) {
@@ -200,19 +216,11 @@ pub(super) fn prepare(
                                         ));
                                     }
                                     text_bytes = text_bytes.saturating_add(url.len());
-                                    ContentPart::from_binary_url(&mime, url, None)
                                 }
                             };
-                            parts.push(part);
                         }
                     }
                 }
-                let content = MessageContent::from_parts(parts);
-                wire.push(match message.role {
-                    MessageRole::System => ChatMessage::system(content),
-                    MessageRole::User => ChatMessage::user(content),
-                    MessageRole::Assistant => ChatMessage::assistant(content),
-                });
             }
             let mut options = ChatOptions::default()
                 .with_max_tokens(route.parameters.max_output_tokens)
@@ -248,8 +256,9 @@ pub(super) fn prepare(
                     options.with_extra_body(serde_json::json!(route.parameters.native_parameters));
             }
             Ok((
-                PreparedRequest::Chat {
-                    request: ChatRequest::new(wire),
+                ValidatedRequest::Chat {
+                    messages: messages.clone(),
+                    max_media_bytes:route.parameters.max_media_bytes,
                     options: Box::new(options),
                 },
                 access,
@@ -267,7 +276,7 @@ pub(super) fn prepare(
                 ));
             }
             Ok((
-                PreparedRequest::Embedding {
+                ValidatedRequest::Embedding {
                     request: EmbedRequest::new_batch(texts.clone()),
                     options: Box::new(
                         EmbedOptions::new()

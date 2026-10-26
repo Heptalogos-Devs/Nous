@@ -178,6 +178,14 @@ impl Drop for ObservabilityGuard {
 }
 
 fn describe_metrics() {
+    metrics::describe_gauge!(
+        "nous_http_requests_active",
+        "HTTP requests whose response stream is still active"
+    );
+    metrics::describe_counter!(
+        "nous_http_response_bytes_total",
+        "Response body bytes produced by route"
+    );
     metrics::describe_counter!(
         "nous_http_requests_total",
         "Completed HTTP requests by method, route and status"
@@ -212,8 +220,21 @@ fn describe_metrics() {
     );
 }
 
-pub fn request_finished(method: String, route: String, status: u16, elapsed: std::time::Duration) {
-    metrics::counter!("nous_http_requests_total", "method"=>method.clone(), "route"=>route.clone(), "status"=>status.to_string()).increment(1);
+pub fn request_started() {
+    metrics::gauge!("nous_http_requests_active").increment(1.0);
+}
+
+pub fn request_finished(
+    method: String,
+    route: String,
+    status: Option<u16>,
+    outcome: &'static str,
+    elapsed: std::time::Duration,
+    response_bytes: u64,
+) {
+    metrics::gauge!("nous_http_requests_active").decrement(1.0);
+    metrics::counter!("nous_http_requests_total", "method"=>method.clone(), "route"=>route.clone(), "status"=>status.map_or_else(||"none".into(),|status|status.to_string()),"outcome"=>outcome).increment(1);
+    metrics::counter!("nous_http_response_bytes_total", "method"=>method.clone(), "route"=>route.clone()).increment(response_bytes);
     metrics::histogram!("nous_http_request_duration_seconds", "method"=>method, "route"=>route)
         .record(elapsed.as_secs_f64());
 }

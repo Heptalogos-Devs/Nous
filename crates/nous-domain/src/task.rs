@@ -64,6 +64,7 @@ impl JobRecord {
         Ok(crate::CallerIdentity {
             caller_id: caller_id.into(),
             scope,
+            authorization: None,
         }
         .begin_call(self.trace_id.clone()))
     }

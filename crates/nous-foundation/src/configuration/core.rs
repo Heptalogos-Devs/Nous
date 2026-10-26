@@ -1,16 +1,7 @@
 //! Bootstrap configuration definitions and restored credential binding.
 use super::*;
-use crate::{
-    instance::{AuthConfig, ServerConfig},
-    network::NetworkConfig,
-};
-use nous_domain::{
-    AccessScope, CallContext, ConfigApplyMode, ConfigEntry, ConfigLevel, ConfigScope, Result,
-};
-use nous_storage::BeginOperation;
-use nous_storage::Database;
-use nous_storage::operation_key;
-use serde_json::json;
+use crate::{identity::AuthConfig, instance::ServerConfig, network::NetworkConfig};
+use nous_domain::{ConfigApplyMode, ConfigEntry, ConfigLevel, ConfigScope, Result};
 
 pub const SERVER: ConfigKey<ServerConfig> = ConfigKey::new("server");
 pub const AUTH: ConfigKey<AuthConfig> = ConfigKey::new("auth");
@@ -20,6 +11,7 @@ pub fn register_core(builder: &mut ConfigRegistryBuilder) -> Result<()> {
     builder.register(
         SERVER,
         ConfigDefinition {
+            write_policy: crate::configuration::ConfigWritePolicy::Scoped,
             owner: "server".into(),
             description: "Instance listener and request body limit.".into(),
             default: ServerConfig::default(),
@@ -35,8 +27,10 @@ pub fn register_core(builder: &mut ConfigRegistryBuilder) -> Result<()> {
     builder.register(
         AUTH,
         ConfigDefinition {
+            write_policy: crate::configuration::ConfigWritePolicy::LocalBootstrapOnly,
             owner: "identity".into(),
-            description: "Protected administrator credential reference.".into(),
+            description: "Bootstrap administrator seed; current API credentials belong to grants."
+                .into(),
             default: AuthConfig::default(),
             scopes: vec![ConfigLevel::Instance],
             apply_mode: ConfigApplyMode::Restart,
@@ -50,6 +44,7 @@ pub fn register_core(builder: &mut ConfigRegistryBuilder) -> Result<()> {
     builder.register(
         NETWORK,
         ConfigDefinition {
+            write_policy: crate::configuration::ConfigWritePolicy::Scoped,
             owner: "network".into(),
             description: "Outbound proxy and connection/request timeouts.".into(),
             default: NetworkConfig::default(),
@@ -64,21 +59,15 @@ pub fn register_core(builder: &mut ConfigRegistryBuilder) -> Result<()> {
     )
 }
 
-/// Restore has installed a new administrator credential; preserve history and reset its binding.
-pub async fn reset_restored_auth(database: &Database) -> Result<()> {
-    let value = serde_json::to_value(AuthConfig::default())?;
-    let ctx = CallContext::new("restore", AccessScope::Admin);
-    let key = operation_key(
-        &ctx,
-        "configuration.restore_auth",
-        "instance",
-        &ulid::Ulid::generate().to_string(),
-        &value,
-    )?;
-    let mut tx = match database.begin_operation(key).await? {
-        BeginOperation::Replay(_) => return Ok(()),
-        BeginOperation::New(tx) => tx,
-    };
+/// The local bootstrap owner installs a seed it already published and bound in this operation.
+pub async fn install_bootstrap_seed_in(
+    tx: &mut nous_storage::WriteTransaction,
+    config: &AuthConfig,
+) -> Result<ConfigEntry> {
+    ConfigWritePolicy::LocalBootstrapOnly.require(tx.context())?;
+    ConfigScope::Instance.require_access(tx.context())?;
+    config.validate()?;
+    let value = serde_json::to_value(config)?;
     let entry = ConfigEntry {
         scope: ConfigScope::Instance,
         key: AUTH.path().into(),
@@ -90,9 +79,5 @@ pub async fn reset_restored_auth(database: &Database) -> Result<()> {
         commit_seq: tx.commit_seq(),
     };
     tx.insert_configuration_change(&entry).await?;
-    tx.commit(
-        json!({"key":AUTH.path(),"revision":entry.revision,"administrator_binding_reset":true}),
-    )
-    .await?;
-    Ok(())
+    Ok(entry)
 }

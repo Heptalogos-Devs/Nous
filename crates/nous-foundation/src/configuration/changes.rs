@@ -51,6 +51,7 @@ impl Configuration {
         scope: &ConfigScope,
         edits: &[ConfigEdit],
     ) -> Result<ConfigChangeSet> {
+        scope.require_access(tx.context())?;
         tx.validate_configuration_scope(scope).await?;
         if edits.is_empty() || edits.len() > 256 {
             return Err(Error::invalid("configuration batch requires 1..256 edits"));
@@ -67,6 +68,7 @@ impl Configuration {
                 return Err(Error::invalid("configuration batch repeats a key"));
             }
             let definition = self.registry.descriptor(key)?;
+            definition.write_policy.require(tx.context())?;
             if !definition.scopes.contains(&scope.level()) {
                 return Err(Error::invalid(
                     "configuration key does not permit this scope",
@@ -108,6 +110,7 @@ impl Configuration {
         scope: &ConfigScope,
         applied: &[ConfigActivation],
     ) -> Result<ConfigChangeSet> {
+        scope.require_access(tx.context())?;
         tx.validate_configuration_scope(scope).await?;
         let heads = tx
             .configuration_entries(std::slice::from_ref(scope))
@@ -125,6 +128,7 @@ impl Configuration {
                 return Err(Error::invalid("configuration activation repeats a key"));
             }
             let definition = self.registry.descriptor(&application.key)?;
+            definition.write_policy.require(tx.context())?;
             if definition.apply_mode != ConfigApplyMode::Restart
                 || !definition.scopes.contains(&scope.level())
             {

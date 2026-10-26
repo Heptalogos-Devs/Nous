@@ -30,12 +30,35 @@ impl<T: 'static> ConfigKey<T> {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ConfigWritePolicy {
+    Scoped,
+    LocalBootstrapOnly,
+}
+impl ConfigWritePolicy {
+    pub fn require(self, context: &nous_domain::CallContext) -> Result<()> {
+        if self == Self::LocalBootstrapOnly {
+            context.require_admin()?;
+            if context.authorization.is_some() {
+                return Err(Error::new(
+                    ErrorCode::Forbidden,
+                    "bootstrap configuration requires the local instance owner",
+                )
+                .with_trace(context.trace_id.clone()));
+            }
+        }
+        Ok(())
+    }
+}
+
 pub struct ConfigDefinition<T> {
     pub owner: String,
     pub description: String,
     pub default: T,
     pub scopes: Vec<ConfigLevel>,
     pub apply_mode: ConfigApplyMode,
+    pub write_policy: ConfigWritePolicy,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -47,6 +70,7 @@ pub struct ConfigDescriptor {
     pub default: Value,
     pub scopes: Vec<ConfigLevel>,
     pub apply_mode: ConfigApplyMode,
+    pub write_policy: ConfigWritePolicy,
 }
 
 type Normalizer = Arc<dyn Fn(Value) -> Result<Value> + Send + Sync>;
@@ -219,6 +243,7 @@ impl ConfigRegistryBuilder {
                     default,
                     scopes: definition.scopes,
                     apply_mode: definition.apply_mode,
+                    write_policy: definition.write_policy,
                 },
                 normalize,
             },

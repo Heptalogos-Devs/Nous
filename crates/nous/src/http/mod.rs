@@ -2,6 +2,7 @@
 mod client;
 pub mod cognition;
 pub mod configuration;
+pub mod identity;
 pub mod maintenance;
 pub mod models;
 mod operation;
@@ -21,15 +22,12 @@ pub use client::ApiClient;
 use nous_app::App;
 use nous_domain::{CallContext, Error, ErrorCode, TraceId};
 use nous_foundation::instance::InstanceConfig;
-use nous_foundation::instance::TokenStore;
 pub use operation::*;
 use serde_json::{Value, json};
-use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 #[derive(Clone)]
 pub struct ApiState {
     pub app: App,
-    pub tokens: Arc<TokenStore>,
     pub shutdown: CancellationToken,
 }
 
@@ -105,6 +103,7 @@ pub fn router(state: ApiState, config: &InstanceConfig, cancellation: Cancellati
         .route("/api/jobs/{job}/cancel", post(cancel_job))
         .merge(crate::http::cognition::router())
         .merge(crate::http::configuration::router())
+        .merge(crate::http::identity::router())
         .merge(crate::http::models::router())
         .merge(crate::http::prompts::router())
         .merge(crate::http::structured::router())
@@ -124,7 +123,7 @@ pub fn router(state: ApiState, config: &InstanceConfig, cancellation: Cancellati
         })
         .layer(DefaultBodyLimit::max(config.server.max_body_bytes))
         .layer(middleware::from_fn_with_state(
-            state.tokens.clone(),
+            state.app.clone(),
             authenticate,
         ))
         .layer(middleware::from_fn(trace::trace_request))
@@ -132,7 +131,7 @@ pub fn router(state: ApiState, config: &InstanceConfig, cancellation: Cancellati
 }
 
 async fn authenticate(
-    State(tokens): State<Arc<TokenStore>>,
+    State(app): State<App>,
     mut request: Request<axum::body::Body>,
     next: Next,
 ) -> Result<Response, ApiError> {
@@ -141,9 +140,9 @@ async fn authenticate(
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "));
-    let identity = token
-        .and_then(|token| tokens.authenticate(token))
+    let token = token
         .ok_or_else(|| Error::new(ErrorCode::Unauthorized, "a valid bearer token is required"))?;
+    let identity = app.authenticate(token).await?;
     let trace_id = request
         .extensions()
         .get::<TraceId>()

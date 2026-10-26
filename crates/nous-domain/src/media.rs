@@ -16,6 +16,8 @@ mod derivation;
 pub use derivation::*;
 mod sampling;
 pub use sampling::*;
+mod workflow;
+pub use workflow::*;
 identity!(SourceRegionId);
 identity!(DerivedRepresentationId);
 identity!(DerivedRegionId);

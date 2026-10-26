@@ -1,4 +1,5 @@
-use crate::{Database, ReadView, SourceClosure, SourceStatus, codec::*, storage_error};
+use crate::source::materials::{details_from_columns, material_details};
+use crate::{Database, ReadView, SourceClosure, SourceStatus, storage_error};
 use nous_domain::*;
 use serde::{Deserialize, Serialize};
 use sqlx::{Row, SqliteConnection};
@@ -249,8 +250,33 @@ async fn memory_snapshot_in(
             "retrieval cutoff refers to uncommitted authority",
         ));
     }
-    let mut rows=sqlx::query("SELECT r.*,s.content_hash AS source_hash,s.media_type AS source_media_type,s.byte_len AS source_byte_len,s.source AS source_name,s.event_time_domain AS source_event_domain,s.event_time_coordinate AS source_event_coordinate,s.recorded_at AS source_recorded_at,s.commit_seq AS source_commit_seq,d.source_type AS detail_source_type,d.tags AS detail_tags,d.metadata AS detail_metadata,d.structured AS detail_structured FROM memories m JOIN memory_revisions r ON r.memory_id=m.id AND r.revision=(SELECT max(h.revision) FROM memory_revisions h WHERE h.memory_id=m.id AND h.commit_seq<=? AND (? IS NULL OR h.revision=?)) JOIN materials s ON s.id=r.material_id LEFT JOIN material_details d ON d.material_id=s.id WHERE m.namespace_id=? AND m.subject_id=? AND (? IS NULL OR m.id=?) ORDER BY m.id LIMIT ?")
-            .bind(watermark).bind(reference.map(|r|r.revision)).bind(reference.map(|r|r.revision)).bind(namespace.as_str()).bind(subject.as_str()).bind(reference.map(|r| if r.kind == CognitiveKind::Memory {r.id.as_str()} else { "" })).bind(reference.map(|r| if r.kind == CognitiveKind::Memory {r.id.as_str()} else { "" })).bind(limit).fetch_all(&mut *conn).await.map_err(storage_error)?;
+    let source_columns = crate::authority::records::material_columns("s", "source_");
+    let mut query = sqlx::QueryBuilder::<sqlx::Sqlite>::new("SELECT r.*,");
+    query.push(source_columns).push(",d.source_type AS detail_source_type,d.tags AS detail_tags,d.metadata AS detail_metadata,d.structured AS detail_structured FROM memories m JOIN memory_revisions r ON r.memory_id=m.id AND r.revision=(SELECT max(h.revision) FROM memory_revisions h WHERE h.memory_id=m.id AND h.commit_seq<=? AND (? IS NULL OR h.revision=?)) JOIN materials s ON s.id=r.material_id LEFT JOIN material_details d ON d.namespace_id=s.namespace_id AND d.material_id=s.id WHERE m.namespace_id=? AND m.subject_id=? AND (? IS NULL OR m.id=?) ORDER BY m.id LIMIT ?");
+    let mut rows = query.build()
+        .bind(watermark)
+        .bind(reference.map(|r| r.revision))
+        .bind(reference.map(|r| r.revision))
+        .bind(namespace.as_str())
+        .bind(subject.as_str())
+        .bind(reference.map(|r| {
+            if r.kind == CognitiveKind::Memory {
+                r.id.as_str()
+            } else {
+                ""
+            }
+        }))
+        .bind(reference.map(|r| {
+            if r.kind == CognitiveKind::Memory {
+                r.id.as_str()
+            } else {
+                ""
+            }
+        }))
+        .bind(limit)
+        .fetch_all(&mut *conn)
+        .await
+        .map_err(storage_error)?;
     let complete = rows.len() < limit as usize;
     if !complete {
         rows.pop();
@@ -259,32 +285,13 @@ async fn memory_snapshot_in(
     let mut tags = BTreeSet::new();
     for row in rows {
         let memory = crate::cognition::memory::memory_row_ref(&row)?;
-        let domain: Option<String> = row.get("source_event_domain");
-        let material = Material {
-            id: memory.material_id.clone(),
-            namespace_id: namespace.clone(),
-            content_hash: row.get("source_hash"),
-            media_type: row.get("source_media_type"),
-            byte_len: row.get("source_byte_len"),
-            source: row.get("source_name"),
-            event_time: domain.map(|domain| TimePoint {
-                domain,
-                coordinate: row.get("source_event_coordinate"),
-            }),
-            recorded_at: row.get("source_recorded_at"),
-            commit_seq: row.get("source_commit_seq"),
-        };
-        let details = MaterialDetails {
-            source_type: row.get("detail_source_type"),
-            tags: serde_json::from_str(row.get::<Option<&str>, _>("detail_tags").unwrap_or("[]"))
-                .map_err(storage_error)?,
-            metadata: serde_json::from_str(
-                row.get::<Option<&str>, _>("detail_metadata")
-                    .unwrap_or("{}"),
-            )
-            .map_err(storage_error)?,
-            structured: parse_optional(row.get("detail_structured"))?,
-        };
+        let material = crate::authority::records::material_row_ref(&row, "source_")?;
+        let details = details_from_columns(
+            row.get("detail_source_type"),
+            row.get("detail_tags"),
+            row.get("detail_metadata"),
+            row.get("detail_structured"),
+        )?;
         for tag in &details.tags {
             let text = tag.trim();
             if !text.is_empty() {
@@ -325,27 +332,4 @@ async fn memory_snapshot_in(
         tag_embeddings,
         complete,
     })
-}
-async fn material_details(
-    conn: &mut SqliteConnection,
-    namespace: &NamespaceId,
-    id: &MaterialId,
-) -> Result<MaterialDetails> {
-    let row=sqlx::query("SELECT source_type,tags,metadata,structured FROM material_details WHERE namespace_id=? AND material_id=?")
-        .bind(namespace.as_str()).bind(id.as_str()).fetch_optional(conn).await.map_err(storage_error)?;
-    let Some(row) = row else {
-        return Ok(MaterialDetails::default());
-    };
-    Ok(MaterialDetails {
-        source_type: row.get("source_type"),
-        tags: serde_json::from_str(row.get("tags"))?,
-        metadata: serde_json::from_str(row.get("metadata"))?,
-        structured: parse_optional_json(row.get("structured"))?,
-    })
-}
-fn parse_optional_json(value: Option<&str>) -> Result<Option<serde_json::Value>> {
-    value
-        .map(serde_json::from_str)
-        .transpose()
-        .map_err(storage_error)
 }

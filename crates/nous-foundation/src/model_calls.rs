@@ -49,6 +49,7 @@ impl ModelCalls {
         step: &str,
         runtime: &ModelRuntime,
         role: &str,
+        input:Option<Value>,
     ) -> bool {
         let Ok(previous) = self.database.latest_model_call(&job.id, step).await else {
             return false;
@@ -79,6 +80,7 @@ impl ModelCalls {
                     index,
                     previous_request: previous.map(|call| call.request),
                 },
+                input.as_ref(),
             )
             .await
         else {
@@ -165,6 +167,9 @@ impl ModelCalls {
             let prepared = match prepare(context).await {
                 Ok(prepared) => prepared,
                 Err(failure) => {
+                    if cancel.is_cancelled() {
+                        return self.defer_interrupted(job_id).await;
+                    }
                     let mut tx = self.tasks.operation("model.prepare", job_id).await?;
                     let mut job = tx.job_record(job_id).await?;
                     if job.state == JobState::Cancelled {

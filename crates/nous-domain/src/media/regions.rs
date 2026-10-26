@@ -136,6 +136,7 @@ impl SourceCoordinate {
                 a <= c && d <= b
             }
             (Self::ImageRect { rect: a }, Self::ImageRect { rect: b }) => a.contains(b),
+            (Self::ImageRect {rect:a},Self::VideoFrame {rect:Some(b),..})=>a.contains(b),
             (
                 Self::TimeSpan {
                     start_ms: a,
@@ -213,12 +214,8 @@ impl SourceRegion {
             &self.coordinate,
         ))?)
     }
-    pub fn validate_against(
-        &self,
-        material: &Material,
-        metadata: &MediaMetadata,
-        parent: Option<&Self>,
-    ) -> Result<()> {
+    pub fn validate_against(&self, material: &Material, parent: Option<&Self>) -> Result<()> {
+        let metadata = &material.metadata;
         self.id.validate()?;
         validate_uuid(self.namespace_id.as_str())?;
         validate_uuid(self.material_id.as_str())?;

@@ -1,8 +1,8 @@
 //! Persistent caller identity and a single traced invocation have separate lifetimes.
-use crate::{Error, ErrorCode, NamespaceId, Result, SubjectId, TraceId};
+use crate::{Error, ErrorCode, GrantRef, NamespaceId, Result, SubjectId, TraceId};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum AccessScope {
     Admin,
@@ -19,6 +19,7 @@ pub enum AccessScope {
 pub struct CallerIdentity {
     pub caller_id: String,
     pub scope: AccessScope,
+    pub authorization: Option<GrantRef>,
 }
 
 impl CallerIdentity {
@@ -27,6 +28,7 @@ impl CallerIdentity {
             caller_id: self.caller_id.clone(),
             scope: self.scope.clone(),
             trace_id,
+            authorization: self.authorization.clone(),
         }
     }
     pub fn new_call(&self) -> CallContext {
@@ -34,11 +36,12 @@ impl CallerIdentity {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CallContext {
     pub caller_id: String,
     pub scope: AccessScope,
     pub trace_id: TraceId,
+    pub authorization: Option<GrantRef>,
 }
 
 impl CallContext {
@@ -46,6 +49,7 @@ impl CallContext {
         CallerIdentity {
             caller_id: caller_id.into(),
             scope,
+            authorization: None,
         }
         .new_call()
     }
@@ -56,6 +60,7 @@ impl CallContext {
         CallerIdentity {
             caller_id: self.caller_id.clone(),
             scope: self.scope.clone(),
+            authorization: self.authorization.clone(),
         }
     }
     pub fn narrow(&self, scope: AccessScope) -> Result<Self> {

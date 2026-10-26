@@ -8,6 +8,8 @@ mod contract;
 mod error;
 mod execution;
 mod input;
+mod media_input;
+pub use media_input::{ModelMediaReader,MediaReadFuture};
 mod openai_embedding;
 mod preview;
 mod request;
@@ -34,12 +36,14 @@ pub use roles::{
 };
 
 use crate::configuration::Configuration;
-use crate::instance::InstancePaths;
 use crate::prompts::Prompts;
+use crate::secret::Secrets;
 use execution::{CallExecutor, ProviderOutput};
 use nous_domain::ConfigScope;
 use serde::Serialize;
 use serde_json::{Value, json};
+use std::sync::Arc;
+use tokio_util::sync::CancellationToken;
 
 #[derive(Clone)]
 pub struct ModelRuntime {
@@ -47,20 +51,23 @@ pub struct ModelRuntime {
     resources: ModelResources,
     prompts: Prompts,
     executor: CallExecutor,
+    media_reader: Arc<dyn ModelMediaReader>,
 }
 impl ModelRuntime {
     pub fn new(
-        paths: &InstancePaths,
+        secrets: Secrets,
         configuration: Configuration,
         roles: RoleRegistry,
         prompts: Prompts,
         network: crate::network::NetworkClients,
+        media_reader: Arc<dyn ModelMediaReader>,
     ) -> anyhow::Result<Self> {
         Ok(Self {
             configuration,
-            resources: ModelResources::new(paths, roles),
+            resources: ModelResources::new(secrets, roles),
             prompts,
             executor: CallExecutor::new(network)?,
+            media_reader,
         })
     }
     pub fn resources(&self) -> &ModelResources {
@@ -103,7 +110,7 @@ impl ModelRuntime {
         let Ok(snapshot) = self.configuration.snapshot(scope, false).await else {
             return false;
         };
-        if !self.resources.readiness(&snapshot, role).is_ready() {
+        if !self.resources.readiness(&snapshot, role).await.is_ready() {
             return false;
         }
         let Ok(resolved) = self.resources.resolve(&snapshot, role) else {
@@ -128,7 +135,7 @@ impl ModelRuntime {
         let snapshot = self.configuration.snapshot(scope, false).await?;
         let mut statuses = serde_json::Map::new();
         for definition in self.resources.roles().definitions() {
-            let ready = self.resources.readiness(&snapshot, definition.id);
+            let ready = self.resources.readiness(&snapshot, definition.id).await;
             let mut value = json!(ready);
             if let Ok(resolved) = self.resources.resolve(&snapshot, definition.id) {
                 value["resolved"] = json!(resolved);
@@ -203,11 +210,12 @@ impl ModelRuntime {
         let model = self.resolve(scope, role).await?;
         Ok(preview::build(self, &model, &input, edits)?.preview)
     }
-    pub fn plan(&self, scope: ConfigScope, role: &str) -> InvocationPlan {
+    pub fn plan(&self, scope: ConfigScope, role: &str, cancel:CancellationToken) -> InvocationPlan {
         InvocationPlan {
             runtime: self.clone(),
             scope,
             role: role.into(),
+            cancel,
             resolved: tokio::sync::OnceCell::new(),
         }
     }
@@ -216,20 +224,29 @@ impl ModelRuntime {
         scope: &ConfigScope,
         role: &str,
         attempt: AttemptContext,
+        input:Option<&Value>,
     ) -> Result<Vec<ResourceMetadata>, ModelFailure> {
-        let plan = self.plan(scope.clone(), role);
+        let plan = self.plan(scope.clone(), role, CancellationToken::new());
         let resolved = plan.resolve(&attempt).await?;
-        Ok(self
+        let start=next_route(resolved,&attempt)?;
+        let preview=input.map(|input|preview::build(self,resolved,input,InvocationEdits::default())).transpose()?;
+        let mut resources=self
             .resources
-            .ready_resources(resolved, next_route(resolved, &attempt)?))
+            .ready_resources(resolved, start)
+            .await;
+        if let Some(built)=preview {
+            resources.retain(|resource|built.preview.routes.iter().skip(start).any(|route|route.rejection.is_none() && route.resource.id==resource.id && route.resource.provider==resource.provider));
+        }
+        Ok(resources)
     }
     /// A single attempt freezes metadata and resolves its credential only after cache reuse.
-    fn prepare<T: Serialize>(
+    async fn prepare<T: Serialize>(
         &self,
         model: &ResolvedModel,
         attempt: &AttemptContext,
         input: T,
         edits: InvocationEdits,
+        cancel:&CancellationToken,
     ) -> Result<PreparedCall<InvocationMetadata<T>>, ModelFailure> {
         let source =
             serde_json::to_value(&input).map_err(|error| ModelFailure::domain(error.into()))?;
@@ -240,11 +257,13 @@ impl ModelRuntime {
         for (index, request) in built.requests.into_iter().enumerate().skip(start) {
             let Some(request) = request else {
                 if let Some(error) = &built.preview.routes[index].rejection {
-                    unavailable = ModelFailure::domain(error.clone());
+                    unavailable = if matches!(error.code,nous_domain::ErrorCode::CapabilityUnavailable|nous_domain::ErrorCode::ResourceExhausted) {
+                        ModelFailure::configuration(error.clone())
+                    } else { ModelFailure::domain(error.clone()) };
                 }
                 continue;
             };
-            match self.resources.target(&model.routes[index]) {
+            match self.resources.target(&model.routes[index]).await {
                 Ok(target) => {
                     selected = Some((index, request, target));
                     break;
@@ -253,6 +272,7 @@ impl ModelRuntime {
             }
         }
         let (index, request, target) = selected.ok_or(unavailable)?;
+        let request=request.encode(&model.scope,self.media_reader.as_ref(),cancel).await.map_err(ModelFailure::domain)?;
         let route = &model.routes[index];
         let access = built.preview.routes[index].actual_access;
         let metadata = InvocationMetadata {
@@ -295,6 +315,7 @@ pub struct InvocationPlan {
     runtime: ModelRuntime,
     scope: ConfigScope,
     role: String,
+    cancel: CancellationToken,
     resolved: tokio::sync::OnceCell<ResolvedModel>,
 }
 impl InvocationPlan {
@@ -340,7 +361,8 @@ impl InvocationPlan {
         edits: InvocationEdits,
     ) -> Result<PreparedCall<InvocationMetadata<T>>, ModelFailure> {
         self.runtime
-            .prepare(self.resolve(&attempt).await?, &attempt, input, edits)
+            .prepare(self.resolve(&attempt).await?, &attempt, input, edits,&self.cancel)
+            .await
     }
 }
 

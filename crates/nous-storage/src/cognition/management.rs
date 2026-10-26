@@ -1,7 +1,6 @@
-//! Memory lifecycle commits, source metadata, and content-free purge markers.
+//! Memory lifecycle commits and content-free purge markers.
 use nous_domain::{
-    Error, ErrorCode, MaterialDetails, MaterialId, Memory, MemoryAudit, MemoryId, NamespaceId,
-    Result, SubjectId,
+    Error, ErrorCode, Memory, MemoryAudit, MemoryId, NamespaceId, Result, SubjectId,
 };
 use serde::{Deserialize, Serialize};
 use sqlx::{Row, sqlite::SqliteRow};
@@ -99,27 +98,6 @@ impl Database {
             .fetch_all(&self.pool).await.map_err(storage_error)?.into_iter().map(audit_row).collect()
     }
 
-    pub async fn material_details(
-        &self,
-        namespace: &NamespaceId,
-        id: &MaterialId,
-    ) -> Result<MaterialDetails> {
-        let row = sqlx::query("SELECT d.source_type,d.tags,d.metadata,d.structured FROM materials m LEFT JOIN material_details d ON d.material_id=m.id WHERE m.namespace_id=? AND m.id=?")
-            .bind(namespace.as_str()).bind(id.as_str()).fetch_optional(&self.pool).await.map_err(storage_error)?.ok_or_else(not_found)?;
-        Ok(MaterialDetails {
-            source_type: row.get("source_type"),
-            tags: serde_json::from_str(row.get::<Option<&str>, _>("tags").unwrap_or("[]"))
-                .map_err(storage_error)?,
-            metadata: serde_json::from_str(row.get::<Option<&str>, _>("metadata").unwrap_or("{}"))
-                .map_err(storage_error)?,
-            structured: row
-                .get::<Option<&str>, _>("structured")
-                .map(serde_json::from_str)
-                .transpose()
-                .map_err(storage_error)?,
-        })
-    }
-
     pub async fn purged_memory(
         &self,
         namespace: &NamespaceId,
@@ -152,20 +130,6 @@ impl WriteTransaction {
         sqlx::query("INSERT INTO memory_audit(id,namespace_id,subject_id,memory_id,action,actor,reason,previous_revision,revision,recorded_at,commit_seq,details) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)")
             .bind(&audit.id).bind(audit.namespace_id.as_str()).bind(audit.subject_id.as_str()).bind(audit.memory_id.as_str()).bind(&audit.action).bind(&audit.actor).bind(&audit.reason)
             .bind(audit.previous_revision).bind(audit.revision).bind(&audit.recorded_at).bind(audit.commit_seq).bind(serde_json::to_string(&audit.details).map_err(storage_error)?)
-            .execute(&mut *self.tx).await.map_err(write_error)?;
-        Ok(())
-    }
-
-    pub async fn set_material_details(
-        &mut self,
-        namespace: &NamespaceId,
-        id: &MaterialId,
-        details: &MaterialDetails,
-    ) -> Result<()> {
-        self.material(namespace, id).await?;
-        sqlx::query("INSERT INTO material_details(material_id,namespace_id,source_type,tags,metadata,structured) VALUES (?,?,?,?,?,?) ON CONFLICT(material_id) DO UPDATE SET source_type=excluded.source_type,tags=excluded.tags,metadata=excluded.metadata,structured=excluded.structured")
-            .bind(id.as_str()).bind(namespace.as_str()).bind(&details.source_type).bind(serde_json::to_string(&details.tags).map_err(storage_error)?)
-            .bind(serde_json::to_string(&details.metadata).map_err(storage_error)?).bind(details.structured.as_ref().map(serde_json::to_string).transpose().map_err(storage_error)?)
             .execute(&mut *self.tx).await.map_err(write_error)?;
         Ok(())
     }

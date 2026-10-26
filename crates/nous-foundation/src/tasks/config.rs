@@ -45,6 +45,7 @@ pub fn register_configuration(builder: &mut ConfigRegistryBuilder) -> Result<()>
     builder.register(
         TASK_RUNTIME,
         ConfigDefinition {
+            write_policy: crate::configuration::ConfigWritePolicy::Scoped,
             owner: "tasks".into(),
             description:
                 "Worker concurrency, queue polling, waiting checks and queue retry budget.".into(),

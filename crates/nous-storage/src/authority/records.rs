@@ -85,16 +85,47 @@ pub(crate) fn subject_row(row: SqliteRow) -> Result<Subject> {
 }
 
 pub(crate) fn material_row(row: SqliteRow) -> Result<Material> {
+    material_row_ref(&row, "")
+}
+
+pub(crate) fn material_columns(table: &'static str, prefix: &'static str) -> String {
+    [
+        "id",
+        "namespace_id",
+        "content_hash",
+        "media_type",
+        "metadata",
+        "byte_len",
+        "source",
+        "event_time_domain",
+        "event_time_coordinate",
+        "recorded_at",
+        "commit_seq",
+    ]
+    .into_iter()
+    .map(|field| format!("{table}.{field} AS {prefix}{field}"))
+    .collect::<Vec<_>>()
+    .join(",")
+}
+
+pub(crate) fn material_row_ref(row: &SqliteRow, prefix: &'static str) -> Result<Material> {
+    let column = |name: &str| format!("{prefix}{name}");
     Ok(Material {
-        id: MaterialId(row.get("id")),
-        namespace_id: NamespaceId(row.get("namespace_id")),
-        content_hash: row.get("content_hash"),
-        media_type: row.get("media_type"),
-        byte_len: row.get("byte_len"),
-        source: row.get("source"),
-        event_time: time_point(&row, "event_time_domain", "event_time_coordinate"),
-        recorded_at: row.get("recorded_at"),
-        commit_seq: row.get("commit_seq"),
+        id: MaterialId(row.get(column("id").as_str())),
+        namespace_id: NamespaceId(row.get(column("namespace_id").as_str())),
+        content_hash: row.get(column("content_hash").as_str()),
+        media_type: row.get(column("media_type").as_str()),
+        metadata: serde_json::from_str(row.get(column("metadata").as_str()))
+            .map_err(storage_error)?,
+        byte_len: row.get(column("byte_len").as_str()),
+        source: row.get(column("source").as_str()),
+        event_time: time_point(
+            row,
+            &column("event_time_domain"),
+            &column("event_time_coordinate"),
+        ),
+        recorded_at: row.get(column("recorded_at").as_str()),
+        commit_seq: row.get(column("commit_seq").as_str()),
     })
 }
 

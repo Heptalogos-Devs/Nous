@@ -1,9 +1,7 @@
 //! Bootstrap file decoding; effective policy and provenance belong to Configuration.
-use super::{
-    InstancePaths, SecretRef,
-    credentials::{protect_credentials_directory, protect_secret_file},
-};
+use super::InstancePaths;
 use crate::network::NetworkConfig;
+use crate::{identity::AuthConfig, secret::Secrets};
 use anyhow::{Context, Result, bail};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -11,7 +9,6 @@ use std::{
     fs::{self, OpenOptions},
     io::Write,
     net::SocketAddr,
-    path::PathBuf,
 };
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
@@ -21,6 +18,8 @@ pub struct InstanceConfig {
     pub network: NetworkConfig,
     pub observability: crate::observability::ObservabilityConfig,
     pub tasks: crate::tasks::TaskRuntimeConfig,
+    pub platform: crate::platform::PlatformConfig,
+    pub media: crate::media::MediaPolicy,
     pub models: crate::models::ModelsDeployment,
 }
 
@@ -43,6 +42,8 @@ impl InstanceConfig {
         self.network.validate()?;
         self.observability.validate()?;
         self.tasks.validate()?;
+        self.platform.validate()?;
+        self.media.validate()?;
         self.models.validate()?;
         Ok(())
     }
@@ -72,66 +73,26 @@ impl Default for ServerConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(default, deny_unknown_fields)]
-pub struct AuthConfig {
-    pub admin_token: SecretRef,
-}
-impl AuthConfig {
-    pub fn validate(&self) -> Result<()> {
-        self.admin_token.validate()
+/// Initialize the bootstrap file and credential through their respective owners.
+/// The caller holds InstanceGuard; all paths remain instance managed.
+pub fn initialize(paths: &InstancePaths) -> Result<bool> {
+    paths.ensure_layout()?;
+    if paths.config.exists() {
+        let config = InstanceConfig::load(paths)?;
+        let value = Secrets::read_bootstrap_blocking(paths, &config.auth.admin_token)?;
+        anyhow::ensure!(
+            value.expose().len() >= 32,
+            "bootstrap credential must contain at least 32 bytes"
+        );
+        return Ok(false);
     }
-}
-
-impl Default for AuthConfig {
-    fn default() -> Self {
-        Self {
-            admin_token: SecretRef {
-                file: PathBuf::from("credentials/admin.token"),
-            },
-        }
-    }
-}
-
-impl InstancePaths {
-    /// Called while holding InstanceGuard. Returns false for an existing valid instance.
-    pub fn initialize(&self) -> Result<bool> {
-        self.ensure_layout()?;
-        if self.config.exists() {
-            let config = InstanceConfig::load(self)?;
-            self.read_secret(&config.auth.admin_token)?;
-            return Ok(false);
-        }
-        protect_credentials_directory(&self.credentials)?;
-        let config = InstanceConfig::default();
-        let token_path = self.resolve(&config.auth.admin_token.file)?;
-        // create_new preserves a credential left by an interrupted initialization.
-        match OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&token_path)
-        {
-            Ok(mut file) => {
-                protect_secret_file(&token_path)?;
-                let token = format!(
-                    "{}{}",
-                    uuid::Uuid::new_v4().simple(),
-                    uuid::Uuid::new_v4().simple()
-                );
-                file.write_all(token.as_bytes())?;
-                file.sync_all()?;
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                self.read_secret(&config.auth.admin_token)?;
-            }
-            Err(e) => return Err(e.into()),
-        }
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&self.config)?;
-        file.write_all(toml::to_string_pretty(&config)?.as_bytes())?;
-        file.sync_all()?;
-        Ok(true)
-    }
+    let config = InstanceConfig::default();
+    Secrets::ensure_bootstrap_blocking(paths, &config.auth.admin_token)?;
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&paths.config)?;
+    file.write_all(toml::to_string_pretty(&config)?.as_bytes())?;
+    file.sync_all()?;
+    Ok(true)
 }

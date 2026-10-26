@@ -5,12 +5,12 @@ use nous_app::App;
 use nous_foundation::instance::InstanceConfig;
 use nous_foundation::instance::InstanceGuard;
 use nous_foundation::instance::InstancePaths;
-use nous_foundation::instance::TokenStore;
 use nous_foundation::network::NetworkClients;
+use nous_foundation::secret::Secrets;
 use serde_json::{Value, json};
 use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 use tokio_util::sync::CancellationToken;
-pub(crate) fn connect(
+pub(crate) async fn connect(
     paths: &InstancePaths,
     url: Option<String>,
     token_file: Option<PathBuf>,
@@ -32,10 +32,10 @@ pub(crate) fn connect(
         .and_then(|state| state.get("listen"))
         .and_then(Value::as_str)
         .and_then(|address| address.parse::<SocketAddr>().ok());
-    let active_auth = running_state
+    let active_credential = running_state
         .as_ref()
-        .and_then(|state| state.get("auth"))
-        .map(|value| serde_json::from_value::<nous_foundation::instance::AuthConfig>(value.clone()))
+        .and_then(|state| state.get("bootstrap_credential"))
+        .map(|value| serde_json::from_value::<nous_domain::SecretRef>(value.clone()))
         .transpose()?;
     let base_url = url
         .or_else(|| {
@@ -54,21 +54,14 @@ pub(crate) fn connect(
         })
         .context("instance is not initialized; pass --url and --token-file or run nous init")?;
     let token = if let Some(path) = token_file {
-        let token = std::fs::read_to_string(&path).context("cannot read --token-file")?;
-        let token = token.trim().to_owned();
-        anyhow::ensure!(
-            !token.is_empty()
-                && token.len() <= 4096
-                && !token.bytes().any(|byte| byte.is_ascii_whitespace()),
-            "token file must contain one bearer token"
-        );
-        token
+        Secrets::read_token_file(&path).await?.into_string()
     } else {
-        let auth = active_auth
-            .as_ref()
-            .or_else(|| config.as_ref().map(|config| &config.auth))
-            .context("--token-file is required for a remote service")?;
-        paths.read_secret(&auth.admin_token)?
+        let reference = active_credential.as_ref()
+            .context("a running local identity or explicit --token-file is required; bootstrap seed is for local initialization/reset")?;
+        Secrets::new(Arc::new(paths.clone()))
+            .read(reference)
+            .await?
+            .into_string()
     };
     let network = running_state
         .as_ref()
@@ -94,7 +87,6 @@ pub(crate) async fn serve(paths: InstancePaths, listen: Option<SocketAddr>) -> R
     if let Some(listen) = listen {
         config.server.listen = listen;
     }
-    let tokens = Arc::new(TokenStore::load(&paths, &config)?);
     let listener = tokio::net::TcpListener::bind(config.server.listen)
         .await
         .context("cannot bind instance listener")?;
@@ -104,7 +96,6 @@ pub(crate) async fn serve(paths: InstancePaths, listen: Option<SocketAddr>) -> R
     let router = http::router(
         ApiState {
             app: app.clone(),
-            tokens,
             shutdown: cancellation.clone(),
         },
         &config,
@@ -114,7 +105,7 @@ pub(crate) async fn serve(paths: InstancePaths, listen: Option<SocketAddr>) -> R
     std::fs::write(
         &run_path,
         serde_json::to_vec_pretty(
-            &json!({"pid":std::process::id(),"version":env!("CARGO_PKG_VERSION"),"listen":address,"auth":config.auth,"network":config.network}),
+            &json!({"pid":std::process::id(),"version":env!("CARGO_PKG_VERSION"),"listen":address,"bootstrap_credential":app.bootstrap_credential().await?,"network":config.network}),
         )?,
     )?;
     tracing::info!(instance=%paths.root.display(),listen=%address,"Nous Wave is serving");

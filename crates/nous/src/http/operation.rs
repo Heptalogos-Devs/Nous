@@ -60,6 +60,7 @@ pub struct CancelJob {
 
 #[derive(Clone)]
 pub enum Operation {
+    Identity(nous_app::administration::identity::IdentityRequest),
     Prompt(nous_app::administration::prompts::PromptRequest),
     ModelContract(nous_app::administration::models::ModelContractRequest),
     ModelPreview(nous_app::administration::models::ModelPreviewRequest),
@@ -98,6 +99,7 @@ impl Operation {
 
     async fn dispatch(&self, app: &App, ctx: &CallContext) -> Result<Value, Error> {
         match self {
+            Self::Identity(request) => app.identity_request(ctx, request.clone()).await,
             Self::Trace(request) => app.trace_records(ctx, request).await,
             Self::Diagnostics => {
                 ctx.require_admin()?;
@@ -180,6 +182,7 @@ impl Operation {
 
     pub fn request(&self) -> (&'static str, String, Option<Value>) {
         match self {
+            Self::Identity(request) => ("POST", "/api/identity".into(), Some(json!(request))),
             Self::Prompt(request) => ("POST", "/api/prompts".into(), Some(json!(request))),
             Self::ModelContract(request) => {
                 ("POST", "/api/models/contract".into(), Some(json!(request)))
