@@ -4,6 +4,7 @@ use nous_foundation::models::ResolvedModel;
 use nous_storage::CognitiveRetrievalSnapshot;
 use tokio_util::sync::CancellationToken;
 mod entry;
+mod time;
 pub(crate) use entry::Entry;
 
 pub(crate) struct QueryView {
@@ -205,6 +206,14 @@ impl App {
         let source_read = read
             .source_read_view(ctx, namespace, &request.subject_id)
             .await?;
+        let options = nous_storage::QuerySnapshotOptions {
+            space_id: space,
+            as_of_commit: request.as_of_commit,
+            limit: policy.max_snapshot_entries,
+            source_read: Some(&source_read),
+            filters: &request.filters,
+            history: request.history,
+        };
         let mut output = QueryView::new(read.watermark);
         let mut media_entries = Vec::new();
         let exact = request.reference.as_ref();
@@ -215,49 +224,38 @@ impl App {
                 read.cognitive_reference_snapshot(
                     namespace,
                     &request.subject_id,
-                    space,
+                    &options,
                     reference,
-                    request.as_of_commit,
-                    Some(&source_read),
                 )
                 .await?
             } else {
-                read.cognitive_retrieval_snapshot(
-                    namespace,
-                    &request.subject_id,
-                    space,
-                    request.as_of_commit,
-                    policy.max_snapshot_entries,
-                    Some(&source_read),
-                )
-                .await?
+                read.cognitive_retrieval_snapshot(namespace, &request.subject_id, &options)
+                    .await?
             };
             output.add_cognition(snapshot)?;
+            if !request.history && exact.is_none() {
+                let mut active = Vec::new();
+                for entry in std::mem::take(&mut output.entries) {
+                    if read
+                        .bundle_target_active(namespace, &request.subject_id, &entry.reference())
+                        .await?
+                    {
+                        active.push(entry);
+                    }
+                }
+                output.entries = active;
+            }
         }
         if request.wants_domain(QueryDomain::Media)
-            && request.kinds.is_empty()
+            && (request.kinds.is_empty() || request.domains.contains(&QueryDomain::Media))
             && exact.is_none_or(|value| value.media().is_some())
         {
             let snapshot = if let Some(reference) = exact.and_then(RetrievalTarget::media) {
-                read.media_reference_snapshot(
-                    namespace,
-                    &request.subject_id,
-                    space,
-                    reference,
-                    request.as_of_commit,
-                    Some(&source_read),
-                )
-                .await?
+                read.media_reference_snapshot(namespace, &request.subject_id, &options, reference)
+                    .await?
             } else {
-                read.media_retrieval_snapshot(
-                    namespace,
-                    &request.subject_id,
-                    space,
-                    request.as_of_commit,
-                    policy.max_snapshot_entries,
-                    Some(&source_read),
-                )
-                .await?
+                read.media_retrieval_snapshot(namespace, &request.subject_id, &options)
+                    .await?
             };
             if !snapshot.complete
                 || output.entries.len().saturating_add(snapshot.entries.len())
@@ -269,6 +267,18 @@ impl App {
                 ));
             }
             for entry in snapshot.entries {
+                if !request.history
+                    && exact.is_none()
+                    && !read
+                        .bundle_target_active(
+                            namespace,
+                            &request.subject_id,
+                            &RetrievalTarget::Media(entry.source.source.clone()),
+                        )
+                        .await?
+                {
+                    continue;
+                }
                 let object = MediaRecord::from_lineage(&entry.source)?;
                 let reference = entry.source.source.clone();
                 let source = self
@@ -306,6 +316,10 @@ impl App {
         read.finish().await?;
         // Frozen semantic facts remain in memory; mechanical I/O and writes hold no SQL read transaction.
         for (mut entry, source) in media_entries {
+            if space.is_empty() && request.input.text.trim().is_empty() {
+                output.entries.push(entry);
+                continue;
+            }
             if !entry.eligible(request) {
                 output.entries.push(entry);
                 continue;

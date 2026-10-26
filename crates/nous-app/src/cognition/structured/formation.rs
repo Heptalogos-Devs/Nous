@@ -28,7 +28,8 @@ pub(super) struct FormationOutcome {
     pub objects: Vec<CognitiveRef>,
 }
 
-const FORMATION_ORDER: [CognitiveKind; 6] = [
+const FORMATION_ORDER: [CognitiveKind; 7] = [
+    CognitiveKind::Entity,
     CognitiveKind::Concept,
     CognitiveKind::MemorySemantics,
     CognitiveKind::Episode,

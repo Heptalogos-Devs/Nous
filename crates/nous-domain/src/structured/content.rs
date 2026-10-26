@@ -66,7 +66,7 @@ pub struct ConceptContent {
     pub description: String,
     pub aliases: Vec<String>,
     pub canonical: Option<CognitiveRef>,
-    pub members: Vec<CognitiveRef>,
+    pub members: Vec<SemanticTarget>,
     pub lineage: Vec<LineageLink>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -174,6 +174,7 @@ pub struct AssociationContent {
 pub enum CognitiveContent {
     MemorySemantics(MemorySemantics),
     Concept(ConceptContent),
+    Entity(EntityContent),
     Episode(EpisodeContent),
     Journal(JournalContent),
     Schema(SchemaContent),
@@ -202,6 +203,7 @@ impl CognitiveContent {
         match self {
             Self::MemorySemantics(_) => CognitiveKind::MemorySemantics,
             Self::Concept(_) => CognitiveKind::Concept,
+            Self::Entity(_) => CognitiveKind::Entity,
             Self::Episode(_) => CognitiveKind::Episode,
             Self::Journal(_) => CognitiveKind::Journal,
             Self::Schema(_) => CognitiveKind::Schema,

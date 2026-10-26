@@ -107,6 +107,15 @@ impl StructuredFormationInput {
         self.reference(key)
             .map(|reference| d::EvidenceSource::CognitiveRevision { reference })
     }
+    pub(super) fn target(&self, key: &str) -> d::Result<d::RetrievalTarget> {
+        self.evidence_source(key)?
+            .retrieval_target()
+            .ok_or_else(|| {
+                d::Error::invalid(
+                    "target key must select exact cognition or media, rather than an Observation",
+                )
+            })
+    }
 
     pub(super) fn observation(&self, key: &str) -> d::Result<d::ObservationId> {
         match self.evidence_source(key)? {

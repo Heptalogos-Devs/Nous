@@ -1,7 +1,7 @@
 pub(super) mod artifact;
 mod config;
-mod update;
 pub(super) mod filesystem;
+mod update;
 use crate::{
     configuration::ConfigWritePolicy,
     instance::{self, InstanceGuard, InstancePaths},

@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
 use nous_domain::{
     CognitiveKind, MemoryId, ModelCallId, ObservationId, QueryMode, QueryRequest, SubjectId,
@@ -67,6 +67,8 @@ pub enum MemoryCommand {
     /// Read original material, contact, formation record and model call.
     Source {
         id: MemoryId,
+        #[arg(long)]
+        revision: Option<i64>,
     },
 }
 
@@ -119,7 +121,10 @@ impl MemoryCommand {
                     expected_revision,
                 },
             ),
-            Self::Source { id } => CognitionOperation::Source(id.to_string()),
+            Self::Source { id, revision } => CognitionOperation::Source {
+                id: id.to_string(),
+                revision,
+            },
         };
         Ok(Operation::Cognition(operation))
     }
@@ -127,6 +132,15 @@ impl MemoryCommand {
 
 #[derive(Args)]
 pub struct QueryArgs {
+    /// Read the embedded NousQL manual without connecting to a service.
+    #[arg(long, conflicts_with = "request_file")]
+    manual: bool,
+    /// Bind and inspect the plan without invoking a model or running retrieval.
+    #[arg(long, conflicts_with = "manual")]
+    plan: bool,
+    /// A complete QueryRequest JSON; uses the same contract as HTTP and MCP.
+    #[arg(long, conflicts_with_all = ["mode", "include_inactive", "text", "subject", "reference", "media", "domains", "source", "kinds", "as_of_commit", "include_deleted", "time", "limit", "min_commit_seq"])]
+    request_file: Option<std::path::PathBuf>,
     /// Defaults to lexical for text, dense when media is supplied.
     #[arg(long, value_parser=parse_query_mode)]
     mode: Option<QueryMode>,
@@ -135,8 +149,8 @@ pub struct QueryArgs {
     /// Natural-language intent. Exact references use kind:UUID@revision.
     #[arg(default_value = "")]
     text: String,
-    #[arg(long)]
-    subject: SubjectId,
+    #[arg(long, required_unless_present_any = ["manual", "request_file"])]
+    subject: Option<SubjectId>,
     #[arg(long)]
     reference: Option<nous_domain::RetrievalTarget>,
     /// Exact media input, e.g. material:UUID or representation:UUID@revision. Repeat for joint input.
@@ -162,13 +176,25 @@ pub struct QueryArgs {
     min_commit_seq: Option<i64>,
 }
 impl QueryArgs {
-    pub fn operation(self) -> Result<Operation> {
-        let time: Option<TimeFilter> = self
-            .time
-            .map(|time| serde_json::from_str(&time))
-            .transpose()?;
-        Ok(Operation::Cognition(CognitionOperation::Query(
+    pub fn operation(self) -> Result<Option<Operation>> {
+        if self.manual {
+            return Ok(None);
+        }
+        let request = if let Some(file) = self.request_file {
+            serde_json::from_reader(std::fs::File::open(&file)?)
+                .with_context(|| format!("invalid QueryRequest {}", file.display()))?
+        } else {
+            let time: Option<TimeFilter> = self
+                .time
+                .map(|time| serde_json::from_str(&time))
+                .transpose()?;
             QueryRequest {
+                sort: None,
+                expression: None,
+                clock: None,
+                history: false,
+                filters: Default::default(),
+                times: Vec::new(),
                 source_read: None,
                 mode: self.mode.unwrap_or(if self.media.is_empty() {
                     QueryMode::Lexical
@@ -176,7 +202,9 @@ impl QueryArgs {
                     QueryMode::Dense
                 }),
                 include_inactive: self.include_inactive,
-                subject_id: self.subject,
+                subject_id: self
+                    .subject
+                    .context("query requires --subject or --request-file")?,
                 input: nous_domain::QueryInput {
                     text: self.text,
                     media: self.media,
@@ -190,8 +218,14 @@ impl QueryArgs {
                 time,
                 limit: self.limit,
                 min_commit_seq: self.min_commit_seq,
-            },
-        )))
+            }
+        };
+        request.validate()?;
+        Ok(Some(Operation::Cognition(if self.plan {
+            CognitionOperation::Plan(Box::new(request))
+        } else {
+            CognitionOperation::Query(Box::new(request))
+        })))
     }
 }
 

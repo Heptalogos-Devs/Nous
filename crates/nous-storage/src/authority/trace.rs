@@ -43,6 +43,7 @@ pub struct TraceJob {
 #[derive(Debug, Clone, Serialize)]
 pub struct TraceModelCall {
     pub id: ModelCallId,
+    pub origin: ModelCallOrigin,
     pub job_id: String,
     pub reservation_commit_seq: i64,
     pub namespace_id: NamespaceId,
@@ -128,7 +129,7 @@ impl Database {
             .take(limit)
             .map(job_row)
             .collect::<Result<Vec<_>>>()?;
-        let rows = sqlx::query("SELECT id,job_id,reservation_commit_seq,namespace_id,subject_id,step_key,attempt,resource_id,state,json_extract(response,'$.record.provider_model') AS provider_model,usage,cost,error,created_at,completed_at FROM model_calls WHERE trace_id=? AND reservation_commit_seq<=? AND (? IS NULL OR id>?) ORDER BY id LIMIT ?")
+        let rows = sqlx::query("SELECT id,origin,job_id,reservation_commit_seq,namespace_id,subject_id,step_key,attempt,resource_id,state,json_extract(response,'$.record.provider_model') AS provider_model,usage,cost,error,created_at,completed_at FROM model_calls WHERE trace_id=? AND reservation_commit_seq<=? AND (? IS NULL OR id>?) ORDER BY id LIMIT ?")
             .bind(trace_id.as_str()).bind(next.snapshot_seq).bind(next.calls_after.as_ref().map(ModelCallId::as_str)).bind(next.calls_after.as_ref().map(ModelCallId::as_str)).bind(fetch_limit)
             .fetch_all(&mut *view.tx).await.map_err(storage_error)?;
         let calls_has_more = rows.len() > limit;
@@ -196,6 +197,7 @@ fn job_row(row: SqliteRow) -> Result<TraceJob> {
 fn call_row(row: SqliteRow) -> Result<TraceModelCall> {
     Ok(TraceModelCall {
         id: ModelCallId(row.get("id")),
+        origin: serde_json::from_str(row.get("origin"))?,
         job_id: row.get("job_id"),
         reservation_commit_seq: row.get("reservation_commit_seq"),
         namespace_id: NamespaceId(row.get("namespace_id")),

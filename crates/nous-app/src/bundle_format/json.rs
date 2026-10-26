@@ -1,95 +1,12 @@
 use super::Images;
 use anyhow::Result;
-use serde::de::{self, DeserializeSeed, MapAccess, SeqAccess, Visitor};
 use serde_json::{Map, Number, Value, json};
-use std::{collections::BTreeMap, fmt};
-struct JsonSeed<'a> {
-    remaining: &'a mut usize,
-    depth: usize,
-}
-impl<'de> DeserializeSeed<'de> for JsonSeed<'_> {
-    type Value = Value;
-    fn deserialize<D: de::Deserializer<'de>>(
-        self,
-        deserializer: D,
-    ) -> std::result::Result<Value, D::Error> {
-        if *self.remaining == 0 || self.depth == 0 {
-            return Err(de::Error::custom("bundle JSON node/depth limit exceeded"));
-        }
-        *self.remaining -= 1;
-        deserializer.deserialize_any(JsonVisitor {
-            remaining: self.remaining,
-            depth: self.depth - 1,
-        })
-    }
-}
-struct JsonVisitor<'a> {
-    remaining: &'a mut usize,
-    depth: usize,
-}
-impl<'de> Visitor<'de> for JsonVisitor<'_> {
-    type Value = Value;
-    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-        formatter.write_str("bounded JSON value")
-    }
-    fn visit_bool<E: de::Error>(self, value: bool) -> std::result::Result<Value, E> {
-        Ok(Value::Bool(value))
-    }
-    fn visit_i64<E: de::Error>(self, value: i64) -> std::result::Result<Value, E> {
-        Ok(json!(value))
-    }
-    fn visit_u64<E: de::Error>(self, value: u64) -> std::result::Result<Value, E> {
-        Ok(json!(value))
-    }
-    fn visit_f64<E: de::Error>(self, value: f64) -> std::result::Result<Value, E> {
-        Number::from_f64(value)
-            .map(Value::Number)
-            .ok_or_else(|| E::custom("nonfinite JSON number"))
-    }
-    fn visit_str<E: de::Error>(self, value: &str) -> std::result::Result<Value, E> {
-        Ok(Value::String(value.to_owned()))
-    }
-    fn visit_string<E: de::Error>(self, value: String) -> std::result::Result<Value, E> {
-        Ok(Value::String(value))
-    }
-    fn visit_unit<E: de::Error>(self) -> std::result::Result<Value, E> {
-        Ok(Value::Null)
-    }
-    fn visit_none<E: de::Error>(self) -> std::result::Result<Value, E> {
-        Ok(Value::Null)
-    }
-    fn visit_seq<A: SeqAccess<'de>>(self, mut sequence: A) -> std::result::Result<Value, A::Error> {
-        let mut result = Vec::new();
-        while let Some(value) = sequence.next_element_seed(JsonSeed {
-            remaining: self.remaining,
-            depth: self.depth,
-        })? {
-            result.push(value);
-        }
-        Ok(Value::Array(result))
-    }
-    fn visit_map<A: MapAccess<'de>>(self, mut object: A) -> std::result::Result<Value, A::Error> {
-        let mut result = Map::new();
-        while let Some(key) = object.next_key::<String>()? {
-            if result.contains_key(&key) {
-                return Err(de::Error::custom("duplicate JSON object key"));
-            }
-            let value = object.next_value_seed(JsonSeed {
-                remaining: self.remaining,
-                depth: self.depth,
-            })?;
-            result.insert(key, value);
-        }
-        Ok(Value::Object(result))
-    }
-}
+use std::collections::BTreeMap;
 pub(super) fn bounded_json(bytes: &[u8], remaining: &mut usize, depth: usize) -> Result<Value> {
-    let mut parser = serde_json::Deserializer::from_slice(bytes);
-    let value = JsonSeed { remaining, depth }.deserialize(&mut parser)?;
-    parser.end()?;
-    Ok(value)
+    Ok(nous_foundation::json::bounded_value(
+        bytes, remaining, depth,
+    )?)
 }
-
 /// Python json.dumps(sort_keys=True,separators=(',',':'),ensure_ascii=False) compatibility.
 pub(super) fn canonical_json(value: &Value) -> Result<Vec<u8>> {
     let mut text = String::new();

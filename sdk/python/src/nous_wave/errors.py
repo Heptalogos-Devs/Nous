@@ -7,7 +7,7 @@ class NousError(Exception):
         self, detail: Mapping[str, Any], *, status_code: int | None = None
     ) -> None:
         self.detail = dict(detail)
-        self.code = str(detail.get("code", "dependency_unavailable"))
+        self.code = str(detail.get("code", "DependencyUnavailable"))
         self.trace_id = detail.get("trace_id")
         self.context = dict(detail.get("context") or {})
         self.detail["context"] = self.context

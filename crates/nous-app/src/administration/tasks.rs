@@ -11,6 +11,8 @@ impl App {
         timeout_ms: u64,
         cancel: &CancellationToken,
     ) -> Result<Vec<JobRecord>> {
-        self.tasks.wait_all(ctx, ids, Duration::from_millis(timeout_ms), cancel).await
+        self.tasks
+            .wait_all(ctx, ids, Duration::from_millis(timeout_ms), cancel)
+            .await
     }
 }

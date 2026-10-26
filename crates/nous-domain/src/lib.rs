@@ -8,6 +8,12 @@ mod context;
 pub use context::*;
 mod origin;
 pub use origin::*;
+mod query_filter;
+pub use query_filter::*;
+mod query_identity;
+pub use query_identity::*;
+mod semantic_target;
+pub use semantic_target::*;
 
 macro_rules! identity {
     ($name:ident) => {
@@ -82,12 +88,17 @@ mod operation_time;
 pub use operation_time::OperationTime;
 mod query;
 pub use query::*;
+pub mod nousql;
 mod source_read;
 pub use source_read::*;
 mod cognition;
 pub use cognition::*;
 mod model;
 pub use model::*;
+mod bundle;
+pub use bundle::*;
+mod source_retirement;
+pub use source_retirement::*;
 mod model_budget;
 pub use model_budget::*;
 mod task;

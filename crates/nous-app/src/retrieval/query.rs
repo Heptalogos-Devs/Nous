@@ -3,17 +3,29 @@ use super::*;
 use nous_retrieval::IndexDocument;
 
 impl App {
-    pub async fn query(&self, ctx: &CallContext, request: QueryRequest) -> Result<QueryResult> {
+    pub(super) async fn execute_query_atom(
+        &self,
+        ctx: &CallContext,
+        leaf: &nous_domain::nousql::PlannedQuery,
+        policy: &super::config::RetrievalPolicy,
+        root_sort: Option<&QuerySort>,
+    ) -> Result<(QueryResult, usize)> {
+        let mut request = leaf.request.clone();
+        request.limit = leaf.candidate_budget.max(1);
         request.validate()?;
-        let context = if let Some(scope) = &request.source_read { ctx.with_source_read(scope.clone())? } else { ctx.clone() };
+        let context = if let Some(scope) = &request.source_read {
+            ctx.with_source_read(scope.clone())?
+        } else {
+            ctx.clone()
+        };
         let ctx = &context;
         let namespace = self.database.subject_namespace(&request.subject_id).await?;
         ctx.require_subject(&namespace, &request.subject_id)?;
-        let policy = self
-            .retrieval_policy(&namespace, &request.subject_id)
-            .await?;
-        policy.admit(&request)?;
-        let model = if request.mode == QueryMode::Lexical || request.reference.is_some() {
+        let model = if request.mode == QueryMode::Lexical
+            || request.reference.is_some()
+            || leaf.candidate_budget == 0
+            || (leaf.direct_only && !leaf.explore)
+        {
             None
         } else {
             Some(
@@ -26,8 +38,12 @@ impl App {
             .map(|model| model.space().map(|space| space.id))
             .transpose()?
             .unwrap_or_default();
+        let mut view_request = request.clone();
+        if leaf.direct_only && !leaf.explore {
+            view_request.input.text.clear();
+        }
         let mut view = self
-            .query_view(ctx, &namespace, &request, &space, &policy)
+            .query_view(ctx, &namespace, &view_request, &space, policy)
             .await?;
         if let Some(model) = &model {
             view.admit_routes(model)?;
@@ -40,13 +56,37 @@ impl App {
                 "query minimum commit is outside its committed authority view",
             ));
         }
+        let eligible_count = view.selected(&request).count();
         let mut semantic = None;
-        let (ranks, generation, mut complete) = if request.reference.is_some() {
+        let (mut ranks, generation, mut complete) = if leaf.candidate_budget == 0 {
+            (
+                Vec::new(),
+                format!("authority:{}", view.watermark),
+                eligible_count == 0,
+            )
+        } else if request.reference.is_some() {
             let ranks = view
                 .selected(&request)
                 .map(|entry| (entry.reference().to_string(), 1.0))
                 .collect();
             (ranks, format!("authority:{}", view.watermark), true)
+        } else if leaf.direct_only && !leaf.explore {
+            (
+                super::nousql::ranking::direct(&view, &request, leaf),
+                format!("authority:{}", view.watermark),
+                true,
+            )
+        } else if request.sort.is_some()
+            && request.input.text.is_empty()
+            && request.mode == QueryMode::Lexical
+        {
+            (
+                view.selected(&request)
+                    .map(|entry| (entry.reference().to_string(), 1.0))
+                    .collect(),
+                format!("authority:{}", view.watermark),
+                true,
+            )
         } else if request.mode == QueryMode::Lexical || view.selected(&request).next().is_none() {
             let (ranks, generation) = self
                 .lexical_ranks(&namespace, &request, &view, request.limit)
@@ -54,10 +94,10 @@ impl App {
             (ranks, generation, true)
         } else {
             let model = model.as_ref().expect("semantic query resolved its model");
-            self.ensure_query_vectors(ctx, &namespace, &request, &mut view, model)
+            self.ensure_query_vectors(ctx, &namespace, leaf, &mut view, model)
                 .await?;
             let (mut ranks, info, is_complete) = self
-                .semantic_ranks(ctx, &namespace, &request, &view, model, &policy)
+                .semantic_ranks(ctx, &namespace, leaf, &view, model, policy)
                 .await?;
             if request.mode == QueryMode::Hybrid {
                 let (lexical, _) = self
@@ -74,10 +114,29 @@ impl App {
             semantic = Some(info);
             (ranks, generation, is_complete)
         };
+        if !leaf.direct_only && !leaf.selectors.is_empty() && request.reference.is_none() {
+            let direct = super::nousql::ranking::direct(&view, &request, leaf);
+            if !direct.is_empty() {
+                ranks = rrf(
+                    [(ranks, 1.0), (direct, 1.0)],
+                    usize::MAX,
+                    policy.rrf_constant,
+                );
+            }
+        }
+        ranks = super::nousql::ranking::order(&view, &request, leaf, ranks, policy.rrf_constant);
+        ranks.truncate(leaf.candidate_budget);
+        let mut final_request = request.clone();
+        if leaf.direct_only && !leaf.explore {
+            final_request.input.text.clear();
+        }
+        if leaf.current_view {
+            final_request.as_of_commit = None;
+        }
         // Recreate the same authority view immediately before returning bodies.
         // Current queries require current exact heads; historical/exact reads retain their selected revisions.
         let current = self
-            .query_view(ctx, &namespace, &request, "", &policy)
+            .query_view(ctx, &namespace, &final_request, "", policy)
             .await?;
         let available = current
             .selected(&request)
@@ -104,10 +163,22 @@ impl App {
                 complete = false;
             }
             hits.push(QueryHit {
+                order: root_sort.or(request.sort.as_ref()).and_then(|sort| {
+                    let mut ordering = request.clone();
+                    ordering.sort = Some(sort.clone());
+                    frozen
+                        .get(&key)
+                        .and_then(|entry| entry.sort_time(&sort.axis, &ordering))
+                        .map(|point| QueryHitOrder {
+                            axis: sort.axis.clone(),
+                            point,
+                        })
+                }),
                 reference: entry.reference(),
                 object: entry.object.clone(),
                 score,
                 source_roots: entry.roots.clone(),
+                materialized: None,
             });
             if hits.len() == request.limit {
                 break;
@@ -122,17 +193,21 @@ impl App {
             .collect::<BTreeSet<_>>();
         view.issues.retain(|issue| selected.contains(&issue.target));
         complete &= view.issues.is_empty();
-        Ok(QueryResult {
-            hits,
-            semantic,
-            coverage: QueryCoverage {
-                indexed_through: view.watermark,
-                authority_commit_seq: current.watermark,
-                complete,
-                generation,
-                projection_issues: view.issues,
+        Ok((
+            QueryResult {
+                plan: None,
+                hits,
+                semantic,
+                coverage: QueryCoverage {
+                    indexed_through: view.watermark,
+                    authority_commit_seq: current.watermark,
+                    complete,
+                    generation,
+                    projection_issues: view.issues,
+                },
             },
-        })
+            eligible_count,
+        ))
     }
 
     async fn lexical_ranks(
@@ -210,10 +285,17 @@ fn fuse(
     limit: usize,
     constant: f32,
 ) -> Vec<(String, f32)> {
+    rrf([(semantic, 1.0), (lexical, 1.0)], limit, constant)
+}
+pub(super) fn rrf(
+    lanes: impl IntoIterator<Item = (Vec<(String, f32)>, f32)>,
+    limit: usize,
+    constant: f32,
+) -> Vec<(String, f32)> {
     let mut scores = BTreeMap::<String, f32>::new();
-    for lane in [semantic, lexical] {
+    for (lane, weight) in lanes {
         for (rank, (id, _)) in lane.into_iter().enumerate() {
-            *scores.entry(id).or_default() += 1.0 / (constant + rank as f32 + 1.0);
+            *scores.entry(id).or_default() += weight / (constant + rank as f32 + 1.0);
         }
     }
     let mut ranks = scores.into_iter().collect::<Vec<_>>();

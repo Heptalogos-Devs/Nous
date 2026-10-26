@@ -85,10 +85,12 @@ pub(super) async fn execute(
             limit,
         },
         ConfigCommand::Set { file, offline } => {
-            let request=read_change(file)?;
-            if offline { return apply_offline(paths,url,request).await; }
+            let request = read_change(file)?;
+            if offline {
+                return apply_offline(paths, url, request).await;
+            }
             ConfigRequest::Change(request)
-        },
+        }
         ConfigCommand::Clear { file, offline } => {
             let input = read_change(file)?;
             ensure!(
@@ -98,7 +100,9 @@ pub(super) async fn execute(
                     .all(|edit| matches!(edit, ConfigEdit::Clear { .. })),
                 "config clear accepts only clear edits"
             );
-            if offline { return apply_offline(paths,url,input).await; }
+            if offline {
+                return apply_offline(paths, url, input).await;
+            }
             ConfigRequest::Change(input)
         }
     };
@@ -109,9 +113,15 @@ pub(super) async fn execute(
             .await?,
     )
 }
-async fn apply_offline(paths:&InstancePaths,url:Option<String>,request:ConfigChangeRequest)->Result<()> {
-    ensure!(url.is_none(),"offline configuration uses --instance");
-    print_result(serde_json::to_value(nous_app::App::change_offline_configuration(paths,request).await?)?)
+async fn apply_offline(
+    paths: &InstancePaths,
+    url: Option<String>,
+    request: ConfigChangeRequest,
+) -> Result<()> {
+    ensure!(url.is_none(), "offline configuration uses --instance");
+    print_result(serde_json::to_value(
+        nous_app::App::change_offline_configuration(paths, request).await?,
+    )?)
 }
 fn read_change(file: PathBuf) -> Result<ConfigChangeRequest> {
     ensure!(

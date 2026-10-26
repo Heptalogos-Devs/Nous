@@ -24,6 +24,18 @@ pub enum EvidenceSource {
     },
 }
 impl EvidenceSource {
+    pub fn retrieval_target(&self) -> Option<RetrievalTarget> {
+        match self {
+            Self::Material { material_id } => Some(RetrievalTarget::Media(
+                crate::media::MediaReference::Original {
+                    material_id: material_id.clone(),
+                },
+            )),
+            Self::Media { reference } => Some(RetrievalTarget::Media(reference.clone())),
+            Self::Observation { .. } => None,
+            _ => self.cognitive_ref().map(RetrievalTarget::Cognition),
+        }
+    }
     pub fn cognitive_ref(&self) -> Option<CognitiveRef> {
         match self {
             Self::MemoryRevision {
@@ -183,11 +195,13 @@ impl CognitiveContent {
                     );
                 }
                 for reference in &value.members {
-                    add(
-                        source_ref(reference),
-                        EvidencePolarity::Context,
-                        "concept member".into(),
-                    );
+                    if let Some(source) = reference.evidence_source() {
+                        add(
+                            source,
+                            EvidencePolarity::Context,
+                            "exact concept member".into(),
+                        );
+                    }
                 }
                 for lineage in &value.lineage {
                     add(
@@ -195,6 +209,16 @@ impl CognitiveContent {
                         EvidencePolarity::Context,
                         lineage.reason.clone(),
                     );
+                }
+            }
+            Self::Entity(value) => {
+                for mention in &value.mentions {
+                    if let Some(source) = mention.target.evidence_source() {
+                        add(source, EvidencePolarity::Context, mention.role.clone());
+                    }
+                }
+                for attribute in &value.attributes {
+                    links.extend(attribute.evidence.iter().cloned());
                 }
             }
             Self::Episode(value) => {

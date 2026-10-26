@@ -61,8 +61,36 @@ pub(crate) async fn reject_cycle(
 pub(crate) async fn validate_content_in(
     conn: &mut SqliteConnection,
     value: &StructuredObject,
-    _previous: Option<&StructuredObject>,
+    previous: Option<&StructuredObject>,
 ) -> Result<()> {
+    for target in value.body.semantic_targets() {
+        let SemanticTarget::Object { identity } = target else {
+            continue;
+        };
+        let known: bool = if identity.kind == CognitiveKind::Memory {
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM memories WHERE namespace_id=? AND subject_id=? AND id=?)")
+                .bind(value.namespace_id.as_str()).bind(value.subject_id.as_str()).bind(&identity.id)
+                .fetch_one(&mut *conn).await.map_err(storage_error)?
+        } else {
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM structured_objects WHERE namespace_id=? AND subject_id=? AND kind=? AND id=?)")
+                .bind(value.namespace_id.as_str()).bind(value.subject_id.as_str()).bind(crate::codec::enum_name(&identity.kind)?).bind(&identity.id)
+                .fetch_one(&mut *conn).await.map_err(storage_error)?
+        };
+        let retained =
+            previous.is_some_and(|previous| previous.body.semantic_targets().contains(&target));
+        if !known
+            && !retained
+            && !crate::source::tombstone::known_identity(
+                conn,
+                &value.namespace_id,
+                &value.subject_id,
+                identity,
+            )
+            .await?
+        {
+            return Err(crate::not_found());
+        }
+    }
     match &value.body {
         CognitiveContent::MemorySemantics(content) => {
             let memory=sqlx::query("SELECT material_id FROM memory_revisions WHERE namespace_id=? AND subject_id=? AND memory_id=? AND revision=?")

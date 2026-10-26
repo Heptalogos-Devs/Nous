@@ -42,20 +42,19 @@ impl WriteTransaction {
                 "context Session revision changed",
             ));
         }
-        if let Some(head) = head {
-            if head.namespace_id != value.namespace_id
+        if let Some(head) = head
+            && (head.namespace_id != value.namespace_id
                 || head.subject_id != value.subject_id
                 || head.closed_at.is_some()
                 || head.history_generation != value.history_generation
                 || head.parent_session != value.parent_session
-                || head.native_session != value.native_session
+                || head.native_session != value.native_session)
             {
                 return Err(Error::new(
                     ErrorCode::Conflict,
                     "context Session binding changed or is closed",
                 ));
             }
-        }
         if let Some(parent) = &value.parent_session {
             let parent = session(&mut self.tx, parent).await?;
             if parent.namespace_id != value.namespace_id || parent.subject_id != value.subject_id {

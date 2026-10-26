@@ -1,6 +1,6 @@
 //! Memory lifecycle commits and content-free purge markers.
 use nous_domain::{
-    Error, ErrorCode, Memory, MemoryAudit, MemoryId, NamespaceId, Result, SubjectId,
+    Error, ErrorCode, Memory, MemoryAudit, MemoryId, NamespaceId, PurgedMemory, Result, SubjectId,
 };
 use serde::{Deserialize, Serialize};
 use sqlx::{Row, sqlite::SqliteRow};
@@ -9,15 +9,6 @@ use crate::{
     Database, WriteTransaction, cognition::memory::memory_row, not_found, storage_error,
     write_error,
 };
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PurgedMemory {
-    pub id: MemoryId,
-    pub namespace_id: NamespaceId,
-    pub subject_id: SubjectId,
-    pub revision: i64,
-    pub commit_seq: i64,
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MaintenancePage {
@@ -166,6 +157,8 @@ impl WriteTransaction {
             revision,
             commit_seq: self.commit_seq(),
         };
+        self.retain_memory_source_tombstones(namespace, &marker.subject_id, id)
+            .await?;
         self.purge_memory_embeddings(id).await?;
         self.purge_memory_structured_formations(namespace, &marker.subject_id, id)
             .await?;

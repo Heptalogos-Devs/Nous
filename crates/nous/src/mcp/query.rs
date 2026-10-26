@@ -21,8 +21,32 @@ pub struct QueryInput {
 #[tool_router(router=query_tool_router,vis="pub(super)")]
 impl McpService {
     #[tool(
+        description = "Read the NousQL manual, including actual selectors, directives, time domains, history, expression composition and source scope. No model call is made."
+    )]
+    async fn query_manual(
+        &self,
+        ctx: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        self.execute(Operation::Cognition(CognitionOperation::Manual), ctx)
+            .await
+    }
+    #[tool(
+        description = "Compile and bind a QueryRequest into its actual QueryPlan, resolving names, source scope, time cutoff and branch budgets without invoking a provider or executing retrieval."
+    )]
+    async fn query_plan(
+        &self,
+        Parameters(input): Parameters<nous_domain::QueryRequest>,
+        ctx: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        self.execute(
+            Operation::Cognition(CognitionOperation::Plan(Box::new(input))),
+            ctx,
+        )
+        .await
+    }
+    #[tool(
         input_schema = schema::object_input::<QueryInput>(),
-        description = "Search cognition and media using text, exact references or joint text/media input. Read results by their stable references; format=json returns complete records and diagnostics."
+        description = "Search cognition and media using natural language, NousQL selectors/directives, exact references or joint text/media input. query_manual explains the language; query_plan inspects binding without model calls. Read results by their returned references; format=json returns complete records and diagnostics."
     )]
     async fn query(
         &self,
@@ -45,7 +69,7 @@ impl McpService {
         ctx.extensions.insert(presentation.clone());
         let mut result = self
             .execute(
-                Operation::Cognition(CognitionOperation::Query(input.query)),
+                Operation::Cognition(CognitionOperation::Query(Box::new(input.query))),
                 ctx,
             )
             .await?;

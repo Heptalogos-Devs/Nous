@@ -38,7 +38,13 @@ impl Tasks {
                 changed.as_mut().enable();
                 let jobs = self.wait_snapshot(ctx, ids).await?;
                 if jobs.iter().all(|job| terminal(job.state))
-                    || jobs.iter().any(|job| job.state == JobState::Waiting)
+                    || jobs.iter().any(|job| {
+                        job.state == JobState::Waiting
+                            && job
+                                .wait
+                                .as_ref()
+                                .is_some_and(|wait| wait.requires_attention)
+                    })
                 {
                     return Ok(jobs);
                 }

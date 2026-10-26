@@ -1,8 +1,13 @@
 use crate::codec::*;
-use crate::{Database, WriteTransaction, not_found, storage_error, write_error};
+use crate::{Database, ReadView, WriteTransaction, not_found, storage_error, write_error};
 use nous_domain::*;
 use serde_json::Value;
 use sqlx::{Row, SqliteConnection, sqlite::SqliteRow};
+impl ReadView {
+    pub async fn model_call(&mut self, id: &ModelCallId) -> Result<ModelCall> {
+        model_call(&mut self.tx, id).await
+    }
+}
 
 impl Database {
     pub async fn model_call(&self, id: &ModelCallId) -> Result<ModelCall> {
@@ -10,7 +15,7 @@ impl Database {
     }
 
     pub async fn model_calls(&self, job_id: &str) -> Result<Vec<ModelCall>> {
-        sqlx::query("SELECT * FROM model_calls WHERE job_id=? ORDER BY attempt,id")
+        sqlx::query("SELECT * FROM model_calls WHERE job_id=? AND local_job_id IS NOT NULL ORDER BY attempt,id")
             .bind(job_id)
             .fetch_all(&self.pool)
             .await
@@ -56,7 +61,7 @@ impl Database {
             "host stopped before the remote response was saved",
         );
         let processed_at = tx.time().recorded();
-        let count=sqlx::query("UPDATE model_calls SET state='uncertain',error=json_set(?,'$.trace_id',trace_id),completed_at=? WHERE state='started'").bind(serde_json::to_string(&error)?).bind(processed_at).execute(&mut *tx.tx).await.map_err(write_error)?.rows_affected();
+        let count=sqlx::query("UPDATE model_calls SET state='uncertain',error=json_set(?,'$.trace_id',trace_id),completed_at=? WHERE state='started' AND local_job_id IS NOT NULL").bind(serde_json::to_string(&error)?).bind(processed_at).execute(&mut *tx.tx).await.map_err(write_error)?.rows_affected();
         if count == 0 {
             tx.rollback().await?;
         } else {
@@ -108,6 +113,11 @@ impl WriteTransaction {
     }
 
     pub(crate) async fn insert_model_call(&mut self, call: &ModelCall) -> Result<()> {
+        if call.origin != ModelCallOrigin::Local {
+            return Err(Error::invalid(
+                "reservation requires a locally executed call",
+            ));
+        }
         call.trace_id.validate()?;
         let job = self.job_record(&call.job_id).await?;
         if call.trace_id != job.trace_id {
@@ -116,17 +126,26 @@ impl WriteTransaction {
                     .with_trace(self.context().trace_id.clone()),
             );
         }
-        sqlx::query("INSERT INTO model_calls(id,job_id,namespace_id,subject_id,step_key,attempt,resource_id,request,response,state,error,usage,cost,created_at,completed_at,trace_id,reservation_commit_seq) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+        self.insert_call_record(call, Some(&call.job_id)).await
+    }
+
+    pub(crate) async fn insert_call_record(
+        &mut self,
+        call: &ModelCall,
+        local_job: Option<&str>,
+    ) -> Result<()> {
+        sqlx::query("INSERT INTO model_calls(id,job_id,namespace_id,subject_id,step_key,attempt,resource_id,request,response,state,error,usage,cost,created_at,completed_at,trace_id,reservation_commit_seq,origin,local_job_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
             .bind(call.id.as_str()).bind(&call.job_id).bind(call.namespace_id.as_str()).bind(call.subject_id.as_str()).bind(&call.step_key).bind(call.attempt).bind(&call.resource_id)
             .bind(serde_json::to_string(&call.request).map_err(storage_error)?).bind(json_option(&call.response)?).bind(enum_name(&call.state)?).bind(json_option(&call.error)?)
-            .bind(json_option(&call.usage)?).bind(json_option(&call.cost)?).bind(&call.created_at).bind(&call.completed_at).bind(call.trace_id.as_str()).bind(self.commit_seq())
+            .bind(json_option(&call.usage)?).bind(json_option(&call.cost)?).bind(&call.created_at).bind(&call.completed_at).bind(call.trace_id.as_str()).bind(self.commit_seq()).bind(serde_json::to_string(&call.origin)?).bind(local_job)
             .execute(&mut *self.tx).await.map_err(write_error)?;
         Ok(())
     }
 
     pub async fn update_model_call(&mut self, call: &ModelCall) -> Result<()> {
         let previous = self.model_call(&call.id).await?;
-        if previous.request != call.request
+        if previous.origin != call.origin
+            || previous.request != call.request
             || previous.resource_id != call.resource_id
             || previous.attempt != call.attempt
             || previous.job_id != call.job_id
@@ -148,7 +167,10 @@ impl WriteTransaction {
     }
 }
 
-async fn model_call(connection: &mut SqliteConnection, id: &ModelCallId) -> Result<ModelCall> {
+pub(crate) async fn model_call(
+    connection: &mut SqliteConnection,
+    id: &ModelCallId,
+) -> Result<ModelCall> {
     model_call_row(
         sqlx::query("SELECT * FROM model_calls WHERE id=?")
             .bind(id.as_str())
@@ -161,6 +183,7 @@ async fn model_call(connection: &mut SqliteConnection, id: &ModelCallId) -> Resu
 fn model_call_row(row: SqliteRow) -> Result<ModelCall> {
     Ok(ModelCall {
         id: ModelCallId(row.get("id")),
+        origin: serde_json::from_str(row.get("origin"))?,
         trace_id: TraceId(row.get("trace_id")),
         job_id: row.get("job_id"),
         step_key: row.get("step_key"),
@@ -180,7 +203,7 @@ fn model_call_row(row: SqliteRow) -> Result<ModelCall> {
 }
 
 async fn steps(conn: &mut SqliteConnection, job: &str, step: &str) -> Result<Vec<ModelCall>> {
-    sqlx::query("SELECT * FROM model_calls WHERE job_id=? AND step_key=? ORDER BY attempt,id")
+    sqlx::query("SELECT * FROM model_calls WHERE job_id=? AND step_key=? AND local_job_id IS NOT NULL ORDER BY attempt,id")
         .bind(job)
         .bind(step)
         .fetch_all(conn)
@@ -191,5 +214,5 @@ async fn steps(conn: &mut SqliteConnection, job: &str, step: &str) -> Result<Vec
         .collect()
 }
 async fn latest(conn: &mut SqliteConnection, job: &str, step: &str) -> Result<Option<ModelCall>> {
-    sqlx::query("SELECT * FROM model_calls WHERE job_id=? AND step_key=? ORDER BY attempt DESC,id DESC LIMIT 1").bind(job).bind(step).fetch_optional(conn).await.map_err(storage_error)?.map(model_call_row).transpose()
+    sqlx::query("SELECT * FROM model_calls WHERE job_id=? AND step_key=? AND local_job_id IS NOT NULL ORDER BY attempt DESC,id DESC LIMIT 1").bind(job).bind(step).fetch_optional(conn).await.map_err(storage_error)?.map(model_call_row).transpose()
 }

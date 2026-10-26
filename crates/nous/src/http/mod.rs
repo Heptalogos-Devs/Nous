@@ -1,9 +1,11 @@
 //! Authenticated HTTP transport and stable error mapping.
+pub mod bundles;
 mod client;
 pub mod cognition;
 pub mod configuration;
 pub mod contexts;
 pub mod identity;
+pub mod integrations;
 mod locale;
 pub mod maintenance;
 pub mod materials;
@@ -12,6 +14,7 @@ pub mod models;
 mod operation;
 pub mod prompts;
 pub(crate) mod source_read;
+pub mod sources;
 pub mod structured;
 pub mod tasks;
 mod trace;
@@ -120,7 +123,10 @@ pub fn router(state: ApiState, config: &InstanceConfig, cancellation: Cancellati
         .merge(crate::http::cognition::router())
         .merge(crate::http::configuration::router())
         .merge(crate::http::contexts::router())
+        .merge(crate::http::sources::router())
+        .merge(crate::http::bundles::router())
         .merge(crate::http::identity::router())
+        .merge(crate::http::integrations::router())
         .merge(crate::http::models::router())
         .merge(crate::http::prompts::router())
         .merge(crate::http::structured::router())

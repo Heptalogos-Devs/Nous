@@ -17,6 +17,14 @@ pub(crate) async fn roots_in(
 ) -> Result<BTreeSet<MaterialId>> {
     graph::roots(connection, namespace, subject, reference).await
 }
+pub(crate) async fn head_in(
+    connection: &mut sqlx::SqliteConnection,
+    namespace: &NamespaceId,
+    subject: &SubjectId,
+    id: &DerivedRepresentationId,
+) -> Result<Option<DerivedRepresentation>> {
+    read::head(connection, namespace, subject, id).await
+}
 
 pub(crate) async fn lineage_in(
     connection: &mut sqlx::SqliteConnection,

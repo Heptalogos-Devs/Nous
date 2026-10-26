@@ -1,6 +1,7 @@
-use crate::cognition::management::{PurgedMemory, purge_row};
+use crate::cognition::management::purge_row;
 use crate::cognition::memory::memory_row;
 use crate::{Database, storage_error};
+use nous_domain::PurgedMemory;
 use nous_domain::*;
 use serde::{Deserialize, Serialize};
 

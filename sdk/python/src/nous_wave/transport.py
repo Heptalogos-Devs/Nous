@@ -104,8 +104,8 @@ class Transport:
         except httpx.HTTPError as error:
             failure = NousError(
                 {
-                    "code": "dependency_unavailable",
-                    "message": str(error),
+                    "code": "DependencyUnavailable",
+                    "message": str(error) or type(error).__name__,
                     "trace_id": headers["x-nous-trace-id"],
                 }
             )
@@ -120,7 +120,7 @@ class Transport:
             if len(data) + len(chunk) > self.options.max_response_bytes:
                 raise NousError(
                     {
-                        "code": "resource_exhausted",
+                        "code": "ResourceExhausted",
                         "message": "response exceeds configured byte limit",
                         "trace_id": trace_id,
                     }
@@ -131,7 +131,7 @@ class Transport:
         except (ValueError, UnicodeDecodeError) as error:
             raise NousError(
                 {
-                    "code": "dependency_unavailable",
+                    "code": "DependencyUnavailable",
                     "message": "service returned invalid JSON",
                     "trace_id": trace_id,
                 },
@@ -171,8 +171,8 @@ class Transport:
         except httpx.HTTPError as error:
             raise NousError(
                 {
-                    "code": "dependency_unavailable",
-                    "message": str(error),
+                    "code": "DependencyUnavailable",
+                    "message": str(error) or type(error).__name__,
                     "trace_id": headers["x-nous-trace-id"],
                 }
             ) from error

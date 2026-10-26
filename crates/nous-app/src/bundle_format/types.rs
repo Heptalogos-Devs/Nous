@@ -23,7 +23,7 @@ pub const STATE_TABLES: &[(&str, &[&str])] = &[
     ("person_profile_alias_overrides", &["person_id"]),
 ];
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Limits {
     pub archive_bytes: u64,
     pub members: usize,

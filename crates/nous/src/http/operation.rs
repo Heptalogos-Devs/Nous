@@ -61,6 +61,9 @@ pub struct CancelJob {
 
 #[derive(Clone)]
 pub enum Operation {
+    Amemorix(Box<super::integrations::AmemorixRequest>),
+    ReadSource(super::sources::RetrievalSourceRequest),
+    Bundle(Box<super::bundles::BundleOperation>),
     WaitJobs(super::tasks::WaitJobs),
     Context(Box<super::contexts::ContextOperation>),
     Media(Box<super::media::MediaOperation>),
@@ -103,7 +106,18 @@ impl Operation {
 
     async fn dispatch(&self, app: &App, ctx: &CallContext) -> Result<Value, Error> {
         match self {
-            Self::WaitJobs(request)=>Ok(json!(app.wait_jobs(ctx,&request.ids,request.timeout_ms,&tokio_util::sync::CancellationToken::new()).await?)),
+            Self::Amemorix(request) => app.amemorix(ctx, *request.clone()).await,
+            Self::ReadSource(request) => app.read_retrieval_source(ctx, request.clone()).await,
+            Self::Bundle(operation) => operation.execute(app, ctx).await,
+            Self::WaitJobs(request) => Ok(json!(
+                app.wait_jobs(
+                    ctx,
+                    &request.ids,
+                    request.timeout_ms,
+                    &tokio_util::sync::CancellationToken::new()
+                )
+                .await?
+            )),
             Self::Context(operation) => operation.execute(app, ctx).await,
             Self::Media(operation) => operation.execute(app, ctx).await,
             Self::Identity(request) => app.identity_request(ctx, request.clone()).await,
@@ -190,7 +204,14 @@ impl Operation {
 
     pub fn request(&self) -> (&'static str, String, Option<Value>) {
         match self {
-            Self::WaitJobs(request)=>("POST","/api/jobs/wait".into(),Some(json!(request))),
+            Self::Amemorix(request) => (
+                "POST",
+                "/api/integrations/amemorix".into(),
+                Some(json!(request)),
+            ),
+            Self::ReadSource(request) => ("POST", "/api/sources/read".into(), Some(json!(request))),
+            Self::Bundle(operation) => ("POST", "/api/bundles".into(), Some(json!(operation))),
+            Self::WaitJobs(request) => ("POST", "/api/jobs/wait".into(), Some(json!(request))),
             Self::Context(operation) => ("POST", "/api/contexts".into(), Some(json!(operation))),
             Self::Media(operation) => ("POST", "/api/media".into(), Some(json!(operation))),
             Self::Identity(request) => ("POST", "/api/identity".into(), Some(json!(request))),

@@ -1,6 +1,7 @@
 import json
 from collections.abc import Mapping, Sequence
 from copy import copy, deepcopy
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Self
 from uuid import uuid4
@@ -198,11 +199,12 @@ class NousClient:
         media: Sequence[Mapping] = (),
         mode: str | None = None,
         domains: Sequence[str] = (),
+        plan_only: bool = False,
         **selection: Any,
     ) -> dict:
         return await self.request(
             "POST",
-            "/api/query",
+            "/api/query/plan" if plan_only else "/api/query",
             body={
                 "subject_id": subject_id,
                 "mode": mode or ("dense" if media else "lexical"),
@@ -215,8 +217,29 @@ class NousClient:
     async def memory(self, memory_id: str) -> dict:
         return await self.request("GET", f"/api/memories/{memory_id}")
 
-    async def memory_source(self, memory_id: str) -> dict:
-        return await self.request("GET", f"/api/memories/{memory_id}/source")
+    async def query_manual(self) -> dict:
+        return await self.request("GET", "/api/query/manual")
+
+    async def memory_source(
+        self, memory_id: str, *, revision: int | None = None
+    ) -> dict:
+        params = {"revision": revision} if revision is not None else None
+        return await self.request(
+            "GET", f"/api/memories/{memory_id}/source", params=params
+        )
+
+    async def source(
+        self, subject_id: str, reference: Mapping, *, observation_id: str | None = None
+    ) -> dict:
+        return await self.request(
+            "POST",
+            "/api/sources/read",
+            body={
+                "subject_id": subject_id,
+                "reference": dict(reference),
+                "observation_id": observation_id,
+            },
+        )
 
     async def form_memory(
         self,
@@ -281,7 +304,7 @@ class NousClient:
                 raise NousError(
                     job.get("error")
                     or {
-                        "code": "dependency_unavailable",
+                        "code": "DependencyUnavailable",
                         "message": f"job {job['id']} is {job['state']}",
                         "context": {"job": job},
                     }
@@ -290,6 +313,42 @@ class NousClient:
 
     async def contexts(self, request: Mapping[str, Any]) -> dict:
         return await self.request("POST", "/api/contexts", body=dict(request))
+
+    async def report_context(
+        self,
+        admission_id: str,
+        *,
+        invocation_id: str,
+        outcome: str,
+        occurred_at: datetime,
+        uses: Sequence[Mapping] = (),
+    ) -> dict:
+        from .managed import event_id
+
+        if not admission_id.strip() or not invocation_id.strip():
+            raise ValueError(
+                "the accepted admission and actual invocation IDs are required"
+            )
+        if outcome not in ("completed", "failed", "cancelled"):
+            raise ValueError("outcome must describe the actual host invocation")
+        if occurred_at.tzinfo is None:
+            raise ValueError("outcome time requires an explicit timezone")
+        return await self.contexts(
+            {
+                "action": "report",
+                "operation_id": event_id("report", invocation_id, admission_id),
+                "request": {
+                    "admission_id": admission_id,
+                    "invocation_id": invocation_id,
+                    "outcome": outcome,
+                    "occurred_at": occurred_at.isoformat(),
+                    "uses": deepcopy(list(uses)),
+                },
+            }
+        )
+
+    async def bundles(self, request: Mapping[str, Any]) -> dict:
+        return await self.request("POST", "/api/bundles", body=dict(request))
 
     async def media(self, request: Mapping[str, Any]) -> dict:
         return await self.request("POST", "/api/media", body=dict(request))

@@ -31,6 +31,7 @@ impl App {
                             JobState::Waiting,
                             Some(WaitCondition {
                                 kind: "configuration".into(),
+                                requires_attention: true,
                                 resume: ResumeCondition::Ready,
                                 details: json!({"phase":"media_preparation"}),
                             }),

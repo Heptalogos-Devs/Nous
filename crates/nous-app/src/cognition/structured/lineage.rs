@@ -79,8 +79,16 @@ impl App {
         // their survivor. Referenced Memory revisions and other members stay exact.
         merged.members = members
             .into_iter()
-            .filter(|reference| {
-                reference.kind != CognitiveKind::Concept || !merged_ids.contains(&reference.id)
+            .filter(|target| match target {
+                SemanticTarget::Object { identity } => {
+                    identity.kind != CognitiveKind::Concept || !merged_ids.contains(&identity.id)
+                }
+                SemanticTarget::Exact {
+                    reference: RetrievalTarget::Cognition(reference),
+                } => {
+                    reference.kind != CognitiveKind::Concept || !merged_ids.contains(&reference.id)
+                }
+                _ => true,
             })
             .collect();
         evidence.extend(input.evidence.iter().cloned());

@@ -18,14 +18,13 @@ impl App {
         let input = model::input(&preparation);
         let mut proposal = None;
         let mut call_id = None;
-        if policy.steward != ContextStewardMode::Off {
-            if let Some((previous, id)) =
+        if policy.steward != ContextStewardMode::Off
+            && let Some((previous, id)) =
                 self.reusable_context_steward(&preparation, &input).await?
             {
                 proposal = Some(previous);
                 call_id = Some(id);
             }
-        }
         if proposal.is_none()
             && policy.steward != ContextStewardMode::Off
             && !input.sources.is_empty()
@@ -112,6 +111,7 @@ impl App {
                         JobState::Waiting,
                         Some(WaitCondition {
                             kind: "context_steward".into(),
+                            requires_attention: false,
                             resume: ResumeCondition::Ready,
                             details: json!({"job_id":child.id}),
                         }),
@@ -140,6 +140,7 @@ impl App {
                     JobState::Waiting,
                     Some(WaitCondition {
                         kind: "context_steward".into(),
+                        requires_attention: false,
                         resume: ResumeCondition::Ready,
                         details: json!({"job_id":child}),
                     }),
@@ -180,12 +181,10 @@ impl App {
                 .policy
                 .as_ref()
                 .is_some_and(|policy| policy.steward == ContextStewardMode::Optional)
-        {
-            if let Some(child) = &preparation.steward_job_id {
+            && let Some(child) = &preparation.steward_job_id {
                 let mut child = tx.job_record(child).await?;
                 self.tasks.cancel_in(&mut tx, &mut child, None).await?;
             }
-        }
         for segment in &segments {
             tx.validate_context_targets(ns, subject, &segment.sources)
                 .await?;

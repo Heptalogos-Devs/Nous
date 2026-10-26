@@ -4,6 +4,7 @@ mod embedding;
 pub mod embedding_model;
 mod embedding_selection;
 mod embedding_worker;
+pub mod nousql;
 mod query;
 mod semantic;
 mod view;

@@ -98,7 +98,7 @@ impl App {
                 .commit(json!({"id":id,"purged":true,"revision":marker.revision}))
                 .await;
         }
-        let previous_activation = memory.lifecycle.activation.clone();
+        let previous_activation = memory.lifecycle.activation;
         let previously_deleted = memory.deleted;
         apply_to_memory(&mut memory, &change, now)?;
         if (memory.deleted && !previously_deleted)

@@ -41,9 +41,10 @@ impl ModelCalls {
         Ok(())
     }
     pub async fn read(&self, ctx: &CallContext, id: &ModelCallId) -> Result<ModelCall> {
-        let call = self.database.model_call(id).await?;
+        let mut view = self.database.read_view().await?;
+        let call = view.model_call(id).await?;
         ctx.require_subject(&call.namespace_id, &call.subject_id)?;
-        if !ctx.source_read.is_empty() {
+        if !ctx.source_read.is_empty() || matches!(&call.origin, ModelCallOrigin::Imported { .. }) {
             let metadata: super::models::InvocationMetadata<Value> =
                 serde_json::from_value(call.request.clone()).map_err(|_| {
                     Error::new(
@@ -57,11 +58,11 @@ impl ModelCalls {
                     "model call contains input without an attributable source catalog",
                 )
             })?;
-            let mut view = self.database.read_view().await?;
-            view.require_source_requirements(ctx, &call.namespace_id, &call.subject_id, sources)
+            let mapped = view.imported_model_sources(&call, sources).await?;
+            view.require_source_requirements(ctx, &call.namespace_id, &call.subject_id, &mapped)
                 .await?;
-            view.finish().await?;
         }
+        view.finish().await?;
         Ok(call)
     }
     pub async fn ready(
@@ -201,6 +202,7 @@ impl ModelCalls {
                     let wait = (failure.class() == RetryClass::WaitingConfiguration).then(|| {
                         WaitCondition {
                             kind: "configuration".into(),
+                            requires_attention: true,
                             resume: ResumeCondition::Ready,
                             details: json!({"task_kind":job.kind}),
                         }
@@ -298,6 +300,7 @@ impl ModelCalls {
                 Err(error) if error.code == ErrorCode::CapabilityUnavailable => {
                     let wait = WaitCondition {
                         kind: "configuration".into(),
+                        requires_attention: true,
                         resume: ResumeCondition::Ready,
                         details: json!({"role":reservation.role,"resource_id":reservation.resource.id}),
                     };
@@ -318,6 +321,7 @@ impl ModelCalls {
             let attempts = tx.model_step_calls(job_id, step).await?.len() as i64;
             let reserved_at = tx.time().utc();
             let mut call = ModelCall {
+                origin: nous_domain::ModelCallOrigin::Local,
                 id: reservation.call_id,
                 job_id: job_id.into(),
                 trace_id: job.trace_id.clone(),
@@ -360,6 +364,7 @@ impl ModelCalls {
                         .timestamp_millis();
                     let wait = WaitCondition {
                         kind: "budget".into(),
+                        requires_attention: true,
                         resume: ResumeCondition::ReadyOrNotBefore { unix_ms: tomorrow },
                         details: json!({"buckets":buckets,"resource":reservation.resource,"role":reservation.role}),
                     };

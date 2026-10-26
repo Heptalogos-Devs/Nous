@@ -1,5 +1,5 @@
 use crate::source::materials::material_details;
-use crate::{Database, ReadView, SourceClosure, SourceReadView, SourceStatus, storage_error};
+use crate::{ReadView, SourceClosure, SourceStatus, storage_error};
 use nous_domain::media::MediaOriginal;
 use nous_domain::*;
 use serde::{Deserialize, Serialize};
@@ -41,64 +41,21 @@ enum Selection<'a> {
 struct MemoryFilter<'a> {
     reference: Option<&'a CognitiveRef>,
     authorized: Option<&'a str>,
-}
-impl Database {
-    pub async fn cognitive_retrieval_snapshot(
-        &self,
-        namespace: &NamespaceId,
-        subject: &SubjectId,
-        space_id: &str,
-        as_of_commit: Option<i64>,
-        limit: usize,
-    ) -> Result<CognitiveRetrievalSnapshot> {
-        let mut view = self.read_view().await?;
-        let result = view
-            .cognitive_retrieval_snapshot(namespace, subject, space_id, as_of_commit, limit, None)
-            .await?;
-        view.finish().await?;
-        Ok(result)
-    }
-    pub async fn cognitive_reference_snapshot(
-        &self,
-        namespace: &NamespaceId,
-        subject: &SubjectId,
-        space_id: &str,
-        reference: &CognitiveRef,
-        as_of_commit: Option<i64>,
-    ) -> Result<CognitiveRetrievalSnapshot> {
-        let mut view = self.read_view().await?;
-        let result = view
-            .cognitive_reference_snapshot(
-                namespace,
-                subject,
-                space_id,
-                reference,
-                as_of_commit,
-                None,
-            )
-            .await?;
-        view.finish().await?;
-        Ok(result)
-    }
+    history: bool,
 }
 impl ReadView {
     pub async fn cognitive_retrieval_snapshot(
         &mut self,
         namespace: &NamespaceId,
         subject: &SubjectId,
-        space_id: &str,
-        as_of_commit: Option<i64>,
-        limit: usize,
-        source_read: Option<&SourceReadView>,
+        options: &super::QuerySnapshotOptions<'_>,
     ) -> Result<CognitiveRetrievalSnapshot> {
         snapshot_in(
             &mut self.tx,
             namespace,
             subject,
-            space_id,
-            as_of_commit,
-            Selection::Scope(limit),
-            source_read,
+            options,
+            Selection::Scope(options.limit),
         )
         .await
     }
@@ -106,19 +63,15 @@ impl ReadView {
         &mut self,
         namespace: &NamespaceId,
         subject: &SubjectId,
-        space_id: &str,
+        options: &super::QuerySnapshotOptions<'_>,
         reference: &CognitiveRef,
-        as_of_commit: Option<i64>,
-        source_read: Option<&SourceReadView>,
     ) -> Result<CognitiveRetrievalSnapshot> {
         snapshot_in(
             &mut self.tx,
             namespace,
             subject,
-            space_id,
-            as_of_commit,
+            options,
             Selection::Exact(reference),
-            source_read,
         )
         .await
     }
@@ -127,11 +80,11 @@ async fn snapshot_in(
     conn: &mut SqliteConnection,
     namespace: &NamespaceId,
     subject: &SubjectId,
-    space_id: &str,
-    as_of_commit: Option<i64>,
+    options: &super::QuerySnapshotOptions<'_>,
     selection: Selection<'_>,
-    source_read: Option<&SourceReadView>,
 ) -> Result<CognitiveRetrievalSnapshot> {
+    let space_id = options.space_id;
+    let as_of_commit = options.as_of_commit;
     let (limit, reference) = match selection {
         Selection::Scope(limit) => (limit, None),
         Selection::Exact(reference) => {
@@ -151,36 +104,8 @@ async fn snapshot_in(
         ));
     }
 
-    let authorized = if let Some(view) = source_read.filter(|view| view.is_restricted()) {
-        if let Some(reference) = reference {
-            if !crate::source::read_scope::target_allowed(
-                conn,
-                view,
-                &RetrievalTarget::Cognition(reference.clone()),
-            )
-            .await?
-            {
-                return Err(Error::new(
-                    ErrorCode::Forbidden,
-                    "exact cognition reference is outside the source-read scope",
-                ));
-            }
-            Some(serde_json::to_string(&[reference.to_string()])?)
-        } else {
-            Some(
-                crate::source::read_scope::candidates::cognitive_keys(
-                    conn,
-                    namespace,
-                    subject,
-                    as_of_commit,
-                    view,
-                )
-                .await?,
-            )
-        }
-    } else {
-        None
-    };
+    let authorized =
+        super::inventory::permitted(conn, namespace, subject, options, reference).await?;
     let memory = memory_snapshot_in(
         conn,
         namespace,
@@ -191,12 +116,13 @@ async fn snapshot_in(
         MemoryFilter {
             reference,
             authorized: authorized.as_deref(),
+            history: options.history,
         },
     )
     .await?;
     let remaining = limit.saturating_sub(memory.entries.len());
-    let rows=sqlx::query("SELECT o.id,(SELECT max(r.revision) FROM structured_revisions r WHERE r.object_id=o.id AND r.commit_seq<=? AND (? IS NULL OR r.revision=?)) AS selected_revision FROM structured_objects o WHERE o.namespace_id=? AND o.subject_id=? AND selected_revision IS NOT NULL AND (? IS NULL OR o.id=?) AND (? IS NULL OR o.kind||':'||o.id||'@'||selected_revision IN(SELECT value FROM json_each(?))) ORDER BY o.kind,o.id LIMIT ?")
-            .bind(memory.watermark).bind(reference.map(|r|r.revision)).bind(reference.map(|r|r.revision)).bind(namespace.as_str()).bind(subject.as_str()).bind(reference.map(|r| if r.kind == CognitiveKind::Memory { "" } else {r.id.as_str()})).bind(reference.map(|r| if r.kind == CognitiveKind::Memory { "" } else {r.id.as_str()})).bind(authorized.as_deref()).bind(authorized.as_deref()).bind((remaining+1) as i64).fetch_all(&mut *conn).await.map_err(storage_error)?;
+    let rows=sqlx::query("SELECT o.id,r.revision AS selected_revision FROM structured_objects o JOIN structured_revisions r ON r.object_id=o.id WHERE o.namespace_id=?1 AND o.subject_id=?2 AND r.commit_seq<=?3 AND (?4 OR r.revision=(SELECT max(h.revision) FROM structured_revisions h WHERE h.object_id=o.id AND h.commit_seq<=?3)) AND (?5 IS NULL OR (o.id=?5 AND r.revision=?6)) AND (?7 IS NULL OR o.kind||':'||o.id||'@'||r.revision IN(SELECT value FROM json_each(?7))) ORDER BY o.kind,o.id,r.revision LIMIT ?8")
+        .bind(namespace.as_str()).bind(subject.as_str()).bind(memory.watermark).bind(options.history).bind(reference.map(|r| if r.kind==CognitiveKind::Memory {""}else{r.id.as_str()})).bind(reference.map(|r|r.revision)).bind(authorized.as_deref()).bind((remaining+1) as i64).fetch_all(&mut *conn).await.map_err(storage_error)?;
     let complete = memory.complete && rows.len() <= remaining;
     let records=sqlx::query("SELECT e.*,c.vector,c.model_call_id FROM embedding_records e JOIN embedding_contents c USING(namespace_id,subject_id,space_id,source_hash) WHERE e.namespace_id=? AND e.subject_id=? AND e.space_id=? AND json_extract(e.target,'$.target.kind')='cognition'")
             .bind(namespace.as_str()).bind(subject.as_str()).bind(space_id).fetch_all(&mut *conn).await.map_err(storage_error)?.into_iter().map(super::records::row).collect::<Result<Vec<_>>>()?;
@@ -274,6 +200,7 @@ async fn memory_snapshot_in(
     let MemoryFilter {
         reference,
         authorized,
+        history,
     } = filter;
     let limit = i64::try_from(limit)
         .ok()
@@ -290,31 +217,8 @@ async fn memory_snapshot_in(
             "retrieval cutoff refers to uncommitted authority",
         ));
     }
-    let mut rows = sqlx::query("SELECT r.* FROM memories m JOIN memory_revisions r ON r.memory_id=m.id AND r.revision=(SELECT max(h.revision) FROM memory_revisions h WHERE h.memory_id=m.id AND h.commit_seq<=? AND (? IS NULL OR h.revision=?)) WHERE m.namespace_id=? AND m.subject_id=? AND (? IS NULL OR m.id=?) AND (? IS NULL OR 'memory:'||m.id||'@'||r.revision IN(SELECT value FROM json_each(?))) ORDER BY m.id LIMIT ?")
-        .bind(watermark)
-        .bind(reference.map(|r| r.revision))
-        .bind(reference.map(|r| r.revision))
-        .bind(namespace.as_str())
-        .bind(subject.as_str())
-        .bind(reference.map(|r| {
-            if r.kind == CognitiveKind::Memory {
-                r.id.as_str()
-            } else {
-                ""
-            }
-        }))
-        .bind(reference.map(|r| {
-            if r.kind == CognitiveKind::Memory {
-                r.id.as_str()
-            } else {
-                ""
-            }
-        }))
-        .bind(authorized).bind(authorized)
-        .bind(limit)
-        .fetch_all(&mut *conn)
-        .await
-        .map_err(storage_error)?;
+    let mut rows = sqlx::query("SELECT r.* FROM memories m JOIN memory_revisions r ON r.memory_id=m.id WHERE m.namespace_id=?1 AND m.subject_id=?2 AND r.commit_seq<=?3 AND (?4 OR r.revision=(SELECT max(h.revision) FROM memory_revisions h WHERE h.memory_id=m.id AND h.commit_seq<=?3)) AND (?5 IS NULL OR (m.id=?5 AND r.revision=?6)) AND (?7 IS NULL OR 'memory:'||m.id||'@'||r.revision IN(SELECT value FROM json_each(?7))) ORDER BY m.id,r.revision LIMIT ?8")
+        .bind(namespace.as_str()).bind(subject.as_str()).bind(watermark).bind(history).bind(reference.map(|r| if r.kind==CognitiveKind::Memory {r.id.as_str()}else{""})).bind(reference.map(|r|r.revision)).bind(authorized).bind(limit).fetch_all(&mut *conn).await.map_err(storage_error)?;
     let complete = rows.len() < limit as usize;
     if !complete {
         rows.pop();

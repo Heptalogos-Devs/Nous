@@ -12,11 +12,24 @@ pub enum ModelCallState {
     Uncertain,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ModelCallOrigin {
+    Local,
+    Imported {
+        installation_id: String,
+        original_call_id: ModelCallId,
+        original_namespace_id: NamespaceId,
+        original_subject_id: SubjectId,
+    },
+}
+
 /// Actual request/response payloads retain prompt content, source references,
 /// parameters, usage and the provider's model identity.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelCall {
     pub id: ModelCallId,
+    pub origin: ModelCallOrigin,
     pub trace_id: TraceId,
     pub job_id: String,
     pub step_key: String,

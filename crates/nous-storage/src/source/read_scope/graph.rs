@@ -69,7 +69,8 @@ pub(super) async fn children(
         Node::Cognition(reference) => {
             let (status, _, sources) =
                 source_node(conn, ns, subject, &source_reference(reference), false, None).await?;
-            if status == SourceStatus::Missing || sources.is_empty() {
+            if matches!(status, SourceStatus::Missing | SourceStatus::Purged) || sources.is_empty()
+            {
                 return Err(crate::not_found());
             }
             if reference.kind == CognitiveKind::Memory {

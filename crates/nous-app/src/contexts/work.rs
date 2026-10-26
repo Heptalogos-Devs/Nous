@@ -105,7 +105,7 @@ impl App {
         match change {
             WorkContextChange::Edit { content } => {
                 content.validate()?;
-                value.content = content;
+                value.content = *content;
             }
             WorkContextChange::Pin { anchors } => {
                 for target in anchors {

@@ -27,7 +27,7 @@ where
         staging_file(store.paths.clone(), Some(lease.clone()), &cancel).await?;
     let mut hasher = Sha256::new();
     let mut length = 0_u64;
-    let mut chunk = [0_u8; 64 * 1024];
+    let mut chunk = vec![0_u8; super::STREAM_BUFFER_BYTES];
     let copied: Result<()> = async {
         loop {
             let count = tokio::select! {
@@ -191,7 +191,7 @@ fn verify_existing(
         ));
     }
     let mut digest = Sha256::new();
-    let mut buffer = [0_u8; 64 * 1024];
+    let mut buffer = vec![0_u8; super::STREAM_BUFFER_BYTES];
     loop {
         execution::check_cancelled(cancel)?;
         let count = input.read(&mut buffer)?;

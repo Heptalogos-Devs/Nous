@@ -1,0 +1,78 @@
+diff --git a/src/services/memory_service.py b/src/services/memory_service.py
+index aa97321..023eb0b 100644
+--- a/src/services/memory_service.py
++++ b/src/services/memory_service.py
+@@ -3,10 +3,12 @@ from __future__ import annotations
+ from dataclasses import dataclass, field
+ from typing import Any, Dict, List, Optional
+ 
+-from src.A_memorix.host_service import a_memorix_host_service
++from nous_wave.amemorix.maibot import connect_from_environment
+ from src.common.logger import get_logger
++from src.common.runtime_loop import run_on_main_loop
+ 
+ 
++a_memorix_host_service = connect_from_environment()
+ logger = get_logger("memory_service")
+ 
+ 
+@@ -98,9 +100,13 @@ class MemoryService:
+         timeout_ms: Optional[int] = None,
+     ) -> Any:
+         if timeout_ms is None:
+-            response = await a_memorix_host_service.invoke(component_name, args or {})
++            response = await run_on_main_loop(
++                a_memorix_host_service.invoke(component_name, args or {})
++            )
+         else:
+-            response = await a_memorix_host_service.invoke(component_name, args or {}, timeout_ms=timeout_ms)
++            response = await run_on_main_loop(
++                a_memorix_host_service.invoke(component_name, args or {}, timeout_ms=timeout_ms)
++            )
+         if isinstance(response, dict):
+             return response
+         payload = getattr(response, "payload", None)
+@@ -194,7 +200,9 @@ class MemoryService:
+     @staticmethod
+     def _coerce_profile_result(payload: Any) -> PersonProfileResult:
+         if not isinstance(payload, dict):
+-            return PersonProfileResult()
++            raise ValueError("invalid person profile payload")
++        if payload.get("success") is False:
++            raise RuntimeError(str(payload.get("error") or "person profile request failed"))
+         return PersonProfileResult(
+             summary=str(payload.get("summary", "") or ""),
+             traits=[str(item) for item in (payload.get("traits") or []) if str(item).strip()],
+@@ -354,7 +362,7 @@ class MemoryService:
+     async def get_person_profile(self, person_id: str, *, chat_id: str = "", limit: int = 10) -> PersonProfileResult:
+         clean_person_id = str(person_id or "").strip()
+         if not clean_person_id:
+-            return PersonProfileResult()
++            raise ValueError("person_id is required")
+         try:
+             payload = await self._invoke(
+                 "get_person_profile",
+@@ -363,7 +371,7 @@ class MemoryService:
+             return self._coerce_profile_result(payload)
+         except Exception as exc:
+             logger.warning(f"获取人物画像失败: {exc}")
+-            return PersonProfileResult()
++            raise
+ 
+     async def maintain_memory(
+         self,
+@@ -389,10 +397,12 @@ class MemoryService:
+     async def memory_stats(self) -> Dict[str, Any]:
+         try:
+             payload = await self._invoke("memory_stats", {})
+-            return payload if isinstance(payload, dict) else {}
++            if not isinstance(payload, dict):
++                raise ValueError("invalid memory stats payload")
++            return payload
+         except Exception as exc:
+             logger.warning(f"获取记忆统计失败: {exc}")
+-            return {}
++            raise
+ 
+     async def image_memory(self, *, action: str, timeout_ms: int = 120000, **kwargs: Any) -> Dict[str, Any]:
+         """调用图片记忆的写入、相似检索和管理接口。"""

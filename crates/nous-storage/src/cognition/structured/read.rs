@@ -109,11 +109,27 @@ impl Database {
         subject: &SubjectId,
         alias: &str,
     ) -> Result<StructuredObject> {
-        let mut tx = self.pool.begin().await.map_err(storage_error)?;
-        let id:String=sqlx::query_scalar("SELECT concept_id FROM concept_aliases WHERE namespace_id=? AND subject_id=? AND alias_key=?")
-            .bind(namespace.as_str()).bind(subject.as_str()).bind(alias.trim().to_lowercase()).fetch_optional(&mut *tx).await.map_err(storage_error)?.ok_or_else(not_found)?;
-        let result = object(&mut tx, namespace, &CognitiveId(id), None).await?;
-        tx.commit().await.map_err(storage_error)?;
+        let mut view = self.read_view().await?;
+        let resolved = view
+            .resolve_query_identity(
+                namespace,
+                subject,
+                CognitiveKind::Concept,
+                alias,
+                &crate::QueryIdentityOptions {
+                    as_of: None,
+                    source_read: None,
+                },
+            )
+            .await?;
+        let result = view
+            .structured_revision(
+                namespace,
+                &CognitiveId(resolved.reference.id),
+                resolved.reference.revision,
+            )
+            .await?;
+        view.finish().await?;
         Ok(result)
     }
 }

@@ -1,5 +1,7 @@
 pub(crate) mod closure;
 pub(crate) mod materials;
+pub(crate) mod query_filter;
+mod query_object;
 mod read;
 pub(crate) mod read_scope;
 pub use read_scope::SourceReadView;
@@ -8,3 +10,4 @@ pub use closure::{SourceClosure, SourceNode, SourceRoot, SourceStatus};
 pub(crate) mod dependents;
 mod formation;
 mod retirement;
+pub(crate) mod tombstone;

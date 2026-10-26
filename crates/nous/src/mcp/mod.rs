@@ -1,12 +1,15 @@
 use nous_app::App;
+mod bundles;
 mod contexts;
 mod identity;
+mod integrations;
 mod media;
 mod observability;
 mod presentation;
 mod query;
-mod tasks;
 mod schema;
+mod sources;
+mod tasks;
 use nous_domain::{CallContext, Error, ErrorCode};
 use rmcp::{
     ErrorData, RoleServer, ServerHandler,
@@ -71,6 +74,12 @@ pub struct MemoryRequest {
     pub memory_id: String,
 }
 #[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MemorySourceRequest {
+    pub memory_id: String,
+    pub revision: Option<i64>,
+}
+#[derive(Deserialize, JsonSchema)]
 pub struct DeleteMemoryRequest {
     pub memory_id: String,
     pub operation_id: String,
@@ -123,6 +132,9 @@ impl McpService {
                 + Self::media_tool_router()
                 + Self::query_tool_router()
                 + Self::context_tool_router()
+                + Self::bundle_tool_router()
+                + Self::source_tool_router()
+                + Self::integration_tool_router()
                 + Self::task_wait_tool_router(),
         }
     }
@@ -136,6 +148,9 @@ impl McpService {
                 + Self::media_tool_router()
                 + Self::query_tool_router()
                 + Self::context_tool_router()
+                + Self::bundle_tool_router()
+                + Self::source_tool_router()
+                + Self::integration_tool_router()
                 + Self::task_wait_tool_router(),
         }
     }
@@ -437,11 +452,14 @@ impl McpService {
     #[tool(description = "Trace a memory to original material, real contact and actual model call")]
     async fn memory_source(
         &self,
-        Parameters(input): Parameters<MemoryRequest>,
+        Parameters(input): Parameters<MemorySourceRequest>,
         ctx: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
         self.execute(
-            Operation::Cognition(CognitionOperation::Source(input.memory_id)),
+            Operation::Cognition(CognitionOperation::Source {
+                id: input.memory_id,
+                revision: input.revision,
+            }),
             ctx,
         )
         .await

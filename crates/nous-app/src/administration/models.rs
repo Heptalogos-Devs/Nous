@@ -4,14 +4,14 @@ use nous_domain::{CallContext, ConfigScope, Result, validate_name};
 use nous_foundation::models::InvocationEdits;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ModelContractRequest {
     pub role: String,
     pub scope: Option<ConfigScope>,
-    pub input: Option<Value>,
+    pub input: Option<Map<String, Value>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -19,7 +19,7 @@ pub struct ModelContractRequest {
 pub struct ModelPreviewRequest {
     pub role: String,
     pub scope: Option<ConfigScope>,
-    pub input: Value,
+    pub input: Map<String, Value>,
     #[serde(default)]
     pub edits: InvocationEdits,
 }
@@ -34,7 +34,7 @@ impl App {
         let scope = self.model_management_scope(ctx, request.scope).await?;
         Ok(json!(
             self.model
-                .contract(&scope, &request.role, request.input)
+                .contract(&scope, &request.role, request.input.map(Value::Object))
                 .await?
         ))
     }
@@ -47,7 +47,12 @@ impl App {
         let scope = self.model_management_scope(ctx, request.scope).await?;
         let preview = self
             .model
-            .preview(&scope, &request.role, request.input, request.edits)
+            .preview(
+                &scope,
+                &request.role,
+                Value::Object(request.input),
+                request.edits,
+            )
             .await
             .map_err(|error| error.to_domain_error())?;
         Ok(json!(preview))

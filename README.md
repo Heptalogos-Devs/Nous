@@ -24,11 +24,11 @@ $instance = Join-Path (Get-Location) 'temp/instances/dev'
 $nous = Join-Path $env:CARGO_TARGET_DIR 'debug/nous.exe'
 $instance = Join-Path (Get-Location) 'temp/instances/dev'
 & $nous --instance $instance status
-$namespace = (& $nous --instance $instance namespace create research --operation-id first-namespace | ConvertFrom-Json).result.id
-$subject = (& $nous --instance $instance subject create --namespace $namespace --name reader | ConvertFrom-Json).result.id
-$material = (& $nous --instance $instance material put --namespace $namespace --file ./docs/requirements/项目宪纲.md | ConvertFrom-Json).result.id
-$observation = (& $nous --instance $instance observation record --subject $subject --material $material | ConvertFrom-Json).result.id
-& $nous --instance $instance source read $material
+$namespace = (& $nous --json --instance $instance namespace create research --operation-id first-namespace | ConvertFrom-Json).result.id
+$subject = (& $nous --json --instance $instance subject create --namespace $namespace --name reader | ConvertFrom-Json).result.id
+$material = (& $nous --json --instance $instance material put --namespace $namespace --file ./docs/requirements/项目宪纲.md | ConvertFrom-Json).result.id
+$observation = (& $nous --json --instance $instance observation record --subject $subject --material $material | ConvertFrom-Json).result.id
+& $nous --instance $instance source read "material:$material" --subject $subject
 ```
 
 Linux 使用同一 PowerShell 环境脚本，程序路径为 `debug/nous`。正式部署用 `--instance <path>` 指定持久位置。开发实例、下载、克隆、缓存和编译均位于 `temp`；脚本只修改当前进程环境。已安装工具链继续使用。
@@ -106,7 +106,7 @@ HTTP 接口与 MCP 工具进入相同应用用例：
 & $nous import bundle inspect --file ./temp/knowledge.amembundle --details
 ```
 
-检查器承接上游 v1/v2 的知识、完整状态和图像包，核对成员校验和、语义摘要、记录引用与内容数量；默认显示 manifest、库存数量和所需领域能力。完整包的事务安装、导出与卸载，以及图谱、Episode、画像和 A-Memorix 兼容 API 按 [合同承接表](docs/首批开发任务.md#当前-a-memorix-合同承接) 继续实施。
+检查器承接上游 v1/v2 的知识、完整状态和图像包，核对成员校验和、语义摘要、记录引用与内容数量；默认显示 manifest、库存数量和所需领域能力。知识包管理通过 `bundle export/install/list/get/uninstall`、HTTP `/api/bundles`、MCP `bundles` 和官方 SDK `bundles` 使用相同领域操作。`export` 返回 `download_material_id`，用 `material get --output` 下载；`install --material` 使用已经流式上传的包材料，支持 `merge` 和空主体的 `restore`。
 
 [nous-vcp](crates/nous-vcp/README.md) 提供完整 VCP 计算族和旧版数值基线，包含 AGS 几何、传播资产、Pyramid、Sense、双场、RiverMemo、DTSC 与 Thinking。开发者可用 `cargo run -p nous-vcp --example native_pipeline` 重放完整计算和来源映射。实际文本查询已接通模型向量、USearch 候选/Tag 双索引、VCP 图资产和来源映射。
 
@@ -223,7 +223,7 @@ $embedding.result.jobs | ForEach-Object { & $nous --instance $instance job get $
 & $nous --instance $instance query --subject $subject --mode hybrid '秋天有哪些植物变化？'
 ```
 
-`memory embed` 返回持久任务 ID；`result.jobs` 包含本次新建和已在处理相同输入的任务。HTTP 提交 `POST /api/embeddings/sync`，JSON 为 `{"subject_id":"<id>","operation_id":"first-embedding","limit":5000}`；按 ID 读取 `/api/embeddings/runs/<job_id>`。MCP 使用 `embedding_sync` 和 `embedding_run {job_id}`。查询默认 `lexical`；HTTP/MCP 的 `mode` 同样接受 `dense`、`vcp`、`hybrid`。语义查询会补齐缺少的当前认知、标签和查询向量并等待结果；当前主体快照上限为 5000 条认知对象，超出时返回 ResourceExhausted。
+`embedding sync` 返回持久任务 ID；`result.jobs` 包含本次新建和已在处理相同输入的任务。HTTP 提交 `POST /api/embeddings/sync`，JSON 为 `{"subject_id":"<id>","operation_id":"first-embedding","limit":5000}`；按 ID 读取 `/api/embeddings/runs/<job_id>`。MCP 使用 `embedding_sync` 和 `embedding_run {job_id}`。查询默认 `lexical`；HTTP/MCP 的 `mode` 同样接受 `dense`、`vcp`、`hybrid`。语义查询会补齐缺少的当前认知、标签和查询向量并等待结果；当前主体快照上限为 5000 条认知对象，超出时返回 ResourceExhausted。
 
 标签取自来源 MaterialDetails.tags 的原文，去除首尾空白后生成稳定身份；同一 Material 派生的多个认知对象 在图证据中共用一个来源根。范围、来源、时间和活跃状态先约束候选与构图，命中返回前再读取最新权威修订。候选索引、Tag 索引和完整 VCP 资产按不可变代际一起发布；重启加载已发布资产，恢复与重建复用 SQLite 保存的向量原值。同一模型空间的相同查询复用持久查询向量，重启后再次查询无需远程嵌入。正文未变的生命周期修订也复用原向量和调用来源。
 

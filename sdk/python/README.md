@@ -21,9 +21,11 @@ async with NousClient(
     result = await client.query(subject_id, "本轮开发尚未完成的工作")
 ```
 
-`configuration`、`identity`、`prompts`、`media`、`cognition`、`contexts` 接收与 HTTP/MCP 相同的正式操作对象。常用材料、记忆、查询、向量、任务和备份有具名方法。`request` 用于直接调用其他公开操作。写入方法接受 `operation_id`；重试同一个实际动作时保留此值，网络异常的 `context.operation_id` 可供继续。
+`configuration`、`identity`、`prompts`、`media`、`cognition`、`contexts`、`bundles` 接收与 HTTP/MCP 相同的正式操作对象。常用材料、记忆、查询、向量、任务和备份有具名方法。`request` 用于直接调用其他公开操作。写入方法接受 `operation_id`；重试同一个实际动作时保留此值，网络异常的 `context.operation_id` 可供继续。
 
 `upload_file` 与 `download_material` 流式传输原件。`query(..., media=[...])` 接受精确 MediaReference，文字与媒体一起构成联合查询。`with_source_read(scope)` 创建共享连接池的受限客户端，所有操作沿相同请求元数据追加范围；调用参数继续在此范围内收窄。
+
+`source(subject_id, reference, observation_id=...)` 读取精确认知或媒体的来源。`memory_source(memory_id, revision=...)` 读取指定历史修订；省略修订时读取当前记忆。媒体的 `observation_id` 指定本次实际接触或导入，认知自身保留形成时的来源事件。
 
 ## 每次模型调用的上下文
 
@@ -70,6 +72,6 @@ await binding.report(
 await binding.close()
 ```
 
-`apply` 管理自身的 RESET/APPEND 片段与游标；工具续轮、模型切换和压缩后继续对净化后的宿主输入执行同一流程。`admit` 记录实际呈现，`report` 记录实际结果及明确使用事件。失败的报告可保留同一调用 ID、完成时间和事件再次提交。
+`apply` 管理自身的 RESET/APPEND 片段与游标；工具续轮、模型切换和压缩后继续对净化后的宿主输入执行同一流程。`admit` 记录实际呈现，`report` 记录实际结果及明确使用事件。宿主持久保存接纳回执、调用 ID、完成时间与使用事件；进程重启后可用 `client.report_context(admission_id, invocation_id=..., outcome=..., occurred_at=..., uses=...)` 继续提交同一反馈。
 
 读取范围来自可信宿主接纳的来源或会话 origin。普通查询继承已认证权限；managed binding 没有显式范围时由服务采用空读取范围。精确引用和派生来源保持独立身份，资料文本不会成为对 SDK 或宿主的执行指令。

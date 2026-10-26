@@ -305,8 +305,9 @@ pub fn operation_key(
 ) -> nous_domain::Result<OperationKey> {
     nous_domain::validate_name(operation_id, "operation_id")?;
     nous_domain::validate_name(&ctx.caller_id, "caller_id")?;
-    let encoded =
-        serde_json::to_vec(&json!({"operation":operation,"scope":scope,"source_read":ctx.source_read_identity()?,"payload":payload}))?;
+    let encoded = serde_json::to_vec(
+        &json!({"operation":operation,"scope":scope,"source_read":ctx.source_read_identity()?,"payload":payload}),
+    )?;
     Ok(OperationKey {
         context: ctx.clone(),
         operation: operation.into(),

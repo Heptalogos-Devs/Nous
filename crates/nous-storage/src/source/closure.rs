@@ -10,6 +10,7 @@ use std::collections::{BTreeMap, HashSet};
 pub enum SourceStatus {
     Available,
     Retired,
+    Purged,
     Missing,
 }
 
@@ -61,7 +62,9 @@ pub(crate) async fn closure_at(
     .await?;
     Ok(SourceClosure {
         reference,
-        complete: nodes.iter().all(|n| n.status != SourceStatus::Missing),
+        complete: nodes
+            .iter()
+            .all(|n| !matches!(n.status, SourceStatus::Missing | SourceStatus::Purged)),
         nodes,
         roots,
     })
@@ -161,6 +164,21 @@ pub(crate) async fn source_node(
     support_only: bool,
     as_of_commit: Option<i64>,
 ) -> Result<(SourceStatus, Option<i64>, Vec<EvidenceSource>)> {
+    if let Some(target) = source.retrieval_target()
+        && let Some(tombstone) = super::tombstone::read(conn, namespace, subject, &target).await?
+    {
+        return Ok((
+            SourceStatus::Purged,
+            Some(tombstone.commit_seq),
+            tombstone.sources,
+        ));
+    }
+    if let Some(reference) = source.cognitive_ref()
+        && let Some(sequence) =
+            super::tombstone::purged_sequence(conn, namespace, subject, &reference).await?
+    {
+        return Ok((SourceStatus::Purged, Some(sequence), vec![]));
+    }
     let (kind, id, revision) = source_parts(source)?;
     if let EvidenceSource::Media { reference } = source {
         let lineage = match media_source(conn, namespace, subject, reference).await {

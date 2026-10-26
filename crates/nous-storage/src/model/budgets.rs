@@ -18,6 +18,11 @@ impl WriteTransaction {
         call: &ModelCall,
         plan: &ModelBudgetPlan,
     ) -> Result<ModelBudgetAdmission> {
+        if call.origin != ModelCallOrigin::Local {
+            return Err(Error::invalid(
+                "imported execution history cannot reserve local budgets",
+            ));
+        }
         call.id.validate()?;
         let limits = &plan.limits;
         if plan.context.model_id != call.resource_id

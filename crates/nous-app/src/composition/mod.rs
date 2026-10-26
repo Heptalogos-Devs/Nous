@@ -25,15 +25,18 @@ pub fn configuration_registry(
 ) -> Result<nous_foundation::configuration::ConfigRegistry> {
     let mut registry = nous_foundation::configuration::ConfigRegistryBuilder::new();
     nous_foundation::configuration::register_core(&mut registry)?;
+    nous_foundation::clock::domains::register_configuration(&mut registry)?;
     nous_foundation::observability::register_configuration(&mut registry)?;
     nous_foundation::tasks::register_configuration(&mut registry)?;
     nous_foundation::platform::register_configuration(&mut registry)?;
     nous_foundation::platform::installation::register_configuration(&mut registry)?;
     nous_foundation::platform::service::register_configuration(&mut registry)?;
     nous_foundation::localization::register_configuration(&mut registry)?;
+    crate::integrations::amemorix::register_configuration(&mut registry)?;
     nous_foundation::media::register_configuration(&mut registry)?;
     crate::retrieval::config::register_configuration(&mut registry)?;
     crate::contexts::config::register_configuration(&mut registry)?;
+    crate::bundles::policy::register_configuration(&mut registry)?;
     nous_foundation::models::register_configuration(&mut registry, roles)?;
     Ok(registry.finish())
 }
@@ -143,6 +146,7 @@ impl App {
                 async move { owner.context_steward_ready(&job).await }
             },
         )?;
+        self.register_amemorix_tasks(&mut registry)?;
         Ok(registry)
     }
     pub fn start_background(&self, cancel: CancellationToken) -> tokio::task::JoinHandle<()> {

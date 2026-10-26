@@ -35,9 +35,9 @@ pub(super) fn operation(command: ModelCommand) -> Result<Operation> {
     }
 }
 
-fn read_input(path: &Path) -> Result<serde_json::Value> {
+fn read_input(path: &Path) -> Result<serde_json::Map<String, serde_json::Value>> {
     serde_json::from_str(&read_text(path)?)
-        .with_context(|| format!("model input {} must be JSON", path.display()))
+        .with_context(|| format!("model input {} must be a JSON object", path.display()))
 }
 
 fn read_text(path: &Path) -> Result<String> {

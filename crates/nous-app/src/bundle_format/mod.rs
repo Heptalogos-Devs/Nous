@@ -1,7 +1,4 @@
-//! A_Memorix v1/v2 archive inspection, without installation or filesystem extraction.
-//!
-//! at c602a2780f4f4dda4a6be46d67abc1cfb1ad420c: _load_bundle, member hashing,
-//! _canonical_json_bytes, _canonical_image_semantics and RESOURCE_PRIMARY_KEYS.
+//! Validated ZIP inventories and the external A-Memorix bundle format.
 
 mod archive;
 mod json;
@@ -9,6 +6,7 @@ mod manifest;
 mod reference;
 mod types;
 use anyhow::Result;
+pub(crate) use archive::read_archive;
 use std::{
     fs::File,
     io::{Cursor, Read, Seek},

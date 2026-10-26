@@ -45,8 +45,10 @@ pub enum CognitionOperation {
     Get(String),
     History(String),
     Delete(String, DeleteMemory),
-    Query(QueryRequest),
-    Source(String),
+    Query(Box<QueryRequest>),
+    Plan(Box<QueryRequest>),
+    Manual,
+    Source { id: String, revision: Option<i64> },
     ModelStatus,
     EmbeddingSync(EmbeddingSync),
     EmbeddingRun(String),
@@ -77,8 +79,12 @@ impl CognitionOperation {
                 )
                 .await?
             )),
-            Self::Query(input) => Ok(json!(app.query(ctx, input.clone()).await?)),
-            Self::Source(id) => Ok(json!(app.memory_source(ctx, &id.parse()?).await?)),
+            Self::Query(input) => Ok(json!(app.query(ctx, *input.clone()).await?)),
+            Self::Plan(input) => Ok(json!(app.plan_query(ctx, *input.clone()).await?)),
+            Self::Manual => Ok(json!({"text":nous_domain::nousql::MANUAL})),
+            Self::Source { id, revision } => Ok(json!(
+                app.memory_source(ctx, &id.parse()?, *revision).await?
+            )),
             Self::ModelStatus => app.model_status(ctx).await,
             Self::EmbeddingSync(input) => Ok(json!(
                 app.sync_embeddings(
@@ -104,7 +110,16 @@ impl CognitionOperation {
                 Some(json!(input)),
             ),
             Self::Query(input) => ("POST", "/api/query".into(), Some(json!(input))),
-            Self::Source(id) => ("GET", format!("/api/memories/{id}/source"), None),
+            Self::Plan(input) => ("POST", "/api/query/plan".into(), Some(json!(input))),
+            Self::Manual => ("GET", "/api/query/manual".into(), None),
+            Self::Source { id, revision } => (
+                "GET",
+                match revision {
+                    Some(revision) => format!("/api/memories/{id}/source?revision={revision}"),
+                    None => format!("/api/memories/{id}/source"),
+                },
+                None,
+            ),
             Self::ModelStatus => ("GET", "/api/models/status".into(), None),
             Self::EmbeddingSync(input) => {
                 ("POST", "/api/embeddings/sync".into(), Some(json!(input)))
@@ -123,6 +138,8 @@ pub fn router() -> Router<ApiState> {
         .route("/api/memories/{memory}/delete", post(delete))
         .route("/api/memories/{memory}/source", get(source))
         .route("/api/query", post(query))
+        .route("/api/query/plan", post(plan))
+        .route("/api/query/manual", get(manual))
         .route("/api/models/status", get(model_status))
         .route("/api/embeddings/sync", post(embedding_sync))
         .route("/api/embeddings/runs/{id}", get(embedding_run))
@@ -175,16 +192,51 @@ async fn query(
     run(
         s,
         c,
-        Operation::Cognition(CognitionOperation::Query(decode(body)?)),
+        Operation::Cognition(CognitionOperation::Query(Box::new(decode(body)?))),
     )
     .await
+}
+async fn plan(
+    State(state): State<ApiState>,
+    Extension(ctx): Extension<CallContext>,
+    body: Result<Json<QueryRequest>, JsonRejection>,
+) -> Result<Json<Value>, ApiError> {
+    run(
+        state,
+        ctx,
+        Operation::Cognition(CognitionOperation::Plan(Box::new(decode(body)?))),
+    )
+    .await
+}
+async fn manual(
+    State(state): State<ApiState>,
+    Extension(ctx): Extension<CallContext>,
+) -> Result<Json<Value>, ApiError> {
+    run(state, ctx, Operation::Cognition(CognitionOperation::Manual)).await
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SourceRevision {
+    revision: Option<i64>,
 }
 async fn source(
     State(s): State<ApiState>,
     Extension(c): Extension<CallContext>,
     Path(id): Path<String>,
+    query: Result<axum::extract::Query<SourceRevision>, axum::extract::rejection::QueryRejection>,
 ) -> Result<Json<Value>, ApiError> {
-    run(s, c, Operation::Cognition(CognitionOperation::Source(id))).await
+    let query = query
+        .map_err(|error| Error::invalid("invalid source revision query").with_cause(&error))?
+        .0;
+    run(
+        s,
+        c,
+        Operation::Cognition(CognitionOperation::Source {
+            id,
+            revision: query.revision,
+        }),
+    )
+    .await
 }
 async fn model_status(
     State(s): State<ApiState>,

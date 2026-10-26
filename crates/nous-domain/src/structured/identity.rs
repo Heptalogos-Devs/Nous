@@ -9,6 +9,7 @@ pub enum CognitiveKind {
     Memory,
     MemorySemantics,
     Concept,
+    Entity,
     Episode,
     Journal,
     Schema,

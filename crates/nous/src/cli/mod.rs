@@ -1,10 +1,12 @@
 //! Command parsing and presentation; application decisions remain in App services.
 pub mod bundle;
+mod bundles;
 pub mod cognition;
 mod configuration;
 mod contexts;
 mod embedding;
 mod identity;
+mod integrations;
 mod invocation;
 pub mod maintenance;
 mod materials;
@@ -14,10 +16,11 @@ mod platform;
 mod prompts;
 mod scope;
 mod secrets;
+mod sources;
 mod tasks;
 use crate::{
     bootstrap::{connect, serve},
-    http::{CreateNamespace, CreateSubject, Operation, RecordObservation, WireTime},
+    http::{CreateNamespace, CreateSubject, Operation, WireTime},
     mcp,
 };
 use anyhow::{Context, Result, bail};
@@ -27,10 +30,11 @@ use configuration::ConfigCommand;
 pub(crate) use invocation::scopes as source_scopes;
 use materials::MaterialCommand;
 use nous_app::App;
-use nous_domain::{CallContext, NamespaceId, SubjectId};
+use nous_domain::{CallContext, NamespaceId};
 use nous_foundation::instance::InstanceGuard;
 use nous_foundation::instance::InstancePaths;
 use serde_json::{Value, json};
+use sources::{ObservationCommand, SourceCommand};
 use std::{net::SocketAddr, path::PathBuf};
 use tasks::JobCommand;
 #[derive(Parser)]
@@ -60,6 +64,16 @@ pub(crate) struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Call A-Memorix consumer operations through the common Nous authority.
+    Amemorix {
+        #[command(subcommand)]
+        command: integrations::AmemorixCommand,
+    },
+    /// Export and manage portable subject knowledge bundles.
+    Bundle {
+        #[command(subcommand)]
+        command: bundles::BundleCommand,
+    },
     /// Manage WorkContexts, resident cognition and per-call context preparation.
     Context {
         #[command(subcommand)]
@@ -181,7 +195,7 @@ enum Command {
         #[command(subcommand)]
         command: JobCommand,
     },
-    /// Read immutable source material using its stable material ID.
+    /// Read exact cognition or media provenance in a Subject's source scope.
     Source {
         #[command(subcommand)]
         command: SourceCommand,
@@ -228,32 +242,6 @@ enum SubjectCommand {
     },
 }
 #[derive(Subcommand)]
-enum ObservationCommand {
-    Record {
-        #[arg(long)]
-        subject: SubjectId,
-        #[arg(long)]
-        material: String,
-        /// JSON time point; omitted means the contact time was not supplied.
-        #[arg(long)]
-        observed_at: Option<String>,
-        #[arg(long)]
-        conversation_ref: Option<nous_domain::ConversationRef>,
-        #[arg(long)]
-        external_object_ref: Option<nous_domain::ExternalObjectRef>,
-        #[arg(long)]
-        operation_id: Option<String>,
-    },
-    List {
-        #[arg(long)]
-        subject: SubjectId,
-    },
-}
-#[derive(Subcommand)]
-enum SourceCommand {
-    Read { id: String },
-}
-#[derive(Subcommand)]
 enum McpCommand {
     Stdio,
 }
@@ -283,6 +271,20 @@ pub(crate) async fn execute(cli: Cli) -> Result<()> {
         return print_result(bundle::inspect(file, *details)?);
     }
     match cli.command {
+        Command::Amemorix { command } => match command.operation()? {
+            Some(request) => {
+                integrations::execute(connect(&paths, cli.url, cli.token_file).await?, request)
+                    .await?
+            }
+            None => print_result(serde_json::to_value(schemars::schema_for!(
+                crate::http::integrations::AmemorixRequest
+            ))?)?,
+        },
+        Command::Bundle { command } => {
+            command
+                .execute(connect(&paths, cli.url, cli.token_file).await?)
+                .await?
+        }
         Command::Context { command } => match command.operation()? {
             Some(operation) => {
                 contexts::execute(connect(&paths, cli.url, cli.token_file).await?, operation)
@@ -343,6 +345,15 @@ pub(crate) async fn execute(cli: Cli) -> Result<()> {
                 .await?,
         )?,
         Command::Paths => print_result(serde_json::to_value(paths)?)?,
+        Command::Query(input) => match input.operation()? {
+            None => print_result(json!({"text":nous_domain::nousql::MANUAL}))?,
+            Some(operation) => print_result(
+                connect(&paths, cli.url, cli.token_file)
+                    .await?
+                    .execute(&operation)
+                    .await?,
+            )?,
+        },
         Command::Trace {
             trace_id,
             cursor,
@@ -461,7 +472,6 @@ pub(crate) async fn execute(cli: Cli) -> Result<()> {
                 } => Operation::CreateBackup,
                 Command::Memory { command } => command.operation()?,
                 Command::Embedding { command } => command.operation(),
-                Command::Query(input) => input.operation()?,
                 Command::Prompt { command } => command.operation()?,
                 Command::Model {
                     command: ModelCommand::Status,
@@ -499,38 +509,8 @@ pub(crate) async fn execute(cli: Cli) -> Result<()> {
                 Command::Subject {
                     command: SubjectCommand::List { namespace },
                 } => Operation::ListSubjects(namespace.to_string()),
-                Command::Source {
-                    command: SourceCommand::Read { id },
-                } => {
-                    let _: nous_domain::MaterialId = id.parse()?;
-                    Operation::GetMaterial(id)
-                }
-                Command::Observation {
-                    command:
-                        ObservationCommand::Record {
-                            subject,
-                            material,
-                            observed_at,
-                            conversation_ref,
-                            external_object_ref,
-                            operation_id,
-                        },
-                } => {
-                    let _: nous_domain::MaterialId = material.parse()?;
-                    Operation::RecordObservation(RecordObservation {
-                        operation_id: op_id(operation_id),
-                        subject_id: subject.to_string(),
-                        material_id: material,
-                        observed_at: parse_time(observed_at)?,
-                        origin: nous_domain::ObservationOrigin::from_refs(
-                            conversation_ref,
-                            external_object_ref,
-                        )?,
-                    })
-                }
-                Command::Observation {
-                    command: ObservationCommand::List { subject },
-                } => Operation::ListObservations(subject.to_string()),
+                Command::Source { command } => command.operation(),
+                Command::Observation { command } => command.operation()?,
                 Command::Job { command } => command.operation(),
                 _ => bail!("unsupported command"),
             };

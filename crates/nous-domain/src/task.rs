@@ -19,6 +19,7 @@ pub enum JobState {
 #[serde(deny_unknown_fields)]
 pub struct WaitCondition {
     pub kind: String,
+    pub requires_attention: bool,
     pub resume: ResumeCondition,
     pub details: Value,
 }

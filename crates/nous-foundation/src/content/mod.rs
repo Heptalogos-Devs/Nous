@@ -17,6 +17,8 @@ use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio_util::sync::CancellationToken;
 pub use writer::copy_verified;
 
+const STREAM_BUFFER_BYTES: usize = 64 * 1024;
+
 #[derive(Clone)]
 pub struct ObjectStore {
     paths: Arc<InstancePaths>,

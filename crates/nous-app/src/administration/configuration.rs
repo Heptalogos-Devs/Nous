@@ -47,19 +47,45 @@ fn history_limit() -> usize {
 
 impl App {
     pub async fn change_offline_configuration(
-        paths:&nous_foundation::instance::InstancePaths,
-        request:ConfigChangeRequest,
-    )->Result<OperationReceipt> {
-        use nous_foundation::{clock::Clock,configuration::Configuration,instance::{InstanceConfig,InstanceGuard}};
-        let _guard=InstanceGuard::acquire(paths).map_err(|error| nous_domain::Error::new(nous_domain::ErrorCode::DependencyUnavailable,error.to_string()).with_cause(error.as_ref()))?;
-        let deployment=InstanceConfig::load(paths).map_err(|error| nous_domain::Error::invalid(error.to_string()).with_cause(error.as_ref()))?;
-        let roles=crate::composition::model_roles()?;
-        let registry=crate::composition::configuration_registry(&roles)?;
-        let database=nous_storage::Database::open(&paths.database,Clock::operation_snapshot).await?;
-        let result=async {
-            let configuration=Configuration::new(database.clone(),registry,&serde_json::to_value(deployment)?).await?;
-            configuration.apply(&CallContext::admin(),&request.operation_id,&request.scope,&request.edits).await
-        }.await;
+        paths: &nous_foundation::instance::InstancePaths,
+        request: ConfigChangeRequest,
+    ) -> Result<OperationReceipt> {
+        use nous_foundation::{
+            clock::Clock,
+            configuration::Configuration,
+            instance::{InstanceConfig, InstanceGuard},
+        };
+        let _guard = InstanceGuard::acquire(paths).map_err(|error| {
+            nous_domain::Error::new(
+                nous_domain::ErrorCode::DependencyUnavailable,
+                error.to_string(),
+            )
+            .with_cause(error.as_ref())
+        })?;
+        let deployment = InstanceConfig::load(paths).map_err(|error| {
+            nous_domain::Error::invalid(error.to_string()).with_cause(error.as_ref())
+        })?;
+        let roles = crate::composition::model_roles()?;
+        let registry = crate::composition::configuration_registry(&roles)?;
+        let database =
+            nous_storage::Database::open(&paths.database, Clock::operation_snapshot).await?;
+        let result = async {
+            let configuration = Configuration::new(
+                database.clone(),
+                registry,
+                &serde_json::to_value(deployment)?,
+            )
+            .await?;
+            configuration
+                .apply(
+                    &CallContext::admin(),
+                    &request.operation_id,
+                    &request.scope,
+                    &request.edits,
+                )
+                .await
+        }
+        .await;
         database.close().await;
         result
     }
@@ -67,21 +93,31 @@ impl App {
     pub async fn desired_instance_configuration(
         paths: &nous_foundation::instance::InstancePaths,
     ) -> Result<nous_foundation::instance::InstanceConfig> {
-        use nous_foundation::{clock::Clock, configuration::Configuration, instance::InstanceConfig};
+        use nous_foundation::{
+            clock::Clock, configuration::Configuration, instance::InstanceConfig,
+        };
         let deployment = if paths.config.exists() {
-            InstanceConfig::load(paths).map_err(|error| nous_domain::Error::invalid(error.to_string()))?
-        } else { InstanceConfig::default() };
+            InstanceConfig::load(paths)
+                .map_err(|error| nous_domain::Error::invalid(error.to_string()))?
+        } else {
+            InstanceConfig::default()
+        };
         let roles = crate::composition::model_roles()?;
         let registry = crate::composition::configuration_registry(&roles)?;
         let document = serde_json::to_value(deployment)?;
         if !paths.database.exists() {
             return InstanceConfig::from_snapshot(&registry.deployment_snapshot(&document)?);
         }
-        let database = nous_storage::Database::open_read_only(&paths.database, Clock::operation_snapshot).await?;
+        let database =
+            nous_storage::Database::open_read_only(&paths.database, Clock::operation_snapshot)
+                .await?;
         let result = async {
             let configuration = Configuration::new(database.clone(), registry, &document).await?;
-            InstanceConfig::from_snapshot(&configuration.snapshot(&ConfigScope::Instance, true).await?)
-        }.await;
+            InstanceConfig::from_snapshot(
+                &configuration.snapshot(&ConfigScope::Instance, true).await?,
+            )
+        }
+        .await;
         database.close().await;
         result
     }
@@ -151,7 +187,10 @@ impl App {
         ctx: &CallContext,
         request: ConfigChangeRequest,
     ) -> Result<OperationReceipt> {
-        let receipt = self.configuration.apply(ctx, &request.operation_id, &request.scope, &request.edits).await?;
+        let receipt = self
+            .configuration
+            .apply(ctx, &request.operation_id, &request.scope, &request.edits)
+            .await?;
         self.tasks.notify_wake();
         Ok(receipt)
     }

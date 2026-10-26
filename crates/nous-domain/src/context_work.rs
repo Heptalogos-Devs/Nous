@@ -80,7 +80,7 @@ pub struct CreateWorkContextRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
 pub enum WorkContextChange {
-    Edit { content: WorkContextContent },
+    Edit { content: Box<WorkContextContent> },
     Pin { anchors: Vec<RetrievalTarget> },
     Unpin { anchors: Vec<RetrievalTarget> },
     ClearText,

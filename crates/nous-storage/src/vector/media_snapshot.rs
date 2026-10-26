@@ -1,5 +1,5 @@
 //! Authorized media candidates retain their exact lineage in one Authority view.
-use crate::{Database, ReadView, not_found, storage_error};
+use crate::{ReadView, not_found, storage_error};
 use nous_domain::{media::*, *};
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
@@ -14,48 +14,16 @@ pub struct MediaRetrievalSnapshot {
     pub entries: Vec<MediaRetrievalEntry>,
     pub complete: bool,
 }
-impl Database {
-    pub async fn media_retrieval_snapshot(
-        &self,
-        namespace: &NamespaceId,
-        subject: &SubjectId,
-        space: &str,
-        as_of_commit: Option<i64>,
-        limit: usize,
-    ) -> Result<MediaRetrievalSnapshot> {
-        let mut view = self.read_view().await?;
-        let result = view
-            .media_retrieval_snapshot(namespace, subject, space, as_of_commit, limit, None)
-            .await?;
-        view.finish().await?;
-        Ok(result)
-    }
-    pub async fn media_reference_snapshot(
-        &self,
-        namespace: &NamespaceId,
-        subject: &SubjectId,
-        space: &str,
-        reference: &MediaReference,
-        as_of_commit: Option<i64>,
-    ) -> Result<MediaRetrievalSnapshot> {
-        let mut view = self.read_view().await?;
-        let result = view
-            .media_reference_snapshot(namespace, subject, space, reference, as_of_commit, None)
-            .await?;
-        view.finish().await?;
-        Ok(result)
-    }
-}
 impl ReadView {
     pub async fn media_retrieval_snapshot(
         &mut self,
         namespace: &NamespaceId,
         subject: &SubjectId,
-        _space: &str,
-        as_of_commit: Option<i64>,
-        limit: usize,
-        source_read: Option<&crate::SourceReadView>,
+        options: &super::QuerySnapshotOptions<'_>,
     ) -> Result<MediaRetrievalSnapshot> {
+        let limit = options.limit;
+        let as_of_commit = options.as_of_commit;
+        let source_read = options.source_read;
         let _request_limit = i64::try_from(limit)
             .ok()
             .filter(|limit| *limit > 0)
@@ -65,8 +33,8 @@ impl ReadView {
             })?;
         self.subject(namespace, subject).await?;
         let watermark = cutoff(self.watermark, as_of_commit)?;
-        let rows=sqlx::query("SELECT 'original' AS kind,m.id,0 AS revision FROM materials m WHERE m.namespace_id=?1 AND m.commit_seq<=?3 AND EXISTS(SELECT 1 FROM observations o WHERE o.namespace_id=m.namespace_id AND o.material_id=m.id AND o.subject_id=?2) UNION ALL SELECT 'source_region',r.id,0 FROM source_regions r WHERE r.namespace_id=?1 AND r.commit_seq<=?3 AND EXISTS(SELECT 1 FROM observations o WHERE o.namespace_id=r.namespace_id AND o.material_id=r.material_id AND o.subject_id=?2) UNION ALL SELECT 'representation',r.id,r.revision FROM media_representations r WHERE r.namespace_id=?1 AND r.subject_id=?2 AND r.revision=(SELECT max(h.revision) FROM media_representations h WHERE h.id=r.id AND h.commit_seq<=?3) UNION ALL SELECT 'derived_region',r.id,0 FROM derived_regions r WHERE r.namespace_id=?1 AND r.subject_id=?2 AND r.commit_seq<=?3 ORDER BY kind,id")
-            .bind(namespace.as_str()).bind(subject.as_str()).bind(watermark).fetch_all(&mut *self.tx).await.map_err(storage_error)?;
+        let rows=sqlx::query("SELECT 'original' AS kind,m.id,0 AS revision FROM materials m WHERE m.namespace_id=?1 AND m.commit_seq<=?3 AND EXISTS(SELECT 1 FROM observations o WHERE o.namespace_id=m.namespace_id AND o.material_id=m.id AND o.subject_id=?2) UNION ALL SELECT 'source_region',r.id,0 FROM source_regions r WHERE r.namespace_id=?1 AND r.commit_seq<=?3 AND EXISTS(SELECT 1 FROM observations o WHERE o.namespace_id=r.namespace_id AND o.material_id=r.material_id AND o.subject_id=?2) UNION ALL SELECT 'representation',r.id,r.revision FROM media_representations r WHERE r.namespace_id=?1 AND r.subject_id=?2 AND r.commit_seq<=?3 AND (?4 OR r.revision=(SELECT max(h.revision) FROM media_representations h WHERE h.id=r.id AND h.commit_seq<=?3)) UNION ALL SELECT 'derived_region',r.id,0 FROM derived_regions r WHERE r.namespace_id=?1 AND r.subject_id=?2 AND r.commit_seq<=?3 ORDER BY kind,id")
+            .bind(namespace.as_str()).bind(subject.as_str()).bind(watermark).bind(options.history).fetch_all(&mut *self.tx).await.map_err(storage_error)?;
         let mut complete = true;
         let mut entries = Vec::new();
         for row in rows {
@@ -92,6 +60,18 @@ impl ReadView {
             {
                 continue;
             }
+            if !crate::source::query_filter::target_matches(
+                &mut self.tx,
+                namespace,
+                subject,
+                &RetrievalTarget::Media(reference.clone()),
+                options.filters,
+                as_of_commit,
+            )
+            .await?
+            {
+                continue;
+            }
             if entries.len() == limit {
                 complete = false;
                 break;
@@ -113,11 +93,11 @@ impl ReadView {
         &mut self,
         namespace: &NamespaceId,
         subject: &SubjectId,
-        _space: &str,
+        options: &super::QuerySnapshotOptions<'_>,
         reference: &MediaReference,
-        as_of_commit: Option<i64>,
-        source_read: Option<&crate::SourceReadView>,
     ) -> Result<MediaRetrievalSnapshot> {
+        let as_of_commit = options.as_of_commit;
+        let source_read = options.source_read;
         self.subject(namespace, subject).await?;
         let watermark = cutoff(self.watermark, as_of_commit)?;
         if let Some(view) = source_read
@@ -136,7 +116,20 @@ impl ReadView {
             .ok_or_else(not_found)?;
         Ok(MediaRetrievalSnapshot {
             watermark,
-            entries: vec![entry],
+            entries: if crate::source::query_filter::target_matches(
+                &mut self.tx,
+                namespace,
+                subject,
+                &RetrievalTarget::Media(reference.clone()),
+                options.filters,
+                as_of_commit,
+            )
+            .await?
+            {
+                vec![entry]
+            } else {
+                Vec::new()
+            },
             complete: true,
         })
     }

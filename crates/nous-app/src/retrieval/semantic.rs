@@ -13,11 +13,25 @@ impl App {
         &self,
         ctx: &CallContext,
         namespace: &NamespaceId,
-        request: &QueryRequest,
+        leaf: &nous_domain::nousql::PlannedQuery,
         view: &mut QueryView,
         config: &ResolvedModel,
     ) -> Result<()> {
-        let inputs = view.pending_inputs(request)?;
+        let request = &leaf.request;
+        let mut inputs = view.pending_inputs(request)?;
+        let activation = super::nousql::ranking::activations(leaf);
+        for entry in view.entries.iter().filter(|entry| {
+            activation.contains(&entry.reference())
+                && entry.can_embed()
+                && entry.accepted_embedding().is_none()
+        }) {
+            if let Some(input) = &entry.input
+                && !inputs.iter().any(|known| {
+                    known.target == input.target && known.source_hash() == input.source_hash()
+                }) {
+                    inputs.push(input.clone());
+                }
+        }
         if inputs.is_empty() {
             return Ok(());
         }
@@ -49,11 +63,14 @@ impl App {
         &self,
         ctx: &CallContext,
         namespace: &NamespaceId,
-        request: &QueryRequest,
+        leaf: &nous_domain::nousql::PlannedQuery,
         view: &QueryView,
         config: &ResolvedModel,
         policy: &super::config::RetrievalPolicy,
     ) -> Result<(Vec<(String, f32)>, SemanticQueryInfo, bool)> {
+        let mut physical = leaf.request.clone();
+        physical.limit = leaf.candidate_budget.max(1);
+        let request = &physical;
         let space = config.space()?;
         let mut parts = Vec::new();
         if !request.input.text.trim().is_empty() {
@@ -75,7 +92,14 @@ impl App {
             );
         }
         let query = self
-            .query_embedding(ctx, namespace, &request.subject_id, parts, config)
+            .query_embedding(
+                ctx,
+                namespace,
+                &request.subject_id,
+                parts,
+                &leaf.query_sources,
+                config,
+            )
             .await?;
         let eligible = view.selected(request).collect::<Vec<_>>();
         let mut candidates = Vec::new();
@@ -107,6 +131,30 @@ impl App {
                     });
                 } else {
                     missing_tags.insert(key);
+                }
+            }
+            for selector in leaf.selectors.iter().filter(|selector| {
+                selector.selector == nous_domain::nousql::SelectorKind::Tag
+                    && selector.targets.contains(&entry.reference())
+            }) {
+                for canonical in &selector.canonical {
+                    let Some(tag) = view
+                        .entries
+                        .iter()
+                        .find(|candidate| candidate.reference().to_string() == *canonical)
+                        .and_then(|candidate| candidate.accepted_embedding())
+                    else {
+                        continue;
+                    };
+                    for root in &entry.roots {
+                        tags.push(ServingTag {
+                            key: canonical.clone(),
+                            label: canonical.clone(),
+                            vector: tag.vector.clone(),
+                            source_ref: format!("material:{root}"),
+                        });
+                    }
+                    watermark = watermark.max(tag.commit_seq);
                 }
             }
             watermark = watermark
@@ -171,13 +219,26 @@ impl App {
             request.limit
         };
         let vector = query.vector;
+        let core_tags = leaf
+            .selectors
+            .iter()
+            .filter(|selector| selector.selector == nous_domain::nousql::SelectorKind::Tag)
+            .flat_map(|selector| selector.canonical.clone())
+            .collect::<Vec<_>>();
+        let diagnostics = leaf.diagnostics.clone();
         let (result, restored) = nous_foundation::execution::blocking(
             &tokio_util::sync::CancellationToken::new(),
             move |_| {
                 let profile = if mode == QueryMode::Dense {
                     ServingProfile::Dense
                 } else {
-                    ServingProfile::Vcp(Box::default())
+                    let config = nous_retrieval::serving::VcpConfig {
+                        candidate_limit: limit,
+                        core_tags,
+                        include_trace: diagnostics == "full",
+                        ..Default::default()
+                    };
+                    ServingProfile::Vcp(Box::new(config))
                 };
                 let restored = generation.restored();
                 generation

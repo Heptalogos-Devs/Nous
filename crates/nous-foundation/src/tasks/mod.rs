@@ -83,6 +83,7 @@ impl Tasks {
             job.state = JobState::Waiting;
             job.wait = Some(WaitCondition {
                 kind: "dependencies".into(),
+                requires_attention: false,
                 resume: ResumeCondition::Ready,
                 details: json!({}),
             });

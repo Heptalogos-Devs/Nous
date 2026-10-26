@@ -18,6 +18,7 @@ macro_rules! catalog_key {
     };
 }
 catalog_key!(ReferenceKey);
+catalog_key!(TargetKey);
 catalog_key!(SourceKey);
 catalog_key!(MemoryKey);
 catalog_key!(ObservationKey);
@@ -57,7 +58,7 @@ pub struct RawConceptContent {
     pub description: String,
     pub aliases: Vec<String>,
     pub canonical: Option<ReferenceKey>,
-    pub members: Vec<ReferenceKey>,
+    pub members: Vec<TargetKey>,
     pub lineage: Vec<RawLineageLink>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -66,6 +67,32 @@ pub struct RawEpisodeMember {
     pub source: SourceKey,
     pub role: String,
     pub ordinal: u32,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RawEntityMention {
+    pub target: TargetKey,
+    pub role: String,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RawEntityAttribute {
+    pub predicate: String,
+    pub value: String,
+    pub epistemic: d::EpistemicStance,
+    pub validity: Option<d::TimeRange>,
+    pub evidence: Vec<RawEvidenceLink>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RawEntityContent {
+    pub entity_type: d::EntityType,
+    pub label: String,
+    pub aliases: Vec<String>,
+    pub description: String,
+    pub identifiers: Vec<d::ExternalEntityIdentity>,
+    pub mentions: Vec<RawEntityMention>,
+    pub attributes: Vec<RawEntityAttribute>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -138,6 +165,7 @@ pub struct RawAssociationContent {
 pub enum RawCognitiveContent {
     MemorySemantics(RawMemorySemantics),
     Concept(RawConceptContent),
+    Entity(RawEntityContent),
     Episode(RawEpisodeContent),
     Journal(RawJournalContent),
     Schema(RawSchemaContent),

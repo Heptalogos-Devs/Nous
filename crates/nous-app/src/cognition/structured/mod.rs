@@ -275,11 +275,12 @@ impl App {
                 };
                 match self
                     .sources
-                    .lineage(
+                    .lineage_for_event(
                         &source_context,
                         &object.namespace_id,
                         &object.subject_id,
                         &memory.source,
+                        &memory.observation_id,
                     )
                     .await
                 {
@@ -317,7 +318,13 @@ impl App {
             }
         }
         let producer = match &object.producer_call_id {
-            Some(id) => Some(self.read_model_call(ctx, id).await?),
+            Some(id) => match self.read_model_call(ctx, id).await {
+                Ok(call) => Some(call),
+                Err(error) if matches!(error.code, ErrorCode::Forbidden | ErrorCode::NotFound) => {
+                    None
+                }
+                Err(error) => return Err(error),
+            },
             None => None,
         };
         Ok(

@@ -31,6 +31,12 @@ impl App {
         let mut policy = self.retrieval_policy(&namespace, subject).await?;
         policy.max_snapshot_entries = policy.max_snapshot_entries.min(limit);
         let request = QueryRequest {
+            sort: None,
+            expression: None,
+            clock: None,
+            history: false,
+            filters: Default::default(),
+            times: Vec::new(),
             source_read: None,
             mode: QueryMode::Lexical,
             subject_id: subject.clone(),
@@ -293,10 +299,12 @@ impl App {
         namespace: &NamespaceId,
         subject: &SubjectId,
         parts: Vec<EmbeddingPart>,
+        read_requirements: &[SourceReadRef],
         config: &ResolvedModel,
     ) -> Result<EmbeddingRecord> {
         let space = config.space()?;
-        let input = EmbeddingInputItem::query_parts(parts)?;
+        let mut input = EmbeddingInputItem::query_parts(parts)?;
+        input.read_requirements = read_requirements.to_vec();
         if let Some(record) = self
             .database
             .embedding_record(

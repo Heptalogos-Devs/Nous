@@ -9,13 +9,14 @@ impl Document {
         Self {
             writer: EmitterConfig::new()
                 .perform_indent(true)
+                .write_document_declaration(false)
                 .create_writer(Vec::new()),
         }
     }
     pub fn start(&mut self, name: &str, attributes: &[(&str, &str)]) -> Result<()> {
         let mut element = XmlEvent::start_element(name);
         for (key, value) in attributes {
-            element = element.attr(*key, *value);
+            element = element.attr(*key, value);
         }
         self.writer.write(element).map_err(Error::dependency)
     }

@@ -138,6 +138,12 @@ impl App {
             }
         }
         let mut query = request.query.clone().unwrap_or_else(|| QueryRequest {
+            sort: None,
+            expression: None,
+            clock: None,
+            history: false,
+            filters: Default::default(),
+            times: Vec::new(),
             source_read: None,
             mode: QueryMode::Lexical,
             subject_id: request.subject_id.clone(),

@@ -30,7 +30,7 @@ impl WriteTransaction {
         space: &str,
         hash: &str,
     ) -> Result<Vec<EmbeddingSubscription>> {
-        sqlx::query("SELECT * FROM embedding_subscriptions WHERE namespace_id=? AND subject_id=? AND space_id=? AND source_hash=? ORDER BY accepted_commit_seq,source_key")
+        sqlx::query("SELECT * FROM embedding_subscriptions WHERE namespace_id=? AND subject_id=? AND space_id=? AND source_hash=? AND retired_commit_seq IS NULL ORDER BY accepted_commit_seq,source_key")
             .bind(namespace.as_str()).bind(subject.as_str()).bind(space).bind(hash).fetch_all(&mut *self.tx).await.map_err(storage_error)?.into_iter().map(|row|Ok(EmbeddingSubscription{
                 namespace_id:NamespaceId(row.get("namespace_id")),subject_id:SubjectId(row.get("subject_id")),space_id:row.get("space_id"),accepted_commit_seq:row.get("accepted_commit_seq"),input:EmbeddingInputItem{target:target_row(&row)?,parts:serde_json::from_str(row.get("parts"))?,read_requirements:serde_json::from_str(row.get("read_requirements"))?},
             })).collect()
@@ -90,8 +90,8 @@ impl WriteTransaction {
         &mut self,
         subscription: &EmbeddingSubscription,
     ) -> Result<()> {
-        sqlx::query("DELETE FROM embedding_subscriptions WHERE namespace_id=? AND subject_id=? AND space_id=? AND source_hash=? AND source_key=? AND accepted_commit_seq=?")
-            .bind(subscription.namespace_id.as_str()).bind(subscription.subject_id.as_str()).bind(&subscription.space_id).bind(subscription.input.source_hash()).bind(subscription.input.source_key()?).bind(subscription.accepted_commit_seq).execute(&mut *self.tx).await.map_err(write_error)?;
+        sqlx::query("UPDATE embedding_subscriptions SET retired_commit_seq=? WHERE namespace_id=? AND subject_id=? AND space_id=? AND source_hash=? AND source_key=? AND accepted_commit_seq=? AND retired_commit_seq IS NULL")
+            .bind(self.commit_seq()).bind(subscription.namespace_id.as_str()).bind(subscription.subject_id.as_str()).bind(&subscription.space_id).bind(subscription.input.source_hash()).bind(subscription.input.source_key()?).bind(subscription.accepted_commit_seq).execute(&mut *self.tx).await.map_err(write_error)?;
         Ok(())
     }
     pub async fn validate_embedding_reservation(

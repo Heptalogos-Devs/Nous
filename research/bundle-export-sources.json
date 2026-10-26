@@ -6,14 +6,30 @@
     "_build_knowledge_docs",
     "_export_bundle",
     "_export_vector_member",
-    "_safe_file_stem"
+    "_safe_file_stem",
+    "_remap_full_state",
+    "_register_installation",
+    "_install_bundle_metadata",
+    "_import_bundle",
+    "_uninstall_locked"
   ],
   "actual_upstream_helpers": [
     "_canonical_image_evidence",
     "_canonical_image_semantics",
     "_canonical_json_bytes",
     "_json_list",
-    "_json_object"
+    "_json_object",
+    "_replace_json_tokens"
+  ],
+  "nous_owners": [
+    "crates/nous-app/src/bundles",
+    "crates/nous-storage/src/bundle"
+  ],
+  "adapted_responsibilities": [
+    "semantic digest and archive inventory",
+    "identity remapping with explicit scoped installation ownership",
+    "single-transaction metadata and ownership acceptance",
+    "shared-resource retention during withdrawal"
   ],
   "fixtures": [
     {

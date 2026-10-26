@@ -9,6 +9,14 @@ pub(crate) async fn validate_input(
     input: &EmbeddingInputItem,
 ) -> Result<()> {
     input.validate()?;
+    if let Some(target) = input.target.item()
+        && !crate::bundle::registry::active(conn, namespace, subject, target).await?
+    {
+        return Err(Error::new(
+            ErrorCode::Conflict,
+            "embedding target belongs to a withdrawn knowledge package",
+        ));
+    }
     if let Some(reference) = input.target.item().and_then(RetrievalTarget::cognition) {
         validate_reference(conn, namespace, subject, reference).await?;
         if input.text_content() != Some(text(conn, namespace, subject, reference).await?.as_str()) {
@@ -125,7 +133,7 @@ pub(crate) async fn validate_reference(
     if closure
         .nodes
         .iter()
-        .any(|node| node.status == SourceStatus::Missing)
+        .any(|node| matches!(node.status, SourceStatus::Missing | SourceStatus::Purged))
     {
         return Err(Error::new(
             ErrorCode::Conflict,

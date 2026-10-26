@@ -140,7 +140,7 @@ class ManagedBinding:
                     },
                 }
             )
-            preparation_id = receipt["result"]["id"]
+            preparation_id = receipt["result"]["preparation_id"]
             self._preparation_id = preparation_id
             if self._closed:
                 await self._cancel_pending()
@@ -154,7 +154,7 @@ class ManagedBinding:
             if response is None:
                 raise NousError(
                     {
-                        "code": "dependency_unavailable",
+                        "code": "DependencyUnavailable",
                         "message": "context preparation has no usable projection",
                     }
                 )
@@ -186,6 +186,8 @@ class ManagedBinding:
                 "context response is not this binding's unchanged pending preparation"
             )
         response = deepcopy(self._pending_snapshot)
+        if not isinstance(response, dict):
+            raise TypeError("context response must be a JSON object")
         projection, cursor = response["projection"], response["cursor"]
         expected = {
             "subject_id": self.subject_id,
@@ -304,23 +306,12 @@ class ManagedBinding:
         admission_id = self._admissions.get(applied, {}).get(invocation_id)
         if admission_id is None:
             raise ValueError("outcome requires an admitted actual model input")
-        if outcome not in ("completed", "failed", "cancelled"):
-            raise ValueError("outcome must describe the actual host invocation")
-        when = occurred_at
-        if when.tzinfo is None:
-            raise ValueError("outcome time requires an explicit timezone")
-        return await self.client.contexts(
-            {
-                "action": "report",
-                "operation_id": event_id("report", invocation_id, admission_id),
-                "request": {
-                    "admission_id": admission_id,
-                    "invocation_id": invocation_id,
-                    "outcome": outcome,
-                    "occurred_at": when.isoformat(),
-                    "uses": deepcopy(list(uses)),
-                },
-            }
+        return await self.client.report_context(
+            admission_id,
+            invocation_id=invocation_id,
+            outcome=outcome,
+            occurred_at=occurred_at,
+            uses=uses,
         )
 
     async def close(self) -> None:
@@ -363,7 +354,7 @@ class ManagedBinding:
         if required and self._preparation_id is not None:
             raise NousError(
                 {
-                    "code": "dependency_unavailable",
+                    "code": "DependencyUnavailable",
                     "message": "previous context preparation is still pending",
                     "context": {"preparation_id": preparation_id},
                 }

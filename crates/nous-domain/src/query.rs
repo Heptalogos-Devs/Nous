@@ -92,6 +92,15 @@ pub enum QueryDomain {
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct QueryRequest {
+    pub sort: Option<QuerySort>,
+    pub expression: Option<crate::nousql::QueryExpression>,
+    pub clock: Option<TimePoint>,
+    #[serde(default)]
+    pub history: bool,
+    #[serde(default)]
+    pub filters: crate::QueryFilters,
+    #[serde(default)]
+    pub times: Vec<TimeFilter>,
     #[serde(default)]
     pub mode: QueryMode,
     pub subject_id: SubjectId,
@@ -117,6 +126,16 @@ pub struct QueryRequest {
 
 impl QueryRequest {
     pub fn validate(&self) -> Result<()> {
+        if let Some(domain) = self.sort.as_ref().and_then(|sort| sort.domain.as_deref()) {
+            crate::validate_name(domain, "sort time domain")?;
+        }
+        self.filters.validate()?;
+        if let Some(clock) = &self.clock {
+            clock.validate()?;
+        }
+        for time in &self.times {
+            time.validate()?;
+        }
         if let Some(scope) = &self.source_read {
             scope.validate()?;
             if scope.subject_id != self.subject_id {
@@ -177,13 +196,57 @@ pub enum QueryMode {
 fn default_query_limit() -> usize {
     10
 }
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SortDirection {
+    Asc,
+    Desc,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct QuerySort {
+    pub axis: TimeAxis,
+    pub direction: SortDirection,
+    pub domain: Option<String>,
+}
+impl QuerySort {
+    pub fn compare(
+        &self,
+        left: Option<&TimePoint>,
+        right: Option<&TimePoint>,
+    ) -> std::cmp::Ordering {
+        let left = left.filter(|point| self.domain.as_deref() == Some(point.domain.as_str()));
+        let right = right.filter(|point| self.domain.as_deref() == Some(point.domain.as_str()));
+        match (left, right) {
+            (Some(left), Some(right)) => {
+                let order = left.coordinate.cmp(&right.coordinate);
+                match self.direction {
+                    SortDirection::Asc => order,
+                    SortDirection::Desc => order.reverse(),
+                }
+            }
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => std::cmp::Ordering::Equal,
+        }
+    }
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QueryHitOrder {
+    pub axis: TimeAxis,
+    pub point: TimePoint,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QueryHit {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub order: Option<QueryHitOrder>,
     pub reference: RetrievalTarget,
     pub object: RetrievalRecord,
     pub score: f32,
     pub source_roots: Vec<MaterialId>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub materialized: Option<Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -204,6 +267,8 @@ pub struct ProjectionIssue {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QueryResult {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plan: Option<crate::nousql::QueryPlan>,
     pub hits: Vec<QueryHit>,
     pub coverage: QueryCoverage,
     #[serde(default, skip_serializing_if = "Option::is_none")]

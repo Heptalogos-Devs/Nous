@@ -231,6 +231,13 @@ CREATE TABLE IF NOT EXISTS memory_purges (
 CREATE INDEX IF NOT EXISTS purge_changes ON memory_purges(commit_seq, memory_id);
 CREATE INDEX IF NOT EXISTS subject_purge_changes ON memory_purges(namespace_id, subject_id, commit_seq, memory_id);
 
+CREATE TABLE IF NOT EXISTS source_tombstones (
+ namespace_id TEXT NOT NULL,subject_id TEXT NOT NULL,target_key TEXT NOT NULL,
+ body TEXT NOT NULL CHECK(json_valid(body)),commit_seq INTEGER NOT NULL CHECK(commit_seq>0),
+ PRIMARY KEY(namespace_id,subject_id,target_key),
+ FOREIGN KEY(namespace_id,subject_id) REFERENCES subjects(namespace_id,id)
+);
+
 CREATE TABLE IF NOT EXISTS material_details (
     material_id TEXT PRIMARY KEY NOT NULL,
     namespace_id TEXT NOT NULL,
@@ -244,6 +251,8 @@ CREATE TABLE IF NOT EXISTS material_details (
 
 CREATE TABLE IF NOT EXISTS model_calls (
     id TEXT PRIMARY KEY NOT NULL,
+    origin TEXT NOT NULL CHECK(json_valid(origin) AND json_extract(origin,'$.kind') IN('local','imported')),
+    local_job_id TEXT,
     trace_id TEXT NOT NULL,
     reservation_commit_seq INTEGER NOT NULL CHECK(reservation_commit_seq > 0),
     job_id TEXT NOT NULL,
@@ -260,12 +269,14 @@ CREATE TABLE IF NOT EXISTS model_calls (
     cost TEXT CHECK (cost IS NULL OR json_valid(cost)),
     created_at TEXT NOT NULL,
     completed_at TEXT,
-    UNIQUE(job_id, step_key, attempt),
     UNIQUE(job_id, id),
     UNIQUE(namespace_id, subject_id, id),
-    FOREIGN KEY(job_id, namespace_id, subject_id, trace_id)
-        REFERENCES task_records(job_id, namespace_id, subject_id, trace_id)
+    FOREIGN KEY(local_job_id, namespace_id, subject_id, trace_id)
+        REFERENCES task_records(job_id, namespace_id, subject_id, trace_id),
+    CHECK((json_extract(origin,'$.kind')='local' AND local_job_id IS NOT NULL AND local_job_id=job_id)
+        OR (json_extract(origin,'$.kind')='imported' AND local_job_id IS NULL))
 );
+CREATE UNIQUE INDEX IF NOT EXISTS local_model_steps ON model_calls(job_id,step_key,attempt) WHERE local_job_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS model_budget_charges (
     call_id TEXT NOT NULL REFERENCES model_calls(id),
@@ -290,7 +301,7 @@ CREATE TABLE IF NOT EXISTS structured_objects (
     id TEXT PRIMARY KEY NOT NULL,
     namespace_id TEXT NOT NULL,
     subject_id TEXT NOT NULL,
-    kind TEXT NOT NULL CHECK(kind IN ('memory_semantics','concept','episode','journal','schema','association')),
+    kind TEXT NOT NULL CHECK(kind IN ('memory_semantics','concept','entity','episode','journal','schema','association')),
     current_revision INTEGER NOT NULL CHECK(current_revision>0),
     commit_seq INTEGER NOT NULL CHECK(commit_seq>0),
     UNIQUE(namespace_id,subject_id,id),
@@ -305,7 +316,7 @@ CREATE TABLE IF NOT EXISTS structured_revisions (
     namespace_id TEXT NOT NULL,
     subject_id TEXT NOT NULL,
     revision INTEGER NOT NULL CHECK(revision>0),
-    kind TEXT NOT NULL CHECK(kind IN ('memory_semantics','concept','episode','journal','schema','association')),
+    kind TEXT NOT NULL CHECK(kind IN ('memory_semantics','concept','entity','episode','journal','schema','association')),
     body TEXT NOT NULL CHECK(json_valid(body) AND json_extract(body,'$.kind')=kind),
     times TEXT NOT NULL CHECK(json_valid(times)),
     producer_call_id TEXT,
@@ -329,7 +340,7 @@ CREATE TABLE IF NOT EXISTS structured_links (
     revision INTEGER NOT NULL,
     ordinal INTEGER NOT NULL CHECK(ordinal>=0),
     category TEXT NOT NULL CHECK(category IN('body','evidence','body_evidence')),
-    source_kind TEXT NOT NULL CHECK(source_kind IN('material','media','observation','memory','memory_semantics','concept','episode','journal','schema','association')),
+    source_kind TEXT NOT NULL CHECK(source_kind IN('material','media','observation','memory','memory_semantics','concept','entity','episode','journal','schema','association')),
     source_id TEXT NOT NULL,
     source_revision INTEGER CHECK(source_revision IS NULL OR source_revision>0),
     polarity TEXT CHECK(polarity IS NULL OR polarity IN('support','contradict','context')),
@@ -351,7 +362,7 @@ CREATE TABLE IF NOT EXISTS concept_aliases (
     alias_key TEXT NOT NULL,
     concept_id TEXT NOT NULL,
     revision INTEGER NOT NULL,
-    PRIMARY KEY(namespace_id,subject_id,alias_key),
+    PRIMARY KEY(namespace_id,subject_id,alias_key,concept_id),
     FOREIGN KEY(namespace_id,subject_id,concept_id,revision)
         REFERENCES structured_revisions(namespace_id,subject_id,object_id,revision)
 );
@@ -424,6 +435,8 @@ CREATE TABLE IF NOT EXISTS embedding_subscriptions (
  parts TEXT NOT NULL CHECK(json_valid(parts) AND json_type(parts)='array'),
  read_requirements TEXT NOT NULL CHECK(json_valid(read_requirements) AND json_type(read_requirements)='array'),
  accepted_commit_seq INTEGER NOT NULL,
+ retired_commit_seq INTEGER,
+ origin TEXT CHECK(origin IS NULL OR json_valid(origin)),
  PRIMARY KEY(namespace_id,subject_id,space_id,source_hash,source_key,accepted_commit_seq),
  FOREIGN KEY(namespace_id,subject_id) REFERENCES subjects(namespace_id,id),
  FOREIGN KEY(accepted_commit_seq) REFERENCES operation_receipts(commit_seq) DEFERRABLE INITIALLY DEFERRED
@@ -442,9 +455,10 @@ CREATE TABLE IF NOT EXISTS embedding_contents (
 CREATE TABLE IF NOT EXISTS embedding_records (
  namespace_id TEXT NOT NULL,subject_id TEXT NOT NULL,space_id TEXT NOT NULL,source_hash TEXT NOT NULL,
  target TEXT NOT NULL CHECK(json_valid(target)),source_key TEXT NOT NULL,identity_key TEXT NOT NULL,
- commit_seq INTEGER NOT NULL CHECK(commit_seq>0),
+ commit_seq INTEGER NOT NULL CHECK(commit_seq>0),accepted_commit_seq INTEGER NOT NULL,
  PRIMARY KEY(namespace_id,subject_id,space_id,source_key,source_hash),
- FOREIGN KEY(namespace_id,subject_id,space_id,source_hash) REFERENCES embedding_contents(namespace_id,subject_id,space_id,source_hash)
+ FOREIGN KEY(namespace_id,subject_id,space_id,source_hash) REFERENCES embedding_contents(namespace_id,subject_id,space_id,source_hash),
+ FOREIGN KEY(namespace_id,subject_id,space_id,source_hash,source_key,accepted_commit_seq) REFERENCES embedding_subscriptions(namespace_id,subject_id,space_id,source_hash,source_key,accepted_commit_seq) DEFERRABLE INITIALLY DEFERRED
 );
 CREATE INDEX IF NOT EXISTS record_identity_history ON embedding_records(namespace_id,subject_id,identity_key,space_id,commit_seq);
 CREATE INDEX IF NOT EXISTS record_content ON embedding_records(namespace_id,subject_id,space_id,source_hash,commit_seq);

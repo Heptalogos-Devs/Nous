@@ -26,10 +26,13 @@ impl Entry {
                     && (request.kinds.is_empty() || request.kinds.contains(&value.kind))
             }
             RetrievalTarget::Media(_) => {
-                request.wants_domain(QueryDomain::Media) && request.kinds.is_empty()
+                request.wants_domain(QueryDomain::Media)
+                    && (request.kinds.is_empty() || request.domains.contains(&QueryDomain::Media))
             }
         };
         kind_matches
+            && request.filters.matches_record(&self.object)
+            && self.matches_times(request)
             && request
                 .reference
                 .as_ref()
@@ -39,56 +42,11 @@ impl Entry {
                 || request.reference.is_some()
                 || (request.include_deleted && self.object.deleted())
                 || self.object.is_active())
-            && request
-                .time
-                .as_ref()
-                .is_none_or(|filter| self.matches_time(filter))
             && request.source.as_ref().is_none_or(|source| {
                 self.materials
                     .iter()
                     .any(|root| root.material.source.as_ref() == Some(source))
             })
-    }
-    fn matches_time(&self, filter: &TimeFilter) -> bool {
-        if let Some(times) = self.object.cognitive_times() {
-            return filter.matches(times);
-        }
-        match filter.axis {
-            TimeAxis::Event => self.materials.iter().any(|root| {
-                root.material
-                    .event_time
-                    .as_ref()
-                    .is_some_and(|time| filter.range.contains(time))
-            }),
-            TimeAxis::Observation => self.observations.iter().any(|event| {
-                event
-                    .observed_at
-                    .as_ref()
-                    .is_some_and(|time| filter.range.contains(time))
-            }),
-            TimeAxis::Formation => {
-                let reference = match &self.object {
-                    RetrievalRecord::Media(MediaRecord::Representation(value)) => {
-                        Some(value.reference())
-                    }
-                    RetrievalRecord::Media(MediaRecord::DerivedRegion(value)) => {
-                        Some(value.representation.clone())
-                    }
-                    _ => None,
-                };
-                self.media_source
-                    .as_ref()
-                    .zip(reference)
-                    .is_some_and(|(source, reference)| {
-                        source.representations.iter().any(|value| {
-                            value.reference() == reference
-                                && filter.range.contains(&value.formed_at)
-                        })
-                    })
-            }
-            TimeAxis::Recorded => filter.range.contains(&self.recorded),
-            TimeAxis::Validity => false,
-        }
     }
     pub fn can_embed(&self) -> bool {
         !self.object.deleted() && self.sources_complete && self.input.is_some()

@@ -56,9 +56,16 @@ impl CognitiveContent {
                 if let Some(canonical) = &value.canonical {
                     validate_ref_kind(canonical, CognitiveKind::Concept)?;
                 }
-                validate_refs(&value.members, None)?;
+                let mut members = BTreeSet::new();
+                for member in &value.members {
+                    member.validate()?;
+                    if !members.insert(member) {
+                        return Err(Error::invalid("Concept repeats a member"));
+                    }
+                }
                 validate_lineage(&value.lineage, CognitiveKind::Concept)?;
             }
+            Self::Entity(value) => value.validate()?,
             Self::Episode(value) => {
                 text(&value.title, "episode title", 1024)?;
                 short(&value.track, "episode track")?;

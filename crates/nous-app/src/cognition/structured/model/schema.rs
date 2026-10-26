@@ -28,6 +28,13 @@ pub fn structured_output_schema(input: &StructuredFormationInput) -> ConfigResul
         .map(|source| source.key.clone())
         .chain(input.slots.iter().map(|slot| slot.key.clone()))
         .collect();
+    let target_keys: Vec<_> = input
+        .sources
+        .iter()
+        .filter(|source| source.source.retrieval_target().is_some())
+        .map(|source| source.key.clone())
+        .chain(input.slots.iter().map(|slot| slot.key.clone()))
+        .collect();
     let memory_keys: Vec<_> = input
         .sources
         .iter()
@@ -43,6 +50,7 @@ pub fn structured_output_schema(input: &StructuredFormationInput) -> ConfigResul
     for (name, values) in [
         ("SourceKey", source_keys),
         ("ReferenceKey", reference_keys),
+        ("TargetKey", target_keys),
         ("MemoryKey", memory_keys),
         ("ObservationKey", observation_keys.clone()),
     ] {

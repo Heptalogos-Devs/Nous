@@ -7,7 +7,7 @@ use std::{
     io::{Read, Seek, SeekFrom},
 };
 use zip::{CompressionMethod, ZipArchive};
-pub(super) struct ArchiveContents {
+pub(crate) struct ArchiveContents {
     pub members: BTreeMap<String, Member>,
     pub json_documents: BTreeMap<String, Value>,
     pub archive_sha256: String,
@@ -15,7 +15,7 @@ pub(super) struct ArchiveContents {
     pub expanded_bytes: u64,
     pub remaining_nodes: usize,
 }
-pub(super) fn read_archive<R: Read + Seek>(
+pub(crate) fn read_archive<R: Read + Seek>(
     mut reader: R,
     limits: &Limits,
 ) -> Result<ArchiveContents> {

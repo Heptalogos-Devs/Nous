@@ -20,7 +20,7 @@ pub async fn digest_file(path: &Path, cancel: &CancellationToken) -> Result<(Str
         let expected_len = metadata.len();
         let mut digest = Sha256::new();
         let mut byte_len = 0_u64;
-        let mut buffer = [0_u8; 64 * 1024];
+        let mut buffer = vec![0_u8; super::STREAM_BUFFER_BYTES];
         loop {
             execution::check_cancelled(&local)?;
             let count = input.read(&mut buffer)?;

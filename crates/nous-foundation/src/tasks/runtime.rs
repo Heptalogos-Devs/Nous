@@ -192,6 +192,7 @@ impl TaskRuntime {
             let failed = matches!(dependency_state, DependencyState::Failed);
             let wait = (!failed).then(|| WaitCondition {
                 kind: "dependencies".into(),
+                requires_attention: false,
                 resume: ResumeCondition::Ready,
                 details: json!({}),
             });
@@ -221,6 +222,7 @@ impl TaskRuntime {
             );
             let wait = WaitCondition {
                 kind: "capability".into(),
+                requires_attention: true,
                 resume: ResumeCondition::Ready,
                 details: json!({"task_kind":job.kind}),
             };

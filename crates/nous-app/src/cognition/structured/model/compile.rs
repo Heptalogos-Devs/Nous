@@ -79,8 +79,48 @@ impl RawCognitiveContent {
                     .as_ref()
                     .map(|key| input.reference(&key.0))
                     .transpose()?,
-                members: refs(&value.members)?,
+                members: value
+                    .members
+                    .iter()
+                    .map(|key| input.target(&key.0).map(d::SemanticTarget::from_reference))
+                    .collect::<d::Result<_>>()?,
                 lineage: lineage(&value.lineage)?,
+            }),
+            Self::Entity(value) => d::CognitiveContent::Entity(d::EntityContent {
+                entity_type: value.entity_type,
+                label: value.label.clone(),
+                aliases: value.aliases.clone(),
+                description: value.description.clone(),
+                identifiers: value.identifiers.clone(),
+                mentions: value
+                    .mentions
+                    .iter()
+                    .map(|mention| {
+                        Ok(d::EntityMention {
+                            target: d::SemanticTarget::from_reference(
+                                input.target(&mention.target.0)?,
+                            ),
+                            role: mention.role.clone(),
+                        })
+                    })
+                    .collect::<d::Result<_>>()?,
+                attributes: value
+                    .attributes
+                    .iter()
+                    .map(|attribute| {
+                        Ok(d::EntityAttribute {
+                            predicate: attribute.predicate.clone(),
+                            value: attribute.value.clone(),
+                            epistemic: attribute.epistemic.clone(),
+                            validity: attribute.validity.clone(),
+                            evidence: attribute
+                                .evidence
+                                .iter()
+                                .map(|link| link.compile(input))
+                                .collect::<d::Result<_>>()?,
+                        })
+                    })
+                    .collect::<d::Result<_>>()?,
             }),
             Self::Episode(value) => d::CognitiveContent::Episode(d::EpisodeContent {
                 title: value.title.clone(),

@@ -113,11 +113,13 @@ impl WriteTransaction {
                 "embedding content requires its actual successful scoped call",
             ));
         }
-        let run = self.embedding_run(&call.job_id).await?;
-        if run.space_id != space.id || !run.content_hashes.contains(&value.source_hash) {
-            return Err(Error::invalid(
-                "embedding call does not own this content space",
-            ));
+        if call.origin == ModelCallOrigin::Local {
+            let run = self.embedding_run(&call.job_id).await?;
+            if run.space_id != space.id || !run.content_hashes.contains(&value.source_hash) {
+                return Err(Error::invalid(
+                    "embedding call does not own this content space",
+                ));
+            }
         }
         validate_producer(&call, &space)?;
         if !super::embedding_call_contents(&call)?
@@ -185,9 +187,9 @@ impl WriteTransaction {
                 "content reuse must preserve the actual call and accepted vector values",
             ));
         }
-        sqlx::query("INSERT INTO embedding_records(namespace_id,subject_id,space_id,source_hash,target,source_key,identity_key,commit_seq) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING")
-            .bind(value.namespace_id.as_str()).bind(value.subject_id.as_str()).bind(&value.space_id).bind(&value.source_hash).bind(serde_json::to_string(&value.target)?).bind(value.source_key()?).bind(value.target.identity_key(&value.source_hash)?).bind(value.commit_seq).execute(&mut *self.tx).await.map_err(write_error)?;
-        Ok(())
+        let accepted:i64=sqlx::query_scalar("SELECT accepted_commit_seq FROM embedding_subscriptions WHERE namespace_id=? AND subject_id=? AND space_id=? AND source_hash=? AND source_key=? AND parts=? AND read_requirements=? AND retired_commit_seq IS NULL ORDER BY accepted_commit_seq DESC LIMIT 1")
+            .bind(value.namespace_id.as_str()).bind(value.subject_id.as_str()).bind(&value.space_id).bind(&value.source_hash).bind(value.source_key()?).bind(serde_json::to_string(&input.parts)?).bind(serde_json::to_string(&input.read_requirements)?).fetch_optional(&mut *self.tx).await.map_err(storage_error)?.ok_or_else(||Error::invalid("embedding record has no accepted input subscription"))?;
+        insert_record(&mut self.tx, value, accepted).await
     }
 }
 fn validate_producer(call: &ModelCall, space: &EmbeddingSpace) -> Result<()> {
@@ -242,16 +244,28 @@ pub(crate) async fn read(
         .transpose()
 }
 pub(crate) fn row(row: SqliteRow) -> Result<EmbeddingRecord> {
+    row_ref(&row)
+}
+pub(super) fn row_ref(row: &SqliteRow) -> Result<EmbeddingRecord> {
     Ok(EmbeddingRecord {
         namespace_id: NamespaceId(row.get("namespace_id")),
         subject_id: SubjectId(row.get("subject_id")),
         space_id: row.get("space_id"),
-        target: target_row(&row)?,
+        target: target_row(row)?,
         source_hash: row.get("source_hash"),
-        vector: vector(&row)?,
+        vector: vector(row)?,
         model_call_id: ModelCallId(row.get("model_call_id")),
         commit_seq: row.get("commit_seq"),
     })
+}
+pub(super) async fn insert_record(
+    conn: &mut SqliteConnection,
+    value: &EmbeddingRecord,
+    accepted: i64,
+) -> Result<()> {
+    sqlx::query("INSERT INTO embedding_records(namespace_id,subject_id,space_id,source_hash,target,source_key,identity_key,commit_seq,accepted_commit_seq) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING")
+        .bind(value.namespace_id.as_str()).bind(value.subject_id.as_str()).bind(&value.space_id).bind(&value.source_hash).bind(serde_json::to_string(&value.target)?).bind(value.source_key()?).bind(value.target.identity_key(&value.source_hash)?).bind(value.commit_seq).bind(accepted).execute(conn).await.map_err(write_error)?;
+    Ok(())
 }
 fn vector(row: &SqliteRow) -> Result<Vec<f32>> {
     let bytes: Vec<u8> = row.get("vector");

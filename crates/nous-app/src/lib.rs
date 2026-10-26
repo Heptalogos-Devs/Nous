@@ -1,10 +1,12 @@
 pub mod administration;
 pub mod backup;
 pub mod bundle_format;
+pub mod bundles;
 pub mod cognition;
 mod composition;
 pub mod contexts;
 pub mod import_format;
+pub mod integrations;
 mod lifecycle;
 pub mod materials;
 pub mod retrieval;

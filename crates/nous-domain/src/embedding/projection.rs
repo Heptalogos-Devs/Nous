@@ -36,6 +36,20 @@ pub fn cognitive_embedding_text(
             content.description.clone(),
             content.aliases.join("\n"),
         ],
+        CognitiveContent::Entity(content) => {
+            let mut lines = vec![
+                content.label.clone(),
+                content.description.clone(),
+                content.aliases.join("\n"),
+            ];
+            lines.extend(
+                content
+                    .attributes
+                    .iter()
+                    .map(|attribute| format!("{}: {}", attribute.predicate, attribute.value)),
+            );
+            lines
+        }
         CognitiveContent::Episode(content) => {
             vec![content.title.clone(), content.boundary_explanation.clone()]
         }

@@ -76,12 +76,30 @@ pub(crate) async fn validate_reference(
     let kind = enum_name(&target.kind)?;
     let sequence: Option<i64> = if kind == "memory" {
         sqlx::query_scalar("SELECT commit_seq FROM memory_revisions WHERE namespace_id=? AND subject_id=? AND memory_id=? AND revision=?")
-            .bind(namespace.as_str()).bind(subject.as_str()).bind(&target.id).bind(target.revision).fetch_optional(conn).await.map_err(storage_error)?
+            .bind(namespace.as_str()).bind(subject.as_str()).bind(&target.id).bind(target.revision).fetch_optional(&mut *conn).await.map_err(storage_error)?
     } else {
         sqlx::query_scalar("SELECT commit_seq FROM structured_revisions WHERE namespace_id=? AND subject_id=? AND object_id=? AND revision=? AND kind=?")
-            .bind(namespace.as_str()).bind(subject.as_str()).bind(&target.id).bind(target.revision).bind(kind).fetch_optional(conn).await.map_err(storage_error)?
+            .bind(namespace.as_str()).bind(subject.as_str()).bind(&target.id).bind(target.revision).bind(kind).fetch_optional(&mut *conn).await.map_err(storage_error)?
     };
-    sequence.ok_or_else(|| {
+    if let Some(sequence) = sequence {
+        return Ok(sequence);
+    }
+    if let Some(tombstone) = super::tombstone::read(
+        conn,
+        namespace,
+        subject,
+        &RetrievalTarget::Cognition(target.clone()),
+    )
+    .await?
+    {
+        return Ok(tombstone.commit_seq);
+    }
+    if let Some(sequence) =
+        super::tombstone::purged_sequence(conn, namespace, subject, target).await?
+    {
+        return Ok(sequence);
+    }
+    Err({
         Error::new(
             ErrorCode::NotFound,
             "exact cognition reference is unavailable in this scope",

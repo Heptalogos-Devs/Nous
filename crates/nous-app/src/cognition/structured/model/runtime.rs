@@ -23,7 +23,13 @@ use nous_foundation::prompts::PromptArguments;
 use nous_foundation::prompts::PromptDefinition;
 use serde_json::json;
 
-const TASKS: [(CognitiveKind, &str, &str, &str); 6] = [
+const TASKS: [(CognitiveKind, &str, &str, &str); 7] = [
+    (
+        CognitiveKind::Entity,
+        "entity_formation",
+        "models.roles.entity_formation",
+        include_str!("../../../prompts/formation/entity.md"),
+    ),
     (
         CognitiveKind::Concept,
         "concept_formation",

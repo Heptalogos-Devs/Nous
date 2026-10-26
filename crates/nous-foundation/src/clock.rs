@@ -1,4 +1,5 @@
 //! Real time and deadlines. Cognitive time semantics remain in their domain.
+pub mod domains;
 use chrono::{DateTime, Utc};
 use nous_domain::{OperationTime, TimePoint};
 use std::time::Instant;

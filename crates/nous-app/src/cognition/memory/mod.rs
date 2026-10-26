@@ -126,8 +126,33 @@ impl App {
         )
         .await
     }
-    pub async fn memory_source(&self, ctx: &CallContext, id: &MemoryId) -> Result<MemorySource> {
-        let memory = self.get_memory(ctx, id).await?;
+    pub async fn memory_source(
+        &self,
+        ctx: &CallContext,
+        id: &MemoryId,
+        revision: Option<i64>,
+    ) -> Result<MemorySource> {
+        if let Some(revision) = revision {
+            CognitiveRef::memory(id, revision).validate()?;
+        }
+        let namespace = self.database.memory_namespace(id).await?;
+        let memory = match revision {
+            Some(revision) => {
+                self.database
+                    .memory_revision(&namespace, id, revision)
+                    .await?
+            }
+            None => self.database.memory(&namespace, id).await?,
+        };
+        ctx.require_subject(&namespace, &memory.subject_id)?;
+        self.database
+            .require_source_read(
+                ctx,
+                &namespace,
+                &memory.subject_id,
+                &RetrievalTarget::Cognition(CognitiveRef::memory(id, memory.revision)),
+            )
+            .await?;
         let observation = self
             .database
             .observation(&memory.namespace_id, &memory.observation_id)
@@ -143,7 +168,13 @@ impl App {
             )
             .await?;
         let model_call = match &memory.model_call_id {
-            Some(id) => Some(self.calls.read(ctx, id).await?),
+            Some(id) => match self.calls.read(ctx, id).await {
+                Ok(call) => Some(call),
+                Err(error) if matches!(error.code, ErrorCode::Forbidden | ErrorCode::NotFound) => {
+                    None
+                }
+                Err(error) => return Err(error),
+            },
             None => None,
         };
         let embedding_provenance = self
