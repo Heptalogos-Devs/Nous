@@ -111,6 +111,18 @@ CREATE TABLE IF NOT EXISTS materials (
 );
 CREATE INDEX IF NOT EXISTS materials_by_namespace ON materials(namespace_id, commit_seq, id);
 
+CREATE TABLE IF NOT EXISTS material_outputs (
+    namespace_id TEXT NOT NULL,
+    subject_id TEXT NOT NULL,
+    material_id TEXT NOT NULL,
+    context TEXT NOT NULL CHECK(json_valid(context)),
+    recorded_at TEXT NOT NULL,
+    commit_seq INTEGER NOT NULL CHECK(commit_seq > 0),
+    PRIMARY KEY(namespace_id, subject_id, material_id),
+    FOREIGN KEY(namespace_id, subject_id) REFERENCES subjects(namespace_id, id) ON DELETE CASCADE,
+    FOREIGN KEY(namespace_id, material_id) REFERENCES materials(namespace_id, id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS observations (
     id TEXT PRIMARY KEY NOT NULL,
     namespace_id TEXT NOT NULL REFERENCES namespaces(id),

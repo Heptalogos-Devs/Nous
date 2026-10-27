@@ -289,8 +289,8 @@ async fn for_target(
         .push_bind(namespace.as_str())
         .push(" AND r.subject_id=")
         .push_bind(subject.as_str())
-        .push(" AND r.identity_key=")
-        .push_bind(target.identity_key()?)
+        .push(" AND r.source_key=")
+        .push_bind(target.key()?)
         .push(" ORDER BY r.space_id,r.commit_seq");
     query
         .build()

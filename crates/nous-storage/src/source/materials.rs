@@ -69,8 +69,10 @@ async fn material_access(
     subject: &SubjectId,
     material: &MaterialId,
 ) -> Result<bool> {
-    sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM observations WHERE namespace_id=? AND subject_id=? AND material_id=?)")
-        .bind(namespace.as_str()).bind(subject.as_str()).bind(material.as_str()).fetch_one(conn).await.map_err(storage_error)
+    sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM observations WHERE namespace_id=? AND subject_id=? AND material_id=? UNION ALL SELECT 1 FROM material_outputs WHERE namespace_id=? AND subject_id=? AND material_id=?)")
+        .bind(namespace.as_str()).bind(subject.as_str()).bind(material.as_str())
+        .bind(namespace.as_str()).bind(subject.as_str()).bind(material.as_str())
+        .fetch_one(conn).await.map_err(storage_error)
 }
 
 pub(crate) async fn material_details(
@@ -103,6 +105,25 @@ pub(crate) fn details_from_columns(
 }
 
 impl WriteTransaction {
+    /// Retain a newly produced resource for its owner without asserting that the
+    /// Subject has read its contents. Existing source access still needs authority.
+    pub async fn retain_material_output(
+        &mut self,
+        namespace: &NamespaceId,
+        subject: &SubjectId,
+        material: &MaterialId,
+    ) -> Result<()> {
+        self.context().require_subject(namespace, subject)?;
+        self.subject(namespace, subject).await?;
+        let original = self.material(namespace, material).await?;
+        self.check_sequence(original.commit_seq)?;
+        sqlx::query("INSERT INTO material_outputs(namespace_id,subject_id,material_id,context,recorded_at,commit_seq) VALUES(?,?,?,?,?,?)")
+            .bind(namespace.as_str()).bind(subject.as_str()).bind(material.as_str())
+            .bind(serde_json::to_string(self.context())?).bind(self.time().recorded())
+            .bind(self.commit_seq()).execute(&mut *self.tx).await.map_err(write_error)?;
+        Ok(())
+    }
+
     pub async fn subject_has_material_access(
         &mut self,
         namespace: &NamespaceId,

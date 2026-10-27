@@ -130,6 +130,8 @@ impl App {
             commit_seq: tx.commit_seq(),
         };
         tx.insert_material(&material).await?;
+        tx.retain_material_output(&material.namespace_id, &request.subject_id, &material.id)
+            .await?;
         tx.set_material_details(&material.namespace_id,&material.id,&MaterialDetails{source_type:Some("nous_bundle".into()),tags:vec![],metadata:json!({"package_id":package.package_id,"subject_id":package.subject.id,"source_watermark":package.watermark}),structured:None}).await?;
         let receipt=tx.commit(json!({"material":material,"package_id":package.package_id,"content_digest":archive::digest(&package)?,"source_watermark":package.watermark,"download_material_id":material.id})).await?;
         drop(staging);
