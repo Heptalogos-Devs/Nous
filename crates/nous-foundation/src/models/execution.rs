@@ -28,10 +28,12 @@ pub(super) enum PreparedRequest {
         request: super::embedding::PreparedEmbeddingRequest,
         contract: super::embedding::ResponseContract,
     },
+    Rerank(super::rerank::Request),
 }
 pub(super) enum ProviderOutput {
     Text(String),
     Vectors(Vec<Vec<f32>>),
+    Reranked(Vec<super::RerankScore>),
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -178,6 +180,7 @@ impl CallExecutor {
         let kind = match &prepared.request {
             PreparedRequest::Chat { .. } => UsageKind::Chat,
             PreparedRequest::Embedding { .. } => UsageKind::Embedding,
+            PreparedRequest::Rerank(_) => UsageKind::Rerank,
         };
         let mut record = ModelCallRecord::started(prepared.metadata);
         let result = match prepared.request {
@@ -208,6 +211,11 @@ impl CallExecutor {
                 }
             }
             .map(ProviderOutput::Vectors),
+            PreparedRequest::Rerank(request) => {
+                super::rerank::execute(&self.network, prepared.target, request, &mut record)
+                    .await
+                    .map(ProviderOutput::Reranked)
+            }
         };
         if record.usage.is_none() {
             record.usage =

@@ -6,13 +6,21 @@ use std::fmt::Write;
 pub fn query_result(result: &QueryResult, presentation: &Presentation) -> String {
     let mut output = String::new();
     for hit in &result.hits {
-        let _ = writeln!(
+        let _ = write!(
             output,
             "{}  {}={:.4}",
             hit.reference,
             super::label("score", presentation),
             hit.score
         );
+        if let Some(score) = hit.rerank_score {
+            let _ = write!(
+                output,
+                "  {}={score:.4}",
+                super::label("rerank_score", presentation)
+            );
+        }
+        output.push('\n');
         match &hit.object {
             RetrievalRecord::Memory(memory) => {
                 let _ = writeln!(output, "{}\n{}", memory.title, memory.content);

@@ -1,5 +1,6 @@
 pub(crate) mod closure;
 pub(crate) mod materials;
+mod query_admission;
 pub(crate) mod query_filter;
 mod query_object;
 mod read;

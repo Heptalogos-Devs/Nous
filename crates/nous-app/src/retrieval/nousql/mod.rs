@@ -237,6 +237,7 @@ impl App {
         binder.read.finish().await?;
         Ok((
             QueryPlan {
+                rerank: request.rerank.unwrap_or(policy.rerank.mode),
                 sort: root_sort,
                 time_units,
                 source: request.input.text,

@@ -1,9 +1,11 @@
 //! Imported payloads stay byte-faithful; only their source qualifications are mapped.
-use crate::{ReadView, storage_error};
+use crate::{ReadView, WriteTransaction, storage_error};
 use nous_domain::{media::*, *};
 use sqlx::Row;
 
-impl ReadView {
+macro_rules! source_mapping {
+    ($owner:ty) => {
+impl $owner {
     pub async fn imported_model_sources(
         &mut self,
         call: &ModelCall,
@@ -77,6 +79,11 @@ impl ReadView {
         Ok(mapped)
     }
 }
+    };
+}
+source_mapping!(ReadView);
+source_mapping!(WriteTransaction);
+
 fn map_id(
     layer: &BundleImportProvenance,
     kind: &str,

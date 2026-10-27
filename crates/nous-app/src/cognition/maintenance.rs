@@ -79,7 +79,7 @@ impl App {
                 ));
             }
             let targets = tx.memory_source_dependents(&namespace, id).await?;
-            self.purge_context_dependencies_in(&mut tx, &namespace, &subject_id, &targets)
+            self.purge_source_dependents_in(&mut tx, &namespace, &subject_id, &targets)
                 .await?;
             let marker = tx.purge_memory(&namespace, id, before).await?;
             let mut event = audit(

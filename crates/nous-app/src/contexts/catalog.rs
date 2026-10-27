@@ -138,6 +138,7 @@ impl App {
             }
         }
         let mut query = request.query.clone().unwrap_or_else(|| QueryRequest {
+            rerank: None,
             sort: None,
             expression: None,
             clock: None,

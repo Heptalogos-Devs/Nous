@@ -10,6 +10,7 @@ pub const RETRIEVAL: ConfigKey<RetrievalPolicy> = ConfigKey::new("retrieval");
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct RetrievalPolicy {
+    pub rerank: super::rerank::config::RerankPolicy,
     pub max_results: usize,
     pub max_query_text_bytes: usize,
     pub max_query_media: usize,
@@ -23,6 +24,7 @@ pub struct RetrievalPolicy {
 impl Default for RetrievalPolicy {
     fn default() -> Self {
         Self {
+            rerank: Default::default(),
             max_results: 100,
             max_query_text_bytes: 4096,
             max_query_media: 16,
@@ -37,6 +39,7 @@ impl Default for RetrievalPolicy {
 }
 impl RetrievalPolicy {
     pub fn validate(&self) -> Result<()> {
+        self.rerank.validate()?;
         if !(1..=10000).contains(&self.max_results)
             || !(1..=1024 * 1024).contains(&self.max_query_text_bytes)
             || !(1..=64).contains(&self.max_query_media)

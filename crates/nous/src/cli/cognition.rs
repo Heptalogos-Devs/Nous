@@ -1,8 +1,8 @@
 use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
 use nous_domain::{
-    CognitiveKind, MemoryId, ModelCallId, ObservationId, QueryMode, QueryRequest, SubjectId,
-    TimeFilter,
+    CognitiveKind, MemoryId, ModelCallId, ObservationId, QueryMode, QueryRequest, QueryRerankMode,
+    SubjectId, TimeFilter,
 };
 
 use crate::{
@@ -139,11 +139,14 @@ pub struct QueryArgs {
     #[arg(long, conflicts_with = "manual")]
     plan: bool,
     /// A complete QueryRequest JSON; uses the same contract as HTTP and MCP.
-    #[arg(long, conflicts_with_all = ["mode", "include_inactive", "text", "subject", "reference", "media", "domains", "source", "kinds", "as_of_commit", "include_deleted", "time", "limit", "min_commit_seq"])]
+    #[arg(long, conflicts_with_all = ["mode", "rerank", "include_inactive", "text", "subject", "reference", "media", "domains", "source", "kinds", "as_of_commit", "include_deleted", "time", "limit", "min_commit_seq"])]
     request_file: Option<std::path::PathBuf>,
     /// Defaults to lexical for text, dense when media is supplied.
     #[arg(long, value_parser=parse_query_mode)]
     mode: Option<QueryMode>,
+    /// Native text reranking; omit to use retrieval.rerank.mode.
+    #[arg(long, value_parser=parse_rerank_mode)]
+    rerank: Option<QueryRerankMode>,
     #[arg(long)]
     include_inactive: bool,
     /// Natural-language intent. Exact references use kind:UUID@revision.
@@ -189,6 +192,7 @@ impl QueryArgs {
                 .map(|time| serde_json::from_str(&time))
                 .transpose()?;
             QueryRequest {
+                rerank: self.rerank,
                 sort: None,
                 expression: None,
                 clock: None,
@@ -261,6 +265,9 @@ pub enum ModelCommand {
 }
 
 fn parse_query_mode(value: &str) -> Result<QueryMode, String> {
+    serde_json::from_value(serde_json::json!(value)).map_err(|error| error.to_string())
+}
+fn parse_rerank_mode(value: &str) -> Result<QueryRerankMode, String> {
     serde_json::from_value(serde_json::json!(value)).map_err(|error| error.to_string())
 }
 fn parse_kind(value: &str) -> Result<CognitiveKind, String> {

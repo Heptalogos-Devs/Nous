@@ -20,6 +20,12 @@ pub enum InvocationDraft {
         sources: Option<Vec<nous_domain::SourceReadRef>>,
         inputs: Vec<Vec<nous_domain::EmbeddingPart>>,
     },
+    Rerank {
+        sources: Option<Vec<nous_domain::SourceReadRef>>,
+        query: String,
+        documents: Vec<String>,
+        top_n: usize,
+    },
 }
 impl InvocationDraft {
     pub fn chat(
@@ -42,9 +48,9 @@ impl InvocationDraft {
     }
     pub fn with_sources(mut self, requirements: Vec<nous_domain::SourceReadRef>) -> Self {
         match &mut self {
-            Self::Chat { sources, .. } | Self::Embedding { sources, .. } => {
-                *sources = Some(requirements)
-            }
+            Self::Chat { sources, .. }
+            | Self::Embedding { sources, .. }
+            | Self::Rerank { sources, .. } => *sources = Some(requirements),
         }
         self
     }
@@ -67,6 +73,28 @@ impl InvocationDraft {
                 ModelInput::Embedding { inputs },
                 sources,
             ),
+            Self::Rerank {
+                sources,
+                query,
+                documents,
+                top_n,
+            } => (
+                PromptArguments::new(),
+                ModelInput::Rerank {
+                    query,
+                    documents,
+                    top_n,
+                },
+                sources,
+            ),
+        }
+    }
+    pub fn rerank(query: String, documents: Vec<String>, top_n: usize) -> Self {
+        Self::Rerank {
+            sources: None,
+            query,
+            documents,
+            top_n,
         }
     }
 }

@@ -57,6 +57,14 @@ impl App {
                 hits.push(hit);
             }
         }
+        let rerank = self.rerank_hits(ctx, &plan, &policy, &mut hits).await?;
+        let (rechecked, authority_watermark) =
+            if rerank.as_ref().is_some_and(|info| info.job_id.is_some()) {
+                self.recheck_reranked_hits(ctx, &plan, &policy, &mut hits)
+                    .await?
+            } else {
+                (true, plan.authority_commit_seq)
+            };
         if let Some(sort) = &plan.sort {
             hits.sort_by(|left, right| {
                 sort.compare(sort_point(left, sort), sort_point(right, sort))
@@ -97,7 +105,7 @@ impl App {
                 hit.materialized = Some(value);
             }
         }
-        let mut complete = results.iter().all(|result| result.coverage.complete);
+        let mut complete = rechecked && results.iter().all(|result| result.coverage.complete);
         if (has_intersection(&plan.expression) || plan.sort.is_some())
             && plan
                 .leaves
@@ -116,7 +124,8 @@ impl App {
                 .iter()
                 .map(|result| result.coverage.authority_commit_seq)
                 .max()
-                .unwrap_or(plan.authority_commit_seq),
+                .unwrap_or(plan.authority_commit_seq)
+                .max(authority_watermark),
             complete,
             generation: results
                 .iter()
@@ -138,6 +147,7 @@ impl App {
             .first()
             .is_some_and(|leaf| leaf.diagnostics != "none");
         Ok(QueryResult {
+            rerank,
             hits,
             coverage,
             semantic,
@@ -153,6 +163,7 @@ fn sort_point<'a>(hit: &'a QueryHit, sort: &QuerySort) -> Option<&'a TimePoint> 
 }
 fn empty(watermark: i64) -> QueryResult {
     QueryResult {
+        rerank: None,
         hits: Vec::new(),
         semantic: None,
         plan: None,

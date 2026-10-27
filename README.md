@@ -108,7 +108,11 @@ HTTP 接口与 MCP 工具进入相同应用用例：
 
 检查器承接上游 v1/v2 的知识、完整状态和图像包，核对成员校验和、语义摘要、记录引用与内容数量；默认显示 manifest、库存数量和所需领域能力。知识包管理通过 `bundle export/install/list/get/uninstall`、HTTP `/api/bundles`、MCP `bundles` 和官方 SDK `bundles` 使用相同领域操作。`export` 返回 `download_material_id`，用 `material get --output` 下载；`install --material` 使用已经流式上传的包材料，支持 `merge` 和空主体的 `restore`。
 
+导出的归档由导出主体持有，可使用该主体的凭据直接下载。原生包保存认知修订、来源、实际模型调用和已接受的向量；恢复后可复用原向量及其生产记录。卸载撤回该包拥有的活跃认知，保留历史与仍被其他对象使用的来源，随后可重新安装。
+
 [nous-vcp](crates/nous-vcp/README.md) 提供完整 VCP 计算族和旧版数值基线，包含 AGS 几何、传播资产、Pyramid、Sense、双场、RiverMemo、DTSC 与 Thinking。开发者可用 `cargo run -p nous-vcp --example native_pipeline` 重放完整计算和来源映射。实际文本查询已接通模型向量、USearch 候选/Tag 双索引、VCP 图资产和来源映射。
+
+可选模型重排通过原生 `rerank` 协议和 `query_rerank` 模型角色配置，沿同一网络、预算、账本和持久任务执行。查询可设置 `rerank: "optional"` 或 `"required"`，CLI 使用 `--rerank optional|required`；默认关闭。结果保留基础得分，并提供独立的 `rerank_score`、实际任务与模型调用身份。精确读取、单候选及显式排序直接返回。
 
 ## 配置与模型资源
 

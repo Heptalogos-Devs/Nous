@@ -78,34 +78,65 @@ impl WriteTransaction {
         latest(&mut self.tx, job, step).await
     }
     pub(crate) async fn redact_job_calls(&mut self, job: &str, reason: &str) -> Result<()> {
-        let ids: Vec<String> = sqlx::query_scalar("SELECT id FROM model_calls WHERE job_id=?")
-            .bind(job)
-            .fetch_all(&mut *self.tx)
-            .await
-            .map_err(storage_error)?;
+        let ids: Vec<String> =
+            sqlx::query_scalar("SELECT id FROM model_calls WHERE local_job_id=?")
+                .bind(job)
+                .fetch_all(&mut *self.tx)
+                .await
+                .map_err(storage_error)?;
         for id in ids {
             let id = ModelCallId(id);
-            let call = self.model_call(&id).await?;
-            let mut metadata = serde_json::Map::new();
-            for key in [
-                "resource",
-                "role",
-                "step_key",
-                "parameters",
-                "prompt_digest",
-            ] {
-                if let Some(value) = call.request.get(key) {
-                    metadata.insert(key.into(), value.clone());
-                }
-            }
-            metadata.insert("redacted".into(), Value::Bool(true));
-            metadata.insert("reason".into(), Value::String(reason.into()));
-            self.redact_model_call(&id,&[
-                super::CallRedaction{document:super::CallDocument::Request,pointer:String::new(),replacement:Value::Object(metadata)},
-                super::CallRedaction{document:super::CallDocument::Response,pointer:String::new(),replacement:serde_json::json!({"redacted":true,"reason":reason,"record":{}})},
-                super::CallRedaction{document:super::CallDocument::Error,pointer:String::new(),replacement:Value::String("model error detail was permanently redacted".into())},
-            ],reason).await?;
+            self.redact_call_payload(&id, reason).await?;
         }
+        Ok(())
+    }
+    pub(crate) async fn redact_call_payload(
+        &mut self,
+        id: &ModelCallId,
+        reason: &str,
+    ) -> Result<()> {
+        let call = self.model_call(id).await?;
+        let mut metadata = serde_json::Map::new();
+        for key in [
+            "resource",
+            "role",
+            "step_key",
+            "parameters",
+            "prompt_digest",
+        ] {
+            if let Some(value) = call.request.get(key) {
+                metadata.insert(key.into(), value.clone());
+            }
+        }
+        metadata.insert("redacted".into(), Value::Bool(true));
+        metadata.insert("reason".into(), Value::String(reason.into()));
+        if let Some(sources) = call.request.pointer("/preview/sources") {
+            metadata.insert("preview".into(), serde_json::json!({"sources":sources}));
+        }
+        self.redact_model_call(
+            id,
+            &[
+                super::CallRedaction {
+                    document: super::CallDocument::Request,
+                    pointer: String::new(),
+                    replacement: Value::Object(metadata),
+                },
+                super::CallRedaction {
+                    document: super::CallDocument::Response,
+                    pointer: String::new(),
+                    replacement: serde_json::json!({"redacted":true,"reason":reason,"record":{}}),
+                },
+                super::CallRedaction {
+                    document: super::CallDocument::Error,
+                    pointer: String::new(),
+                    replacement: Value::String(
+                        "model error detail was permanently redacted".into(),
+                    ),
+                },
+            ],
+            reason,
+        )
+        .await?;
         Ok(())
     }
     pub async fn model_call(&mut self, id: &ModelCallId) -> Result<ModelCall> {

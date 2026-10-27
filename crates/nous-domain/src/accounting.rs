@@ -113,6 +113,7 @@ pub struct ModelPriceSnapshot {
 pub enum UsageKind {
     Chat,
     Embedding,
+    Rerank,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -165,7 +166,9 @@ impl ModelUsage {
             let input = self.input_tokens?;
             match self.output_tokens {
                 Some(output) => input.checked_add(output),
-                None if self.kind == UsageKind::Embedding => Some(input),
+                None if matches!(self.kind, UsageKind::Embedding | UsageKind::Rerank) => {
+                    Some(input)
+                }
                 _ => None,
             }
         })

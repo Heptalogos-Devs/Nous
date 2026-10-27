@@ -22,6 +22,13 @@ pub enum SourceReadRef {
     },
 }
 impl SourceReadRef {
+    pub fn retrieval_target(&self) -> Option<RetrievalTarget> {
+        match self {
+            Self::Cognition { reference } => Some(RetrievalTarget::Cognition(reference.clone())),
+            Self::Media { reference, .. } => Some(RetrievalTarget::Media(reference.clone())),
+            _ => None,
+        }
+    }
     pub fn target(value: &RetrievalTarget) -> Self {
         match value {
             RetrievalTarget::Cognition(reference) => Self::Cognition {

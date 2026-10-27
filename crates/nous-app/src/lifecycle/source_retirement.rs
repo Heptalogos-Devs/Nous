@@ -1,19 +1,25 @@
-//! Source erasure delegates context payloads and running work to their owners.
+//! Source erasure delegates captured payloads and running work to their owners.
 use crate::App;
 use nous_domain::*;
 use nous_storage::WriteTransaction;
 impl App {
-    pub(crate) async fn purge_context_dependencies_in(
+    pub(crate) async fn purge_source_dependents_in(
         &self,
         tx: &mut WriteTransaction,
         namespace: &NamespaceId,
         subject: &SubjectId,
         targets: &[RetrievalTarget],
     ) -> Result<()> {
-        for id in tx
+        let mut jobs = tx
             .purge_context_sources(namespace, subject, targets)
-            .await?
-        {
+            .await?;
+        jobs.extend(
+            tx.retire_model_source_payloads(namespace, subject, targets)
+                .await?,
+        );
+        jobs.sort();
+        jobs.dedup();
+        for id in jobs {
             let mut job = tx.job_record(&id).await?;
             self.tasks
                 .cancel_in(
@@ -21,7 +27,7 @@ impl App {
                     &mut job,
                     Some(Error::new(
                         ErrorCode::Cancelled,
-                        "context source was permanently purged",
+                        "task source was permanently purged",
                     )),
                 )
                 .await?;

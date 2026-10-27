@@ -186,31 +186,7 @@ impl ReadView {
             .collect::<BTreeSet<_>>();
         for id in ids {
             let call = calls::model_call(&mut self.tx, &id).await?;
-            if (!ctx.source_read.is_empty()
-                || matches!(&call.origin, ModelCallOrigin::Imported { .. }))
-                && call.request.get("redacted") != Some(&serde_json::Value::Bool(true))
-            {
-                let sources: Vec<SourceReadRef> = serde_json::from_value(
-                    call.request
-                        .pointer("/preview/sources")
-                        .cloned()
-                        .ok_or_else(|| {
-                            Error::new(
-                                ErrorCode::Forbidden,
-                                "exported model history has no attributable source catalog",
-                            )
-                        })?,
-                )
-                .map_err(|_| {
-                    Error::new(
-                        ErrorCode::Forbidden,
-                        "exported model history source catalog is unavailable",
-                    )
-                })?;
-                let mapped = self.imported_model_sources(&call, &sources).await?;
-                self.require_source_requirements(ctx, ns, sub, &mapped)
-                    .await?;
-            }
+            self.require_model_call_sources(ctx, &call).await?;
             package.calls.push(call);
         }
         let rows = sqlx::query(

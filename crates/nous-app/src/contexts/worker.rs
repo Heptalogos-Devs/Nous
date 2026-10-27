@@ -21,10 +21,10 @@ impl App {
         if policy.steward != ContextStewardMode::Off
             && let Some((previous, id)) =
                 self.reusable_context_steward(&preparation, &input).await?
-            {
-                proposal = Some(previous);
-                call_id = Some(id);
-            }
+        {
+            proposal = Some(previous);
+            call_id = Some(id);
+        }
         if proposal.is_none()
             && policy.steward != ContextStewardMode::Off
             && !input.sources.is_empty()
@@ -181,10 +181,11 @@ impl App {
                 .policy
                 .as_ref()
                 .is_some_and(|policy| policy.steward == ContextStewardMode::Optional)
-            && let Some(child) = &preparation.steward_job_id {
-                let mut child = tx.job_record(child).await?;
-                self.tasks.cancel_in(&mut tx, &mut child, None).await?;
-            }
+            && let Some(child) = &preparation.steward_job_id
+        {
+            let mut child = tx.job_record(child).await?;
+            self.tasks.cancel_in(&mut tx, &mut child, None).await?;
+        }
         for segment in &segments {
             tx.validate_context_targets(ns, subject, &segment.sources)
                 .await?;

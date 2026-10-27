@@ -54,6 +54,7 @@ cli-yes = 是
 cli-no = 否
 cli-numbers = [{ $count } 个数值]
 cli-score = 得分
+cli-rerank-score = 重排得分
 cli-bytes = 字节
 cli-source-roots = 原件来源
 cli-state = 状态

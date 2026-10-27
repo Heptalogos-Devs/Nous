@@ -1,7 +1,42 @@
 //! Read the actual call's immutable content ordering, including explicit erased entries.
+use crate::{WriteTransaction, storage_error};
 use nous_domain::*;
 use serde_json::Value;
 use std::collections::HashSet;
+
+impl WriteTransaction {
+    pub(super) async fn embedding_calls_for_content(
+        &mut self,
+        namespace: &NamespaceId,
+        subject: &SubjectId,
+        space: &str,
+        hash: &str,
+    ) -> Result<Vec<ModelCall>> {
+        let ids:Vec<String>=sqlx::query_scalar("SELECT id FROM model_calls WHERE namespace_id=? AND subject_id=? AND json_extract(request,'$.embedding_space.id')=? AND json_extract(request,'$.preview.input.kind')='embedding'")
+            .bind(namespace.as_str()).bind(subject.as_str()).bind(space).fetch_all(&mut *self.tx).await.map_err(storage_error)?;
+        let mut calls = Vec::new();
+        for id in ids {
+            let call = self.model_call(&ModelCallId(id)).await?;
+            let Some(inputs) = call
+                .request
+                .pointer("/input/inputs")
+                .and_then(Value::as_array)
+            else {
+                continue;
+            };
+            if inputs
+                .iter()
+                .map(input_hash)
+                .collect::<Result<Vec<_>>>()?
+                .iter()
+                .any(|value| value == hash)
+            {
+                calls.push(call);
+            }
+        }
+        Ok(calls)
+    }
+}
 #[derive(Debug, Clone)]
 pub struct EmbeddingCallContent {
     pub source_hash: String,
@@ -55,7 +90,9 @@ pub fn embedding_call_contents(call: &ModelCall) -> Result<Vec<EmbeddingCallCont
         .collect()
 }
 pub(super) fn input_hash(input: &Value) -> Result<String> {
-    if input.get("redacted") == Some(&Value::Bool(true)) {
+    if input.get("redacted") == Some(&Value::Bool(true))
+        || input.get("source_redacted") == Some(&Value::Bool(true))
+    {
         input
             .get("source_hash")
             .and_then(Value::as_str)

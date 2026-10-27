@@ -103,13 +103,14 @@ pub(super) async fn execute<M>(
     record: &mut ModelCallRecord<M>,
     contract: &ResponseContract,
 ) -> std::result::Result<Vec<Vec<f32>>, ModelFailure> {
-    let body = super::embedding_http::exchange(
+    let body = super::protocol_http::exchange(
         network,
         target,
         "embeddings/multimodal",
         &request,
         record,
         contract.max_bytes,
+        nous_domain::UsageKind::Embedding,
     )
     .await?;
     let response: Response = serde_json::from_value(body).map_err(|error| {

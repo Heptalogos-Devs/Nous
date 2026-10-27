@@ -163,6 +163,7 @@ impl App {
                 complete = false;
             }
             hits.push(QueryHit {
+                rerank_score: None,
                 order: root_sort.or(request.sort.as_ref()).and_then(|sort| {
                     let mut ordering = request.clone();
                     ordering.sort = Some(sort.clone());
@@ -195,6 +196,7 @@ impl App {
         complete &= view.issues.is_empty();
         Ok((
             QueryResult {
+                rerank: None,
                 plan: None,
                 hits,
                 semantic,

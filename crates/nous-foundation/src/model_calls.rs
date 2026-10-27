@@ -42,32 +42,17 @@ impl ModelCalls {
     }
     pub async fn read(&self, ctx: &CallContext, id: &ModelCallId) -> Result<ModelCall> {
         let mut view = self.database.read_view().await?;
-        let call=self.read_in(&mut view,ctx,id).await?;
+        let call = self.read_in(&mut view, ctx, id).await?;
         view.finish().await?;
         Ok(call)
     }
-    pub async fn read_in(&self,view:&mut nous_storage::ReadView,ctx:&CallContext,id:&ModelCallId)->Result<ModelCall> {
-        let call = view.model_call(id).await?;
-        ctx.require_subject(&call.namespace_id, &call.subject_id)?;
-        if !ctx.source_read.is_empty() || matches!(&call.origin, ModelCallOrigin::Imported { .. }) {
-            let metadata: super::models::InvocationMetadata<Value> =
-                serde_json::from_value(call.request.clone()).map_err(|_| {
-                    Error::new(
-                        ErrorCode::Forbidden,
-                        "model call has no available source requirements",
-                    )
-                })?;
-            let sources = metadata.preview.sources.as_ref().ok_or_else(|| {
-                Error::new(
-                    ErrorCode::Forbidden,
-                    "model call contains input without an attributable source catalog",
-                )
-            })?;
-            let mapped = view.imported_model_sources(&call, sources).await?;
-            view.require_source_requirements(ctx, &call.namespace_id, &call.subject_id, &mapped)
-                .await?;
-        }
-        Ok(call)
+    pub async fn read_in(
+        &self,
+        view: &mut nous_storage::ReadView,
+        ctx: &CallContext,
+        id: &ModelCallId,
+    ) -> Result<ModelCall> {
+        view.readable_model_call(ctx, id).await
     }
     pub async fn ready(
         &self,

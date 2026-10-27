@@ -11,6 +11,12 @@ pub struct SourceReadView {
     namespace: NamespaceId,
     subject: SubjectId,
     constraints: Vec<Selection>,
+    purpose: ReadPurpose,
+}
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ReadPurpose {
+    Body,
+    Provenance,
 }
 impl SourceReadView {
     pub fn is_restricted(&self) -> bool {
@@ -33,6 +39,7 @@ async fn bind(
     ctx: &CallContext,
     ns: &NamespaceId,
     subject: &SubjectId,
+    purpose: ReadPurpose,
 ) -> Result<SourceReadView> {
     ctx.require_subject(ns, subject)?;
     crate::authority::records::subject(conn, ns, subject)
@@ -49,7 +56,9 @@ async fn bind(
             origins: scope.origin_conversation_refs.iter().cloned().collect(),
         };
         for reference in &scope.source_refs {
-            for (node, _) in graph::walk(conn, ns, subject, Node::selected(reference)).await? {
+            for (node, _) in
+                graph::walk(conn, ns, subject, Node::selected(reference), purpose).await?
+            {
                 selection.nodes.insert(node);
                 if selection.nodes.len() > 1024 {
                     return Err(Error::new(
@@ -65,6 +74,7 @@ async fn bind(
         namespace: ns.clone(),
         subject: subject.clone(),
         constraints,
+        purpose,
     })
 }
 
@@ -168,7 +178,7 @@ async fn allowed(conn: &mut SqliteConnection, view: &SourceReadView, node: Node)
     if view.constraints.is_empty() {
         return Ok(true);
     }
-    let graph = match graph::walk(conn, &view.namespace, &view.subject, node).await {
+    let graph = match graph::walk(conn, &view.namespace, &view.subject, node, view.purpose).await {
         Ok(graph) => graph,
         Err(error) if error.code == ErrorCode::NotFound => return Ok(false),
         Err(error) => return Err(error),
@@ -207,7 +217,7 @@ macro_rules! source_reads {
                 namespace: &NamespaceId,
                 subject: &SubjectId,
             ) -> Result<SourceReadView> {
-                bind(&mut self.tx, ctx, namespace, subject).await
+                bind(&mut self.tx, ctx, namespace, subject, ReadPurpose::Body).await
             }
             pub async fn source_read_allowed(
                 &mut self,
@@ -268,8 +278,46 @@ macro_rules! source_reads {
                 let view = self.source_read_view(ctx, namespace, subject).await?;
                 for reference in references {
                     reference.validate()?;
-                    graph::children(&mut self.tx, namespace, subject, &Node::selected(reference))
-                        .await?;
+                    graph::children(
+                        &mut self.tx,
+                        namespace,
+                        subject,
+                        &Node::selected(reference),
+                        ReadPurpose::Body,
+                    )
+                    .await?;
+                    if !allowed(&mut self.tx, &view, Node::selected(reference)).await? {
+                        return Err(denied());
+                    }
+                }
+                Ok(())
+            }
+            /// Authorize retained source facts without making an erased body readable.
+            pub async fn require_source_provenance(
+                &mut self,
+                ctx: &CallContext,
+                namespace: &NamespaceId,
+                subject: &SubjectId,
+                references: &[SourceReadRef],
+            ) -> Result<()> {
+                let view = bind(
+                    &mut self.tx,
+                    ctx,
+                    namespace,
+                    subject,
+                    ReadPurpose::Provenance,
+                )
+                .await?;
+                for reference in references {
+                    reference.validate()?;
+                    graph::walk(
+                        &mut self.tx,
+                        namespace,
+                        subject,
+                        Node::selected(reference),
+                        ReadPurpose::Provenance,
+                    )
+                    .await?;
                     if !allowed(&mut self.tx, &view, Node::selected(reference)).await? {
                         return Err(denied());
                     }

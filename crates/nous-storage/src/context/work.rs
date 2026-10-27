@@ -88,12 +88,12 @@ impl WriteTransaction {
             && (head.namespace_id != value.namespace_id
                 || head.subject_id != value.subject_id
                 || head.state == WorkContextState::Ended)
-            {
-                return Err(Error::new(
-                    ErrorCode::Conflict,
-                    "WorkContext is outside scope or ended",
-                ));
-            }
+        {
+            return Err(Error::new(
+                ErrorCode::Conflict,
+                "WorkContext is outside scope or ended",
+            ));
+        }
         if (value.state == WorkContextState::Ended) != value.ended_at.is_some() {
             return Err(Error::invalid(
                 "WorkContext end state and timestamp disagree",

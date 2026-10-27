@@ -137,12 +137,13 @@ impl WriteTransaction {
             ));
         }
         if let Some(response) = current.response
-            && encode(&response)? != encode(&value.response)? {
-                return Err(Error::new(
-                    ErrorCode::Conflict,
-                    "context response is already compiled",
-                ));
-            }
+            && encode(&response)? != encode(&value.response)?
+        {
+            return Err(Error::new(
+                ErrorCode::Conflict,
+                "context response is already compiled",
+            ));
+        }
         sqlx::query("UPDATE context_preparations SET config_digest=?,policy=?,catalog=?,work_context=?,session_revision=?,source_watermark=?,steward_job_id=?,response=?,degradation=? WHERE id=?")
             .bind(&value.config_digest).bind(value.policy.as_ref().map(encode).transpose()?).bind(encode(&value.catalog)?).bind(value.work_context.as_ref().map(encode).transpose()?)
             .bind(value.session_revision).bind(value.source_watermark).bind(&value.steward_job_id).bind(value.response.as_ref().map(encode).transpose()?).bind(encode(&value.degradation)?).bind(value.id.as_str()).execute(&mut *self.tx).await.map_err(write_error)?;

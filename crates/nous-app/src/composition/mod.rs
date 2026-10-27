@@ -13,6 +13,7 @@ pub fn model_roles() -> Result<RoleRegistry> {
         registry.register(definition)?;
     }
     registry.register(crate::retrieval::embedding_model::definition())?;
+    registry.register(crate::retrieval::rerank::model::definition())?;
     registry.register(crate::contexts::model::definition())?;
     for definition in crate::materials::derivation::model::definitions() {
         registry.register(definition)?;
@@ -147,6 +148,7 @@ impl App {
             },
         )?;
         self.register_amemorix_tasks(&mut registry)?;
+        self.register_rerank_tasks(&mut registry)?;
         Ok(registry)
     }
     pub fn start_background(&self, cancel: CancellationToken) -> tokio::task::JoinHandle<()> {

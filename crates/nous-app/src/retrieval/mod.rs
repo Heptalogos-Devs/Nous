@@ -6,6 +6,7 @@ mod embedding_selection;
 mod embedding_worker;
 pub mod nousql;
 mod query;
+pub(crate) mod rerank;
 mod semantic;
 mod view;
 

@@ -11,6 +11,7 @@ pub enum ModelProtocol {
     OpenaiChatCompletions,
     OpenaiEmbeddings,
     ArkMultimodalEmbeddings,
+    Rerank,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -26,6 +27,7 @@ pub enum ModelCapability {
     TextGeneration,
     StructuredOutput,
     Embedding,
+    Rerank,
     Tools,
 }
 
@@ -187,11 +189,13 @@ impl ModelCatalog {
             }
             if model.input_modalities.is_empty()
                 || model.capabilities.is_empty()
-                || (model.protocol == ModelProtocol::OpenaiEmbeddings
-                    && model
-                        .input_modalities
-                        .iter()
-                        .any(|m| !matches!(m, ModelModality::Text)))
+                || (matches!(
+                    model.protocol,
+                    ModelProtocol::OpenaiEmbeddings | ModelProtocol::Rerank
+                ) && model
+                    .input_modalities
+                    .iter()
+                    .any(|m| !matches!(m, ModelModality::Text)))
                 || (model.protocol == ModelProtocol::ArkMultimodalEmbeddings
                     && model.input_modalities.contains(&ModelModality::Audio))
                 || model
@@ -208,7 +212,7 @@ impl ModelCatalog {
                     ModelProtocol::OpenaiEmbeddings | ModelProtocol::ArkMultimodalEmbeddings,
                     Some(space),
                 ) => space.validate()?,
-                (ModelProtocol::OpenaiChatCompletions, None) => {}
+                (ModelProtocol::OpenaiChatCompletions | ModelProtocol::Rerank, None) => {}
                 _ => {
                     return Err(Error::invalid(
                         "embedding protocol requires its actual model and dimension",
@@ -263,6 +267,13 @@ impl ModelCatalog {
                             | "stream"
                             | "response_format"
                             | "max_tokens"
+                            | "query"
+                            | "documents"
+                            | "top_n"
+                            | "return_documents"
+                            | "authorization"
+                            | "api_key"
+                            | "headers"
                     )
                 })
             {
@@ -296,7 +307,7 @@ pub(super) fn adapter_supports(protocol: ModelProtocol, capability: ModelCapabil
         ) | (
             ModelProtocol::OpenaiEmbeddings | ModelProtocol::ArkMultimodalEmbeddings,
             ModelCapability::Embedding
-        )
+        ) | (ModelProtocol::Rerank, ModelCapability::Rerank)
     )
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]

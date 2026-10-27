@@ -47,7 +47,7 @@ pub(super) fn build(
     if let Some(prompt) = &prompt {
         let ModelInput::Chat { messages, .. } = &mut invocation else {
             return Err(ModelFailure::domain(Error::invalid(
-                "embedding role cannot bind a chat instruction template",
+                "native non-chat role cannot bind a chat instruction template",
             )));
         };
         messages.insert(0, ModelMessage::system(prompt.text.clone()));

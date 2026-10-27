@@ -97,11 +97,17 @@ pub enum ModelInput {
     Embedding {
         inputs: Vec<Vec<nous_domain::EmbeddingPart>>,
     },
+    Rerank {
+        query: String,
+        documents: Vec<String>,
+        top_n: usize,
+    },
 }
 #[derive(Debug, Clone)]
 pub enum ModelOutput {
     Text(String),
     Vectors(Vec<Vec<f32>>),
+    Reranked(Vec<super::RerankScore>),
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]

@@ -10,6 +10,8 @@ mod origin;
 pub use origin::*;
 mod query_filter;
 pub use query_filter::*;
+mod query_rerank;
+pub use query_rerank::*;
 mod query_identity;
 pub use query_identity::*;
 mod semantic_target;

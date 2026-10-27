@@ -15,6 +15,7 @@ pub(super) enum ValidatedRequest {
         max_media_bytes: usize,
     },
     Embedding(Box<super::embedding_request::ValidatedEmbedding>),
+    Rerank(super::rerank::Request),
 }
 impl ValidatedRequest {
     pub async fn encode(
@@ -41,6 +42,7 @@ impl ValidatedRequest {
                 options,
             },
             Self::Embedding(request) => request.encode(scope, reader, cancel).await?,
+            Self::Rerank(request) => PreparedRequest::Rerank(request),
         })
     }
 }
@@ -67,6 +69,9 @@ pub(super) fn invocation_digest(route: &ResolvedRoute, input: &ModelInput) -> Re
         }
         ModelInput::Embedding { .. } => {
             serde_json::json!({"space":route.embedding.as_ref().map(|_|route.space()).transpose()?})
+        }
+        ModelInput::Rerank { .. } => {
+            serde_json::json!({"parameters":route.parameters.native_parameters})
         }
     };
     let identity = serde_json::json!({"protocol":route.resource.protocol,"endpoint":route.resource.endpoint,"model":route.resource.model,"input":input,"controls":controls});
@@ -318,6 +323,19 @@ pub(super) fn prepare(
         ) => {
             let (request, access) = super::embedding_request::validate(route, inputs)?;
             Ok((ValidatedRequest::Embedding(Box::new(request)), access))
+        }
+        (
+            ModelInput::Rerank {
+                query,
+                documents,
+                top_n,
+            },
+            ModelProtocol::Rerank,
+        ) => {
+            let request = super::rerank::validate(route, query, documents, *top_n)?;
+            let mut access = no_access();
+            access.source_text = ChannelMode::Representation;
+            Ok((ValidatedRequest::Rerank(request), access))
         }
         _ => Err(Error::new(
             ErrorCode::CapabilityUnavailable,

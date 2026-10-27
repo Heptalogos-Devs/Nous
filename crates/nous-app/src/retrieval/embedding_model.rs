@@ -29,23 +29,10 @@ pub fn definition() -> RoleDefinition {
             validate_inputs(&input.inputs)?;
             let mut requirements = Vec::new();
             for item in &input.inputs {
-                requirements.extend(item.read_requirements.clone());
-                if let Some(target) = item.target.item() {
-                    requirements.push(nous_domain::SourceReadRef::target(target));
-                }
-                for part in &item.parts {
-                    let source = match part {
-                        nous_domain::EmbeddingPart::Text { source, .. } => source.as_ref(),
-                        nous_domain::EmbeddingPart::Media { source, .. } => Some(source),
-                    };
-                    if let Some(reference) = source {
-                        requirements.push(nous_domain::SourceReadRef::Media {
-                            reference: reference.clone(),
-                            observation_id: None,
-                        });
-                    }
-                }
+                requirements.extend(item.source_requirements());
             }
+            requirements.sort();
+            requirements.dedup();
             let draft = InvocationDraft::embedding(
                 input.inputs.into_iter().map(|item| item.parts).collect(),
             );

@@ -64,12 +64,15 @@ pub(super) async fn children(
     ns: &NamespaceId,
     subject: &SubjectId,
     node: &Node,
+    purpose: ReadPurpose,
 ) -> Result<Vec<Node>> {
     match node {
         Node::Cognition(reference) => {
             let (status, _, sources) =
                 source_node(conn, ns, subject, &source_reference(reference), false, None).await?;
-            if matches!(status, SourceStatus::Missing | SourceStatus::Purged) || sources.is_empty()
+            if status == SourceStatus::Missing
+                || (status == SourceStatus::Purged && purpose == ReadPurpose::Body)
+                || sources.is_empty()
             {
                 return Err(crate::not_found());
             }
@@ -192,6 +195,7 @@ pub(super) async fn walk(
     ns: &NamespaceId,
     subject: &SubjectId,
     start: Node,
+    purpose: ReadPurpose,
 ) -> Result<Vec<(Node, Vec<Node>)>> {
     let mut pending = vec![(start, false, 0usize)];
     let mut active = BTreeSet::new();
@@ -216,7 +220,7 @@ pub(super) async fn walk(
                 "source-read graph exceeds 64 levels or 1024 nodes",
             ));
         }
-        let next = children(conn, ns, subject, &node).await?;
+        let next = children(conn, ns, subject, &node, purpose).await?;
         active.insert(node.clone());
         visited.insert(node.clone(), next.clone());
         pending.push((node, true, depth));

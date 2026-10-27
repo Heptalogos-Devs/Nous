@@ -91,6 +91,16 @@ impl WriteTransaction {
         if self.has_embedding_consumers(key).await? {
             return Ok(());
         }
+        if permanent {
+            // Imported ledgers have no local embedding_run. Content identity, not
+            // a foreign task identity, finds every actual producer payload.
+            for call in self
+                .embedding_calls_for_content(&key.namespace, &key.subject, &key.space, &key.hash)
+                .await?
+            {
+                self.redact_embedding_hash(&call, &key.hash).await?;
+            }
+        }
         let jobs:Vec<String>=sqlx::query_scalar("SELECT r.job_id FROM embedding_runs r JOIN task_records j ON j.job_id=r.job_id WHERE j.namespace_id=? AND j.subject_id=? AND r.space_id=? AND EXISTS(SELECT 1 FROM json_each(r.content_hashes) WHERE value=?)")
             .bind(key.namespace.as_str()).bind(key.subject.as_str()).bind(&key.space).bind(&key.hash).fetch_all(&mut *self.tx).await.map_err(storage_error)?;
         sqlx::query("DELETE FROM embedding_content_claims WHERE namespace_id=? AND subject_id=? AND space_id=? AND source_hash=?")
@@ -100,11 +110,6 @@ impl WriteTransaction {
                 .bind(key.namespace.as_str()).bind(key.subject.as_str()).bind(&key.space).bind(&key.hash).execute(&mut *self.tx).await.map_err(write_error)?;
         }
         for job in jobs {
-            if permanent {
-                for call in self.model_step_calls(&job, "embedding").await? {
-                    self.redact_embedding_hash(&call, &key.hash).await?;
-                }
-            }
             let error = Error::new(
                 ErrorCode::Cancelled,
                 "embedding work has no remaining consumers",

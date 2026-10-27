@@ -86,6 +86,28 @@ pub struct EmbeddingInputItem {
     pub read_requirements: Vec<crate::SourceReadRef>,
 }
 impl EmbeddingInputItem {
+    pub fn source_requirements(&self) -> Vec<crate::SourceReadRef> {
+        use crate::SourceReadRef;
+        let mut sources = self.read_requirements.clone();
+        if let Some(target) = self.target.item() {
+            sources.push(SourceReadRef::target(target));
+        }
+        for part in &self.parts {
+            let source = match part {
+                EmbeddingPart::Text { source, .. } => source.as_ref(),
+                EmbeddingPart::Media { source, .. } => Some(source),
+            };
+            if let Some(reference) = source {
+                sources.push(SourceReadRef::Media {
+                    reference: reference.clone(),
+                    observation_id: None,
+                });
+            }
+        }
+        sources.sort();
+        sources.dedup();
+        sources
+    }
     pub fn for_memory(value: &Memory) -> Result<Self> {
         Self::text(
             EmbeddingTarget::Item(RetrievalTarget::Cognition(CognitiveRef::memory(

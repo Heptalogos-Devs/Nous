@@ -1,4 +1,4 @@
-use super::{ModelCallRecord, ModelFailure, RetryClass, accounting, embedding::invalid};
+use super::{ModelCallRecord, ModelFailure, RetryClass, accounting};
 use crate::network::NetworkClients;
 use genai::ServiceTarget;
 use nous_domain::{Error, ErrorCode, UsageKind};
@@ -12,13 +12,14 @@ pub(super) async fn exchange<M>(
     payload: &impl Serialize,
     record: &mut ModelCallRecord<M>,
     max_bytes: usize,
+    usage_kind: UsageKind,
 ) -> Result<Value, ModelFailure> {
     let api_key = target.auth.single_key_value().map_err(|error| {
-        ModelFailure::waiting("embedding provider credential is unavailable")
+        ModelFailure::waiting("model provider credential is unavailable")
             .with_source(Box::new(error))
     })?;
     let mut url = reqwest::Url::parse(target.endpoint.base_url()).map_err(|error| {
-        ModelFailure::domain(Error::invalid("embedding provider endpoint is invalid"))
+        ModelFailure::domain(Error::invalid("model provider endpoint is invalid"))
             .with_source(Box::new(error))
     })?;
     let path = format!("{}/{}", url.path().trim_end_matches('/'), suffix);
@@ -43,11 +44,8 @@ pub(super) async fn exchange<M>(
             } else {
                 RetryClass::Uncertain
             };
-            let mut failure = ModelFailure::new(
-                class,
-                error.code,
-                "embedding response could not be fully read",
-            );
+            let mut failure =
+                ModelFailure::new(class, error.code, "model response could not be fully read");
             failure.info.error = error;
             failure
         })?;
@@ -56,7 +54,7 @@ pub(super) async fn exchange<M>(
     match json {
         Ok(body) => {
             record.provider_model = body.get("model").and_then(Value::as_str).map(str::to_owned);
-            record.usage = accounting::normalize_usage(UsageKind::Embedding, None, Some(&body));
+            record.usage = accounting::normalize_usage(usage_kind, None, Some(&body));
             record.provider_response = Some(body);
         }
         Err(error) => {
@@ -67,9 +65,10 @@ pub(super) async fn exchange<M>(
             if !status.is_success() {
                 return Err(http_failure(status.as_u16(), retry_after));
             }
-            return Err(
-                invalid("embedding provider response must be JSON").with_source(Box::new(error))
-            );
+            return Err(ModelFailure::domain(Error::invalid(
+                "model provider response must be JSON",
+            ))
+            .with_source(Box::new(error)));
         }
     }
     if !status.is_success() {
@@ -90,11 +89,11 @@ fn transport(error: reqwest::Error) -> ModelFailure {
         RetryClass::Uncertain
     };
     let message = if error.is_connect() {
-        "cannot connect to embedding provider"
+        "cannot connect to model provider"
     } else if error.is_timeout() {
-        "embedding request timed out"
+        "model request timed out"
     } else {
-        "embedding request failed"
+        "model request failed"
     };
     ModelFailure::new(class, ErrorCode::DependencyUnavailable, message)
         .with_source(Box::new(error.without_url()))
@@ -108,7 +107,7 @@ fn http_failure(status: u16, retry_after: Option<u64>) -> ModelFailure {
     let mut failure = ModelFailure::new(
         class,
         ErrorCode::DependencyUnavailable,
-        format!("embedding provider returned HTTP {status}"),
+        format!("model provider returned HTTP {status}"),
     );
     failure.info.http_status = Some(status);
     failure.info.retry_after_seconds = retry_after;

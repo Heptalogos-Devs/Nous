@@ -221,6 +221,7 @@ pub enum PlannedExpression {
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QueryPlan {
+    pub rerank: crate::QueryRerankMode,
     pub sort: Option<crate::QuerySort>,
     pub time_units: BTreeMap<String, Value>,
     pub source: String,

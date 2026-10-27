@@ -28,9 +28,10 @@ impl App {
             if let Some(input) = &entry.input
                 && !inputs.iter().any(|known| {
                     known.target == input.target && known.source_hash() == input.source_hash()
-                }) {
-                    inputs.push(input.clone());
-                }
+                })
+            {
+                inputs.push(input.clone());
+            }
         }
         if inputs.is_empty() {
             return Ok(());

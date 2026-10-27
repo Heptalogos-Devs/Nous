@@ -57,6 +57,7 @@ cli-yes = Yes
 cli-no = No
 cli-numbers = [{ $count } numbers]
 cli-score = Score
+cli-rerank-score = Rerank score
 cli-bytes = bytes
 cli-source-roots = Original sources
 cli-state = State

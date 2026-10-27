@@ -12,7 +12,9 @@ mod media_input;
 pub use media_input::{MediaReadFuture, ModelMediaReader};
 mod ark_embedding;
 mod embedding;
-mod embedding_http;
+mod protocol_http;
+mod rerank;
+pub use rerank::RerankScore;
 mod embedding_request;
 mod openai_embedding;
 mod preview;
@@ -341,6 +343,7 @@ impl ModelRuntime {
             Ok(match output {
                 ProviderOutput::Text(text) => ModelOutput::Text(text),
                 ProviderOutput::Vectors(vectors) => ModelOutput::Vectors(vectors),
+                ProviderOutput::Reranked(scores) => ModelOutput::Reranked(scores),
             })
         })
     }

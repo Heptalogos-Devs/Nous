@@ -92,6 +92,7 @@ pub enum QueryDomain {
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct QueryRequest {
+    pub rerank: Option<QueryRerankMode>,
     pub sort: Option<QuerySort>,
     pub expression: Option<crate::nousql::QueryExpression>,
     pub clock: Option<TimePoint>,
@@ -240,6 +241,8 @@ pub struct QueryHitOrder {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QueryHit {
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub rerank_score: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub order: Option<QueryHitOrder>,
     pub reference: RetrievalTarget,
     pub object: RetrievalRecord,
@@ -267,6 +270,8 @@ pub struct ProjectionIssue {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QueryResult {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rerank: Option<QueryRerankInfo>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub plan: Option<crate::nousql::QueryPlan>,
     pub hits: Vec<QueryHit>,

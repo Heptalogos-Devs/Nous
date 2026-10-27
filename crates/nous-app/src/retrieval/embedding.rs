@@ -31,6 +31,7 @@ impl App {
         let mut policy = self.retrieval_policy(&namespace, subject).await?;
         policy.max_snapshot_entries = policy.max_snapshot_entries.min(limit);
         let request = QueryRequest {
+            rerank: None,
             sort: None,
             expression: None,
             clock: None,
