@@ -52,17 +52,7 @@ pub struct JobRecord {
 
 impl JobRecord {
     pub fn require_read(&self, ctx: &crate::CallContext) -> Result<()> {
-        let accepted = self.call_context("task-read")?.source_read_identity()?;
-        if ctx
-            .source_read_identity()?
-            .iter()
-            .any(|constraint| !accepted.contains(constraint))
-        {
-            return Err(Error::new(
-                crate::ErrorCode::Forbidden,
-                "task body belongs to a different accepted source-read scope",
-            ));
-        }
+        ctx.require_accepted_source_read(&self.call_context("task-read")?)?;
         match (&self.namespace_id, &self.subject_id) {
             (Some(namespace), Some(subject)) => ctx.require_subject(namespace, subject),
             (Some(namespace), None) => ctx.require_namespace(namespace),

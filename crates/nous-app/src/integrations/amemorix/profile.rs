@@ -33,7 +33,7 @@ pub(super) async fn execute(
                 &binding.subject_id,
                 CognitiveKind::Entity,
                 &input.person_name,
-                &nous_storage::QueryIdentityOptions {
+                &nous_storage::ReferenceViewOptions {
                     as_of: None,
                     source_read: Some(&source_read),
                 },
@@ -73,7 +73,7 @@ pub(super) async fn execute(
                 &binding.subject_id,
                 CognitiveKind::Entity,
                 &input.person_name,
-                &nous_storage::QueryIdentityOptions {
+                &nous_storage::ReferenceViewOptions {
                     as_of: None,
                     source_read: Some(&source_read),
                 },

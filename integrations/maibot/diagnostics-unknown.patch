@@ -1,0 +1,165 @@
+diff --git a/dashboard/src/lib/memory-api.ts b/dashboard/src/lib/memory-api.ts
+index de65f93..0b19c8b 100644
+--- a/dashboard/src/lib/memory-api.ts
++++ b/dashboard/src/lib/memory-api.ts
+@@ -348,20 +348,20 @@ export interface MemoryVectorPoolsStatus {
+ export interface MemoryRuntimeConfigPayload {
+   success: boolean
+   config: Record<string, unknown>
+-  data_dir: string
+-  embedding_dimension: number
+-  embedding_fingerprint?: Record<string, unknown>
+-  stored_embedding_fingerprint?: Record<string, unknown>
++  data_dir: string | null
++  embedding_dimension: number | null
++  embedding_fingerprint?: Record<string, unknown> | null
++  stored_embedding_fingerprint?: Record<string, unknown> | null
+   embedding_fingerprint_status?: string
+   fuzzy_modify_candidate_limit?: number
+-  stored_vector_dimension?: number
+-  vector_rebuild_required?: boolean
++  stored_vector_dimension?: number | null
++  vector_rebuild_required?: boolean | null
+   vector_rebuild_message?: string
+-  auto_save: boolean
+-  relation_vectors_enabled: boolean
+-  vector_pools?: MemoryVectorPoolsStatus
+-  vector_pools_ready?: boolean
+-  vector_pools_effective_mode?: string
++  auto_save: boolean | null
++  relation_vectors_enabled: boolean | null
++  vector_pools?: MemoryVectorPoolsStatus | null
++  vector_pools_ready?: boolean | null
++  vector_pools_effective_mode?: string | null
+   memory_enabled?: boolean
+   runtime_ready: boolean
+   retrieval_ready?: boolean
+@@ -370,14 +370,15 @@ export interface MemoryRuntimeConfigPayload {
+   available_channels?: string[]
+   unavailable_channels?: string[]
+   vector_health?: MemoryVectorHealth
+-  embedding_degraded: boolean
+-  embedding_degraded_reason: string
++  embedding_degraded: boolean | null
++  embedding_degraded_reason: string | null
+   embedding_degraded_since?: number | null
+   embedding_last_check?: number | null
+-  paragraph_vector_backfill_pending: number
+-  paragraph_vector_backfill_running: number
+-  paragraph_vector_backfill_failed: number
+-  paragraph_vector_backfill_done: number
++  paragraph_vector_backfill_pending: number | null
++  paragraph_vector_backfill_running: number | null
++  paragraph_vector_backfill_failed: number | null
++  paragraph_vector_backfill_done: number | null
++  unknown?: Record<string, string>
+ }
+ 
+ export interface MemoryVectorHealth {
+diff --git a/dashboard/src/routes/config/model/components/EmbeddingBuildProgress.tsx b/dashboard/src/routes/config/model/components/EmbeddingBuildProgress.tsx
+index 36fac21..e377471 100644
+--- a/dashboard/src/routes/config/model/components/EmbeddingBuildProgress.tsx
++++ b/dashboard/src/routes/config/model/components/EmbeddingBuildProgress.tsx
+@@ -10,7 +10,7 @@ import { getMemoryRuntimeConfig, type MemoryRuntimeConfigPayload } from '@/lib/m
+ interface BuildProgressRow {
+   label: string
+   detail: string
+-  percent: number
++  percent: number | undefined
+ }
+ 
+ function expressionRow(data: ExpressionVectorBuildProgress | null, error: boolean): BuildProgressRow {
+@@ -84,10 +84,13 @@ function memoryRow(
+     return { label: '记忆库构建', detail: data.embedding_degraded_reason || '嵌入服务不可用', percent: 0 }
+   }
+ 
+-  const pending = data.paragraph_vector_backfill_pending || 0
+-  const running = data.paragraph_vector_backfill_running || 0
+-  const failed = data.paragraph_vector_backfill_failed || 0
+-  const done = data.paragraph_vector_backfill_done || 0
++  const pending = data.paragraph_vector_backfill_pending
++  const running = data.paragraph_vector_backfill_running
++  const failed = data.paragraph_vector_backfill_failed
++  const done = data.paragraph_vector_backfill_done
++  if (pending == null || running == null || failed == null || done == null) {
++    return { label: '记忆库构建', detail: '段落向量回填状态未知', percent: undefined }
++  }
+   const total = pending + running + failed + done
+   if (total === 0) {
+     return { label: '记忆库构建', detail: '向量库已就绪', percent: 100 }
+diff --git a/dashboard/src/routes/resource/expression/ExpressionVectorSpaces.tsx b/dashboard/src/routes/resource/expression/ExpressionVectorSpaces.tsx
+index 39a8e51..91f93be 100644
+--- a/dashboard/src/routes/resource/expression/ExpressionVectorSpaces.tsx
++++ b/dashboard/src/routes/resource/expression/ExpressionVectorSpaces.tsx
+@@ -84,7 +84,7 @@ export function ExpressionVectorSpaces() {
+                     </TableCell>
+                     <TableCell>{space.embedding_fingerprint.dimension || '-'}</TableCell>
+                     <TableCell>{space.vector_count}</TableCell>
+-                    <TableCell>{(space.size_bytes / 1024 / 1024).toFixed(2)} MB</TableCell>
++                    <TableCell>{space.size_bytes == null ? '未知' : `${(space.size_bytes / 1024 / 1024).toFixed(2)} MB`}</TableCell>
+                     <TableCell className="whitespace-nowrap">
+                       {space.last_used_at ? new Date(space.last_used_at * 1000).toLocaleString() : '-'}
+                     </TableCell>
+diff --git a/dashboard/src/routes/resource/knowledge-base.tsx b/dashboard/src/routes/resource/knowledge-base.tsx
+index 99ae2aa..ac8989e 100644
+--- a/dashboard/src/routes/resource/knowledge-base.tsx
++++ b/dashboard/src/routes/resource/knowledge-base.tsx
+@@ -406,6 +406,14 @@ function resolveRuntimeBadge(runtimeConfig: MemoryRuntimeConfigPayload) {
+ }
+ 
+ function resolveVectorPoolsBadge(runtimeConfig: MemoryRuntimeConfigPayload): VectorPoolsBadge {
++  if (runtimeConfig.vector_pools == null && runtimeConfig.vector_pools_effective_mode == null) {
++    return {
++      value: '未知',
++      description: '当前服务未提供文件向量池状态',
++      className: 'border-slate-500/25',
++      iconClassName: 'text-slate-500',
++    }
++  }
+   const vectorHealth = runtimeConfig.vector_health
+   const vectorState = String(vectorHealth?.state ?? '').trim().toLowerCase()
+   const copyProgress = vectorHealth?.copy_progress
+@@ -909,8 +917,10 @@ export function KnowledgeBasePage() {
+       },
+       {
+         label: 'Embedding 维度',
+-        value: String(runtimeConfig.embedding_dimension),
+-        description: runtimeConfig.relation_vectors_enabled ? '关系向量已启用' : '关系向量未启用',
++        value: runtimeConfig.embedding_dimension == null ? '未知' : String(runtimeConfig.embedding_dimension),
++        description: runtimeConfig.relation_vectors_enabled == null
++          ? '关系向量状态未知'
++          : runtimeConfig.relation_vectors_enabled ? '关系向量已启用' : '关系向量未启用',
+         progressValue: undefined,
+         progressLabel: undefined,
+         icon: HardDrive,
+@@ -929,7 +939,7 @@ export function KnowledgeBasePage() {
+       },
+       {
+         label: '数据目录',
+-        value: runtimeConfig.data_dir,
++        value: runtimeConfig.data_dir ?? '未知',
+         description: '长期记忆存储位置',
+         progressValue: undefined,
+         progressLabel: undefined,
+@@ -1095,7 +1105,7 @@ export function KnowledgeBasePage() {
+                             </td>
+                             <td className="px-2 tabular-nums">{space.embedding_fingerprint.dimension ?? '-'}</td>
+                             <td className="px-2 tabular-nums">{space.vector_count.toLocaleString()}</td>
+-                            <td className="px-2 whitespace-nowrap tabular-nums">{(space.size_bytes / 1024 / 1024).toFixed(1)} MB</td>
++                            <td className="px-2 whitespace-nowrap tabular-nums">{space.size_bytes == null ? '未知' : `${(space.size_bytes / 1024 / 1024).toFixed(1)} MB`}</td>
+                             <td className="px-2 whitespace-nowrap">
+                               {space.state === 'active' ? '使用中' : space.state === 'syncing' ? '同步中' : '未使用'}
+                             </td>
+diff --git a/dashboard/src/types/vector-space.ts b/dashboard/src/types/vector-space.ts
+index 40cbc8b..9b10159 100644
+--- a/dashboard/src/types/vector-space.ts
++++ b/dashboard/src/types/vector-space.ts
+@@ -13,7 +13,7 @@ export interface VectorSpace {
+   can_delete: boolean
+   vector_count: number
+   counts?: Record<string, number>
+-  size_bytes: number
++  size_bytes: number | null
+   last_used_at?: number | null
+ }
+ 

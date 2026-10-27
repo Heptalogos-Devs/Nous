@@ -13,9 +13,11 @@ pub mod media;
 pub mod models;
 mod operation;
 pub mod prompts;
+pub mod references;
 pub(crate) mod source_read;
 pub mod sources;
 pub mod structured;
+mod subject_diagnostics;
 pub mod tasks;
 mod trace;
 use crate::mcp::McpService;
@@ -124,6 +126,8 @@ pub fn router(state: ApiState, config: &InstanceConfig, cancellation: Cancellati
         .merge(crate::http::configuration::router())
         .merge(crate::http::contexts::router())
         .merge(crate::http::sources::router())
+        .merge(crate::http::references::router())
+        .merge(crate::http::subject_diagnostics::router())
         .merge(crate::http::bundles::router())
         .merge(crate::http::identity::router())
         .merge(crate::http::integrations::router())

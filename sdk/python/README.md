@@ -27,6 +27,10 @@ async with NousClient(
 
 `source(subject_id, reference, observation_id=...)` 读取精确认知或媒体的来源。`memory_source(memory_id, revision=...)` 读取指定历史修订；省略修订时读取当前记忆。媒体的 `observation_id` 指定本次实际接触或导入，认知自身保留形成时的来源事件。
 
+`source` 同时接受规范引用对象和结果中的词序引用。`resolve_reference(subject_id, address, as_of_commit=...)` 将对象地址绑定到所选知识截点，固定修订地址保持原修订；结果包含规范身份及本机地址。Namespace 操作者可通过 `reconcile_references` 为已有资料补齐目录。知识包恢复后，原地址沿安装来源映射解析。
+
+`subject_diagnostics(subject_id)` 读取当前授权范围内的认知、任务、向量和实际用量统计。本机消费与 Imported 生产历史分别汇总，金额保留货币；缺失量为 `None` 并附原因。A-Memorix adapter 的 `memory_stats()`、`memory_runtime_admin(action="get_config")` 和 `memory_runtime_admin(action="list_vector_spaces")` 使用同一诊断用例；MaiBot 接入和未知值展示补丁见 [集成说明](../../integrations/maibot/README.md)。
+
 ## 每次模型调用的上下文
 
 会话使用 `contexts` 的 `open_session` 操作建立。宿主保存自己的真实历史、工具状态、会话 ID 和历史代次；每个独立执行者使用自己的 `consumer_id` / `instance_id`。

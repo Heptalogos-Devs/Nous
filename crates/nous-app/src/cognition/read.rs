@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 #[serde(deny_unknown_fields)]
 pub struct RetrievalSourceRequest {
     pub subject_id: SubjectId,
-    pub reference: RetrievalTarget,
+    pub reference: nous_domain::references::ReferenceLocator,
     pub observation_id: Option<ObservationId>,
 }
 
@@ -29,7 +29,7 @@ impl App {
             ctx,
             RetrievalSourceRequest {
                 subject_id: subject.clone(),
-                reference: target.clone(),
+                reference: target.clone().into(),
                 observation_id: None,
             },
         )
@@ -40,13 +40,15 @@ impl App {
         ctx: &CallContext,
         request: RetrievalSourceRequest,
     ) -> Result<Value> {
-        request.reference.validate()?;
+        let resolved = self
+            .resolve_reference(ctx, &request.subject_id, &request.reference, None)
+            .await?;
         let namespace = self.database.subject_namespace(&request.subject_id).await?;
         let context = ctx.narrow(AccessScope::Subject {
             namespace_id: namespace.clone(),
             subject_id: request.subject_id.clone(),
         })?;
-        match request.reference {
+        match resolved.reference {
             RetrievalTarget::Cognition(reference) => {
                 if request.observation_id.is_some() {
                     return Err(Error::invalid(

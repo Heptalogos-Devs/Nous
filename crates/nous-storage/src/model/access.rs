@@ -1,4 +1,4 @@
-use crate::ReadView;
+use crate::{ReadView, storage_error};
 use nous_domain::*;
 use serde_json::Value;
 use std::collections::BTreeSet;
@@ -19,21 +19,17 @@ impl ReadView {
         call: &ModelCall,
     ) -> Result<()> {
         ctx.require_subject(&call.namespace_id, &call.subject_id)?;
-        let erased = flag(&call.request, "redacted");
         let Some(sources) = call
             .request
             .pointer("/preview/sources")
             .filter(|value| !value.is_null())
         else {
-            if ctx.source_read.is_empty() && (erased || call.origin == ModelCallOrigin::Local) {
-                return Ok(());
-            }
-            return Err(Error::new(
-                ErrorCode::Forbidden,
-                "model history has no attributable source catalog",
-            ));
+            return self.require_opaque_call_scope(ctx, call).await;
         };
         let sources: Vec<SourceReadRef> = serde_json::from_value(sources.clone())?;
+        if sources.is_empty() {
+            return self.require_opaque_call_scope(ctx, call).await;
+        }
         let (bodies, facts) = source_access(call, &sources)?;
         let bodies = self.imported_model_sources(call, &bodies).await?;
         let facts = self.imported_model_sources(call, &facts).await?;
@@ -46,6 +42,41 @@ impl ReadView {
                 .await?;
         }
         Ok(())
+    }
+    async fn require_opaque_call_scope(
+        &mut self,
+        ctx: &CallContext,
+        call: &ModelCall,
+    ) -> Result<()> {
+        if ctx.source_read.is_empty() {
+            return Ok(());
+        }
+        if call.origin == ModelCallOrigin::Local {
+            let job_id = sqlx::query_scalar::<_, Option<String>>(
+                "SELECT local_job_id FROM model_calls WHERE id=?",
+            )
+            .bind(call.id.as_str())
+            .fetch_optional(&mut *self.tx)
+            .await
+            .map_err(storage_error)?
+            .flatten();
+            if let Some(job_id) = job_id {
+                let job = self.job_record(&job_id).await?;
+                if job.id != call.job_id
+                    || job.namespace_id.as_ref() != Some(&call.namespace_id)
+                    || job.subject_id.as_ref() != Some(&call.subject_id)
+                {
+                    return Err(Error::internal(
+                        "local model call differs from its accepted task identity",
+                    ));
+                }
+                return job.require_read(ctx);
+            }
+        }
+        Err(Error::new(
+            ErrorCode::Forbidden,
+            "opaque model input has no accepted scope proving this source-read range",
+        ))
     }
 }
 

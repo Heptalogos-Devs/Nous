@@ -1,5 +1,5 @@
 use super::*;
-use nous_storage::QueryIdentityOptions;
+use nous_storage::ReferenceViewOptions;
 impl Binder {
     pub(super) fn composition(&self, syntax: &QuerySyntax) -> Result<Option<QueryExpression>> {
         let values = syntax
@@ -139,13 +139,35 @@ impl Binder {
             let targets;
             match selector {
                 SelectorKind::Ref => {
-                    let reference = locators[0].parse::<RetrievalTarget>()?;
+                    let reference = self
+                        .read
+                        .resolve_reference_locator(
+                            &self.namespace,
+                            &self.subject,
+                            &locators[0],
+                            &nous_storage::ReferenceViewOptions {
+                                as_of: leaf.request.as_of_commit,
+                                source_read: Some(&self.source_read),
+                            },
+                        )
+                        .await?;
                     self.validate_exact(&reference, leaf).await?;
                     canonical.push(reference.to_string());
                     targets = vec![reference];
                 }
                 SelectorKind::Resource => {
-                    let target=locators[0].parse::<RetrievalTarget>().map_err(|_|Error::new(ErrorCode::CapabilityUnavailable,"named resources require the resource catalog; @r currently accepts an exact media resource reference"))?;
+                    let target = self
+                        .read
+                        .resolve_reference_locator(
+                            &self.namespace,
+                            &self.subject,
+                            &locators[0],
+                            &nous_storage::ReferenceViewOptions {
+                                as_of: leaf.request.as_of_commit,
+                                source_read: Some(&self.source_read),
+                            },
+                        )
+                        .await?;
                     if target.media().is_none() {
                         return Err(Error::invalid("@r requires a media resource reference"));
                     }
@@ -185,7 +207,7 @@ impl Binder {
                                 &self.subject,
                                 kind,
                                 locator,
-                                &QueryIdentityOptions {
+                                &ReferenceViewOptions {
                                     as_of: leaf.request.as_of_commit,
                                     source_read: Some(&self.source_read),
                                 },
@@ -241,23 +263,8 @@ impl Binder {
             filters: &leaf.request.filters,
             history: leaf.request.history,
         };
-        match target {
-            RetrievalTarget::Cognition(reference) => {
-                self.read
-                    .cognitive_reference_snapshot(
-                        &self.namespace,
-                        &self.subject,
-                        &options,
-                        reference,
-                    )
-                    .await?;
-            }
-            RetrievalTarget::Media(reference) => {
-                self.read
-                    .media_reference_snapshot(&self.namespace, &self.subject, &options, reference)
-                    .await?;
-            }
-        }
-        Ok(())
+        self.read
+            .require_retrieval_reference(&self.namespace, &self.subject, &options, target)
+            .await
     }
 }

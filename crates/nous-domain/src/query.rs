@@ -241,6 +241,10 @@ pub struct QueryHitOrder {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QueryHit {
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub addresses: Option<crate::references::ReferenceAddresses>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub source_addresses: std::collections::BTreeMap<MaterialId, crate::references::LexicalRef>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub rerank_score: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub order: Option<QueryHitOrder>,

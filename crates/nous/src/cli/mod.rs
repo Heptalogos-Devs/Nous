@@ -14,6 +14,7 @@ mod media;
 mod models;
 mod platform;
 mod prompts;
+mod references;
 mod scope;
 mod secrets;
 mod sources;
@@ -64,6 +65,11 @@ pub(crate) struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Resolve readable references or reconcile the address directory.
+    Reference {
+        #[command(subcommand)]
+        command: references::ReferenceCommand,
+    },
     /// Call A-Memorix consumer operations through the common Nous authority.
     Amemorix {
         #[command(subcommand)]
@@ -128,6 +134,11 @@ enum Command {
     Status,
     /// Inspect active log destinations and process diagnostics.
     Diagnostics,
+    /// Read authorized cognition, work, vectors and accounting for one Subject.
+    Stats {
+        #[arg(long)]
+        subject: nous_domain::SubjectId,
+    },
     /// Follow committed operations, durable jobs and model attempts for one trace.
     Trace {
         trace_id: nous_domain::TraceId,
@@ -344,6 +355,16 @@ pub(crate) async fn execute(cli: Cli) -> Result<()> {
                 .execute(&Operation::Diagnostics)
                 .await?,
         )?,
+        Command::Stats { subject } => print_result(
+            connect(&paths, cli.url, cli.token_file)
+                .await?
+                .execute(&Operation::SubjectDiagnostics(
+                    nous_domain::SubjectDiagnosticsRequest {
+                        subject_id: subject,
+                    },
+                ))
+                .await?,
+        )?,
         Command::Paths => print_result(serde_json::to_value(paths)?)?,
         Command::Query(input) => match input.operation()? {
             None => print_result(json!({"text":nous_domain::nousql::MANUAL}))?,
@@ -510,6 +531,7 @@ pub(crate) async fn execute(cli: Cli) -> Result<()> {
                     command: SubjectCommand::List { namespace },
                 } => Operation::ListSubjects(namespace.to_string()),
                 Command::Source { command } => command.operation(),
+                Command::Reference { command } => command.operation(),
                 Command::Observation { command } => command.operation()?,
                 Command::Job { command } => command.operation(),
                 _ => bail!("unsupported command"),

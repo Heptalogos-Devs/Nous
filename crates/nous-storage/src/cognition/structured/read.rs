@@ -116,7 +116,7 @@ impl Database {
                 subject,
                 CognitiveKind::Concept,
                 alias,
-                &crate::QueryIdentityOptions {
+                &crate::ReferenceViewOptions {
                     as_of: None,
                     source_read: None,
                 },

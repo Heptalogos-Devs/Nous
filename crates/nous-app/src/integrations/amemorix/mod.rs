@@ -1,3 +1,4 @@
+mod diagnostics;
 mod graph;
 mod ingest;
 mod maintain;
@@ -8,6 +9,7 @@ mod time;
 mod types;
 use crate::App;
 use nous_domain::*;
+pub(crate) use policy::AMEMORIX;
 pub use policy::register_configuration;
 use serde_json::Value;
 pub use types::*;
@@ -30,6 +32,12 @@ impl App {
             .await?
             .get(policy::AMEMORIX)?;
         match &request.operation {
+            AmemorixOperation::MemoryStats(_) => {
+                diagnostics::stats(self, ctx, &request.subject_id).await
+            }
+            AmemorixOperation::MemoryRuntimeAdmin(input) => {
+                diagnostics::runtime(self, ctx, &request.subject_id, input).await
+            }
             AmemorixOperation::SearchMemory(input) => {
                 search::execute(self, ctx, &request, input, &policy).await
             }

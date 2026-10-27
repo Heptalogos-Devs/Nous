@@ -29,6 +29,13 @@ impl WriteTransaction {
         sqlx::query("INSERT INTO source_regions(id,namespace_id,material_id,parent_id,coordinate_hash,body,commit_seq) VALUES(?,?,?,?,?,?,?)")
             .bind(region.id.as_str()).bind(region.namespace_id.as_str()).bind(region.material_id.as_str()).bind(region.parent.as_ref().map(|id|id.as_str()))
             .bind(&region.coordinate_hash).bind(serde_json::to_string(&region)?).bind(region.commit_seq).execute(&mut *self.tx).await.map_err(write_error)?;
+        self.ensure_retrieval_addresses(
+            &region.namespace_id,
+            &RetrievalTarget::Media(MediaReference::SourceRegion {
+                id: region.id.clone(),
+            }),
+        )
+        .await?;
         Ok(region)
     }
     pub async fn save_representation(
@@ -130,6 +137,13 @@ impl WriteTransaction {
         sqlx::query("INSERT INTO media_representations(id,revision,namespace_id,subject_id,derivation_key,body,commit_seq) VALUES(?,?,?,?,?,?,?)")
             .bind(representation.id.as_str()).bind(representation.revision).bind(representation.namespace_id.as_str()).bind(representation.subject_id.as_str())
             .bind(key).bind(serde_json::to_string(representation)?).bind(representation.commit_seq).execute(&mut *self.tx).await.map_err(write_error)?;
+        self.ensure_retrieval_addresses(
+            &representation.namespace_id,
+            &RetrievalTarget::Media(MediaReference::Representation {
+                reference: representation.reference(),
+            }),
+        )
+        .await?;
         Ok(())
     }
     pub async fn put_derived_region(&mut self, region: DerivedRegion) -> Result<DerivedRegion> {
@@ -160,6 +174,13 @@ impl WriteTransaction {
             .bind(region.id.as_str()).bind(region.namespace_id.as_str()).bind(region.subject_id.as_str()).bind(region.representation.id.as_str()).bind(region.representation.revision)
             .bind(region.parent.as_ref().map(|id|id.as_str())).bind(selector).bind(serde_json::to_string(&region)?).bind(region.commit_seq)
             .execute(&mut *self.tx).await.map_err(write_error)?;
+        self.ensure_retrieval_addresses(
+            &region.namespace_id,
+            &RetrievalTarget::Media(MediaReference::DerivedRegion {
+                id: region.id.clone(),
+            }),
+        )
+        .await?;
         Ok(region)
     }
     pub async fn insert_media_exposure(

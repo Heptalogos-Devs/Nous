@@ -5,10 +5,12 @@ pub mod bundles;
 pub mod cognition;
 mod composition;
 pub mod contexts;
+pub mod diagnostics;
 pub mod import_format;
 pub mod integrations;
 mod lifecycle;
 pub mod materials;
+pub mod references;
 pub mod retrieval;
 
 use nous_domain::*;

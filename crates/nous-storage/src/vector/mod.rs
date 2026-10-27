@@ -12,6 +12,7 @@ mod subscriptions;
 pub use call_content::{EmbeddingCallContent, embedding_call_contents};
 pub use inventory::QuerySnapshotOptions;
 pub(crate) use inventory::references as query_references;
+pub(crate) use runs::space as embedding_space_in;
 pub(crate) mod source;
 pub use media_snapshot::{MediaRetrievalEntry, MediaRetrievalSnapshot};
 use nous_domain::*;

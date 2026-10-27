@@ -136,6 +136,9 @@ fn time_point(row: &SqliteRow, domain: &str, coordinate: &str) -> Option<TimePoi
 }
 
 impl crate::ReadView {
+    pub async fn subject_namespace(&mut self, id: &SubjectId) -> nous_domain::Result<NamespaceId> {
+        subject_namespace(&mut self.tx, id).await
+    }
     pub async fn namespace(&mut self, id: &NamespaceId) -> nous_domain::Result<Namespace> {
         namespace(&mut self.tx, id)
             .await?
@@ -168,4 +171,16 @@ impl crate::ReadView {
             .await?
             .ok_or_else(crate::not_found)
     }
+}
+pub(crate) async fn subject_namespace(
+    conn: &mut SqliteConnection,
+    id: &SubjectId,
+) -> nous_domain::Result<NamespaceId> {
+    sqlx::query_scalar::<_, String>("SELECT namespace_id FROM subjects WHERE id=?")
+        .bind(id.as_str())
+        .fetch_optional(conn)
+        .await
+        .map_err(storage_error)?
+        .map(NamespaceId)
+        .ok_or_else(crate::not_found)
 }

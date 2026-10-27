@@ -136,6 +136,10 @@ impl Database {
             .execute(&mut *tx)
             .await
             .map_err(storage_error)?;
+        sqlx::raw_sql(include_str!("../directory/schema.sql"))
+            .execute(&mut *tx)
+            .await
+            .map_err(storage_error)?;
         tx.commit().await.map_err(storage_error)?;
         Ok(Self {
             pool,
@@ -228,13 +232,11 @@ impl Database {
     }
 
     pub async fn subject_namespace(&self, id: &SubjectId) -> Result<NamespaceId> {
-        sqlx::query_scalar::<_, String>("SELECT namespace_id FROM subjects WHERE id=?")
-            .bind(id.as_str())
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(storage_error)?
-            .map(NamespaceId)
-            .ok_or_else(not_found)
+        crate::authority::records::subject_namespace(
+            &mut *self.pool.acquire().await.map_err(storage_error)?,
+            id,
+        )
+        .await
     }
 
     pub async fn list_namespaces(&self) -> Result<Vec<Namespace>> {
@@ -281,19 +283,7 @@ impl Database {
     }
 
     pub async fn queue_record(&self, id: &str) -> Result<Option<QueueRecord>> {
-        let row = sqlx::query("SELECT * FROM Jobs WHERE id=? AND job_type=?")
-            .bind(id)
-            .bind(JOB_QUEUE)
-            .fetch_optional(&self.pool)
+        crate::authority::queue_record(&mut *self.pool.acquire().await.map_err(storage_error)?, id)
             .await
-            .map_err(storage_error)?;
-        Ok(row.map(|row| QueueRecord {
-            id: row.get("id"),
-
-            status: row.get("status"),
-            attempts: row.get("attempts"),
-            max_attempts: row.get("max_attempts"),
-            last_result: row.get("last_result"),
-        }))
     }
 }

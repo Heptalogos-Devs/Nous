@@ -18,12 +18,23 @@ pub struct AmemorixRequest {
     deny_unknown_fields
 )]
 pub enum AmemorixOperation {
+    MemoryStats(StatsInput),
+    MemoryRuntimeAdmin(RuntimeInput),
     SearchMemory(SearchInput),
     IngestText(IngestInput),
     IngestSummary(SummaryInput),
     MaintainMemory(MaintainInput),
     GetPersonProfile(ProfileInput),
     MemorySource(SourceInput),
+}
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct StatsInput {}
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct RuntimeInput {
+    pub action: String,
+    #[serde(flatten)]
+    pub parameters: serde_json::Map<String, Value>,
 }
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]

@@ -48,6 +48,17 @@ pub struct CallContext {
 }
 
 impl CallContext {
+    pub fn require_accepted_source_read(&self, accepted: &Self) -> Result<()> {
+        let accepted = accepted.source_read_identity()?;
+        if self
+            .source_read_identity()?
+            .iter()
+            .any(|constraint| !accepted.contains(constraint))
+        {
+            return Err(self.forbidden("record belongs to a different accepted source-read scope"));
+        }
+        Ok(())
+    }
     pub fn source_read_identity(&self) -> Result<Vec<SourceReadScope>> {
         let mut scopes = self
             .source_read

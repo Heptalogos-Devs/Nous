@@ -61,6 +61,7 @@ pub struct CancelJob {
 
 #[derive(Clone)]
 pub enum Operation {
+    Reference(nous_app::references::ReferenceOperation),
     Amemorix(Box<super::integrations::AmemorixRequest>),
     ReadSource(super::sources::RetrievalSourceRequest),
     Bundle(Box<super::bundles::BundleOperation>),
@@ -78,6 +79,7 @@ pub enum Operation {
     Cognition(crate::http::cognition::CognitionOperation),
     Status,
     Diagnostics,
+    SubjectDiagnostics(nous_domain::SubjectDiagnosticsRequest),
     Trace(nous_app::administration::observability::TraceRequest),
     CreateNamespace(CreateNamespace),
     ListNamespaces,
@@ -106,6 +108,10 @@ impl Operation {
 
     async fn dispatch(&self, app: &App, ctx: &CallContext) -> Result<Value, Error> {
         match self {
+            Self::Reference(request) => app.reference_operation(ctx, request.clone()).await,
+            Self::SubjectDiagnostics(request) => Ok(json!(
+                app.subject_diagnostics(ctx, &request.subject_id).await?
+            )),
             Self::Amemorix(request) => app.amemorix(ctx, *request.clone()).await,
             Self::ReadSource(request) => app.read_retrieval_source(ctx, request.clone()).await,
             Self::Bundle(operation) => operation.execute(app, ctx).await,
@@ -204,12 +210,18 @@ impl Operation {
 
     pub fn request(&self) -> (&'static str, String, Option<Value>) {
         match self {
+            Self::SubjectDiagnostics(request) => (
+                "GET",
+                format!("/api/subjects/{}/diagnostics", request.subject_id),
+                None,
+            ),
             Self::Amemorix(request) => (
                 "POST",
                 "/api/integrations/amemorix".into(),
                 Some(json!(request)),
             ),
             Self::ReadSource(request) => ("POST", "/api/sources/read".into(), Some(json!(request))),
+            Self::Reference(request) => ("POST", "/api/references".into(), Some(json!(request))),
             Self::Bundle(operation) => ("POST", "/api/bundles".into(), Some(json!(operation))),
             Self::WaitJobs(request) => ("POST", "/api/jobs/wait".into(), Some(json!(request))),
             Self::Context(operation) => ("POST", "/api/contexts".into(), Some(json!(operation))),

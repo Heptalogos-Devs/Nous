@@ -9,6 +9,7 @@
 ```sh
 uv add "/绝对路径/nous_wave-0.1.0-py3-none-any.whl"
 git apply "/绝对路径/Nous-Wave/integrations/maibot/memory-service.patch"
+git apply "/绝对路径/Nous-Wave/integrations/maibot/diagnostics-unknown.patch"
 ```
 
 开发环境也可使用源码包：`uv add --editable "/绝对路径/Nous-Wave/sdk/python"`。SDK 使用说明见 [Python SDK](../../sdk/python/README.md)。
@@ -35,7 +36,11 @@ uv run --env-file "/MaiBot实例/.env" maibot run --directory "/MaiBot实例"
 
 ## 使用范围
 
-当前接通 `ingest_text`、`ingest_summary`、`search_memory`、`maintain_memory` 和人物画像查询；维护任务通过 Nous 作业等待接口返回实际结果。人物事实以 `reported` 保存，并保留原文 Memory 的精确修订证据。需要来源时，使用返回的认知引用读取 Nous 来源接口。
+当前接通 `ingest_text`、`ingest_summary`、`search_memory`、`maintain_memory`、`memory_stats` 和人物画像查询；维护任务通过 Nous 作业等待接口返回实际结果。人物事实以 `reported` 保存，并保留原文 Memory 的精确修订证据。需要来源时，使用返回的认知引用读取 Nous 来源接口。
+
+`memory_stats` 与原生 Subject 诊断使用同一授权快照，统计当前认知、任务、向量及模型用量。段落回填按当前语义空间中真实 Memory 输入的请求状态统计。Imported 生产历史单列，并按原生产调用去重；本机消耗保留实际调用用量与货币。
+
+`memory_runtime_admin` 已提供 `get_config`、`list_vector_spaces` 两项只读操作。模型自检、重建和配置写入仍由各正式 owner 续接。没有对应原生资源或队列的字段返回 `null`，原因放在 `unknown` 中。`diagnostics-unknown.patch` 使管理界面保留未知值：空间大小、关系开关和回填状态不会显示成零、关闭或完成。安装后重新构建 MaiBot dashboard。
 
 `integrations.amemorix` 配置控制聊天过滤、检索模式与接纳后的形成任务。向量检索使用 Nous 的模型资源配置；普通文本接纳可直接保存原文。
 

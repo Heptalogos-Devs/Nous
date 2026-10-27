@@ -9,7 +9,10 @@ pub fn query_result(result: &QueryResult, presentation: &Presentation) -> String
         let _ = write!(
             output,
             "{}  {}={:.4}",
-            hit.reference,
+            hit.addresses
+                .as_ref()
+                .map(|addresses| addresses.exact.to_string())
+                .unwrap_or_else(|| hit.reference.to_string()),
             super::label("score", presentation),
             hit.score
         );
@@ -86,7 +89,11 @@ pub fn query_result(result: &QueryResult, presentation: &Presentation) -> String
             super::label("source_roots", presentation),
             hit.source_roots
                 .iter()
-                .map(|id| format!("material:{id}"))
+                .map(|id| hit
+                    .source_addresses
+                    .get(id)
+                    .map(ToString::to_string)
+                    .unwrap_or_else(|| format!("material:{id}")))
                 .collect::<Vec<_>>()
                 .join(" ")
         );

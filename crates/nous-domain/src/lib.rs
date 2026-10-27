@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 
 mod error;
 pub use error::*;
+mod diagnostics;
+pub use diagnostics::*;
 mod context;
 pub use context::*;
 mod origin;
@@ -16,6 +18,7 @@ mod query_identity;
 pub use query_identity::*;
 mod semantic_target;
 pub use semantic_target::*;
+pub mod references;
 
 macro_rules! identity {
     ($name:ident) => {

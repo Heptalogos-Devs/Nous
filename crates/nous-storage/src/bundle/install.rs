@@ -327,6 +327,16 @@ impl WriteTransaction {
         }
         self.install_bundle_vectors(package, &installation, &map)
             .await?;
+        for binding in &package.addresses {
+            self.import_reference_address(
+                &installation.id,
+                &nous_domain::references::ReferenceBinding {
+                    address: binding.address.clone(),
+                    target: map.value(&binding.target)?,
+                },
+            )
+            .await?;
+        }
         self.bundle_installation(&installation.id).await
     }
 }

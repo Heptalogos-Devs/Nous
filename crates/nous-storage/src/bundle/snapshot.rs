@@ -23,6 +23,7 @@ impl ReadView {
             .await?
             .ok_or_else(crate::not_found)?;
         let mut package = SubjectPackage {
+            addresses: vec![],
             package_id: request.package_id.clone(),
             name: request.name.clone(),
             created_at,
@@ -241,6 +242,7 @@ impl ReadView {
                 }
             }
         }
+        package.addresses = self.package_reference_addresses(&package).await?;
         package.validate()?;
         Ok(package)
     }

@@ -165,6 +165,11 @@ impl WriteTransaction {
             .bind(value.lifecycle.protected_until_unix_ms).bind(value.lifecycle.inactive_since_unix_ms).bind(value.lifecycle.last_reinforced_unix_ms)
             .bind(enum_name(&value.origin)?)
             .execute(&mut *self.tx).await.map_err(write_error)?;
+        self.ensure_retrieval_addresses(
+            &value.namespace_id,
+            &RetrievalTarget::Cognition(CognitiveRef::memory(&value.id, value.revision)),
+        )
+        .await?;
         Ok(())
     }
 

@@ -196,6 +196,12 @@ class AMemorixAdapter:
             target = f"memory:{memory['id']}@{memory['revision']}"
         return await self.call("memory_source", {"target": target_reference(target)})
 
+    async def memory_stats(self, **kwargs: Any) -> dict:
+        return await self.call("memory_stats", kwargs)
+
+    async def memory_runtime_admin(self, *, action: str, **kwargs: Any) -> dict:
+        return await self.call("memory_runtime_admin", {"action": action, **kwargs})
+
     async def invoke(
         self,
         component_name: str,
@@ -226,6 +232,8 @@ class AMemorixAdapter:
             }:
                 return await adapter.maintain_memory(**values)
         functions = {
+            "memory_stats": adapter.memory_stats,
+            "memory_runtime_admin": adapter.memory_runtime_admin,
             "search_memory": adapter.search_memory,
             "ingest_text": adapter.ingest_text,
             "ingest_summary": adapter.ingest_summary,

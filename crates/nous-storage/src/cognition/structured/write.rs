@@ -151,6 +151,11 @@ impl WriteTransaction {
             .await?;
         }
         sync_aliases(&mut self.tx, value).await?;
+        self.ensure_retrieval_addresses(
+            &value.namespace_id,
+            &RetrievalTarget::Cognition(value.reference()),
+        )
+        .await?;
         if value.deleted {
             self.retire_cognition_embedding_jobs(value).await?;
         }

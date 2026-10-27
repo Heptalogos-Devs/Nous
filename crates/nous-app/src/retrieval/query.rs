@@ -148,6 +148,7 @@ impl App {
             .collect::<BTreeMap<_, _>>();
         let mut hits = Vec::new();
         let mut evidence = Vec::new();
+        let mut directory = self.database.read_view().await?;
         for (key, score) in ranks {
             let Some(entry) = available.get(&key).filter(|_| frozen.contains_key(&key)) else {
                 complete = false;
@@ -162,7 +163,30 @@ impl App {
             if !entry.sources_complete {
                 complete = false;
             }
+            let addresses = directory
+                .retrieval_addresses(&namespace, &entry.reference())
+                .await?;
+            let mut source_addresses = BTreeMap::new();
+            for root in &entry.roots {
+                if let Some(address) = directory
+                    .reference_address(
+                        &namespace,
+                        &SemanticTarget::Exact {
+                            reference: RetrievalTarget::Media(
+                                nous_domain::media::MediaReference::Original {
+                                    material_id: root.clone(),
+                                },
+                            ),
+                        },
+                    )
+                    .await?
+                {
+                    source_addresses.insert(root.clone(), address);
+                }
+            }
             hits.push(QueryHit {
+                addresses,
+                source_addresses,
                 rerank_score: None,
                 order: root_sort.or(request.sort.as_ref()).and_then(|sort| {
                     let mut ordering = request.clone();
@@ -185,6 +209,7 @@ impl App {
                 break;
             }
         }
+        directory.finish().await?;
         if let Some(info) = &mut semantic {
             info.provenance = evidence;
         }

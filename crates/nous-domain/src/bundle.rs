@@ -6,6 +6,8 @@ use std::collections::BTreeMap;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SubjectPackage {
+    #[serde(default)]
+    pub addresses: Vec<crate::references::ReferenceBinding>,
     pub package_id: String,
     pub name: String,
     pub created_at: String,
@@ -121,6 +123,7 @@ pub struct BundleEmbeddingAssociation {
 
 impl SubjectPackage {
     pub fn validate(&self) -> Result<()> {
+        self.validate_addresses()?;
         validate_name(&self.package_id, "package ID")?;
         validate_name(&self.name, "package name")?;
         self.subject.id.validate()?;

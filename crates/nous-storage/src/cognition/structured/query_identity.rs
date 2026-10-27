@@ -1,12 +1,7 @@
 use super::read::decode;
-use crate::{ReadView, SourceReadView, not_found, storage_error};
+use crate::{ReadView, ReferenceViewOptions, not_found, storage_error};
 use nous_domain::*;
 use std::collections::{BTreeMap, BTreeSet};
-
-pub struct QueryIdentityOptions<'a> {
-    pub as_of: Option<i64>,
-    pub source_read: Option<&'a SourceReadView>,
-}
 
 impl ReadView {
     pub async fn resolve_query_identity(
@@ -15,7 +10,7 @@ impl ReadView {
         subject: &SubjectId,
         kind: CognitiveKind,
         locator: &str,
-        options: &QueryIdentityOptions<'_>,
+        options: &ReferenceViewOptions<'_>,
     ) -> Result<ResolvedQueryIdentity> {
         if !matches!(
             kind,
@@ -32,7 +27,26 @@ impl ReadView {
             .iter()
             .map(|object| (object.id.as_str(), object))
             .collect::<BTreeMap<_, _>>();
-        let exact = locator.parse::<CognitiveRef>().ok();
+        let addressed = if locator
+            .parse::<nous_domain::references::LexicalRef>()
+            .is_ok()
+        {
+            Some(
+                self.resolve_reference_locator(namespace, subject, locator, options)
+                    .await?,
+            )
+        } else {
+            None
+        };
+        let exact = match addressed {
+            Some(RetrievalTarget::Cognition(reference)) => Some(reference),
+            Some(_) => {
+                return Err(Error::invalid(
+                    "query identity reference has a different type",
+                ));
+            }
+            None => locator.parse::<CognitiveRef>().ok(),
+        };
         if exact
             .as_ref()
             .is_some_and(|reference| reference.kind != kind)

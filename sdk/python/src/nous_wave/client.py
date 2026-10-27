@@ -102,6 +102,9 @@ class NousClient:
     async def subjects(self, namespace_id: str) -> list:
         return await self.request("GET", f"/api/namespaces/{namespace_id}/subjects")
 
+    async def subject_diagnostics(self, subject_id: str) -> dict:
+        return await self.request("GET", f"/api/subjects/{subject_id}/diagnostics")
+
     async def put_text(
         self,
         namespace_id: str,
@@ -220,6 +223,39 @@ class NousClient:
     async def query_manual(self) -> dict:
         return await self.request("GET", "/api/query/manual")
 
+    async def resolve_reference(
+        self,
+        subject_id: str,
+        reference: Mapping | str,
+        *,
+        as_of_commit: int | None = None,
+    ) -> dict:
+        return await self.request(
+            "POST",
+            "/api/references",
+            body={
+                "action": "resolve",
+                "subject_id": subject_id,
+                "reference": dict(reference)
+                if isinstance(reference, Mapping)
+                else reference,
+                "as_of_commit": as_of_commit,
+            },
+        )
+
+    async def reconcile_references(
+        self, namespace_id: str, *, operation_id: str | None = None
+    ) -> dict:
+        return await self.request(
+            "POST",
+            "/api/references",
+            body={
+                "action": "reconcile",
+                "namespace_id": namespace_id,
+                "operation_id": operation_id or str(uuid4()),
+            },
+        )
+
     async def memory_source(
         self, memory_id: str, *, revision: int | None = None
     ) -> dict:
@@ -229,14 +265,20 @@ class NousClient:
         )
 
     async def source(
-        self, subject_id: str, reference: Mapping, *, observation_id: str | None = None
+        self,
+        subject_id: str,
+        reference: Mapping | str,
+        *,
+        observation_id: str | None = None,
     ) -> dict:
         return await self.request(
             "POST",
             "/api/sources/read",
             body={
                 "subject_id": subject_id,
-                "reference": dict(reference),
+                "reference": dict(reference)
+                if isinstance(reference, Mapping)
+                else reference,
                 "observation_id": observation_id,
             },
         )

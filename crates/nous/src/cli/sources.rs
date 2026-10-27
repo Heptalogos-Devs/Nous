@@ -3,8 +3,8 @@ use crate::http::{Operation, RecordObservation, sources::RetrievalSourceRequest}
 use anyhow::Result;
 use clap::Subcommand;
 use nous_domain::{
-    ConversationRef, ExternalObjectRef, MaterialId, ObservationId, ObservationOrigin,
-    RetrievalTarget, SubjectId,
+    ConversationRef, ExternalObjectRef, MaterialId, ObservationId, ObservationOrigin, SubjectId,
+    references::ReferenceLocator,
 };
 
 #[derive(Subcommand)]
@@ -53,7 +53,7 @@ impl ObservationCommand {
 #[derive(Subcommand)]
 pub enum SourceCommand {
     Read {
-        reference: RetrievalTarget,
+        reference: ReferenceLocator,
         #[arg(long)]
         subject: SubjectId,
         #[arg(long)]

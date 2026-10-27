@@ -189,6 +189,13 @@ impl WriteTransaction {
             .bind(value.id.as_str()).bind(value.namespace_id.as_str()).bind(&value.content_hash).bind(&value.media_type).bind(serde_json::to_string(&value.metadata).map_err(storage_error)?).bind(value.byte_len)
             .bind(&value.source).bind(value.event_time.as_ref().map(|t| t.domain.as_str())).bind(value.event_time.as_ref().map(|t| t.coordinate))
             .bind(&value.recorded_at).bind(self.commit_seq).execute(&mut *self.tx).await.map_err(write_error)?;
+        self.ensure_retrieval_addresses(
+            &value.namespace_id,
+            &nous_domain::RetrievalTarget::Media(nous_domain::media::MediaReference::Original {
+                material_id: value.id.clone(),
+            }),
+        )
+        .await?;
         Ok(())
     }
 

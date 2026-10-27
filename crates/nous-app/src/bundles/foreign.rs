@@ -24,6 +24,7 @@ pub(super) fn convert(inspection: BundleInspection, root: &Path) -> Result<Loade
     let subject = SubjectId::new();
     let mut builder = Builder {
         package: SubjectPackage {
+            addresses: vec![],
             package_id: format!(
                 "a-memorix:{}@{}",
                 inspection.manifest.package.id, inspection.manifest.package.version

@@ -1,6 +1,8 @@
 mod backup;
 mod context;
 mod database;
+mod queue;
+pub(crate) use queue::queue_record;
 pub(crate) mod records;
 mod transaction;
 pub use backup::ObjectReference;

@@ -86,12 +86,14 @@ HTTP 接口与 MCP 工具进入相同应用用例：
 | `POST /api/embeddings/sync`                   | `embedding_sync`     |
 | `GET /api/embeddings/runs/{id}`               | `embedding_run`      |
 | `POST /api/query`                             | `query`              |
+| `POST /api/references`                        | `references`         |
 | `GET /api/memories/{id}/source`               | `memory_source`      |
 | `GET /api/models/calls/{id}`                  | `model_call`         |
 | `POST /api/models/contract`                   | `model_contract`     |
 | `POST /api/models/preview`                    | `model_preview`      |
 | `POST /api/prompts`                           | `prompts`            |
 | `GET /api/diagnostics`                        | `diagnostics`        |
+| `GET /api/subjects/{id}/diagnostics`          | `subject_diagnostics` |
 | `POST /api/traces/query`                      | `trace_records`      |
 | `GET /api/metrics`                            | Prometheus 文本      |
 | `GET /api/config`、`POST /api/config`         | `config`             |
@@ -109,6 +111,8 @@ HTTP 接口与 MCP 工具进入相同应用用例：
 检查器承接上游 v1/v2 的知识、完整状态和图像包，核对成员校验和、语义摘要、记录引用与内容数量；默认显示 manifest、库存数量和所需领域能力。知识包管理通过 `bundle export/install/list/get/uninstall`、HTTP `/api/bundles`、MCP `bundles` 和官方 SDK `bundles` 使用相同领域操作。`export` 返回 `download_material_id`，用 `material get --output` 下载；`install --material` 使用已经流式上传的包材料，支持 `merge` 和空主体的 `restore`。
 
 导出的归档由导出主体持有，可使用该主体的凭据直接下载。原生包保存认知修订、来源、实际模型调用和已接受的向量；恢复后可复用原向量及其生产记录。卸载撤回该包拥有的活跃认知，保留历史与仍被其他对象使用的来源，随后可重新安装。
+
+查询默认显示简短词序引用。`--json` 中的 `addresses.exact` 指定固定修订，`addresses.object` 指定稳定对象；后续可用 `@ref(...)`、`source read <词序引用> --subject <id>` 或 `reference resolve <词序引用> --subject <id>` 读取。新对象在写入事务内取得地址；已有 Namespace 可由操作者执行 `reference reconcile --namespace <id>` 补齐目录。知识包携带原地址映射，主体恢复后仍可解析资料中原有的引用。
 
 [nous-vcp](crates/nous-vcp/README.md) 提供完整 VCP 计算族和旧版数值基线，包含 AGS 几何、传播资产、Pyramid、Sense、双场、RiverMemo、DTSC 与 Thinking。开发者可用 `cargo run -p nous-vcp --example native_pipeline` 重放完整计算和来源映射。实际文本查询已接通模型向量、USearch 候选/Tag 双索引、VCP 图资产和来源映射。
 
@@ -205,7 +209,9 @@ Provider、Model 和角色绑定各有 `max_calls_per_day`。Provider/Model 拥�
 
 `prompt catalog/read/history/edit/activate/preview` 管理提示词资源。`prompt edit --id <id> --file <正文文件> --expected-revision <修订>` 保存不可变正文；增加 `--activate-role <职责> --binding-revision <职责覆盖修订>` 可在同一事务激活。职责必须已有模型路线。独立激活使用精确资源选择；预览与真实调用使用相同 MiniJinja 渲染器。模板、变量来源、渲染正文和目标输出合同均可审查。
 
-`nous diagnostics` 查看实际日志位置和丢弃记录数。JSON 日志按日保存在实例 `logs` 目录，策略通过 `observability` 配置管理。`nous trace <trace-id>` 按页读取提交、任务和调用关系；继续分页时将 `next_cursor` 传入 `--cursor`。HTTP 接受并回显 `x-nous-trace-id`，任务和调用持久继承接受事务的 trace。诊断、trace 和 Prometheus 指标入口需要管理员权限。
+`nous diagnostics` 查看实际日志位置和丢弃记录数。JSON 日志按日保存在实例 `logs` 目录，策略通过 `observability` 配置管理。`nous trace <trace-id>` 按页读取提交、任务和调用关系；继续分页时将 `next_cursor` 传入 `--cursor`。HTTP 接受并回显 `x-nous-trace-id`，任务和调用持久继承接受事务的 trace。实例诊断、trace 和 Prometheus 指标入口需要管理员权限。
+
+`nous stats --subject <Subject UUID>`、MCP `subject_diagnostics` 与 Python SDK `subject_diagnostics(subject_id)` 读取该主体及当前来源范围内的统计。认知数量按实际类别和生命周期汇总；任务、队列、维护完成时间、向量输入状态及模型用量取自同一 Authority 快照。本机消耗与去重后的 Imported 生产历史分栏，费用按实际货币分别汇总。尚无同义资源或队列 owner 的指标明确列入 `unknown`；本地资源就绪检查单独标注观察时间。
 
 回执的 `time` 是取得写锁后捕获的本次事务时间，同一提交中的记录共用该时刻；幂等重放保留原时间。原始事件时间、主体接触时间和领域语义时间由对应输入与领域维护。
 
@@ -234,18 +240,19 @@ $embedding.result.jobs | ForEach-Object { & $nous --instance $instance job get $
 任务达到 `succeeded` 后，可查询记忆并读取其原文、实际接触、Prompt、模型参数及 usage：
 
 ```powershell
-$result = & $nous --instance $instance query --subject $subject --kind memory '枫叶 秋天' | ConvertFrom-Json
+$result = & $nous --json --instance $instance query --subject $subject --kind memory '枫叶 秋天' | ConvertFrom-Json
 $memory = $result.hits[0].object
-$reference = $result.hits[0].reference
-& $nous --instance $instance query --subject $subject --reference "$($reference.kind):$($reference.id)@$($reference.revision)"
+$reference = $result.hits[0].addresses.exact
+& $nous --instance $instance query --subject $subject "@ref($reference)"
+& $nous --instance $instance source read $reference --subject $subject
 & $nous --instance $instance memory source $memory.id
 & $nous --instance $instance memory history $memory.id
 # source 返回 embedding_provenance，可用其 model_call_id 展开实际请求与 usage。
-$source = & $nous --instance $instance memory source $memory.id | ConvertFrom-Json
+$source = & $nous --json --instance $instance memory source $memory.id | ConvertFrom-Json
 if ($source.embedding_provenance.Count -gt 0) {
     & $nous --instance $instance model call $source.embedding_provenance[0].model_call_id
 }
-$backup = & $nous --instance $instance backup create | ConvertFrom-Json
+$backup = & $nous --json --instance $instance backup create | ConvertFrom-Json
 & $nous --instance $instance stop
 & $nous --instance ./temp/instances/restored backup restore $backup.backup
 ```
