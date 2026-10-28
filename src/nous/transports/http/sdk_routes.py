@@ -17,14 +17,24 @@ from nous_wave.contracts import (
     TimePoint,
     UnitOutput,
 )
-from nous_wave.contracts.context import ContextAdmissionCommand, ContextPrepare, ContextReport
+from nous_wave.contracts.context import (
+    ChangeResidents,
+    ChangeWorkContext,
+    CognitiveTarget,
+    ContextAdmissionCommand,
+    ContextPrepare,
+    ContextReport,
+    MediaTarget,
+    OpenContextSession,
+)
 from nous_wave.contracts.credentials import Capability
-from pydantic import BaseModel, ConfigDict, Field
+from nous_wave.contracts.lifecycle import MemoryChange
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, TypeAdapter
 from sqlalchemy import select
 
-from nous.cognition.service import revisions
+from nous.cognition.schema import revisions
 from nous.identity.service import subjects
-from nous.imports.service import outputs
+from nous.imports.schema import outputs
 from nous.material.service import materials, observations, require_observation_in
 
 from .security import application, authorize, context
@@ -118,40 +128,11 @@ async def reference_in(
     reference: CognitiveRef | str,
     as_of_commit: int | None = None,
 ) -> CognitiveRef:
-    if isinstance(reference, CognitiveRef):
-        return reference
-    name = reference
-    kind = None
-    if ":" in name:
-        kind, name = name.split(":", 1)
-    revision = None
-    if "@" in name:
-        name, version = name.rsplit("@", 1)
-        try:
-            revision = int(version)
-        except ValueError as error:
-            raise DomainError(
-                "reference_invalid", "Reference revision must be a positive integer"
-            ) from error
-    query = select(revisions.c.record).where(
-        revisions.c.id == name,
-        revisions.c.namespace_id == ctx.namespace_id,
-        revisions.c.subject_id == ctx.subject_id,
-    )
-    if kind is not None:
-        query = query.where(revisions.c.kind == kind)
-    if revision is not None:
-        query = query.where(revisions.c.revision == revision)
-    if as_of_commit is not None:
-        query = query.where(revisions.c.commit_seq <= as_of_commit)
-    query = query.order_by(revisions.c.revision.desc()).limit(1)
-    async with application(request).authority.read(ctx) as view:
-        value = (await view.connection.execute(query)).scalar_one_or_none()
-    if value is None:
-        raise DomainError("reference_not_found", "Reference is unavailable")
-    parsed = CognitiveRef.model_validate(value["reference"])
-    await application(request).cognition.get(ctx, parsed)
-    return parsed
+    locator = reference.exact() if isinstance(reference, CognitiveRef) else reference
+    resolution = await application(request).references.resolve(ctx, locator, as_of_commit)
+    if not isinstance(resolution.reference, CognitiveTarget):
+        raise DomainError("cognition_required", "Reference selects media rather than cognition")
+    return resolution.reference.reference
 
 
 @router.post("/subjects/{subject_id}/query")
@@ -226,42 +207,57 @@ async def memory_source(request: Request, object_id: str, revision: int | None =
 @router.post("/references")
 async def resolve_reference(request: Request, command: ReadReference):
     ctx = await subject_context(request, command.subject_id, "read")
-    if isinstance(command.reference, MediaReference):
-        return await source_read(request, command)
-    reference = await reference_in(request, ctx, command.reference, command.as_of_commit)
-    record = await application(request).cognition.get(ctx, reference)
-    return {"reference": reference, "object": record}
+    locator = command.reference if isinstance(command.reference, str) else command.reference.exact()
+    return await application(request).references.resolve(ctx, locator, command.as_of_commit)
 
 
 @router.post("/sources/read")
 async def source_read(request: Request, command: ReadReference):
     app = application(request)
     ctx = await subject_context(request, command.subject_id, "read")
-    if isinstance(command.reference, MediaReference):
-        ref = command.reference
-        if ref.kind == "material":
-            value = await app.material.read(ctx, ref.id)
-            return {"reference": ref, "material": value}
-        if ref.kind == "source_region":
-            region, material = await app.material.region_source(ctx, ref.id)
-            text = material["text"]
-            excerpt = (
-                text[region.text_start : region.text_end]
-                if text is not None
-                and region.text_start is not None
-                and region.text_end is not None
-                else None
-            )
-            return {"reference": ref, "region": region, "text": excerpt}
-        raise DomainError("source_unavailable", "Media derivation is unavailable")
-    reference = await reference_in(request, ctx, command.reference)
-    record = await app.cognition.get(ctx, reference)
-    return {
-        "reference": reference,
-        "cognition": record,
-        "source_roots": record.source_roots,
-        "evidence": record.evidence,
-    }
+    if isinstance(command.reference, str):
+        target = (await app.references.resolve(ctx, command.reference)).reference
+    elif isinstance(command.reference, CognitiveRef):
+        target = CognitiveTarget(reference=command.reference)
+    else:
+        target = MediaTarget(reference=command.reference)
+    if isinstance(target, CognitiveTarget):
+        record = await app.cognition.get(ctx, target.reference)
+        return {
+            "reference": target.reference,
+            "cognition": record,
+            "source_roots": record.source_roots,
+            "evidence": record.evidence,
+        }
+    ref = target.reference
+    if ref.kind == "material":
+        if command.observation_id is not None:
+            async with app.authority.read(ctx) as view:
+                row = await require_observation_in(view, ctx, command.observation_id)
+                if row["material_id"] != ref.id:
+                    raise DomainError(
+                        "source_mismatch", "Observation does not belong to this original"
+                    )
+        return {"reference": ref, "material": await app.material.read(ctx, ref.id)}
+    if ref.kind == "source_region":
+        region, material = await app.material.region_source(ctx, ref.id)
+        if command.observation_id is not None:
+            async with app.authority.read(ctx) as view:
+                row = await require_observation_in(
+                    view, ctx, command.observation_id, region_id=ref.id
+                )
+                if row["material_id"] != region.material_id:
+                    raise DomainError(
+                        "source_mismatch", "Observation does not belong to this region"
+                    )
+        text = material["text"]
+        excerpt = (
+            text[region.text_start : region.text_end]
+            if text is not None and region.text_start is not None and region.text_end is not None
+            else None
+        )
+        return {"reference": ref, "region": region, "text": excerpt}
+    raise DomainError("source_unavailable", "Media derivation is unavailable")
 
 
 @router.get("/materials/{material_id}")
@@ -403,3 +399,124 @@ async def report_managed(
     return await application(request).contexts.report_managed(
         await context(request, namespace_id, subject_id), command
     )
+
+
+@router.get("/subjects/{subject_id}")
+async def subject_read(request: Request, subject_id: str):
+    ctx = await subject_context(request, subject_id, "read")
+    async with application(request).authority.read(ctx) as view:
+        row = (
+            (
+                await view.connection.execute(
+                    select(subjects).where(
+                        subjects.c.id == subject_id, subjects.c.namespace_id == ctx.namespace_id
+                    )
+                )
+            )
+            .mappings()
+            .one()
+        )
+        return dict(row)
+
+
+@router.post("/namespaces/{namespace_id}/subjects/{subject_id}/contexts/sessions")
+async def open_session(
+    request: Request, namespace_id: str, subject_id: str, command: OpenContextSession
+):
+    return await application(request).contexts.open_session(
+        await context(request, namespace_id, subject_id), command.operation_id, command.session_id
+    )
+
+
+@router.post(
+    "/namespaces/{namespace_id}/subjects/{subject_id}/contexts/sessions/{session_id}/close"
+)
+async def close_session(
+    request: Request,
+    namespace_id: str,
+    subject_id: str,
+    session_id: str,
+    command: OperationIdentity,
+):
+    return await application(request).contexts.close_session(
+        await context(request, namespace_id, subject_id), session_id, command.operation_id
+    )
+
+
+@router.post("/namespaces/{namespace_id}/subjects/{subject_id}/memories/change")
+async def memory_change(
+    request: Request, namespace_id: str, subject_id: str, command: MemoryChange
+):
+    return await application(request).cognition.change_memory(
+        await context(request, namespace_id, subject_id), command
+    )
+
+
+@router.post("/namespaces/{namespace_id}/subjects/{subject_id}/contexts/preparation-jobs")
+async def submit_context_preparation(
+    request: Request, namespace_id: str, subject_id: str, command: ContextPrepare
+):
+    return await application(request).contexts.submit_prepare(
+        await context(request, namespace_id, subject_id), command
+    )
+
+
+@router.get("/namespaces/{namespace_id}/subjects/{subject_id}/contexts/sessions/{session_id}")
+async def read_context_session(
+    request: Request, namespace_id: str, subject_id: str, session_id: str
+):
+    return await application(request).contexts.read_session(
+        await context(request, namespace_id, subject_id, capability="read"), session_id
+    )
+
+
+@router.post("/namespaces/{namespace_id}/subjects/{subject_id}/contexts/residents")
+async def change_context_residents(
+    request: Request, namespace_id: str, subject_id: str, command: ChangeResidents
+):
+    return await application(request).contexts.change_residents(
+        await context(request, namespace_id, subject_id), command
+    )
+
+
+@router.post("/namespaces/{namespace_id}/subjects/{subject_id}/contexts/work")
+async def change_work_context(
+    request: Request, namespace_id: str, subject_id: str, command: ChangeWorkContext
+):
+    return await application(request).contexts.change_work(
+        await context(request, namespace_id, subject_id), command
+    )
+
+
+@router.get("/namespaces/{namespace_id}/subjects/{subject_id}/contexts/work/{work_context_id}")
+async def read_work_context(
+    request: Request, namespace_id: str, subject_id: str, work_context_id: str
+):
+    return await application(request).contexts.read_work(
+        await context(request, namespace_id, subject_id, capability="read"), work_context_id
+    )
+
+
+@router.get("/subjects/{subject_id}/diagnostics")
+async def subject_diagnostics(request: Request, subject_id: str):
+    from nous.integrations.amemorix.service import AMemorixService
+
+    ctx = await subject_context(request, subject_id, "read")
+    app = application(request)
+    summary = await AMemorixService(app).stats(ctx)
+    model_calls = await app.models.ledger.list(ctx)
+    usage: dict[str, int] = {}
+    for call in model_calls:
+        measured = TypeAdapter(JsonValue).validate_python(call.get("usage"))
+        if isinstance(measured, dict):
+            for key in ("input_tokens", "output_tokens", "total_tokens"):
+                value = measured.get(key)
+                if isinstance(value, int):
+                    usage[key] = usage.get(key, 0) + value
+    return {
+        **summary,
+        "namespace_id": ctx.namespace_id,
+        "subject_id": subject_id,
+        "model_calls": len(model_calls),
+        "model_usage": usage,
+    }

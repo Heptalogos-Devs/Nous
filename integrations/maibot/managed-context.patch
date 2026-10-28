@@ -1,0 +1,494 @@
+diff --git a/src/llm_models/model_client/base_client.py b/src/llm_models/model_client/base_client.py
+index 6aaa8c9b6..08c10f41e 100644
+--- a/src/llm_models/model_client/base_client.py
++++ b/src/llm_models/model_client/base_client.py
+@@ -1,4 +1,5 @@
+ from abc import ABC, abstractmethod
++from contextlib import AbstractAsyncContextManager
+ from dataclasses import dataclass, field
+ from typing import Any, Callable, Coroutine, Dict, List, Literal, Set, Tuple, Type
+ 
+@@ -279,6 +280,7 @@ class ResponseRequest:
+     extra_params: Dict[str, Any] = field(default_factory=dict)
+     trace_context: RequestTraceContext | None = None
+     logical_turn_id: str = field(default_factory=lambda: uuid.uuid4().hex)
++    admission_context: Callable[[Dict[str, Any]], AbstractAsyncContextManager[None]] | None = None
+     tool_choice: Literal["none"] | None = None
+ 
+     def copy_with(self, **changes: Any) -> "ResponseRequest":
+@@ -304,6 +306,7 @@ class ResponseRequest:
+             "extra_params": dict(self.extra_params),
+             "trace_context": self.trace_context,
+             "logical_turn_id": self.logical_turn_id,
++            "admission_context": self.admission_context,
+         }
+         payload.update(changes)
+         return ResponseRequest(**payload)
+@@ -312,7 +315,7 @@ class ResponseRequest:
+         """冻结输入和模型设置，解除中断、回调及诊断上下文的生命周期。"""
+         return copy.deepcopy(self.copy_with(
+             stream_response_handler=None, async_response_parser=None,
+-            interrupt_flag=None, trace_context=None,
++            interrupt_flag=None, trace_context=None, admission_context=None,
+         ))
+ 
+ 
+diff --git a/src/llm_models/model_client/gemini_client.py b/src/llm_models/model_client/gemini_client.py
+index e6f8bd086..095570c33 100644
+--- a/src/llm_models/model_client/gemini_client.py
++++ b/src/llm_models/model_client/gemini_client.py
+@@ -1,3 +1,5 @@
++
++from contextlib import nullcontext
+ # ruff: noqa: B025
+ 
+ from typing import Any, AsyncIterator, Callable, Coroutine, Dict, List, Optional, Tuple, cast
+@@ -1050,32 +1052,33 @@ class GeminiClient(AdapterClient[AsyncIterator[GenerateContentResponse], Generat
+                 "model": model_identifier,
+                 "system_instruction": system_instruction,
+             }
+-            if model_info.force_stream_mode:
+-                stream_task: asyncio.Task[AsyncIterator[GenerateContentResponse]] = asyncio.create_task(
+-                    self.client.aio.models.generate_content_stream(
+-                        model=model_identifier,
+-                        contents=contents,
+-                        config=generation_config,
++            async with request.admission_context(snapshot_provider_request) if request.admission_context is not None else nullcontext():
++                if model_info.force_stream_mode:
++                    stream_task: asyncio.Task[AsyncIterator[GenerateContentResponse]] = asyncio.create_task(
++                        self.client.aio.models.generate_content_stream(
++                            model=model_identifier,
++                            contents=contents,
++                            config=generation_config,
++                        )
+                     )
+-                )
+-                raw_response_stream = cast(
+-                    AsyncIterator[GenerateContentResponse],
+-                    await await_task_with_interrupt(stream_task, request.interrupt_flag),
+-                )
+-                response, usage_record = await stream_response_handler(raw_response_stream, request.interrupt_flag)
+-            else:
+-                completion_task: asyncio.Task[GenerateContentResponse] = asyncio.create_task(
+-                    self.client.aio.models.generate_content(
+-                        model=model_identifier,
+-                        contents=contents,
+-                        config=generation_config,
++                    raw_response_stream = cast(
++                        AsyncIterator[GenerateContentResponse],
++                        await await_task_with_interrupt(stream_task, request.interrupt_flag),
+                     )
+-                )
+-                raw_response = cast(
+-                    GenerateContentResponse,
+-                    await await_task_with_interrupt(completion_task, request.interrupt_flag),
+-                )
+-                response, usage_record = response_parser(raw_response)
++                    response, usage_record = await stream_response_handler(raw_response_stream, request.interrupt_flag)
++                else:
++                    completion_task: asyncio.Task[GenerateContentResponse] = asyncio.create_task(
++                        self.client.aio.models.generate_content(
++                            model=model_identifier,
++                            contents=contents,
++                            config=generation_config,
++                        )
++                    )
++                    raw_response = cast(
++                        GenerateContentResponse,
++                        await await_task_with_interrupt(completion_task, request.interrupt_flag),
++                    )
++                    response, usage_record = response_parser(raw_response)
+ 
+             response.wire_protocol = "gemini_generate_content"
+             response.request_wire_payload = {
+diff --git a/src/llm_models/model_client/openai_client.py b/src/llm_models/model_client/openai_client.py
+index 2773a8723..218cb7bee 100644
+--- a/src/llm_models/model_client/openai_client.py
++++ b/src/llm_models/model_client/openai_client.py
+@@ -1,3 +1,5 @@
++
++from contextlib import nullcontext
+ from dataclasses import dataclass, field
+ from typing import Any, Callable, Coroutine, Dict, List, Set, Tuple, cast
+ from urllib.parse import urlparse
+@@ -1633,20 +1635,50 @@ class OpenaiClient(AdapterClient[AsyncStream[ChatCompletionChunk], ChatCompletio
+                     "tools": tools_payload,
+                 }
+ 
+-                if model_info.force_stream_mode:
+-                    active_stream_handler = (
+-                        stream_response_handler
+-                        if request.stream_response_handler is not None
+-                        else self._build_default_stream_response_handler(request.copy_with(max_tokens=effective_max_tokens))
++                async with request.admission_context(snapshot_provider_request) if request.admission_context is not None else nullcontext():
++                    if model_info.force_stream_mode:
++                        active_stream_handler = (
++                            stream_response_handler
++                            if request.stream_response_handler is not None
++                            else self._build_default_stream_response_handler(request.copy_with(max_tokens=effective_max_tokens))
++                        )
++                        stream_task: asyncio.Task[AsyncStream[ChatCompletionChunk]] = asyncio.create_task(
++                            self.client.chat.completions.create(
++                                model=model_info.model_identifier,
++                                messages=messages_payload,
++                                tools=tools_payload or omit,
++                                temperature=temperature_argument,
++                                max_tokens=max_tokens_argument,
++                                stream=True,
++                                response_format=openai_response_format,
++                                extra_headers=self._build_request_headers(request_overrides.extra_headers),
++                                extra_query=request_overrides.extra_query or None,
++                                extra_body=extra_body or None,
++                            )
++                        )
++                        raw_response = cast(
++                            AsyncStream[ChatCompletionChunk],
++                            await await_task_with_interrupt(stream_task, request.interrupt_flag),
++                        )
++                        try:
++                            return await active_stream_handler(raw_response, request.interrupt_flag)
++                        finally:
++                            # 包括取消路径，及时关闭连接，不保留已失效的响应流。
++                            await raw_response.close()
++
++                    active_response_parser = (
++                        response_parser
++                        if request.async_response_parser is not None
++                        else self._build_default_response_parser(request.copy_with(max_tokens=effective_max_tokens))
+                     )
+-                    stream_task: asyncio.Task[AsyncStream[ChatCompletionChunk]] = asyncio.create_task(
++                    completion_task: asyncio.Task[ChatCompletion] = asyncio.create_task(
+                         self.client.chat.completions.create(
+                             model=model_info.model_identifier,
+                             messages=messages_payload,
+                             tools=tools_payload or omit,
+                             temperature=temperature_argument,
+                             max_tokens=max_tokens_argument,
+-                            stream=True,
++                            stream=False,
+                             response_format=openai_response_format,
+                             extra_headers=self._build_request_headers(request_overrides.extra_headers),
+                             extra_query=request_overrides.extra_query or None,
+@@ -1654,39 +1686,10 @@ class OpenaiClient(AdapterClient[AsyncStream[ChatCompletionChunk], ChatCompletio
+                         )
+                     )
+                     raw_response = cast(
+-                        AsyncStream[ChatCompletionChunk],
+-                        await await_task_with_interrupt(stream_task, request.interrupt_flag),
++                        ChatCompletion,
++                        await await_task_with_interrupt(completion_task, request.interrupt_flag),
+                     )
+-                    try:
+-                        return await active_stream_handler(raw_response, request.interrupt_flag)
+-                    finally:
+-                        # 包括取消路径，及时关闭连接，不保留已失效的响应流。
+-                        await raw_response.close()
+-
+-                active_response_parser = (
+-                    response_parser
+-                    if request.async_response_parser is not None
+-                    else self._build_default_response_parser(request.copy_with(max_tokens=effective_max_tokens))
+-                )
+-                completion_task: asyncio.Task[ChatCompletion] = asyncio.create_task(
+-                    self.client.chat.completions.create(
+-                        model=model_info.model_identifier,
+-                        messages=messages_payload,
+-                        tools=tools_payload or omit,
+-                        temperature=temperature_argument,
+-                        max_tokens=max_tokens_argument,
+-                        stream=False,
+-                        response_format=openai_response_format,
+-                        extra_headers=self._build_request_headers(request_overrides.extra_headers),
+-                        extra_query=request_overrides.extra_query or None,
+-                        extra_body=extra_body or None,
+-                    )
+-                )
+-                raw_response = cast(
+-                    ChatCompletion,
+-                    await await_task_with_interrupt(completion_task, request.interrupt_flag),
+-                )
+-                return active_response_parser(raw_response)
++                    return active_response_parser(raw_response)
+ 
+             # 已知仅支持 max_completion_tokens 的模型直接走对应分支；否则先按常规发送，
+             # 命中「max_tokens 不被支持」的 400 错误时自动改用 max_completion_tokens 重试并记忆。
+diff --git a/src/llm_models/model_client/openai_responses_client.py b/src/llm_models/model_client/openai_responses_client.py
+index 6c3867ea8..d8c1246ee 100644
+--- a/src/llm_models/model_client/openai_responses_client.py
++++ b/src/llm_models/model_client/openai_responses_client.py
+@@ -1,3 +1,4 @@
++from contextlib import nullcontext
+ from copy import deepcopy
+ from typing import Any, Dict, List, Sequence, Tuple, cast
+ 
+@@ -726,54 +727,55 @@ class OpenAIResponsesClient(OpenaiClient):
+                 "tools": tools,
+             }
+ 
+-            request_task = asyncio.create_task(
+-                self.client.responses.create(
+-                    model=model_info.model_identifier,
+-                    input=cast(Any, input_items),
+-                    tools=cast(Any, tools) if tools else omit,
+-                    text=cast(Any, text_config) if text_config else omit,
+-                    max_output_tokens=max_output_tokens if max_output_tokens is not None else omit,
+-                    temperature=temperature if temperature is not None else omit,
+-                    store=store,
+-                    stream=bool(model_info.force_stream_mode),
+-                    extra_headers=self._build_request_headers(request_overrides.extra_headers),
+-                    extra_query=request_overrides.extra_query or None,
+-                    extra_body=extra_body or None,
+-                )
+-            )
+-            raw_response = await await_task_with_interrupt(request_task, request.interrupt_flag)
+-            if model_info.force_stream_mode:
+-                completed_response = await _consume_response_stream(
+-                    cast(AsyncStream[ResponseStreamEvent], raw_response),
+-                    request.interrupt_flag,
++            async with request.admission_context(snapshot_provider_request) if request.admission_context is not None else nullcontext():
++                request_task = asyncio.create_task(
++                    self.client.responses.create(
++                        model=model_info.model_identifier,
++                        input=cast(Any, input_items),
++                        tools=cast(Any, tools) if tools else omit,
++                        text=cast(Any, text_config) if text_config else omit,
++                        max_output_tokens=max_output_tokens if max_output_tokens is not None else omit,
++                        temperature=temperature if temperature is not None else omit,
++                        store=store,
++                        stream=bool(model_info.force_stream_mode),
++                        extra_headers=self._build_request_headers(request_overrides.extra_headers),
++                        extra_query=request_overrides.extra_query or None,
++                        extra_body=extra_body or None,
++                    )
+                 )
+-            else:
+-                completed_response = cast(Response, raw_response)
+-
+-            response, usage_record = _parse_completed_response(
+-                completed_response,
+-                request,
+-                self.api_provider.name,
+-                self.api_provider.base_url,
+-                self.tool_argument_parse_mode,
+-            )
+-            if response.native_tool_calls:
+-                logger.info(
+-                    "Responses 原生工具调用: "
+-                    f"provider={self.api_provider.name} model={model_info.model_identifier} "
+-                    f"response={response.raw_data.get('response_id', '')} "
+-                    f"calls={_format_native_tool_log(response.native_tool_calls)}"
++                raw_response = await await_task_with_interrupt(request_task, request.interrupt_flag)
++                if model_info.force_stream_mode:
++                    completed_response = await _consume_response_stream(
++                        cast(AsyncStream[ResponseStreamEvent], raw_response),
++                        request.interrupt_flag,
++                    )
++                else:
++                    completed_response = cast(Response, raw_response)
++
++                response, usage_record = _parse_completed_response(
++                    completed_response,
++                    request,
++                    self.api_provider.name,
++                    self.api_provider.base_url,
++                    self.tool_argument_parse_mode,
+                 )
+-            if usage_record is not None:
+-                response.usage = self._build_usage_record(model_info, usage_record)
+-            response.wire_protocol = "responses"
+-            response.request_wire_payload = {
+-                "extra_body": extra_body or None,
+-                "input": input_items,
+-                "text": text_config,
+-                "tools": tools,
+-            }
+-            return response
++                if response.native_tool_calls:
++                    logger.info(
++                        "Responses 原生工具调用: "
++                        f"provider={self.api_provider.name} model={model_info.model_identifier} "
++                        f"response={response.raw_data.get('response_id', '')} "
++                        f"calls={_format_native_tool_log(response.native_tool_calls)}"
++                    )
++                if usage_record is not None:
++                    response.usage = self._build_usage_record(model_info, usage_record)
++                response.wire_protocol = "responses"
++                response.request_wire_payload = {
++                    "extra_body": extra_body or None,
++                    "input": input_items,
++                    "text": text_config,
++                    "tools": tools,
++                }
++                return response
+         except (EmptyResponseException, RespParseException) as exc:
+             await asyncio.to_thread(self._attach_failure_snapshot, exc, request, snapshot_provider_request)
+             raise
+diff --git a/src/llm_models/model_client/plugin_client.py b/src/llm_models/model_client/plugin_client.py
+index 107fd47ee..f53152c4a 100644
+--- a/src/llm_models/model_client/plugin_client.py
++++ b/src/llm_models/model_client/plugin_client.py
+@@ -1,3 +1,4 @@
++from contextlib import nullcontext
+ from datetime import datetime
+ from typing import Any, Dict, List
+ 
+@@ -76,7 +77,8 @@ class PluginLLMClient(BaseClient):
+             raise RespParseException(message="插件 LLM Provider 暂不支持 Host 侧自定义流式处理器或响应解析器")
+         validate_context_items(request.context_items, ContextProtocolMode.REQUEST_CONTEXT)
+         payload = serialize_response_request_snapshot(request)
+-        result = await self._invoke_provider("response", payload)
++        async with request.admission_context(payload) if request.admission_context is not None else nullcontext():
++            result = await self._invoke_provider("response", payload)
+         response = self._build_api_response(
+             result,
+             request.model_info.name,
+diff --git a/src/llm_models/utils_model.py b/src/llm_models/utils_model.py
+index 55db99831..87f66e7d9 100644
+--- a/src/llm_models/utils_model.py
++++ b/src/llm_models/utils_model.py
+@@ -1090,7 +1090,10 @@ class LLMOrchestrator:
+                     self.task_name, model_info.name, model_info.model_identifier, api_provider.name,
+                 ):
+                     if isinstance(active_request, ResponseRequest):
+-                        response = await client.get_response(active_request)
++                        from src.services.nous_context import managed_response_request
++                        async with managed_response_request(active_request, self.task_name) as measured_request:
++                            active_request = measured_request
++                            response = await client.get_response(active_request)
+                     elif isinstance(active_request, EmbeddingRequest):
+                         response = await client.get_embedding(active_request)
+                     elif isinstance(active_request, ImageEmbeddingRequest):
+diff --git a/src/services/nous_context.py b/src/services/nous_context.py
+new file mode 100644
+index 000000000..42b3121c8
+--- /dev/null
++++ b/src/services/nous_context.py
+@@ -0,0 +1,128 @@
++"""Bind actual host model calls to prepared Nous context and measured wire inputs."""
++
++from collections.abc import AsyncIterator, Sequence
++from contextlib import asynccontextmanager
++from datetime import datetime, timezone
++from hashlib import sha256
++from typing import Any, Dict, List
++from uuid import uuid4
++
++import asyncio
++import json
++import os
++
++from nous_wave import HostInputMeasurement, SourceReadScope
++from nous_wave.contracts.context import ContextSegment, ContextUsage, EpistemicView
++from pydantic_core import to_json
++
++from src.common.runtime_loop import run_on_main_loop
++from src.llm_models.model_client.base_client import ResponseRequest
++from src.llm_models.payload_content.context_item import (
++    AssistantMessageItem, ContextImagePart, ContextItem, ContextItemBuilder, ContextItemMeta,
++    ContextTextPart, FunctionCallItem, FunctionCallOutputItem, ProviderActivityItem, ProviderOpaqueItem, ReasoningItem,
++    RoleType, SystemMessageItem, UserMessageItem,
++)
++from src.llm_models.request_snapshot import serialize_response_request_snapshot
++from src.services.memory_service import a_memorix_host_service
++
++
++def _bytes(value: object) -> bytes:
++    return to_json(value, bytes_mode="base64")
++
++
++def _snapshot(request: ResponseRequest, items: List[ContextItem]) -> bytes:
++    value = serialize_response_request_snapshot(request.copy_with(context_items=items))
++    # The host snapshot intentionally omits immutable provider replay; input
++    # admission includes those actual bytes as well as tools and format schemas.
++    value["provider_replay"] = [item.replay.materialize() for item in items
++        if isinstance(item, (AssistantMessageItem, FunctionCallItem, ReasoningItem, ProviderActivityItem, ProviderOpaqueItem)) and item.replay is not None]
++    return _bytes(value)
++
++
++def _reserved(wire: Dict[str, Any], request: ResponseRequest) -> int:
++    values = wire.get("request_kwargs", wire)
++    extra = values.get("extra_body") or {}
++    config = values.get("config") or {}
++    if hasattr(config, "model_dump"):
++        config = config.model_dump(mode="json")
++    value = extra.get("max_completion_tokens", extra.get("max_tokens",
++        values.get("max_output_tokens", config.get("max_output_tokens", values.get("max_tokens", request.max_tokens)))))
++    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
++        raise ValueError("Managed model input requires the actual reserved output token limit")
++    return value
++
++
++@asynccontextmanager
++async def managed_response_request(request: ResponseRequest, task_name: str) -> AsyncIterator[ResponseRequest]:
++    configured = os.environ.get("NOUS_MODEL_CONTEXT_WINDOWS")
++    session_id = request.trace_context.session_id if request.trace_context is not None else ""
++    if not configured or not session_id:
++        yield request
++        return
++    windows = json.loads(configured)
++    model_name = request.model_info.name
++    window = windows.get(model_name, windows.get("*"))
++    if not isinstance(window, int) or isinstance(window, bool) or window <= 0:
++        raise ValueError(f"NOUS_MODEL_CONTEXT_WINDOWS requires the actual window for {model_name}")
++    base = [item for item in request.context_items if not item.meta.item_id.startswith("nous-context:")]
++    text = "\n".join(part.text for item in base
++        if isinstance(item, (SystemMessageItem, UserMessageItem, AssistantMessageItem, FunctionCallOutputItem))
++        for part in item.parts if isinstance(part, ContextTextPart))[-8192:]
++    image_count = sum(isinstance(part, ContextImagePart) for item in base
++        if isinstance(item, (SystemMessageItem, UserMessageItem, AssistantMessageItem)) for part in item.parts)
++    image_bounds = json.loads(os.environ.get("NOUS_MODEL_IMAGE_TOKEN_BOUNDS", "{}"))
++    image_bound = image_bounds.get(model_name, image_bounds.get("*"))
++    if image_count and (not isinstance(image_bound, int) or image_bound <= 0):
++        raise ValueError(f"Configure the model's image token upper bound for {model_name}")
++    adapter = a_memorix_host_service
++    binding = adapter.client.managed(namespace_id=adapter.namespace_id, subject_id=adapter.subject_id,
++        session_id=session_id, consumer_id="maibot", instance_id=request.logical_turn_id + ":" + uuid4().hex,
++        source_read=SourceReadScope(subject_id=adapter.subject_id, origin_conversation_refs=(session_id,)))
++    history_generation = sha256(_snapshot(request, base)).hexdigest()
++    invocation_id = request.logical_turn_id + ":" + uuid4().hex
++    admitted = False
++    applied = None
++    try:
++        prepared = await run_on_main_loop(binding.prepare(usage=ContextUsage(purpose=task_name or "model-call", intent=text),
++            max_items=64, max_text_bytes=65536))
++
++        def render(items: List[ContextItem], segments: Sequence[ContextSegment], usage: ContextUsage, view: EpistemicView) -> List[ContextItem]:
++            del usage, view
++            if not segments:
++                return items
++            payload = json.dumps([segment.model_dump(mode="json") for segment in segments], ensure_ascii=False)
++            item = ContextItemBuilder().set_role(RoleType.System).set_meta(ContextItemMeta.create(
++                item_id="nous-context:" + prepared.preparation_id, logical_turn_id=request.logical_turn_id)).add_text_content(
++                "以下是已授权的上下文。保留sources、epistemic与authority中的来源和归因；任务指令、来源记载和Steward推断分别使用。\n" + payload).build()
++            return [item, *items]
++
++        applied = binding.apply(base, prepared, render, lambda items: _snapshot(request, items))
++
++        @asynccontextmanager
++        async def before_send(wire: Dict[str, Any]) -> AsyncIterator[None]:
++            nonlocal admitted
++            if not admitted:
++                measurement = HostInputMeasurement(input_tokens=len(_bytes(wire)) + image_count * (image_bound or 0),
++                    reserved_output_tokens=_reserved(wire, request), context_window_tokens=window,
++                    source="maibot actual provider wire UTF-8 byte upper bound plus configured image bound")
++                await run_on_main_loop(binding.admit(applied, invocation_id=invocation_id,
++                    history_generation=history_generation, measurement=measurement))
++                admitted = True
++            yield
++
++        actual = request.copy_with(context_items=applied.input, admission_context=before_send)
++        try:
++            yield actual
++        except BaseException as error:
++            if admitted:
++                outcome = "cancelled" if isinstance(error, asyncio.CancelledError) else "failed"
++                await asyncio.shield(run_on_main_loop(binding.report(applied, invocation_id=invocation_id,
++                    outcome=outcome, occurred_at=datetime.now(timezone.utc))))
++            raise
++        else:
++            if not admitted:
++                raise RuntimeError("The model adapter did not measure and admit its actual provider wire input")
++            await run_on_main_loop(binding.report(applied, invocation_id=invocation_id,
++                outcome="completed", occurred_at=datetime.now(timezone.utc)))
++    finally:
++        await asyncio.shield(run_on_main_loop(binding.close()))

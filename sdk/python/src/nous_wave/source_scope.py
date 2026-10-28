@@ -14,12 +14,12 @@ class OriginalMedia(Contract):
 
 class CognitionSource(Contract):
     kind: Literal["cognition"] = "cognition"
-    reference: CognitiveRef
+    reference: CognitiveRef | str
 
 
 class MediaSource(Contract):
     kind: Literal["media"] = "media"
-    reference: MediaReference | OriginalMedia
+    reference: MediaReference | OriginalMedia | str
     observation_id: str | None = None
 
 

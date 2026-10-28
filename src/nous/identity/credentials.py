@@ -65,6 +65,16 @@ class Principal:
         ):
             raise DomainError("subject_scope_forbidden", "Credential requires a permitted subject")
 
+    def require_instance_management(self) -> None:
+        self.require("manage")
+        if any(
+            scope is not None for scope in (self.namespace_ids, self.subject_ids, self.source_ids)
+        ):
+            raise DomainError(
+                "instance_scope_forbidden",
+                "This operation requires unrestricted instance management",
+            )
+
     def intersect_sources(self, requested: tuple[str, ...] | None) -> tuple[str, ...] | None:
         """Literal identity intersection; resource containment belongs to source_scope."""
         if self.source_ids is None:

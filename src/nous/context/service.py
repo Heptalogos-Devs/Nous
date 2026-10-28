@@ -12,8 +12,12 @@ from nous_wave.contracts import (
 )
 from sqlalchemy import select
 
-from nous.cognition.service import CognitionService, body_text
+from nous.cognition.projection import body_text
+from nous.cognition.service import CognitionService
 from nous.material.service import MaterialService
+from nous.platform.configuration.service import ConfigurationService
+from nous.platform.execution import DurableExecution
+from nous.platform.models import ModelService
 from nous.platform.persistence import Authority
 from nous.retrieval.service import RetrievalService
 
@@ -29,9 +33,13 @@ class ContextService(ManagedContexts):
         *,
         retrieval: RetrievalService | None = None,
         materials: MaterialService | None = None,
+        configuration: ConfigurationService | None = None,
+        models: ModelService | None = None,
+        execution: DurableExecution | None = None,
     ) -> None:
         self.authority, self.cognition = authority, cognition
         self.retrieval, self.materials = retrieval, materials
+        self.configuration, self.models, self.execution = configuration, models, execution
 
     async def admit(self, ctx: CallContext, command: ContextCommand):
         async with self.authority.write(

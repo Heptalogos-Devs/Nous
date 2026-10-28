@@ -10,6 +10,7 @@ from nous_wave.contracts import (
     CognitiveRef,
     DomainError,
 )
+from nous_wave.contracts.context import CognitiveTarget, MediaTarget
 from nous_wave.source_scope import (
     CognitionSource,
     ObservationSource,
@@ -90,7 +91,7 @@ async def resolve_scope(
         selections: list[set[str]] = [set(base_scope)] if base_scope is not None else []
         broad_object_ids: set[str] = set()
         if base_scope is not None:
-            from nous.cognition.service import revisions
+            from nous.cognition.schema import revisions
 
             for token in base_scope:
                 if token in sources or token in material_observations or token in region_materials:
@@ -130,9 +131,18 @@ async def resolve_scope(
                         )
                     selected.add(ref.id)
                 elif isinstance(ref, CognitionSource):
-                    record = await app.cognition.get_in(view, unrestricted, ref.reference)
-                    exact_records[ref.reference.exact()] = record
-                    selected.add(ref.reference.exact())
+                    reference = ref.reference
+                    if isinstance(reference, str):
+                        resolution = await app.references.resolve_in(view, unrestricted, reference)
+                        if not isinstance(resolution.reference, CognitiveTarget):
+                            raise DomainError(
+                                "source_scope_invalid",
+                                "Cognition selector requires a cognitive address",
+                            )
+                        reference = resolution.reference.reference
+                    record = await app.cognition.get_in(view, unrestricted, reference)
+                    exact_records[reference.exact()] = record
+                    selected.add(reference.exact())
                 elif isinstance(ref, WorkContextSource):
                     value = (
                         await view.connection.execute(
@@ -154,6 +164,13 @@ async def resolve_scope(
                         selected.add(reference.exact())
                 else:
                     media = ref.reference
+                    if isinstance(media, str):
+                        resolution = await app.references.resolve_in(view, unrestricted, media)
+                        if not isinstance(resolution.reference, MediaTarget):
+                            raise DomainError(
+                                "source_scope_invalid", "Media selector requires a media address"
+                            )
+                        media = resolution.reference.reference
                     if isinstance(media, OriginalMedia):
                         kind, identity = "material", media.material_id
                     else:

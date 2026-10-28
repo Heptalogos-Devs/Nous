@@ -1,39 +1,33 @@
-name: Native foundation
+name: Python and native runtime
 on: [push, pull_request]
 permissions:
   contents: read
 jobs:
-  formatting:
+  runtime:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v7
+      - uses: astral-sh/setup-uv@v6
         with:
-          node-version: 24
-          package-manager-cache: false
-      - run: npm run format:check
-  foundation:
-    strategy:
-      matrix:
-        os: [windows-2025, ubuntu-24.04]
-    runs-on: ${{ matrix.os }}
-    defaults:
-      run:
-        shell: pwsh
-    steps:
-      - uses: actions/checkout@v7
+          enable-cache: true
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          persist-credentials: false
-      - name: Rust formatting, lint and build
+          toolchain: 1.97.1
+          components: rustfmt, clippy
+      - name: Install media tools
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg pkg-config build-essential
+      - name: Install the Python workspace
         run: |
-          . ./scripts/dev-env.ps1
-          rustup show active-toolchain
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          cargo fmt --all --check
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          cargo clippy --workspace --all-targets --locked -- -D warnings
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          cargo build -p nous --locked
-          exit $LASTEXITCODE
+          source scripts/dev-env.sh
+          uv python install 3.14
+          uv sync --locked
+      - name: Python and native contracts
+        run: |
+          source scripts/dev-env.sh
+          uv run basedpyright
+          uv run ruff check src sdk/python/src native/python/python tests/python
+          uv run pytest tests/python native/python/tests
+      - name: Native formatting
+        run: cargo fmt --manifest-path native/Cargo.toml --all --check

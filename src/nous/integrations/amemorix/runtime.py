@@ -42,7 +42,7 @@ async def runtime_admin(
     if command.action == "list_vector_spaces":
         from sqlalchemy import select
 
-        from nous.cognition.service import vectors
+        from nous.cognition.schema import vectors
 
         async with service.app.authority.read(ctx) as view:
             readable = {record.reference.exact() for record in await service.records(ctx)}

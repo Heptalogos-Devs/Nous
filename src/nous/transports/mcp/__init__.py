@@ -5,7 +5,12 @@ from typing import Literal
 
 from nous_wave import NousClient
 from nous_wave.amemorix import AMemorixAdapter
-from nous_wave.contracts import QueryRequest
+from nous_wave.contracts import AdmitFiles, AdoptCognition, QueryRequest
+from nous_wave.contracts.context import (
+    ContextAdmissionCommand,
+    ContextPrepare,
+    ContextReport,
+)
 from nous_wave.types import JsonObject
 from pydantic import JsonValue, TypeAdapter
 
@@ -141,5 +146,67 @@ def run(
         """Read the running instance status."""
         async with client() as api:
             return TypeAdapter(JsonObject).validate_python(await api.request("GET", "/api/status"))
+
+    @mcp.tool()
+    async def resolve_reference(reference: str, as_of_commit: int | None = None) -> JsonObject:
+        """Resolve a readable or canonical reference within the configured subject."""
+        async with client() as api:
+            return (
+                await api.resolve_reference(subject_id, reference, as_of_commit=as_of_commit)
+            ).model_dump(mode="json")
+
+    @mcp.tool()
+    async def admit_documents(command: AdmitFiles) -> JsonObject:
+        """Preserve real documents and form cognition under the supplied completion policy."""
+        async with client() as api:
+            return (await api.admit_documents(namespace_id, subject_id, command)).model_dump(
+                mode="json"
+            )
+
+    @mcp.tool()
+    async def adopt_cognition(command: AdoptCognition) -> JsonObject:
+        """Adopt structured cognition supported by exact, already observed evidence."""
+        async with client() as api:
+            return (await api.adopt_cognition(namespace_id, subject_id, command)).model_dump(
+                mode="json"
+            )
+
+    @mcp.tool()
+    async def prepare_context(command: ContextPrepare) -> JsonObject:
+        """Prepare scoped cognition for one host model invocation; this does not admit its use."""
+        async with client() as api:
+            return (await api.prepare_context(namespace_id, subject_id, command)).model_dump(
+                mode="json"
+            )
+
+    @mcp.tool()
+    async def admit_context(command: ContextAdmissionCommand) -> JsonObject:
+        """Record the host's applied segments, rendered digest and complete input measurement."""
+        async with client() as api:
+            return (await api.admit_managed_context(namespace_id, subject_id, command)).model_dump(
+                mode="json"
+            )
+
+    @mcp.tool()
+    async def report_context(command: ContextReport) -> JsonObject:
+        """Report an admitted invocation's actual outcome and meaningful cognition uses."""
+        async with client() as api:
+            return (await api.report_managed_context(namespace_id, subject_id, command)).model_dump(
+                mode="json"
+            )
+
+    @mcp.tool()
+    async def read_job(job_id: str) -> JsonObject:
+        """Read a durable import or context preparation job in the bound subject."""
+        async with client() as api:
+            return (
+                await api.job(job_id, namespace_id=namespace_id, subject_id=subject_id)
+            ).model_dump(mode="json")
+
+    @mcp.resource("nous://query/manual")
+    async def query_manual() -> str:
+        """The running service's NousQL syntax and retrieval domains."""
+        async with client() as api:
+            return await api.query_manual()
 
     mcp.run(transport="stdio")

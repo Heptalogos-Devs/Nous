@@ -6,19 +6,23 @@ from typing import Literal
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+ReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh"]
+
 
 class ModelRoute(BaseModel):
     base_url: str = "https://api.openai.com/v1"
-    model: str = "doubao-seed-2.0-mini"
+    model: str = ""
     credential_file: Path | None = None
     credential_env: str = "NOUS_MODEL_API_KEY"
     timeout_seconds: float = Field(default=120, gt=0)
     max_output_tokens: int = Field(default=4096, gt=0)
+    temperature: float | None = Field(default=None, ge=0, le=2)
+    reasoning_effort: ReasoningEffort | None = None
     max_calls_per_day: int = Field(default=50, ge=0)
 
 
 class EmbeddingRoute(ModelRoute):
-    model: str = "doubao-embedding-vision"
+    model: str = ""
     dimensions: int = Field(default=2048, gt=0)
     normalization: Literal["none", "l2"] = "none"
     media_path: str = "embeddings/multimodal"

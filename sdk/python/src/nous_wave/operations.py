@@ -9,6 +9,7 @@ from pydantic import BaseModel, JsonValue, TypeAdapter
 from .contracts import (
     AdmitFiles,
     AdoptCognition,
+    AdoptMedia,
     BundleRequest,
     CatalogView,
     CognitiveRecord,
@@ -28,16 +29,24 @@ from .contracts import (
     UnitOutput,
 )
 from .contracts.context import (
+    ChangeResidents,
+    ChangeWorkContext,
     ContextAdmission,
     ContextAdmissionCommand,
     ContextCommand,
     ContextFeedback,
     ContextPreparation,
+    ContextPreparationJob,
     ContextPrepare,
     ContextReport,
     ContextReportResult,
+    ContextSession,
+    OpenContextSession,
+    WorkContext,
 )
-from .types import ContextRecord, ImportSubmission, JsonObject, QueryParam, SkippedFiles, Source
+from .contracts.lifecycle import MemoryChange
+from .contracts.self_model import AdoptSeed, SeedResult
+from .types import ContextRecord, ImportSubmission, JsonObject, QueryParam, Source
 
 T = TypeVar("T")
 _JSON = TypeAdapter(JsonValue)
@@ -57,6 +66,22 @@ def segment(value: str) -> str:
 
 
 class TypedOperations:
+    async def adopt_seed(
+        self, namespace_id: str, subject_id: str, command: AdoptSeed
+    ) -> SeedResult:
+        return SeedResult.model_validate(
+            await self.request(
+                "POST",
+                self.subject_path(namespace_id, subject_id) + "/self/seed",
+                body=encoded(command),
+            )
+        )
+
+    async def self_profile(self, namespace_id: str, subject_id: str) -> tuple[CognitiveRecord, ...]:
+        return TypeAdapter(tuple[CognitiveRecord, ...]).validate_python(
+            await self.request("GET", self.subject_path(namespace_id, subject_id) + "/self/profile")
+        )
+
     async def request(
         self,
         method: str,
@@ -107,8 +132,8 @@ class TypedOperations:
 
     async def admit_documents(
         self, namespace_id: str, subject_id: str, command: AdmitFiles
-    ) -> ImportResult | SkippedFiles:
-        return TypeAdapter(ImportResult | SkippedFiles).validate_python(
+    ) -> ImportResult:
+        return ImportResult.model_validate(
             await self.request(
                 "POST",
                 self.subject_path(namespace_id, subject_id) + "/imports/files",
@@ -348,6 +373,106 @@ class TypedOperations:
             await self.request(
                 "POST",
                 self.subject_path(namespace_id, subject_id) + "/contexts/reports",
+                body=encoded(command),
+            )
+        )
+
+    async def open_context_session(
+        self, namespace_id: str, subject_id: str, command: OpenContextSession
+    ) -> ContextSession:
+        return ContextSession.model_validate(
+            await self.request(
+                "POST",
+                self.subject_path(namespace_id, subject_id) + "/contexts/sessions",
+                body=encoded(command),
+            )
+        )
+
+    async def close_context_session(
+        self, namespace_id: str, subject_id: str, session_id: str, operation_id: str
+    ) -> ContextSession:
+        return ContextSession.model_validate(
+            await self.request(
+                "POST",
+                self.subject_path(namespace_id, subject_id)
+                + f"/contexts/sessions/{segment(session_id)}/close",
+                body={"operation_id": operation_id},
+            )
+        )
+
+    async def submit_context_preparation(
+        self, namespace_id: str, subject_id: str, command: ContextPrepare
+    ) -> ContextPreparationJob:
+        return ContextPreparationJob.model_validate(
+            await self.request(
+                "POST",
+                self.subject_path(namespace_id, subject_id) + "/contexts/preparation-jobs",
+                body=encoded(command),
+            )
+        )
+
+    async def context_session(
+        self, namespace_id: str, subject_id: str, session_id: str
+    ) -> ContextSession:
+        return ContextSession.model_validate(
+            await self.request(
+                "GET",
+                self.subject_path(namespace_id, subject_id)
+                + f"/contexts/sessions/{segment(session_id)}",
+            )
+        )
+
+    async def change_context_residents(
+        self, namespace_id: str, subject_id: str, command: ChangeResidents
+    ) -> ContextSession:
+        return ContextSession.model_validate(
+            await self.request(
+                "POST",
+                self.subject_path(namespace_id, subject_id) + "/contexts/residents",
+                body=encoded(command),
+            )
+        )
+
+    async def change_work_context(
+        self, namespace_id: str, subject_id: str, command: ChangeWorkContext
+    ) -> WorkContext:
+        return WorkContext.model_validate(
+            await self.request(
+                "POST",
+                self.subject_path(namespace_id, subject_id) + "/contexts/work",
+                body=encoded(command),
+            )
+        )
+
+    async def work_context(
+        self, namespace_id: str, subject_id: str, work_context_id: str
+    ) -> WorkContext:
+        return WorkContext.model_validate(
+            await self.request(
+                "GET",
+                self.subject_path(namespace_id, subject_id)
+                + f"/contexts/work/{segment(work_context_id)}",
+            )
+        )
+
+    async def update_memory(
+        self, namespace_id: str, subject_id: str, command: MemoryChange
+    ) -> CognitiveRecord:
+        return CognitiveRecord.model_validate(
+            await self.request(
+                "POST",
+                self.subject_path(namespace_id, subject_id) + "/memories/change",
+                body=encoded(command),
+            )
+        )
+
+    async def adopt_media(
+        self, namespace_id: str, subject_id: str, command: AdoptMedia
+    ) -> JsonObject:
+        return object_value(
+            await self.request(
+                "POST",
+                self.subject_path(namespace_id, subject_id) + "/media/adopt",
                 body=encoded(command),
             )
         )

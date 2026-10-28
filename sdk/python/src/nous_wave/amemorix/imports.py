@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 from uuid import uuid4
 
 from pydantic import JsonValue, TypeAdapter
@@ -26,6 +26,9 @@ async def import_admin(
             raise ValueError("alias and relative_path must be text")
         return object_value(encoded(adapter.managed_files.resolve_path(alias, relative)))
     values = dict(kwargs)
+    input_format = TypeAdapter(Literal["text", "json", "jsonl"] | None).validate_python(
+        values.get("input_mode")
+    )
     if action in {"create_upload", "create_raw_scan", "create_paste", "cancel", "retry_failed"}:
         values.setdefault("operation_id", str(uuid4()))
     if action in {"create_upload", "create_raw_scan"}:
@@ -46,6 +49,7 @@ async def import_admin(
                     files,
                     transfer_root=adapter.managed_files.root,
                     operation_id=operation,
+                    input_format=input_format,
                 )
                 values["inputs"] = [encoded(document) for document in documents]
         else:
@@ -72,6 +76,7 @@ async def import_admin(
                 transfer_root=adapter.managed_files.root,
                 operation_id=operation,
                 alias=alias,
+                input_format=input_format,
             )
             values["inputs"] = [encoded(document) for document in documents]
     return await adapter.call("memory_import_admin", {"action": action, **values})

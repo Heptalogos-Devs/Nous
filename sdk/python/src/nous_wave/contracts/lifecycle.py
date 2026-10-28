@@ -5,7 +5,20 @@ from pydantic import Field
 from .cognition import CognitiveRef, MemoryBody
 from .common import Operation
 
-MemoryAction = Literal["reinforce", "weaken", "protect", "unprotect", "freeze", "forget", "restore", "trash", "purge", "revise", "decay"]
+MemoryAction = Literal[
+    "reinforce",
+    "weaken",
+    "protect",
+    "unprotect",
+    "freeze",
+    "forget",
+    "restore",
+    "trash",
+    "purge",
+    "revise",
+    "decay",
+]
+
 
 class MemoryChange(Operation):
     reference: CognitiveRef

@@ -5,6 +5,7 @@ from pydantic import Field, JsonValue
 from .cognition import CognitiveRecord, CognitiveRef
 from .common import Contract, Operation
 from .imports import UnitOutput
+from .references import ReferenceBinding
 
 
 class SourceCommand(Operation):
@@ -100,3 +101,4 @@ class SubjectBundle(Contract):
     file_successes: tuple[BundleFileSuccess, ...] = ()
     regions: tuple[dict[str, JsonValue], ...] = ()
     contents: dict[str, str] = Field(default_factory=dict)
+    bindings: tuple[ReferenceBinding, ...] = ()

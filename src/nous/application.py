@@ -1,6 +1,7 @@
 """Explicit resource composition; domain rules stay with their owners."""
 
 from nous_wave.amemorix.contracts import AMemorixPolicy
+from nous_wave.contracts.context import ContextsPolicy
 
 from nous.identity.credentials import CredentialsService
 from nous.platform.configuration import Settings
@@ -28,6 +29,7 @@ class Application:
                     mode="json"
                 ),
                 "integrations.amemorix": AMemorixPolicy().model_dump(mode="json"),
+                "contexts": ContextsPolicy().model_dump(mode="json"),
             },
         )
         self.prompts = PromptService(self.authority)
@@ -40,7 +42,10 @@ class Application:
         self.media = MediaService(self.content)
         self.backups = BackupService(self.authority, self.content)
         self.material = MaterialService(self.authority, content_store=self.content)
-        self.cognition = CognitionService(self.authority)
+        self.cognition = CognitionService(self.authority, materials=self.material)
+        from nous.references.service import ReferenceDirectory
+
+        self.references = ReferenceDirectory(self.authority, self.cognition, self.material)
         self.execution = DurableExecution(
             self.authority,
             queues=(QueueSpec("default"), QueueSpec("formation"), QueueSpec("embedding")),
@@ -62,11 +67,21 @@ class Application:
             self.authority, self.cognition, self.models, materials=self.material
         )
         self.retrieval = RetrievalService(
-            self.authority, self.cognition, self.models, self.settings.instance / "indexes"
+            self.authority,
+            self.cognition,
+            self.models,
+            self.settings.instance / "indexes",
+            materials=self.material,
         )
         self.models.media_resolver = self.media_imports.resolve_embedding_input
         self.contexts = ContextService(
-            self.authority, self.cognition, retrieval=self.retrieval, materials=self.material
+            self.authority,
+            self.cognition,
+            retrieval=self.retrieval,
+            materials=self.material,
+            configuration=self.configuration,
+            models=self.models,
+            execution=self.execution,
         )
         self.cognition.invalidate = self.retrieval.invalidate
         self.cognition.purge_context_in = self.contexts.purge_references_in
@@ -79,6 +94,13 @@ class Application:
             purge_context_in=self.contexts.purge_references_in,
         )
         self.execution.register("nous.imports.process", self.imports.run_process, preemptible=True)
+        self.execution.register("nous.context.prepare", self.contexts.run_prepare, preemptible=True)
+        self.execution.register(
+            "nous.context.resident_tick", self.contexts.resident_tick, preemptible=True
+        )
+        self.execution.register(
+            "nous.context.maintain", self.contexts.run_maintenance, preemptible=True
+        )
         await self.content.initialize()
         await self.authority.initialize()
         await self.execution.start()

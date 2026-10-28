@@ -6,7 +6,7 @@ from uuid import uuid4
 import anyio
 from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
-from nous_wave.contracts import AdoptMedia, BlobDocument, MediaReference
+from nous_wave.contracts import AdoptMedia, BlobDocument, MediaReference, TimePoint
 
 from nous.platform.content import ContentObject
 
@@ -22,14 +22,26 @@ async def upload(
     owner_subject_id: str,
     source: str = "media",
     operation_id: str | None = None,
+    event_time: str | None = None,
+    expected_content_hash: str | None = None,
 ):
     app = application(request)
     ctx = await context(request, namespace_id, owner_subject_id)
     media_type = request.headers.get("content-type", "application/octet-stream")
+    event = TimePoint.model_validate_json(event_time) if event_time else None
     lease = await app.content.publish(request.stream(), media_type)
+    committed = False
     try:
+        declared = request.headers.get("content-length")
+        if declared is not None and int(declared) != lease.byte_len:
+            raise ValueError("Uploaded byte length differs from Content-Length")
+        if (
+            expected_content_hash is not None
+            and expected_content_hash.casefold() != lease.content_hash
+        ):
+            raise ValueError("Uploaded content does not match expected_content_hash")
         info = await app.media.probe(lease)
-        document = BlobDocument(filename=source, media_type=media_type)
+        document = BlobDocument(filename=source, media_type=media_type, event_time=event)
         async with app.authority.write(
             ctx,
             operation_id or str(uuid4()),
@@ -39,12 +51,17 @@ async def upload(
         ) as tx:
             if tx.replayed:
                 assert tx.receipt is not None
-                return tx.receipt.result
-            value = await app.material.put_blob_in(tx, ctx, lease, document, info)
-            await app.material.observe_in(tx, ctx, str(value["id"]), document)
-            return tx.result({"result": value, "commit_seq": tx.commit_seq})
+                result = tx.receipt.result
+            else:
+                value = await app.material.put_blob_in(tx, ctx, lease, document, info)
+                await app.material.observe_in(tx, ctx, str(value["id"]), document)
+                result = tx.result({"result": value, "commit_seq": tx.commit_seq})
+        committed = True
+        return result
     finally:
         await app.content.release(lease)
+        if not committed:
+            await app.content.purge(ctx, (lease.content_hash,))
 
 
 @router.post("/namespaces/{namespace_id}/subjects/{subject_id}/media/adopt")

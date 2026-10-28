@@ -1,5 +1,6 @@
 """Configured OpenAI-compatible content-parts extension for joint media vectors."""
 
+import asyncio
 import base64
 import hashlib
 from collections.abc import Awaitable, Callable
@@ -32,6 +33,32 @@ def vector_space(route: EmbeddingRoute, effective_model: str) -> str:
     return hashlib.sha256(
         f"{route.base_url}:{effective_model}:{route.dimensions}:{route.normalization}".encode()
     ).hexdigest()
+
+
+async def media_parts(
+    ctx: CallContext, group: tuple[str | MediaEmbeddingInput, ...], resolver: MediaResolver
+) -> list[dict[str, JsonValue]]:
+    parts: list[dict[str, JsonValue]] = []
+    for part in group:
+        if isinstance(part, str):
+            parts.append({"type": "text", "text": part})
+            continue
+        resolved = await resolver(ctx, part)
+        if resolved.media_type.startswith("text/"):
+            parts.append({"type": "text", "text": resolved.data.decode("utf-8")})
+            continue
+        kind = (
+            "image_url"
+            if resolved.media_type.startswith("image/")
+            else "video_url"
+            if resolved.media_type.startswith("video/")
+            else None
+        )
+        if kind is None:
+            raise Unavailable(f"Content-parts embeddings do not accept {resolved.media_type}")
+        url = f"data:{resolved.media_type};base64," + base64.b64encode(resolved.data).decode()
+        parts.append({"type": kind, kind: {"url": url}})
+    return parts
 
 
 async def embed_media(
@@ -76,34 +103,12 @@ async def embed_media(
             vectors.extend(result.vectors)
             call_ids.append(call_id)
             continue
-        parts: list[dict[str, JsonValue]] = []
-        for part in group:
-            if isinstance(part, str):
-                parts.append({"type": "text", "text": part})
-            else:
-                resolved = await resolver(ctx, part)
-                if resolved.media_type.startswith("text/"):
-                    parts.append({"type": "text", "text": resolved.data.decode("utf-8")})
-                    continue
-                kind = (
-                    "image_url"
-                    if resolved.media_type.startswith("image/")
-                    else "video_url"
-                    if resolved.media_type.startswith("video/")
-                    else None
-                )
-                if kind is None:
-                    raise Unavailable(
-                        f"Content-parts embeddings do not accept {resolved.media_type}"
-                    )
-                url = (
-                    f"data:{resolved.media_type};base64," + base64.b64encode(resolved.data).decode()
-                )
-                parts.append({"type": kind, kind: {"url": url}})
+        raw: dict[str, JsonValue] | None = None
         try:
-            response = await client.post(
+            parts = await media_parts(ctx, group, resolver)
+            raw = await client.post(
                 route.media_path,
-                cast_to=EmbeddingResponse,
+                cast_to=dict[str, JsonValue],
                 body={
                     "model": route.model,
                     "input": parts,
@@ -111,6 +116,7 @@ async def embed_media(
                     "encoding_format": "float",
                 },
             )
+            response = EmbeddingResponse.model_validate(raw)
             records = (
                 (response.data,) if isinstance(response.data, EmbeddingData) else response.data
             )
@@ -136,9 +142,14 @@ async def embed_media(
             await ledger.finish(ctx, call_id, result.model_dump(mode="json"), dict(response.usage))
             vectors.append(vector)
             call_ids.append(call_id)
+        except asyncio.CancelledError:
+            await asyncio.shield(
+                ledger.finish(ctx, call_id, None, {"response": raw}, "CancelledUnknownOutcome")
+            )
+            raise
         except Exception as error:
             code = str(getattr(error, "status_code", type(error).__name__))
-            await ledger.finish(ctx, call_id, None, {}, code)
+            await ledger.finish(ctx, call_id, None, {"response": raw}, code)
             raise Unavailable(f"Media embedding failed ({code}); call {call_id}") from error
     if effective_model is None:
         raise ValueError("Embedding batch cannot be empty")

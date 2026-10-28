@@ -8,7 +8,14 @@ from pydantic import BaseModel
 
 
 class TemporalValue(BaseModel):
-    precision: Literal["calendar_date", "local_date_time", "zoned_instant", "unknown"]
+    precision: Literal[
+        "calendar_year",
+        "calendar_month",
+        "calendar_date",
+        "local_date_time",
+        "zoned_instant",
+        "unknown",
+    ]
     value: str | None = None
     original: str
     timezone: str | None = None
@@ -16,6 +23,17 @@ class TemporalValue(BaseModel):
 
 def parse_temporal(value: str, timezone: str | None = None) -> TemporalValue:
     try:
+        if len(value) == 4 and value.isdigit():
+            date(int(value), 1, 1)
+            return TemporalValue(
+                precision="calendar_year", value=value, original=value, timezone=timezone
+            )
+        if len(value) == 7 and value[4] == "-":
+            year, month = value.split("-")
+            date(int(year), int(month), 1)
+            return TemporalValue(
+                precision="calendar_month", value=value, original=value, timezone=timezone
+            )
         if len(value) == 10:
             parsed_date = date.fromisoformat(value)
             return TemporalValue(
@@ -37,6 +55,21 @@ def parse_timepoint(expression: str) -> TimePoint | None:
     value = parse_temporal(expression)
     if value.value is None:
         return None
+    if value.precision == "calendar_year":
+        return TimePoint(
+            domain="calendar:gregorian:year",
+            precision="year",
+            coordinate=int(value.value),
+            original=expression,
+        )
+    if value.precision == "calendar_month":
+        year, month = (int(part) for part in value.value.split("-"))
+        return TimePoint(
+            domain="calendar:gregorian:month",
+            precision="month",
+            coordinate=year * 12 + month - 1,
+            original=expression,
+        )
     if value.precision == "calendar_date":
         return TimePoint(
             domain="calendar:gregorian:date",

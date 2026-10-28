@@ -22,6 +22,7 @@ dependencies = [
   "filelock>=3,<4", "platformdirs>=4,<5", "keyring>=25,<27",
   "pypdf>=6,<7", "numpy>=2.3,<3", "pillow>=11,<13",
   "babel>=2,<3", "fluent.runtime>=0.4,<1", "python-dateutil>=2.9,<3",
+  "jsonpointer>=3,<4",
 ]
 
 [project.scripts]

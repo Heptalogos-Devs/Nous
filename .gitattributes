@@ -13,6 +13,8 @@
 *.ps1 text eol=lf
 *.sh text eol=lf
 *.txt text eol=lf
+# Unified patch context uses a single space on empty lines.
+integrations/**/*.patch text eol=lf -whitespace
 *.bat text eol=crlf
 *.cmd text eol=crlf
 

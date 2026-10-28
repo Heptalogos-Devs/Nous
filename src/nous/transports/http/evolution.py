@@ -11,10 +11,25 @@ from nous_wave.contracts import (
     SourceRegion,
     SplitConcept,
 )
+from nous_wave.contracts.self_model import AdoptSeed
 
 from .security import application, context
 
 router = APIRouter(prefix="/api/namespaces/{namespace_id}/subjects/{subject_id}")
+
+
+@router.post("/self/seed")
+async def seed_self(request: Request, namespace_id: str, subject_id: str, command: AdoptSeed):
+    return await application(request).cognition.adopt_seed(
+        await context(request, namespace_id, subject_id), command
+    )
+
+
+@router.get("/self/profile")
+async def self_profile(request: Request, namespace_id: str, subject_id: str):
+    return await application(request).cognition.self_profile(
+        await context(request, namespace_id, subject_id)
+    )
 
 
 @router.post("/cognition/merge-concepts")

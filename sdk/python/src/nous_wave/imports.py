@@ -10,10 +10,10 @@ from pydantic import JsonValue
 from .contracts import AdmitFiles, ImportDocument, ImportResult
 from .files import ManagedFiles, file_name
 from .operations import encoded
-from .types import LocalImportFile, SkippedFiles
+from .types import LocalImportFile
 
 if TYPE_CHECKING:
-    from .client import NousClient
+    from ._client.materials import MaterialClient
 
 
 def _local_input(
@@ -31,7 +31,7 @@ def _local_input(
 
 
 async def upload_import_inputs(
-    client: "NousClient",
+    client: "MaterialClient",
     namespace_id: str,
     subject_id: str,
     files: Sequence[str | Path | Mapping[str, JsonValue]],
@@ -47,6 +47,7 @@ async def upload_import_inputs(
         name = file_name(item.filename or item.name or path.name)
         format_ = (
             item.format
+            or {".json": "json", ".jsonl": "jsonl"}.get(Path(name).suffix.lower())
             or input_format
             or {".txt": "text", ".md": "text", ".json": "json", ".jsonl": "jsonl"}.get(
                 Path(name).suffix.lower()
@@ -90,7 +91,7 @@ async def upload_import_inputs(
 
 
 async def upload_import_file_documents(
-    client: "NousClient",
+    client: "MaterialClient",
     namespace_id: str,
     subject_id: str,
     files: Sequence[str | Path | Mapping[str, JsonValue]],
@@ -124,7 +125,7 @@ async def upload_import_file_documents(
 
 
 async def import_files(
-    client: "NousClient",
+    client: "MaterialClient",
     namespace_id: str,
     subject_id: str,
     files: Sequence[str | Path | Mapping[str, JsonValue]],
@@ -135,7 +136,7 @@ async def import_files(
     completion: Literal["accepted", "formed"] = "accepted",
     origin: Mapping[str, str] | None = None,
     operation_id: str | None = None,
-) -> ImportResult | SkippedFiles:
+) -> ImportResult:
     if completion == "formed" and not form_memory:
         raise ValueError("formed import completion requires form_memory=True")
     operation = operation_id or str(uuid4())
@@ -163,7 +164,7 @@ async def import_files(
 
 
 async def import_directory(
-    client: "NousClient",
+    client: "MaterialClient",
     namespace_id: str,
     subject_id: str,
     *,
@@ -177,7 +178,7 @@ async def import_directory(
     completion: Literal["accepted", "formed"] = "accepted",
     origin: Mapping[str, str] | None = None,
     operation_id: str | None = None,
-) -> ImportResult | SkippedFiles:
+) -> ImportResult:
     files = await ManagedFiles(transfer_root).scan(
         alias, relative_path, pattern=pattern, recursive=recursive
     )

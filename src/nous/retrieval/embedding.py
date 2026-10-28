@@ -1,0 +1,149 @@
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+import numpy as np
+from nous_wave.contracts import (
+    CallContext,
+    DomainError,
+    EmbeddingBatch,
+    MediaEmbeddingInput,
+    MediaReference,
+    QueryRequest,
+)
+from sqlalchemy import select
+
+from nous.cognition.schema import vectors
+from nous.material.service import require_observation_in
+
+from .media import embedding_input, media_records_in
+
+if TYPE_CHECKING:
+    from .service import RetrievalService
+
+
+async def query_embedding(
+    self: RetrievalService, ctx: CallContext, request: QueryRequest
+) -> EmbeddingBatch:
+    parts = request.parts or (request.text, *request.media)
+    if not any(isinstance(part, MediaReference) for part in parts):
+        return await self.models.embed(
+            ctx.model_copy(update={"request_id": f"{ctx.request_id}:query"}),
+            ("\n".join(part for part in parts if isinstance(part, str)),),
+        )
+    async with self.authority.read(ctx) as view:
+        available = await media_records_in(view, ctx, self.materials)
+    converted: list[str | MediaEmbeddingInput] = []
+    source_ids: set[str] = set()
+    for part in parts:
+        if isinstance(part, str):
+            converted.append(part)
+            continue
+        matched = [
+            record
+            for record in available
+            if record.reference.exact() == part.exact()
+            and (part.observation_id is None or part.observation_id in record.source_roots)
+        ]
+        if not matched:
+            raise DomainError(
+                "source_unavailable", "Query media is outside the current source scope"
+            )
+        record = max(matched, key=lambda item: item.commit_seq)
+        converted.append(embedding_input(record))
+        source_ids.add(record.material_id)
+    return await self.models.embed_media(
+        ctx.model_copy(update={"request_id": f"{ctx.request_id}:query-media"}),
+        (tuple(converted),),
+        source_ids=tuple(sorted(source_ids)),
+    )
+
+
+async def embed_media(
+    self: RetrievalService, ctx: CallContext, reference: MediaReference, operation_id: str
+):
+    receipt = await self.authority.receipt(
+        ctx,
+        operation_id,
+        operation_kind="media.embed",
+        scope=ctx.require_subject(),
+        payload=reference,
+    )
+    if receipt is not None:
+        return receipt.result
+    async with self.authority.read(ctx) as view:
+        candidates = [
+            record
+            for record in await media_records_in(view, ctx, self.materials)
+            if record.reference.exact() == reference.exact()
+            and (
+                reference.observation_id is None or reference.observation_id in record.source_roots
+            )
+        ]
+    if not candidates:
+        raise DomainError("source_unavailable", "Media embedding source is unavailable")
+    record = max(candidates, key=lambda item: item.commit_seq)
+    batch = await self.models.embed_media(
+        ctx.model_copy(update={"request_id": operation_id}),
+        ((embedding_input(record),),),
+        source_ids=(record.material_id,),
+    )
+    if (
+        len(batch.vectors) != 1
+        or len(batch.vectors[0]) != batch.dimensions
+        or not np.isfinite(batch.vectors[0]).all()
+    ):
+        raise DomainError(
+            "invalid_embedding", "Media embedding has invalid count, dimensions, or coordinates"
+        )
+    async with self.authority.write(
+        ctx,
+        operation_id,
+        operation_kind="media.embed",
+        scope=ctx.require_subject(),
+        payload=reference,
+    ) as tx:
+        if tx.replayed:
+            return tx.replay_result
+        await require_observation_in(
+            tx,
+            ctx,
+            record.source_roots[0],
+            region_id=record.region.id if record.region else None,
+        )
+        existing = (
+            await tx.connection.execute(
+                select(vectors.c.model, vectors.c.dimensions).where(
+                    vectors.c.reference == reference.exact(), vectors.c.space == batch.space
+                )
+            )
+        ).first()
+        if existing is not None and (
+            existing.model != batch.model or existing.dimensions != batch.dimensions
+        ):
+            raise DomainError(
+                "embedding_space_conflict",
+                "A media space cannot mix model identities or dimensions",
+            )
+        if existing is None:
+            await tx.connection.execute(
+                vectors.insert().values(
+                    reference=reference.exact(),
+                    space=batch.space,
+                    model=batch.model,
+                    dimensions=batch.dimensions,
+                    vector=list(batch.vectors[0]),
+                    call_id=batch.call_id,
+                    commit_seq=tx.commit_seq,
+                )
+            )
+        return tx.result(
+            {
+                "reference": reference.model_dump(mode="json"),
+                "space": batch.space,
+                "model": batch.model,
+                "dimensions": batch.dimensions,
+                "call_ids": list(batch.call_ids or ((batch.call_id,) if batch.call_id else ())),
+                "commit_seq": tx.commit_seq,
+            }
+        )

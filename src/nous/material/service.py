@@ -10,6 +10,7 @@ from nous_wave.contracts import (
     DomainError,
     ImportDocument,
     MediaInfo,
+    MediaReference,
     SourceRegion,
 )
 from pydantic import JsonValue, TypeAdapter
@@ -18,6 +19,9 @@ from sqlalchemy import JSON, Boolean, Column, Integer, String, Table, select
 from nous.identity.service import require_subject_in
 from nous.platform.content import ContentLease, ContentStore
 from nous.platform.persistence import Authority, ReadView, WriteTx, metadata
+from nous.references import allocate_in
+
+from .access import media_source_in
 
 materials = Table(
     "materials",
@@ -64,6 +68,8 @@ class MaterialRecord(TypedDict):
     commit_seq: int
     media_info: NotRequired[dict[str, JsonValue] | None]
     purged: NotRequired[bool]
+    addresses: NotRequired[dict[str, JsonValue]]
+    required_source_ids: NotRequired[list[str]]
 
 
 class SourceRecord(TypedDict):
@@ -149,6 +155,8 @@ async def require_observation_in(
 
 
 class MaterialService:
+    media_source_in = media_source_in
+
     def __init__(self, authority: Authority, content_store: ContentStore | None = None) -> None:
         self.authority = authority
         self.content_store = content_store
@@ -180,11 +188,19 @@ class MaterialService:
             await tx.connection.execute(select(regions.c.record).where(regions.c.id == region.id))
         ).scalar_one_or_none()
         if existing is not None:
-            if SourceRegion.model_validate(existing) != region:
+            stored = SourceRegion.model_validate(existing)
+            if stored.model_dump(exclude={"addresses"}) != region.model_dump(exclude={"addresses"}):
                 raise DomainError(
                     "region_conflict", "Source region identity already has different coordinates"
                 )
-            return region
+            return stored
+        region = region.model_copy(
+            update={
+                "addresses": await allocate_in(
+                    tx, ctx, MediaReference(kind="source_region", id=region.id)
+                )
+            }
+        )
         await tx.connection.execute(
             regions.insert().values(
                 id=region.id,
@@ -197,36 +213,41 @@ class MaterialService:
 
     async def read_region(self, ctx: CallContext, region_id: str) -> SourceRegion:
         async with self.authority.read(ctx) as view:
-            value = (
-                await view.connection.execute(
-                    select(regions.c.record).where(
-                        regions.c.id == region_id, regions.c.namespace_id == ctx.namespace_id
-                    )
+            return await self.read_region_in(view, ctx, region_id)
+
+    async def read_region_in(
+        self, view: ReadView | WriteTx, ctx: CallContext, region_id: str
+    ) -> SourceRegion:
+        value = (
+            await view.connection.execute(
+                select(regions.c.record).where(
+                    regions.c.id == region_id, regions.c.namespace_id == ctx.namespace_id
                 )
-            ).scalar_one_or_none()
-            if value is None:
-                raise DomainError("region_not_found", "Source region does not exist")
-            region = SourceRegion.model_validate(value)
-            events = (
-                (
-                    await view.connection.execute(
-                        select(observations.c.id).where(
-                            observations.c.namespace_id == ctx.namespace_id,
-                            observations.c.subject_id == ctx.subject_id,
-                            observations.c.material_id == region.material_id,
-                            observations.c.active.is_(True),
-                        )
-                    )
-                )
-                .scalars()
-                .all()
             )
-            if not events:
-                raise DomainError(
-                    "source_unavailable", "Source region has no live observation for this subject"
+        ).scalar_one_or_none()
+        if value is None:
+            raise DomainError("region_not_found", "Source region does not exist")
+        region = SourceRegion.model_validate(value)
+        events = (
+            (
+                await view.connection.execute(
+                    select(observations.c.id).where(
+                        observations.c.namespace_id == ctx.namespace_id,
+                        observations.c.subject_id == ctx.subject_id,
+                        observations.c.material_id == region.material_id,
+                        observations.c.active.is_(True),
+                    )
                 )
-            await require_observation_in(view, ctx, str(events[0]), region_id=region_id)
-            return region
+            )
+            .scalars()
+            .all()
+        )
+        if not events:
+            raise DomainError(
+                "source_unavailable", "Source region has no live observation for this subject"
+            )
+        await require_observation_in(view, ctx, str(events[0]), region_id=region_id)
+        return region
 
     async def region_source(
         self, ctx: CallContext, region_id: str
@@ -263,7 +284,7 @@ class MaterialService:
                 )
             )
         ).first()
-        if row and not row[0].get("purged"):
+        if row and not row[0].get("purged") and not row[0].get("required_source_ids"):
             if lease is not None and self.content_store is not None:
                 await self.content_store.attach_in(tx, lease, row[0]["id"])
             return _MATERIAL.validate_python(row[0])
@@ -283,6 +304,9 @@ class MaterialService:
             "recorded_at": str(tx.recorded_at),
             "commit_seq": tx.commit_seq,
         }
+        value["addresses"] = (
+            await allocate_in(tx, ctx, MediaReference(kind="material", id=value["id"]))
+        ).model_dump(mode="json")
         await tx.connection.execute(
             materials.insert().values(
                 id=value["id"], namespace_id=ctx.namespace_id, content_hash=digest, record=value
@@ -299,18 +323,36 @@ class MaterialService:
         lease: ContentLease,
         document: BlobDocument,
         info: MediaInfo | None = None,
+        *,
+        required_source_ids: tuple[str, ...] = (),
     ) -> MaterialRecord:
         if self.content_store is None:
             raise DomainError("content_unavailable", "Immutable content storage is not configured")
-        existing = (
-            await tx.connection.execute(
-                select(materials.c.record).where(
-                    materials.c.namespace_id == ctx.namespace_id,
-                    materials.c.content_hash == lease.content_hash,
+        from .access import require_dependencies_in
+
+        if required_source_ids:
+            await require_dependencies_in(self, tx, ctx, required_source_ids)
+        candidates = (
+            (
+                await tx.connection.execute(
+                    select(materials.c.record).where(
+                        materials.c.namespace_id == ctx.namespace_id,
+                        materials.c.content_hash == lease.content_hash,
+                    )
                 )
             )
-        ).scalar_one_or_none()
-        if existing is not None and not existing.get("purged"):
+            .scalars()
+            .all()
+        )
+        existing = next(
+            (
+                value
+                for value in candidates
+                if not value.get("purged") and not value.get("required_source_ids")
+            ),
+            None,
+        )
+        if existing is not None and not required_source_ids:
             await self.content_store.attach_in(tx, lease, existing["id"])
             return _MATERIAL.validate_python(existing)
         value: MaterialRecord = {
@@ -322,6 +364,7 @@ class MaterialService:
             "media_type": lease.media_type,
             "byte_len": lease.byte_len,
             "source_type": document.source_type,
+            "required_source_ids": list(dict.fromkeys(required_source_ids)),
             "origin": document.origin,
             "event_time": document.event_time.model_dump(mode="json")
             if document.event_time
@@ -330,6 +373,9 @@ class MaterialService:
             "recorded_at": str(tx.recorded_at),
             "commit_seq": tx.commit_seq,
         }
+        value["addresses"] = (
+            await allocate_in(tx, ctx, MediaReference(kind="material", id=value["id"]))
+        ).model_dump(mode="json")
         await tx.connection.execute(
             materials.insert().values(
                 id=value["id"],
@@ -350,9 +396,18 @@ class MaterialService:
         kind: str = "import",
     ) -> SourceRecord:
         await require_subject_in(tx, ctx)
-        material = (await tx.connection.execute(select(materials.c.record).where(materials.c.id == material_id, materials.c.namespace_id == ctx.namespace_id))).scalar_one_or_none()
+        material = (
+            await tx.connection.execute(
+                select(materials.c.record).where(
+                    materials.c.id == material_id, materials.c.namespace_id == ctx.namespace_id
+                )
+            )
+        ).scalar_one_or_none()
         if material is None or material.get("purged"):
-            raise DomainError("source_purged", "An unavailable or purged material cannot produce a new observation")
+            raise DomainError(
+                "source_purged",
+                "An unavailable or purged material cannot produce a new observation",
+            )
         value: SourceRecord = {
             "id": str(uuid4()),
             "namespace_id": ctx.namespace_id,
@@ -386,31 +441,9 @@ class MaterialService:
         async with self.authority.read(ctx) as view:
             return await self.read_in(view, ctx, material_id)
 
-    async def read_in(self, view: ReadView | WriteTx, ctx: CallContext, material_id: str) -> MaterialRecord:
-        await require_subject_in(view, ctx)
-        events = (
-            (
-                await view.connection.execute(
-                    select(observations).where(
-                        observations.c.material_id == material_id,
-                        observations.c.subject_id == ctx.subject_id,
-                        observations.c.namespace_id == ctx.namespace_id,
-                        observations.c.active.is_(True),
-                    )
-                )
-            )
-            .mappings()
-            .all()
-        )
-        if not any(source_permitted(ctx, material_id, row["id"]) for row in events):
-            raise DomainError(
-                "source_unavailable", "Source is unavailable in the current read scope"
-            )
-        value = (
-            await view.connection.execute(
-                select(materials.c.record).where(
-                    materials.c.id == material_id, materials.c.namespace_id == ctx.namespace_id
-                )
-            )
-        ).scalar_one()
-        return _MATERIAL.validate_python(value)
+    async def read_in(
+        self, view: ReadView | WriteTx, ctx: CallContext, material_id: str
+    ) -> MaterialRecord:
+        from .access import read_material_in
+
+        return await read_material_in(self, view, ctx, material_id)

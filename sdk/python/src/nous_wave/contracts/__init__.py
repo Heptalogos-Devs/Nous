@@ -37,9 +37,11 @@ from .cognition import (
 from .cognition import (
     EmbeddingBatch as EmbeddingBatch,
 )
+from .cognition import EntityAttribute as EntityAttribute
 from .cognition import (
     EntityBody as EntityBody,
 )
+from .cognition import EntityMention as EntityMention
 from .cognition import (
     EpisodeBody as EpisodeBody,
 )
@@ -53,6 +55,12 @@ from .cognition import (
     EvidenceLink as EvidenceLink,
 )
 from .cognition import (
+    FormationCatalogEntry as FormationCatalogEntry,
+)
+from .cognition import (
+    FormationDraft as FormationDraft,
+)
+from .cognition import (
     FormationProposal as FormationProposal,
 )
 from .cognition import (
@@ -64,6 +72,9 @@ from .cognition import (
 from .cognition import (
     MemoryBody as MemoryBody,
 )
+from .cognition import (
+    MemoryInterpretation as MemoryInterpretation,
+)
 from .cognition import MemoryLifecycle as MemoryLifecycle
 from .cognition import (
     MemorySemanticsBody as MemorySemanticsBody,
@@ -73,6 +84,21 @@ from .cognition import (
 )
 from .cognition import (
     NarrativeThreadBody as NarrativeThreadBody,
+)
+from .cognition import (
+    ProposedAssociation as ProposedAssociation,
+)
+from .cognition import (
+    ProposedConcept as ProposedConcept,
+)
+from .cognition import (
+    ProposedEntity as ProposedEntity,
+)
+from .cognition import (
+    ProposedEntityAttribute as ProposedEntityAttribute,
+)
+from .cognition import (
+    ProposedSchema as ProposedSchema,
 )
 from .cognition import (
     ResegmentEpisodes as ResegmentEpisodes,
@@ -105,18 +131,32 @@ from .common import (
 from .common import (
     Operation as Operation,
 )
+from .common import ReferenceAddresses as ReferenceAddresses
 from .common import (
     TimePoint as TimePoint,
 )
 from .common import (
     TimeRange as TimeRange,
 )
+from .context import ChangeResidents as ChangeResidents
+from .context import ChangeWorkContext as ChangeWorkContext
 from .context import (
     ContextCommand as ContextCommand,
 )
+from .context import ContextConsumerPolicy as ContextConsumerPolicy
 from .context import (
     ContextFeedback as ContextFeedback,
 )
+from .context import ContextPreparationJob as ContextPreparationJob
+from .context import ContextResident as ContextResident
+from .context import ContextsPolicy as ContextsPolicy
+from .context import StewardProposal as StewardProposal
+from .context import WorkContext as WorkContext
+from .context import WorkContextContent as WorkContextContent
+from .credentials import Capability as Capability
+from .credentials import CreateCredential as CreateCredential
+from .credentials import CredentialRecord as CredentialRecord
+from .credentials import IssuedCredential as IssuedCredential
 from .imports import (
     AdmitFiles as AdmitFiles,
 )
@@ -132,6 +172,9 @@ from .imports import (
 from .imports import (
     ImportDocument as ImportDocument,
 )
+from .imports import ImportFailure as ImportFailure
+from .imports import ImportRecord as ImportRecord
+from .imports import ImportRecordError as ImportRecordError
 from .imports import (
     ImportResult as ImportResult,
 )
@@ -141,6 +184,7 @@ from .imports import (
 from .imports import (
     ProcessCatalog as ProcessCatalog,
 )
+from .imports import UnitAttempt as UnitAttempt
 from .imports import (
     UnitOutput as UnitOutput,
 )
@@ -200,5 +244,3 @@ from .retrieval import (
 from .retrieval import (
     TimeFilter as TimeFilter,
 )
-from .imports import ImportRecord as ImportRecord, ImportRecordError as ImportRecordError
-from .cognition import EntityAttribute as EntityAttribute

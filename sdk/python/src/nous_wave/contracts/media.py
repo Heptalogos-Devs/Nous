@@ -4,7 +4,7 @@ from typing import Literal
 
 from pydantic import Field, model_validator
 
-from .common import CognitiveTimes, Contract, Operation, TimePoint
+from .common import CognitiveTimes, Contract, Operation, ReferenceAddresses, TimePoint
 
 
 class MediaInfo(Contract):
@@ -47,6 +47,7 @@ class MediaReference(Contract):
 
 class SourceRegion(Contract):
     id: str
+    addresses: ReferenceAddresses | None = None
     material_id: str
     pixel_rect: PixelRect | None = None
     time_span: TimeSpan | None = None
@@ -84,6 +85,7 @@ class MediaEmbeddingInput(Contract):
 
 class MediaRecord(Contract):
     reference: MediaReference
+    addresses: ReferenceAddresses | None = None
     namespace_id: str
     subject_id: str
     material_id: str

@@ -9,6 +9,7 @@
 ```sh
 uv add "/绝对路径/nous_wave-0.1.0-py3-none-any.whl"
 git apply "/绝对路径/Nous-Wave/integrations/maibot/memory-service.patch"
+git apply "/绝对路径/Nous-Wave/integrations/maibot/managed-context.patch"
 git apply "/绝对路径/Nous-Wave/integrations/maibot/diagnostics-unknown.patch"
 git apply "/绝对路径/Nous-Wave/integrations/maibot/bundle-files.patch"
 git apply "/绝对路径/Nous-Wave/integrations/maibot/bundle-unknown.patch"
@@ -27,6 +28,7 @@ NOUS_NAMESPACE_ID=填写 Namespace UUID
 NOUS_SUBJECT_ID=填写 MaiBot Subject UUID
 NOUS_TOKEN_FILE=填写受保护凭据文件的绝对路径
 NOUS_TRANSFER_ROOT=填写 MaiBot 实例内专用文件传输目录的绝对路径
+NOUS_MODEL_CONTEXT_WINDOWS={"实际MaiBot模型配置name":262144}
 ```
 
 `NOUS_TOKEN_FILE` 指向令牌文件，凭据内容由 SDK 读取。四项连接配置必填；记忆包上传和下载还需设置 `NOUS_TRANSFER_ROOT`。传输目录由 MaiBot 进程管理，例如实例目录下的 `data/nous-transfer`；上传暂存与下载文件均在此目录内。
@@ -67,11 +69,10 @@ task_id = created["task"]["task_id"]
 detail = await adapter.memory_import_admin(action="get", task_id=task_id, include_chunks=True)
 ```
 
-当前文本创建显式采用 `dedupe_policy=none`。文件去重清单、force/clear_manifest 与请求级并发仍需独立原生接纳能力，传入这些尚未支持的设置会返回具体错误。`import-admin.patch` 让界面按当前能力展示并提交可用设置，未知 chunk 长度上限不再变成零或固定上限。安装后重建 dashboard。
-
+文件去重支持 `none`、`content_hash`、`manifest`，并保留 `force`、`clear_manifest`。全部文件跳过时仍提交真实 finalization 作业，返回清单回执。JSON/JSONL 使用完整原件与正式记录解析；上传扩展名 `.json`、`.jsonl` 自动选择对应格式。请求级并发由 Nous 共享队列配置管理。
 重试使用同一目录的实际失败 UnitId；相同切分参数可重复传入，改变切分必须先创建带 parent_catalog_id 的新目录。聊天绑定作为真实 Import 事件 origin 保存，不增加读取权限。语义角色、逐字 quote、时间子任务和向量状态与原生处理一致。chunk 输出保留实际 temporal_error/vector_error；内容任务成功时，可选时间或索引结果仍可有非致命错误。当前时间归一化只接受明确 offset 的 RFC3339，日期粒度与未知时区不会在调用端补值。
 
-JSON 语义单位、LPMM 转换、时序回填和 MaiBot 数据库迁移保留各自处理合同，当前不会被改成普通文本导入。
+JSON 记录支持 `records`、`paragraphs`、`docs` 包络与 JSONL 原顺序，错误定位保留到具体记录。LPMM 转换、时序回填和 MaiBot 数据库迁移保留各自处理合同。
 
 `memory_source_admin` 支持 list、delete 和 batch_delete，按完整来源标签进入原生来源管理。list 返回实际授权范围内的段落数量和更新时间；手动删除保持此管理接口覆盖保护的原有语义。回执中的删除 operation_id 为本实例真实 trash 提交身份，后续恢复使用同一个值：
 
@@ -94,3 +95,14 @@ operation = await adapter.memory_delete_admin(
 source `preview` 与 `execute(dry_run=true)` 由同一来源事务生成计划后回滚，显示目标原修订、预计退役对象和向量关联数；执行时重新核验。`get_operation` 与 `list_operations(mode="source")` 读取同一快照中的逻辑删除记录，已恢复记录显示 restored，并附真实恢复回执。删除计数来自实际 Memory、退役 Entity／Association 和向量关联行数；图谱修订另列在 native_result。
 
 尚未提供的管理动作返回 `CapabilityUnavailable`。画像与统计异常向调用者传播，写入、检索及其他管理请求沿原有明确失败结果呈现。
+
+
+## 模型调用与托管上下文
+
+`managed-context.patch` 在 MaiBot 的正式 `ResponseRequest` 与四类模型客户端边界接线。设置 `NOUS_MODEL_CONTEXT_WINDOWS` 后，有真实聊天会话的模型调用会先通过 SDK 提交持久准备任务，再把授权上下文渲染为实际 ContextItem。OpenAI Chat、Responses、Gemini 和插件客户端在构造完整 provider 输入后、发送前测量并接纳；结果返回后报告 completed、failed 或 cancelled。模型接触与实际使用分别记录，宿主不会把成功回复全部算作实际使用。
+
+窗口映射使用 MaiBot `model_config.toml` 的模型 **name**，必须填写供应商确认的窗口值。例中 `262144` 适用于已核实的 Doubao Seed 2.0 mini 256k 窗口（[供应商模型表](https://www.volcengine.com/docs/82379/1330310)）；其他模型使用各自窗口。测量采用实际完整 provider 输入的 UTF-8 字节上界，包含工具、格式约束与多模态数据；输出预留来自该次真正发送的参数。图片输入还要求 `NOUS_MODEL_IMAGE_TOKEN_BOUNDS={"模型name":每张图片的供应商token上界}`，避免用文本字节估计视觉 token。
+
+会话身份来自 MaiBot 正式 chat_manager 创建或读取的 session_id。来源权限按当前 conversation_ref 限定；没有会话的后台模型调用不派生聊天身份。history_generation 是实际输入历史的内容摘要，invocation_id 标识真实宿主模型调用。
+
+Nous 的 `contexts` 配置为每个 consumer 管理预算、居民与可选 Steward。`consumers.maibot.steward_role="steward"` 使用同一模型资源图、Prompt 和调用账本；留空时只使用确定性的检索与预算编译。Steward 只选择当前可见条目，综合结果带 `steward_interpretation` 与归因。居民过期使用 DBOS 正式 schedule，接触不会刷新其实际使用时间。

@@ -5,7 +5,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
-from .settings import EmbeddingRoute, ModelRoute
+from .settings import EmbeddingRoute, ModelRoute, ReasoningEffort
 
 
 class ProviderResource(BaseModel):
@@ -27,11 +27,13 @@ class ModelResource(BaseModel):
 class RouteResource(BaseModel):
     model: str
     max_output_tokens: int = Field(default=8192, gt=0)
+    temperature: float | None = Field(default=None, ge=0, le=2)
+    reasoning_effort: ReasoningEffort | None = None
 
 
 class RoleResource(BaseModel):
     routes: tuple[str, ...] = Field(min_length=1)
-    purpose: Literal["formation", "description", "embedding"]
+    purpose: Literal["formation", "description", "embedding", "steward", "maintenance"]
     prompt_id: str = "formation"
     max_calls_per_day: int = Field(default=50, ge=0)
 
@@ -74,6 +76,8 @@ class ModelConfiguration(BaseModel):
             "model": model.name,
             "max_output_tokens": route.max_output_tokens,
             "max_calls_per_day": role.max_calls_per_day,
+            "temperature": route.temperature,
+            "reasoning_effort": route.reasoning_effort,
         }
         if role.purpose == "embedding":
             return EmbeddingRoute.model_validate(
@@ -109,7 +113,10 @@ def initial_resources(generation: ModelRoute, embedding: EmbeddingRoute) -> Mode
         },
         routes={
             "formation": RouteResource(
-                model="generation", max_output_tokens=generation.max_output_tokens
+                model="generation",
+                max_output_tokens=generation.max_output_tokens,
+                temperature=generation.temperature,
+                reasoning_effort=generation.reasoning_effort,
             ),
             "embedding": RouteResource(model="embedding"),
         },
@@ -122,12 +129,25 @@ def initial_resources(generation: ModelRoute, embedding: EmbeddingRoute) -> Mode
             "description": RoleResource(
                 routes=("formation",),
                 purpose="description",
+                prompt_id="media.describe",
                 max_calls_per_day=generation.max_calls_per_day,
             ),
             "embedding": RoleResource(
                 routes=("embedding",),
                 purpose="embedding",
                 max_calls_per_day=embedding.max_calls_per_day,
+            ),
+            "steward": RoleResource(
+                routes=("formation",),
+                purpose="steward",
+                prompt_id="context-steward",
+                max_calls_per_day=generation.max_calls_per_day,
+            ),
+            "maintenance": RoleResource(
+                routes=("formation",),
+                purpose="maintenance",
+                prompt_id="maintenance",
+                max_calls_per_day=generation.max_calls_per_day,
             ),
         },
     )

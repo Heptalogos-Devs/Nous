@@ -1,0 +1,143 @@
+name: Python and native distributions
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  python-distributions:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.12.23"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.97.1"
+      - name: Build server, SDK and native source distributions
+        run: |
+          uv build --package nous-wave-server --sdist --wheel --no-sources --out-dir dist
+          uv build --package nous-wave --sdist --wheel --no-sources --out-dir dist
+          uv build --package nous-wave-native --sdist --no-sources --out-dir dist
+      - uses: actions/upload-artifact@v6
+        with:
+          name: python-source-and-universal
+          path: dist/*
+          if-no-files-found: error
+
+  native-wheels:
+    needs: python-distributions
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            manylinux: "2_28"
+            interpreter: /opt/python/cp314-cp314/bin/python
+            compatibility: --compatibility manylinux_2_28
+          - runner: windows-2025
+            target: x86_64-pc-windows-msvc
+            manylinux: auto
+            interpreter: python
+            compatibility: ""
+          - runner: macos-15
+            target: aarch64-apple-darwin
+            manylinux: auto
+            interpreter: python
+            compatibility: ""
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+            manylinux: auto
+            interpreter: python
+            compatibility: ""
+    runs-on: ${{ matrix.runner }}
+    env:
+      CARGO_TARGET_DIR: temp/build/native
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.12.23"
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
+      - name: Build only the native Python workspace
+        uses: PyO3/maturin-action@v1
+        with:
+          rust-toolchain: "1.97.1"
+          target: ${{ matrix.target }}
+          manylinux: ${{ matrix.manylinux }}
+          maturin-version: "1.15.0"
+          args: >-
+            --locked --release --manifest-path native/python/Cargo.toml
+            --interpreter ${{ matrix.interpreter }}
+            ${{ matrix.compatibility }} --out dist
+      - uses: actions/download-artifact@v7
+        with:
+          name: python-source-and-universal
+          path: dist
+      - name: Install complete wheel set and initialize an instance
+        run: python scripts/install-python.py --wheels dist --venv .release-env --instance .release-instance
+      - name: Verify installed service starts outside the source tree
+        shell: python
+        run: |
+          import json, os, pathlib, socket, subprocess, tempfile, time, urllib.error, urllib.request
+          root = pathlib.Path.cwd()
+          nous = root / '.release-env' / ('Scripts/nous.exe' if os.name == 'nt' else 'bin/nous')
+          instance = root / '.release-instance'
+          with socket.socket() as available:
+              available.bind(('127.0.0.1', 0))
+              port = available.getsockname()[1]
+          token = (instance / 'credentials' / 'admin.token').read_text().strip()
+          with tempfile.TemporaryDirectory() as work:
+              process = subprocess.Popen([str(nous), 'serve', '--instance', str(instance), '--port', str(port)], cwd=work, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+              try:
+                  deadline = time.monotonic() + 45
+                  while True:
+                      try:
+                          request = urllib.request.Request(f'http://127.0.0.1:{port}/api/status', headers={'Authorization': f'Bearer {token}'})
+                          with urllib.request.urlopen(request, timeout=2) as response:
+                              assert json.load(response)['status'] == 'running'
+                          break
+                      except (OSError, urllib.error.URLError):
+                          if process.poll() is not None or time.monotonic() >= deadline:
+                              raise RuntimeError('Installed host did not become ready')
+                          time.sleep(0.2)
+              finally:
+                  process.terminate()
+                  try:
+                      output, _ = process.communicate(timeout=20)
+                  except subprocess.TimeoutExpired:
+                      process.kill()
+                      output, _ = process.communicate()
+                  if process.returncode not in (0, -15):
+                      print(output.decode(errors='replace')[-8000:])
+      - name: Assemble a complete platform installation bundle
+        shell: python
+        run: |
+          import pathlib, shutil
+          output = pathlib.Path('bundle')
+          output.mkdir()
+          for wheel in pathlib.Path('dist').glob('*.whl'):
+              shutil.copy2(wheel, output / wheel.name)
+          shutil.copy2('scripts/install-python.py', output / 'install-python.py')
+          shutil.copy2('docs/python-native-install.md', output / 'INSTALL.md')
+      - uses: actions/upload-artifact@v6
+        with:
+          name: nous-wave-cp314-${{ matrix.target }}
+          path: bundle/*
+          if-no-files-found: error

@@ -4,8 +4,11 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from jinja2 import TemplateError
 from nous_wave.contracts import DomainError
+from starlette.exceptions import HTTPException
 
 from nous.bootstrap import application
 from nous.platform.configuration import Settings
@@ -47,9 +50,58 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def domain_error(request: Request, error: DomainError) -> JSONResponse:
         code = error.code
         status = (
-            403 if "forbidden" in code or "scope" in code else 404 if "not_found" in code else 400
+            401
+            if code == "credential_invalid"
+            else 403
+            if code.endswith("_forbidden")
+            else 404
+            if "not_found" in code or code == "source_unavailable"
+            else 409
+            if "conflict" in code or code == "operation_result_purged"
+            else 400
         )
-        return JSONResponse({"error": {"code": code, "message": str(error)}}, status_code=status)
+        return JSONResponse(
+            {"error": {"code": code, "message": str(error), "context": error.details}},
+            status_code=status,
+            headers={"WWW-Authenticate": "Bearer"} if status == 401 else None,
+        )
+
+    @app.exception_handler(HTTPException)
+    async def http_error(request: Request, error: HTTPException) -> JSONResponse:
+        code = {
+            401: "credential_invalid",
+            403: "Forbidden",
+            404: "NotFound",
+            409: "Conflict",
+            429: "ResourceExhausted",
+            503: "Unavailable",
+        }.get(error.status_code, "InvalidArgument")
+        return JSONResponse(
+            {"error": {"code": code, "message": str(error.detail)}},
+            status_code=error.status_code,
+            headers=error.headers,
+        )
+
+    @app.exception_handler(RequestValidationError)
+    async def invalid_request(request: Request, error: RequestValidationError) -> JSONResponse:
+        return JSONResponse(
+            {
+                "error": {
+                    "code": "InvalidArgument",
+                    "message": "Invalid request",
+                    "context": {
+                        "fields": [
+                            {
+                                "location": [str(part) for part in item["loc"]],
+                                "message": item["msg"],
+                            }
+                            for item in error.errors()
+                        ]
+                    },
+                }
+            },
+            status_code=422,
+        )
 
     @app.exception_handler(NousError)
     async def service_error(request: Request, error: NousError) -> JSONResponse:
@@ -65,6 +117,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def invalid_input(request: Request, error: ValueError) -> JSONResponse:
         return JSONResponse(
             {"error": {"code": "InvalidArgument", "message": str(error)}}, status_code=400
+        )
+
+    @app.exception_handler(TemplateError)
+    async def invalid_template(request: Request, error: TemplateError) -> JSONResponse:
+        return JSONResponse(
+            {"error": {"code": "InvalidTemplate", "message": str(error)}}, status_code=400
         )
 
     @app.exception_handler(LookupError)

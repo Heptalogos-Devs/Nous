@@ -52,8 +52,15 @@ class CallLedger:
                 )
 
     async def reserve(
-        self, ctx: CallContext, purpose: str, request: dict[str, object], maximum: int
+        self,
+        ctx: CallContext,
+        purpose: str,
+        request: dict[str, object],
+        maximum: int,
+        *,
+        budget_role: str | None = None,
     ) -> tuple[str, object | None]:
+        role = budget_role or purpose
         digest = hashlib.sha256(json.dumps(request, sort_keys=True).encode()).hexdigest()
         day = datetime.now(UTC).date().isoformat()
         async with self.authority.write(
@@ -87,7 +94,18 @@ class CallLedger:
                 await tx.connection.scalar(
                     sa.select(sa.func.count())
                     .select_from(calls)
-                    .where(*predicate, calls.c.day == day)
+                    .where(
+                        calls.c.namespace_id == ctx.namespace_id,
+                        calls.c.subject_id == ctx.subject_id,
+                        calls.c.day == day,
+                        sa.or_(
+                            calls.c.request["budget_role"].as_string() == role,
+                            sa.and_(
+                                calls.c.request["budget_role"].as_string().is_(None),
+                                calls.c.purpose.in_((role, f"media.{role}")),
+                            ),
+                        ),
+                    )
                 )
                 or 0
             )
@@ -105,7 +123,7 @@ class CallLedger:
                     request_hash=digest,
                     day=day,
                     status="reserved",
-                    request=request,
+                    request={**request, "budget_role": role},
                 )
             )
             tx.result({"id": call_id, "reused": False})

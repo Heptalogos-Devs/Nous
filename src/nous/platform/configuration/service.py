@@ -5,6 +5,7 @@ from typing import Literal
 import sqlalchemy as sa
 from nous_wave.amemorix.contracts import AMemorixPolicy
 from nous_wave.contracts import CallContext
+from nous_wave.contracts.context import ContextsPolicy
 from pydantic import BaseModel, TypeAdapter
 
 from nous.platform.persistence import Authority, metadata
@@ -33,6 +34,7 @@ class ConfigurationService:
     schemas: dict[str, type[BaseModel]] = {
         "models": ModelConfiguration,
         "integrations.amemorix": AMemorixPolicy,
+        "contexts": ContextsPolicy,
     }
 
     def __init__(self, authority: Authority, defaults: dict[str, object]) -> None:

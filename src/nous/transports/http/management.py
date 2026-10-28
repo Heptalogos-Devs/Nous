@@ -1,12 +1,19 @@
 """Inspect actual resource configuration, calls, prompts and durable work."""
 
 import asyncio
+import re
+import tempfile
+from pathlib import Path
 from typing import Literal
 from uuid import uuid4
 
+import anyio
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, JsonValue
+
+from nous.platform.instance import initialize
+from nous.platform.persistence import OperationConflict
 
 from .security import application, authorize, context
 
@@ -15,7 +22,7 @@ router = APIRouter(prefix="/api")
 
 @router.post("/backups")
 async def backup(request: Request) -> dict[str, object]:
-    await authorize(request, capability="manage")
+    (await authorize(request, capability="manage")).require_instance_management()
     app = application(request)
     target = app.settings.instance / "backups" / f"nous-{uuid4()}.zip"
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -29,7 +36,7 @@ async def backup(request: Request) -> dict[str, object]:
 
 @router.get("/backups/{filename}")
 async def download_backup(request: Request, filename: str) -> FileResponse:
-    await authorize(request, capability="manage")
+    (await authorize(request, capability="manage")).require_instance_management()
     if (
         not filename.startswith("nous-")
         or not filename.endswith(".zip")
@@ -43,6 +50,40 @@ async def download_backup(request: Request, filename: str) -> FileResponse:
     return FileResponse(path, media_type="application/zip", filename=filename)
 
 
+@router.post("/backups/restore")
+async def restore_backup(request: Request, instance_name: str) -> dict[str, object]:
+    (await authorize(request, capability="manage")).require_instance_management()
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", instance_name):
+        raise ValueError("New instance name requires 1–64 letters, numbers, underscores or hyphens")
+    app = application(request)
+    target = app.settings.instance.resolve().parent / instance_name
+    if target.exists():
+        raise OperationConflict("The destination instance already exists")
+    staging_root = app.settings.instance / "backups"
+    staging_root.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="restore-upload-", dir=staging_root) as temporary:
+        archive = Path(temporary) / "backup.zip"
+        length = 0
+        async with await anyio.open_file(archive, "xb") as output:
+            async for chunk in request.stream():
+                length += len(chunk)
+                if length > 100 * 1024**3:
+                    raise ValueError("Backup upload exceeds the 100 GiB restore limit")
+                await output.write(chunk)
+        try:
+            restored = await app.backups.restore(archive, target)
+        except FileExistsError as error:
+            raise OperationConflict("The destination instance already exists") from error
+    token_file = initialize(restored.path)
+    return {
+        "instance": str(restored.path),
+        "commit_seq": restored.commit_seq,
+        "object_count": restored.object_count,
+        "credential_file": str(token_file),
+        "status": "restored",
+    }
+
+
 class ConfigChange(BaseModel):
     value: JsonValue
     scope: Literal["instance", "namespace", "subject"] = "instance"
@@ -52,6 +93,55 @@ class ConfigChange(BaseModel):
 class PromptChange(BaseModel):
     template: str
     operation_id: str = Field(default_factory=lambda: str(uuid4()))
+
+
+class PromptActivation(BaseModel):
+    revision: int = Field(ge=0)
+    operation_id: str = Field(default_factory=lambda: str(uuid4()))
+
+
+class PromptPreview(BaseModel):
+    variables: dict[str, JsonValue]
+    template: str | None = None
+
+
+@router.get("/prompts")
+async def prompts(request: Request, namespace_id: str = "instance"):
+    return await application(request).prompts.list(await context(request, namespace_id))
+
+
+@router.get("/prompts/{prompt_id}/history")
+async def prompt_history(request: Request, prompt_id: str, namespace_id: str = "instance"):
+    return await application(request).prompts.history(
+        await context(request, namespace_id), prompt_id
+    )
+
+
+@router.post("/prompts/{prompt_id}/activate")
+async def activate_prompt(
+    request: Request, prompt_id: str, command: PromptActivation, namespace_id: str = "instance"
+):
+    (await authorize(request, capability="manage")).require_instance_management()
+    return await application(request).prompts.activate(
+        await context(request, namespace_id, capability="manage"),
+        prompt_id,
+        command.revision,
+        command.operation_id,
+    )
+
+
+@router.post("/prompts/{prompt_id}/preview")
+async def preview_prompt(
+    request: Request, prompt_id: str, command: PromptPreview, namespace_id: str = "instance"
+):
+    ctx = await context(request, namespace_id, capability="read")
+    service = application(request).prompts
+    if command.template is not None:
+        return service.preview(
+            {"id": prompt_id, "revision": "draft", "template": command.template},
+            dict(command.variables),
+        )
+    return await service.render(ctx, dict(command.variables), prompt_id)
 
 
 @router.get("/status")
@@ -84,6 +174,9 @@ async def configure(
     namespace_id: str = "instance",
     subject_id: str | None = None,
 ):
+    principal = await authorize(request, capability="manage")
+    if command.scope == "instance" or key == "models":
+        principal.require_instance_management()
     return await application(request).configuration.set(
         await context(request, namespace_id, subject_id, capability="manage"),
         key,
@@ -102,6 +195,7 @@ async def prompt(request: Request, prompt_id: str, namespace_id: str = "instance
 async def save_prompt(
     request: Request, prompt_id: str, command: PromptChange, namespace_id: str = "instance"
 ):
+    (await authorize(request, capability="manage")).require_instance_management()
     return await application(request).prompts.save(
         await context(request, namespace_id, capability="manage"),
         prompt_id,

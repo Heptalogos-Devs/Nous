@@ -1,10 +1,13 @@
 """Versioned Jinja templates with immutable call snapshots."""
 
 import hashlib
+import re
 from importlib.resources import files
+from importlib.resources.abc import Traversable
 
 import sqlalchemy as sa
-from jinja2 import Environment, StrictUndefined, meta
+from jinja2 import StrictUndefined, meta
+from jinja2.sandbox import ImmutableSandboxedEnvironment
 from nous_wave.contracts import CallContext
 from pydantic import TypeAdapter
 
@@ -23,12 +26,50 @@ prompts = sa.Table(
 class PromptService:
     def __init__(self, authority: Authority) -> None:
         self.authority = authority
-        self.environment = Environment(undefined=StrictUndefined, autoescape=False)
+        self.environment = ImmutableSandboxedEnvironment(
+            undefined=StrictUndefined, autoescape=False
+        )
+
+    @staticmethod
+    def bundled_ids() -> set[str]:
+        def visit(root: Traversable, prefix: str = "") -> set[str]:
+            result: set[str] = set()
+            for entry in root.iterdir():
+                if entry.is_dir():
+                    result.update(visit(entry, prefix + entry.name + "."))
+                elif entry.name.endswith((".md", ".jinja")):
+                    result.add(prefix + entry.name.rsplit(".", 1)[0])
+            return result
+
+        return visit(files("nous").joinpath("resources/prompts"))
+
+    def describe(self, record: dict[str, object]) -> dict[str, object]:
+        template = str(record["template"])
+        return {
+            **record,
+            "source": "bundled" if record["revision"] == 0 else "instance",
+            "variable_names": sorted(
+                meta.find_undeclared_variables(self.environment.parse(template))
+            ),
+            "template_hash": hashlib.sha256(template.encode()).hexdigest(),
+        }
+
+    @staticmethod
+    def bundled(prompt_id: str) -> str:
+        if not re.fullmatch(r"[a-zA-Z0-9_-]+(?:\.[a-zA-Z0-9_-]+)*", prompt_id):
+            raise KeyError("Unknown prompt resource")
+        root = files("nous").joinpath("resources/prompts")
+        parts = prompt_id.split(".")
+        for extension in ("jinja", "md"):
+            path = root.joinpath(*parts[:-1], parts[-1] + "." + extension)
+            if path.is_file():
+                return path.read_text(encoding="utf-8")
+        raise KeyError(prompt_id)
 
     async def list(self, ctx: CallContext) -> list[dict[str, object]]:
         async with self.authority.read(ctx) as view:
             ids = set((await view.connection.execute(sa.select(prompts.c.id).distinct())).scalars())
-        return [await self.get(ctx, prompt_id) for prompt_id in sorted(ids | {"formation"})]
+        return [await self.get(ctx, prompt_id) for prompt_id in sorted(ids | self.bundled_ids())]
 
     async def history(self, ctx: CallContext, prompt_id: str) -> list[dict[str, object]]:
         async with self.authority.read(ctx) as view:
@@ -39,7 +80,19 @@ class PromptService:
                     .order_by(prompts.c.revision.desc())
                 )
             ).mappings()
-            return [dict(row) for row in rows]
+            result = [self.describe(dict(row)) for row in rows]
+        if prompt_id in self.bundled_ids():
+            result.append(
+                self.describe(
+                    {
+                        "id": prompt_id,
+                        "revision": 0,
+                        "template": self.bundled(prompt_id),
+                        "active": not any(row["active"] for row in result),
+                    }
+                )
+            )
+        return result
 
     async def activate(
         self, ctx: CallContext, prompt_id: str, revision: int, operation_id: str
@@ -58,8 +111,10 @@ class PromptService:
                     prompts.c.id == prompt_id, prompts.c.revision == revision
                 )
             )
-            if found is None and not (revision == 0 and prompt_id == "formation"):
-                raise KeyError("Prompt revision does not exist")
+            if found is None:
+                if revision != 0:
+                    raise KeyError("Prompt revision does not exist")
+                self.bundled(prompt_id)
             await tx.connection.execute(
                 prompts.update().where(prompts.c.id == prompt_id).values(active=False)
             )
@@ -85,16 +140,15 @@ class PromptService:
                 .first()
             )
         if row is None:
-            if prompt_id != "formation":
-                raise KeyError(prompt_id)
-            return {
-                "id": prompt_id,
-                "revision": 0,
-                "template": files("nous")
-                .joinpath("resources/prompts/formation.jinja")
-                .read_text(encoding="utf-8"),
-            }
-        return dict(row)
+            return self.describe(
+                {
+                    "id": prompt_id,
+                    "revision": 0,
+                    "template": self.bundled(prompt_id),
+                    "active": True,
+                }
+            )
+        return self.describe(dict(row))
 
     async def save(
         self, ctx: CallContext, prompt_id: str, template: str, operation_id: str
@@ -132,9 +186,12 @@ class PromptService:
         self, ctx: CallContext, variables: dict[str, object], prompt_id: str = "formation"
     ) -> dict[str, object]:
         record = await self.get(ctx, prompt_id)
+        return self.preview(record, variables)
+
+    def preview(self, record: dict[str, object], variables: dict[str, object]) -> dict[str, object]:
         rendered = self.environment.from_string(str(record["template"])).render(variables)
         return {
-            **record,
+            **self.describe(record),
             "variables": variables,
             "rendered": rendered,
             "hash": hashlib.sha256(rendered.encode()).hexdigest(),

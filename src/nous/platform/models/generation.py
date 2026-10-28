@@ -4,14 +4,14 @@ import asyncio
 import hashlib
 import json
 from dataclasses import dataclass
-from typing import Literal, TypeVar
+from typing import TypeVar
 
 import httpx2
-from nous_wave.contracts import CallContext, FormationProposal
-from pydantic import BaseModel
+from nous_wave.contracts import CallContext, FormationDraft, MemoryBody
+from pydantic import BaseModel, Field
 from pydantic_ai import Agent, BinaryContent, NativeOutput, capture_run_messages
 from pydantic_ai.messages import ModelMessagesTypeAdapter
-from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.models.openai import OpenAIChatModel, OpenAIChatModelSettings
 from pydantic_ai.providers.openai import OpenAIProvider
 
 from nous.platform.configuration import ModelRoute
@@ -20,6 +20,12 @@ from nous.platform.errors import Unavailable
 from .ledger import CallLedger
 
 T = TypeVar("T", bound=BaseModel)
+
+
+@dataclass(frozen=True)
+class Generated[T: BaseModel]:
+    output: T
+    call_id: str
 
 
 @dataclass(frozen=True)
@@ -32,6 +38,10 @@ class MediaInput:
 class Description(BaseModel):
     description: str
     producer_call_id: str | None = None
+
+
+class MediaFormationDraft(FormationDraft):
+    memories: tuple[MemoryBody, ...] = Field(min_length=1)
 
 
 class Generation:
@@ -58,10 +68,18 @@ class Generation:
         prompt: dict[str, object],
         output_type: type[T],
         media: tuple[MediaInput, ...] = (),
+        source_ids: tuple[str, ...] = (),
+        budget_role: str | None = None,
     ) -> tuple[T, str]:
         snapshot: dict[str, object] = {
+            "source_ids": list(source_ids),
             "model": route.model,
             "base_url": route.base_url,
+            "parameters": {
+                "max_output_tokens": route.max_output_tokens,
+                "temperature": route.temperature,
+                "reasoning_effort": route.reasoning_effort,
+            },
             "prompt": prompt,
             "schema": output_type.model_json_schema(),
             "media": [
@@ -73,7 +91,9 @@ class Generation:
                 for part in media
             ],
         }
-        call_id, cached = await self.ledger.reserve(ctx, purpose, snapshot, route.max_calls_per_day)
+        call_id, cached = await self.ledger.reserve(
+            ctx, purpose, snapshot, route.max_calls_per_day, budget_role=budget_role
+        )
         if cached is not None:
             return output_type.model_validate(cached), call_id
         provider = OpenAIProvider(
@@ -96,9 +116,12 @@ class Generation:
                 )
         with capture_run_messages() as messages:
             try:
-                result = await agent.run(
-                    content, model_settings={"max_tokens": route.max_output_tokens}, retries=0
-                )
+                settings: OpenAIChatModelSettings = {"max_tokens": route.max_output_tokens}
+                if route.temperature is not None:
+                    settings["temperature"] = route.temperature
+                if route.reasoning_effort is not None:
+                    settings["openai_reasoning_effort"] = route.reasoning_effort
+                result = await agent.run(content, model_settings=settings, retries=0)
                 usage = result.usage
                 await self.ledger.finish(
                     ctx,
@@ -126,53 +149,3 @@ class Generation:
                     code,
                 )
                 raise Unavailable(f"Generation provider failed ({code}); call {call_id}") from error
-
-    async def interpret(
-        self,
-        ctx: CallContext,
-        route: ModelRoute,
-        key: str,
-        prompt: dict[str, object],
-        media: tuple[MediaInput, ...],
-        strategy: Literal["description_only", "direct_structured", "describe_then_structure"],
-    ) -> Description | FormationProposal:
-        if strategy == "description_only":
-            result, call_id = await self.request(
-                ctx,
-                "media.description",
-                route,
-                key,
-                {
-                    **prompt,
-                    "rendered": "描述原始媒体可见或可听的内容，保留不确定性。\n"
-                    + str(prompt["rendered"]),
-                },
-                Description,
-                media,
-            )
-            return result.model_copy(update={"producer_call_id": call_id})
-        if strategy == "describe_then_structure":
-            description, description_call = await self.request(
-                ctx,
-                "media.description",
-                route,
-                key,
-                {
-                    **prompt,
-                    "rendered": "描述原始媒体可见或可听的内容，保留不确定性。\n"
-                    + str(prompt["rendered"]),
-                },
-                Description,
-                media,
-            )
-            prompt = {
-                **prompt,
-                "description_call_id": description_call,
-                "rendered": str(prompt["rendered"])
-                + "\n已保存的描述：\n"
-                + description.description,
-            }
-        result, call_id = await self.request(
-            ctx, "media.formation", route, key, prompt, FormationProposal, media
-        )
-        return result.model_copy(update={"producer_call_id": call_id})

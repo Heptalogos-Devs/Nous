@@ -207,7 +207,10 @@ class AMemorixAdapter:
     ) -> JsonObject:
         if isinstance(target, str) and ":" not in target:
             target = (await self.client.memory(target)).reference.exact()
-        return await self.call("memory_source", {"target": encoded(target_reference(target))})
+        return await self.call(
+            "memory_source",
+            {"target": target if isinstance(target, str) else encoded(target_reference(target))},
+        )
 
     async def memory_stats(self, **kwargs: JsonValue) -> JsonObject:
         return await self.call("memory_stats", kwargs)

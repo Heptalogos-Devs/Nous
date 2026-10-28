@@ -1,15 +1,18 @@
 import base64
+import hashlib
 import inspect
 import json
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import quote
 from uuid import uuid4
 
 import anyio
 import httpx
 from pydantic import JsonValue, TypeAdapter
 
+from .contracts import TimePoint
 from .errors import NousError
 from .source_scope import SourceReadScope
 from .types import Download, JsonObject, QueryParam
@@ -27,6 +30,7 @@ class ClientOptions:
     language: str | None = None
     proxy: str | None = None
     verify_tls: bool = True
+    cognitive_clock: TimePoint | None = None
 
 
 class Transport:
@@ -72,6 +76,15 @@ class Transport:
         }
         if self.options.language:
             headers["Accept-Language"] = self.options.language
+        if self.options.cognitive_clock is not None:
+            clock = json.dumps(
+                self.options.cognitive_clock.model_dump(mode="json"),
+                ensure_ascii=True,
+                separators=(",", ":"),
+            )
+            if len(clock.encode()) > 4096:
+                raise ValueError("cognitive clock exceeds its HTTP header limit")
+            headers["x-nous-cognitive-clock"] = clock
         if source_read:
             encoded = json.dumps(
                 [scope.model_dump(mode="json") for scope in source_read],
@@ -185,33 +198,53 @@ class Transport:
         *,
         namespace_id: str,
         subject_id: str,
+        region_id: str | None = None,
     ) -> Download:
         headers = await self.headers(source_read=source_read)
+        resource = (
+            f"regions/{quote(region_id, safe='')}"
+            if region_id is not None
+            else f"materials/{quote(material_id, safe='')}"
+        )
         async with self.http.stream(
             "GET",
-            f"/api/namespaces/{namespace_id}/subjects/{subject_id}/materials/{material_id}/content",
+            f"/api/namespaces/{quote(namespace_id, safe='')}/subjects/{quote(subject_id, safe='')}/{resource}/content",
             headers=headers,
         ) as response:
             if not response.is_success:
                 await self.decode(response, headers["x-nous-trace-id"])
             length = 0
+            digest = hashlib.sha256()
             output = await anyio.open_file(destination, "xb")
             try:
                 async with output:
                     async for chunk in response.aiter_bytes(self.options.chunk_bytes):
                         await output.write(chunk)
                         length += len(chunk)
+                        digest.update(chunk)
                     await output.flush()
+                expected = response.headers.get("x-nous-content-sha256")
+                declared = response.headers.get("content-length")
+                if (expected is not None and digest.hexdigest() != expected) or (
+                    declared is not None and length != int(declared)
+                ):
+                    raise NousError(
+                        {
+                            "code": "content_mismatch",
+                            "message": "Downloaded original differs from its declared immutable identity",
+                        }
+                    )
             except BaseException:
                 with anyio.CancelScope(shield=True):
                     await anyio.Path(destination).unlink(missing_ok=True)
                 raise
             return Download(
                 material_id=material_id,
+                region_id=region_id,
                 output=destination,
                 byte_len=length,
                 media_type=response.headers.get("content-type"),
-                content_hash=response.headers.get("x-nous-content-sha256"),
+                content_hash=digest.hexdigest(),
             )
 
 

@@ -10,17 +10,20 @@ from nous_wave.contracts import (
     BlobDocument,
     CallContext,
     CognitiveTimes,
+    DomainError,
+    EpistemicStance,
     EvidenceLink,
     FormationProposal,
     MediaEmbeddingInput,
     MemoryBody,
     SourceRegion,
 )
-from pydantic import JsonValue, TypeAdapter
+from pydantic import TypeAdapter
 from pypdf import PdfReader, PdfWriter
 
 from nous.cognition.service import CognitionService
 from nous.material.service import MaterialService
+from nous.material.text import source_region_text
 from nous.platform.content import ContentObject, ContentStore
 from nous.platform.media import MediaService
 from nous.platform.models import ModelService
@@ -85,15 +88,16 @@ class MediaImportService:
                 if selected.media_type != "application/pdf":
                     raise ValueError("Page selection requires PDF material")
                 data = await asyncio.to_thread(pdf_region, data, region)
-            if region.text_start is not None or region.text_end is not None:
-                text = data.decode("utf-8")
-                start, end = (
-                    region.text_start or 0,
-                    region.text_end if region.text_end is not None else len(text),
+            if any(
+                value is not None
+                for value in (
+                    region.text_start,
+                    region.text_end,
+                    region.json_pointer,
+                    region.line_number,
                 )
-                if not 0 <= start < end <= len(text):
-                    raise ValueError("Text selection is outside the source range")
-                data = text[start:end].encode("utf-8")
+            ):
+                data = source_region_text(data.decode("utf-8"), region).encode("utf-8")
             return MediaInput(data, selected.media_type, region.id)
         finally:
             if derived:
@@ -195,25 +199,38 @@ class MediaImportService:
                 EvidenceLink(observation_id=str(observation["id"]), region_id=region.id)
                 for region in command.regions
             ) or (EvidenceLink(observation_id=str(observation["id"])),)
-            records: list[dict[str, JsonValue]] = []
-            for body in (*proposal.memories, *proposal.cognition):
-                record = await self.cognition.adopt_in(
-                    tx,
-                    ctx,
-                    AdoptCognition(
-                        body=body,
-                        evidence=evidence,
-                        times=CognitiveTimes(
-                            formation=ctx.clock,
-                            observation=ctx.clock,
-                            recorded=ctx.clock,
-                            event=proposal.event,
-                            validity=proposal.validity,
-                        ),
-                        producer_call_id=proposal.producer_call_id,
-                    ),
+            if not proposal.memories:
+                raise DomainError(
+                    "media_empty_formation", "Media formation returned no description"
                 )
-                records.append(record.model_dump(mode="json"))
+            times = CognitiveTimes(
+                formation=ctx.clock,
+                observation=ctx.clock,
+                recorded=ctx.clock,
+                event=proposal.event,
+                validity=proposal.validity,
+            )
+            anchor_body = MemoryBody(
+                text="\n\n".join(item.text for item in proposal.memories),
+                tags=tuple(dict.fromkeys(tag for item in proposal.memories for tag in item.tags)),
+                epistemic=EpistemicStance(
+                    classification="derived", attribution=material["filename"]
+                ),
+            )
+            anchor = await self.cognition.adopt_in(
+                tx,
+                ctx,
+                AdoptCognition(
+                    body=anchor_body,
+                    evidence=evidence,
+                    times=times,
+                    producer_call_id=proposal.producer_call_id,
+                ),
+            )
+            semantic = await self.cognition.adopt_semantic_proposal_in(
+                tx, ctx, anchor, proposal, times
+            )
+            records = [record.model_dump(mode="json") for record in (anchor, *semantic)]
             return tx.result(
                 {
                     "observation_id": observation["id"],

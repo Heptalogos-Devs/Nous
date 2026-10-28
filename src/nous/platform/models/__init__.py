@@ -1,10 +1,14 @@
 """Native provider SDKs share managed clients, prompts and the paid call ledger."""
 
+import asyncio
+import json
 import os
-from typing import Literal
+from typing import Literal, TypeVar
 
 from nous_wave.contracts import CallContext, EmbeddingBatch, FormationProposal, MediaEmbeddingInput
+from nous_wave.contracts.cognition import FormationDraft
 from openai import AsyncOpenAI
+from pydantic import BaseModel
 
 from nous.platform.configuration import EmbeddingRoute, ModelRoute, Settings
 from nous.platform.configuration.models import ModelConfiguration
@@ -15,18 +19,26 @@ from nous.platform.prompts import PromptService
 from nous.platform.time import parse_timepoint
 
 from .embedding import MediaResolver, embed_media, vector_space
-from .generation import Description, Generation, MediaInput
+from .generation import Description, Generated, Generation, MediaFormationDraft, MediaInput
 from .ledger import CallLedger
 
 os.environ.setdefault("PYDANTIC_AI_NO_BANNER", "1")
 
 
+T = TypeVar("T", bound=BaseModel)
+
+
 def credential(route: ModelRoute) -> str:
-    value = (
-        route.credential_file.read_text().strip()
-        if route.credential_file
-        else os.environ.get(route.credential_env, "")
-    )
+    if not route.model:
+        raise Unavailable("Model ID has not been configured for this role")
+    try:
+        value = (
+            route.credential_file.read_text().strip()
+            if route.credential_file
+            else os.environ.get(route.credential_env, "")
+        )
+    except OSError as error:
+        raise Unavailable("Configured model credential file is unavailable") from error
     if not value:
         raise Unavailable(f"Model credential missing: {route.credential_env}")
     return value
@@ -50,6 +62,31 @@ class ModelService:
     async def close(self) -> None:
         await self.generation.close()
 
+    async def structured(
+        self,
+        ctx: CallContext,
+        role_id: str,
+        variables: dict[str, object],
+        output_type: type[T],
+        *,
+        source_ids: tuple[str, ...] = (),
+    ) -> Generated[T]:
+        resources = ModelConfiguration.model_validate(
+            (await self.configuration.effective(ctx, "models"))["value"]
+        )
+        route, role = resources.resolve(role_id)
+        if role.purpose == "embedding":
+            raise ValueError("Structured generation requires a text generation role")
+        prompt = await self.prompts.render(ctx, variables, role.prompt_id)
+        if not prompt["variable_names"]:
+            prompt["rendered"] = (
+                str(prompt["rendered"]) + "\nInput:\n" + json.dumps(variables, ensure_ascii=False)
+            )
+        result, call_id = await self.generation.request(
+            ctx, role_id, route, credential(route), prompt, output_type, source_ids=source_ids
+        )
+        return Generated(output=result, call_id=call_id)
+
     async def form(
         self, ctx: CallContext, text: str, source: dict[str, object]
     ) -> FormationProposal:
@@ -61,12 +98,11 @@ class ModelService:
             ctx, {"source_text": text, "source": source}, role.prompt_id
         )
         result, call_id = await self.generation.request(
-            ctx, "formation", route, credential(route), prompt, FormationProposal
+            ctx, "formation", route, credential(route), prompt, FormationDraft
         )
-        event = (
-            parse_timepoint(result.event_expression) if result.event_expression else result.event
-        )
-        return result.model_copy(update={"producer_call_id": call_id, "event": event})
+        proposal = FormationProposal.model_validate(result.model_dump(mode="json"))
+        event = parse_timepoint(proposal.event_expression) if proposal.event_expression else None
+        return proposal.model_copy(update={"producer_call_id": call_id, "event": event})
 
     async def interpret(
         self,
@@ -79,16 +115,51 @@ class ModelService:
         resources = ModelConfiguration.model_validate(
             (await self.configuration.effective(ctx, "models"))["value"]
         )
+        variables: dict[str, object] = {
+            "source_text": text,
+            "source": source,
+            "source_context": text + "\n" + json.dumps(source, ensure_ascii=False),
+        }
+        description: Description | None = None
+        if strategy != "direct_structured":
+            route, role = resources.resolve("description")
+            prompt = await self.prompts.render(ctx, variables, role.prompt_id)
+            description, call_id = await self.generation.request(
+                ctx,
+                "media.description",
+                route,
+                credential(route),
+                prompt,
+                Description,
+                media,
+                budget_role="description",
+            )
+            description = description.model_copy(update={"producer_call_id": call_id})
+            if strategy == "description_only":
+                return description
         route, role = resources.resolve("formation")
-        prompt = await self.prompts.render(
-            ctx, {"source_text": text, "source": source}, role.prompt_id
+        prompt = await self.prompts.render(ctx, variables, role.prompt_id)
+        if description is not None:
+            prompt = {
+                **prompt,
+                "description_call_id": description.producer_call_id,
+                "rendered": str(prompt["rendered"])
+                + "\n已保存的描述：\n"
+                + description.description,
+            }
+        draft, call_id = await self.generation.request(
+            ctx,
+            "media.formation",
+            route,
+            credential(route),
+            prompt,
+            MediaFormationDraft,
+            media,
+            budget_role="formation",
         )
-        result = await self.generation.interpret(
-            ctx, route, credential(route), prompt, media, strategy
-        )
-        if isinstance(result, FormationProposal) and result.event_expression:
-            return result.model_copy(update={"event": parse_timepoint(result.event_expression)})
-        return result
+        result = FormationProposal.model_validate(draft.model_dump(mode="json"))
+        event = parse_timepoint(result.event_expression) if result.event_expression else None
+        return result.model_copy(update={"producer_call_id": call_id, "event": event})
 
     async def embed(
         self, ctx: CallContext, texts: tuple[str, ...], *, source_ids: tuple[str, ...] = ()
@@ -143,6 +214,11 @@ class ModelService:
             )
             await self.ledger.finish(ctx, call_id, result.model_dump(mode="json"), {})
             return result
+        except asyncio.CancelledError:
+            await asyncio.shield(
+                self.ledger.finish(ctx, call_id, None, {}, "CancelledUnknownOutcome")
+            )
+            raise
         except Exception as error:
             code = str(getattr(error, "status_code", type(error).__name__))
             await self.ledger.finish(ctx, call_id, None, {}, code)

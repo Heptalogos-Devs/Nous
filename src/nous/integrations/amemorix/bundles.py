@@ -2,10 +2,13 @@
 
 import asyncio
 from hashlib import sha256
+from io import BytesIO
 from typing import TYPE_CHECKING
 from uuid import uuid4
+from zipfile import ZipFile
 
 from nous_wave.contracts import BlobDocument, BundleRequest, CallContext, Contract, DomainError
+from nous_wave.contracts.management import SubjectBundle
 from pydantic import JsonValue
 
 from nous.platform.content import ContentObject
@@ -46,6 +49,20 @@ async def bundle_admin(
         )
     if command.action == "export":
         data = await service.app.bundles.export_zip(ctx, BundleRequest())
+
+        def exported_closure() -> tuple[str, ...]:
+            with ZipFile(BytesIO(data)) as archive:
+                bundle = SubjectBundle.model_validate_json(archive.read("bundle.json"))
+            return tuple(
+                sorted(
+                    {
+                        *(record.reference.exact() for record in bundle.cognition),
+                        *(material.id for material in bundle.materials),
+                    }
+                )
+            )
+
+        required_source_ids = await asyncio.to_thread(exported_closure)
         summary = await service.app.bundles.inspect_zip(ctx, data)
         if command.preview:
             return json_object({"success": True, "preview": True, "counts": summary})
@@ -67,7 +84,9 @@ async def bundle_admin(
                     filename=filename, media_type=lease.media_type, source_type="bundle_export"
                 )
                 info = await service.app.media.probe(lease)
-                material = await service.app.material.put_blob_in(tx, ctx, lease, document, info)
+                material = await service.app.material.put_blob_in(
+                    tx, ctx, lease, document, info, required_source_ids=required_source_ids
+                )
                 await service.app.material.observe_in(
                     tx, ctx, material["id"], document, kind="contact"
                 )

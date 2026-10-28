@@ -57,7 +57,7 @@ async def export_bundle(
     request: Request, namespace_id: str, subject_id: str, command: BundleRequest
 ):
     return await application(request).bundles.export(
-        await context(request, namespace_id, subject_id), command
+        await context(request, namespace_id, subject_id, capability="read"), command
     )
 
 

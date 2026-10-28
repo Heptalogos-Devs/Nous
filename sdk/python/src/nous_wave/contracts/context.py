@@ -107,6 +107,8 @@ class ContextProjection(Contract):
     config_digest: str
     recorded_at: str
     commit_seq: int
+    steward_call_id: str | None = None
+    degradations: tuple[str, ...] = ()
 
 
 class ManagedContextResponse(Contract):
@@ -181,6 +183,8 @@ class ContextReport(Operation):
     def timestamp(self) -> ContextReport:
         if self.occurred_at.tzinfo is None:
             raise ValueError("context outcome requires a timestamp with an explicit timezone")
+        if len({use.event_id for use in self.uses}) != len(self.uses):
+            raise ValueError("Context use event IDs must be distinct")
         return self
 
 
@@ -192,3 +196,119 @@ class ContextReportResult(Contract):
     occurred_at: datetime
     uses: tuple[ContextUse, ...]
     commit_seq: int
+
+
+class OpenContextSession(Operation):
+    session_id: str | None = None
+
+
+class ContextSession(Contract):
+    id: str
+    namespace_id: str
+    subject_id: str
+    closed: bool
+    recorded_at: str
+    closed_at: str | None = None
+    commit_seq: int
+    revision: int = Field(default=1, ge=1)
+    history_generation: str | None = None
+    active_work_context_id: str | None = None
+    residents: tuple[ContextResident, ...] = ()
+
+
+class ContextResident(Contract):
+    target: ContextTarget
+    state: Literal["resident", "provisional", "evicted"] = "resident"
+    entry_reason: str = Field(min_length=1, max_length=2048)
+    entered_at: datetime
+    last_meaningful_use_at: datetime | None = None
+    hold_until: datetime | None = None
+
+    @model_validator(mode="after")
+    def timestamps(self) -> ContextResident:
+        if any(
+            value is not None and value.tzinfo is None
+            for value in (self.entered_at, self.last_meaningful_use_at, self.hold_until)
+        ):
+            raise ValueError("Resident timestamps require explicit timezones")
+        return self
+
+
+class ChangeResidents(Operation):
+    session_id: str
+    expected_revision: int = Field(ge=1)
+    action: Literal["admit", "evict", "clear"]
+    residents: tuple[ContextResident, ...] = ()
+    targets: tuple[ContextTarget, ...] = ()
+
+
+class WorkContextContent(Contract):
+    purpose: str = Field(min_length=1, max_length=512)
+    context_text: str = Field(default="", max_length=65536)
+    unresolved_questions: tuple[str, ...] = ()
+    constraints: JsonValue = None
+    resume_conditions: tuple[str, ...] = ()
+    budget_summary: JsonValue = None
+    anchors: tuple[ContextTarget, ...] = ()
+
+
+class WorkContext(Contract):
+    id: str
+    namespace_id: str
+    subject_id: str
+    state: Literal["open", "suspended", "ended"] = "open"
+    revision: int = Field(ge=1)
+    content: WorkContextContent
+    recorded_at: str
+    updated_at: str
+    commit_seq: int
+
+
+class ChangeWorkContext(Operation):
+    work_context_id: str | None = None
+    expected_revision: int | None = Field(default=None, ge=1)
+    action: Literal[
+        "create", "edit", "pause", "resume", "end", "clear_text", "clear_anchors", "pin", "unpin"
+    ]
+    content: WorkContextContent | None = None
+    session_id: str | None = None
+
+
+class ContextConsumerPolicy(Contract):
+    max_items: int = Field(default=64, ge=1, le=256)
+    max_text_bytes: int = Field(default=65536, ge=1, le=1048576)
+    max_residents: int = Field(default=64, ge=0, le=1024)
+    allowed_kinds: tuple[str, ...] = ()
+    allow_media: bool = True
+    steward_role: str | None = None
+
+
+class ContextsPolicy(Contract):
+    consumers: dict[str, ContextConsumerPolicy] = Field(
+        default_factory=lambda: {
+            "default": ContextConsumerPolicy(),
+            "reply": ContextConsumerPolicy(),
+            "maibot": ContextConsumerPolicy(),
+            "mcp": ContextConsumerPolicy(),
+        }
+    )
+    resident_limit: int = Field(default=256, ge=0, le=1024)
+    resident_idle_seconds: int = Field(default=86400, ge=60)
+
+
+class StewardProposal(Contract):
+    selected_ids: tuple[str, ...] = Field(default=(), max_length=64)
+    summary: str | None = Field(default=None, max_length=8192)
+
+    @model_validator(mode="after")
+    def selections(self) -> StewardProposal:
+        if len(set(self.selected_ids)) != len(self.selected_ids):
+            raise ValueError("Steward selections must be distinct")
+        if self.summary and not self.selected_ids:
+            raise ValueError("Steward interpretation requires selected sources")
+        return self
+
+
+class ContextPreparationJob(Contract):
+    request_id: str
+    job_id: str

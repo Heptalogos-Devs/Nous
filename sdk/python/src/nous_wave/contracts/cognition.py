@@ -6,7 +6,7 @@ from typing import Annotated, Literal
 
 from pydantic import Field, JsonValue, model_validator
 
-from .common import CognitiveTimes, Contract, Operation, TimePoint, TimeRange
+from .common import CognitiveTimes, Contract, Operation, ReferenceAddresses, TimePoint, TimeRange
 from .media import MediaReference
 
 CognitiveKind = Literal[
@@ -74,6 +74,14 @@ class MemoryBody(Contract):
     epistemic: EpistemicStance = Field(default_factory=EpistemicStance)
 
 
+class MemoryInterpretation(Contract):
+    text: str = Field(min_length=1)
+    role: Literal["experiential", "declarative", "procedural_experience"]
+    formation_mode: Literal["grounded", "synthesized"]
+    epistemic: EpistemicStance
+    tags: tuple[str, ...] = ()
+
+
 class MemorySemanticsBody(Contract):
     kind: Literal["memory_semantics"] = "memory_semantics"
     memory: CognitiveRef
@@ -82,6 +90,10 @@ class MemorySemanticsBody(Contract):
     epistemic: EpistemicStance
     concepts: tuple[CognitiveRef, ...] = ()
     qualifications: tuple[str, ...] = ()
+    interpretations: tuple[MemoryInterpretation, ...] = ()
+    grounding_observation: str | None = None
+    event_expression: str | None = None
+    event_parse_status: Literal["not_provided", "resolved", "unresolved"] = "not_provided"
 
 
 class ConceptBody(Contract):
@@ -104,10 +116,16 @@ class EntityAttribute(Contract):
     evidence: tuple[EvidenceLink, ...] = Field(min_length=1)
 
     @model_validator(mode="after")
-    def positive_support(self) -> "EntityAttribute":
+    def positive_support(self) -> EntityAttribute:
         if not any(link.polarity == "support" for link in self.evidence):
             raise ValueError("Entity attributes require their own positive evidence")
         return self
+
+
+class EntityMention(Contract):
+    reference: CognitiveRef | MediaReference
+    role: str = "mentioned"
+
 
 class EntityBody(Contract):
     kind: Literal["entity"] = "entity"
@@ -117,6 +135,7 @@ class EntityBody(Contract):
     description: str = ""
     identifiers: dict[str, str] = Field(default_factory=dict)
     attributes: tuple[EntityAttribute, ...] = ()
+    mentions: tuple[EntityMention, ...] = ()
 
 
 class EpisodeMember(Contract):
@@ -181,6 +200,7 @@ class SelfFacetBody(Contract):
     kind: Literal["self_facet"] = "self_facet"
     facet: str
     description: str
+    epistemic: EpistemicStance = Field(default_factory=EpistemicStance)
     contexts: tuple[str, ...] = ()
     exceptions: tuple[str, ...] = ()
 
@@ -279,6 +299,7 @@ CognitiveBody = Annotated[
 
 class CognitiveRecord(Contract):
     reference: CognitiveRef
+    addresses: ReferenceAddresses | None = None
     namespace_id: str
     subject_id: str
     body: CognitiveBody | None
@@ -312,12 +333,98 @@ class AdoptCognition(Operation):
     producer_call_id: str | None = None
 
 
-class FormationProposal(Contract):
+class ProposedEntityAttribute(Contract):
+    predicate: str
+    value: str
+    epistemic: EpistemicStance = Field(default_factory=EpistemicStance)
+    validity: TimeRange | None = None
+
+
+class ProposedEntity(Contract):
+    key: str = Field(
+        min_length=1,
+        description="Unique local key declared by this proposal. Do not use the reserved key memory or shadow a source.formation_catalog key.",
+    )
+    label: str = Field(min_length=1)
+    entity_type: Literal["person", "group", "organization", "place", "object", "other"] = "other"
+    aliases: tuple[str, ...] = ()
+    description: str = ""
+    identifiers: dict[str, str] = Field(default_factory=dict)
+    attributes: tuple[ProposedEntityAttribute, ...] = ()
+    target_key: str | None = Field(
+        default=None,
+        description="For revising an existing identity, use its exact source.formation_catalog key; otherwise leave null.",
+    )
+
+
+class ProposedConcept(Contract):
+    key: str = Field(
+        min_length=1,
+        description="Unique local key declared by this proposal. Do not use the reserved key memory or shadow a source.formation_catalog key.",
+    )
+    label: str = Field(min_length=1)
+    aliases: tuple[str, ...] = ()
+    description: str = ""
+    member_keys: tuple[str, ...] = Field(
+        default=("memory",),
+        description="Members are reserved memory, declared proposal keys, or supplied source.formation_catalog keys.",
+    )
+    target_key: str | None = Field(
+        default=None,
+        description="For revising an existing identity, use its exact source.formation_catalog key; otherwise leave null.",
+    )
+
+
+class ProposedSchema(Contract):
+    key: str = Field(
+        min_length=1,
+        description="Unique local key declared by this proposal. Do not use the reserved key memory or shadow a source.formation_catalog key.",
+    )
+    title: str
+    claim: str
+    scope: str
+    boundary: str
+    support_keys: tuple[str, ...] = ("memory",)
+    counterexample_keys: tuple[str, ...] = ()
+    epistemic: EpistemicStance = Field(default_factory=EpistemicStance)
+    target_key: str | None = Field(
+        default=None,
+        description="For revising an existing identity, use its exact source.formation_catalog key; otherwise leave null.",
+    )
+
+
+class FormationCatalogEntry(Contract):
+    key: str
+    reference: CognitiveRef
+    label: str
+    aliases: tuple[str, ...] = ()
+    description: str = ""
+
+
+class ProposedAssociation(Contract):
+    from_key: str = Field(
+        description="Exactly memory, a key declared in entities/concepts/schemas, or a source.formation_catalog key; never a free-form label or invented ID."
+    )
+    to_key: str = Field(
+        description="Exactly memory, a key declared in entities/concepts/schemas, or a source.formation_catalog key; never a free-form label or invented ID."
+    )
+    relation: str
+    polarity: Literal["positive", "negative"] = "positive"
+    description: str = ""
+
+
+class FormationDraft(Contract):
     memories: tuple[MemoryBody, ...]
-    cognition: tuple[CognitiveBody, ...] = ()
+    event_expression: str | None = None
+    entities: tuple[ProposedEntity, ...] = ()
+    associations: tuple[ProposedAssociation, ...] = ()
+    concepts: tuple[ProposedConcept, ...] = ()
+    schemas: tuple[ProposedSchema, ...] = ()
+
+
+class FormationProposal(FormationDraft):
     producer_call_id: str | None = None
     event: TimePoint | None = None
-    event_expression: str | None = None
     validity: TimeRange | None = None
 
 
@@ -352,6 +459,7 @@ class ResegmentEpisodes(Operation):
     replacements: tuple[EpisodeBody, ...] = Field(min_length=1)
     reason: str = Field(min_length=1)
 
+
 class MemoryLifecycle(Contract):
     strength: float = Field(default=1, ge=0, le=1)
     anchor_unix_ms: int
@@ -362,12 +470,18 @@ class MemoryLifecycle(Contract):
     last_reinforced_unix_ms: int | None = None
 
     def protected(self, now_unix_ms: int) -> bool:
-        return self.pinned or self.protected_until_unix_ms is not None and self.protected_until_unix_ms > now_unix_ms
+        return (
+            self.pinned
+            or self.protected_until_unix_ms is not None
+            and self.protected_until_unix_ms > now_unix_ms
+        )
+
 
 class RevisionCause(Contract):
     action: str
     actor: str
     reason: str
     parent: CognitiveRef | None = None
+
 
 CognitiveRecord.model_rebuild()

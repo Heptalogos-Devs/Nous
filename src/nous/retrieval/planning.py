@@ -116,7 +116,11 @@ def bind(ctx: CallContext, request: QueryRequest):
         )
         if name == "return":
             kinds = tuple(value for value in args if value not in {"cognition", "media"})
-            update["domains"] = tuple(domain for domain in ("cognition", "media") if domain in args or domain == "cognition" and kinds)
+            update["domains"] = tuple(
+                domain
+                for domain in ("cognition", "media")
+                if domain in args or domain == "cognition" and kinds
+            )
             update["kinds"] = (
                 tuple(value for value in request.kinds if value in kinds)
                 if request.kinds and kinds

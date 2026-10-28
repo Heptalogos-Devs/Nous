@@ -9,11 +9,10 @@ from .contracts import (
     CognitiveRecord,
     CognitiveRef,
     Contract,
-    FileSuccess,
     MediaInfo,
     TimePoint,
-    UnitOutput,
 )
+from .contracts.common import ReferenceAddresses
 
 JsonObject = dict[str, JsonValue]
 QueryParam = str | int | float | bool | None
@@ -46,6 +45,8 @@ class Material(Contract):
     recorded_at: str
     commit_seq: int
     media_info: MediaInfo | None = None
+    required_source_ids: tuple[str, ...] = ()
+    addresses: ReferenceAddresses | None = None
     purged: bool = False
 
 
@@ -72,6 +73,7 @@ class Source(Contract):
 
 class Download(Contract):
     material_id: str
+    region_id: str | None = None
     output: Path
     byte_len: int
     media_type: str | None = None
@@ -82,12 +84,6 @@ class ImportSubmission(Contract):
     request_id: str
     job_id: str
     catalog_id: str
-
-
-class SkippedFiles(Contract):
-    skipped_success_ids: tuple[str, ...]
-    outputs: tuple[UnitOutput, ...] = ()
-    file_successes: tuple[FileSuccess, ...] = ()
 
 
 class Job(Contract):
@@ -156,6 +152,7 @@ class LocalImportFile(Contract):
     format: Literal["text", "json", "jsonl"] | None = None
     source: str | None = None
     file_identity: str | None = None
+    size: int | None = Field(default=None, ge=0)
 
 
 class ResolvedPath(Contract):
