@@ -4,6 +4,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 mod text;
 pub use text::*;
+mod catalog;
+pub use catalog::*;
+mod processing;
+pub use processing::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -78,7 +82,7 @@ pub struct ImportInputSource {
     pub material_id: MaterialId,
     pub content_hash: String,
     pub byte_len: u64,
-    pub original_job_id: String,
+    pub original_job_id: Option<String>,
     pub original_input_index: usize,
     pub recorded_at: String,
     pub commit_seq: i64,

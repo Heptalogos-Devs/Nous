@@ -49,6 +49,7 @@ impl Tasks {
         let now = tx.time().recorded();
         JobRecord {
             id: ulid::Ulid::generate().to_string(),
+            parent_job_id: None,
             trace_id: tx.context().trace_id.clone(),
             namespace_id: namespace,
             subject_id: subject,
@@ -70,10 +71,48 @@ impl Tasks {
         self.changed.notify_waiters();
     }
     pub async fn submit_in(&self, tx: &mut WriteTransaction, job: &JobRecord) -> Result<()> {
+        if job.parent_job_id.is_some() {
+            return Err(Error::invalid("owned tasks must use submit_child_in"));
+        }
+        self.submit_record_in(tx, job).await
+    }
+    async fn submit_record_in(&self, tx: &mut WriteTransaction, job: &JobRecord) -> Result<()> {
         tx.insert_job_record(job, self.config.max_queue_attempts)
             .await?;
         self.observe_transaction(tx);
         Ok(())
+    }
+    pub async fn submit_child_in(
+        &self,
+        tx: &mut WriteTransaction,
+        parent_id: &str,
+        child: &mut JobRecord,
+    ) -> Result<()> {
+        let parent = tx.job_record(parent_id).await?;
+        parent.require_read(tx.context())?;
+        if terminal(parent.state) {
+            return Err(Error::new(
+                ErrorCode::Conflict,
+                "owning parent task is terminal",
+            ));
+        }
+        if child.id == parent_id {
+            return Err(Error::invalid("a task cannot own itself"));
+        }
+        if child.namespace_id != parent.namespace_id || child.subject_id != parent.subject_id {
+            return Err(Error::invalid("owned task belongs to another scope"));
+        }
+        if child
+            .parent_job_id
+            .as_ref()
+            .is_some_and(|actual| actual != parent_id)
+        {
+            return Err(Error::invalid(
+                "task already declares another exclusive owner",
+            ));
+        }
+        child.parent_job_id = Some(parent_id.to_owned());
+        self.submit_record_in(tx, child).await
     }
     pub async fn submit_after_in(
         &self,

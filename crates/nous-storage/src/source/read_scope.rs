@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 pub(crate) mod candidates;
 mod graph;
 mod imports;
+mod unit_outputs;
 use graph::Node;
 const MAX_SOURCE_NODES: usize = 1024;
 
@@ -28,6 +29,7 @@ impl SourceReadView {
 struct Selection {
     nodes: BTreeSet<Node>,
     whole_inputs: BTreeSet<MaterialId>,
+    explicit_regions: BTreeSet<media::SourceRegionId>,
     origins: BTreeSet<ConversationRef>,
 }
 fn denied() -> Error {
@@ -67,6 +69,17 @@ async fn bind(
                     _ => None,
                 })
                 .collect(),
+            explicit_regions: scope
+                .source_refs
+                .iter()
+                .filter_map(|reference| match reference {
+                    SourceReadRef::Media {
+                        reference: MediaReference::SourceRegion { id },
+                        observation_id: None,
+                    } => Some(id.clone()),
+                    _ => None,
+                })
+                .collect(),
             origins: scope.origin_conversation_refs.iter().cloned().collect(),
         };
         for reference in &scope.source_refs {
@@ -97,6 +110,8 @@ async fn occurrence_allowed(
     view: &SourceReadView,
     selection: &Selection,
     id: &ObservationId,
+    source: Option<&MediaReference>,
+    memories: Option<&BTreeSet<CognitiveRef>>,
 ) -> Result<bool> {
     let observation = graph::observation(conn, &view.namespace, &view.subject, id).await?;
     if selection.nodes.contains(&Node::Observation(id.clone()))
@@ -111,12 +126,35 @@ async fn occurrence_allowed(
             .and_then(|origin| origin.conversation_ref.as_ref())
             .is_some_and(|origin| selection.origins.contains(origin))
     {
-        return Ok(true);
+        // Capturing a region's actual event never grants the rest of its original file.
+        let locator_allowed = source.is_none_or(|source| {
+            let original = MediaReference::Original {
+                material_id: observation.material_id.clone(),
+            };
+            [source, &original].iter().any(|reference| {
+                selection
+                    .nodes
+                    .contains(&Node::Media((*reference).clone(), None))
+                    || selection
+                        .nodes
+                        .contains(&Node::Media((*reference).clone(), Some(id.clone())))
+            }) || selection.nodes.contains(&Node::Observation(id.clone()))
+                || selection.nodes.contains(&Node::EventMetadata(id.clone()))
+                || observation
+                    .origin
+                    .as_ref()
+                    .and_then(|o| o.conversation_ref.as_ref())
+                    .is_some_and(|o| selection.origins.contains(o))
+        });
+        return Ok(locator_allowed);
     }
     if observation.kind != ObservationKind::Import {
         return Ok(false);
     }
-    imports::allowed(conn, view, selection, &observation.material_id, Some(id)).await
+    if imports::allowed(conn, view, selection, &observation.material_id, Some(id)).await? {
+        return Ok(true);
+    }
+    unit_outputs::allowed(conn, view, selection, id, source, memories).await
 }
 
 async fn media_leaf_allowed(
@@ -125,6 +163,7 @@ async fn media_leaf_allowed(
     selection: &Selection,
     reference: &MediaReference,
     actual: &Option<ObservationId>,
+    memories: Option<&BTreeSet<CognitiveRef>>,
 ) -> Result<bool> {
     if selection
         .nodes
@@ -160,7 +199,7 @@ async fn media_leaf_allowed(
         || selection.nodes.contains(&Node::Media(original, None));
     if let Some(actual) = actual {
         // A locator used by a cognition keeps its actual event, even for equal CAS bytes.
-        return occurrence_allowed(conn, view, selection, actual).await;
+        return occurrence_allowed(conn, view, selection, actual, Some(reference), memories).await;
     }
     if locator_explicit {
         return Ok(true);
@@ -213,20 +252,45 @@ async fn allowed(conn: &mut SqliteConnection, view: &SourceReadView, node: Node)
         Err(error) if error.code == ErrorCode::NotFound => return Ok(false),
         Err(error) => return Err(error),
     };
+    let mut memory_events = BTreeMap::<ObservationId, BTreeSet<CognitiveRef>>::new();
+    for (node, children) in &graph {
+        if let Node::Cognition(reference) = node
+            && reference.kind == CognitiveKind::Memory
+        {
+            for child in children {
+                if let Node::Media(_, Some(observation)) = child {
+                    memory_events
+                        .entry(observation.clone())
+                        .or_default()
+                        .insert(reference.clone());
+                }
+            }
+        }
+    }
     for selection in &view.constraints {
         for (node, children) in &graph {
             if !children.is_empty() {
                 continue;
             }
             let permitted = match node {
-                Node::Observation(id) => occurrence_allowed(conn, view, selection, id).await?,
+                Node::Observation(id) => {
+                    occurrence_allowed(conn, view, selection, id, None, None).await?
+                }
                 Node::EventMetadata(id) => {
                     selection.nodes.contains(node)
-                        || occurrence_allowed(conn, view, selection, id).await?
+                        || occurrence_allowed(conn, view, selection, id, None, None).await?
                 }
                 Node::Work(_) => selection.nodes.contains(node),
                 Node::Media(reference, actual) => {
-                    media_leaf_allowed(conn, view, selection, reference, actual).await?
+                    media_leaf_allowed(
+                        conn,
+                        view,
+                        selection,
+                        reference,
+                        actual,
+                        actual.as_ref().and_then(|id| memory_events.get(id)),
+                    )
+                    .await?
                 }
                 Node::Cognition(_) => false,
             };

@@ -12,6 +12,9 @@ pub fn model_roles() -> Result<RoleRegistry> {
     for definition in crate::cognition::structured::model::definitions() {
         registry.register(definition)?;
     }
+    for definition in crate::lifecycle::imports::text::model::definitions() {
+        registry.register(definition)?;
+    }
     registry.register(crate::retrieval::embedding_model::definition())?;
     registry.register(crate::retrieval::rerank::model::definition())?;
     registry.register(crate::contexts::model::definition())?;

@@ -57,6 +57,42 @@ preview = await client.preview_text_import(
 
 已有原件可用 `input={"kind":"material","material_id":material_id}`。结果包含原文 hash/字节数、effective_options、selected_strategy、units 与 warnings；每个 unit 的 start_byte/end_byte 是原文 UTF-8 字节范围，text 与该范围原文一致。预览使用 `imports.text` 的有效默认值与本次 overrides；支持 auto/narrative/factual/quote/chat_log，不创建材料或作业、不调用模型。
 
+冻结一次实际目录，再读取或选择原 UnitId 供重试使用：
+
+```python
+frozen = await client.freeze_import_catalog({
+    "namespace_id": namespace_id,
+    "subject_id": subject_id,
+    "inputs": [{"format": "text", "input": {"kind": "material", "material_id": input_material_id}}],
+    "overrides": {"strategy": "narrative"},
+}, operation_id=catalog_operation_id)
+catalog_id = frozen["result"]["catalog_id"]
+catalog = await client.import_catalog(namespace_id, subject_id, catalog_id)
+inputs = await client.retry_import_inputs(
+    namespace_id, subject_id, catalog_id, frozen["result"]["unit_ids"][:1],
+)
+```
+
+这些读取沿正文和标题 context 的精确来源权限返回原单位文本及 source_refs，保留冻结配置与 UnitId。重新配置拆分时，在新的 freeze 请求传入 parent_catalog_id；普通重试继续使用原目录。冻结回执给出来源目录身份，实际处理由 `process_import_units` 提交。
+
+```python
+processing = await client.process_import_units({
+    "namespace_id": namespace_id, "subject_id": subject_id,
+    "catalog_id": catalog_id, "unit_ids": None,
+    "llm_enabled": True, "extract_time": True, "vectors": "required",
+}, operation_id=processing_operation_id)
+await client.wait_success([processing["result"]["job_id"]])
+parent = await client.job(processing["result"]["job_id"])
+for item in parent["job"]["result"]["unit_jobs"]:
+    child = await client.job(item["job_id"])
+    if child["job"]["result"] is not None:
+        output = await client.import_unit_output(
+            namespace_id, subject_id, child["job"]["result"]["output_id"],
+        )
+```
+
+处理通过 `import_narrative`、`import_factual` 和独立 `import_time` 角色调用真实模型；需要时配置对应角色。quote 和关闭 LLM 的路径保存逐字内容，不产生模型调用。结果中的 Memory/认知引用、semantic/temporal call 和错误来自不可变 output 事实；parent 只引用真实 unit Jobs。`vectors=disabled` 不建立索引作业，`metadata_allowed` 保留实际索引请求及准备错误，`required` 等待真实索引依赖成功。已有父任务可用 `wait_jobs` 等待；取消只影响其独占子任务，共享索引工作继续由索引 owner 管理。
+
 Subject 提供自己的文件时，传入 `upload_file(namespace_id, path, owner_subject_id=subject_id)`。已有异步字节流使用 `upload_stream(namespace_id, chunks, byte_len=length, owner_subject_id=subject_id)`；两者使用同一传输与接纳用例。原件归该 Subject 读取，接触或导入来源事件由后续显式操作记录。CLI 对应 `material put --namespace <Namespace UUID> --owner-subject <Subject UUID> --file <本机文件>`。
 
 `import_files(namespace_id, subject_id, files, transfer_root=...)` 将本机文件逐份流式上传，再以 Material 输入目录提交一个正式导入任务。`files` 接受路径列表，或 WebUI 的 `{staged_path, filename, size}` 列表；也可用 `{path, name, format, source}` 明确格式与语义来源。格式按 txt/md、json、jsonl 扩展名选择，`input_format` 可显式指定。SDK 不解析或改写文件内容。

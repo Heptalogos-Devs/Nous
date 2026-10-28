@@ -28,6 +28,7 @@ pub struct TraceOperation {
 #[derive(Debug, Clone, Serialize)]
 pub struct TraceJob {
     pub id: String,
+    pub parent_job_id: Option<String>,
     pub accepted_commit_seq: i64,
     pub namespace_id: Option<NamespaceId>,
     pub subject_id: Option<SubjectId>,
@@ -121,7 +122,7 @@ impl Database {
             .take(limit)
             .map(operation_row)
             .collect::<Result<Vec<_>>>()?;
-        let rows = sqlx::query("SELECT job_id,accepted_commit_seq,namespace_id,subject_id,kind,state,dependencies,dependency_policy,json_extract(wait,'$.kind') AS waiting_for,error,created_at,updated_at FROM task_records WHERE trace_id=? AND accepted_commit_seq<=? AND (? IS NULL OR job_id>?) ORDER BY job_id LIMIT ?")
+        let rows = sqlx::query("SELECT job_id,parent_job_id,accepted_commit_seq,namespace_id,subject_id,kind,state,dependencies,dependency_policy,json_extract(wait,'$.kind') AS waiting_for,error,created_at,updated_at FROM task_records WHERE trace_id=? AND accepted_commit_seq<=? AND (? IS NULL OR job_id>?) ORDER BY job_id LIMIT ?")
             .bind(trace_id.as_str()).bind(next.snapshot_seq).bind(&next.jobs_after).bind(&next.jobs_after).bind(fetch_limit)
             .fetch_all(&mut *view.tx).await.map_err(storage_error)?;
         let jobs_has_more = rows.len() > limit;
@@ -180,6 +181,7 @@ fn operation_row(row: SqliteRow) -> Result<TraceOperation> {
 fn job_row(row: SqliteRow) -> Result<TraceJob> {
     Ok(TraceJob {
         id: row.get("job_id"),
+        parent_job_id: row.get("parent_job_id"),
         accepted_commit_seq: row.get("accepted_commit_seq"),
         namespace_id: row
             .get::<Option<String>, _>("namespace_id")

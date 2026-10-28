@@ -29,7 +29,9 @@ impl SubjectPackage {
         for source in &self.input_sources {
             source.id.validate()?;
             source.material_id.validate()?;
-            validate_name(&source.original_job_id, "original import job")?;
+            if let Some(job_id) = &source.original_job_id {
+                validate_name(job_id, "original import job")?;
+            }
             if source.namespace_id != *namespace
                 || source.subject_id != *subject
                 || source.commit_seq <= 0

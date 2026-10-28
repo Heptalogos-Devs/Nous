@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 mod descriptor;
 mod export;
 mod imports;
+mod units;
 pub use descriptor::*;
 pub use export::*;
 
@@ -21,6 +22,9 @@ pub struct SubjectPackage {
     pub materials: Vec<MediaOriginal>,
     pub input_sources: Vec<ImportInputSource>,
     pub record_containers: Vec<ImportRecordContainer>,
+    pub unit_catalogs: Vec<ImportUnitCatalog>,
+    pub text_units: Vec<ImportTextUnit>,
+    pub unit_outputs: Vec<ImportUnitOutput>,
     pub observations: Vec<Observation>,
     pub exposures: Vec<MediaExposure>,
     pub memories: Vec<Memory>,
@@ -137,6 +141,7 @@ impl SubjectPackage {
     pub fn validate(&self) -> Result<()> {
         self.validate_addresses()?;
         self.validate_import_sources()?;
+        self.validate_import_units()?;
         self.package.validate()?;
         self.subject.id.validate()?;
         self.subject.namespace_id.validate()?;

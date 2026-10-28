@@ -43,9 +43,9 @@ impl Entry {
                 || (request.include_deleted && self.object.deleted())
                 || self.object.is_active())
             && request.source.as_ref().is_none_or(|source| {
-                self.materials
-                    .iter()
-                    .any(|root| root.material.source.as_ref() == Some(source))
+                self.materials.iter().any(|root| {
+                    material_source_name(&root.material, &root.details) == Some(source.as_str())
+                })
             })
     }
     pub fn can_embed(&self) -> bool {

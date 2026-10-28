@@ -192,7 +192,6 @@ impl App {
         formed: i64,
     ) -> Result<()> {
         let (namespace, subject) = run.job.subject_scope()?;
-        group.validate()?;
         let outputs = slots
             .iter()
             .map(|(key, slot)| Ok((slot.output_reference()?, key)))
@@ -229,67 +228,26 @@ impl App {
             tx.rollback().await?;
             return Ok(());
         }
-        let mut pending = group.changes.iter().collect::<Vec<_>>();
-        let pending_targets = group
-            .changes
-            .iter()
-            .map(|c| slots[&c.slot_key].output_reference())
-            .collect::<Result<BTreeSet<_>>>()?;
-        let mut saved = BTreeSet::new();
-        let mut objects = Vec::new();
-        while !pending.is_empty() {
-            let position = pending
-                .iter()
-                .position(|change| {
-                    change
-                        .sources()
-                        .iter()
-                        .filter_map(EvidenceSource::cognitive_ref)
-                        .all(|r| !pending_targets.contains(&r) || saved.contains(&r))
-                })
-                .ok_or_else(|| {
-                    Error::invalid("proposal group's object references contain a cycle")
-                })?;
-            let change = pending.remove(position);
-            let slot = slots[&change.slot_key];
-            if slot.expected_revision > 0
-                && tx.structured_object(namespace, &slot.id).await?.deleted
-            {
-                return Err(Error::new(
-                    ErrorCode::Conflict,
-                    "formation target was deleted",
-                ));
-            }
-            let object = StructuredObject {
-                id: slot.id.clone(),
-                namespace_id: namespace.clone(),
-                subject_id: subject.clone(),
-                revision: slot.expected_revision + 1,
-                body: change.body.clone(),
-                evidence: change.evidence.clone(),
-                times: CognitiveTimes {
-                    event: None,
-                    observation: None,
+        let target_slots = slots
+            .values()
+            .map(|slot| (**slot).clone())
+            .collect::<Vec<_>>();
+        let objects = self
+            .apply_structured_group_in(
+                &mut tx,
+                group,
+                &target_slots,
+                StructuredGroupProvenance {
+                    namespace_id: namespace.clone(),
+                    subject_id: subject.clone(),
+                    producer_call_id: Some(call_id.clone()),
                     formation: TimePoint {
                         domain: "unix_ms".into(),
                         coordinate: formed,
                     },
-                    validity: None,
-                    recorded: tx.time().point(),
                 },
-                producer_call_id: Some(call_id.clone()),
-                recorded_at: tx.time().recorded(),
-                commit_seq: tx.commit_seq(),
-                deleted: false,
-            };
-            tx.save_structured(
-                &object,
-                (slot.expected_revision > 0).then_some(slot.expected_revision),
             )
             .await?;
-            saved.insert(object.reference());
-            objects.push(object);
-        }
         let mut state = tx
             .structured_formation_groups(&run.job.id)
             .await?

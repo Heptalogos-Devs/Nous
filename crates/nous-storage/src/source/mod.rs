@@ -1,4 +1,6 @@
+mod catalog;
 pub(crate) mod closure;
+pub use catalog::SourceMemoryEntry;
 pub(crate) mod materials;
 mod query_admission;
 pub(crate) mod query_filter;

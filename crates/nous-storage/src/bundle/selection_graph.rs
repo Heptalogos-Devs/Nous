@@ -117,6 +117,15 @@ impl Selection {
             self.add("memory", v.id.as_str());
         }
         if native {
+            for catalog in &p.unit_catalogs {
+                self.add("import_unit_catalog", catalog.id.as_str());
+            }
+            for unit in &p.text_units {
+                self.add("import_text_unit", unit.id.as_str());
+            }
+            for output in &p.unit_outputs {
+                self.add("import_unit_output", output.id.as_str());
+            }
             for source in &p.input_sources {
                 self.add("import_input_source", source.id.as_str());
             }
@@ -129,7 +138,12 @@ impl Selection {
     /// follow A-Memorix's closed-episode rule and require every retained member.
     pub fn related(&mut self, p: &SubjectPackage) {
         for v in &p.source_regions {
-            if self.has("material", v.material_id.as_str()) {
+            if self.has("material", v.material_id.as_str())
+                && !p
+                    .input_sources
+                    .iter()
+                    .any(|source| source.material_id == v.material_id)
+            {
                 self.add("source_region", v.id.as_str());
             }
         }
@@ -290,6 +304,12 @@ impl Selection {
             .retain(|v| self.has("import_input_source", v.id.as_str()));
         p.record_containers
             .retain(|v| self.has("import_record_container", v.id.as_str()));
+        p.unit_catalogs
+            .retain(|v| self.has("import_unit_catalog", v.id.as_str()));
+        p.text_units
+            .retain(|v| self.has("import_text_unit", v.id.as_str()));
+        p.unit_outputs
+            .retain(|v| self.has("import_unit_output", v.id.as_str()));
         p.observations
             .retain(|v| self.has("observation", v.id.as_str()));
         for original in &mut p.materials {

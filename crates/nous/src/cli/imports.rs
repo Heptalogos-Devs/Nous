@@ -51,21 +51,92 @@ pub struct PreviewArgs {
 }
 impl PreviewArgs {
     pub(super) fn operation(self) -> Result<Operation> {
-        Ok(Operation::PreviewTextImport(Box::new(
-            PreviewTextImportRequest {
-                namespace_id: self.namespace,
-                subject_id: self.subject,
-                document: document(self.file, self.material, ImportFormat::Text, None)?,
-                overrides: Some(ImportTextSplitOverrides {
-                    strategy: self.strategy.map(Into::into),
-                    narrative_window_size: self.narrative_window_size,
-                    narrative_overlap: self.narrative_overlap,
-                    factual_target_size: self.factual_target_size,
-                    reference_time: self
-                        .reference_time
-                        .map(|value| serde_json::from_str(&value))
-                        .transpose()?,
-                }),
+        Ok(Operation::PreviewTextImport(Box::new(self.into_request()?)))
+    }
+    fn into_request(self) -> Result<PreviewTextImportRequest> {
+        Ok(PreviewTextImportRequest {
+            namespace_id: self.namespace,
+            subject_id: self.subject,
+            document: document(self.file, self.material, ImportFormat::Text, None)?,
+            overrides: Some(ImportTextSplitOverrides {
+                strategy: self.strategy.map(Into::into),
+                narrative_window_size: self.narrative_window_size,
+                narrative_overlap: self.narrative_overlap,
+                factual_target_size: self.factual_target_size,
+                reference_time: self
+                    .reference_time
+                    .map(|value| serde_json::from_str(&value))
+                    .transpose()?,
+            }),
+        })
+    }
+}
+
+#[derive(Args)]
+pub struct FreezeArgs {
+    #[command(flatten)]
+    input: PreviewArgs,
+    #[arg(long)]
+    operation_id: Option<String>,
+    #[arg(long)]
+    parent_catalog: Option<ImportUnitCatalogId>,
+}
+impl FreezeArgs {
+    pub(super) fn operation(self) -> Result<Operation> {
+        let preview = self.input.into_request()?;
+        Ok(Operation::ImportCatalog(Box::new(
+            crate::http::import_catalogs::ImportCatalogOperation::Freeze {
+                operation_id: crate::cli::op_id(self.operation_id),
+                request: FreezeImportCatalogRequest {
+                    namespace_id: preview.namespace_id,
+                    subject_id: preview.subject_id,
+                    inputs: vec![preview.document],
+                    overrides: preview.overrides,
+                    parent_catalog_id: self.parent_catalog,
+                },
+            },
+        )))
+    }
+}
+#[derive(Args)]
+pub struct CatalogArgs {
+    #[arg(long)]
+    namespace: NamespaceId,
+    #[arg(long)]
+    subject: SubjectId,
+    #[arg(long)]
+    catalog: ImportUnitCatalogId,
+}
+impl CatalogArgs {
+    pub(super) fn operation(self) -> Result<Operation> {
+        Ok(Operation::ImportCatalog(Box::new(
+            crate::http::import_catalogs::ImportCatalogOperation::Inspect {
+                request: ReadImportCatalogRequest {
+                    namespace_id: self.namespace,
+                    subject_id: self.subject,
+                    catalog_id: self.catalog,
+                },
+            },
+        )))
+    }
+}
+#[derive(Args)]
+pub struct RetryInputsArgs {
+    #[command(flatten)]
+    catalog: CatalogArgs,
+    #[arg(long = "unit", required = true)]
+    unit_ids: Vec<ImportUnitId>,
+}
+impl RetryInputsArgs {
+    pub(super) fn operation(self) -> Result<Operation> {
+        Ok(Operation::ImportCatalog(Box::new(
+            crate::http::import_catalogs::ImportCatalogOperation::RetryInputs {
+                request: RetryImportInputsRequest {
+                    namespace_id: self.catalog.namespace,
+                    subject_id: self.catalog.subject,
+                    catalog_id: self.catalog.catalog,
+                    unit_ids: self.unit_ids,
+                },
             },
         )))
     }

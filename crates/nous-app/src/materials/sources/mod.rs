@@ -338,14 +338,31 @@ impl SourceReader {
             MediaReference::SourceRegion { id } => {
                 let region = view.source_region(namespace, id).await?;
                 let material = view.material(namespace, &region.material_id).await?;
-                original_snapshot(
+                let text = if let SourceCoordinate::TextSpan { start, end } = &region.coordinate {
+                    Some(
+                        self.verify_text_span(&material, *start, *end, &CancellationToken::new())
+                            .await?,
+                    )
+                } else {
+                    None
+                };
+                let mut snapshot = original_snapshot(
                     reference.clone(),
                     roots,
                     material,
                     region.coordinate,
                     watermark,
                     protection,
-                )?
+                )?;
+                if let Some(text) = text {
+                    snapshot.payload = RepresentationPayload::Text { text };
+                    snapshot.access = ChannelAccess {
+                        visual: ChannelMode::Unavailable,
+                        audio: ChannelMode::Unavailable,
+                        source_text: ChannelMode::Original,
+                    };
+                }
+                snapshot
             }
             MediaReference::Representation { reference: exact } => {
                 let value = view.representation(namespace, subject, exact).await?;
@@ -393,6 +410,23 @@ impl SourceReader {
                 "selected source has no text representation",
             )),
         }
+    }
+
+    /// Decode an already authorized or newly admitted original's exact textual region.
+    pub(crate) async fn verify_text_span(
+        &self,
+        material: &Material,
+        start: u64,
+        end: u64,
+        cancel: &CancellationToken,
+    ) -> Result<String> {
+        SourceCoordinate::TextSpan { start, end }.validate_bounds(
+            u64::try_from(material.byte_len).map_err(Error::dependency)?,
+            &material.metadata,
+        )?;
+        self.media
+            .read_text_range(&original_blob(material)?, start..end, cancel)
+            .await
     }
 }
 

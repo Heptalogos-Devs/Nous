@@ -6,6 +6,7 @@ mod queue_backend;
 mod queue_persistence;
 pub use queue_backend::QueueBackend;
 mod task_dependencies;
+mod task_ownership;
 pub(crate) use queue::queue_record;
 pub(crate) mod records;
 mod transaction;

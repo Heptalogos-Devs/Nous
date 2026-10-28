@@ -61,8 +61,8 @@ impl WriteTransaction {
             if package.content_level != BundleContentLevel::Full {
                 return Err(Error::invalid("restore requires a full subject package"));
             }
-            let count:i64=sqlx::query_scalar("SELECT (SELECT count(*) FROM observations WHERE namespace_id=? AND subject_id=?)+(SELECT count(*) FROM memories WHERE namespace_id=? AND subject_id=?)+(SELECT count(*) FROM structured_objects WHERE namespace_id=? AND subject_id=?)+(SELECT count(*) FROM import_input_sources WHERE namespace_id=? AND subject_id=?)+(SELECT count(*) FROM import_record_containers WHERE namespace_id=? AND subject_id=?)")
-                .bind(request.namespace_id.as_str()).bind(request.subject_id.as_str()).bind(request.namespace_id.as_str()).bind(request.subject_id.as_str()).bind(request.namespace_id.as_str()).bind(request.subject_id.as_str()).bind(request.namespace_id.as_str()).bind(request.subject_id.as_str()).bind(request.namespace_id.as_str()).bind(request.subject_id.as_str()).fetch_one(&mut *self.tx).await.map_err(storage_error)?;
+            let count:i64=sqlx::query_scalar("SELECT (SELECT count(*) FROM observations WHERE namespace_id=? AND subject_id=?)+(SELECT count(*) FROM memories WHERE namespace_id=? AND subject_id=?)+(SELECT count(*) FROM structured_objects WHERE namespace_id=? AND subject_id=?)+(SELECT count(*) FROM import_input_sources WHERE namespace_id=? AND subject_id=?)+(SELECT count(*) FROM import_record_containers WHERE namespace_id=? AND subject_id=?)+(SELECT count(*) FROM import_unit_catalogs WHERE namespace_id=? AND subject_id=?)+(SELECT count(*) FROM import_text_units WHERE namespace_id=? AND subject_id=?)+(SELECT count(*) FROM import_unit_outputs WHERE namespace_id=? AND subject_id=?)")
+                .bind(request.namespace_id.as_str()).bind(request.subject_id.as_str()).bind(request.namespace_id.as_str()).bind(request.subject_id.as_str()).bind(request.namespace_id.as_str()).bind(request.subject_id.as_str()).bind(request.namespace_id.as_str()).bind(request.subject_id.as_str()).bind(request.namespace_id.as_str()).bind(request.subject_id.as_str()).bind(request.namespace_id.as_str()).bind(request.subject_id.as_str()).bind(request.namespace_id.as_str()).bind(request.subject_id.as_str()).bind(request.namespace_id.as_str()).bind(request.subject_id.as_str()).fetch_one(&mut *self.tx).await.map_err(storage_error)?;
             if count != 0 {
                 return Err(Error::new(
                     ErrorCode::Conflict,
@@ -371,6 +371,8 @@ impl WriteTransaction {
             )
             .await?;
         }
+        self.install_import_units(package, &installation, &map)
+            .await?;
         self.install_bundle_vectors(package, &installation, &map)
             .await?;
         for binding in &package.addresses {

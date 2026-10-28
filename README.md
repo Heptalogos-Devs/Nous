@@ -87,6 +87,34 @@ HTTP 与 MCP 接受多文档 inputs，每项指定自己的格式。Material 输
 
 预览不接纳材料、不创建任务，也不调用模型。`--file` 在调用端读取 UTF-8 原文；`--material` 沿原件读取权限访问已保存材料。HTTP 对应 `POST /api/imports/preview`，请求为 `{namespace_id,subject_id,document:{format:"text",input:{kind:"inline",content:"..."}},overrides:{strategy:"narrative"}}`；也可使用 `input:{kind:"material",material_id:"..."}`。MCP 对应 `import_preview`。时间参考仅采用明确传入的 TimePoint，预览不推断事件时间。
 
+需要固定处理或重试输入时，保存不可变的 Unit 目录：
+
+```powershell
+$frozen = & $nous --json --instance $instance import freeze --namespace $namespace --subject $subject --file ./temp/notes.md --strategy narrative | ConvertFrom-Json
+& $nous --json --instance $instance import catalog --namespace $namespace --subject $subject --catalog $frozen.result.catalog_id
+& $nous --json --instance $instance import retry-inputs --namespace $namespace --subject $subject --catalog $frozen.result.catalog_id --unit $frozen.result.unit_ids[0]
+```
+
+目录保存输入原件、准确 UTF-8 文本区域、场景或消息 context、生效配置和稳定 UnitId。ordinal 按整个多文件目录排序；标题位于正文窗口之外时，标题区域也须获得来源授权。`retry-inputs` 读取指定 UnitId 的原范围、原文本与原配置。改变拆分配置时，用 `import freeze --parent-catalog <id>` 创建新目录。冻结与读取只返回来源事实，处理执行通过 `import process` 提交实际任务。
+
+HTTP 目录入口为 `POST /api/imports/catalogs`，接受 `action=freeze|inspect|retry_inputs`；freeze 带 operation_id 和请求 `{namespace_id,subject_id,inputs,overrides,parent_catalog_id}`，inspect 请求带 catalog_id，retry_inputs 再带 unit_ids。MCP 对应 `import_catalog`。合法 UTF-8 Binary 原件保留原媒体属性，其 TextSpan 区域经严格解码后可作为精确文本来源读取。
+
+处理已冻结的目录时，启用所需的正式模型角色后提交任务：
+
+```powershell
+$processing = & $nous --json --instance $instance import process --namespace $namespace --subject $subject --catalog $frozen.result.catalog_id --llm-enabled --extract-time --vectors required | ConvertFrom-Json
+& $nous --json --instance $instance job wait $processing.result.job_id --timeout-ms 45000
+$parent = & $nous --json --instance $instance job get $processing.result.job_id | ConvertFrom-Json
+$unitJob = & $nous --json --instance $instance job get $parent.job.result.unit_jobs[0].job_id | ConvertFrom-Json
+& $nous --json --instance $instance import output --namespace $namespace --subject $subject --output $unitJob.job.result.output_id
+```
+
+`--unit` 可重复指定原 UnitId。父任务只保存真实 unit Job 引用；读取子任务得到不可变 output_id，再读取准确 Memory/认知引用与模型调用来源。narrative/chat-log 使用 `import_narrative`，factual 使用 `import_factual`；`--extract-time` 使用独立 `import_time` 子任务。quote 与关闭 LLM 的路径保留逐字正文，不产生模型调用。时间只采纳带明确 offset 的 RFC3339 输出，其余原始模型结果与错误仍可读取。
+
+`--vectors disabled` 不请求索引；默认 `metadata-allowed` 保留真实索引请求和准备错误，不等待索引就绪；`required` 等待实际索引依赖成功。父任务取消会取消独占的 unit/time 子任务，共享索引作业由索引 owner 管理。部分 unit 失败时，父 Job 保留真实子任务引用并返回失败，可逐项读取原因和已采纳的 output。
+
+HTTP 对应 `POST /api/imports/process`，请求为 `{operation_id,request:{namespace_id,subject_id,catalog_id,unit_ids,llm_enabled,extract_time,vectors}}`。`POST /api/imports/outputs/read` 接收 `{namespace_id,subject_id,output_id}`。MCP 对应 `import_process` 与 `import_output`；Python SDK 对应 `process_import_units` 与 `import_unit_output`。
+
 记忆变更带当前修订号，每次形成新修订和审计。以下操作冻结记忆、查看非活跃结果，再恢复：
 
 ```powershell

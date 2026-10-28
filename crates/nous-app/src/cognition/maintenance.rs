@@ -3,7 +3,7 @@
 use crate::App;
 use nous_domain::*;
 use nous_storage::operation_key;
-use nous_storage::{BeginOperation, OperationReceipt};
+use nous_storage::{BeginOperation, OperationReceipt, WriteTransaction};
 use serde_json::{Value, json};
 
 const HOUR_MS: i64 = 3_600_000;
@@ -32,7 +32,6 @@ impl App {
         kind: &str,
         payload: Value,
     ) -> Result<OperationReceipt> {
-        validate_change(&change)?;
         let namespace = self.database.memory_namespace(id).await?;
         let existing = match self.database.memory(&namespace, id).await {
             Ok(memory) => Some(memory),
@@ -58,7 +57,34 @@ impl App {
             BeginOperation::Replay(receipt) => return Ok(receipt),
             BeginOperation::New(tx) => tx,
         };
-        let mut memory = tx.memory(&namespace, id).await?;
+        let result = self
+            .change_memory_in(&mut tx, &namespace, id, &change)
+            .await?;
+        tx.commit(result).await
+    }
+
+    pub(crate) async fn change_memory_in(
+        &self,
+        tx: &mut WriteTransaction,
+        namespace: &NamespaceId,
+        id: &MemoryId,
+        change: &MemoryChange,
+    ) -> Result<Value> {
+        validate_change(change)?;
+        let ctx = tx.context().clone();
+        let mut memory = tx.memory(namespace, id).await?;
+        let subject_id = memory.subject_id.clone();
+        ctx.require_subject(namespace, &subject_id)?;
+        if change.action == MemoryAction::Purge {
+            ctx.require_namespace(namespace)?;
+        }
+        tx.require_source_read(
+            &ctx,
+            namespace,
+            &subject_id,
+            &RetrievalTarget::Cognition(CognitiveRef::memory(id, memory.revision)),
+        )
+        .await?;
         if memory.revision != change.expected_revision {
             return Err(Error::new(ErrorCode::Conflict, "memory revision changed"));
         }
@@ -78,12 +104,12 @@ impl App {
                     "purge grace period is 24 hours; namespace authority may explicitly force it",
                 ));
             }
-            let targets = tx.memory_source_dependents(&namespace, id).await?;
-            self.purge_source_dependents_in(&mut tx, &namespace, &subject_id, &targets)
+            let targets = tx.memory_source_dependents(namespace, id).await?;
+            self.purge_source_dependents_in(tx, namespace, &subject_id, &targets)
                 .await?;
-            let marker = tx.purge_memory(&namespace, id, before).await?;
+            let marker = tx.purge_memory(namespace, id, before).await?;
             let mut event = audit(
-                ctx,
+                &ctx,
                 &memory,
                 "purge",
                 &change.reason,
@@ -94,19 +120,25 @@ impl App {
             event.revision = marker.revision;
             event.commit_seq = marker.commit_seq;
             tx.append_memory_audit(&event).await?;
-            return tx
-                .commit(json!({"id":id,"purged":true,"revision":marker.revision}))
-                .await;
+            return Ok(json!({"id":id,"purged":true,"revision":marker.revision}));
         }
         let previous_activation = memory.lifecycle.activation;
         let previously_deleted = memory.deleted;
-        apply_to_memory(&mut memory, &change, now)?;
+        apply_to_memory(&mut memory, change, now)?;
         if (memory.deleted && !previously_deleted)
             || (memory.lifecycle.activation != previous_activation && !memory.is_active())
         {
-            let targets = tx.memory_source_dependents(&namespace, id).await?;
-            tx.invalidate_context_history(&namespace, &subject_id, &targets)
+            let targets = tx.memory_source_dependents(namespace, id).await?;
+            tx.invalidate_context_history(namespace, &subject_id, &targets)
                 .await?;
+        }
+        if memory.deleted && !previously_deleted {
+            tx.retire_embedding_targets(
+                namespace,
+                &subject_id,
+                &[RetrievalTarget::Cognition(CognitiveRef::memory(id, before))],
+            )
+            .await?;
         }
         memory.revision += 1;
         memory.commit_seq = tx.commit_seq();
@@ -114,16 +146,16 @@ impl App {
         memory.times.recorded = tx.time().point();
         tx.save_memory(&memory, Some(before)).await?;
         tx.append_memory_audit(&audit(
-            ctx,
+            &ctx,
             &memory,
             &action_name(change.action),
             &change.reason,
             before,
-            json!({"lifecycle":memory.lifecycle,"deleted":memory.deleted}),
+            json!({"lifecycle":memory.lifecycle,"deleted":memory.deleted,"force":change.force}),
             tx.time(),
         ))
         .await?;
-        tx.commit(serde_json::to_value(memory)?).await
+        Ok(serde_json::to_value(memory)?)
     }
 
     pub async fn recycle_bin(

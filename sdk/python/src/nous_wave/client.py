@@ -462,6 +462,44 @@ class NousClient:
     async def backup(self) -> dict:
         return await self.request("POST", "/api/backups")
 
+    async def import_unit_output(self, namespace_id: str, subject_id: str, output_id: str) -> dict:
+        return await self.request("POST", "/api/imports/outputs/read", body={
+            "namespace_id": namespace_id, "subject_id": subject_id, "output_id": output_id,
+        })
+
+    async def process_import_units(
+        self, request: Mapping[str, Any], *, operation_id: str | None = None,
+    ) -> dict:
+        """Submit frozen unit processing; inspect actual unit jobs through the parent result."""
+        return await self.request("POST", "/api/imports/process", body={
+            "operation_id": operation_id or str(uuid4()), "request": dict(request),
+        })
+
+    async def freeze_import_catalog(
+        self, request: Mapping[str, Any], *, operation_id: str | None = None,
+    ) -> dict:
+        """Persist exact source units and configuration; returns catalog and UnitIds."""
+        return await self.request("POST", "/api/imports/catalogs", body={
+            "action": "freeze", "operation_id": operation_id or str(uuid4()),
+            "request": dict(request),
+        })
+
+    async def import_catalog(self, namespace_id: str, subject_id: str, catalog_id: str) -> dict:
+        """Read authorized retained units without executing their processing."""
+        return await self.request("POST", "/api/imports/catalogs", body={
+            "action": "inspect", "request": {"namespace_id": namespace_id,
+                "subject_id": subject_id, "catalog_id": catalog_id},
+        })
+
+    async def retry_import_inputs(
+        self, namespace_id: str, subject_id: str, catalog_id: str, unit_ids: Sequence[str],
+    ) -> dict:
+        """Resolve the original UnitIds, byte ranges and frozen configuration for retry."""
+        return await self.request("POST", "/api/imports/catalogs", body={
+            "action": "retry_inputs", "request": {"namespace_id": namespace_id,
+                "subject_id": subject_id, "catalog_id": catalog_id, "unit_ids": list(unit_ids)},
+        })
+
     async def preview_text_import(
         self, namespace_id: str, subject_id: str, document: Mapping[str, Any], *,
         overrides: Mapping[str, Any] | None = None,

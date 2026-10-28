@@ -4,6 +4,15 @@ use nous_foundation::models::ResolvedModel;
 use nous_storage::{OperationKey, WriteTransaction};
 use std::time::Duration;
 
+#[derive(serde::Serialize)]
+pub(crate) struct EmbeddingAdmission {
+    subject_id: SubjectId,
+    space: EmbeddingSpace,
+    pending_inputs: usize,
+    reused_vectors: usize,
+    pub jobs: BTreeSet<String>,
+}
+
 pub(crate) fn provenance(record: &EmbeddingRecord) -> EmbeddingProvenance {
     EmbeddingProvenance {
         space_id: record.space_id.clone(),
@@ -15,6 +24,33 @@ pub(crate) fn provenance(record: &EmbeddingRecord) -> EmbeddingProvenance {
 }
 
 impl App {
+    /// Read-only preparation inside the caller's current transaction. Admission writes follow separately.
+    pub(crate) async fn prepare_cognitive_embeddings_in(
+        &self,
+        tx: &mut WriteTransaction,
+        namespace: &NamespaceId,
+        subject: &SubjectId,
+        targets: Vec<CognitiveRef>,
+        config: &ResolvedModel,
+    ) -> Result<Vec<EmbeddingInputItem>> {
+        let mut inputs = Vec::new();
+        let context = tx.context().clone();
+        for target in targets {
+            tx.require_source_read(
+                &context,
+                namespace,
+                subject,
+                &RetrievalTarget::Cognition(target.clone()),
+            )
+            .await?;
+            let input = tx
+                .current_embedding_input(namespace, subject, &target)
+                .await?;
+            validate_batch(config, std::slice::from_ref(&input))?;
+            inputs.push(input);
+        }
+        Ok(inputs)
+    }
     pub async fn sync_embeddings(
         &self,
         ctx: &CallContext,
@@ -96,7 +132,7 @@ impl App {
             .await
     }
 
-    pub(super) async fn embedding_configuration(
+    pub(crate) async fn embedding_configuration(
         &self,
         namespace: &NamespaceId,
         subject: &SubjectId,
@@ -125,6 +161,20 @@ impl App {
             BeginOperation::Replay(receipt) => return Ok(receipt),
             BeginOperation::New(tx) => tx,
         };
+        let admission = self
+            .admit_embedding_inputs_in(&mut tx, namespace, subject, inputs, config)
+            .await?;
+        tx.commit(serde_json::to_value(admission)?).await
+    }
+
+    pub(crate) async fn admit_embedding_inputs_in(
+        &self,
+        tx: &mut WriteTransaction,
+        namespace: &NamespaceId,
+        subject: &SubjectId,
+        inputs: Vec<EmbeddingInputItem>,
+        config: &ResolvedModel,
+    ) -> Result<EmbeddingAdmission> {
         let space = config.space()?;
         tx.save_embedding_space(&space).await?;
         let mut unique = BTreeMap::<(String, String), EmbeddingInputItem>::new();
@@ -208,7 +258,7 @@ impl App {
             {
                 jobs.insert(
                     self.queue_embedding_batch(
-                        &mut tx,
+                        tx,
                         namespace,
                         subject,
                         &space,
@@ -225,11 +275,17 @@ impl App {
         }
         if !batch.is_empty() {
             jobs.insert(
-                self.queue_embedding_batch(&mut tx, namespace, subject, &space, batch)
+                self.queue_embedding_batch(tx, namespace, subject, &space, batch)
                     .await?,
             );
         }
-        tx.commit(json!({"subject_id":subject,"space":space,"pending_inputs":pending,"reused_vectors":reused,"jobs":jobs})).await
+        Ok(EmbeddingAdmission {
+            subject_id: subject.clone(),
+            space,
+            pending_inputs: pending,
+            reused_vectors: reused,
+            jobs,
+        })
     }
 
     async fn queue_embedding_batch(

@@ -83,6 +83,9 @@ pub enum Operation {
     Diagnostics,
     SubjectDiagnostics(nous_domain::SubjectDiagnosticsRequest),
     PreviewTextImport(Box<nous_domain::PreviewTextImportRequest>),
+    ImportCatalog(Box<super::import_catalogs::ImportCatalogOperation>),
+    ProcessImportUnits(Box<super::import_processing::ProcessImportInput>),
+    ReadImportOutput(super::import_processing::ReadImportOutputInput),
     Trace(nous_app::administration::observability::TraceRequest),
     CreateNamespace(CreateNamespace),
     ListNamespaces,
@@ -115,6 +118,33 @@ impl Operation {
         ctx: &'a CallContext,
     ) -> BoxFuture<'a, Result<Value, Error>> {
         match self {
+            Self::ReadImportOutput(input) => async move {
+                Ok(json!(
+                    app.import_unit_output(
+                        ctx,
+                        &input.namespace_id,
+                        &input.subject_id,
+                        &input.output_id
+                    )
+                    .await?
+                ))
+            }
+            .boxed(),
+            Self::ImportCatalog(operation) => operation.execute(app, ctx),
+            Self::ProcessImportUnits(input) => async move {
+                let cancel = tokio_util::sync::CancellationToken::new();
+                let _cancel_on_drop = cancel.clone().drop_guard();
+                Ok(json!(
+                    app.process_import_units(
+                        ctx,
+                        &input.operation_id,
+                        input.request.clone(),
+                        &cancel
+                    )
+                    .await?
+                ))
+            }
+            .boxed(),
             Self::PreviewTextImport(request) => async move {
                 let cancel = tokio_util::sync::CancellationToken::new();
                 let _cancel_on_drop = cancel.clone().drop_guard();
@@ -259,6 +289,19 @@ impl Operation {
 
     pub fn request(&self) -> (&'static str, String, Option<Value>) {
         match self {
+            Self::ReadImportOutput(input) => (
+                "POST",
+                "/api/imports/outputs/read".into(),
+                Some(json!(input)),
+            ),
+            Self::ImportCatalog(operation) => (
+                "POST",
+                "/api/imports/catalogs".into(),
+                Some(json!(operation)),
+            ),
+            Self::ProcessImportUnits(input) => {
+                ("POST", "/api/imports/process".into(), Some(json!(input)))
+            }
             Self::PreviewTextImport(request) => {
                 ("POST", "/api/imports/preview".into(), Some(json!(request)))
             }

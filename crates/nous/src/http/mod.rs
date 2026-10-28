@@ -5,6 +5,8 @@ pub mod cognition;
 pub mod configuration;
 pub mod contexts;
 pub mod identity;
+pub mod import_catalogs;
+pub mod import_processing;
 pub mod integrations;
 mod locale;
 pub mod maintenance;
@@ -123,6 +125,7 @@ pub fn router(state: ApiState, config: &InstanceConfig, cancellation: Cancellati
         .route("/api/jobs/{job}", get(get_job))
         .route("/api/jobs/{job}/cancel", post(cancel_job))
         .merge(crate::http::cognition::router())
+        .merge(crate::http::import_catalogs::router())
         .merge(crate::http::configuration::router())
         .merge(crate::http::contexts::router())
         .merge(crate::http::sources::router())
@@ -136,6 +139,7 @@ pub fn router(state: ApiState, config: &InstanceConfig, cancellation: Cancellati
         .merge(crate::http::structured::router())
         .merge(crate::http::tasks::router())
         .merge(crate::http::maintenance::router())
+        .merge(crate::http::import_processing::router())
         .merge(crate::http::materials::router())
         .merge(crate::http::media::router())
         .nest_service("/mcp", mcp)

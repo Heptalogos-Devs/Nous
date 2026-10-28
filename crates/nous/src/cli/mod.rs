@@ -6,6 +6,7 @@ mod configuration;
 mod contexts;
 mod embedding;
 mod identity;
+mod import_processing;
 mod imports;
 mod integrations;
 mod invocation;

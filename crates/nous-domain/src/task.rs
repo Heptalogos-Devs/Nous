@@ -35,6 +35,8 @@ pub enum ResumeCondition {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JobRecord {
     pub id: String,
+    #[serde(default)]
+    pub parent_job_id: Option<String>,
     pub trace_id: TraceId,
     pub namespace_id: Option<NamespaceId>,
     pub subject_id: Option<SubjectId>,
@@ -86,6 +88,12 @@ impl JobRecord {
         self.trace_id.validate()?;
         validate_name(&self.id, "job ID")?;
         validate_name(&self.kind, "task kind")?;
+        if let Some(parent) = &self.parent_job_id {
+            validate_name(parent, "owning parent job")?;
+            if parent == &self.id {
+                return Err(Error::invalid("a task cannot own itself"));
+            }
+        }
         let mut dependencies = BTreeSet::new();
         for dependency in &self.dependencies {
             validate_name(dependency, "task dependency")?;
@@ -210,6 +218,7 @@ pub struct JobCursor {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JobSummary {
     pub id: String,
+    pub parent_job_id: Option<String>,
     pub trace_id: TraceId,
     pub namespace_id: Option<NamespaceId>,
     pub subject_id: Option<SubjectId>,

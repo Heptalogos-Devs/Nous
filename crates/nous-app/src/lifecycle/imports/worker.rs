@@ -15,7 +15,8 @@ impl App {
                 async move { owner.run_import_job(job, cancel).await }
             },
             |_| async { true },
-        )
+        )?;
+        self.register_import_processing_tasks(registry)
     }
     async fn run_import_job(&self, job: JobRecord, cancel: CancellationToken) -> Result<()> {
         let plan: ImportPlan = serde_json::from_value(

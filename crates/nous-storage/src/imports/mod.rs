@@ -1,6 +1,8 @@
 //! Immutable import container provenance has identity independent of local execution.
 use crate::{ReadView, WriteTransaction, not_found, storage_error, write_error};
 use nous_domain::*;
+mod output;
+mod units;
 
 impl WriteTransaction {
     pub async fn insert_import_input_source(&mut self, source: &ImportInputSource) -> Result<()> {

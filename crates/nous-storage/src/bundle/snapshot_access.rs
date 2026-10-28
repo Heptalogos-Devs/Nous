@@ -9,6 +9,10 @@ impl ReadView {
     ) -> Result<()> {
         let ns = &package.subject.namespace_id;
         let subject = &package.subject.id;
+        for unit in &package.text_units {
+            self.require_source_requirements(ctx, ns, subject, &unit.source_requirements())
+                .await?;
+        }
         for source in &package.input_sources {
             // This explicit Original check is independent of each record's Memory grant.
             self.require_source_requirements(

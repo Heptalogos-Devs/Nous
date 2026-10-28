@@ -245,13 +245,20 @@ impl TaskRuntime {
         self.tasks
             .change_in(&mut tx, &mut job, JobState::Running, None, None)
             .await?;
-        tx.commit(json!({"state":job.state})).await?;
         let cancel = self.shutdown.child_token();
         self.tasks
             .running
             .lock()
             .expect("task registry lock")
             .insert(id.into(), cancel.clone());
+        if let Err(error) = tx.commit(json!({"state":job.state})).await {
+            self.tasks
+                .running
+                .lock()
+                .expect("task registry lock")
+                .remove(id);
+            return Err(error);
+        }
         let result = handler(job, cancel).await;
         self.tasks
             .running

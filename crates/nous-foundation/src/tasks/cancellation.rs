@@ -12,18 +12,41 @@ impl Tasks {
         job: &mut JobRecord,
         error: Option<Error>,
     ) -> Result<()> {
-        job.require_read(tx.context())?;
-        if !terminal(job.state) {
-            self.change_in(tx, job, JobState::Cancelled, None, error)
-                .await?;
-        }
-        if job.state == JobState::Cancelled {
-            tx.retain_until_end(CancelAfterEnd {
-                tasks: self.clone(),
-                id: job.id.clone(),
-                trace: tx.context().trace_id.clone(),
-                span: tracing::Span::current(),
-            });
+        let root = tx.job_record(&job.id).await?;
+        root.require_read(tx.context())?;
+        for id in tx.owned_job_ids(&root.id).await? {
+            let mut current = tx.job_record(&id).await?;
+            if current.namespace_id != root.namespace_id || current.subject_id != root.subject_id {
+                return Err(Error::internal("owned task tree leaves its parent scope"));
+            }
+            if !terminal(current.state) {
+                let reason = error.clone().or_else(|| {
+                    if id != root.id {
+                        Some(
+                            Error::new(
+                                ErrorCode::Cancelled,
+                                "owning task cancellation was requested",
+                            )
+                            .with_context("parent_job_id", root.id.clone()),
+                        )
+                    } else {
+                        None
+                    }
+                });
+                self.change_in(tx, &mut current, JobState::Cancelled, None, reason)
+                    .await?;
+            }
+            if current.state == JobState::Cancelled {
+                tx.retain_until_end(CancelAfterEnd {
+                    tasks: self.clone(),
+                    id: current.id.clone(),
+                    trace: tx.context().trace_id.clone(),
+                    span: tracing::Span::current(),
+                });
+            }
+            if id == root.id {
+                *job = current;
+            }
         }
         Ok(())
     }

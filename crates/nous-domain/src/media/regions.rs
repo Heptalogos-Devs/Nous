@@ -79,7 +79,9 @@ impl SourceCoordinate {
             Self::Whole => true,
             Self::ByteRange { start, end } => start < end && *end <= byte_len,
             Self::TextSpan { start, end } => {
-                matches!(metadata, MediaMetadata::Text) && start < end && *end <= byte_len
+                matches!(metadata, MediaMetadata::Text | MediaMetadata::Binary)
+                    && start < end
+                    && *end <= byte_len
             }
             Self::ImageRect { rect } => {
                 let (w, h) = metadata.dimensions().ok_or_else(|| {

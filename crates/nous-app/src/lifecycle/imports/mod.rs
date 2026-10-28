@@ -1,4 +1,7 @@
+mod catalog;
 mod input;
+mod processing;
+mod read;
 mod record;
 pub(crate) mod text;
 mod worker;

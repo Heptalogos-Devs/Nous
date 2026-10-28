@@ -89,6 +89,22 @@ impl WriteTransaction {
                 self.subject(namespace, subject).await?;
             }
         }
+        if let Some(parent_id) = &value.parent_job_id {
+            validate_job_id(parent_id)?;
+            let parent = self.job_record(parent_id).await?;
+            if matches!(
+                parent.state,
+                JobState::Succeeded | JobState::Failed | JobState::Cancelled
+            ) {
+                return Err(Error::new(
+                    ErrorCode::Conflict,
+                    "owning parent task is terminal",
+                ));
+            }
+            if parent.namespace_id != value.namespace_id || parent.subject_id != value.subject_id {
+                return Err(Error::invalid("owned task belongs to another scope"));
+            }
+        }
         for id in &value.dependencies {
             let dependency = self.job_record(id).await?;
             if dependency.namespace_id != value.namespace_id
@@ -97,8 +113,8 @@ impl WriteTransaction {
                 return Err(Error::invalid("task dependency belongs to another scope"));
             }
         }
-        sqlx::query("INSERT INTO task_records(job_id,namespace_id,subject_id,source_read,kind,dependencies,dependency_policy,state,wait,checkpoint,result,error,created_at,updated_at,trace_id,accepted_commit_seq) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
-   .bind(&value.id).bind(value.namespace_id.as_ref().map(NamespaceId::as_str)).bind(value.subject_id.as_ref().map(SubjectId::as_str)).bind(serde_json::to_string(&value.source_read)?).bind(&value.kind).bind(serde_json::to_string(&value.dependencies)?).bind(enum_name(&value.dependency_policy)?).bind(enum_name(&value.state)?).bind(json_option(&value.wait)?).bind(json_option(&value.checkpoint)?).bind(json_option(&value.result)?).bind(json_option(&value.error)?).bind(&value.created_at).bind(&value.updated_at).bind(value.trace_id.as_str()).bind(self.commit_seq()).execute(&mut *self.tx).await.map_err(write_error)?;
+        sqlx::query("INSERT INTO task_records(job_id,parent_job_id,namespace_id,subject_id,source_read,kind,dependencies,dependency_policy,state,wait,checkpoint,result,error,created_at,updated_at,trace_id,accepted_commit_seq) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+   .bind(&value.id).bind(&value.parent_job_id).bind(value.namespace_id.as_ref().map(NamespaceId::as_str)).bind(value.subject_id.as_ref().map(SubjectId::as_str)).bind(serde_json::to_string(&value.source_read)?).bind(&value.kind).bind(serde_json::to_string(&value.dependencies)?).bind(enum_name(&value.dependency_policy)?).bind(enum_name(&value.state)?).bind(json_option(&value.wait)?).bind(json_option(&value.checkpoint)?).bind(json_option(&value.result)?).bind(json_option(&value.error)?).bind(&value.created_at).bind(&value.updated_at).bind(value.trace_id.as_str()).bind(self.commit_seq()).execute(&mut *self.tx).await.map_err(write_error)?;
         if value.state == JobState::Queued {
             self.enqueue_task(&value.id, max_queue_attempts).await?;
         }
@@ -119,6 +135,7 @@ impl WriteTransaction {
         if old.namespace_id != value.namespace_id
             || old.subject_id != value.subject_id
             || old.kind != value.kind
+            || old.parent_job_id != value.parent_job_id
             || old.dependencies != value.dependencies
             || old.dependency_policy != value.dependency_policy
             || old.trace_id != value.trace_id
@@ -193,6 +210,7 @@ pub(crate) async fn read(conn: &mut SqliteConnection, id: &str) -> Result<JobRec
 fn row(row: SqliteRow) -> Result<JobRecord> {
     Ok(JobRecord {
         id: row.get("job_id"),
+        parent_job_id: row.get("parent_job_id"),
         trace_id: TraceId(row.get("trace_id")),
         namespace_id: row
             .get::<Option<String>, _>("namespace_id")
@@ -272,7 +290,7 @@ impl crate::ReadView {
         let mut items = Vec::with_capacity(filter.limit + 1);
         loop {
             let mut query = QueryBuilder::<Sqlite>::new(
-                "SELECT job_id,namespace_id,subject_id,source_read,trace_id,kind,state,accepted_commit_seq,dependency_policy,json_extract(wait,'$.kind') AS waiting_for,error,created_at,updated_at FROM task_records WHERE accepted_commit_seq<=",
+                "SELECT job_id,parent_job_id,namespace_id,subject_id,source_read,trace_id,kind,state,accepted_commit_seq,dependency_policy,json_extract(wait,'$.kind') AS waiting_for,error,created_at,updated_at FROM task_records WHERE accepted_commit_seq<=",
             );
             query.push_bind(snapshot_seq);
             if let Some(namespace) = &filter.namespace_id {
@@ -325,6 +343,7 @@ impl crate::ReadView {
                 }
                 items.push(JobSummary {
                     id,
+                    parent_job_id: row.get("parent_job_id"),
                     trace_id: scope.trace_id,
                     namespace_id: scope.namespace_id,
                     subject_id: scope.subject_id,

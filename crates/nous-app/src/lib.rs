@@ -9,9 +9,11 @@ pub mod diagnostics;
 pub mod import_format;
 pub mod integrations;
 mod lifecycle;
+pub use lifecycle::imports::text::model as import_models;
 pub mod materials;
 pub mod references;
 pub mod retrieval;
+pub mod sources;
 
 use nous_domain::*;
 use nous_foundation::clock::Clock;

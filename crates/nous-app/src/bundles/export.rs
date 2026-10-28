@@ -94,6 +94,7 @@ impl App {
             .subject_package(ctx, request, Clock::operation_snapshot().recorded())
             .await?;
         view.finish().await?;
+        self.verify_bundle_unit_sources(&package, cancel).await?;
         let staging = self.bundle_staging(cancel).await?;
         for blob in package.objects()? {
             self.objects

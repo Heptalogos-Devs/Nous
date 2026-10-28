@@ -5,6 +5,8 @@ use nous_storage::operation_key;
 use nous_storage::{BeginOperation, OperationReceipt};
 use serde_json::{Value, json};
 mod adoption;
+mod apply;
+pub(crate) use apply::StructuredGroupProvenance;
 mod formation;
 mod lineage;
 pub mod model;

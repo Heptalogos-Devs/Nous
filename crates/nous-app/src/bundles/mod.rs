@@ -3,6 +3,7 @@ mod archive;
 mod export;
 mod foreign;
 mod portable;
+mod units;
 pub use export::BundleExportSummary;
 mod files;
 mod input;
@@ -127,6 +128,8 @@ impl App {
             }
             objects.push(object);
         }
+        self.verify_bundle_unit_sources(&loaded.package, cancel)
+            .await?;
         execution::check_cancelled(cancel)?;
         let mut tx = match self.database.begin_operation(key).await? {
             BeginOperation::Replay(receipt) => return Ok(receipt),

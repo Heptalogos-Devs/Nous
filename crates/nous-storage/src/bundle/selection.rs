@@ -26,21 +26,9 @@ impl ReadView {
             }
             BundleSelector::Source { sources } => {
                 for value in &package.materials {
-                    let preserved = value
-                        .details
-                        .metadata
-                        .pointer("/a_memorix/source")
-                        .and_then(serde_json::Value::as_str);
-                    let indexed = value
-                        .details
-                        .metadata
-                        .pointer("/semantic_row/fields/source")
-                        .and_then(serde_json::Value::as_str);
-                    if sources.iter().any(|source| {
-                        value.material.source.as_ref() == Some(source)
-                            || preserved == Some(source.as_str())
-                            || indexed == Some(source.as_str())
-                    }) {
+                    if material_source_name(&value.material, &value.details)
+                        .is_some_and(|source| sources.iter().any(|selected| selected == source))
+                    {
                         selected.add("material", value.material.id.as_str());
                     }
                 }
@@ -187,50 +175,8 @@ impl ReadView {
                 }
             }
             BundleSelector::ImportTask { job_id } => {
-                let job = self.job_record(job_id).await?;
-                job.require_read(ctx)?;
-                if job.kind != "import.text"
-                    || job.namespace_id.as_ref() != Some(&request.namespace_id)
-                    || job.subject_id.as_ref() != Some(&request.subject_id)
-                {
-                    return Err(Error::invalid(
-                        "bundle import task must name an import.text Job in the requested subject",
-                    ));
-                }
-                let result: ImportResult =
-                    serde_json::from_value(job.result.clone().ok_or_else(|| {
-                        Error::internal("import task has no admitted result prefix")
-                    })?)?;
-                if result.job_id != job.id {
-                    return Err(Error::internal("import result belongs to another task"));
-                }
-                if native {
-                    for input in &result.inputs {
-                        selected.add("import_input_source", input.source_id.as_str());
-                    }
-                }
-                for item in result.items {
-                    if let Some(admission) = item.admission {
-                        selected.add("material", admission.material_id.as_str());
-                        selected.add("observation", admission.observation_id.as_str());
-                        selected.add("memory", admission.memory_id.as_str());
-                        if let Some(id) = admission.formation_job_id {
-                            let formation = self.formation(&id).await?;
-                            if formation.job.namespace_id != job.namespace_id
-                                || formation.job.subject_id != job.subject_id
-                                || formation.material_id != admission.material_id
-                                || formation.observation_id != admission.observation_id
-                            {
-                                return Err(Error::internal(
-                                    "import formation result leaves its admitted record",
-                                ));
-                            }
-                            for id in formation.memory_ids {
-                                selected.add("memory", id.as_str());
-                            }
-                        }
-                    }
-                }
+                self.seed_import_task(ctx, request, package, &mut selected, job_id, native)
+                    .await?
             }
         }
         if !native {
@@ -242,7 +188,14 @@ impl ReadView {
                     .remove(&("material".into(), source.material_id.to_string()));
             }
             selected.0.retain(|(kind, _)| {
-                kind != "import_input_source" && kind != "import_record_container"
+                !matches!(
+                    kind.as_str(),
+                    "import_input_source"
+                        | "import_record_container"
+                        | "import_unit_catalog"
+                        | "import_text_unit"
+                        | "import_unit_output"
+                )
             });
         }
         // Selection and its actual producer/source closure converge inside this ReadView.
@@ -250,6 +203,7 @@ impl ReadView {
             let before = selected.0.len();
             selected.related(package);
             if native {
+                selected.import_unit_facts(package);
                 selected.import_sources(package);
             }
             selected.dependencies(package)?;

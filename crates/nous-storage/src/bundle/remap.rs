@@ -38,7 +38,10 @@ impl Remap {
             .chain(package.derived_regions.iter().map(|v| v.id.to_string()))
             .chain(package.calls.iter().map(|v| v.id.to_string()))
             .chain(package.input_sources.iter().map(|v| v.id.to_string()))
-            .chain(package.record_containers.iter().map(|v| v.id.to_string()));
+            .chain(package.record_containers.iter().map(|v| v.id.to_string()))
+            .chain(package.unit_catalogs.iter().map(|v| v.id.to_string()))
+            .chain(package.text_units.iter().map(|v| v.id.to_string()))
+            .chain(package.unit_outputs.iter().map(|v| v.id.to_string()));
         for id in identities {
             ids.entry(id)
                 .or_insert_with(|| MaterialId::new().to_string());
@@ -94,6 +97,71 @@ impl Remap {
             _ => {}
         }
         Ok(())
+    }
+    pub fn unit_catalog(&self, source: &ImportUnitCatalog) -> Result<ImportUnitCatalog> {
+        let mut value = source.clone();
+        value.id = ImportUnitCatalogId(self.id(source.id.as_str())?);
+        value.namespace_id = self.namespace.clone();
+        value.subject_id = self.subject.clone();
+        value.parent_catalog_id = source
+            .parent_catalog_id
+            .as_ref()
+            .map(|id| self.id(id.as_str()).map(ImportUnitCatalogId))
+            .transpose()?;
+        for document in &mut value.documents {
+            document.input_source_id =
+                ImportInputSourceId(self.id(document.input_source_id.as_str())?);
+        }
+        value.recorded_at = self.recorded_at.clone();
+        value.commit_seq = self.sequence;
+        Ok(value)
+    }
+    pub fn text_unit(&self, source: &ImportTextUnit) -> Result<ImportTextUnit> {
+        let mut value = source.clone();
+        value.id = ImportUnitId(self.id(source.id.as_str())?);
+        value.namespace_id = self.namespace.clone();
+        value.subject_id = self.subject.clone();
+        value.catalog_id = ImportUnitCatalogId(self.id(source.catalog_id.as_str())?);
+        value.input_source_id = ImportInputSourceId(self.id(source.input_source_id.as_str())?);
+        value.source_region_id = SourceRegionId(self.id(source.source_region_id.as_str())?);
+        value.context_region_ids = source
+            .context_region_ids
+            .iter()
+            .map(|id| self.id(id.as_str()).map(SourceRegionId))
+            .collect::<Result<_>>()?;
+        value.recorded_at = self.recorded_at.clone();
+        value.commit_seq = self.sequence;
+        Ok(value)
+    }
+    pub fn unit_output(&self, source: &ImportUnitOutput) -> Result<ImportUnitOutput> {
+        let mut value = source.clone();
+        value.id = ImportUnitOutputId(self.id(source.id.as_str())?);
+        value.namespace_id = self.namespace.clone();
+        value.subject_id = self.subject.clone();
+        value.unit_id = ImportUnitId(self.id(source.unit_id.as_str())?);
+        value.memory_ids = source
+            .memory_ids
+            .iter()
+            .map(|id| self.id(id.as_str()).map(MemoryId))
+            .collect::<Result<_>>()?;
+        value.cognition = source
+            .cognition
+            .iter()
+            .map(|reference| self.value(reference))
+            .collect::<Result<_>>()?;
+        value.semantic_call_id = source
+            .semantic_call_id
+            .as_ref()
+            .map(|id| self.id(id.as_str()).map(ModelCallId))
+            .transpose()?;
+        value.temporal_call_id = source
+            .temporal_call_id
+            .as_ref()
+            .map(|id| self.id(id.as_str()).map(ModelCallId))
+            .transpose()?;
+        value.recorded_at = self.recorded_at.clone();
+        value.commit_seq = self.sequence;
+        Ok(value)
     }
     pub fn import_input_source(&self, source: &ImportInputSource) -> Result<ImportInputSource> {
         let mut value = source.clone();

@@ -31,7 +31,7 @@ fn validate(options: &ImportTextSplitOptions) -> Result<()> {
     Ok(())
 }
 
-pub(super) fn effective(
+pub(crate) fn effective(
     mut options: ImportTextSplitOptions,
     overrides: Option<ImportTextSplitOverrides>,
 ) -> Result<ImportTextSplitOptions> {

@@ -188,7 +188,8 @@ impl App {
         request: SourceRegionRequest,
     ) -> Result<OperationReceipt> {
         let namespace = self.database.subject_namespace(&request.subject_id).await?;
-        self.sources
+        let authorized = self
+            .sources
             .resolve(
                 ctx,
                 &namespace,
@@ -198,6 +199,20 @@ impl App {
                 },
             )
             .await?;
+        if let SourceCoordinate::TextSpan { start, end } = &request.coordinate {
+            let material = self
+                .database
+                .material(&namespace, &request.material_id)
+                .await?;
+            self.sources
+                .verify_text_span(
+                    &material,
+                    *start,
+                    *end,
+                    &tokio_util::sync::CancellationToken::new(),
+                )
+                .await?;
+        }
         let key = operation_key(
             ctx,
             "media.region",
@@ -220,7 +235,9 @@ impl App {
             commit_seq: tx.commit_seq(),
         };
         let region = tx.put_source_region(region).await?;
-        tx.commit(json!(region)).await
+        let receipt = tx.commit(json!(region)).await?;
+        drop(authorized);
+        Ok(receipt)
     }
 
     pub async fn source_region(

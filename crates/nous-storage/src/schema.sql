@@ -398,6 +398,7 @@ CREATE TABLE IF NOT EXISTS structured_formation_groups (
 
 CREATE TABLE IF NOT EXISTS task_records (
  job_id TEXT PRIMARY KEY NOT NULL,namespace_id TEXT,subject_id TEXT,kind TEXT NOT NULL,
+ parent_job_id TEXT REFERENCES task_records(job_id) CHECK(parent_job_id IS NULL OR parent_job_id<>job_id),
  source_read TEXT NOT NULL CHECK(json_valid(source_read) AND json_type(source_read)='array'),
  trace_id TEXT NOT NULL,
  accepted_commit_seq INTEGER NOT NULL CHECK(accepted_commit_seq > 0),
@@ -411,6 +412,7 @@ CREATE TABLE IF NOT EXISTS task_records (
  CHECK(subject_id IS NULL OR namespace_id IS NOT NULL),CHECK((state='waiting')=(wait IS NOT NULL)),
  FOREIGN KEY(namespace_id) REFERENCES namespaces(id),FOREIGN KEY(namespace_id,subject_id) REFERENCES subjects(namespace_id,id)
 );
+CREATE INDEX IF NOT EXISTS tasks_by_parent ON task_records(parent_job_id,job_id);
 CREATE INDEX IF NOT EXISTS tasks_waiting ON task_records(state,kind,job_id);
 CREATE INDEX IF NOT EXISTS tasks_by_trace ON task_records(trace_id,job_id);
 CREATE INDEX IF NOT EXISTS tasks_by_acceptance ON task_records(accepted_commit_seq DESC,job_id DESC);

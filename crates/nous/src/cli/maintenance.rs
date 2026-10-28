@@ -74,8 +74,18 @@ impl ChangeArgs {
 }
 #[derive(Subcommand)]
 pub enum ImportCommand {
+    /// Read exact adopted objects and model provenance for one unit attempt.
+    Output(crate::cli::import_processing::OutputArgs),
+    /// Process an already frozen unit catalog through the native task pipeline.
+    Process(crate::cli::import_processing::ProcessArgs),
     /// Preview source-preserving text units without admitting data or calling models.
     Preview(crate::cli::imports::PreviewArgs),
+    /// Freeze an immutable source unit catalog.
+    Freeze(crate::cli::imports::FreezeArgs),
+    /// Inspect retained source units and their frozen configuration.
+    Catalog(crate::cli::imports::CatalogArgs),
+    /// Read the exact inputs for retrying original UnitIds.
+    RetryInputs(crate::cli::imports::RetryInputsArgs),
     /// Inspect local A-Memorix memory bundles.
     Bundle {
         #[command(subcommand)]
@@ -114,6 +124,21 @@ pub enum ImportCommand {
 }
 impl ImportCommand {
     pub fn operation(self) -> Result<Operation> {
+        if let Self::Freeze(args) = self {
+            return args.operation();
+        }
+        if let Self::Catalog(args) = self {
+            return args.operation();
+        }
+        if let Self::RetryInputs(args) = self {
+            return args.operation();
+        }
+        if let Self::Process(args) = self {
+            return args.operation();
+        }
+        if let Self::Output(args) = self {
+            return args.operation();
+        }
         if let Self::Preview(args) = self {
             return args.operation();
         }
