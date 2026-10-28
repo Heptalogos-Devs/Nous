@@ -217,8 +217,13 @@ class NousClient:
             },
         )
 
-    async def import_text(self, request: Mapping[str, Any]) -> dict:
-        return await self.request("POST", "/api/imports/text", body=dict(request))
+    async def import_text(
+        self, request: Mapping[str, Any], *, operation_id: str | None = None
+    ) -> dict:
+        """Submit a durable import; result.job_id identifies its progress and results."""
+        body = dict(request)
+        body["operation_id"] = operation_id or body.get("operation_id") or str(uuid4())
+        return await self.request("POST", "/api/imports/text", body=body)
 
     async def query(
         self,

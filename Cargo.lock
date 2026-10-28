@@ -2492,6 +2492,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
+ "futures",
  "nous-domain",
  "nous-foundation",
  "nous-retrieval",

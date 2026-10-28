@@ -87,9 +87,10 @@ pub(super) async fn execute(
             json!({"entities":input.entities,"relations":input.relations,"time_window":interval.map(|value|value.range)}),
         ),
     };
-    let result = app
-        .import_text(
+    let receipt = app
+        .submit_import(
             ctx,
+            &ulid::Ulid::generate().to_string(),
             ImportRequest {
                 namespace_id: binding.namespace_id.clone(),
                 subject_id: binding.subject_id.clone(),
@@ -101,6 +102,44 @@ pub(super) async fn execute(
             },
         )
         .await?;
+    let job_id = receipt
+        .result
+        .get("job_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| Error::internal("import submission has no job identity"))?;
+    let jobs = app
+        .wait_jobs(
+            ctx,
+            &[job_id.to_owned()],
+            policy.ingest_wait_ms,
+            &tokio_util::sync::CancellationToken::new(),
+        )
+        .await?;
+    let job = jobs
+        .first()
+        .ok_or_else(|| Error::internal("import wait has no task result"))?;
+    if job.state != JobState::Succeeded {
+        return Err(job
+            .error
+            .clone()
+            .unwrap_or_else(|| {
+                Error::new(
+                    if job.state == JobState::Cancelled {
+                        ErrorCode::Cancelled
+                    } else {
+                        ErrorCode::DependencyUnavailable
+                    },
+                    "source import has not completed",
+                )
+            })
+            .with_context("job_id", job_id)
+            .with_context("import_result", json!(job.result)));
+    }
+    let result: ImportResult = serde_json::from_value(
+        job.result
+            .clone()
+            .ok_or_else(|| Error::internal("import task has no admission results"))?,
+    )?;
     let item = result
         .items
         .first()
@@ -108,16 +147,11 @@ pub(super) async fn execute(
     if let Some(error) = &item.error {
         return Err(error.clone());
     }
-    let receipt = item
-        .receipt
+    let admission = item
+        .admission
         .as_ref()
-        .ok_or_else(|| Error::internal("source admission returned no operation receipt"))?;
-    let memory_id: MemoryId = serde_json::from_value(
-        receipt
-            .pointer("/result/memory_id")
-            .cloned()
-            .ok_or_else(|| Error::internal("source admission did not return memory identity"))?,
-    )?;
+        .ok_or_else(|| Error::internal("source import has no admitted identities"))?;
+    let memory_id = admission.memory_id.clone();
     let source: MemorySource = serde_json::from_value(
         app.retrieval_source(
             ctx,
@@ -141,7 +175,7 @@ pub(super) async fn execute(
         vec![]
     };
     Ok(
-        json!({"success":true,"stored_ids":stored_ids,"skipped_ids":skipped,"detail":if result.replayed>0 {"exists"}else{"stored"},"operation":receipt,"structured_targets":graph,"time_start":input.time_start,"time_end":input.time_end}),
+        json!({"success":true,"stored_ids":stored_ids,"skipped_ids":skipped,"detail":if result.replayed>0 {"exists"}else{"stored"},"operation":receipt,"admission":admission,"import_job_id":job_id,"structured_targets":graph,"time_start":input.time_start,"time_end":input.time_end}),
     )
 }
 fn source(input: &IngestInput) -> String {

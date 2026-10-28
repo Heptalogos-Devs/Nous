@@ -25,6 +25,8 @@ async with NousClient(
 
 `upload_file` 与 `download_material` 流式传输原件。`query(..., media=[...])` 接受精确 MediaReference，文字与媒体一起构成联合查询。`with_source_read(scope)` 创建共享连接池的受限客户端，所有操作沿相同请求元数据追加范围；调用参数继续在此范围内收窄。
 
+`import_text(request, operation_id=...)` 返回持久任务回执，`receipt["result"]["job_id"]` 指定导入任务。`wait_success([job_id])` 返回处理完成的 JobRecord；其 `result.items` 按原记录顺序保存接纳、重放或拒绝结果。成功项的 `admission` 包含准确材料、Import 事件、Memory 和可选形成任务身份。`job(job_id)` 返回 `job`、`queue`、`model_calls` 详情，`cancel_job(job_id)` 取消尚未完成的工作。已提交的记录进度在重启后继续保留。
+
 Subject 提供自己的文件时，传入 `upload_file(namespace_id, path, owner_subject_id=subject_id)`。已有异步字节流使用 `upload_stream(namespace_id, chunks, byte_len=length, owner_subject_id=subject_id)`；两者使用同一传输与接纳用例。原件归该 Subject 读取，接触或导入来源事件由后续显式操作记录。CLI 对应 `material put --namespace <Namespace UUID> --owner-subject <Subject UUID> --file <本机文件>`。
 
 `source(subject_id, reference, observation_id=...)` 读取精确认知或媒体的来源。`memory_source(memory_id, revision=...)` 读取指定历史修订；省略修订时读取当前记忆。媒体的 `observation_id` 指定本次实际接触或导入，认知自身保留形成时的来源事件。

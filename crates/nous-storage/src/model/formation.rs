@@ -9,6 +9,11 @@ impl Database {
         Ok(value)
     }
 }
+impl crate::ReadView {
+    pub async fn formation(&mut self, id: &str) -> Result<FormationRun> {
+        read(&mut self.tx, id).await
+    }
+}
 impl WriteTransaction {
     pub async fn formation(&mut self, id: &str) -> Result<FormationRun> {
         read(&mut self.tx, id).await

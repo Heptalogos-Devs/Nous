@@ -28,7 +28,7 @@ NOUS_TOKEN_FILE=填写受保护凭据文件的绝对路径
 NOUS_TRANSFER_ROOT=填写 MaiBot 实例内专用文件传输目录的绝对路径
 ```
 
-`NOUS_TOKEN_FILE` 指向令牌文件，凭据内容由 SDK 读取。五项配置均为必填。`NOUS_TRANSFER_ROOT` 由 MaiBot 进程管理，例如实例目录下的 `data/nous-transfer`；上传暂存与下载文件均在此目录内。
+`NOUS_TOKEN_FILE` 指向令牌文件，凭据内容由 SDK 读取。四项连接配置必填；记忆包上传和下载还需设置 `NOUS_TRANSFER_ROOT`。传输目录由 MaiBot 进程管理，例如实例目录下的 `data/nous-transfer`；上传暂存与下载文件均在此目录内。
 
 ```sh
 uv run --env-file "/MaiBot实例/.env" maibot init --directory "/MaiBot实例"

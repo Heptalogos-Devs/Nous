@@ -78,6 +78,14 @@ impl Selection {
     }
     pub fn all(&mut self, p: &SubjectPackage) {
         for v in &p.materials {
+            if v.details.source_type.as_deref() == Some("nous_bundle")
+                && !p
+                    .observations
+                    .iter()
+                    .any(|event| event.material_id == v.material.id)
+            {
+                continue;
+            }
             self.add("material", v.material.id.as_str());
         }
         for v in &p.observations {

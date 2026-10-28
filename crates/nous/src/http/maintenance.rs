@@ -83,6 +83,7 @@ pub enum Format {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ImportInput {
+    pub operation_id: String,
     pub namespace_id: String,
     pub subject_id: String,
     pub format: Format,
@@ -136,9 +137,16 @@ impl MaintenanceOperation {
                 .await?
             )),
             Self::Import(input) => {
-                let request: nous_domain::ImportRequest = serde_json::from_value(json!(input))
-                    .map_err(|e| Error::invalid(e.to_string()))?;
-                Ok(json!(app.import_text(ctx, request).await?))
+                let mut request = json!(input);
+                request
+                    .as_object_mut()
+                    .expect("serialized import input")
+                    .remove("operation_id");
+                let request: nous_domain::ImportRequest =
+                    serde_json::from_value(request).map_err(|e| Error::invalid(e.to_string()))?;
+                Ok(json!(
+                    app.submit_import(ctx, &input.operation_id, request).await?
+                ))
             }
         }
     }

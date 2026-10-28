@@ -6,6 +6,7 @@ use std::collections::BTreeSet;
 impl ReadView {
     pub(super) async fn select_bundle_snapshot(
         &mut self,
+        ctx: &CallContext,
         request: &ExportBundleRequest,
         package: &mut SubjectPackage,
     ) -> Result<()> {
@@ -184,11 +185,46 @@ impl ReadView {
                     select_material_observations(&mut selected, package);
                 }
             }
-            BundleSelector::ImportTask { .. } => {
-                return Err(Error::new(
-                    ErrorCode::CapabilityUnavailable,
-                    "import-task selection requires a persisted import Job with exact admitted Observation and Material results; current text imports have only per-record operation receipts",
-                ));
+            BundleSelector::ImportTask { job_id } => {
+                let job = self.job_record(job_id).await?;
+                job.require_read(ctx)?;
+                if job.kind != "import.text"
+                    || job.namespace_id.as_ref() != Some(&request.namespace_id)
+                    || job.subject_id.as_ref() != Some(&request.subject_id)
+                {
+                    return Err(Error::invalid(
+                        "bundle import task must name an import.text Job in the requested subject",
+                    ));
+                }
+                let result: ImportResult =
+                    serde_json::from_value(job.result.clone().ok_or_else(|| {
+                        Error::internal("import task has no admitted result prefix")
+                    })?)?;
+                if result.job_id != job.id {
+                    return Err(Error::internal("import result belongs to another task"));
+                }
+                for item in result.items {
+                    if let Some(admission) = item.admission {
+                        selected.add("material", admission.material_id.as_str());
+                        selected.add("observation", admission.observation_id.as_str());
+                        selected.add("memory", admission.memory_id.as_str());
+                        if let Some(id) = admission.formation_job_id {
+                            let formation = self.formation(&id).await?;
+                            if formation.job.namespace_id != job.namespace_id
+                                || formation.job.subject_id != job.subject_id
+                                || formation.material_id != admission.material_id
+                                || formation.observation_id != admission.observation_id
+                            {
+                                return Err(Error::internal(
+                                    "import formation result leaves its admitted record",
+                                ));
+                            }
+                            for id in formation.memory_ids {
+                                selected.add("memory", id.as_str());
+                            }
+                        }
+                    }
+                }
             }
         }
         // Selection and its actual producer/source closure converge inside this ReadView.

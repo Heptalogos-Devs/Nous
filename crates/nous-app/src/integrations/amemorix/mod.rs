@@ -10,6 +10,7 @@ mod time;
 mod types;
 use crate::App;
 pub use bundles::BundleInput;
+use futures::future::BoxFuture;
 use nous_domain::*;
 pub(crate) use policy::AMEMORIX;
 pub use policy::register_configuration;
@@ -33,23 +34,32 @@ impl App {
             )
             .await?
             .get(policy::AMEMORIX)?;
+        self.amemorix_operation(ctx, &request, &policy).await
+    }
+
+    fn amemorix_operation<'a>(
+        &'a self,
+        ctx: &'a CallContext,
+        request: &'a AmemorixRequest,
+        policy: &'a policy::AmemorixPolicy,
+    ) -> BoxFuture<'a, Result<Value>> {
         match &request.operation {
             AmemorixOperation::MemoryBundleAdmin(input) => {
-                bundles::execute(self, ctx, &request, input).await
+                Box::pin(bundles::execute(self, ctx, request, input))
             }
             AmemorixOperation::MemoryStats(_) => {
-                diagnostics::stats(self, ctx, &request.subject_id).await
+                Box::pin(diagnostics::stats(self, ctx, &request.subject_id))
             }
             AmemorixOperation::MemoryRuntimeAdmin(input) => {
-                diagnostics::runtime(self, ctx, &request.subject_id, input).await
+                Box::pin(diagnostics::runtime(self, ctx, &request.subject_id, input))
             }
             AmemorixOperation::SearchMemory(input) => {
-                search::execute(self, ctx, &request, input, &policy).await
+                Box::pin(search::execute(self, ctx, request, input, policy))
             }
             AmemorixOperation::IngestText(input) => {
-                ingest::execute(self, ctx, &request, input, &policy).await
+                Box::pin(ingest::execute(self, ctx, request, input, policy))
             }
-            AmemorixOperation::IngestSummary(input) => {
+            AmemorixOperation::IngestSummary(input) => Box::pin(async move {
                 let input = IngestInput {
                     external_id: input.external_id.clone(),
                     source_type: "chat_summary".into(),
@@ -68,17 +78,16 @@ impl App {
                     user_id: input.user_id.clone(),
                     group_id: input.group_id.clone(),
                 };
-                ingest::execute(self, ctx, &request, &input, &policy).await
-            }
+                ingest::execute(self, ctx, request, &input, policy).await
+            }),
             AmemorixOperation::MaintainMemory(input) => {
-                maintain::execute(self, ctx, &request, input).await
+                Box::pin(maintain::execute(self, ctx, request, input))
             }
             AmemorixOperation::GetPersonProfile(input) => {
-                profile::execute(self, ctx, &request, input).await
+                Box::pin(profile::execute(self, ctx, request, input))
             }
             AmemorixOperation::MemorySource(input) => {
-                self.retrieval_source(ctx, &request.subject_id, &input.target)
-                    .await
+                Box::pin(self.retrieval_source(ctx, &request.subject_id, &input.target))
             }
         }
     }

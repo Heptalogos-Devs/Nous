@@ -147,6 +147,7 @@ impl App {
                 async move { owner.context_steward_ready(&job).await }
             },
         )?;
+        self.register_import_tasks(&mut registry)?;
         self.register_amemorix_tasks(&mut registry)?;
         self.register_rerank_tasks(&mut registry)?;
         Ok(registry)

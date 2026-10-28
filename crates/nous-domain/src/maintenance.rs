@@ -196,14 +196,27 @@ pub struct ImportItemResult {
     pub index: usize,
     pub external_id: Option<String>,
     pub status: String,
-    pub receipt: Option<Value>,
+    pub admission: Option<ImportAdmission>,
+    pub commit_seq: Option<i64>,
     pub error: Option<Error>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImportResult {
+    pub job_id: String,
     pub items: Vec<ImportItemResult>,
     pub accepted: usize,
     pub replayed: usize,
     pub rejected: usize,
+}
+
+/// Exact objects admitted by one faithful import record operation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImportAdmission {
+    pub external_id: String,
+    pub material_id: MaterialId,
+    pub observation_id: ObservationId,
+    pub memory_id: MemoryId,
+    pub formation_job_id: Option<String>,
+    pub structured_preserved: bool,
 }

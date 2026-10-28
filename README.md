@@ -40,22 +40,23 @@ HTTP 入口为 `/api`，Streamable HTTP MCP 为 `/mcp`。`nous mcp stdio` 连接
 文本导入可直接生成可查询的忠实记忆，无需模型配置。将实际资料导出为 UTF-8 JSONL，每行包含 `external_id`、`text`，可带 `source`、`tags`、`metadata` 和 `structured`：
 
 ```powershell
-$imported = & $nous --instance $instance import text --namespace $namespace --subject $subject --file ./temp/import.jsonl --format jsonl | ConvertFrom-Json
-$imported.items | Select-Object index, status, error
-$importedMemory = $imported.items[0].receipt.result.memory_id
+$imported = & $nous --json --instance $instance import text --namespace $namespace --subject $subject --file ./temp/import.jsonl --format jsonl | ConvertFrom-Json
+$importJob = (& $nous --json --instance $instance job wait $imported.result.job_id --timeout-ms 45000 | ConvertFrom-Json)[0]
+$importJob.result.items | Select-Object index, status, error
+$importedMemory = ($importJob.result.items | Where-Object admission | Select-Object -First 1).admission.memory_id
 & $nous --instance $instance query --subject $subject '<实际资料中的主题>'
 & $nous --instance $instance memory source $importedMemory
 ```
 
-导入保存 Material、`kind=import` 的来源事件、`origin=imported` 的忠实 Memory，以及标签、metadata 和 structured。实际接触保留独立 Contact 记录。`--form-memory` 可额外提交模型派生任务。同一调用方、Subject 和 external_id 的相同载荷重放旧回执，改变载荷返回 Conflict；每条记录独立提交，结果按原顺序给出 accepted、replayed 或 rejected。
+导入先返回持久 Job，保存冻结的记录目录，再逐条接纳 Material、`kind=import` 的来源事件、`origin=imported` 的忠实 Memory，以及标签、metadata 和 structured。实际接触保留独立 Contact 记录。`--form-memory` 可额外提交模型派生任务。每条接纳与任务进度同事务提交，结果按原顺序给出 accepted、replayed 或 rejected；相同调用方、Subject 和 external_id 的相同载荷复用原接纳，改变载荷返回 Conflict。`job get/cancel` 查看或取消导入，重启继续已接纳的工作。
 
 格式支持 `text`、`jsonl`、`json`；JSON 接受记录数组、`records`、A-Memorix `paragraphs` 和 LPMM `docs`。原生记录含 external_id、text 及可选 source、source_type、event_time、observed_at、tags、metadata、structured。输入与规范化结果各限 4 MiB，最多 1000 条，单条限 1 MiB；HTTP 另受实例请求体上限约束。成熟格式中的实体、三元组和时间载荷保存在 structured，后续由相应认知领域承接。
 
 记忆变更带当前修订号，每次形成新修订和审计。以下操作冻结记忆、查看非活跃结果，再恢复：
 
 ```powershell
-$memory = & $nous --instance $instance memory get $importedMemory | ConvertFrom-Json
-$frozen = & $nous --instance $instance memory change $memory.id --action freeze --expected-revision $memory.revision --operation-id freeze-leaf | ConvertFrom-Json
+$memory = & $nous --json --instance $instance memory get $importedMemory | ConvertFrom-Json
+$frozen = & $nous --json --instance $instance memory change $memory.id --action freeze --expected-revision $memory.revision --operation-id freeze-leaf | ConvertFrom-Json
 & $nous --instance $instance query --subject $subject --include-inactive '枫叶'
 & $nous --instance $instance memory change $memory.id --action restore --expected-revision $frozen.result.revision
 & $nous --instance $instance memory audit $memory.id
@@ -66,9 +67,9 @@ $frozen = & $nous --instance $instance memory change $memory.id --action freeze 
 按批评估自动衰减时，默认每批 50 条，范围为 1..1000。返回值包含 snapshot_seq、next_cursor 和 complete，续扫同一快照直到完成：
 
 ```powershell
-$page = & $nous --instance $instance memory maintain --subject $subject --limit 50 | ConvertFrom-Json
+$page = & $nous --json --instance $instance memory maintain --subject $subject --limit 50 | ConvertFrom-Json
 while (-not $page.result.complete) {
-    $page = & $nous --instance $instance memory maintain --subject $subject --limit 50 --after $page.result.next_cursor --snapshot-seq $page.result.snapshot_seq | ConvertFrom-Json
+    $page = & $nous --json --instance $instance memory maintain --subject $subject --limit 50 --after $page.result.next_cursor --snapshot-seq $page.result.snapshot_seq | ConvertFrom-Json
 }
 ```
 
@@ -76,29 +77,29 @@ while (-not $page.result.complete) {
 
 HTTP 接口与 MCP 工具进入相同应用用例：
 
-| HTTP                                          | MCP 工具             |
-| --------------------------------------------- | -------------------- |
-| `POST /api/imports/text`                      | `import_text`        |
-| `POST /api/memories/{id}/change`              | `memory_change`      |
-| `GET /api/memories/{id}/audit?limit=50`       | `memory_audit`       |
-| `GET /api/subjects/{id}/recycle-bin?limit=50` | `memory_recycle_bin` |
-| `POST /api/subjects/{id}/maintenance`         | `memory_maintain`    |
-| `POST /api/embeddings/sync`                   | `embedding_sync`     |
-| `GET /api/embeddings/runs/{id}`               | `embedding_run`      |
-| `POST /api/query`                             | `query`              |
-| `POST /api/references`                        | `references`         |
-| `GET /api/memories/{id}/source`               | `memory_source`      |
-| `GET /api/models/calls/{id}`                  | `model_call`         |
-| `POST /api/models/contract`                   | `model_contract`     |
-| `POST /api/models/preview`                    | `model_preview`      |
-| `POST /api/prompts`                           | `prompts`            |
-| `GET /api/diagnostics`                        | `diagnostics`        |
+| HTTP                                          | MCP 工具              |
+| --------------------------------------------- | --------------------- |
+| `POST /api/imports/text`                      | `import_text`         |
+| `POST /api/memories/{id}/change`              | `memory_change`       |
+| `GET /api/memories/{id}/audit?limit=50`       | `memory_audit`        |
+| `GET /api/subjects/{id}/recycle-bin?limit=50` | `memory_recycle_bin`  |
+| `POST /api/subjects/{id}/maintenance`         | `memory_maintain`     |
+| `POST /api/embeddings/sync`                   | `embedding_sync`      |
+| `GET /api/embeddings/runs/{id}`               | `embedding_run`       |
+| `POST /api/query`                             | `query`               |
+| `POST /api/references`                        | `references`          |
+| `GET /api/memories/{id}/source`               | `memory_source`       |
+| `GET /api/models/calls/{id}`                  | `model_call`          |
+| `POST /api/models/contract`                   | `model_contract`      |
+| `POST /api/models/preview`                    | `model_preview`       |
+| `POST /api/prompts`                           | `prompts`             |
+| `GET /api/diagnostics`                        | `diagnostics`         |
 | `GET /api/subjects/{id}/diagnostics`          | `subject_diagnostics` |
-| `POST /api/traces/query`                      | `trace_records`      |
-| `GET /api/metrics`                            | Prometheus 文本      |
-| `GET /api/config`、`POST /api/config`         | `config`             |
-| `GET /api/jobs/{id}`                          | `job_get`            |
-| `POST /api/jobs/{id}/cancel`                  | `job_cancel`         |
+| `POST /api/traces/query`                      | `trace_records`       |
+| `GET /api/metrics`                            | Prometheus 文本       |
+| `GET /api/config`、`POST /api/config`         | `config`              |
+| `GET /api/jobs/{id}`                          | `job_get`             |
+| `POST /api/jobs/{id}/cancel`                  | `job_cancel`          |
 
 `.amembundle` 可在本地离线检查，无需启动实例：
 
@@ -108,7 +109,9 @@ HTTP 接口与 MCP 工具进入相同应用用例：
 & $nous import bundle inspect --file ./temp/knowledge.amembundle --details
 ```
 
-检查器承接上游 v1/v2 的知识、完整状态和图像包，核对成员校验和、语义摘要、记录引用与内容数量；默认显示 manifest、库存数量和所需领域能力。知识包管理通过 `bundle export/install/list/get/uninstall`、HTTP `/api/bundles`、MCP `bundles` 和官方 SDK `bundles` 使用相同领域操作。`export` 返回 `download_material_id`，用 `material get --output` 下载；`install --material` 使用已经流式上传的包材料，支持 `merge` 和空主体的 `restore`。
+检查器承接上游 v1/v2 的知识、完整状态和图像包，核对成员校验和、语义摘要、记录引用与内容数量；默认显示 manifest、库存数量和所需领域能力。知识包管理通过 `bundle`、HTTP `/api/bundles`、MCP `bundles` 和官方 SDK `bundles` 使用相同领域操作。`export --preview` 预览选择内容，`export` 返回 `download_material_id`，用 `material get --output` 下载。`bundle inspect --material` 检查已上传的包，`install --material` 支持 `merge` 和空主体的 `restore`，`--chat` 指定安装会话。Subject 上传自己的包时，使用 `material put --owner-subject`。
+
+默认导出原生 `.nousbundle` 完整主体快照。`--format amemorix --version <发布版本>` 导出标准 `.amembundle`，`--content-level knowledge|full` 选择知识或完整语义状态。可携带真实图片和向量；预览 manifest 中列出实际保留内容与空间采用状态。包描述中的版本用于标识所分享资料的发布。
 
 导出的归档由导出主体持有，可使用该主体的凭据直接下载。原生包保存认知修订、来源、实际模型调用和已接受的向量；恢复后可复用原向量及其生产记录。卸载撤回该包拥有的活跃认知，保留历史与仍被其他对象使用的来源，随后可重新安装。
 
@@ -219,14 +222,14 @@ Provider、Model 和角色绑定各有 `max_calls_per_day`。Provider/Model 拥�
 
 ```powershell
 & $nous --instance $instance model status
-$formation = & $nous --instance $instance memory form --subject $subject --observation $observation --operation-id first-formation | ConvertFrom-Json
+$formation = & $nous --json --instance $instance memory form --subject $subject --observation $observation --operation-id first-formation | ConvertFrom-Json
 & $nous --instance $instance job get $formation.job_ids[0]
 ```
 
 文本向量职责通过 `models.roles.embedding` 绑定资源图中的 route。配置就绪后，可显式补齐主体认知和来源标签的向量，再查询：
 
 ```powershell
-$embedding = & $nous --instance $instance embedding sync --subject $subject --operation-id first-embedding | ConvertFrom-Json
+$embedding = & $nous --json --instance $instance embedding sync --subject $subject --operation-id first-embedding | ConvertFrom-Json
 $embedding.result.jobs | ForEach-Object { & $nous --instance $instance job get $_ }
 & $nous --instance $instance query --subject $subject --mode dense '秋天有哪些植物变化？'
 & $nous --instance $instance query --subject $subject --mode vcp '秋天有哪些植物变化？'
@@ -277,14 +280,14 @@ $backup = & $nous --json --instance $instance backup create | ConvertFrom-Json
 
 ```powershell
 & $nous media schema
-$derived = & $nous --instance $instance media derive --subject $subject --observation $observation --material $material --strategy describe-then-structure | ConvertFrom-Json
+$derived = & $nous --json --instance $instance media derive --subject $subject --observation $observation --material $material --strategy describe-then-structure | ConvertFrom-Json
 & $nous --instance $instance media run $derived.job_ids[0]
 ```
 
 任务完成后，用它的精确结果形成记忆或展开来源：
 
 ```powershell
-$run = & $nous --instance $instance media run $derived.job_ids[0] | ConvertFrom-Json
+$run = & $nous --json --instance $instance media run $derived.job_ids[0] | ConvertFrom-Json
 $reference = @{ kind = 'representation'; reference = $run.result } | ConvertTo-Json -Compress
 & $nous --instance $instance memory form --subject $subject --observation $observation --source $reference
 & $nous --instance $instance media lineage --subject $subject $reference

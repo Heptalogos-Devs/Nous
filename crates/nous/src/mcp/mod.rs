@@ -541,7 +541,7 @@ impl McpService {
         .await
     }
     #[tool(
-        description = "Import faithful memories from bounded text, JSON or JSONL source records, preserving structured paragraph/LPMM units; returns per-item results and optional asynchronous model formation jobs"
+        description = "Submit a durable text, JSON or JSONL import with operation_id; returns its job_id. Inspect or wait for that Job to read exact admitted objects and optional formation jobs."
     )]
     async fn import_text(
         &self,

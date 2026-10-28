@@ -1,7 +1,7 @@
 //! Owned work retains its resources until asynchronous and blocking I/O actually stop.
 use crate::observability::{contextualize, current_trace, in_trace};
 use nous_domain::{Error, ErrorCode, Result};
-use std::future::Future;
+use std::{future::Future, pin::Pin};
 use tokio_util::sync::CancellationToken;
 use tracing::Instrument;
 
@@ -53,7 +53,10 @@ where
     let trace = current_trace();
     let span = tracing::Span::current();
     let future = async move {
-        let run = async move { work(local).await.map_err(contextualize) };
+        let run = async move {
+            let work: Pin<Box<dyn Future<Output = Result<T>> + Send>> = Box::pin(work(local));
+            work.await.map_err(contextualize)
+        };
         match trace {
             Some(trace) => in_trace(trace, run).await,
             None => run.await,

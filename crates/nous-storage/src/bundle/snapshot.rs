@@ -148,7 +148,8 @@ impl ReadView {
                 }
             }
         }
-        self.select_bundle_snapshot(request, &mut package).await?;
+        self.select_bundle_snapshot(ctx, request, &mut package)
+            .await?;
         self.authorize_bundle_snapshot(ctx, &package).await?;
         package.addresses = self.package_reference_addresses(&package).await?;
         package.validate()?;

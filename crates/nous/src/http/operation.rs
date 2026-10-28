@@ -1,4 +1,5 @@
 //! Shared typed dispatch used by HTTP, CLI and MCP.
+use futures::{FutureExt, future::BoxFuture};
 use nous_app::App;
 use nous_domain::{CallContext, Capability, Error, MaterialId, NamespaceId, SubjectId, TimePoint};
 use serde::{Deserialize, Serialize};
@@ -106,50 +107,67 @@ impl Operation {
         .map_err(|error| error.with_trace(ctx.trace_id.clone()))
     }
 
-    async fn dispatch(&self, app: &App, ctx: &CallContext) -> Result<Value, Error> {
+    fn dispatch<'a>(
+        &'a self,
+        app: &'a App,
+        ctx: &'a CallContext,
+    ) -> BoxFuture<'a, Result<Value, Error>> {
         match self {
-            Self::Reference(request) => app.reference_operation(ctx, request.clone()).await,
-            Self::SubjectDiagnostics(request) => Ok(json!(
-                app.subject_diagnostics(ctx, &request.subject_id).await?
-            )),
-            Self::Amemorix(request) => app.amemorix(ctx, *request.clone()).await,
-            Self::ReadSource(request) => app.read_retrieval_source(ctx, request.clone()).await,
-            Self::Bundle(operation) => operation.execute(app, ctx).await,
-            Self::WaitJobs(request) => Ok(json!(
-                app.wait_jobs(
-                    ctx,
-                    &request.ids,
-                    request.timeout_ms,
-                    &tokio_util::sync::CancellationToken::new()
-                )
-                .await?
-            )),
-            Self::Context(operation) => operation.execute(app, ctx).await,
-            Self::Media(operation) => operation.execute(app, ctx).await,
-            Self::Identity(request) => app.identity_request(ctx, request.clone()).await,
-            Self::Trace(request) => app.trace_records(ctx, request).await,
-            Self::Diagnostics => {
+            Self::Reference(request) => app.reference_operation(ctx, request.clone()).boxed(),
+            Self::SubjectDiagnostics(request) => async move {
+                Ok(json!(
+                    app.subject_diagnostics(ctx, &request.subject_id).await?
+                ))
+            }
+            .boxed(),
+            Self::Amemorix(request) => app.amemorix(ctx, *request.clone()).boxed(),
+            Self::ReadSource(request) => app.read_retrieval_source(ctx, request.clone()).boxed(),
+            Self::Bundle(operation) => operation.execute(app, ctx).boxed(),
+            Self::WaitJobs(request) => async move {
+                Ok(json!(
+                    app.wait_jobs(
+                        ctx,
+                        &request.ids,
+                        request.timeout_ms,
+                        &tokio_util::sync::CancellationToken::new(),
+                    )
+                    .await?
+                ))
+            }
+            .boxed(),
+            Self::Context(operation) => operation.execute(app, ctx).boxed(),
+            Self::Media(operation) => operation.execute(app, ctx).boxed(),
+            Self::Identity(request) => app.identity_request(ctx, request.clone()).boxed(),
+            Self::Trace(request) => app.trace_records(ctx, request).boxed(),
+            Self::Diagnostics => async move {
                 ctx.require_admin()?;
                 nous_foundation::observability::Observability::current()?.diagnostics()
             }
-            Self::Prompt(request) => app.prompt_request(ctx, request.clone()).await,
-            Self::ModelContract(request) => app.model_contract(ctx, request.clone()).await,
-            Self::ModelPreview(request) => app.model_preview(ctx, request.clone()).await,
-            Self::Configuration(request) => app.configuration_request(ctx, request.clone()).await,
-            Self::Structured(operation) => operation.execute(app, ctx).await,
-            Self::Maintenance(operation) => operation.execute(app, ctx).await,
-            Self::CreateBackup => app.create_backup(ctx).await,
-            Self::Cognition(operation) => operation.execute(app, ctx).await,
-            Self::Status => {
+            .boxed(),
+            Self::Prompt(request) => app.prompt_request(ctx, request.clone()).boxed(),
+            Self::ModelContract(request) => app.model_contract(ctx, request.clone()).boxed(),
+            Self::ModelPreview(request) => app.model_preview(ctx, request.clone()).boxed(),
+            Self::Configuration(request) => app.configuration_request(ctx, request.clone()).boxed(),
+            Self::Structured(operation) => operation.execute(app, ctx).boxed(),
+            Self::Maintenance(operation) => operation.execute(app, ctx).boxed(),
+            Self::CreateBackup => app.create_backup(ctx).boxed(),
+            Self::Cognition(operation) => operation.execute(app, ctx).boxed(),
+            Self::Status => async move {
                 ctx.require_admin()?;
                 app.status().await
             }
-            Self::CreateNamespace(input) => Ok(serde_json::to_value(
-                app.create_namespace(ctx, &input.operation_id, &input.name)
-                    .await?,
-            )?),
-            Self::ListNamespaces => Ok(serde_json::to_value(app.list_namespaces(ctx).await?)?),
-            Self::CreateSubject(namespace, input) => {
+            .boxed(),
+            Self::CreateNamespace(input) => async move {
+                Ok(serde_json::to_value(
+                    app.create_namespace(ctx, &input.operation_id, &input.name)
+                        .await?,
+                )?)
+            }
+            .boxed(),
+            Self::ListNamespaces => {
+                async move { Ok(serde_json::to_value(app.list_namespaces(ctx).await?)?) }.boxed()
+            }
+            Self::CreateSubject(namespace, input) => async move {
                 let capabilities = input
                     .capabilities
                     .iter()
@@ -169,41 +187,58 @@ impl Operation {
                     .await?,
                 )?)
             }
-            Self::ListSubjects(namespace) => Ok(serde_json::to_value(
-                app.list_subjects(ctx, &namespace.parse()?).await?,
-            )?),
-            Self::PutMaterial(input) => Ok(serde_json::to_value(
-                app.put_material(
-                    ctx,
-                    &input.operation_id,
-                    &input.namespace_id.parse()?,
-                    &input.text,
-                    input.source.clone(),
-                    input.event_time.clone().map(Into::into),
-                )
-                .await?,
-            )?),
-            Self::GetMaterial(id) => Ok(serde_json::to_value(
-                app.get_material(ctx, &MaterialId::from_str(id)?).await?,
-            )?),
-            Self::RecordObservation(input) => Ok(serde_json::to_value(
-                app.record_observation(
-                    ctx,
-                    &input.operation_id,
-                    &input.subject_id.parse()?,
-                    &input.material_id.parse()?,
-                    input.observed_at.clone().map(Into::into),
-                    input.origin.clone(),
-                )
-                .await?,
-            )?),
-            Self::ListObservations(subject) => Ok(serde_json::to_value(
-                app.list_observations(ctx, &SubjectId::from_str(subject)?)
+            .boxed(),
+            Self::ListSubjects(namespace) => async move {
+                Ok(serde_json::to_value(
+                    app.list_subjects(ctx, &namespace.parse()?).await?,
+                )?)
+            }
+            .boxed(),
+            Self::PutMaterial(input) => async move {
+                Ok(serde_json::to_value(
+                    app.put_material(
+                        ctx,
+                        &input.operation_id,
+                        &input.namespace_id.parse()?,
+                        &input.text,
+                        input.source.clone(),
+                        input.event_time.clone().map(Into::into),
+                    )
                     .await?,
-            )?),
-            Self::GetJob(id) => app.job(ctx, id).await,
+                )?)
+            }
+            .boxed(),
+            Self::GetMaterial(id) => async move {
+                Ok(serde_json::to_value(
+                    app.get_material(ctx, &MaterialId::from_str(id)?).await?,
+                )?)
+            }
+            .boxed(),
+            Self::RecordObservation(input) => async move {
+                Ok(serde_json::to_value(
+                    app.record_observation(
+                        ctx,
+                        &input.operation_id,
+                        &input.subject_id.parse()?,
+                        &input.material_id.parse()?,
+                        input.observed_at.clone().map(Into::into),
+                        input.origin.clone(),
+                    )
+                    .await?,
+                )?)
+            }
+            .boxed(),
+            Self::ListObservations(subject) => async move {
+                Ok(serde_json::to_value(
+                    app.list_observations(ctx, &SubjectId::from_str(subject)?)
+                        .await?,
+                )?)
+            }
+            .boxed(),
+            Self::GetJob(id) => app.job(ctx, id).boxed(),
             Self::CancelJob(id, input) => {
-                Ok(json!(app.cancel_job(ctx, &input.operation_id, id).await?))
+                async move { Ok(json!(app.cancel_job(ctx, &input.operation_id, id).await?)) }
+                    .boxed()
             }
         }
     }

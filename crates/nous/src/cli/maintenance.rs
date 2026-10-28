@@ -67,6 +67,8 @@ pub enum ImportCommand {
     /// Import faithful memories from source records; model-derived formation is optional.
     Text {
         #[arg(long)]
+        operation_id: Option<String>,
+        #[arg(long)]
         namespace: NamespaceId,
         #[arg(long)]
         subject: SubjectId,
@@ -87,6 +89,7 @@ pub enum ImportCommand {
 impl ImportCommand {
     pub fn operation(self) -> Result<Operation> {
         let Self::Text {
+            operation_id,
             namespace,
             subject,
             file,
@@ -112,6 +115,7 @@ impl ImportCommand {
         let content = String::from_utf8(bytes).context("import file must contain UTF-8 text")?;
         Ok(Operation::Maintenance(MaintenanceOperation::Import(
             ImportInput {
+                operation_id: op_id(operation_id),
                 namespace_id: namespace.to_string(),
                 subject_id: subject.to_string(),
                 format,

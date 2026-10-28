@@ -12,6 +12,7 @@ nous-retrieval.workspace = true
 npyz.workspace = true
 anyhow.workspace = true
 chrono.workspace = true
+futures.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true

@@ -21,6 +21,7 @@ pub struct AmemorixPolicy {
     pub chats: Vec<String>,
     pub excluded_source_types: Vec<String>,
     pub form_memory: bool,
+    pub ingest_wait_ms: u64,
     pub search_mode: QueryMode,
 }
 impl Default for AmemorixPolicy {
@@ -31,6 +32,7 @@ impl Default for AmemorixPolicy {
             chats: vec![],
             excluded_source_types: vec![],
             form_memory: false,
+            ingest_wait_ms: 45_000,
             search_mode: QueryMode::Hybrid,
         }
     }
@@ -56,6 +58,11 @@ impl AmemorixPolicy {
         }
     }
     pub fn validate(&self) -> Result<()> {
+        if !(1..=86_400_000).contains(&self.ingest_wait_ms) {
+            return Err(Error::invalid(
+                "A-Memorix ingest_wait_ms must be 1..86400000",
+            ));
+        }
         for value in self.chats.iter().chain(&self.excluded_source_types) {
             if value.trim().is_empty() || value.chars().any(char::is_control) {
                 return Err(Error::invalid(
