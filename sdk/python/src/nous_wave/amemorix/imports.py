@@ -1,57 +1,77 @@
-from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
-from ..errors import NousError
+from pydantic import JsonValue, TypeAdapter
+
 from ..imports import upload_import_file_documents
+from ..operations import encoded, object_value
+from ..types import JsonObject
 
 if TYPE_CHECKING:
     from .client import AMemorixAdapter
 
 
-async def import_admin(adapter: "AMemorixAdapter", *, action: str, **kwargs: Any) -> dict:
+async def import_admin(
+    adapter: "AMemorixAdapter", *, action: str, **kwargs: JsonValue
+) -> JsonObject:
     action = action.strip().lower()
     if action in {"path_aliases", "get_path_aliases"}:
         if kwargs:
             raise ValueError("path_aliases accepts no parameters")
-        return {"success": True, "path_aliases": adapter.managed_files.path_aliases()}
+        return {"success": True, "path_aliases": dict(adapter.managed_files.path_aliases())}
     if action in {"resolve", "resolve_path"}:
-        return adapter.managed_files.resolve_path(**kwargs)
+        alias = kwargs.get("alias", "raw")
+        relative = kwargs.get("relative_path", "")
+        if not isinstance(alias, str) or not isinstance(relative, str):
+            raise ValueError("alias and relative_path must be text")
+        return object_value(encoded(adapter.managed_files.resolve_path(alias, relative)))
     values = dict(kwargs)
     if action in {"create_upload", "create_raw_scan", "create_paste", "cancel", "retry_failed"}:
         values.setdefault("operation_id", str(uuid4()))
-    if action == "create_upload":
-        files = values.pop("staged_files", None) or values.pop("files", None) or values.pop("uploads", None)
-        if files is not None:
-            if "inputs" in values:
-                raise ValueError("Supply staged files or uploaded inputs, not both")
-            prepared = []
-            for value in files:
-                item = dict(value) if isinstance(value, dict) else {"path": value}
-                name = item.get("filename") or item.get("name") or Path(item.get("staged_path") or item.get("path")).name
-                if Path(name).suffix.lower() not in {".txt", ".md", ".json"}:
-                    raise NousError({"code": "CapabilityUnavailable", "message": "A-Memorix upload accepts txt/md/json; other formats use their native parser"})
-                if Path(name).suffix.lower() == ".json":
-                    item["format"] = "json"
-                prepared.append(item)
-            values["inputs"] = await upload_import_file_documents(
-                adapter.client, adapter.namespace_id, adapter.subject_id, prepared,
-                transfer_root=adapter.managed_files.root, input_format=values.get("input_mode", "text"), operation_id=values["operation_id"],
+    if action in {"create_upload", "create_raw_scan"}:
+        operation = values["operation_id"]
+        assert isinstance(operation, str)
+        if action == "create_upload":
+            files = TypeAdapter(list[str | JsonObject]).validate_python(
+                values.pop("staged_files", None)
+                or values.pop("files", None)
+                or values.pop("uploads", None)
+                or []
             )
-    elif action == "create_raw_scan":
-        alias = values.pop("alias", "raw")
-        if alias != "raw":
-            raise ValueError("raw scan requires the raw alias")
-        files = await adapter.managed_files.scan(
-            alias, values.pop("relative_path", ""), pattern=values.pop("glob", "*"), recursive=values.pop("recursive", True),
-        )
-        files = [path for path in files if path.suffix.lower() in {".txt", ".md", ".json"}]
-        values["inputs"] = await upload_import_file_documents(
-            adapter.client, adapter.namespace_id, adapter.subject_id,
-            [{"path": path, "format": "json" if path.suffix.lower() == ".json" else values.get("input_mode", "text")} for path in files],
-            transfer_root=adapter.managed_files.root, operation_id=values["operation_id"], alias=alias,
-        )
-    result = await adapter.call("memory_import_admin", {"action": action, **values})
-    if action in {"settings", "get_settings", "get_guide"} and adapter.transfer_root is not None:
-        result["settings"]["path_aliases"] = adapter.managed_files.path_aliases()
-    return result
+            if files:
+                documents = await upload_import_file_documents(
+                    adapter.client,
+                    adapter.namespace_id,
+                    adapter.subject_id,
+                    files,
+                    transfer_root=adapter.managed_files.root,
+                    operation_id=operation,
+                )
+                values["inputs"] = [encoded(document) for document in documents]
+        else:
+            alias = values.pop("alias", "raw")
+            relative = values.pop("relative_path", "")
+            pattern = values.pop("glob", "*")
+            recursive = values.pop("recursive", True)
+            if (
+                not isinstance(alias, str)
+                or alias != "raw"
+                or not isinstance(relative, str)
+                or not isinstance(pattern, str)
+                or not isinstance(recursive, bool)
+            ):
+                raise ValueError("Raw scan requires the raw alias and valid scan options")
+            files = await adapter.managed_files.scan(
+                alias, relative, pattern=pattern, recursive=recursive
+            )
+            documents = await upload_import_file_documents(
+                adapter.client,
+                adapter.namespace_id,
+                adapter.subject_id,
+                files,
+                transfer_root=adapter.managed_files.root,
+                operation_id=operation,
+                alias=alias,
+            )
+            values["inputs"] = [encoded(document) for document in documents]
+    return await adapter.call("memory_import_admin", {"action": action, **values})

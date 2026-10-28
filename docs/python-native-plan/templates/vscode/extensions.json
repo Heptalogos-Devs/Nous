@@ -1,0 +1,10 @@
+{
+  "recommendations": [
+    "ms-python.python",
+    "detachhead.basedpyright",
+    "charliermarsh.ruff",
+    "ms-python.debugpy",
+    "rust-lang.rust-analyzer"
+  ],
+  "unwantedRecommendations": ["ms-python.vscode-pylance"]
+}

@@ -4,13 +4,15 @@ import json
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 from uuid import uuid4
 
 import anyio
 import httpx
+from pydantic import JsonValue, TypeAdapter
 
 from .errors import NousError
+from .source_scope import SourceReadScope
+from .types import Download, JsonObject, QueryParam
 
 TokenProvider = str | Callable[[], str | Awaitable[str]]
 
@@ -30,11 +32,7 @@ class ClientOptions:
 class Transport:
     def __init__(self, url: str, token: TokenProvider, options: ClientOptions) -> None:
         endpoint = httpx.URL(url)
-        if (
-            endpoint.scheme not in ("http", "https")
-            or not endpoint.host
-            or endpoint.userinfo
-        ):
+        if endpoint.scheme not in ("http", "https") or not endpoint.host or endpoint.userinfo:
             raise ValueError("Nous URL must be HTTP(S) without embedded credentials")
         if (
             min(
@@ -51,9 +49,7 @@ class Transport:
         self.options = options
         self.http = httpx.AsyncClient(
             base_url=str(endpoint).rstrip("/") + "/",
-            timeout=httpx.Timeout(
-                options.timeout_seconds, connect=options.connect_timeout_seconds
-            ),
+            timeout=httpx.Timeout(options.timeout_seconds, connect=options.connect_timeout_seconds),
             proxy=options.proxy,
             verify=options.verify_tls,
             trust_env=False,
@@ -63,12 +59,12 @@ class Transport:
         await self.http.aclose()
 
     async def headers(
-        self, trace_id: str | None = None, source_read: tuple[Mapping, ...] = ()
+        self, trace_id: str | None = None, source_read: tuple[SourceReadScope, ...] = ()
     ) -> dict[str, str]:
         token = self.token() if callable(self.token) else self.token
         if inspect.isawaitable(token):
             token = await token
-        if not isinstance(token, str) or not token.strip():
+        if not token.strip():
             raise ValueError("Nous credential is empty")
         headers = {
             "Authorization": f"Bearer {token.strip()}",
@@ -78,11 +74,11 @@ class Transport:
             headers["Accept-Language"] = self.options.language
         if source_read:
             encoded = json.dumps(
-                source_read, ensure_ascii=False, separators=(",", ":")
+                [scope.model_dump(mode="json") for scope in source_read],
+                ensure_ascii=False,
+                separators=(",", ":"),
             ).encode()
-            headers["x-nous-source-read"] = (
-                base64.urlsafe_b64encode(encoded).decode().rstrip("=")
-            )
+            headers["x-nous-source-read"] = base64.urlsafe_b64encode(encoded).decode().rstrip("=")
         return headers
 
     async def request(
@@ -90,11 +86,11 @@ class Transport:
         method: str,
         path: str,
         *,
-        body: Any = None,
-        params: Mapping[str, Any] | None = None,
+        body: JsonValue = None,
+        params: Mapping[str, QueryParam] | None = None,
         trace_id: str | None = None,
-        source_read: tuple[Mapping, ...] = (),
-    ) -> Any:
+        source_read: tuple[SourceReadScope, ...] = (),
+    ) -> JsonValue:
         headers = await self.headers(trace_id, source_read)
         try:
             async with self.http.stream(
@@ -113,7 +109,7 @@ class Transport:
                 failure.context["operation_id"] = body["operation_id"]
             raise failure from error
 
-    async def decode(self, response: httpx.Response, trace_id: str) -> Any:
+    async def decode(self, response: httpx.Response, trace_id: str) -> JsonValue:
         trace_id = response.headers.get("x-nous-trace-id", trace_id)
         data = bytearray()
         async for chunk in response.aiter_bytes():
@@ -127,7 +123,7 @@ class Transport:
                 )
             data.extend(chunk)
         try:
-            value = json.loads(data)
+            value = TypeAdapter(JsonValue).validate_json(data)
         except (ValueError, UnicodeDecodeError) as error:
             raise NousError(
                 {
@@ -138,7 +134,11 @@ class Transport:
                 status_code=response.status_code,
             ) from error
         if not response.is_success:
-            detail = value.get("error", {}) if isinstance(value, dict) else {}
+            try:
+                envelope = TypeAdapter(JsonObject).validate_python(value)
+                detail = TypeAdapter(JsonObject).validate_python(envelope.get("error", {}))
+            except ValueError:
+                detail: JsonObject = {}
             raise NousError(
                 {
                     "message": f"service returned HTTP {response.status_code}",
@@ -151,12 +151,12 @@ class Transport:
 
     async def upload(
         self,
-        params: Mapping[str, Any],
+        params: Mapping[str, QueryParam],
         content: AsyncIterable[bytes],
         media_type: str,
         length: int,
-        source_read: tuple[Mapping, ...] = (),
-    ) -> Any:
+        source_read: tuple[SourceReadScope, ...] = (),
+    ) -> JsonValue:
         headers = await self.headers(source_read=source_read)
         headers.update({"Content-Type": media_type, "Content-Length": str(length)})
         try:
@@ -178,11 +178,19 @@ class Transport:
             ) from error
 
     async def download(
-        self, material_id: str, destination: Path, source_read: tuple[Mapping, ...] = ()
-    ) -> dict[str, Any]:
+        self,
+        material_id: str,
+        destination: Path,
+        source_read: tuple[SourceReadScope, ...] = (),
+        *,
+        namespace_id: str,
+        subject_id: str,
+    ) -> Download:
         headers = await self.headers(source_read=source_read)
         async with self.http.stream(
-            "GET", f"/api/materials/{material_id}/content", headers=headers
+            "GET",
+            f"/api/namespaces/{namespace_id}/subjects/{subject_id}/materials/{material_id}/content",
+            headers=headers,
         ) as response:
             if not response.is_success:
                 await self.decode(response, headers["x-nous-trace-id"])
@@ -198,13 +206,13 @@ class Transport:
                 with anyio.CancelScope(shield=True):
                     await anyio.Path(destination).unlink(missing_ok=True)
                 raise
-            return {
-                "material_id": material_id,
-                "output": str(destination),
-                "byte_len": length,
-                "media_type": response.headers.get("content-type"),
-                "content_hash": response.headers.get("x-nous-content-sha256"),
-            }
+            return Download(
+                material_id=material_id,
+                output=destination,
+                byte_len=length,
+                media_type=response.headers.get("content-type"),
+                content_hash=response.headers.get("x-nous-content-sha256"),
+            )
 
 
 def token_file(path: str | Path) -> Callable[[], Awaitable[str]]:

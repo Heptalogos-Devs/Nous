@@ -1,0 +1,60 @@
+{
+  "sources": [
+    {
+      "repository": "https://github.com/Heptalogos-Devs/Nous-Wave",
+      "commit": "412b062082afb75ccfae4c3f69fc606d3e3cc862",
+      "license": "Apache-2.0",
+      "sha256": {
+        "crates/retrieval/src/vcp/index.rs": "6df0de8e63154896fc7a97e8b22b08c0d6cc77bfe6170c6b709a2798bdadeef5",
+        "crates/retrieval/src/mechanisms/dense.rs": "af045fc2d2f074e5b8248c35764f53b55530f6b506894c92c7f998ff434d7f11"
+      },
+      "adaptation": "src/vector.rs: immutable candidate/Tag pair, native filtered search, F32 vector readback"
+    },
+    {
+      "repository": "https://github.com/unum-cloud/USearch",
+      "version": "2.26.2",
+      "commit": "f91fe5bc000222aa1af6e91daf78c2bb20b0c90e",
+      "license": "Apache-2.0",
+      "dependency": {
+        "default_features": false,
+        "metric": "Cos",
+        "scalar": "F32",
+        "index": "native HNSW"
+      },
+      "published_source_sha256": {
+        "rust/lib.rs": "7d5eafd002c9ce39ac3548b6aefdb060df8df166d9335360bf92ea721db3c6bb",
+        "rust/lib.cpp": "311b589e95754046f9072230a2ea4a1f5f437f7cb3cdb0b8309b547305d3905b",
+        "build.rs": "92753d20d50bf982c3ebf111db88c5c92e5d2d7c4cad6f19e33f65b58d5c4cb6"
+      },
+      "adaptation": "Published dependency; checked actual native search/filter/header/save/load/get APIs; no engine source copied"
+    }
+  ],
+  "serving_sources": {
+    "repository": "https://github.com/Heptalogos-Devs/Nous-Wave",
+    "commit": "412b062082afb75ccfae4c3f69fc606d3e3cc862",
+    "license": "Apache-2.0",
+    "sha256": {
+      "crates/retrieval/src/vcp/generation.rs": "364398a70eda226a361c51efca44bc40da89ab02ddc82b05a32408f8a354d748",
+      "crates/retrieval/src/vcp/graph.rs": "6bebe13dc1b1f3e1a3aac4abadccbb5071fb430e2c71bb9f0183358dd5bb3664",
+      "crates/retrieval/src/vcp/observation.rs": "9032a203a5fb06f29eb97440f342b5430993aca52f24015af1f5b243e0b4f201",
+      "crates/retrieval/src/vcp/lane.rs": "04a5baf2adfea708ef714aa9de7c402a4098ad000311435393ce6f3a56911707",
+      "crates/retrieval/src/vcp/readout.rs": "2d8d4239cff2420a529e4492a3c5821ffbf5d8e125b7d58103c4a187aaa75068"
+    },
+    "adaptation": "src/serving.rs: typed frozen source snapshot, independent root/candidate/Tag mappings, persisted current AGS/CSR assets, single-observation multi-query ANN/readout; math delegated to pinned nous-vcp kernels"
+  },
+  "adapted_modules": {
+    "vector": [
+      "src/vector.rs",
+      "src/vector/engine.rs",
+      "src/vector/persistence.rs",
+      "src/vector/snapshot.rs"
+    ],
+    "serving": [
+      "src/serving.rs",
+      "src/serving/assets.rs",
+      "src/serving/persistence.rs",
+      "src/serving/query.rs",
+      "src/serving/snapshot.rs"
+    ]
+  }
+}

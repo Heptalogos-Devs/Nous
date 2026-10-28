@@ -1,0 +1,81 @@
+# 合并到新分支根目录；包路径建立后由 uv lock 解析稳定版本。
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "nous-wave-server"
+version = "0.1.0"
+description = "Nous Wave cognitive service"
+requires-python = ">=3.14,<3.15"
+dependencies = [
+  "nous-wave", "nous-wave-native",
+  "pydantic>=2.12,<3", "pydantic-settings>=2,<3",
+  "sqlalchemy[asyncio]>=2.0,<2.1", "aiosqlite>=0.21,<1", "alembic>=1.16,<2",
+  "dbos>=3.3,<4",
+  "fastapi>=0.118,<1", "uvicorn>=0.35,<1", "mcp>=1.18,<3",
+  "typer>=0.19,<1", "rich>=14,<15",
+  "httpx[socks]>=0.28,<1", "anyio>=4,<5",
+  "pydantic-ai-slim[openai,anthropic,google]>=1,<3",
+  "jinja2>=3.1,<4", "tomlkit>=0.13,<1",
+  "structlog>=25,<27", "opentelemetry-api>=1,<2", "opentelemetry-sdk>=1,<2",
+  "platformdirs>=4,<5", "keyring>=25,<27",
+  "numpy>=2.3,<3", "pillow>=11,<13",
+  "babel>=2,<3", "fluent.runtime>=0.4,<1", "python-dateutil>=2.9,<3",
+]
+
+[project.scripts]
+nous = "nous.transports.cli:main"
+
+[dependency-groups]
+dev = [
+  "basedpyright>=1.31,<2", "ruff>=0.14,<1", "maturin>=1.9,<2",
+  "pytest>=8,<10", "debugpy>=1.8,<2", "types-python-dateutil",
+]
+
+[tool.uv.workspace]
+members = ["sdk/python", "native/python"]
+
+[tool.uv.sources]
+nous-wave = { workspace = true }
+nous-wave-native = { workspace = true }
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/nous"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"resources/prompts" = "nous/resources/prompts"
+"locales" = "nous/resources/locales"
+
+[tool.basedpyright]
+include = ["src", "sdk/python/src", "native/python/python"]
+exclude = ["temp", ".venv", "crates", "native/target", "dist"]
+venvPath = "."
+venv = ".venv"
+pythonVersion = "3.14"
+typeCheckingMode = "strict"
+reportExplicitAny = "error"
+reportMissingTypeStubs = "warning"
+executionEnvironments = [
+  { root = "sdk/python/src", pythonVersion = "3.11" },
+  { root = "src", pythonVersion = "3.14" },
+  { root = "native/python/python", pythonVersion = "3.14" },
+]
+
+[tool.ruff]
+target-version = "py314"
+line-length = 100
+extend-exclude = ["temp", ".venv", "crates", "native/target", "dist"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "B", "UP", "ASYNC"]
+
+[tool.ruff.lint.per-file-ignores]
+"*.pyi" = ["E701", "E704"]
+
+[tool.ruff.per-file-target-version]
+"sdk/python/**/*.py" = "py311"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"

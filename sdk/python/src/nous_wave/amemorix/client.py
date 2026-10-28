@@ -1,14 +1,21 @@
+"""MaiBot-compatible tool facade over actual Nous domain operations."""
+
 from collections.abc import Mapping, Sequence
 from copy import copy
 from pathlib import Path
-from typing import Any
+from typing import Literal, Self
 from uuid import uuid4
 
+from pydantic import JsonValue
+
 from ..client import NousClient
-from ..errors import NousError
+from ..contracts import ImportDocument
+from ..contracts.context import ContextTarget
 from ..files import ManagedFiles
-from .bundles import bundle_admin
-from .imports import import_admin
+from ..operations import encoded, object_value
+from ..source_scope import SourceReadScope
+from ..types import JsonObject
+from .contracts import AMemorixOperation, AMemorixRequest
 from .references import target_reference
 
 
@@ -22,9 +29,7 @@ class AMemorixAdapter:
         wait_timeout_ms: int | None = None,
         transfer_root: str | Path | None = None,
     ) -> None:
-        self.client = client
-        self.namespace_id = namespace_id
-        self.subject_id = subject_id
+        self.client, self.namespace_id, self.subject_id = client, namespace_id, subject_id
         self.wait_timeout_ms = wait_timeout_ms
         self.transfer_root = ManagedFiles(transfer_root).root if transfer_root is not None else None
 
@@ -34,54 +39,39 @@ class AMemorixAdapter:
             raise ValueError("File transfer requires an explicit transfer_root")
         return ManagedFiles(self.transfer_root)
 
-    async def upload_import_inputs(
-        self, files: Sequence[str | Path | Mapping[str, Any]], *, input_format: str | None = None,
-        operation_id: str | None = None,
-    ) -> list[dict[str, Any]]:
-        from ..imports import upload_import_inputs
-        return await upload_import_inputs(
-            self.client, self.namespace_id, self.subject_id, files,
-            transfer_root=self.managed_files.root, input_format=input_format, operation_id=operation_id,
-        )
-
-    def with_source_read(self, scope: Mapping) -> "AMemorixAdapter":
+    def with_source_read(self, scope: SourceReadScope | Mapping[str, JsonValue]) -> Self:
         bound = copy(self)
         bound.client = self.client.with_source_read(scope)
         return bound
 
-    async def call(self, tool: str, arguments: Mapping[str, Any]) -> dict:
-        result = await self.client.request(
-            "POST",
-            "/api/integrations/amemorix",
-            body={
-                "namespace_id": self.namespace_id,
-                "subject_id": self.subject_id,
-                "operation": {"tool": tool, "arguments": dict(arguments)},
-            },
+    async def upload_import_inputs(
+        self,
+        files: Sequence[str | Path | Mapping[str, JsonValue]],
+        *,
+        input_format: Literal["text", "json", "jsonl"] | None = None,
+        operation_id: str | None = None,
+    ) -> tuple[ImportDocument, ...]:
+        from ..imports import upload_import_inputs
+
+        return await upload_import_inputs(
+            self.client,
+            self.namespace_id,
+            self.subject_id,
+            files,
+            transfer_root=self.managed_files.root,
+            input_format=input_format,
+            operation_id=operation_id,
         )
-        if not isinstance(result, dict):
-            raise NousError(
-                {
-                    "code": "Internal",
-                    "message": "A-Memorix operation returned a non-object",
-                }
-            )
-        if result.get("accepted") and result.get("job_id"):
-            options = (
-                {}
-                if self.wait_timeout_ms is None
-                else {"timeout_ms": self.wait_timeout_ms}
-            )
-            jobs = await self.client.wait_success([result["job_id"]], **options)
-            result = jobs[0].get("result")
-            if not isinstance(result, dict):
-                raise NousError(
-                    {
-                        "code": "Internal",
-                        "message": "A-Memorix task has no result object",
-                    }
-                )
-        return result
+
+    async def call(self, tool: str, arguments: Mapping[str, JsonValue]) -> JsonObject:
+        command = AMemorixRequest(
+            namespace_id=self.namespace_id,
+            subject_id=self.subject_id,
+            operation=AMemorixOperation(tool=tool, arguments=dict(arguments)),
+        )
+        return object_value(
+            await self.client.request("POST", "/api/integrations/amemorix", body=encoded(command))
+        )
 
     async def search_memory(
         self,
@@ -94,22 +84,22 @@ class AMemorixAdapter:
         time_end: str | float | None = None,
         respect_filter: bool = True,
         shared_chat_ids: Sequence[str] | None = None,
-        **kwargs: Any,
-    ) -> dict:
+        **kwargs: JsonValue,
+    ) -> JsonObject:
         return await self.call(
             "search_memory",
-            dict(
-                query=query,
-                limit=limit,
-                mode=mode,
-                chat_id=chat_id,
-                person_id=person_id,
-                time_start=time_start,
-                time_end=time_end,
-                respect_filter=respect_filter,
-                shared_chat_ids=list(shared_chat_ids or ()),
+            {
+                "query": query,
+                "limit": limit,
+                "mode": mode,
+                "chat_id": chat_id,
+                "person_id": person_id,
+                "time_start": time_start,
+                "time_end": time_end,
+                "respect_filter": respect_filter,
+                "shared_chat_ids": list(shared_chat_ids or ()),
                 **kwargs,
-            ),
+            },
         )
 
     async def ingest_text(
@@ -124,31 +114,31 @@ class AMemorixAdapter:
         time_start: float | str | None = None,
         time_end: float | str | None = None,
         tags: Sequence[str] | None = None,
-        metadata: Mapping | None = None,
+        metadata: Mapping[str, JsonValue] | None = None,
         respect_filter: bool = True,
         entities: Sequence[str] | None = None,
-        relations: Sequence[Mapping] | None = None,
-        **kwargs: Any,
-    ) -> dict:
+        relations: Sequence[Mapping[str, JsonValue]] | None = None,
+        **kwargs: JsonValue,
+    ) -> JsonObject:
         return await self.call(
             "ingest_text",
-            dict(
-                external_id=external_id,
-                source_type=source_type,
-                text=text,
-                chat_id=chat_id,
-                person_ids=list(person_ids or ()),
-                participants=list(participants or ()),
-                timestamp=timestamp,
-                time_start=time_start,
-                time_end=time_end,
-                tags=list(tags or ()),
-                metadata=dict(metadata or {}),
-                respect_filter=respect_filter,
-                entities=list(entities or ()),
-                relations=[dict(item) for item in (relations or ())],
+            {
+                "external_id": external_id,
+                "source_type": source_type,
+                "text": text,
+                "chat_id": chat_id,
+                "person_ids": list(person_ids or ()),
+                "participants": list(participants or ()),
+                "timestamp": timestamp,
+                "time_start": time_start,
+                "time_end": time_end,
+                "tags": list(tags or ()),
+                "metadata": dict(metadata or {}),
+                "respect_filter": respect_filter,
+                "entities": list(entities or ()),
+                "relations": [dict(value) for value in relations or ()],
                 **kwargs,
-            ),
+            },
         )
 
     async def ingest_summary(
@@ -160,24 +150,24 @@ class AMemorixAdapter:
         time_start: float | str | None = None,
         time_end: float | str | None = None,
         tags: Sequence[str] | None = None,
-        metadata: Mapping | None = None,
+        metadata: Mapping[str, JsonValue] | None = None,
         respect_filter: bool = True,
-        **kwargs: Any,
-    ) -> dict:
+        **kwargs: JsonValue,
+    ) -> JsonObject:
         return await self.call(
             "ingest_summary",
-            dict(
-                external_id=external_id,
-                chat_id=chat_id,
-                text=text,
-                participants=list(participants or ()),
-                time_start=time_start,
-                time_end=time_end,
-                tags=list(tags or ()),
-                metadata=dict(metadata or {}),
-                respect_filter=respect_filter,
+            {
+                "external_id": external_id,
+                "chat_id": chat_id,
+                "text": text,
+                "participants": list(participants or ()),
+                "time_start": time_start,
+                "time_end": time_end,
+                "tags": list(tags or ()),
+                "metadata": dict(metadata or {}),
+                "respect_filter": respect_filter,
                 **kwargs,
-            ),
+            },
         )
 
     async def maintain_memory(
@@ -189,77 +179,77 @@ class AMemorixAdapter:
         limit: int = 50,
         *,
         operation_id: str | None = None,
-        **kwargs: Any,
-    ) -> dict:
+        **kwargs: JsonValue,
+    ) -> JsonObject:
         return await self.call(
             "maintain_memory",
-            dict(
-                action=action,
-                target=target,
-                hours=hours,
-                reason=reason,
-                limit=limit,
-                operation_id=operation_id or str(uuid4()),
+            {
+                "action": action,
+                "target": target,
+                "hours": hours,
+                "reason": reason,
+                "limit": limit,
+                "operation_id": operation_id or str(uuid4()),
                 **kwargs,
-            ),
+            },
         )
 
     async def get_person_profile(
-        self, person_id: str = "", chat_id: str = "", limit: int = 10, **kwargs: Any
-    ) -> dict:
+        self, person_id: str = "", chat_id: str = "", limit: int = 10, **kwargs: JsonValue
+    ) -> JsonObject:
         return await self.call(
             "get_person_profile",
-            dict(person_id=person_id, chat_id=chat_id, limit=limit, **kwargs),
+            {"person_id": person_id, "chat_id": chat_id, "limit": limit, **kwargs},
         )
 
-    async def memory_source(self, target: str | Mapping) -> dict:
+    async def memory_source(
+        self, target: str | Mapping[str, JsonValue] | ContextTarget
+    ) -> JsonObject:
         if isinstance(target, str) and ":" not in target:
-            memory = await self.client.request("GET", f"/api/memories/{target}")
-            target = f"memory:{memory['id']}@{memory['revision']}"
-        return await self.call("memory_source", {"target": target_reference(target)})
+            target = (await self.client.memory(target)).reference.exact()
+        return await self.call("memory_source", {"target": encoded(target_reference(target))})
 
-    async def memory_stats(self, **kwargs: Any) -> dict:
+    async def memory_stats(self, **kwargs: JsonValue) -> JsonObject:
         return await self.call("memory_stats", kwargs)
 
-    async def memory_runtime_admin(self, *, action: str, **kwargs: Any) -> dict:
+    async def memory_runtime_admin(self, *, action: str, **kwargs: JsonValue) -> JsonObject:
         return await self.call("memory_runtime_admin", {"action": action, **kwargs})
 
-    async def memory_bundle_admin(self, *, action: str, **kwargs: Any) -> dict:
+    async def memory_bundle_admin(self, *, action: str, **kwargs: JsonValue) -> JsonObject:
+        from .bundles import bundle_admin
+
         return await bundle_admin(self, action=action, **kwargs)
 
-    async def memory_source_admin(self, *, action: str, **kwargs: Any) -> dict:
-        arguments = {"action": action, **kwargs}
-        if action.strip().lower() in {"delete", "batch_delete"} and not arguments.get("operation_id"):
-            arguments["operation_id"] = str(uuid4())
-        return await self.call("memory_source_admin", arguments)
+    async def memory_source_admin(self, *, action: str, **kwargs: JsonValue) -> JsonObject:
+        values = {"action": action, **kwargs}
+        if action in {"delete", "batch_delete"}:
+            values.setdefault("operation_id", str(uuid4()))
+        return await self.call("memory_source_admin", values)
 
-    async def memory_delete_admin(self, *, action: str, **kwargs: Any) -> dict:
-        arguments = {"action": action, **kwargs}
-        if action.strip().lower() in {"execute", "restore", "purge"} and not arguments.get("request_id"):
-            arguments["request_id"] = str(uuid4())
-        return await self.call("memory_delete_admin", arguments)
+    async def memory_delete_admin(self, *, action: str, **kwargs: JsonValue) -> JsonObject:
+        values = {"action": action, **kwargs}
+        if action in {"execute", "restore", "purge"}:
+            values.setdefault("request_id", str(uuid4()))
+        return await self.call("memory_delete_admin", values)
 
-    async def memory_import_admin(self, *, action: str, **kwargs: Any) -> dict:
+    async def memory_import_admin(self, *, action: str, **kwargs: JsonValue) -> JsonObject:
+        from .imports import import_admin
+
         return await import_admin(self, action=action, **kwargs)
 
     async def invoke(
         self,
         component_name: str,
-        arguments: Mapping | None = None,
+        arguments: Mapping[str, JsonValue] | None = None,
         *,
         timeout_ms: int | None = None,
-    ) -> dict:
-        adapter = self
-        if timeout_ms is not None:
-            adapter = copy(self)
-            adapter.wait_timeout_ms = timeout_ms
+    ) -> JsonObject:
         values = dict(arguments or {})
         if component_name == "memory_profile_admin" and values.get("action") == "query":
+            component_name = "get_person_profile"
             values.pop("action")
-            return await adapter.get_person_profile(**values)
         if component_name == "memory_v5_admin":
-            action = values.get("action")
-            if action == "remember_forever":
+            if values.get("action") == "remember_forever":
                 values.update(action="protect", hours=0)
             if values.get("action") in {
                 "reinforce",
@@ -270,28 +260,23 @@ class AMemorixAdapter:
                 "forget",
                 "recycle_bin",
             }:
-                return await adapter.maintain_memory(**values)
-        functions = {
-            "memory_source_admin": adapter.memory_source_admin,
-            "memory_delete_admin": adapter.memory_delete_admin,
-            "memory_import_admin": adapter.memory_import_admin,
-            "memory_stats": adapter.memory_stats,
-            "memory_runtime_admin": adapter.memory_runtime_admin,
-            "memory_bundle_admin": adapter.memory_bundle_admin,
-            "search_memory": adapter.search_memory,
-            "ingest_text": adapter.ingest_text,
-            "ingest_summary": adapter.ingest_summary,
-            "maintain_memory": adapter.maintain_memory,
-            "get_person_profile": adapter.get_person_profile,
-            "memory_source": adapter.memory_source,
-        }
-        function = functions.get(component_name)
-        if function is None:
-            raise NousError(
-                {
-                    "code": "CapabilityUnavailable",
-                    "message": "This A-Memorix operation requires its domain service",
-                    "context": {"tool": component_name, "action": values.get("action")},
-                }
-            )
-        return await function(**values)
+                component_name = "maintain_memory"
+                values.setdefault("operation_id", str(uuid4()))
+        if component_name == "maintain_memory":
+            values.setdefault("operation_id", str(uuid4()))
+        if component_name == "memory_import_admin":
+            action = values.pop("action", None)
+            if not isinstance(action, str):
+                raise ValueError("Import administration requires action")
+            return await self.memory_import_admin(action=action, **values)
+        if component_name == "memory_bundle_admin":
+            action = values.pop("action", None)
+            if not isinstance(action, str):
+                raise ValueError("Bundle administration requires action")
+            return await self.memory_bundle_admin(action=action, **values)
+        if timeout_ms is not None:
+            import anyio
+
+            with anyio.fail_after(timeout_ms / 1000):
+                return await self.call(component_name, values)
+        return await self.call(component_name, values)

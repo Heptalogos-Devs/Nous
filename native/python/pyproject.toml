@@ -1,0 +1,26 @@
+# 目标位置 native/python/pyproject.toml。
+[build-system]
+requires = ["maturin>=1.9,<2"]
+build-backend = "maturin"
+
+[project]
+name = "nous-wave-native"
+version = "0.1.0"
+license = "CC-BY-NC-SA-4.0 AND Apache-2.0"
+license-files = ["python/nous_native/licenses/*"]
+requires-python = ">=3.14,<3.15"
+dependencies = ["numpy>=2.3,<3"]
+
+[tool.maturin]
+python-source = "python"
+module-name = "nous_native._core"
+bindings = "pyo3"
+
+[tool.uv]
+cache-keys = [
+  { file = "pyproject.toml" }, { file = "Cargo.toml" },
+  { file = "../Cargo.toml" }, { file = "../Cargo.lock" },
+  { file = "src/**/*.rs" }, { file = "../vcp/src/**/*.rs" },
+  { file = "../retrieval/src/**/*.rs" }, { file = "../nousql-syntax/src/**/*.rs" },
+  { file = "python/**/*.pyi" },
+]

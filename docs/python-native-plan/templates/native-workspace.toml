@@ -1,0 +1,22 @@
+# 目标 native/Cargo.toml；workspace.dependencies 从实际采用的原生 crates 收敛。
+[workspace]
+members = ["vcp", "retrieval", "nousql-syntax", "python"]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97"
+
+[profile.dev]
+debug = 0
+incremental = true
+
+[profile.release]
+strip = "debuginfo"
+lto = "thin"
+
+# 需要原生调试时使用 --profile native-debug。
+[profile.native-debug]
+inherits = "dev"
+debug = 1

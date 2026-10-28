@@ -2,3 +2,15 @@
 /.env
 /.env.*
 /target/
+
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+dist/
+*.egg-info/
+
+/native/python/python/nous_native/_core*.so
+/native/python/python/nous_native/_core*.pyd
+/native/python/python/nous_native/_core*.dll

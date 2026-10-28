@@ -1,0 +1,280 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Nous Wave · 认知工作台</title>
+    <link rel="stylesheet" href="/assets/workbench.css" />
+    <link rel="stylesheet" href="/assets/responsive.css">
+    <script type="module" src="/assets/workbench.js"></script>
+  </head>
+  <body>
+    <section id="login" class="login">
+      <form id="connect-form" class="login-form">
+        <p class="wordmark">Nous Wave</p>
+        <h1>连接你的认知库</h1>
+        <label
+          >实例访问令牌<input
+            id="token"
+            type="password"
+            autocomplete="off"
+            required
+            autofocus /></label
+        ><button type="submit">连接</button>
+        <p id="login-error" role="alert"></p>
+      </form>
+    </section>
+    <div id="workspace" hidden>
+      <aside class="sidebar">
+        <a href="#search" class="wordmark">Nous Wave<span>认知工作台</span></a>
+        <div class="scope">
+          <label>命名空间<select id="namespace"></select></label
+          ><label>主体<select id="subject"></select></label
+          ><button id="new-entity" class="subtle">＋ 创建命名空间或主体</button>
+        </div>
+        <nav aria-label="主导航">
+          <a href="#search" data-page="search">认知库<span>01</span></a
+          ><a href="#imports" data-page="imports">接纳资料<span>02</span></a
+          ><a href="#sources" data-page="sources">来源与恢复<span>03</span></a
+          ><a href="#contexts" data-page="contexts">工作上下文<span>04</span></a
+          ><a href="#jobs" data-page="jobs">持久任务<span>05</span></a
+          ><a href="#models" data-page="models">模型与角色<span>06</span></a
+          ><a href="#prompts" data-page="prompts">Prompt<span>07</span></a
+          ><a href="#backups" data-page="backups">实例备份<span>08</span></a>
+        </nav>
+        <footer>
+          <span id="connection">已连接</span><button id="logout" class="subtle">断开连接</button>
+        </footer>
+      </aside>
+      <main>
+        <header class="topbar">
+          <span id="breadcrumb">认知库</span><span id="instance-status"></span>
+        </header>
+        <div id="notice" role="status" hidden></div>
+        <section data-panel="search">
+          <div class="page-heading">
+            <div>
+              <p class="eyebrow">KNOWLEDGE</p>
+              <h1>认知库</h1>
+              <p>沿着记忆、关系与来源，找到当前需要的理解。</p>
+            </div>
+            <button id="refresh-query" class="secondary">刷新</button>
+          </div>
+          <form id="query-form" class="query-bar">
+            <input id="query" placeholder="输入文字、NousQL 或精确引用…" aria-label="查询" /><select
+              id="mode"
+              aria-label="检索模式"
+            >
+              <option value="lexical">中文词项</option>
+              <option value="hybrid">混合检索</option>
+              <option value="dense">语义向量</option>
+              <option value="vcp">VCP</option></select
+            ><select id="domain" aria-label="返回域">
+              <option value="cognition">认知</option>
+              <option value="media">媒体</option>
+              <option value="both">认知与媒体</option></select
+            ><button>查询</button>
+          </form>
+          <div class="results-heading">
+            <span id="result-count">尚未查询</span><span id="coverage"></span>
+          </div>
+          <div class="split-view">
+            <div id="results" class="result-list">
+              <div class="empty">
+                <h2>从一次查询开始</h2>
+                <p>也可以先接纳一份真实资料。</p>
+                <a href="#imports">接纳资料 →</a>
+              </div>
+            </div>
+            <aside id="detail" class="detail">
+              <p class="muted">选择一条结果查看正文、五轴时间与来源。</p>
+            </aside>
+          </div>
+        </section>
+        <section data-panel="imports" hidden>
+          <div class="page-heading">
+            <div>
+              <p class="eyebrow">MATERIAL</p>
+              <h1>接纳资料</h1>
+              <p>保留原件、精确来源和实际形成结果。</p>
+            </div>
+          </div>
+          <form id="import-form" class="form-sheet">
+            <label class="file-drop"
+              >选择文字、图片、音频或视频<input id="import-files" type="file" multiple required
+            /></label>
+            <div class="form-grid">
+              <label
+                >文字处理<select id="llm">
+                  <option value="true">模型形成</option>
+                  <option value="false">保留原文记忆</option>
+                </select></label
+              ><label
+                >向量完成条件<select id="vectors">
+                  <option value="required">等待向量完成</option>
+                  <option value="disabled">暂不生成向量</option>
+                  <option value="metadata_allowed">允许稍后补齐</option>
+                </select></label
+              ><label
+                >媒体解释<select id="media-strategy">
+                  <option value="native">直接结构化</option>
+                  <option value="description">自由描述</option>
+                  <option value="description_then_native">描述后结合原媒体结构化</option>
+                </select></label
+              >
+            </div>
+            <label
+              >媒体说明<textarea
+                id="media-instruction"
+                rows="3"
+                placeholder="希望记住什么？保留材料中的语言和来源。"
+              ></textarea></label
+            ><button type="submit">接纳所选资料</button>
+            <div id="import-status" aria-live="polite"></div>
+          </form>
+        </section>
+        <section data-panel="sources" hidden>
+          <div class="page-heading">
+            <div>
+              <p class="eyebrow">PROVENANCE</p>
+              <h1>来源与恢复</h1>
+              <p>查看原件如何支持认知，以及撤回后会发生的变化。</p>
+            </div>
+            <button id="refresh-sources" class="secondary">刷新</button>
+          </div>
+          <div id="source-list"></div>
+          <form id="source-action" class="action-sheet">
+            <label
+              >操作原因<input id="source-reason" required placeholder="说明本次调整的原因"
+            /></label>
+            <div class="button-row">
+              <button type="button" id="source-preview" class="secondary">预览撤回影响</button
+              ><button name="action" value="trash">撤回来源</button
+              ><button name="action" value="restore" class="secondary">恢复来源</button
+              ><button name="action" value="purge" class="danger">永久清除</button>
+            </div>
+            <div id="source-plan"></div>
+          </form>
+        </section>
+        <section data-panel="contexts" hidden>
+          <div class="page-heading">
+            <div>
+              <p class="eyebrow">WORKING CONTEXT</p>
+              <h1>工作上下文</h1>
+              <p>准备当前任务需要的认知，并记录实际使用。</p>
+            </div>
+          </div>
+          <form id="context-form" class="form-sheet">
+            <label>用途<input id="context-purpose" required placeholder="这次工作的目标" /></label
+            ><label
+              >精确认知引用<textarea
+                id="context-refs"
+                rows="4"
+                placeholder="每行一个 kind:id@revision"
+                required
+              ></textarea></label
+            ><label
+              >上下文类型<select id="context-kind">
+                <option value="work">工作</option>
+                <option value="resident">常驻</option>
+                <option value="active">活动</option>
+                <option value="managed">受管</option>
+              </select></label
+            ><button>接纳上下文</button>
+          </form>
+          <div id="context-result"></div>
+        </section>
+        <section data-panel="jobs" hidden>
+          <div class="page-heading">
+            <div>
+              <p class="eyebrow">DURABLE WORK</p>
+              <h1>持久任务</h1>
+              <p>任务进度来自实际执行，重启后继续。</p>
+            </div>
+            <button id="refresh-jobs" class="secondary">刷新</button>
+          </div>
+          <div id="job-list"></div>
+        </section>
+        <section data-panel="models" hidden>
+          <div class="page-heading">
+            <div>
+              <p class="eyebrow">MODEL RESOURCES</p>
+              <h1>模型与角色</h1>
+              <p>提供商连接、模型能力与角色路由。</p>
+            </div>
+            <button id="refresh-models" class="secondary">刷新</button>
+          </div>
+          <form id="models-form">
+            <div id="providers"></div>
+            <div id="roles"></div>
+            <details>
+              <summary>完整资源配置</summary>
+              <textarea
+                id="models-json"
+                class="code-editor"
+                rows="18"
+                spellcheck="false"
+              ></textarea>
+            </details>
+            <button>保存并在后续调用生效</button>
+          </form>
+          <h2>实际模型调用</h2>
+          <div id="call-list"></div>
+        </section>
+        <section data-panel="prompts" hidden>
+          <div class="page-heading">
+            <div>
+              <p class="eyebrow">PROMPTS</p>
+              <h1>Prompt</h1>
+              <p>编辑、预览和恢复实际使用的模板。</p>
+            </div>
+          </div>
+          <form id="prompt-form" class="form-sheet">
+            <label>模板 ID<input id="prompt-id" value="formation" required /></label
+            ><button type="button" id="load-prompt" class="secondary">读取模板</button
+            ><label
+              >模板正文<textarea
+                id="prompt-template"
+                class="code-editor"
+                rows="15"
+                required
+              ></textarea></label
+            ><button>保存新修订并激活</button>
+            <p id="prompt-revision" class="muted"></p>
+          </form>
+          <div id="prompt-history"></div>
+        </section>
+        <section data-panel="backups" hidden>
+          <div class="page-heading">
+            <div>
+              <p class="eyebrow">INSTANCE</p>
+              <h1>实例备份</h1>
+              <p>保存一致的认知数据库、持久任务与全部保留原件。</p>
+            </div>
+          </div>
+          <div class="form-sheet">
+            <h2>创建在线备份</h2>
+            <p>当前实例可继续处理其他工作。</p>
+            <button id="create-backup">创建备份</button>
+            <div id="backup-result"></div>
+          </div>
+        </section>
+      </main>
+    </div>
+    <dialog id="entity-dialog">
+      <form id="entity-form">
+        <h2>创建</h2>
+        <label
+          >类型<select id="entity-kind">
+            <option value="subject">当前命名空间下的主体</option>
+            <option value="namespace">命名空间</option>
+          </select></label
+        ><label>名称<input id="entity-name" required /></label>
+        <div class="button-row">
+          <button>创建</button
+          ><button type="button" id="close-dialog" class="secondary">取消</button>
+        </div>
+      </form>
+    </dialog>
+  </body>
+</html>

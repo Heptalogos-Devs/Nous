@@ -1,0 +1,1 @@
+"""Nous Wave cognitive service."""

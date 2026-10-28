@@ -1,0 +1,22 @@
+{
+  "python.defaultInterpreterPath": "${workspaceFolder}/.venv",
+  "python.languageServer": "None",
+  "[python]": {
+    "editor.defaultFormatter": "charliermarsh.ruff",
+    "editor.formatOnSave": true,
+    "editor.codeActionsOnSave": {
+      "source.organizeImports.ruff": "explicit"
+    }
+  },
+  "ruff.nativeServer": "on",
+  "rust-analyzer.linkedProjects": ["native/Cargo.toml"],
+  "rust-analyzer.check.command": "clippy",
+  "rust-analyzer.cargo.extraEnv": {
+    "CARGO_TARGET_DIR": "${workspaceFolder}/temp/build/native"
+  },
+  "files.watcherExclude": {
+    "**/temp/**": true,
+    "**/.venv/**": true,
+    "**/target/**": true
+  }
+}

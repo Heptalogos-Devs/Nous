@@ -1,114 +1,195 @@
+"""Upload exact originals and pass native format/identity to the import owner."""
+
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Literal
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
+from pydantic import JsonValue
+
+from .contracts import AdmitFiles, ImportDocument, ImportResult
 from .files import ManagedFiles, file_name
+from .operations import encoded
+from .types import LocalImportFile, SkippedFiles
 
 if TYPE_CHECKING:
     from .client import NousClient
 
 
-def _local_input(managed: ManagedFiles, value: str | Path | Mapping[str, Any]) -> tuple[dict, Path]:
-    item = dict(value) if isinstance(value, Mapping) else {"path": value}
-    raw_path = item.get("staged_path") or item.get("path")
-    if raw_path is None:
+def _local_input(
+    managed: ManagedFiles, value: str | Path | Mapping[str, JsonValue]
+) -> tuple[LocalImportFile, Path]:
+    item = (
+        LocalImportFile.model_validate(value)
+        if isinstance(value, Mapping)
+        else LocalImportFile(path=Path(value))
+    )
+    path = item.staged_path or item.path
+    if path is None:
         raise ValueError("Import file requires staged_path or path")
-    return item, managed.local_file(raw_path)
+    return item, managed.local_file(path)
 
 
 async def upload_import_inputs(
-    client: "NousClient", namespace_id: str, subject_id: str,
-    files: Sequence[str | Path | Mapping[str, Any]], *, transfer_root: str | Path,
-    input_format: str | None = None,
+    client: "NousClient",
+    namespace_id: str,
+    subject_id: str,
+    files: Sequence[str | Path | Mapping[str, JsonValue]],
+    *,
+    transfer_root: str | Path,
+    input_format: Literal["text", "json", "jsonl"] | None = None,
     operation_id: str | None = None,
-) -> list[dict[str, Any]]:
+) -> tuple[ImportDocument, ...]:
     managed = ManagedFiles(transfer_root)
-    documents = []
-    for value in files:
+    documents: list[ImportDocument] = []
+    for index, value in enumerate(files):
         item, path = _local_input(managed, value)
-        name = file_name(item.get("filename") or item.get("name") or path.name)
-        format_ = item.get("format") or input_format or {
-            ".txt": "text", ".md": "text", ".json": "json", ".jsonl": "jsonl",
-        }.get(Path(name).suffix.lower())
+        name = file_name(item.filename or item.name or path.name)
+        format_ = (
+            item.format
+            or input_format
+            or {".txt": "text", ".md": "text", ".json": "json", ".jsonl": "jsonl"}.get(
+                Path(name).suffix.lower()
+            )
+        )
         if format_ not in {"text", "json", "jsonl"}:
             raise ValueError("Import file format must be text, json or jsonl")
-        source = item.get("source", name)
-        if source is not None and not isinstance(source, str):
-            raise ValueError("Import source must be text or None")
-        documents.append((path, name, format_, source))
+        receipt = await client.upload_file(
+            namespace_id,
+            path,
+            owner_subject_id=subject_id,
+            media_type={
+                "text": "text/plain",
+                "json": "application/json",
+                "jsonl": "application/x-ndjson",
+            }[format_],
+            source=name,
+            operation_id=str(
+                uuid5(
+                    NAMESPACE_URL,
+                    f"nous-wave:import-upload:{namespace_id}:{subject_id}:{operation_id}:{index}",
+                )
+            )
+            if operation_id is not None
+            else None,
+        )
+        documents.append(
+            ImportDocument.model_validate(
+                {
+                    "material_id": receipt.result.id,
+                    "filename": name,
+                    "format": format_,
+                    "source_type": item.source or "document",
+                    "file_identity": item.file_identity,
+                }
+            )
+        )
     if not documents:
         raise ValueError("Select at least one import file")
-    inputs = []
-    for index, (path, name, format_, source) in enumerate(documents):
-        receipt = await client.upload_file(
-            namespace_id, path, owner_subject_id=subject_id,
-            media_type="application/octet-stream", source=name,
-            operation_id=str(uuid5(NAMESPACE_URL, f"nous-wave:import-upload:{namespace_id}:{subject_id}:{operation_id}:{index}"))
-                if operation_id is not None else None,
-        )
-        inputs.append({"name": name, "format": format_, "source": source,
-                       "input": {"kind": "material", "material_id": receipt["result"]["id"]}})
-    return inputs
+    return tuple(documents)
 
 
 async def upload_import_file_documents(
-    client: "NousClient", namespace_id: str, subject_id: str,
-    files: Sequence[str | Path | Mapping[str, Any]], *, transfer_root: str | Path,
-    input_format: str | None = None, operation_id: str | None = None,
+    client: "NousClient",
+    namespace_id: str,
+    subject_id: str,
+    files: Sequence[str | Path | Mapping[str, JsonValue]],
+    *,
+    transfer_root: str | Path,
+    input_format: Literal["text", "json", "jsonl"] | None = None,
+    operation_id: str | None = None,
     alias: str | None = None,
-) -> list[dict[str, Any]]:
-    """Upload file originals and pair documents with explicit or alias-relative identities."""
+) -> tuple[ImportDocument, ...]:
     managed = ManagedFiles(transfer_root)
-    identities = []
+    identities: list[str | None] = []
     for value in files:
         item, path = _local_input(managed, value)
-        identity = item.get("file_identity")
-        if identity is not None and not isinstance(identity, str):
-            raise ValueError("file_identity must be text or None")
-        if alias is not None:
-            alias_identity = managed.file_identity(alias, path)
-            identity = identity if identity is not None else alias_identity
-        identities.append(identity)
+        identities.append(
+            item.file_identity
+            or (managed.file_identity(alias, path) if alias is not None else None)
+        )
     documents = await upload_import_inputs(
-        client, namespace_id, subject_id, files, transfer_root=transfer_root,
-        input_format=input_format, operation_id=operation_id,
+        client,
+        namespace_id,
+        subject_id,
+        files,
+        transfer_root=transfer_root,
+        input_format=input_format,
+        operation_id=operation_id,
     )
-    return [{"document": document, "file_identity": identity}
-            for document, identity in zip(documents, identities, strict=True)]
+    return tuple(
+        document.model_copy(update={"file_identity": identity})
+        for document, identity in zip(documents, identities, strict=True)
+    )
 
 
 async def import_files(
-    client: "NousClient", namespace_id: str, subject_id: str,
-    files: Sequence[str | Path | Mapping[str, Any]], *, transfer_root: str | Path,
-    input_format: str | None = None, form_memory: bool = False, completion: str = "accepted",
-    origin: Mapping[str, Any] | None = None, operation_id: str | None = None,
-) -> dict:
-    if completion not in {"accepted", "formed"}:
-        raise ValueError("Import completion must be accepted or formed")
+    client: "NousClient",
+    namespace_id: str,
+    subject_id: str,
+    files: Sequence[str | Path | Mapping[str, JsonValue]],
+    *,
+    transfer_root: str | Path,
+    input_format: Literal["text", "json", "jsonl"] | None = None,
+    form_memory: bool = False,
+    completion: Literal["accepted", "formed"] = "accepted",
+    origin: Mapping[str, str] | None = None,
+    operation_id: str | None = None,
+) -> ImportResult | SkippedFiles:
     if completion == "formed" and not form_memory:
         raise ValueError("formed import completion requires form_memory=True")
-    operation_id = operation_id or str(uuid4())
-    inputs = await upload_import_inputs(
-        client, namespace_id, subject_id, files,
-        transfer_root=transfer_root, input_format=input_format, operation_id=operation_id,
+    operation = operation_id or str(uuid4())
+    documents = await upload_import_inputs(
+        client,
+        namespace_id,
+        subject_id,
+        files,
+        transfer_root=transfer_root,
+        input_format=input_format,
+        operation_id=operation,
     )
-    return await client.import_text({
-        "namespace_id": namespace_id, "subject_id": subject_id, "inputs": inputs,
-        "form_memory": form_memory, "completion": completion,
-        "origin": dict(origin) if origin is not None else None,
-    }, operation_id=operation_id)
+    inputs = tuple(
+        document.model_copy(update={"origin": dict(origin or {})}) for document in documents
+    )
+    command = AdmitFiles.model_validate(
+        {
+            "operation_id": operation,
+            "inputs": [encoded(document) for document in inputs],
+            "llm_enabled": form_memory,
+            "vectors": "metadata_allowed" if form_memory else "disabled",
+        }
+    )
+    return await client.admit_documents(namespace_id, subject_id, command)
 
 
 async def import_directory(
-    client: "NousClient", namespace_id: str, subject_id: str, *, transfer_root: str | Path,
-    alias: str = "raw", relative_path: str = "", pattern: str = "*", recursive: bool = True,
-    input_format: str | None = None, form_memory: bool = False, completion: str = "accepted",
-    origin: Mapping[str, Any] | None = None, operation_id: str | None = None,
-) -> dict:
-    files = await ManagedFiles(transfer_root).scan(alias, relative_path, pattern=pattern, recursive=recursive)
+    client: "NousClient",
+    namespace_id: str,
+    subject_id: str,
+    *,
+    transfer_root: str | Path,
+    alias: str = "raw",
+    relative_path: str = "",
+    pattern: str = "*",
+    recursive: bool = True,
+    input_format: Literal["text", "json", "jsonl"] | None = None,
+    form_memory: bool = False,
+    completion: Literal["accepted", "formed"] = "accepted",
+    origin: Mapping[str, str] | None = None,
+    operation_id: str | None = None,
+) -> ImportResult | SkippedFiles:
+    files = await ManagedFiles(transfer_root).scan(
+        alias, relative_path, pattern=pattern, recursive=recursive
+    )
     return await import_files(
-        client, namespace_id, subject_id, files,
-        transfer_root=transfer_root, input_format=input_format, form_memory=form_memory,
-        completion=completion, origin=origin, operation_id=operation_id,
+        client,
+        namespace_id,
+        subject_id,
+        files,
+        transfer_root=transfer_root,
+        input_format=input_format,
+        form_memory=form_memory,
+        completion=completion,
+        origin=origin,
+        operation_id=operation_id,
     )

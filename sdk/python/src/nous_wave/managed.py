@@ -1,58 +1,47 @@
+"""Apply prepared contexts and attest actual complete host input before invocation."""
+
 from __future__ import annotations
 
 import hashlib
-import logging
 from collections.abc import Callable, Mapping, Sequence
 from copy import deepcopy
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Generic, TypeVar
+from typing import TYPE_CHECKING, Generic, Literal, TypeVar
 from uuid import NAMESPACE_URL, uuid4, uuid5
 from weakref import WeakKeyDictionary
 
 import anyio
+from pydantic import JsonValue
 
-from .errors import NousError
+from .contracts import QueryRequest
+from .contracts.context import (
+    ContextAdmission,
+    ContextAdmissionCommand,
+    ContextCursor,
+    ContextPrepare,
+    ContextProjection,
+    ContextReportResult,
+    ContextSegment,
+    ContextTarget,
+    ContextUsage,
+    ContextUse,
+    EpistemicView,
+    HostInputMeasurement,
+    ManagedContextResponse,
+)
+from .source_scope import SourceReadScope
 
 if TYPE_CHECKING:
     from .client import NousClient
 
 T = TypeVar("T")
-logger = logging.getLogger(__name__)
-
-
-@dataclass(frozen=True)
-class HostInputMeasurement:
-    input_tokens: int
-    reserved_output_tokens: int
-    context_window_tokens: int
-    source: str
-
-    def validate(self) -> None:
-        values = (
-            self.input_tokens,
-            self.reserved_output_tokens,
-            self.context_window_tokens,
-        )
-        if (
-            any(type(value) is not int or value < 0 for value in values)
-            or not self.context_window_tokens
-        ):
-            raise ValueError(
-                "token measurements must be nonnegative integers with a positive window"
-            )
-        if self.input_tokens + self.reserved_output_tokens > self.context_window_tokens:
-            raise ValueError(
-                "the complete rendered input and reserved output exceed the model window"
-            )
-        if not self.source.strip():
-            raise ValueError("supply the actual host measurement source")
 
 
 @dataclass(frozen=True, eq=False)
 class PreparedContext:
     preparation_id: str
-    response: dict[str, Any]
+    response: ManagedContextResponse
 
 
 @dataclass(frozen=True, eq=False)
@@ -64,37 +53,35 @@ class AppliedContext(Generic[T]):
     rendered_digest: str
 
 
+@dataclass
+class _Application:
+    projection: ContextProjection
+    serialize_current: Callable[[], bytes]
+    admissions: dict[str, str] = field(default_factory=dict)
+
+
 class ManagedBinding:
     def __init__(
         self,
         client: NousClient,
         *,
+        namespace_id: str,
         subject_id: str,
         session_id: str,
         consumer_id: str,
         instance_id: str,
-        source_read: Mapping | None = None,
+        source_read: SourceReadScope | Mapping[str, JsonValue] | None = None,
     ) -> None:
-        self.client = (
-            client.with_source_read(source_read) if source_read is not None else client
-        )
-        self.subject_id = subject_id
-        self.session_id = session_id
-        self.consumer_id = consumer_id
-        self.instance_id = instance_id
-        self._cursor: dict | None = None
-        self._projection: dict | None = None
+        self.client = client.with_source_read(source_read) if source_read is not None else client
+        self.namespace_id, self.subject_id = namespace_id, subject_id
+        self.session_id, self.consumer_id, self.instance_id = session_id, consumer_id, instance_id
+        self._cursor: ContextCursor | None = None
+        self._projection: ContextProjection | None = None
         self._pending: PreparedContext | None = None
-        self._pending_snapshot: dict | None = None
         self._preparation_id: str | None = None
         self._preparing = False
         self._closed = False
-        self._applications: WeakKeyDictionary[AppliedContext, tuple[dict, Callable]] = (
-            WeakKeyDictionary()
-        )
-        self._admissions: WeakKeyDictionary[AppliedContext, dict[str, str]] = (
-            WeakKeyDictionary()
-        )
+        self._applications: WeakKeyDictionary[object, _Application] = WeakKeyDictionary()
 
     def _assert_open(self) -> None:
         if self._closed:
@@ -103,11 +90,11 @@ class ManagedBinding:
     async def prepare(
         self,
         *,
-        usage: Mapping,
+        usage: ContextUsage | Mapping[str, JsonValue],
         max_items: int,
         max_text_bytes: int,
-        current_sources: Sequence[Mapping] = (),
-        query: Mapping | None = None,
+        current_sources: Sequence[ContextTarget] = (),
+        query: QueryRequest | None = None,
         operation_id: str | None = None,
         timeout_ms: int = 45000,
     ) -> PreparedContext:
@@ -117,59 +104,31 @@ class ManagedBinding:
                 "parallel workers require separate managed bindings and instance IDs"
             )
         self._preparing = True
-        preparation_id = None
         try:
-            await self._cancel_pending(required=True)
-            self._pending = None
-            self._pending_snapshot = None
-            receipt = await self.client.contexts(
-                {
-                    "action": "prepare",
-                    "operation_id": operation_id or str(uuid4()),
-                    "request": {
-                        "subject_id": self.subject_id,
-                        "session_id": self.session_id,
-                        "consumer_id": self.consumer_id,
-                        "instance_id": self.instance_id,
-                        "usage": deepcopy(dict(usage)),
-                        "max_items": max_items,
-                        "max_text_bytes": max_text_bytes,
-                        "current_sources": deepcopy(list(current_sources)),
-                        "query": deepcopy(query),
-                        "known_cursor": deepcopy(self._cursor),
-                    },
-                }
+            await self._cancel_pending()
+            parsed_usage = (
+                usage if isinstance(usage, ContextUsage) else ContextUsage.model_validate(usage)
             )
-            preparation_id = receipt["result"]["preparation_id"]
-            self._preparation_id = preparation_id
-            if self._closed:
-                await self._cancel_pending()
-                self._assert_open()
-            await self.client.wait_success(receipt["job_ids"], timeout_ms=timeout_ms)
-            preparation = await self.client.contexts(
-                {"action": "preparation", "id": preparation_id}
+            command = ContextPrepare(
+                operation_id=operation_id or str(uuid4()),
+                session_id=self.session_id,
+                consumer_id=self.consumer_id,
+                instance_id=self.instance_id,
+                usage=parsed_usage,
+                max_items=max_items,
+                max_text_bytes=max_text_bytes,
+                current_sources=tuple(current_sources),
+                query=query,
+                known_cursor=self._cursor,
             )
-            self._assert_open()
-            response = preparation.get("response")
-            if response is None:
-                raise NousError(
-                    {
-                        "code": "DependencyUnavailable",
-                        "message": "context preparation has no usable projection",
-                    }
+            with anyio.fail_after(timeout_ms / 1000):
+                result = await self.client.prepare_context(
+                    self.namespace_id, self.subject_id, command
                 )
-            prepared = PreparedContext(preparation_id, deepcopy(response))
-            self._pending = prepared
-            self._pending_snapshot = deepcopy(response)
-            return prepared
-        except NousError as error:
-            if preparation_id:
-                error.context["preparation_id"] = preparation_id
-            raise
-        except BaseException as error:
-            if isinstance(error, anyio.get_cancelled_exc_class()):
-                await self._cancel_pending()
-            raise
+            self._preparation_id = result.id
+            self._assert_open()
+            self._pending = PreparedContext(result.id, result.response)
+            return self._pending
         finally:
             self._preparing = False
 
@@ -177,137 +136,113 @@ class ManagedBinding:
         self,
         base: T,
         prepared: PreparedContext,
-        renderer: Callable[[T, Sequence[Mapping], Mapping, Mapping], T],
+        renderer: Callable[[T, Sequence[ContextSegment], ContextUsage, EpistemicView], T],
         serialize: Callable[[T], bytes],
     ) -> AppliedContext[T]:
         self._assert_open()
-        if prepared is not self._pending or prepared.response != self._pending_snapshot:
-            raise ValueError(
-                "context response is not this binding's unchanged pending preparation"
-            )
-        response = deepcopy(self._pending_snapshot)
-        if not isinstance(response, dict):
-            raise TypeError("context response must be a JSON object")
-        projection, cursor = response["projection"], response["cursor"]
-        expected = {
-            "subject_id": self.subject_id,
-            "session_id": self.session_id,
-            "consumer_id": self.consumer_id,
-            "instance_id": self.instance_id,
-        }
-        if any(projection.get(key) != value for key, value in expected.items()):
-            raise ValueError(
-                "context projection belongs to a different managed binding"
-            )
-        if response["kind"] == "reset":
-            segments = projection["segments"]
-        elif (
-            response["kind"] == "append"
-            and self._projection is not None
-            and self._cursor is not None
+        if prepared is not self._pending:
+            raise ValueError("context response is not this binding's pending preparation")
+        response = prepared.response
+        projection = response.projection
+        if (
+            projection.namespace_id,
+            projection.subject_id,
+            projection.session_id,
+            projection.consumer_id,
+            projection.instance_id,
+        ) != (
+            self.namespace_id,
+            self.subject_id,
+            self.session_id,
+            self.consumer_id,
+            self.instance_id,
         ):
-            delta = projection["segments"]
-            if (
-                cursor["track_id"] != self._cursor["track_id"]
-                or cursor["epoch_id"] != self._cursor["epoch_id"]
+            raise ValueError("context projection belongs to a different managed binding")
+        if response.kind == "reset":
+            segments = projection.segments
+        elif self._projection is not None and self._cursor is not None:
+            cursor = response.cursor
+            if (cursor.track_id, cursor.epoch_id, cursor.revision) != (
+                self._cursor.track_id,
+                self._cursor.epoch_id,
+                self._cursor.revision + bool(projection.segments),
             ):
-                raise ValueError("context append belongs to a different track or epoch")
-            if cursor["revision"] != self._cursor["revision"] + bool(delta):
                 raise ValueError("context append does not extend the applied cursor")
-            segments = [*deepcopy(self._projection["segments"]), *delta]
+            segments = (*self._projection.segments, *projection.segments)
         else:
-            raise ValueError("context response cannot extend this binding")
-        projection["segments"] = segments
+            raise ValueError("context append requires the previously applied projection")
+        complete = projection.model_copy(update={"segments": segments}, deep=True)
         rendered = renderer(
             deepcopy(base),
             deepcopy(segments),
-            deepcopy(projection["usage"]),
-            deepcopy(projection["epistemic_view"]),
+            projection.usage.model_copy(deep=True),
+            projection.epistemic_view.model_copy(deep=True),
         )
         encoded = serialize(rendered)
-        if not isinstance(encoded, bytes):
-            raise TypeError(
-                "host serializer must return the actual rendered input bytes"
-            )
         applied = AppliedContext(
             rendered,
             prepared.preparation_id,
-            projection["id"],
-            tuple(segment["key"] for segment in segments),
+            projection.id,
+            tuple(item.key for item in segments),
             hashlib.sha256(encoded).hexdigest(),
         )
-        self._applications[applied] = (deepcopy(projection), serialize)
-        self._projection = deepcopy(projection)
-        self._cursor = deepcopy(cursor)
+        self._applications[applied] = _Application(complete, lambda: serialize(rendered))
+        self._projection, self._cursor = complete, response.cursor
         self._pending = None
-        self._pending_snapshot = None
-        self._preparation_id = None
         return applied
 
-    def applied_projection(self, applied: AppliedContext) -> dict:
+    def applied_projection(self, applied: AppliedContext[T]) -> ContextProjection:
         self._assert_open()
-        if applied not in self._applications:
-            raise ValueError(
-                "projection requires an actual application from this binding"
-            )
-        return deepcopy(self._applications[applied][0])
+        state = self._applications.get(applied)
+        if state is None:
+            raise ValueError("projection requires an actual application from this binding")
+        return state.projection.model_copy(deep=True)
 
     async def admit(
         self,
-        applied: AppliedContext,
+        applied: AppliedContext[T],
         *,
         invocation_id: str,
         history_generation: str,
         measurement: HostInputMeasurement,
-    ) -> dict:
+    ) -> ContextAdmission:
         self.applied_projection(applied)
-        measurement.validate()
-        serializer = self._applications[applied][1]
-        if (
-            hashlib.sha256(serializer(applied.input)).hexdigest()
-            != applied.rendered_digest
-        ):
-            raise ValueError(
-                "host input changed after rendering; apply the complete input again"
-            )
-        if not invocation_id.strip():
-            raise ValueError("actual invocation ID is required")
-        receipt = await self.client.contexts(
-            {
-                "action": "admit",
-                "operation_id": event_id(
-                    "admit", invocation_id, applied.preparation_id
-                ),
-                "request": {
-                    "preparation_id": applied.preparation_id,
-                    "invocation_id": invocation_id,
-                    "applied_segment_ids": list(applied.segment_ids),
-                    "rendered_digest": applied.rendered_digest,
-                    "history_generation": history_generation,
-                    "measurement": asdict(measurement),
-                },
-            }
+        state = self._applications[applied]
+        if hashlib.sha256(state.serialize_current()).hexdigest() != applied.rendered_digest:
+            raise ValueError("host input changed after rendering; apply the complete input again")
+        command = ContextAdmissionCommand(
+            operation_id=event_id("admit", invocation_id, applied.preparation_id),
+            preparation_id=applied.preparation_id,
+            invocation_id=invocation_id,
+            applied_segment_ids=applied.segment_ids,
+            rendered_digest=applied.rendered_digest,
+            history_generation=history_generation,
+            measurement=measurement,
         )
-        self._admissions.setdefault(applied, {})[invocation_id] = receipt["result"][
-            "id"
-        ]
+        receipt = await self.client.admit_managed_context(
+            self.namespace_id, self.subject_id, command
+        )
+        state.admissions[invocation_id] = receipt.id
+        self._preparation_id = None
         return receipt
 
     async def report(
         self,
-        applied: AppliedContext,
+        applied: AppliedContext[T],
         *,
         invocation_id: str,
-        outcome: str,
+        outcome: Literal["completed", "failed", "cancelled"],
         occurred_at: datetime,
-        uses: Sequence[Mapping] = (),
-    ) -> dict:
+        uses: Sequence[ContextUse] = (),
+    ) -> ContextReportResult:
         self.applied_projection(applied)
-        admission_id = self._admissions.get(applied, {}).get(invocation_id)
+        admission_id = self._applications[applied].admissions.get(invocation_id)
         if admission_id is None:
             raise ValueError("outcome requires an admitted actual model input")
         return await self.client.report_context(
             admission_id,
+            namespace_id=self.namespace_id,
+            subject_id=self.subject_id,
             invocation_id=invocation_id,
             outcome=outcome,
             occurred_at=occurred_at,
@@ -317,49 +252,26 @@ class ManagedBinding:
     async def close(self) -> None:
         self._closed = True
         await self._cancel_pending()
-        self._pending = None
-        self._pending_snapshot = None
-        self._projection = None
-        self._cursor = None
+        self._pending, self._projection, self._cursor = None, None, None
         self._applications.clear()
-        self._admissions.clear()
 
-    async def _cancel_pending(self, *, required: bool = False) -> None:
-        preparation_id = self._preparation_id
-        if preparation_id is None:
+    async def _cancel_pending(self) -> None:
+        identity = self._preparation_id
+        if identity is None:
             return
-        if self._pending is not None:
-            self._preparation_id = None
-            return
-        with anyio.move_on_after(
-            self.client.transport.options.cleanup_timeout_seconds, shield=True
-        ):
-            try:
-                await self.client.contexts(
-                    {
-                        "action": "cancel_preparation",
-                        "id": preparation_id,
-                        "operation_id": event_id(
-                            "cancel", self.instance_id, preparation_id
-                        ),
-                    }
-                )
-                self._preparation_id = None
-            except Exception:
-                logger.warning(
-                    "context preparation cancellation failed: %s",
-                    preparation_id,
-                    exc_info=True,
-                )
-        if required and self._preparation_id is not None:
-            raise NousError(
-                {
-                    "code": "DependencyUnavailable",
-                    "message": "previous context preparation is still pending",
-                    "context": {"preparation_id": preparation_id},
-                }
+        with anyio.fail_after(self.client.transport.options.cleanup_timeout_seconds, shield=True):
+            await self.client.cancel_context_preparation(
+                self.namespace_id,
+                self.subject_id,
+                identity,
+                event_id("cancel", self.instance_id, identity),
             )
+        self._preparation_id = None
+        self._pending = None
 
 
 def event_id(kind: str, invocation_id: str, source: str) -> str:
     return str(uuid5(NAMESPACE_URL, f"nous:{kind}:{invocation_id}:{source}"))
+
+
+__all__ = ["AppliedContext", "HostInputMeasurement", "ManagedBinding", "PreparedContext"]
