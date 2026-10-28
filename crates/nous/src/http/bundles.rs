@@ -1,4 +1,5 @@
 use super::*;
+use nous_app::bundles::{InspectBundleRequest, ResolveBundleFileRequest};
 use nous_domain::{ExportBundleRequest, InstallBundleRequest, NamespaceId, SubjectId};
 use serde::{Deserialize, Serialize};
 
@@ -8,6 +9,15 @@ pub enum BundleOperation {
     Export {
         operation_id: String,
         request: ExportBundleRequest,
+    },
+    Preview {
+        request: ExportBundleRequest,
+    },
+    Inspect {
+        request: InspectBundleRequest,
+    },
+    ResolveFile {
+        request: ResolveBundleFileRequest,
     },
     Install {
         operation_id: String,
@@ -30,6 +40,16 @@ impl BundleOperation {
         let cancel = CancellationToken::new();
         let _cancel_on_drop = cancel.clone().drop_guard();
         Ok(match self {
+            Self::Preview { request } => {
+                json!(app.preview_bundle(ctx, request.clone(), &cancel).await?)
+            }
+            Self::Inspect { request } => {
+                json!(app.inspect_bundle(ctx, request.clone(), &cancel).await?)
+            }
+            Self::ResolveFile { request } => {
+                app.resolve_bundle_file(ctx, request.clone(), &cancel)
+                    .await?
+            }
             Self::Export {
                 operation_id,
                 request,

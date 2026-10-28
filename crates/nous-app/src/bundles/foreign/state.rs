@@ -5,7 +5,14 @@ use std::collections::BTreeSet;
 type ProfileRecord<'a> = (&'a str, usize, &'a serde_json::Map<String, Value>);
 
 impl Builder<'_> {
-    pub(super) fn state(&mut self, state: &State) -> Result<()> {
+    pub(super) fn state(&mut self, state: &State, source_digest: &str) -> Result<()> {
+        let source_subject = self.package.subject.id.to_string();
+        for original in &mut self.package.materials {
+            if original.details.metadata.get("external_id").is_some() {
+                original.details.metadata["semantic_source_digest"] = json!(source_digest);
+                original.details.metadata["semantic_source_subject"] = json!(source_subject);
+            }
+        }
         // Every exported source record remains independently addressable, including
         // tombstones, external mappings, fact transitions and profile overrides.
         let mut evidence = BTreeMap::new();
@@ -14,7 +21,7 @@ impl Builder<'_> {
                 let (_, observation) = self.record(
                     &format!("{table}/{index}"),
                     &serde_json::to_string(row)?,
-                    json!({"table":table,"row_index":index}),
+                    json!({"table":table,"row_index":index,"semantic_source_digest":source_digest,"semantic_source_subject":source_subject,"semantic_row":nous_storage::bundle_semantics::index(table,row,index)}),
                 )?;
                 evidence.insert(
                     (table.clone(), index),

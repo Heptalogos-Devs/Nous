@@ -95,6 +95,22 @@ impl Remap {
     }
     pub fn material(&self, source: &MediaOriginal) -> Result<MediaOriginal> {
         let mut value = self.value(source)?;
+        if let Some(records) = value
+            .details
+            .metadata
+            .get_mut("image_occurrences")
+            .and_then(Value::as_array_mut)
+        {
+            for record in records {
+                let source_id = record
+                    .get("observation_id")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| {
+                        Error::invalid("image occurrence record has no actual source event")
+                    })?;
+                record["observation_id"] = Value::String(self.id(source_id)?);
+            }
+        }
         value.material.namespace_id = self.namespace.clone();
         value.material.commit_seq = self.sequence;
         value.material.recorded_at = self.recorded_at.clone();

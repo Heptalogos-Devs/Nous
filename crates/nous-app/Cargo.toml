@@ -9,6 +9,7 @@ nous-foundation.workspace = true
 nous-domain.workspace = true
 nous-storage.workspace = true
 nous-retrieval.workspace = true
+npyz.workspace = true
 anyhow.workspace = true
 chrono.workspace = true
 schemars.workspace = true

@@ -1,9 +1,14 @@
 //! Portable subject knowledge, validated archive IO and installation ownership.
 mod archive;
+mod export;
 mod foreign;
+mod portable;
+pub use export::BundleExportSummary;
+mod files;
 mod input;
 mod inspection;
-pub use inspection::{InspectBundleRequest,BundleInspectionSummary};
+pub use files::ResolveBundleFileRequest;
+pub use inspection::{BundleInspectionSummary, InspectBundleRequest};
 pub mod policy;
 use crate::App;
 use nous_domain::{media::*, *};
@@ -28,116 +33,6 @@ impl App {
             )
             .await?
             .get(policy::BUNDLES)
-    }
-    pub async fn export_bundle(
-        &self,
-        ctx: &CallContext,
-        operation_id: &str,
-        request: ExportBundleRequest,
-        cancel: &CancellationToken,
-    ) -> Result<OperationReceipt> {
-        let app = self.clone();
-        let context = ctx.clone();
-        let operation_id = operation_id.to_owned();
-        execution::owned_async(cancel, move |local| async move {
-            app.export_bundle_inner(&context, &operation_id, request, &local)
-                .await
-        })
-        .await
-    }
-    async fn export_bundle_inner(
-        &self,
-        ctx: &CallContext,
-        operation_id: &str,
-        request: ExportBundleRequest,
-        cancel: &CancellationToken,
-    ) -> Result<OperationReceipt> {
-        ctx.require_subject(&request.namespace_id, &request.subject_id)?;
-        request.package.validate()?;
-        let scope = format!(
-            "namespace:{}/subject:{}",
-            request.namespace_id, request.subject_id
-        );
-        let key = operation_key(
-            ctx,
-            "bundle.export",
-            &scope,
-            operation_id,
-            &serde_json::to_value(&request)?,
-        )?;
-        if let Some(receipt) = self.database.lookup_operation(&key).await? {
-            return Ok(receipt);
-        }
-        let policy = self
-            .bundle_policy(&request.namespace_id, &request.subject_id)
-            .await?;
-        let protection = self.objects.protect_references(cancel).await?;
-        let mut view = self.database.read_view().await?;
-        let package = view
-            .subject_package(ctx, &request, Clock::operation_snapshot().recorded())
-            .await?;
-        view.finish().await?;
-        let staging = self.bundle_staging(cancel).await?;
-        for blob in package.objects()? {
-            self.objects
-                .copy_to(
-                    &blob.content_hash,
-                    blob.byte_len as i64,
-                    &staging.path().join(&blob.content_hash),
-                    cancel,
-                )
-                .await?;
-        }
-        let archive_package = package.clone();
-        let root = staging.path().to_path_buf();
-        let limits = policy.limits.clone();
-        let (staging, path) = execution::blocking(cancel, move |local| {
-            let path = archive::write(&root, &archive_package, &local)?;
-            if std::fs::metadata(&path)?.len() > limits.archive_bytes {
-                return Err(Error::new(
-                    ErrorCode::ResourceExhausted,
-                    "exported bundle exceeds configured archive limit",
-                ));
-            }
-            archive::load(&path, &limits)?
-                .ok_or_else(|| Error::internal("exported subject package could not be read"))?;
-            Ok((staging, path))
-        })
-        .await?;
-        let published = self
-            .objects
-            .publish(
-                tokio::fs::File::open(path).await?,
-                policy.limits.archive_bytes,
-                cancel,
-            )
-            .await?;
-        execution::check_cancelled(cancel)?;
-        let mut tx = match self.database.begin_operation(key).await? {
-            BeginOperation::Replay(receipt) => return Ok(receipt),
-            BeginOperation::New(tx) => tx,
-        };
-        published.protect_in(&mut tx);
-        tx.retain_until_end(protection);
-        let material = Material {
-            id: MaterialId::new(),
-            namespace_id: request.namespace_id,
-            content_hash: published.digest.clone(),
-            media_type: "application/vnd.nous.subject+zip".into(),
-            metadata: MediaMetadata::Binary,
-            byte_len: published.byte_len,
-            source: Some(format!("nous-bundle:{}", package.package.id)),
-            event_time: None,
-            recorded_at: tx.time().recorded(),
-            commit_seq: tx.commit_seq(),
-        };
-        tx.insert_material(&material).await?;
-        tx.retain_material_output(&material.namespace_id, &request.subject_id, &material.id)
-            .await?;
-        tx.set_material_details(&material.namespace_id,&material.id,&MaterialDetails{source_type:Some("nous_bundle".into()),tags:vec![],metadata:json!({"package":package.package,"content_level":package.content_level,"subject_id":package.subject.id,"source_watermark":package.watermark}),structured:None}).await?;
-        let receipt=tx.commit(json!({"material":material,"package":package.package,"content_level":package.content_level,"content_digest":archive::content_digest(&serde_json::to_value(&package)?)?,"source_watermark":package.watermark,"download_material_id":material.id})).await?;
-        drop(staging);
-        Ok(receipt)
     }
     pub async fn install_bundle(
         &self,
@@ -177,9 +72,22 @@ impl App {
         if let Some(receipt) = self.database.lookup_operation(&key).await? {
             return Ok(receipt);
         }
-        let input=self.bundle_input(ctx,&request.namespace_id,&request.subject_id,&request.material_id,cancel).await?;
+        let input = self
+            .bundle_input(
+                ctx,
+                &request.namespace_id,
+                &request.subject_id,
+                &request.material_id,
+                cancel,
+            )
+            .await?;
         let protection = self.objects.protect_references(cancel).await?;
-        let input::BundleInput{original:_original,staging,path,policy}=input;
+        let input::BundleInput {
+            original: _original,
+            staging,
+            path,
+            policy,
+        } = input;
         let limits = policy.limits.clone();
         let root = staging.path().to_path_buf();
         let (staging, loaded) = execution::blocking(cancel, move |local| {

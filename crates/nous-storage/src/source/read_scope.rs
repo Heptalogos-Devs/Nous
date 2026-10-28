@@ -86,6 +86,11 @@ async fn occurrence_allowed(
 ) -> Result<bool> {
     let observation = graph::observation(conn, &view.namespace, &view.subject, id).await?;
     Ok(selection.nodes.contains(&Node::Observation(id.clone()))
+        || selection.nodes.contains(&Node::EventMetadata(id.clone()))
+        || selection.nodes.iter().any(|node| {
+            matches!(node,
+            Node::Media(_, Some(actual)) if actual == id)
+        })
         || observation
             .origin
             .and_then(|origin| origin.conversation_ref)

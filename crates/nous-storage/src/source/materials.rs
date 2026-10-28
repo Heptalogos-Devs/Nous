@@ -7,6 +7,15 @@ use nous_domain::{Material, MaterialDetails, MaterialId, NamespaceId, Result, Su
 use sqlx::{Row, SqliteConnection};
 
 impl ReadView {
+    pub(crate) async fn subject_material_ids(
+        &mut self,
+        namespace: &NamespaceId,
+        subject: &SubjectId,
+    ) -> Result<Vec<MaterialId>> {
+        sqlx::query_scalar::<_,String>("SELECT material_id FROM observations WHERE namespace_id=?1 AND subject_id=?2 UNION SELECT material_id FROM material_outputs WHERE namespace_id=?1 AND subject_id=?2 UNION SELECT r.local_id FROM bundle_resources r JOIN bundle_installations i ON i.id=r.installation_id WHERE i.namespace_id=?1 AND i.subject_id=?2 AND r.kind='material' ORDER BY 1")
+            .bind(namespace.as_str()).bind(subject.as_str()).fetch_all(&mut *self.tx).await.map_err(storage_error)
+            .map(|ids|ids.into_iter().map(MaterialId).collect())
+    }
     pub async fn material_by_id(&mut self, id: &MaterialId) -> Result<Material> {
         sqlx::query("SELECT * FROM materials WHERE id=?")
             .bind(id.as_str())
@@ -83,7 +92,8 @@ async fn material_access(
     subject: &SubjectId,
     material: &MaterialId,
 ) -> Result<bool> {
-    sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM observations WHERE namespace_id=? AND subject_id=? AND material_id=? UNION ALL SELECT 1 FROM material_outputs WHERE namespace_id=? AND subject_id=? AND material_id=?)")
+    sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM observations WHERE namespace_id=? AND subject_id=? AND material_id=? UNION ALL SELECT 1 FROM material_outputs WHERE namespace_id=? AND subject_id=? AND material_id=? UNION ALL SELECT 1 FROM bundle_resources r JOIN bundle_installations i ON i.id=r.installation_id WHERE i.namespace_id=? AND i.subject_id=? AND r.kind='material' AND r.local_id=?)")
+        .bind(namespace.as_str()).bind(subject.as_str()).bind(material.as_str())
         .bind(namespace.as_str()).bind(subject.as_str()).bind(material.as_str())
         .bind(namespace.as_str()).bind(subject.as_str()).bind(material.as_str())
         .fetch_one(conn).await.map_err(storage_error)

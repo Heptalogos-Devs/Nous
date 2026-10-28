@@ -7,6 +7,7 @@ mod reference;
 mod types;
 use anyhow::Result;
 pub(crate) use archive::read_archive;
+pub(crate) use json::{canonical_images, canonical_json};
 use std::{
     fs::File,
     io::{Cursor, Read, Seek},

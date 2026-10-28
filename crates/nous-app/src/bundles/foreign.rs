@@ -1,4 +1,5 @@
 //! External knowledge records become typed cognition with their original records as evidence.
+mod assets;
 mod images;
 mod state;
 use super::archive::{self, Loaded};
@@ -74,41 +75,16 @@ pub(super) fn convert(inspection: BundleInspection, root: &Path) -> Result<Loade
         builder.document_graph(doc)?;
     }
     if let Some(state) = &inspection.state {
-        builder.state(state)?;
+        builder.state(state, &inspection.manifest.content_digest)?;
     }
     let mut object_members = match &inspection.images {
         Some(images) => builder.images(images, &inspection.manifest.content_digest)?,
         None => BTreeMap::new(),
     };
-    let unaccepted_vector_members = inspection
-        .index
-        .vector_members
-        .values()
-        .cloned()
-        .collect::<Vec<_>>();
-    for member in &unaccepted_vector_members {
-        let source = inspection.members.get(member).ok_or_else(|| {
-            Error::invalid("external vector member missing from validated inventory")
-        })?;
-        let (namespace_id, subject_id) = builder.scope();
-        let id = MaterialId::new();
-        builder.package.materials.push(MediaOriginal{material:Material{id:id.clone(),namespace_id:namespace_id.clone(),content_hash:source.sha256.clone(),media_type:"application/x-npz".into(),metadata:MediaMetadata::Binary,byte_len:source.byte_len as i64,source:Some(format!("a-memorix:{member}")),event_time:None,recorded_at:builder.package.created_at.clone(),commit_seq:1},details:MaterialDetails{source_type:Some("external_embedding_archive".into()),tags:vec![],metadata:json!({"member":member,"embedding_fingerprint":inspection.manifest.embedding_fingerprint,"image_embedding_fingerprint":inspection.manifest.image_embedding_fingerprint,"adoption":"not_adopted_without_complete_space_and_provenance"}),structured:None},details_redacted:false});
-        builder.package.observations.push(Observation {
-            id: ObservationId::new(),
-            namespace_id,
-            subject_id,
-            material_id: id,
-            observed_at: None,
-            origin: None,
-            kind: ObservationKind::Import,
-            recorded_at: builder.package.created_at.clone(),
-            commit_seq: 1,
-        });
-        object_members.insert(source.sha256.clone(), member.clone());
-    }
+    let unaccepted_vector_members = builder.retained_assets(&inspection, &mut object_members)?;
     builder.package.validate()?;
     Ok(Loaded {
-        manifest:serde_json::to_value(&inspection.manifest)?,
+        manifest: serde_json::to_value(&inspection.manifest)?,
         package: builder.package,
         digest: inspection.manifest.content_digest,
         members: inspection.members,

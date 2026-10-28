@@ -5,13 +5,11 @@ use sqlx::Row;
 use std::collections::BTreeSet;
 
 impl ReadView {
-    pub async fn bundle_vectors(
+    pub(crate) async fn bundle_vector_snapshot(
         &mut self,
-        ctx: &CallContext,
         namespace: &NamespaceId,
         subject: &SubjectId,
     ) -> Result<BundleVectors> {
-        ctx.require_subject(namespace, subject)?;
         let mut output = BundleVectors::default();
         let mut spaces = BTreeSet::new();
         let rows=sqlx::query("SELECT space_id,source_hash FROM embedding_contents WHERE namespace_id=? AND subject_id=? ORDER BY space_id,source_hash").bind(namespace.as_str()).bind(subject.as_str()).fetch_all(&mut *self.tx).await.map_err(storage_error)?;
@@ -38,14 +36,6 @@ impl ReadView {
                 parts: serde_json::from_str(row.get("parts"))?,
                 read_requirements: serde_json::from_str(row.get("read_requirements"))?,
             };
-            if let Some(target) = input.target.item() {
-                self.require_source_read(ctx, namespace, subject, target)
-                    .await?;
-            }
-            if !ctx.source_read.is_empty() {
-                self.require_source_requirements(ctx, namespace, subject, &input.read_requirements)
-                    .await?;
-            }
             let parent: Option<EmbeddingAcceptance> = row
                 .get::<Option<&str>, _>("origin")
                 .map(serde_json::from_str)

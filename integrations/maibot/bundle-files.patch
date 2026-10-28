@@ -1,0 +1,93 @@
+--- a/src/webui/routers/memory.py
++++ b/src/webui/routers/memory.py
+@@ -5,6 +5,10 @@
+ from typing import Any, Dict, Iterator, List, Literal, Optional, Tuple
+ from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Query, UploadFile
+ from fastapi.responses import FileResponse
++from starlette.background import BackgroundTasks
++
++import anyio
++from nous_wave.amemorix.bundles import file_name as transfer_file_name
+ from pydantic import BaseModel, Field
+ from sqlalchemy import func
+ from sqlmodel import col, select
+@@ -27,7 +31,7 @@
+ from src.common.logger import get_logger
+ from src.person_info.person_info import resolve_person_id_for_memory
+ from src.services.memory_flow_service import memory_automation_service
+-from src.services.memory_service import MemorySearchResult, memory_service
++from src.services.memory_service import MemorySearchResult, memory_service, a_memorix_host_service as nous_memory_host
+ from src.webui.dependencies import require_auth
+ 
+ 
+@@ -39,9 +43,11 @@
+ 
+ 
+ def _upload_staging_root() -> Path:
+-    if STAGING_ROOT is not None:
+-        return STAGING_ROOT
+-    return a_memorix_host_service.get_runtime_data_dir() / "imports" / "staging"
++    root = nous_memory_host.transfer_root
++    directory = (STAGING_ROOT if STAGING_ROOT is not None else root / "uploads").resolve()
++    if not directory.is_relative_to(root):
++        raise ValueError("上传暂存目录超出 NOUS_TRANSFER_ROOT")
++    return directory
+ 
+ 
+ class NodeRequest(BaseModel):
+@@ -4043,21 +4049,28 @@
+ 
+ 
+ async def _stage_upload_files(files: list[UploadFile]) -> tuple[Path, list[dict[str, Any]]]:
++    filenames = [transfer_file_name(upload.filename or f"upload_{index}.txt") for index, upload in enumerate(files)]
+     staging_root = _upload_staging_root()
+     staging_root.mkdir(parents=True, exist_ok=True)
+     staging_dir = staging_root / uuid.uuid4().hex
+     staging_dir.mkdir(parents=True, exist_ok=True)
+     staged_files: list[dict[str, Any]] = []
+-    for index, upload in enumerate(files):
+-        filename = Path(upload.filename or f"upload_{index}.txt").name
++    for index, (upload, filename) in enumerate(zip(files, filenames)):
+         target = staging_dir / f"{index:03d}_{filename}"
+-        content = await upload.read()
+-        target.write_bytes(content)
++        size = 0
++        try:
++            async with await anyio.open_file(target, "xb") as output:
++                while chunk := await upload.read(64 * 1024):
++                    await output.write(chunk)
++                    size += len(chunk)
++        except BaseException:
++            shutil.rmtree(staging_dir, ignore_errors=True)
++            raise
+         staged_files.append(
+             {
+                 "filename": filename,
+                 "staged_path": str(target.resolve()),
+-                "size": len(content),
++                "size": size,
+             }
+         )
+     return staging_dir, staged_files
+@@ -4797,14 +4810,18 @@
+ 
+ @router.get("/bundles/download/{file_name}", response_class=FileResponse)
+ async def download_memory_bundle(file_name: str) -> FileResponse:
+-    payload = await memory_service.bundle_admin(action="resolve_file", file_name=Path(file_name).name)
++    payload = await memory_service.bundle_admin(action="resolve_file", file_name=file_name)
+     if not bool(payload.get("success", False)):
+         raise HTTPException(status_code=404, detail=str(payload.get("error", "记忆包不存在")))
+     path = Path(str(payload.get("path", "") or ""))
++    cleanup = BackgroundTasks()
++    cleanup.add_task(path.unlink, missing_ok=True)
++    cleanup.add_task(path.parent.rmdir)
+     return FileResponse(
+         path,
+-        media_type="application/vnd.a-memorix.bundle+zip",
+-        filename=path.name,
++        media_type=payload.get("media_type") or "application/vnd.a-memorix.bundle+zip",
++        filename=payload["file_name"],
++        background=cleanup,
+     )
+ 
+ 

@@ -1,0 +1,129 @@
+--- a/dashboard/src/routes/resource/knowledge-base/tabs/MemoryBundleCard.tsx
++++ b/dashboard/src/routes/resource/knowledge-base/tabs/MemoryBundleCard.tsx
+@@ -47,7 +47,11 @@
+   return error instanceof Error ? error.message : String(error)
+ }
+ 
+-function imageRetrievalLabel(status?: string): string {
++function numberLabel(value: number | null | undefined): number | string {
++  return value ?? '未知'
++}
++
++function imageRetrievalLabel(status?: string | null): string {
+   const labels: Record<string, string> = {
+     ready: '已就绪',
+     pending: '等待构建',
+@@ -55,7 +59,7 @@
+     disabled: '功能未启用',
+     failed: '初始化失败',
+   }
+-  return status ? (labels[status] ?? status) : '无图片'
++  return status ? (labels[status] ?? status) : '未知'
+ }
+ 
+ function selectorPayload(type: MemoryBundleSelectorType, value: string): Record<string, unknown> {
+@@ -264,7 +268,7 @@
+         kind: 'success',
+         text: payload.already_installed
+           ? `知识包 ${payload.package?.name || ''} 已安装，无需重复写入`
+-          : `已安装 ${payload.package?.name || bundleFile.name}，映射 ${payload.mapped_paragraphs ?? 0} 条段落；图片 ${payload.images?.assets ?? 0} 张，图片内容${payload.images?.content_status === 'installed' ? '已安装' : '无'}，检索${imageRetrievalLabel(payload.images?.retrieval_status)}，复用向量 ${payload.vectors?.images_imported ?? 0} 个`,
++          : `已安装 ${payload.package?.name || bundleFile.name}，映射 ${numberLabel(payload.mapped_paragraphs)} 条段落；图片 ${numberLabel(payload.images?.assets)} 张，图片内容${payload.images?.content_status === 'installed' ? '已安装' : '未知'}，检索${imageRetrievalLabel(payload.images?.retrieval_status)}，复用向量 ${numberLabel(payload.vectors?.images_imported)} 个`,
+       })
+       await refreshInstallations()
+     } catch (error) {
+@@ -573,16 +577,18 @@
+                   条
+                 </p>
+                 <p>
+-                  资源校验完成，缺失 {preview.images.missing_resources} 项。
+-                  {preview.images.has_vectors
+-                    ? preview.images.vector_compatible
+-                      ? '图片向量兼容，可复用。'
+-                      : '图片向量与当前空间不兼容，需要本地重建。'
+-                    : '未携带图片向量，需要本地构建。'}
++                  缺失资源：{numberLabel(preview.images.missing_resources)}。
++                  {preview.images.has_vectors == null
++                    ? '图片向量状态未知。'
++                    : preview.images.has_vectors
++                      ? preview.images.vector_compatible == null
++                        ? '已携带图片向量，兼容性未知。'
++                        : preview.images.vector_compatible
++                          ? '图片向量兼容，可复用。'
++                          : '图片向量与当前空间不兼容，需要本地重建。'
++                      : '未携带图片向量。'}
+                 </p>
+-                {preview.images.runtime_status !== 'ready' && (
+-                  <p>当前图片模型尚未就绪，安装内容后需等待模型恢复才能完成检索构建。</p>
+-                )}
++                <p>当前图片检索：{imageRetrievalLabel(preview.images.runtime_status)}。</p>
+               </div>
+             )}
+             <div className="grid gap-3 sm:grid-cols-2">
+@@ -679,12 +685,12 @@
+                         <div className="text-muted-foreground truncate text-xs">
+                           {item.package_id} · {item.version} · {item.paragraph_count} 条
+                         </div>
+-                        {item.images && item.images.assets > 0 && (
++                        {item.images && item.images.assets !== 0 && (
+                           <p className="text-muted-foreground text-xs">
+-                            图片 {item.images.assets} 张、出现 {item.images.occurrences} 次；内容
++                            图片 {numberLabel(item.images.assets)} 张、出现 {numberLabel(item.images.occurrences)} 次；内容
+                             {item.images.content_status === 'installed'
+                               ? '已安装'
+-                              : '未就绪'}；向量 {item.images.ready}/{item.images.assets}，检索
++                              : item.images.content_status === 'uninstalled' ? '已卸载' : '未知'}；向量 {numberLabel(item.images.ready)}/{numberLabel(item.images.assets)}，检索
+                             {imageRetrievalLabel(item.images.retrieval_status)}
+                           </p>
+                         )}
+--- a/dashboard/src/lib/memory-api.ts
++++ b/dashboard/src/lib/memory-api.ts
+@@ -733,13 +733,13 @@
+ 
+ export interface MemoryBundleImportPayload {
+   images?: {
+-    assets: number
+-    occurrences: number
++    assets: number | null
++    occurrences: number | null
+     content_status: string
+-    retrieval_status: string
++    retrieval_status: string | null
+     retrieval_message?: string
+-  }
+-  vectors?: { images_imported?: number }
++  } | null
++  vectors?: { images_imported?: number | null }
+   success: boolean
+   already_installed?: boolean
+   installation_id?: string
+@@ -755,11 +755,11 @@
+ 
+ export interface MemoryBundleInstallationPayload {
+   images?: {
+-    assets: number
+-    occurrences: number
+-    ready: number
++    assets: number | null
++    occurrences: number | null
++    ready: number | null
+     content_status: string
+-    retrieval_status: string
++    retrieval_status: string | null
+   }
+   installation_id: string
+   package_id: string
+@@ -2605,10 +2605,10 @@
+   size: number
+   counts: Record<string, number>
+   images: {
+-    vector_compatible: boolean
+-    has_vectors: boolean
+-    runtime_status: string
+-    missing_resources: number
++    vector_compatible: boolean | null
++    has_vectors: boolean | null
++    runtime_status: string | null
++    missing_resources: number | null
+   }
+ }
+ 

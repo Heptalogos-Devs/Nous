@@ -66,6 +66,31 @@ impl Builder<'_> {
                 recorded_at: self.package.created_at.clone(),
                 commit_seq: 1,
             };
+            let original_observations: Vec<_> = images
+                .observations
+                .iter()
+                .filter(|value| value.occurrence_id == occurrence.occurrence_id)
+                .collect();
+            let original_links: Vec<_> = images
+                .links
+                .iter()
+                .filter(|value| value.occurrence_id == occurrence.occurrence_id)
+                .collect();
+            let original = self
+                .package
+                .materials
+                .iter_mut()
+                .find(|value| value.material.id == material_id)
+                .ok_or_else(|| Error::invalid("image occurrence original is absent"))?;
+            let records = original
+                .details
+                .metadata
+                .as_object_mut()
+                .ok_or_else(|| Error::invalid("image source metadata must be an object"))?
+                .entry("image_occurrences")
+                .or_insert_with(|| json!([]));
+            records.as_array_mut().ok_or_else(||Error::invalid("image occurrence records must be an array"))?
+                .push(json!({"observation_id":observation.id,"record":occurrence,"observations":original_observations,"links":original_links}));
             occurrences.insert(
                 occurrence.occurrence_id.clone(),
                 (material_id, observation.id.clone()),

@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS bundle_installations (
  commit_seq INTEGER NOT NULL CHECK(commit_seq>0),
  FOREIGN KEY(namespace_id,subject_id) REFERENCES subjects(namespace_id,id),
  FOREIGN KEY(namespace_id,archive_material_id) REFERENCES materials(namespace_id,id),
- CHECK((placement_kind='global' AND conversation_ref IS NULL) OR (placement_kind='chat' AND length(conversation_ref)>0))
+ CHECK((placement_kind='global' AND conversation_ref IS NULL) OR (placement_kind='chat' AND json_type(placement_json,'$.conversation_ref')='text' AND conversation_ref IS NOT NULL AND length(conversation_ref)>0))
 );
 CREATE UNIQUE INDEX IF NOT EXISTS active_bundle_package ON bundle_installations(namespace_id,subject_id,package_id,coalesce(package_version,''),placement_kind,coalesce(conversation_ref,'')) WHERE uninstalled_at IS NULL;
 CREATE TABLE IF NOT EXISTS bundle_resources (

@@ -96,11 +96,9 @@ impl ReadView {
                 Err(error) => return Err(error),
             }
         }
-        let ids:Vec<String>=sqlx::query_scalar("SELECT id FROM materials m WHERE namespace_id=?1 AND (EXISTS(SELECT 1 FROM observations o WHERE o.namespace_id=m.namespace_id AND o.subject_id=?2 AND o.material_id=m.id) OR EXISTS(SELECT 1 FROM material_outputs o WHERE o.namespace_id=m.namespace_id AND o.subject_id=?2 AND o.material_id=m.id)) ORDER BY id")
-            .bind(namespace.as_str()).bind(subject.as_str()).fetch_all(&mut *self.tx).await.map_err(storage_error)?;
+        let ids = self.subject_material_ids(namespace, subject).await?;
         let mut originals = BTreeSet::new();
         for id in ids {
-            let id = MaterialId(id);
             if self
                 .source_read_allowed(
                     &scope,

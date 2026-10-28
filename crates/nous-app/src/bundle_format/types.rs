@@ -223,7 +223,7 @@ pub struct BundleInspection {
     pub expanded_bytes: u64,
 }
 
-pub(super) fn valid_hash(value: &str) -> bool {
+pub(crate) fn valid_hash(value: &str) -> bool {
     value.len() == 64
         && value
             .bytes()

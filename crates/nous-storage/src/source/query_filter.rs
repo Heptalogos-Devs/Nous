@@ -79,8 +79,8 @@ pub(crate) async fn target_matches(
         return Ok(false);
     }
     let mut conversations: BTreeMap<MaterialId, BTreeSet<ConversationRef>> = BTreeMap::new();
-    let mut published=BTreeSet::new();
-    let mut global_publications=BTreeSet::new();
+    let mut published = BTreeSet::new();
+    let mut global_publications = BTreeSet::new();
     let mut explicit = BTreeSet::new();
     for node in nodes {
         if let EvidenceSource::Observation { observation_id } = node.source {
@@ -94,9 +94,18 @@ pub(crate) async fn target_matches(
                 continue;
             }
             explicit.insert(observation.material_id.clone());
-            if let Some(placement)=crate::bundle::placement::observation_placement_in(conn,namespace,subject,&observation_id).await? {
+            if let Some(placement) = crate::bundle::placement::observation_placement_in(
+                conn,
+                namespace,
+                subject,
+                &observation_id,
+            )
+            .await?
+            {
                 published.insert(observation.material_id.clone());
-                if placement==BundlePlacement::Global {global_publications.insert(observation.material_id.clone());}
+                if placement == BundlePlacement::Global {
+                    global_publications.insert(observation.material_id.clone());
+                }
             }
             if let Some(conversation) = observation
                 .origin
@@ -118,10 +127,19 @@ pub(crate) async fn target_matches(
             let rows=sqlx::query("SELECT * FROM observations WHERE namespace_id=? AND subject_id=? AND material_id=? AND (? IS NULL OR commit_seq<=?)")
                 .bind(namespace.as_str()).bind(subject.as_str()).bind(root.material_id.as_str()).bind(as_of).bind(as_of).fetch_all(&mut *conn).await.map_err(storage_error)?;
             for row in rows {
-                let observation_id=ObservationId(row.get("id"));
-                if let Some(placement)=crate::bundle::placement::observation_placement_in(conn,namespace,subject,&observation_id).await? {
+                let observation_id = ObservationId(row.get("id"));
+                if let Some(placement) = crate::bundle::placement::observation_placement_in(
+                    conn,
+                    namespace,
+                    subject,
+                    &observation_id,
+                )
+                .await?
+                {
                     published.insert(root.material_id.clone());
-                    if placement==BundlePlacement::Global {global_publications.insert(root.material_id.clone());}
+                    if placement == BundlePlacement::Global {
+                        global_publications.insert(root.material_id.clone());
+                    }
                 }
                 if let Some(raw) = row.get::<Option<&str>, _>("origin") {
                     let origin: ObservationOrigin = serde_json::from_str(raw)?;
@@ -153,7 +171,11 @@ pub(crate) async fn target_matches(
             .get("scope_type")
             .and_then(serde_json::Value::as_str)
             .is_some_and(|value| value.eq_ignore_ascii_case("global"));
-        let global_source=if published.contains(&root.material_id) {global_publications.contains(&root.material_id)} else {declared_global};
+        let global_source = if published.contains(&root.material_id) {
+            global_publications.contains(&root.material_id)
+        } else {
+            declared_global
+        };
         let modality = match material.metadata {
             MediaMetadata::Text => "text",
             MediaMetadata::Image { .. } => "image",

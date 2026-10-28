@@ -46,6 +46,7 @@ metrics-exporter-prometheus = { version = "0.18", default-features = false }
 process-wrap = { version = "=10.0.1", features = ["tokio1"] }
 plist = "1"
 nalgebra = { version = "0.35", features = ["serde-serialize"] }
+npyz = { version = "0.9.1", default-features = false }
 rayon = "1"
 reqwest = { version = "0.13.2", default-features = false, features = ["json", "rustls", "stream", "query"] }
 rmcp = { version = "3.7.0", features = ["server", "macros", "transport-streamable-http-server", "transport-io"] }

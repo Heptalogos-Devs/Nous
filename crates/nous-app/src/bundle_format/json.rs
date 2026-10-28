@@ -8,7 +8,7 @@ pub(super) fn bounded_json(bytes: &[u8], remaining: &mut usize, depth: usize) ->
     )?)
 }
 /// Python json.dumps(sort_keys=True,separators=(',',':'),ensure_ascii=False) compatibility.
-pub(super) fn canonical_json(value: &Value) -> Result<Vec<u8>> {
+pub(crate) fn canonical_json(value: &Value) -> Result<Vec<u8>> {
     let mut text = String::new();
     canonical_into(value, &mut text)?;
     Ok(text.into_bytes())
@@ -132,7 +132,7 @@ fn evidence(value: &Value, remaining: &mut usize, depth: usize) -> Result<Value>
     }
     Ok(Value::Object(object))
 }
-pub(super) fn canonical_images(
+pub(crate) fn canonical_images(
     images: &Images,
     remaining: &mut usize,
     depth: usize,

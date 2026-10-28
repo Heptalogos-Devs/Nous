@@ -1,3 +1,4 @@
+mod bundles;
 mod diagnostics;
 mod graph;
 mod ingest;
@@ -8,6 +9,7 @@ mod search;
 mod time;
 mod types;
 use crate::App;
+pub use bundles::BundleInput;
 use nous_domain::*;
 pub(crate) use policy::AMEMORIX;
 pub use policy::register_configuration;
@@ -32,6 +34,9 @@ impl App {
             .await?
             .get(policy::AMEMORIX)?;
         match &request.operation {
+            AmemorixOperation::MemoryBundleAdmin(input) => {
+                bundles::execute(self, ctx, &request, input).await
+            }
             AmemorixOperation::MemoryStats(_) => {
                 diagnostics::stats(self, ctx, &request.subject_id).await
             }

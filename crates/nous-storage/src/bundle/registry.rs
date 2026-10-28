@@ -301,7 +301,7 @@ async fn read(conn: &mut SqliteConnection, id: &str) -> Result<BundleInstallatio
 async fn decode(conn: &mut SqliteConnection, row: SqliteRow) -> Result<BundleInstallation> {
     let id: String = row.get("id");
     let counts = sqlx::query(
-        "SELECT kind,count(*) AS count FROM bundle_resources WHERE installation_id=? GROUP BY kind",
+        "SELECT kind,count(DISTINCT local_id) AS count FROM bundle_resources WHERE installation_id=? GROUP BY kind",
     )
     .bind(&id)
     .fetch_all(conn)

@@ -3,7 +3,9 @@ use crate::{media::*, *};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 mod descriptor;
+mod export;
 pub use descriptor::*;
+pub use export::*;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -44,6 +46,9 @@ pub struct ExportBundleRequest {
     pub subject_id: SubjectId,
     pub package: PackageDescriptor,
     pub content_level: BundleContentLevel,
+    pub format: BundleExportFormat,
+    pub selector: BundleSelector,
+    pub assets: Option<BundleAssetOptions>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]

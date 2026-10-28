@@ -1,6 +1,7 @@
 //! Transactional SQLite authority and durable work.
 mod authority;
 mod bundle;
+pub use bundle::semantics as bundle_semantics;
 pub use bundle::*;
 mod codec;
 mod cognition;

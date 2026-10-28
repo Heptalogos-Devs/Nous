@@ -1,11 +1,13 @@
 from collections.abc import Mapping, Sequence
 from copy import copy
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
 from ..client import NousClient
 from ..errors import NousError
 from .references import target_reference
+from .bundles import bundle_admin
 
 
 class AMemorixAdapter:
@@ -16,11 +18,15 @@ class AMemorixAdapter:
         namespace_id: str,
         subject_id: str,
         wait_timeout_ms: int | None = None,
+        transfer_root: str | Path | None = None,
     ) -> None:
         self.client = client
         self.namespace_id = namespace_id
         self.subject_id = subject_id
         self.wait_timeout_ms = wait_timeout_ms
+        if transfer_root is not None and not Path(transfer_root).is_absolute():
+            raise ValueError("transfer_root must be an absolute caller-owned directory")
+        self.transfer_root = Path(transfer_root).resolve() if transfer_root is not None else None
 
     def with_source_read(self, scope: Mapping) -> "AMemorixAdapter":
         bound = copy(self)
@@ -202,6 +208,9 @@ class AMemorixAdapter:
     async def memory_runtime_admin(self, *, action: str, **kwargs: Any) -> dict:
         return await self.call("memory_runtime_admin", {"action": action, **kwargs})
 
+    async def memory_bundle_admin(self, *, action: str, **kwargs: Any) -> dict:
+        return await bundle_admin(self, action=action, **kwargs)
+
     async def invoke(
         self,
         component_name: str,
@@ -234,6 +243,7 @@ class AMemorixAdapter:
         functions = {
             "memory_stats": adapter.memory_stats,
             "memory_runtime_admin": adapter.memory_runtime_admin,
+            "memory_bundle_admin": adapter.memory_bundle_admin,
             "search_memory": adapter.search_memory,
             "ingest_text": adapter.ingest_text,
             "ingest_summary": adapter.ingest_summary,
