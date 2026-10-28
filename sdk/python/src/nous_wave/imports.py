@@ -51,9 +51,13 @@ async def upload_import_inputs(
 async def import_files(
     client: "NousClient", namespace_id: str, subject_id: str,
     files: Sequence[str | Path | Mapping[str, Any]], *, transfer_root: str | Path,
-    input_format: str | None = None, form_memory: bool = False,
+    input_format: str | None = None, form_memory: bool = False, completion: str = "accepted",
     origin: Mapping[str, Any] | None = None, operation_id: str | None = None,
 ) -> dict:
+    if completion not in {"accepted", "formed"}:
+        raise ValueError("Import completion must be accepted or formed")
+    if completion == "formed" and not form_memory:
+        raise ValueError("formed import completion requires form_memory=True")
     operation_id = operation_id or str(uuid4())
     inputs = await upload_import_inputs(
         client, namespace_id, subject_id, files,
@@ -61,19 +65,20 @@ async def import_files(
     )
     return await client.import_text({
         "namespace_id": namespace_id, "subject_id": subject_id, "inputs": inputs,
-        "form_memory": form_memory, "origin": dict(origin) if origin is not None else None,
+        "form_memory": form_memory, "completion": completion,
+        "origin": dict(origin) if origin is not None else None,
     }, operation_id=operation_id)
 
 
 async def import_directory(
     client: "NousClient", namespace_id: str, subject_id: str, *, transfer_root: str | Path,
     alias: str = "raw", relative_path: str = "", pattern: str = "*", recursive: bool = True,
-    input_format: str | None = None, form_memory: bool = False,
+    input_format: str | None = None, form_memory: bool = False, completion: str = "accepted",
     origin: Mapping[str, Any] | None = None, operation_id: str | None = None,
 ) -> dict:
     files = await ManagedFiles(transfer_root).scan(alias, relative_path, pattern=pattern, recursive=recursive)
     return await import_files(
         client, namespace_id, subject_id, files,
         transfer_root=transfer_root, input_format=input_format, form_memory=form_memory,
-        origin=origin, operation_id=operation_id,
+        completion=completion, origin=origin, operation_id=operation_id,
     )

@@ -50,6 +50,8 @@ $importedMemory = ($importJob.result.items | Where-Object admission | Select-Obj
 
 导入先保存精确输入原件和有序记录目录，再返回持久 Job。每条记录接纳独立文本 Material、`kind=import` 的来源事件、`origin=imported` 的忠实 Memory，以及标签、metadata 和 structured。`--form-memory` 可额外提交模型派生任务。结果按输入顺序给出 accepted、replayed 或 rejected，并标明从零开始的 input_index 和 record_index；整份文档解析失败时 record_index 为空，其他合法输入继续。`job get/cancel` 查看或取消导入，重启继续使用已冻结的目录。
 
+`completion` 默认为 `accepted`，Job 在记录接纳处理完毕后完成。选择 `formed` 并设置 `form_memory=true`，Job 会在已接纳记录的实际形成任务全部成功后完成；等待期间可查看持久依赖。形成任务失败时父 Job 标明失败及实际依赖，已接纳资料保留。CLI 的 `--wait-formation` 同时启用形成与此完成模式，再用 `job wait` 等待该导入 Job。
+
 相同调用方、Subject、external_id 和规范记录载荷复用原接纳，改变记录载荷返回 Conflict；form_memory 也参与该身份。另一份真实输入包含相同记录时，保留新的容器来源关联并重放原接纳。记录接纳、此次容器关联和任务进度同事务提交。来源结果分别展示记录文本与原文件信息，读取整份原件仍需该材料的来源权限。
 
 HTTP 与 MCP 接受多文档 inputs，每项指定自己的格式。Material 输入使用已上传且获授权的材料 ID；inline 输入由服务保存原始 UTF-8 字节。CLI 可用 `--material <id>` 替代 `--file <path>`：
@@ -67,11 +69,23 @@ HTTP 与 MCP 接受多文档 inputs，每项指定自己的格式。Material 输
     },
     { "format": "text", "input": { "kind": "inline", "content": "需要导入的实际记录" } }
   ],
-  "form_memory": false
+  "form_memory": false,
+  "completion": "accepted"
 }
 ```
 
 格式支持 `text`、`jsonl`、`json`；JSON 接受记录数组、`records`、A-Memorix `paragraphs` 和 LPMM `docs`。原生记录含 external_id、text 及可选 source、source_type、event_time、observed_at、tags、metadata、structured。整个任务的原始输入与规范化目录各限 4 MiB，最多 1000 条，单条限 1 MiB；所有输入严格按 UTF-8 解码，HTTP 另受实例请求体上限约束。成熟格式中的实体、三元组和时间载荷保存在 structured，后续由相应认知领域承接。
+
+导入前可预览纯文本的实际拆分：
+
+```powershell
+& $nous --json --instance $instance import preview --namespace $namespace --subject $subject --file ./temp/notes.md --strategy narrative --narrative-window-size 1600 --narrative-overlap 400
+& $nous --json --instance $instance import preview --namespace $namespace --subject $subject --material $materialId --strategy chat-log
+```
+
+`import preview` 返回原文 SHA256、字节数、生效配置、选中策略和有序 units；每个 unit 带全文件 ordinal、精确 UTF-8 `start_byte/end_byte`、原文文本、实际策略、场景或消息 context 及 `requires_llm`。支持 auto、narrative、factual、quote、chat-log；quote stanza 和超长单条消息保持完整。`imports.text` 配置提供默认窗口、overlap 与事实段落目标，命令参数覆盖本次选择。源文与返回 unit 文本目录各限 4 MiB，最多 1000 units。
+
+预览不接纳材料、不创建任务，也不调用模型。`--file` 在调用端读取 UTF-8 原文；`--material` 沿原件读取权限访问已保存材料。HTTP 对应 `POST /api/imports/preview`，请求为 `{namespace_id,subject_id,document:{format:"text",input:{kind:"inline",content:"..."}},overrides:{strategy:"narrative"}}`；也可使用 `input:{kind:"material",material_id:"..."}`。MCP 对应 `import_preview`。时间参考仅采用明确传入的 TimePoint，预览不推断事件时间。
 
 记忆变更带当前修订号，每次形成新修订和审计。以下操作冻结记忆、查看非活跃结果，再恢复：
 

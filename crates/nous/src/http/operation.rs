@@ -82,6 +82,7 @@ pub enum Operation {
     Status,
     Diagnostics,
     SubjectDiagnostics(nous_domain::SubjectDiagnosticsRequest),
+    PreviewTextImport(Box<nous_domain::PreviewTextImportRequest>),
     Trace(nous_app::administration::observability::TraceRequest),
     CreateNamespace(CreateNamespace),
     ListNamespaces,
@@ -114,6 +115,15 @@ impl Operation {
         ctx: &'a CallContext,
     ) -> BoxFuture<'a, Result<Value, Error>> {
         match self {
+            Self::PreviewTextImport(request) => async move {
+                let cancel = tokio_util::sync::CancellationToken::new();
+                let _cancel_on_drop = cancel.clone().drop_guard();
+                Ok(json!(
+                    app.preview_text_import(ctx, *request.clone(), &cancel)
+                        .await?
+                ))
+            }
+            .boxed(),
             Self::Reference(request) => app.reference_operation(ctx, request.clone()).boxed(),
             Self::SubjectDiagnostics(request) => async move {
                 Ok(json!(
@@ -249,6 +259,9 @@ impl Operation {
 
     pub fn request(&self) -> (&'static str, String, Option<Value>) {
         match self {
+            Self::PreviewTextImport(request) => {
+                ("POST", "/api/imports/preview".into(), Some(json!(request)))
+            }
             Self::SubjectDiagnostics(request) => (
                 "GET",
                 format!("/api/subjects/{}/diagnostics", request.subject_id),

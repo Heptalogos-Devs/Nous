@@ -25,7 +25,37 @@ async with NousClient(
 
 `upload_file` 与 `download_material` 流式传输原件。`query(..., media=[...])` 接受精确 MediaReference，文字与媒体一起构成联合查询。`with_source_read(scope)` 创建共享连接池的受限客户端，所有操作沿相同请求元数据追加范围；调用参数继续在此范围内收窄。
 
+绑定本次提供的整份导入原件，继续读取其正式解析记录和执行模型形成：
+
+```python
+selected = client.with_source_read({
+    "subject_id": subject_id,
+    "source_refs": [{
+        "kind": "media",
+        "reference": {"kind": "original", "material_id": input_material_id},
+        "observation_id": None,
+    }],
+    "origin_conversation_refs": [],
+})
+```
+
+整份原件的范围覆盖正式绑定的记录及其 Import 事件；单条记忆的范围保留自身的来源边界，容器原件正文另行授权。多个范围按交集约束，空 `source_refs` 与空会话来源表示空读取范围。
+
 `import_text(request, operation_id=...)` 返回持久任务回执，`receipt["result"]["job_id"]` 指定导入任务。`wait_success([job_id])` 返回处理完成的 JobRecord；其 `result.items` 按原记录顺序保存接纳、重放或拒绝结果。成功项的 `admission` 包含准确材料、Import 事件、Memory 和可选形成任务身份。`job(job_id)` 返回 `job`、`queue`、`model_calls` 详情，`cancel_job(job_id)` 取消尚未完成的工作。已提交的记录进度在重启后继续保留。
+
+请求的 `completion` 默认为 `"accepted"`，Job 在记录接纳处理完毕后完成。需要形成完成后再继续时，设置 `form_memory=True, completion="formed"`，再等待这一个导入 Job；其持久依赖保存实际形成任务身份，重启继续等待。形成任务失败会使父 Job 失败并保留已接纳资料与依赖信息。
+
+`preview_text_import(namespace_id, subject_id, document, overrides=...)` 只读预览纯文本拆分：
+
+```python
+preview = await client.preview_text_import(
+    namespace_id, subject_id,
+    {"format": "text", "input": {"kind": "inline", "content": actual_text}},
+    overrides={"strategy": "narrative", "narrative_window_size": 1600, "narrative_overlap": 400},
+)
+```
+
+已有原件可用 `input={"kind":"material","material_id":material_id}`。结果包含原文 hash/字节数、effective_options、selected_strategy、units 与 warnings；每个 unit 的 start_byte/end_byte 是原文 UTF-8 字节范围，text 与该范围原文一致。预览使用 `imports.text` 的有效默认值与本次 overrides；支持 auto/narrative/factual/quote/chat_log，不创建材料或作业、不调用模型。
 
 Subject 提供自己的文件时，传入 `upload_file(namespace_id, path, owner_subject_id=subject_id)`。已有异步字节流使用 `upload_stream(namespace_id, chunks, byte_len=length, owner_subject_id=subject_id)`；两者使用同一传输与接纳用例。原件归该 Subject 读取，接触或导入来源事件由后续显式操作记录。CLI 对应 `material put --namespace <Namespace UUID> --owner-subject <Subject UUID> --file <本机文件>`。
 
@@ -40,14 +70,16 @@ receipt = await client.import_directory(
     relative_path="notes",
     pattern="*.md",
     recursive=True,
-    form_memory=False,
+    form_memory=True,
+    completion="formed",
     operation_id=import_operation_id,
 )
+job = (await client.wait_success([receipt["result"]["job_id"]]))[0]
 ```
 
 `transfer_root` 必须是宿主管理的绝对目录。`ManagedFiles(transfer_root).path_aliases()` 返回该目录内的 `raw=source/raw`、`lpmm=source/lpmm`、`maibot=source/maibot`、`converted=converted`；`resolve_path(alias, relative_path)` 读取本机文件状态。alias 路径拒绝绝对路径、盘符、上级目录与符号链接越界。目录扫描选择 txt/md/json/jsonl，原路径留在调用端。
 
-这些便利方法保留调用者原文件，WebUI 自行清理请求的上传暂存目录。上传已接纳的 Material 继续由 Nous 管理，重试从正式原件恢复。重复同一导入时保留 `operation_id` 和文件顺序，SDK 为各文件上传派生稳定操作身份。`form_memory` 仅采用原生形成语义；文件便利方法不改变处理策略或声称形成、向量作业已经完成。
+这些便利方法保留调用者原文件，WebUI 自行清理请求的上传暂存目录。上传已接纳的 Material 继续由 Nous 管理，重试从正式原件恢复。重复同一导入时保留 `operation_id` 和文件顺序，SDK 为各文件上传派生稳定操作身份。`import_files` 和 `import_directory` 均把 `form_memory` 与 `completion` 传给同一原生导入操作，返回持久回执后可用 `wait_success` 等待所选完成模式。
 
 `source(subject_id, reference, observation_id=...)` 读取精确认知或媒体的来源。`memory_source(memory_id, revision=...)` 读取指定历史修订；省略修订时读取当前记忆。媒体的 `observation_id` 指定本次实际接触或导入，认知自身保留形成时的来源事件。
 

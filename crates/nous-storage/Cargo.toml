@@ -6,6 +6,7 @@ edition.workspace = true
 [dependencies]
 nous-domain = { path = "../nous-domain" }
 apalis.workspace = true
+apalis-core.workspace = true
 apalis-sqlite.workspace = true
 chrono.workspace = true
 serde.workspace = true

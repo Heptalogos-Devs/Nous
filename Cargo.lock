@@ -2498,6 +2498,7 @@ dependencies = [
  "nous-retrieval",
  "nous-storage",
  "npyz",
+ "regex",
  "schemars 1.2.3",
  "serde",
  "serde_json",
@@ -2594,6 +2595,7 @@ name = "nous-storage"
 version = "0.1.0"
 dependencies = [
  "apalis",
+ "apalis-core",
  "apalis-sqlite",
  "chrono",
  "metrics",

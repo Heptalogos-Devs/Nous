@@ -1,4 +1,6 @@
 use super::*;
+use nous_foundation::tasks::DependencyResolution;
+use std::collections::BTreeSet;
 
 impl App {
     pub(crate) fn register_import_tasks(
@@ -31,17 +33,7 @@ impl App {
             }
             let result = progress(&current)?;
             let Some(parsed) = plan.records.get(result.items.len()) else {
-                let mut tx = self.tasks.operation("import.complete", &job.id).await?;
-                let Some(mut current) = current_for(&mut tx, &job.id, plan.records.len()).await?
-                else {
-                    tx.rollback().await?;
-                    return Ok(());
-                };
-                self.tasks
-                    .complete_in(&mut tx, &mut current, json!(result))
-                    .await?;
-                tx.commit(json!({"job_id":job.id})).await?;
-                return Ok(());
+                return self.complete_import(&job.id, &plan).await;
             };
             if let Some(error) = &parsed.error {
                 self.import_progress(&job, &plan, parsed, None, Some(error.clone()))
@@ -73,6 +65,48 @@ impl App {
                 }
             }
         }
+    }
+    async fn complete_import(&self, id: &str, plan: &ImportPlan) -> Result<()> {
+        let mut tx = self.tasks.operation("import.complete", id).await?;
+        let Some(mut current) = current_for(&mut tx, id, plan.records.len()).await? else {
+            tx.rollback().await?;
+            return Ok(());
+        };
+        let result = progress(&current)?;
+        if plan.completion == ImportCompletion::Formed {
+            let mut dependencies = BTreeSet::new();
+            for admission in result
+                .items
+                .iter()
+                .filter_map(|item| item.admission.as_ref())
+            {
+                dependencies.insert(admission.formation_job_id.clone().ok_or_else(|| {
+                    Error::internal("formed import admission has no actual formation task")
+                })?);
+            }
+            match self
+                .tasks
+                .suspend_until_in(
+                    &mut tx,
+                    &mut current,
+                    dependencies.into_iter().collect(),
+                    DependencyPolicy::AllSucceeded,
+                )
+                .await?
+            {
+                DependencyResolution::Ready => {}
+                DependencyResolution::Suspended | DependencyResolution::Failed => {
+                    tx.commit(json!({"job_id":id,"state":current.state,"dependencies":current.dependencies})).await?;
+                    return Ok(());
+                }
+            }
+        }
+        self.tasks
+            .complete_in(&mut tx, &mut current, json!(result))
+            .await?;
+        tx.commit(json!({"job_id":id,"state":current.state}))
+            .await?;
+        Ok(())
     }
     async fn pause_import(&self, id: &str) -> Result<()> {
         let mut tx = self.tasks.operation("import.interrupted", id).await?;

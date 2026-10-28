@@ -103,6 +103,7 @@ pub(super) async fn execute(
                     source: None,
                 }],
                 form_memory: policy.form_memory,
+                completion: ImportCompletion::Accepted,
                 origin,
             },
         )

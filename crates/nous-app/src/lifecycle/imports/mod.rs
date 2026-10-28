@@ -1,5 +1,6 @@
 mod input;
 mod record;
+pub(crate) mod text;
 mod worker;
 use crate::{App, import_format};
 use nous_domain::*;
@@ -12,6 +13,8 @@ use tokio_util::sync::CancellationToken;
 struct ImportPlan {
     caller_id: String,
     form_memory: bool,
+    #[serde(default)]
+    completion: ImportCompletion,
     inputs: Vec<ImportInputRef>,
     records: Vec<ParsedImportRecord>,
 }
@@ -23,6 +26,11 @@ impl App {
         request: ImportRequest,
     ) -> Result<OperationReceipt> {
         ctx.require_subject(&request.namespace_id, &request.subject_id)?;
+        if request.completion == ImportCompletion::Formed && !request.form_memory {
+            return Err(Error::invalid(
+                "formed import completion requires form_memory=true",
+            ));
+        }
         if let Some(origin) = &request.origin {
             origin.validate()?;
         }
@@ -54,11 +62,13 @@ impl App {
         job.checkpoint = Some(json!(ImportPlan {
             caller_id: ctx.caller_id.clone(),
             form_memory: request.form_memory,
+            completion: request.completion,
             inputs: inputs.clone(),
             records
         }));
         job.result = Some(json!(ImportResult {
             job_id: job.id.clone(),
+            completion: request.completion,
             inputs: inputs.clone(),
             items: vec![],
             accepted: 0,

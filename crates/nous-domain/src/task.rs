@@ -15,7 +15,7 @@ pub enum JobState {
     Cancelled,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WaitCondition {
     pub kind: String,
@@ -24,7 +24,7 @@ pub struct WaitCondition {
     pub details: Value,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ResumeCondition {
     Ready,
@@ -41,6 +41,8 @@ pub struct JobRecord {
     pub source_read: Vec<crate::SourceReadScope>,
     pub kind: String,
     pub dependencies: Vec<String>,
+    #[serde(default)]
+    pub dependency_policy: DependencyPolicy,
     pub state: JobState,
     pub wait: Option<WaitCondition>,
     pub checkpoint: Option<Value>,
@@ -124,6 +126,17 @@ impl JobRecord {
     }
 }
 
+/// The completion condition of the task's current dependency set.
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum DependencyPolicy {
+    #[default]
+    AllSucceeded,
+    AllTerminal,
+}
+
 /// Authorization projection shared by task summaries and full task reads.
 #[derive(Debug, Clone)]
 pub struct JobReadScope {
@@ -203,6 +216,7 @@ pub struct JobSummary {
     pub kind: String,
     pub state: JobState,
     pub accepted_commit_seq: i64,
+    pub dependency_policy: DependencyPolicy,
     pub waiting_for: Option<String>,
     pub error: Option<Error>,
     pub created_at: String,

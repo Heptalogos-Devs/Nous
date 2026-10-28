@@ -34,6 +34,7 @@ pub struct TraceJob {
     pub kind: String,
     pub state: JobState,
     pub dependencies: Vec<String>,
+    pub dependency_policy: DependencyPolicy,
     pub waiting_for: Option<String>,
     pub error: Option<Error>,
     pub created_at: String,
@@ -120,7 +121,7 @@ impl Database {
             .take(limit)
             .map(operation_row)
             .collect::<Result<Vec<_>>>()?;
-        let rows = sqlx::query("SELECT job_id,accepted_commit_seq,namespace_id,subject_id,kind,state,dependencies,json_extract(wait,'$.kind') AS waiting_for,error,created_at,updated_at FROM task_records WHERE trace_id=? AND accepted_commit_seq<=? AND (? IS NULL OR job_id>?) ORDER BY job_id LIMIT ?")
+        let rows = sqlx::query("SELECT job_id,accepted_commit_seq,namespace_id,subject_id,kind,state,dependencies,dependency_policy,json_extract(wait,'$.kind') AS waiting_for,error,created_at,updated_at FROM task_records WHERE trace_id=? AND accepted_commit_seq<=? AND (? IS NULL OR job_id>?) ORDER BY job_id LIMIT ?")
             .bind(trace_id.as_str()).bind(next.snapshot_seq).bind(&next.jobs_after).bind(&next.jobs_after).bind(fetch_limit)
             .fetch_all(&mut *view.tx).await.map_err(storage_error)?;
         let jobs_has_more = rows.len() > limit;
@@ -187,6 +188,7 @@ fn job_row(row: SqliteRow) -> Result<TraceJob> {
         kind: row.get("kind"),
         state: parse_enum(row.get("state"))?,
         dependencies: serde_json::from_str(row.get("dependencies"))?,
+        dependency_policy: parse_enum(row.get("dependency_policy"))?,
         waiting_for: row.get("waiting_for"),
         error: parse_optional(row.get("error"))?,
         created_at: row.get("created_at"),

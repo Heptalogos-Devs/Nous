@@ -94,14 +94,21 @@ impl Tasks {
     }
 
     pub(super) fn observe_transaction(&self, tx: &mut WriteTransaction) {
-        tx.retain_until_end(TaskChange(self.changed.clone()));
+        tx.retain_until_end(TaskChange {
+            changed: self.changed.clone(),
+            wake: self.wake.clone(),
+        });
     }
 }
 
 #[derive(Debug)]
-struct TaskChange(Arc<Notify>);
+struct TaskChange {
+    changed: Arc<Notify>,
+    wake: Arc<Notify>,
+}
 impl Drop for TaskChange {
     fn drop(&mut self) {
-        self.0.notify_waiters();
+        self.changed.notify_waiters();
+        self.wake.notify_one();
     }
 }

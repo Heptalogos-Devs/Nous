@@ -34,6 +34,7 @@ pub fn configuration_registry(
     nous_foundation::platform::service::register_configuration(&mut registry)?;
     nous_foundation::localization::register_configuration(&mut registry)?;
     crate::integrations::amemorix::register_configuration(&mut registry)?;
+    crate::lifecycle::imports::text::policy::register_configuration(&mut registry)?;
     nous_foundation::media::register_configuration(&mut registry)?;
     crate::retrieval::config::register_configuration(&mut registry)?;
     crate::contexts::config::register_configuration(&mut registry)?;

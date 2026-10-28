@@ -48,6 +48,7 @@ plist = "1"
 nalgebra = { version = "0.35", features = ["serde-serialize"] }
 npyz = { version = "0.9.1", default-features = false }
 rayon = "1"
+regex = "1"
 reqwest = { version = "0.13.2", default-features = false, features = ["json", "rustls", "stream", "query"] }
 rmcp = { version = "3.7.0", features = ["server", "macros", "transport-streamable-http-server", "transport-io"] }
 rust_decimal = "1"

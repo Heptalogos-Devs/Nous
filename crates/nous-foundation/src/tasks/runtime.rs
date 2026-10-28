@@ -1,8 +1,12 @@
 //! Queue execution and recovery use the instance's frozen task policy.
-use super::{TaskRegistry, Tasks, terminal};
+use super::{
+    TaskRegistry, Tasks,
+    dependencies::{DependencyStatus, dependency_wait},
+    terminal,
+};
 use apalis::prelude::{BackendExt, Data, WorkerBuilder, WorkerBuilderExt};
 use apalis_core::error::WorkerError;
-use nous_domain::{Error, ErrorCode, JobRecord, JobState, Result, ResumeCondition, WaitCondition};
+use nous_domain::{Error, ErrorCode, JobState, Result, ResumeCondition, WaitCondition};
 use serde_json::json;
 use std::{
     sync::Arc,
@@ -47,7 +51,7 @@ impl Tasks {
             let backend = runtime
                 .tasks
                 .database
-                .queue_backend()
+                .queue_backend(runtime.tasks.wake.clone())
                 .poll_with_interval(Duration::from_millis(runtime.tasks.config.poll_interval_ms));
             let concurrency = runtime.tasks.config.concurrency;
             let worker = WorkerBuilder::new(format!("nous-{}", ulid::Ulid::generate()))
@@ -79,59 +83,69 @@ struct TaskRuntime {
 }
 impl TaskRuntime {
     async fn wake_ready(&self) -> Result<()> {
-        for job in self.tasks.database.waiting_jobs().await? {
-            let Some(wait) = &job.wait else {
+        for snapshot in self.tasks.database.waiting_jobs().await? {
+            let Some(wait) = &snapshot.wait else {
                 continue;
             };
-            let Some((_, ready)) = self.registry.handlers.get(&job.kind) else {
-                continue;
-            };
-            if !job.dependencies.is_empty() {
-                let dependencies = self.tasks.dependencies(&job).await?;
-                if matches!(dependency_state(&dependencies), DependencyState::Failed) {
-                    let mut tx = self
-                        .tasks
-                        .operation("task.dependency_failed", &job.id)
-                        .await?;
-                    let mut current = tx.job_record(&job.id).await?;
-                    if current.state == JobState::Waiting {
-                        self.tasks
-                            .change_in(
-                                &mut tx,
-                                &mut current,
-                                JobState::Failed,
-                                None,
-                                Some(Error::new(
-                                    ErrorCode::Conflict,
-                                    "required task did not complete",
-                                )),
-                            )
-                            .await?;
-                        tx.commit(json!({"state":current.state})).await?;
-                        self.tasks.notify_wake();
-                    } else {
-                        tx.rollback().await?;
+            let handler = self.registry.handlers.get(&snapshot.kind);
+            let callback_ready = if let Some((_, ready)) = handler {
+                match wait.resume {
+                    ResumeCondition::Ready => ready(snapshot.clone()).await,
+                    ResumeCondition::NotBefore { .. } => false,
+                    ResumeCondition::ReadyOrNotBefore { unix_ms } => {
+                        if self.tasks.clock.utc().timestamp_millis() >= unix_ms {
+                            false
+                        } else {
+                            ready(snapshot.clone()).await
+                        }
                     }
+                }
+            } else {
+                false
+            };
+            let mut tx = self.tasks.operation("task.wake", &snapshot.id).await?;
+            let mut current = tx.job_record(&snapshot.id).await?;
+            if current.state != JobState::Waiting {
+                tx.rollback().await?;
+                continue;
+            }
+            match self.tasks.dependency_status_in(&mut tx, &current).await? {
+                DependencyStatus::Failed(error) => {
+                    self.tasks
+                        .change_in(&mut tx, &mut current, JobState::Failed, None, Some(error))
+                        .await?;
+                    tx.commit(json!({"state":current.state})).await?;
                     continue;
                 }
-                if matches!(dependency_state(&dependencies), DependencyState::Pending) {
+                DependencyStatus::Pending => {
+                    tx.rollback().await?;
                     continue;
                 }
+                DependencyStatus::Ready => {}
+            }
+            if handler.is_none()
+                || current.wait != snapshot.wait
+                || current.dependencies != snapshot.dependencies
+                || current.dependency_policy != snapshot.dependency_policy
+                || current.checkpoint != snapshot.checkpoint
+                || current.result != snapshot.result
+                || current.updated_at != snapshot.updated_at
+            {
+                tx.rollback().await?;
+                continue;
             }
             let now = self.tasks.clock.utc().timestamp_millis();
-            let resumed = match wait.resume {
-                ResumeCondition::Ready => ready(job.clone()).await,
+            let resumed = match current
+                .wait
+                .as_ref()
+                .expect("waiting task has a wait condition")
+                .resume
+            {
+                ResumeCondition::Ready => callback_ready,
                 ResumeCondition::NotBefore { unix_ms } => now >= unix_ms,
-                ResumeCondition::ReadyOrNotBefore { unix_ms } => {
-                    now >= unix_ms || ready(job.clone()).await
-                }
+                ResumeCondition::ReadyOrNotBefore { unix_ms } => now >= unix_ms || callback_ready,
             };
             if !resumed {
-                continue;
-            }
-            let mut tx = self.tasks.operation("task.wake", &job.id).await?;
-            let mut current = tx.job_record(&job.id).await?;
-            if current.state != JobState::Waiting {
                 tx.rollback().await?;
                 continue;
             }
@@ -143,9 +157,8 @@ impl TaskRuntime {
                 Ok(()) => {
                     tx.commit(json!({"state":current.state})).await?;
                 }
-                Err(error) if error.code == ErrorCode::Conflict => {
-                    tx.rollback().await?;
-                }
+                // The backend's post-ack commit notification retries this persisted wait.
+                Err(error) if error.code == ErrorCode::Conflict => tx.rollback().await?,
                 Err(error) => return Err(error),
             }
         }
@@ -183,37 +196,28 @@ impl TaskRuntime {
             tx.rollback().await?;
             return Ok(());
         }
-        let mut dependencies = Vec::new();
-        for dependency in &job.dependencies {
-            dependencies.push(tx.job_record(dependency).await?);
-        }
-        let dependency_state = dependency_state(&dependencies);
-        if !matches!(dependency_state, DependencyState::Ready) {
-            let failed = matches!(dependency_state, DependencyState::Failed);
-            let wait = (!failed).then(|| WaitCondition {
-                kind: "dependencies".into(),
-                requires_attention: false,
-                resume: ResumeCondition::Ready,
-                details: json!({}),
-            });
-            let error =
-                failed.then(|| Error::new(ErrorCode::Conflict, "required task did not complete"));
-            self.tasks
-                .change_in(
-                    &mut tx,
-                    &mut job,
-                    if failed {
-                        JobState::Failed
-                    } else {
-                        JobState::Waiting
-                    },
-                    wait,
-                    error,
-                )
-                .await?;
-            tx.commit(json!({"state":job.state})).await?;
-            self.tasks.notify_wake();
-            return Ok(());
+        match self.tasks.dependency_status_in(&mut tx, &job).await? {
+            DependencyStatus::Ready => {}
+            DependencyStatus::Pending => {
+                self.tasks
+                    .change_in(
+                        &mut tx,
+                        &mut job,
+                        JobState::Waiting,
+                        Some(dependency_wait()),
+                        None,
+                    )
+                    .await?;
+                tx.commit(json!({"state":job.state})).await?;
+                return Ok(());
+            }
+            DependencyStatus::Failed(error) => {
+                self.tasks
+                    .change_in(&mut tx, &mut job, JobState::Failed, None, Some(error))
+                    .await?;
+                tx.commit(json!({"state":job.state})).await?;
+                return Ok(());
+            }
         }
         let Some((handler, _)) = self.registry.handlers.get(&job.kind) else {
             let error = Error::new(
@@ -296,26 +300,4 @@ impl TaskRuntime {
 }
 async fn dispatch(job: nous_storage::JobEnvelope, runtime: Data<TaskRuntime>) -> Result<()> {
     runtime.execute(&job.id).await
-}
-
-#[derive(Clone, Copy)]
-enum DependencyState {
-    Ready,
-    Pending,
-    Failed,
-}
-fn dependency_state(dependencies: &[JobRecord]) -> DependencyState {
-    if dependencies
-        .iter()
-        .any(|job| matches!(job.state, JobState::Failed | JobState::Cancelled))
-    {
-        DependencyState::Failed
-    } else if dependencies
-        .iter()
-        .any(|job| job.state != JobState::Succeeded)
-    {
-        DependencyState::Pending
-    } else {
-        DependencyState::Ready
-    }
 }

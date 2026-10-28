@@ -1,5 +1,5 @@
 use crate::{not_found, storage_error};
-use apalis_sqlite::{Config, SqliteStorage};
+use apalis_sqlite::SqliteStorage;
 use nous_domain::*;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -163,8 +163,8 @@ impl Database {
         Ok(())
     }
 
-    pub fn queue_backend(&self) -> SqliteStorage<JobEnvelope> {
-        SqliteStorage::new(&self.pool).with_config(Config::default().queue(JOB_QUEUE))
+    pub fn queue_backend(&self, wake: std::sync::Arc<tokio::sync::Notify>) -> super::QueueBackend {
+        super::QueueBackend::new(self.pool.clone(), wake)
     }
 
     pub async fn status(&self) -> Result<StorageStatus> {

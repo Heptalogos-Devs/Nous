@@ -5,12 +5,10 @@ use crate::{
         Action, ChangeInput, EditInput, ImportInput, ListInput, MaintainInput, MaintenanceOperation,
     },
 };
-use anyhow::{Context, Result, bail, ensure};
+use anyhow::{Result, bail, ensure};
 use clap::{Args, Subcommand};
-use nous_domain::{
-    ImportDocument, ImportDocumentInput, ImportFormat, MaterialId, MemoryId, NamespaceId, SubjectId,
-};
-use std::{io::Read, path::PathBuf};
+use nous_domain::{ImportFormat, MaterialId, MemoryId, NamespaceId, SubjectId};
+use std::path::PathBuf;
 
 #[derive(Clone, clap::ValueEnum)]
 pub enum Format {
@@ -76,6 +74,8 @@ impl ChangeArgs {
 }
 #[derive(Subcommand)]
 pub enum ImportCommand {
+    /// Preview source-preserving text units without admitting data or calling models.
+    Preview(crate::cli::imports::PreviewArgs),
     /// Inspect local A-Memorix memory bundles.
     Bundle {
         #[command(subcommand)]
@@ -103,6 +103,9 @@ pub enum ImportCommand {
         source: Option<String>,
         #[arg(long)]
         form_memory: bool,
+        /// Complete after the actual formation jobs succeed; creates formation jobs.
+        #[arg(long)]
+        wait_formation: bool,
         #[arg(long)]
         conversation_ref: Option<nous_domain::ConversationRef>,
         #[arg(long)]
@@ -111,6 +114,9 @@ pub enum ImportCommand {
 }
 impl ImportCommand {
     pub fn operation(self) -> Result<Operation> {
+        if let Self::Preview(args) = self {
+            return args.operation();
+        }
         let Self::Text {
             operation_id,
             namespace,
@@ -120,50 +126,26 @@ impl ImportCommand {
             format,
             source,
             form_memory,
+            wait_formation,
             conversation_ref,
             external_object_ref,
         } = self
         else {
             bail!("bundle inspection runs locally");
         };
-        let (name, input) = if let Some(file) = file {
-            let mut bytes = Vec::new();
-            std::fs::File::open(&file)
-                .context("cannot open import file")?
-                .take((nous_app::import_format::MAX_IMPORT_BYTES + 1) as u64)
-                .read_to_end(&mut bytes)
-                .context("cannot read import file")?;
-            ensure!(
-                bytes.len() <= nous_app::import_format::MAX_IMPORT_BYTES,
-                "import file exceeds 4 MiB"
-            );
-            let content =
-                String::from_utf8(bytes).context("import file must contain UTF-8 text")?;
-            (
-                file.file_name()
-                    .map(|name| name.to_string_lossy().into_owned()),
-                ImportDocumentInput::Inline { content },
-            )
-        } else {
-            (
-                None,
-                ImportDocumentInput::Material {
-                    material_id: material.context("select an import file or admitted material")?,
-                },
-            )
-        };
+        let document = crate::cli::imports::document(file, material, format.into(), source)?;
         Ok(Operation::Maintenance(MaintenanceOperation::Import(
             ImportInput {
                 operation_id: op_id(operation_id),
                 namespace_id: namespace.to_string(),
                 subject_id: subject.to_string(),
-                inputs: vec![ImportDocument {
-                    name,
-                    format: format.into(),
-                    input,
-                    source,
-                }],
-                form_memory,
+                inputs: vec![document],
+                form_memory: form_memory || wait_formation,
+                completion: if wait_formation {
+                    nous_domain::ImportCompletion::Formed
+                } else {
+                    nous_domain::ImportCompletion::Accepted
+                },
                 origin: nous_domain::ObservationOrigin::from_refs(
                     conversation_ref,
                     external_object_ref,

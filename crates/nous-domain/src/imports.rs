@@ -2,6 +2,8 @@
 use crate::*;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+mod text;
+pub use text::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -9,6 +11,21 @@ pub enum ImportFormat {
     Json,
     Jsonl,
     Text,
+}
+
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ImportCompletion {
+    #[default]
+    Accepted,
+    Formed,
+}
+impl ImportCompletion {
+    fn is_accepted(&self) -> bool {
+        *self == Self::Accepted
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -19,6 +36,8 @@ pub struct ImportRequest {
     pub inputs: Vec<ImportDocument>,
     #[serde(default)]
     pub form_memory: bool,
+    #[serde(default, skip_serializing_if = "ImportCompletion::is_accepted")]
+    pub completion: ImportCompletion,
     pub origin: Option<crate::ObservationOrigin>,
 }
 
@@ -133,6 +152,8 @@ pub struct ImportItemResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImportResult {
     pub job_id: String,
+    #[serde(default)]
+    pub completion: ImportCompletion,
     #[serde(default)]
     pub inputs: Vec<ImportInputRef>,
     pub items: Vec<ImportItemResult>,

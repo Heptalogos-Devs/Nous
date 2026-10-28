@@ -97,8 +97,8 @@ impl WriteTransaction {
                 return Err(Error::invalid("task dependency belongs to another scope"));
             }
         }
-        sqlx::query("INSERT INTO task_records(job_id,namespace_id,subject_id,source_read,kind,dependencies,state,wait,checkpoint,result,error,created_at,updated_at,trace_id,accepted_commit_seq) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
-   .bind(&value.id).bind(value.namespace_id.as_ref().map(NamespaceId::as_str)).bind(value.subject_id.as_ref().map(SubjectId::as_str)).bind(serde_json::to_string(&value.source_read)?).bind(&value.kind).bind(serde_json::to_string(&value.dependencies)?).bind(enum_name(&value.state)?).bind(json_option(&value.wait)?).bind(json_option(&value.checkpoint)?).bind(json_option(&value.result)?).bind(json_option(&value.error)?).bind(&value.created_at).bind(&value.updated_at).bind(value.trace_id.as_str()).bind(self.commit_seq()).execute(&mut *self.tx).await.map_err(write_error)?;
+        sqlx::query("INSERT INTO task_records(job_id,namespace_id,subject_id,source_read,kind,dependencies,dependency_policy,state,wait,checkpoint,result,error,created_at,updated_at,trace_id,accepted_commit_seq) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+   .bind(&value.id).bind(value.namespace_id.as_ref().map(NamespaceId::as_str)).bind(value.subject_id.as_ref().map(SubjectId::as_str)).bind(serde_json::to_string(&value.source_read)?).bind(&value.kind).bind(serde_json::to_string(&value.dependencies)?).bind(enum_name(&value.dependency_policy)?).bind(enum_name(&value.state)?).bind(json_option(&value.wait)?).bind(json_option(&value.checkpoint)?).bind(json_option(&value.result)?).bind(json_option(&value.error)?).bind(&value.created_at).bind(&value.updated_at).bind(value.trace_id.as_str()).bind(self.commit_seq()).execute(&mut *self.tx).await.map_err(write_error)?;
         if value.state == JobState::Queued {
             self.enqueue_task(&value.id, max_queue_attempts).await?;
         }
@@ -120,6 +120,7 @@ impl WriteTransaction {
             || old.subject_id != value.subject_id
             || old.kind != value.kind
             || old.dependencies != value.dependencies
+            || old.dependency_policy != value.dependency_policy
             || old.trace_id != value.trace_id
             || old.source_read != value.source_read
             || old.created_at != value.created_at
@@ -200,6 +201,7 @@ fn row(row: SqliteRow) -> Result<JobRecord> {
         source_read: serde_json::from_str(row.get("source_read"))?,
         kind: row.get("kind"),
         dependencies: serde_json::from_str(row.get("dependencies"))?,
+        dependency_policy: parse_enum(row.get("dependency_policy"))?,
         state: parse_enum(row.get("state"))?,
         wait: parse_optional(row.get("wait"))?,
         checkpoint: parse_optional(row.get("checkpoint"))?,
@@ -270,7 +272,7 @@ impl crate::ReadView {
         let mut items = Vec::with_capacity(filter.limit + 1);
         loop {
             let mut query = QueryBuilder::<Sqlite>::new(
-                "SELECT job_id,namespace_id,subject_id,source_read,trace_id,kind,state,accepted_commit_seq,json_extract(wait,'$.kind') AS waiting_for,error,created_at,updated_at FROM task_records WHERE accepted_commit_seq<=",
+                "SELECT job_id,namespace_id,subject_id,source_read,trace_id,kind,state,accepted_commit_seq,dependency_policy,json_extract(wait,'$.kind') AS waiting_for,error,created_at,updated_at FROM task_records WHERE accepted_commit_seq<=",
             );
             query.push_bind(snapshot_seq);
             if let Some(namespace) = &filter.namespace_id {
@@ -329,6 +331,7 @@ impl crate::ReadView {
                     kind: row.get("kind"),
                     state: parse_enum(row.get("state"))?,
                     accepted_commit_seq: sequence,
+                    dependency_policy: parse_enum(row.get("dependency_policy"))?,
                     waiting_for: row.get("waiting_for"),
                     error: parse_optional(row.get("error"))?,
                     created_at: row.get("created_at"),

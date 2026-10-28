@@ -220,7 +220,7 @@ class NousClient:
     async def import_text(
         self, request: Mapping[str, Any], *, operation_id: str | None = None
     ) -> dict:
-        """Submit a durable import; result.job_id identifies its progress and results."""
+        """Submit an import Job; completion='formed' in the request includes formation."""
         body = dict(request)
         body["operation_id"] = operation_id or body.get("operation_id") or str(uuid4())
         return await self.request("POST", "/api/imports/text", body=body)
@@ -462,10 +462,21 @@ class NousClient:
     async def backup(self) -> dict:
         return await self.request("POST", "/api/backups")
 
+    async def preview_text_import(
+        self, namespace_id: str, subject_id: str, document: Mapping[str, Any], *,
+        overrides: Mapping[str, Any] | None = None,
+    ) -> dict:
+        """Read-only split preview for inline text or an authorized Material."""
+        return await self.request("POST", "/api/imports/preview", body={
+            "namespace_id": namespace_id, "subject_id": subject_id,
+            "document": dict(document),
+            "overrides": dict(overrides) if overrides is not None else None,
+        })
+
     async def import_files(
         self, namespace_id: str, subject_id: str,
         files: Sequence[str | Path | Mapping[str, Any]], *, transfer_root: str | Path,
-        input_format: str | None = None, form_memory: bool = False,
+        input_format: str | None = None, form_memory: bool = False, completion: str = "accepted",
         origin: Mapping[str, Any] | None = None, operation_id: str | None = None,
     ) -> dict:
         """Upload managed local files and submit their Material-backed import directory."""
@@ -473,7 +484,7 @@ class NousClient:
 
         return await import_files(
             self, namespace_id, subject_id, files, transfer_root=transfer_root,
-            input_format=input_format, form_memory=form_memory, origin=origin,
+            input_format=input_format, form_memory=form_memory, completion=completion, origin=origin,
             operation_id=operation_id,
         )
 
@@ -481,6 +492,7 @@ class NousClient:
         self, namespace_id: str, subject_id: str, *, transfer_root: str | Path,
         alias: str = "raw", relative_path: str = "", pattern: str = "*",
         recursive: bool = True, input_format: str | None = None, form_memory: bool = False,
+        completion: str = "accepted",
         origin: Mapping[str, Any] | None = None, operation_id: str | None = None,
     ) -> dict:
         """Scan a managed local alias, upload selected originals and submit one import."""
@@ -489,7 +501,7 @@ class NousClient:
         return await import_directory(
             self, namespace_id, subject_id, transfer_root=transfer_root, alias=alias,
             relative_path=relative_path, pattern=pattern, recursive=recursive,
-            input_format=input_format, form_memory=form_memory, origin=origin,
+            input_format=input_format, form_memory=form_memory, completion=completion, origin=origin,
             operation_id=operation_id,
         )
 

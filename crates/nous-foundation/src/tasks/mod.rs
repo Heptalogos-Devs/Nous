@@ -1,6 +1,8 @@
 //! Durable task authority, submission and cancellation.
 mod cancellation;
 mod config;
+mod dependencies;
+pub use dependencies::DependencyResolution;
 mod registry;
 mod runtime;
 mod wait;
@@ -53,6 +55,7 @@ impl Tasks {
             source_read: tx.context().source_read.clone(),
             kind: kind.into(),
             dependencies: Vec::new(),
+            dependency_policy: DependencyPolicy::default(),
             state: JobState::Queued,
             wait: None,
             checkpoint: None,
@@ -91,10 +94,12 @@ impl Tasks {
         self.submit_in(tx, job).await
     }
     pub async fn dependencies(&self, job: &JobRecord) -> Result<Vec<JobRecord>> {
+        let mut view = self.database.read_view().await?;
         let mut dependencies = Vec::with_capacity(job.dependencies.len());
         for id in &job.dependencies {
-            dependencies.push(self.database.job_record(id).await?);
+            dependencies.push(view.job_record(id).await?);
         }
+        view.finish().await?;
         Ok(dependencies)
     }
     pub async fn read(&self, ctx: &CallContext, id: &str) -> Result<JobRecord> {

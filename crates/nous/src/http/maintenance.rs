@@ -82,6 +82,8 @@ pub struct ImportInput {
     pub inputs: Vec<nous_domain::ImportDocument>,
     #[serde(default)]
     pub form_memory: bool,
+    #[serde(default)]
+    pub completion: nous_domain::ImportCompletion,
     /// Captured origin for records without their own origin fact.
     pub origin: Option<nous_domain::ObservationOrigin>,
 }
@@ -174,6 +176,7 @@ pub fn router() -> Router<ApiState> {
         .route("/api/subjects/{subject}/recycle-bin", get(recycle))
         .route("/api/subjects/{subject}/maintenance", post(maintain))
         .route("/api/imports/text", post(import))
+        .route("/api/imports/preview", post(preview_import))
 }
 async fn change(
     State(s): State<ApiState>,
@@ -243,6 +246,18 @@ async fn import(
         s,
         c,
         Operation::Maintenance(MaintenanceOperation::Import(decode(body)?)),
+    )
+    .await
+}
+async fn preview_import(
+    State(state): State<ApiState>,
+    Extension(ctx): Extension<CallContext>,
+    body: Result<Json<nous_domain::PreviewTextImportRequest>, JsonRejection>,
+) -> Result<Json<Value>, ApiError> {
+    run(
+        state,
+        ctx,
+        Operation::PreviewTextImport(Box::new(decode(body)?)),
     )
     .await
 }

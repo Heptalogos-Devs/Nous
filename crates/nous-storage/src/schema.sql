@@ -402,6 +402,7 @@ CREATE TABLE IF NOT EXISTS task_records (
  trace_id TEXT NOT NULL,
  accepted_commit_seq INTEGER NOT NULL CHECK(accepted_commit_seq > 0),
  dependencies TEXT NOT NULL CHECK(json_valid(dependencies) AND json_type(dependencies)='array'),
+ dependency_policy TEXT NOT NULL DEFAULT 'all_succeeded' CHECK(dependency_policy IN('all_succeeded','all_terminal')),
  state TEXT NOT NULL CHECK(state IN('queued','waiting','running','succeeded','failed','cancelled')),
  wait TEXT CHECK(wait IS NULL OR json_valid(wait)),checkpoint TEXT CHECK(checkpoint IS NULL OR json_valid(checkpoint)),result TEXT CHECK(result IS NULL OR json_valid(result)),
  error TEXT CHECK(error IS NULL OR json_valid(error)),created_at TEXT NOT NULL,updated_at TEXT NOT NULL,
