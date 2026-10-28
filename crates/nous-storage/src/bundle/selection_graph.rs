@@ -117,6 +117,9 @@ impl Selection {
             self.add("memory", v.id.as_str());
         }
         if native {
+            for success in &p.file_successes {
+                self.add("import_file_success", success.id.as_str());
+            }
             for catalog in &p.unit_catalogs {
                 self.add("import_unit_catalog", catalog.id.as_str());
             }
@@ -310,6 +313,13 @@ impl Selection {
             .retain(|v| self.has("import_text_unit", v.id.as_str()));
         p.unit_outputs
             .retain(|v| self.has("import_unit_output", v.id.as_str()));
+        p.file_successes
+            .retain(|v| self.has("import_file_success", v.id.as_str()));
+        p.import_manifest_heads.retain(|head| {
+            p.file_successes
+                .iter()
+                .any(|success| success.id == head.success_id)
+        });
         p.observations
             .retain(|v| self.has("observation", v.id.as_str()));
         for original in &mut p.materials {

@@ -152,6 +152,10 @@ impl Database {
             .execute(&mut *tx)
             .await
             .map_err(storage_error)?;
+        sqlx::raw_sql(include_str!("../imports/files_schema.sql"))
+            .execute(&mut *tx)
+            .await
+            .map_err(storage_error)?;
         tx.commit().await.map_err(storage_error)?;
         Ok(Self {
             pool,

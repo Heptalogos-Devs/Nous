@@ -53,9 +53,9 @@ async fn settings(app: &App, binding: &AmemorixRequest) -> Result<Value> {
         "default_narrative_window_size":split.narrative_window_size,"default_narrative_overlap":split.narrative_overlap,"default_factual_target_size":split.factual_target_size,
         "max_chunk_chars":null,"default_file_concurrency":null,"default_chunk_concurrency":null,"max_file_concurrency":null,"max_chunk_concurrency":null,
         "llm_enabled":policy.llm_enabled,"vectors":policy.vectors,"supported_input_modes":["text"],"path_aliases":null,"shared_task_concurrency":tasks.concurrency,
-        "capabilities":{"request_concurrency":false,"file_dedupe":false,"json_processing":false,"unit_retry":true},
+        "capabilities":{"request_concurrency":false,"file_dedupe":true,"json_processing":false,"unit_retry":true},
         "native_limits":{"input_bytes":crate::import_format::MAX_IMPORT_BYTES,"units":crate::import_format::MAX_IMPORT_RECORDS}},
-        "content":"纯文本可上传、粘贴或从宿主受管目录选择。处理采用冻结 UnitId，任务、文件与分块状态来自真实子任务。时间抽取保留原始结果，当前仅带明确 offset 的 RFC3339 时间可归一化；日期或时区未知时保留 temporal_error，不补本机日期或 UTC。请求级并发与文件去重清单尚需对应原生能力；显式选择 dedupe_policy=none 可使用现有文本处理链。JSON、LPMM 转换、时序回填与 MaiBot 数据库迁移分别由其专门处理能力接入。"}),
+        "content":"纯文本可上传、粘贴或从宿主受管目录选择。处理采用冻结 UnitId，任务、文件与分块状态来自真实子任务。时间抽取保留原始结果，当前仅带明确 offset 的 RFC3339 时间可归一化；日期或时区未知时保留 temporal_error，不补本机日期或 UTC。文件去重支持 content_hash/manifest/none；force 绕过本批命中，clear_manifest 清本作用域当前资格，历史保留。请求级并发由统一任务配置管理。JSON、LPMM 转换、时序回填与 MaiBot 数据库迁移分别由其专门处理能力接入。"}),
     )
 }
 
@@ -91,21 +91,8 @@ async fn create(
             "request file/chunk concurrency requires the native scheduler's matching request policy",
         ));
     }
-    let dedupe = options
-        .dedupe_policy
-        .as_deref()
-        .unwrap_or(if action == "create_raw_scan" {
-            "manifest"
-        } else {
-            "content_hash"
-        });
-    if dedupe != "none" || options.force || options.clear_manifest {
-        return Err(Error::new(
-            ErrorCode::CapabilityUnavailable,
-            "file-level dedupe, force and manifest clearing require durable document admission",
-        )
-        .with_context("dedupe_policy", dedupe));
-    }
+    let dedupe = options.dedupe_policy.as_deref().unwrap_or(if action == "create_raw_scan" { "manifest" } else { "content_hash" });
+    let dedupe_policy: ImportFileDedupePolicy = serde_json::from_value(json!(dedupe.trim().to_ascii_lowercase()))?;
     if options
         .input_mode
         .as_deref()
@@ -123,17 +110,10 @@ async fn create(
                 "paste accepts content, not an uploaded input catalog",
             ));
         }
-        documents.push(ImportDocument {
-            name: options.name.clone(),
-            format: ImportFormat::Text,
-            input: ImportDocumentInput::Inline {
-                content: options
-                    .content
-                    .clone()
-                    .ok_or_else(|| Error::invalid("paste content is required"))?,
-            },
-            source: None,
-        });
+        documents.push(ImportFileDocument { document: ImportDocument {
+            name: options.name.clone(), format: ImportFormat::Text,
+            input: ImportDocumentInput::Inline { content: options.content.clone().ok_or_else(|| Error::invalid("paste content is required"))? }, source: None,
+        }, file_identity: None });
     }
     if documents.is_empty() {
         return Err(Error::new(
@@ -143,7 +123,7 @@ async fn create(
     }
     if documents
         .iter()
-        .any(|document| document.format != ImportFormat::Text)
+        .any(|document| document.document.format != ImportFormat::Text)
     {
         return Err(Error::new(
             ErrorCode::CapabilityUnavailable,
@@ -157,46 +137,19 @@ async fn create(
     let origin = options.origin()?;
     let cancel = CancellationToken::new();
     let _guard = cancel.clone().drop_guard();
-    let frozen = app
-        .freeze_import_catalog(
-            ctx,
-            &operation_id,
-            FreezeImportCatalogRequest {
-                namespace_id: binding.namespace_id.clone(),
-                subject_id: binding.subject_id.clone(),
-                inputs: documents,
-                overrides: Some(options.overrides()?),
-                parent_catalog_id: None,
-            },
-            &cancel,
-        )
-        .await?;
-    let catalog_id: ImportUnitCatalogId =
-        serde_json::from_value(frozen.result["catalog_id"].clone())?;
-    let receipt = app
-        .process_import_units(
-            ctx,
-            &operation_id,
-            ProcessImportUnitsRequest {
-                namespace_id: binding.namespace_id.clone(),
-                subject_id: binding.subject_id.clone(),
-                catalog_id,
-                unit_ids: None,
-                llm_enabled: options.llm_enabled.unwrap_or(policy.llm_enabled),
-                extract_time: options.chat_log,
-                vectors: options.vectors.unwrap_or(policy.vectors),
-                origin,
-                retry_parent_job_id: None,
-            },
-            &cancel,
-        )
-        .await?;
-    let id = receipt.result["job_id"]
-        .as_str()
-        .ok_or_else(|| Error::internal("native processing receipt has no job_id"))?;
+    let receipt = app.admit_import_files(ctx, &operation_id, AdmitImportFilesRequest {
+        namespace_id: binding.namespace_id.clone(), subject_id: binding.subject_id.clone(), inputs: documents,
+        overrides: Some(options.overrides()?), llm_enabled: options.llm_enabled.unwrap_or(policy.llm_enabled),
+        extract_time: options.chat_log, vectors: options.vectors.unwrap_or(policy.vectors), origin,
+        dedupe_policy, force: options.force, clear_manifest: options.clear_manifest,
+    }, &cancel).await?;
+    let admission: ImportFilesAdmission = serde_json::from_value(receipt.result.clone())?;
+    let Some(id) = admission.processing_job_id.as_deref() else {
+        return Ok(json!({"success":true,"skipped":true,"task":null,"files":admission.inputs,"operation_id":operation_id,"native":receipt}));
+    };
     let task = task::read(app, ctx, binding, id, &cancel).await?;
     Ok(
-        json!({"success":true,"task":presentation::summary(&task,false,false)?,"operation_id":operation_id,"native":receipt}),
+        json!({"success":true,"skipped":false,"files":admission.inputs,"task":presentation::summary(&task,false,false)?,"operation_id":operation_id,"native":receipt}),
     )
 }
 #[derive(Deserialize)]
@@ -403,15 +356,18 @@ fn retry_overrides(
         || changes.chunk_concurrency.is_some()
         || changes.force
         || changes.clear_manifest
-        || changes
-            .dedupe_policy
-            .as_deref()
-            .is_some_and(|value| value != "none")
     {
         return Err(Error::new(
             ErrorCode::CapabilityUnavailable,
             "retry does not apply unsupported file-manifest or request-concurrency policy",
         ));
+    }
+    if let Some(policy)=&changes.dedupe_policy {
+        let policy:ImportFileDedupePolicy=serde_json::from_value(json!(policy.trim().to_ascii_lowercase()))?;
+        for input in &task.inputs {
+            let original=task.files.iter().find(|file|file.input_source_id==input.id).map_or(ImportFileDedupePolicy::None,|file|file.dedupe_policy);
+            if policy!=original {return Err(Error::new(ErrorCode::Conflict,"retry retains the original file admission policy; new policy requires file admission"));}
+        }
     }
     let wanted = changes.overrides()?;
     for document in &task.catalog.documents {

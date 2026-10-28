@@ -95,6 +95,29 @@ for item in parent["job"]["result"]["unit_jobs"]:
 
 Subject 提供自己的文件时，传入 `upload_file(namespace_id, path, owner_subject_id=subject_id)`。已有异步字节流使用 `upload_stream(namespace_id, chunks, byte_len=length, owner_subject_id=subject_id)`；两者使用同一传输与接纳用例。原件归该 Subject 读取，接触或导入来源事件由后续显式操作记录。CLI 对应 `material put --namespace <Namespace UUID> --owner-subject <Subject UUID> --file <本机文件>`。
 
+需要文件成功记录去重及自动冻结、处理时，使用 `admit_import_files(request, operation_id=...)`。本机文件可先通过公共文件边界上传并生成调用端身份：
+
+```python
+from nous_wave.imports import upload_import_file_documents
+
+inputs = await upload_import_file_documents(
+    client, namespace_id, subject_id, ["source/raw/notes.md"],
+    transfer_root=instance_transfer_directory, alias="raw",
+    operation_id=import_operation_id,
+)
+receipt = await client.admit_import_files({
+    "namespace_id": namespace_id, "subject_id": subject_id, "inputs": inputs,
+    "overrides": {"strategy": "narrative"},
+    "llm_enabled": True, "extract_time": False, "vectors": "required",
+    "origin": None, "dedupe_policy": "manifest", "force": False, "clear_manifest": False,
+}, operation_id=import_operation_id)
+job_id = receipt["result"]["processing_job_id"]
+if job_id is not None:
+    await client.wait_success([job_id])
+```
+
+每项输入返回 process 或带实际 success_id 的 skip。全部 skip 时 catalog_id 与 processing_job_id 为 None；其余输入按实际冻结目录提交处理。dedupe_policy 可为 none、content_hash（默认）或 manifest。file_identity 可显式提供；alias 文件身份由调用端生成，保留 alias 与相对路径，绝对主机路径留在本机。缺少身份时 manifest 按内容 hash；force 显式重新处理，clear_manifest 清除当前 namespace／subject／typed origin 下全部当前资格，历史成功记录保留。已上传的输入直接使用 `{document:{format,input:{kind:"material",material_id}},file_identity}`。
+
 `import_files(namespace_id, subject_id, files, transfer_root=...)` 将本机文件逐份流式上传，再以 Material 输入目录提交一个正式导入任务。`files` 接受路径列表，或 WebUI 的 `{staged_path, filename, size}` 列表；也可用 `{path, name, format, source}` 明确格式与语义来源。格式按 txt/md、json、jsonl 扩展名选择，`input_format` 可显式指定。SDK 不解析或改写文件内容。
 
 ```python

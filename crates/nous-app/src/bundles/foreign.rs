@@ -53,6 +53,8 @@ pub(super) fn convert(inspection: BundleInspection, root: &Path) -> Result<Loade
             unit_catalogs: vec![],
             text_units: vec![],
             unit_outputs: vec![],
+            file_successes: vec![],
+            import_manifest_heads: vec![],
             observations: vec![],
             exposures: vec![],
             memories: vec![],

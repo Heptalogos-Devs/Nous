@@ -20,6 +20,15 @@ impl SubjectPackage {
                     "unit catalog has an invalid identity, scope or original unit count",
                 ));
             }
+            let count = catalog.documents.iter().try_fold(0usize, |sum, document| {
+                sum.checked_add(document.original_unit_count)
+                    .ok_or_else(|| Error::invalid("document unit count overflow"))
+            })?;
+            if count != catalog.original_unit_count {
+                return Err(Error::invalid(
+                    "catalog document counts differ from its original total",
+                ));
+            }
             let mut documents = BTreeSet::new();
             for document in &catalog.documents {
                 if !documents.insert(&document.input_source_id)
@@ -122,6 +131,23 @@ impl SubjectPackage {
                 }
             }
         }
+        for catalog in &self.unit_catalogs {
+            for document in &catalog.documents {
+                let retained = self
+                    .text_units
+                    .iter()
+                    .filter(|unit| {
+                        unit.catalog_id == catalog.id
+                            && unit.input_source_id == document.input_source_id
+                    })
+                    .count();
+                if retained > document.original_unit_count {
+                    return Err(Error::invalid(
+                        "retained document units exceed its original count",
+                    ));
+                }
+            }
+        }
         let mut outputs = BTreeSet::new();
         for output in &self.unit_outputs {
             output.id.validate()?;
@@ -137,6 +163,26 @@ impl SubjectPackage {
             {
                 return Err(Error::invalid(
                     "unit output has no exact scoped retained unit",
+                ));
+            }
+            output.observation_id.validate()?;
+            let unit = self
+                .text_units
+                .iter()
+                .find(|unit| unit.id == output.unit_id)
+                .ok_or_else(|| Error::invalid("unit output omits original unit"))?;
+            let input = self
+                .input_sources
+                .iter()
+                .find(|input| input.id == unit.input_source_id)
+                .ok_or_else(|| Error::invalid("unit output omits original input"))?;
+            if !self.observations.iter().any(|event| {
+                event.id == output.observation_id
+                    && event.kind == ObservationKind::Import
+                    && event.material_id == input.material_id
+            }) {
+                return Err(Error::invalid(
+                    "unit output omits exact original Import observation",
                 ));
             }
             for (id, temporal) in [
@@ -166,8 +212,15 @@ impl SubjectPackage {
             let mut memories = BTreeSet::new();
             for id in &output.memory_ids {
                 if !memories.insert(id)
-                    || (!self.memories.iter().any(|value| &value.id == id)
-                        && !self.purges.iter().any(|value| &value.id == id))
+                    || (!self.memories.iter().any(|value| {
+                        &value.id == id
+                            && value.observation_id == output.observation_id
+                            && value.material_id == input.material_id
+                            && value.source
+                                == (MediaReference::SourceRegion {
+                                    id: unit.source_region_id.clone(),
+                                })
+                    }) && !self.purges.iter().any(|value| &value.id == id))
                 {
                     return Err(Error::invalid(
                         "unit output omits a retained or purged Memory identity",

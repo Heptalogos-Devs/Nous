@@ -44,10 +44,9 @@ impl SourceManagementOperation {
         ctx: &'a CallContext,
     ) -> BoxFuture<'a, Result<Value, Error>> {
         match self {
-            Self::Preview { request } => async move {
-                Ok(json!(app.preview_sources(ctx, request.clone()).await?))
+            Self::Preview { request } => {
+                async move { Ok(json!(app.preview_sources(ctx, request.clone()).await?)) }.boxed()
             }
-            .boxed(),
             Self::GetTrashOperation { request } => {
                 async move { Ok(json!(app.source_trash_operation(ctx, request).await?)) }.boxed()
             }

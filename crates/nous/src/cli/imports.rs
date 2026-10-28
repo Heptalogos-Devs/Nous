@@ -142,6 +142,30 @@ impl RetryInputsArgs {
     }
 }
 
+#[derive(Args)]
+pub struct AdmitFilesArgs {
+    /// JSON AdmitImportFilesRequest with inline documents or uploaded MaterialIds.
+    #[arg(long)]
+    request_file: PathBuf,
+    #[arg(long)]
+    operation_id: Option<String>,
+}
+impl AdmitFilesArgs {
+    pub(super) fn operation(self) -> Result<Operation> {
+        let request: AdmitImportFilesRequest = serde_json::from_reader(
+            std::fs::File::open(&self.request_file)
+                .context("cannot open file admission request")?,
+        )
+        .context("invalid file admission request")?;
+        Ok(Operation::AdmitImportFiles(Box::new(
+            crate::http::import_files::AdmitImportFilesInput {
+                operation_id: crate::cli::op_id(self.operation_id),
+                request,
+            },
+        )))
+    }
+}
+
 pub(super) fn document(
     file: Option<PathBuf>,
     material: Option<MaterialId>,

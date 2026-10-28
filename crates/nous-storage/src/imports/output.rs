@@ -20,7 +20,26 @@ impl WriteTransaction {
         .fetch_optional(&mut *self.tx)
         .await
         .map_err(storage_error)?;
-        let _: ImportTextUnit = serde_json::from_str(&unit_body.ok_or_else(not_found)?)?;
+        let unit: ImportTextUnit = serde_json::from_str(&unit_body.ok_or_else(not_found)?)?;
+        output.observation_id.validate()?;
+        let input = self
+            .import_input_source(
+                &output.namespace_id,
+                &output.subject_id,
+                &unit.input_source_id,
+            )
+            .await?;
+        let event = self
+            .observation(&output.namespace_id, &output.observation_id)
+            .await?;
+        if event.subject_id != output.subject_id
+            || event.kind != ObservationKind::Import
+            || event.material_id != input.material_id
+        {
+            return Err(Error::invalid(
+                "unit output differs from actual document Import observation",
+            ));
+        }
         for (id, temporal) in [
             (&output.semantic_call_id, false),
             (&output.temporal_call_id, true),
@@ -45,8 +64,8 @@ impl WriteTransaction {
             }
         }
         for id in &output.memory_ids {
-            let known: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM memory_revisions WHERE namespace_id=?1 AND subject_id=?2 AND memory_id=?3 UNION ALL SELECT 1 FROM memory_purges WHERE namespace_id=?1 AND subject_id=?2 AND memory_id=?3)")
-                .bind(output.namespace_id.as_str()).bind(output.subject_id.as_str()).bind(id.as_str())
+            let known: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM memory_revisions WHERE namespace_id=?1 AND subject_id=?2 AND memory_id=?3 AND observation_id=?4 AND material_id=?5 AND json_extract(source,'$.kind')='source_region' AND json_extract(source,'$.id')=?6 UNION ALL SELECT 1 FROM memory_purges WHERE namespace_id=?1 AND subject_id=?2 AND memory_id=?3)")
+                .bind(output.namespace_id.as_str()).bind(output.subject_id.as_str()).bind(id.as_str()).bind(output.observation_id.as_str()).bind(input.material_id.as_str()).bind(unit.source_region_id.as_str())
                 .fetch_one(&mut *self.tx).await.map_err(storage_error)?;
             if !known {
                 return Err(Error::invalid(
@@ -84,10 +103,7 @@ impl ReadView {
         subject: &SubjectId,
         id: &ImportUnitOutputId,
     ) -> Result<ImportUnitOutput> {
-        let body: Option<String> = sqlx::query_scalar("SELECT body FROM import_unit_outputs WHERE namespace_id=? AND subject_id=? AND id=? AND commit_seq<=?")
-            .bind(namespace.as_str()).bind(subject.as_str()).bind(id.as_str()).bind(self.watermark)
-            .fetch_optional(&mut *self.tx).await.map_err(storage_error)?;
-        Ok(serde_json::from_str(&body.ok_or_else(not_found)?)?)
+        read_output(&mut self.tx, namespace, subject, id, self.watermark).await
     }
     pub async fn import_unit_output_facts(
         &mut self,
@@ -101,5 +117,28 @@ impl ReadView {
             .into_iter()
             .map(|body| serde_json::from_str(&body).map_err(Error::from))
             .collect()
+    }
+}
+
+async fn read_output(
+    conn: &mut sqlx::SqliteConnection,
+    namespace: &NamespaceId,
+    subject: &SubjectId,
+    id: &ImportUnitOutputId,
+    cutoff: i64,
+) -> Result<ImportUnitOutput> {
+    let body: Option<String> = sqlx::query_scalar("SELECT body FROM import_unit_outputs WHERE namespace_id=? AND subject_id=? AND id=? AND commit_seq<=?")
+            .bind(namespace.as_str()).bind(subject.as_str()).bind(id.as_str()).bind(cutoff)
+            .fetch_optional(conn).await.map_err(storage_error)?;
+    Ok(serde_json::from_str(&body.ok_or_else(not_found)?)?)
+}
+impl WriteTransaction {
+    pub async fn import_unit_output(
+        &mut self,
+        namespace: &NamespaceId,
+        subject: &SubjectId,
+        id: &ImportUnitOutputId,
+    ) -> Result<ImportUnitOutput> {
+        read_output(&mut self.tx, namespace, subject, id, i64::MAX).await
     }
 }

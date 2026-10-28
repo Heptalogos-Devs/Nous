@@ -37,6 +37,7 @@ pub struct ImportUnitOutput {
     pub subject_id: SubjectId,
     pub unit_id: ImportUnitId,
     pub attempt_job_id: String,
+    pub observation_id: ObservationId,
     pub memory_ids: Vec<MemoryId>,
     pub cognition: Vec<CognitiveRef>,
     pub semantic_call_id: Option<ModelCallId>,

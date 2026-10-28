@@ -8,6 +8,8 @@ mod catalog;
 pub use catalog::*;
 mod processing;
 pub use processing::*;
+mod files;
+pub use files::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]

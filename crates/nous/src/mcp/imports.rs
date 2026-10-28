@@ -3,6 +3,17 @@ use super::*;
 #[tool_router(router = import_tool_router, vis = "pub(super)")]
 impl McpService {
     #[tool(
+        description = "Admit supplied import file documents under the native dedupe policy, freeze selected text units and submit real processing tasks. Accepts inline documents or authorized MaterialIds and optional opaque caller file identities. Returns per-input process/skip decisions; an all-skipped batch has null catalog_id and processing_job_id."
+    )]
+    async fn import_admit_files(
+        &self,
+        Parameters(input): Parameters<crate::http::import_files::AdmitImportFilesInput>,
+        ctx: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        self.execute(Operation::AdmitImportFiles(Box::new(input)), ctx)
+            .await
+    }
+    #[tool(
         description = "Read an adopted immutable import unit output under the unit's actual source-read permissions. Includes exact Memory/cognition references and real semantic/temporal call identities."
     )]
     async fn import_output(

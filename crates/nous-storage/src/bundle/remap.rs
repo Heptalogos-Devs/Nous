@@ -41,7 +41,8 @@ impl Remap {
             .chain(package.record_containers.iter().map(|v| v.id.to_string()))
             .chain(package.unit_catalogs.iter().map(|v| v.id.to_string()))
             .chain(package.text_units.iter().map(|v| v.id.to_string()))
-            .chain(package.unit_outputs.iter().map(|v| v.id.to_string()));
+            .chain(package.unit_outputs.iter().map(|v| v.id.to_string()))
+            .chain(package.file_successes.iter().map(|v| v.id.to_string()));
         for id in identities {
             ids.entry(id)
                 .or_insert_with(|| MaterialId::new().to_string());
@@ -98,6 +99,30 @@ impl Remap {
         }
         Ok(())
     }
+    pub fn file_success(&self, source: &ImportFileSuccess) -> Result<ImportFileSuccess> {
+        let mut value = source.clone();
+        value.id = ImportFileSuccessId(self.id(source.id.as_str())?);
+        value.namespace_id = self.namespace.clone();
+        value.subject_id = self.subject.clone();
+        value.input_source_id = ImportInputSourceId(self.id(source.input_source_id.as_str())?);
+        value.catalog_id = ImportUnitCatalogId(self.id(source.catalog_id.as_str())?);
+        for pair in &mut value.unit_outputs {
+            pair.unit_id = ImportUnitId(self.id(pair.unit_id.as_str())?);
+            pair.output_id = ImportUnitOutputId(self.id(pair.output_id.as_str())?);
+        }
+        value.recorded_at = self.recorded_at.clone();
+        value.commit_seq = self.sequence;
+        Ok(value)
+    }
+    pub fn manifest_head(&self, source: &ImportManifestHead) -> Result<ImportManifestHead> {
+        let mut value = source.clone();
+        value.namespace_id = self.namespace.clone();
+        value.subject_id = self.subject.clone();
+        value.success_id = ImportFileSuccessId(self.id(source.success_id.as_str())?);
+        value.recorded_at = self.recorded_at.clone();
+        value.commit_seq = self.sequence;
+        Ok(value)
+    }
     pub fn unit_catalog(&self, source: &ImportUnitCatalog) -> Result<ImportUnitCatalog> {
         let mut value = source.clone();
         value.id = ImportUnitCatalogId(self.id(source.id.as_str())?);
@@ -139,6 +164,7 @@ impl Remap {
         value.namespace_id = self.namespace.clone();
         value.subject_id = self.subject.clone();
         value.unit_id = ImportUnitId(self.id(source.unit_id.as_str())?);
+        value.observation_id = ObservationId(self.id(source.observation_id.as_str())?);
         value.memory_ids = source
             .memory_ids
             .iter()

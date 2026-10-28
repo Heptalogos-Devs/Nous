@@ -12,6 +12,7 @@ mod directory;
 pub use directory::ReferenceViewOptions;
 mod identity;
 mod imports;
+pub use imports::ImportFileLookup;
 mod media;
 mod model;
 mod prompt;

@@ -24,6 +24,12 @@ pub(super) enum InputBytes {
     Material(Material),
 }
 impl PendingInput {
+    pub(super) fn content_hash(&self) -> &str {
+        match &self.bytes {
+            InputBytes::Captured(value) => &value.object.digest,
+            InputBytes::Material(value) => &value.content_hash,
+        }
+    }
     pub(super) fn byte_len(&self) -> Result<usize> {
         usize::try_from(match &self.bytes {
             InputBytes::Captured(value) => value.object.byte_len,

@@ -16,7 +16,7 @@ pub(super) struct Create {
     pub content: Option<String>,
     pub name: Option<String>,
     #[serde(default)]
-    pub inputs: Vec<ImportDocument>,
+    pub inputs: Vec<ImportFileDocument>,
     pub input_mode: Option<String>,
     pub llm_enabled: Option<bool>,
     pub strategy_override: Option<ImportTextStrategy>,

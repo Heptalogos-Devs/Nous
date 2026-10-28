@@ -133,16 +133,7 @@ impl ReadView {
         subject: &SubjectId,
         id: &ImportUnitId,
     ) -> Result<ImportTextUnit> {
-        let body: Option<String> = sqlx::query_scalar(
-            "SELECT body FROM import_text_units WHERE namespace_id=? AND subject_id=? AND id=?",
-        )
-        .bind(ns.as_str())
-        .bind(subject.as_str())
-        .bind(id.as_str())
-        .fetch_optional(&mut *self.tx)
-        .await
-        .map_err(storage_error)?;
-        Ok(serde_json::from_str(&body.ok_or_else(not_found)?)?)
+        read_unit(&mut self.tx, ns, subject, id).await
     }
     pub async fn import_catalog_units(
         &mut self,
@@ -150,11 +141,7 @@ impl ReadView {
         subject: &SubjectId,
         catalog: &ImportUnitCatalogId,
     ) -> Result<Vec<ImportTextUnit>> {
-        let rows:Vec<String>=sqlx::query_scalar("SELECT body FROM import_text_units WHERE namespace_id=? AND subject_id=? AND catalog_id=? ORDER BY ordinal,id")
-            .bind(ns.as_str()).bind(subject.as_str()).bind(catalog.as_str()).fetch_all(&mut *self.tx).await.map_err(storage_error)?;
-        rows.into_iter()
-            .map(|v| serde_json::from_str(&v).map_err(Error::from))
-            .collect()
+        read_units(&mut self.tx, ns, subject, catalog).await
     }
     pub async fn import_unit_catalog_facts(
         &mut self,
@@ -228,4 +215,60 @@ async fn read_catalog(
     .await
     .map_err(storage_error)?;
     Ok(serde_json::from_str(&body.ok_or_else(not_found)?)?)
+}
+
+async fn read_unit(
+    conn: &mut sqlx::SqliteConnection,
+    ns: &NamespaceId,
+    subject: &SubjectId,
+    id: &ImportUnitId,
+) -> Result<ImportTextUnit> {
+    let body: Option<String> = sqlx::query_scalar(
+        "SELECT body FROM import_text_units WHERE namespace_id=? AND subject_id=? AND id=?",
+    )
+    .bind(ns.as_str())
+    .bind(subject.as_str())
+    .bind(id.as_str())
+    .fetch_optional(&mut *conn)
+    .await
+    .map_err(storage_error)?;
+    Ok(serde_json::from_str(&body.ok_or_else(not_found)?)?)
+}
+async fn read_units(
+    conn: &mut sqlx::SqliteConnection,
+    ns: &NamespaceId,
+    subject: &SubjectId,
+    catalog: &ImportUnitCatalogId,
+) -> Result<Vec<ImportTextUnit>> {
+    let rows:Vec<String>=sqlx::query_scalar("SELECT body FROM import_text_units WHERE namespace_id=? AND subject_id=? AND catalog_id=? ORDER BY ordinal,id")
+            .bind(ns.as_str()).bind(subject.as_str()).bind(catalog.as_str()).fetch_all(&mut *conn).await.map_err(storage_error)?;
+    rows.into_iter()
+        .map(|v| serde_json::from_str(&v).map_err(Error::from))
+        .collect()
+}
+impl WriteTransaction {
+    pub async fn import_unit_catalog(
+        &mut self,
+        ns: &NamespaceId,
+        subject: &SubjectId,
+        id: &ImportUnitCatalogId,
+    ) -> Result<ImportUnitCatalog> {
+        read_catalog(&mut self.tx, ns, subject, id).await
+    }
+    pub async fn import_text_unit(
+        &mut self,
+        ns: &NamespaceId,
+        subject: &SubjectId,
+        id: &ImportUnitId,
+    ) -> Result<ImportTextUnit> {
+        read_unit(&mut self.tx, ns, subject, id).await
+    }
+    pub async fn import_catalog_units(
+        &mut self,
+        ns: &NamespaceId,
+        subject: &SubjectId,
+        catalog: &ImportUnitCatalogId,
+    ) -> Result<Vec<ImportTextUnit>> {
+        read_units(&mut self.tx, ns, subject, catalog).await
+    }
 }

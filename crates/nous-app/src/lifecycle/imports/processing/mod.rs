@@ -1,12 +1,13 @@
 mod adoption;
 mod compile;
+mod finish_files;
 mod models;
 mod time;
 mod unit;
 use crate::App;
 use nous_domain::*;
 use nous_foundation::tasks::{DependencyResolution, TaskRegistry};
-use nous_storage::{BeginOperation, OperationReceipt, operation_key};
+use nous_storage::{BeginOperation, OperationReceipt, WriteTransaction, operation_key};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio_util::sync::CancellationToken;
@@ -15,6 +16,14 @@ use tokio_util::sync::CancellationToken;
 struct ParentPlan {
     request: ProcessImportUnitsRequest,
     caller_id: String,
+    #[serde(default)]
+    files: Vec<FilePublicationIntent>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct FilePublicationIntent {
+    pub input_source_id: ImportInputSourceId,
+    pub file_identity: Option<String>,
+    pub dedupe_policy: ImportFileDedupePolicy,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct UnitPlan {
@@ -101,6 +110,7 @@ impl App {
                 cancel,
             )
             .await?;
+        let mut files = Vec::new();
         if let Some(parent_id) = &request.retry_parent_job_id {
             let parent = self.tasks.read(ctx, parent_id).await?;
             let (namespace, subject) = parent.subject_scope()?;
@@ -117,9 +127,15 @@ impl App {
                     .checkpoint
                     .ok_or_else(|| Error::internal("retry parent has no frozen request"))?,
             )?;
+            files = parent_plan.files;
             if parent_plan.request.catalog_id != request.catalog_id {
                 return Err(Error::invalid(
                     "retry must retain its parent's frozen catalog",
+                ));
+            }
+            if parent_plan.request.origin != request.origin {
+                return Err(Error::invalid(
+                    "retry must retain its parent's actual origin",
                 ));
             }
             let result: ImportProcessingResult = serde_json::from_value(
@@ -150,18 +166,39 @@ impl App {
             BeginOperation::Replay(receipt) => return Ok(receipt),
             BeginOperation::New(tx) => tx,
         };
+        let job = self.submit_processing_in(&mut tx, request, files).await?;
+        tx.commit(json!({"job_id":job.id})).await
+    }
+
+    pub(super) async fn submit_processing_in(
+        &self,
+        tx: &mut WriteTransaction,
+        request: ProcessImportUnitsRequest,
+        files: Vec<FilePublicationIntent>,
+    ) -> Result<JobRecord> {
+        tx.context()
+            .require_subject(&request.namespace_id, &request.subject_id)?;
+        if let Some(origin) = &request.origin {
+            origin.validate()?;
+        }
+        if request.unit_ids.as_ref().is_none_or(|ids| ids.is_empty()) {
+            return Err(Error::invalid(
+                "processing requires a frozen unit selection",
+            ));
+        }
         let mut job = self.tasks.new_job(
-            &tx,
+            tx,
             "import.process",
             Some(request.namespace_id.clone()),
             Some(request.subject_id.clone()),
         );
         job.checkpoint = Some(json!(ParentPlan {
             request,
-            caller_id: ctx.caller_id.clone()
+            caller_id: tx.context().caller_id.clone(),
+            files,
         }));
-        self.tasks.submit_in(&mut tx, &job).await?;
-        tx.commit(json!({"job_id":job.id})).await
+        self.tasks.submit_in(tx, &job).await?;
+        Ok(job)
     }
 
     pub(crate) fn register_import_processing_tasks(
@@ -305,6 +342,8 @@ impl App {
                 .clone()
                 .ok_or_else(|| Error::internal("processing has no actual unit jobs"))?,
         )?;
+        self.finish_import_files_in(&mut tx, &current, &plan, &result)
+            .await?;
         let mut failed = Vec::new();
         for reference in &result.unit_jobs {
             let child = tx.job_record(&reference.job_id).await?;

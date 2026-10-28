@@ -1,6 +1,8 @@
 //! Immutable import container provenance has identity independent of local execution.
 use crate::{ReadView, WriteTransaction, not_found, storage_error, write_error};
 use nous_domain::*;
+mod files;
+pub use files::ImportFileLookup;
 mod output;
 mod units;
 

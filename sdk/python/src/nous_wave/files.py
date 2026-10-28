@@ -1,3 +1,4 @@
+import json
 from pathlib import Path, PureWindowsPath
 from typing import Any
 from uuid import uuid4
@@ -66,6 +67,15 @@ class ManagedFiles:
         path = self.resolve_alias(alias, relative_path, must_exist=must_exist)
         return {"alias": alias, "relative_path": relative_path, "resolved_path": str(path),
                 "exists": path.exists(), "is_file": path.is_file(), "is_dir": path.is_dir()}
+
+    def file_identity(self, alias: str, path: str | Path) -> str:
+        """Return an opaque caller identity without exposing an absolute host path."""
+        root = self.resolve_alias(alias)
+        selected = self.local_file(path)
+        if not selected.is_relative_to(root):
+            raise ValueError("Import file escapes the selected alias")
+        return json.dumps([alias, selected.relative_to(root).as_posix()],
+                          ensure_ascii=False, separators=(",", ":"))
 
     async def scan(self, alias: str, relative_path: str = "", *, pattern: str = "*", recursive: bool = True) -> list[Path]:
         self.relative_path(pattern)

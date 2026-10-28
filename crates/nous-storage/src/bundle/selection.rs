@@ -195,6 +195,7 @@ impl ReadView {
                         | "import_unit_catalog"
                         | "import_text_unit"
                         | "import_unit_output"
+                        | "import_file_success"
                 )
             });
         }
@@ -204,6 +205,7 @@ impl ReadView {
             selected.related(package);
             if native {
                 selected.import_unit_facts(package);
+                selected.import_file_facts(package);
                 selected.import_sources(package);
             }
             selected.dependencies(package)?;

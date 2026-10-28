@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS bundle_installations (
 CREATE UNIQUE INDEX IF NOT EXISTS active_bundle_package ON bundle_installations(namespace_id,subject_id,package_id,coalesce(package_version,''),placement_kind,coalesce(conversation_ref,'')) WHERE uninstalled_at IS NULL;
 CREATE TABLE IF NOT EXISTS bundle_resources (
  installation_id TEXT NOT NULL REFERENCES bundle_installations(id),
- kind TEXT NOT NULL CHECK(kind IN('material','observation','memory','cognition','source_region','representation','derived_region','model_call','import_input_source','import_record_container','import_unit_catalog','import_text_unit','import_unit_output')),
+ kind TEXT NOT NULL CHECK(kind IN('material','observation','memory','cognition','source_region','representation','derived_region','model_call','import_input_source','import_record_container','import_unit_catalog','import_text_unit','import_unit_output','import_file_success')),
  original_id TEXT NOT NULL,local_id TEXT NOT NULL,revision INTEGER NOT NULL CHECK(revision>=0),
  provenance TEXT NOT NULL CHECK(json_valid(provenance)),
  PRIMARY KEY(installation_id,kind,original_id,revision)

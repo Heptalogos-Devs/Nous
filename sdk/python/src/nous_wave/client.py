@@ -476,6 +476,14 @@ class NousClient(SourceManagement):
             "operation_id": operation_id or str(uuid4()), "request": dict(request),
         })
 
+    async def admit_import_files(
+        self, request: Mapping[str, Any], *, operation_id: str | None = None,
+    ) -> dict:
+        """Admit file documents with native dedupe; all skipped returns no catalog or job."""
+        return await self.request("POST", "/api/imports/files", body={
+            "operation_id": operation_id or str(uuid4()), "request": dict(request),
+        })
+
     async def freeze_import_catalog(
         self, request: Mapping[str, Any], *, operation_id: str | None = None,
     ) -> dict:

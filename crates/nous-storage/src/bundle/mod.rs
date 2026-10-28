@@ -1,6 +1,7 @@
 //! Subject-package snapshots, installation ownership and atomic withdrawal.
 mod authorization;
 mod install;
+mod install_files;
 mod install_units;
 pub(crate) mod placement;
 pub(crate) mod registry;

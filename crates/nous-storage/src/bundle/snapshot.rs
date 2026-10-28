@@ -35,6 +35,8 @@ impl ReadView {
             unit_catalogs: vec![],
             text_units: vec![],
             unit_outputs: vec![],
+            file_successes: vec![],
+            import_manifest_heads: vec![],
             observations: vec![],
             exposures: vec![],
             memories: vec![],
@@ -53,6 +55,8 @@ impl ReadView {
         (package.unit_catalogs, package.text_units) =
             self.import_unit_catalog_facts(ns, sub).await?;
         package.unit_outputs = self.import_unit_output_facts(ns, sub).await?;
+        (package.file_successes, package.import_manifest_heads) =
+            self.import_file_facts(ns, sub).await?;
         let mut material_ids: BTreeSet<_> = package
             .input_sources
             .iter()

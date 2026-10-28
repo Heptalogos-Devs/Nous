@@ -6,6 +6,7 @@ pub mod configuration;
 pub mod contexts;
 pub mod identity;
 pub mod import_catalogs;
+pub mod import_files;
 pub mod import_processing;
 pub mod integrations;
 mod locale;
@@ -140,6 +141,7 @@ pub fn router(state: ApiState, config: &InstanceConfig, cancellation: Cancellati
         .merge(crate::http::tasks::router())
         .merge(crate::http::maintenance::router())
         .merge(crate::http::import_processing::router())
+        .merge(crate::http::import_files::router())
         .merge(crate::http::materials::router())
         .merge(crate::http::media::router())
         .nest_service("/mcp", mcp)

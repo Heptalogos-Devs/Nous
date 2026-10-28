@@ -86,6 +86,7 @@ pub enum Operation {
     PreviewTextImport(Box<nous_domain::PreviewTextImportRequest>),
     ImportCatalog(Box<super::import_catalogs::ImportCatalogOperation>),
     ProcessImportUnits(Box<super::import_processing::ProcessImportInput>),
+    AdmitImportFiles(Box<super::import_files::AdmitImportFilesInput>),
     ReadImportOutput(super::import_processing::ReadImportOutputInput),
     Trace(nous_app::administration::observability::TraceRequest),
     CreateNamespace(CreateNamespace),
@@ -132,6 +133,20 @@ impl Operation {
             }
             .boxed(),
             Self::ImportCatalog(operation) => operation.execute(app, ctx),
+            Self::AdmitImportFiles(input) => async move {
+                let cancel = tokio_util::sync::CancellationToken::new();
+                let _cancel_on_drop = cancel.clone().drop_guard();
+                Ok(json!(
+                    app.admit_import_files(
+                        ctx,
+                        &input.operation_id,
+                        input.request.clone(),
+                        &cancel
+                    )
+                    .await?
+                ))
+            }
+            .boxed(),
             Self::ProcessImportUnits(input) => async move {
                 let cancel = tokio_util::sync::CancellationToken::new();
                 let _cancel_on_drop = cancel.clone().drop_guard();
@@ -303,6 +318,9 @@ impl Operation {
             ),
             Self::ProcessImportUnits(input) => {
                 ("POST", "/api/imports/process".into(), Some(json!(input)))
+            }
+            Self::AdmitImportFiles(input) => {
+                ("POST", "/api/imports/files".into(), Some(json!(input)))
             }
             Self::PreviewTextImport(request) => {
                 ("POST", "/api/imports/preview".into(), Some(json!(request)))

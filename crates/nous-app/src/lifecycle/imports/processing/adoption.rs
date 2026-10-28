@@ -188,6 +188,7 @@ impl App {
             subject_id: subject.clone(),
             unit_id: unit.id.clone(),
             attempt_job_id: job.id.clone(),
+            observation_id: observation.id.clone(),
             memory_ids: vec![memory.id.clone()],
             cognition,
             semantic_call_id: semantic.call_id,

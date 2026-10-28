@@ -74,6 +74,8 @@ impl ChangeArgs {
 }
 #[derive(Subcommand)]
 pub enum ImportCommand {
+    /// Admit file documents with manifest dedupe and submit the selected processing tasks.
+    AdmitFiles(crate::cli::imports::AdmitFilesArgs),
     /// Read exact adopted objects and model provenance for one unit attempt.
     Output(crate::cli::import_processing::OutputArgs),
     /// Process an already frozen unit catalog through the native task pipeline.
@@ -124,6 +126,9 @@ pub enum ImportCommand {
 }
 impl ImportCommand {
     pub fn operation(self) -> Result<Operation> {
+        if let Self::AdmitFiles(args) = self {
+            return args.operation();
+        }
         if let Self::Freeze(args) = self {
             return args.operation();
         }

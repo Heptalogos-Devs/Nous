@@ -21,6 +21,7 @@ pub struct ImportUnitCatalog {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImportUnitDocumentPlan {
     pub input_source_id: ImportInputSourceId,
+    pub original_unit_count: usize,
     pub effective_options: ImportTextSplitOptions,
     pub selected_strategy: ImportTextStrategy,
 }

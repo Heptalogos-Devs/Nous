@@ -4,6 +4,8 @@ use serde::Deserialize;
 #[derive(Deserialize)]
 struct Accepted {
     request: ProcessImportUnitsRequest,
+    #[serde(default)]
+    files:Vec<crate::lifecycle::imports::FilePublicationIntent>,
 }
 pub(super) struct UnitJob {
     pub unit: ImportTextUnit,
@@ -17,6 +19,7 @@ pub(super) struct Task {
     pub catalog: ImportUnitCatalog,
     pub inputs: Vec<ImportInputSource>,
     pub units: Vec<UnitJob>,
+    pub files:Vec<crate::lifecycle::imports::FilePublicationIntent>,
 }
 pub(super) async fn read(
     app: &App,
@@ -102,6 +105,7 @@ pub(super) async fn read(
         catalog: view.catalog,
         inputs: view.input_sources,
         units,
+        files:accepted.files,
     })
 }
 pub(super) fn status(job: Option<&JobRecord>) -> &'static str {

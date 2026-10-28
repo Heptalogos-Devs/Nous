@@ -9,6 +9,14 @@ if TYPE_CHECKING:
     from .client import NousClient
 
 
+def _local_input(managed: ManagedFiles, value: str | Path | Mapping[str, Any]) -> tuple[dict, Path]:
+    item = dict(value) if isinstance(value, Mapping) else {"path": value}
+    raw_path = item.get("staged_path") or item.get("path")
+    if raw_path is None:
+        raise ValueError("Import file requires staged_path or path")
+    return item, managed.local_file(raw_path)
+
+
 async def upload_import_inputs(
     client: "NousClient", namespace_id: str, subject_id: str,
     files: Sequence[str | Path | Mapping[str, Any]], *, transfer_root: str | Path,
@@ -18,11 +26,7 @@ async def upload_import_inputs(
     managed = ManagedFiles(transfer_root)
     documents = []
     for value in files:
-        item = dict(value) if isinstance(value, Mapping) else {"path": value}
-        raw_path = item.get("staged_path") or item.get("path")
-        if raw_path is None:
-            raise ValueError("Import file requires staged_path or path")
-        path = managed.local_file(raw_path)
+        item, path = _local_input(managed, value)
         name = file_name(item.get("filename") or item.get("name") or path.name)
         format_ = item.get("format") or input_format or {
             ".txt": "text", ".md": "text", ".json": "json", ".jsonl": "jsonl",
@@ -46,6 +50,32 @@ async def upload_import_inputs(
         inputs.append({"name": name, "format": format_, "source": source,
                        "input": {"kind": "material", "material_id": receipt["result"]["id"]}})
     return inputs
+
+
+async def upload_import_file_documents(
+    client: "NousClient", namespace_id: str, subject_id: str,
+    files: Sequence[str | Path | Mapping[str, Any]], *, transfer_root: str | Path,
+    input_format: str | None = None, operation_id: str | None = None,
+    alias: str | None = None,
+) -> list[dict[str, Any]]:
+    """Upload file originals and pair documents with explicit or alias-relative identities."""
+    managed = ManagedFiles(transfer_root)
+    identities = []
+    for value in files:
+        item, path = _local_input(managed, value)
+        identity = item.get("file_identity")
+        if identity is not None and not isinstance(identity, str):
+            raise ValueError("file_identity must be text or None")
+        if alias is not None:
+            alias_identity = managed.file_identity(alias, path)
+            identity = identity if identity is not None else alias_identity
+        identities.append(identity)
+    documents = await upload_import_inputs(
+        client, namespace_id, subject_id, files, transfer_root=transfer_root,
+        input_format=input_format, operation_id=operation_id,
+    )
+    return [{"document": document, "file_identity": identity}
+            for document, identity in zip(documents, identities, strict=True)]
 
 
 async def import_files(

@@ -45,7 +45,7 @@ async fn output_sources(
             AND region.namespace_id=u.namespace_id AND region.material_id=i.material_id
         JOIN observations actual ON actual.namespace_id=m.namespace_id AND actual.subject_id=m.subject_id
             AND actual.id=m.observation_id AND actual.material_id=m.material_id
-        WHERE result.namespace_id=?1 AND result.subject_id=?2 AND actual.id=?3 AND actual.kind='import'
+        WHERE result.namespace_id=?1 AND result.subject_id=?2 AND result.observation_id=actual.id AND actual.id=?3 AND actual.kind='import'
             AND m.material_id=i.material_id AND json_extract(m.source,'$.kind')='source_region'
             AND json_extract(m.source,'$.id')=u.source_region_id
             AND (?4 IS NULL OR (m.memory_id=?4 AND m.revision=?5))

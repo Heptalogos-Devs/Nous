@@ -87,17 +87,22 @@ pub(super) async fn delete_admin(
     }
     match action.as_str() {
         "preview" | "execute" if mode == "source" && (action == "preview" || input.dry_run) => {
-            let preview = app.preview_sources(ctx, TrashSourcesRequest {
-                namespace_id: binding.namespace_id.clone(),
-                subject_id: binding.subject_id.clone(),
-                sources: source_selection(input)?,
-                force: true,
-                reason: audit_reason(Audit {
-                    action: "memory_delete_admin.preview",
-                    requested_by: &input.requested_by,
-                    reason: &input.reason,
-                }),
-            }).await?;
+            let preview = app
+                .preview_sources(
+                    ctx,
+                    TrashSourcesRequest {
+                        namespace_id: binding.namespace_id.clone(),
+                        subject_id: binding.subject_id.clone(),
+                        sources: source_selection(input)?,
+                        force: true,
+                        reason: audit_reason(Audit {
+                            action: "memory_delete_admin.preview",
+                            requested_by: &input.requested_by,
+                            reason: &input.reason,
+                        }),
+                    },
+                )
+                .await?;
             Ok(projection::preview(preview))
         }
         "execute" if mode == "source" => {

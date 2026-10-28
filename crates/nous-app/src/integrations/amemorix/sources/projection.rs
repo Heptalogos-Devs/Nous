@@ -8,10 +8,24 @@ pub(super) fn preview(plan: SourceTrashPreview) -> Value {
     let relations = plan.graph.retire_associations.len();
     let sources = plan.matched_sources.len();
     let item_count = paragraphs + entities + relations;
-    let items = plan.memory_targets.iter().map(|reference|preview_item("paragraph",reference))
-        .chain(plan.graph.retire_entities.iter().map(|reference|preview_item("entity",reference)))
-        .chain(plan.graph.retire_associations.iter().map(|reference|preview_item("relation",reference)))
-        .take(100).collect::<Vec<_>>();
+    let items = plan
+        .memory_targets
+        .iter()
+        .map(|reference| preview_item("paragraph", reference))
+        .chain(
+            plan.graph
+                .retire_entities
+                .iter()
+                .map(|reference| preview_item("entity", reference)),
+        )
+        .chain(
+            plan.graph
+                .retire_associations
+                .iter()
+                .map(|reference| preview_item("relation", reference)),
+        )
+        .take(100)
+        .collect::<Vec<_>>();
     json!({"success":paragraphs>0,"mode":"source","selector":{"sources":plan.sources},
         "counts":{"paragraphs":paragraphs,"entities":entities,"relations":relations,"sources":sources,
             "requested_sources":plan.sources.len(),"matched_sources":sources},
@@ -20,7 +34,7 @@ pub(super) fn preview(plan: SourceTrashPreview) -> Value {
         "vector_associations_to_retire":plan.vector_associations_to_retire,
         "error":if paragraphs>0 {""} else {"No matching source records"},"native_plan":plan})
 }
-fn preview_item(kind:&str,reference:&CognitiveRef)->Value {
+fn preview_item(kind: &str, reference: &CognitiveRef) -> Value {
     json!({"item_type":kind,"item_hash":reference.id,"item_key":reference.to_string()})
 }
 

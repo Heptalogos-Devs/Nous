@@ -1,6 +1,8 @@
 mod catalog;
 mod input;
+mod admission;
 mod processing;
+pub(crate) use processing::FilePublicationIntent;
 mod read;
 mod record;
 pub(crate) mod text;

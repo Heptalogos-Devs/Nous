@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 mod descriptor;
 mod export;
+mod files;
 mod imports;
 mod units;
 pub use descriptor::*;
@@ -25,6 +26,8 @@ pub struct SubjectPackage {
     pub unit_catalogs: Vec<ImportUnitCatalog>,
     pub text_units: Vec<ImportTextUnit>,
     pub unit_outputs: Vec<ImportUnitOutput>,
+    pub file_successes: Vec<ImportFileSuccess>,
+    pub import_manifest_heads: Vec<ImportManifestHead>,
     pub observations: Vec<Observation>,
     pub exposures: Vec<MediaExposure>,
     pub memories: Vec<Memory>,
@@ -142,6 +145,7 @@ impl SubjectPackage {
         self.validate_addresses()?;
         self.validate_import_sources()?;
         self.validate_import_units()?;
+        self.validate_import_files()?;
         self.package.validate()?;
         self.subject.id.validate()?;
         self.subject.namespace_id.validate()?;

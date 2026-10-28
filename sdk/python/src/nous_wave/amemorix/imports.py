@@ -3,6 +3,7 @@ from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from ..errors import NousError
+from ..imports import upload_import_file_documents
 
 if TYPE_CHECKING:
     from .client import AMemorixAdapter
@@ -33,8 +34,9 @@ async def import_admin(adapter: "AMemorixAdapter", *, action: str, **kwargs: Any
                 if Path(name).suffix.lower() == ".json":
                     item["format"] = "json"
                 prepared.append(item)
-            values["inputs"] = await adapter.upload_import_inputs(
-                prepared, input_format=values.get("input_mode", "text"), operation_id=values["operation_id"],
+            values["inputs"] = await upload_import_file_documents(
+                adapter.client, adapter.namespace_id, adapter.subject_id, prepared,
+                transfer_root=adapter.managed_files.root, input_format=values.get("input_mode", "text"), operation_id=values["operation_id"],
             )
     elif action == "create_raw_scan":
         alias = values.pop("alias", "raw")
@@ -44,9 +46,10 @@ async def import_admin(adapter: "AMemorixAdapter", *, action: str, **kwargs: Any
             alias, values.pop("relative_path", ""), pattern=values.pop("glob", "*"), recursive=values.pop("recursive", True),
         )
         files = [path for path in files if path.suffix.lower() in {".txt", ".md", ".json"}]
-        values["inputs"] = await adapter.upload_import_inputs(
+        values["inputs"] = await upload_import_file_documents(
+            adapter.client, adapter.namespace_id, adapter.subject_id,
             [{"path": path, "format": "json" if path.suffix.lower() == ".json" else values.get("input_mode", "text")} for path in files],
-            operation_id=values["operation_id"],
+            transfer_root=adapter.managed_files.root, operation_id=values["operation_id"], alias=alias,
         )
     result = await adapter.call("memory_import_admin", {"action": action, **values})
     if action in {"settings", "get_settings", "get_guide"} and adapter.transfer_root is not None:

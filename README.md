@@ -115,6 +115,25 @@ $unitJob = & $nous --json --instance $instance job get $parent.job.result.unit_j
 
 HTTP 对应 `POST /api/imports/process`，请求为 `{operation_id,request:{namespace_id,subject_id,catalog_id,unit_ids,llm_enabled,extract_time,vectors}}`。`POST /api/imports/outputs/read` 接收 `{namespace_id,subject_id,output_id}`。MCP 对应 `import_process` 与 `import_output`；Python SDK 对应 `process_import_units` 与 `import_unit_output`。
 
+文件批次需要按已有成功记录去重时，使用 `POST /api/imports/files`，或先上传原件再提交文件接纳请求：
+
+```powershell
+$original = & $nous --json --instance $instance material put --namespace $namespace --owner-subject $subject --file ./temp/notes.md | ConvertFrom-Json
+@{
+  namespace_id = $namespace; subject_id = $subject
+  inputs = @(@{ document = @{ name = 'notes.md'; format = 'text'; input = @{ kind = 'material'; material_id = $original.result.id } }; file_identity = $null })
+  overrides = @{ strategy = 'narrative' }
+  llm_enabled = $true; extract_time = $false; vectors = 'required'
+  dedupe_policy = 'content_hash'; force = $false; clear_manifest = $false
+} | ConvertTo-Json -Depth 8 | Set-Content -Encoding utf8 ./temp/file-admission.json
+$admitted = & $nous --json --instance $instance import admit-files --request-file ./temp/file-admission.json --operation-id admit-notes | ConvertFrom-Json
+if ($admitted.result.processing_job_id) {
+  & $nous --json --instance $instance job wait $admitted.result.processing_job_id --timeout-ms 45000
+}
+```
+
+HTTP 请求带 `{operation_id,request}`；request.inputs 每项为 `{document,file_identity?}`，document 使用现有 inline／Material 输入。`dedupe_policy` 支持 none、content_hash（默认）和 manifest；manifest 使用调用端提供的 opaque file_identity，缺失时按内容 hash。overrides、llm_enabled、extract_time、vectors、origin 沿正式目录与处理用例生效；force 显式重新处理，clear_manifest 清除当前 namespace／subject／typed origin 下全部去重资格。回执逐输入返回 process 或 skip 及真实来源身份；全部 skip 时 catalog_id 和 processing_job_id 均为空。MCP 对应 `import_admit_files`，SDK 对应 `admit_import_files`。
+
 记忆变更带当前修订号，每次形成新修订和审计。以下操作冻结记忆、查看非活跃结果，再恢复：
 
 ```powershell
@@ -171,8 +190,8 @@ HTTP 接口与 MCP 工具进入相同应用用例：
 | `POST /api/query`                             | `query`               |
 | `POST /api/references`                        | `references`          |
 | `GET /api/memories/{id}/source`               | `memory_source`       |
-| `POST /api/sources/read`                     | `source_read`         |
-| `POST /api/sources`                          | `source_management`   |
+| `POST /api/sources/read`                      | `source_read`         |
+| `POST /api/sources`                           | `source_management`   |
 | `GET /api/models/calls/{id}`                  | `model_call`          |
 | `POST /api/models/contract`                   | `model_contract`      |
 | `POST /api/models/preview`                    | `model_preview`       |

@@ -3,6 +3,12 @@ use super::{input::ImportSourceScope, text, *};
 use nous_domain::media::{SourceCoordinate, SourceRegion, SourceRegionId};
 use std::collections::BTreeSet;
 
+pub(super) struct CatalogSource {
+    pub input: ImportInputSource,
+    pub material: Material,
+    pub preview: TextImportPreview,
+}
+
 impl App {
     pub async fn freeze_import_catalog(
         &self,
@@ -95,37 +101,87 @@ impl App {
             subject: &request.subject_id,
             original_job_id: None,
         };
-        let mut documents = Vec::new();
         let mut sources = Vec::new();
         for (index, (pending, preview)) in prepared.into_iter().enumerate() {
             let (input, material) = self
                 .register_import_source(&mut tx, &scope, index, pending)
                 .await?;
-            documents.push(ImportUnitDocumentPlan {
-                input_source_id: input.id.clone(),
-                effective_options: preview.effective_options,
-                selected_strategy: preview.selected_strategy,
+            sources.push(CatalogSource {
+                input,
+                material,
+                preview,
             });
-            sources.push((input, material, preview.units));
         }
+        let (catalog, units) = self
+            .freeze_catalog_in(
+                &mut tx,
+                &request.namespace_id,
+                &request.subject_id,
+                request.parent_catalog_id,
+                sources,
+                cancel,
+            )
+            .await?;
+        tx.commit(json!({"catalog_id":catalog.id,"unit_ids":units.iter().map(|unit|&unit.id).collect::<Vec<_>>(),"unit_count":count})).await
+    }
+
+    pub(super) async fn freeze_catalog_in(
+        &self,
+        tx: &mut WriteTransaction,
+        namespace: &NamespaceId,
+        subject: &SubjectId,
+        parent_catalog_id: Option<ImportUnitCatalogId>,
+        sources: Vec<CatalogSource>,
+        cancel: &CancellationToken,
+    ) -> Result<(ImportUnitCatalog, Vec<ImportTextUnit>)> {
+        tx.context().require_subject(namespace, subject)?;
+        let count = sources
+            .iter()
+            .map(|source| source.preview.units.len())
+            .sum::<usize>();
+        if count == 0 {
+            return Err(Error::invalid(
+                "unit catalog requires 1 to 1000 actual units",
+            ));
+        }
+        if count > import_format::MAX_IMPORT_RECORDS {
+            return Err(Error::new(
+                ErrorCode::ResourceExhausted,
+                "unit catalog exceeds 1000 units",
+            ));
+        }
+        let documents = sources
+            .iter()
+            .map(|source| ImportUnitDocumentPlan {
+                input_source_id: source.input.id.clone(),
+                original_unit_count: source.preview.units.len(),
+                effective_options: source.preview.effective_options.clone(),
+                selected_strategy: source.preview.selected_strategy,
+            })
+            .collect();
         let catalog = ImportUnitCatalog {
             id: ImportUnitCatalogId::new(),
-            namespace_id: request.namespace_id,
-            subject_id: request.subject_id,
-            parent_catalog_id: request.parent_catalog_id,
+            namespace_id: namespace.clone(),
+            subject_id: subject.clone(),
+            parent_catalog_id,
             documents,
             original_unit_count: count,
             recorded_at: tx.time().recorded(),
             commit_seq: tx.commit_seq(),
         };
         tx.insert_import_unit_catalog(&catalog).await?;
-        let mut unit_ids = Vec::new();
+        let mut units = Vec::new();
         let mut normalized = 0usize;
-        for (input, material, drafts) in sources {
-            for draft in drafts {
+        for CatalogSource {
+            input,
+            material,
+            preview,
+        } in sources
+        {
+            for draft in preview.units {
                 let source_region = self
                     .freeze_text_region(
-                        &mut tx,
+                        tx,
                         &material,
                         draft.start_byte,
                         draft.end_byte,
@@ -148,7 +204,7 @@ impl App {
                         .and_then(serde_json::Value::as_u64)
                         .ok_or_else(|| Error::internal("split context lacks heading end"))?;
                     let region = self
-                        .freeze_text_region(&mut tx, &material, start, end, None, cancel)
+                        .freeze_text_region(tx, &material, start, end, None, cancel)
                         .await?;
                     context_region_ids.insert(region);
                 }
@@ -157,7 +213,7 @@ impl App {
                     namespace_id: catalog.namespace_id.clone(),
                     subject_id: catalog.subject_id.clone(),
                     catalog_id: catalog.id.clone(),
-                    ordinal: unit_ids.len(),
+                    ordinal: units.len(),
                     input_source_id: input.id.clone(),
                     source_region_id: source_region,
                     text: draft.text,
@@ -175,11 +231,10 @@ impl App {
                     ));
                 }
                 tx.insert_import_text_unit(&unit).await?;
-                unit_ids.push(unit.id);
+                units.push(unit);
             }
         }
-        tx.commit(json!({"catalog_id":catalog.id,"unit_ids":unit_ids,"unit_count":count}))
-            .await
+        Ok((catalog, units))
     }
     async fn freeze_text_region(
         &self,

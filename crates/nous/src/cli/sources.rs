@@ -153,10 +153,21 @@ pub enum SourceCommand {
 impl SourceCommand {
     pub fn operation(self) -> Operation {
         match self {
-            Self::Preview { namespace, subject, sources, force, reason } =>
-                Operation::SourceManagement(Box::new(SourceManagementOperation::Preview {
-                    request: TrashSourcesRequest { namespace_id: namespace, subject_id: subject, sources, force, reason },
-                })),
+            Self::Preview {
+                namespace,
+                subject,
+                sources,
+                force,
+                reason,
+            } => Operation::SourceManagement(Box::new(SourceManagementOperation::Preview {
+                request: TrashSourcesRequest {
+                    namespace_id: namespace,
+                    subject_id: subject,
+                    sources,
+                    force,
+                    reason,
+                },
+            })),
             Self::TrashOperation {
                 namespace,
                 subject,
