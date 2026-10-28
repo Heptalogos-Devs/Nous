@@ -5,20 +5,6 @@ use crate::{ReadView, storage_error};
 use nous_domain::*;
 
 impl ReadView {
-    pub async fn subject_job_ids(
-        &mut self,
-        namespace: &NamespaceId,
-        subject: &SubjectId,
-    ) -> Result<Vec<String>> {
-        sqlx::query_scalar(
-            "SELECT job_id FROM task_records WHERE namespace_id=? AND subject_id=? ORDER BY job_id",
-        )
-        .bind(namespace.as_str())
-        .bind(subject.as_str())
-        .fetch_all(&mut *self.tx)
-        .await
-        .map_err(storage_error)
-    }
     pub async fn subject_model_call_ids(
         &mut self,
         namespace: &NamespaceId,

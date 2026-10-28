@@ -67,6 +67,7 @@ pub enum Operation {
     ReadSource(super::sources::RetrievalSourceRequest),
     Bundle(Box<super::bundles::BundleOperation>),
     WaitJobs(super::tasks::WaitJobs),
+    ListJobs(nous_domain::JobListRequest),
     Context(Box<super::contexts::ContextOperation>),
     Media(Box<super::media::MediaOperation>),
     Identity(nous_app::administration::identity::IdentityRequest),
@@ -123,6 +124,9 @@ impl Operation {
             Self::Amemorix(request) => app.amemorix(ctx, *request.clone()).boxed(),
             Self::ReadSource(request) => app.read_retrieval_source(ctx, request.clone()).boxed(),
             Self::Bundle(operation) => operation.execute(app, ctx).boxed(),
+            Self::ListJobs(request) => {
+                async move { Ok(json!(app.jobs(ctx, request).await?)) }.boxed()
+            }
             Self::WaitJobs(request) => async move {
                 Ok(json!(
                     app.wait_jobs(
@@ -259,6 +263,7 @@ impl Operation {
             Self::Reference(request) => ("POST", "/api/references".into(), Some(json!(request))),
             Self::Bundle(operation) => ("POST", "/api/bundles".into(), Some(json!(operation))),
             Self::WaitJobs(request) => ("POST", "/api/jobs/wait".into(), Some(json!(request))),
+            Self::ListJobs(request) => ("POST", "/api/jobs/query".into(), Some(json!(request))),
             Self::Context(operation) => ("POST", "/api/contexts".into(), Some(json!(operation))),
             Self::Media(operation) => ("POST", "/api/media".into(), Some(json!(operation))),
             Self::Identity(request) => ("POST", "/api/identity".into(), Some(json!(request))),

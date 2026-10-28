@@ -351,6 +351,18 @@ class NousClient:
             },
         )
 
+    async def jobs(
+        self, *, namespace_id: str | None = None, subject_id: str | None = None,
+        kind: str | None = None, state: str | None = None,
+        limit: int = 50, cursor: Mapping[str, Any] | None = None,
+    ) -> dict:
+        """List task summaries; pass next_cursor with the same filters to continue."""
+        return await self.request("POST", "/api/jobs/query", body={
+            "namespace_id": namespace_id, "subject_id": subject_id,
+            "kind": kind, "state": state, "limit": limit,
+            "cursor": dict(cursor) if cursor is not None else None,
+        })
+
     async def job(self, job_id: str) -> dict:
         return await self.request("GET", f"/api/jobs/{job_id}")
 

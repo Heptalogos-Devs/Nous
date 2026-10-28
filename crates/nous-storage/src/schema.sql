@@ -412,6 +412,9 @@ CREATE TABLE IF NOT EXISTS task_records (
 );
 CREATE INDEX IF NOT EXISTS tasks_waiting ON task_records(state,kind,job_id);
 CREATE INDEX IF NOT EXISTS tasks_by_trace ON task_records(trace_id,job_id);
+CREATE INDEX IF NOT EXISTS tasks_by_acceptance ON task_records(accepted_commit_seq DESC,job_id DESC);
+CREATE INDEX IF NOT EXISTS tasks_by_namespace_acceptance ON task_records(namespace_id,accepted_commit_seq DESC,job_id DESC);
+CREATE INDEX IF NOT EXISTS tasks_by_subject_acceptance ON task_records(namespace_id,subject_id,accepted_commit_seq DESC,job_id DESC);
 CREATE INDEX IF NOT EXISTS calls_by_trace ON model_calls(trace_id,job_id,step_key,attempt);
 CREATE TABLE IF NOT EXISTS model_call_redactions (
  call_id TEXT NOT NULL REFERENCES model_calls(id),document TEXT NOT NULL CHECK(document IN('request','response','error')),

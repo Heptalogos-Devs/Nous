@@ -1,9 +1,13 @@
 use crate::App;
-use nous_domain::{CallContext, JobRecord, Result};
+use nous_domain::{CallContext, JobListRequest, JobPage, JobRecord, Result};
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
 impl App {
+    pub async fn jobs(&self, ctx: &CallContext, request: &JobListRequest) -> Result<JobPage> {
+        self.tasks.list(ctx, request).await
+    }
+
     pub async fn wait_jobs(
         &self,
         ctx: &CallContext,

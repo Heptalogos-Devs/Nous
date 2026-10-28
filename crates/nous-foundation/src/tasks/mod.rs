@@ -98,9 +98,16 @@ impl Tasks {
         Ok(dependencies)
     }
     pub async fn read(&self, ctx: &CallContext, id: &str) -> Result<JobRecord> {
-        let job = self.database.job_record(id).await?;
-        job.require_read(ctx)?;
+        let mut view = self.database.read_view().await?;
+        let job = view.readable_job(ctx, id).await?;
+        view.finish().await?;
         Ok(job)
+    }
+    pub async fn list(&self, ctx: &CallContext, request: &JobListRequest) -> Result<JobPage> {
+        let mut view = self.database.read_view().await?;
+        let page = view.list_jobs(ctx, request).await?;
+        view.finish().await?;
+        Ok(page)
     }
     pub async fn change_in(
         &self,

@@ -4,7 +4,8 @@ use crate::{
     storage_error, write_error,
 };
 use nous_domain::*;
-use sqlx::{Row, SqliteConnection, sqlite::SqliteRow};
+use sha2::{Digest, Sha256};
+use sqlx::{QueryBuilder, Row, Sqlite, SqliteConnection, sqlite::SqliteRow};
 impl Database {
     pub async fn job_record(&self, id: &str) -> Result<JobRecord> {
         read(&mut *self.pool.acquire().await.map_err(storage_error)?, id).await
@@ -222,5 +223,201 @@ pub(crate) fn validate_job_id(id: &str) -> Result<()> {
 impl crate::ReadView {
     pub async fn job_record(&mut self, id: &str) -> Result<JobRecord> {
         read(&mut self.tx, id).await
+    }
+}
+
+impl crate::ReadView {
+    pub async fn readable_job(&mut self, ctx: &CallContext, id: &str) -> Result<JobRecord> {
+        validate_job_id(id)?;
+        let job = self.job_record(id).await?;
+        job.require_read(ctx)?;
+        Ok(job)
+    }
+    pub async fn list_jobs(
+        &mut self,
+        ctx: &CallContext,
+        request: &JobListRequest,
+    ) -> Result<JobPage> {
+        let filter = self.normalize_job_filter(ctx, request).await?;
+        let filter_hash = format!(
+            "{:x}",
+            Sha256::digest(serde_json::to_vec(&serde_json::json!({
+                "namespace_id":filter.namespace_id,"subject_id":filter.subject_id,"kind":filter.kind,
+                "state":filter.state,"scope":ctx.scope,"source_read":ctx.source_read_identity()?,
+            }))?)
+        );
+        let snapshot_seq = if let Some(cursor) = &request.cursor {
+            validate_job_id(&cursor.before_job_id)?;
+            if cursor.filter_hash != filter_hash
+                || cursor.snapshot_seq < 0
+                || cursor.snapshot_seq > self.watermark
+                || cursor.before_commit_seq <= 0
+                || cursor.before_commit_seq > cursor.snapshot_seq
+            {
+                return Err(Error::invalid(
+                    "task cursor does not match its filters, authorization, or creation cutoff",
+                ));
+            }
+            cursor.snapshot_seq
+        } else {
+            self.watermark
+        };
+        let mut before = request
+            .cursor
+            .as_ref()
+            .map(|c| (c.before_commit_seq, c.before_job_id.clone()));
+        let batch = (filter.limit + 1).max(64);
+        let mut items = Vec::with_capacity(filter.limit + 1);
+        loop {
+            let mut query = QueryBuilder::<Sqlite>::new(
+                "SELECT job_id,namespace_id,subject_id,source_read,trace_id,kind,state,accepted_commit_seq,json_extract(wait,'$.kind') AS waiting_for,error,created_at,updated_at FROM task_records WHERE accepted_commit_seq<=",
+            );
+            query.push_bind(snapshot_seq);
+            if let Some(namespace) = &filter.namespace_id {
+                query
+                    .push(" AND namespace_id=")
+                    .push_bind(namespace.as_str());
+            }
+            if let Some(subject) = &filter.subject_id {
+                query.push(" AND subject_id=").push_bind(subject.as_str());
+            }
+            if let Some(kind) = &filter.kind {
+                query.push(" AND kind=").push_bind(kind);
+            }
+            if let Some(state) = filter.state {
+                query.push(" AND state=").push_bind(enum_name(&state)?);
+            }
+            if let Some((seq, id)) = &before {
+                query
+                    .push(" AND (accepted_commit_seq,job_id)<(")
+                    .push_bind(*seq)
+                    .push(",")
+                    .push_bind(id.clone())
+                    .push(")");
+            }
+            query
+                .push(" ORDER BY accepted_commit_seq DESC,job_id DESC LIMIT ")
+                .push_bind(batch as i64);
+            let rows = query
+                .build()
+                .fetch_all(&mut *self.tx)
+                .await
+                .map_err(storage_error)?;
+            let count = rows.len();
+            for row in rows {
+                let id: String = row.get("job_id");
+                let sequence: i64 = row.get("accepted_commit_seq");
+                before = Some((sequence, id.clone()));
+                let scope = JobReadScope {
+                    trace_id: TraceId(row.get("trace_id")),
+                    namespace_id: row
+                        .get::<Option<String>, _>("namespace_id")
+                        .map(NamespaceId),
+                    subject_id: row.get::<Option<String>, _>("subject_id").map(SubjectId),
+                    source_read: serde_json::from_str(row.get("source_read"))?,
+                };
+                match scope.require_read(ctx) {
+                    Ok(()) => {}
+                    Err(error) if error.code == ErrorCode::Forbidden => continue,
+                    Err(error) => return Err(error),
+                }
+                items.push(JobSummary {
+                    id,
+                    trace_id: scope.trace_id,
+                    namespace_id: scope.namespace_id,
+                    subject_id: scope.subject_id,
+                    kind: row.get("kind"),
+                    state: parse_enum(row.get("state"))?,
+                    accepted_commit_seq: sequence,
+                    waiting_for: row.get("waiting_for"),
+                    error: parse_optional(row.get("error"))?,
+                    created_at: row.get("created_at"),
+                    updated_at: row.get("updated_at"),
+                });
+                if items.len() > filter.limit {
+                    break;
+                }
+            }
+            if items.len() > filter.limit || count < batch {
+                break;
+            }
+        }
+        let has_more = items.len() > filter.limit;
+        if has_more {
+            items.pop();
+        }
+        let next_cursor = if has_more {
+            let last = items.last().expect("positive task page limit");
+            Some(JobCursor {
+                snapshot_seq,
+                before_commit_seq: last.accepted_commit_seq,
+                before_job_id: last.id.clone(),
+                filter_hash,
+            })
+        } else {
+            None
+        };
+        Ok(JobPage {
+            snapshot_seq,
+            read_at_commit_seq: self.watermark,
+            items,
+            next_cursor,
+        })
+    }
+    async fn normalize_job_filter(
+        &mut self,
+        ctx: &CallContext,
+        request: &JobListRequest,
+    ) -> Result<JobListRequest> {
+        if !(1..=200).contains(&request.limit) {
+            return Err(Error::invalid("task list limit must be 1..200"));
+        }
+        if let Some(namespace) = &request.namespace_id {
+            namespace.validate()?;
+        }
+        if let Some(subject) = &request.subject_id {
+            subject.validate()?;
+        }
+        if let Some(kind) = &request.kind {
+            validate_name(kind, "task kind")?;
+        }
+        let mut filter = request.clone();
+        match &ctx.scope {
+            AccessScope::Admin => {}
+            AccessScope::Namespace { namespace_id } => {
+                if let Some(requested) = &filter.namespace_id {
+                    ctx.require_namespace(requested)?;
+                }
+                filter.namespace_id = Some(namespace_id.clone());
+            }
+            AccessScope::Subject {
+                namespace_id,
+                subject_id,
+            } => {
+                ctx.require_subject(
+                    filter.namespace_id.as_ref().unwrap_or(namespace_id),
+                    filter.subject_id.as_ref().unwrap_or(subject_id),
+                )?;
+                filter.namespace_id = Some(namespace_id.clone());
+                filter.subject_id = Some(subject_id.clone());
+            }
+        }
+        if let Some(subject) = &filter.subject_id {
+            let namespace = self.subject_namespace(subject).await?;
+            ctx.require_subject(&namespace, subject)?;
+            if filter
+                .namespace_id
+                .as_ref()
+                .is_some_and(|requested| requested != &namespace)
+            {
+                return Err(Error::invalid(
+                    "task subject does not belong to the requested namespace",
+                ));
+            }
+            filter.namespace_id = Some(namespace);
+        } else if let Some(namespace) = &filter.namespace_id {
+            self.namespace(namespace).await?;
+        }
+        Ok(filter)
     }
 }

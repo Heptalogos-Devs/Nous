@@ -8,7 +8,9 @@ pub struct WaitJobs {
     pub timeout_ms: u64,
 }
 pub(super) fn router() -> Router<ApiState> {
-    Router::new().route("/api/jobs/wait", post(wait))
+    Router::new()
+        .route("/api/jobs/wait", post(wait))
+        .route("/api/jobs/query", post(list))
 }
 async fn wait(
     State(state): State<ApiState>,
@@ -27,4 +29,12 @@ async fn wait(
             )
             .await?
     )))
+}
+
+async fn list(
+    State(state): State<ApiState>,
+    Extension(ctx): Extension<CallContext>,
+    body: Result<Json<nous_domain::JobListRequest>, JsonRejection>,
+) -> Result<Json<Value>, ApiError> {
+    run(state, ctx, Operation::ListJobs(decode(body)?)).await
 }

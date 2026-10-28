@@ -18,29 +18,36 @@ impl App {
             .subject_vector_diagnostics(ctx, &namespace, subject)
             .await?;
         let mut work = WorkDiagnostics::default();
-        for id in view.subject_job_ids(&namespace, subject).await? {
-            let job = view.job_record(&id).await?;
-            match job.require_read(ctx) {
-                Ok(()) => {}
-                Err(error) if hidden(&error) => continue,
-                Err(error) => return Err(error),
+        let mut jobs = JobListRequest {
+            namespace_id: Some(namespace.clone()),
+            subject_id: Some(subject.clone()),
+            limit: 200,
+            ..Default::default()
+        };
+        loop {
+            let page = view.list_jobs(ctx, &jobs).await?;
+            for job in page.items {
+                *work
+                    .by_kind
+                    .entry(job.kind.clone())
+                    .or_default()
+                    .entry(accounting::name(&job.state)?)
+                    .or_default() += 1;
+                if let Some(reason) = &job.waiting_for {
+                    *work.waiting_by_reason.entry(reason.clone()).or_default() += 1;
+                }
+                if let Some(queue) = view.queue_record(&job.id).await? {
+                    *work.queue_rows_by_status.entry(queue.status).or_default() += 1;
+                } else {
+                    work.jobs_without_queue_row += 1;
+                }
+                if job.kind == "amemorix.maintain" && job.state == JobState::Succeeded {
+                    latest(&mut work.last_maintenance_at, &job.updated_at)?;
+                }
             }
-            *work
-                .by_kind
-                .entry(job.kind.clone())
-                .or_default()
-                .entry(accounting::name(&job.state)?)
-                .or_default() += 1;
-            if let Some(wait) = &job.wait {
-                *work.waiting_by_reason.entry(wait.kind.clone()).or_default() += 1;
-            }
-            if let Some(queue) = view.queue_record(&id).await? {
-                *work.queue_rows_by_status.entry(queue.status).or_default() += 1;
-            } else {
-                work.jobs_without_queue_row += 1;
-            }
-            if job.kind == "amemorix.maintain" && job.state == JobState::Succeeded {
-                latest(&mut work.last_maintenance_at, &job.updated_at)?;
+            match page.next_cursor {
+                Some(cursor) => jobs.cursor = Some(cursor),
+                None => break,
             }
         }
         for receipt in view
