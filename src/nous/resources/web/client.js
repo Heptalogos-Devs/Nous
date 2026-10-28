@@ -1,3 +1,4 @@
+import { t, locale, message as localizedMessage } from "./i18n.js";
 export const $ = (id) => document.getElementById(id);
 export const state = {
   token: "",
@@ -16,16 +17,26 @@ export function jsonView(value) {
   return el("pre", "json-view", JSON.stringify(value, null, 2));
 }
 export function notice(message, failed = false) {
+  delete $("notice").dataset.i18n;
+  delete $("notice").dataset.i18nArgs;
   $("notice").hidden = false;
   $("notice").classList.toggle("error", failed);
   $("notice").textContent = message;
+}
+export function notify(key, args = {}) {
+  notice(t(key, args));
+  localizedMessage($("notice"), key, args);
 }
 export function error(error) {
   notice(error.message || String(error), true);
 }
 export async function api(path, options = {}) {
+  const caller = state.token;
+  const namespace = state.namespace,
+    subject = state.subject;
   const headers = new Headers(options.headers || {});
   headers.set("Authorization", `Bearer ${state.token}`);
+  headers.set("Accept-Language", locale);
   let body = options.body;
   if (body !== undefined && !(body instanceof Blob) && typeof body !== "string") {
     headers.set("Content-Type", "application/json");
@@ -35,12 +46,27 @@ export async function api(path, options = {}) {
   const value = response.headers.get("content-type")?.includes("json")
     ? await response.json()
     : await response.text();
-  if (!response.ok)
-    throw new Error(value?.error?.message || value?.detail || `请求失败 (${response.status})`);
+  if (state.token !== caller) throw new Error(t("web-connection-changed"));
+  if (state.namespace !== namespace || state.subject !== subject)
+    throw new Error(t("web-connection-changed"));
+  if (!response.ok) {
+    const code = value?.error?.code || "";
+    const key = `error-${code
+      .replace(/([a-z])([A-Z])/g, "$1-$2")
+      .replaceAll("_", "-")
+      .toLowerCase()}`;
+    let title;
+    try {
+      title = t(key);
+    } catch {
+      title = t("web-request-failed", { status: response.status });
+    }
+    throw new Error(`${title} ${value?.error?.message || value?.detail || ""}`.trim());
+  }
   return value;
 }
 export function subjectPath(suffix = "") {
-  if (!state.namespace || !state.subject) throw new Error("请先选择命名空间和主体");
+  if (!state.namespace || !state.subject) throw new Error(t("web-select-scope"));
   return `/api/namespaces/${encodeURIComponent(state.namespace)}/subjects/${encodeURIComponent(state.subject)}${suffix}`;
 }
 export function op() {
@@ -64,7 +90,9 @@ export function table(headers, rows) {
     body.append(row);
   });
   node.append(body);
-  return node;
+  const container = el("div", "table-scroll");
+  container.append(node);
+  return container;
 }
 export function button(text, action, cls = "secondary") {
   const node = el("button", cls, text);
@@ -94,7 +122,7 @@ export function chip(text, inactive = false) {
 }
 export async function download(path, filename) {
   const response = await fetch(path, { headers: { Authorization: `Bearer ${state.token}` } });
-  if (!response.ok) throw new Error(`下载失败 (${response.status})`);
+  if (!response.ok) throw new Error(t("web-download-failed", { status: response.status }));
   const url = URL.createObjectURL(await response.blob());
   const link = el("a");
   link.href = url;

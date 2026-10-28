@@ -13,6 +13,12 @@ _ASSETS = {
     "client.js": "text/javascript",
     "knowledge.js": "text/javascript",
     "management.js": "text/javascript",
+    "i18n.js": "text/javascript",
+    "fluent.js": "text/javascript",
+    "fluent.LICENSE": "text/plain",
+    "access.js": "text/javascript",
+    "bundles.js": "text/javascript",
+    "management.css": "text/css",
 }
 _HEADERS = {
     "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' blob: data:; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'",
@@ -26,6 +32,14 @@ _HEADERS = {
 async def workbench() -> Response:
     content = files("nous").joinpath("resources/web/index.html").read_bytes()
     return Response(content, media_type="text/html", headers=_HEADERS)
+
+
+@router.get("/assets/locales/{locale}.ftl", include_in_schema=False)
+async def locale_resource(locale: str) -> Response:
+    if locale not in {"en-US", "zh-CN"}:
+        raise HTTPException(status_code=404, detail="Language is not available")
+    content = files("nous").joinpath("resources", "locales", f"{locale}.ftl").read_bytes()
+    return Response(content, media_type="text/plain", headers=_HEADERS)
 
 
 @router.get("/assets/{name}", include_in_schema=False)

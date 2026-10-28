@@ -1,15 +1,34 @@
-import { $, state, el, api, op, notice, error, busy, form } from "./client.js";
-import { query, loadSources, initializeKnowledge } from "./knowledge.js";
-import { loadJobs, loadModels, loadPrompt, initializeManagement } from "./management.js";
+import { t, initializeLocale, message } from "./i18n.js";
+import { $, state, el, api, op, notify, error, busy, form } from "./client.js";
+import {
+  query,
+  loadSources,
+  initializeKnowledge,
+  resetKnowledge,
+  renderKnowledge,
+} from "./knowledge.js";
+import {
+  loadJobs,
+  loadModels,
+  loadPrompt,
+  initializeManagement,
+  renderManagement,
+  resetManagement,
+} from "./management.js";
+import { initializeAccess, loadCredentials, clearIssuedToken } from "./access.js";
+import { initializeBundles, clearBundle } from "./bundles.js";
+await initializeLocale();
 const titles = {
-  search: "认知库",
-  imports: "接纳资料",
-  sources: "来源与恢复",
-  contexts: "工作上下文",
-  jobs: "持久任务",
-  models: "模型与角色",
-  prompts: "Prompt",
-  backups: "实例备份",
+  search: "web-search",
+  imports: "web-imports",
+  sources: "web-sources",
+  contexts: "web-contexts",
+  jobs: "web-jobs",
+  models: "web-models",
+  prompts: "cli-prompt",
+  backups: "web-backups",
+  bundles: "web-bundles",
+  credentials: "web-credentials",
 };
 async function subjects() {
   const rows = await api(`/api/namespaces/${encodeURIComponent(state.namespace)}/subjects`);
@@ -44,7 +63,7 @@ async function namespaces() {
     $("subject").replaceChildren();
   }
 }
-async function navigate() {
+async function navigate(reload = true) {
   const page = location.hash.slice(1) || "search";
   if (!titles[page]) {
     location.hash = "search";
@@ -56,22 +75,29 @@ async function navigate() {
   document
     .querySelectorAll("[data-page]")
     .forEach((node) => node.classList.toggle("active", node.dataset.page === page));
-  $("breadcrumb").textContent = titles[page];
+  message($("breadcrumb"), titles[page]);
+  if (page !== "credentials") clearIssuedToken();
   if (!state.token) return;
   if (!state.subject && ["search", "sources", "contexts", "jobs"].includes(page)) {
-    notice("请先创建或选择主体");
+    notify("web-select-subject");
     return;
   }
-  const load = { sources: loadSources, jobs: loadJobs, models: loadModels, prompts: loadPrompt }[
-    page
-  ];
-  if (load) await load();
+  const load = {
+    sources: loadSources,
+    jobs: loadJobs,
+    models: loadModels,
+    prompts: loadPrompt,
+    credentials: loadCredentials,
+  }[page];
+  if (load && reload) await load();
 }
 form("connect-form", async () => {
+  $("login-error").textContent = "";
   state.token = $("token").value.trim();
   try {
     const value = await api("/api/status");
-    $("instance-status").textContent = `提交位置 ${value.commit_seq}`;
+    if (value.status === "running") message($("instance-status"), "web-service-running");
+    else $("instance-status").textContent = value.status;
     await namespaces();
     $("login").hidden = true;
     $("workspace").hidden = false;
@@ -83,7 +109,25 @@ form("connect-form", async () => {
   }
 });
 $("logout").onclick = () => {
+  $("login-error").textContent = "";
   state.token = "";
+  clearIssuedToken();
+  clearBundle();
+  resetKnowledge();
+  resetManagement();
+  for (const id of [
+    "credential-list",
+    "job-list",
+    "call-list",
+    "backup-result",
+    "restore-result",
+    "prompt-history",
+    "prompt-output",
+  ])
+    $(id).replaceChildren();
+  $("models-json").value = "";
+  $("prompt-template").value = "";
+  $("notice").hidden = true;
   $("workspace").hidden = true;
   $("login").hidden = false;
   $("token").value = "";
@@ -91,12 +135,18 @@ $("logout").onclick = () => {
 $("namespace").onchange = () =>
   busy($("namespace"), async () => {
     state.namespace = $("namespace").value;
+    resetKnowledge();
+    resetManagement();
+    clearBundle();
     localStorage.setItem("nous.namespace", state.namespace);
     await subjects();
     await navigate();
   });
 $("subject").onchange = () => {
   state.subject = $("subject").value;
+  resetKnowledge();
+  resetManagement();
+  clearBundle();
   localStorage.setItem("nous.subject", state.subject);
   navigate().catch(error);
 };
@@ -108,7 +158,7 @@ form("entity-form", async () => {
     kind === "namespace"
       ? "/api/namespaces"
       : `/api/namespaces/${encodeURIComponent(state.namespace)}/subjects`;
-  if (kind === "subject" && !state.namespace) throw new Error("请先创建命名空间");
+  if (kind === "subject" && !state.namespace) throw new Error(t("web-select-namespace"));
   const value = await api(path, {
     method: "POST",
     body: { name: $("entity-name").value, operation_id: op() },
@@ -120,10 +170,18 @@ form("entity-form", async () => {
   await namespaces();
   $("entity-dialog").close();
   $("entity-name").value = "";
-  notice("已创建");
+  notify("web-entity-created");
   await navigate();
 });
 initializeKnowledge();
 initializeManagement();
+initializeAccess();
+initializeBundles();
+window.addEventListener("nous:locale", () => {
+  navigate(false).catch(error);
+  renderKnowledge();
+  renderManagement();
+  if (state.token && location.hash === "#credentials") loadCredentials().catch(error);
+});
 window.addEventListener("hashchange", () => navigate().catch(error));
 navigate().catch(error);

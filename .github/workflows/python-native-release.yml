@@ -2,6 +2,9 @@ name: Python and native distributions
 
 on:
   workflow_dispatch:
+  push:
+    branches: [codex/python-native-rewrite-cloud]
+    paths: [.github/workflows/python-native-release.yml]
 
 permissions:
   contents: read

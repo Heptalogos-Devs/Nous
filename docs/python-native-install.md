@@ -83,7 +83,7 @@ python scripts/install-python.py --wheels dist --venv /tmp/nous-installed --inst
 
 构建始终使用 `native/python/Cargo.toml` 和 `native/Cargo.lock`。不要执行旧根目录 Cargo workspace 的应用构建。Windows 源码构建需要 Visual Studio C++ Build Tools、Windows SDK 与 CMake；macOS 需要对应架构的 Xcode Command Line Tools。Python 依赖使用根 `uv.lock`，第三方源码和构建缓存留在 `temp/`。
 
-`.github/workflows/python-native-release.yml` 只由手动 `workflow_dispatch` 启动。它构建三个包的 sdist、server/SDK 通用 wheel，以及四个平台的 native wheel；每个平台再安装完整三件套、初始化实例并实际启动 HTTP 服务。产物保存在 Actions artifacts，不发布包索引。
+`.github/workflows/python-native-release.yml` 支持手动 `workflow_dispatch`；当前开发分支 `codex/python-native-rewrite-cloud` 上仅修改该 workflow 文件的 push 也会触发构建。它构建三个包的 sdist、server/SDK 通用 wheel，以及四个平台的 native wheel；每个平台再安装完整三件套、初始化实例并实际启动 HTTP 服务。产物保存在 Actions artifacts，不发布包索引。
 
 Linux 发布构建使用 manylinux 2.28 容器。当前本机 Ubuntu 构建得到的 `manylinux_2_39_x86_64` wheel 需要 glibc 2.39 或更新版本，不能当作支持旧 Linux 的通用包。Windows/macOS runner 配置是构建路径，运行结果以对应 Actions 任务为准。
 
