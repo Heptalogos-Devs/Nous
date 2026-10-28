@@ -83,7 +83,7 @@ impl App {
             subject_id: subject.clone(),
             material_id: original.id.clone(),
             observed_at: None,
-            origin: None,
+            origin: plan.origin.clone(),
             recorded_at: recorded.clone(),
             commit_seq: tx.commit_seq(),
             kind: ObservationKind::Import,

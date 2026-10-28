@@ -156,6 +156,8 @@ CREATE TABLE IF NOT EXISTS operation_receipts (
     PRIMARY KEY(caller_id, operation, scope, operation_id)
 );
 CREATE INDEX IF NOT EXISTS operations_by_trace ON operation_receipts(trace_id,commit_seq);
+CREATE INDEX IF NOT EXISTS operations_by_scope_kind ON operation_receipts(scope,operation,commit_seq);
+CREATE INDEX IF NOT EXISTS source_restores_by_trash ON operation_receipts(scope,json_extract(receipt,'$.result.trash_commit_seq'),commit_seq) WHERE operation='source.restore';
 
 
 CREATE TABLE IF NOT EXISTS memories (

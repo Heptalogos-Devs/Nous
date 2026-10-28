@@ -25,6 +25,7 @@ struct UnitPlan {
     llm_enabled: bool,
     extract_time: bool,
     vectors: ImportVectorPolicy,
+    origin: Option<ObservationOrigin>,
 }
 
 impl App {
@@ -54,6 +55,9 @@ impl App {
         cancel: &CancellationToken,
     ) -> Result<OperationReceipt> {
         ctx.require_subject(&request.namespace_id, &request.subject_id)?;
+        if let Some(origin) = &request.origin {
+            origin.validate()?;
+        }
         let key = operation_key(
             ctx,
             "import.process",
@@ -97,6 +101,45 @@ impl App {
                 cancel,
             )
             .await?;
+        if let Some(parent_id) = &request.retry_parent_job_id {
+            let parent = self.tasks.read(ctx, parent_id).await?;
+            let (namespace, subject) = parent.subject_scope()?;
+            if parent.kind != "import.process"
+                || namespace != &request.namespace_id
+                || subject != &request.subject_id
+            {
+                return Err(Error::invalid(
+                    "retry parent must be an import processing task in this subject",
+                ));
+            }
+            let parent_plan: ParentPlan = serde_json::from_value(
+                parent
+                    .checkpoint
+                    .ok_or_else(|| Error::internal("retry parent has no frozen request"))?,
+            )?;
+            if parent_plan.request.catalog_id != request.catalog_id {
+                return Err(Error::invalid(
+                    "retry must retain its parent's frozen catalog",
+                ));
+            }
+            let result: ImportProcessingResult = serde_json::from_value(
+                parent
+                    .result
+                    .ok_or_else(|| Error::invalid("retry parent has no actual unit tasks"))?,
+            )?;
+            for unit in &inputs.units {
+                let reference = result
+                    .unit_jobs
+                    .iter()
+                    .find(|item| item.unit_id == unit.id)
+                    .ok_or_else(|| Error::invalid("retry unit was not attempted by its parent"))?;
+                if self.tasks.read(ctx, &reference.job_id).await?.state != JobState::Failed {
+                    return Err(Error::invalid(
+                        "retry selection must contain actual failed unit tasks",
+                    ));
+                }
+            }
+        }
         if inputs.units.is_empty() {
             return Err(Error::invalid(
                 "processing requires at least one retained unit",
@@ -206,7 +249,8 @@ impl App {
                     caller_id: plan.caller_id.clone(),
                     llm_enabled: request.llm_enabled,
                     extract_time: request.extract_time,
-                    vectors: request.vectors
+                    vectors: request.vectors,
+                    origin: request.origin.clone(),
                 }));
                 self.tasks
                     .submit_child_in(&mut tx, &job.id, &mut child)

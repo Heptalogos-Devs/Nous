@@ -81,12 +81,14 @@ pub struct RetryImportInputsRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImportCatalogView {
     pub catalog: ImportUnitCatalog,
+    pub input_sources: Vec<ImportInputSource>,
     pub units: Vec<ImportTextUnit>,
     pub retained_unit_count: usize,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImportUnitInputs {
     pub catalog: ImportUnitCatalog,
+    pub input_sources: Vec<ImportInputSource>,
     pub units: Vec<ImportTextUnit>,
     pub source_refs: Vec<SourceReadRef>,
 }

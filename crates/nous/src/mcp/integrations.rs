@@ -4,7 +4,7 @@ use super::*;
 impl McpService {
     #[tool(
         input_schema = schema::object_input::<crate::http::integrations::AmemorixRequest>(),
-        description = "Use A-Memorix consumer operations for memory search, text/summary ingest, maintenance, person profiles and exact sources. Namespace and Subject select the Nous authority; tool arguments retain the consumer's chat, person, time and filtering semantics."
+        description = "Use A-Memorix operations for memory search, import, source administration, maintenance, person profiles and exact lineage. Namespace and Subject select the Nous authority; source deletion and restoration use real native batch identities and transactions."
     )]
     async fn amemorix(
         &self,

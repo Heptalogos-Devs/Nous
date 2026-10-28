@@ -16,6 +16,7 @@ pub enum FilterMode {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct AmemorixPolicy {
+    pub imports: super::imports::config::ImportFacadePolicy,
     pub enabled: bool,
     pub mode: FilterMode,
     pub chats: Vec<String>,
@@ -27,6 +28,7 @@ pub struct AmemorixPolicy {
 impl Default for AmemorixPolicy {
     fn default() -> Self {
         Self {
+            imports: Default::default(),
             enabled: true,
             mode: FilterMode::Blacklist,
             chats: vec![],
@@ -58,6 +60,7 @@ impl AmemorixPolicy {
         }
     }
     pub fn validate(&self) -> Result<()> {
+        self.imports.validate()?;
         if !(1..=86_400_000).contains(&self.ingest_wait_ms) {
             return Err(Error::invalid(
                 "A-Memorix ingest_wait_ms must be 1..86400000",

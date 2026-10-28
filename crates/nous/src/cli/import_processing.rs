@@ -40,6 +40,12 @@ pub struct ProcessArgs {
     vectors: Vectors,
     #[arg(long)]
     operation_id: Option<String>,
+    #[arg(long)]
+    conversation_ref: Option<ConversationRef>,
+    #[arg(long)]
+    external_object_ref: Option<ExternalObjectRef>,
+    #[arg(long)]
+    retry_parent_job: Option<String>,
 }
 impl ProcessArgs {
     pub(super) fn operation(self) -> Result<Operation> {
@@ -54,6 +60,11 @@ impl ProcessArgs {
                     llm_enabled: self.llm_enabled,
                     extract_time: self.extract_time,
                     vectors: self.vectors.into(),
+                    origin: ObservationOrigin::from_refs(
+                        self.conversation_ref,
+                        self.external_object_ref,
+                    )?,
+                    retry_parent_job_id: self.retry_parent_job,
                 },
             },
         )))

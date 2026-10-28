@@ -65,6 +65,7 @@ pub enum Operation {
     Reference(nous_app::references::ReferenceOperation),
     Amemorix(Box<super::integrations::AmemorixRequest>),
     ReadSource(super::sources::RetrievalSourceRequest),
+    SourceManagement(Box<super::sources::SourceManagementOperation>),
     Bundle(Box<super::bundles::BundleOperation>),
     WaitJobs(super::tasks::WaitJobs),
     ListJobs(nous_domain::JobListRequest),
@@ -163,6 +164,7 @@ impl Operation {
             .boxed(),
             Self::Amemorix(request) => app.amemorix(ctx, *request.clone()).boxed(),
             Self::ReadSource(request) => app.read_retrieval_source(ctx, request.clone()).boxed(),
+            Self::SourceManagement(operation) => operation.execute(app, ctx),
             Self::Bundle(operation) => operation.execute(app, ctx).boxed(),
             Self::ListJobs(request) => {
                 async move { Ok(json!(app.jobs(ctx, request).await?)) }.boxed()
@@ -316,6 +318,9 @@ impl Operation {
                 Some(json!(request)),
             ),
             Self::ReadSource(request) => ("POST", "/api/sources/read".into(), Some(json!(request))),
+            Self::SourceManagement(operation) => {
+                ("POST", "/api/sources".into(), Some(json!(operation)))
+            }
             Self::Reference(request) => ("POST", "/api/references".into(), Some(json!(request))),
             Self::Bundle(operation) => ("POST", "/api/bundles".into(), Some(json!(operation))),
             Self::WaitJobs(request) => ("POST", "/api/jobs/wait".into(), Some(json!(request))),

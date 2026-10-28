@@ -59,29 +59,53 @@ impl Database {
         id: &MemoryId,
         revision: i64,
     ) -> Result<Memory> {
-        if revision <= 0 {
-            return Err(Error::invalid(
-                "Memory source requires a positive exact revision",
-            ));
-        }
-        sqlx::query(
-            "SELECT * FROM memory_revisions WHERE namespace_id=? AND memory_id=? AND revision=?",
+        revision_in(
+            &mut *self.pool.acquire().await.map_err(storage_error)?,
+            namespace,
+            id,
+            revision,
         )
-        .bind(namespace.as_str())
-        .bind(id.as_str())
-        .bind(revision)
-        .fetch_optional(&self.pool)
         .await
-        .map_err(storage_error)?
-        .map(memory_row)
-        .transpose()?
-        .ok_or_else(not_found)
     }
+}
+
+async fn revision_in(
+    conn: &mut SqliteConnection,
+    namespace: &NamespaceId,
+    id: &MemoryId,
+    revision: i64,
+) -> Result<Memory> {
+    if revision <= 0 {
+        return Err(Error::invalid(
+            "Memory source requires a positive exact revision",
+        ));
+    }
+    sqlx::query(
+        "SELECT * FROM memory_revisions WHERE namespace_id=? AND memory_id=? AND revision=?",
+    )
+    .bind(namespace.as_str())
+    .bind(id.as_str())
+    .bind(revision)
+    .fetch_optional(conn)
+    .await
+    .map_err(storage_error)?
+    .map(memory_row)
+    .transpose()?
+    .ok_or_else(not_found)
 }
 
 impl WriteTransaction {
     pub async fn memory(&mut self, namespace: &NamespaceId, id: &MemoryId) -> Result<Memory> {
         memory(&mut self.tx, namespace, id).await
+    }
+
+    pub async fn memory_revision(
+        &mut self,
+        namespace: &NamespaceId,
+        id: &MemoryId,
+        revision: i64,
+    ) -> Result<Memory> {
+        revision_in(&mut self.tx, namespace, id, revision).await
     }
 
     /// `None` creates revision 1. `Some(n)` appends revision n+1 and moves the

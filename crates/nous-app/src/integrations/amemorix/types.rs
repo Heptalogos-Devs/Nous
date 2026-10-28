@@ -18,6 +18,9 @@ pub struct AmemorixRequest {
     deny_unknown_fields
 )]
 pub enum AmemorixOperation {
+    MemorySourceAdmin(super::sources::SourceAdminInput),
+    MemoryDeleteAdmin(super::sources::DeleteAdminInput),
+    MemoryImportAdmin(super::imports::ImportInput),
     MemoryBundleAdmin(super::bundles::BundleInput),
     MemoryStats(StatsInput),
     MemoryRuntimeAdmin(RuntimeInput),

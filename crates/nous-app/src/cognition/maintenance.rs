@@ -10,6 +10,11 @@ const HOUR_MS: i64 = 3_600_000;
 const FREEZE_THRESHOLD: f64 = 0.1;
 const REVIVE_THRESHOLD: f64 = 0.15;
 
+pub(crate) struct MemoryChangeOutcome {
+    pub result: Value,
+    pub retired_vector_associations: u64,
+}
+
 impl App {
     pub async fn change_memory(
         &self,
@@ -60,7 +65,9 @@ impl App {
         let result = self
             .change_memory_in(&mut tx, &namespace, id, &change)
             .await?;
-        tx.commit(result).await
+        let receipt = tx.commit(result.result).await?;
+        self.tasks.notify_wake();
+        Ok(receipt)
     }
 
     pub(crate) async fn change_memory_in(
@@ -69,7 +76,7 @@ impl App {
         namespace: &NamespaceId,
         id: &MemoryId,
         change: &MemoryChange,
-    ) -> Result<Value> {
+    ) -> Result<MemoryChangeOutcome> {
         validate_change(change)?;
         let ctx = tx.context().clone();
         let mut memory = tx.memory(namespace, id).await?;
@@ -120,7 +127,10 @@ impl App {
             event.revision = marker.revision;
             event.commit_seq = marker.commit_seq;
             tx.append_memory_audit(&event).await?;
-            return Ok(json!({"id":id,"purged":true,"revision":marker.revision}));
+            return Ok(MemoryChangeOutcome {
+                result: json!({"id":id,"purged":true,"revision":marker.revision}),
+                retired_vector_associations: 0,
+            });
         }
         let previous_activation = memory.lifecycle.activation;
         let previously_deleted = memory.deleted;
@@ -132,14 +142,16 @@ impl App {
             tx.invalidate_context_history(namespace, &subject_id, &targets)
                 .await?;
         }
-        if memory.deleted && !previously_deleted {
+        let retired_vector_associations = if memory.deleted && !previously_deleted {
             tx.retire_embedding_targets(
                 namespace,
                 &subject_id,
                 &[RetrievalTarget::Cognition(CognitiveRef::memory(id, before))],
             )
-            .await?;
-        }
+            .await?
+        } else {
+            0
+        };
         memory.revision += 1;
         memory.commit_seq = tx.commit_seq();
         memory.recorded_at = tx.time().recorded();
@@ -155,7 +167,66 @@ impl App {
             tx.time(),
         ))
         .await?;
-        Ok(serde_json::to_value(memory)?)
+        Ok(MemoryChangeOutcome {
+            result: serde_json::to_value(memory)?,
+            retired_vector_associations,
+        })
+    }
+
+    /// Undo the exact retained lifecycle revision without reactivating previously frozen records.
+    pub(crate) async fn restore_memory_snapshot_in(
+        &self,
+        tx: &mut WriteTransaction,
+        namespace: &NamespaceId,
+        id: &MemoryId,
+        expected: i64,
+        reason: &str,
+    ) -> Result<Memory> {
+        let ctx = tx.context().clone();
+        let current = tx.memory(namespace, id).await?;
+        ctx.require_subject(namespace, &current.subject_id)?;
+        tx.require_source_read(
+            &ctx,
+            namespace,
+            &current.subject_id,
+            &RetrievalTarget::Cognition(CognitiveRef::memory(id, current.revision)),
+        )
+        .await?;
+        if current.revision != expected || !current.deleted {
+            return Err(Error::new(
+                ErrorCode::Conflict,
+                "trashed Memory changed after source deletion",
+            ));
+        }
+        let previous = expected
+            .checked_sub(1)
+            .filter(|revision| *revision > 0)
+            .ok_or_else(|| Error::invalid("source undo has no prior Memory revision"))?;
+        let mut restored = tx.memory_revision(namespace, id, previous).await?;
+        if restored.subject_id != current.subject_id || restored.deleted {
+            return Err(Error::new(
+                ErrorCode::Conflict,
+                "source undo has no live prior Memory snapshot",
+            ));
+        }
+        restored.revision = expected
+            .checked_add(1)
+            .ok_or_else(|| Error::invalid("Memory restore revision overflow"))?;
+        restored.commit_seq = tx.commit_seq();
+        restored.recorded_at = tx.time().recorded();
+        restored.times.recorded = tx.time().point();
+        tx.save_memory(&restored, Some(expected)).await?;
+        tx.append_memory_audit(&audit(
+            &ctx,
+            &restored,
+            "restore",
+            reason,
+            expected,
+            json!({"restored_snapshot_revision":previous}),
+            tx.time(),
+        ))
+        .await?;
+        Ok(restored)
     }
 
     pub async fn recycle_bin(

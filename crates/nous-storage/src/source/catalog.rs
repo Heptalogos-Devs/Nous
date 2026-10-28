@@ -1,4 +1,4 @@
-use crate::{ReadView, WriteTransaction, authority::records, storage_error};
+use crate::{OperationReceipt, ReadView, WriteTransaction, authority::records, storage_error};
 use nous_domain::*;
 use sqlx::{Row, SqliteConnection};
 use std::collections::BTreeMap;
@@ -50,7 +50,32 @@ async fn entries(
     }
     Ok(result)
 }
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SourceOperationRecord {
+    pub operation: String,
+    pub receipt: OperationReceipt,
+}
 impl ReadView {
+    pub async fn source_operation_records(
+        &mut self,
+        ns: &NamespaceId,
+        sub: &SubjectId,
+        before: Option<i64>,
+        limit: usize,
+    ) -> Result<Vec<SourceOperationRecord>> {
+        let scope = format!("namespace:{ns}/subject:{sub}");
+        let rows = sqlx::query("SELECT operation,receipt FROM operation_receipts WHERE scope=? AND operation IN('source.trash','source.restore') AND commit_seq<=? AND (? IS NULL OR commit_seq<?) ORDER BY commit_seq DESC LIMIT ?")
+            .bind(scope).bind(self.watermark).bind(before).bind(before).bind(limit as i64)
+            .fetch_all(&mut *self.tx).await.map_err(storage_error)?;
+        rows.into_iter()
+            .map(|row| {
+                Ok(SourceOperationRecord {
+                    operation: row.get("operation"),
+                    receipt: serde_json::from_str(&row.get::<String, _>("receipt"))?,
+                })
+            })
+            .collect()
+    }
     pub async fn source_memory_entries(
         &mut self,
         ns: &NamespaceId,
@@ -61,6 +86,17 @@ impl ReadView {
     }
 }
 impl WriteTransaction {
+    pub async fn source_trash_receipt(
+        &mut self,
+        ns: &NamespaceId,
+        sub: &SubjectId,
+        seq: i64,
+    ) -> Result<OperationReceipt> {
+        let scope = format!("namespace:{ns}/subject:{sub}");
+        let body:Option<String>=sqlx::query_scalar("SELECT receipt FROM operation_receipts WHERE commit_seq=? AND operation='source.trash' AND scope=?")
+            .bind(seq).bind(scope).fetch_optional(&mut *self.tx).await.map_err(storage_error)?;
+        Ok(serde_json::from_str(&body.ok_or_else(crate::not_found)?)?)
+    }
     pub async fn evidence_source_status(
         &mut self,
         ns: &NamespaceId,

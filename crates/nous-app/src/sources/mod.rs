@@ -1,10 +1,16 @@
 //! Exact named-source membership and atomic record retirement.
 mod graph;
+mod operations;
+pub use operations::SourceOperationsPage;
+mod preview;
+mod restore;
+mod trash_operations;
 use crate::App;
 use nous_domain::*;
-use nous_storage::{BeginOperation, OperationReceipt, operation_key};
+use nous_storage::{BeginOperation, OperationReceipt, WriteTransaction, operation_key};
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
+pub use trash_operations::SourceTrashOperationsPage;
 
 impl App {
     pub async fn source_directory(
@@ -100,6 +106,17 @@ impl App {
             BeginOperation::Replay(receipt) => return Ok(receipt),
             BeginOperation::New(tx) => tx,
         };
+        let result = self.trash_sources_in(ctx, &mut tx, request).await?;
+        let receipt = tx.commit(json!(result)).await?;
+        self.tasks.notify_wake();
+        Ok(receipt)
+    }
+    async fn trash_sources_in(
+        &self,
+        ctx: &CallContext,
+        tx: &mut WriteTransaction,
+        request: TrashSourcesRequest,
+    ) -> Result<TrashSourcesResult> {
         tx.subject(&request.namespace_id, &request.subject_id)
             .await?;
         let rows = tx
@@ -149,18 +166,14 @@ impl App {
             }
         }
         let graph = self
-            .retire_source_graph_in(
-                &mut tx,
-                &request.namespace_id,
-                &request.subject_id,
-                &selected,
-            )
+            .retire_source_graph_in(tx, &request.namespace_id, &request.subject_id, &selected)
             .await?;
         let mut trashed = Vec::with_capacity(selected.len());
+        let mut retired_vector_associations = graph.retired_vector_associations;
         for row in &selected {
             let value = self
                 .change_memory_in(
-                    &mut tx,
+                    tx,
                     &request.namespace_id,
                     &row.id,
                     &MemoryChange {
@@ -178,7 +191,8 @@ impl App {
                     },
                 )
                 .await?;
-            let memory: Memory = serde_json::from_value(value)?;
+            retired_vector_associations += value.retired_vector_associations;
+            let memory: Memory = serde_json::from_value(value.result)?;
             trashed.push(CognitiveRef::memory(&memory.id, memory.revision));
         }
         let matched_sources = selected
@@ -187,16 +201,14 @@ impl App {
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect();
-        let result = TrashSourcesResult {
+        Ok(TrashSourcesResult {
             sources: request.sources,
             matched_sources,
             trashed_memories: trashed,
             graph,
             affected_independent: affected.into_iter().collect(),
             force: request.force,
-        };
-        let receipt = tx.commit(json!(result)).await?;
-        self.tasks.notify_wake();
-        Ok(receipt)
+            retired_vector_associations,
+        })
     }
 }

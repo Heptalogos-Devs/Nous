@@ -119,9 +119,34 @@ job = (await client.wait_success([receipt["result"]["job_id"]]))[0]
 
 `source(subject_id, reference, observation_id=...)` 读取精确认知或媒体的来源。`memory_source(memory_id, revision=...)` 读取指定历史修订；省略修订时读取当前记忆。媒体的 `observation_id` 指定本次实际接触或导入，认知自身保留形成时的来源事件。
 
+`source_directory(namespace_id, subject_id)` 列出授权范围内的精确来源标签及实际记忆、材料、事件和受保护对象数量。使用目录中的 source 值整批移入回收站，并保存回执以恢复同一批次：
+
+```python
+directory = await client.source_directory(namespace_id, subject_id)
+plan = await client.preview_sources(namespace_id, subject_id, [source_label])
+trashed = await client.trash_sources(
+    namespace_id, subject_id, [source_label],
+    reason="撤下这组资料", operation_id=trash_operation_id,
+)
+restored = await client.restore_sources(
+    namespace_id, subject_id, trashed["commit_seq"],
+    reason="恢复原批次", operation_id=restore_operation_id,
+)
+```
+
+含受保护记忆的选择需要显式 `force=True`。preview 返回目标原修订、图谱计划及向量关联退役数量；预览事务回滚，执行时重新核验。恢复核对原批次的当前修订并保留原 Frozen、固定和保护期限；后续修改会触发 Conflict 并保留当前状态。通用 `sources(request)` 接受同一 HTTP/MCP 的正式操作对象；全部方法共享当前连接、凭据和 SourceReadScope。
+
+`source_operation(namespace_id, subject_id, commit_seq)` 与 `source_operations(..., limit=50, before_commit_seq=...)` 读取真实 source 事件。需要某次删除的逻辑状态时，用 `sources({"action":"get_trash_operation","request":{"namespace_id":namespace_id,"subject_id":subject_id,"commit_seq":trash_commit_seq}})`；`list_trash_operations` 使用相同 scope、limit 和 before_commit_seq 请求逻辑删除分页。每项的 trash 保留原回执，restore 保存实际恢复回执。
+
+A-Memorix `memory_source_admin` 的 list／delete／batch_delete 使用同一来源 owner。手动删除按该接口原有语义显式启用保护覆盖，原生 `trash_sources` 仍默认保留保护检查。结果的 operation_id 和 delete_operation_id 是本实例真实 trash commit_seq 字符串；原生幂等身份保存在 native_operation。`memory_delete_admin` 的 source preview 与 execute(dry_run=true) 返回未提交计划；execute、精确 restore、get_operation 与 list_operations 返回相同真实批次，恢复后逻辑状态为 restored。
+
 `source` 同时接受规范引用对象和结果中的词序引用。`resolve_reference(subject_id, address, as_of_commit=...)` 将对象地址绑定到所选知识截点，固定修订地址保持原修订；结果包含规范身份及本机地址。Namespace 操作者可通过 `reconcile_references` 为已有资料补齐目录。知识包恢复后，原地址沿安装来源映射解析。
 
 `subject_diagnostics(subject_id)` 读取当前授权范围内的认知、任务、向量和实际用量统计。本机消费与 Imported 生产历史分别汇总，金额保留货币；缺失量为 `None` 并附原因。A-Memorix adapter 的 `memory_stats()`、`memory_runtime_admin(action="get_config")` 和 `memory_runtime_admin(action="list_vector_spaces")` 使用同一诊断用例；MaiBot 接入和未知值展示补丁见 [集成说明](../../integrations/maibot/README.md)。
+
+A-Memorix adapter 的 `memory_import_admin(action=...)` 将纯文本创建接到冻结目录与正式处理任务，`create_upload` 接受受管 `staged_files`，`create_raw_scan` 扫描本机 `raw` alias。路径不发往服务器。当前创建显式传 `dedupe_policy="none"`；文件清单去重和请求级并发尚未接入，传入时返回能力错误。`get/list/get_chunks/cancel/retry_failed` 使用原生任务和稳定 UnitId，具体使用见 MaiBot 集成说明。
+
+`process_import_units` 的请求可附 `origin`（实际 ObservationOrigin）和 `retry_parent_job_id`。CLI 对应 `--conversation-ref` / `--external-object-ref` 与 `--retry-parent-job`。重试原任务引用只记录尝试来源，不构成独占 parent_job_id 所有权；原生 owner 校验同作用域、同目录和实际失败单位。
 
 ## 每次模型调用的上下文
 

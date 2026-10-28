@@ -18,35 +18,32 @@ impl WriteTransaction {
         namespace: &NamespaceId,
         subject: &SubjectId,
         targets: &[RetrievalTarget],
-    ) -> Result<()> {
+    ) -> Result<u64> {
         let mut keys = BTreeSet::new();
+        let mut retired = 0;
         for target in targets {
             let identity = target.identity_key()?;
             let rows=sqlx::query("SELECT DISTINCT namespace_id,subject_id,space_id,source_hash FROM embedding_subscriptions WHERE namespace_id=? AND subject_id=? AND identity_key=?")
                 .bind(namespace.as_str()).bind(subject.as_str()).bind(&identity).fetch_all(&mut *self.tx).await.map_err(storage_error)?;
             keys.extend(rows.into_iter().map(content_key));
-            sqlx::query("UPDATE embedding_subscriptions SET retired_commit_seq=? WHERE namespace_id=? AND subject_id=? AND identity_key=? AND retired_commit_seq IS NULL")
-                .bind(self.commit_seq()).bind(namespace.as_str()).bind(subject.as_str()).bind(identity).execute(&mut *self.tx).await.map_err(write_error)?;
+            retired+=sqlx::query("UPDATE embedding_subscriptions SET retired_commit_seq=? WHERE namespace_id=? AND subject_id=? AND identity_key=? AND retired_commit_seq IS NULL")
+                .bind(self.commit_seq()).bind(namespace.as_str()).bind(subject.as_str()).bind(identity).execute(&mut *self.tx).await.map_err(write_error)?.rows_affected();
         }
         for key in keys {
             self.reconcile_embedding_content(&key, false).await?;
         }
-        Ok(())
+        Ok(retired)
     }
     pub(crate) async fn retire_cognition_embedding_jobs(
         &mut self,
         value: &StructuredObject,
-    ) -> Result<()> {
-        let identity = RetrievalTarget::Cognition(value.reference()).identity_key()?;
-        let rows=sqlx::query("SELECT DISTINCT namespace_id,subject_id,space_id,source_hash FROM embedding_subscriptions WHERE namespace_id=? AND subject_id=? AND identity_key=?")
-            .bind(value.namespace_id.as_str()).bind(value.subject_id.as_str()).bind(&identity).fetch_all(&mut *self.tx).await.map_err(storage_error)?;
-        let keys = rows.into_iter().map(content_key).collect::<Vec<_>>();
-        sqlx::query("UPDATE embedding_subscriptions SET retired_commit_seq=? WHERE namespace_id=? AND subject_id=? AND identity_key=? AND retired_commit_seq IS NULL")
-            .bind(self.commit_seq()).bind(value.namespace_id.as_str()).bind(value.subject_id.as_str()).bind(identity).execute(&mut *self.tx).await.map_err(write_error)?;
-        for key in keys {
-            self.reconcile_embedding_content(&key, false).await?;
-        }
-        Ok(())
+    ) -> Result<u64> {
+        self.retire_embedding_targets(
+            &value.namespace_id,
+            &value.subject_id,
+            &[RetrievalTarget::Cognition(value.reference())],
+        )
+        .await
     }
     pub(crate) async fn purge_memory_embeddings(&mut self, id: &MemoryId) -> Result<()> {
         let mut keys = BTreeSet::new();

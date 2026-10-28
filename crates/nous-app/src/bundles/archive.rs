@@ -208,6 +208,13 @@ fn hash(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
 pub(super) fn format_error(error: anyhow::Error) -> Error {
+    if let Some(domain) = error.downcast_ref::<Error>() {
+        let mut mapped = domain.clone();
+        if mapped.code == ErrorCode::ResourceExhausted {
+            mapped = mapped.with_context("configuration_key", "bundles");
+        }
+        return mapped.with_cause(error.as_ref());
+    }
     Error::invalid("invalid knowledge bundle").with_cause(error.as_ref())
 }
 fn zip_error(error: zip::result::ZipError) -> Error {

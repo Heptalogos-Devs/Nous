@@ -127,6 +127,25 @@ $frozen = & $nous --json --instance $instance memory change $memory.id --action 
 
 `memory change` 支持 reinforce、weaken、protect、unprotect、freeze、forget、restore、trash、purge、revise、decay；revise 通过 `--edit` 提供 JSON 编辑对象。protect 的 `--hours` 为正时设置期限，省略或非正值时永久保护。freeze、forget、weaken 保留正文和修订；普通查询排除非活跃记忆，`--include-inactive` 或精确引用可读取。trash（也可用 `memory delete`）进入 `memory recycle-bin --subject <id>`；restore 恢复。purge 需要 Namespace 或管理员权限，默认等待软删除 24 小时，`--force` 可显式跳过期限；清除正文修订及相关模型输出、回执副本，保留最小身份和审计，原始 Material 继续由材料领域管理。
 
+按来源名称管理整组资料时，先查看授权范围内的目录，再使用其中的完整 source 标签：
+
+```powershell
+$sources = & $nous --json --instance $instance source list --namespace $namespace --subject $subject | ConvertFrom-Json
+$sources.items | Select-Object source, memory_count, protected_count
+$sourceLabel = $sources.items[0].source
+& $nous --json --instance $instance source preview --namespace $namespace --subject $subject --source $sourceLabel
+$trashed = & $nous --json --instance $instance source trash --namespace $namespace --subject $subject --source $sourceLabel --reason '撤下这组资料' --operation-id source-trash-notes | ConvertFrom-Json
+& $nous --json --instance $instance source restore --namespace $namespace --subject $subject --trash-commit-seq $trashed.commit_seq --reason '恢复原批次' --operation-id source-restore-notes
+```
+
+`--source` 可重复指定，按标签精确匹配。含受保护记忆的批次需要显式 `--force`；每次 trash 与相应图谱修改在同一事务完成。回执列出实际修订和相关独立认知。restore 按原 trash 批次恢复原内容与生命周期，包括 Frozen、固定与保护期限；后续修订发生变化时整批返回 Conflict，保留当前修改。原件、来源事件与容器记录继续保留。
+
+HTTP 对应 `POST /api/sources`，MCP 对应 `source_management`：`action=list` 带 `{request:{namespace_id,subject_id}}`；`preview` 带 request.sources、force、reason；`trash` 再带 operation_id；`restore` 带 operation_id 和 request.trash_commit_seq、reason。单条认知或媒体的精确来源读取继续使用 `/api/sources/read` 和 `source read`。
+
+`source preview` 使用与 trash 相同的来源选择、权限与保护规则，返回目标原修订、图谱变更计划及将退役的向量关联数。预览事务回滚并返回 watermark；执行时重新核验当前状态。
+
+`source operation --commit-seq <seq>` 与 `source operations --limit 50` 读取真实 source 提交事件；续页使用 before_commit_seq。查看某次 trash 及其实际恢复回执时，使用 `source trash-operation --commit-seq <T>` 或 `source trash-operations`，HTTP action 对应 get_trash_operation／list_trash_operations。逻辑操作始终按原 trash T 排序与分页，restore 回执保留自身提交身份。读取先按来源权限过滤，再应用页大小；原生事件和逻辑视图都返回实际快照 watermark。
+
 按批评估自动衰减时，默认每批 50 条，范围为 1..1000。返回值包含 snapshot_seq、next_cursor 和 complete，续扫同一快照直到完成：
 
 ```powershell
@@ -152,6 +171,8 @@ HTTP 接口与 MCP 工具进入相同应用用例：
 | `POST /api/query`                             | `query`               |
 | `POST /api/references`                        | `references`          |
 | `GET /api/memories/{id}/source`               | `memory_source`       |
+| `POST /api/sources/read`                     | `source_read`         |
+| `POST /api/sources`                          | `source_management`   |
 | `GET /api/models/calls/{id}`                  | `model_call`          |
 | `POST /api/models/contract`                   | `model_contract`      |
 | `POST /api/models/preview`                    | `model_preview`       |

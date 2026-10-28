@@ -1,20 +1,24 @@
 mod bundles;
 mod diagnostics;
 mod graph;
+mod imports;
 mod ingest;
 mod maintain;
 mod policy;
 mod profile;
 mod search;
+mod sources;
 mod time;
 mod types;
 use crate::App;
 pub use bundles::BundleInput;
 use futures::future::BoxFuture;
+pub use imports::ImportInput;
 use nous_domain::*;
 pub(crate) use policy::AMEMORIX;
 pub use policy::register_configuration;
 use serde_json::Value;
+pub use sources::{DeleteAdminInput, SourceAdminInput};
 pub use types::*;
 
 impl App {
@@ -44,6 +48,15 @@ impl App {
         policy: &'a policy::AmemorixPolicy,
     ) -> BoxFuture<'a, Result<Value>> {
         match &request.operation {
+            AmemorixOperation::MemorySourceAdmin(input) => {
+                Box::pin(sources::execute(self, ctx, request, input))
+            }
+            AmemorixOperation::MemoryDeleteAdmin(input) => {
+                Box::pin(sources::delete_admin(self, ctx, request, input))
+            }
+            AmemorixOperation::MemoryImportAdmin(input) => {
+                imports::execute(self, ctx, request, input)
+            }
             AmemorixOperation::MemoryBundleAdmin(input) => {
                 Box::pin(bundles::execute(self, ctx, request, input))
             }

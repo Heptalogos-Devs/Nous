@@ -299,10 +299,10 @@ impl WriteTransaction {
                         self.save_memory(v, (v.revision > 1).then_some(v.revision - 1))
                             .await
                     }
-                    Pending::Cognition(v) => {
-                        self.save_structured(v, (v.revision > 1).then_some(v.revision - 1))
-                            .await
-                    }
+                    Pending::Cognition(v) => self
+                        .save_structured(v, (v.revision > 1).then_some(v.revision - 1))
+                        .await
+                        .map(|_| ()),
                 };
                 match result {
                     Ok(()) => progress = true,

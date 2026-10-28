@@ -28,9 +28,21 @@ impl App {
             self.verify_catalog_unit(ctx, &mut view, unit, cancel)
                 .await?;
         }
+        let mut input_sources = Vec::new();
+        for document in &catalog.documents {
+            input_sources.push(
+                view.import_input_source(
+                    &request.namespace_id,
+                    &request.subject_id,
+                    &document.input_source_id,
+                )
+                .await?,
+            );
+        }
         view.finish().await?;
         Ok(ImportCatalogView {
             catalog,
+            input_sources,
             retained_unit_count: units.len(),
             units,
         })
@@ -76,9 +88,21 @@ impl App {
             units.push(unit);
         }
         units.sort_by_key(|unit| unit.ordinal);
+        let mut input_sources = Vec::new();
+        for id in units
+            .iter()
+            .map(|unit| &unit.input_source_id)
+            .collect::<BTreeSet<_>>()
+        {
+            input_sources.push(
+                view.import_input_source(&request.namespace_id, &request.subject_id, id)
+                    .await?,
+            );
+        }
         view.finish().await?;
         Ok(ImportUnitInputs {
             catalog,
+            input_sources,
             units,
             source_refs: source_refs.into_iter().collect(),
         })

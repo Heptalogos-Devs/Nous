@@ -1,6 +1,6 @@
 mod catalog;
 pub(crate) mod closure;
-pub use catalog::SourceMemoryEntry;
+pub use catalog::{SourceMemoryEntry, SourceOperationRecord};
 pub(crate) mod materials;
 mod query_admission;
 pub(crate) mod query_filter;
@@ -14,3 +14,6 @@ pub(crate) mod dependents;
 mod formation;
 mod retirement;
 pub(crate) mod tombstone;
+
+mod operations;
+pub use operations::SourceTrashOperation;

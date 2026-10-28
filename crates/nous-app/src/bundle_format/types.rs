@@ -43,7 +43,7 @@ impl Default for Limits {
             expanded_bytes: 1024 * 1024 * 1024,
             central_directory_bytes: 4 * 1024 * 1024,
             json_bytes: 32 * 1024 * 1024,
-            json_nodes: 250_000,
+            json_nodes: 2_000_000,
             json_depth: 64,
         }
     }

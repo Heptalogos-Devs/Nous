@@ -16,6 +16,16 @@ impl WriteTransaction {
                 "unit catalog requires 1 to 1000 original units and admitted inputs",
             ));
         }
+        let document_count = value.documents.iter().try_fold(0usize, |count, document| {
+            count
+                .checked_add(document.original_unit_count)
+                .ok_or_else(|| Error::invalid("catalog document unit count overflow"))
+        })?;
+        if document_count != value.original_unit_count {
+            return Err(Error::invalid(
+                "catalog document unit counts differ from original total",
+            ));
+        }
         let mut inputs = BTreeSet::new();
         for document in &value.documents {
             self.import_input_source(

@@ -1,5 +1,5 @@
 //! Bounded JSON values retain the numeric representation supplied by serde_json.
-use nous_domain::{Error, Result};
+use nous_domain::{Error, ErrorCode, Result};
 use serde::{
     Deserialize,
     de::{self, DeserializeSeed, MapAccess, SeqAccess, Visitor},
@@ -8,19 +8,42 @@ use serde_json::{Map, Value, value::RawValue};
 use std::fmt;
 
 pub fn bounded_value(bytes: &[u8], remaining_nodes: &mut usize, max_depth: usize) -> Result<Value> {
+    let available_nodes = *remaining_nodes;
+    let mut exceeded = None;
     let mut parser = serde_json::Deserializer::from_slice(bytes);
     let result = JsonSeed {
         remaining: remaining_nodes,
         depth: max_depth,
+        exceeded: &mut exceeded,
     }
     .deserialize(&mut parser)
     .and_then(|value| parser.end().map(|()| value));
-    result
-        .map_err(|error| Error::invalid("invalid or over-budget JSON document").with_cause(&error))
+    result.map_err(|error| {
+        let failure = match exceeded {
+            Some(JsonLimit::Nodes) => {
+                Error::new(ErrorCode::ResourceExhausted, "JSON node budget exhausted")
+                    .with_context("resource", "json_nodes")
+                    .with_context("available_nodes", available_nodes)
+            }
+            Some(JsonLimit::Depth) => Error::new(
+                ErrorCode::ResourceExhausted,
+                "JSON nesting depth exceeds configured limit",
+            )
+            .with_context("resource", "json_depth")
+            .with_context("limit", max_depth),
+            None => Error::invalid("invalid JSON document"),
+        };
+        failure.with_cause(&error)
+    })
+}
+enum JsonLimit {
+    Nodes,
+    Depth,
 }
 struct JsonSeed<'a> {
     remaining: &'a mut usize,
     depth: usize,
+    exceeded: &'a mut Option<JsonLimit>,
 }
 impl<'de> DeserializeSeed<'de> for JsonSeed<'_> {
     type Value = Value;
@@ -28,14 +51,20 @@ impl<'de> DeserializeSeed<'de> for JsonSeed<'_> {
         self,
         deserializer: D,
     ) -> std::result::Result<Value, D::Error> {
-        if *self.remaining == 0 || self.depth == 0 {
-            return Err(de::Error::custom("JSON node/depth limit exceeded"));
+        if self.depth == 0 {
+            *self.exceeded = Some(JsonLimit::Depth);
+            return Err(de::Error::custom("JSON depth limit exceeded"));
+        }
+        if *self.remaining == 0 {
+            *self.exceeded = Some(JsonLimit::Nodes);
+            return Err(de::Error::custom("JSON node limit exceeded"));
         }
         *self.remaining -= 1;
         let raw = <&RawValue>::deserialize(deserializer)?;
         let visitor = JsonVisitor {
             remaining: self.remaining,
             depth: self.depth - 1,
+            exceeded: self.exceeded,
         };
         // The raw token is part of the public serde_json interface. Numeric
         // leaves go through Value's own precision-aware deserializer.
@@ -53,6 +82,7 @@ impl<'de> DeserializeSeed<'de> for JsonSeed<'_> {
 struct JsonVisitor<'a> {
     remaining: &'a mut usize,
     depth: usize,
+    exceeded: &'a mut Option<JsonLimit>,
 }
 impl<'de> Visitor<'de> for JsonVisitor<'_> {
     type Value = Value;
@@ -64,6 +94,7 @@ impl<'de> Visitor<'de> for JsonVisitor<'_> {
         while let Some(value) = sequence.next_element_seed(JsonSeed {
             remaining: self.remaining,
             depth: self.depth,
+            exceeded: self.exceeded,
         })? {
             values.push(value);
         }
@@ -78,6 +109,7 @@ impl<'de> Visitor<'de> for JsonVisitor<'_> {
             let value = object.next_value_seed(JsonSeed {
                 remaining: self.remaining,
                 depth: self.depth,
+                exceeded: self.exceeded,
             })?;
             values.insert(key, value);
         }

@@ -137,9 +137,9 @@ impl App {
                 removed.annotations.insert(object.id.to_string());
                 let mut retired = object.clone();
                 retired.deleted = true;
-                changes
-                    .retired_annotations
-                    .push(self.save_source_graph_revision(tx, retired).await?);
+                let (reference, retired) = self.save_source_graph_revision(tx, retired).await?;
+                changes.retired_annotations.push(reference);
+                changes.retired_vector_associations += retired;
             }
         }
         let mut endpoints = BTreeMap::new();
@@ -149,6 +149,7 @@ impl App {
             .cloned()
         {
             let previous = object.reference();
+            let historical = object.clone();
             let (mut changed, _) = removed.links(tx, ns, sub, &mut object.evidence).await?;
             let CognitiveContent::Entity(entity) = &mut object.body else {
                 unreachable!()
@@ -168,15 +169,28 @@ impl App {
                 }
             }
             if changed {
-                let current = self.save_source_graph_revision(tx, object).await?;
-                endpoints.insert(previous, current.clone());
-                changes.revised_entities.push(current);
+                let links = object.evidence_links();
+                let deleted = !supported(tx, ns, sub, &links).await?;
+                if deleted {
+                    // A retired revision retains its genuine birth and claim history.
+                    object = historical;
+                    object.deleted = true;
+                }
+                let (current, retired) = self.save_source_graph_revision(tx, object).await?;
+                changes.retired_vector_associations += retired;
+                if deleted {
+                    changes.retired_entities.push(current);
+                } else {
+                    endpoints.insert(previous, current.clone());
+                    changes.revised_entities.push(current);
+                }
             }
         }
         for mut object in objects
             .into_iter()
             .filter(|v| matches!(v.body, CognitiveContent::Association(_)))
         {
+            let retained_provenance = object.evidence.clone();
             let (mut changed, removed_support) =
                 removed.links(tx, ns, sub, &mut object.evidence).await?;
             let has_support = supported(tx, ns, sub, &object.evidence).await?;
@@ -194,10 +208,12 @@ impl App {
             }
             if removed_support && !has_support {
                 object.deleted = true;
+                object.evidence = retained_provenance;
             }
             if changed {
                 let deleted = object.deleted;
-                let reference = self.save_source_graph_revision(tx, object).await?;
+                let (reference, retired) = self.save_source_graph_revision(tx, object).await?;
+                changes.retired_vector_associations += retired;
                 if deleted {
                     changes.retired_associations.push(reference);
                 } else {
@@ -207,25 +223,27 @@ impl App {
         }
         Ok(changes)
     }
-    async fn save_source_graph_revision(
+    pub(super) async fn save_source_graph_revision(
         &self,
         tx: &mut WriteTransaction,
         mut object: StructuredObject,
-    ) -> Result<CognitiveRef> {
+    ) -> Result<(CognitiveRef, u64)> {
         let old = object.reference();
         let affected = tx
             .cognition_source_dependents(&object.namespace_id, &object.subject_id, &old)
             .await?;
         tx.invalidate_context_history(&object.namespace_id, &object.subject_id, &affected)
             .await?;
-        if !object.deleted {
+        let retired = if !object.deleted {
             tx.retire_embedding_targets(
                 &object.namespace_id,
                 &object.subject_id,
                 &[RetrievalTarget::Cognition(old)],
             )
-            .await?;
-        }
+            .await?
+        } else {
+            0
+        };
         let expected = object.revision;
         object.revision = expected
             .checked_add(1)
@@ -234,7 +252,7 @@ impl App {
         object.recorded_at = tx.time().recorded();
         object.times.recorded = tx.time().point();
         object.producer_call_id = None;
-        tx.save_structured(&object, Some(expected)).await?;
-        Ok(object.reference())
+        let retired = retired + tx.save_structured(&object, Some(expected)).await?;
+        Ok((object.reference(), retired))
     }
 }

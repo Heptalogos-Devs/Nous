@@ -62,6 +62,27 @@ impl TrashSourcesRequest {
         Ok(())
     }
 }
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RestoreSourcesRequest {
+    pub namespace_id: NamespaceId,
+    pub subject_id: SubjectId,
+    pub trash_commit_seq: i64,
+    #[serde(default)]
+    pub reason: String,
+}
+impl RestoreSourcesRequest {
+    pub fn validate(&self) -> Result<()> {
+        self.namespace_id.validate()?;
+        self.subject_id.validate()?;
+        if self.trash_commit_seq <= 0 || self.reason.len() > 4096 {
+            return Err(Error::invalid(
+                "source restore requires a positive trash commit and reason of at most 4096 bytes",
+            ));
+        }
+        Ok(())
+    }
+}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NamedSourceSummary {
     pub source: String,
@@ -81,9 +102,14 @@ pub struct SourceDirectory {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SourceGraphChanges {
     pub revised_entities: Vec<CognitiveRef>,
+    pub retired_entities: Vec<CognitiveRef>,
+    pub restored_entities: Vec<CognitiveRef>,
     pub revised_associations: Vec<CognitiveRef>,
     pub retired_associations: Vec<CognitiveRef>,
     pub retired_annotations: Vec<CognitiveRef>,
+    pub restored_associations: Vec<CognitiveRef>,
+    pub restored_annotations: Vec<CognitiveRef>,
+    pub retired_vector_associations: u64,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TrashSourcesResult {
@@ -93,4 +119,50 @@ pub struct TrashSourcesResult {
     pub graph: SourceGraphChanges,
     pub affected_independent: Vec<CognitiveRef>,
     pub force: bool,
+    pub retired_vector_associations: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RestoreSourcesResult {
+    pub trash_commit_seq: i64,
+    pub restored_memories: Vec<CognitiveRef>,
+    pub graph: SourceGraphChanges,
+    pub vector_associations_reused: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SourceOperationRequest {
+    pub namespace_id: NamespaceId,
+    pub subject_id: SubjectId,
+    pub commit_seq: i64,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SourceOperationsRequest {
+    pub namespace_id: NamespaceId,
+    pub subject_id: SubjectId,
+    pub limit: usize,
+    pub before_commit_seq: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SourceGraphPlan {
+    pub revise_entities: Vec<CognitiveRef>,
+    pub retire_entities: Vec<CognitiveRef>,
+    pub revise_associations: Vec<CognitiveRef>,
+    pub retire_associations: Vec<CognitiveRef>,
+    pub retire_annotations: Vec<CognitiveRef>,
+}
+/// An uncommitted deletion plan; every target names its original revision.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SourceTrashPreview {
+    pub watermark: i64,
+    pub sources: Vec<String>,
+    pub matched_sources: Vec<String>,
+    pub memory_targets: Vec<CognitiveRef>,
+    pub graph: SourceGraphPlan,
+    pub affected_independent: Vec<CognitiveRef>,
+    pub force: bool,
+    pub vector_associations_to_retire: u64,
 }

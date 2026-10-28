@@ -21,6 +21,8 @@ pub struct ProcessImportUnitsRequest {
     pub unit_ids: Option<Vec<ImportUnitId>>,
     pub llm_enabled: bool,
     pub extract_time: bool,
+    pub origin: Option<ObservationOrigin>,
+    pub retry_parent_job_id: Option<String>,
     #[serde(default)]
     pub vectors: ImportVectorPolicy,
 }

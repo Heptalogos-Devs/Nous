@@ -9,10 +9,11 @@ from uuid import uuid4
 import anyio
 
 from .errors import NousError
+from .sources import SourceManagement
 from .transport import ClientOptions, TokenProvider, Transport, token_file
 
 
-class NousClient:
+class NousClient(SourceManagement):
     def __init__(
         self,
         url: str,

@@ -5,6 +5,7 @@ mod media_source;
 mod package;
 mod records;
 mod redaction;
+mod restoration;
 mod retirement;
 mod runs;
 mod snapshot;

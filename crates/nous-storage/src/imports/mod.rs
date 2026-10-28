@@ -36,16 +36,7 @@ impl WriteTransaction {
         subject: &SubjectId,
         id: &ImportInputSourceId,
     ) -> Result<ImportInputSource> {
-        let body: Option<String> = sqlx::query_scalar(
-            "SELECT body FROM import_input_sources WHERE namespace_id=? AND subject_id=? AND id=?",
-        )
-        .bind(namespace.as_str())
-        .bind(subject.as_str())
-        .bind(id.as_str())
-        .fetch_optional(&mut *self.tx)
-        .await
-        .map_err(storage_error)?;
-        Ok(serde_json::from_str(&body.ok_or_else(not_found)?)?)
+        read_input_source(&mut self.tx, namespace, subject, id, i64::MAX).await
     }
     pub async fn insert_import_record_container(
         &mut self,
@@ -86,6 +77,14 @@ impl WriteTransaction {
     }
 }
 impl ReadView {
+    pub async fn import_input_source(
+        &mut self,
+        namespace: &NamespaceId,
+        subject: &SubjectId,
+        id: &ImportInputSourceId,
+    ) -> Result<ImportInputSource> {
+        read_input_source(&mut self.tx, namespace, subject, id, self.watermark).await
+    }
     pub async fn import_source_facts(
         &mut self,
         namespace: &NamespaceId,
@@ -124,4 +123,18 @@ impl ReadView {
             })
             .collect()
     }
+}
+
+async fn read_input_source(
+    connection: &mut sqlx::SqliteConnection,
+    namespace: &NamespaceId,
+    subject: &SubjectId,
+    id: &ImportInputSourceId,
+    watermark: i64,
+) -> Result<ImportInputSource> {
+    let body: Option<String> = sqlx::query_scalar(
+        "SELECT body FROM import_input_sources WHERE namespace_id=? AND subject_id=? AND id=? AND commit_seq<=?",
+    ).bind(namespace.as_str()).bind(subject.as_str()).bind(id.as_str()).bind(watermark)
+        .fetch_optional(connection).await.map_err(storage_error)?;
+    Ok(serde_json::from_str(&body.ok_or_else(not_found)?)?)
 }

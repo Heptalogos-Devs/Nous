@@ -12,7 +12,7 @@ impl WriteTransaction {
         &mut self,
         value: &StructuredObject,
         expected_revision: Option<i64>,
-    ) -> Result<()> {
+    ) -> Result<u64> {
         self.check_sequence(value.commit_seq)?;
         value.validate()?;
         let revision = expected_revision
@@ -157,9 +157,10 @@ impl WriteTransaction {
         )
         .await?;
         if value.deleted {
-            self.retire_cognition_embedding_jobs(value).await?;
+            self.retire_cognition_embedding_jobs(value).await
+        } else {
+            Ok(0)
         }
-        Ok(())
     }
 }
 

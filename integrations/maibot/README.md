@@ -12,6 +12,7 @@ git apply "/绝对路径/Nous-Wave/integrations/maibot/memory-service.patch"
 git apply "/绝对路径/Nous-Wave/integrations/maibot/diagnostics-unknown.patch"
 git apply "/绝对路径/Nous-Wave/integrations/maibot/bundle-files.patch"
 git apply "/绝对路径/Nous-Wave/integrations/maibot/bundle-unknown.patch"
+git apply "/绝对路径/Nous-Wave/integrations/maibot/import-admin.patch"
 ```
 
 开发环境也可使用源码包：`uv add --editable "/绝对路径/Nous-Wave/sdk/python"`。SDK 使用说明见 [Python SDK](../../sdk/python/README.md)。
@@ -53,6 +54,43 @@ uv run --env-file "/MaiBot实例/.env" maibot run --directory "/MaiBot实例"
 
 `bundle-unknown.patch` 使包预览和安装结果保留未知状态：图片数量、空间兼容性和检索就绪状态按返回值显示；未知项显示“未知”。安装后重新构建 dashboard。
 
-SDK 的 `adapter.managed_files` 提供同一传输目录的 alias 解析和本地扫描。`adapter.upload_import_inputs(staged_files, operation_id=...)` 将 WebUI 暂存文件上传为 Material 并返回原生多文档目录；宿主也可直接使用 `client.import_files` / `client.import_directory` 提交原生导入。A-Memorix 的导入任务 action 与处理阶段继续按其正式合同接入。
+SDK 的 `adapter.managed_files` 提供同一传输目录的 alias 解析和本地扫描。`adapter.upload_import_inputs(staged_files, operation_id=...)` 将 WebUI 暂存文件上传为 Material 并返回原生多文档目录；宿主也可直接使用 `client.import_files` / `client.import_directory` 提交原生导入。
+
+`memory_import_admin` 已接通 settings/guide、宿主路径 aliases/resolve、纯文本上传/粘贴/raw 扫描、任务列表与详情、分块分页、取消和失败单位重试。创建先冻结目录再提交正式 processing；get/list/chunks 的状态、输出和错误来自原生 Task 与不可变 Output。原始文件名来自同一授权读取中的 InputSource；文件路径留在 MaiBot 调用端。
+
+```python
+created = await adapter.memory_import_admin(
+    action="create_paste", name="notes.txt", content=actual_text,
+    llm_enabled=False, dedupe_policy="none",
+)
+task_id = created["task"]["task_id"]
+detail = await adapter.memory_import_admin(action="get", task_id=task_id, include_chunks=True)
+```
+
+当前文本创建显式采用 `dedupe_policy=none`。文件去重清单、force/clear_manifest 与请求级并发仍需独立原生接纳能力，传入这些尚未支持的设置会返回具体错误。`import-admin.patch` 让界面按当前能力展示并提交可用设置，未知 chunk 长度上限不再变成零或固定上限。安装后重建 dashboard。
+
+重试使用同一目录的实际失败 UnitId；相同切分参数可重复传入，改变切分必须先创建带 parent_catalog_id 的新目录。聊天绑定作为真实 Import 事件 origin 保存，不增加读取权限。语义角色、逐字 quote、时间子任务和向量状态与原生处理一致。chunk 输出保留实际 temporal_error/vector_error；内容任务成功时，可选时间或索引结果仍可有非致命错误。当前时间归一化只接受明确 offset 的 RFC3339，日期粒度与未知时区不会在调用端补值。
+
+JSON 语义单位、LPMM 转换、时序回填和 MaiBot 数据库迁移保留各自处理合同，当前不会被改成普通文本导入。
+
+`memory_source_admin` 支持 list、delete 和 batch_delete，按完整来源标签进入原生来源管理。list 返回实际授权范围内的段落数量和更新时间；手动删除保持此管理接口覆盖保护的原有语义。回执中的删除 operation_id 为本实例真实 trash 提交身份，后续恢复使用同一个值：
+
+```python
+plan = await adapter.memory_delete_admin(
+    action="preview", mode="source", selector={"sources": [source_label]},
+)
+removed = await adapter.memory_source_admin(
+    action="delete", source=source_label, operation_id=delete_request_id,
+)
+restored = await adapter.memory_delete_admin(
+    action="restore", mode="source", operation_id=removed["operation_id"],
+    request_id=restore_request_id,
+)
+operation = await adapter.memory_delete_admin(
+    action="get_operation", operation_id=removed["operation_id"],
+)
+```
+
+source `preview` 与 `execute(dry_run=true)` 由同一来源事务生成计划后回滚，显示目标原修订、预计退役对象和向量关联数；执行时重新核验。`get_operation` 与 `list_operations(mode="source")` 读取同一快照中的逻辑删除记录，已恢复记录显示 restored，并附真实恢复回执。删除计数来自实际 Memory、退役 Entity／Association 和向量关联行数；图谱修订另列在 native_result。
 
 尚未提供的管理动作返回 `CapabilityUnavailable`。画像与统计异常向调用者传播，写入、检索及其他管理请求沿原有明确失败结果呈现。

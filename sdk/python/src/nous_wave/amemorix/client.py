@@ -8,6 +8,7 @@ from ..client import NousClient
 from ..errors import NousError
 from ..files import ManagedFiles
 from .bundles import bundle_admin
+from .imports import import_admin
 from .references import target_reference
 
 
@@ -226,6 +227,21 @@ class AMemorixAdapter:
     async def memory_bundle_admin(self, *, action: str, **kwargs: Any) -> dict:
         return await bundle_admin(self, action=action, **kwargs)
 
+    async def memory_source_admin(self, *, action: str, **kwargs: Any) -> dict:
+        arguments = {"action": action, **kwargs}
+        if action.strip().lower() in {"delete", "batch_delete"} and not arguments.get("operation_id"):
+            arguments["operation_id"] = str(uuid4())
+        return await self.call("memory_source_admin", arguments)
+
+    async def memory_delete_admin(self, *, action: str, **kwargs: Any) -> dict:
+        arguments = {"action": action, **kwargs}
+        if action.strip().lower() in {"execute", "restore", "purge"} and not arguments.get("request_id"):
+            arguments["request_id"] = str(uuid4())
+        return await self.call("memory_delete_admin", arguments)
+
+    async def memory_import_admin(self, *, action: str, **kwargs: Any) -> dict:
+        return await import_admin(self, action=action, **kwargs)
+
     async def invoke(
         self,
         component_name: str,
@@ -256,6 +272,9 @@ class AMemorixAdapter:
             }:
                 return await adapter.maintain_memory(**values)
         functions = {
+            "memory_source_admin": adapter.memory_source_admin,
+            "memory_delete_admin": adapter.memory_delete_admin,
+            "memory_import_admin": adapter.memory_import_admin,
             "memory_stats": adapter.memory_stats,
             "memory_runtime_admin": adapter.memory_runtime_admin,
             "memory_bundle_admin": adapter.memory_bundle_admin,

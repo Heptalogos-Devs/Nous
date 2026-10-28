@@ -1,0 +1,215 @@
+--- a/dashboard/src/routes/resource/knowledge-base/hooks/useImportForm.ts
++++ b/dashboard/src/routes/resource/knowledge-base/hooks/useImportForm.ts
+@@ -268,9 +268,9 @@
+       llm_enabled: importCommonLlmEnabled,
+       ...contentCategoryPayload,
+       scope_type: chatId ? 'chat' : 'global',
+-      dedupe_policy: importCommonDedupePolicy,
+-      force: importCommonForce,
+-      clear_manifest: importCommonClearManifest,
++      dedupe_policy: importSettings.capabilities?.file_dedupe === false ? 'none' : importCommonDedupePolicy,
++      force: importSettings.capabilities?.file_dedupe === false ? false : importCommonForce,
++      clear_manifest: importSettings.capabilities?.file_dedupe === false ? false : importCommonClearManifest,
+     }
+ 
+     const fileConcurrency = parseOptionalPositiveInt(importCommonFileConcurrency)
+@@ -278,10 +278,10 @@
+     const narrativeWindowSize = parseOptionalPositiveInt(importCommonNarrativeWindowSize)
+     const narrativeOverlap = parseOptionalNonNegativeInt(importCommonNarrativeOverlap)
+     const factualTargetSize = parseOptionalPositiveInt(importCommonFactualTargetSize)
+-    if (fileConcurrency !== undefined) {
++    if (fileConcurrency !== undefined && importSettings.capabilities?.request_concurrency !== false) {
+       payload.file_concurrency = fileConcurrency
+     }
+-    if (chunkConcurrency !== undefined) {
++    if (chunkConcurrency !== undefined && importSettings.capabilities?.request_concurrency !== false) {
+       payload.chunk_concurrency = chunkConcurrency
+     }
+     if (narrativeWindowSize !== undefined) {
+@@ -301,6 +301,7 @@
+     }
+     return payload
+   }, [
++    importSettings.capabilities,
+     importContentCategory,
+     importCommonChatId,
+     importCommonChatReferenceTime,
+--- a/dashboard/src/routes/resource/knowledge-base/tabs/ImportTab.tsx
++++ b/dashboard/src/routes/resource/knowledge-base/tabs/ImportTab.tsx
+@@ -342,9 +342,9 @@
+     () => filterChatTargets(importChatTargets, chatTargetQuery),
+     [chatTargetQuery, importChatTargets],
+   )
+-  const importMaxChunkChars = Number.isFinite(Number(importSettings.max_chunk_chars))
++  const importMaxChunkChars = importSettings.max_chunk_chars != null && Number.isFinite(Number(importSettings.max_chunk_chars))
+     ? Number(importSettings.max_chunk_chars)
+-    : 3200
++    : undefined
+   const narrativeWindowForOverlap = Number.isFinite(
+     Number(importCommonNarrativeWindowSize || importSettings.default_narrative_window_size),
+   )
+@@ -454,7 +454,7 @@
+                     </SelectTriggerWithHint>
+                     <SelectContent>
+                       {IMPORT_CONTENT_CATEGORY_OPTIONS.map((item) => (
+-                        <SelectItem key={item.value} value={item.value} title={item.description}>
++                        <SelectItem key={item.value} value={item.value} title={item.description} disabled={item.value === 'json' && importSettings.capabilities?.json_processing === false}>
+                           {item.label}
+                         </SelectItem>
+                       ))}
+@@ -486,7 +486,9 @@
+                       type="number"
+                       min={1}
+                       max={Number(importSettings.max_file_concurrency ?? 128)}
+-                      value={importCommonFileConcurrency}
++                      disabled={importSettings.capabilities?.request_concurrency === false}
++                      placeholder="由任务配置管理"
++                      value={importSettings.capabilities?.request_concurrency === false ? '' : importCommonFileConcurrency}
+                       onChange={(event) => setImportCommonFileConcurrency(event.target.value)}
+                     />
+                   </div>
+@@ -499,7 +501,9 @@
+                       type="number"
+                       min={1}
+                       max={Number(importSettings.max_chunk_concurrency ?? 256)}
+-                      value={importCommonChunkConcurrency}
++                      disabled={importSettings.capabilities?.request_concurrency === false}
++                      placeholder="由任务配置管理"
++                      value={importSettings.capabilities?.request_concurrency === false ? '' : importCommonChunkConcurrency}
+                       onChange={(event) => setImportCommonChunkConcurrency(event.target.value)}
+                     />
+                   </div>
+@@ -628,13 +632,15 @@
+                     <div className="space-y-1">
+                       <Label>去重策略</Label>
+                       <Input
+-                        value={importCommonDedupePolicy}
++                        disabled={importSettings.capabilities?.file_dedupe === false}
++                        value={importSettings.capabilities?.file_dedupe === false ? 'none' : importCommonDedupePolicy}
+                         onChange={(event) => setImportCommonDedupePolicy(event.target.value)}
+                       />
+                     </div>
+                     <div className="space-y-1">
+                       <Label>聊天参考时间</Label>
+                       <Input
++                        placeholder="2026-10-28T12:00:00+09:00"
+                         value={importCommonChatReferenceTime}
+                         onChange={(event) => setImportCommonChatReferenceTime(event.target.value)}
+                       />
+@@ -650,14 +656,16 @@
+                     </div>
+                     <div className="flex items-center gap-2 text-sm">
+                       <Checkbox
+-                        checked={importCommonForce}
++                        disabled={importSettings.capabilities?.file_dedupe === false}
++                        checked={importSettings.capabilities?.file_dedupe === false ? false : importCommonForce}
+                         onCheckedChange={(value) => setImportCommonForce(Boolean(value))}
+                       />
+                       强制导入
+                     </div>
+                     <div className="flex items-center gap-2 text-sm">
+                       <Checkbox
+-                        checked={importCommonClearManifest}
++                        disabled={importSettings.capabilities?.file_dedupe === false}
++                        checked={importSettings.capabilities?.file_dedupe === false ? false : importCommonClearManifest}
+                         onCheckedChange={(value) => setImportCommonClearManifest(Boolean(value))}
+                       />
+                       清空导入清单
+@@ -693,7 +701,7 @@
+                           </SelectTrigger>
+                           <SelectContent>
+                             {IMPORT_INPUT_MODE_OPTIONS.map((item) => (
+-                              <SelectItem key={item.value} value={item.value} title={item.description}>
++                              <SelectItem key={item.value} value={item.value} title={item.description} disabled={item.value === 'json' && importSettings.capabilities?.json_processing === false}>
+                                 {item.label}
+                               </SelectItem>
+                             ))}
+@@ -726,7 +734,7 @@
+                           </SelectTrigger>
+                           <SelectContent>
+                             {IMPORT_INPUT_MODE_OPTIONS.map((item) => (
+-                              <SelectItem key={item.value} value={item.value} title={item.description}>
++                              <SelectItem key={item.value} value={item.value} title={item.description} disabled={item.value === 'json' && importSettings.capabilities?.json_processing === false}>
+                                 {item.label}
+                               </SelectItem>
+                             ))}
+@@ -741,7 +749,7 @@
+                           className="hidden"
+                           aria-label="文件选择"
+                           multiple
+-                          accept=".txt,.md,.json"
++                          accept={importSettings.capabilities?.json_processing === false ? '.txt,.md' : '.txt,.md,.json'}
+                           onChange={(event) =>
+                             setUploadFiles(Array.from(event.target.files ?? []))
+                           }
+@@ -789,7 +797,7 @@
+                           </SelectTrigger>
+                           <SelectContent>
+                             {IMPORT_INPUT_MODE_OPTIONS.map((item) => (
+-                              <SelectItem key={item.value} value={item.value} title={item.description}>
++                              <SelectItem key={item.value} value={item.value} title={item.description} disabled={item.value === 'json' && importSettings.capabilities?.json_processing === false}>
+                                 {item.label}
+                               </SelectItem>
+                             ))}
+--- a/dashboard/src/lib/memory-api.ts
++++ b/dashboard/src/lib/memory-api.ts
+@@ -477,18 +477,20 @@
+   | 'maibot_migration'
+ 
+ export interface MemoryImportSettings {
+-  max_queue_size?: number
++  capabilities?: { request_concurrency: boolean; file_dedupe: boolean; json_processing: boolean; unit_retry: boolean }
++  shared_task_concurrency?: number
++  max_queue_size?: number | null
+   max_files_per_task?: number
+   max_file_size_mb?: number
+-  max_paste_chars?: number
+-  default_file_concurrency?: number
+-  default_chunk_concurrency?: number
++  max_paste_chars?: number | null
++  default_file_concurrency?: number | null
++  default_chunk_concurrency?: number | null
+   default_narrative_window_size?: number
+   default_narrative_overlap?: number
+   default_factual_target_size?: number
+-  max_chunk_chars?: number
+-  max_file_concurrency?: number
+-  max_chunk_concurrency?: number
++  max_chunk_chars?: number | null
++  max_file_concurrency?: number | null
++  max_chunk_concurrency?: number | null
+   poll_interval_ms?: number
+   maibot_source_db_default?: string
+   maibot_target_data_dir?: string
+--- a/dashboard/src/routes/resource/knowledge-base/constants.ts
++++ b/dashboard/src/routes/resource/knowledge-base/constants.ts
+@@ -11,10 +11,11 @@
+ export const IMPORT_CHUNK_PAGE_SIZE = 50
+ 
+ export const RUNNING_IMPORT_STATUS = new Set(['preparing', 'running', 'cancel_requested'])
+-export const QUEUED_IMPORT_STATUS = new Set(['queued'])
++export const QUEUED_IMPORT_STATUS = new Set(['queued', 'waiting'])
+ 
+ export const IMPORT_STATUS_TEXT: Record<string, string> = {
+   queued: '排队中',
++  waiting: '等待条件',
+   preparing: '准备中',
+   running: '运行中',
+   cancel_requested: '取消中',
+@@ -26,6 +27,7 @@
+ 
+ export const IMPORT_STEP_TEXT: Record<string, string> = {
+   queued: '排队中',
++  waiting: '等待条件',
+   preparing: '准备中',
+   running: '运行中',
+   splitting: '分块中',
+@@ -44,6 +46,8 @@
+ }
+ 
+ export const IMPORT_TASK_KIND_TEXT: Record<string, string> = {
++  native_import: '文本导入',
++  processing: '文本处理',
+   upload: '资料导入',
+   paste: '粘贴导入',
+   raw_scan: '本地扫描',
