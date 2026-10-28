@@ -46,22 +46,18 @@ jobs:
             target: x86_64-unknown-linux-gnu
             manylinux: "2_28"
             interpreter: /opt/python/cp314-cp314/bin/python
-            compatibility: --compatibility manylinux_2_28
           - runner: windows-2025
             target: x86_64-pc-windows-msvc
             manylinux: auto
             interpreter: python
-            compatibility: ""
           - runner: macos-15
             target: aarch64-apple-darwin
             manylinux: auto
             interpreter: python
-            compatibility: ""
           - runner: macos-15-intel
             target: x86_64-apple-darwin
             manylinux: auto
             interpreter: python
-            compatibility: ""
     runs-on: ${{ matrix.runner }}
     env:
       CARGO_TARGET_DIR: temp/build/native
@@ -88,7 +84,7 @@ jobs:
           args: >-
             --locked --release --manifest-path native/python/Cargo.toml
             --interpreter ${{ matrix.interpreter }}
-            ${{ matrix.compatibility }} --out dist
+            --out dist
       - uses: actions/download-artifact@v7
         with:
           name: python-source-and-universal
@@ -106,8 +102,9 @@ jobs:
               available.bind(('127.0.0.1', 0))
               port = available.getsockname()[1]
           token = (instance / 'credentials' / 'admin.token').read_text().strip()
-          with tempfile.TemporaryDirectory() as work:
-              process = subprocess.Popen([str(nous), 'serve', '--instance', str(instance), '--port', str(port)], cwd=work, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+          with tempfile.TemporaryDirectory() as work, tempfile.TemporaryFile() as log:
+              process = subprocess.Popen([str(nous), 'serve', '--instance', str(instance), '--port', str(port)], cwd=work, stdout=log, stderr=subprocess.STDOUT)
+              ready = False
               try:
                   deadline = time.monotonic() + 45
                   while True:
@@ -115,20 +112,24 @@ jobs:
                           request = urllib.request.Request(f'http://127.0.0.1:{port}/api/status', headers={'Authorization': f'Bearer {token}'})
                           with urllib.request.urlopen(request, timeout=2) as response:
                               assert json.load(response)['status'] == 'running'
+                          ready = True
                           break
                       except (OSError, urllib.error.URLError):
                           if process.poll() is not None or time.monotonic() >= deadline:
                               raise RuntimeError('Installed host did not become ready')
                           time.sleep(0.2)
               finally:
-                  process.terminate()
+                  if process.poll() is None:
+                      process.terminate()
                   try:
-                      output, _ = process.communicate(timeout=20)
+                      process.wait(timeout=20)
                   except subprocess.TimeoutExpired:
                       process.kill()
-                      output, _ = process.communicate()
-                  if process.returncode not in (0, -15):
-                      print(output.decode(errors='replace')[-8000:])
+                      process.wait(timeout=5)
+                  if not ready or process.returncode not in (0, -15):
+                      log.seek(0, os.SEEK_END)
+                      log.seek(max(0, log.tell() - 8000))
+                      print(log.read().decode(errors='replace'))
       - name: Assemble a complete platform installation bundle
         shell: python
         run: |
