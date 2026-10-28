@@ -4,7 +4,9 @@ use sqlx::{Row, SqliteConnection};
 use std::collections::{BTreeMap, BTreeSet};
 pub(crate) mod candidates;
 mod graph;
+mod imports;
 use graph::Node;
+const MAX_SOURCE_NODES: usize = 1024;
 
 /// Ephemeral metadata for the same Authority snapshot, never an additional grant.
 pub struct SourceReadView {
@@ -25,6 +27,7 @@ impl SourceReadView {
 }
 struct Selection {
     nodes: BTreeSet<Node>,
+    whole_inputs: BTreeSet<MaterialId>,
     origins: BTreeSet<ConversationRef>,
 }
 fn denied() -> Error {
@@ -53,6 +56,17 @@ async fn bind(
         }
         let mut selection = Selection {
             nodes: BTreeSet::new(),
+            whole_inputs: scope
+                .source_refs
+                .iter()
+                .filter_map(|reference| match reference {
+                    SourceReadRef::Media {
+                        reference: MediaReference::Original { material_id },
+                        observation_id: None,
+                    } => Some(material_id.clone()),
+                    _ => None,
+                })
+                .collect(),
             origins: scope.origin_conversation_refs.iter().cloned().collect(),
         };
         for reference in &scope.source_refs {
@@ -60,7 +74,7 @@ async fn bind(
                 graph::walk(conn, ns, subject, Node::selected(reference), purpose).await?
             {
                 selection.nodes.insert(node);
-                if selection.nodes.len() > 1024 {
+                if selection.nodes.len() > MAX_SOURCE_NODES {
                     return Err(Error::new(
                         ErrorCode::ResourceExhausted,
                         "explicit source-read metadata exceeds 1024 nodes",
@@ -85,7 +99,7 @@ async fn occurrence_allowed(
     id: &ObservationId,
 ) -> Result<bool> {
     let observation = graph::observation(conn, &view.namespace, &view.subject, id).await?;
-    Ok(selection.nodes.contains(&Node::Observation(id.clone()))
+    if selection.nodes.contains(&Node::Observation(id.clone()))
         || selection.nodes.contains(&Node::EventMetadata(id.clone()))
         || selection.nodes.iter().any(|node| {
             matches!(node,
@@ -93,8 +107,16 @@ async fn occurrence_allowed(
         })
         || observation
             .origin
-            .and_then(|origin| origin.conversation_ref)
-            .is_some_and(|origin| selection.origins.contains(&origin)))
+            .as_ref()
+            .and_then(|origin| origin.conversation_ref.as_ref())
+            .is_some_and(|origin| selection.origins.contains(origin))
+    {
+        return Ok(true);
+    }
+    if observation.kind != ObservationKind::Import {
+        return Ok(false);
+    }
+    imports::allowed(conn, view, selection, &observation.material_id, Some(id)).await
 }
 
 async fn media_leaf_allowed(
@@ -141,6 +163,9 @@ async fn media_leaf_allowed(
         return occurrence_allowed(conn, view, selection, actual).await;
     }
     if locator_explicit {
+        return Ok(true);
+    }
+    if imports::allowed(conn, view, selection, material, None).await? {
         return Ok(true);
     }
     let rows = sqlx::query(

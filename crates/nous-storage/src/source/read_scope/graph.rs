@@ -214,7 +214,7 @@ pub(super) async fn walk(
         if visited.contains_key(&node) {
             continue;
         }
-        if depth > 64 || visited.len() >= 1024 {
+        if depth > 64 || visited.len() >= MAX_SOURCE_NODES {
             return Err(Error::new(
                 ErrorCode::ResourceExhausted,
                 "source-read graph exceeds 64 levels or 1024 nodes",
