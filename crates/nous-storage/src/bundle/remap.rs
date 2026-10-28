@@ -9,6 +9,7 @@ pub(super) struct Remap {
     subject: SubjectId,
     sequence: i64,
     recorded_at: String,
+    placement: BundlePlacement,
 }
 impl Remap {
     pub fn new(
@@ -17,6 +18,7 @@ impl Remap {
         subject: &SubjectId,
         sequence: i64,
         recorded_at: String,
+        placement: &BundlePlacement,
     ) -> Self {
         let mut ids = BTreeMap::new();
         ids.insert(
@@ -49,6 +51,7 @@ impl Remap {
             subject: subject.clone(),
             sequence,
             recorded_at,
+            placement: placement.clone(),
         }
     }
     pub fn id(&self, value: &str) -> Result<String> {
@@ -102,7 +105,13 @@ impl Remap {
         value.namespace_id = self.namespace.clone();
         value.subject_id = self.subject.clone();
         value.kind = ObservationKind::Import;
-        value.origin = None;
+        value.origin = self
+            .placement
+            .conversation()
+            .map(|conversation| ObservationOrigin {
+                conversation_ref: Some(conversation.clone()),
+                external_object_ref: None,
+            });
         value.observed_at = None;
         value.recorded_at = self.recorded_at.clone();
         value.commit_seq = self.sequence;

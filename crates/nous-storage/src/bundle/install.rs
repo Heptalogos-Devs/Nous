@@ -25,6 +25,23 @@ impl WriteTransaction {
         let archive = self
             .material(&request.namespace_id, &request.material_id)
             .await?;
+        if self
+            .context()
+            .require_namespace(&request.namespace_id)
+            .is_err()
+            && !self
+                .subject_has_material_access(
+                    &request.namespace_id,
+                    &request.subject_id,
+                    &request.material_id,
+                )
+                .await?
+        {
+            return Err(Error::new(
+                ErrorCode::Forbidden,
+                "bundle archive is not available to the receiving subject",
+            ));
+        }
         if archive.content_hash.is_empty() {
             return Err(Error::invalid("bundle archive has no digest"));
         }
@@ -32,21 +49,18 @@ impl WriteTransaction {
             .bundle_by_package(
                 &request.namespace_id,
                 &request.subject_id,
-                &package.package_id,
+                &package.package,
+                &request.placement,
+                digest,
             )
             .await?
         {
-            if existing.content_digest != digest {
-                return Err(Error::new(
-                    ErrorCode::Conflict,
-                    "package ID is already registered with different content",
-                ));
-            }
-            if existing.uninstalled_at.is_none() {
-                return Ok(existing);
-            }
+            return Ok(existing);
         }
         if request.mode == BundleInstallMode::Restore {
+            if package.content_level != BundleContentLevel::Full {
+                return Err(Error::invalid("restore requires a full subject package"));
+            }
             let count:i64=sqlx::query_scalar("SELECT (SELECT count(*) FROM observations WHERE namespace_id=? AND subject_id=?)+(SELECT count(*) FROM memories WHERE namespace_id=? AND subject_id=?)+(SELECT count(*) FROM structured_objects WHERE namespace_id=? AND subject_id=?)")
                 .bind(request.namespace_id.as_str()).bind(request.subject_id.as_str()).bind(request.namespace_id.as_str()).bind(request.subject_id.as_str()).bind(request.namespace_id.as_str()).bind(request.subject_id.as_str()).fetch_one(&mut *self.tx).await.map_err(storage_error)?;
             if count != 0 {
@@ -62,8 +76,9 @@ impl WriteTransaction {
             subject_id: request.subject_id.clone(),
             source_namespace_id: package.subject.namespace_id.clone(),
             source_subject_id: package.subject.id.clone(),
-            package_id: package.package_id.clone(),
-            name: package.name.clone(),
+            package: package.package.clone(),
+            content_level: package.content_level,
+            placement: request.placement.clone(),
             content_digest: digest.into(),
             archive_material_id: request.material_id.clone(),
             installed_at: self.time().recorded(),
@@ -80,6 +95,7 @@ impl WriteTransaction {
             &request.subject_id,
             self.commit_seq(),
             self.time().recorded(),
+            &request.placement,
         );
         for source in &package.calls {
             let mut call = source.clone();

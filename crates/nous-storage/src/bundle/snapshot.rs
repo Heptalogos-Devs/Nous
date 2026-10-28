@@ -18,14 +18,15 @@ impl ReadView {
         created_at: String,
     ) -> Result<SubjectPackage> {
         ctx.require_subject(&request.namespace_id, &request.subject_id)?;
+        request.package.validate()?;
         let (ns, sub) = (&request.namespace_id, &request.subject_id);
         let subject = records::subject(&mut self.tx, ns, sub)
             .await?
             .ok_or_else(crate::not_found)?;
         let mut package = SubjectPackage {
             addresses: vec![],
-            package_id: request.package_id.clone(),
-            name: request.name.clone(),
+            package: request.package.clone(),
+            content_level: request.content_level,
             created_at,
             watermark: self.watermark,
             subject,

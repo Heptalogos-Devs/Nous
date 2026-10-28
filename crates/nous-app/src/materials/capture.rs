@@ -49,6 +49,7 @@ impl App {
     ) -> Result<OperationReceipt> {
         let request = PutMediaRequest {
             namespace_id: namespace_id.clone(),
+            owner_subject_id: None,
             media_type: "text/plain".into(),
             declared_byte_len: Some(text.len() as u64),
             expected_content_hash: None,
@@ -86,9 +87,16 @@ impl App {
         ctx: &CallContext,
         request: &PutMediaRequest,
     ) -> Result<()> {
-        ctx.require_namespace(&request.namespace_id)?;
         request.validate()?;
-        self.database.namespace(&request.namespace_id).await?;
+        if let Some(subject) = &request.owner_subject_id {
+            ctx.require_subject(&request.namespace_id, subject)?;
+            self.database
+                .subject(&request.namespace_id, subject)
+                .await?;
+        } else {
+            ctx.require_namespace(&request.namespace_id)?;
+            self.database.namespace(&request.namespace_id).await?;
+        }
         Ok(())
     }
 
@@ -106,12 +114,16 @@ impl App {
         } = captured;
         request.validate_received(object.byte_len as u64, &object.digest)?;
         let media_type = media::canonical_media_type(&media_type)?;
+        let scope = match &request.owner_subject_id {
+            Some(subject) => format!("namespace:{}/subject:{subject}", request.namespace_id),
+            None => request.namespace_id.to_string(),
+        };
         let key = operation_key(
             ctx,
             "material.put",
-            request.namespace_id.as_str(),
+            &scope,
             operation_id,
-            &json!({"namespace_id":request.namespace_id,"content_hash":object.digest,
+            &json!({"namespace_id":request.namespace_id,"owner_subject_id":request.owner_subject_id,"content_hash":object.digest,
                 "media_type":media_type,"source":request.source,"event_time":request.event_time}),
         )?;
         let mut tx = match self.database.begin_operation(key).await? {
@@ -120,6 +132,13 @@ impl App {
         };
         object.protect_in(&mut tx);
         tx.namespace(&request.namespace_id).await?;
+        if let Some(subject) = &request.owner_subject_id {
+            tx.context()
+                .require_subject(&request.namespace_id, subject)?;
+            tx.subject(&request.namespace_id, subject).await?;
+        } else {
+            tx.context().require_namespace(&request.namespace_id)?;
+        }
         let material = Material {
             id: MaterialId::new(),
             namespace_id: request.namespace_id,
@@ -133,6 +152,10 @@ impl App {
             commit_seq: tx.commit_seq(),
         };
         tx.insert_material(&material).await?;
+        if let Some(subject) = &request.owner_subject_id {
+            tx.retain_material_output(&material.namespace_id, subject, &material.id)
+                .await?;
+        }
         tx.commit(serde_json::to_value(material)?).await
     }
 

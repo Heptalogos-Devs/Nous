@@ -1,5 +1,5 @@
 import json
-from collections.abc import Mapping, Sequence
+from collections.abc import AsyncIterable, Mapping, Sequence
 from copy import copy, deepcopy
 from datetime import datetime
 from pathlib import Path
@@ -131,6 +131,7 @@ class NousClient:
         namespace_id: str,
         path: str | Path,
         *,
+        owner_subject_id: str | None = None,
         media_type: str = "application/octet-stream",
         source: str | None = None,
         event_time: Mapping | None = None,
@@ -138,17 +139,6 @@ class NousClient:
         operation_id: str | None = None,
     ) -> dict:
         path = Path(path)
-        params = {
-            "namespace_id": namespace_id,
-            "source": source or str(path),
-            "operation_id": operation_id or str(uuid4()),
-        }
-        if event_time is not None:
-            params["event_time"] = json.dumps(
-                event_time, ensure_ascii=False, separators=(",", ":")
-            )
-        if expected_content_hash is not None:
-            params["expected_content_hash"] = expected_content_hash
         async with await anyio.open_file(path, "rb") as file:
             length = (await anyio.Path(path).stat()).st_size
 
@@ -156,9 +146,45 @@ class NousClient:
                 while data := await file.read(self.transport.options.chunk_bytes):
                     yield data
 
-            return await self.transport.upload(
-                params, chunks(), media_type, length, self._source_read
+            return await self.upload_stream(
+                namespace_id, chunks(), byte_len=length,
+                owner_subject_id=owner_subject_id, media_type=media_type,
+                source=source or str(path), event_time=event_time,
+                expected_content_hash=expected_content_hash, operation_id=operation_id,
             )
+
+    async def upload_stream(
+        self,
+        namespace_id: str,
+        content: AsyncIterable[bytes],
+        *,
+        byte_len: int,
+        owner_subject_id: str | None = None,
+        media_type: str = "application/octet-stream",
+        source: str | None = None,
+        event_time: Mapping | None = None,
+        expected_content_hash: str | None = None,
+        operation_id: str | None = None,
+    ) -> dict:
+        if self._closed:
+            raise RuntimeError("Nous client is closed")
+        params = {
+            "namespace_id": namespace_id,
+            "operation_id": operation_id or str(uuid4()),
+        }
+        if source is not None:
+            params["source"] = source
+        if owner_subject_id is not None:
+            params["owner_subject_id"] = owner_subject_id
+        if event_time is not None:
+            params["event_time"] = json.dumps(
+                event_time, ensure_ascii=False, separators=(",", ":")
+            )
+        if expected_content_hash is not None:
+            params["expected_content_hash"] = expected_content_hash
+        return await self.transport.upload(
+            params, content, media_type, byte_len, self._source_read
+        )
 
     async def download_material(
         self, material_id: str, destination: str | Path

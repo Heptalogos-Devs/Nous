@@ -84,17 +84,30 @@ impl WriteTransaction {
         &mut self,
         ns: &NamespaceId,
         subject: &SubjectId,
-        package: &str,
+        package: &PackageDescriptor,
+        placement: &BundlePlacement,
+        digest: &str,
     ) -> Result<Option<BundleInstallation>> {
-        let row=sqlx::query("SELECT * FROM bundle_installations WHERE namespace_id=? AND subject_id=? AND package_id=? ORDER BY commit_seq DESC,id DESC LIMIT 1").bind(ns.as_str()).bind(subject.as_str()).bind(package).fetch_optional(&mut *self.tx).await.map_err(storage_error)?;
-        match row {
-            Some(row) => Ok(Some(decode(&mut self.tx, row).await?)),
-            None => Ok(None),
+        let rows=sqlx::query("SELECT * FROM bundle_installations WHERE namespace_id=? AND subject_id=? AND package_id=? AND package_version IS ? AND placement_kind=? AND conversation_ref IS ? ORDER BY commit_seq DESC,id DESC")
+            .bind(ns.as_str()).bind(subject.as_str()).bind(&package.id).bind(&package.version).bind(placement.kind()).bind(placement.conversation().map(ConversationRef::as_str)).fetch_all(&mut *self.tx).await.map_err(storage_error)?;
+        let mut active = None;
+        for row in rows {
+            let installed = decode(&mut self.tx, row).await?;
+            if installed.content_digest != digest {
+                return Err(Error::new(
+                    ErrorCode::Conflict,
+                    "package release is registered with different content in this placement",
+                ));
+            }
+            if installed.uninstalled_at.is_none() {
+                active = Some(installed);
+            }
         }
+        Ok(active)
     }
     pub(super) async fn register_bundle(&mut self, v: &BundleInstallation) -> Result<()> {
-        sqlx::query("INSERT INTO bundle_installations(id,namespace_id,subject_id,source_namespace_id,source_subject_id,package_id,name,content_digest,archive_material_id,installed_at,commit_seq) VALUES(?,?,?,?,?,?,?,?,?,?,?)")
-            .bind(&v.id).bind(v.namespace_id.as_str()).bind(v.subject_id.as_str()).bind(v.source_namespace_id.as_str()).bind(v.source_subject_id.as_str()).bind(&v.package_id).bind(&v.name).bind(&v.content_digest).bind(v.archive_material_id.as_str()).bind(&v.installed_at).bind(self.commit_seq()).execute(&mut *self.tx).await.map_err(write_error)?;
+        sqlx::query("INSERT INTO bundle_installations(id,namespace_id,subject_id,source_namespace_id,source_subject_id,package_json,content_level,placement_json,content_digest,archive_material_id,installed_at,commit_seq) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)")
+            .bind(&v.id).bind(v.namespace_id.as_str()).bind(v.subject_id.as_str()).bind(v.source_namespace_id.as_str()).bind(v.source_subject_id.as_str()).bind(serde_json::to_string(&v.package)?).bind(crate::codec::enum_name(&v.content_level)?).bind(serde_json::to_string(&v.placement)?).bind(&v.content_digest).bind(v.archive_material_id.as_str()).bind(&v.installed_at).bind(self.commit_seq()).execute(&mut *self.tx).await.map_err(write_error)?;
         Ok(())
     }
     pub(super) async fn inherit_bundle_provenance(
@@ -304,8 +317,9 @@ async fn decode(conn: &mut SqliteConnection, row: SqliteRow) -> Result<BundleIns
         subject_id: SubjectId(row.get("subject_id")),
         source_namespace_id: NamespaceId(row.get("source_namespace_id")),
         source_subject_id: SubjectId(row.get("source_subject_id")),
-        package_id: row.get("package_id"),
-        name: row.get("name"),
+        package: serde_json::from_str(row.get("package_json"))?,
+        content_level: crate::codec::parse_enum(row.get("content_level"))?,
+        placement: serde_json::from_str(row.get("placement_json"))?,
         content_digest: row.get("content_digest"),
         archive_material_id: MaterialId(row.get("archive_material_id")),
         installed_at: row.get("installed_at"),

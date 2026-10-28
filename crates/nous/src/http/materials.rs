@@ -8,7 +8,7 @@ use axum::{
     routing::{get, post},
 };
 use futures::TryStreamExt;
-use nous_domain::{CallContext, Error, MaterialId, NamespaceId, media::PutMediaRequest};
+use nous_domain::{CallContext, Error, MaterialId, NamespaceId, SubjectId, media::PutMediaRequest};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio_util::io::{ReaderStream, StreamReader};
@@ -18,6 +18,7 @@ use tokio_util::io::{ReaderStream, StreamReader};
 pub struct UploadQuery {
     pub operation_id: String,
     pub namespace_id: NamespaceId,
+    pub owner_subject_id: Option<SubjectId>,
     pub source: Option<String>,
     pub event_time: Option<String>,
     pub expected_content_hash: Option<String>,
@@ -48,6 +49,7 @@ async fn upload(
         .transpose()?;
     let request = PutMediaRequest {
         namespace_id: query.namespace_id,
+        owner_subject_id: query.owner_subject_id,
         media_type: media_type.to_owned(),
         declared_byte_len,
         expected_content_hash: query.expected_content_hash,

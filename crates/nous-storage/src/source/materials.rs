@@ -63,6 +63,20 @@ impl Database {
     }
 }
 
+pub(crate) async fn require_subject_material(
+    conn: &mut SqliteConnection,
+    namespace: &NamespaceId,
+    subject: &SubjectId,
+    material: &MaterialId,
+) -> Result<nous_domain::Material> {
+    if !material_access(conn, namespace, subject, material).await? {
+        return Err(crate::not_found());
+    }
+    crate::authority::records::material(conn, namespace, material)
+        .await?
+        .ok_or_else(crate::not_found)
+}
+
 async fn material_access(
     conn: &mut SqliteConnection,
     namespace: &NamespaceId,

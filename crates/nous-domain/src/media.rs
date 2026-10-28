@@ -32,6 +32,7 @@ identity!(DerivedRegionId);
 #[serde(deny_unknown_fields)]
 pub struct PutMediaRequest {
     pub namespace_id: NamespaceId,
+    pub owner_subject_id: Option<SubjectId>,
     pub media_type: String,
     pub declared_byte_len: Option<u64>,
     pub expected_content_hash: Option<String>,
@@ -41,6 +42,9 @@ pub struct PutMediaRequest {
 impl PutMediaRequest {
     pub fn validate(&self) -> Result<()> {
         validate_uuid(self.namespace_id.as_str())?;
+        if let Some(subject) = &self.owner_subject_id {
+            subject.validate()?;
+        }
         canonical_media_type(&self.media_type)?;
         if self
             .declared_byte_len

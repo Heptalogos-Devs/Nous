@@ -65,6 +65,7 @@ impl ApiClient {
         let query = super::materials::UploadQuery {
             operation_id,
             namespace_id: input.namespace_id,
+            owner_subject_id: input.owner_subject_id,
             source: input.source,
             event_time: input
                 .event_time

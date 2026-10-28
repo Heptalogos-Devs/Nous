@@ -14,6 +14,7 @@ use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
 
 pub(super) const FORMAT: &str = "nous-subject-package";
 pub(super) struct Loaded {
+    pub manifest:Value,
     pub package: SubjectPackage,
     pub digest: String,
     pub members: BTreeMap<String, Member>,
@@ -24,6 +25,12 @@ pub(super) fn digest(value: &impl serde::Serialize) -> Result<String> {
     let mut value = serde_json::to_value(value)?;
     value.sort_all_objects();
     Ok(format!("{:x}", Sha256::digest(serde_json::to_vec(&value)?)))
+}
+pub(super) fn content_digest(document:&Value)->Result<String> {
+    let mut content=document.clone();
+    let body=content.as_object_mut().ok_or_else(||Error::invalid("package content must be an object"))?;
+    body.remove("created_at");body.remove("watermark");
+    digest(&content)
 }
 pub(super) fn load(path: &Path, limits: &Limits) -> Result<Option<Loaded>> {
     let contents = bundle_format::read_archive(File::open(path)?, limits).map_err(format_error)?;
@@ -37,7 +44,10 @@ pub(super) fn load(path: &Path, limits: &Limits) -> Result<Option<Loaded>> {
     let knowledge = &contents.json_documents["knowledge.json"];
     // Integrity belongs to the transmitted document; domain decoding may choose
     // a different JSON number spelling inside opaque provider payloads.
-    let expected = digest(knowledge)?;
+    let expected = content_digest(knowledge)?;
+    if contents.json_documents["manifest.json"].get("document_digest").and_then(Value::as_str)!=Some(digest(knowledge)?.as_str()) {
+        return Err(Error::invalid("subject package document digest mismatch"));
+    }
     if contents.json_documents["manifest.json"]
         .get("content_digest")
         .and_then(Value::as_str)
@@ -84,6 +94,7 @@ pub(super) fn load(path: &Path, limits: &Limits) -> Result<Option<Loaded>> {
         }
     }
     Ok(Some(Loaded {
+        manifest:contents.json_documents["manifest.json"].clone(),
         package,
         digest: expected,
         members: contents.members,
@@ -99,10 +110,11 @@ pub(super) fn write(
     execution::check_cancelled(cancel)?;
     let mut knowledge = serde_json::to_value(package)?;
     knowledge.sort_all_objects();
-    let digest = digest(&knowledge)?;
+    let document_digest=digest(&knowledge)?;
+    let digest = content_digest(&knowledge)?;
     let knowledge = serde_json::to_vec(&knowledge)?;
     let manifest = serde_json::to_vec(
-        &json!({"format":FORMAT,"package_id":package.package_id,"content_digest":digest}),
+        &json!({"format":FORMAT,"package":package.package,"content_level":package.content_level,"content_digest":digest,"document_digest":document_digest}),
     )?;
     let mut checksums = BTreeMap::from([
         ("manifest.json".to_owned(), hash(&manifest)),

@@ -2,14 +2,16 @@
 use crate::{media::*, *};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+mod descriptor;
+pub use descriptor::*;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SubjectPackage {
     #[serde(default)]
     pub addresses: Vec<crate::references::ReferenceBinding>,
-    pub package_id: String,
-    pub name: String,
+    pub package: PackageDescriptor,
+    pub content_level: BundleContentLevel,
     pub created_at: String,
     pub watermark: i64,
     pub subject: Subject,
@@ -40,8 +42,8 @@ pub enum BundleInstallMode {
 pub struct ExportBundleRequest {
     pub namespace_id: NamespaceId,
     pub subject_id: SubjectId,
-    pub package_id: String,
-    pub name: String,
+    pub package: PackageDescriptor,
+    pub content_level: BundleContentLevel,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -51,6 +53,7 @@ pub struct InstallBundleRequest {
     pub subject_id: SubjectId,
     pub material_id: MaterialId,
     pub mode: BundleInstallMode,
+    pub placement: BundlePlacement,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -61,8 +64,9 @@ pub struct BundleInstallation {
     pub subject_id: SubjectId,
     pub source_namespace_id: NamespaceId,
     pub source_subject_id: SubjectId,
-    pub package_id: String,
-    pub name: String,
+    pub package: PackageDescriptor,
+    pub content_level: BundleContentLevel,
+    pub placement: BundlePlacement,
     pub content_digest: String,
     pub archive_material_id: MaterialId,
     pub installed_at: String,
@@ -124,8 +128,7 @@ pub struct BundleEmbeddingAssociation {
 impl SubjectPackage {
     pub fn validate(&self) -> Result<()> {
         self.validate_addresses()?;
-        validate_name(&self.package_id, "package ID")?;
-        validate_name(&self.name, "package name")?;
+        self.package.validate()?;
         self.subject.id.validate()?;
         self.subject.namespace_id.validate()?;
         if self.watermark <= 0 {

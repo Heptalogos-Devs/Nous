@@ -1,6 +1,9 @@
 //! Portable subject knowledge, validated archive IO and installation ownership.
 mod archive;
 mod foreign;
+mod input;
+mod inspection;
+pub use inspection::{InspectBundleRequest,BundleInspectionSummary};
 pub mod policy;
 use crate::App;
 use nous_domain::{media::*, *};
@@ -50,8 +53,7 @@ impl App {
         cancel: &CancellationToken,
     ) -> Result<OperationReceipt> {
         ctx.require_subject(&request.namespace_id, &request.subject_id)?;
-        validate_name(&request.package_id, "package ID")?;
-        validate_name(&request.name, "package name")?;
+        request.package.validate()?;
         let scope = format!(
             "namespace:{}/subject:{}",
             request.namespace_id, request.subject_id
@@ -124,7 +126,7 @@ impl App {
             media_type: "application/vnd.nous.subject+zip".into(),
             metadata: MediaMetadata::Binary,
             byte_len: published.byte_len,
-            source: Some(format!("nous-bundle:{}", package.package_id)),
+            source: Some(format!("nous-bundle:{}", package.package.id)),
             event_time: None,
             recorded_at: tx.time().recorded(),
             commit_seq: tx.commit_seq(),
@@ -132,8 +134,8 @@ impl App {
         tx.insert_material(&material).await?;
         tx.retain_material_output(&material.namespace_id, &request.subject_id, &material.id)
             .await?;
-        tx.set_material_details(&material.namespace_id,&material.id,&MaterialDetails{source_type:Some("nous_bundle".into()),tags:vec![],metadata:json!({"package_id":package.package_id,"subject_id":package.subject.id,"source_watermark":package.watermark}),structured:None}).await?;
-        let receipt=tx.commit(json!({"material":material,"package_id":package.package_id,"content_digest":archive::digest(&package)?,"source_watermark":package.watermark,"download_material_id":material.id})).await?;
+        tx.set_material_details(&material.namespace_id,&material.id,&MaterialDetails{source_type:Some("nous_bundle".into()),tags:vec![],metadata:json!({"package":package.package,"content_level":package.content_level,"subject_id":package.subject.id,"source_watermark":package.watermark}),structured:None}).await?;
+        let receipt=tx.commit(json!({"material":material,"package":package.package,"content_level":package.content_level,"content_digest":archive::content_digest(&serde_json::to_value(&package)?)?,"source_watermark":package.watermark,"download_material_id":material.id})).await?;
         drop(staging);
         Ok(receipt)
     }
@@ -175,36 +177,9 @@ impl App {
         if let Some(receipt) = self.database.lookup_operation(&key).await? {
             return Ok(receipt);
         }
-        let original = self
-            .sources
-            .original_metadata(ctx, &request.material_id, cancel)
-            .await?;
-        if original.material.namespace_id != request.namespace_id {
-            return Err(Error::new(
-                ErrorCode::Forbidden,
-                "bundle archive is outside the target namespace",
-            ));
-        }
-        let policy = self
-            .bundle_policy(&request.namespace_id, &request.subject_id)
-            .await?;
-        if original.material.byte_len as u64 > policy.limits.archive_bytes {
-            return Err(Error::new(
-                ErrorCode::ResourceExhausted,
-                "bundle archive exceeds configured limit",
-            ));
-        }
+        let input=self.bundle_input(ctx,&request.namespace_id,&request.subject_id,&request.material_id,cancel).await?;
         let protection = self.objects.protect_references(cancel).await?;
-        let staging = self.bundle_staging(cancel).await?;
-        let path = staging.path().join("uploaded.bundle");
-        self.objects
-            .copy_to(
-                &original.material.content_hash,
-                original.material.byte_len,
-                &path,
-                cancel,
-            )
-            .await?;
+        let input::BundleInput{original:_original,staging,path,policy}=input;
         let limits = policy.limits.clone();
         let root = staging.path().to_path_buf();
         let (staging, loaded) = execution::blocking(cancel, move |local| {

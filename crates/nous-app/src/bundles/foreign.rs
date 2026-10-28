@@ -25,11 +25,17 @@ pub(super) fn convert(inspection: BundleInspection, root: &Path) -> Result<Loade
     let mut builder = Builder {
         package: SubjectPackage {
             addresses: vec![],
-            package_id: format!(
-                "a-memorix:{}@{}",
-                inspection.manifest.package.id, inspection.manifest.package.version
-            ),
-            name: inspection.manifest.package.name.clone(),
+            package: PackageDescriptor {
+                id: inspection.manifest.package.id.clone(),
+                version: Some(inspection.manifest.package.version.clone()),
+                name: inspection.manifest.package.name.clone(),
+                description: package_text(&inspection.manifest.package.extra, "description")?,
+                author: package_text(&inspection.manifest.package.extra, "author")?,
+            },
+            content_level: match inspection.manifest.content_level {
+                crate::bundle_format::ContentLevel::Knowledge => BundleContentLevel::Knowledge,
+                crate::bundle_format::ContentLevel::Full => BundleContentLevel::Full,
+            },
             created_at: clock.recorded(),
             watermark: 1,
             subject: Subject {
@@ -102,12 +108,20 @@ pub(super) fn convert(inspection: BundleInspection, root: &Path) -> Result<Loade
     }
     builder.package.validate()?;
     Ok(Loaded {
+        manifest:serde_json::to_value(&inspection.manifest)?,
         package: builder.package,
         digest: inspection.manifest.content_digest,
         members: inspection.members,
         object_members,
         unaccepted_vector_members,
     })
+}
+fn package_text(values: &BTreeMap<String, Value>, key: &str) -> Result<String> {
+    match values.get(key) {
+        None | Some(Value::Null) => Ok(String::new()),
+        Some(Value::String(value)) => Ok(value.clone()),
+        Some(_) => Err(Error::invalid(format!("package {key} must be text"))),
+    }
 }
 impl Builder<'_> {
     fn scope(&self) -> (NamespaceId, SubjectId) {

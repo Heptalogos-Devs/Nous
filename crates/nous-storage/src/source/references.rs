@@ -158,8 +158,11 @@ async fn material_source(
     subject: &SubjectId,
     id: &MaterialId,
 ) -> Result<i64> {
-    sqlx::query_scalar("SELECT m.commit_seq FROM materials m WHERE m.namespace_id=? AND m.id=? AND EXISTS(SELECT 1 FROM observations o WHERE o.namespace_id=m.namespace_id AND o.subject_id=? AND o.material_id=m.id)")
-        .bind(namespace.as_str()).bind(id.as_str()).bind(subject.as_str()).fetch_optional(conn).await.map_err(storage_error)?.ok_or_else(not_found)
+    Ok(
+        crate::source::materials::require_subject_material(conn, namespace, subject, id)
+            .await?
+            .commit_seq,
+    )
 }
 pub(crate) async fn media_source(
     conn: &mut SqliteConnection,

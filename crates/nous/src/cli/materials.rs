@@ -15,6 +15,9 @@ pub enum MaterialCommand {
     Put {
         #[arg(long)]
         namespace: NamespaceId,
+        /// Retain the newly supplied original for this Subject, without recording a contact.
+        #[arg(long)]
+        owner_subject: Option<nous_domain::SubjectId>,
         #[arg(long)]
         file: PathBuf,
         #[arg(long)]
@@ -44,6 +47,7 @@ impl MaterialCommand {
         match self {
             Self::Put {
                 namespace,
+                owner_subject,
                 file,
                 source,
                 media_type,
@@ -57,6 +61,7 @@ impl MaterialCommand {
                 let length = reader.metadata().await?.len();
                 let request = PutMediaRequest {
                     namespace_id: namespace,
+                    owner_subject_id: owner_subject,
                     media_type,
                     declared_byte_len: Some(length),
                     expected_content_hash,
