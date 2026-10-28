@@ -237,6 +237,12 @@ impl SourceReader {
                 }
             }
         }
+        for original in &lineage.materials {
+            lineage.import_containers.extend(
+                view.import_containers(namespace, subject, &original.material.id)
+                    .await?,
+            );
+        }
         view.finish().await?;
         Ok(lineage)
     }

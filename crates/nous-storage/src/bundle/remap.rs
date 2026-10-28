@@ -36,7 +36,9 @@ impl Remap {
             .chain(package.source_regions.iter().map(|v| v.id.to_string()))
             .chain(package.representations.iter().map(|v| v.id.to_string()))
             .chain(package.derived_regions.iter().map(|v| v.id.to_string()))
-            .chain(package.calls.iter().map(|v| v.id.to_string()));
+            .chain(package.calls.iter().map(|v| v.id.to_string()))
+            .chain(package.input_sources.iter().map(|v| v.id.to_string()))
+            .chain(package.record_containers.iter().map(|v| v.id.to_string()));
         for id in identities {
             ids.entry(id)
                 .or_insert_with(|| MaterialId::new().to_string());
@@ -92,6 +94,32 @@ impl Remap {
             _ => {}
         }
         Ok(())
+    }
+    pub fn import_input_source(&self, source: &ImportInputSource) -> Result<ImportInputSource> {
+        let mut value = source.clone();
+        value.id = ImportInputSourceId(self.id(source.id.as_str())?);
+        value.namespace_id = self.namespace.clone();
+        value.subject_id = self.subject.clone();
+        value.material_id = MaterialId(self.id(source.material_id.as_str())?);
+        value.recorded_at = self.recorded_at.clone();
+        value.commit_seq = self.sequence;
+        Ok(value)
+    }
+    pub fn import_record_container(
+        &self,
+        source: &ImportRecordContainer,
+    ) -> Result<ImportRecordContainer> {
+        let mut value = source.clone();
+        value.id = ImportRecordContainerId(self.id(source.id.as_str())?);
+        value.namespace_id = self.namespace.clone();
+        value.subject_id = self.subject.clone();
+        value.input_source_id = ImportInputSourceId(self.id(source.input_source_id.as_str())?);
+        value.record_material_id = MaterialId(self.id(source.record_material_id.as_str())?);
+        value.observation_id = ObservationId(self.id(source.observation_id.as_str())?);
+        value.memory_id = MemoryId(self.id(source.memory_id.as_str())?);
+        value.recorded_at = self.recorded_at.clone();
+        value.commit_seq = self.sequence;
+        Ok(value)
     }
     pub fn material(&self, source: &MediaOriginal) -> Result<MediaOriginal> {
         let mut value = self.value(source)?;

@@ -2,14 +2,31 @@ use crate::{
     cli::op_id,
     http::Operation,
     http::maintenance::{
-        Action, ChangeInput, EditInput, Format, ImportInput, ListInput, MaintainInput,
-        MaintenanceOperation,
+        Action, ChangeInput, EditInput, ImportInput, ListInput, MaintainInput, MaintenanceOperation,
     },
 };
 use anyhow::{Context, Result, bail, ensure};
 use clap::{Args, Subcommand};
-use nous_domain::{MemoryId, NamespaceId, SubjectId};
+use nous_domain::{
+    ImportDocument, ImportDocumentInput, ImportFormat, MaterialId, MemoryId, NamespaceId, SubjectId,
+};
 use std::{io::Read, path::PathBuf};
+
+#[derive(Clone, clap::ValueEnum)]
+pub enum Format {
+    Json,
+    Jsonl,
+    Text,
+}
+impl From<Format> for ImportFormat {
+    fn from(value: Format) -> Self {
+        match value {
+            Format::Json => Self::Json,
+            Format::Jsonl => Self::Jsonl,
+            Format::Text => Self::Text,
+        }
+    }
+}
 
 #[derive(Args)]
 pub struct ChangeArgs {
@@ -72,8 +89,14 @@ pub enum ImportCommand {
         namespace: NamespaceId,
         #[arg(long)]
         subject: SubjectId,
-        #[arg(long)]
-        file: PathBuf,
+        #[arg(
+            long,
+            required_unless_present = "material",
+            conflicts_with = "material"
+        )]
+        file: Option<PathBuf>,
+        #[arg(long, required_unless_present = "file", conflicts_with = "file")]
+        material: Option<MaterialId>,
         #[arg(long, value_enum)]
         format: Format,
         #[arg(long)]
@@ -93,6 +116,7 @@ impl ImportCommand {
             namespace,
             subject,
             file,
+            material,
             format,
             source,
             form_memory,
@@ -102,26 +126,44 @@ impl ImportCommand {
         else {
             bail!("bundle inspection runs locally");
         };
-        let mut bytes = Vec::new();
-        std::fs::File::open(&file)
-            .context("cannot open import file")?
-            .take((nous_app::import_format::MAX_IMPORT_BYTES + 1) as u64)
-            .read_to_end(&mut bytes)
-            .context("cannot read import file")?;
-        ensure!(
-            bytes.len() <= nous_app::import_format::MAX_IMPORT_BYTES,
-            "import file exceeds 4 MiB"
-        );
-        let content = String::from_utf8(bytes).context("import file must contain UTF-8 text")?;
+        let (name, input) = if let Some(file) = file {
+            let mut bytes = Vec::new();
+            std::fs::File::open(&file)
+                .context("cannot open import file")?
+                .take((nous_app::import_format::MAX_IMPORT_BYTES + 1) as u64)
+                .read_to_end(&mut bytes)
+                .context("cannot read import file")?;
+            ensure!(
+                bytes.len() <= nous_app::import_format::MAX_IMPORT_BYTES,
+                "import file exceeds 4 MiB"
+            );
+            let content =
+                String::from_utf8(bytes).context("import file must contain UTF-8 text")?;
+            (
+                file.file_name()
+                    .map(|name| name.to_string_lossy().into_owned()),
+                ImportDocumentInput::Inline { content },
+            )
+        } else {
+            (
+                None,
+                ImportDocumentInput::Material {
+                    material_id: material.context("select an import file or admitted material")?,
+                },
+            )
+        };
         Ok(Operation::Maintenance(MaintenanceOperation::Import(
             ImportInput {
                 operation_id: op_id(operation_id),
                 namespace_id: namespace.to_string(),
                 subject_id: subject.to_string(),
-                format,
-                content,
+                inputs: vec![ImportDocument {
+                    name,
+                    format: format.into(),
+                    input,
+                    source,
+                }],
                 form_memory,
-                source,
                 origin: nous_domain::ObservationOrigin::from_refs(
                     conversation_ref,
                     external_object_ref,

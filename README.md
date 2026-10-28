@@ -33,7 +33,7 @@ $observation = (& $nous --json --instance $instance observation record --subject
 
 Linux 使用同一 PowerShell 环境脚本，程序路径为 `debug/nous`。正式部署用 `--instance <path>` 指定持久位置。开发实例、下载、克隆、缓存和编译均位于 `temp`；脚本只修改当前进程环境。已安装工具链继续使用。
 
-HTTP 入口为 `/api`，Streamable HTTP MCP 为 `/mcp`。`nous mcp stdio` 连接运行中的服务。凭据默认读取实例内当前受保护文件；远程调用用 `--url` 与 `--token-file`。运行中通过 `identity issue --namespace <id> [--subject <id>] --name <name>` 创建范围凭据，`identity rotate/revoke/history` 管理轮换、撤销和历史；本地停服恢复使用 `identity reset-bootstrap`。Subject 可读取已获授权的材料并记录再次接触；首次材料暴露由 Namespace 或管理员接纳。
+HTTP 入口为 `/api`，Streamable HTTP MCP 为 `/mcp`。`nous mcp stdio` 连接运行中的服务。凭据默认读取实例内当前受保护文件；远程调用用 `--url` 与 `--token-file`。运行中通过 `identity issue --namespace <id> [--subject <id>] --name <name>` 创建范围凭据，`identity rotate/revoke/history` 管理轮换、撤销和历史；本地停服恢复使用 `identity reset-bootstrap`。Subject 可上传归自己的材料、读取已获授权的来源，并记录实际接触。
 
 材料保存、实际接触和记忆形成各有独立身份。`observation record` 创建 `kind=contact` 的实际接触记录。模型形成请求先持久入队，模型调用在写事务外进行；保存输出后，由同一权威事务采纳 Memory 与来源关系。检索服务按合法快照维护 Tantivy 索引，并在返回前读取当前权威修订。
 
@@ -42,15 +42,36 @@ HTTP 入口为 `/api`，Streamable HTTP MCP 为 `/mcp`。`nous mcp stdio` 连接
 ```powershell
 $imported = & $nous --json --instance $instance import text --namespace $namespace --subject $subject --file ./temp/import.jsonl --format jsonl | ConvertFrom-Json
 $importJob = (& $nous --json --instance $instance job wait $imported.result.job_id --timeout-ms 45000 | ConvertFrom-Json)[0]
-$importJob.result.items | Select-Object index, status, error
+$importJob.result.items | Select-Object index, input_index, record_index, status, error
 $importedMemory = ($importJob.result.items | Where-Object admission | Select-Object -First 1).admission.memory_id
 & $nous --instance $instance query --subject $subject '<实际资料中的主题>'
 & $nous --instance $instance memory source $importedMemory
 ```
 
-导入先返回持久 Job，保存冻结的记录目录，再逐条接纳 Material、`kind=import` 的来源事件、`origin=imported` 的忠实 Memory，以及标签、metadata 和 structured。实际接触保留独立 Contact 记录。`--form-memory` 可额外提交模型派生任务。每条接纳与任务进度同事务提交，结果按原顺序给出 accepted、replayed 或 rejected；相同调用方、Subject 和 external_id 的相同载荷复用原接纳，改变载荷返回 Conflict。`job get/cancel` 查看或取消导入，重启继续已接纳的工作。
+导入先保存精确输入原件和有序记录目录，再返回持久 Job。每条记录接纳独立文本 Material、`kind=import` 的来源事件、`origin=imported` 的忠实 Memory，以及标签、metadata 和 structured。`--form-memory` 可额外提交模型派生任务。结果按输入顺序给出 accepted、replayed 或 rejected，并标明从零开始的 input_index 和 record_index；整份文档解析失败时 record_index 为空，其他合法输入继续。`job get/cancel` 查看或取消导入，重启继续使用已冻结的目录。
 
-格式支持 `text`、`jsonl`、`json`；JSON 接受记录数组、`records`、A-Memorix `paragraphs` 和 LPMM `docs`。原生记录含 external_id、text 及可选 source、source_type、event_time、observed_at、tags、metadata、structured。输入与规范化结果各限 4 MiB，最多 1000 条，单条限 1 MiB；HTTP 另受实例请求体上限约束。成熟格式中的实体、三元组和时间载荷保存在 structured，后续由相应认知领域承接。
+相同调用方、Subject、external_id 和规范记录载荷复用原接纳，改变记录载荷返回 Conflict；form_memory 也参与该身份。另一份真实输入包含相同记录时，保留新的容器来源关联并重放原接纳。记录接纳、此次容器关联和任务进度同事务提交。来源结果分别展示记录文本与原文件信息，读取整份原件仍需该材料的来源权限。
+
+HTTP 与 MCP 接受多文档 inputs，每项指定自己的格式。Material 输入使用已上传且获授权的材料 ID；inline 输入由服务保存原始 UTF-8 字节。CLI 可用 `--material <id>` 替代 `--file <path>`：
+
+```json
+{
+  "operation_id": "import-notes",
+  "namespace_id": "<NamespaceId>",
+  "subject_id": "<SubjectId>",
+  "inputs": [
+    {
+      "name": "notes.jsonl",
+      "format": "jsonl",
+      "input": { "kind": "material", "material_id": "<MaterialId>" }
+    },
+    { "format": "text", "input": { "kind": "inline", "content": "需要导入的实际记录" } }
+  ],
+  "form_memory": false
+}
+```
+
+格式支持 `text`、`jsonl`、`json`；JSON 接受记录数组、`records`、A-Memorix `paragraphs` 和 LPMM `docs`。原生记录含 external_id、text 及可选 source、source_type、event_time、observed_at、tags、metadata、structured。整个任务的原始输入与规范化目录各限 4 MiB，最多 1000 条，单条限 1 MiB；所有输入严格按 UTF-8 解码，HTTP 另受实例请求体上限约束。成熟格式中的实体、三元组和时间载荷保存在 structured，后续由相应认知领域承接。
 
 记忆变更带当前修订号，每次形成新修订和审计。以下操作冻结记忆、查看非活跃结果，再恢复：
 

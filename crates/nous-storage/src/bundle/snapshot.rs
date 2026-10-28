@@ -30,6 +30,8 @@ impl ReadView {
             watermark: self.watermark,
             subject,
             materials: vec![],
+            input_sources: vec![],
+            record_containers: vec![],
             observations: vec![],
             exposures: vec![],
             memories: vec![],
@@ -43,7 +45,13 @@ impl ReadView {
             imports: vec![],
             vectors: BundleVectors::default(),
         };
-        let mut material_ids = BTreeSet::new();
+        (package.input_sources, package.record_containers) =
+            self.import_source_facts(ns, sub).await?;
+        let mut material_ids: BTreeSet<_> = package
+            .input_sources
+            .iter()
+            .map(|value| value.material_id.clone())
+            .collect();
         let rows=sqlx::query("SELECT * FROM observations WHERE namespace_id=? AND subject_id=? ORDER BY commit_seq,id").bind(ns.as_str()).bind(sub.as_str()).fetch_all(&mut *self.tx).await.map_err(storage_error)?;
         for row in rows {
             let observation = records::observation_row(row)?;

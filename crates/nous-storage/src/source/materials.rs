@@ -129,8 +129,8 @@ pub(crate) fn details_from_columns(
 }
 
 impl WriteTransaction {
-    /// Retain a newly produced resource for its owner without asserting that the
-    /// Subject has read its contents. Existing source access still needs authority.
+    /// Retain a produced resource or an explicitly admitted Namespace original.
+    /// The custody fact gets this transaction's identity; the original stays immutable.
     pub async fn retain_material_output(
         &mut self,
         namespace: &NamespaceId,
@@ -140,7 +140,9 @@ impl WriteTransaction {
         self.context().require_subject(namespace, subject)?;
         self.subject(namespace, subject).await?;
         let original = self.material(namespace, material).await?;
-        self.check_sequence(original.commit_seq)?;
+        if original.commit_seq != self.commit_seq() {
+            self.context().require_namespace(namespace)?;
+        }
         sqlx::query("INSERT INTO material_outputs(namespace_id,subject_id,material_id,context,recorded_at,commit_seq) VALUES(?,?,?,?,?,?)")
             .bind(namespace.as_str()).bind(subject.as_str()).bind(material.as_str())
             .bind(serde_json::to_string(self.context())?).bind(self.time().recorded())

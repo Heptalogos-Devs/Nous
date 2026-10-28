@@ -6,8 +6,9 @@ from uuid import uuid4
 
 from ..client import NousClient
 from ..errors import NousError
-from .references import target_reference
+from ..files import ManagedFiles
 from .bundles import bundle_admin
+from .references import target_reference
 
 
 class AMemorixAdapter:
@@ -24,9 +25,23 @@ class AMemorixAdapter:
         self.namespace_id = namespace_id
         self.subject_id = subject_id
         self.wait_timeout_ms = wait_timeout_ms
-        if transfer_root is not None and not Path(transfer_root).is_absolute():
-            raise ValueError("transfer_root must be an absolute caller-owned directory")
-        self.transfer_root = Path(transfer_root).resolve() if transfer_root is not None else None
+        self.transfer_root = ManagedFiles(transfer_root).root if transfer_root is not None else None
+
+    @property
+    def managed_files(self) -> ManagedFiles:
+        if self.transfer_root is None:
+            raise ValueError("File transfer requires an explicit transfer_root")
+        return ManagedFiles(self.transfer_root)
+
+    async def upload_import_inputs(
+        self, files: Sequence[str | Path | Mapping[str, Any]], *, input_format: str | None = None,
+        operation_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        from ..imports import upload_import_inputs
+        return await upload_import_inputs(
+            self.client, self.namespace_id, self.subject_id, files,
+            transfer_root=self.managed_files.root, input_format=input_format, operation_id=operation_id,
+        )
 
     def with_source_read(self, scope: Mapping) -> "AMemorixAdapter":
         bound = copy(self)

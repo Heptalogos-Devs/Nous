@@ -136,6 +136,11 @@ pub(super) fn package_counts(package: &SubjectPackage) -> BTreeMap<String, u64> 
         ),
         ("memory_revisions".into(), package.memories.len() as u64),
         ("materials".into(), package.materials.len() as u64),
+        ("input_sources".into(), package.input_sources.len() as u64),
+        (
+            "record_containers".into(),
+            package.record_containers.len() as u64,
+        ),
         ("observations".into(), package.observations.len() as u64),
         (
             "vector_contents".into(),

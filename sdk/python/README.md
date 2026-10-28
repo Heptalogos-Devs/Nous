@@ -29,6 +29,26 @@ async with NousClient(
 
 Subject 提供自己的文件时，传入 `upload_file(namespace_id, path, owner_subject_id=subject_id)`。已有异步字节流使用 `upload_stream(namespace_id, chunks, byte_len=length, owner_subject_id=subject_id)`；两者使用同一传输与接纳用例。原件归该 Subject 读取，接触或导入来源事件由后续显式操作记录。CLI 对应 `material put --namespace <Namespace UUID> --owner-subject <Subject UUID> --file <本机文件>`。
 
+`import_files(namespace_id, subject_id, files, transfer_root=...)` 将本机文件逐份流式上传，再以 Material 输入目录提交一个正式导入任务。`files` 接受路径列表，或 WebUI 的 `{staged_path, filename, size}` 列表；也可用 `{path, name, format, source}` 明确格式与语义来源。格式按 txt/md、json、jsonl 扩展名选择，`input_format` 可显式指定。SDK 不解析或改写文件内容。
+
+```python
+receipt = await client.import_directory(
+    namespace_id,
+    subject_id,
+    transfer_root=instance_transfer_directory,
+    alias="raw",
+    relative_path="notes",
+    pattern="*.md",
+    recursive=True,
+    form_memory=False,
+    operation_id=import_operation_id,
+)
+```
+
+`transfer_root` 必须是宿主管理的绝对目录。`ManagedFiles(transfer_root).path_aliases()` 返回该目录内的 `raw=source/raw`、`lpmm=source/lpmm`、`maibot=source/maibot`、`converted=converted`；`resolve_path(alias, relative_path)` 读取本机文件状态。alias 路径拒绝绝对路径、盘符、上级目录与符号链接越界。目录扫描选择 txt/md/json/jsonl，原路径留在调用端。
+
+这些便利方法保留调用者原文件，WebUI 自行清理请求的上传暂存目录。上传已接纳的 Material 继续由 Nous 管理，重试从正式原件恢复。重复同一导入时保留 `operation_id` 和文件顺序，SDK 为各文件上传派生稳定操作身份。`form_memory` 仅采用原生形成语义；文件便利方法不改变处理策略或声称形成、向量作业已经完成。
+
 `source(subject_id, reference, observation_id=...)` 读取精确认知或媒体的来源。`memory_source(memory_id, revision=...)` 读取指定历史修订；省略修订时读取当前记忆。媒体的 `observation_id` 指定本次实际接触或导入，认知自身保留形成时的来源事件。
 
 `source` 同时接受规范引用对象和结果中的词序引用。`resolve_reference(subject_id, address, as_of_commit=...)` 将对象地址绑定到所选知识截点，固定修订地址保持原修订；结果包含规范身份及本机地址。Namespace 操作者可通过 `reconcile_references` 为已有资料补齐目录。知识包恢复后，原地址沿安装来源映射解析。

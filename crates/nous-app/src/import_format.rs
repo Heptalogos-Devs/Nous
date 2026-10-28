@@ -295,12 +295,16 @@ fn item(
     match result {
         Ok(record) => ParsedImportRecord {
             index,
+            input_index: 0,
+            record_index: Some(index),
             external_id: Some(record.external_id.clone()),
             record: Some(record),
             error: None,
         },
         Err(error) => ParsedImportRecord {
             index,
+            input_index: 0,
+            record_index: Some(index),
             external_id,
             record: None,
             error: Some(error),

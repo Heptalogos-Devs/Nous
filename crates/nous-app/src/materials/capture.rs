@@ -130,7 +130,33 @@ impl App {
             BeginOperation::Replay(receipt) => return Ok(receipt),
             BeginOperation::New(tx) => tx,
         };
-        object.protect_in(&mut tx);
+        let captured = CapturedMedia {
+            object,
+            media_type,
+            metadata,
+        };
+        let material = self
+            .register_captured_material(&mut tx, request, captured)
+            .await?;
+        tx.commit(serde_json::to_value(material)?).await
+    }
+
+    /// Register a protected publication in the caller's existing business transaction.
+    pub(crate) async fn register_captured_material(
+        &self,
+        tx: &mut nous_storage::WriteTransaction,
+        request: PutMediaRequest,
+        captured: CapturedMedia,
+    ) -> Result<Material> {
+        request.validate()?;
+        let CapturedMedia {
+            object,
+            media_type,
+            metadata,
+        } = captured;
+        request.validate_received(object.byte_len as u64, &object.digest)?;
+        let media_type = media::canonical_media_type(&media_type)?;
+        object.protect_in(tx);
         tx.namespace(&request.namespace_id).await?;
         if let Some(subject) = &request.owner_subject_id {
             tx.context()
@@ -156,7 +182,7 @@ impl App {
             tx.retain_material_output(&material.namespace_id, subject, &material.id)
                 .await?;
         }
-        tx.commit(serde_json::to_value(material)?).await
+        Ok(material)
     }
 
     pub async fn get_material(

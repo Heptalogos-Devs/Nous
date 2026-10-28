@@ -12,8 +12,9 @@ impl ReadView {
     ) -> Result<()> {
         let mut selected = Selection::default();
         let all = matches!(request.selector, BundleSelector::All);
+        let native = request.format == BundleExportFormat::Native;
         match &request.selector {
-            BundleSelector::All => selected.all(package),
+            BundleSelector::All => selected.all(package, native),
             BundleSelector::Materials { material_ids } => {
                 for id in material_ids {
                     if !package.materials.iter().any(|v| v.material.id == *id) {
@@ -203,6 +204,11 @@ impl ReadView {
                 if result.job_id != job.id {
                     return Err(Error::internal("import result belongs to another task"));
                 }
+                if native {
+                    for input in &result.inputs {
+                        selected.add("import_input_source", input.source_id.as_str());
+                    }
+                }
                 for item in result.items {
                     if let Some(admission) = item.admission {
                         selected.add("material", admission.material_id.as_str());
@@ -227,10 +233,25 @@ impl ReadView {
                 }
             }
         }
+        if !native {
+            // Container custody alone does not select portable knowledge.
+            // Genuine cognition dependencies can select an independently used original.
+            for source in &package.input_sources {
+                selected
+                    .0
+                    .remove(&("material".into(), source.material_id.to_string()));
+            }
+            selected.0.retain(|(kind, _)| {
+                kind != "import_input_source" && kind != "import_record_container"
+            });
+        }
         // Selection and its actual producer/source closure converge inside this ReadView.
         loop {
             let before = selected.0.len();
             selected.related(package);
+            if native {
+                selected.import_sources(package);
+            }
             selected.dependencies(package)?;
             if !all {
                 selected.semantic_rows(package)?;

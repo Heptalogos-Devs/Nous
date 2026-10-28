@@ -541,7 +541,7 @@ impl McpService {
         .await
     }
     #[tool(
-        description = "Submit a durable text, JSON or JSONL import with operation_id; returns its job_id. Inspect or wait for that Job to read exact admitted objects and optional formation jobs."
+        description = "Import an ordered inputs catalog with operation_id. Each document specifies text, JSON or JSONL format and inline content or an authorized MaterialId. Returns job_id; wait for its per-input record admissions and optional formation jobs."
     )]
     async fn import_text(
         &self,

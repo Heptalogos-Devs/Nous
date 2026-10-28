@@ -462,6 +462,37 @@ class NousClient:
     async def backup(self) -> dict:
         return await self.request("POST", "/api/backups")
 
+    async def import_files(
+        self, namespace_id: str, subject_id: str,
+        files: Sequence[str | Path | Mapping[str, Any]], *, transfer_root: str | Path,
+        input_format: str | None = None, form_memory: bool = False,
+        origin: Mapping[str, Any] | None = None, operation_id: str | None = None,
+    ) -> dict:
+        """Upload managed local files and submit their Material-backed import directory."""
+        from .imports import import_files
+
+        return await import_files(
+            self, namespace_id, subject_id, files, transfer_root=transfer_root,
+            input_format=input_format, form_memory=form_memory, origin=origin,
+            operation_id=operation_id,
+        )
+
+    async def import_directory(
+        self, namespace_id: str, subject_id: str, *, transfer_root: str | Path,
+        alias: str = "raw", relative_path: str = "", pattern: str = "*",
+        recursive: bool = True, input_format: str | None = None, form_memory: bool = False,
+        origin: Mapping[str, Any] | None = None, operation_id: str | None = None,
+    ) -> dict:
+        """Scan a managed local alias, upload selected originals and submit one import."""
+        from .imports import import_directory
+
+        return await import_directory(
+            self, namespace_id, subject_id, transfer_root=transfer_root, alias=alias,
+            relative_path=relative_path, pattern=pattern, recursive=recursive,
+            input_format=input_format, form_memory=form_memory, origin=origin,
+            operation_id=operation_id,
+        )
+
     def managed(
         self,
         *,

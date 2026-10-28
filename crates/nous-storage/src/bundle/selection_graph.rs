@@ -76,8 +76,15 @@ impl Selection {
         }
         Ok(())
     }
-    pub fn all(&mut self, p: &SubjectPackage) {
+    pub fn all(&mut self, p: &SubjectPackage, native: bool) {
         for v in &p.materials {
+            if !native
+                && p.input_sources
+                    .iter()
+                    .any(|source| source.material_id == v.material.id)
+            {
+                continue;
+            }
             if v.details.source_type.as_deref() == Some("nous_bundle")
                 && !p
                     .observations
@@ -108,6 +115,14 @@ impl Selection {
         }
         for v in &p.purges {
             self.add("memory", v.id.as_str());
+        }
+        if native {
+            for source in &p.input_sources {
+                self.add("import_input_source", source.id.as_str());
+            }
+            for container in &p.record_containers {
+                self.add("import_record_container", container.id.as_str());
+            }
         }
     }
     /// Linked entities and relations bring their actual endpoints. Aggregates
@@ -241,9 +256,40 @@ impl Selection {
         }
         Ok(())
     }
+    /// Containers describe the chosen record, without making sibling records evidence roots.
+    pub fn import_sources(&mut self, p: &SubjectPackage) {
+        for source in &p.input_sources {
+            if self.has("material", source.material_id.as_str()) {
+                self.add("import_input_source", source.id.as_str());
+            }
+        }
+        for container in &p.record_containers {
+            if self.has("memory", container.memory_id.as_str())
+                || self.has("observation", container.observation_id.as_str())
+                || self.has("material", container.record_material_id.as_str())
+            {
+                self.add("import_record_container", container.id.as_str());
+            }
+            if self.has("import_record_container", container.id.as_str()) {
+                self.add("import_input_source", container.input_source_id.as_str());
+                self.add("material", container.record_material_id.as_str());
+                self.add("observation", container.observation_id.as_str());
+                self.add("memory", container.memory_id.as_str());
+            }
+        }
+        for source in &p.input_sources {
+            if self.has("import_input_source", source.id.as_str()) {
+                self.add("material", source.material_id.as_str());
+            }
+        }
+    }
     pub fn retain(&self, p: &mut SubjectPackage, all: bool) {
         p.materials
             .retain(|v| self.has("material", v.material.id.as_str()));
+        p.input_sources
+            .retain(|v| self.has("import_input_source", v.id.as_str()));
+        p.record_containers
+            .retain(|v| self.has("import_record_container", v.id.as_str()));
         p.observations
             .retain(|v| self.has("observation", v.id.as_str()));
         for original in &mut p.materials {

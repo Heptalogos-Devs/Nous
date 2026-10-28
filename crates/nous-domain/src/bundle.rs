@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 mod descriptor;
 mod export;
+mod imports;
 pub use descriptor::*;
 pub use export::*;
 
@@ -18,6 +19,8 @@ pub struct SubjectPackage {
     pub watermark: i64,
     pub subject: Subject,
     pub materials: Vec<MediaOriginal>,
+    pub input_sources: Vec<ImportInputSource>,
+    pub record_containers: Vec<ImportRecordContainer>,
     pub observations: Vec<Observation>,
     pub exposures: Vec<MediaExposure>,
     pub memories: Vec<Memory>,
@@ -133,6 +136,7 @@ pub struct BundleEmbeddingAssociation {
 impl SubjectPackage {
     pub fn validate(&self) -> Result<()> {
         self.validate_addresses()?;
+        self.validate_import_sources()?;
         self.package.validate()?;
         self.subject.id.validate()?;
         self.subject.namespace_id.validate()?;
@@ -266,6 +270,9 @@ impl SubjectPackage {
                     .map_err(|_| Error::invalid("negative material length"))?,
             };
             add_blob(&mut references, blob)?;
+        }
+        for source in &self.input_sources {
+            add_blob(&mut references, self.import_input_blob(source)?)?;
         }
         for value in &self.representations {
             if let RepresentationPayload::Artifact { blob, .. } = &value.payload {

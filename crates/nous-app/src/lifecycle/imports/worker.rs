@@ -44,7 +44,7 @@ impl App {
                 return Ok(());
             };
             if let Some(error) = &parsed.error {
-                self.import_progress(&job, parsed, None, Some(error.clone()))
+                self.import_progress(&job, &plan, parsed, None, Some(error.clone()))
                     .await?;
                 continue;
             }
@@ -68,7 +68,7 @@ impl App {
                     return Err(error);
                 }
                 Err(error) => {
-                    self.import_progress(&job, parsed, None, Some(error))
+                    self.import_progress(&job, &plan, parsed, None, Some(error))
                         .await?
                 }
             }

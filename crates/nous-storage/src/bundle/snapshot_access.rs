@@ -9,6 +9,21 @@ impl ReadView {
     ) -> Result<()> {
         let ns = &package.subject.namespace_id;
         let subject = &package.subject.id;
+        for source in &package.input_sources {
+            // This explicit Original check is independent of each record's Memory grant.
+            self.require_source_requirements(
+                ctx,
+                ns,
+                subject,
+                &[SourceReadRef::Media {
+                    reference: MediaReference::Original {
+                        material_id: source.material_id.clone(),
+                    },
+                    observation_id: None,
+                }],
+            )
+            .await?;
+        }
         for v in &package.materials {
             let observation_id = package
                 .observations

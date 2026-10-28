@@ -73,24 +73,15 @@ impl Default for ListInput {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, clap::ValueEnum)]
-#[serde(rename_all = "snake_case")]
-pub enum Format {
-    Json,
-    Jsonl,
-    Text,
-}
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ImportInput {
     pub operation_id: String,
     pub namespace_id: String,
     pub subject_id: String,
-    pub format: Format,
-    pub content: String,
+    pub inputs: Vec<nous_domain::ImportDocument>,
     #[serde(default)]
     pub form_memory: bool,
-    pub source: Option<String>,
     /// Captured origin for records without their own origin fact.
     pub origin: Option<nous_domain::ObservationOrigin>,
 }

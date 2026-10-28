@@ -94,10 +94,15 @@ pub(super) async fn execute(
             ImportRequest {
                 namespace_id: binding.namespace_id.clone(),
                 subject_id: binding.subject_id.clone(),
-                format: ImportFormat::Json,
-                content: serde_json::to_string(&vec![record])?,
+                inputs: vec![ImportDocument {
+                    name: None,
+                    format: ImportFormat::Json,
+                    input: ImportDocumentInput::Inline {
+                        content: serde_json::to_string(&vec![record])?,
+                    },
+                    source: None,
+                }],
                 form_memory: policy.form_memory,
-                source: None,
                 origin,
             },
         )

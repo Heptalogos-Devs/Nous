@@ -14,6 +14,8 @@ pub struct MediaSourceLineage {
     pub source_regions: Vec<SourceRegion>,
     pub representations: Vec<DerivedRepresentation>,
     pub derived_regions: Vec<DerivedRegion>,
+    #[serde(default)]
+    pub import_containers: Vec<crate::ImportContainerSource>,
     pub watermark: i64,
 }
 impl MediaSourceLineage {

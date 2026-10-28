@@ -48,6 +48,8 @@ pub(super) fn convert(inspection: BundleInspection, root: &Path) -> Result<Loade
                 commit_seq: 1,
             },
             materials: vec![],
+            input_sources: vec![],
+            record_containers: vec![],
             observations: vec![],
             exposures: vec![],
             memories: vec![],

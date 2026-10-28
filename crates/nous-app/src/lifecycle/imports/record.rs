@@ -60,6 +60,7 @@ impl App {
                 return self
                     .import_progress(
                         job,
+                        plan,
                         parsed,
                         Some((admission, receipt.commit_seq, true)),
                         None,
@@ -190,6 +191,7 @@ impl App {
             &mut tx,
             &mut current,
             parsed,
+            plan.input_source(parsed)?,
             Some((admission.clone(), sequence, false)),
             None,
         )

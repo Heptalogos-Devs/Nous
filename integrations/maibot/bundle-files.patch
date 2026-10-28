@@ -7,7 +7,7 @@
 +from starlette.background import BackgroundTasks
 +
 +import anyio
-+from nous_wave.amemorix.bundles import file_name as transfer_file_name
++from nous_wave.files import file_name as transfer_file_name
  from pydantic import BaseModel, Field
  from sqlalchemy import func
  from sqlmodel import col, select
@@ -20,22 +20,18 @@
  from src.webui.dependencies import require_auth
  
  
-@@ -39,9 +43,11 @@
+@@ -39,9 +43,7 @@
  
  
  def _upload_staging_root() -> Path:
 -    if STAGING_ROOT is not None:
 -        return STAGING_ROOT
 -    return a_memorix_host_service.get_runtime_data_dir() / "imports" / "staging"
-+    root = nous_memory_host.transfer_root
-+    directory = (STAGING_ROOT if STAGING_ROOT is not None else root / "uploads").resolve()
-+    if not directory.is_relative_to(root):
-+        raise ValueError("上传暂存目录超出 NOUS_TRANSFER_ROOT")
-+    return directory
++    return nous_memory_host.managed_files.contained(STAGING_ROOT if STAGING_ROOT is not None else "uploads")
  
  
  class NodeRequest(BaseModel):
-@@ -4043,21 +4049,28 @@
+@@ -4043,21 +4045,28 @@
  
  
  async def _stage_upload_files(files: list[UploadFile]) -> tuple[Path, list[dict[str, Any]]]:
@@ -69,7 +65,7 @@
              }
          )
      return staging_dir, staged_files
-@@ -4797,14 +4810,18 @@
+@@ -4797,14 +4806,18 @@
  
  @router.get("/bundles/download/{file_name}", response_class=FileResponse)
  async def download_memory_bundle(file_name: str) -> FileResponse:

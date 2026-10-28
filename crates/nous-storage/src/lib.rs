@@ -11,6 +11,7 @@ mod diagnostics;
 mod directory;
 pub use directory::ReferenceViewOptions;
 mod identity;
+mod imports;
 mod media;
 mod model;
 mod prompt;

@@ -53,4 +53,6 @@ uv run --env-file "/MaiBot实例/.env" maibot run --directory "/MaiBot实例"
 
 `bundle-unknown.patch` 使包预览和安装结果保留未知状态：图片数量、空间兼容性和检索就绪状态按返回值显示；未知项显示“未知”。安装后重新构建 dashboard。
 
+SDK 的 `adapter.managed_files` 提供同一传输目录的 alias 解析和本地扫描。`adapter.upload_import_inputs(staged_files, operation_id=...)` 将 WebUI 暂存文件上传为 Material 并返回原生多文档目录；宿主也可直接使用 `client.import_files` / `client.import_directory` 提交原生导入。A-Memorix 的导入任务 action 与处理阶段继续按其正式合同接入。
+
 尚未提供的管理动作返回 `CapabilityUnavailable`。画像与统计异常向调用者传播，写入、检索及其他管理请求沿原有明确失败结果呈现。

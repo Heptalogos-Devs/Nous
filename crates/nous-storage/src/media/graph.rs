@@ -103,6 +103,7 @@ pub(super) async fn lineage(
         source_regions: graph.source_regions,
         representations: graph.representations,
         derived_regions: graph.derived_regions,
+        import_containers: vec![],
         watermark,
     })
 }
