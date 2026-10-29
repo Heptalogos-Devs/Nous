@@ -12,8 +12,9 @@ from pydantic import BaseModel, Field, JsonValue
 
 from nous.platform.configuration import EmbeddingRoute
 from nous.platform.errors import Unavailable
+from nous.platform.network.service import NetworkService
 
-from .generation import Generation, MediaInput
+from .generation import MediaInput
 from .ledger import CallLedger
 
 MediaResolver = Callable[[CallContext, MediaEmbeddingInput], Awaitable[MediaInput]]
@@ -85,18 +86,12 @@ async def embed_media(
     key: str,
     resolver: MediaResolver,
     ledger: CallLedger,
-    generation: Generation,
+    network: NetworkService,
     source_ids: tuple[str, ...],
 ) -> EmbeddingBatch:
     vectors: list[tuple[float, ...]] = []
     call_ids: list[str | None] = []
     effective_model: str | None = None
-    client = AsyncOpenAI(
-        base_url=route.base_url,
-        api_key=key,
-        http_client=generation.client(route.timeout_seconds),
-        max_retries=0,
-    )
     for group in inputs:
         if not group:
             raise ValueError("A joint embedding input must contain at least one part")
@@ -124,17 +119,21 @@ async def embed_media(
         raw: dict[str, JsonValue] | None = None
         try:
             parts = await media_parts(ctx, group, resolver)
-            raw = await client.post(
-                route.media_path,
-                cast_to=dict[str, JsonValue],
-                body={
-                    **route.extra_body,
-                    "model": route.model,
-                    "input": parts,
-                    "dimensions": route.dimensions,
-                    "encoding_format": "float",
-                },
-            )
+            async with network.client(ctx, timeout_seconds=route.timeout_seconds) as client:
+                sdk = AsyncOpenAI(
+                    base_url=route.base_url, api_key=key, http_client=client, max_retries=0
+                )
+                raw = await sdk.post(
+                    route.media_path,
+                    cast_to=dict[str, JsonValue],
+                    body={
+                        **route.extra_body,
+                        "model": route.model,
+                        "input": parts,
+                        "dimensions": route.dimensions,
+                        "encoding_format": "float",
+                    },
+                )
             response = EmbeddingResponse.model_validate(raw)
             records = (
                 (response.data,) if isinstance(response.data, EmbeddingData) else response.data

@@ -86,3 +86,19 @@ QueryResult.expression 返回带准确地址的正文表达；sources 是有界�
 重排默认关闭。需要时在模型资源配置 `query_rerank` 角色，使用 purpose=rerank、text-generation 路线及 `query-rerank` Prompt。optional 在缺少模型能力时沿用基础顺序并返回 skipped 原因；真实提供方失败仍返回错误。required 要求模型能力并将失败返回。模型调用继续保存在现有账本，`rerank_invocation_id` 固定本次调用身份。详见 [SDK 查询消费](sdk/python/README.md#查询结果与来源展开)。
 
 机器查询可通过同一 QueryRequest.expression 提交 atom/any/all 树；filters 选择正式命名来源、观察身份、来源类型、origin 字段与值、标签及认知语义。budget 的 candidates/branches/depth 限制实际候选与组合。capabilities.semantic/exploration 可设 required 或 optional；require_complete_vectors 默认 false，单独控制完整向量覆盖。execution 始终报告真实 effective_mode、missing_vectors、candidate_limited 与降级原因，关闭详细 diagnostics 后仍保留；Hybrid 覆盖不足时采用真实词项通道。authority 按实际认知、证据与解释分类；外部权威和资源描述要求对应资源 owner。current=prefer 保留本地结果并报告 external_freshness_unchecked，required 缺外部时效能力时返回错误；modality 按真实原件及同一来源根过滤。
+
+
+## 出站网络配置
+
+应用主动的模型、向量和媒体提供方请求由同一 NetworkService 管理。`network` 是正式配置 key，沿 instance → namespace → subject 覆盖；`nous config get network` 读取实际有效值与 origin，`nous config history network` 查看保存历史。配置保存后，后续调用使用新策略，活跃调用保留其原连接，结束后退役；应用关闭会等待租约释放并统一关闭连接池。
+
+```json
+{"trust_env":true,"proxy_url":null,"verify_tls":true,"ca_file":null,
+ "connect_timeout_seconds":10,"read_timeout_seconds":120,"write_timeout_seconds":30,
+ "pool_timeout_seconds":10,"max_connections":100,"max_keepalive_connections":20,
+ "keepalive_expiry_seconds":5,"follow_redirects":false}
+```
+
+将 JSON 保存后，通过 `nous config set network network.json --scope instance` 设置。HTTP、SDK 和 MCP 的通用 configuration 操作支持相同 key；history 由同一配置 owner 读取。默认保留 HTTP_PROXY、HTTPS_PROXY、NO_PROXY 与环境 CA 支持；proxy_url 可显式指定 HTTP(S) 代理，代理凭据留在受保护的进程环境。Provider timeout_seconds 作为各阶段超时的额外上限；TLS 和连接池值使用 NetworkPolicy 的有效配置。SDK 外部客户端、DBOS 与可选进程级 OTEL exporter 各自由成熟 SDK 管理；遥测沿 OTEL 专用配置生命周期。
+
+自由文本只在提供方明确返回 stop 时保存成功；length、拒绝和未确定完成原因会返回带真实调用身份的错误，付费原响应和实际用量仍在调用账本中保留。

@@ -9,6 +9,7 @@ from nous.platform.configuration.models import initial_resources
 from nous.platform.configuration.service import ConfigurationService
 from nous.platform.execution import DurableExecution, QueueSpec
 from nous.platform.models import ModelService
+from nous.platform.network.service import NetworkService
 from nous.platform.persistence import Authority, BackupService, WriteTx
 from nous.platform.prompts import PromptService
 
@@ -18,6 +19,7 @@ class Application:
         from nous.cognition.service import CognitionService
         from nous.identity.service import IdentityService
         from nous.material.service import MaterialService
+        from nous.retrieval.policy import defaults as retrieval_defaults
 
         self.settings = settings
         self.authority = Authority(settings.database)
@@ -30,10 +32,15 @@ class Application:
                 ),
                 "integrations.amemorix": AMemorixPolicy().model_dump(mode="json"),
                 "contexts": ContextsPolicy().model_dump(mode="json"),
+                "network": settings.network.model_dump(mode="json"),
+                "retrieval": retrieval_defaults().model_dump(mode="json"),
             },
         )
         self.prompts = PromptService(self.authority)
-        self.models = ModelService(self.authority, settings, self.prompts, self.configuration)
+        self.network = NetworkService(self.configuration)
+        self.models = ModelService(
+            self.authority, settings, self.prompts, self.configuration, self.network
+        )
         from nous.model_roles import register as register_model_roles
 
         register_model_roles(self.models.roles)
@@ -91,6 +98,7 @@ class Application:
             self.cognition,
             self.models,
             self.settings.instance / "indexes",
+            configuration=self.configuration,
             materials=self.material,
             derivations=self.derivations,
         )
@@ -143,7 +151,7 @@ class Application:
         await self.execution.close()
         if hasattr(self, "retrieval"):
             await self.retrieval.close()
-        await self.models.close()
+        await self.network.close()
         await self.authority.close()
 
     async def purge_model_inputs_in(self, tx: WriteTx, material_ids: tuple[str, ...]) -> None:

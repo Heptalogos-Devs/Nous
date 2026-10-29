@@ -221,7 +221,7 @@ def test_physical_derivation_exact_scope_revisions_and_withdrawal(tmp_path: Path
         # A separate contact keeps the original alive, while its withdrawn derivative stays unavailable.
         assert (await app.material.read(ctx, material["id"]))["id"] == material["id"]
         assert second["id"] != first["id"]
-        await app.models.close()
+        await app.network.close()
         await app.authority.close()
 
     asyncio.run(scenario())
@@ -426,7 +426,7 @@ def test_purge_follows_exact_input_contacts_without_erasing_other_revisions(tmp_
         with pytest.raises(NousError) as erased:
             await app.models.ledger.reserve(ctx, "formation", {"source_ids": [first]}, 10)
         assert erased.value.code == "SourcePurged"
-        await app.models.close()
+        await app.network.close()
         await app.authority.close()
 
     asyncio.run(scenario())

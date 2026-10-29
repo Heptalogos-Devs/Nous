@@ -318,6 +318,11 @@ from .retrieval import (
 from .retrieval import (
     TimeFilter as TimeFilter,
 )
+from .retrieval_policy import RetrievalPolicy as RetrievalPolicy
+from .retrieval_policy import VcpPipeline as VcpPipeline
+from .retrieval_policy import VcpPolicy as VcpPolicy
+from .retrieval_policy import VcpReadout as VcpReadout
+from .retrieval_policy import VcpSpikeRouting as VcpSpikeRouting
 from .self_model import AdoptSeed as AdoptSeed
 from .self_model import SeedDocument as SeedDocument
 from .self_model import SeedFacet as SeedFacet

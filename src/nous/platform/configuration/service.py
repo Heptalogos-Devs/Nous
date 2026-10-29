@@ -6,8 +6,10 @@ import sqlalchemy as sa
 from nous_wave.amemorix.contracts import AMemorixPolicy
 from nous_wave.contracts import CallContext
 from nous_wave.contracts.context import ContextsPolicy
+from nous_wave.contracts.retrieval_policy import RetrievalPolicy
 from pydantic import BaseModel, TypeAdapter
 
+from nous.platform.network.policy import NetworkPolicy
 from nous.platform.persistence import Authority, metadata
 
 from .models import ModelConfiguration
@@ -33,6 +35,8 @@ history = sa.Table(
 class ConfigurationService:
     schemas: dict[str, type[BaseModel]] = {
         "models": ModelConfiguration,
+        "network": NetworkPolicy,
+        "retrieval": RetrievalPolicy,
         "integrations.amemorix": AMemorixPolicy,
         "contexts": ContextsPolicy,
     }
@@ -66,6 +70,22 @@ class ConfigurationService:
                 if row:
                     value, origin = row["value"], scope
         return {"key": key, "value": value, "origin": origin}
+
+    async def history(self, ctx: CallContext, key: str, limit: int = 100) -> dict[str, object]:
+        if key not in self.schemas:
+            raise KeyError(key)
+        if not 1 <= limit <= 1000:
+            raise ValueError("Configuration history limit must be between 1 and 1000")
+        async with self.authority.read(ctx) as view:
+            rows = (
+                await view.connection.execute(
+                    sa.select(history)
+                    .where(history.c.key == key, history.c.scope.in_(self.scopes(ctx)))
+                    .order_by(history.c.commit_seq.desc())
+                    .limit(limit)
+                )
+            ).mappings()
+            return {"key": key, "items": [dict(row) for row in rows], "watermark": view.commit_seq}
 
     async def set(
         self,

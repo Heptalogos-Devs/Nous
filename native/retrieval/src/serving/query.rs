@@ -28,7 +28,17 @@ impl ServingGeneration {
                     diagnostics: json!({"profile":"dense","engine":"usearch","restored":self.restored,"assets":self.query_asset_diagnostics()}),
                 })
             }
-            ServingProfile::Vcp(config) => self.vcp_search(query, limit, *config, None, None, None),
+            ServingProfile::Vcp(config) => self.vcp_search(
+                query,
+                limit,
+                *config,
+                ScopedVcpCandidates {
+                    allowed: None,
+                    tags: None,
+                    lexical: &BTreeMap::new(),
+                },
+                None,
+            ),
         }
     }
     pub(super) fn sources_for(
@@ -81,8 +91,7 @@ impl ServingGeneration {
         query: &[f32],
         limit: usize,
         mut config: VcpConfig,
-        allowed: Option<&BTreeSet<i64>>,
-        allowed_tags: Option<&BTreeSet<i64>>,
+        scope: ScopedVcpCandidates<'_>,
         cancelled: nous_vcp::CancellationCheck<'_>,
     ) -> Result<ServingResult> {
         let check_cancel = || -> Result<()> {
@@ -93,7 +102,7 @@ impl ServingGeneration {
             Ok(())
         };
         check_cancel()?;
-        let scoped_assets = self.restrict_assets(allowed, allowed_tags)?;
+        let scoped_assets = self.restrict_assets(scope.allowed, scope.tags)?;
         let assets = scoped_assets.as_ref().unwrap_or(&self.assets);
         let effective_tags = assets
             .tag_vectors()
@@ -157,7 +166,7 @@ impl ServingGeneration {
             check_cancel()?;
             let hits = self
                 .ann
-                .search_candidates(vector, candidate_limit, allowed)?;
+                .search_candidates(vector, candidate_limit, scope.allowed)?;
             lanes.insert(name, json!({"hits":hits.len()}));
             for hit in hits {
                 offered
@@ -176,6 +185,21 @@ impl ServingGeneration {
                         anchor_score: 0.0,
                     });
             }
+        }
+        lanes.insert("bm25", json!({"hits":scope.lexical.len()}));
+        for (id, score) in scope.lexical {
+            offered
+                .entry(*id)
+                .and_modify(|candidate| candidate.bm25_score = *score)
+                .or_insert(CandidateInput {
+                    id: *id,
+                    score: 0.0,
+                    vector_score: 0.0,
+                    hybrid_score: 0.0,
+                    bm25_score: *score,
+                    time_score: 0.0,
+                    anchor_score: 0.0,
+                });
         }
         let candidate_ids = offered.keys().copied().collect::<Vec<_>>();
         let native = readout(

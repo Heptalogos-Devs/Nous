@@ -38,6 +38,13 @@ class ManagementClient(ContextClient):
             return object_value(
                 await self.request("GET", f"/api/configuration/{segment(key)}", params=params)
             )
+        if action == "history":
+            params["limit"] = int(str(request.get("limit", 100)))
+            return object_value(
+                await self.request(
+                    "GET", f"/api/configuration/{segment(key)}/history", params=params
+                )
+            )
         if action in {"set", "reset"}:
             return object_value(
                 await self.request(

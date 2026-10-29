@@ -92,12 +92,26 @@ impl Frozen {
                         .collect()
                 });
                 let config = options.vcp.into_config(ghost_vectors)?;
+                let lexical_hits = if text.trim().is_empty() {
+                    Vec::new()
+                } else {
+                    lexical()?
+                        .into_iter()
+                        .map(|(row, score)| nous_retrieval::serving::ServingLexicalHit {
+                            reference: self.data.references[row as usize].clone(),
+                            score,
+                        })
+                        .collect()
+                };
                 let result = engine.search_authorized(
                     query,
                     options.limit,
                     ServingProfile::Vcp(Box::new(config)),
-                    &allowed_refs,
-                    keys.as_ref(),
+                    nous_retrieval::serving::ServingQueryScope {
+                        references: &allowed_refs,
+                        tag_keys: keys.as_ref(),
+                        lexical: &lexical_hits,
+                    },
                     &|| cancel.cancelled(),
                 )?;
                 diagnostics["vcp"] = result.diagnostics;

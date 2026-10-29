@@ -5,13 +5,14 @@ import base64
 from typing import TYPE_CHECKING
 
 import httpx2
-from nous_wave.contracts import CallContext
+from nous_wave.contracts import CallContext, DomainError
 from openai import AsyncOpenAI, omit
 from pydantic import BaseModel, JsonValue, TypeAdapter
 
 from nous.platform.configuration import ModelRoute
-from nous.platform.errors import Unavailable
+from nous.platform.errors import NousError, Unavailable
 
+from .completion import require_complete_text
 from .ledger import CallLedger
 
 if TYPE_CHECKING:
@@ -77,8 +78,10 @@ async def complete_video[T: BaseModel | str](
             parsed_text = response.parse()
             if not parsed_text.choices or parsed_text.choices[0].message.content is None:
                 raise ValueError("Provider did not return video description text")
-            if parsed_text.choices[0].finish_reason != "stop":
-                raise ValueError("Provider did not complete the video description")
+            require_complete_text(
+                parsed_text.choices[0].finish_reason,
+                refused=parsed_text.choices[0].message.refusal is not None,
+            )
             result = TypeAdapter(output_type).validate_python(
                 parsed_text.choices[0].message.content
             )
@@ -117,11 +120,22 @@ async def complete_video[T: BaseModel | str](
         )
         raise
     except Exception as error:
-        code = str(getattr(error, "status_code", type(error).__name__))
+        code = (
+            error.code
+            if isinstance(error, (DomainError, NousError))
+            else str(getattr(error, "status_code", type(error).__name__))
+        )
         await ledger.finish(ctx, call_id, None, {"response": raw}, code)
         raise Unavailable(
             f"Video generation failed ({code})",
             context={
+                **(
+                    error.details
+                    if isinstance(error, DomainError)
+                    else error.context
+                    if isinstance(error, NousError)
+                    else {}
+                ),
                 "call_id": call_id,
                 "invocation_id": invocation_id,
                 "role": role,

@@ -46,6 +46,21 @@ pub struct ServingCandidate {
     #[serde(default)]
     pub tags: Vec<ServingTag>,
 }
+/// Actual lexical hits from the caller's same frozen authorized query view.
+pub struct ServingLexicalHit {
+    pub reference: String,
+    pub score: f64,
+}
+pub struct ServingQueryScope<'a> {
+    pub references: &'a BTreeSet<String>,
+    pub tag_keys: Option<&'a BTreeSet<String>>,
+    pub lexical: &'a [ServingLexicalHit],
+}
+struct ScopedVcpCandidates<'a> {
+    allowed: Option<&'a BTreeSet<i64>>,
+    tags: Option<&'a BTreeSet<i64>>,
+    lexical: &'a BTreeMap<i64, f64>,
+}
 /// Explicit signed directed edges in the declared Tag row order.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

@@ -70,6 +70,7 @@ class QueryBudget(Contract):
     rerank_documents: int = Field(default=32, ge=1, le=256)
     rerank_document_bytes: int = Field(default=4096, ge=1, le=65536)
     rerank_total_bytes: int = Field(default=65536, ge=1, le=1048576)
+    diagnostics_bytes: int = Field(default=65536, ge=0, le=1048576)
 
 
 class QueryCapabilities(Contract):

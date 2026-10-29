@@ -4,6 +4,18 @@
   padding: 6px 8px;
   font-size: 12px;
 }
+.model-contract {
+  width: min(920px, 95vw);
+  max-height: 90vh;
+  overflow-y: auto;
+}
+.model-contract .json-view {
+  max-height: 360px;
+  overflow: auto;
+}
+.model-contract textarea {
+  font-family: ui-monospace, monospace;
+}
 .sidebar {
   overflow-y: auto;
 }

@@ -18,6 +18,7 @@ from nous.platform.configuration import EmbeddingRoute, ModelRoute, Settings
 from nous.platform.configuration.models import ModelConfiguration
 from nous.platform.configuration.service import ConfigurationService
 from nous.platform.errors import Unavailable
+from nous.platform.network.service import NetworkService
 from nous.platform.persistence import Authority
 from nous.platform.prompts import PromptService
 
@@ -80,20 +81,19 @@ class ModelService:
         settings: Settings,
         prompts: PromptService,
         configuration: ConfigurationService,
+        network: NetworkService,
     ) -> None:
         self.settings = settings
         self.prompts = prompts
         self.configuration = configuration
         self.ledger = CallLedger(authority)
-        self.generation = Generation(self.ledger)
+        self.network = network
+        self.generation = Generation(self.ledger, network)
         self.media_resolver: MediaResolver | None = None
         self.preview_media_resolver: (
             Callable[[CallContext, MediaReference], Awaitable[MediaInput]] | None
         ) = None
         self.roles = RoleRegistry()
-
-    async def close(self) -> None:
-        await self.generation.close()
 
     async def status(self, ctx: CallContext) -> dict[str, object]:
         """Report configured resources and local credential readiness without probing a provider."""
@@ -209,7 +209,7 @@ class ModelService:
             route,
             credential(route, "embedding"),
             self.ledger,
-            self.generation,
+            self.network,
             source_ids,
         )
 
@@ -240,6 +240,6 @@ class ModelService:
             credential(route, "embedding"),
             self.media_resolver,
             self.ledger,
-            self.generation,
+            self.network,
             source_ids,
         )

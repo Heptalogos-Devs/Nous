@@ -13,6 +13,7 @@ _ASSETS = {
     "client.js": "text/javascript",
     "knowledge.js": "text/javascript",
     "management.js": "text/javascript",
+    "model-contracts.js": "text/javascript",
     "i18n.js": "text/javascript",
     "fluent.js": "text/javascript",
     "fluent.LICENSE": "text/plain",

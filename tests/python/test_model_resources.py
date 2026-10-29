@@ -221,7 +221,7 @@ def test_durable_model_invocation_keeps_paid_result_across_configuration_changes
                 )
             assert retired.value.details["status"] == "purged"
         finally:
-            await app.models.close()
+            await app.network.close()
             await app.authority.close()
 
     asyncio.run(scenario())

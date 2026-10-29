@@ -6,6 +6,8 @@ from typing import Annotated, Literal
 from pydantic import AfterValidator, BaseModel, Field, JsonValue
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from nous.platform.network.policy import NetworkPolicy
+
 ReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh"]
 
 
@@ -66,6 +68,7 @@ class Settings(BaseSettings):
     locale: str = "zh-CN"
     model: ModelRoute = Field(default_factory=ModelRoute)
     embedding: EmbeddingRoute = Field(default_factory=EmbeddingRoute)
+    network: NetworkPolicy = Field(default_factory=NetworkPolicy)
     log_level: str = "INFO"
 
     @property

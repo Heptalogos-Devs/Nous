@@ -15,6 +15,7 @@ import {
   chip,
   download,
 } from "./client.js";
+import { closeModelContract, showModelContract } from "./model-contracts.js";
 let lastJobs, lastCalls, lastPrompt;
 export async function loadJobs() {
   const params = new URLSearchParams({ namespace_id: state.namespace, subject_id: state.subject });
@@ -60,6 +61,11 @@ export async function loadModels() {
     `/api/configuration/models?namespace_id=${encodeURIComponent(state.namespace)}&subject_id=${encodeURIComponent(state.subject)}`,
   );
   state.config = value.value;
+  message($("models-origin"), "web-models-origin", { origin: value.origin });
+  const scope = value.origin.split(":")[0];
+  $("models-scope").value = ["instance", "namespace", "subject"].includes(scope)
+    ? scope
+    : "instance";
   $("models-json").value = JSON.stringify(state.config, null, 2);
   renderModels();
   lastCalls = await api(
@@ -106,6 +112,16 @@ function renderModels() {
       ),
     );
     card.append(fields);
+    if (role.purpose !== "embedding")
+      card.append(
+        button(t("web-view-model-contract"), () =>
+          showModelContract(id, async (promptId) => {
+            $("prompt-id").value = promptId;
+            location.hash = "#prompts";
+            await loadPrompt();
+          }),
+        ),
+      );
     roles.append(card);
   }
 }
@@ -138,7 +154,10 @@ async function saveModels() {
   state.config = JSON.parse($("models-json").value);
   await api(
     `/api/configuration/models?namespace_id=${encodeURIComponent(state.namespace)}&subject_id=${encodeURIComponent(state.subject)}`,
-    { method: "PUT", body: { operation_id: op(), scope: "instance", value: state.config } },
+    {
+      method: "PUT",
+      body: { operation_id: op(), scope: $("models-scope").value, value: state.config },
+    },
   );
   notify("web-models-saved");
   await loadModels();
@@ -263,6 +282,7 @@ export function renderManagement() {
 }
 
 export function resetManagement() {
+  closeModelContract();
   lastJobs = lastCalls = lastPrompt = undefined;
   state.config = null;
   for (const id of [

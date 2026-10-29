@@ -123,8 +123,10 @@
             ><select id="rerank" aria-label="Reranking" data-i18n-aria-label="web-rerank">
               <option value="off" data-i18n="web-rerank-off">关闭重排</option>
               <option value="optional" data-i18n="web-rerank-optional">可选模型重排</option>
-              <option value="required" data-i18n="web-rerank-required">要求模型重排</option>
-            </select><label><input id="query-sources" type="checkbox" /> <span data-i18n="web-expand-sources">展开来源</span></label
+              <option value="required" data-i18n="web-rerank-required">要求模型重排</option></select
+            ><label
+              ><input id="query-sources" type="checkbox" />
+              <span data-i18n="web-expand-sources">展开来源</span></label
             ><button data-i18n="web-query">查询</button>
           </form>
           <div class="results-heading">
@@ -298,6 +300,15 @@
             <button id="refresh-models" class="secondary" data-i18n="web-refresh">刷新</button>
           </div>
           <form id="models-form">
+            <p id="models-origin" class="muted"></p>
+            <label
+              ><span data-i18n="web-models-save-scope">保存范围</span>
+              <select id="models-scope">
+                <option value="instance" data-i18n="web-scope-instance">整个实例</option>
+                <option value="namespace" data-i18n="web-scope-namespace">当前命名空间</option>
+                <option value="subject" data-i18n="web-scope-subject">当前主体</option>
+              </select>
+            </label>
             <div id="providers"></div>
             <div id="roles"></div>
             <details>

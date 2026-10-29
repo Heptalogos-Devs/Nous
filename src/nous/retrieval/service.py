@@ -11,6 +11,7 @@ from nous.cognition.service import CognitionService
 from nous.material.derived import DerivedService
 from nous.material.service import MaterialService
 from nous.platform.concurrency import owned_thread
+from nous.platform.configuration.service import ConfigurationService
 from nous.platform.persistence import Authority
 from nous.references.service import ReferenceDirectory
 
@@ -40,8 +41,11 @@ class RetrievalService:
         index_path: str | Path,
         materials: MaterialService | None = None,
         derivations: DerivedService | None = None,
+        *,
+        configuration: ConfigurationService,
     ) -> None:
         self.authority, self.cognition, self.models = authority, cognition, models
+        self.configuration = configuration
         self.materials = materials or MaterialService(authority)
         self.derivations = derivations or cognition.derivations
         self.references = ReferenceDirectory(authority, cognition, self.materials)

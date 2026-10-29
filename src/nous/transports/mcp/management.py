@@ -139,7 +139,7 @@ def register_management(
 
     @server.tool()
     async def configuration(
-        action: Literal["get", "effective", "set", "reset"], command: JsonObject
+        action: Literal["get", "effective", "history", "set", "reset"], command: JsonObject
     ) -> JsonObject:
         """Read effective configuration or change an authorized scoped override.
 

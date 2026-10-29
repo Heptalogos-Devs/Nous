@@ -217,6 +217,27 @@ def register(cli: typer.Typer) -> None:
             ),
         )
 
+    @config.command("history")
+    def config_history(
+        ctx: typer.Context,
+        key: str,
+        namespace_id: str = "instance",
+        subject_id: str | None = None,
+        limit: int = 100,
+    ) -> None:
+        invoke(
+            ctx,
+            lambda api: api.configuration(
+                {
+                    "action": "history",
+                    "key": key,
+                    "namespace_id": namespace_id,
+                    "subject_id": subject_id,
+                    "limit": limit,
+                }
+            ),
+        )
+
     @config.command("set")
     def set_config(
         ctx: typer.Context,

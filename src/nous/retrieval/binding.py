@@ -84,7 +84,7 @@ class BoundSelection:
     records: list[RetrievalRecord]
     direct: bool
     terms: tuple[str, ...]
-    source_ids: tuple[str, ...]
+    source_material_ids: tuple[str, ...]
 
 
 def selectors(
@@ -131,4 +131,11 @@ def selectors(
             matched.append({value.reference.exact() for value in values})
         selected = matched[0].intersection(*matched[1:]) if matched else set[str]()
         candidates = [record for record in candidates if record.reference.exact() in selected]
-    return BoundSelection(candidates, direct, tuple(dict.fromkeys(terms)), tuple(sorted(roots)))
+    if not roots.issubset(sources):
+        raise DomainError("source_unavailable", "A bound name's original source is unavailable")
+    return BoundSelection(
+        candidates,
+        direct,
+        tuple(dict.fromkeys(terms)),
+        tuple(sorted({sources[root]["material_id"] for root in roots})),
+    )

@@ -177,6 +177,22 @@ expression 按实际顺序给出准确地址与正文摘录；source graph 按�
 
 rerank 默认为 off。启用时，模型角色 `query_rerank` 使用 text-generation 路线、purpose=rerank 和 Prompt `query-rerank`，提交有界正文候选并保存实际调用。optional 缺少可用模型角色、凭据或 Prompt 时保留基础顺序，结果附 skipped 原因；实际提供方失败返回带 call_id、invocation_id 和 role 的错误。required 传播缺能力与调用失败。显式 `$sort` 优先，required 重排与其冲突；未评分候选保留基础相对顺序。hits.score 保留检索分，rerank_score 为实际模型分数。重用 invocation 身份与相同候选请求会复用已保存结果；未知付费结果需新身份才能再次请求。
 
+检索算法配置使用共享 `configuration` 的 `retrieval` 键，按 instance、namespace、subject 继承。`RetrievalPolicy` 包含融合权重、RRF 常量，以及实际 VCP pipeline、spike routing、readout 和诊断参数；初始值来自 native 的 Serde 默认定义。先读取有效对象再修改，保留完整强类型结构：
+
+```python
+from nous_wave.contracts import RetrievalPolicy
+
+effective = await api.configuration({"key": "retrieval"})
+policy = RetrievalPolicy.model_validate(effective["value"])
+await api.configuration({
+    "action": "set", "key": "retrieval", "scope": "subject",
+    "value": policy.model_copy(update={"dense_weight": 0.8}).model_dump(mode="json"),
+})
+changes = await api.configuration({"action": "history", "key": "retrieval"})
+```
+
+查询在开始时冻结同一份有效策略，组合分支共用它。诊断中的 `plan.policy` 给出 namespace、subject、配置来源和实际策略；`plan.native` 保留原生计算诊断，组合查询在 `plan.branches` 中呈现各分支。`$diagnostics(none|summary|full)` 控制详细程度，`budget.diagnostics_bytes` 限制每次查询的原生诊断输出，超限会明确标记 truncated。VCP 的 BM25 lane 使用同一授权快照的真实词法命中，`bm25K` 参与原生 readout 选择；Ghost tags 尚无向量输入接纳 owner，未作为配置项开放。
+
 机器查询使用 `expression` 的 atom/any/all 树，每个 atom.source 是同一 NousQL 语法。`filters.sources` 按正式命名来源解析器选择完整标签；也可设置 source_ids、source_types、origin（field/value 对）、tags、cognitive_roles、formation_modes 和 epistemic_classes。`budget.candidates`、branches、depth 约束候选与组合树；来源和重排分别使用 source_* 与 rerank_* 预算。
 
 ```python
@@ -197,3 +213,6 @@ semantic/exploration 的 required 要求实际计算通道可用；require_compl
 
 
 A-Memorix 图谱搜索使用 `adapter.memory_graph_admin(action="search", query="项目", limit=50)`；`invoke("memory_graph_admin", {"action":"search","query":"项目"})` 供原 MaiBot RPC 直接调用。结果为实际实体与关系，匹配优先级依次为精确、前缀、子串；每项 reference 经 `CognitiveRef.model_validate(item["reference"])` 读取为强类型后，交给 `client.source(subject_id, reference)` 展开来源。读取受当前 SourceReadScope 与认知可见性约束。
+
+
+`client.configuration({"action":"get","key":"network","namespace_id":namespace_id,"subject_id":subject_id})` 读取应用出站网络有效策略与 origin；`action="history"` 读取同一 scope 继承范围的正式配置历史（limit 1..1000）。network 控制应用 Provider 的代理、环境信任、CA/TLS、分阶段超时和连接池；策略更新在下一次调用边界生效，已运行调用的租约结束后关闭旧池。外部 SDK 自身的 Transport 保持独立。`retrieval` 使用同一配置 get/set/reset/history 入口，默认值来自正式 Native schema。

@@ -7,9 +7,9 @@ from openai import AsyncOpenAI
 
 from nous.platform.configuration import EmbeddingRoute
 from nous.platform.errors import Unavailable
+from nous.platform.network.service import NetworkService
 
 from .embedding import retained_embedding, vector_space
-from .generation import Generation
 from .ledger import CallLedger
 
 
@@ -19,7 +19,7 @@ async def embed_one(
     route: EmbeddingRoute,
     key: str,
     ledger: CallLedger,
-    generation: Generation,
+    network: NetworkService,
     source_ids: tuple[str, ...],
 ) -> EmbeddingBatch:
     request: dict[str, object] = {
@@ -35,14 +35,16 @@ async def embed_one(
     if cached is not None:
         return retained_embedding(cached, call_id)
     try:
-        client = generation.client(route.timeout_seconds)
-        sdk = AsyncOpenAI(base_url=route.base_url, api_key=key, http_client=client, max_retries=0)
-        response = await sdk.embeddings.create(
-            model=route.model,
-            input=list(texts),
-            dimensions=route.dimensions,
-            extra_body=route.extra_body,
-        )
+        async with network.client(ctx, timeout_seconds=route.timeout_seconds) as client:
+            sdk = AsyncOpenAI(
+                base_url=route.base_url, api_key=key, http_client=client, max_retries=0
+            )
+            response = await sdk.embeddings.create(
+                model=route.model,
+                input=list(texts),
+                dimensions=route.dimensions,
+                extra_body=route.extra_body,
+            )
         vectors = [tuple(item.embedding) for item in sorted(response.data, key=lambda v: v.index)]
         if len(vectors) != len(texts) or any(len(v) != route.dimensions for v in vectors):
             raise ValueError("Provider returned inconsistent embedding dimensions")
@@ -85,7 +87,7 @@ async def embed_text(
     route: EmbeddingRoute,
     key: str,
     ledger: CallLedger,
-    generation: Generation,
+    network: NetworkService,
     source_ids: tuple[str, ...],
 ) -> EmbeddingBatch:
     if not texts or any(not text.strip() for text in texts):
@@ -98,7 +100,7 @@ async def embed_text(
             route,
             key,
             ledger,
-            generation,
+            network,
             source_ids,
         )
         if batches and (batch.space, batch.model, batch.dimensions) != (

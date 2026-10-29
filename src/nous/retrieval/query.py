@@ -17,6 +17,7 @@ from nous_wave.contracts import (
 )
 from nous_wave.contracts.query_conditions import QueryEffectiveMode, QueryExecution
 from numpy.typing import NDArray
+from pydantic import JsonValue
 
 from .assets import (
     GraphAssets,
@@ -26,6 +27,8 @@ from .filters import authority
 from .media import source_material_ids_in
 from .native import failure, run_native
 from .planning import BoundPlan, bind
+from .policy import ResolvedPolicy, native_diagnostics
+from .policy import resolve as resolve_policy
 
 if TYPE_CHECKING:
     from .service import RetrievalService
@@ -33,7 +36,10 @@ if TYPE_CHECKING:
 
 async def query(self: RetrievalService, ctx: CallContext, request: QueryRequest) -> QueryResult:
     bound, plan = bind(ctx, request)
-    result = await execute(self, ctx, bound, plan, 0, [bound.budget.branches])
+    policy = await resolve_policy(self.configuration, ctx)
+    result = await execute(self, ctx, bound, plan, 0, [bound.budget.branches], policy)
+    if plan["diagnostics"] != "none":
+        result = result.model_copy(update={"plan": {**result.plan, "policy": policy.diagnostics()}})
     result = result.model_copy(update={"expression": plan["canonical"]})
     return await self.finalize(
         ctx,
@@ -55,6 +61,7 @@ async def execute(
     plan: BoundPlan,
     depth: int,
     branches: list[int],
+    policy: ResolvedPolicy,
 ) -> QueryResult:
     if depth >= bound.budget.depth:
         raise DomainError("query_budget_exceeded", "Query composition exceeds depth budget")
@@ -138,6 +145,16 @@ async def execute(
             )
             child_bound = child_bound.model_copy(
                 update={
+                    "budget": child_bound.budget.model_copy(
+                        update={
+                            "diagnostics_bytes": bound.budget.diagnostics_bytes
+                            // len(composition["children"])
+                        }
+                    )
+                }
+            )
+            child_bound = child_bound.model_copy(
+                update={
                     "text": " ".join(value for value in (bound.text, child_bound.text) if value),
                     "domains": tuple(
                         value for value in child_bound.domains if value in bound.domains
@@ -171,7 +188,9 @@ async def execute(
                 child_plan["asof_time"] = min(
                     plan["asof_time"], child_plan.get("asof_time", plan["asof_time"])
                 )
-            children.append(await execute(self, ctx, child_bound, child_plan, depth + 1, branches))
+            children.append(
+                await execute(self, ctx, child_bound, child_plan, depth + 1, branches, policy)
+            )
         keys: list[set[str]] = [
             {hit.object.reference.exact() for hit in child.hits} for child in children
         ]
@@ -191,7 +210,10 @@ async def execute(
                 if key in selected:
                     previous = merged.get(key)
                     merged[key] = hit.model_copy(
-                        update={"score": (previous.score if previous else 0) + 1 / (61 + rank)}
+                        update={
+                            "score": (previous.score if previous else 0)
+                            + 1 / (policy.value.rrf_k + rank + 1)
+                        }
                     )
         ordered = self.order([(hit.object, hit.score) for hit in merged.values()], plan)
         modes: set[QueryEffectiveMode] = {
@@ -217,7 +239,9 @@ async def execute(
                 complete=all(child.coverage.complete for child in children),
                 generation="composition",
             ),
-            plan={} if plan["diagnostics"] == "none" else json.loads(json.dumps(plan)),
+            plan={}
+            if plan["diagnostics"] == "none"
+            else json.loads(json.dumps({**plan, "branches": [child.plan for child in children]})),
             execution=QueryExecution(
                 requested_mode=bound.mode,
                 effective_mode=next(iter(modes)) if len(modes) == 1 else "mixed",
@@ -290,9 +314,10 @@ async def execute(
     dense: NDArray[np.float32] | None = None
     graph: GraphAssets | None = None
     space: str | None = None
+    native_info: dict[str, JsonValue] = {}
     if bound.mode != "lexical" and not direct and records:
         try:
-            batch = await self.query_embedding(ctx, bound, source_ids=selection.source_ids)
+            batch = await self.query_embedding(ctx, bound, source_ids=selection.source_material_ids)
         except DomainError as error:
             if bound.capabilities.semantic != "optional" or error.code not in {
                 "model_unavailable",
@@ -450,8 +475,13 @@ async def execute(
                 vectors=query_vector,
                 allowed_rows=np.arange(len(records), dtype=np.uint64),
                 allowed_graph_nodes=np.arange(len(graph.tags), dtype=np.uint64) if graph else None,
-                options_json=json.dumps({"limit": bound.budget.candidates}),
+                options_json=json.dumps(
+                    policy.options(bound.budget.candidates, plan["diagnostics"])
+                ),
             )
+        native_info = native_diagnostics(
+            result.diagnostics_json, plan["diagnostics"], bound.budget.diagnostics_bytes
+        )
         ranked = [
             (records[int(index)], float(score))
             for index, score in zip(result.row_ids, result.scores, strict=True)
@@ -518,6 +548,13 @@ async def execute(
         plan={}
         if plan["diagnostics"] == "none"
         else json.loads(
-            json.dumps({**plan, "eligible_objects": len(records), "missing_vectors": missing})
+            json.dumps(
+                {
+                    **plan,
+                    "eligible_objects": len(records),
+                    "missing_vectors": missing,
+                    "native": native_info,
+                }
+            )
         ),
     )

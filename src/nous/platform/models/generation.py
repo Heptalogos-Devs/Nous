@@ -3,10 +3,10 @@
 import asyncio
 import hashlib
 import json
+from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from typing import TypeVar
 
-import httpx2
 from nous_wave.contracts import CallContext, DomainError
 from pydantic import BaseModel, JsonValue, TypeAdapter
 from pydantic_ai import Agent, BinaryContent, NativeOutput, capture_run_messages
@@ -17,8 +17,10 @@ from pydantic_ai.models.openai import OpenAIChatModel, OpenAIChatModelSettings
 from pydantic_ai.providers.openai import OpenAIProvider
 
 from nous.platform.configuration import ModelRoute
-from nous.platform.errors import Unavailable
+from nous.platform.errors import NousError, Unavailable
+from nous.platform.network.service import NetworkService
 
+from .completion import require_complete_text
 from .content_parts import complete_video
 from .ledger import CallLedger
 
@@ -97,19 +99,9 @@ def prepare_invocation(
 
 
 class Generation:
-    def __init__(self, ledger: CallLedger) -> None:
+    def __init__(self, ledger: CallLedger, network: NetworkService) -> None:
         self.ledger = ledger
-        self.clients: dict[float, httpx2.AsyncClient] = {}
-
-    async def close(self) -> None:
-        for client in self.clients.values():
-            await client.aclose()
-        self.clients.clear()
-
-    def client(self, timeout: float) -> httpx2.AsyncClient:
-        if timeout not in self.clients:
-            self.clients[timeout] = httpx2.AsyncClient(timeout=timeout, trust_env=True)
-        return self.clients[timeout]
+        self.network = network
 
     async def request(
         self,
@@ -136,90 +128,139 @@ class Generation:
         )
         if cached is not None:
             return TypeAdapter(output_type).validate_python(cached), call_id
-        if video:
-            return await complete_video(
-                ctx,
-                call_id,
-                route,
-                key,
-                prompt,
-                output_type,
-                media,
-                self.ledger,
-                self.client(route.timeout_seconds),
-                role=budget_role or purpose,
-                invocation_id=invocation_id,
-            )
-        provider = OpenAIProvider(
-            base_url=route.base_url, api_key=key, http_client=self.client(route.timeout_seconds)
-        )
-        agent = Agent(
-            OpenAIChatModel(route.model, provider=provider),
-            output_type=str if output_type is str else NativeOutput(output_type),
-            retries=0,
-            capabilities=[
-                Instrumentation(
-                    settings=InstrumentationSettings(
-                        include_content=False,
-                        include_binary_content=False,
-                        include_model_request_parameters=False,
-                    )
-                )
-            ],
-        )
-        content: list[str | BinaryContent] = [str(prompt["rendered"])]
-        for part in media:
-            if part.media_type.startswith("text/") or part.media_type == "application/json":
-                content.append(part.data.decode("utf-8"))
-            else:
-                content.append(
-                    BinaryContent(
-                        part.data, media_type=part.media_type, identifier=part.source_reference
-                    )
-                )
-        with capture_run_messages() as messages:
+        async with AsyncExitStack() as resources:
             try:
-                settings: OpenAIChatModelSettings = {"max_tokens": route.max_output_tokens}
-                if route.temperature is not None:
-                    settings["temperature"] = route.temperature
-                if route.reasoning_effort is not None:
-                    settings["openai_reasoning_effort"] = route.reasoning_effort
-                if route.extra_body:
-                    settings["extra_body"] = route.extra_body
-                result = await agent.run(content, model_settings=settings, retries=0)
-                usage = result.usage
-                await self.ledger.finish(
-                    ctx,
-                    call_id,
-                    TypeAdapter(output_type).dump_python(result.output, mode="json"),
-                    {
-                        "actual_output_mode": "text" if output_type is str else "json_schema",
-                        "input_tokens": usage.input_tokens,
-                        "output_tokens": usage.output_tokens,
-                        "messages": json.loads(result.all_messages_json()),
-                    },
+                client = await resources.enter_async_context(
+                    self.network.client(ctx, timeout_seconds=route.timeout_seconds)
                 )
-                return TypeAdapter(output_type).validate_python(result.output), call_id
             except asyncio.CancelledError:
                 await asyncio.shield(
-                    self.ledger.finish(ctx, call_id, None, {}, "CancelledUnknownOutcome")
+                    self.ledger.finish(
+                        ctx,
+                        call_id,
+                        None,
+                        {"stage": "network_acquisition"},
+                        "CancelledBeforeRequest",
+                    )
                 )
                 raise
             except Exception as error:
-                code = str(getattr(error, "status_code", type(error).__name__))
-                await self.ledger.finish(
-                    ctx,
-                    call_id,
-                    None,
-                    {"messages": json.loads(ModelMessagesTypeAdapter.dump_json(messages))},
-                    code,
-                )
+                code = error.code if isinstance(error, NousError) else type(error).__name__
+                await self.ledger.finish(ctx, call_id, None, {"stage": "network_acquisition"}, code)
                 raise Unavailable(
-                    f"Generation provider failed ({code})",
+                    "Model network client is unavailable",
                     context={
+                        **(error.context if isinstance(error, NousError) else {}),
                         "call_id": call_id,
                         "invocation_id": invocation_id,
                         "role": budget_role or purpose,
                         "provider_code": code,
                     },
                 ) from error
+            if video:
+                return await complete_video(
+                    ctx,
+                    call_id,
+                    route,
+                    key,
+                    prompt,
+                    output_type,
+                    media,
+                    self.ledger,
+                    client,
+                    role=budget_role or purpose,
+                    invocation_id=invocation_id,
+                )
+            provider = OpenAIProvider(base_url=route.base_url, api_key=key, http_client=client)
+            agent = Agent(
+                OpenAIChatModel(route.model, provider=provider),
+                output_type=str if output_type is str else NativeOutput(output_type),
+                retries=0,
+                capabilities=[
+                    Instrumentation(
+                        settings=InstrumentationSettings(
+                            include_content=False,
+                            include_binary_content=False,
+                            include_model_request_parameters=False,
+                        )
+                    )
+                ],
+            )
+            content: list[str | BinaryContent] = [str(prompt["rendered"])]
+            for part in media:
+                if part.media_type.startswith("text/") or part.media_type == "application/json":
+                    content.append(part.data.decode("utf-8"))
+                else:
+                    content.append(
+                        BinaryContent(
+                            part.data, media_type=part.media_type, identifier=part.source_reference
+                        )
+                    )
+            usage_record: dict[str, object] = {
+                "actual_output_mode": "text" if output_type is str else "json_schema"
+            }
+            with capture_run_messages() as messages:
+                try:
+                    settings: OpenAIChatModelSettings = {"max_tokens": route.max_output_tokens}
+                    if route.temperature is not None:
+                        settings["temperature"] = route.temperature
+                    if route.reasoning_effort is not None:
+                        settings["openai_reasoning_effort"] = route.reasoning_effort
+                    if route.extra_body:
+                        settings["extra_body"] = route.extra_body
+                    result = await agent.run(content, model_settings=settings, retries=0)
+                    usage = result.usage
+                    usage_record.update(
+                        {
+                            "input_tokens": usage.input_tokens,
+                            "output_tokens": usage.output_tokens,
+                            "finish_reason": result.response.finish_reason,
+                            "messages": json.loads(result.all_messages_json()),
+                        }
+                    )
+                    if output_type is str:
+                        require_complete_text(result.response.finish_reason)
+                    await self.ledger.finish(
+                        ctx,
+                        call_id,
+                        TypeAdapter(output_type).dump_python(result.output, mode="json"),
+                        usage_record,
+                    )
+                    return TypeAdapter(output_type).validate_python(result.output), call_id
+                except asyncio.CancelledError:
+                    await asyncio.shield(
+                        self.ledger.finish(ctx, call_id, None, {}, "CancelledUnknownOutcome")
+                    )
+                    raise
+                except Exception as error:
+                    code = (
+                        error.code
+                        if isinstance(error, (DomainError, NousError))
+                        else str(getattr(error, "status_code", type(error).__name__))
+                    )
+                    await self.ledger.finish(
+                        ctx,
+                        call_id,
+                        None,
+                        {
+                            **usage_record,
+                            "messages": json.loads(ModelMessagesTypeAdapter.dump_json(messages)),
+                        },
+                        code,
+                    )
+                    raise Unavailable(
+                        f"Generation provider failed ({code})",
+                        context={
+                            **(
+                                error.details
+                                if isinstance(error, DomainError)
+                                else error.context
+                                if isinstance(error, NousError)
+                                else {}
+                            ),
+                            "call_id": call_id,
+                            "invocation_id": invocation_id,
+                            "role": budget_role or purpose,
+                            "provider_code": code,
+                        },
+                    ) from error

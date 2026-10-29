@@ -188,6 +188,19 @@ async def configuration(
     )
 
 
+@router.get("/configuration/{key}/history")
+async def configuration_history(
+    request: Request,
+    key: str,
+    namespace_id: str = "instance",
+    subject_id: str | None = None,
+    limit: int = 100,
+):
+    return await application(request).configuration.history(
+        await context(request, namespace_id, subject_id, capability="read"), key, limit
+    )
+
+
 @router.put("/configuration/{key}")
 async def configure(
     request: Request,
@@ -197,7 +210,7 @@ async def configure(
     subject_id: str | None = None,
 ):
     principal = await authorize(request, capability="manage")
-    if command.scope == "instance" or key == "models":
+    if command.scope == "instance" or key in {"models", "network"}:
         principal.require_instance_management()
     return await application(request).configuration.set(
         await context(request, namespace_id, subject_id, capability="manage"),

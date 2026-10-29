@@ -6,8 +6,7 @@ impl ServingGeneration {
         query: &[f32],
         limit: usize,
         profile: ServingProfile,
-        allowed_references: &BTreeSet<String>,
-        allowed_tag_keys: Option<&BTreeSet<String>>,
+        scope: ServingQueryScope<'_>,
         cancelled: &(dyn Fn() -> bool + Sync),
     ) -> Result<ServingResult> {
         ensure!(!cancelled(), "CANCELLED: query cancelled");
@@ -15,14 +14,14 @@ impl ServingGeneration {
             .mappings
             .candidates
             .iter()
-            .filter(|(_, item)| allowed_references.contains(&item.id))
+            .filter(|(_, item)| scope.references.contains(&item.id))
             .map(|(id, _)| *id)
             .collect::<BTreeSet<_>>();
         ensure!(
-            allowed.len() == allowed_references.len(),
+            allowed.len() == scope.references.len(),
             "candidate filter contains unknown reference"
         );
-        let allowed_tags = allowed_tag_keys.map(|keys| {
+        let allowed_tags = scope.tag_keys.map(|keys| {
             self.mappings
                 .tags
                 .iter()
@@ -31,11 +30,33 @@ impl ServingGeneration {
                 .collect::<BTreeSet<_>>()
         });
         ensure!(
-            allowed_tag_keys
+            scope
+                .tag_keys
                 .zip(allowed_tags.as_ref())
                 .is_none_or(|(keys, ids)| keys.len() == ids.len()),
             "graph filter contains unknown tag"
         );
+        let row_by_reference = self
+            .mappings
+            .candidates
+            .iter()
+            .filter(|(id, _)| allowed.contains(*id))
+            .map(|(id, item)| (item.id.as_str(), *id))
+            .collect::<BTreeMap<_, _>>();
+        let mut lexical = BTreeMap::new();
+        for hit in scope.lexical {
+            ensure!(
+                hit.score.is_finite() && hit.score >= 0.0,
+                "invalid lexical score"
+            );
+            let row = row_by_reference
+                .get(hit.reference.as_str())
+                .context("lexical candidate is outside authorized frozen mapping")?;
+            ensure!(
+                lexical.insert(*row, hit.score).is_none(),
+                "duplicate lexical candidate"
+            );
+        }
         match profile {
             ServingProfile::Dense => {
                 let hits = self.ann.search_candidates(query, limit, Some(&allowed))?;
@@ -55,8 +76,11 @@ impl ServingGeneration {
                 query,
                 limit,
                 *config,
-                Some(&allowed),
-                allowed_tags.as_ref(),
+                ScopedVcpCandidates {
+                    allowed: Some(&allowed),
+                    tags: allowed_tags.as_ref(),
+                    lexical: &lexical,
+                },
                 Some(cancelled),
             ),
         }
