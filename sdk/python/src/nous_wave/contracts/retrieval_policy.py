@@ -84,6 +84,7 @@ class VcpPipeline(NativeParameters):
 
 
 class VcpReadout(NativeParameters):
+    lexical_weight: FiniteFloat = Field(ge=0, le=1)
     anchor_activation_floor: FiniteFloat
     anchor_activation_z: FiniteFloat
     anchor_bonus_cap: FiniteFloat

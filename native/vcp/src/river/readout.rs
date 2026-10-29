@@ -22,6 +22,9 @@ pub fn readout(
     crate::check_cancelled(cancelled)?;
     cached.validate_for(connection)?;
     crate::assets::validate_finite_config(&request.config)?;
+    if !(0.0..=1.0).contains(&request.config.lexical_weight) {
+        return Err("MEMO_CONFIG_INVALID: lexicalWeight must lie in [0, 1]".into());
+    }
     if request.candidates.iter().any(|candidate| {
         candidate.id <= 0
             || [
@@ -174,7 +177,27 @@ pub fn readout(
             })
             .count()
     });
+    // Normalize within the authorized, hydrated pool before union truncation.
+    // Max normalization retains a sole lexical hit, unlike min/max subtraction.
+    let maximum_bm25 = if input.config.bm25_k > 0 {
+        curves
+            .iter()
+            .map(|curve| curve.bm25_score)
+            .fold(0.0, f64::max)
+    } else {
+        0.0
+    };
+    let lexical_weight = if maximum_bm25 > 0.0 {
+        input.config.lexical_weight
+    } else {
+        0.0
+    };
     curves.par_iter_mut().for_each(|curve| {
+        curve.lexical_score = if maximum_bm25 > 0.0 {
+            clamp01(curve.bm25_score / maximum_bm25)
+        } else {
+            0.0
+        };
         curve.query_score = cosine(&input.query.vector, &curve.chunk_vector);
         curve.denoised_score = cosine(&input.denoised_vector, &curve.chunk_vector);
         curve.local_score = cosine(&input.local_vector, &curve.chunk_vector);
@@ -325,6 +348,10 @@ pub fn readout(
                     + input.config.pure_transfer_weight * clamp01(curve.transfer_score))
                     / semantic_total,
             );
+            // VCP's mature sparse/dense blend is applied to the complete union:
+            // nonmatches have lexical zero and share the same scoring scale.
+            let lexical_base =
+                lexical_weight * curve.lexical_score + (1.0 - lexical_weight) * semantic_base;
             let topology_raw = clamp01(
                 0.625 * geometry.path_quality
                     + 0.375
@@ -341,7 +368,7 @@ pub fn readout(
             let topology_bonus =
                 input.config.topology_bonus_cap * topology_raw * topology_reliability;
             let pure_score =
-                clamp01(semantic_base + topology_bonus.min(input.config.topology_bonus_cap));
+                clamp01(lexical_base + topology_bonus.min(input.config.topology_bonus_cap));
             let atomic_score = 0.75 * topology.node_graph_score + 0.25 * topology.edge_graph_score;
             let propositional_score =
                 0.25 * topology.node_graph_score + 0.75 * topology.edge_graph_score;
@@ -352,13 +379,19 @@ pub fn readout(
                     + morphology.propositional_weight * propositional_score
                     + morphology.narrative_weight * narrative_score,
             );
+            let direct_evidence = observables
+                .semantic_boundary_score
+                .max(observables.direct)
+                .max(curve.direct_anchor_score);
             ScoredWork {
                 curve,
                 geometry,
                 topology,
-                direct_evidence: observables.semantic_boundary_score.max(observables.direct),
+                direct_evidence,
                 observables,
                 pure_score,
+                semantic_score: semantic_base,
+                lexical_base,
                 graph_score,
                 role: String::new(),
                 anchor,
@@ -422,6 +455,7 @@ pub fn readout(
                     "anchorScore": item.anchor.score,
                     "anchorReliability": item.anchor.reliability,
                     "anchorStrength": item.anchor.strength,
+                    "effectiveAnchorStrength": item.anchor.strength.max(item.curve.direct_anchor_score),
                     "anchorBonus": item.anchor_bonus,
                     "contactedSeeds": item.anchor.contacted_seeds,
                     "exactContacts": item.anchor.exact_contacts,
@@ -429,6 +463,12 @@ pub fn readout(
                     "meanClosure": item.anchor.mean_closure,
                     "role": item.role,
                     "pureScore": item.pure_score,
+                    "semanticBase": item.semantic_score,
+                    "lexicalScore": item.curve.lexical_score,
+                    "bm25Score": item.curve.bm25_score,
+                    "lexicalWeight": lexical_weight,
+                    "lexicalBase": item.lexical_base,
+                    "directAnchorInput": item.curve.direct_anchor_score,
                     "finalScore": item.final_score,
                     "nativeBackend": "rust-rayon"
                 }))

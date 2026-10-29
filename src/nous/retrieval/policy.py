@@ -38,6 +38,8 @@ class ResolvedPolicy:
         if diagnostics == "none":
             value["vcp"]["include_trace"] = False
             value["vcp"]["include_fields"] = False
+        elif diagnostics == "full":
+            value["vcp"]["include_trace"] = True
         return _JSON.validate_python({**value, "limit": limit})
 
     def diagnostics(self) -> dict[str, JsonValue]:

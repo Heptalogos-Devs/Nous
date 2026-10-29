@@ -58,7 +58,7 @@ pub(super) fn source_top(
     });
     ranked
         .into_iter()
-        .take(limit.max(1))
+        .take(limit)
         .enumerate()
         .map(|(index, item)| (item.0, item.1, index + 1))
         .collect()
@@ -255,8 +255,10 @@ pub(super) fn load_curves(
             local_score: 0.0,
             transfer_score: 0.0,
             bm25_score: positive(candidate.bm25_score),
+            lexical_score: 0.0,
             time_score: positive(candidate.time_score),
             anchor_score: positive(candidate.anchor_score),
+            direct_anchor_score: clamp01(candidate.anchor_score),
             union_score: 0.0,
             union_rank: 0,
             sources: Vec::new(),

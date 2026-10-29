@@ -1,6 +1,10 @@
 //! Topology readout score assignment.
 use super::*;
 
+fn effective_anchor(item: &ScoredWork) -> f64 {
+    item.anchor.strength.max(item.curve.direct_anchor_score)
+}
+
 pub(super) fn assign_v3_scores(
     work: &mut [ScoredWork],
     mode: &str,
@@ -142,13 +146,13 @@ pub(super) fn assign_v3_scores(
     let anchor_mean = if work.is_empty() {
         0.0
     } else {
-        work.iter().map(|item| item.anchor.strength).sum::<f64>() / work.len() as f64
+        work.iter().map(effective_anchor).sum::<f64>() / work.len() as f64
     };
     let anchor_variance = if work.is_empty() {
         0.0
     } else {
         work.iter()
-            .map(|item| (item.anchor.strength - anchor_mean).powi(2))
+            .map(|item| (effective_anchor(item) - anchor_mean).powi(2))
             .sum::<f64>()
             / work.len() as f64
     };
@@ -161,7 +165,7 @@ pub(super) fn assign_v3_scores(
     let mut ranked_anchors: Vec<(usize, f64)> = work
         .iter()
         .enumerate()
-        .map(|(index, item)| (index, item.anchor.strength))
+        .map(|(index, item)| (index, effective_anchor(item)))
         .collect();
     ranked_anchors.sort_by(|left, right| right.1.partial_cmp(&left.1).unwrap_or(Ordering::Equal));
     let strongest = ranked_anchors.first().copied();
@@ -175,12 +179,12 @@ pub(super) fn assign_v3_scores(
     let graph_gate = omega.omega.powf(config.omega_gamma.max(0.0));
 
     for (index, item) in work.iter_mut().enumerate() {
-        let activation = if item.anchor.strength <= threshold {
+        let strength = effective_anchor(item);
+        let activation = if strength <= threshold {
             0.0
         } else if config.anchor_saturation - threshold > 1e-12 {
-            let normalized = clamp01(
-                (item.anchor.strength - threshold) / (config.anchor_saturation - threshold),
-            );
+            let normalized =
+                clamp01((strength - threshold) / (config.anchor_saturation - threshold));
             normalized * normalized * (3.0 - 2.0 * normalized)
         } else {
             1.0
