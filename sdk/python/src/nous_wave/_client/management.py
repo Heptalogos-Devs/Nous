@@ -7,6 +7,7 @@ from uuid import uuid4
 
 from pydantic import JsonValue, TypeAdapter
 
+from ..contracts.configuration import ConfigurationCatalog, ConfigurationDefinition
 from ..contracts.model_roles import (
     ModelContractRequest,
     ModelInvocationPreview,
@@ -23,6 +24,30 @@ from .context import ContextClient
 
 
 class ManagementClient(ContextClient):
+    async def configuration_catalog(self) -> ConfigurationCatalog:
+        return ConfigurationCatalog.model_validate(
+            await self.request(
+                "GET",
+                "/api/configuration",
+                params={
+                    "namespace_id": self.namespace_id or "instance",
+                    "subject_id": self.subject_id,
+                },
+            )
+        )
+
+    async def configuration_schema(self, key: str) -> ConfigurationDefinition:
+        return ConfigurationDefinition.model_validate(
+            await self.request(
+                "GET",
+                f"/api/configuration/{segment(key)}/schema",
+                params={
+                    "namespace_id": self.namespace_id or "instance",
+                    "subject_id": self.subject_id,
+                },
+            )
+        )
+
     async def configuration(self, request: Mapping[str, JsonValue]) -> JsonObject:
         action = request.get("action", "get")
         key = request.get("key", "models")
@@ -34,6 +59,16 @@ class ManagementClient(ContextClient):
             if request.get("subject_id") or self.subject_id
             else None,
         }
+        if action in {"list", "schema"}:
+            return object_value(
+                await self.request(
+                    "GET",
+                    "/api/configuration"
+                    if action == "list"
+                    else f"/api/configuration/{segment(key)}/schema",
+                    params=params,
+                )
+            )
         if action in {"get", "effective"}:
             return object_value(
                 await self.request("GET", f"/api/configuration/{segment(key)}", params=params)

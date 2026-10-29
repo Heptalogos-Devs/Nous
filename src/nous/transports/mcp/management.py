@@ -139,9 +139,10 @@ def register_management(
 
     @server.tool()
     async def configuration(
-        action: Literal["get", "effective", "history", "set", "reset"], command: JsonObject
+        action: Literal["list", "schema", "get", "effective", "history", "set", "reset"],
+        command: JsonObject,
     ) -> JsonObject:
-        """Read effective configuration or change an authorized scoped override.
+        """Read registered keys, schemas, effective values and history or change a scoped override.
 
         command has key, value, scope and operation_id as applicable. Model
         resources and instance-wide changes require unrestricted management.

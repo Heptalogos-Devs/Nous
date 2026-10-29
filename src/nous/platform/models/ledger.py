@@ -10,6 +10,7 @@ from uuid import uuid4
 import sqlalchemy as sa
 from nous_wave.contracts import CallContext, DomainError
 from nous_wave.contracts.model_calls import ArchivedCall
+from nous_wave.contracts.model_roles import ModelCachePolicy
 from pydantic import JsonValue, TypeAdapter
 
 from nous.platform.errors import NousError
@@ -190,8 +191,14 @@ class CallLedger:
         *,
         budget_role: str | None = None,
         invocation_id: str | None = None,
+        cache_policy: ModelCachePolicy = "shared",
     ) -> tuple[str, object | None]:
         request = dict(request)
+        if cache_policy == "invocation" and invocation_id is None:
+            raise DomainError(
+                "model_invocation_required",
+                "An invocation-scoped request requires its explicit invocation identity",
+            )
         role = budget_role or purpose
         digest = hashlib.sha256(json.dumps(request, sort_keys=True).encode()).hexdigest()
         day = datetime.now(UTC).date().isoformat()
@@ -230,7 +237,7 @@ class CallLedger:
                 .mappings()
                 .first()
             )
-            if cached:
+            if cached and cache_policy == "shared":
                 if invocation_id is not None:
                     await bind_in(tx, ctx, role, invocation_id, str(cached["id"]))
                 tx.result({"id": cached["id"], "reused": True})
@@ -270,7 +277,7 @@ class CallLedger:
                     request_hash=digest,
                     day=day,
                     status="reserved",
-                    request={**request, "budget_role": role},
+                    request={**request, "budget_role": role, "cache_policy": cache_policy},
                 )
             )
             tx.result({"id": call_id, "reused": False})

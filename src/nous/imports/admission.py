@@ -384,6 +384,7 @@ async def finish_admit(self: ImportService, ctx: CallContext, request_id: str) -
             ctx,
             ProcessCatalog(
                 operation_id=f"{command.operation_id}:process",
+                force=command.force,
                 catalog_id=value["catalog_id"],
                 llm_enabled=command.llm_enabled,
                 deferred_formation=command.deferred_formation,

@@ -59,6 +59,25 @@ def _table(items: list[dict[str, JsonValue]], locale: Localizer) -> None:
 
 
 def present(value: JsonValue, locale: Localizer) -> None:
+    if isinstance(value, dict) and isinstance(value.get("items"), list):
+        items = value["items"]
+        if (
+            isinstance(items, list)
+            and items
+            and all(
+                isinstance(item, dict) and "value_schema" in item and "write_access" in item
+                for item in items
+            )
+        ):
+            _table(
+                [
+                    {"key": item["key"], "write_access": item["write_access"]}
+                    for item in items
+                    if isinstance(item, dict)
+                ],
+                locale,
+            )
+            return
     if isinstance(value, dict) and isinstance(value.get("hits"), list):
         hits = value["hits"]
         assert isinstance(hits, list)

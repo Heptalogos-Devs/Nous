@@ -37,11 +37,9 @@ async def graph_admin(
     self: AMemorixService, ctx: CallContext, arguments: dict[str, JsonValue]
 ) -> dict[str, JsonValue]:
     if arguments.get("action") != "search":
-        raise DomainError(
-            "capability_unavailable",
-            "Graph action requires its native graph operation",
-            action=arguments.get("action"),
-        )
+        from .graph_actions import graph_action
+
+        return await graph_action(self, ctx, arguments)
     command = GraphSearchInput.model_validate(arguments)
     query = command.query.strip()
     if not query:

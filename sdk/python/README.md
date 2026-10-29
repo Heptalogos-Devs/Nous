@@ -76,6 +76,25 @@ JSON 接受 `records`、`paragraphs`、`docs` 包络，JSONL 保留记录顺序�
 
 `import_catalog`、`import_unit_output` 返回冻结 Unit 与不可变 Output。单位尝试保留实际 job_id、阶段、失败与可选 vector_error；未执行单位保持 pending。`vectors="required"` 要求向量完成，`metadata_allowed` 保留成功的正文 Output 及独立向量失败，`disabled` 不请求向量。
 
+同一 Catalog 可以分批提交 `ProcessCatalog(unit_ids=...)`。默认继续会按实际来源、LLM 与有效形成选项复用已完成单元；已接纳正文但向量失败的单元只继续向量步骤。新请求会保留原 Output 和付费结果，不重新形成已经满足本次政策的单元。`import_attempts` 返回各次真实处理结果；旧 Output 的首次向量政策保持不变，后续完成情况由实际尝试和向量事实表达。
+
+```python
+# 继续剩余的冻结单元，不重新拆分或重做先前成功的单元。
+continued = await client.submit_catalog(namespace_id, subject_id, ProcessCatalog(
+    catalog_id=catalog.id, unit_ids=tuple(unit.id for unit in catalog.units[1:]),
+    vectors="required",
+))
+
+# 明确重新形成所选单元。新 operation 产生新的模型调用意图；
+# 同一 operation 重放保留该次实际付费结果。
+redone = await client.submit_catalog(namespace_id, subject_id, ProcessCatalog(
+    catalog_id=catalog.id, unit_ids=(catalog.units[0].id,), force=True,
+    vectors="required",
+))
+```
+
+每个文件的全部原始单元都达到本次处理政策后，系统从跨作业的真实成功尝试生成 `FileSuccess`。只修改部分单元的形成政策时，其余旧政策输出不会被算作新政策的整文件成功；需要整文件重做时选择全部单元并设置 `force=True`。`retry_parent_job_id` 必须指向同一 Catalog 的实际处理请求。HTTP/MCP 和 CLI `catalog process` 的 `ProcessCatalog` JSON 使用相同字段；不必改变全局 Prompt 来触发默认继续。
+
 `job`、`jobs`、`wait_jobs`、`wait_success`、`cancel_job` 使用正式 DBOS 状态。等待采用有上限的退避和调用超时。失败作业保留已提交的业务事实。
 
 ## 查询与管理
@@ -86,7 +105,7 @@ JSON 接受 `records`、`paragraphs`、`docs` 包络，JSONL 保留记录顺序�
 
 来源管理使用 `source_directory`、`preview_sources`、`trash_sources`、`restore_sources`、`purge_sources` 及共享 `SourceCommand`；恢复保留实际 Observation 身份。Bundle 使用 `export_bundle` 与 `install_bundle` 合同，A-Memorix 提供 ZIP 文件操作。导出产物保留实际依赖闭包，读取与来源 purge 由材料 owner 共同约束。
 
-`configuration`、`prompts`、`model_contract`、`model_preview`、`model_call`、`backup` 接正式管理入口。`subject_diagnostics` 返回授权范围内的认知、向量、任务与实际 token 用量。不同凭据的 read/write/manage 能力由服务核验。
+`configuration`、`prompts`、`model_contract`、`model_preview`、`model_call`、`backup` 接正式管理入口。`configuration_catalog()` 列出注册配置、默认值、Schema 与写入权限，`configuration_schema(key)` 读取单项定义；`configuration` 的 `list`、`schema`、`get`、`history`、`set`、`reset` 与 CLI `config`、MCP 使用同一操作。管理界面的“配置”页可编辑作用域覆盖、恢复继承值及取回历史值。`subject_diagnostics` 返回授权范围内的认知、向量、任务与实际 token 用量。不同凭据的 read/write/manage 能力由服务核验。
 
 模型角色的实际输入、输出模式、对应 Schema 和 Prompt 可在调用前读取。`model_contract(ModelContractRequest(role="formation"))` 返回登记的输入/输出 Schema、当前 Prompt 和可选 variant；形成的 `text` 与 `media` 使用各自真实输出类型。`description`、`steward`、`maintenance`、`query_rerank` 同样使用实际消费者的合同。description 的 output_mode=text、输出 Schema 为 string，实际模型直接返回正文；其它强类型角色使用 json_schema。自由描述及两段解释的第一步均采用文本输出，应用保存正文与真实 producer_call_id；第二步仍同时传入原媒体和已保存描述。调用账本保留实际字符串及 actual_output_mode。自定义 Prompt 保留原内容，可在管理入口按实际用途编辑。
 
@@ -213,6 +232,9 @@ semantic/exploration 的 required 要求实际计算通道可用；require_compl
 
 
 A-Memorix 图谱搜索使用 `adapter.memory_graph_admin(action="search", query="项目", limit=50)`；`invoke("memory_graph_admin", {"action":"search","query":"项目"})` 供原 MaiBot RPC 直接调用。结果为实际实体与关系，匹配优先级依次为精确、前缀、子串；每项 reference 经 `CognitiveRef.model_validate(item["reference"])` 读取为强类型后，交给 `client.source(subject_id, reference)` 展开来源。读取受当前 SourceReadScope 与认知可见性约束。
+
+`client.graph_snapshot(namespace_id, subject_id)` 读取正式图谱目录。`client.manage_graph(namespace_id, subject_id, GraphChange(action="create_node", name="项目", reason="调用者提交的图谱登记"))` 创建有来源的 Entity；其余 action 支持改名、软删除、创建关系、修改权重及删除关系，返回实际报告 Material、Import 观察与认知修订。更改现有身份可传 exact `reference`，旧修订会返回 revision_conflict。`weight` 与 `epistemic.confidence` 分开保存，未知权重保留 None。
+
 
 
 `client.configuration({"action":"get","key":"network","namespace_id":namespace_id,"subject_id":subject_id})` 读取应用出站网络有效策略与 origin；`action="history"` 读取同一 scope 继承范围的正式配置历史（limit 1..1000）。network 控制应用 Provider 的代理、环境信任、CA/TLS、分阶段超时和连接池；策略更新在下一次调用边界生效，已运行调用的租约结束后关闭旧池。外部 SDK 自身的 Transport 保持独立。`retrieval` 使用同一配置 get/set/reset/history 入口，默认值来自正式 Native schema。

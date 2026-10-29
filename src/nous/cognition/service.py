@@ -39,6 +39,8 @@ from . import (
     access,
     evolution,
     formation,
+    graph_changes,
+    graph_state,
     growth,
     growth_validation,
     memory,
@@ -65,6 +67,9 @@ class CognitionService:
     replay_records_in = access.replay_records_in
     concept_by_alias = access.concept_by_alias
     set_deleted = access.set_deleted
+    set_deleted_in = access.set_deleted_in
+    graph_snapshot = graph_state.graph_snapshot
+    manage_graph = graph_changes.manage_graph
     adopt_seed = self_model.adopt_seed
     self_profile = self_model.self_profile
     merge_concepts = evolution.merge_concepts

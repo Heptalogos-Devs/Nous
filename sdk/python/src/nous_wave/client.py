@@ -1,7 +1,7 @@
 """Asynchronous typed client for Nous domain services."""
 
-from ._client.maintenance import MaintenanceClient
+from ._client.graph import GraphClient
 
 
-class NousClient(MaintenanceClient):
+class NousClient(GraphClient):
     """Public client for the shared Nous service contracts."""

@@ -1,29 +1,15 @@
 """The management workbench consumes the same authenticated HTTP operations."""
 
+import mimetypes
 from importlib.resources import files
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response
+from starlette.staticfiles import StaticFiles
 
 router = APIRouter()
-_ASSETS = {
-    "workbench.css": "text/css",
-    "responsive.css": "text/css",
-    "workbench.js": "text/javascript",
-    "client.js": "text/javascript",
-    "knowledge.js": "text/javascript",
-    "management.js": "text/javascript",
-    "model-contracts.js": "text/javascript",
-    "i18n.js": "text/javascript",
-    "fluent.js": "text/javascript",
-    "fluent.LICENSE": "text/plain",
-    "access.js": "text/javascript",
-    "bundles.js": "text/javascript",
-    "management.css": "text/css",
-    "media.js": "text/javascript",
-    "maintenance.js": "text/javascript",
-    "media.css": "text/css",
-}
+mimetypes.add_type("text/javascript", ".js")
+_ASSETS = StaticFiles(packages=[("nous", "resources/web")])
 _HEADERS = {
     "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' blob: data:; media-src 'self' blob:; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'",
     "X-Content-Type-Options": "nosniff",
@@ -46,9 +32,8 @@ async def locale_resource(locale: str) -> Response:
     return Response(content, media_type="text/plain", headers=_HEADERS)
 
 
-@router.get("/assets/{name}", include_in_schema=False)
-async def asset(name: str) -> Response:
-    if name not in _ASSETS:
-        raise HTTPException(status_code=404, detail="Asset does not exist")
-    content = files("nous").joinpath(f"resources/web/{name}").read_bytes()
-    return Response(content, media_type=_ASSETS[name], headers=_HEADERS)
+@router.get("/assets/{resource_path:path}", include_in_schema=False)
+async def asset(request: Request, resource_path: str) -> Response:
+    response = await _ASSETS.get_response(resource_path, request.scope)
+    response.headers.update(_HEADERS)
+    return response

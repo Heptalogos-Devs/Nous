@@ -13,6 +13,7 @@ from . import (
     attempts,
     catalog,
     embedding,
+    file_completion,
     observation,
     observation_jobs,
     processing,
@@ -47,7 +48,7 @@ class ImportService:
     submit_form_observation = observation_jobs.submit_form_observation
     submit_form_observation_in = observation_jobs.submit_form_observation_in
     run_form_observation = observation_jobs.run_form_observation
-    complete_files = processing.complete_files
+    complete_files = file_completion.complete_files
     embed_output = embedding.embed_output
     embedding_sync = embedding.embedding_sync
     embed_records = embedding.embed_records

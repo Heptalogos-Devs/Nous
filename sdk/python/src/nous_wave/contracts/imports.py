@@ -121,6 +121,7 @@ class FormationOptionsOverride(Contract):
 
 
 class ProcessCatalog(Operation):
+    force: bool = False
     deferred_formation: bool = False
     origin: dict[str, str] | None = None
     retry_parent_job_id: str | None = None

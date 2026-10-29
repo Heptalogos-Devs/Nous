@@ -106,6 +106,7 @@ class GrowthSchema(Contract):
 
 
 class GrowthAssociation(Contract):
+    weight: float | None = Field(default=None, ge=0, le=1)
     kind: Literal["association"]
     from_ref: GrowthRef
     to_ref: GrowthRef

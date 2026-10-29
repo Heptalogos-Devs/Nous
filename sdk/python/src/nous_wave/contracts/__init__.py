@@ -143,6 +143,8 @@ from .common import (
 from .common import (
     TimeRange as TimeRange,
 )
+from .configuration import ConfigurationCatalog as ConfigurationCatalog
+from .configuration import ConfigurationDefinition as ConfigurationDefinition
 from .context import ChangeContextSession as ChangeContextSession
 from .context import ChangeResidents as ChangeResidents
 from .context import ChangeWorkContext as ChangeWorkContext
@@ -164,6 +166,9 @@ from .credentials import Capability as Capability
 from .credentials import CreateCredential as CreateCredential
 from .credentials import CredentialRecord as CredentialRecord
 from .credentials import IssuedCredential as IssuedCredential
+from .graph_management import GraphChange as GraphChange
+from .graph_management import GraphChangeResult as GraphChangeResult
+from .graph_management import GraphSnapshot as GraphSnapshot
 from .growth import GrowthAction as GrowthAction
 from .growth import GrowthAdoption as GrowthAdoption
 from .growth import GrowthBinding as GrowthBinding

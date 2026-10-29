@@ -120,6 +120,6 @@ for item in result["items"]:
     source = await client.source(subject_id, CognitiveRef.model_validate(item["reference"]))
 ```
 
-search 按实体名称、真实身份、关系两端名称与谓词进行精确、前缀、子串匹配。items 保留旧界面的 type/title/matched_field/matched_value、entity_hash 或 relation_hash；这些身份指向实际 Native 认知，并附完整 reference 与来源根。置信度只有真实记录存在时返回。图谱写入动作仍要求相应领域操作，当前不会以修改投影替代认知变更。
+search 按实体名称、真实身份、关系两端名称与谓词进行精确、前缀、子串匹配。items 保留旧界面的 type/title/matched_field/matched_value、entity_hash 或 relation_hash；这些身份指向实际 Native 认知，并附完整 reference 与来源根。置信度只有真实记录存在时返回。get_graph、node_detail、edge_detail 读取同一认知目录；create_node、rename_node、delete_node、create_edge、update_edge_weight、delete_edge 由正式认知事务执行，保留调用者提交的更改报告和 Import 来源。Entity 身份保持稳定，改名更新相关关系的当前精确端点，删除保留历史修订。weight 是独立的 Association 字段，未记录时仍为 null；可视化的中性 prior 明确标为 neutral_prior。
 
-CLI 对应 `nous graph-search <namespace-id> <subject-id> <query> --limit 50`；MCP 的 `memory_graph_admin` 接受 search action、query 和 limit，沿同一来源权限读取。
+CLI 对应 `nous graph-search <namespace-id> <subject-id> <query> --limit 50`；MCP 的 `memory_graph_admin` 接受上述 action，额外字段放入 arguments；CLI `nous graph <namespace-id> <subject-id> <action> --request change.json` 使用同一字段。

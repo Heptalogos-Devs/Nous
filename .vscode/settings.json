@@ -8,7 +8,6 @@
       "source.organizeImports.ruff": "explicit"
     }
   },
-  "ruff.nativeServer": "on",
   "rust-analyzer.linkedProjects": ["native/Cargo.toml"],
   "rust-analyzer.check.command": "clippy",
   "rust-analyzer.cargo.extraEnv": {

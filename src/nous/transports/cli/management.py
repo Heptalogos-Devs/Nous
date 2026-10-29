@@ -204,6 +204,19 @@ def register(cli: typer.Typer) -> None:
             ),
         )
 
+    @config.command("list")
+    def list_config(ctx: typer.Context, namespace_id: str = "instance") -> None:
+        invoke(ctx, lambda api: api.configuration({"action": "list", "namespace_id": namespace_id}))
+
+    @config.command("schema")
+    def config_schema(ctx: typer.Context, key: str, namespace_id: str = "instance") -> None:
+        invoke(
+            ctx,
+            lambda api: api.configuration(
+                {"action": "schema", "key": key, "namespace_id": namespace_id}
+            ),
+        )
+
     @config.command("get")
     def get_config(
         ctx: typer.Context, key: str, namespace_id: str = "instance", subject_id: str | None = None

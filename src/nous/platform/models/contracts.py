@@ -22,6 +22,7 @@ from nous.platform.configuration import ModelRoute
 from nous.platform.configuration.models import ModelConfiguration, ModelResource, RoleResource
 
 from .generation import MediaInput, prepare_invocation
+from .provider_schema import response_formats
 from .roles import RoleDefinition, json_object
 
 if TYPE_CHECKING:
@@ -96,6 +97,10 @@ async def model_contract(
         input_schema=json_object(definition.input_type.model_json_schema()),
         output_schema=json_object(TypeAdapter(definition.output_type).json_schema()),
         output_mode="text" if definition.output_type is str else "json_schema",
+        provider_response_formats=response_formats(
+            definition.output_type,
+            resources.resolve(request.role, require_configured=False)[0].model,
+        ),
         prompt_id=role.prompt_id,
         prompt=ModelPrompt.model_validate(prompt),
     )
@@ -135,6 +140,7 @@ async def model_preview(
         input_schema=json_object(definition.input_type.model_json_schema()),
         output_schema=json_object(TypeAdapter(definition.output_type).json_schema()),
         output_mode="text" if definition.output_type is str else "json_schema",
+        provider_response_formats=response_formats(definition.output_type, prepared.route.model),
         prompt_id=prepared.role.prompt_id,
         prompt=ModelPrompt.model_validate(prepared.prompt),
     )

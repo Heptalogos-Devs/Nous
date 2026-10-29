@@ -12,6 +12,7 @@ from nous_wave.contracts import (
     MediaEmbeddingInput,
     MediaReference,
 )
+from nous_wave.contracts.model_roles import ModelCachePolicy
 from pydantic import BaseModel, TypeAdapter
 
 from nous.platform.configuration import EmbeddingRoute, ModelRoute, Settings
@@ -164,6 +165,7 @@ class ModelService:
         *,
         source_ids: tuple[str, ...] = (),
         invocation_id: str | None = None,
+        cache_policy: ModelCachePolicy = "shared",
         media: tuple[MediaInput, ...] = (),
     ) -> Generated[T]:
         if invocation_id is not None:
@@ -185,6 +187,7 @@ class ModelService:
             media,
             source_ids=source_ids,
             invocation_id=invocation_id,
+            cache_policy=cache_policy,
             budget_role=role_id,
         )
         return Generated(output=result, call_id=call_id)

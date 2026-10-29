@@ -158,10 +158,27 @@ def run(
 
     @mcp.tool()
     async def memory_graph_admin(
-        query: str = "", limit: int = 50, action: Literal["search"] = "search"
+        query: str = "",
+        limit: int = 50,
+        action: Literal[
+            "search",
+            "get_graph",
+            "node_detail",
+            "edge_detail",
+            "create_node",
+            "rename_node",
+            "delete_node",
+            "create_edge",
+            "update_edge_weight",
+            "delete_edge",
+        ] = "search",
+        arguments: dict[str, JsonValue] | None = None,
     ) -> JsonObject:
-        """Search actual entities and relations by name, identity or predicate within the bound subject."""
-        return await call("memory_graph_admin", {"action": action, "query": query, "limit": limit})
+        """Read graph/search/details or apply source-backed create, rename, weight and delete actions."""
+        return await call(
+            "memory_graph_admin",
+            {**(arguments or {}), "action": action, "query": query, "limit": limit},
+        )
 
     @mcp.tool()
     async def memory_source(target: str) -> JsonObject:

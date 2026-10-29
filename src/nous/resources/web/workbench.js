@@ -18,6 +18,7 @@ import {
 import { initializeAccess, loadCredentials, clearIssuedToken } from "./access.js";
 import { initializeBundles, clearBundle } from "./bundles.js";
 import { initializeMedia, loadMedia, clearMedia, renderMedia } from "./media.js";
+import { initializeConfiguration, loadConfiguration, resetConfiguration } from "./configuration.js";
 import {
   initializeMaintenance,
   loadMaintenance,
@@ -34,6 +35,7 @@ const titles = {
   contexts: "web-contexts",
   jobs: "web-jobs",
   models: "web-models",
+  configuration: "web-configuration",
   prompts: "cli-prompt",
   backups: "web-backups",
   bundles: "web-bundles",
@@ -72,6 +74,15 @@ async function namespaces() {
     $("subject").replaceChildren();
   }
 }
+function resetScopedViews() {
+  clearIssuedToken();
+  clearBundle();
+  clearMedia();
+  clearMaintenance();
+  resetKnowledge();
+  resetManagement();
+  resetConfiguration();
+}
 async function navigate(reload = true) {
   const page = location.hash.slice(1) || "search";
   if (!titles[page]) {
@@ -100,6 +111,7 @@ async function navigate(reload = true) {
     maintenance: loadMaintenance,
     jobs: loadJobs,
     models: loadModels,
+    configuration: loadConfiguration,
     prompts: loadPrompt,
     credentials: loadCredentials,
   }[page];
@@ -126,12 +138,7 @@ $("logout").onclick = () => {
   document.querySelectorAll("dialog:not(#entity-dialog)").forEach((dialog) => dialog.remove());
   $("login-error").textContent = "";
   state.token = "";
-  clearIssuedToken();
-  clearBundle();
-  clearMedia();
-  clearMaintenance();
-  resetKnowledge();
-  resetManagement();
+  resetScopedViews();
   for (const id of [
     "credential-list",
     "job-list",
@@ -153,22 +160,14 @@ window.addEventListener("nous:disconnect", () => $("logout").click());
 $("namespace").onchange = () =>
   busy($("namespace"), async () => {
     state.namespace = $("namespace").value;
-    resetKnowledge();
-    resetManagement();
-    clearBundle();
-    clearMedia();
-    clearMaintenance();
+    resetScopedViews();
     localStorage.setItem("nous.namespace", state.namespace);
     await subjects();
     await navigate();
   });
 $("subject").onchange = () => {
   state.subject = $("subject").value;
-  resetKnowledge();
-  resetManagement();
-  clearBundle();
-  clearMedia();
-  clearMaintenance();
+  resetScopedViews();
   localStorage.setItem("nous.subject", state.subject);
   navigate().catch(error);
 };
@@ -189,6 +188,7 @@ form("entity-form", async () => {
     state.namespace = value.id;
     state.subject = "";
   } else state.subject = value.id;
+  resetScopedViews();
   await namespaces();
   $("entity-dialog").close();
   $("entity-name").value = "";
@@ -197,6 +197,7 @@ form("entity-form", async () => {
 });
 initializeKnowledge();
 initializeManagement();
+initializeConfiguration();
 initializeAccess();
 initializeBundles();
 initializeMedia();

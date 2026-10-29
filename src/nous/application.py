@@ -6,7 +6,7 @@ from nous_wave.contracts.context import ContextsPolicy
 from nous.identity.credentials import CredentialsService
 from nous.platform.configuration import Settings
 from nous.platform.configuration.models import initial_resources
-from nous.platform.configuration.service import ConfigurationService
+from nous.platform.configuration.service import ConfigurationEntry, ConfigurationService
 from nous.platform.execution import DurableExecution, QueueSpec
 from nous.platform.models import ModelService
 from nous.platform.network.service import NetworkService
@@ -27,13 +27,13 @@ class Application:
         self.configuration = ConfigurationService(
             self.authority,
             {
-                "models": initial_resources(settings.model, settings.embedding).model_dump(
-                    mode="json"
+                "models": ConfigurationEntry(
+                    initial_resources(settings.model, settings.embedding), instance_management=True
                 ),
-                "integrations.amemorix": AMemorixPolicy().model_dump(mode="json"),
-                "contexts": ContextsPolicy().model_dump(mode="json"),
-                "network": settings.network.model_dump(mode="json"),
-                "retrieval": retrieval_defaults().model_dump(mode="json"),
+                "integrations.amemorix": ConfigurationEntry(AMemorixPolicy()),
+                "contexts": ConfigurationEntry(ContextsPolicy()),
+                "network": ConfigurationEntry(settings.network, instance_management=True),
+                "retrieval": ConfigurationEntry(retrieval_defaults()),
             },
         )
         self.prompts = PromptService(self.authority)

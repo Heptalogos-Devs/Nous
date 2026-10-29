@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from datetime import UTC
 from typing import TYPE_CHECKING, Literal
 from uuid import uuid4
@@ -12,6 +13,8 @@ from uuid import uuid4
 from nous_wave.contracts import CallContext, DomainError, FormationProposal, ImportUnit
 from nous_wave.contracts.imports import ImportFailure, UnitAttempt
 from sqlalchemy import select, update
+
+from nous.platform.persistence import ReadView, WriteTx
 
 from .schema import requests
 
@@ -123,15 +126,38 @@ async def read_attempts(
 ) -> tuple[UnitAttempt, ...]:
     async with self.authority.read(ctx) as view:
         await self.read_catalog_in(view, ctx, catalog_id)
-        rows = (await view.connection.execute(select(requests.c.record))).scalars()
-        result: list[UnitAttempt] = []
-        for row in rows:
-            if row.get("kind") != "unit_attempt" or row.get("purged"):
-                continue
-            scope = row["context"]
-            if scope["namespace_id"] != ctx.namespace_id or scope["subject_id"] != ctx.subject_id:
-                continue
-            value = UnitAttempt.model_validate(row["attempt"])
-            if value.catalog_id == catalog_id:
-                result.append(value)
-        return tuple(sorted(result, key=lambda value: (value.started_at, value.id)))
+        return tuple(item.attempt for item in await attempts_in(view, ctx, catalog_id))
+
+
+@dataclass(frozen=True)
+class AttemptRecord:
+    attempt: UnitAttempt
+    caller_id: str
+
+
+async def attempts_in(
+    view: ReadView | WriteTx,
+    ctx: CallContext,
+    catalog_id: str,
+    unit_ids: set[str] | None = None,
+) -> tuple[AttemptRecord, ...]:
+    statement = select(requests.c.record).where(
+        requests.c.record["kind"].as_string() == "unit_attempt",
+        requests.c.record["context"]["namespace_id"].as_string() == ctx.namespace_id,
+        requests.c.record["context"]["subject_id"].as_string() == ctx.require_subject(),
+        requests.c.record["attempt"]["catalog_id"].as_string() == catalog_id,
+    )
+    if unit_ids is not None:
+        statement = statement.where(
+            requests.c.record["attempt"]["unit_id"].as_string().in_(unit_ids)
+        )
+    rows = (await view.connection.execute(statement)).scalars()
+    result = [
+        AttemptRecord(
+            UnitAttempt.model_validate(row["attempt"]),
+            CallContext.model_validate(row["context"]).caller_id,
+        )
+        for row in rows
+        if not row.get("purged")
+    ]
+    return tuple(sorted(result, key=lambda value: (value.attempt.started_at, value.attempt.id)))

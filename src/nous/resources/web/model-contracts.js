@@ -69,6 +69,7 @@ export async function showModelContract(role, editPrompt) {
       ),
       section("web-model-input-schema", contract.input_schema, true),
       section("web-model-output-schema", contract.output_schema, true),
+      section("web-model-provider-formats", contract.provider_response_formats),
       section("web-model-active-prompt", contract.prompt),
     );
   }

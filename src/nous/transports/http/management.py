@@ -179,6 +179,22 @@ async def status(request: Request):
         }
 
 
+@router.get("/configuration")
+async def configuration_catalog(
+    request: Request, namespace_id: str = "instance", subject_id: str | None = None
+):
+    await context(request, namespace_id, subject_id, capability="read")
+    return application(request).configuration.catalog()
+
+
+@router.get("/configuration/{key}/schema")
+async def configuration_schema(
+    request: Request, key: str, namespace_id: str = "instance", subject_id: str | None = None
+):
+    await context(request, namespace_id, subject_id, capability="read")
+    return application(request).configuration.describe(key)
+
+
 @router.get("/configuration/{key}")
 async def configuration(
     request: Request, key: str, namespace_id: str = "instance", subject_id: str | None = None
@@ -210,9 +226,10 @@ async def configure(
     subject_id: str | None = None,
 ):
     principal = await authorize(request, capability="manage")
-    if command.scope == "instance" or key in {"models", "network"}:
+    service = application(request).configuration
+    if command.scope == "instance" or service.entry(key).instance_management:
         principal.require_instance_management()
-    return await application(request).configuration.set(
+    return await service.set(
         await context(request, namespace_id, subject_id, capability="manage"),
         key,
         command.value,

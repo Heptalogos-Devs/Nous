@@ -162,6 +162,28 @@ def register(cli: typer.Typer) -> None:
 
         invoke(ctx, search)
 
+    @cli.command("graph")
+    def graph(
+        ctx: typer.Context,
+        namespace_id: str,
+        subject_id: str,
+        action: Annotated[str, typer.Argument()] = "get_graph",
+        request: Path | None = None,
+    ) -> None:
+        """Read graph details or apply a source-backed manual graph action from JSON."""
+        from nous_wave.amemorix import AMemorixAdapter
+
+        values = (
+            TypeAdapter(dict[str, JsonValue]).validate_python(read_json(request)) if request else {}
+        )
+
+        async def run(api: NousClient) -> object:
+            return await AMemorixAdapter(
+                api, namespace_id=namespace_id, subject_id=subject_id
+            ).memory_graph_admin(action=action, **values)
+
+        invoke(ctx, run)
+
     @source.command("list")
     def sources(ctx: typer.Context, namespace_id: str, subject_id: str) -> None:
         invoke(ctx, lambda api: api.source_directory(namespace_id, subject_id))

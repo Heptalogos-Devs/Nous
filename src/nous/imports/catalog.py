@@ -160,6 +160,7 @@ async def freeze_catalog_in(
             "material_id": material["id"],
             "document": document.model_dump(mode="json"),
             "content_hash": material["content_hash"],
+            "original_unit_count": sum(len(chunks) for chunks in record_chunks),
         }
         await tx.connection.execute(
             inputs.insert().values(

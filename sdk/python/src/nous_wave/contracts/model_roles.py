@@ -9,6 +9,8 @@ from pydantic import ConfigDict, Field, JsonValue
 from .common import Contract
 from .media import MediaReference
 
+ModelCachePolicy = Literal["shared", "invocation"]
+
 
 class ModelContractRequest(Contract):
     role: str = Field(min_length=1)
@@ -29,6 +31,7 @@ class ModelRoleContract(Contract):
     input_schema: dict[str, JsonValue]
     output_schema: dict[str, JsonValue]
     output_mode: Literal["text", "json_schema"]
+    provider_response_formats: dict[str, dict[str, JsonValue] | None]
     prompt_id: str
     prompt: ModelPrompt
     provider_called: Literal[False] = False
@@ -64,6 +67,7 @@ class InvocationMedia(Contract):
 
 
 class InvocationSnapshot(Contract):
+    cache_policy: ModelCachePolicy = "shared"
     model_config = ConfigDict(extra="forbid", frozen=True, serialize_by_alias=True)
     purpose: str
     source_ids: tuple[str, ...]
@@ -73,6 +77,8 @@ class InvocationSnapshot(Contract):
     prompt: ModelPrompt
     output_schema: dict[str, JsonValue] = Field(alias="schema")
     output_mode: Literal["text", "json_schema"]
+    provider_schema_backend: Literal["pydantic_ai", "openai_sdk"]
+    provider_response_format: dict[str, JsonValue] | None
     media: tuple[InvocationMedia, ...]
     video_content_format: Literal["video_url"] | None = None
 

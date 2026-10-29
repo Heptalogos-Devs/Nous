@@ -6,6 +6,7 @@ from typing import Literal
 
 from nous_wave.contracts import CallContext, FormationProposal
 from nous_wave.contracts.cognition import FormationDraft
+from nous_wave.contracts.model_roles import ModelCachePolicy
 
 from nous.cognition.models import ModelServices
 from nous.platform.models.generation import MediaInput
@@ -15,10 +16,21 @@ from .model_contracts import Description, MediaFormationDraft
 
 
 async def form(
-    models: ModelServices, ctx: CallContext, text: str, source: dict[str, object]
+    models: ModelServices,
+    ctx: CallContext,
+    text: str,
+    source: dict[str, object],
+    *,
+    invocation_id: str | None = None,
+    cache_policy: ModelCachePolicy = "shared",
 ) -> FormationProposal:
     generated = await models.generate(
-        ctx, "formation", {"source_text": text, "source": source}, FormationDraft
+        ctx,
+        "formation",
+        {"source_text": text, "source": source},
+        FormationDraft,
+        invocation_id=invocation_id,
+        cache_policy=cache_policy,
     )
     proposal = FormationProposal.model_validate(generated.output.model_dump(mode="json"))
     event = parse_timepoint(proposal.event_expression) if proposal.event_expression else None

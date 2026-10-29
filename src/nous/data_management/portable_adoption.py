@@ -335,6 +335,9 @@ def normalize(loaded: PortableArchive, data: bytes) -> SubjectBundle:
                 to_ref=right,
                 relation=predicate,
                 basis_class="source_evidence",
+                weight=TypeAdapter(float | None).validate_python(
+                    metadata(relation.get("metadata")).get("weight")
+                ),
                 epistemic=EpistemicStance.model_validate(relation_epistemic)
                 if relation_epistemic is not None
                 else None,

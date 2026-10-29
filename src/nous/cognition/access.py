@@ -134,30 +134,67 @@ async def set_deleted(
             return await self.replay_record_in(
                 tx, ctx, CognitiveRecord.model_validate(tx.replay_result)
             )
-        previous = await self.get_in(tx, ctx, reference)
-        if previous.body is None:
-            raise DomainError("cognition_purged", "A purged object cannot be changed")
-        adopted = await self.adopt_in(
+        adopted = await self.set_deleted_in(tx, ctx, reference, deleted)
+        result = tx.result(adopted)
+    if self.invalidate:
+        await self.invalidate()
+    return result
+
+
+async def set_deleted_in(
+    self: CognitionService,
+    tx: WriteTx,
+    ctx: CallContext,
+    reference: CognitiveRef,
+    deleted: bool,
+    *,
+    evidence: tuple[EvidenceLink, ...] = (),
+    reason: str = "Manual cognitive lifecycle change",
+) -> CognitiveRecord:
+    previous = await self.get_in(tx, ctx, reference)
+    if isinstance(previous.body, MemoryBody):
+        return await self.change_memory_in(
             tx,
             ctx,
-            AdoptCognition(
-                id=reference.id,
-                expected_revision=reference.revision,
-                body=previous.body,
-                evidence=(EvidenceLink(reference=reference),),
-                times=previous.times.model_copy(update={"formation": ctx.clock}),
+            MemoryChange(
+                reference=reference, action="trash" if deleted else "restore", reason=reason
             ),
         )
-        adopted = adopted.model_copy(update={"deleted": deleted})
-        await tx.connection.execute(
-            update(revisions)
-            .where(
-                revisions.c.id == adopted.reference.id,
-                revisions.c.revision == adopted.reference.revision,
-            )
-            .values(record=adopted.model_dump(mode="json"))
+    if previous.body is None:
+        raise DomainError("cognition_purged", "A purged object cannot be changed")
+    adopted = await self.adopt_in(
+        tx,
+        ctx,
+        AdoptCognition(
+            id=reference.id,
+            expected_revision=reference.revision,
+            body=previous.body,
+            evidence=(EvidenceLink(reference=reference), *evidence),
+            times=previous.times,
+        ),
+    )
+    from nous_wave.contracts import RevisionCause
+
+    adopted = adopted.model_copy(
+        update={
+            "deleted": deleted,
+            "cause": RevisionCause(
+                action="trash" if deleted else "restore",
+                actor=ctx.caller_id,
+                reason=reason,
+                parent=reference,
+            ),
+        }
+    )
+    await tx.connection.execute(
+        update(revisions)
+        .where(
+            revisions.c.id == adopted.reference.id,
+            revisions.c.revision == adopted.reference.revision,
         )
-        return tx.result(adopted)
+        .values(record=adopted.model_dump(mode="json"))
+    )
+    return adopted
 
 
 async def replay_record_in(

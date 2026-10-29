@@ -193,6 +193,7 @@ class SchemaBody(Contract):
 
 
 class AssociationBody(Contract):
+    weight: float | None = Field(default=None, ge=0, le=1)
     kind: Literal["association"] = "association"
     from_ref: CognitiveRef
     to_ref: CognitiveRef
@@ -432,6 +433,7 @@ class FormationCatalogEntry(Contract):
 
 
 class ProposedAssociation(Contract):
+    weight: float | None = Field(default=None, ge=0, le=1)
     from_key: str = Field(
         description="Exactly memory, a key declared in entities/concepts/schemas, or a source.formation_catalog key; never a free-form label or invented ID."
     )

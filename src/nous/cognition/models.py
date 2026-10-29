@@ -10,6 +10,7 @@ if TYPE_CHECKING:
     from nous.platform.models.generation import Generated, MediaInput
 
 from nous_wave.contracts import CallContext, EmbeddingBatch, MediaEmbeddingInput
+from nous_wave.contracts.model_roles import ModelCachePolicy
 
 
 class ModelServices(Protocol):
@@ -22,6 +23,7 @@ class ModelServices(Protocol):
         *,
         source_ids: tuple[str, ...] = (),
         invocation_id: str | None = None,
+        cache_policy: ModelCachePolicy = "shared",
         media: tuple[MediaInput, ...] = (),
     ) -> Generated[T]: ...
     async def embed(

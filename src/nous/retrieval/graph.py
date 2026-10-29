@@ -83,7 +83,7 @@ def graph(
                 adjacency[tag_rows[body.from_ref.exact()]].append(
                     (
                         tag_rows[body.to_ref.exact()],
-                        1.0,
+                        body.weight if body.weight is not None else 1.0,
                         1 if body.polarity == "positive" else -1,
                         material_roots(record),
                     )

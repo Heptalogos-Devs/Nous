@@ -8,8 +8,9 @@ from dataclasses import dataclass
 from typing import TypeVar
 
 from nous_wave.contracts import CallContext, DomainError
+from nous_wave.contracts.model_roles import ModelCachePolicy
 from pydantic import BaseModel, JsonValue, TypeAdapter
-from pydantic_ai import Agent, BinaryContent, NativeOutput, capture_run_messages
+from pydantic_ai import Agent, BinaryContent, capture_run_messages
 from pydantic_ai.capabilities import Instrumentation
 from pydantic_ai.messages import ModelMessagesTypeAdapter
 from pydantic_ai.models.instrumented import InstrumentationSettings
@@ -23,6 +24,7 @@ from nous.platform.network.service import NetworkService
 from .completion import require_complete_text
 from .content_parts import complete_video
 from .ledger import CallLedger
+from .provider_schema import native_output, response_format
 
 T = TypeVar("T", bound=BaseModel | str)
 
@@ -68,6 +70,11 @@ def prepare_invocation(
             role=purpose,
             reason="video_protocol_missing",
         )
+    backend = (
+        "openai_sdk"
+        if any(part.media_type.startswith("video/") for part in media)
+        else "pydantic_ai"
+    )
     snapshot: dict[str, object] = {
         "purpose": purpose,
         "source_ids": list(source_ids),
@@ -81,6 +88,8 @@ def prepare_invocation(
         },
         "prompt": prompt,
         "schema": TypeAdapter(output_type).json_schema(),
+        "provider_schema_backend": backend,
+        "provider_response_format": response_format(output_type, route.model, backend=backend),
         "output_mode": "text" if output_type is str else "json_schema",
         "media": [
             {
@@ -115,9 +124,12 @@ class Generation:
         source_ids: tuple[str, ...] = (),
         budget_role: str | None = None,
         invocation_id: str | None = None,
+        cache_policy: ModelCachePolicy = "shared",
     ) -> tuple[T, str]:
         video = any(part.media_type.startswith("video/") for part in media)
         snapshot = prepare_invocation(purpose, route, prompt, output_type, media, source_ids)
+        if cache_policy != "shared":
+            snapshot["cache_policy"] = cache_policy
         call_id, cached = await self.ledger.reserve(
             ctx,
             purpose,
@@ -125,6 +137,7 @@ class Generation:
             route.max_calls_per_day,
             budget_role=budget_role,
             invocation_id=invocation_id,
+            cache_policy=cache_policy,
         )
         if cached is not None:
             return TypeAdapter(output_type).validate_python(cached), call_id
@@ -174,7 +187,7 @@ class Generation:
             provider = OpenAIProvider(base_url=route.base_url, api_key=key, http_client=client)
             agent = Agent(
                 OpenAIChatModel(route.model, provider=provider),
-                output_type=str if output_type is str else NativeOutput(output_type),
+                output_type=native_output(output_type),
                 retries=0,
                 capabilities=[
                     Instrumentation(

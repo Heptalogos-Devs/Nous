@@ -1,18 +1,15 @@
 """Whole-key overrides, scoped inheritance and immutable change history."""
 
+from dataclasses import dataclass
 from typing import Literal
 
 import sqlalchemy as sa
-from nous_wave.amemorix.contracts import AMemorixPolicy
 from nous_wave.contracts import CallContext
-from nous_wave.contracts.context import ContextsPolicy
-from nous_wave.contracts.retrieval_policy import RetrievalPolicy
+from nous_wave.contracts.configuration import ConfigurationCatalog, ConfigurationDefinition
 from pydantic import BaseModel, TypeAdapter
 
-from nous.platform.network.policy import NetworkPolicy
+from nous.platform.errors import NousError
 from nous.platform.persistence import Authority, metadata
-
-from .models import ModelConfiguration
 
 configuration = sa.Table(
     "nous_configuration",
@@ -32,27 +29,52 @@ history = sa.Table(
 )
 
 
-class ConfigurationService:
-    schemas: dict[str, type[BaseModel]] = {
-        "models": ModelConfiguration,
-        "network": NetworkPolicy,
-        "retrieval": RetrievalPolicy,
-        "integrations.amemorix": AMemorixPolicy,
-        "contexts": ContextsPolicy,
-    }
+@dataclass(frozen=True)
+class ConfigurationEntry:
+    default: BaseModel
+    instance_management: bool = False
 
-    def __init__(self, authority: Authority, defaults: dict[str, object]) -> None:
+
+class ConfigurationService:
+    def __init__(self, authority: Authority, entries: dict[str, ConfigurationEntry]) -> None:
         self.authority = authority
-        self.defaults = defaults
+        self._entries = dict(entries)
+        self._defaults = {
+            key: entry.default.model_dump(mode="json") for key, entry in self._entries.items()
+        }
+
+    def entry(self, key: str) -> ConfigurationEntry:
+        try:
+            return self._entries[key]
+        except KeyError as error:
+            raise NousError(
+                "configuration_key_not_found",
+                "Configuration key is not registered",
+                status=404,
+                context={"key": key},
+            ) from error
+
+    def describe(self, key: str) -> ConfigurationDefinition:
+        entry = self.entry(key)
+        return ConfigurationDefinition(
+            key=key,
+            value_schema=type(entry.default).model_json_schema(),
+            default_value=self._defaults[key],
+            write_access="instance_manage" if entry.instance_management else "manage",
+        )
+
+    def catalog(self) -> ConfigurationCatalog:
+        return ConfigurationCatalog(
+            items=tuple(self.describe(key) for key in sorted(self._entries))
+        )
 
     def scopes(self, ctx: CallContext) -> tuple[str, ...]:
         scopes = ("instance", f"namespace:{ctx.namespace_id}")
         return (*scopes, f"subject:{ctx.subject_id}") if ctx.subject_id else scopes
 
     async def effective(self, ctx: CallContext, key: str) -> dict[str, object]:
-        if key not in self.schemas:
-            raise KeyError(key)
-        value = self.defaults[key]
+        entry = self.entry(key)
+        value = self._defaults[key]
         origin = "default"
         async with self.authority.read(ctx) as view:
             for scope in self.scopes(ctx):
@@ -69,11 +91,11 @@ class ConfigurationService:
                 )
                 if row:
                     value, origin = row["value"], scope
-        return {"key": key, "value": value, "origin": origin}
+        resolved = type(entry.default).model_validate(value).model_dump(mode="json")
+        return {"key": key, "value": resolved, "origin": origin}
 
     async def history(self, ctx: CallContext, key: str, limit: int = 100) -> dict[str, object]:
-        if key not in self.schemas:
-            raise KeyError(key)
+        self.entry(key)
         if not 1 <= limit <= 1000:
             raise ValueError("Configuration history limit must be between 1 and 1000")
         async with self.authority.read(ctx) as view:
@@ -95,8 +117,7 @@ class ConfigurationService:
         operation_id: str,
         scope: Literal["instance", "namespace", "subject"] = "instance",
     ) -> dict[str, object]:
-        if key not in self.schemas:
-            raise KeyError(key)
+        entry = self.entry(key)
         if scope == "subject" and ctx.subject_id is None:
             raise ValueError("Subject scope requires a subject")
         target = (
@@ -107,7 +128,7 @@ class ConfigurationService:
         parsed = (
             None
             if value is None
-            else self.schemas[key].model_validate(value).model_dump(mode="json")
+            else type(entry.default).model_validate(value).model_dump(mode="json")
         )
         async with self.authority.write(
             ctx,

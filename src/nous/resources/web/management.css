@@ -16,6 +16,13 @@
 .model-contract textarea {
   font-family: ui-monospace, monospace;
 }
+#configuration-panel .json-view {
+  max-height: 420px;
+  overflow: auto;
+}
+#configuration-form textarea {
+  font-family: ui-monospace, monospace;
+}
 .sidebar {
   overflow-y: auto;
 }
