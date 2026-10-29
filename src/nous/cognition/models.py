@@ -13,7 +13,7 @@ from nous_wave.contracts import CallContext, EmbeddingBatch, MediaEmbeddingInput
 
 
 class ModelServices(Protocol):
-    async def structured[T: BaseModel](
+    async def generate[T: BaseModel | str](
         self,
         ctx: CallContext,
         role_id: str,

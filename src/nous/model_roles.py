@@ -5,7 +5,7 @@ from nous_wave.contracts.context import ContextSegment, ContextUsage, StewardPro
 from nous_wave.contracts.growth import GrowthProposal
 from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
-from nous.imports.model_contracts import DescriptionDraft, MediaFormationDraft
+from nous.imports.model_contracts import MediaFormationDraft
 from nous.platform.models.roles import RoleDefinition, RoleRegistry
 from nous.retrieval.readout import Ranking
 
@@ -93,7 +93,7 @@ def register(registry: RoleRegistry) -> None:
             "description",
             "media",
             MediaFormationInput,
-            DescriptionDraft,
+            str,
             default=True,
             invocation_purpose="media.description",
         ),

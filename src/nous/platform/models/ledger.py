@@ -61,16 +61,20 @@ class CallLedger:
         return await history.export_in(view, ctx, call_ids, calls)
 
     async def import_in(
-        self, tx: WriteTx, ctx: CallContext, records: tuple[ArchivedCall, ...],
-        mapping: Mapping[str, str], installation_id: str,
+        self,
+        tx: WriteTx,
+        ctx: CallContext,
+        records: tuple[ArchivedCall, ...],
+        mapping: Mapping[str, str],
+        installation_id: str,
     ) -> dict[str, str]:
         return await history.import_in(tx, ctx, records, mapping, installation_id)
 
     async def recall(
-        self, ctx: CallContext, purpose: str, invocation_id: str
+        self, ctx: CallContext, role_id: str, invocation_id: str
     ) -> InvocationResult | None:
         async with self.authority.read(ctx) as view:
-            return await invocation_in(view, ctx, purpose, invocation_id, calls)
+            return await invocation_in(view, ctx, role_id, invocation_id, calls)
 
     async def purge_calls_in(self, tx: WriteTx, call_ids: tuple[str, ...]) -> None:
         if call_ids:
@@ -89,20 +93,20 @@ class CallLedger:
         self,
         tx: WriteTx,
         ctx: CallContext,
-        purpose: str,
+        role_id: str,
         identities: tuple[str, ...],
     ) -> None:
         if (ctx.namespace_id, ctx.subject_id) != (tx.ctx.namespace_id, tx.ctx.subject_id):
             raise ValueError("Invocation erasure must stay in the source transaction's subject")
         for identity in identities:
-            await retire_in(tx, ctx, purpose, identity)
+            await retire_in(tx, ctx, role_id, identity)
         ids = tuple(
             str(value)
             for value in (
                 await tx.connection.execute(
                     sa.select(invocations.c.call_id).where(
                         invocations.c.key.in_(
-                            tuple(invocation_key(ctx, purpose, identity) for identity in identities)
+                            tuple(invocation_key(ctx, role_id, identity) for identity in identities)
                         )
                     )
                 )
@@ -204,7 +208,7 @@ class CallLedger:
                     status=409,
                 )
             if invocation_id is not None:
-                retained = await invocation_in(tx, ctx, purpose, invocation_id, calls)
+                retained = await invocation_in(tx, ctx, role, invocation_id, calls)
                 if retained is not None:
                     tx.result({"id": retained.call_id, "reused": True})
                     return retained.call_id, retained.output
@@ -228,7 +232,7 @@ class CallLedger:
             )
             if cached:
                 if invocation_id is not None:
-                    await bind_in(tx, ctx, purpose, invocation_id, str(cached["id"]))
+                    await bind_in(tx, ctx, role, invocation_id, str(cached["id"]))
                 tx.result({"id": cached["id"], "reused": True})
                 return str(cached["id"]), cached["result"]
             count = int(
@@ -256,7 +260,7 @@ class CallLedger:
                 )
             call_id = str(uuid4())
             if invocation_id is not None:
-                await bind_in(tx, ctx, purpose, invocation_id, call_id)
+                await bind_in(tx, ctx, role, invocation_id, call_id)
             await tx.connection.execute(
                 calls.insert().values(
                     id=call_id,

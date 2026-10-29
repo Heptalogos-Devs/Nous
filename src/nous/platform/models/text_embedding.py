@@ -8,7 +8,7 @@ from openai import AsyncOpenAI
 from nous.platform.configuration import EmbeddingRoute
 from nous.platform.errors import Unavailable
 
-from .embedding import vector_space
+from .embedding import retained_embedding, vector_space
 from .generation import Generation
 from .ledger import CallLedger
 
@@ -33,7 +33,7 @@ async def embed_one(
     }
     call_id, cached = await ledger.reserve(ctx, "embedding", request, route.max_calls_per_day)
     if cached is not None:
-        return EmbeddingBatch.model_validate(cached).model_copy(update={"call_id": call_id})
+        return retained_embedding(cached, call_id)
     try:
         client = generation.client(route.timeout_seconds)
         sdk = AsyncOpenAI(base_url=route.base_url, api_key=key, http_client=client, max_retries=0)
@@ -58,8 +58,7 @@ async def embed_one(
             space=space,
             dimensions=route.dimensions,
             vectors=tuple(vectors),
-            call_id=call_id,
-            call_ids=(call_id,),
+            call_ids=(call_id,) * len(vectors),
         )
         await ledger.finish(ctx, call_id, result.model_dump(mode="json"), {})
         return result
@@ -114,6 +113,5 @@ async def embed_text(
         space=batches[0].space,
         dimensions=batches[0].dimensions,
         vectors=tuple(vector for batch in batches for vector in batch.vectors),
-        call_id=batches[0].call_id,
         call_ids=tuple(call_id for batch in batches for call_id in batch.call_ids),
     )

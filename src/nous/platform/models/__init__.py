@@ -12,7 +12,7 @@ from nous_wave.contracts import (
     MediaEmbeddingInput,
     MediaReference,
 )
-from pydantic import BaseModel
+from pydantic import BaseModel, TypeAdapter
 
 from nous.platform.configuration import EmbeddingRoute, ModelRoute, Settings
 from nous.platform.configuration.models import ModelConfiguration
@@ -35,7 +35,7 @@ from .text_embedding import embed_text
 os.environ.setdefault("PYDANTIC_AI_NO_BANNER", "1")
 
 
-T = TypeVar("T", bound=BaseModel)
+T = TypeVar("T", bound=BaseModel | str)
 
 
 def credential(route: ModelRoute, role_id: str | None = None) -> str:
@@ -155,7 +155,7 @@ class ModelService:
                 reason="prompt_missing",
             ) from error
 
-    async def structured(
+    async def generate(
         self,
         ctx: CallContext,
         role_id: str,
@@ -170,7 +170,8 @@ class ModelService:
             retained = await self.ledger.recall(ctx, role_id, invocation_id)
             if retained is not None:
                 return Generated(
-                    output=output_type.model_validate(retained.output), call_id=retained.call_id
+                    output=TypeAdapter(output_type).validate_python(retained.output),
+                    call_id=retained.call_id,
                 )
         prepared = await self.prepare_role(ctx, role_id, variables, output_type=output_type)
         route, prompt = prepared.route, prepared.prompt

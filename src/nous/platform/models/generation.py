@@ -22,11 +22,11 @@ from nous.platform.errors import Unavailable
 from .content_parts import complete_video
 from .ledger import CallLedger
 
-T = TypeVar("T", bound=BaseModel)
+T = TypeVar("T", bound=BaseModel | str)
 
 
 @dataclass(frozen=True)
-class Generated[T: BaseModel]:
+class Generated[T: BaseModel | str]:
     output: T
     call_id: str
 
@@ -51,7 +51,7 @@ def prepare_invocation(
     purpose: str,
     route: ModelRoute,
     prompt: dict[str, object],
-    output_type: type[BaseModel],
+    output_type: type[BaseModel] | type[str],
     media: tuple[MediaInput, ...] = (),
     source_ids: tuple[str, ...] = (),
 ) -> dict[str, JsonValue]:
@@ -78,7 +78,8 @@ def prepare_invocation(
             "extra_body": route.extra_body,
         },
         "prompt": prompt,
-        "schema": output_type.model_json_schema(),
+        "schema": TypeAdapter(output_type).json_schema(),
+        "output_mode": "text" if output_type is str else "json_schema",
         "media": [
             {
                 "sha256": hashlib.sha256(part.data).hexdigest(),
@@ -134,7 +135,7 @@ class Generation:
             invocation_id=invocation_id,
         )
         if cached is not None:
-            return output_type.model_validate(cached), call_id
+            return TypeAdapter(output_type).validate_python(cached), call_id
         if video:
             return await complete_video(
                 ctx,
@@ -154,7 +155,7 @@ class Generation:
         )
         agent = Agent(
             OpenAIChatModel(route.model, provider=provider),
-            output_type=NativeOutput(output_type),
+            output_type=str if output_type is str else NativeOutput(output_type),
             retries=0,
             capabilities=[
                 Instrumentation(
@@ -190,14 +191,15 @@ class Generation:
                 await self.ledger.finish(
                     ctx,
                     call_id,
-                    result.output.model_dump(mode="json"),
+                    TypeAdapter(output_type).dump_python(result.output, mode="json"),
                     {
+                        "actual_output_mode": "text" if output_type is str else "json_schema",
                         "input_tokens": usage.input_tokens,
                         "output_tokens": usage.output_tokens,
                         "messages": json.loads(result.all_messages_json()),
                     },
                 )
-                return result.output, call_id
+                return TypeAdapter(output_type).validate_python(result.output), call_id
             except asyncio.CancelledError:
                 await asyncio.shield(
                     self.ledger.finish(ctx, call_id, None, {}, "CancelledUnknownOutcome")

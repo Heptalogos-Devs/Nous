@@ -112,6 +112,10 @@ class GrowthAssociation(Contract):
     relation: str
     polarity: Literal["positive", "negative"] = "positive"
     description: str = ""
+    epistemic: EpistemicStance | None = Field(
+        default=None,
+        description="The subject's actual assessment of this relation claim; null preserves an unrecorded assessment.",
+    )
 
 
 class GrowthSelfFacet(Contract):

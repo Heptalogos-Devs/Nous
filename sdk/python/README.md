@@ -88,7 +88,7 @@ JSON 接受 `records`、`paragraphs`、`docs` 包络，JSONL 保留记录顺序�
 
 `configuration`、`prompts`、`model_contract`、`model_preview`、`model_call`、`backup` 接正式管理入口。`subject_diagnostics` 返回授权范围内的认知、向量、任务与实际 token 用量。不同凭据的 read/write/manage 能力由服务核验。
 
-模型角色的实际输入、目标 JSON Schema 和 Prompt 可在调用前读取。`model_contract(ModelContractRequest(role="formation"))` 返回登记的输入/输出 Schema、当前 Prompt 和可选 variant；形成的 `text` 与 `media` 使用各自真实输出类型。`description`、`steward`、`maintenance`、`query_rerank` 同样使用实际消费者的合同。
+模型角色的实际输入、输出模式、对应 Schema 和 Prompt 可在调用前读取。`model_contract(ModelContractRequest(role="formation"))` 返回登记的输入/输出 Schema、当前 Prompt 和可选 variant；形成的 `text` 与 `media` 使用各自真实输出类型。`description`、`steward`、`maintenance`、`query_rerank` 同样使用实际消费者的合同。description 的 output_mode=text、输出 Schema 为 string，实际模型直接返回正文；其它强类型角色使用 json_schema。自由描述及两段解释的第一步均采用文本输出，应用保存正文与真实 producer_call_id；第二步仍同时传入原媒体和已保存描述。调用账本保留实际字符串及 actual_output_mode。自定义 Prompt 保留原内容，可在管理入口按实际用途编辑。
 
 ```python
 from nous_wave.contracts import ModelContractRequest, ModelPreviewRequest
@@ -194,3 +194,6 @@ print(result.execution)
 ```
 
 semantic/exploration 的 required 要求实际计算通道可用；require_complete_vectors 默认 False，独立控制是否要求完整向量覆盖。Hybrid 向量覆盖不完整时真实降为词项检索，execution 返回 effective_mode、missing_vectors、candidate_limited、degraded 和 reasons；组合不同通道时 effective_mode 为 mixed。`$diagnostics(none)` 只关闭详细计划，execution 仍保留。authority 支持 subject_cognition、evidence、interpretation 的实际分类；external_current_authority 与 resource_descriptor 缺少资源 owner 时返回 capability_unavailable。current=none 为默认；prefer 保留本地结果并报告 external_freshness_unchecked，required 要求外部时效 owner。modalities 支持 text/image/audio/video/document/binary，按真实原件模态及同一来源根过滤；图片的派生描述仍保留图片来源模态。
+
+
+A-Memorix 图谱搜索使用 `adapter.memory_graph_admin(action="search", query="项目", limit=50)`；`invoke("memory_graph_admin", {"action":"search","query":"项目"})` 供原 MaiBot RPC 直接调用。结果为实际实体与关系，匹配优先级依次为精确、前缀、子串；每项 reference 经 `CognitiveRef.model_validate(item["reference"])` 读取为强类型后，交给 `client.source(subject_id, reference)` 展开来源。读取受当前 SourceReadScope 与认知可见性约束。

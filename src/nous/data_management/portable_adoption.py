@@ -327,10 +327,17 @@ def normalize(loaded: PortableArchive, data: bytes) -> SubjectBundle:
         links = tuple(
             EvidenceLink(reference=memories[p]) for p in sorted(mentioned) if p in memories
         )
+        relation_epistemic = metadata(relation.get("metadata")).get("epistemic")
         adopt(
             key,
             AssociationBody(
-                from_ref=left, to_ref=right, relation=predicate, basis_class="source_evidence"
+                from_ref=left,
+                to_ref=right,
+                relation=predicate,
+                basis_class="source_evidence",
+                epistemic=EpistemicStance.model_validate(relation_epistemic)
+                if relation_epistemic is not None
+                else None,
             ),
             links=links or evidence,
             raw=relation,

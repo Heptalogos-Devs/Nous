@@ -189,7 +189,7 @@ pub(super) fn build(
                 state.path.display()
             )
         })?;
-    let mut frozen = assemble(staging.path(), generation.clone(), data, true, Some(token))?;
+    let frozen = assemble(staging.path(), generation.clone(), data, true, Some(token))?;
     token.check()?;
     let bytes = rmp_serde::to_vec_named(&frozen.data)?;
     let mut file = std::fs::File::create(staging.path().join("snapshot.msgpack"))
@@ -198,12 +198,17 @@ pub(super) fn build(
     file.write_all(&bytes)
         .context("write native generation snapshot")?;
     file.sync_all().context("sync native generation snapshot")?;
+    drop(file);
+    // Tantivy readers retain mapped files and a directory watcher. Release every
+    // staging handle before publication, then bind readers to the final path.
+    drop(frozen);
+    token.check()?;
     sync_directory(staging.path())?;
-    std::fs::rename(staging.path(), state.path.join(&generation))
-        .context("publish native generation directory")?;
+    let published = state.path.join(&generation);
+    std::fs::rename(staging.path(), &published).context("publish native generation directory")?;
     sync_directory(&state.path)?;
-    // Readers and USearch arrays own their data; publication cannot invalidate them.
-    frozen.generation = generation;
+    let frozen = load(&published, generation).context("open published native generation")?;
+    token.check()?;
     Ok(frozen)
 }
 pub(super) fn load(path: &Path, generation: String) -> Result<Frozen> {

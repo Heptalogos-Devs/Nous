@@ -101,7 +101,7 @@ async def finalize(
                 )
                 call_id: str | None = None
                 try:
-                    generated = await self.models.structured(
+                    generated = await self.models.generate(
                         ctx,
                         "query_rerank",
                         {"query": request.text, "documents": documents},

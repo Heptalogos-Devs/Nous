@@ -37,7 +37,7 @@ export NOUS_EMBEDDING__MAX_BATCH_ITEMS=10
 
 `max_batch_items` 按模型的实际请求限制配置；共享向量服务分批请求，并分别保存结果，重试复用已成功的批次。上例将每批限制为十项。
 
-媒体解释保留自由描述、直接结构化、原媒体结合已保存描述后二次结构化三种路径。图片区域、视频/音频时间片段和 PDF 页区使用精确来源；日期和无时区表达保留其精度与时间域。
+媒体解释保留自由描述、直接结构化、原媒体结合已保存描述后二次结构化三种路径。description 角色使用 output_mode=text，直接接收自然语言正文；形成、维护与重排使用 output_mode=json_schema 和各自强类型输出。预览同时返回实际输出模式和对应 Schema，字符串模式不要求模型返回 JSON。图片区域、视频/音频时间片段和 PDF 页区使用精确来源；日期和无时区表达保留其精度与时间域。
 
 提供方支持 `video_url` 内容片段扩展时，在对应模型资源设置 `video_content_format: "video_url"`，或首次启动时设置 `NOUS_MODEL__VIDEO_CONTENT_FORMAT=video_url`。视频通过官方兼容 SDK 的结构化输出接口发送，响应原文、实际输入摘要与解析结果保存在同一调用账本。
 

@@ -6,7 +6,13 @@ from uuid import uuid4
 import anyio
 from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
-from nous_wave.contracts import AdoptMedia, BlobDocument, MediaReference, TimePoint
+from nous_wave.contracts import (
+    AdoptMedia,
+    BlobDocument,
+    MediaEmbeddingResult,
+    MediaReference,
+    TimePoint,
+)
 
 from nous.platform.content import ContentObject
 
@@ -83,7 +89,7 @@ async def embed_media(
     subject_id: str,
     reference: MediaReference,
     operation_id: str | None = None,
-):
+) -> MediaEmbeddingResult:
     return await application(request).retrieval.embed_media(
         await context(request, namespace_id, subject_id), reference, operation_id or str(uuid4())
     )

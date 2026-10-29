@@ -145,11 +145,11 @@ def test_http_backup_restores_a_new_instance_only(tmp_path: Path):
 def test_durable_model_invocation_keeps_paid_result_across_configuration_changes(tmp_path: Path):
     async def scenario():
         from nous_wave.contracts import DomainError
+        from nous_wave.contracts.growth import GrowthProposal
         from sqlalchemy import func, select
 
         from nous.application import Application
         from nous.platform.configuration import Settings
-        from nous.platform.models.generation import DescriptionDraft
         from nous.platform.models.ledger import calls
 
         app = Application(Settings(instance=tmp_path / "instance"))
@@ -173,17 +173,22 @@ def test_durable_model_invocation_keeps_paid_result_across_configuration_changes
                     invocation_id="run:one",
                 )
             assert pending.value.code == "model_invocation_unavailable"
-            await app.models.ledger.finish(ctx, call, {"description": "retained result"}, {})
+            await app.models.ledger.finish(
+                ctx,
+                call,
+                {"summary": "retained result", "rationale": "retained basis", "actions": []},
+                {},
+            )
             await app.prompts.save(ctx, "maintenance", "Changed prompt {{ source }}", "change")
             # The role has no configured model or key: recovery reads the existing invocation first.
-            recovered = await app.models.structured(
+            recovered = await app.models.generate(
                 ctx,
                 "maintenance",
                 {"different": "variables"},
-                DescriptionDraft,
+                GrowthProposal,
                 invocation_id="run:one",
             )
-            assert recovered.call_id == call and recovered.output.description == "retained result"
+            assert recovered.call_id == call and recovered.output.summary == "retained result"
             async with app.authority.read(ctx) as view:
                 assert await view.connection.scalar(select(func.count()).select_from(calls)) == 1
             unknown, _ = await app.models.ledger.reserve(
@@ -195,8 +200,8 @@ def test_durable_model_invocation_keeps_paid_result_across_configuration_changes
             )
             await app.models.ledger.finish(ctx, unknown, None, {}, "CancelledUnknownOutcome")
             with pytest.raises(DomainError) as unavailable:
-                await app.models.structured(
-                    ctx, "maintenance", {}, DescriptionDraft, invocation_id="run:unknown"
+                await app.models.generate(
+                    ctx, "maintenance", {}, GrowthProposal, invocation_id="run:unknown"
                 )
             assert unavailable.value.details["error_code"] == "CancelledUnknownOutcome"
             async with app.authority.write(

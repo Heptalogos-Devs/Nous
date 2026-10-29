@@ -206,6 +206,10 @@ class AssociationBody(Contract):
         "derived_structure",
     ]
     description: str = ""
+    epistemic: EpistemicStance | None = Field(
+        default=None,
+        description="The subject's assessment of the relation claim; null means no assessment was recorded. Basis class separately identifies how the relation was established.",
+    )
 
 
 class SelfFacetBody(Contract):
@@ -437,6 +441,10 @@ class ProposedAssociation(Contract):
     relation: str
     polarity: Literal["positive", "negative"] = "positive"
     description: str = ""
+    epistemic: EpistemicStance | None = Field(
+        default=None,
+        description="Assess this relation claim as observed, reported, derived, inferred, narrative or simulated when known; otherwise leave null.",
+    )
 
 
 class ProposedMemory(Contract):
@@ -468,8 +476,13 @@ class EmbeddingBatch(Contract):
     space: str
     dimensions: int = Field(gt=0)
     vectors: tuple[tuple[float, ...], ...]
-    call_id: str | None = None
-    call_ids: tuple[str, ...] = ()
+    call_ids: tuple[str | None, ...]
+
+    @model_validator(mode="after")
+    def exact_vector_producers(self) -> EmbeddingBatch:
+        if len(self.call_ids) != len(self.vectors):
+            raise ValueError("Each embedding vector requires its actual producer entry")
+        return self
 
 
 class MergeConcepts(Operation):

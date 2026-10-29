@@ -66,7 +66,7 @@ async def steward_select(
                 )
             ).scalars()
         )
-    generated = await service.models.structured(
+    generated = await service.models.generate(
         ctx,
         policy.steward_role,
         {

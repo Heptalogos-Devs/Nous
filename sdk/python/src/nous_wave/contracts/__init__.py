@@ -248,6 +248,7 @@ from .media import (
     BlobDocument as BlobDocument,
 )
 from .media import MediaEmbeddingInput as MediaEmbeddingInput
+from .media import MediaEmbeddingResult as MediaEmbeddingResult
 from .media import (
     MediaInfo as MediaInfo,
 )

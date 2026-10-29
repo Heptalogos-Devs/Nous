@@ -28,6 +28,7 @@ class ModelRoleContract(Contract):
     variants: tuple[str, ...]
     input_schema: dict[str, JsonValue]
     output_schema: dict[str, JsonValue]
+    output_mode: Literal["text", "json_schema"]
     prompt_id: str
     prompt: ModelPrompt
     provider_called: Literal[False] = False
@@ -71,6 +72,7 @@ class InvocationSnapshot(Contract):
     parameters: InvocationParameters
     prompt: ModelPrompt
     output_schema: dict[str, JsonValue] = Field(alias="schema")
+    output_mode: Literal["text", "json_schema"]
     media: tuple[InvocationMedia, ...]
     video_content_format: Literal["video_url"] | None = None
 

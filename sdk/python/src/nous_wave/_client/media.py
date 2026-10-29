@@ -6,7 +6,7 @@ from uuid import uuid4
 
 from pydantic import JsonValue, TypeAdapter
 
-from ..contracts import MediaReference, SourceRegion
+from ..contracts import MediaEmbeddingResult, MediaReference, SourceRegion
 from ..contracts.context import MediaTarget
 from ..contracts.derivation import (
     CreateDerivedRegion,
@@ -25,6 +25,23 @@ from .requests import operation_identity, operation_values, request_scope, requi
 
 
 class MediaClient(BundleClient):
+    async def embed_media(
+        self,
+        namespace_id: str,
+        subject_id: str,
+        reference: MediaReference,
+        *,
+        operation_id: str | None = None,
+    ) -> MediaEmbeddingResult:
+        return MediaEmbeddingResult.model_validate(
+            await self.request(
+                "POST",
+                self.subject_path(namespace_id, subject_id) + "/media/embed",
+                body=encoded(reference),
+                params={"operation_id": operation_id or str(uuid4())},
+            )
+        )
+
     async def derive_media(
         self, namespace_id: str, subject_id: str, command: DeriveMedia
     ) -> tuple[DerivedRepresentation, ...]:
@@ -166,6 +183,15 @@ class MediaClient(BundleClient):
                 )
             )
         namespace, subject = await request_scope(self, values)
+        if action == "embed":
+            return encoded(
+                await self.embed_media(
+                    namespace,
+                    subject,
+                    MediaReference.model_validate(values.pop("reference")),
+                    operation_id=operation_identity(values),
+                )
+            )
         if action in {"source", "lineage"}:
             reference = values.pop("reference")
             if isinstance(reference, str):

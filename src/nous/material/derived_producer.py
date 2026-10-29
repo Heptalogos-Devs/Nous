@@ -47,8 +47,8 @@ def verify_result(
             "derivation_producer_conflict", "Producer differs from the actual model call"
         )
     if isinstance(payload, TextRepresentation):
-        result = TypeAdapter(dict[str, JsonValue]).validate_python(call.result)
-        if result.get("description") != payload.text:
+        # Text generation selects the complete retained JSON string (root pointer "").
+        if call.result != payload.text:
             raise DomainError(
                 "derivation_result_conflict", "Description differs from the retained paid output"
             )

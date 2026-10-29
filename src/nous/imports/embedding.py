@@ -54,7 +54,7 @@ async def adopt_vectors(
         if tx.replayed:
             return VectorAdoption.model_validate(tx.replay_result)
         inserted = 0
-        for record, vector in zip(records, batch.vectors, strict=True):
+        for record, vector, call_id in zip(records, batch.vectors, batch.call_ids, strict=True):
             await self.cognition.get_in(tx, ctx, record.reference)
             existing = (
                 await tx.connection.execute(
@@ -78,7 +78,7 @@ async def adopt_vectors(
                     model=batch.model,
                     dimensions=batch.dimensions,
                     vector=list(vector),
-                    call_id=batch.call_id,
+                    call_id=call_id,
                     commit_seq=tx.commit_seq,
                 )
             )

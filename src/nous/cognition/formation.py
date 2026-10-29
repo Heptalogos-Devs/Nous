@@ -425,6 +425,7 @@ async def adopt_semantic_proposal_in(
             polarity=item.polarity,
             basis_class="source_evidence",
             description=item.description,
+            epistemic=item.epistemic,
         )
         result.append(
             await self.adopt_in(

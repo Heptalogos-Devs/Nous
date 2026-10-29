@@ -110,10 +110,11 @@ def register_management(
 
     @server.tool()
     async def manage_media(action: str, command: JsonObject) -> JsonValue:
-        """Media lineage, regions, representations and derivation in the bound subject.
+        """Media lineage, regions, representations, derivation and embedding in the bound subject.
 
         Use the public MediaRequest action and request. Original file transfer
         uses the SDK/CLI streaming upload; derive operates on existing originals.
+        embed takes an exact reference and operation_id and uses the configured model.
         """
         async with client() as api:
             if action == "inspect":

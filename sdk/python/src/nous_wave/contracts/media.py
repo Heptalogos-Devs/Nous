@@ -121,6 +121,15 @@ class MediaEmbeddingInput(Contract):
     filename: str
 
 
+class MediaEmbeddingResult(Contract):
+    reference: MediaReference
+    space: str
+    model: str
+    dimensions: int
+    call_ids: tuple[str | None, ...]
+    commit_seq: int
+
+
 class MediaRecord(Contract):
     reference: MediaReference
     addresses: ReferenceAddresses | None = None

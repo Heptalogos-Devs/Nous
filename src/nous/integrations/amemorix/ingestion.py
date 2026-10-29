@@ -287,6 +287,9 @@ async def adopt_host_graph(
                     relation=relation.predicate,
                     basis_class="host_explicit",
                     description=f"Reported by {command.external_id}",
+                    epistemic=EpistemicStance(
+                        classification="reported", attribution=command.external_id
+                    ),
                 ),
                 evidence=(EvidenceLink(reference=memory, role="host_reported_relation"),),
             ),

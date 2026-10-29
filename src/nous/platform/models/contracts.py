@@ -16,7 +16,7 @@ from nous_wave.contracts.model_roles import (
     ModelPrompt,
     ModelRoleContract,
 )
-from pydantic import BaseModel
+from pydantic import BaseModel, TypeAdapter
 
 from nous.platform.configuration import ModelRoute
 from nous.platform.configuration.models import ModelConfiguration, ModelResource, RoleResource
@@ -43,7 +43,7 @@ async def prepare_role(
     role_id: str,
     variables: dict[str, object],
     *,
-    output_type: type[BaseModel] | None = None,
+    output_type: type[BaseModel] | type[str] | None = None,
     variant: str | None = None,
     require_configured: bool = True,
 ) -> PreparedRole:
@@ -51,7 +51,7 @@ async def prepare_role(
         (await self.configuration.effective(ctx, "models"))["value"]
     )
     route, role = resources.resolve(role_id, require_configured=require_configured)
-    definition = self.roles.resolve(role.purpose, variant, output_type)
+    definition = self.roles.resolve(role.purpose, variant, output_type, role.output_mode)
     parsed, variables = definition.variables(variables)
     prompt = await self.render_prompt(ctx, role_id, variables, role.prompt_id)
     if not prompt["variable_names"]:
@@ -77,7 +77,7 @@ async def model_contract(
         raise DomainError(
             "model_contract_unavailable", "Role is not configured", role=request.role
         ) from error
-    definition = self.roles.resolve(role.purpose, request.variant)
+    definition = self.roles.resolve(role.purpose, request.variant, output_mode=role.output_mode)
     try:
         prompt = await self.prompts.get(ctx, role.prompt_id)
     except KeyError as error:
@@ -94,7 +94,8 @@ async def model_contract(
         variant=definition.variant,
         variants=self.roles.variants(role.purpose),
         input_schema=json_object(definition.input_type.model_json_schema()),
-        output_schema=json_object(definition.output_type.model_json_schema()),
+        output_schema=json_object(TypeAdapter(definition.output_type).json_schema()),
+        output_mode="text" if definition.output_type is str else "json_schema",
         prompt_id=role.prompt_id,
         prompt=ModelPrompt.model_validate(prompt),
     )
@@ -132,7 +133,8 @@ async def model_preview(
         variant=definition.variant,
         variants=self.roles.variants(prepared.role.purpose),
         input_schema=json_object(definition.input_type.model_json_schema()),
-        output_schema=json_object(definition.output_type.model_json_schema()),
+        output_schema=json_object(TypeAdapter(definition.output_type).json_schema()),
+        output_mode="text" if definition.output_type is str else "json_schema",
         prompt_id=prepared.role.prompt_id,
         prompt=ModelPrompt.model_validate(prepared.prompt),
     )

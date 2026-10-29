@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Literal
 
 from nous_wave.contracts.common import DomainError
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, TypeAdapter, model_validator
 
 from .settings import EmbeddingRoute, ModelRoute, ProviderOptions, ReasoningEffort
 
@@ -38,8 +38,19 @@ class RouteResource(BaseModel):
 class RoleResource(BaseModel):
     routes: tuple[str, ...] = Field(min_length=1)
     purpose: Literal["formation", "description", "embedding", "steward", "maintenance", "rerank"]
+    output_mode: Literal["text", "json_schema"] = "json_schema"
     prompt_id: str = "formation"
     max_calls_per_day: int = Field(default=50, ge=0)
+
+    @model_validator(mode="before")
+    @classmethod
+    def role_output_default(cls, value: object) -> object:
+        if not isinstance(value, dict):
+            return value
+        parsed = TypeAdapter(dict[str, object]).validate_python(value)
+        if parsed.get("purpose") == "description" and "output_mode" not in parsed:
+            return {**parsed, "output_mode": "text"}
+        return parsed
 
 
 class ModelConfiguration(BaseModel):
@@ -154,6 +165,7 @@ def initial_resources(generation: ModelRoute, embedding: EmbeddingRoute) -> Mode
             "description": RoleResource(
                 routes=("formation",),
                 purpose="description",
+                output_mode="text",
                 prompt_id="media.describe",
                 max_calls_per_day=generation.max_calls_per_day,
             ),

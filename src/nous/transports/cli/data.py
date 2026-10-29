@@ -148,6 +148,20 @@ def register(cli: typer.Typer) -> None:
     def manual(ctx: typer.Context) -> None:
         invoke(ctx, lambda api: api.query_manual())
 
+    @cli.command("graph-search")
+    def graph_search(
+        ctx: typer.Context, namespace_id: str, subject_id: str, query: str, limit: int = 50
+    ) -> None:
+        """Search graph entities and relations using the A-Memorix search contract."""
+        from nous_wave.amemorix import AMemorixAdapter
+
+        async def search(api: NousClient) -> object:
+            return await AMemorixAdapter(
+                api, namespace_id=namespace_id, subject_id=subject_id
+            ).memory_graph_admin(action="search", query=query, limit=limit)
+
+        invoke(ctx, search)
+
     @source.command("list")
     def sources(ctx: typer.Context, namespace_id: str, subject_id: str) -> None:
         invoke(ctx, lambda api: api.source_directory(namespace_id, subject_id))
@@ -328,12 +342,7 @@ def register(cli: typer.Typer) -> None:
         value = read_command(reference, MediaReference)
         invoke(
             ctx,
-            lambda api: api.request(
-                "POST",
-                f"/api/namespaces/{segment(namespace_id)}/subjects/{segment(subject_id)}/media/embed",
-                body=encoded(value),
-                params={"operation_id": operation_id or str(uuid4())},
-            ),
+            lambda api: api.embed_media(namespace_id, subject_id, value, operation_id=operation_id),
         )
 
     @media.command("register-region")

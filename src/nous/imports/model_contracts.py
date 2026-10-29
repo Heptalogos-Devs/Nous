@@ -4,11 +4,8 @@ from nous_wave.contracts.cognition import FormationDraft, ProposedMemory
 from pydantic import BaseModel, Field
 
 
-class DescriptionDraft(BaseModel):
+class Description(BaseModel):
     description: str = Field(min_length=1)
-
-
-class Description(DescriptionDraft):
     producer_call_id: str
 
 

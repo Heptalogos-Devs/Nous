@@ -6,7 +6,7 @@ import hashlib
 import json
 from collections.abc import Awaitable, Callable
 
-from nous_wave.contracts import CallContext, EmbeddingBatch, MediaEmbeddingInput
+from nous_wave.contracts import CallContext, DomainError, EmbeddingBatch, MediaEmbeddingInput
 from openai import AsyncOpenAI
 from pydantic import BaseModel, Field, JsonValue
 
@@ -39,6 +39,17 @@ def vector_space(route: EmbeddingRoute, effective_model: str) -> str:
     return hashlib.sha256(
         f"{route.base_url}:{effective_model}:{route.dimensions}:{route.normalization}{options}".encode()
     ).hexdigest()
+
+
+def retained_embedding(value: object, call_id: str) -> EmbeddingBatch:
+    result = EmbeddingBatch.model_validate(value)
+    if result.call_ids != (call_id,) * len(result.vectors):
+        raise DomainError(
+            "embedding_producer_conflict",
+            "Retained embedding producers differ from the actual paid call",
+            call_id=call_id,
+        )
+    return result
 
 
 async def media_parts(
@@ -78,7 +89,7 @@ async def embed_media(
     source_ids: tuple[str, ...],
 ) -> EmbeddingBatch:
     vectors: list[tuple[float, ...]] = []
-    call_ids: list[str] = []
+    call_ids: list[str | None] = []
     effective_model: str | None = None
     client = AsyncOpenAI(
         base_url=route.base_url,
@@ -103,12 +114,12 @@ async def embed_media(
         }
         call_id, cached = await ledger.reserve(ctx, "embedding", snapshot, route.max_calls_per_day)
         if cached is not None:
-            result = EmbeddingBatch.model_validate(cached)
+            result = retained_embedding(cached, call_id)
             if effective_model is not None and effective_model != result.model:
                 raise ValueError("Joint inputs resolve to different embedding model versions")
             effective_model = result.model
             vectors.extend(result.vectors)
-            call_ids.append(call_id)
+            call_ids.extend(result.call_ids)
             continue
         raw: dict[str, JsonValue] | None = None
         try:
@@ -144,12 +155,11 @@ async def embed_media(
                 space=vector_space(route, response.model),
                 dimensions=route.dimensions,
                 vectors=(vector,),
-                call_id=call_id,
                 call_ids=(call_id,),
             )
             await ledger.finish(ctx, call_id, result.model_dump(mode="json"), dict(response.usage))
             vectors.append(vector)
-            call_ids.append(call_id)
+            call_ids.extend(result.call_ids)
         except asyncio.CancelledError:
             await asyncio.shield(
                 ledger.finish(ctx, call_id, None, {"response": raw}, "CancelledUnknownOutcome")
@@ -174,6 +184,5 @@ async def embed_media(
         space=vector_space(route, effective_model),
         dimensions=route.dimensions,
         vectors=tuple(vectors),
-        call_id=call_ids[0],
         call_ids=tuple(call_ids),
     )

@@ -68,7 +68,7 @@ async def generate_validated(
     )
     for attempt in range(2):
         invocation = "maintenance:" + run.id + (":correction:1" if attempt else "")
-        generated = await self.models.structured(
+        generated = await self.models.generate(
             ctx,
             "maintenance",
             variables,

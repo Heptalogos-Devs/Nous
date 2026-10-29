@@ -12,7 +12,7 @@ class RoleDefinition:
     purpose: str
     variant: str
     input_type: type[BaseModel]
-    output_type: type[BaseModel]
+    output_type: type[BaseModel] | type[str]
     default: bool = False
     invocation_purpose: str | None = None
     transform_prompt: Callable[[dict[str, object], BaseModel], dict[str, object]] | None = None
@@ -38,7 +38,11 @@ class RoleRegistry:
         )
 
     def resolve(
-        self, purpose: str, variant: str | None = None, output_type: type[BaseModel] | None = None
+        self,
+        purpose: str,
+        variant: str | None = None,
+        output_type: type[BaseModel] | type[str] | None = None,
+        output_mode: str | None = None,
     ) -> RoleDefinition:
         candidates = [
             value
@@ -56,7 +60,18 @@ class RoleRegistry:
                 purpose=purpose,
                 variant=variant,
             )
-        return candidates[0]
+        selected = candidates[0]
+        expected_mode = "text" if selected.output_type is str else "json_schema"
+        if output_mode is not None and output_mode != expected_mode:
+            raise DomainError(
+                "model_contract_unavailable",
+                "Role output mode does not match its consumer contract",
+                purpose=purpose,
+                variant=selected.variant,
+                expected_output_mode=expected_mode,
+                configured_output_mode=output_mode,
+            )
+        return selected
 
 
 def json_object(value: object) -> dict[str, JsonValue]:

@@ -44,7 +44,7 @@ def content_parts(
     return parts
 
 
-async def complete_video[T: BaseModel](
+async def complete_video[T: BaseModel | str](
     ctx: CallContext,
     call_id: str,
     route: ModelRoute,
@@ -62,23 +62,54 @@ async def complete_video[T: BaseModel](
     try:
         parts = content_parts(prompt, media)
         sdk = AsyncOpenAI(base_url=route.base_url, api_key=key, http_client=client, max_retries=0)
-        # The SDK owns strict response schemas and parsing. extra_body supplies the
-        # explicitly configured content-part extension absent from its standard video union.
-        response = await sdk.chat.completions.with_raw_response.parse(
-            model=route.model,
-            messages=[{"role": "user", "content": str(prompt["rendered"])}],
-            response_format=output_type,
-            max_tokens=route.max_output_tokens,
-            temperature=route.temperature if route.temperature is not None else omit,
-            reasoning_effort=route.reasoning_effort if route.reasoning_effort is not None else omit,
-            extra_body={**route.extra_body, "messages": [{"role": "user", "content": parts}]},
+        if output_type is str:
+            response = await sdk.chat.completions.with_raw_response.create(
+                model=route.model,
+                messages=[{"role": "user", "content": str(prompt["rendered"])}],
+                max_tokens=route.max_output_tokens,
+                temperature=route.temperature if route.temperature is not None else omit,
+                reasoning_effort=route.reasoning_effort
+                if route.reasoning_effort is not None
+                else omit,
+                extra_body={**route.extra_body, "messages": [{"role": "user", "content": parts}]},
+            )
+            raw = TypeAdapter(JsonValue).validate_json(response.content)
+            parsed_text = response.parse()
+            if not parsed_text.choices or parsed_text.choices[0].message.content is None:
+                raise ValueError("Provider did not return video description text")
+            if parsed_text.choices[0].finish_reason != "stop":
+                raise ValueError("Provider did not complete the video description")
+            result = TypeAdapter(output_type).validate_python(
+                parsed_text.choices[0].message.content
+            )
+        elif issubclass(output_type, BaseModel):
+            response_json = await sdk.chat.completions.with_raw_response.parse(
+                model=route.model,
+                messages=[{"role": "user", "content": str(prompt["rendered"])}],
+                response_format=output_type,
+                max_tokens=route.max_output_tokens,
+                temperature=route.temperature if route.temperature is not None else omit,
+                reasoning_effort=route.reasoning_effort
+                if route.reasoning_effort is not None
+                else omit,
+                extra_body={**route.extra_body, "messages": [{"role": "user", "content": parts}]},
+            )
+            raw = TypeAdapter(JsonValue).validate_json(response_json.content)
+            parsed_json = response_json.parse()
+            if not parsed_json.choices or parsed_json.choices[0].message.parsed is None:
+                raise ValueError("Provider did not return the requested structured video output")
+            result = TypeAdapter(output_type).validate_python(parsed_json.choices[0].message.parsed)
+        else:
+            raise TypeError("Generation output must be text or a Pydantic model")
+        await ledger.finish(
+            ctx,
+            call_id,
+            TypeAdapter(output_type).dump_python(result, mode="json"),
+            {
+                "response": raw,
+                "actual_output_mode": "text" if output_type is str else "json_schema",
+            },
         )
-        raw = TypeAdapter(JsonValue).validate_json(response.content)
-        parsed = response.parse()
-        if not parsed.choices or parsed.choices[0].message.parsed is None:
-            raise ValueError("Provider did not return the requested structured video output")
-        result = parsed.choices[0].message.parsed
-        await ledger.finish(ctx, call_id, result.model_dump(mode="json"), {"response": raw})
         return result, call_id
     except asyncio.CancelledError:
         await asyncio.shield(

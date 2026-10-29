@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from nous_wave.contracts import (
+    AssociationBody,
     CallContext,
     CognitiveRecord,
     DomainError,
@@ -396,7 +397,7 @@ async def prepare(
 def record_segment(record: CognitiveRecord) -> ContextSegment:
     if record.body is None:
         raise DomainError("source_purged", "Purged cognitive content cannot enter a context")
-    if isinstance(record.body, (MemoryBody, MemorySemanticsBody)):
+    if isinstance(record.body, (MemoryBody, MemorySemanticsBody, AssociationBody)):
         epistemic = record.body.epistemic
     elif isinstance(record.body, JournalBody):
         epistemic = record.body.perspective
@@ -490,8 +491,20 @@ async def media_segment_in(
         text = material["text"]
         if text is not None and region is not None:
             from nous.material.text import source_region_text
-            text = source_region_text(text,region) if any(value is not None for value in (
-                region.text_start,region.text_end,region.json_pointer,region.line_number)) else None
+
+            text = (
+                source_region_text(text, region)
+                if any(
+                    value is not None
+                    for value in (
+                        region.text_start,
+                        region.text_end,
+                        region.json_pointer,
+                        region.line_number,
+                    )
+                )
+                else None
+            )
         provenance = {
             "media_reference": reference.model_dump(mode="json"),
             "source_roots": [observation_id],

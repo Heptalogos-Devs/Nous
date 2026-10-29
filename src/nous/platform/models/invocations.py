@@ -28,11 +28,11 @@ retirements = sa.Table(
 )
 
 
-async def retire_in(tx: WriteTx, ctx: CallContext, purpose: str, identity: str) -> None:
+async def retire_in(tx: WriteTx, ctx: CallContext, role_id: str, identity: str) -> None:
     await tx.connection.execute(
         insert(retirements)
         .values(
-            key=invocation_key(ctx, purpose, identity),
+            key=invocation_key(ctx, role_id, identity),
             commit_seq=tx.commit_seq,
             recorded_at=tx.recorded_at,
         )
@@ -40,12 +40,12 @@ async def retire_in(tx: WriteTx, ctx: CallContext, purpose: str, identity: str) 
     )
 
 
-def invocation_key(ctx: CallContext, purpose: str, identity: str) -> str:
+def invocation_key(ctx: CallContext, role_id: str, identity: str) -> str:
     if not identity or len(identity) > 512:
         raise ValueError("Invocation identity requires 1–512 characters")
     return sha256(
         canonical_json(
-            (ctx.caller_id, ctx.namespace_id, ctx.require_subject(), purpose, identity)
+            (ctx.caller_id, ctx.namespace_id, ctx.require_subject(), role_id, identity)
         ).encode()
     ).hexdigest()
 
@@ -59,14 +59,14 @@ class InvocationResult:
 async def invocation_in(
     view: ReadView | WriteTx,
     ctx: CallContext,
-    purpose: str,
+    role_id: str,
     identity: str,
     calls: sa.Table,
 ) -> InvocationResult | None:
     if (
         await view.connection.scalar(
             sa.select(retirements.c.key).where(
-                retirements.c.key == invocation_key(ctx, purpose, identity)
+                retirements.c.key == invocation_key(ctx, role_id, identity)
             )
         )
         is not None
@@ -83,7 +83,7 @@ async def invocation_in(
                 sa.select(calls.c.id, calls.c.status, calls.c.result, calls.c.error_code)
                 .join(invocations, invocations.c.call_id == calls.c.id)
                 .where(
-                    invocations.c.key == invocation_key(ctx, purpose, identity),
+                    invocations.c.key == invocation_key(ctx, role_id, identity),
                     calls.c.namespace_id == ctx.namespace_id,
                     calls.c.subject_id == ctx.require_subject(),
                 )
@@ -107,10 +107,10 @@ async def invocation_in(
     return InvocationResult(str(row["id"]), TypeAdapter(JsonValue).validate_python(row["result"]))
 
 
-async def bind_in(tx: WriteTx, ctx: CallContext, purpose: str, identity: str, call_id: str) -> None:
+async def bind_in(tx: WriteTx, ctx: CallContext, role_id: str, identity: str, call_id: str) -> None:
     await tx.connection.execute(
         invocations.insert().values(
-            key=invocation_key(ctx, purpose, identity),
+            key=invocation_key(ctx, role_id, identity),
             call_id=call_id,
             commit_seq=tx.commit_seq,
         )
