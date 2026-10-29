@@ -157,6 +157,13 @@ def run(
         return await call("memory_stats", {})
 
     @mcp.tool()
+    async def memory_graph_admin(
+        query: str = "", limit: int = 50, action: Literal["search"] = "search"
+    ) -> JsonObject:
+        """Search actual entities and relations by name, identity or predicate within the bound subject."""
+        return await call("memory_graph_admin", {"action": action, "query": query, "limit": limit})
+
+    @mcp.tool()
     async def memory_source(target: str) -> JsonObject:
         """Expand a precise cognitive reference's permitted provenance."""
         async with client() as api:

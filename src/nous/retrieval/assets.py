@@ -36,6 +36,7 @@ def record_text(record: RetrievalRecord) -> str:
 @dataclass(frozen=True)
 class CandidateView:
     records: list[RetrievalRecord]
+    catalog: list[RetrievalRecord]
     vectors: list[VectorAsset]
     commit_seq: int
     sources: dict[str, SourceRecord]

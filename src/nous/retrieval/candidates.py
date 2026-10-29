@@ -7,13 +7,11 @@ from nous_wave.contracts import (
     CognitiveRecord,
     ConceptBody,
     DomainError,
-    EntityBody,
     EpisodeBody,
     QueryRequest,
 )
 from sqlalchemy import select
 
-from nous.cognition.projection import references_in
 from nous.cognition.schema import revisions, vectors
 from nous.identity.service import require_subject_in
 from nous.material.modalities import source_modalities_in
@@ -65,14 +63,14 @@ async def eligible(
             and any("@" in locator for locator in cue.get("locators", []))
             for cue in plan["selectors"]
         )
+        heads: dict[str, CognitiveRecord] = {}
+        for row in rows:
+            if (
+                row.reference.id not in heads
+                or heads[row.reference.id].reference.revision < row.reference.revision
+            ):
+                heads[row.reference.id] = row
         if not request.history and not exact:
-            heads: dict[str, CognitiveRecord] = {}
-            for row in rows:
-                if (
-                    row.reference.id not in heads
-                    or heads[row.reference.id].reference.revision < row.reference.revision
-                ):
-                    heads[row.reference.id] = row
             rows = list(heads.values())
         candidates: list[RetrievalRecord] = [
             *rows,
@@ -80,6 +78,7 @@ async def eligible(
         ]
         roots = await self.cognition.active_roots_in(view, ctx)
         allowed: list[RetrievalRecord] = []
+        catalog: list[RetrievalRecord] = []
         source_rows: dict[str, SourceRecord] = {
             row["id"]: row["record"]
             for row in (
@@ -117,11 +116,25 @@ async def eligible(
                 and not exact
             ):
                 continue
-            if not time_matches(row, request.times):
-                continue
             if isinstance(row, CognitiveRecord) and not await self.cognition.visible_in(
                 view, ctx, row, roots
             ):
+                continue
+            if not isinstance(row, CognitiveRecord) or (
+                heads[row.reference.id].reference == row.reference
+                and (
+                    request.include_inactive
+                    or (
+                        (
+                            not isinstance(row.body, (ConceptBody, EpisodeBody))
+                            or row.body.state == "active"
+                        )
+                        and (row.lifecycle is None or row.lifecycle.activation == "active")
+                    )
+                )
+            ):
+                catalog.append(row)
+            if not time_matches(row, request.times):
                 continue
             live = [oid for oid in row.source_roots if oid in roots]
             if request.source_ids is not None and not all(
@@ -168,124 +181,7 @@ async def eligible(
         assets = VECTOR_ROWS.validate_python(
             (await view.connection.execute(select(vectors))).mappings().all()
         )
-        return CandidateView(allowed, assets, view.commit_seq, source_rows, roots)
-
-
-def selectors(
-    self: RetrievalService,
-    records: list[RetrievalRecord],
-    plan: BoundPlan,
-    sources: dict[str, SourceRecord],
-) -> tuple[list[RetrievalRecord], bool]:
-    candidates, direct = records, False
-    for cue in plan["selectors"]:
-        if cue["kind"] != "selector":
-            continue
-        selector, locators = cue.get("selector", ""), cue.get("locators", [])
-        matched: list[set[str]] = []
-        for locator in locators:
-            if selector == "ref":
-                values = [
-                    record
-                    for record in records
-                    if record.reference.exact() == locator
-                    or f"{record.reference.kind}:{record.reference.id}" == locator
-                ]
-                if "@" not in locator and values:
-                    values = [
-                        max(
-                            values,
-                            key=lambda record: (
-                                record.reference.revision
-                                if isinstance(record, CognitiveRecord)
-                                else record.commit_seq
-                            ),
-                        )
-                    ]
-                direct = True
-            elif selector == "object":
-                values = [
-                    record
-                    for record in records
-                    if any(
-                        oid in sources and locator in sources[oid]["origin"].values()
-                        for oid in record.source_roots
-                    )
-                ]
-            elif selector == "resource":
-                values = [
-                    record
-                    for record in records
-                    if any(
-                        oid in sources
-                        and sources[oid]["material_id"] == locator.removeprefix("material:")
-                        for oid in record.source_roots
-                    )
-                ]
-            else:
-                kind = {"tag": "concept", "entity": "entity", "schema": "schema"}.get(selector)
-                values = [
-                    record
-                    for record in records
-                    if record.reference.kind == kind
-                    and locator.casefold()
-                    in [
-                        str(
-                            getattr(
-                                getattr(record, "body", None),
-                                "label",
-                                getattr(getattr(record, "body", None), "title", ""),
-                            )
-                        ).casefold(),
-                        *(
-                            str(alias).casefold()
-                            for alias in getattr(getattr(record, "body", None), "aliases", ())
-                        ),
-                        record.reference.exact().casefold(),
-                    ]
-                ]
-                if len(values) > 1:
-                    raise DomainError(
-                        "ambiguous_name",
-                        "Selector matches multiple cognitive objects",
-                        candidates=[value.reference.model_dump() for value in values],
-                    )
-                if values:
-                    target_ids = {value.reference.id for value in values}
-                    explicit_members = {
-                        ref.id
-                        for value in values
-                        if isinstance(value, CognitiveRecord)
-                        and isinstance(value.body, (ConceptBody, EntityBody))
-                        for ref in (
-                            value.body.members
-                            if isinstance(value.body, ConceptBody)
-                            else tuple(mention.reference for mention in value.body.mentions)
-                        )
-                    }
-                    values = [
-                        record
-                        for record in records
-                        if record.reference.id in target_ids | explicit_members
-                        or any(
-                            ref.id in target_ids
-                            for ref in references_in(
-                                record.body if isinstance(record, CognitiveRecord) else None
-                            )
-                        )
-                        or any(
-                            link.reference and link.reference.id in target_ids
-                            for link in (
-                                record.evidence if isinstance(record, CognitiveRecord) else ()
-                            )
-                        )
-                    ]
-            if not values:
-                raise DomainError("selector_not_found", f"No accessible object matches {locator}")
-            matched.append({value.reference.exact() for value in values})
-        selected = matched[0].intersection(*matched[1:]) if matched else set[str]()
-        candidates = [record for record in candidates if record.reference.exact() in selected]
-    return candidates, direct
+        return CandidateView(allowed, catalog, assets, view.commit_seq, source_rows, roots)
 
 
 def order(

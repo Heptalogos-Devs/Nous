@@ -37,7 +37,12 @@ async def query(self: RetrievalService, ctx: CallContext, request: QueryRequest)
     result = result.model_copy(update={"expression": plan["canonical"]})
     return await self.finalize(
         ctx,
-        bound.model_copy(update={"materialize": bound.materialize or plan["materialize"]}),
+        bound.model_copy(
+            update={
+                "text": plan["canonical"],
+                "materialize": bound.materialize or plan["materialize"],
+            }
+        ),
         result,
         explicit_sort=plan["sort"] is not None,
     )
@@ -242,7 +247,15 @@ async def execute(
     if branches[0] < 0:
         raise DomainError("query_budget_exceeded", "Query exceeds branch budget")
     view = await self.eligible(ctx, bound, plan)
-    records, direct = self.selectors(view.records, plan, view.sources)
+    selection = self.selectors(view.records, view.catalog, plan, view.sources)
+    records, direct = selection.records, selection.direct
+    if bound.mode != "lexical" and selection.terms:
+        bound = bound.model_copy(
+            update={
+                "text": " ".join((bound.text, *selection.terms)).strip(),
+                "parts": (*bound.parts, *selection.terms) if bound.parts else (),
+            }
+        )
     if plan.get("no_matches"):
         records = []
     records = [
@@ -279,7 +292,7 @@ async def execute(
     space: str | None = None
     if bound.mode != "lexical" and not direct and records:
         try:
-            batch = await self.query_embedding(ctx, bound)
+            batch = await self.query_embedding(ctx, bound, source_ids=selection.source_ids)
         except DomainError as error:
             if bound.capabilities.semantic != "optional" or error.code not in {
                 "model_unavailable",
@@ -346,7 +359,7 @@ async def execute(
         )
         query_vector = np.ascontiguousarray(batch.vectors[0], dtype=np.float32)
         if bound.mode == "vcp":
-            graph = self.graph(view.records, records, by_ref, batch.dimensions, view.active_roots)
+            graph = self.graph(view.catalog, records, by_ref, batch.dimensions, view.active_roots)
             if not graph.tags:
                 if bound.capabilities.exploration == "required":
                     raise DomainError(

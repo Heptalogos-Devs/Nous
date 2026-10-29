@@ -92,6 +92,10 @@ class AMemorixService:
             )
         if tool == "memory_stats":
             return await self.stats(ctx)
+        if tool == "memory_graph_admin":
+            from .graph import graph_admin
+
+            return await graph_admin(self, ctx, arguments)
         if tool in {"memory_source_admin", "memory_delete_admin"}:
             from .sources import source_admin
 

@@ -119,3 +119,9 @@ class AMemorixPolicy(Contract):
             else:
                 matched |= pattern in {chat, group, user}
         return not matched if self.mode == "blacklist" else matched
+
+
+class GraphSearchInput(Contract):
+    action: Literal["search"] = "search"
+    query: str = Field(max_length=65536)
+    limit: int = Field(default=50, ge=1, le=200)

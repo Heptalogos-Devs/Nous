@@ -215,6 +215,10 @@ class AMemorixAdapter:
     async def memory_stats(self, **kwargs: JsonValue) -> JsonObject:
         return await self.call("memory_stats", kwargs)
 
+    async def memory_graph_admin(self, *, action: str, **kwargs: JsonValue) -> JsonObject:
+        """Search actual graph entities and relations through the shared domain authority."""
+        return await self.call("memory_graph_admin", {"action": action, **kwargs})
+
     async def memory_runtime_admin(self, *, action: str, **kwargs: JsonValue) -> JsonObject:
         return await self.call("memory_runtime_admin", {"action": action, **kwargs})
 

@@ -8,6 +8,7 @@ from nous_wave.contracts import (
     DomainError,
     EmbeddingBatch,
     MediaEmbeddingInput,
+    MediaEmbeddingResult,
     MediaReference,
     QueryRequest,
 )
@@ -22,18 +23,23 @@ if TYPE_CHECKING:
 
 
 async def query_embedding(
-    self: RetrievalService, ctx: CallContext, request: QueryRequest
+    self: RetrievalService,
+    ctx: CallContext,
+    request: QueryRequest,
+    *,
+    source_ids: tuple[str, ...] = (),
 ) -> EmbeddingBatch:
     parts = request.parts or (request.text, *request.media)
     if not any(isinstance(part, MediaReference) for part in parts):
         return await self.models.embed(
             ctx.model_copy(update={"request_id": f"{ctx.request_id}:query"}),
             ("\n".join(part for part in parts if isinstance(part, str)),),
+            source_ids=source_ids,
         )
     async with self.authority.read(ctx) as view:
         available = await media_records_in(view, ctx, self.materials, self.derivations)
     converted: list[str | MediaEmbeddingInput] = []
-    source_ids: set[str] = set()
+    input_sources: set[str] = set(source_ids)
     for part in parts:
         if isinstance(part, str):
             converted.append(part)
@@ -58,7 +64,7 @@ async def query_embedding(
         record = max(matched, key=lambda item: item.commit_seq)
         converted.append(embedding_input(record))
         async with self.authority.read(ctx) as view:
-            source_ids.update(
+            input_sources.update(
                 await source_material_ids_in(
                     view, ctx, record.reference, self.materials, self.derivations
                 )
@@ -66,22 +72,13 @@ async def query_embedding(
     return await self.models.embed_media(
         ctx.model_copy(update={"request_id": f"{ctx.request_id}:query-media"}),
         (tuple(converted),),
-        source_ids=tuple(sorted(source_ids)),
+        source_ids=tuple(sorted(input_sources)),
     )
 
 
 async def embed_media(
     self: RetrievalService, ctx: CallContext, reference: MediaReference, operation_id: str
-):
-    receipt = await self.authority.receipt(
-        ctx,
-        operation_id,
-        operation_kind="media.embed",
-        scope=ctx.require_subject(),
-        payload=reference,
-    )
-    if receipt is not None:
-        return receipt.result
+) -> MediaEmbeddingResult:
     async with self.authority.read(ctx) as view:
         candidates = [
             record
@@ -103,6 +100,15 @@ async def embed_media(
         source_ids = await source_material_ids_in(
             view, ctx, record.reference, self.materials, self.derivations
         )
+    receipt = await self.authority.receipt(
+        ctx,
+        operation_id,
+        operation_kind="media.embed",
+        scope=ctx.require_subject(),
+        payload=reference,
+    )
+    if receipt is not None:
+        return MediaEmbeddingResult.model_validate(receipt.result)
     batch = await self.models.embed_media(
         ctx.model_copy(update={"request_id": operation_id}),
         ((embedding_input(record),),),
@@ -123,9 +129,9 @@ async def embed_media(
         scope=ctx.require_subject(),
         payload=reference,
     ) as tx:
-        if tx.replayed:
-            return tx.replay_result
         await source_material_ids_in(tx, ctx, record.reference, self.materials, self.derivations)
+        if tx.replayed:
+            return MediaEmbeddingResult.model_validate(tx.replay_result)
         existing = (
             await tx.connection.execute(
                 select(vectors.c.model, vectors.c.dimensions).where(
@@ -148,17 +154,17 @@ async def embed_media(
                     model=batch.model,
                     dimensions=batch.dimensions,
                     vector=list(batch.vectors[0]),
-                    call_id=batch.call_id,
+                    call_id=batch.call_ids[0],
                     commit_seq=tx.commit_seq,
                 )
             )
         return tx.result(
-            {
-                "reference": reference.model_dump(mode="json"),
-                "space": batch.space,
-                "model": batch.model,
-                "dimensions": batch.dimensions,
-                "call_ids": list(batch.call_ids or ((batch.call_id,) if batch.call_id else ())),
-                "commit_seq": tx.commit_seq,
-            }
+            MediaEmbeddingResult(
+                reference=reference,
+                space=batch.space,
+                model=batch.model,
+                dimensions=batch.dimensions,
+                call_ids=batch.call_ids,
+                commit_seq=tx.commit_seq,
+            )
         )

@@ -36,13 +36,20 @@ async def amemorix(request: Request, command: AMemorixRequest):
         "list_vector_spaces",
     }
     read_preview = (
-        command.operation.tool == "memory_bundle_admin"
-        and command.operation.arguments.get("action") == "export"
-        and command.operation.arguments.get("preview") is True
-    ) or (
-        command.operation.tool == "memory_delete_admin"
-        and command.operation.arguments.get("action") == "execute"
-        and command.operation.arguments.get("dry_run") is True
+        (
+            command.operation.tool == "memory_graph_admin"
+            and command.operation.arguments.get("action") == "search"
+        )
+        or (
+            command.operation.tool == "memory_bundle_admin"
+            and command.operation.arguments.get("action") == "export"
+            and command.operation.arguments.get("preview") is True
+        )
+        or (
+            command.operation.tool == "memory_delete_admin"
+            and command.operation.arguments.get("action") == "execute"
+            and command.operation.arguments.get("dry_run") is True
+        )
     )
     capability = (
         "manage"

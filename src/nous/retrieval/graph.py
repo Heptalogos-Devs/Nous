@@ -44,23 +44,23 @@ def graph(
         for record in concepts
         if isinstance(record.body, ConceptBody)
     ]
-    tag_rows = {record.reference.id: index for index, record in enumerate(concepts)}
+    tag_rows = {record.reference.exact(): index for index, record in enumerate(concepts)}
     memberships: dict[str, set[int]] = {}
     for tag, record in enumerate(concepts):
         if isinstance(record.body, ConceptBody):
             for member in record.body.members:
-                memberships.setdefault(member.id, set()).add(tag)
+                memberships.setdefault(member.exact(), set()).add(tag)
     member_indptr: list[int] = [0]
     member_indices: list[int] = []
     for record in records:
-        nodes = set(memberships.get(record.reference.id, ()))
+        nodes = set(memberships.get(record.reference.exact(), ()))
         for ref in references_in(record.body if isinstance(record, CognitiveRecord) else None):
-            if ref.id in tag_rows and not (
+            if ref.exact() in tag_rows and not (
                 isinstance(record, CognitiveRecord) and isinstance(record.body, AssociationBody)
             ):
-                nodes.add(tag_rows[ref.id])
-        if record.reference.id in tag_rows:
-            nodes.add(tag_rows[record.reference.id])
+                nodes.add(tag_rows[ref.exact()])
+        if record.reference.exact() in tag_rows:
+            nodes.add(tag_rows[record.reference.exact()])
         member_indices.extend(sorted(nodes))
         member_indptr.append(len(member_indices))
 
@@ -79,10 +79,10 @@ def graph(
     for record in catalog:
         if isinstance(record, CognitiveRecord) and isinstance(record.body, AssociationBody):
             body = record.body
-            if body.from_ref.id in tag_rows and body.to_ref.id in tag_rows:
-                adjacency[tag_rows[body.from_ref.id]].append(
+            if body.from_ref.exact() in tag_rows and body.to_ref.exact() in tag_rows:
+                adjacency[tag_rows[body.from_ref.exact()]].append(
                     (
-                        tag_rows[body.to_ref.id],
+                        tag_rows[body.to_ref.exact()],
                         1.0,
                         1 if body.polarity == "positive" else -1,
                         material_roots(record),

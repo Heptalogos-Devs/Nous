@@ -106,3 +106,20 @@ source `preview` 与 `execute(dry_run=true)` 由同一来源事务生成计划�
 会话身份来自 MaiBot 正式 chat_manager 创建或读取的 session_id。来源权限按当前 conversation_ref 限定；没有会话的后台模型调用不派生聊天身份。history_generation 是实际输入历史的内容摘要，invocation_id 标识真实宿主模型调用。
 
 Nous 的 `contexts` 配置为每个 consumer 管理预算、居民与可选 Steward。`consumers.maibot.steward_role="steward"` 使用同一模型资源图、Prompt 和调用账本；留空时只使用确定性的检索与预算编译。Steward 只选择当前可见条目，综合结果带 `steward_interpretation` 与归因。居民过期使用 DBOS 正式 schedule，接触不会刷新其实际使用时间。
+
+
+图谱搜索通过现有 MemoryService.graph_admin → SDK invoke → `memory_graph_admin` 接入：
+
+```python
+from nous_wave.contracts import CognitiveRef
+
+result = await adapter.memory_graph_admin(action="search", query="项目", limit=50)
+# MaiBot 的既有 RPC 入口传递相同合同。
+result = await adapter.invoke("memory_graph_admin", {"action": "search", "query": "项目", "limit": 50})
+for item in result["items"]:
+    source = await client.source(subject_id, CognitiveRef.model_validate(item["reference"]))
+```
+
+search 按实体名称、真实身份、关系两端名称与谓词进行精确、前缀、子串匹配。items 保留旧界面的 type/title/matched_field/matched_value、entity_hash 或 relation_hash；这些身份指向实际 Native 认知，并附完整 reference 与来源根。置信度只有真实记录存在时返回。图谱写入动作仍要求相应领域操作，当前不会以修改投影替代认知变更。
+
+CLI 对应 `nous graph-search <namespace-id> <subject-id> <query> --limit 50`；MCP 的 `memory_graph_admin` 接受 search action、query 和 limit，沿同一来源权限读取。

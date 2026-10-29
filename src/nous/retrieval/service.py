@@ -14,7 +14,7 @@ from nous.platform.concurrency import owned_thread
 from nous.platform.persistence import Authority
 from nous.references.service import ReferenceDirectory
 
-from . import candidates, embedding, graph, query, status
+from . import binding, candidates, embedding, graph, query, status
 from .native import run_native
 from .readout import finalize
 from .source_expansion import expand_sources
@@ -25,7 +25,7 @@ class RetrievalService:
     expand_sources = expand_sources
     status = status.status
     eligible = candidates.eligible
-    selectors = candidates.selectors
+    selectors = binding.selectors
     order = candidates.order
     graph = graph.graph
     query = query.query
