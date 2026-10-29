@@ -36,18 +36,20 @@ uv run ruff format src sdk/python/src native/python/python
 
 ## 编辑器、LSP 与 AI
 
-采用 `detachhead.basedpyright` 提供跳转、引用、签名、类型诊断，`charliermarsh.ruff` 提供格式和 lint，`rust-lang.rust-analyzer` 仅加载新的 native workspace。Python 调试使用 debugpy；Rust 调试沿用原生调试器，需要时启用符号。
+跨编辑器默认用 `detachhead.basedpyright` 提供跳转、引用、签名与类型诊断；`python.languageServer` 设为 `None`，并拒绝 Pylance，避免与 Microsoft 语言服务叠诊。CLI 与 CI 只跑 `uv run basedpyright`，规则来自 `[tool.basedpyright]`。`charliermarsh.ruff` 负责格式与 lint；`rust-analyzer` 仅加载 `native/` workspace。Python 调试用 debugpy；测试发现启用 pytest（`tests/python`、`native/python/tests`）。
 
-`templates/vscode/` 提供扩展建议和设置。解释器统一指向根 `.venv`。避免同一文件由 Pylance 与 Basedpyright、Ruff 与多个格式器重复处理。
+在 Cursor 里可用自带的 `anysphere.cursorpyright`（Basedpyright 分支）代替 basedpyright 扩展；二者只开其一，不要同时启用。其它 VS Code 兼容编辑器安装推荐的 basedpyright 扩展即可；CLI/格式/测试/调试配置相同，不依赖 Cursor。
 
-云端安装 LSP 二进制：
+`templates/vscode/` 与根 `.vscode/` 对齐：解释器指向 `temp/venvs/python-native`，含测试发现与 launch 配置。不要再叠加第二套类型检查输出或第二个格式器。
+
+云端或其它 LSP 宿主可直接连接：
 
 ```bash
 uv run basedpyright-langserver --stdio
 uv run ruff server
 ```
 
-支持 LSP 的 Codex/编辑器宿主可以直接连接它们。只有 shell 工具的云端会话用 Basedpyright CLI 得到相同类型诊断；不要为了“AI 友好”再开发一个自制 LSP-to-MCP 服务。语言服务器作为常规工具提供符号信息，工作方式由真实宿主能力决定。
+只有 shell 工具的会话用 Basedpyright CLI 得到相同类型诊断；不要为了“AI 友好”再开发自制 LSP-to-MCP 服务。语言服务器作为常规工具提供符号信息，工作方式由真实宿主能力决定。
 
 工程对 AI 的可读性主要来自：一个清楚的应用入口、一份依赖锁、确定的模块 owner、短而准确的公开操作、可定位的 Prompt、类型完整的 native stub、能直接运行的 CLI 和实际消费者示例。常驻 AGENTS 只记录这些当前工程事实，专项方法从已安装 AntiRLHF 按需读取。
 

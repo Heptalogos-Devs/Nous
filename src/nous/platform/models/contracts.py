@@ -47,6 +47,7 @@ async def prepare_role(
     output_type: type[BaseModel] | type[str] | None = None,
     variant: str | None = None,
     require_configured: bool = True,
+    draft_template: str | None = None,
 ) -> PreparedRole:
     resources = ModelConfiguration.model_validate(
         (await self.configuration.effective(ctx, "models"))["value"]
@@ -54,7 +55,14 @@ async def prepare_role(
     route, role = resources.resolve(role_id, require_configured=require_configured)
     definition = self.roles.resolve(role.purpose, variant, output_type, role.output_mode)
     parsed, variables = definition.variables(variables)
-    prompt = await self.render_prompt(ctx, role_id, variables, role.prompt_id)
+    prompt = (
+        await self.render_prompt(ctx, role_id, variables, role.prompt_id)
+        if draft_template is None
+        else self.prompts.preview(
+            {"id": role.prompt_id, "revision": None, "template": draft_template, "active": False},
+            variables,
+        )
+    )
     if not prompt["variable_names"]:
         prompt["rendered"] = (
             str(prompt["rendered"]) + "\nInput:\n" + json.dumps(variables, ensure_ascii=False)
@@ -116,6 +124,7 @@ async def model_preview(
         dict(request.input),
         variant=request.variant,
         require_configured=False,
+        draft_template=request.draft_template,
     )
     media: list[MediaInput] = []
     if request.media and self.preview_media_resolver is None:

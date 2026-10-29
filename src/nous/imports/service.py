@@ -32,6 +32,7 @@ class ImportService:
     replay_result_in = replay.replay_result_in
     replay_result = replay.replay_result
     read_admit_result = replay.read_admit_result
+    input_context_in = replay.input_context_in
     vector_status = status.vector_status
     prepare_document = catalog.prepare_document
     freeze_catalog = catalog.freeze_catalog

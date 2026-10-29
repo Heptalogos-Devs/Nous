@@ -215,6 +215,7 @@ async def accept_admit(
                         await tx.connection.execute(
                             delete(manifest).where(manifest.c.key == head["key"])
                         )
+            effective = ctx
             selected: list[int] = []
             skipped: list[str] = []
             material_ids: list[str] = []
@@ -263,7 +264,7 @@ async def accept_admit(
                         "inputs": tuple(prepared[index].document for index in selected),
                     }
                 )
-                catalog = await self.freeze_catalog_in(
+                frozen = await self.freeze_catalog_in(
                     tx,
                     ctx,
                     frozen_command,
@@ -271,6 +272,8 @@ async def accept_admit(
                     [prepared[index] for index in selected],
                     [split[index] for index in selected],
                 )
+                catalog = frozen.catalog
+                effective = frozen.context
                 material_ids.extend(unit.material_id for unit in catalog.units)
             request_id = str(uuid4())
             work_command = (
@@ -293,7 +296,12 @@ async def accept_admit(
             }
             request = {
                 "kind": "files",
-                "context": ctx.model_dump(mode="json"),
+                "input_operation": {
+                    "operation_id": operation_id,
+                    "operation_kind": operation_kind,
+                    "scope": ctx.require_subject(),
+                },
+                "context": effective.model_dump(mode="json"),
                 "command": work_command.model_dump(mode="json"),
                 "catalog_id": catalog.id if catalog else None,
                 "manifest_keys": keys,
@@ -341,6 +349,7 @@ async def accept_admit(
                         record={
                             **parent,
                             "admission_request_id": request_id,
+                            "context": effective.model_dump(mode="json"),
                             "material_ids": request["material_ids"],
                         }
                     )
@@ -367,6 +376,7 @@ async def finish_admit(self: ImportService, ctx: CallContext, request_id: str) -
                 select(requests.c.record).where(requests.c.id == request_id)
             )
         ).scalar_one()
+        ctx = await self.input_context_in(view, ctx, value)
     if value.get("purged"):
         raise DomainError("source_purged", "The import request's source was purged")
     command = AdmitFiles.model_validate(value["command"])

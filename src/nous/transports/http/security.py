@@ -46,9 +46,7 @@ async def context(
     clock = request.headers.get("x-nous-cognitive-clock")
     if clock is not None and len(clock.encode()) > 4096:
         raise ValueError("Cognitive clock header exceeds its size limit")
-    source_scope = await resolve_scope(
-        request, namespace_id, subject_id, base_scope=principal.source_ids
-    )
+    source_scope = await resolve_scope(request, namespace_id, subject_id)
     ctx = CallContext(
         caller_id=principal.caller_id,
         namespace_id=namespace_id,
@@ -56,6 +54,7 @@ async def context(
         request_id=current_request_id() or request.headers.get("x-nous-trace-id", str(uuid4())),
         locale=request.headers.get("Accept-Language", "zh-CN"),
         clock=TimePoint.model_validate_json(clock) if clock is not None else utc_now(),
+        credential_source_ids=principal.source_ids,
         allowed_source_ids=source_scope.allowed_source_ids,
         source_constraints=source_scope.source_constraints,
     )

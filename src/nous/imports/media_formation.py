@@ -48,6 +48,17 @@ async def authorize_result(
     value: object,
 ) -> dict[str, object]:
     result = TypeAdapter(dict[str, object]).validate_python(value)
+    if command.observation_id is None and ctx.source_groups():
+        ctx = (
+            await self.materials.restore_input_in(
+                view,
+                ctx,
+                (command.material_id,),
+                operation_id=command.operation_id + ":contact",
+                operation_kind="media.contact",
+                scope=ctx.require_subject(),
+            )
+        ).context
     observation_id = TypeAdapter(str).validate_python(result["observation_id"])
     references = tuple(
         MediaReference(kind="source_region", id=region.id, observation_id=observation_id)
@@ -60,7 +71,7 @@ async def authorize_result(
 
 async def observe(
     self: MediaImportService, ctx: CallContext, command: AdoptMedia, material: MaterialRecord
-) -> SourceRecord:
+) -> tuple[SourceRecord, CallContext]:
     document = BlobDocument(
         filename=material["filename"],
         media_type=material["media_type"],
@@ -78,9 +89,36 @@ async def observe(
         payload=command,
     ) as tx:
         if tx.replayed:
-            return TypeAdapter(SourceRecord).validate_python(tx.replay_result)
+            value = TypeAdapter(SourceRecord).validate_python(tx.replay_result)
+            effective = (
+                (
+                    await self.materials.restore_input_in(
+                        tx,
+                        ctx,
+                        (command.material_id,),
+                        operation_id=command.operation_id + ":contact",
+                        operation_kind="media.contact",
+                        scope=ctx.require_subject(),
+                    )
+                ).context
+                if command.observation_id is None and ctx.source_groups()
+                else ctx
+            )
+            await require_observation_in(
+                tx,
+                effective,
+                value["id"],
+                region_id=command.regions[0].id if command.regions else None,
+            )
+            return value, effective
         if command.observation_id is None:
-            value = await self.materials.observe_in(tx, ctx, command.material_id, document)
+            sources = tuple(
+                MediaReference(kind="source_region", id=region.id) for region in command.regions
+            ) or (MediaReference(kind="material", id=command.material_id),)
+            admission = await self.materials.admit_observation_in(
+                tx, ctx, command.material_id, document, sources=sources
+            )
+            value, effective = admission.event, admission.context
         else:
             existing = await require_observation_in(
                 tx,
@@ -95,7 +133,9 @@ async def observe(
             for region in command.regions[1:]:
                 await require_observation_in(tx, ctx, command.observation_id, region_id=region.id)
             value = TypeAdapter(SourceRecord).validate_python(existing["record"])
-        return tx.result(value)
+            effective = ctx
+        tx.result(value)
+        return value, effective
 
 
 async def adopt(
@@ -141,7 +181,7 @@ async def adopt(
         _, material = await self.materials.region_source(ctx, command.regions[0].id)
     else:
         material = await self.materials.read(ctx, command.material_id)
-    observation = await observe(self, ctx, command, material)
+    observation, ctx = await observe(self, ctx, command, material)
     observation_id = observation["id"]
     references = tuple(
         MediaReference(kind="source_region", id=region.id, observation_id=observation_id)

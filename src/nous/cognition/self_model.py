@@ -24,11 +24,42 @@ from sqlalchemy import select
 from nous.identity.service import require_subject_in
 from nous.material.service import MaterialRecord
 from nous.platform.content import ContentLease, ContentObject
+from nous.platform.persistence import ReadView, WriteTx
 
 from .schema import revisions
 
 if TYPE_CHECKING:
     from .service import CognitionService
+
+
+async def replay_seed(
+    self: CognitionService,
+    view: ReadView | WriteTx,
+    ctx: CallContext,
+    command: AdoptSeed,
+    cached: SeedResult,
+) -> SeedResult:
+    for entry in command.documents:
+        if entry.document.material_id:
+            await self.materials.read_in(view, ctx, entry.document.material_id)
+        for facet in entry.facets:
+            if facet.target:
+                await self.get_in(view, ctx, facet.target)
+    effective = (
+        await self.qualify_known_outputs_in(
+            view,
+            ctx,
+            (*cached.memories, *cached.facets),
+            operation_id=command.operation_id,
+            operation_kind="self.seed",
+            scope=ctx.require_subject(),
+        )
+        if ctx.source_groups()
+        else ctx
+    )
+    for reference in (*cached.memories, *cached.facets):
+        await self.get_in(view, effective, reference)
+    return cached
 
 
 async def adopt_seed(self: CognitionService, ctx: CallContext, command: AdoptSeed) -> SeedResult:
@@ -40,7 +71,10 @@ async def adopt_seed(self: CognitionService, ctx: CallContext, command: AdoptSee
         payload=command,
     )
     if receipt is not None:
-        return SeedResult.model_validate(receipt.result)
+        async with self.authority.read(ctx) as view:
+            return await replay_seed(
+                self, view, ctx, command, SeedResult.model_validate(receipt.result)
+            )
     async with self.authority.read(ctx) as view:
         await require_subject_in(view, ctx, "self")
     prepared: list[tuple[MaterialRecord | None, str, ContentLease | None]] = []
@@ -79,21 +113,24 @@ async def adopt_seed(self: CognitionService, ctx: CallContext, command: AdoptSee
             payload=command,
         ) as tx:
             if tx.replayed:
-                return SeedResult.model_validate(tx.replay_result)
+                return await replay_seed(
+                    self, tx, ctx, command, SeedResult.model_validate(tx.replay_result)
+                )
             await require_subject_in(tx, ctx, "self")
             memories: list[CognitiveRef] = []
             facets: list[CognitiveRef] = []
             observation_ids: list[str] = []
+            effective = ctx
             for entry, (original, text, lease) in zip(command.documents, prepared, strict=True):
                 document = entry.document.model_copy(update={"source_type": "self_seed"})
-                material = (
+                if original:
                     await self.materials.read_in(tx, ctx, original["id"])
-                    if original
-                    else await self.materials.put_in(tx, ctx, document, lease)
-                )
-                event = await self.materials.observe_in(
-                    tx, ctx, material["id"], document, kind="contact"
-                )
+                    admission = await self.materials.admit_observation_in(
+                        tx, effective, original["id"], document
+                    )
+                else:
+                    admission = await self.materials.admit_text_in(tx, effective, document, lease)
+                material, event, effective = admission.material, admission.event, admission.context
                 observation_ids.append(event["id"])
                 evidence = (EvidenceLink(observation_id=event["id"]),)
                 times = CognitiveTimes(
@@ -108,7 +145,7 @@ async def adopt_seed(self: CognitionService, ctx: CallContext, command: AdoptSee
                 if entry.enter_memory:
                     memory = await self.adopt_in(
                         tx,
-                        ctx,
+                        effective,
                         AdoptCognition(
                             body=MemoryBody(
                                 text=text, role="procedural_experience", epistemic=stance
@@ -127,7 +164,7 @@ async def adopt_seed(self: CognitionService, ctx: CallContext, command: AdoptSee
                         )
                     record = await self.adopt_in(
                         tx,
-                        ctx,
+                        effective,
                         AdoptCognition(
                             id=prior.reference.id if prior else None,
                             expected_revision=prior.reference.revision if prior else 0,

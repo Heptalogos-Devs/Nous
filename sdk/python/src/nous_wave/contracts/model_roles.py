@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import ConfigDict, Field, JsonValue
+from pydantic import ConfigDict, Field, JsonValue, model_validator
 
 from .common import Contract
 from .media import MediaReference
@@ -21,6 +21,7 @@ class ModelPreviewRequest(ModelContractRequest):
     input: dict[str, JsonValue]
     media: tuple[MediaReference, ...] = ()
     source_ids: tuple[str, ...] = ()
+    draft_template: str | None = None
 
 
 class ModelRoleContract(Contract):
@@ -39,16 +40,25 @@ class ModelRoleContract(Contract):
 
 class ModelPrompt(Contract):
     id: str
-    revision: int
+    revision: int | None
     template: str
     active: bool
-    source: Literal["bundled", "instance"]
+    source: Literal["bundled", "instance", "draft"]
     variable_names: tuple[str, ...]
     template_hash: str
     variables: dict[str, JsonValue] | None = None
     rendered: str | None = None
     hash: str | None = None
     description_call_id: str | None = None
+
+    @model_validator(mode="after")
+    def revision_identity(self) -> ModelPrompt:
+        if self.source == "draft":
+            if self.revision is not None or self.active:
+                raise ValueError("A draft prompt has no revision and cannot be active")
+        elif self.revision is None:
+            raise ValueError("A saved or bundled prompt requires its actual revision")
+        return self
 
 
 class InvocationParameters(Contract):

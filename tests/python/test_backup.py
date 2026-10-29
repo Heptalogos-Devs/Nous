@@ -17,7 +17,7 @@ async def _backup_job(reference):
 
 def test_installation_archive_restores_content_receipts_and_dbos_work(tmp_path):
     async def scenario():
-        ctx = CallContext(caller_id="owner", namespace_id="namespace")
+        ctx = CallContext(credential_source_ids=None, caller_id="owner", namespace_id="namespace")
         authority = Authority(tmp_path / "original" / "data" / "authority.sqlite")
         content = ContentStore(authority, tmp_path / "original" / "content")
         await authority.initialize()

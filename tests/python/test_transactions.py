@@ -18,7 +18,7 @@ from nous.platform.persistence.schema import job_links, operations
 
 
 def context(caller="alice", namespace="workspace"):
-    return CallContext(caller_id=caller, namespace_id=namespace)
+    return CallContext(credential_source_ids=None, caller_id=caller, namespace_id=namespace)
 
 
 def test_operation_identity_survives_restart_and_serializes_concurrent_retries(tmp_path):

@@ -1,4 +1,4 @@
-import { $, api, button, el, jsonView, state } from "./client.js";
+import { $, api, button, el, jsonView, notify, op, setDisabled, state } from "./client.js";
 import { message, t } from "./i18n.js";
 
 let activeDialog;
@@ -33,10 +33,10 @@ export async function showModelContract(role, editPrompt) {
   const namespace = state.namespace;
   const subject = state.subject;
   const params = new URLSearchParams({ namespace_id: namespace, subject_id: subject });
-  async function request(path, body) {
+  async function request(path, body, method = "POST") {
     if (state.namespace !== namespace || state.subject !== subject)
       throw new Error(t("web-connection-changed"));
-    return api(`${path}?${params}`, { method: "POST", body });
+    return api(`${path}?${params}`, { method, body });
   }
   let contract = await request("/api/models/contract", { role });
   const dialog = el("dialog", "model-contract");
@@ -60,8 +60,17 @@ export async function showModelContract(role, editPrompt) {
     variants.append(option);
   }
   variants.value = contract.variant;
+  const template = el("textarea");
+  template.value = contract.prompt.template;
+  template.rows = 6;
+  template.spellcheck = false;
+  const promptInfo = el("p", "muted");
   const schemas = el("div");
   function renderContract() {
+    message(promptInfo, "web-model-prompt-resource", {
+      id: contract.prompt_id,
+      revision: contract.prompt.revision,
+    });
     schemas.replaceChildren(
       message(
         el("p", "muted"),
@@ -78,15 +87,24 @@ export async function showModelContract(role, editPrompt) {
   const media = editor([], 3);
   const sources = editor([], 3);
   const invocation = el("div");
+  let editGeneration = 0;
+  let variantGeneration = 0;
+  function invalidatePreview() {
+    editGeneration += 1;
+    invocation.replaceChildren();
+  }
   const preview = message(
     button("", async () => {
+      const requested = editGeneration;
       const value = await request("/api/models/preview", {
         role,
         variant: variants.value,
         input: JSON.parse(input.value),
         media: JSON.parse(media.value),
         source_ids: JSON.parse(sources.value),
+        ...(template.value !== contract.prompt.template ? { draft_template: template.value } : {}),
       });
+      if (requested !== editGeneration || !dialog.open) return;
       invocation.replaceChildren(
         message(el("h3"), "web-model-rendered-input"),
         el("pre", "json-view", value.invocation.prompt.rendered),
@@ -96,20 +114,59 @@ export async function showModelContract(role, editPrompt) {
     "web-preview-invocation",
   );
   variants.addEventListener("change", async () => {
-    preview.disabled = true;
+    const requested = ++variantGeneration;
+    invalidatePreview();
+    setDisabled(preview, true);
     try {
-      contract = await request("/api/models/contract", { role, variant: variants.value });
+      const next = await request("/api/models/contract", { role, variant: variants.value });
+      if (requested !== variantGeneration) return;
+      contract = next;
       renderContract();
       invocation.replaceChildren();
+      updateDraft();
     } catch (error) {
       invocation.replaceChildren(el("p", "error", error.message));
     } finally {
-      preview.disabled = false;
+      if (requested === variantGeneration) setDisabled(preview, false);
     }
   });
   const actions = el("div", "button-row");
+  const save = message(
+    button("", async () => {
+      const submitted = template.value;
+      await request(
+        `/api/prompts/${encodeURIComponent(contract.prompt_id)}`,
+        { operation_id: op(), template: submitted },
+        "PUT",
+      );
+      contract = await request("/api/models/contract", { role, variant: variants.value });
+      if (template.value === submitted) template.value = contract.prompt.template;
+      renderContract();
+      updateDraft();
+      invalidatePreview();
+      notify("web-prompt-saved");
+    }),
+    "web-model-save-prompt",
+  );
+  function updateDraft() {
+    setDisabled(save, template.value === contract.prompt.template);
+  }
+  for (const field of [template, input, media, sources])
+    field.addEventListener("input", () => {
+      updateDraft();
+      invalidatePreview();
+    });
   actions.append(
     preview,
+    save,
+    message(
+      button("", () => {
+        template.value = contract.prompt.template;
+        updateDraft();
+        invalidatePreview();
+      }),
+      "web-model-reset-draft",
+    ),
     message(
       button("", async () => {
         dialog.close();
@@ -128,11 +185,14 @@ export async function showModelContract(role, editPrompt) {
     heading,
     labeled("web-model-contract-variant", variants),
     schemas,
+    promptInfo,
+    labeled("web-model-draft-template", template),
     labeled("web-model-input-values", input),
     supplemental,
     actions,
     invocation,
   );
+  updateDraft();
   document.body.append(dialog);
   dialog.showModal();
 }

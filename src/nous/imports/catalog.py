@@ -50,6 +50,38 @@ class PreparedInput:
         )
 
 
+@dataclass(frozen=True)
+class FrozenCatalog:
+    catalog: CatalogView
+    context: CallContext
+
+
+async def replay_frozen(
+    self: ImportService,
+    view: ReadView | WriteTx,
+    ctx: CallContext,
+    command: FreezeCatalog,
+    cached: CatalogView,
+) -> CatalogView:
+    for document in command.inputs:
+        if document.material_id is not None:
+            await self.materials.read_in(view, ctx, document.material_id)
+    effective = (
+        (
+            await self.materials.restore_input_in(
+                view,
+                ctx,
+                operation_id=command.operation_id,
+                operation_kind="imports.freeze",
+                scope=ctx.require_subject(),
+            )
+        ).context
+        if ctx.source_groups()
+        else ctx
+    )
+    return await self.replay_catalog_in(view, effective, cached)
+
+
 async def prepare_document(
     self: ImportService, ctx: CallContext, document: ImportDocument
 ) -> PreparedInput:
@@ -82,7 +114,10 @@ async def freeze_catalog(
         payload=command,
     )
     if receipt is not None:
-        return await self.replay_catalog(ctx, CatalogView.model_validate(receipt.result))
+        async with self.authority.read(ctx) as view:
+            return await replay_frozen(
+                self, view, ctx, command, CatalogView.model_validate(receipt.result)
+            )
     if command.chunk_overlap >= command.chunk_size:
         raise DomainError("invalid_split", "Chunk overlap must be smaller than chunk size")
     prepared = [await self.prepare_document(ctx, document) for document in command.inputs]
@@ -126,10 +161,11 @@ async def freeze_catalog_prepared(
         payload=command,
     ) as tx:
         if tx.replayed:
-            return await self.replay_catalog_in(
-                tx, ctx, CatalogView.model_validate(tx.replay_result)
+            return await replay_frozen(
+                self, tx, ctx, command, CatalogView.model_validate(tx.replay_result)
             )
-        return tx.result(await self.freeze_catalog_in(tx, ctx, command, leases, prepared, split))
+        frozen = await self.freeze_catalog_in(tx, ctx, command, leases, prepared, split)
+        return tx.result(frozen.catalog)
 
 
 async def freeze_catalog_in(
@@ -140,19 +176,20 @@ async def freeze_catalog_in(
     leases: list[ContentLease | None],
     prepared: list[PreparedInput],
     split: list[list[list[Document]]],
-) -> CatalogView:
+) -> FrozenCatalog:
     await require_subject_in(tx, ctx, "memory")
     catalog_id = str(uuid4())
+    effective = ctx
     source_ids: list[str] = []
     frozen: list[ImportUnit] = []
     errors: list[ImportRecordError] = []
     for item, record_chunks, lease in zip(prepared, split, leases, strict=True):
         document = item.document
-        material = (
-            await self.materials.read_in(tx, ctx, item.material["id"])
-            if item.material
-            else await self.materials.put_in(tx, ctx, document, lease)
-        )
+        if item.material:
+            material = await self.materials.read_in(tx, ctx, item.material["id"])
+        else:
+            admission = await self.materials.admit_text_in(tx, effective, document, lease)
+            material, effective = admission.material, admission.context
         source_id = str(uuid4())
         source_ids.append(source_id)
         source = {
@@ -195,7 +232,10 @@ async def freeze_catalog_in(
             )
             for chunk in chunks:
                 start = int(chunk.metadata["start_index"])
-                event = await self.materials.observe_in(tx, ctx, material["id"], actual)
+                admission = await self.materials.admit_observation_in(
+                    tx, effective, material["id"], actual
+                )
+                event, effective = admission.event, admission.context
                 region = SourceRegion(
                     id=str(uuid4()),
                     material_id=material["id"],
@@ -204,7 +244,7 @@ async def freeze_catalog_in(
                     json_pointer=parsed.pointer,
                     line_number=parsed.line_number,
                 )
-                await self.materials.register_region_in(tx, ctx, region)
+                await self.materials.register_region_in(tx, effective, region)
                 unit = ImportUnit(
                     id=str(uuid4()),
                     catalog_id=catalog_id,
@@ -252,7 +292,7 @@ async def freeze_catalog_in(
         original_record_count=sum(len(item.records) for item in prepared),
         errors=tuple(errors),
         formation_catalog=await self.cognition.formation_catalog_in(
-            tx, ctx, "\n".join(unit.text for unit in frozen)
+            tx, effective, "\n".join(unit.text for unit in frozen)
         ),
     )
     await tx.connection.execute(
@@ -263,7 +303,7 @@ async def freeze_catalog_in(
             record=result.model_dump(mode="json"),
         )
     )
-    return result
+    return FrozenCatalog(result, effective)
 
 
 async def read_catalog_in(

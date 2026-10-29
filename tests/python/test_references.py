@@ -31,7 +31,12 @@ def test_reconcile_recovers_old_names_only_within_visible_sources(tmp_path: Path
         cognition = CognitionService(authority, materials=materials)
         directory = ReferenceDirectory(authority, cognition, materials)
         await authority.initialize()
-        ctx = CallContext(caller_id="owner", namespace_id="research", subject_id="subject")
+        ctx = CallContext(
+            credential_source_ids=None,
+            caller_id="owner",
+            namespace_id="research",
+            subject_id="subject",
+        )
         try:
             await identity.create_namespace(ctx, "Research", "namespace")
             await identity.create_subject(ctx, "Researcher", "subject", subject_id=ctx.subject_id)

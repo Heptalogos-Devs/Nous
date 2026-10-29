@@ -249,105 +249,105 @@ fn assemble(
     check()?;
     let mut dense = None;
     let mut vcp = None;
-    if let Some(vectors) = &data.vectors {
-        if !vectors.is_empty() {
-            let identity = VectorGenerationIdentity {
-                space: data.assets.space.clone(),
-                generation: generation.clone(),
-                signature: generation.clone(),
-                watermark: 1,
-                dimension: vectors[0].len(),
-            };
-            let records = data
+    if let Some(vectors) = &data.vectors
+        && !vectors.is_empty()
+    {
+        let identity = VectorGenerationIdentity {
+            space: data.assets.space.clone(),
+            generation: generation.clone(),
+            signature: generation.clone(),
+            watermark: 1,
+            dimension: vectors[0].len(),
+        };
+        let records = data
+            .references
+            .iter()
+            .zip(vectors)
+            .enumerate()
+            .map(|(i, (reference, vector))| VectorRecord {
+                id: i as i64 + 1,
+                source_key: reference.clone(),
+                vector: vector.clone(),
+            })
+            .collect();
+        let snapshot = VectorSnapshot {
+            identity: identity.clone(),
+            candidates: records,
+            tags: vec![],
+        };
+        dense = Some(if create {
+            VectorGeneration::create(&path.join("dense"), snapshot)
+                .context("build native dense generation")?
+        } else {
+            VectorGeneration::open(&path.join("dense"), &snapshot)?
+        });
+        check()?;
+        if let Some(tag_vectors) = &data.tag_vectors {
+            let candidate_sources = (0..data.references.len())
+                .map(|row| {
+                    data.candidate_source_indices[data.candidate_source_indptr[row] as usize
+                        ..data.candidate_source_indptr[row + 1] as usize]
+                        .iter()
+                        .map(|index| data.source_references[*index as usize].clone())
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>();
+            let candidates = data
                 .references
                 .iter()
                 .zip(vectors)
                 .enumerate()
-                .map(|(i, (reference, vector))| VectorRecord {
-                    id: i as i64 + 1,
-                    source_key: reference.clone(),
-                    vector: vector.clone(),
+                .map(|(row, (reference, vector))| {
+                    let tags = data.tag_indices
+                        [data.tag_indptr[row] as usize..data.tag_indptr[row + 1] as usize]
+                        .iter()
+                        .flat_map(|index| {
+                            let id = *index as usize;
+                            let tag = &data.assets.tags[id];
+                            candidate_sources[row]
+                                .iter()
+                                .map(move |source_ref| ServingTag {
+                                    key: tag.key.clone(),
+                                    label: tag.label.clone(),
+                                    vector: tag_vectors[id].clone(),
+                                    source_ref: source_ref.clone(),
+                                })
+                        })
+                        .collect();
+                    ServingCandidate {
+                        id: reference.clone(),
+                        commit_seq: 1,
+                        vector: vector.clone(),
+                        source_refs: candidate_sources[row].clone(),
+                        tags,
+                    }
                 })
                 .collect();
-            let snapshot = VectorSnapshot {
-                identity: identity.clone(),
-                candidates: records,
-                tags: vec![],
-            };
-            dense = Some(if create {
-                VectorGeneration::create(&path.join("dense"), snapshot)
-                    .context("build native dense generation")?
-            } else {
-                VectorGeneration::open(&path.join("dense"), &snapshot)?
-            });
-            check()?;
-            if let Some(tag_vectors) = &data.tag_vectors {
-                let candidate_sources = (0..data.references.len())
-                    .map(|row| {
-                        data.candidate_source_indices[data.candidate_source_indptr[row] as usize
-                            ..data.candidate_source_indptr[row + 1] as usize]
-                            .iter()
-                            .map(|index| data.source_references[*index as usize].clone())
-                            .collect::<Vec<_>>()
-                    })
-                    .collect::<Vec<_>>();
-                let candidates = data
-                    .references
+            let snapshot = ServingSnapshot {
+                identity,
+                candidates,
+                tags: data
+                    .assets
+                    .tags
                     .iter()
-                    .zip(vectors)
-                    .enumerate()
-                    .map(|(row, (reference, vector))| {
-                        let tags = data.tag_indices
-                            [data.tag_indptr[row] as usize..data.tag_indptr[row + 1] as usize]
-                            .iter()
-                            .flat_map(|index| {
-                                let id = *index as usize;
-                                let tag = &data.assets.tags[id];
-                                candidate_sources[row]
-                                    .iter()
-                                    .map(move |source_ref| ServingTag {
-                                        key: tag.key.clone(),
-                                        label: tag.label.clone(),
-                                        vector: tag_vectors[id].clone(),
-                                        source_ref: source_ref.clone(),
-                                    })
-                            })
-                            .collect();
-                        ServingCandidate {
-                            id: reference.clone(),
-                            commit_seq: 1,
-                            vector: vector.clone(),
-                            source_refs: candidate_sources[row].clone(),
-                            tags,
-                        }
+                    .zip(tag_vectors)
+                    .map(|(tag, vector)| ServingTag {
+                        key: tag.key.clone(),
+                        label: tag.label.clone(),
+                        vector: vector.clone(),
+                        source_ref: tag.key.clone(),
                     })
-                    .collect();
-                let snapshot = ServingSnapshot {
-                    identity,
-                    candidates,
-                    tags: data
-                        .assets
-                        .tags
-                        .iter()
-                        .zip(tag_vectors)
-                        .map(|(tag, vector)| ServingTag {
-                            key: tag.key.clone(),
-                            label: tag.label.clone(),
-                            vector: vector.clone(),
-                            source_ref: tag.key.clone(),
-                        })
-                        .collect(),
-                    graph: data.graph.clone(),
-                    geometry_config: data.assets.geometry_config.clone(),
-                    artifact_config: data.assets.artifact_config.clone(),
-                };
-                std::fs::create_dir_all(path.join("vcp"))?;
-                vcp = Some(ServingGeneration::create_or_open(
-                    &path.join("vcp"),
-                    &snapshot,
-                )?);
-                check()?;
-            }
+                    .collect(),
+                graph: data.graph.clone(),
+                geometry_config: data.assets.geometry_config.clone(),
+                artifact_config: data.assets.artifact_config.clone(),
+            };
+            std::fs::create_dir_all(path.join("vcp"))?;
+            vcp = Some(ServingGeneration::create_or_open(
+                &path.join("vcp"),
+                &snapshot,
+            )?);
+            check()?;
         }
     }
     let reference_rows = data

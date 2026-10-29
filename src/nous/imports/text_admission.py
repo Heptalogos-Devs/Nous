@@ -179,6 +179,13 @@ async def run_text_import(self: ImportService, request_id: str) -> dict[str, Jso
         )
     )
     admission_id = TypeAdapter(str).validate_python(submitted["request_id"])
+    async with self.authority.read(ctx) as view:
+        accepted = await view.connection.scalar(
+            select(requests.c.record).where(requests.c.id == admission_id)
+        )
+        if accepted is None:
+            raise DomainError("import_request_not_found", "Literal admission is unavailable")
+        ctx = await self.input_context_in(view, ctx, accepted)
     admission = await self.finish_admit(ctx, admission_id)
     formations = tuple(
         output.formation for output in admission.outputs if output.formation is not None

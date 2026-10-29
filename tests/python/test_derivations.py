@@ -37,7 +37,12 @@ def test_physical_derivation_exact_scope_revisions_and_withdrawal(tmp_path: Path
         app = Application(Settings(instance=tmp_path / "instance"))
         await app.authority.initialize()
         await app.content.initialize()
-        ctx = CallContext(caller_id="owner", namespace_id="research", subject_id="subject")
+        ctx = CallContext(
+            credential_source_ids=None,
+            caller_id="owner",
+            namespace_id="research",
+            subject_id="subject",
+        )
         await app.identity.create_namespace(ctx, "Research", "namespace")
         await app.identity.create_subject(ctx, "Owner", "subject", subject_id=ctx.subject_id)
         path = tmp_path / "image.png"
@@ -239,7 +244,12 @@ def test_purge_follows_exact_input_contacts_without_erasing_other_revisions(tmp_
         app = Application(Settings(instance=tmp_path / "instance"))
         await app.authority.initialize()
         await app.content.initialize()
-        ctx = CallContext(caller_id="owner", namespace_id="research", subject_id="subject")
+        ctx = CallContext(
+            credential_source_ids=None,
+            caller_id="owner",
+            namespace_id="research",
+            subject_id="subject",
+        )
         await app.identity.create_namespace(ctx, "Research", "namespace")
         await app.identity.create_subject(ctx, "Owner", "subject", subject_id=ctx.subject_id)
         path = tmp_path / "image.png"

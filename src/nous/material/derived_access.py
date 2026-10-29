@@ -15,7 +15,7 @@ from sqlalchemy import select
 from nous.platform.persistence import Authority, ReadView, WriteTx
 
 from .derived_schema import derived_regions, representations
-from .service import MaterialService, materials, observations
+from .service import MaterialService
 
 
 def representation_ref(reference: MediaReference) -> RepresentationRef:
@@ -100,39 +100,13 @@ class DerivedAccess:
     async def live_in(
         self, view: ReadView | WriteTx, ctx: CallContext, value: DerivedRepresentation
     ) -> None:
-        live = set(
-            (
-                await view.connection.execute(
-                    select(observations.c.id).where(
-                        observations.c.namespace_id == ctx.namespace_id,
-                        observations.c.subject_id == ctx.require_subject(),
-                        observations.c.id.in_(value.source_roots),
-                        observations.c.active.is_(True),
-                    )
-                )
-            ).scalars()
-        )
-        if not value.source_roots or not set(value.source_roots).issubset(live):
-            raise DomainError("source_unavailable", "A required derivation source was withdrawn")
-        records = (
-            (
-                await view.connection.execute(
-                    select(materials.c.record).where(
-                        materials.c.namespace_id == ctx.namespace_id,
-                        materials.c.id.in_(value.material_ids),
-                    )
-                )
+        from .derived_availability import dependency_availability_in
+
+        state = await dependency_availability_in(view, ctx, value.reference.media())
+        if state != "available":
+            raise DomainError(
+                "source_unavailable", "A required derivation source is unavailable", state=state
             )
-            .scalars()
-            .all()
-        )
-        if len(records) != len(value.material_ids) or any(
-            record.get("purged") for record in records
-        ):
-            raise DomainError("source_unavailable", "A required derivation material was purged")
-        internal = ctx.model_copy(update={"allowed_source_ids": None, "source_constraints": ()})
-        for item in value.inputs:
-            await self.source_in(view, internal, item.source)
 
     async def read_in(
         self, view: ReadView | WriteTx, ctx: CallContext, reference: RepresentationRef

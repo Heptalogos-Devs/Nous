@@ -150,7 +150,11 @@ class CredentialsService:
 
     @staticmethod
     def _context(actor: Principal) -> CallContext:
-        return CallContext(caller_id=actor.caller_id, namespace_id="instance")
+        return CallContext(
+            caller_id=actor.caller_id,
+            namespace_id="instance",
+            credential_source_ids=actor.source_ids,
+        )
 
     @staticmethod
     def whoami(actor: Principal) -> PrincipalRecord:

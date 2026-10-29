@@ -104,14 +104,21 @@ export function button(text, action, cls = "secondary") {
   node.addEventListener("click", () => busy(node, action));
   return node;
 }
+export function setDisabled(node, disabled) {
+  node.dataset.disabled = String(disabled);
+  node.disabled = disabled || node.dataset.busy === "true";
+}
 export async function busy(node, action) {
+  if (node.dataset.busy === "true") return;
+  node.dataset.busy = "true";
   node.disabled = true;
   try {
     await action();
   } catch (e) {
     error(e);
   } finally {
-    node.disabled = false;
+    delete node.dataset.busy;
+    node.disabled = node.dataset.disabled === "true";
   }
 }
 export function form(id, action) {

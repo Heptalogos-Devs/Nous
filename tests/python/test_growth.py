@@ -31,7 +31,9 @@ def test_pure_growth_and_actual_adoption(tmp_path: Path):
         imports = ImportService(authority, cognition, LiteralModels())
         identity = IdentityService(authority)
         await authority.initialize()
-        ctx = CallContext(caller_id="owner", namespace_id="ns", subject_id="subject")
+        ctx = CallContext(
+            credential_source_ids=None, caller_id="owner", namespace_id="ns", subject_id="subject"
+        )
         try:
             await identity.create_namespace(ctx, "namespace", "namespace")
             await identity.create_subject(ctx, "subject", "subject", subject_id="subject")

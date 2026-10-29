@@ -25,7 +25,7 @@ from sqlalchemy import select
 
 from nous.identity.service import subjects
 from nous.imports.schema import outputs
-from nous.material.service import materials, require_observation_in
+from nous.material.service import require_observation_in
 
 from .sdk_cognition import router as cognition_router
 from .sdk_common import (
@@ -247,18 +247,42 @@ async def put_text(request: Request, command: PutText):
     app = application(request)
     ctx = await context(request, command.namespace_id, command.subject_id)
     document = ImportDocument(
-        text=command.text, filename=command.source or "input.txt", event_time=command.event_time
+        text=command.text,
+        filename=command.source or "input.txt",
+        source=command.source,
+        event_time=command.event_time,
     )
-    async with app.authority.write(
-        ctx,
-        command.operation_id,
-        operation_kind="material.put",
-        scope=ctx.require_subject(),
-        payload=command,
-    ) as tx:
-        if tx.replayed:
-            return tx.replay_result
-        return tx.result(await app.material.put_in(tx, ctx, document))
+    lease = await app.content.publish_bytes(command.text.encode(), document.media_type)
+    try:
+        async with app.authority.write(
+            ctx,
+            command.operation_id,
+            operation_kind="material.put",
+            scope=ctx.require_subject(),
+            payload=command,
+        ) as tx:
+            if tx.replayed:
+                cached = TypeAdapter(dict[str, JsonValue]).validate_python(tx.replay_result)
+                identifier = TypeAdapter(str).validate_python(cached["id"])
+                effective = (
+                    (
+                        await app.material.restore_input_in(
+                            tx,
+                            ctx,
+                            (identifier,),
+                            operation_id=command.operation_id,
+                            operation_kind="material.put",
+                            scope=ctx.require_subject(),
+                        )
+                    ).context
+                    if ctx.source_groups()
+                    else ctx
+                )
+                return await app.material.read_in(tx, effective, identifier)
+            admission = await app.material.admit_text_in(tx, ctx, document, lease)
+            return tx.result(admission.material)
+    finally:
+        await app.content.release(lease)
 
 
 @router.post("/observations")
@@ -273,26 +297,36 @@ async def observe(request: Request, command: Observe):
         payload=command,
     ) as tx:
         if tx.replayed:
-            return tx.replay_result
-        material = (
-            await tx.connection.execute(
-                select(materials.c.record).where(
-                    materials.c.id == command.material_id,
-                    materials.c.namespace_id == ctx.namespace_id,
-                )
+            cached = TypeAdapter(dict[str, JsonValue]).validate_python(tx.replay_result)
+            await app.material.read_in(tx, ctx, command.material_id)
+            effective = (
+                (
+                    await app.material.restore_input_in(
+                        tx,
+                        ctx,
+                        (command.material_id,),
+                        operation_id=command.operation_id,
+                        operation_kind="material.observe",
+                        scope=ctx.require_subject(),
+                    )
+                ).context
+                if ctx.source_groups()
+                else ctx
             )
-        ).scalar_one_or_none()
-        if material is None:
-            raise DomainError("material_not_found", "Material is unavailable in this namespace")
+            identifier = TypeAdapter(str).validate_python(cached["id"])
+            event = await require_observation_in(tx, effective, identifier)
+            return event["record"]
+        material = await app.material.read_in(tx, ctx, command.material_id)
         document = BlobDocument(
             filename=material["filename"],
             media_type=material["media_type"],
             source_type=material["source_type"],
+            source=material.get("source"),
             origin=command.origin,
             observed_at=command.observed_at,
         )
-        value = await app.material.observe_in(tx, ctx, command.material_id, document)
-        return tx.result(value)
+        admission = await app.material.admit_observation_in(tx, ctx, command.material_id, document)
+        return tx.result(admission.event)
 
 
 @router.get("/namespaces/{namespace_id}/subjects/{subject_id}/imports/outputs/{output_id}")

@@ -71,7 +71,12 @@ def test_http_transaction_and_durable_worker_share_trace_without_content(tmp_pat
                     finally:
                         context.detach(attached)
                     assert submitted.status_code == 200, submitted.text
-                    ctx = CallContext(caller_id="instance-admin", namespace_id=ns, subject_id=sub)
+                    ctx = CallContext(
+                        credential_source_ids=None,
+                        caller_id="instance-admin",
+                        namespace_id=ns,
+                        subject_id=sub,
+                    )
                     service = app.state.application
                     job_id = submitted.json()["job_id"]
                     await asyncio.wait_for(service.execution.wait(ctx, job_id), timeout=10)
@@ -116,7 +121,12 @@ def test_http_transaction_and_durable_worker_share_trace_without_content(tmp_pat
         assert replays[0].attributes["nous.commit_seq"] == replays[1].attributes["nous.commit_seq"]
         assert private not in logs.getvalue()
         assert token not in logs.getvalue()
-        entries = [json.loads(line) for line in logs.getvalue().splitlines() if line.startswith("{")]
-        assert any(row.get("event") == "http.request" and row.get("trace_id") == trace_id for row in entries)
+        entries = [
+            json.loads(line) for line in logs.getvalue().splitlines() if line.startswith("{")
+        ]
+        assert any(
+            row.get("event") == "http.request" and row.get("trace_id") == trace_id
+            for row in entries
+        )
 
     asyncio.run(scenario())

@@ -1,6 +1,7 @@
 //! Coarse native execution over the frozen authorized generation.
 use super::*;
 impl Frozen {
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn query(
         &self,
         mode: &str,

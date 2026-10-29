@@ -150,9 +150,8 @@ async def graph_action(
             )
         )
     elif action == "create_edge":
-        snapshot = await self.app.cognition.graph_snapshot(ctx)
         known = {
-            row.reference.id: row for row in snapshot.records if isinstance(row.body, EntityBody)
+            row.reference.id: row for row in result.records if isinstance(row.body, EntityBody)
         }
         value = associations[-1]
         response.update(

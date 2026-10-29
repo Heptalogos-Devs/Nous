@@ -27,7 +27,7 @@ def test_shared_content_references_and_rollback_leases_control_purge(tmp_path):
         store = ContentStore(authority, tmp_path / "content", max_bytes=8)
         await authority.initialize()
         await store.initialize()
-        ctx = CallContext(caller_id="owner", namespace_id="namespace")
+        ctx = CallContext(credential_source_ids=None, caller_id="owner", namespace_id="namespace")
         first = await store.publish_bytes(b"original", "application/octet-stream")
         second = await store.publish_bytes(b"original", "application/octet-stream")
         assert first.content_hash == second.content_hash
@@ -39,7 +39,9 @@ def test_shared_content_references_and_rollback_leases_control_purge(tmp_path):
             tx.result({"attached": True})
         await store.release(first)
         await store.release(second)
-        other = CallContext(caller_id="owner", namespace_id="other-namespace")
+        other = CallContext(
+            credential_source_ids=None, caller_id="owner", namespace_id="other-namespace"
+        )
         third = await store.publish_bytes(b"original", "application/octet-stream")
         async with authority.write(
             other, "attach", operation_kind="material.attach", payload={}
@@ -253,7 +255,7 @@ def test_persistent_cancellation_reaches_preemptible_owned_subprocess(tmp_path):
 
         execution.register("preemptible-media", prepare, preemptible=True)
         await execution.start()
-        ctx = CallContext(caller_id="owner", namespace_id="namespace")
+        ctx = CallContext(credential_source_ids=None, caller_id="owner", namespace_id="namespace")
         try:
             async with authority.write(ctx, "prepare", operation_kind="prepare", payload={}) as tx:
                 job = await tx.enqueue(

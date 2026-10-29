@@ -43,6 +43,7 @@ from . import (
     graph_state,
     growth,
     growth_validation,
+    known_outputs,
     memory,
     retirement,
     self_model,
@@ -70,6 +71,7 @@ class CognitionService:
     set_deleted_in = access.set_deleted_in
     graph_snapshot = graph_state.graph_snapshot
     manage_graph = graph_changes.manage_graph
+    qualify_known_outputs_in = known_outputs.qualify_known_outputs_in
     adopt_seed = self_model.adopt_seed
     self_profile = self_model.self_profile
     merge_concepts = evolution.merge_concepts

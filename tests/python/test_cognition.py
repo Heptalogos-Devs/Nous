@@ -45,7 +45,12 @@ def test_import_source_bundle_and_restart(tmp_path: Path):
         contexts = ContextService(authority, cognition)
         identity = IdentityService(authority)
         await authority.initialize()
-        ctx = CallContext(caller_id="owner", namespace_id="namespace", subject_id="subject")
+        ctx = CallContext(
+            credential_source_ids=None,
+            caller_id="owner",
+            namespace_id="namespace",
+            subject_id="subject",
+        )
         try:
             await identity.create_namespace(ctx, "Research", "namespace-create")
             await identity.create_subject(
@@ -158,7 +163,12 @@ def test_purge_clears_history_receipts_and_blocks_late_adoption(tmp_path: Path):
         )
         identity = IdentityService(authority)
         await authority.initialize()
-        ctx = CallContext(caller_id="owner", namespace_id="namespace", subject_id="subject")
+        ctx = CallContext(
+            credential_source_ids=None,
+            caller_id="owner",
+            namespace_id="namespace",
+            subject_id="subject",
+        )
         try:
             await identity.create_namespace(ctx, "Research", "namespace-create")
             await identity.create_subject(
@@ -274,7 +284,12 @@ def test_json_original_regions_addresses_attempts_and_artifact_purge(tmp_path: P
         bundles = BundleService(authority, cognition, content)
         identity = IdentityService(authority)
         await authority.initialize()
-        ctx = CallContext(caller_id="owner", namespace_id="namespace", subject_id="subject")
+        ctx = CallContext(
+            credential_source_ids=None,
+            caller_id="owner",
+            namespace_id="namespace",
+            subject_id="subject",
+        )
         try:
             await identity.create_namespace(ctx, "Research", "namespace-create")
             await identity.create_subject(
@@ -466,7 +481,12 @@ def test_self_seed_observation_reuse_and_attribute_support(tmp_path: Path):
         sources = SourceService(authority, cognition, content_store=content)
         identity = IdentityService(authority)
         await authority.initialize()
-        ctx = CallContext(caller_id="owner", namespace_id="namespace", subject_id="subject")
+        ctx = CallContext(
+            credential_source_ids=None,
+            caller_id="owner",
+            namespace_id="namespace",
+            subject_id="subject",
+        )
         try:
             await identity.create_namespace(ctx, "People", "namespace-create")
             await identity.create_subject(

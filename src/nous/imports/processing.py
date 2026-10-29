@@ -238,7 +238,7 @@ async def process_unit(
             {"external_id": f"unit:{unit.id}", "text": unit.text, **unit.context}
         )
         source_document = ImportDocument.model_validate(source["document"])
-        accepted_event = await processing_source(self, ctx, unit, command, source_document)
+        accepted_event, ctx = await processing_source(self, ctx, unit, command, source_document)
         source_record = source_record.model_copy(update={"origin": accepted_event["origin"]})
         effective_options = formation_options(unit, command)
         model_source: dict[str, object] = {

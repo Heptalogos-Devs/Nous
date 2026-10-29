@@ -100,7 +100,10 @@ def test_sdk_scopes_and_managed_real_http(tmp_path):
                 )
                 assert formed.observation_id == observation and formed.cognition
                 ctx = CallContext(
-                    caller_id="instance-admin", namespace_id=namespace.id, subject_id=subject.id
+                    credential_source_ids=None,
+                    caller_id="instance-admin",
+                    namespace_id=namespace.id,
+                    subject_id=subject.id,
                 )
                 async with service.authority.write(
                     ctx,

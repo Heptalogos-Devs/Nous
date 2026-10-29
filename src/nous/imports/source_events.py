@@ -4,7 +4,14 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from nous_wave.contracts import CallContext, ImportDocument, ImportUnit, ProcessCatalog, TimePoint
+from nous_wave.contracts import (
+    CallContext,
+    ImportDocument,
+    ImportUnit,
+    MediaReference,
+    ProcessCatalog,
+    TimePoint,
+)
 from pydantic import TypeAdapter
 from sqlalchemy import update
 
@@ -21,16 +28,17 @@ async def processing_source(
     unit: ImportUnit,
     command: ProcessCatalog,
     document: ImportDocument,
-) -> SourceRecord:
+) -> tuple[SourceRecord, CallContext]:
     if unit.observation_id is None:
         raise ValueError("Frozen ImportUnit must identify its accepted Observation")
     if command.origin is None:
         async with self.authority.read(ctx) as view:
-            return (
+            value = (
                 await require_observation_in(
                     view, ctx, unit.observation_id, region_id=unit.source_region_id
                 )
             )["record"]
+            return value, ctx
     async with self.authority.write(
         ctx,
         f"{command.operation_id}:{unit.id}:origin",
@@ -40,8 +48,24 @@ async def processing_source(
     ) as tx:
         if tx.replayed:
             record = TypeAdapter(SourceRecord).validate_python(tx.replay_result)
-            await require_observation_in(tx, ctx, record["id"], region_id=unit.source_region_id)
-            return record
+            effective = (
+                (
+                    await self.materials.restore_input_in(
+                        tx,
+                        ctx,
+                        (unit.material_id,),
+                        operation_id=f"{command.operation_id}:{unit.id}:origin",
+                        operation_kind="imports.processing_origin",
+                        scope=ctx.require_subject(),
+                    )
+                ).context
+                if ctx.source_groups()
+                else ctx
+            )
+            await require_observation_in(
+                tx, effective, record["id"], region_id=unit.source_region_id
+            )
+            return record, effective
         if command.retry_parent_job_id:
             await require_job_in(tx, ctx, command.retry_parent_job_id)
         previous = (
@@ -60,12 +84,25 @@ async def processing_source(
                 else None,
             }
         )
-        event = await self.materials.observe_in(tx, ctx, unit.material_id, captured)
+        selected = (
+            MediaReference(
+                kind="source_region", id=unit.source_region_id, observation_id=unit.observation_id
+            )
+            if unit.source_region_id
+            else MediaReference(
+                kind="material", id=unit.material_id, observation_id=unit.observation_id
+            )
+        )
+        admission = await self.materials.admit_observation_in(
+            tx, ctx, unit.material_id, captured, sources=(selected,)
+        )
+        event, effective = admission.event, admission.context
         event["previous_observation_id"] = previous["id"]
         if command.retry_parent_job_id:
             event["retry_parent_job_id"] = command.retry_parent_job_id
         await tx.connection.execute(
             update(observations).where(observations.c.id == event["id"]).values(record=event)
         )
-        await require_observation_in(tx, ctx, event["id"], region_id=unit.source_region_id)
-        return tx.result(event)
+        await require_observation_in(tx, effective, event["id"], region_id=unit.source_region_id)
+        tx.result(event)
+        return event, effective

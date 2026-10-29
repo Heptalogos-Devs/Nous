@@ -1,26 +1,21 @@
 """Immutable source content and actual Import/Contact events."""
 
-from hashlib import sha256
 from typing import NotRequired, TypedDict
-from uuid import uuid4
 
 from nous_wave.contracts import (
-    BlobDocument,
     CallContext,
     DomainError,
-    ImportDocument,
-    MediaInfo,
     MediaReference,
     SourceRegion,
 )
 from pydantic import JsonValue, TypeAdapter
 from sqlalchemy import JSON, Boolean, Column, Integer, String, Table, select
 
-from nous.identity.service import require_subject_in
-from nous.platform.content import ContentLease, ContentStore
+from nous.platform.content import ContentStore
 from nous.platform.persistence import Authority, ReadView, WriteTx, metadata
 from nous.references import allocate_in
 
+from . import admission, writes
 from .access import media_source_in
 from .provenance import provenance_in
 
@@ -164,6 +159,14 @@ async def require_observation_in(
 
 
 class MaterialService:
+    put_in = writes.put_in
+    put_blob_in = writes.put_blob_in
+    observe_in = writes.observe_in
+    admit_text_in = admission.admit_text_in
+    admit_blob_in = admission.admit_blob_in
+    admit_observation_in = admission.admit_observation_in
+    restore_input_in = admission.restore_input_in
+
     provenance_in = provenance_in
 
     media_source_in = media_source_in
@@ -288,189 +291,6 @@ class MaterialService:
                 )
             ).scalar_one()
             return region, _MATERIAL.validate_python(value)
-
-    async def put_in(
-        self,
-        tx: WriteTx,
-        ctx: CallContext,
-        document: ImportDocument,
-        lease: ContentLease | None = None,
-    ) -> MaterialRecord:
-        digest = sha256(document.inline_text().encode("utf-8")).hexdigest()
-        row = (
-            await tx.connection.execute(
-                select(materials.c.record).where(
-                    materials.c.namespace_id == ctx.namespace_id, materials.c.content_hash == digest
-                )
-            )
-        ).first()
-        if (
-            row
-            and not row[0].get("purged")
-            and not row[0].get("required_source_ids")
-            and not row[0].get("required_observation_ids")
-        ):
-            if lease is not None and self.content_store is not None:
-                await self.content_store.attach_in(tx, lease, row[0]["id"])
-            return _MATERIAL.validate_python(row[0])
-        value: MaterialRecord = {
-            "id": str(uuid4()),
-            "namespace_id": ctx.namespace_id,
-            "content_hash": digest,
-            "text": document.inline_text(),
-            "filename": document.filename,
-            "media_type": document.media_type,
-            "byte_len": len(document.inline_text().encode("utf-8")),
-            "source_type": document.source_type,
-            "source": document.source,
-            "origin": document.origin,
-            "event_time": document.event_time.model_dump(mode="json")
-            if document.event_time
-            else None,
-            "recorded_at": str(tx.recorded_at),
-            "commit_seq": tx.commit_seq,
-        }
-        value["addresses"] = (
-            await allocate_in(tx, ctx, MediaReference(kind="material", id=value["id"]))
-        ).model_dump(mode="json")
-        await tx.connection.execute(
-            materials.insert().values(
-                id=value["id"], namespace_id=ctx.namespace_id, content_hash=digest, record=value
-            )
-        )
-        if lease is not None and self.content_store is not None:
-            await self.content_store.attach_in(tx, lease, str(value["id"]))
-        return value
-
-    async def put_blob_in(
-        self,
-        tx: WriteTx,
-        ctx: CallContext,
-        lease: ContentLease,
-        document: BlobDocument,
-        info: MediaInfo | None = None,
-        *,
-        required_source_ids: tuple[str, ...] = (),
-        required_observation_ids: tuple[str, ...] = (),
-    ) -> MaterialRecord:
-        if self.content_store is None:
-            raise DomainError("content_unavailable", "Immutable content storage is not configured")
-        from .access import require_dependencies_in
-
-        if required_source_ids:
-            await require_dependencies_in(self, tx, ctx, required_source_ids)
-        unrestricted = ctx.model_copy(update={"allowed_source_ids": None, "source_constraints": ()})
-        for observation_id in required_observation_ids:
-            await require_observation_in(tx, unrestricted, observation_id)
-        candidates = (
-            (
-                await tx.connection.execute(
-                    select(materials.c.record).where(
-                        materials.c.namespace_id == ctx.namespace_id,
-                        materials.c.content_hash == lease.content_hash,
-                    )
-                )
-            )
-            .scalars()
-            .all()
-        )
-        existing = next(
-            (
-                value
-                for value in candidates
-                if not value.get("purged")
-                and not value.get("required_source_ids")
-                and not value.get("required_observation_ids")
-            ),
-            None,
-        )
-        if existing is not None and not required_source_ids and not required_observation_ids:
-            await self.content_store.attach_in(tx, lease, existing["id"])
-            return _MATERIAL.validate_python(existing)
-        value: MaterialRecord = {
-            "id": str(uuid4()),
-            "namespace_id": ctx.namespace_id,
-            "content_hash": lease.content_hash,
-            "text": None,
-            "filename": document.filename,
-            "media_type": lease.media_type,
-            "byte_len": lease.byte_len,
-            "source_type": document.source_type,
-            "source": document.source,
-            "required_source_ids": list(dict.fromkeys(required_source_ids)),
-            "required_observation_ids": list(dict.fromkeys(required_observation_ids)),
-            "origin": document.origin,
-            "event_time": document.event_time.model_dump(mode="json")
-            if document.event_time
-            else None,
-            "media_info": info.model_dump(mode="json") if info else None,
-            "recorded_at": str(tx.recorded_at),
-            "commit_seq": tx.commit_seq,
-        }
-        value["addresses"] = (
-            await allocate_in(tx, ctx, MediaReference(kind="material", id=value["id"]))
-        ).model_dump(mode="json")
-        await tx.connection.execute(
-            materials.insert().values(
-                id=value["id"],
-                namespace_id=ctx.namespace_id,
-                content_hash=lease.content_hash,
-                record=value,
-            )
-        )
-        await self.content_store.attach_in(tx, lease, value["id"])
-        return value
-
-    async def observe_in(
-        self,
-        tx: WriteTx,
-        ctx: CallContext,
-        material_id: str,
-        document: ImportDocument | BlobDocument,
-        kind: str = "import",
-    ) -> SourceRecord:
-        await require_subject_in(tx, ctx)
-        material = (
-            await tx.connection.execute(
-                select(materials.c.record).where(
-                    materials.c.id == material_id, materials.c.namespace_id == ctx.namespace_id
-                )
-            )
-        ).scalar_one_or_none()
-        if material is None or material.get("purged"):
-            raise DomainError(
-                "source_purged",
-                "An unavailable or purged material cannot produce a new observation",
-            )
-        value: SourceRecord = {
-            "id": str(uuid4()),
-            "namespace_id": ctx.namespace_id,
-            "subject_id": ctx.require_subject(),
-            "material_id": material_id,
-            "kind": kind,
-            "origin": document.origin,
-            "source_type": document.source_type,
-            "source": document.source,
-            "event_time": document.event_time.model_dump(mode="json")
-            if document.event_time
-            else None,
-            "observed_at": (document.observed_at or ctx.clock).model_dump(mode="json"),
-            "recorded_at": str(tx.recorded_at),
-            "commit_seq": tx.commit_seq,
-        }
-        await tx.connection.execute(
-            observations.insert().values(
-                id=value["id"],
-                namespace_id=ctx.namespace_id,
-                subject_id=ctx.require_subject(),
-                material_id=material_id,
-                kind=kind,
-                active=True,
-                record=value,
-                commit_seq=tx.commit_seq,
-            )
-        )
-        return value
 
     async def read(self, ctx: CallContext, material_id: str) -> MaterialRecord:
         async with self.authority.read(ctx) as view:

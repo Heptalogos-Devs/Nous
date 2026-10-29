@@ -22,7 +22,12 @@ from nous.platform.persistence import OperationConflict
 def test_empty_snapshot_review_and_real_dbos_schedule_reconciliation(tmp_path):
     async def scenario():
         async with application(Settings(instance=tmp_path / "instance")) as app:
-            ctx = CallContext(caller_id="owner", namespace_id="namespace", subject_id="subject")
+            ctx = CallContext(
+                credential_source_ids=None,
+                caller_id="owner",
+                namespace_id="namespace",
+                subject_id="subject",
+            )
             await app.identity.create_namespace(ctx, "Knowledge", "namespace")
             await app.identity.create_subject(ctx, "Subject", "subject", subject_id="subject")
             submitted = await app.maintenance.submit(ctx, StartMaintenance(operation_id="request"))
@@ -87,7 +92,12 @@ def test_empty_snapshot_review_and_real_dbos_schedule_reconciliation(tmp_path):
 def test_contact_purge_clears_run_payload_while_shared_original_survives(tmp_path):
     async def scenario():
         async with application(Settings(instance=tmp_path / "instance")) as app:
-            ctx = CallContext(caller_id="owner", namespace_id="namespace", subject_id="subject")
+            ctx = CallContext(
+                credential_source_ids=None,
+                caller_id="owner",
+                namespace_id="namespace",
+                subject_id="subject",
+            )
             await app.identity.create_namespace(ctx, "Knowledge", "namespace")
             await app.identity.create_subject(ctx, "Subject", "subject", subject_id="subject")
             source = "Sensitive project evidence for one shared immutable original."

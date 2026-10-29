@@ -40,7 +40,9 @@ def test_literal_and_child_queue_are_atomic(tmp_path: Path, registered: bool):
             )
         await authority.initialize()
         await execution.start()
-        ctx = CallContext(caller_id="owner", namespace_id="ns", subject_id="subject")
+        ctx = CallContext(
+            credential_source_ids=None, caller_id="owner", namespace_id="ns", subject_id="subject"
+        )
         identity = IdentityService(authority)
         try:
             await identity.create_namespace(ctx, "namespace", "namespace")

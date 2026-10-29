@@ -90,7 +90,6 @@ async def read_material_in(
         MaterialRecord,
         materials,
         observations,
-        require_observation_in,
         source_permitted,
     )
 
@@ -122,13 +121,23 @@ async def read_material_in(
         events = [event for event in events if event == observation_id]
     if not events:
         raise DomainError("source_unavailable", "Source has no live contact in this subject")
-    unrestricted = ctx.model_copy(update={"allowed_source_ids": None, "source_constraints": ()})
+    from .writes import require_observation_exists_in
+
     for dependency in value.get("required_observation_ids", ()):
-        await require_observation_in(view, unrestricted, dependency)
+        await require_observation_exists_in(view, ctx, dependency)
     required = tuple(value.get("required_source_ids", ()))
     if required:
-        unrestricted = ctx.model_copy(update={"allowed_source_ids": None, "source_constraints": ()})
-        await require_dependencies_in(service, view, unrestricted, required, seen | {material_id})
+        from .derived_availability import dependency_availability_in
+
+        state = await dependency_availability_in(
+            view,
+            ctx,
+            MediaReference(kind="material", id=material_id, observation_id=observation_id),
+        )
+        if state != "available":
+            raise DomainError(
+                "source_unavailable", "An artifact dependency is unavailable", state=state
+            )
         permitted = False
         for event in events:
             for group in ctx.source_groups():

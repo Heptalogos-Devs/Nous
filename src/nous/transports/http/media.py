@@ -62,11 +62,25 @@ async def upload(
 
                 retained = TypeAdapter(dict[str, JsonValue]).validate_python(result)
                 record = TypeAdapter(dict[str, JsonValue]).validate_python(retained["result"])
-                await app.material.read_in(tx, ctx, TypeAdapter(str).validate_python(record["id"]))
+                identifier = TypeAdapter(str).validate_python(record["id"])
+                effective = (
+                    (
+                        await app.material.restore_input_in(
+                            tx,
+                            ctx,
+                            (identifier,),
+                            operation_id=operation_id or tx.operation_id,
+                            operation_kind="material.upload",
+                            scope=owner_subject_id,
+                        )
+                    ).context
+                    if ctx.source_groups()
+                    else ctx
+                )
+                await app.material.read_in(tx, effective, identifier)
             else:
-                value = await app.material.put_blob_in(tx, ctx, lease, document, info)
-                await app.material.observe_in(tx, ctx, str(value["id"]), document)
-                result = tx.result({"result": value, "commit_seq": tx.commit_seq})
+                admission = await app.material.admit_blob_in(tx, ctx, lease, document, info)
+                result = tx.result({"result": admission.material, "commit_seq": tx.commit_seq})
         committed = True
         return result
     finally:

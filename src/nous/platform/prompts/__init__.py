@@ -47,7 +47,12 @@ class PromptService:
         template = str(record["template"])
         return {
             **record,
-            "source": "bundled" if record["revision"] == 0 else "instance",
+            "source": "draft"
+            if record["revision"] is None
+            else "bundled"
+            if record["revision"] == 0
+            else "instance",
+            **({"active": False} if record["revision"] is None else {}),
             "variable_names": sorted(
                 meta.find_undeclared_variables(self.environment.parse(template))
             ),

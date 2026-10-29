@@ -122,6 +122,7 @@ impl IndexStore {
             state: Arc::new(state),
         })
     }
+    #[allow(clippy::too_many_arguments)]
     #[pyo3(signature=(*,references,texts,assets_json="{}",cancel=None,vectors=None,tag_vectors=None,tag_indptr=None,tag_indices=None,graph_indptr=None,graph_indices=None,graph_weights=None,graph_polarities=None,source_references=None,candidate_source_indptr=None,candidate_source_indices=None,graph_source_indptr=None,graph_source_indices=None))]
     fn build(
         &self,
@@ -293,6 +294,7 @@ impl Snapshot {
     fn references(&self) -> Vec<String> {
         self.inner.data.references.clone()
     }
+    #[allow(clippy::too_many_arguments)]
     #[pyo3(signature=(*,mode,text="",vectors=None,allowed_rows,allowed_graph_nodes=None,options_json="{}",cancel=None,ghost_vectors=None))]
     fn query(
         &self,
@@ -348,7 +350,7 @@ impl Snapshot {
                 );
                 self.inner.query(
                     &mode,
-                    &text,
+                    text,
                     query.as_deref(),
                     &allowed,
                     graph.as_ref(),

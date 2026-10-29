@@ -55,7 +55,10 @@ async def revised(
             id=previous.reference.id,
             expected_revision=previous.reference.revision,
             body=body,
-            evidence=(*previous.evidence, *evidence),
+            evidence=(
+                EvidenceLink(reference=previous.reference, role="previous_revision"),
+                *evidence,
+            ),
             times=previous.times,
         ),
     )
@@ -77,7 +80,12 @@ async def revised(
 
 
 async def apply_in(
-    self: CognitionService, tx: WriteTx, ctx: CallContext, command: GraphChange, event_id: str
+    self: CognitionService,
+    tx: WriteTx,
+    ctx: CallContext,
+    command: GraphChange,
+    event_id: str,
+    admitted_ctx: CallContext,
 ) -> tuple[list[CognitiveRecord], list[CognitiveRef], list[CognitiveRef]]:
     records = list(await heads_in(tx, ctx))
     changed: list[CognitiveRecord] = []
@@ -95,7 +103,12 @@ async def apply_in(
                         "entity_deleted", "Restore the Entity before changing its relations"
                     )
                 value = await self.set_deleted_in(
-                    tx, ctx, existing.reference, False, evidence=report, reason=command.reason
+                    tx,
+                    admitted_ctx,
+                    existing.reference,
+                    False,
+                    evidence=report,
+                    reason=command.reason,
                 )
                 changed.append(value)
                 revived.append(value.reference)
@@ -107,7 +120,7 @@ async def apply_in(
             raise DomainError("entity_not_found", "The Entity selector has no accessible match")
         value = await self.adopt_in(
             tx,
-            ctx,
+            admitted_ctx,
             AdoptCognition(body=EntityBody(label=token, entity_type="other"), evidence=report),
         )
         records.append(value)
@@ -138,12 +151,22 @@ async def apply_in(
             for row in related:
                 changed.append(
                     await self.set_deleted_in(
-                        tx, ctx, row.reference, True, evidence=report, reason=command.reason
+                        tx,
+                        admitted_ctx,
+                        row.reference,
+                        True,
+                        evidence=report,
+                        reason=command.reason,
                     )
                 )
             changed.append(
                 await self.set_deleted_in(
-                    tx, ctx, previous.reference, True, evidence=report, reason=command.reason
+                    tx,
+                    admitted_ctx,
+                    previous.reference,
+                    True,
+                    evidence=report,
+                    reason=command.reason,
                 )
             )
         else:
@@ -161,7 +184,7 @@ async def apply_in(
                     "aliases": tuple(dict.fromkeys((*previous.body.aliases, previous.body.label))),
                 }
             )
-            value = await revised(self, tx, ctx, previous, body, report, command.reason)
+            value = await revised(self, tx, admitted_ctx, previous, body, report, command.reason)
             changed.append(value)
             for row in related:
                 assert isinstance(row.body, AssociationBody)
@@ -175,7 +198,9 @@ async def apply_in(
                         else row.body.to_ref,
                     }
                 )
-                changed.append(await revised(self, tx, ctx, row, body, report, command.reason))
+                changed.append(
+                    await revised(self, tx, admitted_ctx, row, body, report, command.reason)
+                )
         return changed, created, revived
 
     left = (
@@ -256,13 +281,18 @@ async def apply_in(
         if matches:
             previous = matches[0]
             await self.get_in(tx, ctx, previous.reference)
-            value = await revised(self, tx, ctx, previous, body, evidence, command.reason)
+            value = await revised(self, tx, admitted_ctx, previous, body, evidence, command.reason)
             if previous.deleted:
                 revived.append(value.reference)
         else:
-            value = await self.adopt_in(tx, ctx, AdoptCognition(body=body, evidence=evidence))
+            value = await self.adopt_in(
+                tx, admitted_ctx, AdoptCognition(body=body, evidence=evidence)
+            )
             created.append(value.reference)
         changed.append(value)
+        for endpoint in (left, right):
+            if not any(record.reference == endpoint.reference for record in changed):
+                changed.append(endpoint)
     else:
         matches = [row for row in matches if not row.deleted]
         if not matches:
@@ -280,13 +310,18 @@ async def apply_in(
             assert isinstance(previous.body, AssociationBody)
             if command.action == "delete_edge":
                 value = await self.set_deleted_in(
-                    tx, ctx, previous.reference, True, evidence=report, reason=command.reason
+                    tx,
+                    admitted_ctx,
+                    previous.reference,
+                    True,
+                    evidence=report,
+                    reason=command.reason,
                 )
             else:
                 value = await revised(
                     self,
                     tx,
-                    ctx,
+                    admitted_ctx,
                     previous,
                     previous.body.model_copy(update={"weight": command.weight}),
                     report,
@@ -328,23 +363,31 @@ async def manage_graph(
         ) as tx:
             if tx.replayed:
                 result = GraphChangeResult.model_validate(tx.replay_result)
-                await self.replay_records_in(tx, ctx, result.records)
+                effective = (
+                    await self.qualify_known_outputs_in(
+                        tx,
+                        ctx,
+                        tuple(record.reference for record in result.records),
+                        operation_id=command.operation_id,
+                        operation_kind="graph.change",
+                        scope=ctx.require_subject(),
+                        input_material_ids=(result.report_material_id,),
+                    )
+                    if ctx.source_groups()
+                    else ctx
+                )
+                await self.replay_records_in(tx, effective, result.records)
                 return result
             await require_subject_in(tx, ctx, "memory")
-            if ctx.source_groups():
-                raise DomainError(
-                    "source_unavailable",
-                    "A new manual report requires an unrestricted input-admission scope",
-                )
             now = TimePoint(
                 coordinate=int(datetime.fromisoformat(tx.recorded_at).timestamp() * 1000)
             )
             document = document.model_copy(update={"observed_at": now})
-            material = await self.materials.put_in(tx, ctx, document, lease)
-            event = await self.materials.observe_in(
-                tx, ctx, material["id"], document, kind="import"
+            admission = await self.materials.admit_text_in(tx, ctx, document, lease)
+            material, event = admission.material, admission.event
+            changed, created, revived = await apply_in(
+                self, tx, ctx, command, event["id"], admission.context
             )
-            changed, created, revived = await apply_in(self, tx, ctx, command, event["id"])
             retired = [
                 record.cause.parent.exact()
                 for record in changed

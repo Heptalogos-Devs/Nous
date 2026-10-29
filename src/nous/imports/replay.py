@@ -12,6 +12,40 @@ if TYPE_CHECKING:
     from .service import ImportService
 
 
+async def input_context_in(
+    self: ImportService, view: ReadView | WriteTx, ctx: CallContext, row: dict[str, object]
+) -> CallContext:
+    from nous_wave.contracts import AdmitFiles
+    from pydantic import TypeAdapter
+
+    captured = CallContext.model_validate(row["context"])
+    if (captured.caller_id, captured.namespace_id, captured.subject_id) != (
+        ctx.caller_id,
+        ctx.namespace_id,
+        ctx.subject_id,
+    ):
+        raise DomainError(
+            "import_request_not_found", "Import request belongs to another caller scope"
+        )
+    operation = row.get("input_operation")
+    if operation is None or not ctx.source_groups():
+        return ctx
+    operation = TypeAdapter(dict[str, str]).validate_python(operation)
+    command = AdmitFiles.model_validate(row["command"])
+    for document in command.inputs:
+        if document.material_id is not None:
+            await self.materials.read_in(view, ctx, document.material_id)
+    return (
+        await self.materials.restore_input_in(
+            view,
+            ctx,
+            operation_id=operation["operation_id"],
+            operation_kind=operation["operation_kind"],
+            scope=operation["scope"],
+        )
+    ).context
+
+
 async def replay_catalog_in(
     self: ImportService, view: ReadView | WriteTx, ctx: CallContext, cached: CatalogView
 ) -> CatalogView:
@@ -73,6 +107,7 @@ async def read_admit_result(self: ImportService, ctx: CallContext, request_id: s
             )
         if row.get("purged"):
             raise DomainError("source_purged", "Import source has been purged")
+        ctx = await input_context_in(self, view, ctx, row)
         command = AdmitFiles.model_validate(row["command"])
     receipt = await self.authority.receipt(
         ctx,

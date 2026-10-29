@@ -160,7 +160,7 @@ async def preview_prompt(
     service = application(request).prompts
     if command.template is not None:
         return service.preview(
-            {"id": prompt_id, "revision": "draft", "template": command.template},
+            {"id": prompt_id, "revision": None, "template": command.template, "active": False},
             dict(command.variables),
         )
     return await service.render(ctx, dict(command.variables), prompt_id)

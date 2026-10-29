@@ -19,19 +19,31 @@ def test_prompt_preview_history_restore_and_restart(tmp_path: Path):
         authority = Authority(path)
         prompts = PromptService(authority)
         await authority.initialize()
-        ctx = CallContext(caller_id="instance-admin", namespace_id="instance")
+        ctx = CallContext(
+            credential_source_ids=None, caller_id="instance-admin", namespace_id="instance"
+        )
         try:
             default = await prompts.get(ctx, "formation")
             assert "source_text" in default["variable_names"]
             await prompts.save(ctx, "formation", "Remember {{ source_text }}", "edit-one")
             preview = prompts.preview(
-                {"id": "formation", "revision": "draft", "template": "Draft {{ text }}"},
+                {
+                    "id": "formation",
+                    "revision": None,
+                    "template": "Draft {{ text }}",
+                    "active": False,
+                },
                 {"text": "真实材料"},
             )
             assert preview["rendered"] == "Draft 真实材料"
             with pytest.raises(UndefinedError):
                 prompts.preview(
-                    {"id": "formation", "revision": "draft", "template": "{{ missing }}"},
+                    {
+                        "id": "formation",
+                        "revision": None,
+                        "template": "{{ missing }}",
+                        "active": False,
+                    },
                     {},
                 )
             assert (await prompts.get(ctx, "formation"))["revision"] == 1
@@ -64,7 +76,12 @@ def test_text_and_media_share_one_formation_role_budget(tmp_path: Path):
         authority = Authority(tmp_path / "authority.sqlite")
         ledger = CallLedger(authority)
         await authority.initialize()
-        ctx = CallContext(caller_id="worker", namespace_id="research", subject_id="owner")
+        ctx = CallContext(
+            credential_source_ids=None,
+            caller_id="worker",
+            namespace_id="research",
+            subject_id="owner",
+        )
         try:
             call_id, _ = await ledger.reserve(
                 ctx, "media.formation", {"input": "image"}, 1, budget_role="formation"
@@ -154,7 +171,12 @@ def test_durable_model_invocation_keeps_paid_result_across_configuration_changes
 
         app = Application(Settings(instance=tmp_path / "instance"))
         await app.authority.initialize()
-        ctx = CallContext(caller_id="worker", namespace_id="research", subject_id="owner")
+        ctx = CallContext(
+            credential_source_ids=None,
+            caller_id="worker",
+            namespace_id="research",
+            subject_id="owner",
+        )
         try:
             call, output = await app.models.ledger.reserve(
                 ctx,

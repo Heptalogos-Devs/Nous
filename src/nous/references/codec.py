@@ -36,3 +36,8 @@ def decode(value: str) -> int:
             group = (group << width) | alphabet.index(character)
         result = (result << 16) | group
     return result
+
+
+if __name__ == "__main__":
+    print(encode(1234567890))
+    print(decode("badif-guhaj-kilom"))

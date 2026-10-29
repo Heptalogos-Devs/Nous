@@ -67,11 +67,10 @@ async def resolve_scope(
     request: Request,
     namespace_id: str,
     subject_id: str | None,
-    base_scope: tuple[str, ...] | None = None,
 ) -> ResolvedSourceScope:
     header = request.headers.get("x-nous-source-read")
     if header is None:
-        return ResolvedSourceScope(base_scope, (base_scope,) if base_scope is not None else ())
+        return ResolvedSourceScope(None)
     if len(header) > 65536:
         raise DomainError("source_scope_invalid", "Source-read metadata exceeds its limit")
     try:
@@ -88,9 +87,12 @@ async def resolve_scope(
         )
     app: Application = request.app.state.application
     unrestricted = CallContext(
-        caller_id="instance-admin", namespace_id=namespace_id, subject_id=selected_subject
+        caller_id="instance-admin",
+        namespace_id=namespace_id,
+        subject_id=selected_subject,
+        credential_source_ids=None,
     )
-    clauses = [set(base_scope)] if base_scope is not None else []
+    clauses: list[set[str]] = []
     async with app.authority.read(unrestricted) as view:
         await require_subject_in(view, unrestricted)
         source_rows = (

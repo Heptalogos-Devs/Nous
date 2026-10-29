@@ -50,7 +50,9 @@ def test_external_portable_and_native_vector_roundtrip(tmp_path: Path):
         bundles = BundleService(authority, cognition, content)
         identity = IdentityService(authority)
         await authority.initialize()
-        ctx = CallContext(caller_id="owner", namespace_id="ns", subject_id="sender")
+        ctx = CallContext(
+            credential_source_ids=None, caller_id="owner", namespace_id="ns", subject_id="sender"
+        )
         try:
             await identity.create_namespace(ctx, "namespace", "namespace")
             await identity.create_subject(ctx, "sender", "sender", subject_id="sender")
@@ -178,7 +180,9 @@ def test_artifact_contact_inherits_inputs_and_withdrawal(tmp_path: Path):
         sources = SourceService(authority, cognition, content_store=store)
         identity = IdentityService(authority)
         await authority.initialize()
-        ctx = CallContext(caller_id="owner", namespace_id="ns", subject_id="subject")
+        ctx = CallContext(
+            credential_source_ids=None, caller_id="owner", namespace_id="ns", subject_id="subject"
+        )
         try:
             await identity.create_namespace(ctx, "namespace", "namespace")
             await identity.create_subject(ctx, "subject", "subject", subject_id="subject")
