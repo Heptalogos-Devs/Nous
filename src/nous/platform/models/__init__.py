@@ -3,11 +3,11 @@
 import asyncio
 import json
 import os
+from collections.abc import Awaitable, Callable
 from typing import Literal, TypeVar
 
 from nous_wave.contracts import CallContext, EmbeddingBatch, FormationProposal, MediaEmbeddingInput
 from nous_wave.contracts.cognition import FormationDraft
-from openai import AsyncOpenAI
 from pydantic import BaseModel
 
 from nous.platform.configuration import EmbeddingRoute, ModelRoute, Settings
@@ -18,9 +18,17 @@ from nous.platform.persistence import Authority
 from nous.platform.prompts import PromptService
 from nous.platform.time import parse_timepoint
 
-from .embedding import MediaResolver, embed_media, vector_space
-from .generation import Description, Generated, Generation, MediaFormationDraft, MediaInput
+from .embedding import MediaResolver, embed_media
+from .generation import (
+    Description,
+    DescriptionDraft,
+    Generated,
+    Generation,
+    MediaFormationDraft,
+    MediaInput,
+)
 from .ledger import CallLedger
+from .text_embedding import embed_text
 
 os.environ.setdefault("PYDANTIC_AI_NO_BANNER", "1")
 
@@ -62,6 +70,49 @@ class ModelService:
     async def close(self) -> None:
         await self.generation.close()
 
+    async def status(self, ctx: CallContext) -> dict[str, object]:
+        """Report configured resources and local credential readiness without probing a provider."""
+        effective = await self.configuration.effective(ctx, "models")
+        resources = ModelConfiguration.model_validate(effective["value"])
+        roles: dict[str, object] = {}
+        for role_id, role in resources.roles.items():
+            routes: list[dict[str, object]] = []
+            for index, route_id in enumerate(role.routes):
+                resolved, _ = resources.resolve(role_id, index)
+                model = resources.models[resources.routes[route_id].model]
+                ready: bool | None = None
+                if resolved.model:
+                    try:
+                        await asyncio.to_thread(credential, resolved)
+                    except Unavailable:
+                        ready = False
+                    else:
+                        ready = True
+                routes.append(
+                    {
+                        "id": route_id,
+                        "model": model.name,
+                        "provider": model.provider,
+                        "capabilities": model.capabilities,
+                        "dimensions": model.dimensions,
+                        "normalization": model.normalization,
+                        "max_batch_items": model.max_batch_items
+                        if isinstance(resolved, EmbeddingRoute)
+                        else None,
+                        "video_content_format": model.video_content_format,
+                        "credential_ready": ready,
+                        "model_configured": bool(model.name),
+                    }
+                )
+            roles[role_id] = {
+                "purpose": role.purpose,
+                "prompt_id": role.prompt_id,
+                "active_route": role.routes[0],
+                "routes": routes,
+                "max_calls_per_day": role.max_calls_per_day,
+            }
+        return {"origin": effective["origin"], "roles": roles, "provider_probed": False}
+
     async def structured(
         self,
         ctx: CallContext,
@@ -70,7 +121,14 @@ class ModelService:
         output_type: type[T],
         *,
         source_ids: tuple[str, ...] = (),
+        invocation_id: str | None = None,
     ) -> Generated[T]:
+        if invocation_id is not None:
+            retained = await self.ledger.recall(ctx, role_id, invocation_id)
+            if retained is not None:
+                return Generated(
+                    output=output_type.model_validate(retained.output), call_id=retained.call_id
+                )
         resources = ModelConfiguration.model_validate(
             (await self.configuration.effective(ctx, "models"))["value"]
         )
@@ -83,7 +141,14 @@ class ModelService:
                 str(prompt["rendered"]) + "\nInput:\n" + json.dumps(variables, ensure_ascii=False)
             )
         result, call_id = await self.generation.request(
-            ctx, role_id, route, credential(route), prompt, output_type, source_ids=source_ids
+            ctx,
+            role_id,
+            route,
+            credential(route),
+            prompt,
+            output_type,
+            source_ids=source_ids,
+            invocation_id=invocation_id,
         )
         return Generated(output=result, call_id=call_id)
 
@@ -111,6 +176,9 @@ class ModelService:
         source: dict[str, object],
         media: tuple[MediaInput, ...],
         strategy: Literal["description_only", "direct_structured", "describe_then_structure"],
+        *,
+        description_adopter: Callable[[Description], Awaitable[None]] | None = None,
+        cached_description: Description | None = None,
     ) -> Description | FormationProposal:
         resources = ModelConfiguration.model_validate(
             (await self.configuration.effective(ctx, "models"))["value"]
@@ -120,23 +188,28 @@ class ModelService:
             "source": source,
             "source_context": text + "\n" + json.dumps(source, ensure_ascii=False),
         }
-        description: Description | None = None
-        if strategy != "direct_structured":
+        description = cached_description
+        if strategy != "direct_structured" and description is None:
             route, role = resources.resolve("description")
             prompt = await self.prompts.render(ctx, variables, role.prompt_id)
-            description, call_id = await self.generation.request(
+            draft_description, call_id = await self.generation.request(
                 ctx,
                 "media.description",
                 route,
                 credential(route),
                 prompt,
-                Description,
+                DescriptionDraft,
                 media,
                 budget_role="description",
             )
-            description = description.model_copy(update={"producer_call_id": call_id})
-            if strategy == "description_only":
-                return description
+            description = Description(
+                description=draft_description.description, producer_call_id=call_id
+            )
+            if description_adopter is not None:
+                await description_adopter(description)
+        if strategy == "description_only":
+            assert description is not None
+            return description
         route, role = resources.resolve("formation")
         prompt = await self.prompts.render(ctx, variables, role.prompt_id)
         if description is not None:
@@ -170,59 +243,9 @@ class ModelService:
         route, _ = resources.resolve("embedding")
         if not isinstance(route, EmbeddingRoute):
             raise ValueError("Embedding role must resolve to an embedding model")
-        key = credential(route)
-        request: dict[str, object] = {
-            "model": route.model,
-            "base_url": route.base_url,
-            "texts": list(texts),
-            "source_ids": list(source_ids),
-            "dimensions": route.dimensions,
-            "normalization": route.normalization,
-        }
-        call_id, cached = await self.ledger.reserve(
-            ctx, "embedding", request, route.max_calls_per_day
+        return await embed_text(
+            ctx, texts, route, credential(route), self.ledger, self.generation, source_ids
         )
-        if cached is not None:
-            return EmbeddingBatch.model_validate(cached).model_copy(update={"call_id": call_id})
-        try:
-            client = self.generation.client(route.timeout_seconds)
-            sdk = AsyncOpenAI(
-                base_url=route.base_url, api_key=key, http_client=client, max_retries=0
-            )
-            response = await sdk.embeddings.create(
-                model=route.model, input=list(texts), dimensions=route.dimensions
-            )
-            vectors = [
-                tuple(item.embedding) for item in sorted(response.data, key=lambda v: v.index)
-            ]
-            if len(vectors) != len(texts) or any(len(v) != route.dimensions for v in vectors):
-                raise ValueError("Provider returned inconsistent embedding dimensions")
-            if route.normalization == "l2":
-                import numpy as np
-
-                array = np.asarray(vectors, dtype=np.float64)
-                norms = np.linalg.norm(array, axis=1, keepdims=True)
-                vectors = [tuple(row) for row in array / np.where(norms == 0, 1, norms)]
-            space = vector_space(route, response.model)
-            result = EmbeddingBatch(
-                model=response.model,
-                space=space,
-                dimensions=route.dimensions,
-                vectors=tuple(vectors),
-                call_id=call_id,
-                call_ids=(call_id,),
-            )
-            await self.ledger.finish(ctx, call_id, result.model_dump(mode="json"), {})
-            return result
-        except asyncio.CancelledError:
-            await asyncio.shield(
-                self.ledger.finish(ctx, call_id, None, {}, "CancelledUnknownOutcome")
-            )
-            raise
-        except Exception as error:
-            code = str(getattr(error, "status_code", type(error).__name__))
-            await self.ledger.finish(ctx, call_id, None, {}, code)
-            raise Unavailable(f"Embedding provider failed ({code}); call {call_id}") from error
 
     async def embed_media(
         self,

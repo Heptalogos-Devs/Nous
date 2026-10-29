@@ -9,7 +9,7 @@ from nous.platform.configuration.models import initial_resources
 from nous.platform.configuration.service import ConfigurationService
 from nous.platform.execution import DurableExecution, QueueSpec
 from nous.platform.models import ModelService
-from nous.platform.persistence import Authority, BackupService
+from nous.platform.persistence import Authority, BackupService, WriteTx
 from nous.platform.prompts import PromptService
 
 
@@ -42,7 +42,12 @@ class Application:
         self.media = MediaService(self.content)
         self.backups = BackupService(self.authority, self.content)
         self.material = MaterialService(self.authority, content_store=self.content)
-        self.cognition = CognitionService(self.authority, materials=self.material)
+        from nous.material.derived import DerivedService
+
+        self.derivations = DerivedService(self.authority, self.material)
+        self.cognition = CognitionService(
+            self.authority, materials=self.material, derivations=self.derivations
+        )
         from nous.references.service import ReferenceDirectory
 
         self.references = ReferenceDirectory(self.authority, self.cognition, self.material)
@@ -57,14 +62,24 @@ class Application:
         from nous.data_management.sources import SourceService
         from nous.imports.media import MediaImportService
         from nous.imports.service import ImportService
+        from nous.maintenance import MaintenanceService
         from nous.retrieval.service import RetrievalService
 
         self.bundles = BundleService(self.authority, self.cognition, content_store=self.content)
         self.media_imports = MediaImportService(
-            self.authority, self.material, self.cognition, self.models, self.content, self.media
+            self.authority,
+            self.material,
+            self.cognition,
+            self.models,
+            self.content,
+            self.media,
+            self.derivations,
         )
         self.imports = ImportService(
             self.authority, self.cognition, self.models, materials=self.material
+        )
+        self.maintenance = MaintenanceService(
+            self.authority, self.cognition, self.models, self.execution
         )
         self.retrieval = RetrievalService(
             self.authority,
@@ -72,6 +87,7 @@ class Application:
             self.models,
             self.settings.instance / "indexes",
             materials=self.material,
+            derivations=self.derivations,
         )
         self.models.media_resolver = self.media_imports.resolve_embedding_input
         self.contexts = ContextService(
@@ -82,18 +98,23 @@ class Application:
             configuration=self.configuration,
             models=self.models,
             execution=self.execution,
+            derivations=self.derivations,
         )
         self.cognition.invalidate = self.retrieval.invalidate
         self.cognition.purge_context_in = self.contexts.purge_references_in
         self.sources = SourceService(
             self.authority,
             self.cognition,
-            purge_in=self.models.ledger.purge_materials_in,
+            purge_in=self.purge_model_inputs_in,
             content_store=self.content,
             invalidate=self.retrieval.invalidate,
             purge_context_in=self.contexts.purge_references_in,
         )
         self.execution.register("nous.imports.process", self.imports.run_process, preemptible=True)
+        self.execution.register("nous.imports.text", self.imports.run_text_import, preemptible=True)
+        self.execution.register(
+            "nous.imports.form_observation", self.imports.run_form_observation, preemptible=True
+        )
         self.execution.register("nous.context.prepare", self.contexts.run_prepare, preemptible=True)
         self.execution.register(
             "nous.context.resident_tick", self.contexts.resident_tick, preemptible=True
@@ -101,9 +122,16 @@ class Application:
         self.execution.register(
             "nous.context.maintain", self.contexts.run_maintenance, preemptible=True
         )
+        self.execution.register(
+            "nous.maintenance.generate", self.maintenance.run_generate, preemptible=True
+        )
+        self.execution.register(
+            "nous.maintenance.tick", self.maintenance.run_tick, preemptible=True
+        )
         await self.content.initialize()
         await self.authority.initialize()
         await self.execution.start()
+        await self.maintenance.reconcile_schedules()
 
     async def close(self) -> None:
         await self.execution.close()
@@ -111,3 +139,8 @@ class Application:
             await self.retrieval.close()
         await self.models.close()
         await self.authority.close()
+
+    async def purge_model_inputs_in(self, tx: WriteTx, material_ids: tuple[str, ...]) -> None:
+        await self.models.ledger.purge_materials_in(tx, material_ids)
+        await self.derivations.purge_materials_in(tx, material_ids)
+        await self.maintenance.purge_materials_in(tx, material_ids)

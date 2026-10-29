@@ -14,6 +14,7 @@ from sqlalchemy import select
 
 from nous.cognition.projection import body_text
 from nous.cognition.service import CognitionService
+from nous.material.derived import DerivedService
 from nous.material.service import MaterialService
 from nous.platform.configuration.service import ConfigurationService
 from nous.platform.execution import DurableExecution
@@ -36,10 +37,12 @@ class ContextService(ManagedContexts):
         configuration: ConfigurationService | None = None,
         models: ModelService | None = None,
         execution: DurableExecution | None = None,
+        derivations: DerivedService | None = None,
     ) -> None:
         self.authority, self.cognition = authority, cognition
         self.retrieval, self.materials = retrieval, materials
         self.configuration, self.models, self.execution = configuration, models, execution
+        self.derivations = derivations
 
     async def admit(self, ctx: CallContext, command: ContextCommand):
         async with self.authority.write(
@@ -50,6 +53,8 @@ class ContextService(ManagedContexts):
             payload=command,
         ) as tx:
             if tx.replayed:
+                for reference in command.references:
+                    await self.cognition.get_in(tx, ctx, reference)
                 return tx.replay_result
             records = [await self.cognition.get_in(tx, ctx, ref) for ref in command.references]
             # UTF-8 bytes give a conservative provider-independent upper bound.
@@ -96,7 +101,21 @@ class ContextService(ManagedContexts):
                 await self.cognition.get_in(view, ctx, CognitiveRef.model_validate(ref))
                 for ref in value["references"]
             ]
-            return {**value, "objects": [record.model_dump(mode="json") for record in records]}
+            return {
+                **{
+                    key: value[key]
+                    for key in (
+                        "id",
+                        "kind",
+                        "executor",
+                        "purpose",
+                        "references",
+                        "token_upper_bound",
+                        "commit_seq",
+                    )
+                },
+                "objects": [record.model_dump(mode="json") for record in records],
+            }
 
     async def record_feedback(self, ctx: CallContext, command: ContextFeedback):
         async with self.authority.write(

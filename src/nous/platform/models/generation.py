@@ -7,16 +7,20 @@ from dataclasses import dataclass
 from typing import TypeVar
 
 import httpx2
-from nous_wave.contracts import CallContext, FormationDraft, MemoryBody
+from nous_wave.contracts import CallContext, FormationDraft
+from nous_wave.contracts.cognition import ProposedMemory
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent, BinaryContent, NativeOutput, capture_run_messages
+from pydantic_ai.capabilities import Instrumentation
 from pydantic_ai.messages import ModelMessagesTypeAdapter
+from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.openai import OpenAIChatModel, OpenAIChatModelSettings
 from pydantic_ai.providers.openai import OpenAIProvider
 
 from nous.platform.configuration import ModelRoute
 from nous.platform.errors import Unavailable
 
+from .content_parts import complete_video
 from .ledger import CallLedger
 
 T = TypeVar("T", bound=BaseModel)
@@ -35,13 +39,16 @@ class MediaInput:
     source_reference: str
 
 
-class Description(BaseModel):
-    description: str
-    producer_call_id: str | None = None
+class DescriptionDraft(BaseModel):
+    description: str = Field(min_length=1)
+
+
+class Description(DescriptionDraft):
+    producer_call_id: str
 
 
 class MediaFormationDraft(FormationDraft):
-    memories: tuple[MemoryBody, ...] = Field(min_length=1)
+    memories: tuple[ProposedMemory, ...] = Field(min_length=1)
 
 
 class Generation:
@@ -70,7 +77,11 @@ class Generation:
         media: tuple[MediaInput, ...] = (),
         source_ids: tuple[str, ...] = (),
         budget_role: str | None = None,
+        invocation_id: str | None = None,
     ) -> tuple[T, str]:
+        video = any(part.media_type.startswith("video/") for part in media)
+        if video and route.video_content_format is None:
+            raise Unavailable("Video generation requires a configured video content format")
         snapshot: dict[str, object] = {
             "source_ids": list(source_ids),
             "model": route.model,
@@ -91,11 +102,30 @@ class Generation:
                 for part in media
             ],
         }
+        if video:
+            snapshot["video_content_format"] = route.video_content_format
         call_id, cached = await self.ledger.reserve(
-            ctx, purpose, snapshot, route.max_calls_per_day, budget_role=budget_role
+            ctx,
+            purpose,
+            snapshot,
+            route.max_calls_per_day,
+            budget_role=budget_role,
+            invocation_id=invocation_id,
         )
         if cached is not None:
             return output_type.model_validate(cached), call_id
+        if video:
+            return await complete_video(
+                ctx,
+                call_id,
+                route,
+                key,
+                prompt,
+                output_type,
+                media,
+                self.ledger,
+                self.client(route.timeout_seconds),
+            )
         provider = OpenAIProvider(
             base_url=route.base_url, api_key=key, http_client=self.client(route.timeout_seconds)
         )
@@ -103,10 +133,19 @@ class Generation:
             OpenAIChatModel(route.model, provider=provider),
             output_type=NativeOutput(output_type),
             retries=0,
+            capabilities=[
+                Instrumentation(
+                    settings=InstrumentationSettings(
+                        include_content=False,
+                        include_binary_content=False,
+                        include_model_request_parameters=False,
+                    )
+                )
+            ],
         )
         content: list[str | BinaryContent] = [str(prompt["rendered"])]
         for part in media:
-            if part.media_type.startswith("text/"):
+            if part.media_type.startswith("text/") or part.media_type == "application/json":
                 content.append(part.data.decode("utf-8"))
             else:
                 content.append(

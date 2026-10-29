@@ -135,6 +135,7 @@ async def formation_catalog_in(
     limit: int = 128,
 ) -> tuple[FormationCatalogEntry, ...]:
     result: list[FormationCatalogEntry] = []
+    active_roots = await self.active_roots_in(view, ctx)
     rows = (
         await view.connection.execute(
             select(revisions.c.record)
@@ -168,6 +169,11 @@ async def formation_catalog_in(
             continue
         result.append(
             FormationCatalogEntry(
+                material_ids=tuple(
+                    sorted(
+                        {active_roots[root] for root in record.source_roots if root in active_roots}
+                    )
+                ),
                 key=f"existing:{record.reference.id}",
                 reference=record.reference,
                 label=label,

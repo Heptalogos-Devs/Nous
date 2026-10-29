@@ -19,9 +19,12 @@ _ASSETS = {
     "access.js": "text/javascript",
     "bundles.js": "text/javascript",
     "management.css": "text/css",
+    "media.js": "text/javascript",
+    "maintenance.js": "text/javascript",
+    "media.css": "text/css",
 }
 _HEADERS = {
-    "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' blob: data:; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'",
+    "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' blob: data:; media-src 'self' blob:; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'",
     "X-Content-Type-Options": "nosniff",
     "Cache-Control": "no-cache",
     "X-Robots-Tag": "noindex, nofollow, noarchive",

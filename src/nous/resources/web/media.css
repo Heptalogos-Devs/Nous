@@ -1,0 +1,29 @@
+#media-controls {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 1rem;
+}
+#media-controls .form-sheet {
+  margin-top: 0;
+}
+.media-coordinate-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.6rem;
+}
+.media-preview img,
+.media-preview video {
+  max-width: 100%;
+  max-height: 55vh;
+  object-fit: contain;
+}
+.media-preview audio {
+  width: 100%;
+}
+.media-preview {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+#media-results {
+  margin-block: 1rem;
+}

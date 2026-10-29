@@ -11,10 +11,12 @@ from nous_wave.contracts import (
     DomainError,
     FileSuccess,
     FormationProposal,
+    FormObservation,
     ImportDocument,
     ImportRecord,
     ImportResult,
     ImportUnit,
+    MediaReference,
     ProcessCatalog,
     TimePoint,
     UnitOutput,
@@ -25,10 +27,11 @@ from sqlalchemy import select, update
 
 from nous.cognition.formation_validation import validate_formation_draft
 from nous.material.service import require_observation_in
-from nous.platform.execution import JobSpec
+from nous.platform.execution import JobSpec, require_job_in
 
 from .attempts import AttemptRecorder, failure, record_attempt
 from .schema import inputs, outputs, requests, successes, units
+from .source_events import processing_source
 
 if TYPE_CHECKING:
     from .service import ImportService
@@ -45,6 +48,8 @@ async def submit_process(self: ImportService, ctx: CallContext, command: Process
         if tx.replayed:
             return tx.replay_result
         await self.read_catalog_in(tx, ctx, command.catalog_id)
+        if command.retry_parent_job_id:
+            await require_job_in(tx, ctx, command.retry_parent_job_id)
         request_id = str(uuid4())
         await tx.connection.execute(
             requests.insert().values(
@@ -57,7 +62,9 @@ async def submit_process(self: ImportService, ctx: CallContext, command: Process
         )
         job = await tx.enqueue(
             JobSpec(
-                workflow_name="nous.imports.process", queue_name="formation", args=(request_id,)
+                workflow_name="nous.imports.process",
+                queue_name="default" if command.deferred_formation else "formation",
+                args=(request_id,),
             )
         )
         request = (
@@ -115,6 +122,9 @@ async def process_catalog(
     attempt_job_id: str | None = None,
 ) -> ImportResult:
     catalog = await self.read_catalog(ctx, command.catalog_id)
+    if command.retry_parent_job_id:
+        async with self.authority.read(ctx) as view:
+            await require_job_in(view, ctx, command.retry_parent_job_id)
     selected = (
         set(command.unit_ids)
         if command.unit_ids is not None
@@ -128,10 +138,12 @@ async def process_catalog(
             continue
         correction: dict[str, JsonValue] | None = None
         for retry in range(command.formation_retries + 1):
+            current_attempt: AttemptRecorder | None = None
             try:
                 async with record_attempt(
                     self, ctx, unit, command.operation_id, attempt_job_id
                 ) as attempt:
+                    current_attempt = attempt
                     output = await process_unit(
                         self,
                         ctx,
@@ -156,7 +168,17 @@ async def process_catalog(
                     }
                 ):
                     raise
-                correction = {"code": error.code, "message": str(error), **error.details}
+                correction = {
+                    "code": error.code,
+                    "message": str(error),
+                    **error.details,
+                    "previous_call_id": current_attempt.proposal.producer_call_id
+                    if current_attempt and current_attempt.proposal
+                    else None,
+                    "previous_proposal": current_attempt.proposal.model_dump(mode="json")
+                    if current_attempt and current_attempt.proposal
+                    else None,
+                }
             else:
                 adopted.append(output)
                 break
@@ -185,14 +207,24 @@ async def complete_files(
         for source_id in catalog.input_source_ids:
             if any(error.input_source_id == source_id for error in catalog.errors):
                 continue
-            file_units = [unit for unit in catalog.units if unit.input_source_id == source_id]
+            file_units = [
+                ImportUnit.model_validate(value)
+                for value in (
+                    await tx.connection.execute(
+                        select(units.c.record).where(units.c.catalog_id == catalog.id)
+                    )
+                ).scalars()
+                if value["input_source_id"] == source_id
+            ]
             if not file_units or not all(unit.id in by_unit for unit in file_units):
                 continue
             source = (
                 await tx.connection.execute(select(inputs.c.record).where(inputs.c.id == source_id))
             ).scalar_one()
             for unit in file_units:
-                await require_observation_in(tx, ctx, by_unit[unit.id].observation_id)
+                await require_observation_in(
+                    tx, ctx, by_unit[unit.id].observation_id, region_id=unit.source_region_id
+                )
             document = ImportDocument.model_validate(source["document"])
             fact = FileSuccess(
                 id=str(uuid4()),
@@ -201,7 +233,7 @@ async def complete_files(
                 unit_outputs={unit.id: by_unit[unit.id].id for unit in file_units},
                 content_hash=source["content_hash"],
                 file_identity=document.file_identity,
-                origin=document.origin,
+                origin=command.origin if command.origin is not None else document.origin,
                 commit_seq=tx.commit_seq,
             )
             await tx.connection.execute(
@@ -255,15 +287,39 @@ async def process_unit(
         source_record = ImportRecord.model_validate(
             {"external_id": f"unit:{unit.id}", "text": unit.text, **unit.context}
         )
+        source_document = ImportDocument.model_validate(source["document"])
+        accepted_event = await processing_source(self, ctx, unit, command, source_document)
+        source_record = source_record.model_copy(update={"origin": accepted_event["origin"]})
+        formation_options = {
+            **unit.formation_options,
+            **(
+                command.formation_options_override.model_dump(mode="json", exclude_unset=True)
+                if command.formation_options_override is not None
+                else {}
+            ),
+        }
         model_source: dict[str, object] = {
             "id": source["id"],
             "material_id": source["material_id"],
             "document": source["document"],
             "content_hash": source["content_hash"],
-            "unit_context": unit.context,
+            "source_material_ids": sorted(
+                {
+                    str(source["material_id"]),
+                    *(
+                        material_id
+                        for entry in catalog.formation_catalog
+                        for material_id in entry.material_ids
+                    ),
+                }
+            ),
+            "unit_context": {**unit.context, "origin": accepted_event["origin"]},
+            "observation_id": accepted_event["id"],
+            "observation": accepted_event,
+            "retry_parent_job_id": command.retry_parent_job_id,
             "strategy": unit.strategy,
             "split_context": unit.split_context,
-            "formation_options": unit.formation_options,
+            "formation_options": formation_options,
             "formation_catalog": [
                 item.model_dump(mode="json") for item in catalog.formation_catalog
             ],
@@ -276,20 +332,16 @@ async def process_unit(
         await attempt.advance("formation")
         proposal = (
             (await self.models.form(model_ctx, unit.text, model_source))
-            if command.llm_enabled and unit.requires_llm
+            if command.llm_enabled and unit.requires_llm and not command.deferred_formation
             else FormationProposal(memories=())
         )
-        if unit.formation_options.get("extract_time") is False:
+        if formation_options.get("extract_time") is False:
             proposal = proposal.model_copy(update={"event": None, "event_expression": None})
         attempt.value = attempt.value.model_copy(
             update={"producer_call_id": proposal.producer_call_id}
         )
-        try:
-            validate_formation_draft(proposal, catalog.formation_catalog)
-        except DomainError as error:
-            error.details["previous_call_id"] = proposal.producer_call_id
-            error.details["previous_proposal"] = proposal.model_dump(mode="json")
-            raise
+        attempt.proposal = proposal
+        validate_formation_draft(proposal, catalog.formation_catalog)
         await attempt.advance("adoption")
         async with self.authority.write(
             ctx,
@@ -320,14 +372,10 @@ async def process_unit(
                     }
                 )
                 event = (
-                    (
-                        await require_observation_in(
-                            tx, ctx, unit.observation_id, region_id=unit.source_region_id
-                        )
-                    )["record"]
-                    if unit.observation_id
-                    else await self.materials.observe_in(tx, ctx, unit.material_id, document)
-                )
+                    await require_observation_in(
+                        tx, ctx, accepted_event["id"], region_id=unit.source_region_id
+                    )
+                )["record"]
                 times = CognitiveTimes(
                     event=proposal.event or document.event_time,
                     observation=TimePoint.model_validate(event["observed_at"]),
@@ -347,14 +395,38 @@ async def process_unit(
                     catalog.formation_catalog,
                 )
                 refs = [record.reference for record in records]
+                formation = (
+                    await self.submit_form_observation_in(
+                        tx,
+                        ctx,
+                        FormObservation(
+                            operation_id=f"{command.operation_id}:{unit.id}:form",
+                            observation_id=event["id"],
+                            anchor=records[0].reference,
+                            source=MediaReference(
+                                kind="source_region",
+                                id=unit.source_region_id,
+                                observation_id=event["id"],
+                            )
+                            if unit.source_region_id
+                            else None,
+                            llm_enabled=command.llm_enabled and unit.requires_llm,
+                            vectors=command.vectors,
+                        ),
+                        owned_parent=attempt_job_id,
+                    )
+                    if command.deferred_formation
+                    else None
+                )
                 output = UnitOutput(
+                    formation=formation,
                     id=str(uuid4()),
                     unit_id=unit.id,
                     observation_id=event["id"],
                     cognition=tuple(refs),
                     attempt_job_id=attempt_job_id,
                     producer_call_id=proposal.producer_call_id,
-                    vector_policy=command.vectors,
+                    vector_policy="disabled" if command.deferred_formation else command.vectors,
                     commit_seq=tx.commit_seq,
                 )
                 await tx.connection.execute(
@@ -367,7 +439,7 @@ async def process_unit(
                 )
                 tx.result(output)
     attempt.value = attempt.value.model_copy(update={"output_id": output.id})
-    if command.vectors != "disabled":
+    if command.vectors != "disabled" and not command.deferred_formation:
         await attempt.advance("embedding")
         try:
             await self.embed_output(ctx, output.id, required=command.vectors == "required")

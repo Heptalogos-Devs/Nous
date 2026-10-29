@@ -50,6 +50,8 @@ nous --instance /path/to/instance query NAMESPACE_ID SUBJECT_ID rollback --mode 
 
 `jobs` 查询、等待、取消与恢复持久任务；`config`、`prompts` 管理配置与提示词。`credentials create command.json --token-out /path/to/new-key` 以独占方式创建凭据文件，已有文件会拒绝覆盖；省略 `--token-out` 时只在创建响应显示一次凭据。作用域内的管理凭据可管理被授予范围内的密钥与配置，完整实例备份、全局提示词和模型资源修改需要完整实例管理权限。
 
+`credentials whoami` 显示当前调用者及授权范围；`credentials read ID` 和 `credentials history ID` 查看密钥的当前修订和生命周期事件。轮换使用 `credentials rotate ID command.json --token-out /path/to/replacement-key`，JSON 包含 `expected_revision`、可选 `operation_id` 和 `reason`。旧密钥立即失效，授权范围保持一致；相同操作重试只返回元数据。保存替代密钥后将调用方的凭据文件引用改为新文件。
+
 ```bash
 nous --instance /path/to/instance backup --output nous-backup.zip
 nous restore nous-backup.zip /path/to/new-instance

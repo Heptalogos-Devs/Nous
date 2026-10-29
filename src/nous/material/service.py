@@ -22,6 +22,7 @@ from nous.platform.persistence import Authority, ReadView, WriteTx, metadata
 from nous.references import allocate_in
 
 from .access import media_source_in
+from .provenance import provenance_in
 
 materials = Table(
     "materials",
@@ -62,6 +63,7 @@ class MaterialRecord(TypedDict):
     media_type: str
     byte_len: int
     source_type: str
+    source: NotRequired[str | None]
     origin: dict[str, str]
     event_time: dict[str, JsonValue] | None
     recorded_at: str
@@ -70,6 +72,7 @@ class MaterialRecord(TypedDict):
     purged: NotRequired[bool]
     addresses: NotRequired[dict[str, JsonValue]]
     required_source_ids: NotRequired[list[str]]
+    required_observation_ids: NotRequired[list[str]]
 
 
 class SourceRecord(TypedDict):
@@ -80,11 +83,15 @@ class SourceRecord(TypedDict):
     kind: str
     origin: dict[str, str]
     source_type: str
+    source: NotRequired[str | None]
     event_time: dict[str, JsonValue] | None
     observed_at: dict[str, JsonValue]
     recorded_at: str
     commit_seq: int
     purged: NotRequired[bool]
+    placement: NotRequired[dict[str, JsonValue]]
+    previous_observation_id: NotRequired[str]
+    retry_parent_job_id: NotRequired[str]
 
 
 _MATERIAL = TypeAdapter(MaterialRecord)
@@ -92,11 +99,10 @@ _SOURCE = TypeAdapter(SourceRecord)
 
 
 def source_permitted(ctx: CallContext, material_id: str, observation_id: str | None = None) -> bool:
-    return (
-        ctx.allowed_source_ids is None
-        or material_id in ctx.allowed_source_ids
-        or observation_id in ctx.allowed_source_ids
-    )
+    atoms = {material_id, f"material:{material_id}"}
+    if observation_id is not None:
+        atoms.update((observation_id, f"observation:{observation_id}"))
+    return all(bool(atoms.intersection(group)) for group in ctx.source_groups())
 
 
 async def require_observation_in(
@@ -120,18 +126,21 @@ async def require_observation_in(
         .mappings()
         .first()
     )
-    if (
-        row is None
-        or (active and not row["active"])
-        or (
-            not source_permitted(ctx, row["material_id"], observation_id)
-            and not (
-                region_id
-                and ctx.allowed_source_ids is not None
-                and region_id in ctx.allowed_source_ids
-            )
+    if row is None or (active and not row["active"]):
+        raise DomainError(
+            "source_unavailable",
+            "Source is unavailable in the current read scope",
+            observation_id=observation_id,
         )
-    ):
+    atoms = {
+        str(row["material_id"]),
+        f"material:{row['material_id']}",
+        observation_id,
+        f"observation:{observation_id}",
+    }
+    if region_id:
+        atoms.update((region_id, f"source-region:{region_id}", f"source_region:{region_id}"))
+    if not all(bool(atoms.intersection(group)) for group in ctx.source_groups()):
         raise DomainError(
             "source_unavailable",
             "Source is unavailable in the current read scope",
@@ -155,6 +164,8 @@ async def require_observation_in(
 
 
 class MaterialService:
+    provenance_in = provenance_in
+
     media_source_in = media_source_in
 
     def __init__(self, authority: Authority, content_store: ContentStore | None = None) -> None:
@@ -246,8 +257,17 @@ class MaterialService:
             raise DomainError(
                 "source_unavailable", "Source region has no live observation for this subject"
             )
-        await require_observation_in(view, ctx, str(events[0]), region_id=region_id)
-        return region
+        for observation_id in events:
+            try:
+                await require_observation_in(view, ctx, str(observation_id), region_id=region_id)
+            except DomainError as error:
+                if error.code != "source_unavailable":
+                    raise
+            else:
+                return region
+        raise DomainError(
+            "source_unavailable", "No live observation grants access to this source region"
+        )
 
     async def region_source(
         self, ctx: CallContext, region_id: str
@@ -284,7 +304,12 @@ class MaterialService:
                 )
             )
         ).first()
-        if row and not row[0].get("purged") and not row[0].get("required_source_ids"):
+        if (
+            row
+            and not row[0].get("purged")
+            and not row[0].get("required_source_ids")
+            and not row[0].get("required_observation_ids")
+        ):
             if lease is not None and self.content_store is not None:
                 await self.content_store.attach_in(tx, lease, row[0]["id"])
             return _MATERIAL.validate_python(row[0])
@@ -297,6 +322,7 @@ class MaterialService:
             "media_type": document.media_type,
             "byte_len": len(document.inline_text().encode("utf-8")),
             "source_type": document.source_type,
+            "source": document.source,
             "origin": document.origin,
             "event_time": document.event_time.model_dump(mode="json")
             if document.event_time
@@ -325,6 +351,7 @@ class MaterialService:
         info: MediaInfo | None = None,
         *,
         required_source_ids: tuple[str, ...] = (),
+        required_observation_ids: tuple[str, ...] = (),
     ) -> MaterialRecord:
         if self.content_store is None:
             raise DomainError("content_unavailable", "Immutable content storage is not configured")
@@ -332,6 +359,9 @@ class MaterialService:
 
         if required_source_ids:
             await require_dependencies_in(self, tx, ctx, required_source_ids)
+        unrestricted = ctx.model_copy(update={"allowed_source_ids": None, "source_constraints": ()})
+        for observation_id in required_observation_ids:
+            await require_observation_in(tx, unrestricted, observation_id)
         candidates = (
             (
                 await tx.connection.execute(
@@ -348,11 +378,13 @@ class MaterialService:
             (
                 value
                 for value in candidates
-                if not value.get("purged") and not value.get("required_source_ids")
+                if not value.get("purged")
+                and not value.get("required_source_ids")
+                and not value.get("required_observation_ids")
             ),
             None,
         )
-        if existing is not None and not required_source_ids:
+        if existing is not None and not required_source_ids and not required_observation_ids:
             await self.content_store.attach_in(tx, lease, existing["id"])
             return _MATERIAL.validate_python(existing)
         value: MaterialRecord = {
@@ -364,7 +396,9 @@ class MaterialService:
             "media_type": lease.media_type,
             "byte_len": lease.byte_len,
             "source_type": document.source_type,
+            "source": document.source,
             "required_source_ids": list(dict.fromkeys(required_source_ids)),
+            "required_observation_ids": list(dict.fromkeys(required_observation_ids)),
             "origin": document.origin,
             "event_time": document.event_time.model_dump(mode="json")
             if document.event_time
@@ -416,6 +450,7 @@ class MaterialService:
             "kind": kind,
             "origin": document.origin,
             "source_type": document.source_type,
+            "source": document.source,
             "event_time": document.event_time.model_dump(mode="json")
             if document.event_time
             else None,

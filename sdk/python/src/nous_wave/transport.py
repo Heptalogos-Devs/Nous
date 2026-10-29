@@ -12,7 +12,7 @@ import anyio
 import httpx
 from pydantic import JsonValue, TypeAdapter
 
-from .contracts import TimePoint
+from .contracts import MediaReference, TimePoint
 from .errors import NousError
 from .source_scope import SourceReadScope
 from .types import Download, JsonObject, QueryParam
@@ -107,7 +107,13 @@ class Transport:
         headers = await self.headers(trace_id, source_read)
         try:
             async with self.http.stream(
-                method, path, json=body, params=params, headers=headers
+                method,
+                path,
+                json=body,
+                params={key: value for key, value in params.items() if value is not None}
+                if params is not None
+                else None,
+                headers=headers,
             ) as response:
                 return await self.decode(response, headers["x-nous-trace-id"])
         except httpx.HTTPError as error:
@@ -176,7 +182,7 @@ class Transport:
             async with self.http.stream(
                 "POST",
                 "/api/media/materials",
-                params=params,
+                params={key: value for key, value in params.items() if value is not None},
                 content=content,
                 headers=headers,
             ) as response:
@@ -199,6 +205,7 @@ class Transport:
         namespace_id: str,
         subject_id: str,
         region_id: str | None = None,
+        reference: MediaReference | None = None,
     ) -> Download:
         headers = await self.headers(source_read=source_read)
         resource = (
@@ -206,6 +213,8 @@ class Transport:
             if region_id is not None
             else f"materials/{quote(material_id, safe='')}"
         )
+        if reference is not None:
+            resource = f"media/{reference.kind}/{quote(reference.id, safe='')}"
         async with self.http.stream(
             "GET",
             f"/api/namespaces/{quote(namespace_id, safe='')}/subjects/{quote(subject_id, safe='')}/{resource}/content",
@@ -241,6 +250,7 @@ class Transport:
             return Download(
                 material_id=material_id,
                 region_id=region_id,
+                reference=reference,
                 output=destination,
                 byte_len=length,
                 media_type=response.headers.get("content-type"),

@@ -23,6 +23,9 @@ from sqlalchemy.engine.interfaces import DBAPICursor
 from sqlalchemy.ext.asyncio import AsyncConnection, create_async_engine
 from sqlalchemy.pool import ConnectionPoolEntry
 
+from nous.platform.observability import operation_span
+
+from .payload_compat import previous_payload
 from .schema import clock, metadata, operations
 
 if TYPE_CHECKING:
@@ -259,91 +262,98 @@ class Authority:
         payload_hash = hashlib.sha256(
             canonical_json({"kind": operation_kind, "payload": payload}).encode()
         ).hexdigest()
-        async with self.writer.connect() as connection, connection.begin():
-            row = (
-                (
-                    await connection.execute(
-                        sa.select(operations).where(operations.c.operation_key == key)
+        previous_hash = hashlib.sha256(
+            canonical_json({"kind": operation_kind, "payload": previous_payload(payload)}).encode()
+        ).hexdigest()
+        with operation_span(operation_kind, ctx, operation_id=operation_id) as span:
+            async with self.writer.connect() as connection, connection.begin():
+                row = (
+                    (
+                        await connection.execute(
+                            sa.select(operations).where(operations.c.operation_key == key)
+                        )
                     )
+                    .mappings()
+                    .first()
                 )
-                .mappings()
-                .first()
-            )
-            if row:
-                if row["payload_hash"] != payload_hash:
-                    raise OperationConflict(
-                        f"Operation {operation_id!r} already has a different payload"
+                if row:
+                    if row["payload_hash"] not in {payload_hash, previous_hash}:
+                        raise OperationConflict(
+                            f"Operation {operation_id!r} already has a different payload"
+                        )
+                    retained = _require_retained_result(
+                        row["operation_id"], json.loads(row["result_json"])
                     )
-                retained = _require_retained_result(
-                    row["operation_id"], json.loads(row["result_json"])
-                )
-                receipt = OperationReceipt(
-                    row["operation_id"],
-                    row["operation_kind"],
-                    row["commit_seq"],
-                    row["recorded_at"],
-                    retained,
-                    tuple(json.loads(row["jobs_json"])),
-                )
-                tx = WriteTx(
-                    connection,
-                    authority=self,
-                    ctx=ctx,
-                    operation_id=operation_id,
-                    operation_kind=operation_kind,
-                    scope=scope,
-                    operation_key=key,
-                    payload_hash=payload_hash,
-                    commit_seq=receipt.commit_seq,
-                    recorded_at=receipt.recorded_at,
-                    receipt=receipt,
-                )
-                # Prevent an accidental second execution from mutating domain facts.
-                await connection.exec_driver_sql("PRAGMA query_only=ON")
-                try:
+                    receipt = OperationReceipt(
+                        row["operation_id"],
+                        row["operation_kind"],
+                        row["commit_seq"],
+                        row["recorded_at"],
+                        retained,
+                        tuple(json.loads(row["jobs_json"])),
+                    )
+                    tx = WriteTx(
+                        connection,
+                        authority=self,
+                        ctx=ctx,
+                        operation_id=operation_id,
+                        operation_kind=operation_kind,
+                        scope=scope,
+                        operation_key=key,
+                        payload_hash=payload_hash,
+                        commit_seq=receipt.commit_seq,
+                        recorded_at=receipt.recorded_at,
+                        receipt=receipt,
+                    )
+                    # Prevent an accidental second execution from mutating domain facts.
+                    await connection.exec_driver_sql("PRAGMA query_only=ON")
+                    try:
+                        yield tx
+                    finally:
+                        await connection.exec_driver_sql("PRAGMA query_only=OFF")
+                else:
+                    seq = await connection.scalar(
+                        sa.update(clock)
+                        .where(clock.c.singleton == 1)
+                        .values(commit_seq=clock.c.commit_seq + 1)
+                        .returning(clock.c.commit_seq)
+                    )
+                    if seq is None:
+                        raise RuntimeError("Authority commit clock is missing")
+                    now = datetime.now(UTC).isoformat()
+                    tx = WriteTx(
+                        connection,
+                        authority=self,
+                        ctx=ctx,
+                        operation_id=operation_id,
+                        operation_kind=operation_kind,
+                        scope=scope,
+                        operation_key=key,
+                        payload_hash=payload_hash,
+                        commit_seq=int(seq),
+                        recorded_at=now,
+                    )
                     yield tx
-                finally:
-                    await connection.exec_driver_sql("PRAGMA query_only=OFF")
-                return
-            seq = await connection.scalar(
-                sa.update(clock)
-                .where(clock.c.singleton == 1)
-                .values(commit_seq=clock.c.commit_seq + 1)
-                .returning(clock.c.commit_seq)
-            )
-            if seq is None:
-                raise RuntimeError("Authority commit clock is missing")
-            now = datetime.now(UTC).isoformat()
-            tx = WriteTx(
-                connection,
-                authority=self,
-                ctx=ctx,
-                operation_id=operation_id,
-                operation_kind=operation_kind,
-                scope=scope,
-                operation_key=key,
-                payload_hash=payload_hash,
-                commit_seq=int(seq),
-                recorded_at=now,
-            )
-            yield tx
-            if not tx.result_set:
-                raise RuntimeError("A successful write must record tx.result(value)")
-            await connection.execute(
-                operations.insert().values(
-                    operation_key=key,
-                    caller_id=ctx.caller_id,
-                    namespace_id=ctx.namespace_id,
-                    scope=scope,
-                    operation_id=operation_id,
-                    operation_kind=operation_kind,
-                    payload_hash=payload_hash,
-                    commit_seq=seq,
-                    recorded_at=now,
-                    result_json=canonical_json(tx.result_value),
-                    jobs_json=canonical_json(tx.jobs),
-                )
-            )
+                    if not tx.result_set:
+                        raise RuntimeError("A successful write must record tx.result(value)")
+                    await connection.execute(
+                        operations.insert().values(
+                            operation_key=key,
+                            caller_id=ctx.caller_id,
+                            namespace_id=ctx.namespace_id,
+                            scope=scope,
+                            operation_id=operation_id,
+                            operation_kind=operation_kind,
+                            payload_hash=payload_hash,
+                            commit_seq=seq,
+                            recorded_at=now,
+                            result_json=canonical_json(tx.result_value),
+                            jobs_json=canonical_json(tx.jobs),
+                        )
+                    )
+            # A sequence becomes observable only after SQLite has committed.
+            span.set_attribute("nous.replayed", tx.replayed)
+            span.set_attribute("nous.commit_seq", tx.commit_seq)
 
     async def receipt(
         self,
@@ -361,6 +371,9 @@ class Authority:
         expected = hashlib.sha256(
             canonical_json({"kind": operation_kind, "payload": payload}).encode()
         ).hexdigest()
+        previous_hash = hashlib.sha256(
+            canonical_json({"kind": operation_kind, "payload": previous_payload(payload)}).encode()
+        ).hexdigest()
         async with self.read(ctx) as view:
             row = (
                 (
@@ -373,7 +386,7 @@ class Authority:
             )
             if row is None:
                 return None
-            if row["payload_hash"] != expected:
+            if row["payload_hash"] not in {expected, previous_hash}:
                 raise OperationConflict(
                     f"Operation {operation_id!r} already has a different payload"
                 )

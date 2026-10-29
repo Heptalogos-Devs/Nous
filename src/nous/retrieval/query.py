@@ -22,6 +22,7 @@ from .assets import (
     GraphAssets,
     record_text,
 )
+from .media import source_material_ids_in
 from .planning import bind
 
 if TYPE_CHECKING:
@@ -235,7 +236,24 @@ async def query(self: RetrievalService, ctx: CallContext, request: QueryRequest)
     async with self.authority.read(ctx) as current:
         roots = await self.cognition.active_roots_in(current, ctx)
         for record, score in ranked:
-            if await self.cognition.visible_in(current, ctx, record, roots):
+            if isinstance(record, CognitiveRecord):
+                visible = await self.cognition.visible_in(current, ctx, record, roots)
+            else:
+                try:
+                    await source_material_ids_in(
+                        current, ctx, record.reference, self.materials, self.derivations
+                    )
+                    visible = True
+                except DomainError as error:
+                    if error.code not in {
+                        "source_unavailable",
+                        "region_not_found",
+                        "representation_not_found",
+                        "derived_region_not_found",
+                    }:
+                        raise
+                    visible = False
+            if visible:
                 hits.append(QueryHit(object=record, score=score, source_roots=record.source_roots))
             if len(hits) >= bound.limit:
                 break

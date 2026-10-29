@@ -65,6 +65,7 @@ class MemoryBody(Contract):
     kind: Literal["memory"] = "memory"
     text: str = Field(min_length=1)
     summary: str | None = None
+    media: tuple[MediaReference, ...] = ()
     tags: tuple[str, ...] = ()
     external_ids: dict[str, str] = Field(default_factory=dict)
     metadata: dict[str, JsonValue] = Field(default_factory=dict)
@@ -127,6 +128,14 @@ class EntityMention(Contract):
     role: str = "mentioned"
 
 
+class PlatformIdentity(Contract):
+    platform: str = Field(min_length=1)
+    account_id: str = Field(min_length=1)
+    display_name: str | None = None
+    attributes: tuple[EntityAttribute, ...] = ()
+    evidence: tuple[EvidenceLink, ...] = Field(min_length=1)
+
+
 class EntityBody(Contract):
     kind: Literal["entity"] = "entity"
     label: str
@@ -135,7 +144,10 @@ class EntityBody(Contract):
     description: str = ""
     identifiers: dict[str, str] = Field(default_factory=dict)
     attributes: tuple[EntityAttribute, ...] = ()
+    purged_attribute_count: int = Field(default=0, ge=0)
+    purged_identity_count: int = Field(default=0, ge=0)
     mentions: tuple[EntityMention, ...] = ()
+    platform_identities: tuple[PlatformIdentity, ...] = ()
 
 
 class EpisodeMember(Contract):
@@ -226,9 +238,22 @@ class SocialRelationBody(Contract):
     from_entity: CognitiveRef
     to_entity: CognitiveRef
     relation: str
-    degree: float = Field(ge=-1, le=1)
+    dimension: Literal[
+        "familiarity",
+        "affinity",
+        "intimacy",
+        "trust",
+        "cooperation",
+        "guidance",
+        "membership",
+        "conflict",
+        "other",
+    ] = "other"
+    degree: float = Field(ge=-1, le=1, allow_inf_nan=False)
     trust_domains: dict[str, float] = Field(default_factory=dict)
     scope: tuple[str, ...] = ()
+    groups: tuple[CognitiveRef, ...] = ()
+    epistemic: EpistemicStance = Field(default_factory=EpistemicStance)
     judgement: Literal["sufficient", "insufficient", "unknown"] = "unknown"
 
 
@@ -394,6 +419,7 @@ class ProposedSchema(Contract):
 
 
 class FormationCatalogEntry(Contract):
+    material_ids: tuple[str, ...] = ()
     key: str
     reference: CognitiveRef
     label: str
@@ -413,8 +439,17 @@ class ProposedAssociation(Contract):
     description: str = ""
 
 
+class ProposedMemory(Contract):
+    text: str = Field(min_length=1)
+    summary: str | None = None
+    tags: tuple[str, ...] = ()
+    role: Literal["experiential", "declarative", "procedural_experience"] = "declarative"
+    formation_mode: Literal["grounded", "synthesized"] = "grounded"
+    epistemic: EpistemicStance = Field(default_factory=EpistemicStance)
+
+
 class FormationDraft(Contract):
-    memories: tuple[MemoryBody, ...]
+    memories: tuple[ProposedMemory, ...]
     event_expression: str | None = None
     entities: tuple[ProposedEntity, ...] = ()
     associations: tuple[ProposedAssociation, ...] = ()

@@ -19,6 +19,7 @@ class ModelRoute(BaseModel):
     temperature: float | None = Field(default=None, ge=0, le=2)
     reasoning_effort: ReasoningEffort | None = None
     max_calls_per_day: int = Field(default=50, ge=0)
+    video_content_format: Literal["video_url"] | None = None
 
 
 class EmbeddingRoute(ModelRoute):
@@ -26,6 +27,7 @@ class EmbeddingRoute(ModelRoute):
     dimensions: int = Field(default=2048, gt=0)
     normalization: Literal["none", "l2"] = "none"
     media_path: str = "embeddings/multimodal"
+    max_batch_items: int = Field(default=64, ge=1, le=2048)
 
 
 class Settings(BaseSettings):

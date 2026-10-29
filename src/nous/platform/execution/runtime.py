@@ -23,13 +23,18 @@ from dbos import (
     WorkflowStatus,
 )
 from nous_wave.contracts.common import CallContext
+from opentelemetry.context import get_current
 from pydantic import JsonValue
 from sqlalchemy import event
 from sqlalchemy.pool import ConnectionPoolEntry
 
+from nous.platform.observability import configure_tracing
 from nous.platform.persistence import Authority, WriteTx
 from nous.platform.persistence.authority import SQLiteConnection, canonical_json
 from nous.platform.persistence.schema import job_links
+
+from .query import JobPage, query_jobs
+from .scope import require_job_in
 
 P = ParamSpec("P")
 R = TypeVar("R")
@@ -139,6 +144,7 @@ class DurableExecution:
             return
         if not self.authority.initialized:
             raise RuntimeError("Migrate the authority before starting workers")
+        configure_tracing()
         self._host_loop = asyncio.get_running_loop()
         self._engine = sa.create_engine(
             sa.URL.create("sqlite", database=str(self.authority.path)),
@@ -159,7 +165,10 @@ class DurableExecution:
                     "name": self.application_name,
                     "system_database_engine": self._engine,
                     "serializer": serializer,
-                    "enable_otlp": False,
+                    # Use the process provider without DBOS-owned network exporters.
+                    "enable_otlp": True,
+                    "otlp_traces_endpoints": [],
+                    "otlp_logs_endpoints": [],
                     "use_listen_notify": False,
                     "executor_id": "nous-local-host",
                 }
@@ -264,6 +273,8 @@ class DurableExecution:
             "serialization_type": WorkflowSerializationFormat.PORTABLE,
             "workflow_id_reuse_policy": "reject",
             "authenticated_user": tx.ctx.caller_id,
+            # DBOS persists W3C trace context only; baggage and payload are excluded.
+            "otel_context": get_current(),
             "attributes": {
                 "scope": tx.scope,
                 "operation_id": tx.operation_id,
@@ -297,17 +308,8 @@ class DurableExecution:
         return JobRef(handle.get_workflow_id())
 
     async def _require_job(self, ctx: CallContext, workflow_id: str) -> None:
-        query = sa.select(job_links).where(
-            job_links.c.workflow_id == workflow_id,
-            job_links.c.caller_id == ctx.caller_id,
-            job_links.c.namespace_id == ctx.namespace_id,
-        )
-        if ctx.subject_id is not None:
-            query = query.where(job_links.c.subject_id == ctx.subject_id)
         async with self.authority.read(ctx) as view:
-            row = (await view.connection.execute(query)).mappings().first()
-            if row is None:
-                raise LookupError("Job does not exist in this caller's namespace")
+            await require_job_in(view, ctx, workflow_id)
 
     async def status(self, ctx: CallContext, workflow_id: str) -> WorkflowStatus:
         await self._require_job(ctx, workflow_id)
@@ -319,22 +321,28 @@ class DurableExecution:
     async def list_jobs(
         self, ctx: CallContext, *, scope: str | None = None, limit: int = 100
     ) -> list[WorkflowStatus]:
-        if limit < 1 or limit > 1000:
-            raise ValueError("Job list limit must be between 1 and 1000")
-        query = sa.select(job_links.c.workflow_id).where(
-            job_links.c.caller_id == ctx.caller_id,
-            job_links.c.namespace_id == ctx.namespace_id,
-        )
-        if scope is not None:
-            query = query.where(job_links.c.scope == scope)
-        if ctx.subject_id is not None:
-            query = query.where(job_links.c.subject_id == ctx.subject_id)
-        async with self.authority.read(ctx) as view:
-            ids = list((await view.connection.execute(query.limit(limit))).scalars())
-        if not ids:
-            return []
-        return await self.client.list_workflows_async(
-            workflow_ids=ids, limit=limit, load_input=False, load_output=False
+        page = await self.query_jobs(ctx, scope=scope, limit=limit)
+        return list(page.items)
+
+    async def query_jobs(
+        self,
+        ctx: CallContext,
+        *,
+        scope: str | None = None,
+        kind: str | None = None,
+        state: str | None = None,
+        limit: int = 50,
+        cursor: str | None = None,
+    ) -> JobPage:
+        return await query_jobs(
+            self.authority,
+            self.client,
+            ctx,
+            scope=scope,
+            kind=kind,
+            state=state,
+            limit=limit,
+            cursor=cursor,
         )
 
     async def wait(self, ctx: CallContext, workflow_id: str) -> JsonValue:

@@ -3,7 +3,7 @@
 from collections.abc import Iterator, Sequence
 from typing import cast
 
-from nous_wave.contracts import CognitiveBody, CognitiveRef, MemorySemanticsBody
+from nous_wave.contracts import CognitiveBody, CognitiveRef, MediaReference, MemorySemanticsBody
 from pydantic import BaseModel
 
 
@@ -43,3 +43,15 @@ def references_in(value: object) -> Iterator[CognitiveRef]:
     elif isinstance(value, (list, tuple)):
         for child in cast(Sequence[object], value):
             yield from references_in(child)
+
+
+def media_references_in(value: object) -> Iterator[MediaReference]:
+    """Media dependencies are typed identities; metadata strings never become references."""
+    if isinstance(value, MediaReference):
+        yield value
+    elif isinstance(value, BaseModel):
+        for field in type(value).model_fields:
+            yield from media_references_in(getattr(value, field))
+    elif isinstance(value, (list, tuple)):
+        for child in cast(Sequence[object], value):
+            yield from media_references_in(child)

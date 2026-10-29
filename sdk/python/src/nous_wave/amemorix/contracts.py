@@ -54,8 +54,22 @@ class SummaryInput(IngestInput):
 
 
 class MaintainInput(Contract):
-    action: Literal["reinforce", "weaken", "protect", "restore", "freeze", "forget", "recycle_bin"]
+    action: Literal[
+        "reinforce",
+        "weaken",
+        "protect",
+        "unprotect",
+        "restore",
+        "freeze",
+        "forget",
+        "trash",
+        "purge",
+        "decay",
+        "recycle_bin",
+    ]
     target: str = ""
+    strength: float = Field(default=1, ge=0, allow_inf_nan=False)
+    force: bool = False
     hours: float | None = Field(default=None, ge=0)
     reason: str = ""
     limit: int = Field(default=50, ge=1, le=1000)

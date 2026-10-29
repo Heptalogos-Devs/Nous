@@ -2,15 +2,26 @@
 
 import hashlib
 import json
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import uuid4
 
 import sqlalchemy as sa
-from nous_wave.contracts import CallContext
+from nous_wave.contracts import CallContext, DomainError
 from pydantic import JsonValue, TypeAdapter
 
 from nous.platform.errors import NousError
-from nous.platform.persistence import Authority, WriteTx, metadata
+from nous.platform.persistence import Authority, ReadView, WriteTx, metadata
+
+from .invocations import (
+    InvocationResult,
+    bind_in,
+    invocation_in,
+    invocation_key,
+    invocations,
+    retire_in,
+)
+from .source_fence import erased_sources_in, source_identities
 
 calls = sa.Table(
     "nous_model_calls",
@@ -29,11 +40,103 @@ calls = sa.Table(
 )
 
 
+@dataclass(frozen=True)
+class PaidInvocation:
+    id: str
+    request_hash: str
+    request: dict[str, JsonValue]
+    result: JsonValue
+
+
 class CallLedger:
     def __init__(self, authority: Authority) -> None:
         self.authority = authority
 
+    async def recall(
+        self, ctx: CallContext, purpose: str, invocation_id: str
+    ) -> InvocationResult | None:
+        async with self.authority.read(ctx) as view:
+            return await invocation_in(view, ctx, purpose, invocation_id, calls)
+
+    async def purge_calls_in(self, tx: WriteTx, call_ids: tuple[str, ...]) -> None:
+        if call_ids:
+            await tx.connection.execute(
+                calls.update()
+                .where(
+                    calls.c.id.in_(call_ids),
+                    calls.c.namespace_id == tx.ctx.namespace_id,
+                    calls.c.subject_id == tx.ctx.require_subject(),
+                )
+                .values(request={"purged": True}, result=None, usage=None, status="purged")
+            )
+
+    async def purge_invocations_in(
+        self,
+        tx: WriteTx,
+        ctx: CallContext,
+        purpose: str,
+        identities: tuple[str, ...],
+    ) -> None:
+        if (ctx.namespace_id, ctx.subject_id) != (tx.ctx.namespace_id, tx.ctx.subject_id):
+            raise ValueError("Invocation erasure must stay in the source transaction's subject")
+        for identity in identities:
+            await retire_in(tx, ctx, purpose, identity)
+        ids = tuple(
+            str(value)
+            for value in (
+                await tx.connection.execute(
+                    sa.select(invocations.c.call_id).where(
+                        invocations.c.key.in_(
+                            tuple(invocation_key(ctx, purpose, identity) for identity in identities)
+                        )
+                    )
+                )
+            ).scalars()
+        )
+        await self.purge_calls_in(tx, ids)
+
+    async def successful_in(
+        self, view: ReadView | WriteTx, ctx: CallContext, call_id: str
+    ) -> PaidInvocation:
+        row = (
+            (
+                await view.connection.execute(
+                    sa.select(calls).where(
+                        calls.c.id == call_id,
+                        calls.c.namespace_id == ctx.namespace_id,
+                        calls.c.subject_id == ctx.require_subject(),
+                        calls.c.status == "succeeded",
+                    )
+                )
+            )
+            .mappings()
+            .first()
+        )
+        if row is None:
+            raise DomainError(
+                "model_call_unavailable", "A retained successful model call is required"
+            )
+        return PaidInvocation(
+            str(row["id"]),
+            str(row["request_hash"]),
+            TypeAdapter(dict[str, JsonValue]).validate_python(row["request"]),
+            TypeAdapter(JsonValue).validate_python(row["result"]),
+        )
+
     async def purge_materials_in(self, tx: WriteTx, material_ids: tuple[str, ...]) -> None:
+        from nous.material.service import observations
+
+        purged_roots = {
+            str(row["id"])
+            for row in (
+                await tx.connection.execute(
+                    sa.select(observations.c.id, observations.c.record).where(
+                        observations.c.namespace_id == tx.ctx.namespace_id,
+                    )
+                )
+            ).mappings()
+            if row["record"].get("purged")
+        }
         selected = set(material_ids)
         rows = (
             await tx.connection.execute(
@@ -43,8 +146,15 @@ class CallLedger:
         for row in rows:
             request = row["request"]
             source = request.get("prompt", {}).get("variables", {}).get("source", {})
-            inputs = set(request.get("source_ids", []))
-            if source.get("material_id") in selected or inputs.intersection(selected):
+            inputs = source_identities(request)
+            inputs.update(source.get("source_material_ids", []))
+            if (
+                source.get("material_id") in selected
+                or inputs.intersection(selected)
+                or inputs.intersection(purged_roots)
+                or source.get("observation_id") in purged_roots
+                or set(request.get("observation_ids", [])).intersection(purged_roots)
+            ):
                 await tx.connection.execute(
                     calls.update()
                     .where(calls.c.id == row["id"])
@@ -59,6 +169,7 @@ class CallLedger:
         maximum: int,
         *,
         budget_role: str | None = None,
+        invocation_id: str | None = None,
     ) -> tuple[str, object | None]:
         role = budget_role or purpose
         digest = hashlib.sha256(json.dumps(request, sort_keys=True).encode()).hexdigest()
@@ -69,6 +180,17 @@ class CallLedger:
             operation_kind="model.reserve",
             payload={"request_hash": digest, "purpose": purpose},
         ) as tx:
+            if await erased_sources_in(tx, ctx, request):
+                raise NousError(
+                    "SourcePurged",
+                    "Model input was permanently erased before admission",
+                    status=409,
+                )
+            if invocation_id is not None:
+                retained = await invocation_in(tx, ctx, purpose, invocation_id, calls)
+                if retained is not None:
+                    tx.result({"id": retained.call_id, "reused": True})
+                    return retained.call_id, retained.output
             predicate = (
                 calls.c.namespace_id == ctx.namespace_id,
                 calls.c.subject_id == ctx.subject_id,
@@ -88,6 +210,8 @@ class CallLedger:
                 .first()
             )
             if cached:
+                if invocation_id is not None:
+                    await bind_in(tx, ctx, purpose, invocation_id, str(cached["id"]))
                 tx.result({"id": cached["id"], "reused": True})
                 return str(cached["id"]), cached["result"]
             count = int(
@@ -114,6 +238,8 @@ class CallLedger:
                     "ResourceExhausted", f"Daily {purpose} call budget exhausted", status=429
                 )
             call_id = str(uuid4())
+            if invocation_id is not None:
+                await bind_in(tx, ctx, purpose, invocation_id, call_id)
             await tx.connection.execute(
                 calls.insert().values(
                     id=call_id,
@@ -177,7 +303,7 @@ class CallLedger:
                 )
             ).mappings()
             result = [dict(row) for row in rows]
-            if ctx.allowed_source_ids is not None:
+            if ctx.source_groups():
                 for item in result:
                     item.pop("request", None)
                     item.pop("result", None)

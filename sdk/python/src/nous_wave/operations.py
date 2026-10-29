@@ -29,6 +29,7 @@ from .contracts import (
     UnitOutput,
 )
 from .contracts.context import (
+    ChangeContextSession,
     ChangeResidents,
     ChangeWorkContext,
     ContextAdmission,
@@ -452,6 +453,51 @@ class TypedOperations:
                 "GET",
                 self.subject_path(namespace_id, subject_id)
                 + f"/contexts/work/{segment(work_context_id)}",
+            )
+        )
+
+    async def change_context_session(
+        self, namespace_id: str, subject_id: str, command: ChangeContextSession
+    ) -> ContextSession:
+        return ContextSession.model_validate(
+            await self.request(
+                "POST",
+                self.subject_path(namespace_id, subject_id) + "/contexts/sessions/change",
+                body=encoded(command),
+            )
+        )
+
+    async def work_contexts(
+        self, namespace_id: str, subject_id: str, limit: int = 50
+    ) -> tuple[WorkContext, ...]:
+        return TypeAdapter(tuple[WorkContext, ...]).validate_python(
+            await self.request(
+                "GET",
+                self.subject_path(namespace_id, subject_id) + "/contexts/work",
+                params={"limit": limit},
+            )
+        )
+
+    async def work_context_history(
+        self, namespace_id: str, subject_id: str, work_context_id: str, limit: int = 50
+    ) -> tuple[WorkContext, ...]:
+        return TypeAdapter(tuple[WorkContext, ...]).validate_python(
+            await self.request(
+                "GET",
+                self.subject_path(namespace_id, subject_id)
+                + f"/contexts/work/{segment(work_context_id)}/history",
+                params={"limit": limit},
+            )
+        )
+
+    async def context_admission(
+        self, namespace_id: str, subject_id: str, admission_id: str
+    ) -> ContextAdmission:
+        return ContextAdmission.model_validate(
+            await self.request(
+                "GET",
+                self.subject_path(namespace_id, subject_id)
+                + f"/contexts/admissions/{segment(admission_id)}",
             )
         )
 

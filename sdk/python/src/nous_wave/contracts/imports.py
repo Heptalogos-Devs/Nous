@@ -6,6 +6,7 @@ from pydantic import Field, JsonValue, model_validator
 
 from .cognition import CognitiveRef, FormationCatalogEntry
 from .common import Contract, Operation, TimePoint
+from .media import MediaReference
 
 
 class ImportDocument(Contract):
@@ -16,6 +17,7 @@ class ImportDocument(Contract):
     media_type: str = "text/plain"
     file_identity: str | None = None
     source_type: str = "document"
+    source: str | None = Field(default=None, max_length=4096)
     origin: dict[str, str] = Field(default_factory=dict)
     event_time: TimePoint | None = None
     observed_at: TimePoint | None = None
@@ -54,11 +56,10 @@ class ImportRecordError(Contract):
     message: str
 
 
-class FreezeCatalog(Operation):
-    inputs: tuple[ImportDocument, ...] = Field(min_length=1)
+class TextSplitOptions(Contract):
+    record_units: bool = False
     chunk_size: int = Field(default=2400, ge=128, le=100000)
     chunk_overlap: int = Field(default=200, ge=0)
-    parent_catalog_id: str | None = None
     strategy_override: Literal["auto", "factual", "narrative", "quote", "chat_log"] | None = None
     narrative_window_size: int | None = Field(default=None, ge=200, le=100000)
     narrative_overlap: int | None = Field(default=None, ge=0)
@@ -69,6 +70,11 @@ class FreezeCatalog(Operation):
     content_category: str | None = None
     timezone: str | None = None
     reference_time: TimePoint | None = None
+
+
+class FreezeCatalog(Operation, TextSplitOptions):
+    inputs: tuple[ImportDocument, ...] = Field(min_length=1)
+    parent_catalog_id: str | None = None
 
 
 class ImportUnit(Contract):
@@ -94,6 +100,7 @@ class ImportUnit(Contract):
 
 
 class CatalogView(Contract):
+    split_options: TextSplitOptions | None = None
     id: str
     namespace_id: str
     subject_id: str
@@ -105,15 +112,28 @@ class CatalogView(Contract):
     formation_catalog: tuple[FormationCatalogEntry, ...] = ()
 
 
+class FormationOptionsOverride(Contract):
+    extract_time: bool | None = None
+    content_category: str | None = None
+    timezone: str | None = None
+    reference_time: TimePoint | str | None = None
+    chat_reference_time: str | None = None
+
+
 class ProcessCatalog(Operation):
+    deferred_formation: bool = False
+    origin: dict[str, str] | None = None
+    retry_parent_job_id: str | None = None
     catalog_id: str
     unit_ids: tuple[str, ...] | None = None
+    formation_options_override: FormationOptionsOverride | None = None
     llm_enabled: bool = True
     formation_retries: int = Field(default=1, ge=0, le=3)
     vectors: Literal["disabled", "metadata_allowed", "required"] = "metadata_allowed"
 
 
 class UnitOutput(Contract):
+    formation: ObservationFormSubmission | None = None
     id: str
     unit_id: str
     observation_id: str
@@ -143,6 +163,7 @@ class ImportResult(Contract):
 
 
 class AdmitFiles(FreezeCatalog):
+    deferred_formation: bool = False
     llm_enabled: bool = True
     formation_retries: int = Field(default=1, ge=0, le=3)
     vectors: Literal["disabled", "metadata_allowed", "required"] = "metadata_allowed"
@@ -170,3 +191,55 @@ class UnitAttempt(Contract):
     producer_call_id: str | None = None
     error: ImportFailure | None = None
     vector_error: ImportFailure | None = None
+
+
+class TextPreviewUnit(Contract):
+    text: str
+    start: int
+    end: int
+    strategy: str
+    requires_llm: bool
+    context: dict[str, JsonValue] = Field(default_factory=dict)
+
+
+class TextImportPreview(Contract):
+    content_hash: str
+    byte_len: int
+    options: TextSplitOptions
+    units: tuple[TextPreviewUnit, ...]
+
+
+class FormObservation(Operation):
+    anchor: CognitiveRef | None = None
+    vectors: Literal["disabled", "metadata_allowed", "required"] = "disabled"
+    observation_id: str
+    source: MediaReference | None = None
+    llm_enabled: bool = True
+
+
+class ObservationFormation(Contract):
+    vector_policy: Literal["disabled", "metadata_allowed", "required"] = "disabled"
+    vector_error: ImportFailure | None = None
+    observation_id: str
+    cognition: tuple[CognitiveRef, ...]
+    producer_call_id: str | None = None
+    commit_seq: int
+
+
+class VectorAdoption(Contract):
+    embedded: int
+    space: str | None
+    references: tuple[str, ...] = ()
+    output_id: str | None = None
+
+
+class EmbeddingSyncResult(Contract):
+    embedded: int
+    remaining: int
+    space: str | None
+
+
+class ObservationFormSubmission(Contract):
+    request_id: str
+    job_id: str
+    observation_id: str

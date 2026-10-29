@@ -1,11 +1,8 @@
 """Public SDK resource routes backed by the shared domain owners."""
 
-from uuid import uuid4
-
 from fastapi import APIRouter, Request
 from nous_wave.contracts import (
     BlobDocument,
-    CallContext,
     CognitiveRef,
     DomainError,
     ImportDocument,
@@ -18,33 +15,39 @@ from nous_wave.contracts import (
     UnitOutput,
 )
 from nous_wave.contracts.context import (
-    ChangeResidents,
-    ChangeWorkContext,
     CognitiveTarget,
-    ContextAdmissionCommand,
-    ContextPrepare,
-    ContextReport,
     MediaTarget,
-    OpenContextSession,
 )
-from nous_wave.contracts.credentials import Capability
 from nous_wave.contracts.lifecycle import MemoryChange
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, TypeAdapter
 from sqlalchemy import select
 
-from nous.cognition.schema import revisions
 from nous.identity.service import subjects
 from nous.imports.schema import outputs
-from nous.material.service import materials, observations, require_observation_in
+from nous.material.service import materials, require_observation_in
 
+from .sdk_cognition import router as cognition_router
+from .sdk_common import (
+    OperationIdentity,
+    cognitive_context,
+    material_context,
+    reference_in,
+    subject_context,
+)
+from .sdk_contexts import router as context_router
+from .sdk_imports import router as import_router
+from .sdk_media import router as media_router
+from .sdk_social import router as social_router
+from .sdk_sources import router as sources_router
 from .security import application, authorize, context
 
 router = APIRouter(prefix="/api")
-
-
-class OperationIdentity(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    operation_id: str = Field(default_factory=lambda: str(uuid4()))
+router.include_router(context_router)
+router.include_router(import_router)
+router.include_router(media_router)
+router.include_router(social_router)
+router.include_router(sources_router)
+router.include_router(cognition_router)
 
 
 class PutText(OperationIdentity):
@@ -68,71 +71,6 @@ class ReadReference(BaseModel):
     reference: CognitiveRef | MediaReference | str
     observation_id: str | None = None
     as_of_commit: int | None = None
-
-
-async def subject_context(
-    request: Request, subject_id: str, capability: Capability | None = None
-) -> CallContext:
-    await authorize(request, capability=capability)
-    async with application(request).authority.read() as view:
-        namespace_id = (
-            await view.connection.execute(
-                select(subjects.c.namespace_id).where(subjects.c.id == subject_id)
-            )
-        ).scalar_one_or_none()
-    if namespace_id is None:
-        raise DomainError("subject_not_found", "Subject does not exist")
-    return await context(request, str(namespace_id), subject_id, capability=capability)
-
-
-async def cognitive_context(request: Request, object_id: str) -> CallContext:
-    await authorize(request, capability="read")
-    async with application(request).authority.read() as view:
-        row = (
-            await view.connection.execute(
-                select(revisions.c.namespace_id, revisions.c.subject_id)
-                .where(revisions.c.id == object_id)
-                .limit(1)
-            )
-        ).first()
-    if row is None:
-        raise DomainError("cognition_not_found", "Cognitive object is unavailable")
-    return await context(request, str(row.namespace_id), str(row.subject_id), capability="read")
-
-
-async def material_context(request: Request, material_id: str) -> CallContext:
-    await authorize(request, capability="read")
-    async with application(request).authority.read() as view:
-        rows = (
-            await view.connection.execute(
-                select(observations.c.namespace_id, observations.c.subject_id).where(
-                    observations.c.material_id == material_id, observations.c.active.is_(True)
-                )
-            )
-        ).all()
-    for row in rows:
-        try:
-            ctx = await context(
-                request, str(row.namespace_id), str(row.subject_id), capability="read"
-            )
-            await application(request).material.read(ctx, material_id)
-            return ctx
-        except DomainError:
-            continue
-    raise DomainError("source_unavailable", "Material has no authorized live observation")
-
-
-async def reference_in(
-    request: Request,
-    ctx: CallContext,
-    reference: CognitiveRef | str,
-    as_of_commit: int | None = None,
-) -> CognitiveRef:
-    locator = reference.exact() if isinstance(reference, CognitiveRef) else reference
-    resolution = await application(request).references.resolve(ctx, locator, as_of_commit)
-    if not isinstance(resolution.reference, CognitiveTarget):
-        raise DomainError("cognition_required", "Reference selects media rather than cognition")
-    return resolution.reference.reference
 
 
 @router.post("/subjects/{subject_id}/query")
@@ -230,10 +168,18 @@ async def source_read(request: Request, command: ReadReference):
             "evidence": record.evidence,
         }
     ref = target.reference
+    if (
+        command.observation_id is not None
+        and ref.observation_id is not None
+        and command.observation_id != ref.observation_id
+    ):
+        raise DomainError("source_mismatch", "Source request names conflicting observations")
+    observation_id = command.observation_id or ref.observation_id
+    ref = ref.model_copy(update={"observation_id": observation_id})
     if ref.kind == "material":
-        if command.observation_id is not None:
+        if observation_id is not None:
             async with app.authority.read(ctx) as view:
-                row = await require_observation_in(view, ctx, command.observation_id)
+                row = await require_observation_in(view, ctx, observation_id)
                 if row["material_id"] != ref.id:
                     raise DomainError(
                         "source_mismatch", "Observation does not belong to this original"
@@ -241,23 +187,42 @@ async def source_read(request: Request, command: ReadReference):
         return {"reference": ref, "material": await app.material.read(ctx, ref.id)}
     if ref.kind == "source_region":
         region, material = await app.material.region_source(ctx, ref.id)
-        if command.observation_id is not None:
+        if observation_id is not None:
             async with app.authority.read(ctx) as view:
-                row = await require_observation_in(
-                    view, ctx, command.observation_id, region_id=ref.id
-                )
+                row = await require_observation_in(view, ctx, observation_id, region_id=ref.id)
                 if row["material_id"] != region.material_id:
                     raise DomainError(
                         "source_mismatch", "Observation does not belong to this region"
                     )
         text = material["text"]
+        from nous.material.text import source_region_text
+
         excerpt = (
-            text[region.text_start : region.text_end]
-            if text is not None and region.text_start is not None and region.text_end is not None
+            source_region_text(text, region)
+            if text is not None
+            and any(
+                value is not None
+                for value in (
+                    region.text_start,
+                    region.text_end,
+                    region.json_pointer,
+                    region.line_number,
+                )
+            )
             else None
         )
         return {"reference": ref, "region": region, "text": excerpt}
-    raise DomainError("source_unavailable", "Media derivation is unavailable")
+    async with app.authority.read(ctx) as view:
+        info = await app.derivations.source_in(view, ctx, ref)
+        selected = await app.derivations.selected_in(view, ctx, ref)
+    return {
+        "reference": ref,
+        "source_roots": info.roots,
+        "material_ids": info.material_ids,
+        "access": info.access,
+        "payload": selected.payload,
+        "selector": selected.selector,
+    }
 
 
 @router.get("/materials/{material_id}")
@@ -329,7 +294,7 @@ async def observe(request: Request, command: Observe):
 @router.get("/namespaces/{namespace_id}/subjects/{subject_id}/imports/outputs/{output_id}")
 async def import_output(request: Request, namespace_id: str, subject_id: str, output_id: str):
     app = application(request)
-    ctx = await context(request, namespace_id, subject_id)
+    ctx = await context(request, namespace_id, subject_id, capability="read")
     async with app.authority.read(ctx) as view:
         raw = (
             await view.connection.execute(select(outputs.c.record).where(outputs.c.id == output_id))
@@ -343,62 +308,46 @@ async def import_output(request: Request, namespace_id: str, subject_id: str, ou
         return output
 
 
-@router.get("/jobs")
-async def jobs(request: Request, namespace_id: str, subject_id: str | None = None, limit: int = 50):
-    return await application(request).execution.list_jobs(
-        await context(request, namespace_id, subject_id), limit=limit
-    )
-
-
-@router.post("/namespaces/{namespace_id}/subjects/{subject_id}/contexts/preparations")
-async def prepare_context(
-    request: Request, namespace_id: str, subject_id: str, command: ContextPrepare
-):
-    return await application(request).contexts.prepare(
-        await context(request, namespace_id, subject_id), command
-    )
-
-
-@router.get(
-    "/namespaces/{namespace_id}/subjects/{subject_id}/contexts/preparations/{preparation_id}"
-)
-async def preparation(request: Request, namespace_id: str, subject_id: str, preparation_id: str):
-    return await application(request).contexts.preparation(
-        await context(request, namespace_id, subject_id, capability="read"), preparation_id
-    )
-
-
-@router.post(
-    "/namespaces/{namespace_id}/subjects/{subject_id}/contexts/preparations/{preparation_id}/cancel"
-)
-async def cancel_preparation(
+@router.get("/job-pages")
+async def job_page(
     request: Request,
     namespace_id: str,
-    subject_id: str,
-    preparation_id: str,
-    command: OperationIdentity,
+    subject_id: str | None = None,
+    limit: int = 50,
+    cursor: str | None = None,
+    scope: str | None = None,
+    kind: str | None = None,
+    state: str | None = None,
 ):
-    return await application(request).contexts.cancel_preparation(
-        await context(request, namespace_id, subject_id), preparation_id, command.operation_id
+    page = await application(request).execution.query_jobs(
+        await context(request, namespace_id, subject_id, capability="read"),
+        limit=limit,
+        cursor=cursor,
+        scope=scope,
+        kind=kind,
+        state=state,
     )
+    return {"items": page.items, "next_cursor": page.next_cursor}
 
 
-@router.post("/namespaces/{namespace_id}/subjects/{subject_id}/contexts/admissions")
-async def admit_managed(
-    request: Request, namespace_id: str, subject_id: str, command: ContextAdmissionCommand
+@router.get("/jobs")
+async def jobs(
+    request: Request,
+    namespace_id: str,
+    subject_id: str | None = None,
+    limit: int = 50,
+    scope: str | None = None,
+    kind: str | None = None,
+    state: str | None = None,
 ):
-    return await application(request).contexts.admit_managed(
-        await context(request, namespace_id, subject_id), command
+    page = await application(request).execution.query_jobs(
+        await context(request, namespace_id, subject_id, capability="read"),
+        limit=limit,
+        scope=scope,
+        kind=kind,
+        state=state,
     )
-
-
-@router.post("/namespaces/{namespace_id}/subjects/{subject_id}/contexts/reports")
-async def report_managed(
-    request: Request, namespace_id: str, subject_id: str, command: ContextReport
-):
-    return await application(request).contexts.report_managed(
-        await context(request, namespace_id, subject_id), command
-    )
+    return page.items
 
 
 @router.get("/subjects/{subject_id}")
@@ -419,81 +368,12 @@ async def subject_read(request: Request, subject_id: str):
         return dict(row)
 
 
-@router.post("/namespaces/{namespace_id}/subjects/{subject_id}/contexts/sessions")
-async def open_session(
-    request: Request, namespace_id: str, subject_id: str, command: OpenContextSession
-):
-    return await application(request).contexts.open_session(
-        await context(request, namespace_id, subject_id), command.operation_id, command.session_id
-    )
-
-
-@router.post(
-    "/namespaces/{namespace_id}/subjects/{subject_id}/contexts/sessions/{session_id}/close"
-)
-async def close_session(
-    request: Request,
-    namespace_id: str,
-    subject_id: str,
-    session_id: str,
-    command: OperationIdentity,
-):
-    return await application(request).contexts.close_session(
-        await context(request, namespace_id, subject_id), session_id, command.operation_id
-    )
-
-
 @router.post("/namespaces/{namespace_id}/subjects/{subject_id}/memories/change")
 async def memory_change(
     request: Request, namespace_id: str, subject_id: str, command: MemoryChange
 ):
     return await application(request).cognition.change_memory(
         await context(request, namespace_id, subject_id), command
-    )
-
-
-@router.post("/namespaces/{namespace_id}/subjects/{subject_id}/contexts/preparation-jobs")
-async def submit_context_preparation(
-    request: Request, namespace_id: str, subject_id: str, command: ContextPrepare
-):
-    return await application(request).contexts.submit_prepare(
-        await context(request, namespace_id, subject_id), command
-    )
-
-
-@router.get("/namespaces/{namespace_id}/subjects/{subject_id}/contexts/sessions/{session_id}")
-async def read_context_session(
-    request: Request, namespace_id: str, subject_id: str, session_id: str
-):
-    return await application(request).contexts.read_session(
-        await context(request, namespace_id, subject_id, capability="read"), session_id
-    )
-
-
-@router.post("/namespaces/{namespace_id}/subjects/{subject_id}/contexts/residents")
-async def change_context_residents(
-    request: Request, namespace_id: str, subject_id: str, command: ChangeResidents
-):
-    return await application(request).contexts.change_residents(
-        await context(request, namespace_id, subject_id), command
-    )
-
-
-@router.post("/namespaces/{namespace_id}/subjects/{subject_id}/contexts/work")
-async def change_work_context(
-    request: Request, namespace_id: str, subject_id: str, command: ChangeWorkContext
-):
-    return await application(request).contexts.change_work(
-        await context(request, namespace_id, subject_id), command
-    )
-
-
-@router.get("/namespaces/{namespace_id}/subjects/{subject_id}/contexts/work/{work_context_id}")
-async def read_work_context(
-    request: Request, namespace_id: str, subject_id: str, work_context_id: str
-):
-    return await application(request).contexts.read_work(
-        await context(request, namespace_id, subject_id, capability="read"), work_context_id
     )
 
 
@@ -520,3 +400,12 @@ async def subject_diagnostics(request: Request, subject_id: str):
         "model_calls": len(model_calls),
         "model_usage": usage,
     }
+
+
+@router.post("/namespaces/{namespace_id}/references/reconcile")
+async def reconcile_references(
+    request: Request, namespace_id: str, command: OperationIdentity, subject_id: str | None = None
+):
+    return await application(request).references.reconcile(
+        await context(request, namespace_id, subject_id), command.operation_id
+    )

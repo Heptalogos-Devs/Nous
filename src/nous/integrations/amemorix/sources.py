@@ -18,17 +18,25 @@ class Selection(Contract):
     mode: str = "source"
     source: str | None = None
     sources: tuple[str, ...] = ()
-    selector: dict[str, JsonValue] = Field(default_factory=dict)
+    selector: JsonValue = None
+    query: str | None = None
+    items: tuple[str, ...] = ()
+    requested_by: str | None = Field(default=None, max_length=120)
     reason: str = "A-Memorix source management"
     operation_id: str | None = None
     request_id: str | None = None
     dry_run: bool = False
     force: bool = False
+    cascade: bool = False
+    grace_hours: float | None = None
     limit: int = Field(default=50, ge=1, le=1000)
     before_commit_seq: int | None = None
 
 
 def source_label(source: dict[str, JsonValue]) -> str:
+    captured = source.get("source")
+    if isinstance(captured, str) and captured:
+        return captured
     kind = source.get("source_type")
     origin = source.get("origin")
     chat = origin.get("conversation_ref") if isinstance(origin, dict) else None
@@ -39,46 +47,63 @@ async def source_admin(
     service: AMemorixService, ctx: CallContext, tool: str, arguments: dict[str, JsonValue]
 ) -> dict[str, JsonValue]:
     command = Selection.model_validate(arguments)
-    sources = await service.app.sources.list(ctx)
+    if command.mode.strip().lower() not in {"", "source"}:
+        raise DomainError("capability_unavailable", "Deletion mode requires its scoped owner")
+    if command.cascade or command.grace_hours is not None:
+        raise DomainError(
+            "capability_unavailable", "Source selection has no delayed cascade policy"
+        )
+    sources = [
+        source for source in await service.app.sources.list(ctx) if not source.get("purged", False)
+    ]
     grouped: dict[str, list[str]] = defaultdict(list)
     for source in sources:
         grouped[source_label(json_object(source))].append(source["id"])
     if command.action == "list" and tool == "memory_source_admin":
         records = await service.records(ctx, ("memory",))
+        items = [
+            {
+                "source": label,
+                "paragraph_count": sum(
+                    not record.deleted and bool(set(record.source_roots).intersection(ids))
+                    for record in records
+                ),
+                "observation_ids": ids,
+                "updated_at": max(
+                    source["recorded_at"] for source in sources if source["id"] in ids
+                ),
+            }
+            for label, ids in sorted(grouped.items())
+        ]
         return json_object(
             {
                 "success": True,
-                "sources": [
-                    {
-                        "source": label,
-                        "paragraph_count": sum(
-                            bool(set(record.source_roots).intersection(ids)) for record in records
-                        ),
-                        "observation_ids": ids,
-                    }
-                    for label, ids in sorted(grouped.items())
-                ],
+                "items": items,
+                "count": len(items),
+                "sources": items,
             }
         )
     if command.action in {"get_operation", "list_operations"}:
         if command.action == "get_operation":
-            if not command.operation_id:
-                raise DomainError("operation_required", "Select a source operation")
-            value = await service.app.sources.get_operation(ctx, command.operation_id)
+            value = await selected_operation(service, ctx, command.operation_id)
             return json_object({"success": True, "operation": value})
+        rows = await service.app.sources.list_operations(
+            ctx, command.limit, before_commit_seq=command.before_commit_seq
+        )
         return json_object(
             {
                 "success": True,
-                "operations": await service.app.sources.list_operations(ctx, command.limit),
+                "operations": rows,
+                "items": rows,
+                "count": len(rows),
+                "next_before_commit_seq": SourceResult.model_validate(rows[-1]["result"]).commit_seq
+                if rows
+                else None,
             }
         )
-    labels = command.sources or (
-        (command.source,)
-        if command.source
-        else TypeAdapter(tuple[str, ...]).validate_python(command.selector.get("sources", ()))
-    )
+    labels = selected_labels(command)
     if command.action in {"restore", "purge"} and command.operation_id:
-        raw = await service.app.sources.get_operation(ctx, command.operation_id)
+        raw = await selected_operation(service, ctx, command.operation_id)
         ids = SourceResult.model_validate(raw["result"]).observation_ids
     else:
         if not labels:
@@ -99,11 +124,16 @@ async def source_admin(
                 "native_result": preview,
             }
         )
-    operation = command.request_id or command.operation_id or str(uuid4())
+    operation = (
+        command.request_id
+        or (command.operation_id if command.action not in {"restore", "purge"} else None)
+        or str(uuid4())
+    )
     native = SourceCommand(
         operation_id=operation,
         observation_ids=ids,
-        reason=command.reason,
+        reason=command.reason.strip() or f"{tool}.{command.action}",
+        requested_by=command.requested_by or tool,
         expected_preview=preview.preview_token,
     )
     if command.action in {"delete", "batch_delete", "execute"}:
@@ -122,3 +152,36 @@ async def source_admin(
             "native_result": result,
         }
     )
+
+
+async def selected_operation(service: AMemorixService, ctx: CallContext, identity: str | None):
+    if not identity:
+        raise DomainError("operation_required", "Select a source operation")
+    if identity.isdecimal():
+        return await service.app.sources.get_operation(ctx, commit_seq=int(identity))
+    return await service.app.sources.get_operation(ctx, identity)
+
+
+def selected_labels(command: Selection) -> tuple[str, ...]:
+    selector = command.selector
+    if isinstance(selector, str):
+        return (selector,)
+    if isinstance(selector, list):
+        return TypeAdapter(tuple[str, ...]).validate_python(selector)
+    if selector is None:
+        values = [*command.sources, *command.items]
+        values.extend(value for value in (command.source, command.query) if value is not None)
+        return tuple(sorted(set(values)))
+    if not isinstance(selector, dict):
+        raise DomainError("source_selection_invalid", "Source selector requires exact text labels")
+    unknown = set(selector).difference({"source", "query", "sources", "items"})
+    if unknown:
+        raise DomainError("source_selection_invalid", "Unknown source selector fields")
+    labels: list[str] = []
+    for key in ("source", "query"):
+        if key in selector:
+            labels.append(TypeAdapter(str).validate_python(selector[key]))
+    for key in ("sources", "items"):
+        if key in selector:
+            labels.extend(TypeAdapter(tuple[str, ...]).validate_python(selector[key]))
+    return tuple(sorted(set(labels)))

@@ -51,13 +51,19 @@ class ContextLifecycle:
             raise DomainError("session_not_found", "Context session is unavailable")
         return ContextSession.model_validate(raw)
 
+    async def require_session_sources_in(
+        self, view: ReadView | WriteTx, ctx: CallContext, value: ContextSession
+    ) -> ContextSession:
+        await self.require_targets_in(
+            view, ctx, tuple(item.target for item in value.residents if item.state != "evicted")
+        )
+        return value
+
     async def read_session(self, ctx: CallContext, identity: str) -> ContextSession:
         async with self.authority.read(ctx) as view:
-            value = await self.session_in(view, ctx, identity)
-            await self.require_targets_in(
-                view, ctx, tuple(item.target for item in value.residents if item.state != "evicted")
+            return await self.require_session_sources_in(
+                view, ctx, await self.session_in(view, ctx, identity)
             )
-            return value
 
     async def policy(self, ctx: CallContext) -> ContextsPolicy:
         if self.configuration is None:
@@ -84,8 +90,11 @@ class ContextLifecycle:
             payload=command,
         ) as tx:
             if tx.replayed:
-                return ContextSession.model_validate(tx.replay_result)
+                return await self.require_session_sources_in(
+                    tx, ctx, ContextSession.model_validate(tx.replay_result)
+                )
             current = await self.session_in(tx, ctx, command.session_id)
+            await self.require_session_sources_in(tx, ctx, current)
             if current.closed or current.revision != command.expected_revision:
                 raise DomainError(
                     "session_revision_conflict", "Session is closed or its revision changed"
@@ -101,14 +110,15 @@ class ContextLifecycle:
                     for item in residents
                 ]
             else:
-                if any(item.state == "evicted" for item in command.residents):
-                    raise DomainError(
-                        "resident_invalid", "Admission requires a resident or provisional state"
-                    )
                 await self.require_targets_in(
                     tx, ctx, tuple(item.target for item in command.residents)
                 )
-                incoming = {item.target.model_dump_json(): item for item in command.residents}
+                incoming = {
+                    item.target.model_dump_json(): ContextResident.model_validate(
+                        {**item.model_dump(), "entered_at": tx.recorded_at}
+                    )
+                    for item in command.residents
+                }
                 residents = [
                     item for item in residents if item.target.model_dump_json() not in incoming
                 ]
@@ -144,7 +154,8 @@ class ContextLifecycle:
         if raw is None or "work_context" not in raw or raw.get("caller_id") != ctx.caller_id:
             raise DomainError("work_context_not_found", "Work context is unavailable")
         result = WorkContext.model_validate(raw["work_context"])
-        await self.require_targets_in(view, ctx, result.content.anchors)
+        if not result.purged:
+            await self.require_targets_in(view, ctx, result.content.anchors)
         return result
 
     async def read_work(self, ctx: CallContext, identity: str) -> WorkContext:
@@ -161,7 +172,8 @@ class ContextLifecycle:
         ) as tx:
             if tx.replayed:
                 replay = WorkContext.model_validate(tx.replay_result)
-                await self.require_targets_in(tx, ctx, replay.content.anchors)
+                if not replay.purged:
+                    await self.require_targets_in(tx, ctx, replay.content.anchors)
                 return replay
             if command.action == "create":
                 if command.work_context_id is not None or command.content is None:
@@ -199,7 +211,13 @@ class ContextLifecycle:
                         )
                     await self.require_targets_in(tx, ctx, command.content.anchors)
                     updates["content"] = command.content
+                    updates["purged"] = False
                 elif command.action in {"pause", "resume", "end"}:
+                    if command.action == "resume" and current.purged:
+                        raise DomainError(
+                            "work_context_source_purged",
+                            "Edit the purged work content before resuming",
+                        )
                     updates["state"] = {"pause": "suspended", "resume": "open", "end": "ended"}[
                         command.action
                     ]
@@ -207,6 +225,18 @@ class ContextLifecycle:
                     updates["content"] = current.content.model_copy(update={"context_text": ""})
                 elif command.action == "clear_anchors":
                     updates["content"] = current.content.model_copy(update={"anchors": ()})
+                elif command.action in {"pin", "unpin"}:
+                    await self.require_targets_in(tx, ctx, command.anchors)
+                    anchors = list(current.content.anchors)
+                    if command.action == "pin":
+                        anchors.extend(
+                            target for target in command.anchors if target not in anchors
+                        )
+                    else:
+                        anchors = [target for target in anchors if target not in command.anchors]
+                    updates["content"] = current.content.model_copy(
+                        update={"anchors": tuple(anchors)}
+                    )
                 result = current.model_copy(update=updates)
             record = {
                 "id": result.id,
@@ -236,34 +266,98 @@ class ContextLifecycle:
                 await tx.connection.execute(
                     update(contexts).where(contexts.c.id == result.id).values(record=record)
                 )
-            if command.action in {"pin", "unpin", "end"}:
-                if command.session_id is None:
-                    raise DomainError(
-                        "session_required", "Pinning and ending work require a session"
-                    )
-                session = await self.session_in(tx, ctx, command.session_id)
-                if session.closed:
-                    raise DomainError("session_closed", "Context session is closed")
-                pointer = result.id if command.action == "pin" else None
-                if command.action == "pin" and result.state != "open":
-                    raise DomainError(
-                        "work_context_suspended", "Resume the work context before pinning it"
-                    )
-                if command.action != "pin" and session.active_work_context_id != result.id:
-                    pointer = session.active_work_context_id
-                revised = session.model_copy(
-                    update={
-                        "active_work_context_id": pointer,
-                        "revision": session.revision + 1,
-                        "commit_seq": tx.commit_seq,
-                    }
+            await tx.connection.execute(
+                contexts.insert().values(
+                    id=f"work:{result.id}@{result.revision}",
+                    namespace_id=ctx.namespace_id,
+                    subject_id=ctx.subject_id,
+                    record={**record, "kind": "work_revision"},
                 )
-                await tx.connection.execute(
-                    update(sessions)
-                    .where(sessions.c.id == session_key(ctx, session.id))
-                    .values(record=revised.model_dump(mode="json"))
-                )
+            )
+            if command.action == "end":
+                active_sessions = (
+                    await tx.connection.execute(
+                        select(sessions.c.id, sessions.c.record).where(
+                            sessions.c.namespace_id == ctx.namespace_id,
+                            sessions.c.subject_id == ctx.subject_id,
+                        )
+                    )
+                ).all()
+                for row in active_sessions:
+                    session = ContextSession.model_validate(row.record)
+                    if session.active_work_context_id != result.id or row.id != session_key(
+                        ctx, session.id
+                    ):
+                        continue
+                    revised = session.model_copy(
+                        update={
+                            "active_work_context_id": None,
+                            "revision": session.revision + 1,
+                            "commit_seq": tx.commit_seq,
+                        }
+                    )
+                    await tx.connection.execute(
+                        update(sessions)
+                        .where(sessions.c.id == row.id)
+                        .values(record=revised.model_dump(mode="json"))
+                    )
             return tx.result(result)
+
+    async def work_history(
+        self, ctx: CallContext, identity: str, limit: int = 50
+    ) -> tuple[WorkContext, ...]:
+        if not 1 <= limit <= 1000:
+            raise DomainError("invalid_limit", "Work history limit must be between 1 and 1000")
+        async with self.authority.read(ctx) as view:
+            await self.work_in(view, ctx, identity)
+            rows = (
+                await view.connection.execute(
+                    select(contexts.c.record).where(
+                        contexts.c.namespace_id == ctx.namespace_id,
+                        contexts.c.subject_id == ctx.subject_id,
+                        contexts.c.record["kind"].as_string() == "work_revision",
+                        contexts.c.record["work_context"]["id"].as_string() == identity,
+                    )
+                )
+            ).scalars()
+            visible: list[WorkContext] = []
+            for row in rows:
+                if row.get("caller_id") != ctx.caller_id:
+                    continue
+                work = WorkContext.model_validate(row["work_context"])
+                try:
+                    if not work.purged:
+                        await self.require_targets_in(view, ctx, work.content.anchors)
+                except DomainError:
+                    continue
+                visible.append(work)
+            return tuple(sorted(visible, key=lambda value: value.revision, reverse=True)[:limit])
+
+    async def list_work(self, ctx: CallContext, limit: int = 50) -> tuple[WorkContext, ...]:
+        if not 1 <= limit <= 1000:
+            raise DomainError("invalid_limit", "Work list limit must be between 1 and 1000")
+        async with self.authority.read(ctx) as view:
+            rows = (
+                await view.connection.execute(
+                    select(contexts.c.record).where(
+                        contexts.c.namespace_id == ctx.namespace_id,
+                        contexts.c.subject_id == ctx.subject_id,
+                        contexts.c.record["kind"].as_string() == "work",
+                    )
+                )
+            ).scalars()
+            visible: list[WorkContext] = []
+            for row in rows:
+                if row.get("caller_id") != ctx.caller_id:
+                    continue
+                work = WorkContext.model_validate(row["work_context"])
+                try:
+                    if not work.purged:
+                        await self.require_targets_in(view, ctx, work.content.anchors)
+                except DomainError:
+                    continue
+                visible.append(work)
+            return tuple(sorted(visible, key=lambda value: value.commit_seq, reverse=True)[:limit])
 
     async def maintain_session(
         self, ctx: CallContext, identity: str, operation_id: str
@@ -279,7 +373,9 @@ class ContextLifecycle:
             payload={"session_id": identity},
         ) as tx:
             if tx.replayed:
-                return ContextSession.model_validate(tx.replay_result)
+                return await self.require_session_sources_in(
+                    tx, ctx, ContextSession.model_validate(tx.replay_result)
+                )
             current = await self.session_in(tx, ctx, identity)
             revised: list[ContextResident] = []
             for resident in current.residents:

@@ -28,3 +28,23 @@ class MemoryChange(Operation):
     reason: str = Field(default="", max_length=4096)
     force: bool = False
     body: MemoryBody | None = None
+
+
+class MemoryChanges(Operation):
+    references: tuple[CognitiveRef, ...] = Field(min_length=1, max_length=1000)
+    action: Literal[
+        "reinforce",
+        "weaken",
+        "protect",
+        "unprotect",
+        "freeze",
+        "forget",
+        "restore",
+        "trash",
+        "purge",
+        "decay",
+    ]
+    strength: float = Field(default=1, ge=0, allow_inf_nan=False)
+    hours: float | None = Field(default=None, ge=-1000000, le=1000000, allow_inf_nan=False)
+    reason: str = Field(default="", max_length=4096)
+    force: bool = False

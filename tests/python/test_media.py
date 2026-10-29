@@ -8,6 +8,7 @@ import struct
 import sys
 import time
 import wave
+from pathlib import Path
 
 import pytest
 from nous_wave.contracts import CallContext, PixelRect, TimeSpan
@@ -16,6 +17,7 @@ from PIL import Image
 from nous.platform.content import ContentStore
 from nous.platform.execution import DurableExecution, JobSpec
 from nous.platform.media import MediaService, run_process
+from nous.platform.media import service as media_service
 from nous.platform.persistence import Authority
 
 
@@ -197,6 +199,42 @@ def test_process_cancellation_waits_for_actual_process_exit(tmp_path):
             await task
         with pytest.raises(ProcessLookupError):
             os.kill(pid, 0)
+
+    asyncio.run(scenario())
+
+
+def test_successful_early_transcode_is_rejected_before_content_publication(tmp_path, monkeypatch):
+    async def scenario():
+        authority = Authority(tmp_path / "authority.sqlite")
+        store = ContentStore(authority, tmp_path / "content")
+        await authority.initialize()
+        media = MediaService(store)
+        path = tmp_path / "source.wav"
+        with wave.open(str(path), "wb") as original:
+            original.setnchannels(1)
+            original.setsampwidth(2)
+            original.setframerate(8000)
+            original.writeframes(bytes(16000))
+        source = await store.publish_file(path, "audio/wav")
+        measured = []
+
+        async def early_success(arguments):
+            if arguments[0] != "ffmpeg":
+                return await run_process(arguments)
+            # Fault injection retains the real encoder and successful process exit,
+            # but makes it end early, as a size cap can. The file stays below budget.
+            outcome = await run_process((*arguments[:-1], "-t", "0.1", arguments[-1]))
+            measured.append((await asyncio.to_thread(Path(arguments[-1]).stat)).st_size)
+            return outcome
+
+        monkeypatch.setattr(media_service, "run_process", early_success)
+        with pytest.raises(ValueError, match="full requested time interval"):
+            await media.extract_clip(source, TimeSpan(start_ms=0, end_ms=800))
+        assert 0 < measured[0] < media.max_derivative_bytes
+        assert list(store.staging.iterdir()) == []
+        assert store.path_for(source.content_hash).read_bytes() == path.read_bytes()
+        await store.release(source)
+        await authority.close()
 
     asyncio.run(scenario())
 

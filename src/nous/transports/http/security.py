@@ -9,6 +9,8 @@ from nous_wave.contracts.credentials import Capability
 
 from nous.application import Application
 from nous.identity.credentials import AuthenticationError, Principal
+from nous.platform.observability import bind_call_context
+from nous.platform.observability import request_id as current_request_id
 
 from .source_scope import resolve_scope
 
@@ -17,12 +19,16 @@ def application(request: Request) -> Application:
     return request.app.state.application
 
 
-async def authorize(request: Request, *, capability: Capability | None = None) -> Principal:
+async def authenticate_request(request: Request) -> Principal:
     header = request.headers.get("Authorization", "")
     scheme, separator, token = header.partition(" ")
     if not separator or scheme.lower() != "bearer" or not token:
         raise AuthenticationError()
-    principal = await application(request).credentials.authenticate(token)
+    return await application(request).credentials.authenticate(token)
+
+
+async def authorize(request: Request, *, capability: Capability | None = None) -> Principal:
+    principal = await authenticate_request(request)
     required = capability or ("read" if request.method in {"GET", "HEAD"} else "write")
     principal.require(required)
     return principal
@@ -40,14 +46,18 @@ async def context(
     clock = request.headers.get("x-nous-cognitive-clock")
     if clock is not None and len(clock.encode()) > 4096:
         raise ValueError("Cognitive clock header exceeds its size limit")
-    return CallContext(
+    source_scope = await resolve_scope(
+        request, namespace_id, subject_id, base_scope=principal.source_ids
+    )
+    ctx = CallContext(
         caller_id=principal.caller_id,
         namespace_id=namespace_id,
         subject_id=subject_id,
-        request_id=request.headers.get("x-nous-trace-id", str(uuid4())),
+        request_id=current_request_id() or request.headers.get("x-nous-trace-id", str(uuid4())),
         locale=request.headers.get("Accept-Language", "zh-CN"),
         clock=TimePoint.model_validate_json(clock) if clock is not None else utc_now(),
-        allowed_source_ids=await resolve_scope(
-            request, namespace_id, subject_id, base_scope=principal.source_ids
-        ),
+        allowed_source_ids=source_scope.allowed_source_ids,
+        source_constraints=source_scope.source_constraints,
     )
+    bind_call_context(ctx)
+    return ctx

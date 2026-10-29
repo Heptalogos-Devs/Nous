@@ -20,7 +20,6 @@ from nous_wave.contracts import (
     DomainError,
 )
 from nous_wave.contracts.context import CognitiveTarget
-from nous_wave.contracts.lifecycle import MemoryChange
 from pydantic import JsonValue, TypeAdapter
 from sqlalchemy import select
 
@@ -33,7 +32,7 @@ if TYPE_CHECKING:
     from nous.application import Application
 
 
-from . import ingestion, profiles, searching
+from . import ingestion, maintaining, profiles, searching
 
 
 class AMemorixService:
@@ -42,6 +41,7 @@ class AMemorixService:
     adopt_host_graph = ingestion.adopt_host_graph
     profile = profiles.profile
     stats = profiles.stats
+    maintain = maintaining.maintain
 
     def __init__(self, app: Application) -> None:
         self.app = app
@@ -152,31 +152,3 @@ class AMemorixService:
         ):
             raise DomainError("memory_required", "Maintenance target must be Memory")
         return resolved.reference.reference
-
-    async def maintain(self, ctx: CallContext, command: MaintainInput) -> dict[str, JsonValue]:
-        if command.action == "recycle_bin":
-            return json_object(
-                {
-                    "success": True,
-                    "items": await self.app.cognition.recycle_bin(ctx, limit=command.limit),
-                }
-            )
-        reference = await self.memory_ref(ctx, command.target)
-        result = await self.app.cognition.change_memory(
-            ctx,
-            MemoryChange(
-                operation_id=command.operation_id,
-                reference=reference,
-                action=command.action,
-                hours=command.hours,
-                reason=command.reason,
-            ),
-        )
-        return json_object(
-            {
-                "success": True,
-                "detail": command.action,
-                "memory": result,
-                "reference": result.reference,
-            }
-        )

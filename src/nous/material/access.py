@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from nous_wave.contracts import CallContext, DomainError, MediaReference, SourceRegion
+from nous_wave.contracts import CallContext, CognitiveRef, DomainError, MediaReference, SourceRegion
 from sqlalchemy import select
 
 from nous.identity.service import require_subject_in
@@ -22,11 +22,15 @@ async def require_dependencies_in(
     seen: frozenset[str] = frozenset(),
 ) -> None:
     from nous.cognition.service import CognitionService
+    from nous.material.derived import DerivedService
     from nous.references.service import ReferenceDirectory
 
     from .service import materials, observations, regions, require_observation_in
 
-    directory = ReferenceDirectory(service.authority, CognitionService(service.authority), service)
+    cognition = CognitionService(
+        service.authority, materials=service, derivations=DerivedService(service.authority, service)
+    )
+    directory = ReferenceDirectory(service.authority, cognition, service)
     for locator in required:
         if locator.startswith("material:"):
             await read_material_in(service, view, ctx, locator.removeprefix("material:"), seen)
@@ -36,6 +40,12 @@ async def require_dependencies_in(
             reference = resolved.reference.reference
             if reference.kind == "material":
                 await read_material_in(service, view, ctx, reference.id, seen)
+            elif isinstance(reference, CognitiveRef):
+                record = await cognition.get_in(view, ctx, reference)
+                if record.purged:
+                    raise DomainError(
+                        "source_unavailable", "Artifact cognition dependency has been purged"
+                    )
             continue
         material = await view.connection.scalar(
             select(materials.c.id).where(
@@ -74,8 +84,15 @@ async def read_material_in(
     ctx: CallContext,
     material_id: str,
     seen: frozenset[str] = frozenset(),
+    observation_id: str | None = None,
 ) -> MaterialRecord:
-    from .service import MaterialRecord, materials, observations, source_permitted
+    from .service import (
+        MaterialRecord,
+        materials,
+        observations,
+        require_observation_in,
+        source_permitted,
+    )
 
     await require_subject_in(view, ctx)
     if material_id in seen:
@@ -101,11 +118,44 @@ async def read_material_in(
         .scalars()
         .all()
     )
+    if observation_id is not None:
+        events = [event for event in events if event == observation_id]
     if not events:
         raise DomainError("source_unavailable", "Source has no live contact in this subject")
+    unrestricted = ctx.model_copy(update={"allowed_source_ids": None, "source_constraints": ()})
+    for dependency in value.get("required_observation_ids", ()):
+        await require_observation_in(view, unrestricted, dependency)
     required = tuple(value.get("required_source_ids", ()))
     if required:
-        await require_dependencies_in(service, view, ctx, required, seen | {material_id})
+        unrestricted = ctx.model_copy(update={"allowed_source_ids": None, "source_constraints": ()})
+        await require_dependencies_in(service, view, unrestricted, required, seen | {material_id})
+        permitted = False
+        for event in events:
+            for group in ctx.source_groups():
+                scoped = ctx.for_source_group(group)
+                if source_permitted(scoped, material_id, event):
+                    continue
+                try:
+                    await require_dependencies_in(
+                        service, view, scoped, required, seen | {material_id}
+                    )
+                except DomainError as error:
+                    if error.code not in {
+                        "source_unavailable",
+                        "cognition_not_found",
+                        "reference_not_found",
+                        "region_not_found",
+                    }:
+                        raise
+                    break
+            else:
+                permitted = True
+                break
+        if not permitted:
+            raise DomainError(
+                "source_unavailable",
+                "Artifact dependencies are outside the current source constraints",
+            )
     elif not any(source_permitted(ctx, material_id, observation_id) for observation_id in events):
         raise DomainError("source_unavailable", "Source is outside the current read scope")
     from pydantic import TypeAdapter
@@ -123,7 +173,9 @@ async def media_source_in(
 
     region: SourceRegion | None = None
     if reference.kind == "material":
-        material = await self.read_in(view, ctx, reference.id)
+        material = await read_material_in(
+            self, view, ctx, reference.id, observation_id=reference.observation_id
+        )
     elif reference.kind == "source_region":
         region = await self.read_region_in(view, ctx, reference.id)
         value = await view.connection.scalar(

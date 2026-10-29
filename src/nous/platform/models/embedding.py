@@ -44,7 +44,7 @@ async def media_parts(
             parts.append({"type": "text", "text": part})
             continue
         resolved = await resolver(ctx, part)
-        if resolved.media_type.startswith("text/"):
+        if resolved.media_type.startswith("text/") or resolved.media_type == "application/json":
             parts.append({"type": "text", "text": resolved.data.decode("utf-8")})
             continue
         kind = (

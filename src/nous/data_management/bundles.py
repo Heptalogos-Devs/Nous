@@ -12,16 +12,19 @@ from nous.identity.service import require_subject_in
 from nous.platform.content import ContentStore
 from nous.platform.persistence import Authority
 
-from . import bundle_export, bundle_install
+from . import archive, bundle_export, bundle_install
 from .schema import bundle_installs
 
 
 class BundleService:
+    export_archive = archive.export_archive
+    inspect_material = archive.inspect_material
     export = bundle_export.export
     export_zip = bundle_export.export_zip
     inspect_zip = bundle_export.inspect_zip
     install = bundle_install.install
     install_zip = bundle_install.install_zip
+    install_material = bundle_install.install_material
     install_prepared = bundle_install.install_prepared
 
     def __init__(
@@ -113,3 +116,10 @@ class BundleService:
                     "commit_seq": tx.commit_seq,
                 }
             )
+
+    async def get_installation(self, ctx: CallContext, installation_id: str):
+        values = await self.list_installs(ctx)
+        for value in values:
+            if value["installation_id"] == installation_id:
+                return value
+        raise DomainError("bundle_install_not_found", "Bundle installation is unavailable")

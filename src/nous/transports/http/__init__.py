@@ -20,8 +20,10 @@ from .credentials import router as credentials
 from .domain import router as domain
 from .evolution import router as evolution
 from .knowledge import router as knowledge
+from .maintenance import router as maintenance
 from .management import router as management
 from .media import router as media
+from .observability import instrument_app
 from .sdk_routes import router as sdk_routes
 from .web import router as web
 
@@ -45,6 +47,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(credentials)
     app.include_router(web)
     app.include_router(amemorix)
+    app.include_router(maintenance)
 
     @app.exception_handler(DomainError)
     async def domain_error(request: Request, error: DomainError) -> JSONResponse:
@@ -57,7 +60,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             else 404
             if "not_found" in code or code == "source_unavailable"
             else 409
-            if "conflict" in code or code == "operation_result_purged"
+            if "conflict" in code
+            or code in {"operation_result_purged", "model_invocation_unavailable"}
             else 400
         )
         return JSONResponse(
@@ -129,4 +133,5 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def missing(request: Request, error: LookupError) -> JSONResponse:
         return JSONResponse({"error": {"code": "NotFound", "message": str(error)}}, status_code=404)
 
+    instrument_app(app)
     return app

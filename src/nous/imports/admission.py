@@ -26,7 +26,7 @@ from nous.platform.content import ContentLease
 from nous.platform.execution import JobSpec
 from nous.platform.persistence import ReadView, WriteTx
 
-from .schema import inputs, manifest, outputs, requests, successes
+from .schema import inputs, manifest, outputs, requests, successes, units
 from .splitting import split_text
 
 if TYPE_CHECKING:
@@ -34,13 +34,25 @@ if TYPE_CHECKING:
 
 
 def manifest_key(
-    ctx: CallContext, document: ImportDocument, policy: str, content_hash: str | None = None
+    ctx: CallContext,
+    document: ImportDocument,
+    policy: str,
+    content_hash: str | None = None,
+    *,
+    deferred_formation: bool = False,
+    llm_enabled: bool = True,
 ) -> str:
     digest = content_hash or sha256(document.inline_text().encode()).hexdigest()
     key = document.file_identity if policy == "manifest" and document.file_identity else digest
     return sha256(
         json.dumps(
-            [ctx.namespace_id, ctx.subject_id, document.origin, policy, key], sort_keys=True
+            [ctx.namespace_id, ctx.subject_id, document.origin, policy, key]
+            + (
+                [{"deferred_formation": True, "llm_enabled": llm_enabled}]
+                if deferred_formation
+                else []
+            ),
+            sort_keys=True,
         ).encode()
     ).hexdigest()
 
@@ -53,10 +65,19 @@ async def eligible_file_in(
     digest: str,
     policy: str,
     vector_policy: str,
+    deferred_formation: bool = False,
+    llm_enabled: bool = True,
 ) -> str | None:
     if policy == "none":
         return None
-    key = manifest_key(ctx, document, policy, digest)
+    key = manifest_key(
+        ctx,
+        document,
+        policy,
+        digest,
+        deferred_formation=deferred_formation,
+        llm_enabled=llm_enabled,
+    )
     success_id = (
         await view.connection.execute(select(manifest.c.success_id).where(manifest.c.key == key))
     ).scalar_one_or_none()
@@ -87,6 +108,14 @@ async def eligible_file_in(
         if value is None:
             return None
         output = UnitOutput.model_validate(value)
+        if deferred_formation and output.formation is None:
+            return None
+        if not deferred_formation and llm_enabled and output.producer_call_id is None:
+            original_unit = await view.connection.scalar(
+                select(units.c.record).where(units.c.id == output.unit_id)
+            )
+            if original_unit is None or original_unit.get("requires_llm", True):
+                return None
         try:
             await require_observation_in(view, ctx, output.observation_id)
             for reference in output.cognition:
@@ -118,7 +147,13 @@ async def eligible_file_in(
 
 
 async def accept_admit(
-    self: ImportService, ctx: CallContext, command: AdmitFiles, *, enqueue: bool
+    self: ImportService,
+    ctx: CallContext,
+    command: AdmitFiles,
+    *,
+    enqueue: bool,
+    attempt_job_id: str | None = None,
+    parent_request_id: str | None = None,
 ):
     operation_id = command.operation_id if enqueue else f"{command.operation_id}:accept"
     operation_kind = "imports.files.submit" if enqueue else "imports.files.accept"
@@ -196,7 +231,14 @@ async def accept_admit(
                     None
                     if command.force or command.clear_manifest
                     else await self.eligible_file_in(
-                        tx, ctx, item.document, digest, command.dedupe_policy, command.vectors
+                        tx,
+                        ctx,
+                        item.document,
+                        digest,
+                        command.dedupe_policy,
+                        "disabled" if command.deferred_formation else command.vectors,
+                        command.deferred_formation,
+                        command.llm_enabled,
                     )
                 )
                 if success_id is None:
@@ -213,12 +255,13 @@ async def accept_admit(
                     material_ids.append(str(old_source))
             catalog: CatalogView | None = None
             if selected:
-                frozen_command = FreezeCatalog(
-                    operation_id=operation_id,
-                    inputs=tuple(prepared[index].document for index in selected),
-                    chunk_size=command.chunk_size,
-                    chunk_overlap=command.chunk_overlap,
-                    parent_catalog_id=command.parent_catalog_id,
+                frozen_command = FreezeCatalog.model_validate(
+                    command.model_dump(include=set(FreezeCatalog.model_fields))
+                ).model_copy(
+                    update={
+                        "operation_id": operation_id,
+                        "inputs": tuple(prepared[index].document for index in selected),
+                    }
                 )
                 catalog = await self.freeze_catalog_in(
                     tx,
@@ -241,6 +284,8 @@ async def accept_admit(
                     prepared[index].document,
                     command.dedupe_policy,
                     prepared[index].content_hash,
+                    deferred_formation=command.deferred_formation,
+                    llm_enabled=command.llm_enabled,
                 )
                 for source_id, index in zip(
                     catalog.input_source_ids if catalog else (), selected, strict=True
@@ -260,22 +305,51 @@ async def accept_admit(
                 await tx.enqueue(
                     JobSpec(
                         workflow_name="nous.imports.process",
-                        queue_name="formation",
+                        queue_name="default" if command.deferred_formation else "formation",
                         args=(request_id,),
                     )
                 )
                 if enqueue
                 else None
             )
-            request["job_id"] = job.workflow_id if job else None
+            request["job_id"] = job.workflow_id if job else attempt_job_id
             await tx.connection.execute(
                 update(requests).where(requests.c.id == request_id).values(record=request)
             )
+            if parent_request_id is not None:
+                parent = await tx.connection.scalar(
+                    select(requests.c.record).where(requests.c.id == parent_request_id)
+                )
+                if parent is None or parent.get("kind") != "text_import":
+                    raise DomainError(
+                        "import_request_not_found", "Text import parent is unavailable"
+                    )
+                parent_context = CallContext.model_validate(parent["context"])
+                if (
+                    parent_context.caller_id,
+                    parent_context.namespace_id,
+                    parent_context.subject_id,
+                ) != (ctx.caller_id, ctx.namespace_id, ctx.subject_id):
+                    raise DomainError(
+                        "import_request_not_found",
+                        "Text import parent is outside this caller scope",
+                    )
+                await tx.connection.execute(
+                    update(requests)
+                    .where(requests.c.id == parent_request_id)
+                    .values(
+                        record={
+                            **parent,
+                            "admission_request_id": request_id,
+                            "material_ids": request["material_ids"],
+                        }
+                    )
+                )
             return tx.result(
                 {
                     "request_id": request_id,
                     "catalog_id": catalog.id if catalog else None,
-                    "job_id": job.workflow_id if job else None,
+                    "job_id": job.workflow_id if job else attempt_job_id,
                     "skipped_success_ids": skipped,
                 }
             )
@@ -304,7 +378,7 @@ async def finish_admit(self: ImportService, ctx: CallContext, request_id: str) -
         payload=command,
     )
     if receipt is not None:
-        return ImportResult.model_validate(receipt.result)
+        return await self.replay_result(ctx, ImportResult.model_validate(receipt.result))
     if value["catalog_id"]:
         result = await self.process_catalog(
             ctx,
@@ -312,6 +386,7 @@ async def finish_admit(self: ImportService, ctx: CallContext, request_id: str) -
                 operation_id=f"{command.operation_id}:process",
                 catalog_id=value["catalog_id"],
                 llm_enabled=command.llm_enabled,
+                deferred_formation=command.deferred_formation,
                 formation_retries=command.formation_retries,
                 vectors=command.vectors,
             ),
@@ -327,7 +402,9 @@ async def finish_admit(self: ImportService, ctx: CallContext, request_id: str) -
         payload=command,
     ) as tx:
         if tx.replayed:
-            return ImportResult.model_validate(tx.replay_result)
+            return await self.replay_result_in(
+                tx, ctx, ImportResult.model_validate(tx.replay_result)
+            )
         for output in result.outputs:
             await require_observation_in(tx, ctx, output.observation_id)
         for fact in result.file_successes:
@@ -349,7 +426,7 @@ async def admit_files(self: ImportService, ctx: CallContext, command: AdmitFiles
         payload=command,
     )
     if receipt is not None:
-        return ImportResult.model_validate(receipt.result)
+        return await self.replay_result(ctx, ImportResult.model_validate(receipt.result))
     accepted = await self.accept_admit(ctx, command, enqueue=False)
     return await self.finish_admit(ctx, str(accepted["request_id"]))
 

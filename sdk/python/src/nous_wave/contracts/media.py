@@ -58,21 +58,59 @@ class SourceRegion(Contract):
     json_pointer: str | None = None
     line_number: int | None = Field(default=None, ge=1)
 
+    @model_validator(mode="after")
+    def meaningful_coordinates(self) -> "SourceRegion":
+        if all(
+            value is None
+            for value in (
+                self.pixel_rect,
+                self.time_span,
+                self.page_start,
+                self.page_end,
+                self.text_start,
+                self.text_end,
+                self.json_pointer,
+                self.line_number,
+            )
+        ):
+            raise ValueError("A source region requires explicit coordinates or a source pointer")
+        if (
+            self.text_start is not None
+            and self.text_end is not None
+            and self.text_end <= self.text_start
+        ):
+            raise ValueError("Text region must end after its start")
+        if (
+            self.page_start is not None
+            and self.page_end is not None
+            and self.page_end < self.page_start
+        ):
+            raise ValueError("Page region cannot end before its start")
+        return self
+
 
 class BlobDocument(Contract):
     filename: str
     media_type: str
     source_type: str = "media"
+    source: str | None = Field(default=None, max_length=4096)
     origin: dict[str, str] = Field(default_factory=dict)
     event_time: TimePoint | None = None
     observed_at: TimePoint | None = None
 
 
 class AdoptMedia(Operation):
+    observation_id: str | None = None
     material_id: str
     regions: tuple[SourceRegion, ...] = ()
     strategy: Literal["native", "description", "description_then_native"] = "native"
     instruction: str = "Describe and remember the supplied material."
+
+    @model_validator(mode="after")
+    def distinct_regions(self) -> "AdoptMedia":
+        if len({region.id for region in self.regions}) != len(self.regions):
+            raise ValueError("Media interpretation regions must have distinct source identities")
+        return self
 
 
 class MediaEmbeddingInput(Contract):

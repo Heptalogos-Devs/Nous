@@ -11,16 +11,18 @@ from nous_wave.contracts import (
     CallContext,
     CatalogView,
     DomainError,
+    FormationCatalogEntry,
     FreezeCatalog,
     ImportDocument,
     ImportRecordError,
     ImportUnit,
     SourceRegion,
 )
+from nous_wave.contracts.imports import TextImportPreview, TextPreviewUnit, TextSplitOptions
 from sqlalchemy import select
 
 from nous.identity.service import require_subject_in
-from nous.material.service import MaterialRecord
+from nous.material.service import MaterialRecord, require_observation_in
 from nous.platform.content import ContentLease, ContentObject
 from nous.platform.persistence import ReadView, WriteTx
 
@@ -80,7 +82,7 @@ async def freeze_catalog(
         payload=command,
     )
     if receipt is not None:
-        return CatalogView.model_validate(receipt.result)
+        return await self.replay_catalog(ctx, CatalogView.model_validate(receipt.result))
     if command.chunk_overlap >= command.chunk_size:
         raise DomainError("invalid_split", "Chunk overlap must be smaller than chunk size")
     prepared = [await self.prepare_document(ctx, document) for document in command.inputs]
@@ -124,7 +126,9 @@ async def freeze_catalog_prepared(
         payload=command,
     ) as tx:
         if tx.replayed:
-            return CatalogView.model_validate(tx.replay_result)
+            return await self.replay_catalog_in(
+                tx, ctx, CatalogView.model_validate(tx.replay_result)
+            )
         return tx.result(await self.freeze_catalog_in(tx, ctx, command, leases, prepared, split))
 
 
@@ -176,6 +180,8 @@ async def freeze_catalog_in(
                     )
                 )
                 continue
+            if record.source is None and document.source is not None:
+                record = record.model_copy(update={"source": document.source})
             context = record.model_dump(mode="json", exclude={"text"})
             actual = document.model_copy(
                 update={
@@ -183,6 +189,7 @@ async def freeze_catalog_in(
                     "observed_at": record.observed_at or document.observed_at,
                     "origin": {**document.origin, **record.origin},
                     "source_type": record.source_type or document.source_type,
+                    "source": record.source or document.source,
                 }
             )
             for chunk in chunks:
@@ -232,6 +239,9 @@ async def freeze_catalog_in(
                     )
                 )
     result = CatalogView(
+        split_options=TextSplitOptions.model_validate(
+            command.model_dump(include=set(TextSplitOptions.model_fields))
+        ),
         id=catalog_id,
         namespace_id=ctx.namespace_id,
         subject_id=ctx.require_subject(),
@@ -270,16 +280,59 @@ async def read_catalog_in(
     if value is None:
         raise DomainError("catalog_not_found", "Import catalog is unavailable")
     result = CatalogView.model_validate(value)
-    if ctx.allowed_source_ids is not None and any(
-        unit.material_id not in ctx.allowed_source_ids for unit in result.units
-    ):
-        raise DomainError(
-            "source_unavailable", "Catalog sources are outside the current read scope"
-        )
-    return result
+    for unit in result.units:
+        if unit.observation_id:
+            await require_observation_in(
+                view,
+                ctx,
+                unit.observation_id,
+                active=not unit.purged,
+                region_id=unit.source_region_id,
+            )
+        elif ctx.source_groups():
+            await self.materials.read_in(view, ctx, unit.material_id)
+    visible_catalog: list[FormationCatalogEntry] = []
+    for entry in result.formation_catalog:
+        try:
+            await self.cognition.get_in(view, ctx, entry.reference)
+        except DomainError as error:
+            if error.code not in {"source_unavailable", "cognition_not_found"}:
+                raise
+        else:
+            visible_catalog.append(entry)
+    return result.model_copy(update={"formation_catalog": tuple(visible_catalog)})
 
 
 async def read_catalog(self: ImportService, ctx: CallContext, catalog_id: str) -> CatalogView:
     async with self.authority.read(ctx) as view:
         await require_subject_in(view, ctx)
         return await self.read_catalog_in(view, ctx, catalog_id)
+
+
+async def preview_text_import(
+    self: ImportService,
+    ctx: CallContext,
+    document: ImportDocument,
+    overrides: TextSplitOptions | None = None,
+) -> TextImportPreview:
+    if document.format != "text":
+        raise DomainError("invalid_preview_format", "Text preview requires a text document")
+    options = overrides or TextSplitOptions()
+    item = await self.prepare_document(ctx, document)
+    chunks = split_text(item.content, options)
+    return TextImportPreview(
+        content_hash=item.content_hash,
+        byte_len=len(item.content.encode()),
+        options=options,
+        units=tuple(
+            TextPreviewUnit(
+                text=chunk.page_content,
+                start=int(chunk.metadata["start_index"]),
+                end=int(chunk.metadata["start_index"]) + len(chunk.page_content),
+                strategy=str(chunk.metadata.get("strategy", "narrative")),
+                requires_llm=bool(chunk.metadata.get("requires_llm", True)),
+                context=chunk.metadata.get("split_context", {}),
+            )
+            for chunk in chunks
+        ),
+    )

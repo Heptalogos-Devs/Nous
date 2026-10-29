@@ -22,6 +22,8 @@ class ModelResource(BaseModel):
     dimensions: int | None = Field(default=None, gt=0)
     normalization: Literal["none", "l2"] = "none"
     media_path: str = "embeddings/multimodal"
+    max_batch_items: int = Field(default=64, ge=1, le=2048)
+    video_content_format: Literal["video_url"] | None = None
 
 
 class RouteResource(BaseModel):
@@ -78,6 +80,7 @@ class ModelConfiguration(BaseModel):
             "max_calls_per_day": role.max_calls_per_day,
             "temperature": route.temperature,
             "reasoning_effort": route.reasoning_effort,
+            "video_content_format": model.video_content_format,
         }
         if role.purpose == "embedding":
             return EmbeddingRoute.model_validate(
@@ -86,6 +89,7 @@ class ModelConfiguration(BaseModel):
                     "dimensions": model.dimensions,
                     "normalization": model.normalization,
                     "media_path": model.media_path,
+                    "max_batch_items": model.max_batch_items,
                 }
             ), role
         return ModelRoute.model_validate(values), role
@@ -101,6 +105,7 @@ def initial_resources(generation: ModelRoute, embedding: EmbeddingRoute) -> Mode
                 provider="generation",
                 name=generation.model,
                 capabilities=("text", "image", "audio", "video"),
+                video_content_format=generation.video_content_format,
             ),
             "embedding": ModelResource(
                 provider="embedding",
@@ -109,6 +114,7 @@ def initial_resources(generation: ModelRoute, embedding: EmbeddingRoute) -> Mode
                 dimensions=embedding.dimensions,
                 normalization=embedding.normalization,
                 media_path=embedding.media_path,
+                max_batch_items=embedding.max_batch_items,
             ),
         },
         routes={

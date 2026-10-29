@@ -6,6 +6,7 @@ import asyncio
 import math
 import tempfile
 from dataclasses import dataclass
+from fractions import Fraction
 from pathlib import Path
 
 import anyio
@@ -24,7 +25,9 @@ class _Stream(BaseModel):
     width: int | None = None
     height: int | None = None
     duration: str | None = None
+    start_time: str | None = None
     nb_frames: str | None = None
+    avg_frame_rate: str | None = None
     sample_rate: str | None = None
     channels: int | None = None
     disposition: dict[str, int] = Field(default_factory=dict)
@@ -33,6 +36,7 @@ class _Stream(BaseModel):
 class _Format(BaseModel):
     model_config = ConfigDict(extra="ignore")
     duration: str | None = None
+    start_time: str | None = None
 
 
 class _Probe(BaseModel):
@@ -114,22 +118,7 @@ class MediaService:
                     else "binary"
                 )
                 return MediaInfo(kind=kind, media_type=source.media_type)
-            async with self._processes, asyncio.timeout(30):
-                output = await run_process(
-                    (
-                        self.ffprobe,
-                        "-v",
-                        "error",
-                        "-protocol_whitelist",
-                        "file,pipe",
-                        "-show_streams",
-                        "-show_format",
-                        "-of",
-                        "json",
-                        str(path),
-                    )
-                )
-            probe = _Probe.model_validate_json(output.stdout)
+            probe = await self._probe_file(path)
             video = next(
                 (
                     stream
@@ -139,16 +128,7 @@ class MediaService:
                 None,
             )
             audio = next((stream for stream in probe.streams if stream.codec_type == "audio"), None)
-            durations: list[float] = []
-            for value in [probe.format.duration, *(stream.duration for stream in probe.streams)]:
-                if value is not None:
-                    try:
-                        seconds = float(value)
-                    except ValueError:
-                        continue
-                    if math.isfinite(seconds) and seconds >= 0:
-                        durations.append(seconds)
-            duration_ms = round(max(durations) * 1000) if durations else None
+            duration_ms = self._duration_ms(probe)
             if video is None and audio is None:
                 raise ValueError("Media has no playable audio or video stream")
             return MediaInfo(
@@ -163,6 +143,110 @@ class MediaService:
                 sample_rate=int(audio.sample_rate) if audio and audio.sample_rate else None,
                 channels=audio.channels if audio else None,
             )
+
+    async def _probe_file(self, path: Path) -> _Probe:
+        async with self._processes, asyncio.timeout(30):
+            output = await run_process(
+                (
+                    self.ffprobe,
+                    "-v",
+                    "error",
+                    "-protocol_whitelist",
+                    "file,pipe",
+                    "-show_streams",
+                    "-show_format",
+                    "-of",
+                    "json",
+                    str(path),
+                )
+            )
+        return _Probe.model_validate_json(output.stdout)
+
+    @staticmethod
+    def _duration_ms(probe: _Probe) -> int | None:
+        durations: list[float] = []
+        for value in [probe.format.duration, *(stream.duration for stream in probe.streams)]:
+            if value is not None:
+                try:
+                    seconds = float(value)
+                except ValueError:
+                    continue
+                if math.isfinite(seconds) and seconds >= 0:
+                    durations.append(seconds)
+        return round(max(durations) * 1000) if durations else None
+
+    @staticmethod
+    def _milliseconds(value: str | None) -> int | None:
+        try:
+            seconds = float(value) if value is not None else None
+        except ValueError:
+            return None
+        return round(seconds * 1000) if seconds is not None and math.isfinite(seconds) else None
+
+    async def _check_coverage(
+        self,
+        output: Path,
+        source: _Probe,
+        expected_ms: int | None,
+        span: TimeSpan | None,
+        *,
+        audio: bool,
+    ) -> None:
+        probe = await self._probe_file(output)
+        actual_ms = self._duration_ms(probe)
+        if expected_ms is None or actual_ms is None:
+            raise ValueError("Cannot verify the prepared media time coverage")
+        selected_start = span.start_ms if span is not None else 0
+        selected_end = span.end_ms if span is not None else expected_ms
+        origin = self._milliseconds(source.format.start_time) or 0
+        sources = [
+            stream
+            for stream in source.streams
+            if stream.codec_type in ({"audio"} if audio else {"audio", "video"})
+            and stream.disposition.get("attached_pic") != 1
+        ]
+        if audio:
+            sources = sources[:1]
+        else:
+            # The transcoder selects the first video and preserves all audio tracks.
+            first_video = next((stream for stream in sources if stream.codec_type == "video"), None)
+            sources = ([first_video] if first_video else []) + [
+                stream for stream in sources if stream.codec_type == "audio"
+            ]
+        counters: dict[str, int] = {}
+        tolerance_ms = 2
+        for original in sources:
+            kind = original.codec_type or ""
+            index = counters.get(kind, 0)
+            counters[kind] = index + 1
+            outputs = [stream for stream in probe.streams if stream.codec_type == kind]
+            if len(outputs) <= index:
+                raise ValueError("Prepared media is missing a selected source stream")
+            prepared = outputs[index]
+            tolerance = 2
+            if kind == "video" and prepared.avg_frame_rate is not None:
+                try:
+                    rate = Fraction(prepared.avg_frame_rate)
+                except ValueError, ZeroDivisionError:
+                    rate = Fraction(0)
+                if rate > 0:
+                    tolerance += math.ceil(1000 / rate)
+            tolerance_ms = max(tolerance_ms, tolerance)
+            source_duration = self._milliseconds(original.duration)
+            required = expected_ms
+            if source_duration is not None:
+                original_start = self._milliseconds(original.start_time)
+                start = (original_start if original_start is not None else origin) - origin
+                required = max(
+                    0, min(selected_end, start + source_duration) - max(selected_start, start)
+                )
+            covered = self._milliseconds(prepared.duration)
+            if covered is None and len(probe.streams) == 1:
+                covered = actual_ms
+            if covered is None or covered + tolerance < required:
+                raise ValueError("Prepared media does not cover the full requested time interval")
+        if actual_ms + tolerance_ms < expected_ms:
+            raise ValueError("Prepared media does not cover the full requested time interval")
 
     @staticmethod
     def _validate_rect(rect: PixelRect, width: int | None, height: int | None) -> None:
@@ -289,9 +373,21 @@ class MediaService:
                         "-f",
                         "mp4",
                     )
-                arguments += ("-threads", "2", "-fs", str(self.max_derivative_bytes), str(output))
+                arguments += (
+                    "-threads",
+                    "2",
+                    "-fs",
+                    str(self.max_derivative_bytes + 1),
+                    str(output),
+                )
                 async with self._processes, asyncio.timeout(120):
                     await run_process(arguments)
+                expected_ms = span.end_ms - span.start_ms if span is not None else info.duration_ms
+                # FFmpeg can exit successfully after a size cap or recoverable
+                # decoding failure. Publishing requires actual time coverage too.
+                await self._check_coverage(
+                    output, await self._probe_file(path), expected_ms, span, audio=audio
+                )
                 lease = await self._publish_derivative(
                     output, "audio/wav" if audio else "video/mp4"
                 )

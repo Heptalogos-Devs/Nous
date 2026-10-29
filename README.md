@@ -30,11 +30,18 @@ export NOUS_MODEL__CREDENTIAL_FILE=/protected/path/generation.key
 export NOUS_EMBEDDING__BASE_URL=https://your-provider.example/v1
 export NOUS_EMBEDDING__MODEL=your-embedding-model
 export NOUS_EMBEDDING__CREDENTIAL_FILE=/protected/path/embedding.key
+export NOUS_EMBEDDING__MAX_BATCH_ITEMS=10
 ```
 
 也可通过 `NOUS_MODEL_API_KEY` 引用运行环境提供的凭据。代码与调用快照不保存 Key。文字向量使用标准 `embeddings`；图文联合向量使用模型资源中配置的内容片段扩展路径，默认 `embeddings/multimodal`。模型空间包含实际返回的模型版本、维数和归一化方式。
 
+`max_batch_items` 按模型的实际请求限制配置；共享向量服务分批请求，并分别保存结果，重试复用已成功的批次。上例将每批限制为十项。
+
 媒体解释保留自由描述、直接结构化、原媒体结合已保存描述后二次结构化三种路径。图片区域、视频/音频时间片段和 PDF 页区使用精确来源；日期和无时区表达保留其精度与时间域。
+
+提供方支持 `video_url` 内容片段扩展时，在对应模型资源设置 `video_content_format: "video_url"`，或首次启动时设置 `NOUS_MODEL__VIDEO_CONTENT_FORMAT=video_url`。视频通过官方兼容 SDK 的结构化输出接口发送，响应原文、实际输入摘要与解析结果保存在同一调用账本。
+
+工作台“媒体与派生”可打开正式地址，选择原件或派生内容的准确区域，查看谱系与修订，并裁剪、截取、提取音轨或采样。Memory 引用具体表示修订；来源清除会抹除相关派生正文和缓存，独立接触仍可保留其原件。
 
 ## 认知与来源
 
@@ -43,6 +50,8 @@ export NOUS_EMBEDDING__CREDENTIAL_FILE=/protected/path/embedding.key
 Memory、Concept、Entity、Episode、Journal、Schema、Association、Self、Social、Language 与 Motivation 使用明确的领域记录和修订。检索支持中文词项、语义、Hybrid、VCP、NousQL、五轴时间与历史截点。来源权限同时约束候选、图计算和最终物化；撤回、恢复与清除由来源所有者处理。
 
 Managed Context 保留 prepare、实际完整输入测量、admit、model contact、实际使用与结果反馈的区别。SDK 和 MaiBot 集成通过正式服务入口调用；A-Memorix 工具和管理协议消费同一认知权威。
+
+认知成长可按需运行或按时区与 cron 定时生成提案。在“认知成长”中查看依据与动作，再选择采纳或拒绝；采纳对原对象修订进行冲突检查，并在一个事务内应用。定时任务持续生成可审阅的提案。任务与模型调用分别持久化，成功的付费结果可在重启后继续使用。
 
 ## SDK 与 MCP
 

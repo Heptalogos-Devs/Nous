@@ -29,10 +29,12 @@ def source_region_text(content: str, region: SourceRegion) -> str:
                 "region_unavailable", "Text region must address a string in its original"
             )
         value = selected
-    if region.text_start is not None:
-        if region.text_end is None or region.text_end > len(value):
+    if region.text_start is not None or region.text_end is not None:
+        start = region.text_start if region.text_start is not None else 0
+        end = region.text_end if region.text_end is not None else len(value)
+        if not 0 <= start < end <= len(value):
             raise DomainError(
                 "region_unavailable", "Text coordinates are outside the decoded source string"
             )
-        value = value[region.text_start : region.text_end]
+        value = value[start:end]
     return value

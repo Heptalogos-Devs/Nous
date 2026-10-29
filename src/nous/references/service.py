@@ -14,10 +14,11 @@ from pydantic import JsonValue, TypeAdapter
 
 from nous.cognition.schema import revisions
 from nous.cognition.service import CognitionService
-from nous.material.service import MaterialService
+from nous.identity.service import subjects
+from nous.material.service import MaterialService, materials, regions
 from nous.platform.persistence import Authority, ReadView, WriteTx
 
-from .allocation import addresses_in, validate_address
+from .allocation import addresses_in, recover_in, validate_address
 from .schema import addresses, imported
 
 _TARGET = TypeAdapter(SemanticTarget)
@@ -62,7 +63,11 @@ class ReferenceDirectory:
         elif target.reference.kind == "source_region":
             await self.materials.read_region_in(view, ctx, target.reference.id)
         else:
-            raise DomainError("reference_not_found", "Media representation is unavailable")
+            from nous.material.derived import DerivedService
+
+            await DerivedService(self.authority, self.materials).authorize_in(
+                view, ctx, target.reference
+            )
         return target
 
     async def resolve_in(
@@ -192,3 +197,98 @@ class ReferenceDirectory:
     ) -> ReferenceResolution:
         async with self.authority.read(ctx) as view:
             return await self.resolve_in(view, ctx, locator, as_of_commit)
+
+    async def reconcile(self, ctx: CallContext, operation_id: str) -> dict[str, int]:
+        """Repair missing address metadata on visible identities without revising content."""
+        async with self.authority.write(
+            ctx,
+            operation_id,
+            operation_kind="references.reconcile",
+            scope=ctx.subject_id or ctx.namespace_id,
+            payload={"namespace_id": ctx.namespace_id, "subject_id": ctx.subject_id},
+        ) as tx:
+            if tx.replayed:
+                return TypeAdapter(dict[str, int]).validate_python(tx.replay_result)
+            subject_ids = (
+                [ctx.subject_id]
+                if ctx.subject_id is not None
+                else list(
+                    (
+                        await tx.connection.execute(
+                            sa.select(subjects.c.id).where(
+                                subjects.c.namespace_id == ctx.namespace_id
+                            )
+                        )
+                    ).scalars()
+                )
+            )
+            scopes = [ctx.model_copy(update={"subject_id": str(sid)}) for sid in subject_ids]
+            statement = sa.select(revisions).where(revisions.c.namespace_id == ctx.namespace_id)
+            if ctx.subject_id is not None:
+                statement = statement.where(revisions.c.subject_id == ctx.subject_id)
+            counts = {"cognition": 0, "materials": 0, "regions": 0, "commit_seq": tx.commit_seq}
+            for row in (await tx.connection.execute(statement)).mappings():
+                selected = ctx.model_copy(update={"subject_id": str(row["subject_id"])})
+                record = CognitiveRecord.model_validate(row["record"])
+                try:
+                    await self.cognition.get_in(tx, selected, record.reference)
+                except DomainError as error:
+                    if error.code != "source_unavailable":
+                        raise
+                    continue
+                prior = await addresses_in(tx, selected, record.reference)
+                allocated = await recover_in(tx, selected, record.reference, record.addresses)
+                if prior is None or record.addresses != allocated:
+                    updated = dict(row["record"])
+                    updated["addresses"] = allocated.model_dump(mode="json")
+                    await tx.connection.execute(
+                        revisions.update()
+                        .where(
+                            revisions.c.id == record.reference.id,
+                            revisions.c.revision == record.reference.revision,
+                        )
+                        .values(record=updated)
+                    )
+                    counts["cognition"] += 1
+            for table, kind, counter in (
+                (materials, "material", "materials"),
+                (regions, "source_region", "regions"),
+            ):
+                rows = (
+                    await tx.connection.execute(
+                        sa.select(table).where(table.c.namespace_id == ctx.namespace_id)
+                    )
+                ).mappings()
+                for row in rows:
+                    for selected in scopes:
+                        try:
+                            if kind == "material":
+                                await self.materials.read_in(tx, selected, str(row["id"]))
+                            else:
+                                await self.materials.read_region_in(tx, selected, str(row["id"]))
+                        except DomainError as error:
+                            if error.code != "source_unavailable":
+                                raise
+                            continue
+                        reference = MediaReference.model_validate({"kind": kind, "id": row["id"]})
+                        prior = await addresses_in(tx, selected, reference)
+                        from nous_wave.contracts.common import ReferenceAddresses
+
+                        known = row["record"].get("addresses")
+                        allocated = await recover_in(
+                            tx,
+                            selected,
+                            reference,
+                            ReferenceAddresses.model_validate(known) if known else None,
+                        )
+                        if prior is None or row["record"].get("addresses") != allocated.model_dump(
+                            mode="json"
+                        ):
+                            updated = dict(row["record"])
+                            updated["addresses"] = allocated.model_dump(mode="json")
+                            await tx.connection.execute(
+                                table.update().where(table.c.id == row["id"]).values(record=updated)
+                            )
+                            counts[counter] += 1
+                        break
+            return tx.result(counts)

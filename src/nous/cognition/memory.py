@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from pydantic import JsonValue
+from nous_wave.contracts.lifecycle import MemoryChanges
+from pydantic import JsonValue, TypeAdapter
 from sqlalchemy import select, update
 
 from nous.identity.service import require_subject_in
@@ -109,7 +110,9 @@ async def change_memory_in(
                 )
                 .values(record=tombstone.model_dump(mode="json"))
             )
-        references = tuple(record.reference for record in history)
+        references = tuple(
+            record.reference for record in history
+        ) + await self.retire_unsupported_in(tx, ctx)
         await tx.connection.execute(
             vectors.delete().where(vectors.c.reference.in_([ref.exact() for ref in references]))
         )
@@ -171,7 +174,9 @@ async def change_memory(
         payload=command,
     ) as tx:
         if tx.replayed:
-            return CognitiveRecord.model_validate(tx.replay_result)
+            return await self.replay_record_in(
+                tx, ctx, CognitiveRecord.model_validate(tx.replay_result)
+            )
         result = tx.result(await change_memory_in(self, tx, ctx, command))
     if command.action == "purge" and self.invalidate:
         await self.invalidate()
@@ -258,3 +263,69 @@ async def decay_memories(
             if transition(lifecycle, command, now) != lifecycle:
                 changed.append((await change_memory_in(self, tx, ctx, command)).reference.exact())
         return tx.result({"scanned": len(rows), "changed": changed, "complete": len(rows) < limit})
+
+
+async def change_memories_in(
+    self: CognitionService, tx: WriteTx, ctx: CallContext, command: MemoryChanges
+) -> tuple[CognitiveRecord, ...]:
+    if len({reference.id for reference in command.references}) != len(command.references):
+        raise DomainError("memory_selection", "A batch can select each Memory identity once")
+    for reference in command.references:
+        record = await self.get_in(tx, ctx, reference)
+        current = await tx.connection.scalar(
+            select(revisions.c.revision).where(
+                revisions.c.id == reference.id,
+                revisions.c.namespace_id == ctx.namespace_id,
+                revisions.c.subject_id == ctx.subject_id,
+                revisions.c.head.is_(True),
+            )
+        )
+        if reference.kind != "memory" or current != reference.revision or record.purged:
+            raise DomainError(
+                "memory_revision_conflict",
+                "A frozen batch target must still be its current nonpurged Memory revision",
+            )
+    changed: list[CognitiveRecord] = []
+    for reference in command.references:
+        current = await self.get_in(tx, ctx, reference)
+        if command.action == "purge" and current.purged:
+            changed.append(current)
+            continue
+        changed.append(
+            await change_memory_in(
+                self,
+                tx,
+                ctx,
+                MemoryChange(
+                    operation_id=command.operation_id,
+                    reference=reference,
+                    action=command.action,
+                    strength=command.strength,
+                    hours=command.hours,
+                    reason=command.reason,
+                    force=command.force,
+                ),
+            )
+        )
+    return tuple(changed)
+
+
+async def change_memories(
+    self: CognitionService, ctx: CallContext, command: MemoryChanges
+) -> tuple[CognitiveRecord, ...]:
+    """Execute a frozen selection once; no repeated query can change its membership."""
+    async with self.authority.write(
+        ctx,
+        command.operation_id,
+        operation_kind="memory.change_many",
+        scope=ctx.require_subject(),
+        payload=command,
+    ) as tx:
+        if tx.replayed:
+            return await self.replay_records_in(
+                tx, ctx, TypeAdapter(tuple[CognitiveRecord, ...]).validate_python(tx.replay_result)
+            )
+        result = tx.result(await self.change_memories_in(tx, ctx, command))
+    if command.action == "purge" and self.invalidate:
+        await self.invalidate()
+    return result

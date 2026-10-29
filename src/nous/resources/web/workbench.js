@@ -17,9 +17,18 @@ import {
 } from "./management.js";
 import { initializeAccess, loadCredentials, clearIssuedToken } from "./access.js";
 import { initializeBundles, clearBundle } from "./bundles.js";
+import { initializeMedia, loadMedia, clearMedia, renderMedia } from "./media.js";
+import {
+  initializeMaintenance,
+  loadMaintenance,
+  clearMaintenance,
+  renderMaintenance,
+} from "./maintenance.js";
 await initializeLocale();
 const titles = {
   search: "web-search",
+  media: "web-media-workspace",
+  maintenance: "web-maintenance",
   imports: "web-imports",
   sources: "web-sources",
   contexts: "web-contexts",
@@ -78,12 +87,17 @@ async function navigate(reload = true) {
   message($("breadcrumb"), titles[page]);
   if (page !== "credentials") clearIssuedToken();
   if (!state.token) return;
-  if (!state.subject && ["search", "sources", "contexts", "jobs"].includes(page)) {
+  if (
+    !state.subject &&
+    ["search", "sources", "contexts", "jobs", "media", "maintenance"].includes(page)
+  ) {
     notify("web-select-subject");
     return;
   }
   const load = {
     sources: loadSources,
+    media: loadMedia,
+    maintenance: loadMaintenance,
     jobs: loadJobs,
     models: loadModels,
     prompts: loadPrompt,
@@ -109,10 +123,13 @@ form("connect-form", async () => {
   }
 });
 $("logout").onclick = () => {
+  document.querySelectorAll("dialog:not(#entity-dialog)").forEach((dialog) => dialog.remove());
   $("login-error").textContent = "";
   state.token = "";
   clearIssuedToken();
   clearBundle();
+  clearMedia();
+  clearMaintenance();
   resetKnowledge();
   resetManagement();
   for (const id of [
@@ -132,12 +149,15 @@ $("logout").onclick = () => {
   $("login").hidden = false;
   $("token").value = "";
 };
+window.addEventListener("nous:disconnect", () => $("logout").click());
 $("namespace").onchange = () =>
   busy($("namespace"), async () => {
     state.namespace = $("namespace").value;
     resetKnowledge();
     resetManagement();
     clearBundle();
+    clearMedia();
+    clearMaintenance();
     localStorage.setItem("nous.namespace", state.namespace);
     await subjects();
     await navigate();
@@ -147,6 +167,8 @@ $("subject").onchange = () => {
   resetKnowledge();
   resetManagement();
   clearBundle();
+  clearMedia();
+  clearMaintenance();
   localStorage.setItem("nous.subject", state.subject);
   navigate().catch(error);
 };
@@ -177,10 +199,14 @@ initializeKnowledge();
 initializeManagement();
 initializeAccess();
 initializeBundles();
+initializeMedia();
+initializeMaintenance();
 window.addEventListener("nous:locale", () => {
   navigate(false).catch(error);
   renderKnowledge();
   renderManagement();
+  renderMedia();
+  renderMaintenance();
   if (state.token && location.hash === "#credentials") loadCredentials().catch(error);
 });
 window.addEventListener("hashchange", () => navigate().catch(error));

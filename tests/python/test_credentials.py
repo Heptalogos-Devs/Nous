@@ -10,13 +10,181 @@ import httpx
 import pytest
 import sqlalchemy as sa
 from nous_wave.contracts import DomainError
-from nous_wave.contracts.credentials import CreateCredential
+from nous_wave.contracts.credentials import CreateCredential, RotateCredential
 
 from nous.identity.credentials import AuthenticationError, CredentialsService, credentials
 from nous.platform.configuration import Settings
 from nous.platform.persistence import Authority, OperationConflict
 from nous.platform.persistence.schema import operations
 from nous.transports.http import create_app
+
+
+def test_rotation_is_one_time_scoped_revisioned_and_audited_across_restart(tmp_path):
+    async def scenario():
+        token_file = tmp_path / "admin.token"
+        token_file.write_text(secrets.token_urlsafe(32))
+        path = tmp_path / "authority.sqlite"
+        authority = Authority(path)
+        await authority.initialize()
+        service = CredentialsService(authority, token_file)
+        admin = await service.authenticate(token_file.read_text())
+        issued = await service.create(
+            admin,
+            CreateCredential(
+                name="Writer",
+                namespace_ids=("a",),
+                subject_ids=("subject",),
+                source_ids=("source",),
+                capabilities=("read", "write"),
+                reason="Initial grant",
+            ),
+        )
+        manager_key = await service.create(
+            admin,
+            CreateCredential(
+                name="Read manager",
+                namespace_ids=("a",),
+                subject_ids=("subject",),
+                source_ids=("source",),
+                capabilities=("read", "manage"),
+            ),
+        )
+        manager = await service.authenticate(manager_key.token)
+        self_rotation = await service.rotate(
+            manager,
+            manager_key.record.id,
+            RotateCredential(expected_revision=1, reason="Own client key rollover"),
+        )
+        with pytest.raises(AuthenticationError):
+            await service.authenticate(manager_key.token)
+        manager = await service.authenticate(self_rotation.token)
+        own_history = await service.history(manager, manager_key.record.id)
+        assert own_history[-1].caller_id == manager.caller_id
+        assert manager.caller_id == manager_key.record.caller_id
+        with pytest.raises(DomainError, match="capabilities"):
+            await service.rotate(manager, issued.record.id, RotateCredential(expected_revision=1))
+        foreign = await service.create(
+            admin,
+            CreateCredential(
+                name="Foreign manager", namespace_ids=("b",), capabilities=("manage",)
+            ),
+        )
+        foreign_manager = await service.authenticate(foreign.token)
+        for method in (service.read, service.history):
+            with pytest.raises(DomainError, match="scope"):
+                await method(foreign_manager, issued.record.id)
+        command = RotateCredential(
+            operation_id="rotate-once", expected_revision=1, reason="Client rollover"
+        )
+        rotated = await service.rotate(admin, issued.record.id, command)
+        assert rotated.token is not None and rotated.record.revision == 2
+        assert rotated.record.caller_id == issued.record.caller_id
+        assert rotated.record.source_ids == issued.record.source_ids
+        assert rotated.record.capabilities == issued.record.capabilities
+        assert (await service.authenticate(rotated.token)).caller_id == issued.record.caller_id
+        with pytest.raises(AuthenticationError):
+            await service.authenticate(issued.token)
+        assert (await service.rotate(admin, issued.record.id, command)).token is None
+        results = await asyncio.gather(
+            service.rotate(
+                admin,
+                issued.record.id,
+                RotateCredential(operation_id="concurrent-a", expected_revision=2),
+            ),
+            service.rotate(
+                admin,
+                issued.record.id,
+                RotateCredential(operation_id="concurrent-b", expected_revision=2),
+            ),
+            return_exceptions=True,
+        )
+        successful = [result for result in results if not isinstance(result, BaseException)]
+        conflicts = [result for result in results if isinstance(result, DomainError)]
+        assert len(successful) == len(conflicts) == 1
+        assert conflicts[0].code == "credential_revision_conflict"
+        winner = successful[0]
+        assert winner.record.revision == 3 and winner.token is not None
+        with pytest.raises(DomainError, match="revision"):
+            await service.revoke(admin, issued.record.id, "stale-revoke", expected_revision=2)
+        await service.authenticate(winner.token)
+        record = await service.revoke(
+            admin, issued.record.id, "revoke-current", expected_revision=3, reason="Retired client"
+        )
+        assert record.revision == 4
+        await service.revoke(admin, issued.record.id, "revoke-again")
+        events = await service.history(admin, issued.record.id)
+        assert [event.action for event in events] == ["created", "rotated", "rotated", "revoked"]
+        assert [event.revision for event in events] == [1, 2, 3, 4]
+        assert events[0].reason == "Initial grant" and events[-1].reason == "Retired client"
+        assert all(event.caller_id == "instance-admin" for event in events)
+        assert all(event.recorded_at.utcoffset().total_seconds() == 0 for event in events)
+        async with authority.read() as view:
+            receipts = (
+                (await view.connection.execute(sa.select(operations.c.result_json))).scalars().all()
+            )
+        serialized = str(receipts) + "".join(event.model_dump_json() for event in events)
+        assert all(token not in serialized for token in (issued.token, rotated.token, winner.token))
+        await authority.close()
+        authority = Authority(path)
+        await authority.initialize()
+        service = CredentialsService(authority, token_file)
+        assert len(await service.history(admin, issued.record.id)) == 4
+        with pytest.raises(AuthenticationError):
+            await service.authenticate(winner.token)
+        await authority.close()
+
+    asyncio.run(scenario())
+
+
+def test_http_whoami_accepts_write_only_identity_and_rotation_never_reissues_plaintext(tmp_path):
+    async def scenario():
+        settings = Settings(instance=tmp_path / "instance")
+        app = create_app(settings)
+        async with app.router.lifespan_context(app):
+            admin = {"Authorization": f"Bearer {settings.token_file.read_text()}"}
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                issued = (
+                    await client.post(
+                        "/api/credentials",
+                        headers=admin,
+                        json={
+                            "name": "Write only",
+                            "capabilities": ["write"],
+                            "namespace_ids": ["allowed"],
+                        },
+                    )
+                ).json()
+                caller = {"Authorization": f"Bearer {issued['token']}"}
+                identity = await client.get("/api/credentials/whoami", headers=caller)
+                assert identity.status_code == 200 and identity.json()["capabilities"] == ["write"]
+                assert identity.json()["namespace_ids"] == ["allowed"]
+                path = f"/api/credentials/{issued['record']['id']}"
+                assert (await client.get(path, headers=caller)).status_code == 403
+                command = {
+                    "operation_id": "http-rotation",
+                    "expected_revision": 1,
+                    "reason": "Routine rotation",
+                }
+                rotated = await client.post(path + "/rotate", headers=admin, json=command)
+                assert rotated.status_code == 200 and rotated.json()["token"]
+                assert (
+                    await client.get("/api/credentials/whoami", headers=caller)
+                ).status_code == 401
+                replay = await client.post(path + "/rotate", headers=admin, json=command)
+                assert replay.status_code == 200 and replay.json()["token"] is None
+                history = (await client.get(path + "/history", headers=admin)).json()
+                assert [event["action"] for event in history] == ["created", "rotated"]
+                assert (await client.get(path, headers=admin)).json()["revision"] == 2
+                stale = await client.delete(path, headers=admin, params={"expected_revision": 1})
+                assert stale.status_code == 409
+                revoked = await client.delete(
+                    path, headers=admin, params={"expected_revision": 2, "reason": "Retired"}
+                )
+                assert revoked.status_code == 200 and revoked.json()["revision"] == 3
+
+    asyncio.run(scenario())
 
 
 def test_tokens_are_disclosed_once_hashed_at_rest_and_revoked_across_restart(tmp_path):

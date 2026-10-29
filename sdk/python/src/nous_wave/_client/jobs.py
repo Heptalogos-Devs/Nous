@@ -5,13 +5,13 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 import anyio
-from pydantic import TypeAdapter
 
 from ..errors import NousError
 from ..operations import object_value, segment
 from ..types import (
     Job,
     JobDetail,
+    JobPage,
     JsonObject,
 )
 from .materials import MaterialClient
@@ -19,16 +19,49 @@ from .materials import MaterialClient
 
 class JobClient(MaterialClient):
     async def jobs(
-        self, *, namespace_id: str | None = None, subject_id: str | None = None, limit: int = 50
+        self,
+        *,
+        namespace_id: str | None = None,
+        subject_id: str | None = None,
+        limit: int = 50,
+        scope: str | None = None,
+        kind: str | None = None,
+        state: str | None = None,
     ) -> tuple[Job, ...]:
-        return TypeAdapter(tuple[Job, ...]).validate_python(
+        return (
+            await self.job_page(
+                namespace_id=namespace_id,
+                subject_id=subject_id,
+                limit=limit,
+                scope=scope,
+                kind=kind,
+                state=state,
+            )
+        ).items
+
+    async def job_page(
+        self,
+        *,
+        namespace_id: str | None = None,
+        subject_id: str | None = None,
+        limit: int = 50,
+        cursor: str | None = None,
+        scope: str | None = None,
+        kind: str | None = None,
+        state: str | None = None,
+    ) -> JobPage:
+        return JobPage.model_validate(
             await self.request(
                 "GET",
-                "/api/jobs",
+                "/api/job-pages",
                 params={
                     "namespace_id": namespace_id or self.namespace_id,
                     "subject_id": subject_id or self.subject_id,
                     "limit": limit,
+                    "cursor": cursor,
+                    "scope": scope,
+                    "kind": kind,
+                    "state": state,
                 },
             )
         )

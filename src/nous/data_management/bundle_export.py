@@ -2,12 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import json
 from hashlib import sha256
-from io import BytesIO
 from typing import TYPE_CHECKING
 from uuid import uuid4
-from zipfile import ZIP_DEFLATED, ZipFile
 
 from nous_wave.contracts import (
     BundleRequest,
@@ -21,13 +18,15 @@ from nous_wave.contracts import (
 from pydantic import JsonValue, TypeAdapter
 from sqlalchemy import select
 
-from nous.cognition.projection import references_in
-from nous.cognition.schema import revisions
+from nous.cognition.projection import media_references_in, references_in
+from nous.cognition.schema import revisions, vectors
 from nous.identity.service import require_subject_in
 from nous.imports.schema import catalogs, inputs, outputs, successes, units
 from nous.material.service import MaterialRecord, materials, observations, regions, source_permitted
 from nous.platform.content import ContentObject
 from nous.references import export_bindings_in
+
+from .selection import select_roots_in
 
 if TYPE_CHECKING:
     from .bundles import BundleService
@@ -62,11 +61,26 @@ async def export(self: BundleService, ctx: CallContext, command: BundleRequest |
                 )
             ).mappings()
         }
+        selected, selected_observations = await select_roots_in(
+            view,
+            ctx,
+            command,
+            all_records,
+            TypeAdapter(dict[str, dict[str, JsonValue]]).validate_python(source_rows),
+        )
         chosen = (
             {reference.exact() for reference in command.references}
             if command.references is not None
-            else set(all_records)
+            else selected
         )
+        for observation_id in selected_observations:
+            if observation_id not in source_rows or not source_permitted(
+                ctx, str(source_rows[observation_id]["material_id"]), observation_id
+            ):
+                raise DomainError(
+                    "source_unavailable",
+                    "Bundle selection includes a source outside the current read scope",
+                )
         pending = list(chosen)
         while pending:
             key = pending.pop()
@@ -92,7 +106,9 @@ async def export(self: BundleService, ctx: CallContext, command: BundleRequest |
                     chosen.add(reference.exact())
                     pending.append(reference.exact())
         records = [all_records[key] for key in sorted(chosen)]
-        observation_ids = {oid for record in records for oid in record.source_roots}
+        observation_ids = selected_observations | {
+            oid for record in records for oid in record.source_roots
+        }
         observation_ids.update(
             link.observation_id
             for record in records
@@ -109,8 +125,25 @@ async def export(self: BundleService, ctx: CallContext, command: BundleRequest |
             ):
                 selected_outputs.append(output)
                 observation_ids.add(output.observation_id)
+        from nous_wave.contracts.derivation import ArtifactRepresentation
+
+        derived = await self.cognition.derivations.export_in(
+            view,
+            ctx,
+            tuple(ref for record in records for ref in media_references_in(record.body)),
+            observation_ids=tuple(sorted(observation_ids)),
+        )
+        observation_ids.update(derived.observation_ids)
+        artifacts = {
+            record.payload.material_id
+            for record in derived.representations
+            if isinstance(record.payload, ArtifactRepresentation)
+        }
+        observation_ids.update(
+            oid for oid, source in source_rows.items() if source["material_id"] in artifacts
+        )
         obs = [source_rows[oid] for oid in sorted(observation_ids)]
-        material_ids = {row["material_id"] for row in obs}
+        material_ids = {row["material_id"] for row in obs} | set(derived.material_ids) | artifacts
         mat = [
             dict(row)
             for row in (
@@ -151,6 +184,16 @@ async def export(self: BundleService, ctx: CallContext, command: BundleRequest |
             value["record"] = {
                 **row["record"],
                 "units": [unit for unit in row["record"]["units"] if unit["id"] in unit_ids],
+                "formation_catalog": [
+                    entry
+                    for entry in row["record"].get("formation_catalog", [])
+                    if entry["reference"]["kind"]
+                    + ":"
+                    + entry["reference"]["id"]
+                    + "@"
+                    + str(entry["reference"]["revision"])
+                    in chosen
+                ],
                 "input_source_ids": [
                     sid for sid in row["record"]["input_source_ids"] if sid in input_ids
                 ],
@@ -172,6 +215,8 @@ async def export(self: BundleService, ctx: CallContext, command: BundleRequest |
         result = TypeAdapter(dict[str, JsonValue]).validate_python(
             {
                 "format": "nous.subject",
+                "package": command.package.model_dump(mode="json") if command.package else None,
+                "content_level": command.content_level,
                 "version": 1,
                 "id": str(uuid4()),
                 "namespace_id": ctx.namespace_id,
@@ -188,7 +233,7 @@ async def export(self: BundleService, ctx: CallContext, command: BundleRequest |
             }
         )
 
-        region_ids = {
+        region_ids = set(derived.source_region_ids) | {
             region_id
             for record in records
             for region_ids in record.source_regions.values()
@@ -210,6 +255,11 @@ async def export(self: BundleService, ctx: CallContext, command: BundleRequest |
                 material = TypeAdapter(MaterialRecord).validate_python(row["record"])
                 if material.get("purged"):
                     continue
+                if material["text"] is not None:
+                    contents[material["content_hash"]] = base64.b64encode(
+                        material["text"].encode()
+                    ).decode("ascii")
+                    continue
                 content = ContentObject(
                     material["content_hash"], material["byte_len"], material["media_type"]
                 )
@@ -217,6 +267,25 @@ async def export(self: BundleService, ctx: CallContext, command: BundleRequest |
                     contents[content.content_hash] = base64.b64encode(
                         await asyncio.to_thread(path.read_bytes)
                     ).decode("ascii")
+        result["derivations"] = derived.model_dump(mode="json")
+        if command.assets is not None and command.assets.include_vectors:
+            vector_references = {
+                *chosen,
+                *(f"material:{row['id']}" for row in mat),
+                *(f"source-region:{region_id}" for region_id in region_ids),
+                *(value.reference.media().exact() for value in derived.representations),
+                *(f"derived-region:{region.id}" for region in derived.regions),
+            }
+            result["vectors"] = TypeAdapter(list[JsonValue]).validate_python(
+                [
+                    dict(row)
+                    for row in (
+                        await view.connection.execute(
+                            select(vectors).where(vectors.c.reference.in_(vector_references))
+                        )
+                    ).mappings()
+                ]
+            )
         result["bindings"] = [
             binding.model_dump(mode="json")
             for binding in await export_bindings_in(
@@ -224,6 +293,11 @@ async def export(self: BundleService, ctx: CallContext, command: BundleRequest |
                 ctx,
                 (
                     *tuple(record.reference for record in records),
+                    *tuple(record.reference.media() for record in derived.representations),
+                    *tuple(
+                        MediaReference(kind="derived_region", id=region.id)
+                        for region in derived.regions
+                    ),
                     *tuple(MediaReference(kind="material", id=row["id"]) for row in mat),
                     *tuple(
                         MediaReference(kind="source_region", id=region_id)
@@ -239,20 +313,14 @@ async def export(self: BundleService, ctx: CallContext, command: BundleRequest |
 async def export_zip(
     self: BundleService, ctx: CallContext, command: BundleRequest | None = None
 ) -> bytes:
-    bundle = await self.export(ctx, command)
-    buffer = BytesIO()
-    with ZipFile(buffer, "w", ZIP_DEFLATED) as archive:
-        archive.writestr("bundle.json", json.dumps(bundle, ensure_ascii=False))
-    return buffer.getvalue()
+    return (await self.export_archive(ctx, command)).data
 
 
 async def inspect_zip(self: BundleService, ctx: CallContext, data: bytes):
     ctx.require_subject()
-    with ZipFile(BytesIO(data)) as archive:
-        info = archive.getinfo("bundle.json")
-        if info.file_size > 64 * 1024 * 1024:
-            raise DomainError("bundle_too_large", "Bundle JSON exceeds 64 MiB")
-        bundle = SubjectBundle.model_validate_json(archive.read(info))
+    from .archive_read import decode
+
+    bundle = await asyncio.to_thread(decode, data)
     for row in bundle.materials:
         material = TypeAdapter(MaterialRecord).validate_python(row.record)
         encoded = bundle.contents.get(row.content_hash)

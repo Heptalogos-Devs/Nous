@@ -140,3 +140,83 @@ def test_http_backup_restores_a_new_instance_only(tmp_path: Path):
                 assert invalid.status_code == 400 and not (tmp_path / "invalid").exists()
 
     asyncio.run(scenario())
+
+
+def test_durable_model_invocation_keeps_paid_result_across_configuration_changes(tmp_path: Path):
+    async def scenario():
+        from nous_wave.contracts import DomainError
+        from sqlalchemy import func, select
+
+        from nous.application import Application
+        from nous.platform.configuration import Settings
+        from nous.platform.models.generation import DescriptionDraft
+        from nous.platform.models.ledger import calls
+
+        app = Application(Settings(instance=tmp_path / "instance"))
+        await app.authority.initialize()
+        ctx = CallContext(caller_id="worker", namespace_id="research", subject_id="owner")
+        try:
+            call, output = await app.models.ledger.reserve(
+                ctx,
+                "maintenance",
+                {"prompt": "original frozen request"},
+                10,
+                invocation_id="run:one",
+            )
+            assert output is None
+            with pytest.raises(DomainError) as pending:
+                await app.models.ledger.reserve(
+                    ctx,
+                    "maintenance",
+                    {"prompt": "changed request"},
+                    10,
+                    invocation_id="run:one",
+                )
+            assert pending.value.code == "model_invocation_unavailable"
+            await app.models.ledger.finish(ctx, call, {"description": "retained result"}, {})
+            await app.prompts.save(ctx, "maintenance", "Changed prompt {{ source }}", "change")
+            # The role has no configured model or key: recovery reads the existing invocation first.
+            recovered = await app.models.structured(
+                ctx,
+                "maintenance",
+                {"different": "variables"},
+                DescriptionDraft,
+                invocation_id="run:one",
+            )
+            assert recovered.call_id == call and recovered.output.description == "retained result"
+            async with app.authority.read(ctx) as view:
+                assert await view.connection.scalar(select(func.count()).select_from(calls)) == 1
+            unknown, _ = await app.models.ledger.reserve(
+                ctx,
+                "maintenance",
+                {"prompt": "unknown outcome"},
+                10,
+                invocation_id="run:unknown",
+            )
+            await app.models.ledger.finish(ctx, unknown, None, {}, "CancelledUnknownOutcome")
+            with pytest.raises(DomainError) as unavailable:
+                await app.models.structured(
+                    ctx, "maintenance", {}, DescriptionDraft, invocation_id="run:unknown"
+                )
+            assert unavailable.value.details["error_code"] == "CancelledUnknownOutcome"
+            async with app.authority.write(
+                ctx, "erase-before-reserve", operation_kind="source.erase", payload={}
+            ) as tx:
+                await app.models.ledger.purge_invocations_in(
+                    tx, ctx, "maintenance", ("run:erased-before-admission",)
+                )
+                tx.result(None)
+            with pytest.raises(DomainError) as retired:
+                await app.models.ledger.reserve(
+                    ctx,
+                    "maintenance",
+                    {"prompt": "already erased"},
+                    10,
+                    invocation_id="run:erased-before-admission",
+                )
+            assert retired.value.details["status"] == "purged"
+        finally:
+            await app.models.close()
+            await app.authority.close()
+
+    asyncio.run(scenario())

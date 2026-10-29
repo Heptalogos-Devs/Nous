@@ -15,6 +15,10 @@ from nous_wave.types import JsonObject
 from pydantic import JsonValue, TypeAdapter
 
 from mcp.server import MCPServer
+from nous.platform.observability import configure_logging
+
+from .maintenance import register_maintenance
+from .management import register_management
 
 
 def run(
@@ -25,10 +29,13 @@ def run(
     credential_file: Path | None = None,
 ) -> None:
     mcp = MCPServer("Nous Wave")
+    configure_logging("INFO")
     token_path = credential_file or instance / "credentials/admin.token"
 
     def client() -> NousClient:
-        return NousClient(url, credential_file=token_path)
+        return NousClient(
+            url, credential_file=token_path, namespace_id=namespace_id, subject_id=subject_id
+        )
 
     async def call(tool: str, arguments: dict[str, JsonValue]) -> JsonObject:
         async with client() as api:
@@ -209,4 +216,6 @@ def run(
         async with client() as api:
             return await api.query_manual()
 
+    register_management(mcp, client, namespace_id, subject_id)
+    register_maintenance(mcp, client, namespace_id, subject_id)
     mcp.run(transport="stdio")

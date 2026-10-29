@@ -8,14 +8,16 @@ from nous_native import IndexStore, Snapshot
 
 from nous.cognition.models import ModelServices
 from nous.cognition.service import CognitionService
+from nous.material.derived import DerivedService
 from nous.material.service import MaterialService
 from nous.platform.persistence import Authority
 from nous.references.service import ReferenceDirectory
 
-from . import candidates, embedding, graph, query
+from . import candidates, embedding, graph, query, status
 
 
 class RetrievalService:
+    status = status.status
     eligible = candidates.eligible
     selectors = candidates.selectors
     order = candidates.order
@@ -31,9 +33,11 @@ class RetrievalService:
         models: ModelServices,
         index_path: str | Path,
         materials: MaterialService | None = None,
+        derivations: DerivedService | None = None,
     ) -> None:
         self.authority, self.cognition, self.models = authority, cognition, models
         self.materials = materials or MaterialService(authority)
+        self.derivations = derivations or cognition.derivations
         self.references = ReferenceDirectory(authority, cognition, self.materials)
         self.index_path = Path(index_path)
         self.index_path.mkdir(parents=True, exist_ok=True)

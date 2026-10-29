@@ -14,6 +14,7 @@ from nous_wave.contracts import (
     TimePoint,
     UnitOutput,
 )
+from nous_wave.contracts.imports import FormationOptionsOverride
 from pydantic import Field, JsonValue, TypeAdapter
 from sqlalchemy import select
 
@@ -33,6 +34,7 @@ class ImportInput(Contract):
     inputs: tuple[ImportDocument, ...] = ()
     task_id: str | None = None
     catalog_id: str | None = None
+    parent_catalog_id: str | None = None
     operation_id: str = Field(default_factory=lambda: str(uuid4()))
     llm_enabled: bool = True
     vectors: Literal["disabled", "metadata_allowed", "required"] = "metadata_allowed"
@@ -237,6 +239,18 @@ async def import_admin(
     service: AMemorixService, ctx: CallContext, arguments: dict[str, JsonValue]
 ) -> dict[str, JsonValue]:
     command = ImportInput.model_validate(arguments)
+    retry_values = {**arguments, **(command.overrides or {})}
+    formation_override = (
+        FormationOptionsOverride.model_validate(
+            {
+                key: retry_values[key]
+                for key in FormationOptionsOverride.model_fields
+                if key in retry_values
+            }
+        )
+        if command.action == "retry_failed"
+        else None
+    )
     if command.action == "retry_failed" and command.overrides is not None:
         command = ImportInput.model_validate(
             {**command.model_dump(), **command.overrides, "overrides": None}
@@ -296,6 +310,27 @@ async def import_admin(
             if not isinstance(catalog_id, str):
                 raise DomainError("catalog_required", "The original task has no frozen catalog")
             catalog = await service.app.imports.read_catalog(ctx, catalog_id)
+            split_fields = {
+                "chunk_size",
+                "chunk_overlap",
+                "strategy_override",
+                "chat_log",
+                "narrative_window_size",
+                "narrative_overlap",
+                "factual_target_size",
+            }
+            explicit_split = split_fields.intersection(retry_values)
+            if explicit_split and (
+                catalog.split_options is None
+                or any(
+                    retry_values[key] != catalog.split_options.model_dump(mode="json")[key]
+                    for key in explicit_split
+                )
+            ):
+                raise DomainError(
+                    "import_resplit_required",
+                    "Changed splitting requires a new catalog with parent_catalog_id",
+                )
             async with service.app.authority.read(ctx) as view:
                 completed = {
                     str(value)
@@ -330,6 +365,7 @@ async def import_admin(
                     operation_id=command.operation_id,
                     catalog_id=catalog_id,
                     unit_ids=failed,
+                    formation_options_override=formation_override,
                     llm_enabled=command.llm_enabled,
                     vectors=command.vectors,
                 ),
@@ -375,6 +411,7 @@ async def import_admin(
         freeze = FreezeCatalog(
             operation_id=command.operation_id + ":freeze",
             inputs=documents,
+            parent_catalog_id=command.parent_catalog_id,
             chunk_size=command.chunk_size,
             chunk_overlap=command.chunk_overlap,
             strategy_override=command.strategy_override,

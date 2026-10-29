@@ -61,6 +61,15 @@ class CallContext(Contract):
     locale: str = "en"
     clock: TimePoint = Field(default_factory=utc_now)
     allowed_source_ids: tuple[str, ...] | None = None
+    source_constraints: tuple[tuple[str, ...], ...] = ()
+
+    def source_groups(self) -> tuple[tuple[str, ...], ...]:
+        if self.source_constraints:
+            return self.source_constraints
+        return () if self.allowed_source_ids is None else (self.allowed_source_ids,)
+
+    def for_source_group(self, group: tuple[str, ...]) -> CallContext:
+        return self.model_copy(update={"allowed_source_ids": group, "source_constraints": ()})
 
     def require_subject(self) -> str:
         if self.subject_id is None:

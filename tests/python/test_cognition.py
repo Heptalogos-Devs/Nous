@@ -289,7 +289,7 @@ def test_json_original_regions_addresses_attempts_and_artifact_purge(tmp_path: P
                 payload={"hash": lease.content_hash},
             ) as tx:
                 material = await materials.put_blob_in(tx, ctx, lease, blob)
-                await materials.observe_in(tx, ctx, material["id"], blob)
+                uploaded = await materials.observe_in(tx, ctx, material["id"], blob)
                 tx.result({"material_id": material["id"]})
             await content.release(lease)
             result = await imports.admit_files(
@@ -322,6 +322,57 @@ def test_json_original_regions_addresses_attempts_and_artifact_purge(tmp_path: P
                 region_ctx, QueryRequest(reference=f"source-region:{region.id}", domains=("media",))
             )
             assert exact.hits[0].object.text == memory.body.text
+            from nous_wave.contracts import MediaReference, SourceRegion
+
+            selected = ctx.model_copy(
+                update={
+                    "allowed_source_ids": (region.id, uploaded["id"], memory.reference.exact()),
+                    "source_constraints": ((region.id,), (uploaded["id"],)),
+                }
+            )
+            async with authority.read(ctx) as view:
+                chosen = await materials.media_source_in(
+                    view,
+                    selected,
+                    MediaReference(
+                        kind="source_region", id=region.id, observation_id=uploaded["id"]
+                    ),
+                )
+                assert chosen[2] == uploaded["id"]
+                try:
+                    await materials.media_source_in(
+                        view,
+                        selected,
+                        MediaReference(
+                            kind="source_region", id=region.id, observation_id=unit.observation_id
+                        ),
+                    )
+                except DomainError as error:
+                    assert error.code == "source_unavailable"
+                else:
+                    raise AssertionError(
+                        "A selected event cannot authorize another contact of the same bytes"
+                    )
+            wrong_event = selected.model_copy(
+                update={"source_constraints": ((memory.reference.exact(),), (uploaded["id"],))}
+            )
+            assert (await retrieval.query(wrong_event, QueryRequest(text="独立来源"))).hits == ()
+            denied_group = ctx.model_copy(
+                update={
+                    "source_constraints": ((),),
+                    "allowed_source_ids": (memory.reference.exact(),),
+                }
+            )
+            assert (await retrieval.query(denied_group, QueryRequest(text="独立来源"))).hits == ()
+            from nous.material.text import source_region_text
+
+            assert (
+                source_region_text(
+                    "private-prefix",
+                    SourceRegion(id="prefix", material_id=material["id"], text_end=7),
+                )
+                == "private"
+            )
             try:
                 await materials.read(region_ctx, material["id"])
             except DomainError as error:
@@ -384,6 +435,154 @@ def test_json_original_regions_addresses_attempts_and_artifact_purge(tmp_path: P
                 raise AssertionError("An artifact cannot retain its purged cognitive source")
         finally:
             await retrieval.close()
+            await authority.close()
+
+    asyncio.run(scenario())
+
+
+def test_self_seed_observation_reuse_and_attribute_support(tmp_path: Path):
+    async def scenario():
+        from nous_wave.contracts import (
+            AdoptCognition,
+            CognitiveTimes,
+            DomainError,
+            EntityAttribute,
+            EntityBody,
+            EpistemicStance,
+            EvidenceLink,
+        )
+        from nous_wave.contracts.imports import FormObservation, TextSplitOptions
+        from nous_wave.contracts.self_model import AdoptSeed, SeedDocument, SeedFacet
+        from sqlalchemy import select
+
+        from nous.material.service import MaterialService, observations
+        from nous.platform.content import ContentStore
+
+        authority = Authority(tmp_path / "authority.sqlite")
+        content = ContentStore(authority, tmp_path / "content")
+        materials = MaterialService(authority, content)
+        cognition = CognitionService(authority, materials=materials)
+        imports = ImportService(authority, cognition, UnusedModels(), materials=materials)
+        sources = SourceService(authority, cognition, content_store=content)
+        identity = IdentityService(authority)
+        await authority.initialize()
+        ctx = CallContext(caller_id="owner", namespace_id="namespace", subject_id="subject")
+        try:
+            await identity.create_namespace(ctx, "People", "namespace-create")
+            await identity.create_subject(
+                ctx,
+                "Researcher",
+                "subject-create",
+                subject_id=ctx.subject_id,
+                capabilities=("memory", "self", "social"),
+            )
+            seeded = await cognition.adopt_seed(
+                ctx,
+                AdoptSeed(
+                    operation_id="seed",
+                    documents=(
+                        SeedDocument(
+                            document=ImportDocument(text="我喜欢记录观察。", filename="soul.md"),
+                            facets=(SeedFacet(facet="preference", description="喜欢记录观察"),),
+                        ),
+                        SeedDocument(
+                            document=ImportDocument(
+                                text="我在资料不足时保留疑问。", filename="values.md"
+                            ),
+                            facets=(
+                                SeedFacet(facet="epistemics", description="资料不足时保留疑问"),
+                            ),
+                        ),
+                    ),
+                ),
+            )
+            assert len(seeded.facets) == 2 and len(seeded.memories) == 2
+            assert len(await cognition.self_profile(ctx)) == 2
+            assert (
+                await cognition.get(ctx, seeded.memories[0])
+            ).body.epistemic.classification == "simulated"
+            preview = await imports.preview_text_import(
+                ctx,
+                ImportDocument(text="一行\n二行\n三行\n四行\n五行"),
+                TextSplitOptions(strategy_override="quote"),
+            )
+            assert len(preview.units) == 1 and not preview.units[0].requires_llm
+            async with authority.read(ctx) as view:
+                before = len((await view.connection.execute(select(observations.c.id))).all())
+            formed = await imports.form_observation(
+                ctx,
+                FormObservation(
+                    operation_id="form-existing",
+                    observation_id=seeded.observation_ids[0],
+                    llm_enabled=False,
+                ),
+            )
+            async with authority.read(ctx) as view:
+                after = len((await view.connection.execute(select(observations.c.id))).all())
+            assert before == after
+            assert (await cognition.get(ctx, formed.cognition[0])).source_roots == (
+                seeded.observation_ids[0],
+            )
+            evidence = tuple(EvidenceLink(observation_id=value) for value in seeded.observation_ids)
+            times = CognitiveTimes(formation=ctx.clock, recorded=ctx.clock)
+            async with authority.write(
+                ctx,
+                "person",
+                operation_kind="person.adopt",
+                scope=ctx.require_subject(),
+                payload={"observations": list(seeded.observation_ids)},
+            ) as tx:
+                entity = await cognition.adopt_in(
+                    tx,
+                    ctx,
+                    AdoptCognition(
+                        body=EntityBody(
+                            entity_type="person",
+                            label="李明",
+                            attributes=(
+                                EntityAttribute(
+                                    predicate="private_note",
+                                    value="仅第一份材料支持的资料",
+                                    epistemic=EpistemicStance(classification="reported"),
+                                    evidence=(evidence[0],),
+                                ),
+                                EntityAttribute(
+                                    predicate="public_note",
+                                    value="仍有第二份材料支持的资料",
+                                    epistemic=EpistemicStance(classification="reported"),
+                                    evidence=(evidence[1],),
+                                ),
+                            ),
+                        ),
+                        evidence=evidence,
+                        times=times,
+                    ),
+                )
+                tx.result(entity)
+            await sources.purge(
+                ctx,
+                SourceCommand(
+                    operation_id="purge-one",
+                    observation_ids=(seeded.observation_ids[0],),
+                    reason="remove first source",
+                ),
+            )
+            retained = await cognition.get(ctx, entity.reference)
+            assert retained.body.purged_attribute_count == 1
+            assert [item.predicate for item in retained.body.attributes] == ["public_note"]
+            try:
+                await authority.receipt(
+                    ctx,
+                    "person",
+                    operation_kind="person.adopt",
+                    scope=ctx.require_subject(),
+                    payload={"observations": list(seeded.observation_ids)},
+                )
+            except DomainError as error:
+                assert error.code == "operation_result_purged"
+            else:
+                raise AssertionError("A historical receipt cannot retain the removed attribute")
+        finally:
             await authority.close()
 
     asyncio.run(scenario())

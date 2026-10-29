@@ -1,17 +1,12 @@
 """Bundle host actions use domain archives and managed immutable originals."""
 
-import asyncio
 from hashlib import sha256
-from io import BytesIO
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 from uuid import uuid4
-from zipfile import ZipFile
 
-from nous_wave.contracts import BlobDocument, BundleRequest, CallContext, Contract, DomainError
-from nous_wave.contracts.management import SubjectBundle
+from nous_wave.contracts import BlobDocument, BundleRequest, CallContext, DomainError
+from nous_wave.contracts.bundles import BundlePlacement
 from pydantic import JsonValue
-
-from nous.platform.content import ContentObject
 
 from .helpers import json_object
 
@@ -19,19 +14,32 @@ if TYPE_CHECKING:
     from .service import AMemorixService
 
 
-class BundleInput(Contract):
+class BundleInput(BundleRequest):
     action: str
     material_id: str | None = None
     file_name: str | None = None
     installation_id: str | None = None
     operation_id: str | None = None
     preview: bool = False
+    mode: Literal["merge", "restore"] = "merge"
+    placement: BundlePlacement | None = None
 
 
 async def bundle_admin(
     service: AMemorixService, ctx: CallContext, arguments: dict[str, JsonValue]
 ) -> dict[str, JsonValue]:
     command = BundleInput.model_validate(arguments)
+    if command.action == "get":
+        if command.installation_id is None:
+            raise DomainError("installation_required", "Select a bundle installation")
+        return json_object(
+            {
+                "success": True,
+                "installation": await service.app.bundles.get_installation(
+                    ctx, command.installation_id
+                ),
+            }
+        )
     if command.action == "list":
         return json_object(
             {"success": True, "installations": await service.app.bundles.list_installs(ctx)}
@@ -48,22 +56,38 @@ async def bundle_admin(
             }
         )
     if command.action == "export":
-        data = await service.app.bundles.export_zip(ctx, BundleRequest())
-
-        def exported_closure() -> tuple[str, ...]:
-            with ZipFile(BytesIO(data)) as archive:
-                bundle = SubjectBundle.model_validate_json(archive.read("bundle.json"))
-            return tuple(
-                sorted(
-                    {
-                        *(record.reference.exact() for record in bundle.cognition),
-                        *(material.id for material in bundle.materials),
-                    }
-                )
+        operation_id = command.operation_id or str(uuid4())
+        if not command.preview:
+            receipt = await service.app.authority.receipt(
+                ctx,
+                operation_id,
+                operation_kind="bundle.export.material",
+                scope=ctx.require_subject(),
+                payload=command,
             )
-
-        required_source_ids = await asyncio.to_thread(exported_closure)
-        summary = await service.app.bundles.inspect_zip(ctx, data)
+            if receipt is not None:
+                saved = json_object(receipt.result)
+                identity = saved.get("material_id")
+                if not isinstance(identity, str):
+                    raise DomainError("bundle_material_missing", "Export receipt has no material")
+                await service.app.material.read(ctx, identity)
+                return saved
+        archive = await service.app.bundles.export_archive(
+            ctx,
+            BundleRequest(
+                package=command.package,
+                selector=command.selector,
+                content_level=command.content_level,
+                format=command.format,
+                assets=command.assets,
+                references=command.references,
+            ),
+        )
+        data, required_source_ids, summary = (
+            archive.data,
+            archive.required_source_ids,
+            archive.summary,
+        )
         if command.preview:
             return json_object({"success": True, "preview": True, "counts": summary})
         lease = await service.app.content.publish_bytes(
@@ -73,13 +97,20 @@ async def bundle_admin(
         try:
             async with service.app.authority.write(
                 ctx,
-                command.operation_id or str(uuid4()),
+                operation_id,
                 operation_kind="bundle.export.material",
                 scope=ctx.require_subject(),
-                payload={"hash": lease.content_hash},
+                payload=command,
             ) as tx:
                 if tx.replayed:
-                    return json_object(tx.replay_result)
+                    saved = json_object(tx.replay_result)
+                    identity = saved.get("material_id")
+                    if not isinstance(identity, str):
+                        raise DomainError(
+                            "bundle_material_missing", "Export receipt has no material"
+                        )
+                    await service.app.material.read_in(tx, ctx, identity)
+                    return saved
                 document = BlobDocument(
                     filename=filename, media_type=lease.media_type, source_type="bundle_export"
                 )
@@ -136,6 +167,30 @@ async def bundle_admin(
         raise DomainError(
             "material_required", "Bundle inspection and installation require an uploaded original"
         )
+    if command.action == "import":
+        return json_object(
+            {
+                "success": True,
+                "installation": await service.app.bundles.install_material(
+                    ctx,
+                    material_id,
+                    command.operation_id or str(uuid4()),
+                    command.mode,
+                    command.placement,
+                ),
+            }
+        )
+    if command.action == "inspect":
+        original = await service.app.material.read(ctx, material_id)
+        return json_object(
+            {
+                "success": True,
+                "manifest": await service.app.bundles.inspect_material(ctx, material_id),
+                "material_id": material_id,
+                "file_name": original["filename"],
+                "size": original["byte_len"],
+            }
+        )
     material = await service.app.material.read(ctx, material_id)
     if command.action == "resolve_file":
         return json_object(
@@ -144,28 +199,6 @@ async def bundle_admin(
                 "file_name": material["filename"],
                 "material_id": material_id,
                 "size": material["byte_len"],
-            }
-        )
-    content = ContentObject(material["content_hash"], material["byte_len"], material["media_type"])
-    async with service.app.content.protect(content) as path:
-        data = await asyncio.to_thread(path.read_bytes)
-    if command.action == "inspect":
-        return json_object(
-            {
-                "success": True,
-                "manifest": await service.app.bundles.inspect_zip(ctx, data),
-                "file_name": material["filename"],
-                "material_id": material_id,
-                "size": material["byte_len"],
-            }
-        )
-    if command.action == "import":
-        return json_object(
-            {
-                "success": True,
-                "installation": await service.app.bundles.install_zip(
-                    ctx, data, command.operation_id or str(uuid4())
-                ),
             }
         )
     raise DomainError("action_invalid", "Unknown bundle administration action")

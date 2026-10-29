@@ -111,6 +111,34 @@ async def allocate_in(
     )
 
 
+async def recover_in(
+    tx: WriteTx,
+    ctx: CallContext,
+    reference: CognitiveRef | MediaReference,
+    known: ReferenceAddresses | None,
+) -> ReferenceAddresses:
+    """Recover saved names without taking a name already bound to another identity."""
+    if known is None:
+        return await allocate_in(tx, ctx, reference)
+    selected = targets(reference)
+    names = (known.object, known.exact) if len(selected) == 2 else (known.exact,)
+    for target, address in zip(selected, names, strict=True):
+        if address is None:
+            continue
+        validate_address(address, target)
+        await tx.connection.execute(
+            insert(addresses)
+            .values(
+                address=address,
+                namespace_id=ctx.namespace_id,
+                target=canonical_json(target),
+                commit_seq=tx.commit_seq,
+            )
+            .on_conflict_do_nothing()
+        )
+    return await allocate_in(tx, ctx, reference)
+
+
 async def addresses_in(
     view: ReadView | WriteTx, ctx: CallContext, reference: CognitiveRef | MediaReference
 ) -> ReferenceAddresses | None:

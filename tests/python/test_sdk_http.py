@@ -60,6 +60,45 @@ def test_sdk_scopes_and_managed_real_http(tmp_path):
                 material = result.catalog.units[0].material_id
                 observation = result.outputs[0].observation_id
                 service = app.state.application
+                from nous_wave.contracts.credentials import CreateCredential, RotateCredential
+
+                assert (await client.identity({"action": "whoami"}))["caller_id"]
+                issued = await client.create_credential(
+                    CreateCredential(
+                        name="SDK readonly",
+                        namespace_ids=(namespace.id,),
+                        subject_ids=(subject.id,),
+                        capabilities=("read",),
+                    )
+                )
+                assert (await client.credential(issued.record.id)).revision == 1
+                rotated = await client.rotate_credential(
+                    issued.record.id,
+                    RotateCredential(expected_revision=1, reason="actual rotation"),
+                )
+                assert rotated.record.revision == 2 and rotated.token != issued.token
+                revoked = await client.revoke_credential(
+                    issued.record.id, reason="finished SDK verification"
+                )
+                assert revoked.revoked_at is not None
+                assert len(await client.credential_history(issued.record.id)) == 3
+                assert (await client.cognition({"action": "get", "id": ref.id}))["reference"][
+                    "id"
+                ] == ref.id
+                assert len(await client.cognitive_history(ref.id)) == 1
+                from nous_wave.contracts.imports import TextSplitOptions
+
+                preview = await client.preview_text_import(
+                    namespace.id,
+                    subject.id,
+                    ImportDocument(text="逐字引文。", filename="quote.txt"),
+                    overrides=TextSplitOptions(strategy_override="quote"),
+                )
+                assert preview.units[0].text == "逐字引文。" and not preview.units[0].requires_llm
+                formed = await client.form_memory(
+                    subject.id, observation, llm_enabled=False, operation_id="literal-observation"
+                )
+                assert formed.observation_id == observation and formed.cognition
                 ctx = CallContext(
                     caller_id="instance-admin", namespace_id=namespace.id, subject_id=subject.id
                 )
@@ -147,6 +186,49 @@ def test_sdk_scopes_and_managed_real_http(tmp_path):
                 assert [hit.object.reference for hit in limited.hits] == [region_record.reference]
                 with pytest.raises(NousError):
                     await region_client.material(material)
+                second_event = await client.observe(
+                    subject.id, material, origin={"conversation_ref": "chat:two"}
+                )
+                other_region_record = await service.cognition.adopt(
+                    ctx,
+                    AdoptCognition(
+                        body=MemoryBody(text="限定片段。来自另一事件。"),
+                        evidence=(
+                            EvidenceLink(observation_id=second_event["id"], region_id=region.id),
+                        ),
+                    ),
+                )
+                narrowed_event = region_client.with_source_read(
+                    SourceReadScope(subject_id=subject.id, observation_ids=(observation,))
+                )
+                event_hits = (
+                    await narrowed_event.query_cognition(
+                        namespace.id, subject.id, QueryRequest(text="限定")
+                    )
+                ).hits
+                assert [hit.object.reference for hit in event_hits] == [region_record.reference]
+                paired_event = whole.with_source_read(
+                    SourceReadScope(
+                        subject_id=subject.id,
+                        source_refs=(
+                            MediaSource(
+                                reference={"kind": "source_region", "id": region.id},
+                                observation_id=observation,
+                            ),
+                        ),
+                    )
+                )
+                assert [
+                    hit.object.reference
+                    for hit in (
+                        await paired_event.query_cognition(
+                            namespace.id, subject.id, QueryRequest(text="限定")
+                        )
+                    ).hits
+                ] == [region_record.reference]
+                assert other_region_record.reference not in [
+                    hit.object.reference for hit in event_hits
+                ]
                 scoped_empty = client.with_source_read(SourceReadScope(subject_id=subject.id))
                 assert (
                     await scoped_empty.query_cognition(
@@ -240,7 +322,7 @@ def test_sdk_scopes_and_managed_real_http(tmp_path):
                     ChangeResidents,
                     ChangeWorkContext,
                     ContextPrepare,
-                    ContextResident,
+                    ContextResidentAdmission,
                     OpenContextSession,
                     WorkContextContent,
                 )
@@ -249,10 +331,10 @@ def test_sdk_scopes_and_managed_real_http(tmp_path):
                     namespace.id, subject.id, OpenContextSession(session_id="resident-session")
                 )
                 target = CognitiveTarget(reference=ref)
-                resident = ContextResident(
+                resident = ContextResidentAdmission(
                     target=target,
                     entry_reason="explicit host pin",
-                    entered_at=datetime.now(UTC) - timedelta(days=2),
+                    last_meaningful_use_at=datetime.now(UTC) - timedelta(days=2),
                 )
                 revised = await single.change_context_residents(
                     namespace.id,
@@ -264,7 +346,7 @@ def test_sdk_scopes_and_managed_real_http(tmp_path):
                         residents=(resident,),
                     ),
                 )
-                assert revised.residents[0].last_meaningful_use_at is None
+                assert revised.residents[0].entered_at > resident.last_meaningful_use_at
                 with pytest.raises(NousError):
                     await single.change_context_residents(
                         namespace.id,
@@ -287,16 +369,33 @@ def test_sdk_scopes_and_managed_real_http(tmp_path):
                         ),
                     ),
                 )
-                await single.change_work_context(
+                work = await single.change_work_context(
                     namespace.id,
                     subject.id,
                     ChangeWorkContext(
                         action="pin",
                         work_context_id=work.id,
                         expected_revision=work.revision,
-                        session_id=session.id,
+                        anchors=(target,),
                     ),
                 )
+                assert work.content.anchors == (target,)
+                from nous_wave.contracts.context import ChangeContextSession
+
+                session = await single.context_session(namespace.id, subject.id, session.id)
+                await single.change_context_session(
+                    namespace.id,
+                    subject.id,
+                    ChangeContextSession(
+                        session_id=session.id,
+                        expected_revision=session.revision,
+                        active_work_context_id=work.id,
+                    ),
+                )
+                assert [
+                    item.revision
+                    for item in await single.work_context_history(namespace.id, subject.id, work.id)
+                ] == [2, 1]
                 with pytest.raises(NousError):
                     await single.prepare_context(
                         namespace.id,
@@ -373,7 +472,13 @@ def test_sdk_scopes_and_managed_real_http(tmp_path):
                 assert (await adapter.memory_source(memory_id))["success"]
                 directory = await adapter.memory_source_admin(action="list")
                 assert directory["sources"]
-                exported = await adapter.memory_bundle_admin(action="export")
+                exported = await adapter.memory_bundle_admin(
+                    action="export", operation_id="archive-once"
+                )
+                assert (
+                    await adapter.memory_bundle_admin(action="export", operation_id="archive-once")
+                    == exported
+                )
                 assert exported["material_id"]
                 inspection = await adapter.memory_bundle_admin(
                     action="inspect", material_id=exported["material_id"]
@@ -450,6 +555,27 @@ def test_sdk_scopes_and_managed_real_http(tmp_path):
                     (skipped["task"]["task_id"],), namespace_id=namespace.id, subject_id=subject.id
                 )
                 assert skipped["task"]["task_id"] != task_id
+                page = await client.job_page(
+                    namespace_id=namespace.id,
+                    subject_id=subject.id,
+                    state="SUCCESS",
+                    kind="nous.imports.process",
+                    limit=1,
+                )
+                assert len(page.items) == 1
+                assert page.items[0].status == "SUCCESS"
+                if page.next_cursor:
+                    following = await client.job_page(
+                        namespace_id=namespace.id,
+                        subject_id=subject.id,
+                        state="SUCCESS",
+                        kind="nous.imports.process",
+                        limit=10,
+                        cursor=page.next_cursor,
+                    )
+                    assert page.items[0].workflow_id not in {
+                        row.workflow_id for row in following.items
+                    }
 
             finally:
                 await client.close()

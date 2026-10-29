@@ -22,14 +22,10 @@ async def runtime_admin(
     service: AMemorixService, ctx: CallContext, arguments: dict[str, JsonValue]
 ) -> dict[str, JsonValue]:
     command = RuntimeInput.model_validate(arguments)
-    if command.action == "get_config":
-        return json_object(
-            {
-                "success": True,
-                "config": await service.app.configuration.effective(ctx, "models"),
-                "integration": await service.policy(ctx),
-            }
-        )
+    if command.action in {"get_config", "list_vector_spaces"}:
+        from .diagnostics import diagnostics
+
+        return await diagnostics(service, ctx)
     if command.action == "set_config":
         return json_object(
             {
@@ -39,23 +35,4 @@ async def runtime_admin(
                 ),
             }
         )
-    if command.action == "list_vector_spaces":
-        from sqlalchemy import select
-
-        from nous.cognition.schema import vectors
-
-        async with service.app.authority.read(ctx) as view:
-            readable = {record.reference.exact() for record in await service.records(ctx)}
-            query = select(vectors.c.space, vectors.c.reference).where(
-                vectors.c.reference.in_(readable)
-            )
-            counts: dict[str, int] = {}
-            for space, _ in (await view.connection.execute(query)).all():
-                counts[str(space)] = counts.get(str(space), 0) + 1
-        return {
-            "success": True,
-            "spaces": [
-                {"space": key, "vector_count": value} for key, value in sorted(counts.items())
-            ],
-        }
-    raise DomainError("action_invalid", "Unknown runtime management action")
+    raise DomainError("capability_unavailable", "Runtime action has no configured owner")

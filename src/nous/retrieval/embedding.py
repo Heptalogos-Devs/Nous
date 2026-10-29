@@ -14,9 +14,8 @@ from nous_wave.contracts import (
 from sqlalchemy import select
 
 from nous.cognition.schema import vectors
-from nous.material.service import require_observation_in
 
-from .media import embedding_input, media_records_in
+from .media import embedding_input, media_records_in, source_material_ids_in
 
 if TYPE_CHECKING:
     from .service import RetrievalService
@@ -32,7 +31,7 @@ async def query_embedding(
             ("\n".join(part for part in parts if isinstance(part, str)),),
         )
     async with self.authority.read(ctx) as view:
-        available = await media_records_in(view, ctx, self.materials)
+        available = await media_records_in(view, ctx, self.materials, self.derivations)
     converted: list[str | MediaEmbeddingInput] = []
     source_ids: set[str] = set()
     for part in parts:
@@ -43,7 +42,14 @@ async def query_embedding(
             record
             for record in available
             if record.reference.exact() == part.exact()
-            and (part.observation_id is None or part.observation_id in record.source_roots)
+            and (
+                part.observation_id is None
+                or (
+                    record.reference.observation_id == part.observation_id
+                    if part.kind in {"material", "source_region"}
+                    else part.observation_id in record.source_roots
+                )
+            )
         ]
         if not matched:
             raise DomainError(
@@ -51,7 +57,12 @@ async def query_embedding(
             )
         record = max(matched, key=lambda item: item.commit_seq)
         converted.append(embedding_input(record))
-        source_ids.add(record.material_id)
+        async with self.authority.read(ctx) as view:
+            source_ids.update(
+                await source_material_ids_in(
+                    view, ctx, record.reference, self.materials, self.derivations
+                )
+            )
     return await self.models.embed_media(
         ctx.model_copy(update={"request_id": f"{ctx.request_id}:query-media"}),
         (tuple(converted),),
@@ -74,19 +85,28 @@ async def embed_media(
     async with self.authority.read(ctx) as view:
         candidates = [
             record
-            for record in await media_records_in(view, ctx, self.materials)
+            for record in await media_records_in(view, ctx, self.materials, self.derivations)
             if record.reference.exact() == reference.exact()
             and (
-                reference.observation_id is None or reference.observation_id in record.source_roots
+                reference.observation_id is None
+                or (
+                    record.reference.observation_id == reference.observation_id
+                    if reference.kind in {"material", "source_region"}
+                    else reference.observation_id in record.source_roots
+                )
             )
         ]
     if not candidates:
         raise DomainError("source_unavailable", "Media embedding source is unavailable")
     record = max(candidates, key=lambda item: item.commit_seq)
+    async with self.authority.read(ctx) as view:
+        source_ids = await source_material_ids_in(
+            view, ctx, record.reference, self.materials, self.derivations
+        )
     batch = await self.models.embed_media(
         ctx.model_copy(update={"request_id": operation_id}),
         ((embedding_input(record),),),
-        source_ids=(record.material_id,),
+        source_ids=source_ids,
     )
     if (
         len(batch.vectors) != 1
@@ -105,12 +125,7 @@ async def embed_media(
     ) as tx:
         if tx.replayed:
             return tx.replay_result
-        await require_observation_in(
-            tx,
-            ctx,
-            record.source_roots[0],
-            region_id=record.region.id if record.region else None,
-        )
+        await source_material_ids_in(tx, ctx, record.reference, self.materials, self.derivations)
         existing = (
             await tx.connection.execute(
                 select(vectors.c.model, vectors.c.dimensions).where(

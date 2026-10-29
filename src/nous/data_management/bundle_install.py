@@ -1,13 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 from datetime import datetime
 from hashlib import sha256
-from io import BytesIO
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 from uuid import uuid4
-from zipfile import ZipFile
 
 from nous_wave.contracts import (
     CallContext,
@@ -22,16 +21,18 @@ from nous_wave.contracts import (
     TimePoint,
     UnitOutput,
 )
+from nous_wave.contracts.bundles import BundlePlacement
 from nous_wave.contracts.context import CognitiveTarget
 from nous_wave.contracts.references import ObjectTarget, ReferenceBinding
 from pydantic import JsonValue, TypeAdapter
+from sqlalchemy import select
 
 from nous.cognition.projection import references_in
-from nous.cognition.schema import revisions
+from nous.cognition.schema import revisions, vectors
 from nous.identity.service import require_subject_in
 from nous.imports.schema import catalogs, inputs, outputs, successes, units
 from nous.material.service import MaterialRecord, materials, observations, regions
-from nous.platform.content import ContentLease
+from nous.platform.content import ContentLease, ContentObject
 from nous.references import allocate_in, import_bindings_in
 
 from .schema import bundle_installs
@@ -41,12 +42,12 @@ if TYPE_CHECKING:
 
 
 async def install_zip(self: BundleService, ctx: CallContext, data: bytes, operation_id: str):
-    with ZipFile(BytesIO(data)) as archive:
-        info = archive.getinfo("bundle.json")
-        if info.file_size > 64 * 1024 * 1024:
-            raise DomainError("bundle_too_large", "Bundle JSON exceeds 64 MiB")
-        bundle = json.loads(archive.read(info))
-    return await self.install(ctx, InstallBundle(operation_id=operation_id, bundle=bundle))
+    from .archive_read import decode
+
+    bundle = await asyncio.to_thread(decode, data)
+    return await self.install(
+        ctx, InstallBundle(operation_id=operation_id, bundle=bundle.model_dump(mode="json"))
+    )
 
 
 async def install(self: BundleService, ctx: CallContext, command: InstallBundle):
@@ -60,6 +61,9 @@ async def install(self: BundleService, ctx: CallContext, command: InstallBundle)
     if receipt is not None:
         return receipt.result
     bundle = SubjectBundle.model_validate(command.bundle)
+    from .bundle_validation import validate_graph
+
+    validate_graph(bundle)
     leases: dict[str, ContentLease] = {}
     try:
         if self.content_store:
@@ -150,10 +154,62 @@ async def install_prepared(
         if tx.replayed:
             return tx.replay_result
         await require_subject_in(tx, ctx, "memory")
+        if command.archive_material_id:
+            await self.cognition.materials.read_in(tx, ctx, command.archive_material_id)
+        if command.mode == "restore":
+            if original.content_level != "full":
+                raise DomainError(
+                    "bundle_restore_full_required", "Restore requires a full subject archive"
+                )
+            for table in (revisions, catalogs, observations):
+                statement = select(table.c.id).where(
+                    table.c.namespace_id == ctx.namespace_id, table.c.subject_id == ctx.subject_id
+                )
+                if table is observations and command.archive_material_id:
+                    statement = statement.where(
+                        observations.c.material_id != command.archive_material_id
+                    )
+                if await tx.connection.scalar(statement.limit(1)) is not None:
+                    raise DomainError(
+                        "bundle_restore_nonempty", "Restore requires an empty receiving Subject"
+                    )
+        digest = sha256(
+            json.dumps(
+                original.model_dump(mode="json", exclude={"id", "authority_commit_seq"}),
+                sort_keys=True,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ).encode()
+        ).hexdigest()
+        if original.package is not None and original.package.version is not None:
+            registered = (
+                await tx.connection.execute(
+                    select(bundle_installs.c.record).where(
+                        bundle_installs.c.namespace_id == ctx.namespace_id,
+                        bundle_installs.c.subject_id == ctx.subject_id,
+                    )
+                )
+            ).scalars()
+            for existing in registered:
+                if (
+                    existing.get("state") == "active"
+                    and isinstance(existing.get("package"), dict)
+                    and existing["package"].get("id") == original.package.id
+                    and existing["package"].get("version") == original.package.version
+                    and existing.get("placement") == command.placement.model_dump(mode="json")
+                ):
+                    if existing.get("content_digest") != digest:
+                        raise DomainError(
+                            "bundle_release_conflict",
+                            "This package release already has different content in the receiving placement",
+                        )
+                    return tx.result(existing)
         mapping = {
             value: str(uuid4())
             for value in {
                 *(record.reference.id for record in records),
+                *(record.reference.id for record in original.derivations.representations),
+                *(region.id for region in original.derivations.regions),
                 *obs,
                 *mats,
                 *(
@@ -180,8 +236,14 @@ async def install_prepared(
 
         def remap(value: JsonValue, field: str = "") -> JsonValue:
             if isinstance(value, dict):
-                if field in {"origin", "identifiers"}:
+                if field in {"origin", "identifiers", "metadata", "structured", "external_ids"}:
                     return value
+                if value.get("kind") == "representation" and isinstance(value.get("id"), str):
+                    identity, at, revision = str(value["id"]).partition("@")
+                    return {
+                        **{key: remap(item, key) for key, item in value.items() if key != "id"},
+                        "id": mapping.get(identity, identity) + (f"@{revision}" if at else ""),
+                    }
                 if field == "source_regions":
                     return {
                         mapping[key]: [
@@ -205,7 +267,7 @@ async def install_prepared(
                 return ctx.namespace_id
             if field == "subject_id":
                 return ctx.subject_id
-            if field == "required_source_ids" and isinstance(value, str):
+            if field in {"required_source_ids", "reference"} and isinstance(value, str):
                 if ":" not in value:
                     return mapping.get(value, value)
                 kind, identity = value.split(":", 1)
@@ -217,6 +279,8 @@ async def install_prepared(
                 "source_roots",
                 "support_roots",
                 "input_source_ids",
+                "material_ids",
+                "required_observation_ids",
             }:
                 return mapping.get(value, value) if isinstance(value, str) else value
             return value
@@ -227,6 +291,8 @@ async def install_prepared(
             identity = (
                 target.identity.id if isinstance(target, ObjectTarget) else target.reference.id
             )
+            if "@" in identity:
+                identity = identity.rsplit("@", 1)[0]
             if identity not in mapping or (
                 isinstance(target, CognitiveTarget) and target.reference.exact() not in keys
             ):
@@ -250,12 +316,15 @@ async def install_prepared(
         for new in remapped["observations"]:
             new["commit_seq"] = tx.commit_seq
             new["record"]["commit_seq"] = tx.commit_seq
+            new["record"]["placement"] = command.placement.model_dump(mode="json")
             await tx.connection.execute(observations.insert().values(**new))
         for name, table in (("catalogs", catalogs), ("inputs", inputs), ("units", units)):
             for new in remapped[name]:
                 if name == "catalogs":
                     CatalogView.model_validate(new["record"])
                 await tx.connection.execute(table.insert().values(**new))
+        if original.derivations.representations or original.derivations.regions:
+            await self.cognition.derivations.install_in(tx, ctx, original.derivations, mapping)
         heads: dict[str, int] = {}
         for record in records:
             heads[record.reference.id] = max(
@@ -290,6 +359,42 @@ async def install_prepared(
                     commit_seq=tx.commit_seq,
                 )
             )
+        vector_targets = {
+            *keys,
+            *(f"material:{identity}" for identity in mats),
+            *(f"source-region:{row['id']}" for row in bundle.get("regions", [])),
+            *(value.reference.media().exact() for value in original.derivations.representations),
+            *(f"derived-region:{region.id}" for region in original.derivations.regions),
+        }
+        spaces: dict[str, tuple[str, int]] = {}
+        for archived, row in zip(original.vectors, remapped["vectors"], strict=True):
+            if archived.reference not in vector_targets:
+                raise DomainError(
+                    "bundle_vector_reference", "A vector must identify an archived exact object"
+                )
+            signature = (archived.model, archived.dimensions)
+            if spaces.setdefault(archived.space, signature) != signature:
+                raise DomainError(
+                    "embedding_space_conflict",
+                    "An archived space mixes model identities or dimensions",
+                )
+            current = (
+                await tx.connection.execute(
+                    select(vectors.c.model, vectors.c.dimensions)
+                    .where(vectors.c.space == archived.space)
+                    .limit(1)
+                )
+            ).first()
+            if current is not None and (current.model, current.dimensions) != signature:
+                raise DomainError(
+                    "embedding_space_conflict",
+                    "Archived vectors conflict with the authority's existing space",
+                )
+            row["commit_seq"] = tx.commit_seq
+            row["call_id"] = (
+                f"bundle:{original.id}:{archived.call_id}" if archived.call_id else None
+            )
+            await tx.connection.execute(vectors.insert().values(**row))
         for value, new in zip(bundle.get("outputs", []), remapped["outputs"], strict=True):
             new["attempt_job_id"] = None
             new["commit_seq"] = tx.commit_seq
@@ -323,6 +428,15 @@ async def install_prepared(
         installation_id = str(uuid4())
         result = {
             "installation_id": installation_id,
+            "package": original.package.model_dump(mode="json") if original.package else None,
+            "content_level": original.content_level,
+            "mode": command.mode,
+            "placement": command.placement.model_dump(mode="json"),
+            "content_digest": digest,
+            "archive_material_id": command.archive_material_id,
+            "source_namespace_id": original.namespace_id,
+            "source_subject_id": original.subject_id,
+            "installed_at": tx.recorded_at,
             "state": "active",
             "owned_observation_ids": [mapping[oid] for oid in obs],
             "bundle_id": bundle["id"],
@@ -340,3 +454,33 @@ async def install_prepared(
             )
         )
         return tx.result(result)
+
+
+async def install_material(
+    self: BundleService,
+    ctx: CallContext,
+    material_id: str,
+    operation_id: str,
+    mode: Literal["merge", "restore"] = "merge",
+    placement: BundlePlacement | None = None,
+):
+    if self.content_store is None:
+        raise DomainError("content_unavailable", "Bundle archive bytes are unavailable")
+    material = await self.cognition.materials.read(ctx, material_id)
+    async with self.content_store.protect(
+        ContentObject(material["content_hash"], material["byte_len"], material["media_type"])
+    ) as path:
+        data = await asyncio.to_thread(path.read_bytes)
+    from .archive_read import decode
+
+    bundle = (await asyncio.to_thread(decode, data)).model_dump(mode="json")
+    return await self.install(
+        ctx,
+        InstallBundle(
+            operation_id=operation_id,
+            bundle=bundle,
+            mode=mode,
+            placement=placement or BundlePlacement(),
+            archive_material_id=material_id,
+        ),
+    )

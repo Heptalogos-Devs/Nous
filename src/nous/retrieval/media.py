@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 from nous_wave.contracts import (
     CallContext,
     CognitiveTimes,
+    DomainError,
     MediaEmbeddingInput,
     MediaRecord,
     MediaReference,
@@ -24,11 +25,17 @@ from nous.platform.content import ContentObject
 from nous.platform.persistence import ReadView, WriteTx
 
 if TYPE_CHECKING:
+    from nous.material.derived import DerivedService
     from nous.material.service import MaterialService
 
 
 async def media_records_in(
-    view: ReadView | WriteTx, ctx: CallContext, material_service: MaterialService | None = None
+    view: ReadView | WriteTx,
+    ctx: CallContext,
+    material_service: MaterialService | None = None,
+    derivations: DerivedService | None = None,
+    *,
+    include_text: bool = True,
 ) -> list[MediaRecord]:
     sources = (
         (
@@ -65,9 +72,10 @@ async def media_records_in(
         if material is None or material.get("purged"):
             continue
         source = row["record"]
-        content_text: str = material.get("text") or ""
+        content_text: str = (material.get("text") or "") if include_text else ""
         if (
-            material.get("text") is None
+            include_text
+            and material.get("text") is None
             and material_service
             and material_service.content_store
             and (material["media_type"].startswith("text/") or "json" in material["media_type"])
@@ -90,14 +98,19 @@ async def media_records_in(
             recorded=recorded,
         )
         candidates: list[SourceRegion | None] = []
-        if source_permitted(ctx, row["material_id"], row["id"]):
+        if source_permitted(ctx, row["material_id"], row["id"]) or material.get(
+            "required_source_ids"
+        ):
             candidates.append(None)
             candidates.extend(region_rows.get(row["material_id"], []))
-        elif ctx.allowed_source_ids is not None:
+        elif ctx.source_groups():
+            union = {atom for group in ctx.source_groups() for atom in group}
             candidates.extend(
                 region
                 for region in region_rows.get(row["material_id"], [])
-                if region.id in ctx.allowed_source_ids
+                if region.id in union
+                or f"source-region:{region.id}" in union
+                or f"source_region:{region.id}" in union
             )
         for region in candidates:
             reference = MediaReference(
@@ -105,13 +118,33 @@ async def media_records_in(
                 id=region.id if region else row["material_id"],
                 observation_id=row["id"],
             )
+            if material_service is not None:
+                try:
+                    await material_service.media_source_in(view, ctx, reference)
+                except DomainError as error:
+                    if error.code not in {"source_unavailable", "region_not_found"}:
+                        raise
+                    continue
             text: str = content_text
             if region:
-                if region.text_start is not None:
+                if any(
+                    value is not None
+                    for value in (
+                        region.text_start,
+                        region.text_end,
+                        region.json_pointer,
+                        region.line_number,
+                    )
+                ):
                     text = source_region_text(text, region) if content_text else ""
                 else:
                     text = ""
             text = text or f"{material['filename']} {material['media_type']}"
+            provenance = (
+                await material_service.provenance_in(view, ctx, reference, derivations=derivations)
+                if material_service is not None
+                else None
+            )
             result.append(
                 MediaRecord(
                     reference=reference,
@@ -128,14 +161,20 @@ async def media_records_in(
                     byte_len=material["byte_len"],
                     filename=material["filename"],
                     text=text,
-                    source_roots=(row["id"],),
-                    support_roots=(row["id"],),
-                    source_regions={row["id"]: (region.id,)} if region else {},
+                    source_roots=provenance.roots if provenance else (row["id"],),
+                    support_roots=provenance.roots if provenance else (row["id"],),
+                    source_regions=provenance.regions
+                    if provenance
+                    else {row["id"]: (region.id,)}
+                    if region
+                    else {},
                     times=times,
                     region=region,
                     commit_seq=max(row["commit_seq"], material["commit_seq"]),
                 )
             )
+    if derivations is not None:
+        result.extend(await derivations.records_in(view, ctx, include_text=include_text))
     return result
 
 
@@ -147,3 +186,19 @@ def embedding_input(record: MediaRecord) -> MediaEmbeddingInput:
         media_type=record.media_type,
         filename=record.filename,
     )
+
+
+async def source_material_ids_in(
+    view: ReadView | WriteTx,
+    ctx: CallContext,
+    reference: MediaReference,
+    materials: MaterialService,
+    derivations: DerivedService | None,
+) -> tuple[str, ...]:
+    """Revalidate all exact media inputs and return their actual paid-call source roots."""
+    if reference.kind in {"representation", "derived_region"}:
+        if derivations is None:
+            raise DomainError("source_unavailable", "Derived media authority is unavailable")
+        return (await derivations.source_in(view, ctx, reference)).material_ids
+    material, _, _ = await materials.media_source_in(view, ctx, reference)
+    return (material["id"],)

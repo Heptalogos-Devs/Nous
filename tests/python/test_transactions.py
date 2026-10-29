@@ -90,6 +90,85 @@ def test_reader_snapshot_remains_stable_while_writer_commits(tmp_path):
     asyncio.run(scenario())
 
 
+def test_job_pages_filter_before_limit_and_bind_cursor_to_snapshot_and_scope(tmp_path):
+    async def scenario():
+        authority = Authority(tmp_path / "authority.sqlite")
+        await authority.initialize()
+        execution = DurableExecution(authority)
+
+        async def echo(value):
+            return {"value": value}
+
+        execution.register("paged-echo", echo)
+        execution.register("different-kind", echo)
+        await execution.start()
+        ctx = context().model_copy(update={"subject_id": "subject-one"})
+        try:
+            async with authority.write(ctx, "older", operation_kind="admit", payload={}) as tx:
+                for number in range(3):
+                    await tx.enqueue(
+                        JobSpec(
+                            "paged-echo", "default", args=(number,), workflow_id=f"ready-{number}"
+                        )
+                    )
+                tx.result({"accepted": True})
+            for number in range(3):
+                await asyncio.wait_for(execution.wait(ctx, f"ready-{number}"), timeout=10)
+            async with authority.write(ctx, "newer", operation_kind="admit", payload={}) as tx:
+                # More nonmatching rows than one internal query batch: older matches
+                # must still fill the requested page.
+                for number in range(130):
+                    await tx.enqueue(
+                        JobSpec(
+                            "paged-echo",
+                            "default",
+                            args=(number,),
+                            workflow_id=f"delayed-{number:03}",
+                            delay_seconds=3600,
+                        )
+                    )
+                await tx.enqueue(
+                    JobSpec("different-kind", "default", args=(0,), workflow_id="other")
+                )
+                tx.result({"accepted": True})
+            other = ctx.model_copy(update={"subject_id": "subject-two"})
+            async with authority.write(other, "foreign", operation_kind="admit", payload={}) as tx:
+                await tx.enqueue(JobSpec("paged-echo", "default", args=(0,), workflow_id="foreign"))
+                tx.result({"accepted": True})
+            await asyncio.wait_for(execution.wait(other, "foreign"), timeout=10)
+            page = await execution.query_jobs(ctx, kind="paged-echo", state="SUCCESS", limit=2)
+            assert [job.workflow_id for job in page.items] == ["ready-2", "ready-1"]
+            assert page.next_cursor
+            async with authority.write(ctx, "latest", operation_kind="admit", payload={}) as tx:
+                await tx.enqueue(JobSpec("paged-echo", "default", args=(0,), workflow_id="latest"))
+                tx.result({"accepted": True})
+            await asyncio.wait_for(execution.wait(ctx, "latest"), timeout=10)
+            next_page = await execution.query_jobs(
+                ctx, kind="paged-echo", state="SUCCESS", limit=2, cursor=page.next_cursor
+            )
+            assert [job.workflow_id for job in next_page.items] == ["ready-0"]
+            assert next_page.next_cursor is None
+            for modified in (
+                other,
+                ctx.model_copy(update={"caller_id": "another"}),
+                ctx.model_copy(update={"namespace_id": "another"}),
+            ):
+                with pytest.raises(ValueError, match="cursor"):
+                    await execution.query_jobs(
+                        modified, kind="paged-echo", state="SUCCESS", cursor=page.next_cursor
+                    )
+            with pytest.raises(ValueError, match="cursor"):
+                await execution.query_jobs(ctx, kind="paged-echo", cursor=page.next_cursor)
+            with pytest.raises(ValueError, match="cursor"):
+                await execution.query_jobs(ctx, cursor="invalid-cursor")
+            assert await execution.list_jobs(context("another")) == []
+        finally:
+            await execution.close()
+            await authority.close()
+
+    asyncio.run(scenario())
+
+
 def test_rollback_removes_domain_changes_receipt_and_dbos_job(tmp_path):
     async def scenario():
         authority = Authority(tmp_path / "authority.sqlite")
@@ -398,5 +477,60 @@ def test_source_receipt_redaction_keeps_operation_identity_and_prevents_reexecut
             )
             assert all("private original text" not in value for value in results)
         await authority.close()
+
+    asyncio.run(scenario())
+
+
+def test_old_public_receipt_accepts_only_neutral_added_defaults(tmp_path):
+    async def scenario():
+        from nous_wave.contracts import ProcessCatalog
+        from nous_wave.contracts.imports import FormationOptionsOverride
+
+        authority = Authority(tmp_path / "authority.sqlite")
+        await authority.initialize()
+        ctx = context()
+        command = ProcessCatalog(operation_id="existing-import", catalog_id="catalog")
+        previous = {
+            "operation_id": "existing-import",
+            "catalog_id": "catalog",
+            "unit_ids": None,
+            "llm_enabled": True,
+            "formation_retries": 1,
+            "vectors": "metadata_allowed",
+        }
+        try:
+            async with authority.write(
+                ctx, command.operation_id, operation_kind="imports.submit", payload=previous
+            ) as tx:
+                tx.result({"job_id": "already-paid-job"})
+            receipt = await authority.receipt(
+                ctx, command.operation_id, operation_kind="imports.submit", payload=command
+            )
+            assert receipt is not None and receipt.result == {"job_id": "already-paid-job"}
+            async with authority.write(
+                ctx, command.operation_id, operation_kind="imports.submit", payload=command
+            ) as tx:
+                assert tx.replayed and tx.commit_seq == receipt.commit_seq
+            for changed in (
+                command.model_copy(update={"llm_enabled": False}),
+                command.model_copy(
+                    update={
+                        "formation_options_override": FormationOptionsOverride(
+                            timezone="Asia/Shanghai"
+                        )
+                    }
+                ),
+            ):
+                with pytest.raises(OperationConflict):
+                    await authority.receipt(
+                        ctx, command.operation_id, operation_kind="imports.submit", payload=changed
+                    )
+                with pytest.raises(OperationConflict):
+                    async with authority.write(
+                        ctx, command.operation_id, operation_kind="imports.submit", payload=changed
+                    ):
+                        raise AssertionError("Different behavior cannot replay an old command")
+        finally:
+            await authority.close()
 
     asyncio.run(scenario())

@@ -24,7 +24,9 @@ from nous.platform.localization import Localizer
 from .common import Options, emit, options
 from .contexts import register as register_contexts
 from .data import register as register_data
+from .maintenance import register as register_maintenance
 from .management import register as register_management
+from .media import register as register_media
 from .service import register as register_service
 
 cli = typer.Typer(
@@ -81,7 +83,7 @@ def serve(
         raise ValueError("Foreground service logs are a stream; omit --json when serving")
     settings = Settings(instance=instance or options(ctx).instance, host=host, port=port)
     configure_logging(settings.log_level)
-    uvicorn.run(create_app(settings), host=host, port=port, log_config=None)
+    uvicorn.run(create_app(settings), host=host, port=port, log_config=None, reset_contextvars=True)
 
 
 @cli.command()
@@ -116,7 +118,9 @@ def restore(ctx: typer.Context, archive: Path, instance: Path) -> None:
 
 register_data(cli)
 register_management(cli)
+register_maintenance(cli)
 register_contexts(cli)
+register_media(cli)
 register_service(cli)
 
 

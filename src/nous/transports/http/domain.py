@@ -91,7 +91,7 @@ async def freeze(request: Request, namespace_id: str, subject_id: str, command: 
 @router.get("/namespaces/{namespace_id}/subjects/{subject_id}/imports/catalogs/{catalog_id}")
 async def catalog(request: Request, namespace_id: str, subject_id: str, catalog_id: str):
     return await application(request).imports.read_catalog(
-        await context(request, namespace_id, subject_id), catalog_id
+        await context(request, namespace_id, subject_id, capability="read"), catalog_id
     )
 
 
@@ -126,5 +126,5 @@ async def query(request: Request, namespace_id: str, subject_id: str, command: Q
 @router.get("/namespaces/{namespace_id}/subjects/{subject_id}/materials/{material_id}")
 async def material(request: Request, namespace_id: str, subject_id: str, material_id: str):
     return await application(request).material.read(
-        await context(request, namespace_id, subject_id), material_id
+        await context(request, namespace_id, subject_id, capability="read"), material_id
     )

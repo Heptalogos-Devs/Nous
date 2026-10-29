@@ -64,7 +64,7 @@ async def eligible(
             rows = list(heads.values())
         candidates: list[RetrievalRecord] = [
             *rows,
-            *(await media_records_in(view, ctx, self.materials)),
+            *(await media_records_in(view, ctx, self.materials, self.derivations)),
         ]
         roots = await self.cognition.active_roots_in(view, ctx)
         allowed: list[RetrievalRecord] = []
@@ -104,7 +104,9 @@ async def eligible(
                 continue
             if not time_matches(row, request.times):
                 continue
-            if not await self.cognition.visible_in(view, ctx, row, roots):
+            if isinstance(row, CognitiveRecord) and not await self.cognition.visible_in(
+                view, ctx, row, roots
+            ):
                 continue
             live = [oid for oid in row.source_roots if oid in roots]
             if request.source_ids is not None and not all(

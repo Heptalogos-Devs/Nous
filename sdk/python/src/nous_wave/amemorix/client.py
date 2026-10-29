@@ -262,6 +262,10 @@ class AMemorixAdapter:
                 "freeze",
                 "forget",
                 "recycle_bin",
+                "unprotect",
+                "trash",
+                "purge",
+                "decay",
             }:
                 component_name = "maintain_memory"
                 values.setdefault("operation_id", str(uuid4()))

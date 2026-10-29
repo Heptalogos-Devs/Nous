@@ -8,7 +8,8 @@ import re
 
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from nous_wave.contracts import DomainError, FreezeCatalog
+from nous_wave.contracts import DomainError
+from nous_wave.contracts.imports import TextSplitOptions
 from pydantic import JsonValue
 
 SCENE = re.compile(r"(?m)^(?:#{1,6}\s+.*|Chapter\s+\d+|\*{3,}$|={3,}$)")
@@ -64,7 +65,19 @@ def select_strategy(text: str, strategy: str) -> str:
     )
 
 
-def split_text(text: str, options: FreezeCatalog) -> list[Document]:
+def split_text(text: str, options: TextSplitOptions) -> list[Document]:
+    if options.record_units:
+        return [
+            Document(
+                page_content=text,
+                metadata={
+                    "start_index": 0,
+                    "strategy": "record",
+                    "requires_llm": options.strategy_override != "quote",
+                    "split_context": {"record_units": True},
+                },
+            )
+        ]
     if options.strategy_override is None and not options.chat_log:
         return RecursiveCharacterTextSplitter(
             chunk_size=options.chunk_size, chunk_overlap=options.chunk_overlap, add_start_index=True

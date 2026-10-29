@@ -1,18 +1,15 @@
-"""Resolve public source selectors without broadening precise selections."""
+"""Resolve source selectors into OR clauses whose conjunction preserves scope."""
 
 import base64
 import binascii
+from dataclasses import dataclass
 
 from fastapi import Request
-from nous_wave.contracts import (
-    CallContext,
-    CognitiveRecord,
-    CognitiveRef,
-    DomainError,
-)
-from nous_wave.contracts.context import CognitiveTarget, MediaTarget
+from nous_wave.contracts import CallContext, CognitiveRef, DomainError, MediaReference
+from nous_wave.contracts.context import CognitiveTarget, ContextTarget, MediaTarget, WorkContext
 from nous_wave.source_scope import (
     CognitionSource,
+    MediaSource,
     ObservationSource,
     OriginalMedia,
     SourceReadScope,
@@ -22,7 +19,7 @@ from pydantic import TypeAdapter, ValidationError
 from sqlalchemy import select
 
 from nous.application import Application
-from nous.context.service import contexts
+from nous.context.models import contexts
 from nous.identity.service import require_subject_in
 from nous.material.service import SourceRecord, observations, regions
 
@@ -30,15 +27,51 @@ _SCOPES = TypeAdapter(tuple[SourceReadScope, ...])
 _SOURCE = TypeAdapter(SourceRecord)
 
 
+@dataclass(frozen=True)
+class ResolvedSourceScope:
+    allowed_source_ids: tuple[str, ...] | None
+    source_constraints: tuple[tuple[str, ...], ...] = ()
+
+
+def resolved_scope(clauses: list[set[str]]) -> ResolvedSourceScope:
+    groups = tuple(tuple(sorted(group)) for group in clauses)
+    if any(not group for group in groups):
+        return ResolvedSourceScope((), groups)
+    return ResolvedSourceScope(
+        tuple(sorted({token for group in groups for token in group})), groups
+    )
+
+
+def union_selectors(alternatives: list[list[set[str]]]) -> list[set[str]]:
+    """Distribute selector alternatives without losing region/event conjunctions."""
+    if not alternatives:
+        return [set()]
+    result = alternatives[0]
+    for alternative in alternatives[1:]:
+        combined = {frozenset(left | right) for left in result for right in alternative}
+        ordered = sorted(combined, key=lambda group: (len(group), tuple(sorted(group))))
+        reduced: list[set[str]] = []
+        for group in ordered:
+            if not any(prior.issubset(group) for prior in reduced):
+                reduced.append(set(group))
+            if len(reduced) > 1024:
+                raise DomainError(
+                    "source_scope_complex",
+                    "Source selectors require too many independent constraints",
+                )
+        result = reduced
+    return result
+
+
 async def resolve_scope(
     request: Request,
     namespace_id: str,
     subject_id: str | None,
     base_scope: tuple[str, ...] | None = None,
-) -> tuple[str, ...] | None:
+) -> ResolvedSourceScope:
     header = request.headers.get("x-nous-source-read")
     if header is None:
-        return base_scope
+        return ResolvedSourceScope(base_scope, (base_scope,) if base_scope is not None else ())
     if len(header) > 65536:
         raise DomainError("source_scope_invalid", "Source-read metadata exceeds its limit")
     try:
@@ -57,6 +90,7 @@ async def resolve_scope(
     unrestricted = CallContext(
         caller_id="instance-admin", namespace_id=namespace_id, subject_id=selected_subject
     )
+    clauses = [set(base_scope)] if base_scope is not None else []
     async with app.authority.read(unrestricted) as view:
         await require_subject_in(view, unrestricted)
         source_rows = (
@@ -87,140 +121,122 @@ async def resolve_scope(
             for row in region_rows
             if row.material_id in material_observations
         }
-        exact_records: dict[str, CognitiveRecord] = {}
-        selections: list[set[str]] = [set(base_scope)] if base_scope is not None else []
-        broad_object_ids: set[str] = set()
-        if base_scope is not None:
-            from nous.cognition.schema import revisions
 
-            for token in base_scope:
-                if token in sources or token in material_observations or token in region_materials:
-                    continue
-                query = select(revisions.c.record).where(
-                    revisions.c.namespace_id == namespace_id,
-                    revisions.c.subject_id == selected_subject,
-                )
-                if ":" in token and "@" in token:
-                    kind, versioned = token.split(":", 1)
-                    object_id, version = versioned.rsplit("@", 1)
-                    if not version.isdigit():
-                        continue
-                    query = query.where(
-                        revisions.c.id == object_id,
-                        revisions.c.revision == int(version),
-                        revisions.c.kind == kind,
+        async def cognition_selector(ref: CognitionSource) -> list[set[str]]:
+            reference = ref.reference
+            if isinstance(reference, str):
+                resolution = await app.references.resolve_in(view, unrestricted, reference)
+                if not isinstance(resolution.reference, CognitiveTarget):
+                    raise DomainError(
+                        "source_scope_invalid", "Cognition selector requires a cognitive address"
                     )
-                else:
-                    broad_object_ids.add(token)
-                    query = query.where(revisions.c.id == token, revisions.c.head.is_(True))
-                raw_record = (await view.connection.execute(query)).scalar_one_or_none()
-                if raw_record is not None:
-                    exact_records[token] = CognitiveRecord.model_validate(raw_record)
+                reference = resolution.reference.reference
+            await app.cognition.get_in(view, unrestricted, reference)
+            return [{reference.exact()}]
+
+        async def media_selector(ref: MediaSource) -> list[set[str]]:
+            media = ref.reference
+            if isinstance(media, str):
+                resolution = await app.references.resolve_in(view, unrestricted, media)
+                if not isinstance(resolution.reference, MediaTarget):
+                    raise DomainError(
+                        "source_scope_invalid", "Media selector requires a media address"
+                    )
+                media = resolution.reference.reference
+            observation_id = ref.observation_id
+            if isinstance(media, OriginalMedia):
+                kind, identity = "material", media.material_id
+            else:
+                kind, identity = media.kind, media.id
+                if (
+                    observation_id is not None
+                    and media.observation_id is not None
+                    and observation_id != media.observation_id
+                ):
+                    raise DomainError(
+                        "source_scope_invalid", "Media selector names conflicting observations"
+                    )
+                observation_id = observation_id or media.observation_id
+            if kind not in {"material", "source_region"}:
+                info = await app.derivations.source_in(
+                    view,
+                    unrestricted,
+                    MediaReference.model_validate({"kind": kind, "id": identity}),
+                )
+                if observation_id is not None and observation_id not in info.roots:
+                    raise DomainError(
+                        "source_unavailable", "Selected observation did not produce this derivation"
+                    )
+                return (
+                    [{info.reference.id}, {observation_id}]
+                    if observation_id is not None
+                    else [{info.reference.id}]
+                )
+            material_id = identity if kind == "material" else region_materials.get(identity)
+            available = material_observations.get(material_id or "", set())
+            if not available or (observation_id is not None and observation_id not in available):
+                raise DomainError(
+                    "source_unavailable", "Selected media has no authorized observation"
+                )
+            if kind == "material":
+                return [{observation_id or identity}]
+            return [{identity}, {observation_id}] if observation_id is not None else [{identity}]
 
         for scope in scopes:
-            selected: set[str] = set()
+            alternatives: list[list[set[str]]] = []
             for observation_id in scope.observation_ids:
                 if observation_id not in sources:
                     raise DomainError("source_unavailable", "Selected observation is unavailable")
-                selected.add(observation_id)
-            for ref in scope.source_refs:
+                alternatives.append([{observation_id}])
+            pending = list(scope.source_refs)
+            while pending:
+                ref = pending.pop()
                 if isinstance(ref, ObservationSource):
                     if ref.id not in sources:
                         raise DomainError(
                             "source_unavailable", "Selected observation is unavailable"
                         )
-                    selected.add(ref.id)
+                    alternatives.append([{ref.id}])
                 elif isinstance(ref, CognitionSource):
-                    reference = ref.reference
-                    if isinstance(reference, str):
-                        resolution = await app.references.resolve_in(view, unrestricted, reference)
-                        if not isinstance(resolution.reference, CognitiveTarget):
-                            raise DomainError(
-                                "source_scope_invalid",
-                                "Cognition selector requires a cognitive address",
-                            )
-                        reference = resolution.reference.reference
-                    record = await app.cognition.get_in(view, unrestricted, reference)
-                    exact_records[reference.exact()] = record
-                    selected.add(reference.exact())
+                    alternatives.append(await cognition_selector(ref))
                 elif isinstance(ref, WorkContextSource):
-                    value = (
-                        await view.connection.execute(
-                            select(contexts.c.record).where(
-                                contexts.c.id == ref.id,
-                                contexts.c.namespace_id == namespace_id,
-                                contexts.c.subject_id == selected_subject,
-                            )
+                    value = await view.connection.scalar(
+                        select(contexts.c.record).where(
+                            contexts.c.id == ref.id,
+                            contexts.c.namespace_id == namespace_id,
+                            contexts.c.subject_id == selected_subject,
                         )
-                    ).scalar_one_or_none()
+                    )
                     if value is None:
                         raise DomainError("context_not_found", "Selected context is unavailable")
-                    references = TypeAdapter(tuple[CognitiveRef, ...]).validate_python(
-                        value["references"]
-                    )
-                    for reference in references:
-                        record = await app.cognition.get_in(view, unrestricted, reference)
-                        exact_records[reference.exact()] = record
-                        selected.add(reference.exact())
-                else:
-                    media = ref.reference
-                    if isinstance(media, str):
-                        resolution = await app.references.resolve_in(view, unrestricted, media)
-                        if not isinstance(resolution.reference, MediaTarget):
-                            raise DomainError(
-                                "source_scope_invalid", "Media selector requires a media address"
-                            )
-                        media = resolution.reference.reference
-                    if isinstance(media, OriginalMedia):
-                        kind, identity = "material", media.material_id
+                    targets: tuple[ContextTarget, ...]
+                    if "work_context" in value:
+                        targets = WorkContext.model_validate(value["work_context"]).content.anchors
                     else:
-                        kind, identity = media.kind, media.id
-                    material_id = identity if kind == "material" else region_materials.get(identity)
-                    if kind not in {"material", "source_region"}:
-                        raise DomainError(
-                            "source_unavailable", "Selected media derivation is unavailable"
+                        targets = tuple(
+                            CognitiveTarget(reference=reference)
+                            for reference in TypeAdapter(tuple[CognitiveRef, ...]).validate_python(
+                                value["references"]
+                            )
                         )
-                    available = material_observations.get(material_id or "", set())
-                    if not available or (
-                        ref.observation_id is not None and ref.observation_id not in available
-                    ):
-                        raise DomainError(
-                            "source_unavailable",
-                            "Selected media has no authorized live observation",
-                        )
-                    selected.add(
-                        ref.observation_id
-                        if kind == "material" and ref.observation_id is not None
-                        else identity
-                    )
+                    for target in targets:
+                        if isinstance(target, CognitiveTarget):
+                            alternatives.append(
+                                await cognition_selector(
+                                    CognitionSource(reference=target.reference)
+                                )
+                            )
+                        else:
+                            alternatives.append(
+                                await media_selector(MediaSource(reference=target.reference))
+                            )
+                else:
+                    alternatives.append(await media_selector(ref))
             for source in sources.values():
                 if (
                     source["id"] in active_ids
                     and source["origin"].get("conversation_ref") in scope.origin_conversation_refs
                 ):
-                    selected.add(source["id"])
-            selections.append(selected)
-
-        async def admitted(token: str, selection: set[str]) -> bool:
-            if token in selection:
-                return True
-            if token in sources:
-                return sources[token]["material_id"] in selection
-            if token in region_materials:
-                material = region_materials[token]
-                return material in selection or bool(
-                    material_observations[material].intersection(selection)
-                )
-            if token in broad_object_ids:
-                return False
-            if token in exact_records:
-                narrowed = unrestricted.model_copy(update={"allowed_source_ids": tuple(selection)})
-                return await app.cognition.visible_in(view, narrowed, exact_records[token])
-            return False
-
-        candidates = {token for selection in selections for token in selection}
-        resolved: list[str] = []
-        for token in sorted(candidates):
-            if all([await admitted(token, selection) for selection in selections]):
-                resolved.append(token)
-        return tuple(resolved)
+                    alternatives.append([{source["id"]}])
+            clauses.extend(union_selectors(alternatives))
+    return resolved_scope(clauses)

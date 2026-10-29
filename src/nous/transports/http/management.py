@@ -107,13 +107,15 @@ class PromptPreview(BaseModel):
 
 @router.get("/prompts")
 async def prompts(request: Request, namespace_id: str = "instance"):
-    return await application(request).prompts.list(await context(request, namespace_id))
+    return await application(request).prompts.list(
+        await context(request, namespace_id, capability="read")
+    )
 
 
 @router.get("/prompts/{prompt_id}/history")
 async def prompt_history(request: Request, prompt_id: str, namespace_id: str = "instance"):
     return await application(request).prompts.history(
-        await context(request, namespace_id), prompt_id
+        await context(request, namespace_id, capability="read"), prompt_id
     )
 
 
@@ -162,7 +164,7 @@ async def configuration(
     request: Request, key: str, namespace_id: str = "instance", subject_id: str | None = None
 ):
     return await application(request).configuration.effective(
-        await context(request, namespace_id, subject_id), key
+        await context(request, namespace_id, subject_id, capability="read"), key
     )
 
 
@@ -188,7 +190,9 @@ async def configure(
 
 @router.get("/prompts/{prompt_id}")
 async def prompt(request: Request, prompt_id: str, namespace_id: str = "instance"):
-    return await application(request).prompts.get(await context(request, namespace_id), prompt_id)
+    return await application(request).prompts.get(
+        await context(request, namespace_id, capability="read"), prompt_id
+    )
 
 
 @router.put("/prompts/{prompt_id}")
@@ -207,14 +211,16 @@ async def save_prompt(
 @router.get("/model-calls")
 async def model_calls(request: Request, namespace_id: str, subject_id: str | None = None):
     return await application(request).models.ledger.list(
-        await context(request, namespace_id, subject_id)
+        await context(request, namespace_id, subject_id, capability="read")
     )
 
 
 @router.get("/jobs/{job_id}")
 async def job(request: Request, job_id: str, namespace_id: str, subject_id: str | None = None):
     app = application(request)
-    value = await app.execution.status(await context(request, namespace_id, subject_id), job_id)
+    value = await app.execution.status(
+        await context(request, namespace_id, subject_id, capability="read"), job_id
+    )
     return {"job": value}
 
 

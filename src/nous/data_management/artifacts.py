@@ -66,7 +66,10 @@ async def purge_artifacts_in(self: SourceService, tx: WriteTx, ctx: CallContext)
             )
         ).all()
         for material_id, value in rows:
-            required: list[str] = value.get("required_source_ids", [])
+            required: list[str] = [
+                *value.get("required_source_ids", []),
+                *value.get("required_observation_ids", []),
+            ]
             if value.get("purged") or not required:
                 continue
             if not any([await lost_in(tx, ctx.namespace_id, locator) for locator in required]):

@@ -6,11 +6,44 @@ from uuid import uuid4
 
 import typer
 from nous_wave import NousClient
-from nous_wave.contracts.credentials import CreateCredential
+from nous_wave.contracts.credentials import CreateCredential, RotateCredential
 from nous_wave.operations import encoded, segment
 from pydantic import JsonValue
 
 from .common import download, invoke, read_command, read_json
+
+
+def _issue(ctx: typer.Context, path: str, payload: JsonValue, token_out: Path | None) -> None:
+    saved = False
+    target = None
+    if token_out is not None:
+        token_out = token_out.resolve()
+        descriptor = os.open(token_out, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        target = os.fdopen(descriptor, "w", encoding="utf-8")
+
+    async def run(api: NousClient) -> object:
+        nonlocal saved
+        result = await api.request("POST", path, body=payload)
+        if (
+            token_out is not None
+            and target is not None
+            and isinstance(result, dict)
+            and isinstance(result.get("token"), str)
+        ):
+            target.write(str(result["token"]))
+            target.flush()
+            os.fsync(target.fileno())
+            saved = True
+            return {"record": result["record"], "token_file": str(token_out)}
+        return result
+
+    try:
+        invoke(ctx, run)
+    finally:
+        if target is not None:
+            target.close()
+            if not saved and token_out is not None:
+                token_out.unlink(missing_ok=True)
 
 
 def register(cli: typer.Typer) -> None:
@@ -38,10 +71,49 @@ def register(cli: typer.Typer) -> None:
 
     @jobs.command("list")
     def list_jobs(
-        ctx: typer.Context, namespace_id: str, subject_id: str | None = None, limit: int = 50
+        ctx: typer.Context,
+        namespace_id: str,
+        subject_id: str | None = None,
+        limit: int = 50,
+        kind: str | None = None,
+        state: str | None = None,
+        scope: str | None = None,
     ) -> None:
         invoke(
-            ctx, lambda api: api.jobs(namespace_id=namespace_id, subject_id=subject_id, limit=limit)
+            ctx,
+            lambda api: api.jobs(
+                namespace_id=namespace_id,
+                subject_id=subject_id,
+                limit=limit,
+                kind=kind,
+                state=state,
+                scope=scope,
+            ),
+        )
+
+    @jobs.command("page")
+    def job_page(
+        ctx: typer.Context,
+        namespace_id: str,
+        subject_id: str | None = None,
+        limit: int = 50,
+        kind: str | None = None,
+        state: str | None = None,
+        scope: str | None = None,
+        cursor: str | None = None,
+    ) -> None:
+        """Page durable jobs with exact kind/state filters; reuse next_cursor."""
+        invoke(
+            ctx,
+            lambda api: api.job_page(
+                namespace_id=namespace_id,
+                subject_id=subject_id,
+                limit=limit,
+                kind=kind,
+                state=state,
+                scope=scope,
+                cursor=cursor,
+            ),
         )
 
     @jobs.command("status")
@@ -207,45 +279,51 @@ def register(cli: typer.Typer) -> None:
     def create_credential(ctx: typer.Context, command: Path, token_out: Path | None = None) -> None:
         """Create from public CreateCredential JSON; optionally save its one-time token."""
         payload = read_command(command, CreateCredential)
-        saved = False
-        target = None
-        if token_out is not None:
-            token_out = token_out.resolve()
-            descriptor = os.open(token_out, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-            target = os.fdopen(descriptor, "w", encoding="utf-8")
+        _issue(ctx, "/api/credentials", encoded(payload), token_out)
 
-        async def run(api: NousClient) -> object:
-            nonlocal saved
-            result = await api.request("POST", "/api/credentials", body=encoded(payload))
-            if (
-                token_out is not None
-                and target is not None
-                and isinstance(result, dict)
-                and isinstance(result.get("token"), str)
-            ):
-                target.write(str(result["token"]))
-                target.flush()
-                os.fsync(target.fileno())
-                saved = True
-                return {"record": result["record"], "token_file": str(token_out)}
-            return result
+    @credentials.command("whoami")
+    def whoami(ctx: typer.Context) -> None:
+        invoke(ctx, lambda api: api.request("GET", "/api/credentials/whoami"))
 
-        try:
-            invoke(ctx, run)
-        finally:
-            if target is not None:
-                target.close()
-                if not saved and token_out is not None:
-                    token_out.unlink(missing_ok=True)
+    @credentials.command("read")
+    def read_credential(ctx: typer.Context, credential_id: str) -> None:
+        invoke(ctx, lambda api: api.request("GET", f"/api/credentials/{segment(credential_id)}"))
+
+    @credentials.command("history")
+    def history_credential(ctx: typer.Context, credential_id: str) -> None:
+        invoke(
+            ctx,
+            lambda api: api.request("GET", f"/api/credentials/{segment(credential_id)}/history"),
+        )
+
+    @credentials.command("rotate")
+    def rotate_credential(
+        ctx: typer.Context, credential_id: str, command: Path, token_out: Path | None = None
+    ) -> None:
+        """Replace the token using RotateCredential JSON; save its new one-time value."""
+        payload = read_command(command, RotateCredential)
+        _issue(
+            ctx, f"/api/credentials/{segment(credential_id)}/rotate", encoded(payload), token_out
+        )
 
     @credentials.command("revoke")
-    def revoke(ctx: typer.Context, credential_id: str, operation_id: str | None = None) -> None:
+    def revoke(
+        ctx: typer.Context,
+        credential_id: str,
+        operation_id: str | None = None,
+        expected_revision: int | None = None,
+        reason: str = "",
+    ) -> None:
         invoke(
             ctx,
             lambda api: api.request(
                 "DELETE",
                 f"/api/credentials/{segment(credential_id)}",
-                params={"operation_id": operation_id or str(uuid4())},
+                params={
+                    "operation_id": operation_id or str(uuid4()),
+                    "expected_revision": expected_revision,
+                    "reason": reason,
+                },
             ),
         )
 

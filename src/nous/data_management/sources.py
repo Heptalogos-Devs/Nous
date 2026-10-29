@@ -15,28 +15,24 @@ from nous_wave.contracts import (
     SourceResult,
 )
 from pydantic import JsonValue
-from sqlalchemy import JSON, Column, String, Table, select, update
+from sqlalchemy import select, update
 
 from nous.cognition.schema import revisions, vectors
 from nous.cognition.service import CognitionService
 from nous.identity.service import require_subject_in
 from nous.material.service import materials, observations, require_observation_in, source_permitted
 from nous.platform.content import ContentStore
-from nous.platform.persistence import Authority, ReadView, WriteTx, metadata
+from nous.platform.persistence import Authority, ReadView, WriteTx
 
+from . import source_log
 from .artifacts import purge_artifacts_in
-
-source_operations = Table(
-    "source_operations",
-    metadata,
-    Column("id", String, primary_key=True),
-    Column("namespace_id", String, nullable=False),
-    Column("subject_id", String, nullable=False),
-    Column("record", JSON, nullable=False),
-)
+from .schema import source_operations
 
 
 class SourceService:
+    get_operation = source_log.get_operation
+    list_operations = source_log.list_operations
+
     def __init__(
         self,
         authority: Authority,
@@ -197,10 +193,14 @@ class SourceService:
                         vectors.delete().where(vectors.c.reference == reference.exact())
                     )
         if kind == "purge":
-            await self._purge_cognitive_payloads_in(tx, ctx)
+            if self.purge_in:
+                await self.purge_in(tx, ())
+            retired = await self.cognition.retire_unsupported_in(tx, ctx)
             detached.extend(await purge_artifacts_in(self, tx, ctx))
-            await self._purge_cognitive_payloads_in(tx, ctx)
+            retired += await self.cognition.retire_unsupported_in(tx, ctx)
             await self._purge_import_payloads_in(tx, ctx)
+            if self.purge_context_in:
+                await self.purge_context_in(tx, ctx, tuple(dict.fromkeys(retired)))
         source_operation_id = str(uuid4())
         result = SourceResult(
             operation_id=command.operation_id,
@@ -216,6 +216,7 @@ class SourceService:
                 subject_id=ctx.require_subject(),
                 record={
                     "caller_id": ctx.caller_id,
+                    "requested_by": command.requested_by,
                     "kind": kind,
                     "reason": command.reason,
                     "result": result.model_dump(mode="json"),
@@ -223,61 +224,6 @@ class SourceService:
             )
         )
         return result, detached
-
-    async def _purge_cognitive_payloads_in(self, tx: WriteTx, ctx: CallContext) -> None:
-        live = {
-            row["id"]
-            for row in (
-                await tx.connection.execute(
-                    select(observations.c.id, observations.c.record).where(
-                        observations.c.namespace_id == ctx.namespace_id,
-                        observations.c.subject_id == ctx.subject_id,
-                    )
-                )
-            ).mappings()
-            if not row["record"].get("purged")
-        }
-        retired: list[CognitiveRef] = []
-        rows = (
-            (
-                await tx.connection.execute(
-                    select(revisions.c.record).where(
-                        revisions.c.namespace_id == ctx.namespace_id,
-                        revisions.c.subject_id == ctx.subject_id,
-                    )
-                )
-            )
-            .scalars()
-            .all()
-        )
-        for value in rows:
-            record = CognitiveRecord.model_validate(value)
-            if record.purged or set(record.support_roots or record.source_roots).intersection(live):
-                continue
-            tombstone = record.model_copy(
-                update={
-                    "body": None,
-                    "deleted": True,
-                    "purged": True,
-                    "evidence": tuple(
-                        link.model_copy(update={"role": "purged"}) for link in record.evidence
-                    ),
-                }
-            )
-            await tx.connection.execute(
-                update(revisions)
-                .where(
-                    revisions.c.id == record.reference.id,
-                    revisions.c.revision == record.reference.revision,
-                )
-                .values(record=tombstone.model_dump(mode="json"))
-            )
-            await tx.connection.execute(
-                vectors.delete().where(vectors.c.reference == record.reference.exact())
-            )
-            retired.append(record.reference)
-        if retired and self.purge_context_in:
-            await self.purge_context_in(tx, ctx, tuple(retired))
 
     async def _purge_import_payloads_in(self, tx: WriteTx, ctx: CallContext) -> None:
         from nous.imports.schema import catalogs, inputs, requests, units
@@ -426,52 +372,3 @@ class SourceService:
 
     async def purge(self, ctx: CallContext, command: SourceCommand):
         return await self._change(ctx, command, "purge")
-
-    async def get_operation(self, ctx: CallContext, source_operation_id: str):
-        async with self.authority.read(ctx) as view:
-            value = (
-                await view.connection.execute(
-                    select(source_operations.c.record).where(
-                        source_operations.c.id == source_operation_id,
-                        source_operations.c.namespace_id == ctx.namespace_id,
-                        source_operations.c.subject_id == ctx.subject_id,
-                    )
-                )
-            ).scalar_one_or_none()
-            if value is None:
-                raise DomainError("source_operation_not_found", "Source operation is unavailable")
-            for observation_id in value["result"]["observation_ids"]:
-                await require_observation_in(view, ctx, observation_id, active=False)
-            return {"source_operation_id": source_operation_id, **value}
-
-    async def list_operations(self, ctx: CallContext, limit: int = 100):
-        if not 1 <= limit <= 1000:
-            raise DomainError("invalid_limit", "Source operation limit must be between 1 and 1000")
-        async with self.authority.read(ctx) as view:
-            rows = (
-                (
-                    await view.connection.execute(
-                        select(source_operations).where(
-                            source_operations.c.namespace_id == ctx.namespace_id,
-                            source_operations.c.subject_id == ctx.subject_id,
-                        )
-                    )
-                )
-                .mappings()
-                .all()
-            )
-            result: list[dict[str, JsonValue]] = []
-            for row in rows:
-                value = row["record"]
-                permitted = True
-                for observation_id in value["result"]["observation_ids"]:
-                    try:
-                        await require_observation_in(view, ctx, observation_id, active=False)
-                    except DomainError:
-                        permitted = False
-                        break
-                if permitted:
-                    result.append({"source_operation_id": row["id"], **value})
-                if len(result) >= limit:
-                    break
-            return result

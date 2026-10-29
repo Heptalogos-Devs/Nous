@@ -1,3 +1,7 @@
+from .bundles import BundleAssetOptions as BundleAssetOptions
+from .bundles import BundlePlacement as BundlePlacement
+from .bundles import BundleSelector as BundleSelector
+from .bundles import PackageDescriptor as PackageDescriptor
 from .cognition import (
     AdoptCognition as AdoptCognition,
 )
@@ -85,6 +89,7 @@ from .cognition import (
 from .cognition import (
     NarrativeThreadBody as NarrativeThreadBody,
 )
+from .cognition import PlatformIdentity as PlatformIdentity
 from .cognition import (
     ProposedAssociation as ProposedAssociation,
 )
@@ -138,6 +143,7 @@ from .common import (
 from .common import (
     TimeRange as TimeRange,
 )
+from .context import ChangeContextSession as ChangeContextSession
 from .context import ChangeResidents as ChangeResidents
 from .context import ChangeWorkContext as ChangeWorkContext
 from .context import (
@@ -149,6 +155,7 @@ from .context import (
 )
 from .context import ContextPreparationJob as ContextPreparationJob
 from .context import ContextResident as ContextResident
+from .context import ContextResidentAdmission as ContextResidentAdmission
 from .context import ContextsPolicy as ContextsPolicy
 from .context import StewardProposal as StewardProposal
 from .context import WorkContext as WorkContext
@@ -157,15 +164,27 @@ from .credentials import Capability as Capability
 from .credentials import CreateCredential as CreateCredential
 from .credentials import CredentialRecord as CredentialRecord
 from .credentials import IssuedCredential as IssuedCredential
+from .growth import GrowthAction as GrowthAction
+from .growth import GrowthAdoption as GrowthAdoption
+from .growth import GrowthBinding as GrowthBinding
+from .growth import GrowthDraft as GrowthDraft
+from .growth import GrowthEntry as GrowthEntry
+from .growth import GrowthMemoryChange as GrowthMemoryChange
+from .growth import GrowthMerge as GrowthMerge
+from .growth import GrowthPartition as GrowthPartition
+from .growth import GrowthSnapshot as GrowthSnapshot
+from .growth import GrowthSplit as GrowthSplit
 from .imports import (
     AdmitFiles as AdmitFiles,
 )
 from .imports import (
     CatalogView as CatalogView,
 )
+from .imports import EmbeddingSyncResult as EmbeddingSyncResult
 from .imports import (
     FileSuccess as FileSuccess,
 )
+from .imports import FormObservation as FormObservation
 from .imports import (
     FreezeCatalog as FreezeCatalog,
 )
@@ -181,15 +200,31 @@ from .imports import (
 from .imports import (
     ImportUnit as ImportUnit,
 )
+from .imports import ObservationFormation as ObservationFormation
 from .imports import (
     ProcessCatalog as ProcessCatalog,
 )
+from .imports import TextImportPreview as TextImportPreview
+from .imports import TextPreviewUnit as TextPreviewUnit
+from .imports import TextSplitOptions as TextSplitOptions
 from .imports import UnitAttempt as UnitAttempt
 from .imports import (
     UnitOutput as UnitOutput,
 )
+from .imports import VectorAdoption as VectorAdoption
 from .lifecycle import MemoryAction as MemoryAction
 from .lifecycle import MemoryChange as MemoryChange
+from .lifecycle import MemoryChanges as MemoryChanges
+from .maintenance import CreateMaintenanceSchedule as CreateMaintenanceSchedule
+from .maintenance import MaintenanceCatalog as MaintenanceCatalog
+from .maintenance import MaintenanceOptions as MaintenanceOptions
+from .maintenance import MaintenanceReview as MaintenanceReview
+from .maintenance import MaintenanceRun as MaintenanceRun
+from .maintenance import MaintenanceSchedule as MaintenanceSchedule
+from .maintenance import MaintenanceSubmission as MaintenanceSubmission
+from .maintenance import ReviewMaintenance as ReviewMaintenance
+from .maintenance import SnapshotReference as SnapshotReference
+from .maintenance import StartMaintenance as StartMaintenance
 from .management import (
     BundleRequest as BundleRequest,
 )
@@ -244,3 +279,13 @@ from .retrieval import (
 from .retrieval import (
     TimeFilter as TimeFilter,
 )
+from .self_model import AdoptSeed as AdoptSeed
+from .self_model import SeedDocument as SeedDocument
+from .self_model import SeedFacet as SeedFacet
+from .self_model import SeedResult as SeedResult
+from .social import ChangeSocialRelation as ChangeSocialRelation
+from .social import LinkIdentity as LinkIdentity
+from .text_import import TextImport as TextImport
+from .text_import import TextImportCompletion as TextImportCompletion
+from .text_import import TextImportResult as TextImportResult
+from .text_import import TextImportSubmission as TextImportSubmission

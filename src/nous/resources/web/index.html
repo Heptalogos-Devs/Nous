@@ -8,6 +8,7 @@
     <link rel="stylesheet" href="/assets/workbench.css" />
     <link rel="stylesheet" href="/assets/responsive.css" />
     <link rel="stylesheet" href="/assets/management.css" />
+    <link rel="stylesheet" href="/assets/media.css" />
     <script type="module" src="/assets/workbench.js"></script>
   </head>
   <body>
@@ -50,8 +51,10 @@
         <nav aria-label="主导航" data-i18n-aria-label="web-navigation">
           <a href="#search" data-page="search" data-i18n="web-search">认知库</a
           ><a href="#imports" data-page="imports" data-i18n="web-imports">接纳资料</a
+          ><a href="#media" data-page="media" data-i18n="web-media-workspace">媒体与派生</a
           ><a href="#sources" data-page="sources" data-i18n="web-sources">来源与恢复</a
           ><a href="#contexts" data-page="contexts" data-i18n="web-contexts">工作上下文</a
+          ><a href="#maintenance" data-page="maintenance" data-i18n="web-maintenance">认知整理</a
           ><a href="#jobs" data-page="jobs" data-i18n="web-jobs">持久任务</a
           ><a href="#models" data-page="models" data-i18n="web-models">模型与角色</a
           ><a href="#prompts" data-page="prompts">Prompt</a
@@ -79,6 +82,19 @@
           </select>
         </header>
         <div id="notice" role="status" hidden></div>
+        <section data-panel="maintenance" hidden>
+          <h1 data-i18n="web-maintenance">认知整理</h1>
+          <div id="maintenance-controls"></div>
+          <div id="maintenance-runs"></div>
+          <div id="maintenance-detail"></div>
+          <div id="maintenance-schedules"></div>
+        </section>
+        <section data-panel="media" hidden>
+          <h1 data-i18n="web-media-workspace">媒体与派生</h1>
+          <div id="media-controls"></div>
+          <div id="media-results" class="button-row"></div>
+          <div id="media-detail" class="form-sheet"></div>
+        </section>
         <section data-panel="search">
           <div class="page-heading">
             <div>
@@ -102,7 +118,7 @@
               <option value="vcp">VCP</option></select
             ><select id="domain" aria-label="返回域" data-i18n-aria-label="web-return-domain">
               <option value="cognition" data-i18n="web-cognition">认知</option>
-              <option value="media" data-i18n="web-media">媒体</option>
+              <option value="media" data-i18n="web-media-workspace">媒体</option>
               <option value="both" data-i18n="web-both-domains">认知与媒体</option></select
             ><button data-i18n="web-query">查询</button>
           </form>

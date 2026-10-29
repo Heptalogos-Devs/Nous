@@ -28,6 +28,7 @@ from nous_wave.contracts.context import (
     ContextTarget,
     EpistemicView,
     ManagedContextResponse,
+    MediaTarget,
 )
 from pydantic import JsonValue, TypeAdapter
 from sqlalchemy import select, update
@@ -80,6 +81,8 @@ async def require_targets_in(
                 await self.materials.read_in(view, ctx, target.reference.id)
             elif target.reference.kind == "source_region":
                 await self.materials.read_region_in(view, ctx, target.reference.id)
+            elif self.derivations is not None:
+                await self.derivations.authorize_in(view, ctx, target.reference)
             else:
                 raise DomainError("source_unavailable", "Context media derivation is unavailable")
 
@@ -129,12 +132,7 @@ async def prepare(
                         )
                     else:
                         offered.append(
-                            ContextSegment(
-                                key=resident.target.reference.model_dump_json(),
-                                text=f"{resident.target.reference.kind}:{resident.target.reference.id}",
-                                sources=(resident.target,),
-                                authority="source_material",
-                            )
+                            await self.media_segment_in(view, selected_ctx, resident.target)
                         )
                 except DomainError:
                     degradations.append("resident_unavailable")
@@ -156,15 +154,8 @@ async def prepare(
                 record = await self.cognition.get_in(view, selected_ctx, target.reference)
                 offered.append(self.record_segment(record).model_copy(update={"required": True}))
             else:
-                await self.require_targets_in(view, selected_ctx, (target,))
                 offered.append(
-                    ContextSegment(
-                        key=f"{target.reference.kind}:{target.reference.id}",
-                        text=f"{target.reference.kind}:{target.reference.id}",
-                        sources=(target,),
-                        authority="source_material",
-                        required=True,
-                    )
+                    await self.media_segment_in(view, selected_ctx, target, required=True)
                 )
     query = command.query
     if query is None and command.usage.intent.strip():
@@ -216,6 +207,7 @@ async def prepare(
             {
                 "usage": command.usage,
                 "scope": scope,
+                "source_constraints": selected_ctx.source_constraints,
                 "max_items": command.max_items,
                 "max_text_bytes": command.max_text_bytes,
                 "consumer_policy": consumer,
@@ -228,7 +220,11 @@ async def prepare(
         command.operation_id,
         operation_kind="context.prepare",
         scope=ctx.require_subject(),
-        payload={"command": command, "source_scope": scope},
+        payload={
+            "command": command,
+            "source_scope": scope,
+            "source_constraints": selected_ctx.source_constraints,
+        },
     ) as tx:
         if tx.replayed:
             replay = ContextPreparation.model_validate(tx.replay_result)
@@ -239,7 +235,7 @@ async def prepare(
                 selected_ctx,
                 tuple(target for segment in full.segments for target in segment.sources),
             )
-            return replay
+            return ContextPreparation.model_validate(stored["preparation"])
         session_key = sha256(
             f"{ctx.caller_id}\0{ctx.namespace_id}\0{ctx.require_subject()}\0{command.session_id}".encode()
         ).hexdigest()
@@ -291,6 +287,7 @@ async def prepare(
             old is not None
             and old.cursor == command.known_cursor
             and old.config_digest == config_digest
+            and not (prior_session is not None and prior_session.get("history_invalidated", False))
         )
         previous: tuple[ContextSegment, ...] = ()
         if append and old is not None:
@@ -381,6 +378,7 @@ async def prepare(
             "preparation": preparation.model_dump(mode="json"),
             "full_projection": full.model_dump(mode="json"),
             "source_scope": scope,
+            "source_constraints": selected_ctx.source_constraints,
             "caller_id": ctx.caller_id,
         }
         await tx.connection.execute(
@@ -469,3 +467,60 @@ async def cancel_preparation(
             update(preparations).where(preparations.c.id == preparation_id).values(record=value)
         )
         return tx.result(result)
+
+
+async def media_segment_in(
+    self: ManagedContexts,
+    view: ReadView | WriteTx,
+    ctx: CallContext,
+    target: MediaTarget,
+    *,
+    required: bool = False,
+) -> ContextSegment:
+    from nous_wave.contracts.derivation import StructuredRepresentation, TextRepresentation
+
+    await self.require_targets_in(view, ctx, (target,))
+    reference = target.reference
+    if reference.kind in {"material", "source_region"}:
+        if self.materials is None:
+            raise DomainError("media_unavailable", "Context media owner is unavailable")
+        material, region, observation_id = await self.materials.media_source_in(
+            view, ctx, reference
+        )
+        text = material["text"]
+        if text is not None and region is not None:
+            from nous.material.text import source_region_text
+            text = source_region_text(text,region) if any(value is not None for value in (
+                region.text_start,region.text_end,region.json_pointer,region.line_number)) else None
+        provenance = {
+            "media_reference": reference.model_dump(mode="json"),
+            "source_roots": [observation_id],
+            "media_type": material["media_type"],
+        }
+        epistemic = None
+    else:
+        if self.derivations is None:
+            raise DomainError("media_unavailable", "Context derivation owner is unavailable")
+        selected = await self.derivations.selected_in(view, ctx, reference)
+        info = await self.derivations.source_in(view, ctx, reference)
+        if isinstance(selected.payload, TextRepresentation):
+            text = selected.payload.text
+        elif isinstance(selected.payload, StructuredRepresentation):
+            text = canonical_json(selected.payload.value)
+        else:
+            text = canonical_json(selected.payload)
+        provenance = {
+            "media_reference": reference.model_dump(mode="json"),
+            "source_roots": list(info.roots),
+            "source_channel_access": info.access.model_dump(mode="json"),
+        }
+        epistemic = EpistemicStance(classification="derived", attribution=reference.exact())
+    return ContextSegment(
+        key=reference.exact(),
+        text=text or reference.exact(),
+        sources=(target,),
+        required=required,
+        authority="source_material",
+        provenance=TypeAdapter(dict[str, JsonValue]).validate_python(provenance),
+        epistemic=epistemic,
+    )

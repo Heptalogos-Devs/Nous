@@ -5,20 +5,16 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from datetime import datetime
 from typing import Literal
-from uuid import uuid4
 
 from pydantic import JsonValue
 
 from ..contracts.context import ContextReport, ContextReportResult, ContextUse
 from ..operations import encoded, object_value
 from ..source_scope import SourceReadScope
-from ..types import (
-    JsonObject,
-)
-from .knowledge import KnowledgeClient
+from .sources import SourceClient
 
 
-class ContextClient(KnowledgeClient):
+class ContextClient(SourceClient):
     async def report_context(
         self,
         admission_id: str,
@@ -68,81 +64,210 @@ class ContextClient(KnowledgeClient):
             source_read=source_read,
         )
 
-    async def contexts(self, request: Mapping[str, JsonValue]) -> JsonObject:
+    async def contexts(self, request: Mapping[str, JsonValue]) -> JsonValue:
+        from pydantic import TypeAdapter
+
         from ..contracts.context import (
+            ChangeContextSession,
+            ChangeResidents,
+            ChangeWorkContext,
             ContextAdmissionCommand,
             ContextPrepare,
             ContextReport,
             OpenContextSession,
         )
+        from .requests import operation_identity, operation_values, request_scope, required_text
 
-        values = object_value(request.get("request", {}))
-        subject_id = values.pop("subject_id", None) or request.get("subject_id") or self.subject_id
-        namespace_id = (
-            values.pop("namespace_id", None) or request.get("namespace_id") or self.namespace_id
-        )
-        if not isinstance(subject_id, str):
-            raise ValueError("Context operation requires subject_id")
-        if not isinstance(namespace_id, str):
-            namespace_id = (await self.subject(subject_id)).namespace_id
-        operation_id = request.get("operation_id") or str(uuid4())
-        if not isinstance(operation_id, str):
-            raise ValueError("operation_id must be text")
+        values = operation_values(request)
+        source_read = values.pop("source_read", None)
+        if source_read is not None:
+            scoped = self.with_source_read(SourceReadScope.model_validate(source_read))
+            return await scoped.contexts({"action": request.get("action"), "request": values})
+        namespace, subject = await request_scope(self, values)
         action = request.get("action")
+        operation_id = operation_identity(values)
         if action == "open_session":
+            if "native_session" in values:
+                values["session_id"] = values.pop("native_session")
+            if "parent_session" in values:
+                values["parent_session_id"] = values.pop("parent_session")
             return {
                 "result": encoded(
                     await self.open_context_session(
-                        namespace_id,
-                        subject_id,
+                        namespace,
+                        subject,
                         OpenContextSession.model_validate({"operation_id": operation_id, **values}),
                     )
                 )
             }
+        if action == "read_session":
+            return encoded(
+                await self.context_session(namespace, subject, required_text(values, "id"))
+            )
+        if action == "close_session":
+            return {
+                "result": encoded(
+                    await self.close_context_session(
+                        namespace, subject, required_text(values, "id"), operation_id
+                    )
+                )
+            }
+        if action == "change_session":
+            identity = required_text(values, "id")
+            change = object_value(values.pop("change", {}))
+            if "active_work_context" in change:
+                change["active_work_context_id"] = change.pop("active_work_context")
+            return {
+                "result": encoded(
+                    await self.change_context_session(
+                        namespace,
+                        subject,
+                        ChangeContextSession.model_validate(
+                            {
+                                "operation_id": operation_id,
+                                "session_id": identity,
+                                **values,
+                                **change,
+                            }
+                        ),
+                    )
+                )
+            }
+        if action == "residents":
+            session = await self.context_session(
+                namespace, subject, required_text(values, "session_id")
+            )
+            include_evicted = TypeAdapter(bool).validate_python(
+                values.pop("include_evicted", False)
+            )
+            return [
+                encoded(item)
+                for item in session.residents
+                if include_evicted or item.state != "evicted"
+            ]
+        if action == "change_residents":
+            change = object_value(values.pop("change", {}))
+            change_action = change.pop("action", None)
+            if "items" in change:
+                items = TypeAdapter(list[dict[str, JsonValue]]).validate_python(change.pop("items"))
+                for item in items:
+                    if "reason" in item:
+                        item["entry_reason"] = item.pop("reason")
+                change["residents"] = TypeAdapter(JsonValue).validate_python(items)
+            return {
+                "result": encoded(
+                    await self.change_context_residents(
+                        namespace,
+                        subject,
+                        ChangeResidents.model_validate(
+                            {
+                                "operation_id": operation_id,
+                                **values,
+                                **change,
+                                "action": change_action,
+                            }
+                        ),
+                    )
+                )
+            }
+        if action == "create_work":
+            return {
+                "result": encoded(
+                    await self.change_work_context(
+                        namespace,
+                        subject,
+                        ChangeWorkContext.model_validate(
+                            {"operation_id": operation_id, "action": "create", **values}
+                        ),
+                    )
+                )
+            }
+        if action == "read_work":
+            return encoded(await self.work_context(namespace, subject, required_text(values, "id")))
+        if action == "list_work":
+            return [
+                encoded(work)
+                for work in await self.work_contexts(
+                    namespace, subject, TypeAdapter(int).validate_python(values.pop("limit", 50))
+                )
+            ]
+        if action == "work_history":
+            return [
+                encoded(work)
+                for work in await self.work_context_history(
+                    namespace,
+                    subject,
+                    required_text(values, "id"),
+                    TypeAdapter(int).validate_python(values.pop("limit", 50)),
+                )
+            ]
+        if action == "change_work":
+            identity = required_text(values, "id")
+            change = object_value(values.pop("change", {}))
+            return {
+                "result": encoded(
+                    await self.change_work_context(
+                        namespace,
+                        subject,
+                        ChangeWorkContext.model_validate(
+                            {
+                                "operation_id": operation_id,
+                                "work_context_id": identity,
+                                **values,
+                                **change,
+                            }
+                        ),
+                    )
+                )
+            }
         if action == "prepare":
-            prepared = await self.prepare_context(
-                namespace_id,
-                subject_id,
+            submitted = await self.submit_context_preparation(
+                namespace,
+                subject,
                 ContextPrepare.model_validate({"operation_id": operation_id, **values}),
             )
-            return {"result": {"preparation_id": prepared.id}, "job_ids": []}
-        identity = request.get("id")
+            completed = (
+                await self.wait_success(
+                    (submitted.job_id,), namespace_id=namespace, subject_id=subject
+                )
+            )[0]
+            output = object_value(completed.output)
+            preparation_id = required_text(output, "preparation_id")
+            return {"result": {"preparation_id": preparation_id}, "job_ids": [submitted.job_id]}
         if action in {"preparation", "cancel_preparation"}:
-            if not isinstance(identity, str):
-                raise ValueError("Context operation requires preparation ID")
+            identity = required_text(values, "id")
             result = (
-                await self.context_preparation(namespace_id, subject_id, identity)
+                await self.context_preparation(namespace, subject, identity)
                 if action == "preparation"
                 else await self.cancel_context_preparation(
-                    namespace_id, subject_id, identity, operation_id
+                    namespace, subject, identity, operation_id
                 )
             )
-            return object_value(encoded(result))
+            return encoded(result)
         if action == "admit":
-            admission = await self.admit_managed_context(
-                namespace_id,
-                subject_id,
-                ContextAdmissionCommand.model_validate({"operation_id": operation_id, **values}),
+            return {
+                "result": encoded(
+                    await self.admit_managed_context(
+                        namespace,
+                        subject,
+                        ContextAdmissionCommand.model_validate(
+                            {"operation_id": operation_id, **values}
+                        ),
+                    )
+                )
+            }
+        if action == "admission":
+            return encoded(
+                await self.context_admission(namespace, subject, required_text(values, "id"))
             )
-            return {"result": encoded(admission)}
         if action == "report":
             return {
                 "result": encoded(
                     await self.report_managed_context(
-                        namespace_id,
-                        subject_id,
+                        namespace,
+                        subject,
                         ContextReport.model_validate({"operation_id": operation_id, **values}),
                     )
                 )
             }
-        if action == "close_session":
-            if not isinstance(identity, str):
-                raise ValueError("Close requires session ID")
-            return {
-                "result": encoded(
-                    await self.close_context_session(
-                        namespace_id, subject_id, identity, operation_id
-                    )
-                )
-            }
-        raise ValueError("Unknown context operation")
+        raise ValueError("Unknown context action")

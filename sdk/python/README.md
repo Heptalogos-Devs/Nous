@@ -45,13 +45,13 @@ single = whole.with_source_read(SourceReadScope(
 ))
 ```
 
-范围可选择完整原件、精确区域、单个认知修订、Observation、工作上下文锚点或实际 conversation origin。认知与媒体 selector 均接受对应类型的 Proquint 地址，由服务端统一 ReferenceDirectory 解析。多个范围与凭据授权按语义交集收窄；空范围返回空读取权限。单认知范围保持精确引用，读取容器原件仍需原件授权。
+范围可选择完整原件、精确区域、单个认知修订、Observation、工作上下文锚点或实际 conversation origin。认知与媒体 selector 均接受对应类型的 Proquint 地址，由服务端统一 ReferenceDirectory 解析。每个范围内选择器按 OR，多个范围与凭据授权按 AND 收窄；空范围返回空读取权限。单认知范围保持精确引用，读取容器原件仍需原件授权。
 
 `resolve_reference(subject_id,address,as_of_commit=...)` 返回 `ReferenceResolution`。对象短地址在指定知识截点选择修订，固定地址保留精确修订。`source(subject_id,reference)` 读取认知或媒体来源；`memory_source(memory_id,revision=...)` 读取记忆修订的真实来源。`cognitive_revision(namespace_id,subject_id,reference)` 返回准确修订。
 
 ## 文件与导入
 
-`upload_file`、`upload_stream` 流式接纳原件；上传必须指定 `owner_subject_id`。`expected_content_hash` 可核验实际上传字节。`download_material` 和 `download_region` 使用相同 scope 元数据、长度与散列验证，失败会清理未完成文件。
+`upload_file`、`upload_stream` 流式接纳原件；上传必须指定 `owner_subject_id`。`expected_content_hash` 可核验实际上传字节。`download_material`、`download_region` 和 `download_derived` 使用相同 scope 元数据、长度与散列验证，失败会清理未完成文件。
 
 ```python
 from nous_wave.contracts import FreezeCatalog, ProcessCatalog
@@ -72,7 +72,7 @@ JSON 接受 `records`、`paragraphs`、`docs` 包络，JSONL 保留记录顺序�
 
 `admit_documents(...,AdmitFiles(...))` 完成文件资格去重、冻结与处理，返回 `ImportResult`。`dedupe_policy` 为 none、content_hash 或 manifest；force 重新处理，clear_manifest 清除当前资格并保留历史事实。全部跳过时 `catalog=None`，跳过身份在 `skipped_success_ids` 中。异步管理创建即使全部跳过也返回真实 finalization 作业。
 
-`import_files` / `import_directory` 先上传准确原件，再调用同一接纳用例。文件可为路径，或 `{staged_path,filename,size}` / `{path,name,format,source,file_identity}`。SDK 不解析正文。本地扫描与文件路径限制在显式的 `transfer_root`；`ManagedFiles` 提供 raw/lpmm/maibot/converted aliases，拒绝路径或符号链接越界。原路径留在宿主。
+`import_files` / `import_directory` 先上传准确原件，再调用记录导入用例并返回真实 `TextImportSubmission`。文件可为路径，或 `{staged_path,filename,size}` / `{path,name,format,source,file_identity}`。SDK 不解析正文。本地扫描与文件路径限制在显式的 `transfer_root`；`ManagedFiles` 提供 raw/lpmm/maibot/converted aliases，拒绝路径或符号链接越界。原路径留在宿主。
 
 `import_catalog`、`import_unit_output` 返回冻结 Unit 与不可变 Output。单位尝试保留实际 job_id、阶段、失败与可选 vector_error；未执行单位保持 pending。`vectors="required"` 要求向量完成，`metadata_allowed` 保留成功的正文 Output 及独立向量失败，`disabled` 不请求向量。
 
@@ -87,6 +87,14 @@ JSON 接受 `records`、`paragraphs`、`docs` 包络，JSONL 保留记录顺序�
 来源管理使用 `source_directory`、`preview_sources`、`trash_sources`、`restore_sources`、`purge_sources` 及共享 `SourceCommand`；恢复保留实际 Observation 身份。Bundle 使用 `export_bundle` 与 `install_bundle` 合同，A-Memorix 提供 ZIP 文件操作。导出产物保留实际依赖闭包，读取与来源 purge 由材料 owner 共同约束。
 
 `configuration`、`prompts`、`model_contract`、`model_preview`、`model_call`、`backup` 接正式管理入口。`subject_diagnostics` 返回授权范围内的认知、向量、任务与实际 token 用量。不同凭据的 read/write/manage 能力由服务核验。
+
+`whoami`、`credentials`、`credential`、`credential_history`、`create_credential`、`rotate_credential` 和 `revoke_credential` 使用正式凭据 owner。轮换要求 expected_revision，旧 token 立即失效，明文只在创建或轮换当次返回。
+
+`job_page(namespace_id=...,subject_id=...,kind=...,state=...,limit=...,cursor=...)` 返回真实作业及 next_cursor。过滤先于分页，state 使用 DBOS 大写状态；续页保持首个快照的提交边界。
+
+`derive_media(...,DeriveMedia(...))` 对实际源字节执行 crop、clip、audio_track 或 sample_frames，返回精确派生身份。`media_lineage`、`representation`、`representation_history` 与区域方法读取同一派生 owner。`download_derived` 读取已授权的精确内容；派生授权不扩大到父原件。`source_operation` 支持实际 log ID 或 commit_seq，`source_operations` 支持 before_commit_seq 分页。
+
+`identity`、`cognition`、`sources`、`contexts`、`bundles` 与 `media` 接受公开 operation envelope，消费同一正式 owner；来源读取通过绑定客户端或请求 source_read 继续收窄。
 
 ## 每次模型调用的 Context
 
@@ -121,3 +129,14 @@ prepare 提交真实持久任务并等待。renderer 接收独立副本并返回
 `contexts` 配置限制 consumer 预算与来源类型。配置 `steward_role` 后使用统一模型资源、Prompt、预算与账本；Steward 只选择当前授权候选，综合保持独立归因。居民使用 DBOS schedule 维护，模型接触、实际使用和完成结果分别记录。
 
 A-Memorix `AMemorixAdapter` 保留六项工具、来源、导入、包与运行时管理入口。完整 MaiBot 补丁、模型窗口配置与真实发送边界见 [MaiBot 集成](../../integrations/maibot/README.md)。
+
+
+## 认知整理提案
+
+`start_maintenance` 提交实际模型生成作业；用 `maintenance_run` 读取快照、提案与真实 producer_call_id。`review_maintenance(...,ReviewMaintenance(expected_revision=...,decision="adopt"或"reject"))` 明确审阅，采纳复用认知 owner 的正式变更规则。来源当前不可用时 `sources_available=False`，正文与提案不会返回。
+
+`create_maintenance_schedule`、`maintenance_schedules` 与 `stop_maintenance_schedule` 管理正式 DBOS 重复运行策略。工作台提供同一提案审阅与计划操作；每次计划生成待审提案，审阅决定单独保存。
+
+`freeze_import_catalog`、`process_import_units` 与 `admit_import_files` 也接受原有单 Mapping 请求：`{namespace_id,subject_id,inputs:[{name,format,input:{kind:"inline",content:...},source}],overrides:{strategy:...}}`。`input.kind="material"` 使用已上传的 material_id；文件文档的 `{document,file_identity}` 包络继续可用。Mapping 文件接纳返回 `FileImportSubmission`；`submit_admit_documents` 是对应 typed 异步入口。
+
+`import_text` 接受同一文档形状及 form_memory/completion，返回真实父作业。等待 `wait_success((submission.job_id,),...)` 后，`text_import_result` 读取对应结果。`accepted` 完成完整逐字记录接纳，并仅返回已排入队列的 formation_jobs；`formed` 要求 form_memory=True，父作业等待这些实际子作业成功。语义形成复用逐字 Memory 的精确修订，保留独立模型调用身份。每解析记录保持一个完整 Unit；输入总字节上限 4 MiB。

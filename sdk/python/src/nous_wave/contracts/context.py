@@ -200,6 +200,8 @@ class ContextReportResult(Contract):
 
 class OpenContextSession(Operation):
     session_id: str | None = None
+    parent_session_id: str | None = None
+    history_generation: str | None = None
 
 
 class ContextSession(Contract):
@@ -214,6 +216,8 @@ class ContextSession(Contract):
     history_generation: str | None = None
     active_work_context_id: str | None = None
     residents: tuple[ContextResident, ...] = ()
+    parent_session_id: str | None = None
+    history_invalidated: bool = False
 
 
 class ContextResident(Contract):
@@ -238,8 +242,25 @@ class ChangeResidents(Operation):
     session_id: str
     expected_revision: int = Field(ge=1)
     action: Literal["admit", "evict", "clear"]
-    residents: tuple[ContextResident, ...] = ()
+    residents: tuple[ContextResidentAdmission, ...] = ()
     targets: tuple[ContextTarget, ...] = ()
+
+
+class ContextResidentAdmission(Contract):
+    target: ContextTarget
+    state: Literal["resident", "provisional"] = "resident"
+    entry_reason: str = Field(min_length=1, max_length=2048)
+    last_meaningful_use_at: datetime | None = None
+    hold_until: datetime | None = None
+
+    @model_validator(mode="after")
+    def timestamps(self) -> ContextResidentAdmission:
+        if any(
+            value is not None and value.tzinfo is None
+            for value in (self.last_meaningful_use_at, self.hold_until)
+        ):
+            raise ValueError("Resident admission timestamps require explicit timezones")
+        return self
 
 
 class WorkContextContent(Contract):
@@ -253,6 +274,7 @@ class WorkContextContent(Contract):
 
 
 class WorkContext(Contract):
+    purged: bool = False
     id: str
     namespace_id: str
     subject_id: str
@@ -271,7 +293,16 @@ class ChangeWorkContext(Operation):
         "create", "edit", "pause", "resume", "end", "clear_text", "clear_anchors", "pin", "unpin"
     ]
     content: WorkContextContent | None = None
-    session_id: str | None = None
+    anchors: tuple[ContextTarget, ...] = ()
+
+
+class ChangeContextSession(Operation):
+    session_id: str
+    expected_revision: int = Field(ge=1)
+    active_work_context_id: str | None = None
+    history_generation: str | None = None
+    close: bool = False
+    invalidate_history: bool = False
 
 
 class ContextConsumerPolicy(Contract):

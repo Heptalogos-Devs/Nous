@@ -9,7 +9,7 @@ from datetime import UTC
 from typing import TYPE_CHECKING, Literal
 from uuid import uuid4
 
-from nous_wave.contracts import CallContext, DomainError, ImportUnit
+from nous_wave.contracts import CallContext, DomainError, FormationProposal, ImportUnit
 from nous_wave.contracts.imports import ImportFailure, UnitAttempt
 from sqlalchemy import select, update
 
@@ -31,6 +31,7 @@ def failure(error: BaseException) -> ImportFailure:
 class AttemptRecorder:
     def __init__(self, service: ImportService, ctx: CallContext, value: UnitAttempt) -> None:
         self.service, self.ctx, self.value = service, ctx, value
+        self.proposal: FormationProposal | None = None
 
     async def save(self) -> None:
         async with self.service.authority.write(

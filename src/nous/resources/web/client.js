@@ -42,10 +42,14 @@ export async function api(path, options = {}) {
     headers.set("Content-Type", "application/json");
     body = JSON.stringify(body);
   }
-  const response = await fetch(path, { ...options, headers, body });
-  const value = response.headers.get("content-type")?.includes("json")
-    ? await response.json()
-    : await response.text();
+  const { responseType, ...fetchOptions } = options;
+  const response = await fetch(path, { ...fetchOptions, headers, body });
+  const value =
+    response.ok && responseType === "blob"
+      ? await response.blob()
+      : response.headers.get("content-type")?.includes("json")
+        ? await response.json()
+        : await response.text();
   if (state.token !== caller) throw new Error(t("web-connection-changed"));
   if (state.namespace !== namespace || state.subject !== subject)
     throw new Error(t("web-connection-changed"));
@@ -121,9 +125,7 @@ export function chip(text, inactive = false) {
   return el("span", `chip${inactive ? " inactive" : ""}`, text);
 }
 export async function download(path, filename) {
-  const response = await fetch(path, { headers: { Authorization: `Bearer ${state.token}` } });
-  if (!response.ok) throw new Error(t("web-download-failed", { status: response.status }));
-  const url = URL.createObjectURL(await response.blob());
+  const url = URL.createObjectURL(await api(path, { responseType: "blob" }));
   const link = el("a");
   link.href = url;
   link.download = filename;

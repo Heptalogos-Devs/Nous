@@ -57,8 +57,18 @@ async def admit_managed(
         # The current caller scope and the accepted preparation scope must both hold.
         await self.require_targets_in(tx, ctx, targets)
         accepted_scope = TypeAdapter(tuple[str, ...] | None).validate_python(value["source_scope"])
+        accepted_constraints = TypeAdapter(tuple[tuple[str, ...], ...]).validate_python(
+            value.get("source_constraints", ())
+        )
         await self.require_targets_in(
-            tx, ctx.model_copy(update={"allowed_source_ids": accepted_scope}), targets
+            tx,
+            ctx.model_copy(
+                update={
+                    "allowed_source_ids": accepted_scope,
+                    "source_constraints": accepted_constraints,
+                }
+            ),
+            targets,
         )
         prior = (
             await tx.connection.execute(
@@ -140,6 +150,7 @@ async def admit_managed(
         revised_session = current_session.model_copy(
             update={
                 "history_generation": command.history_generation,
+                "history_invalidated": False,
                 "revision": current_session.revision + 1,
                 "commit_seq": tx.commit_seq,
             }
@@ -240,7 +251,13 @@ async def report_managed(
 
             current_session = await self.session_in(tx, ctx, admission.session_id)
             updated_residents = tuple(
-                item.model_copy(update={"last_meaningful_use_at": command.occurred_at})
+                item.model_copy(
+                    update={
+                        "last_meaningful_use_at": max(
+                            command.occurred_at, item.last_meaningful_use_at or item.entered_at
+                        )
+                    }
+                )
                 if any(use.target == item.target for use in command.uses)
                 else item
                 for item in current_session.residents
@@ -276,3 +293,27 @@ async def report_managed(
             )
         )
         return tx.result(result)
+
+
+async def read_admission(
+    self: ManagedContexts, ctx: CallContext, identity: str
+) -> ContextAdmission:
+    async with self.authority.read(ctx) as view:
+        value = await view.connection.scalar(
+            select(contexts.c.record).where(
+                contexts.c.id == identity,
+                contexts.c.namespace_id == ctx.namespace_id,
+                contexts.c.subject_id == ctx.subject_id,
+            )
+        )
+        if (
+            value is None
+            or value.get("caller_id") != ctx.caller_id
+            or "managed_admission" not in value
+        ):
+            raise DomainError(
+                "context_admission_not_found", "Managed context admission is unavailable"
+            )
+        admission = ContextAdmission.model_validate(value["managed_admission"])
+        await self.require_targets_in(view, ctx, admission.sources)
+        return admission

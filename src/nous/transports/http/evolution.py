@@ -28,7 +28,7 @@ async def seed_self(request: Request, namespace_id: str, subject_id: str, comman
 @router.get("/self/profile")
 async def self_profile(request: Request, namespace_id: str, subject_id: str):
     return await application(request).cognition.self_profile(
-        await context(request, namespace_id, subject_id)
+        await context(request, namespace_id, subject_id, capability="read")
     )
 
 
@@ -77,13 +77,13 @@ async def register_region(
 @router.get("/regions/{region_id}")
 async def region(request: Request, namespace_id: str, subject_id: str, region_id: str):
     return await application(request).material.read_region(
-        await context(request, namespace_id, subject_id), region_id
+        await context(request, namespace_id, subject_id, capability="read"), region_id
     )
 
 
 @router.get("/regions/{region_id}/content")
 async def region_content(request: Request, namespace_id: str, subject_id: str, region_id: str):
     value = await application(request).media_imports.region_input(
-        await context(request, namespace_id, subject_id), region_id
+        await context(request, namespace_id, subject_id, capability="read"), region_id
     )
     return Response(value.data, media_type=value.media_type)

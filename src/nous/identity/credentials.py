@@ -7,7 +7,9 @@ import hmac
 import re
 import secrets
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
+from typing import Literal
 from uuid import uuid4
 
 import sqlalchemy as sa
@@ -15,11 +17,15 @@ from nous_wave.contracts.common import CallContext, DomainError
 from nous_wave.contracts.credentials import (
     Capability,
     CreateCredential,
+    CredentialEvent,
     CredentialRecord,
     IssuedCredential,
+    PrincipalRecord,
+    RotateCredential,
 )
+from sqlalchemy.ext.asyncio import AsyncConnection
 
-from nous.platform.persistence import Authority, metadata
+from nous.platform.persistence import Authority, WriteTx, metadata
 from nous.platform.persistence.authority import owned_thread
 
 credentials = sa.Table(
@@ -28,6 +34,16 @@ credentials = sa.Table(
     sa.Column("id", sa.String, primary_key=True),
     sa.Column("token_hash", sa.String, unique=True, nullable=False),
     sa.Column("record", sa.JSON, nullable=False),
+)
+credential_events = sa.Table(
+    "nous_credential_events",
+    metadata,
+    sa.Column("id", sa.String, primary_key=True),
+    sa.Column("credential_id", sa.String, nullable=False, index=True),
+    sa.Column("revision", sa.Integer, nullable=False),
+    sa.Column("commit_seq", sa.Integer, nullable=False),
+    sa.Column("record", sa.JSON, nullable=False),
+    sa.UniqueConstraint("credential_id", "revision", name="uq_credential_event_revision"),
 )
 
 
@@ -136,6 +152,94 @@ class CredentialsService:
     def _context(actor: Principal) -> CallContext:
         return CallContext(caller_id=actor.caller_id, namespace_id="instance")
 
+    @staticmethod
+    def whoami(actor: Principal) -> PrincipalRecord:
+        return PrincipalRecord(
+            caller_id=actor.caller_id,
+            credential_id=actor.credential_id,
+            namespace_ids=actor.namespace_ids,
+            subject_ids=actor.subject_ids,
+            source_ids=actor.source_ids,
+            capabilities=tuple(sorted(actor.capabilities)),
+        )
+
+    @staticmethod
+    async def _record_in(
+        connection: AsyncConnection, actor: Principal, credential_id: str
+    ) -> CredentialRecord:
+        raw = await connection.scalar(
+            sa.select(credentials.c.record).where(credentials.c.id == credential_id)
+        )
+        if raw is None:
+            raise DomainError("credential_not_found", "Credential does not exist")
+        record = CredentialRecord.model_validate(raw)
+        if not actor.permits_record(record):
+            raise DomainError(
+                "credential_scope_forbidden", "Credential is outside the manager's scope"
+            )
+        return record
+
+    @staticmethod
+    async def _event_in(
+        tx: WriteTx,
+        actor: Principal,
+        record: CredentialRecord,
+        action: Literal["created", "rotated", "revoked"],
+        reason: str,
+    ) -> None:
+        event = CredentialEvent(
+            id=str(uuid4()),
+            credential_id=record.id,
+            action=action,
+            revision=record.revision,
+            caller_id=actor.caller_id,
+            recorded_at=datetime.fromisoformat(tx.recorded_at),
+            commit_seq=tx.commit_seq,
+            reason=reason,
+            record=record,
+        )
+        await tx.connection.execute(
+            credential_events.insert().values(
+                id=event.id,
+                credential_id=event.credential_id,
+                revision=event.revision,
+                commit_seq=event.commit_seq,
+                record=event.model_dump(mode="json"),
+            )
+        )
+
+    @staticmethod
+    def _revision(record: CredentialRecord, expected: int | None) -> None:
+        if expected is not None and expected != record.revision:
+            raise DomainError(
+                "credential_revision_conflict",
+                "Credential revision changed; read the current record before retrying",
+                expected_revision=expected,
+                actual_revision=record.revision,
+            )
+
+    async def read(self, actor: Principal, credential_id: str) -> CredentialRecord:
+        actor.require("manage")
+        async with self.authority.read(self._context(actor)) as view:
+            return await self._record_in(view.connection, actor, credential_id)
+
+    async def history(self, actor: Principal, credential_id: str) -> tuple[CredentialEvent, ...]:
+        actor.require("manage")
+        async with self.authority.read(self._context(actor)) as view:
+            await self._record_in(view.connection, actor, credential_id)
+            rows = (
+                (
+                    await view.connection.execute(
+                        sa.select(credential_events.c.record)
+                        .where(credential_events.c.credential_id == credential_id)
+                        .order_by(credential_events.c.commit_seq)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        return tuple(CredentialEvent.model_validate(row) for row in rows)
+
     async def create(self, actor: Principal, command: CreateCredential) -> IssuedCredential:
         actor.require("manage")
         if not command.name.strip() or not command.capabilities:
@@ -165,6 +269,7 @@ class CredentialsService:
             "name": command.name,
             **scopes,
             "capabilities": sorted(set(command.capabilities)),
+            **({"reason": command.reason} if command.reason else {}),
         }
         async with self.authority.write(
             self._context(actor),
@@ -200,6 +305,7 @@ class CredentialsService:
                     record=record.model_dump(mode="json"),
                 )
             )
+            await self._event_in(tx, actor, record, "created", command.reason)
             tx.result(record)
             return IssuedCredential(record=record, token=token)
 
@@ -224,35 +330,90 @@ class CredentialsService:
         )
 
     async def revoke(
-        self, actor: Principal, credential_id: str, operation_id: str
+        self,
+        actor: Principal,
+        credential_id: str,
+        operation_id: str,
+        *,
+        expected_revision: int | None = None,
+        reason: str = "",
     ) -> CredentialRecord:
         actor.require("manage")
+        if (expected_revision is not None and expected_revision < 1) or len(reason) > 4096:
+            raise ValueError("Invalid credential revision or reason")
         async with self.authority.write(
             self._context(actor),
             operation_id,
             operation_kind="credentials.revoke",
             scope="credentials",
-            payload={"credential_id": credential_id},
+            payload={
+                "credential_id": credential_id,
+                **(
+                    {"expected_revision": expected_revision}
+                    if expected_revision is not None
+                    else {}
+                ),
+                **({"reason": reason} if reason else {}),
+            },
         ) as tx:
             if tx.replayed:
                 return CredentialRecord.model_validate(tx.replay_result)
-            raw = await tx.connection.scalar(
-                sa.select(credentials.c.record).where(credentials.c.id == credential_id)
-            )
-            if raw is None:
-                raise DomainError("credential_not_found", "Credential does not exist")
-            record = CredentialRecord.model_validate(raw)
-            if not actor.permits_record(record):
-                raise DomainError(
-                    "credential_scope_forbidden", "Credential is outside the manager's scope"
-                )
+            record = await self._record_in(tx.connection, actor, credential_id)
+            self._revision(record, expected_revision)
             if record.revoked_at is None:
                 record = record.model_copy(
-                    update={"revoked_at": tx.recorded_at, "commit_seq": tx.commit_seq}
+                    update={
+                        "revoked_at": tx.recorded_at,
+                        "commit_seq": tx.commit_seq,
+                        "revision": record.revision + 1,
+                    }
                 )
                 await tx.connection.execute(
                     credentials.update()
                     .where(credentials.c.id == record.id)
                     .values(record=record.model_dump(mode="json"))
                 )
+                await self._event_in(tx, actor, record, "revoked", reason)
             return tx.result(record)
+
+    async def rotate(
+        self, actor: Principal, credential_id: str, command: RotateCredential
+    ) -> IssuedCredential:
+        actor.require("manage")
+        async with self.authority.write(
+            self._context(actor),
+            command.operation_id,
+            operation_kind="credentials.rotate",
+            scope="credentials",
+            payload={"credential_id": credential_id, "command": command},
+        ) as tx:
+            if tx.replayed:
+                original = CredentialRecord.model_validate(tx.replay_result)
+                current = await self._record_in(tx.connection, actor, original.id)
+                return IssuedCredential(record=current, token=None)
+            record = await self._record_in(tx.connection, actor, credential_id)
+            if not set(record.capabilities).issubset(actor.capabilities):
+                raise DomainError(
+                    "credential_scope_forbidden",
+                    "Rotating this credential would exceed the manager's capabilities",
+                )
+            self._revision(record, command.expected_revision)
+            if record.revoked_at is not None:
+                raise DomainError(
+                    "credential_revoked_conflict", "A revoked credential cannot be rotated"
+                )
+            token = f"nous_{record.id.replace('-', '')}_{secrets.token_urlsafe(32)}"
+            record = record.model_copy(
+                update={"revision": record.revision + 1, "commit_seq": tx.commit_seq}
+            )
+            await tx.connection.execute(
+                credentials.update()
+                .where(credentials.c.id == record.id)
+                .values(
+                    token_hash=hashlib.sha256(token.encode()).hexdigest(),
+                    record=record.model_dump(mode="json"),
+                )
+            )
+            await self._event_in(tx, actor, record, "rotated", command.reason)
+            tx.result(record)
+            return IssuedCredential(record=record, token=token)

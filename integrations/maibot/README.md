@@ -42,7 +42,7 @@ uv run --env-file "/MaiBot实例/.env" maibot run --directory "/MaiBot实例"
 
 ## 使用范围
 
-当前接通 `ingest_text`、`ingest_summary`、`search_memory`、`maintain_memory`、`memory_stats` 和人物画像查询；维护任务通过 Nous 作业等待接口返回实际结果。人物事实以 `reported` 保存，并保留原文 Memory 的精确修订证据。需要来源时，使用返回的认知引用读取 Nous 来源接口。
+当前接通 `ingest_text`、`ingest_summary`、`search_memory`、`maintain_memory`、`memory_stats` 和人物画像查询；记忆维护在同一事务返回实际认知修订，支持精确地址或检索词冻结的多条 Memory；同一 operation_id 重放保持原选择。模型形成与导入通过真实 Nous 作业等待接口返回结果。人物事实以 `reported` 保存，并保留原文 Memory 的精确修订证据。需要来源时，使用返回的认知引用读取 Nous 来源接口。 `maintain_memory` 支持 reinforce、weaken、protect、unprotect、freeze、forget、restore、trash、purge、decay 与 recycle_bin；受保护记忆的 trash/purge 需要显式 force。
 
 `memory_stats` 与原生 Subject 诊断使用同一授权快照，统计当前认知、任务、向量及模型用量。段落回填按当前语义空间中真实 Memory 输入的请求状态统计。Imported 生产历史单列，并按原生产调用去重；本机消耗保留实际调用用量与货币。
 
@@ -69,8 +69,8 @@ task_id = created["task"]["task_id"]
 detail = await adapter.memory_import_admin(action="get", task_id=task_id, include_chunks=True)
 ```
 
-文件去重支持 `none`、`content_hash`、`manifest`，并保留 `force`、`clear_manifest`。全部文件跳过时仍提交真实 finalization 作业，返回清单回执。JSON/JSONL 使用完整原件与正式记录解析；上传扩展名 `.json`、`.jsonl` 自动选择对应格式。请求级并发由 Nous 共享队列配置管理。
-重试使用同一目录的实际失败 UnitId；相同切分参数可重复传入，改变切分必须先创建带 parent_catalog_id 的新目录。聊天绑定作为真实 Import 事件 origin 保存，不增加读取权限。语义角色、逐字 quote、时间子任务和向量状态与原生处理一致。chunk 输出保留实际 temporal_error/vector_error；内容任务成功时，可选时间或索引结果仍可有非致命错误。当前时间归一化只接受明确 offset 的 RFC3339，日期粒度与未知时区不会在调用端补值。
+文件去重支持 `none`、`content_hash`、`manifest`，并保留 `force`、`clear_manifest`。全部文件跳过时仍提交真实 finalization 作业，返回清单回执。JSON/JSONL 使用完整原件与正式记录解析；上传未指定格式时由 `.json`、`.jsonl` 扩展名选择格式；显式 input_mode 保持调用方选择。请求级并发由 Nous 共享队列配置管理。
+重试使用同一目录的实际失败 UnitId；相同切分参数可重复传入，改变切分必须先创建带 parent_catalog_id 的新目录。聊天绑定作为真实 Import 事件 origin 保存，不增加读取权限。语义角色、逐字 quote 和向量状态与原生处理一致。chunk 输出来自实际 UnitAttempt；可选向量失败保留 vector_error 与已采纳的 Output。时间提取是形成调用的显式选项。当前时间归一化只接受明确 offset 的 RFC3339，日期粒度与未知时区不会在调用端补值。
 
 JSON 记录支持 `records`、`paragraphs`、`docs` 包络与 JSONL 原顺序，错误定位保留到具体记录。LPMM 转换、时序回填和 MaiBot 数据库迁移保留各自处理合同。
 

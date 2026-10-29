@@ -76,6 +76,17 @@ async def search(
     )
     if command.mode == "time":
         text += " $sort(occurred,desc)"
+    elif command.mode == "aggregate":
+        import json
+
+        branches = (
+            text + " $return(memory)",
+            text + " $return(episode)",
+            text + " $sort(occurred,desc) $mode(lexical)",
+        )
+        text = (
+            "$any(" + ",".join(json.dumps(branch, ensure_ascii=False) for branch in branches) + ")"
+        )
     kinds = ("episode",) if command.mode == "episode" else ()
     mode = (
         "hybrid"

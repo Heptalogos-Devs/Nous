@@ -52,6 +52,11 @@ async def upload(
             if tx.replayed:
                 assert tx.receipt is not None
                 result = tx.receipt.result
+                from pydantic import JsonValue, TypeAdapter
+
+                retained = TypeAdapter(dict[str, JsonValue]).validate_python(result)
+                record = TypeAdapter(dict[str, JsonValue]).validate_python(retained["result"])
+                await app.material.read_in(tx, ctx, TypeAdapter(str).validate_python(record["id"]))
             else:
                 value = await app.material.put_blob_in(tx, ctx, lease, document, info)
                 await app.material.observe_in(tx, ctx, str(value["id"]), document)
@@ -87,7 +92,9 @@ async def embed_media(
 @router.get("/namespaces/{namespace_id}/subjects/{subject_id}/materials/{material_id}/content")
 async def download(request: Request, namespace_id: str, subject_id: str, material_id: str):
     app = application(request)
-    value = await app.material.read(await context(request, namespace_id, subject_id), material_id)
+    value = await app.material.read(
+        await context(request, namespace_id, subject_id, capability="read"), material_id
+    )
     obj = ContentObject(value["content_hash"], value["byte_len"], value["media_type"])
 
     async def chunks() -> AsyncGenerator[bytes]:

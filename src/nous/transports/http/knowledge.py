@@ -21,7 +21,9 @@ class SourceSelection(BaseModel):
 
 @router.get("/sources")
 async def sources(request: Request, namespace_id: str, subject_id: str):
-    return await application(request).sources.list(await context(request, namespace_id, subject_id))
+    return await application(request).sources.list(
+        await context(request, namespace_id, subject_id, capability="read")
+    )
 
 
 @router.post("/sources/preview")
@@ -82,7 +84,7 @@ async def admit_context(
 @router.get("/contexts/{context_id}")
 async def read_context(request: Request, namespace_id: str, subject_id: str, context_id: str):
     return await application(request).contexts.read(
-        await context(request, namespace_id, subject_id), context_id
+        await context(request, namespace_id, subject_id, capability="read"), context_id
     )
 
 

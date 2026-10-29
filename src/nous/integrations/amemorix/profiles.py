@@ -14,9 +14,6 @@ from nous_wave.contracts import (
     EntityBody,
 )
 from pydantic import JsonValue
-from sqlalchemy import select
-
-from nous.cognition.schema import vectors
 
 from .helpers import json_object
 
@@ -93,24 +90,22 @@ async def stats(self: AMemorixService, ctx: CallContext) -> dict[str, JsonValue]
     records = await self.records(ctx)
     counts = Counter(record.reference.kind for record in records if not record.deleted)
     jobs = await self.app.execution.list_jobs(ctx)
-    async with self.app.authority.read(ctx) as view:
-        vector_count = (
-            len(
-                (
-                    await view.connection.execute(
-                        select(vectors.c.reference).where(
-                            vectors.c.reference.in_(
-                                [record.reference.exact() for record in records]
-                            )
-                        )
-                    )
-                ).all()
-            )
-            if records
-            else 0
-        )
+    from .diagnostics import diagnostics
+
+    observed = await diagnostics(self, ctx)
+    retrieval = observed["retrieval"]
+    assert isinstance(retrieval, dict)
+    spaces = retrieval["spaces"]
+    assert isinstance(spaces, list)
+    vector_count = 0
+    for space in spaces:
+        if isinstance(space, dict):
+            count = space.get("indexed_references")
+            if isinstance(count, int):
+                vector_count += count
     return json_object(
         {
+            **observed,
             "success": True,
             "paragraphs": counts["memory"],
             "entities": counts["entity"],
@@ -118,6 +113,7 @@ async def stats(self: AMemorixService, ctx: CallContext) -> dict[str, JsonValue]
             "episodes": counts["episode"],
             "cognition": dict(counts),
             "tasks": dict(Counter(job.status for job in jobs)),
+            "tasks_recent": True,
             "vectors": vector_count,
         }
     )

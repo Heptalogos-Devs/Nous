@@ -7,12 +7,14 @@ from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from pydantic import JsonValue
 
-from .contracts import AdmitFiles, ImportDocument, ImportResult
+from .contracts import ImportDocument
+from .contracts.text_import import TextImport, TextImportSubmission
 from .files import ManagedFiles, file_name
 from .operations import encoded
 from .types import LocalImportFile
 
 if TYPE_CHECKING:
+    from ._client.imports import ImportClient
     from ._client.materials import MaterialClient
 
 
@@ -41,13 +43,12 @@ async def upload_import_inputs(
     operation_id: str | None = None,
 ) -> tuple[ImportDocument, ...]:
     managed = ManagedFiles(transfer_root)
-    documents: list[ImportDocument] = []
-    for index, value in enumerate(files):
+    pending: list[tuple[LocalImportFile, Path, str, str]] = []
+    for value in files:
         item, path = _local_input(managed, value)
         name = file_name(item.filename or item.name or path.name)
         format_ = (
             item.format
-            or {".json": "json", ".jsonl": "jsonl"}.get(Path(name).suffix.lower())
             or input_format
             or {".txt": "text", ".md": "text", ".json": "json", ".jsonl": "jsonl"}.get(
                 Path(name).suffix.lower()
@@ -55,6 +56,11 @@ async def upload_import_inputs(
         )
         if format_ not in {"text", "json", "jsonl"}:
             raise ValueError("Import file format must be text, json or jsonl")
+        pending.append((item, path, name, format_))
+    if not pending:
+        raise ValueError("Select at least one import file")
+    documents: list[ImportDocument] = []
+    for index, (item, path, name, format_) in enumerate(pending):
         receipt = await client.upload_file(
             namespace_id,
             path,
@@ -80,7 +86,8 @@ async def upload_import_inputs(
                     "material_id": receipt.result.id,
                     "filename": name,
                     "format": format_,
-                    "source_type": item.source or "document",
+                    "source_type": "document",
+                    "source": item.source if "source" in item.model_fields_set else name,
                     "file_identity": item.file_identity,
                 }
             )
@@ -107,7 +114,8 @@ async def upload_import_file_documents(
         item, path = _local_input(managed, value)
         identities.append(
             item.file_identity
-            or (managed.file_identity(alias, path) if alias is not None else None)
+            if item.file_identity is not None
+            else (managed.file_identity(alias, path) if alias is not None else None)
         )
     documents = await upload_import_inputs(
         client,
@@ -125,7 +133,7 @@ async def upload_import_file_documents(
 
 
 async def import_files(
-    client: "MaterialClient",
+    client: "ImportClient",
     namespace_id: str,
     subject_id: str,
     files: Sequence[str | Path | Mapping[str, JsonValue]],
@@ -136,7 +144,7 @@ async def import_files(
     completion: Literal["accepted", "formed"] = "accepted",
     origin: Mapping[str, str] | None = None,
     operation_id: str | None = None,
-) -> ImportResult:
+) -> TextImportSubmission:
     if completion == "formed" and not form_memory:
         raise ValueError("formed import completion requires form_memory=True")
     operation = operation_id or str(uuid4())
@@ -152,19 +160,20 @@ async def import_files(
     inputs = tuple(
         document.model_copy(update={"origin": dict(origin or {})}) for document in documents
     )
-    command = AdmitFiles.model_validate(
+    command = TextImport.model_validate(
         {
             "operation_id": operation,
             "inputs": [encoded(document) for document in inputs],
-            "llm_enabled": form_memory,
+            "form_memory": form_memory,
+            "completion": completion,
             "vectors": "metadata_allowed" if form_memory else "disabled",
         }
     )
-    return await client.admit_documents(namespace_id, subject_id, command)
+    return await client.submit_text_import(namespace_id, subject_id, command)
 
 
 async def import_directory(
-    client: "MaterialClient",
+    client: "ImportClient",
     namespace_id: str,
     subject_id: str,
     *,
@@ -178,7 +187,7 @@ async def import_directory(
     completion: Literal["accepted", "formed"] = "accepted",
     origin: Mapping[str, str] | None = None,
     operation_id: str | None = None,
-) -> ImportResult:
+) -> TextImportSubmission:
     files = await ManagedFiles(transfer_root).scan(
         alias, relative_path, pattern=pattern, recursive=recursive
     )

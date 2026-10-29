@@ -10,8 +10,10 @@ from .contracts import (
     CognitiveRef,
     Contract,
     MediaInfo,
+    MediaReference,
     TimePoint,
 )
+from .contracts.bundles import BundlePlacement
 from .contracts.common import ReferenceAddresses
 
 JsonObject = dict[str, JsonValue]
@@ -40,12 +42,14 @@ class Material(Contract):
     media_type: str
     byte_len: int
     source_type: str
+    source: str | None = None
     origin: dict[str, str]
     event_time: TimePoint | None = None
     recorded_at: str
     commit_seq: int
     media_info: MediaInfo | None = None
     required_source_ids: tuple[str, ...] = ()
+    required_observation_ids: tuple[str, ...] = ()
     addresses: ReferenceAddresses | None = None
     purged: bool = False
 
@@ -63,16 +67,21 @@ class Source(Contract):
     kind: str
     origin: dict[str, str]
     source_type: str
+    source: str | None = None
     event_time: TimePoint | None = None
     observed_at: TimePoint
     recorded_at: str
     commit_seq: int
     active: bool = True
     purged: bool = False
+    placement: BundlePlacement | None = None
+    previous_observation_id: str | None = None
+    retry_parent_job_id: str | None = None
 
 
 class Download(Contract):
     material_id: str
+    reference: MediaReference | None = None
     region_id: str | None = None
     output: Path
     byte_len: int
@@ -84,6 +93,13 @@ class ImportSubmission(Contract):
     request_id: str
     job_id: str
     catalog_id: str
+
+
+class FileImportSubmission(Contract):
+    request_id: str
+    job_id: str
+    catalog_id: str | None
+    skipped_success_ids: tuple[str, ...] = ()
 
 
 class Job(Contract):
@@ -127,6 +143,11 @@ class Job(Contract):
     application_name: str | None = None
     app_id: str | None = None
     recovery_attempts: int | None = None
+
+
+class JobPage(Contract):
+    items: tuple[Job, ...]
+    next_cursor: str | None = None
 
 
 class JobDetail(Contract):
