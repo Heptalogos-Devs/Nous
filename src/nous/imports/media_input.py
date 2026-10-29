@@ -54,7 +54,14 @@ async def selected_input(
             raise ValueError("Selected text exceeds the 32 MiB model input limit")
         return MediaInput(data, "text/plain", reference)
     derived = None
-    if region and region.pixel_rect:
+    image_info = await media.probe(source) if source.media_type.startswith("image/") else None
+    if image_info is not None and image_info.frames is not None and image_info.frames > 1:
+        derived = await media.animate(
+            source,
+            rect=region.pixel_rect if region else None,
+            span=region.time_span if region else None,
+        )
+    elif region and region.pixel_rect:
         if source.media_type.startswith("image/"):
             derived = await media.crop_image(source, region.pixel_rect)
         elif source.media_type.startswith("video/"):
@@ -81,7 +88,7 @@ async def selected_input(
                 selected, TimeSpan(start_ms=0, end_ms=info.duration_ms), audio_only=True
             )
             selected = audio.lease
-        limit = media.max_derivative_bytes if textual else 32 * 1024 * 1024
+        limit = media.policy.max_derivative_bytes if textual else 32 * 1024 * 1024
         if selected.byte_len > limit:
             raise ValueError("Selected input exceeds the instance media processing limit")
         async with content.protect(selected) as path:

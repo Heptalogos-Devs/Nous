@@ -5,12 +5,15 @@ from __future__ import annotations
 import asyncio
 import math
 import tempfile
+from collections.abc import Awaitable, Callable
+from copy import copy
 from dataclasses import dataclass
 from fractions import Fraction
 from pathlib import Path
 
 import anyio
 from nous_wave.contracts.media import MediaInfo, PixelRect, TimeSpan
+from nous_wave.contracts.media_policy import MediaPolicy
 from PIL import Image, ImageOps
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -60,25 +63,27 @@ class MediaService:
         self,
         content: ContentStore,
         *,
-        ffmpeg: str = "ffmpeg",
-        ffprobe: str = "ffprobe",
-        max_pixels: int = 40_000_000,
-        max_frames: int = 256,
-        max_derivative_bytes: int = 128 * 1024 * 1024,
-        process_concurrency: int = 2,
+        policy: MediaPolicy | None = None,
+        policy_resolver: Callable[[], Awaitable[MediaPolicy]] | None = None,
     ):
         self.content = content
-        self.ffmpeg = ffmpeg
-        self.ffprobe = ffprobe
-        self.max_pixels = max_pixels
-        self.max_frames = max_frames
-        self.max_derivative_bytes = max_derivative_bytes
-        self._processes = asyncio.Semaphore(process_concurrency)
+        self.policy = policy or MediaPolicy()
+        self._policy_resolver = policy_resolver
+        self._processes = anyio.CapacityLimiter(self.policy.process_concurrency)
+
+    async def freeze(self) -> MediaService:
+        """Freeze limits for this operation while sharing the instance process gate."""
+        policy = await self._policy_resolver() if self._policy_resolver else self.policy
+        self._processes.total_tokens = policy.process_concurrency
+        operation = copy(self)
+        operation.policy = policy.model_copy(deep=True)
+        operation._policy_resolver = None
+        return operation
 
     def _check_image(self, image: Image.Image) -> None:
-        if image.width * image.height > self.max_pixels:
+        if image.width * image.height > self.policy.max_pixels:
             raise ValueError("Decoded image exceeds the instance pixel limit")
-        if getattr(image, "n_frames", 1) > self.max_frames:
+        if getattr(image, "n_frames", 1) > self.policy.max_frames:
             raise ValueError("Image exceeds the instance animation frame limit")
 
     def _image_info(self, path: Path, media_type: str) -> MediaInfo:
@@ -145,10 +150,10 @@ class MediaService:
             )
 
     async def _probe_file(self, path: Path) -> _Probe:
-        async with self._processes, asyncio.timeout(30):
+        async with self._processes, asyncio.timeout(self.policy.probe_timeout_seconds):
             output = await run_process(
                 (
-                    self.ffprobe,
+                    self.policy.ffprobe,
                     "-v",
                     "error",
                     "-protocol_whitelist",
@@ -269,11 +274,14 @@ class MediaService:
             cropped.save(destination, format="PNG")
 
     async def _publish_derivative(self, path: Path, media_type: str) -> ContentLease:
-        if (await anyio.to_thread.run_sync(path.stat)).st_size > self.max_derivative_bytes:
+        if (await anyio.to_thread.run_sync(path.stat)).st_size > self.policy.max_derivative_bytes:
             raise ValueError("Prepared media exceeds the derivative size limit")
         return await self.content.publish_file(path, media_type)
 
     async def crop_image(self, source: ContentObject, rect: PixelRect) -> DerivedContent:
+        info = await self.probe(source)
+        if info.frames is not None and info.frames > 1:
+            return await self.animate(source, rect=rect)
         async with self.content.protect(source) as path:
             with tempfile.TemporaryDirectory(
                 prefix="nous-media-", dir=self.content.staging
@@ -285,7 +293,7 @@ class MediaService:
 
     def _base(self) -> tuple[str, ...]:
         return (
-            self.ffmpeg,
+            self.policy.ffmpeg,
             "-hide_banner",
             "-loglevel",
             "error",
@@ -304,12 +312,95 @@ class MediaService:
     ) -> DerivedContent:
         info = await self.probe(source)
         if (
-            info.kind not in ("audio", "video")
+            info.kind not in ("audio", "video", "image")
             or info.duration_ms is None
             or span.end_ms > info.duration_ms
         ):
             raise ValueError("Time span is outside the source media duration")
+        if info.kind == "image":
+            if audio_only:
+                raise ValueError("Animated images have no audio track")
+            return await self.animate(source, span=span)
         return await self._transcode(source, info, span, None, audio_only)
+
+    async def animate(
+        self,
+        source: ContentObject,
+        *,
+        rect: PixelRect | None = None,
+        span: TimeSpan | None = None,
+    ) -> DerivedContent:
+        """Prepare one actual animation cycle; retain its temporal and spatial selection."""
+        info = await self.probe(source)
+        if info.kind != "image" or not info.frames or info.frames < 2 or not info.duration_ms:
+            raise ValueError("Animation preparation requires timed, multiple image frames")
+        if rect is not None:
+            self._validate_rect(rect, info.width, info.height)
+        if span is not None and span.end_ms > info.duration_ms:
+            raise ValueError("Time span is outside the source animation duration")
+        from .animation import animation_timeline
+
+        selected = span or TimeSpan(start_ms=0, end_ms=info.duration_ms)
+        duration = selected.end_ms - selected.start_ms
+        async with self.content.protect(source) as path:
+            with tempfile.TemporaryDirectory(
+                prefix="nous-animation-", dir=self.content.staging
+            ) as temporary:
+                directory = Path(temporary)
+                async with self._processes:
+                    manifest = await anyio.to_thread.run_sync(
+                        animation_timeline, path, directory, selected, rect
+                    )
+                output = directory / "animation.mp4"
+                visual_filter = "null" if rect else "pad=ceil(iw/2)*2:ceil(ih/2)*2"
+                pixel_format = (
+                    "yuv444p" if rect and (rect.width % 2 or rect.height % 2) else "yuv420p"
+                )
+                arguments = self._base() + (
+                    "-f",
+                    "concat",
+                    "-safe",
+                    "0",
+                    "-i",
+                    str(manifest),
+                    "-t",
+                    str(duration / 1000),
+                    "-an",
+                    "-vf",
+                    visual_filter,
+                    "-fps_mode",
+                    "vfr",
+                    "-enc_time_base",
+                    "1:1000",
+                    "-c:v",
+                    "libx264",
+                    "-bf",
+                    "0",
+                    "-pix_fmt",
+                    pixel_format,
+                    "-video_track_timescale",
+                    "1000",
+                    "-movflags",
+                    "+faststart",
+                    "-fs",
+                    str(self.policy.max_derivative_bytes + 1),
+                    str(output),
+                )
+                async with self._processes, asyncio.timeout(self.policy.transform_timeout_seconds):
+                    await run_process(arguments)
+                await self._check_coverage(
+                    output, await self._probe_file(path), duration, selected, audio=False
+                )
+                if self._duration_ms(await self._probe_file(output)) != duration:
+                    raise ValueError("Prepared animation changed the selected interval duration")
+                lease = await self._publish_derivative(output, "video/mp4")
+                return DerivedContent(
+                    lease,
+                    source.content_hash,
+                    "video_crop" if rect else "video_clip",
+                    pixel_rect=rect,
+                    time_span=selected,
+                )
 
     async def crop_video(
         self, source: ContentObject, rect: PixelRect, span: TimeSpan | None = None
@@ -377,10 +468,10 @@ class MediaService:
                     "-threads",
                     "2",
                     "-fs",
-                    str(self.max_derivative_bytes + 1),
+                    str(self.policy.max_derivative_bytes + 1),
                     str(output),
                 )
-                async with self._processes, asyncio.timeout(120):
+                async with self._processes, asyncio.timeout(self.policy.transform_timeout_seconds):
                     await run_process(arguments)
                 expected_ms = span.end_ms - span.start_ms if span is not None else info.duration_ms
                 # FFmpeg can exit successfully after a size cap or recoverable
@@ -405,12 +496,14 @@ class MediaService:
         info = await self.probe(source)
         if info.kind not in ("video", "image") or info.duration_ms is None:
             raise ValueError("Frame sampling requires temporal visual media")
-        if len(at_ms) > self.max_frames or any(
+        if len(at_ms) > self.policy.max_frames or any(
             value < 0 or value >= info.duration_ms for value in at_ms
         ):
             raise ValueError("Frame sample positions exceed source bounds or the frame limit")
         if rect is not None:
             self._validate_rect(rect, info.width, info.height)
+        if info.kind == "image":
+            return await self._sample_animation(source, at_ms, rect)
         result: list[DerivedContent] = []
         try:
             async with self.content.protect(source) as path:
@@ -433,7 +526,10 @@ class MediaService:
                                 f"crop={rect.width}:{rect.height}:{rect.x}:{rect.y}",
                             )
                         arguments += ("-threads", "1", str(output))
-                        async with self._processes, asyncio.timeout(60):
+                        async with (
+                            self._processes,
+                            asyncio.timeout(self.policy.transform_timeout_seconds),
+                        ):
                             await run_process(arguments)
                         lease = await self._publish_derivative(output, "image/png")
                         result.append(
@@ -449,4 +545,45 @@ class MediaService:
         except BaseException:
             for derivative in result:
                 await self.content.release(derivative.lease)
+            raise
+
+    async def _sample_animation(
+        self, source: ContentObject, positions: tuple[int, ...], rect: PixelRect | None
+    ) -> tuple[DerivedContent, ...]:
+        from .animation import decode_animation_frames
+
+        result: list[DerivedContent] = []
+        try:
+            async with self.content.protect(source) as path:
+                with tempfile.TemporaryDirectory(
+                    prefix="nous-animation-", dir=self.content.staging
+                ) as temporary:
+                    directory = Path(temporary)
+                    async with self._processes:
+                        await anyio.to_thread.run_sync(
+                            decode_animation_frames,
+                            self.policy.max_pixels,
+                            self.policy.max_frames,
+                            path,
+                            directory,
+                            positions,
+                            rect,
+                        )
+                    for value in positions:
+                        lease = await self._publish_derivative(
+                            directory / f"{value}.png", "image/png"
+                        )
+                        result.append(
+                            DerivedContent(
+                                lease,
+                                source.content_hash,
+                                "sampled_frame",
+                                pixel_rect=rect,
+                                at_ms=value,
+                            )
+                        )
+            return tuple(result)
+        except BaseException:
+            for item in result:
+                await self.content.release(item.lease)
             raise

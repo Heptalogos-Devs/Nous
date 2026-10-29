@@ -123,3 +123,19 @@ for item in result["items"]:
 search 按实体名称、真实身份、关系两端名称与谓词进行精确、前缀、子串匹配。items 保留旧界面的 type/title/matched_field/matched_value、entity_hash 或 relation_hash；这些身份指向实际 Native 认知，并附完整 reference 与来源根。置信度只有真实记录存在时返回。get_graph、node_detail、edge_detail 读取同一认知目录；create_node、rename_node、delete_node、create_edge、update_edge_weight、delete_edge 由正式认知事务执行，保留调用者提交的更改报告和 Import 来源。Entity 身份保持稳定，改名更新相关关系的当前精确端点，删除保留历史修订。weight 是独立的 Association 字段，未记录时仍为 null；可视化的中性 prior 明确标为 neutral_prior。
 
 CLI 对应 `nous graph-search <namespace-id> <subject-id> <query> --limit 50`；MCP 的 `memory_graph_admin` 接受上述 action，额外字段放入 arguments；CLI `nous graph <namespace-id> <subject-id> <action> --request change.json` 使用同一字段。
+
+
+人物查看使用 MaiBot 既有 `src/services/memory_service.py::MemoryService.profile_admin`，RPC 直接传 `memory_profile_admin`，不在调用端转换成另一工具：
+
+```python
+people = await adapter.memory_profile_admin(action="list", limit=50)
+if people["items"]:
+    person_id = people["items"][0]["person_id"]
+    profile = await adapter.memory_profile_admin(action="query", person_id=person_id, limit=12)
+    evidence = await adapter.memory_profile_admin(action="evidence", person_id=person_id, limit=12)
+    aliases = await adapter.memory_profile_admin(action="get_aliases", person_id=person_id)
+```
+
+query/evidence 也可传 person_keyword（或 keyword）按真实人物主名、别名精确选择；歧义返回错误。get_person_profile 复用同一人物选择和证据读取。人物与每条属性证据均沿现有 Cognition/SourceRead owner 授权，已撤回或不可读的属性证据不会放出。profile_version 是当前 Native Entity 修订；profile_source=nous_entity，别名只返回实际 effective_aliases。原 A-Memorix get_person_profile 的 chat_id 保持其全局人物查看语义，来源范围仍由 SourceReadScope 限定。
+
+force_refresh=true 明确返回 profile_refresh_unavailable，不提交或伪报刷新。别名覆盖、画像覆盖与证据纠正需要相应写入 owner；这些写入 action 当前返回 capability_unavailable。CLI `nous profile <namespace-id> <subject-id> --action list` 与 MCP memory_profile_admin 使用同一操作。

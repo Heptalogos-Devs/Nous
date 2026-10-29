@@ -41,6 +41,7 @@ from .sdk_imports import router as import_router
 from .sdk_media import router as media_router
 from .sdk_social import router as social_router
 from .sdk_sources import router as sources_router
+from .sdk_vectors import router as vectors_router
 from .security import application, authorize, context
 
 router = APIRouter(prefix="/api")
@@ -51,6 +52,7 @@ router.include_router(social_router)
 router.include_router(sources_router)
 router.include_router(graph_router)
 router.include_router(cognition_router)
+router.include_router(vectors_router)
 
 
 class PutText(OperationIdentity):

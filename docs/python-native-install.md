@@ -30,7 +30,9 @@ python install-python.py --wheels . --venv /path/to/venv --instance /path/to/ins
 
 Windows 对应 `C:\path\to\venv\Scripts\nous.exe`。通过同一安装的 `nous --help` 查看 CLI；HTTP 管理界面与 API 使用该实例的凭据。实例数据库、内容、索引和后台任务均随实例保存，程序升级不需要移动它们。
 
-音视频探测、裁剪与采样另需 PATH 中的 `ffmpeg` 和 `ffprobe`。Debian/Ubuntu 可安装 `ffmpeg`，macOS 可使用 Homebrew 的 `ffmpeg`，Windows 可安装 FFmpeg 并将其 `bin` 目录加入 PATH。图片由 Pillow 处理，PDF 由 pypdf 处理。缺少音视频工具会返回明确的依赖不可用错误。
+音视频及 GIF 动画准备另需 `ffmpeg` 和 `ffprobe`。Debian/Ubuntu 可安装 `ffmpeg`，macOS 可使用 Homebrew 的 `ffmpeg`，Windows 可安装 FFmpeg 并将其 `bin` 目录加入 PATH，也可在配置页的 `media` 中填写两个程序的完整路径。该配置仅保存到实例，包含像素、帧数、派生文件大小、进程并发与超时限制；后续媒体操作读取新值，已开始的操作保留自己的参数。静态图片由 Pillow 处理，PDF 由 pypdf 处理。
+
+GIF 保留原件及帧时长。整段或时间、像素选区会准备为视频供模型读取；精确帧采样返回相应时间位置的合成画面。需要保留派生材料时使用 `media derive`，结果可继续按原件和选区追溯。
 
 ## 使用 CLI
 

@@ -232,7 +232,7 @@ def test_successful_early_transcode_is_rejected_before_content_publication(tmp_p
         monkeypatch.setattr(media_service, "run_process", early_success)
         with pytest.raises(ValueError, match="full requested time interval"):
             await media.extract_clip(source, TimeSpan(start_ms=0, end_ms=800))
-        assert 0 < measured[0] < media.max_derivative_bytes
+        assert 0 < measured[0] < media.policy.max_derivative_bytes
         assert list(store.staging.iterdir()) == []
         assert store.path_for(source.content_hash).read_bytes() == path.read_bytes()
         await store.release(source)

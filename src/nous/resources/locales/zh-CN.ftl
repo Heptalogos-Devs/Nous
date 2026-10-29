@@ -1,4 +1,5 @@
 error-invalid-argument = 请检查输入的参数。
+error-configuration-scope-invalid = 该配置不支持所选保存范围。
 error-unauthorized = 请先完成身份认证。
 error-forbidden = 当前账户没有执行此操作的权限。
 error-not-found = 未找到请求的资源。

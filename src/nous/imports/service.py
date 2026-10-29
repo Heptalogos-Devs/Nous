@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from nous.cognition.models import ModelServices
 from nous.cognition.service import CognitionService
 from nous.material.service import MaterialService
@@ -21,6 +23,9 @@ from . import (
     status,
     text_admission,
 )
+
+if TYPE_CHECKING:
+    from nous.vector_projection.service import VectorProjectionService
 
 
 class ImportService:
@@ -72,3 +77,4 @@ class ImportService:
         self.models = models
         self.materials = materials or MaterialService(authority, content_store)
         self.content_store = self.materials.content_store
+        self.projection: VectorProjectionService | None = None

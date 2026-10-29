@@ -150,6 +150,8 @@ async def adopt_observation(
             recorded=ctx.clock,
             validity=proposal.validity,
         )
+        if self.projection is not None:
+            await self.projection.policy_in(tx, "disabled")
         if anchor is not None:
             current_anchor = await self.cognition.get_in(tx, ctx, anchor.reference)
             records = (
@@ -177,6 +179,11 @@ async def adopt_observation(
             )
         return tx.result(
             ObservationFormation(
+                projection=await self.projection.admit_in(
+                    tx, ctx, tuple(record.reference for record in records)
+                )
+                if self.projection is not None and command.vectors != "disabled"
+                else None,
                 observation_id=command.observation_id,
                 cognition=tuple(record.reference for record in records),
                 producer_call_id=proposal.producer_call_id,
@@ -210,7 +217,10 @@ async def form_observation(
     vector_error = None
     if command.vectors != "disabled":
         try:
-            await self.embed_records(ctx, result.cognition, command.operation_id + ":embed")
+            if result.projection is not None and self.projection is not None:
+                await self.projection.execution().wait(ctx, result.projection.job_id)
+            else:
+                await self.embed_records(ctx, result.cognition, command.operation_id + ":embed")
         except (DomainError, APIError, HTTPError, TimeoutError) as error:
             if command.vectors == "required" or (
                 isinstance(error, DomainError)

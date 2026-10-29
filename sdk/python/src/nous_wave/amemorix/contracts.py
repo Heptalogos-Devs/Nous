@@ -2,7 +2,7 @@
 
 from typing import Literal
 
-from pydantic import Field, JsonValue
+from pydantic import AliasChoices, Field, JsonValue
 
 from ..contracts import Contract
 
@@ -78,10 +78,18 @@ class MaintainInput(Contract):
 
 class ProfileInput(Contract):
     person_id: str = ""
-    person_name: str = ""
+    person_name: str = Field(
+        default="", validation_alias=AliasChoices("person_name", "person_keyword", "keyword")
+    )
     chat_id: str = ""
     context_text: str = ""
-    limit: int = Field(default=10, ge=1, le=1000)
+    limit: int = Field(default=10, ge=1, le=1000, validation_alias=AliasChoices("limit", "top_k"))
+    force_refresh: bool = False
+
+
+class ProfileAdminInput(ProfileInput):
+    action: Literal["list", "query", "evidence", "get_aliases"]
+    limit: int = Field(default=12, ge=1, le=1000, validation_alias=AliasChoices("limit", "top_k"))
 
 
 class AMemorixOperation(Contract):

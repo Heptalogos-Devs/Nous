@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import shutil
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from nous_native import IndexStore, Snapshot
 
@@ -19,6 +20,9 @@ from . import binding, candidates, embedding, graph, query, status
 from .native import run_native
 from .readout import finalize
 from .source_expansion import expand_sources
+
+if TYPE_CHECKING:
+    from nous.vector_projection.service import VectorProjectionService
 
 
 class RetrievalService:
@@ -54,6 +58,7 @@ class RetrievalService:
         self.snapshots: dict[str, Snapshot] = {}
         self.stores: dict[str, IndexStore] = {}
         self.lock = asyncio.Lock()
+        self.projection: VectorProjectionService | None = None
 
     async def close(self) -> None:
         async with self.lock:

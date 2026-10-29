@@ -7,6 +7,7 @@ from pydantic import Field, JsonValue, model_validator
 from .cognition import CognitiveRef, FormationCatalogEntry
 from .common import Contract, Operation, TimePoint
 from .media import MediaReference
+from .vector_projection import ProjectionReceipt
 
 
 class ImportDocument(Contract):
@@ -134,6 +135,7 @@ class ProcessCatalog(Operation):
 
 
 class UnitOutput(Contract):
+    projection: ProjectionReceipt | None = None
     formation: ObservationFormSubmission | None = None
     id: str
     unit_id: str
@@ -219,6 +221,7 @@ class FormObservation(Operation):
 
 
 class ObservationFormation(Contract):
+    projection: ProjectionReceipt | None = None
     vector_policy: Literal["disabled", "metadata_allowed", "required"] = "disabled"
     vector_error: ImportFailure | None = None
     observation_id: str

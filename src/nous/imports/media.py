@@ -26,14 +26,17 @@ class MediaImportService:
     adopt = adopt
     derive = derive
 
-    async def generation_input(self, ctx: CallContext, reference: MediaReference) -> MediaInput:
+    async def generation_input(
+        self, ctx: CallContext, reference: MediaReference, *, media: MediaService | None = None
+    ) -> MediaInput:
+        media = media or await self.media.freeze()
         if reference.kind in {"representation", "derived_region"}:
-            return await self.derived_input(ctx, reference)
+            return await self.derived_input(ctx, reference, media=media)
         async with self.authority.read(ctx) as view:
             material, region, _ = await self.materials.media_source_in(view, ctx, reference)
         return await selected_input(
             self.content,
-            self.media,
+            media,
             ContentObject(material["content_hash"], material["byte_len"], material["media_type"]),
             reference.id,
             region,
@@ -54,18 +57,24 @@ class MediaImportService:
         self.authority, self.materials, self.cognition = authority, materials, cognition
         self.models, self.content, self.media = models, content, media
 
-    async def region_input(self, ctx: CallContext, region_id: str) -> MediaInput:
+    async def region_input(
+        self, ctx: CallContext, region_id: str, *, media: MediaService | None = None
+    ) -> MediaInput:
+        media = media or await self.media.freeze()
         region, material = await self.materials.region_source(ctx, region_id)
         return await selected_input(
             self.content,
-            self.media,
+            media,
             ContentObject(material["content_hash"], material["byte_len"], material["media_type"]),
             region.id,
             region,
             inline_text=material["text"],
         )
 
-    async def derived_input(self, ctx: CallContext, reference: MediaReference) -> MediaInput:
+    async def derived_input(
+        self, ctx: CallContext, reference: MediaReference, *, media: MediaService | None = None
+    ) -> MediaInput:
+        media = media or await self.media.freeze()
         async with self.authority.read(ctx) as view:
             selected = await self.derivations.selected_in(view, ctx, reference)
         payload = selected.payload
@@ -91,7 +100,7 @@ class MediaImportService:
         )
         return await selected_input(
             self.content,
-            self.media,
+            media,
             ContentObject(payload.content_hash, payload.byte_len, payload.media_type),
             reference.id,
             region,
@@ -100,6 +109,7 @@ class MediaImportService:
     async def resolve_embedding_input(
         self, ctx: CallContext, value: MediaEmbeddingInput
     ) -> MediaInput:
+        media = await self.media.freeze()
         if value.reference.kind in {"representation", "derived_region"}:
             async with self.authority.read(ctx) as view:
                 record = await self.derivations.media_record_in(
@@ -111,14 +121,14 @@ class MediaImportService:
                 value.media_type,
             ):
                 raise ValueError("Derived embedding input differs from its retained source")
-            return await self.derived_input(ctx, value.reference)
+            return await self.derived_input(ctx, value.reference, media=media)
         async with self.authority.read(ctx) as view:
             record, region, _ = await self.materials.media_source_in(view, ctx, value.reference)
         if record["content_hash"] != value.content_hash:
             raise ValueError("Media embedding input differs from its retained source")
         return await selected_input(
             self.content,
-            self.media,
+            media,
             ContentObject(record["content_hash"], record["byte_len"], record["media_type"]),
             value.reference.id,
             region,

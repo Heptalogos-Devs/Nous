@@ -215,6 +215,10 @@ class AMemorixAdapter:
     async def memory_stats(self, **kwargs: JsonValue) -> JsonObject:
         return await self.call("memory_stats", kwargs)
 
+    async def memory_profile_admin(self, *, action: str, **kwargs: JsonValue) -> JsonObject:
+        """Read retained person profiles, aliases and exact evidence through their owner."""
+        return await self.call("memory_profile_admin", {"action": action, **kwargs})
+
     async def memory_graph_admin(self, *, action: str, **kwargs: JsonValue) -> JsonObject:
         """Search actual graph entities and relations through the shared domain authority."""
         return await self.call("memory_graph_admin", {"action": action, **kwargs})
@@ -252,9 +256,6 @@ class AMemorixAdapter:
         timeout_ms: int | None = None,
     ) -> JsonObject:
         values = dict(arguments or {})
-        if component_name == "memory_profile_admin" and values.get("action") == "query":
-            component_name = "get_person_profile"
-            values.pop("action")
         if component_name == "memory_v5_admin":
             if values.get("action") == "remember_forever":
                 values.update(action="protect", hours=0)

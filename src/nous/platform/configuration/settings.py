@@ -3,6 +3,7 @@
 from pathlib import Path
 from typing import Annotated, Literal
 
+from nous_wave.contracts.media_policy import MediaPolicy
 from pydantic import AfterValidator, BaseModel, Field, JsonValue
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -69,6 +70,7 @@ class Settings(BaseSettings):
     model: ModelRoute = Field(default_factory=ModelRoute)
     embedding: EmbeddingRoute = Field(default_factory=EmbeddingRoute)
     network: NetworkPolicy = Field(default_factory=NetworkPolicy)
+    media: MediaPolicy = Field(default_factory=MediaPolicy)
     log_level: str = "INFO"
 
     @property

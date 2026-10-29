@@ -33,6 +33,11 @@ history = sa.Table(
 class ConfigurationEntry:
     default: BaseModel
     instance_management: bool = False
+    scopes: tuple[Literal["instance", "namespace", "subject"], ...] = (
+        "instance",
+        "namespace",
+        "subject",
+    )
 
 
 class ConfigurationService:
@@ -61,6 +66,7 @@ class ConfigurationService:
             value_schema=type(entry.default).model_json_schema(),
             default_value=self._defaults[key],
             write_access="instance_manage" if entry.instance_management else "manage",
+            scopes=entry.scopes,
         )
 
     def catalog(self) -> ConfigurationCatalog:
@@ -74,10 +80,25 @@ class ConfigurationService:
 
     async def effective(self, ctx: CallContext, key: str) -> dict[str, object]:
         entry = self.entry(key)
+        scopes = tuple(
+            scope for scope in self.scopes(ctx) if scope.split(":", 1)[0] in entry.scopes
+        )
+        return await self._effective(key, scopes, ctx)
+
+    async def effective_instance(self, key: str) -> dict[str, object]:
+        entry = self.entry(key)
+        if entry.scopes != ("instance",):
+            raise ValueError("Instance resource resolution requires an instance-only definition")
+        return await self._effective(key, ("instance",), None)
+
+    async def _effective(
+        self, key: str, scopes: tuple[str, ...], ctx: CallContext | None
+    ) -> dict[str, object]:
+        entry = self.entry(key)
         value = self._defaults[key]
         origin = "default"
         async with self.authority.read(ctx) as view:
-            for scope in self.scopes(ctx):
+            for scope in scopes:
                 row = (
                     (
                         await view.connection.execute(
@@ -118,6 +139,12 @@ class ConfigurationService:
         scope: Literal["instance", "namespace", "subject"] = "instance",
     ) -> dict[str, object]:
         entry = self.entry(key)
+        if scope not in entry.scopes:
+            raise NousError(
+                "configuration_scope_invalid",
+                "Configuration does not support the selected scope",
+                context={"key": key, "scope": scope, "allowed_scopes": list(entry.scopes)},
+            )
         if scope == "subject" and ctx.subject_id is None:
             raise ValueError("Subject scope requires a subject")
         target = (

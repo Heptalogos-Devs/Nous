@@ -129,6 +129,28 @@ def run(
         )
 
     @mcp.tool()
+    async def memory_profile_admin(
+        action: Literal["list", "query", "evidence", "get_aliases"],
+        person_id: str = "",
+        person_keyword: str = "",
+        limit: int = 10,
+        force_refresh: bool = False,
+        context_text: str = "",
+    ) -> JsonObject:
+        """Browse retained person knowledge, aliases and supported evidence. Forced refresh needs its formation operation."""
+        return await call(
+            "memory_profile_admin",
+            {
+                "action": action,
+                "person_id": person_id,
+                "person_keyword": person_keyword,
+                "limit": limit,
+                "force_refresh": force_refresh,
+                "context_text": context_text,
+            },
+        )
+
+    @mcp.tool()
     async def maintain_memory(
         action: Literal[
             "reinforce", "weaken", "protect", "restore", "freeze", "forget", "recycle_bin"

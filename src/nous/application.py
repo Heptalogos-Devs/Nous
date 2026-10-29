@@ -2,6 +2,8 @@
 
 from nous_wave.amemorix.contracts import AMemorixPolicy
 from nous_wave.contracts.context import ContextsPolicy
+from nous_wave.contracts.media_policy import MediaPolicy
+from nous_wave.contracts.vector_projection import VectorProjectionPolicy
 
 from nous.identity.credentials import CredentialsService
 from nous.platform.configuration import Settings
@@ -34,6 +36,10 @@ class Application:
                 "contexts": ConfigurationEntry(ContextsPolicy()),
                 "network": ConfigurationEntry(settings.network, instance_management=True),
                 "retrieval": ConfigurationEntry(retrieval_defaults()),
+                "vector_projection": ConfigurationEntry(VectorProjectionPolicy()),
+                "media": ConfigurationEntry(
+                    settings.media, instance_management=True, scopes=("instance",)
+                ),
             },
         )
         self.prompts = PromptService(self.authority)
@@ -49,7 +55,9 @@ class Application:
         from nous.platform.media import MediaService
 
         self.content = ContentStore(self.authority, settings.instance / "content")
-        self.media = MediaService(self.content)
+        self.media = MediaService(
+            self.content, policy=settings.media, policy_resolver=self.media_policy
+        )
         self.backups = BackupService(self.authority, self.content)
         self.material = MaterialService(self.authority, content_store=self.content)
         from nous.material.derived import DerivedService
@@ -104,6 +112,20 @@ class Application:
         )
         self.models.media_resolver = self.media_imports.resolve_embedding_input
         self.models.preview_media_resolver = self.media_imports.generation_input
+        from nous.vector_projection.service import VectorProjectionService
+
+        self.vector_projection = VectorProjectionService(
+            self.authority,
+            self.cognition,
+            self.models,
+            self.configuration,
+            materials=self.material,
+            derivations=self.derivations,
+            invalidate=self.retrieval.invalidate,
+        )
+        self.cognition.projection = self.vector_projection
+        self.imports.projection = self.vector_projection
+        self.retrieval.projection = self.vector_projection
         self.contexts = ContextService(
             self.authority,
             self.cognition,
@@ -125,6 +147,9 @@ class Application:
             purge_context_in=self.contexts.purge_references_in,
         )
         self.execution.register("nous.imports.process", self.imports.run_process, preemptible=True)
+        self.execution.register(
+            "nous.vectors.project", self.vector_projection.run, preemptible=True
+        )
         self.execution.register("nous.imports.text", self.imports.run_text_import, preemptible=True)
         self.execution.register(
             "nous.imports.form_observation", self.imports.run_form_observation, preemptible=True
@@ -155,6 +180,11 @@ class Application:
         await self.authority.close()
 
     async def purge_model_inputs_in(self, tx: WriteTx, material_ids: tuple[str, ...]) -> None:
+        await self.vector_projection.purge_materials_in(tx, material_ids)
         await self.models.ledger.purge_materials_in(tx, material_ids)
         await self.derivations.purge_materials_in(tx, material_ids)
         await self.maintenance.purge_materials_in(tx, material_ids)
+
+    async def media_policy(self) -> MediaPolicy:
+        effective = await self.configuration.effective_instance("media")
+        return MediaPolicy.model_validate(effective["value"])

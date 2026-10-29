@@ -1,4 +1,5 @@
 error-invalid-argument = Check the supplied values.
+error-configuration-scope-invalid = This configuration does not support the selected scope.
 error-unauthorized = Authentication is required.
 error-forbidden = Your account cannot perform this operation.
 error-not-found = The requested resource was not found.

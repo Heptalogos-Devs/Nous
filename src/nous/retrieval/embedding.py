@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import numpy as np
 from nous_wave.contracts import (
     CallContext,
     DomainError,
@@ -79,92 +78,30 @@ async def query_embedding(
 async def embed_media(
     self: RetrievalService, ctx: CallContext, reference: MediaReference, operation_id: str
 ) -> MediaEmbeddingResult:
+    if self.projection is None:
+        raise RuntimeError("The vector projection owner is not composed")
+    result = await self.projection.project(ctx, (reference,), operation_id)
+    if len(result.spaces) != 1 or reference.exact() not in result.references:
+        raise DomainError("source_unavailable", "The media projection has no available vector")
     async with self.authority.read(ctx) as view:
-        candidates = [
-            record
-            for record in await media_records_in(view, ctx, self.materials, self.derivations)
-            if record.reference.exact() == reference.exact()
-            and (
-                reference.observation_id is None
-                or (
-                    record.reference.observation_id == reference.observation_id
-                    if reference.kind in {"material", "source_region"}
-                    else reference.observation_id in record.source_roots
+        await source_material_ids_in(view, ctx, reference, self.materials, self.derivations)
+        row = (
+            (
+                await view.connection.execute(
+                    select(vectors).where(
+                        vectors.c.reference == reference.exact(),
+                        vectors.c.space == result.spaces[0],
+                    )
                 )
             )
-        ]
-    if not candidates:
-        raise DomainError("source_unavailable", "Media embedding source is unavailable")
-    record = max(candidates, key=lambda item: item.commit_seq)
-    async with self.authority.read(ctx) as view:
-        source_ids = await source_material_ids_in(
-            view, ctx, record.reference, self.materials, self.derivations
+            .mappings()
+            .one()
         )
-    receipt = await self.authority.receipt(
-        ctx,
-        operation_id,
-        operation_kind="media.embed",
-        scope=ctx.require_subject(),
-        payload=reference,
-    )
-    if receipt is not None:
-        return MediaEmbeddingResult.model_validate(receipt.result)
-    batch = await self.models.embed_media(
-        ctx.model_copy(update={"request_id": operation_id}),
-        ((embedding_input(record),),),
-        source_ids=source_ids,
-    )
-    if (
-        len(batch.vectors) != 1
-        or len(batch.vectors[0]) != batch.dimensions
-        or not np.isfinite(batch.vectors[0]).all()
-    ):
-        raise DomainError(
-            "invalid_embedding", "Media embedding has invalid count, dimensions, or coordinates"
-        )
-    async with self.authority.write(
-        ctx,
-        operation_id,
-        operation_kind="media.embed",
-        scope=ctx.require_subject(),
-        payload=reference,
-    ) as tx:
-        await source_material_ids_in(tx, ctx, record.reference, self.materials, self.derivations)
-        if tx.replayed:
-            return MediaEmbeddingResult.model_validate(tx.replay_result)
-        existing = (
-            await tx.connection.execute(
-                select(vectors.c.model, vectors.c.dimensions).where(
-                    vectors.c.reference == reference.exact(), vectors.c.space == batch.space
-                )
-            )
-        ).first()
-        if existing is not None and (
-            existing.model != batch.model or existing.dimensions != batch.dimensions
-        ):
-            raise DomainError(
-                "embedding_space_conflict",
-                "A media space cannot mix model identities or dimensions",
-            )
-        if existing is None:
-            await tx.connection.execute(
-                vectors.insert().values(
-                    reference=reference.exact(),
-                    space=batch.space,
-                    model=batch.model,
-                    dimensions=batch.dimensions,
-                    vector=list(batch.vectors[0]),
-                    call_id=batch.call_ids[0],
-                    commit_seq=tx.commit_seq,
-                )
-            )
-        return tx.result(
-            MediaEmbeddingResult(
-                reference=reference,
-                space=batch.space,
-                model=batch.model,
-                dimensions=batch.dimensions,
-                call_ids=batch.call_ids,
-                commit_seq=tx.commit_seq,
-            )
+        return MediaEmbeddingResult(
+            reference=reference,
+            space=str(row["space"]),
+            model=str(row["model"]),
+            dimensions=int(row["dimensions"]),
+            call_ids=(str(row["call_id"]),),
+            commit_seq=int(row["commit_seq"]),
         )

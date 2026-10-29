@@ -337,6 +337,8 @@ async def process_unit(
                     validity=proposal.validity,
                     recorded=ctx.clock,
                 )
+                if self.projection is not None:
+                    await self.projection.policy_in(tx, "disabled")
                 records = await self.cognition.adopt_text_formation_in(
                     tx,
                     ctx,
@@ -373,6 +375,11 @@ async def process_unit(
                     else None
                 )
                 output = UnitOutput(
+                    projection=await self.projection.admit_in(tx, ctx, tuple(refs))
+                    if self.projection is not None
+                    and command.vectors != "disabled"
+                    and not command.deferred_formation
+                    else None,
                     formation=formation,
                     id=str(uuid4()),
                     unit_id=unit.id,
@@ -398,7 +405,13 @@ async def process_unit(
     if command.vectors != "disabled" and not command.deferred_formation:
         await attempt.advance("embedding")
         try:
-            await self.embed_output(ctx, output.id, required=command.vectors == "required")
+            await self.embed_output(
+                ctx,
+                output.id,
+                required=command.vectors == "required",
+                operation_id=f"{command.operation_id}:{unit.id}:vectors",
+                receipt=output.projection if reused is None else None,
+            )
         except (DomainError, APIError, HTTPError, TimeoutError) as error:
             attempt.value = attempt.value.model_copy(update={"vector_error": failure(error)})
             if command.vectors == "required" or (

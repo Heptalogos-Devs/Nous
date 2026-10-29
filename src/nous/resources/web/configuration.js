@@ -22,11 +22,18 @@ async function loadKey() {
   const value = await api(`/api/configuration/${encodeURIComponent(key)}?${params()}`);
   if (requested !== generation) return;
   editor.value = JSON.stringify(value.value, null, 2);
-  const inherited = value.origin.split(":")[0];
-  scope.value = ["instance", "namespace", "subject"].includes(inherited) ? inherited : "subject";
-  if (!state.subject && scope.value === "subject") scope.value = "namespace";
-  message(origin, "web-models-origin", { origin: value.origin });
   const registered = catalog.find((item) => item.key === key);
+  const scopes = registered.scopes.filter((name) => name !== "subject" || state.subject);
+  scope.replaceChildren(
+    ...scopes.map((name) => {
+      const option = message(el("option"), `web-scope-${name}`);
+      option.value = name;
+      return option;
+    }),
+  );
+  const inherited = value.origin.split(":")[0];
+  scope.value = scopes.includes(inherited) ? inherited : scopes.at(-1);
+  message(origin, "web-models-origin", { origin: value.origin });
   definition.replaceChildren(
     message(
       el("p", "muted"),
@@ -91,11 +98,6 @@ async function loadHistory() {
 export function initializeConfiguration() {
   keys = el("select");
   scope = el("select");
-  for (const name of ["instance", "namespace", "subject"]) {
-    const option = message(el("option"), `web-scope-${name}`);
-    option.value = name;
-    scope.append(option);
-  }
   editor = el("textarea");
   editor.rows = 18;
   editor.spellcheck = false;

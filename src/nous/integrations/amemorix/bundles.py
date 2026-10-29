@@ -115,7 +115,8 @@ async def bundle_admin(
                 document = BlobDocument(
                     filename=filename, media_type=lease.media_type, source_type="bundle_export"
                 )
-                info = await service.app.media.probe(lease)
+                media = await service.app.media.freeze()
+                info = await media.probe(lease)
                 material = await service.app.material.put_blob_in(
                     tx, ctx, lease, document, info, required_source_ids=required_source_ids
                 )

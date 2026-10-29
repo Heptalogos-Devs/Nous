@@ -23,7 +23,7 @@ from nous_wave.contracts.derivation import (
 from pydantic import TypeAdapter
 
 from nous.platform.content import ContentLease, ContentObject
-from nous.platform.media import DerivedContent
+from nous.platform.media import DerivedContent, MediaService
 from nous.platform.persistence.authority import canonical_json
 
 from .media_input import selected_input
@@ -67,30 +67,33 @@ async def source_object(
 
 
 async def transform(
-    self: MediaImportService,
+    media: MediaService,
     source: ContentObject,
     command: MediaTransformation,
 ) -> tuple[DerivedContent, ...]:
     if command.action == "crop":
         assert command.pixel_rect is not None
         if source.media_type.startswith("image/"):
+            info = await media.probe(source)
+            if info.frames is not None and info.frames > 1:
+                return (
+                    await media.animate(source, rect=command.pixel_rect, span=command.time_span),
+                )
             if command.time_span is not None:
                 raise DomainError("media_transform_invalid", "A still image has no time span")
-            return (await self.media.crop_image(source, command.pixel_rect),)
-        return (await self.media.crop_video(source, command.pixel_rect, command.time_span),)
+            return (await media.crop_image(source, command.pixel_rect),)
+        return (await media.crop_video(source, command.pixel_rect, command.time_span),)
     if command.action in {"clip", "audio_track"}:
         span = command.time_span
         if span is None:
-            info = await self.media.probe(source)
+            info = await media.probe(source)
             if not info.duration_ms:
                 raise DomainError(
                     "media_transform_invalid", "Audio extraction requires temporal media"
                 )
             span = TimeSpan(start_ms=0, end_ms=info.duration_ms)
-        return (
-            await self.media.extract_clip(source, span, audio_only=command.action == "audio_track"),
-        )
-    return await self.media.sample_frames(source, command.sample_at_ms, rect=command.pixel_rect)
+        return (await media.extract_clip(source, span, audio_only=command.action == "audio_track"),)
+    return await media.sample_frames(source, command.sample_at_ms, rect=command.pixel_rect)
 
 
 async def derive(
@@ -111,6 +114,7 @@ async def derive(
             return tuple(
                 [await self.derivations.read_in(view, ctx, value.reference) for value in values]
             )
+    media = await self.media.freeze()
     source, region = await source_object(self, ctx, command.source)
     if not source.media_type.startswith(("image/", "video/", "audio/")):
         raise DomainError(
@@ -120,17 +124,15 @@ async def derive(
     results: tuple[DerivedContent, ...] = ()
     try:
         if region:
-            selected = await selected_input(
-                self.content, self.media, source, command.source.id, region
-            )
+            selected = await selected_input(self.content, media, source, command.source.id, region)
             prepared = await self.content.publish_bytes(selected.data, selected.media_type)
             source = prepared
-        results = await transform(self, source, command.transformation)
-        infos = [await self.media.probe(item.lease) for item in results]
+        results = await transform(media, source, command.transformation)
+        infos = [await media.probe(item.lease) for item in results]
         config = {
-            "max_pixels": self.media.max_pixels,
-            "max_frames": self.media.max_frames,
-            "max_derivative_bytes": self.media.max_derivative_bytes,
+            "max_pixels": media.policy.max_pixels,
+            "max_frames": media.policy.max_frames,
+            "max_derivative_bytes": media.policy.max_derivative_bytes,
         }
 
         def digest(value: object) -> str:

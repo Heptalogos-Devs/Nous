@@ -2,7 +2,7 @@
 
 from typing import Literal
 
-from pydantic import JsonValue
+from pydantic import Field, JsonValue
 
 from .common import Contract
 
@@ -12,6 +12,7 @@ class ConfigurationDefinition(Contract):
     value_schema: dict[str, JsonValue]
     default_value: dict[str, JsonValue]
     write_access: Literal["manage", "instance_manage"]
+    scopes: tuple[Literal["instance", "namespace", "subject"], ...] = Field(min_length=1)
 
 
 class ConfigurationCatalog(Contract):

@@ -63,6 +63,10 @@ class AMemorixService:
             return await self.maintain(ctx, MaintainInput.model_validate(arguments))
         if tool == "get_person_profile":
             return await self.profile(ctx, ProfileInput.model_validate(arguments))
+        if tool == "memory_profile_admin":
+            from .profile_admin import profile_admin
+
+            return await profile_admin(self, ctx, arguments)
         if tool == "memory_source":
             from nous_wave.contracts.source_graph import ExpandSources
 

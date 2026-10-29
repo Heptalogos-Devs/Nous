@@ -37,6 +37,11 @@ async def amemorix(request: Request, command: AMemorixRequest):
     }
     read_preview = (
         (
+            command.operation.tool == "memory_profile_admin"
+            and command.operation.arguments.get("action")
+            in {"list", "query", "evidence", "get_aliases"}
+        )
+        or (
             command.operation.tool == "memory_graph_admin"
             and command.operation.arguments.get("action")
             in {"search", "get_graph", "node_detail", "edge_detail"}

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from datetime import datetime
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from nous_wave.contracts import (
@@ -52,6 +53,9 @@ from . import (
 from .projection import media_references_in, references_in
 from .schema import revisions
 from .semantics import capability_for, validate_domain_in
+
+if TYPE_CHECKING:
+    from nous.vector_projection.service import VectorProjectionService
 
 
 class CognitionService:
@@ -110,6 +114,7 @@ class CognitionService:
         self.derivations = derivations or DerivedService(authority, self.materials)
         self.invalidate = invalidate
         self.purge_context_in = purge_context_in
+        self.projection: VectorProjectionService | None = None
 
     async def active_roots_in(self, view: ReadView | WriteTx, ctx: CallContext):
         rows = (
@@ -402,6 +407,8 @@ class CognitionService:
                 commit_seq=tx.commit_seq,
             )
         )
+        if self.projection is not None:
+            await self.projection.changed_in(tx, ctx, result.reference)
         return result
 
     async def adopt(self, ctx: CallContext, command: AdoptCognition):

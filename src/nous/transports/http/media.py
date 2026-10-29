@@ -46,7 +46,8 @@ async def upload(
             and expected_content_hash.casefold() != lease.content_hash
         ):
             raise ValueError("Uploaded content does not match expected_content_hash")
-        info = await app.media.probe(lease)
+        media = await app.media.freeze()
+        info = await media.probe(lease)
         document = BlobDocument(filename=source, media_type=media_type, event_time=event)
         async with app.authority.write(
             ctx,

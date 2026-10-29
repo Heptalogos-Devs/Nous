@@ -17,15 +17,25 @@ export function jsonView(value) {
   return el("pre", "json-view", JSON.stringify(value, null, 2));
 }
 export function notice(message, failed = false) {
-  delete $("notice").dataset.i18n;
-  delete $("notice").dataset.i18nArgs;
-  $("notice").hidden = false;
-  $("notice").classList.toggle("error", failed);
-  $("notice").textContent = message;
+  const dialog = [...document.querySelectorAll("dialog[open]")].at(-1);
+  let inline = dialog?.querySelector(":scope > .dialog-notice");
+  if (dialog && !inline) {
+    inline = el("div", "dialog-notice notice");
+    inline.setAttribute("role", "status");
+    dialog.prepend(inline);
+  }
+  for (const node of [$("notice"), inline].filter(Boolean)) {
+    delete node.dataset.i18n;
+    delete node.dataset.i18nArgs;
+    node.hidden = false;
+    node.classList.toggle("error", failed);
+    node.textContent = message;
+  }
 }
 export function notify(key, args = {}) {
   notice(t(key, args));
-  localizedMessage($("notice"), key, args);
+  for (const node of document.querySelectorAll("#notice, dialog[open] > .dialog-notice"))
+    localizedMessage(node, key, args);
 }
 export function error(error) {
   notice(error.message || String(error), true);
@@ -65,7 +75,11 @@ export async function api(path, options = {}) {
     } catch {
       title = t("web-request-failed", { status: response.status });
     }
-    throw new Error(`${title} ${value?.error?.message || value?.detail || ""}`.trim());
+    const fields = value?.error?.context?.fields;
+    const details = Array.isArray(fields)
+      ? fields.map((field) => `${field.location.join(".")}: ${field.message}`).join("\n")
+      : value?.error?.message || value?.detail || "";
+    throw new Error(`${title} ${details}`.trim());
   }
   return value;
 }
@@ -110,6 +124,7 @@ export function setDisabled(node, disabled) {
 }
 export async function busy(node, action) {
   if (node.dataset.busy === "true") return;
+  node.closest("dialog")?.querySelector(":scope > .dialog-notice")?.remove();
   node.dataset.busy = "true";
   node.disabled = true;
   try {

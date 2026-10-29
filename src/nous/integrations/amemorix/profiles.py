@@ -10,8 +10,6 @@ from nous_wave.amemorix.contracts import (
 )
 from nous_wave.contracts import (
     CallContext,
-    DomainError,
-    EntityBody,
 )
 from pydantic import JsonValue
 
@@ -24,65 +22,10 @@ if TYPE_CHECKING:
 async def profile(
     self: AMemorixService, ctx: CallContext, command: ProfileInput
 ) -> dict[str, JsonValue]:
-    if not command.person_id and not command.person_name:
-        raise DomainError("person_required", "Profile requires person_id or person_name")
-    found = [
-        record
-        for record in await self.records(ctx, ("entity",))
-        if isinstance(record.body, EntityBody)
-        and record.body.entity_type == "person"
-        and (
-            (
-                command.person_id
-                and record.body.identifiers.get("maibot:person") == command.person_id
-            )
-            or (
-                command.person_name
-                and (
-                    record.body.label == command.person_name
-                    or command.person_name in record.body.aliases
-                )
-            )
-        )
-    ]
-    if len(found) != 1:
-        raise DomainError(
-            "person_not_found" if not found else "person_ambiguous",
-            "Person has no unique authorized profile",
-        )
-    record = found[0]
-    assert isinstance(record.body, EntityBody)
-    accepted = [
-        attribute
-        for attribute in record.body.attributes
-        if attribute.epistemic.classification in {"observed", "reported"}
-        and not any(link.polarity == "counterexample" for link in attribute.evidence)
-        and (attribute.validity is None or attribute.validity.contains(ctx.clock))
-    ][: command.limit]
-    uncertain = [attribute for attribute in record.body.attributes if attribute not in accepted][
-        : command.limit
-    ]
+    from .profile_read import read_profile, select_person
+
     return json_object(
-        {
-            "success": True,
-            "summary": record.body.description,
-            "traits": [f"{attribute.predicate}: {attribute.value}" for attribute in accepted],
-            "evidence": [
-                {
-                    "hash": record.reference.exact(),
-                    "content": f"{attribute.predicate}: {attribute.value}",
-                    "type": "entity_attribute",
-                    "metadata": {
-                        "epistemic": attribute.epistemic,
-                        "validity": attribute.validity,
-                    },
-                    "evidence": attribute.evidence,
-                }
-                for attribute in accepted
-            ],
-            "uncertain": uncertain,
-            "reference": record.reference,
-        }
+        await read_profile(self, ctx, await select_person(self, ctx, command), command)
     )
 
 

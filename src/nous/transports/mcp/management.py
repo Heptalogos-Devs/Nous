@@ -6,6 +6,7 @@ from typing import Literal
 
 from nous_wave import NousClient
 from nous_wave.contracts.model_roles import ModelContractRequest, ModelPreviewRequest
+from nous_wave.contracts.vector_projection import ProjectVectors
 from nous_wave.types import JsonObject
 from pydantic import JsonValue
 
@@ -18,6 +19,14 @@ def register_management(
     namespace_id: str,
     subject_id: str,
 ) -> None:
+    @server.tool()
+    async def project_vectors(command: ProjectVectors) -> JsonObject:
+        """Admit exact targets to the durable embedding queue; inspect or wait for the returned job."""
+        async with client() as api:
+            return (await api.project_vectors(namespace_id, subject_id, command)).model_dump(
+                mode="json"
+            )
+
     @server.tool()
     async def model_contract(command: ModelContractRequest) -> JsonObject:
         """Read a registered role's real input/output schema and active Prompt without a provider call."""

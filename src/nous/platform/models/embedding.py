@@ -88,11 +88,13 @@ async def embed_media(
     ledger: CallLedger,
     network: NetworkService,
     source_ids: tuple[str, ...],
+    *,
+    invocation_id: str | None = None,
 ) -> EmbeddingBatch:
     vectors: list[tuple[float, ...]] = []
     call_ids: list[str | None] = []
     effective_model: str | None = None
-    for group in inputs:
+    for index, group in enumerate(inputs):
         if not group:
             raise ValueError("A joint embedding input must contain at least one part")
         snapshot: dict[str, object] = {
@@ -107,7 +109,10 @@ async def embed_media(
             "normalization": route.normalization,
             "extra_body": route.extra_body,
         }
-        call_id, cached = await ledger.reserve(ctx, "embedding", snapshot, route.max_calls_per_day)
+        identity = f"{invocation_id}:{index}" if invocation_id is not None else None
+        call_id, cached = await ledger.reserve(
+            ctx, "embedding", snapshot, route.max_calls_per_day, invocation_id=identity
+        )
         if cached is not None:
             result = retained_embedding(cached, call_id)
             if effective_model is not None and effective_model != result.model:
@@ -171,7 +176,7 @@ async def embed_media(
                 f"Media embedding failed ({code})",
                 context={
                     "call_id": call_id,
-                    "invocation_id": None,
+                    "invocation_id": identity,
                     "role": "embedding",
                     "provider_code": code,
                 },

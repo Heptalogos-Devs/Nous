@@ -28,6 +28,7 @@ from ..contracts.imports import (
     UnitAttempt,
 )
 from ..contracts.text_import import TextImport, TextImportResult, TextImportSubmission
+from ..contracts.vector_projection import ProjectionReceipt, ProjectVectors
 from ..operations import encoded, segment
 from ..types import (
     FileImportSubmission,
@@ -42,6 +43,17 @@ from .requests import request_scope
 
 
 class ImportClient(JobClient):
+    async def project_vectors(
+        self, namespace_id: str, subject_id: str, command: ProjectVectors
+    ) -> ProjectionReceipt:
+        return ProjectionReceipt.model_validate(
+            await self.request(
+                "POST",
+                self.subject_path(namespace_id, subject_id) + "/embeddings/jobs",
+                body=encoded(command),
+            )
+        )
+
     async def process_import_units(
         self,
         namespace_id: str | Mapping[str, JsonValue],

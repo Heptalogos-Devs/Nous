@@ -191,13 +191,19 @@ async def adopt(
         DerivationInput(ordinal=index, source=reference)
         for index, reference in enumerate(references)
     )
+    prepared_media = await self.media.freeze()
     if command.regions:
-        media = tuple([await self.region_input(ctx, region.id) for region in command.regions])
+        media = tuple(
+            [
+                await self.region_input(ctx, region.id, media=prepared_media)
+                for region in command.regions
+            ]
+        )
     else:
         obj = ContentObject(material["content_hash"], material["byte_len"], material["media_type"])
         media = (
             await selected_input(
-                self.content, self.media, obj, command.material_id, inline_text=material["text"]
+                self.content, prepared_media, obj, command.material_id, inline_text=material["text"]
             ),
         )
     description_record: DerivedRepresentation | None = None

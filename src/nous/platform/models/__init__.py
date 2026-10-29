@@ -20,11 +20,13 @@ from nous.platform.configuration.models import ModelConfiguration
 from nous.platform.configuration.service import ConfigurationService
 from nous.platform.errors import Unavailable
 from nous.platform.network.service import NetworkService
-from nous.platform.persistence import Authority
+from nous.platform.persistence import Authority, ReadView, WriteTx
 from nous.platform.prompts import PromptService
 
 from .contracts import model_contract, model_preview, prepare_role
-from .embedding import MediaResolver, embed_media
+from .embedding import MediaResolver, embed_media, retained_embedding
+from .embedding_evidence import reusable_embedding_in
+from .embedding_profile import EmbeddingProfile
 from .generation import (
     Generated,
     Generation,
@@ -72,6 +74,7 @@ def credential(route: ModelRoute, role_id: str | None = None) -> str:
 
 
 class ModelService:
+    reusable_embedding_in = reusable_embedding_in
     model_contract = model_contract
     model_preview = model_preview
     prepare_role = prepare_role
@@ -192,13 +195,11 @@ class ModelService:
         )
         return Generated(output=result, call_id=call_id)
 
-    async def embed(
-        self, ctx: CallContext, texts: tuple[str, ...], *, source_ids: tuple[str, ...] = ()
-    ) -> EmbeddingBatch:
+    async def prepare_embedding(self, ctx: CallContext) -> EmbeddingProfile:
         resources = ModelConfiguration.model_validate(
             (await self.configuration.effective(ctx, "models"))["value"]
         )
-        route, _ = resources.resolve("embedding")
+        route, _ = resources.resolve("embedding", require_configured=False)
         if not isinstance(route, EmbeddingRoute):
             raise DomainError(
                 "model_unavailable",
@@ -206,6 +207,27 @@ class ModelService:
                 role="embedding",
                 reason="capability_missing",
             )
+        return EmbeddingProfile(route=route)
+
+    async def successful_embedding_in(
+        self,
+        view: ReadView | WriteTx,
+        ctx: CallContext,
+        call_id: str,
+    ) -> EmbeddingBatch:
+        paid = await self.ledger.successful_in(view, ctx, call_id)
+        return retained_embedding(paid.result, paid.id)
+
+    async def embed(
+        self,
+        ctx: CallContext,
+        texts: tuple[str, ...],
+        *,
+        source_ids: tuple[str, ...] = (),
+        invocation_id: str | None = None,
+        profile: EmbeddingProfile | None = None,
+    ) -> EmbeddingBatch:
+        route = (profile or await self.prepare_embedding(ctx)).route
         return await embed_text(
             ctx,
             texts,
@@ -214,6 +236,7 @@ class ModelService:
             self.ledger,
             self.network,
             source_ids,
+            invocation_id=invocation_id,
         )
 
     async def embed_media(
@@ -222,20 +245,12 @@ class ModelService:
         inputs: tuple[tuple[str | MediaEmbeddingInput, ...], ...],
         *,
         source_ids: tuple[str, ...] = (),
+        invocation_id: str | None = None,
+        profile: EmbeddingProfile | None = None,
     ) -> EmbeddingBatch:
         if self.media_resolver is None:
             raise Unavailable("Media resolution is not configured")
-        resources = ModelConfiguration.model_validate(
-            (await self.configuration.effective(ctx, "models"))["value"]
-        )
-        route, _ = resources.resolve("embedding")
-        if not isinstance(route, EmbeddingRoute):
-            raise DomainError(
-                "model_unavailable",
-                "Embedding role must resolve to an embedding model",
-                role="embedding",
-                reason="capability_missing",
-            )
+        route = (profile or await self.prepare_embedding(ctx)).route
         return await embed_media(
             ctx,
             inputs,
@@ -245,4 +260,5 @@ class ModelService:
             self.ledger,
             self.network,
             source_ids,
+            invocation_id=invocation_id,
         )

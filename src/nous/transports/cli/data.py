@@ -26,6 +26,7 @@ from nous_wave.contracts import (
     SplitConcept,
 )
 from nous_wave.contracts.lifecycle import MemoryChange
+from nous_wave.contracts.vector_projection import ProjectVectors
 from nous_wave.operations import encoded, segment
 from pydantic import JsonValue, TypeAdapter
 
@@ -33,6 +34,12 @@ from .common import invoke, read_command, read_json
 
 
 def register(cli: typer.Typer) -> None:
+    @cli.command("project-vectors")
+    def project_vectors(ctx: typer.Context, namespace: str, subject: str, request: Path) -> None:
+        """Submit exact cognitive/media targets from a ProjectVectors JSON file."""
+        command = read_command(request, ProjectVectors)
+        invoke(ctx, lambda api: api.project_vectors(namespace, subject, command))
+
     namespace = typer.Typer(help="Namespace directory and creation.", no_args_is_help=False)
     subject = typer.Typer(help="Subject ownership and capabilities.", no_args_is_help=False)
     source = typer.Typer(help="Original sources and their lifecycle.", no_args_is_help=False)
@@ -147,6 +154,33 @@ def register(cli: typer.Typer) -> None:
     @cli.command("manual")
     def manual(ctx: typer.Context) -> None:
         invoke(ctx, lambda api: api.query_manual())
+
+    @cli.command("profile")
+    def profile(
+        ctx: typer.Context,
+        namespace_id: str,
+        subject_id: str,
+        action: Literal["list", "query", "evidence", "get_aliases"] = "query",
+        person_id: str = "",
+        person_keyword: str = "",
+        limit: int = 10,
+        force_refresh: bool = False,
+    ) -> None:
+        """Browse retained person profiles and exact evidence."""
+        from nous_wave.amemorix import AMemorixAdapter
+
+        async def read(api: NousClient) -> object:
+            return await AMemorixAdapter(
+                api, namespace_id=namespace_id, subject_id=subject_id
+            ).memory_profile_admin(
+                action=action,
+                person_id=person_id,
+                person_keyword=person_keyword,
+                limit=limit,
+                force_refresh=force_refresh,
+            )
+
+        invoke(ctx, read)
 
     @cli.command("graph-search")
     def graph_search(

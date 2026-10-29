@@ -238,3 +238,6 @@ A-Memorix 图谱搜索使用 `adapter.memory_graph_admin(action="search", query=
 
 
 `client.configuration({"action":"get","key":"network","namespace_id":namespace_id,"subject_id":subject_id})` 读取应用出站网络有效策略与 origin；`action="history"` 读取同一 scope 继承范围的正式配置历史（limit 1..1000）。network 控制应用 Provider 的代理、环境信任、CA/TLS、分阶段超时和连接池；策略更新在下一次调用边界生效，已运行调用的租约结束后关闭旧池。外部 SDK 自身的 Transport 保持独立。`retrieval` 使用同一配置 get/set/reset/history 入口，默认值来自正式 Native schema。
+
+
+人物目录、画像证据和别名可通过 `adapter.memory_profile_admin(action="list"|"query"|"evidence"|"get_aliases", ...)` 查看，原 `get_person_profile` 复用相同人物与证据读取。person_id 接受实际 MaiBot correspondence 或 Native Entity 身份；person_keyword/keyword 接受实际主名与别名，选择歧义会明确失败。force_refresh=true 返回 profile_refresh_unavailable，读取不会触发付费生成。画像证据的 evidence_key 是准确 Entity 修订及属性 JSON pointer，reference 和每条 evidence 保留真实来源，可继续使用公开来源读取。

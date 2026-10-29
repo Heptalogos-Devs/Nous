@@ -21,6 +21,8 @@ async def embed_one(
     ledger: CallLedger,
     network: NetworkService,
     source_ids: tuple[str, ...],
+    *,
+    invocation_id: str | None = None,
 ) -> EmbeddingBatch:
     request: dict[str, object] = {
         "model": route.model,
@@ -31,7 +33,9 @@ async def embed_one(
         "normalization": route.normalization,
         "extra_body": route.extra_body,
     }
-    call_id, cached = await ledger.reserve(ctx, "embedding", request, route.max_calls_per_day)
+    call_id, cached = await ledger.reserve(
+        ctx, "embedding", request, route.max_calls_per_day, invocation_id=invocation_id
+    )
     if cached is not None:
         return retained_embedding(cached, call_id)
     try:
@@ -74,7 +78,7 @@ async def embed_one(
             f"Embedding provider failed ({code})",
             context={
                 "call_id": call_id,
-                "invocation_id": None,
+                "invocation_id": invocation_id,
                 "role": "embedding",
                 "provider_code": code,
             },
@@ -89,6 +93,8 @@ async def embed_text(
     ledger: CallLedger,
     network: NetworkService,
     source_ids: tuple[str, ...],
+    *,
+    invocation_id: str | None = None,
 ) -> EmbeddingBatch:
     if not texts or any(not text.strip() for text in texts):
         raise ValueError("Text embedding inputs must contain nonempty text")
@@ -102,6 +108,9 @@ async def embed_text(
             ledger,
             network,
             source_ids,
+            invocation_id=f"{invocation_id}:{offset // route.max_batch_items}"
+            if invocation_id is not None
+            else None,
         )
         if batches and (batch.space, batch.model, batch.dimensions) != (
             batches[0].space,
