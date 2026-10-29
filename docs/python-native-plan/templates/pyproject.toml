@@ -11,7 +11,7 @@ requires-python = ">=3.14,<3.15"
 dependencies = [
   "nous-wave", "nous-wave-native",
   "pydantic>=2.12,<3", "pydantic-settings>=2,<3",
-  "sqlalchemy[asyncio]>=2.0,<2.1", "aiosqlite>=0.21,<1", "alembic>=1.16,<2",
+  "sqlalchemy[asyncio]>=2.0,<2.1", "aiosqlite>=0.21,<1",
   "dbos>=3.3,<4",
   "fastapi>=0.118,<1", "uvicorn>=0.35,<1", "mcp>=1.18,<3",
   "typer>=0.19,<1", "rich>=14,<15",

@@ -30,6 +30,7 @@ from nous.material.service import require_observation_in
 from nous.platform.execution import JobSpec, require_job_in
 
 from .attempts import AttemptRecorder, failure, record_attempt
+from .model_generation import form
 from .schema import inputs, outputs, requests, successes, units
 from .source_events import processing_source
 
@@ -331,7 +332,7 @@ async def process_unit(
         )
         await attempt.advance("formation")
         proposal = (
-            (await self.models.form(model_ctx, unit.text, model_source))
+            (await form(self.models, model_ctx, unit.text, model_source))
             if command.llm_enabled and unit.requires_llm and not command.deferred_formation
             else FormationProposal(memories=())
         )

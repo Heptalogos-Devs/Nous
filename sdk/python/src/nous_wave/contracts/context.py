@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Annotated, Literal
+from typing import Literal
 
 from pydantic import Field, JsonValue, model_validator
 
 from .cognition import CognitiveRef, EpistemicStance
 from .common import Contract, Operation, TimePoint
-from .media import MediaReference
 from .retrieval import QueryRequest
+from .targets import CognitiveTarget as CognitiveTarget
+from .targets import ContextTarget as ContextTarget
+from .targets import MediaTarget as MediaTarget
 
 
 class ContextCommand(Operation):
@@ -27,19 +29,6 @@ class ContextFeedback(Operation):
     kind: Literal["model_contact", "actual_use", "behavior_adoption", "outcome"]
     description: str
     outcome: Literal["helpful", "unhelpful", "unknown"] = "unknown"
-
-
-class CognitiveTarget(Contract):
-    kind: Literal["cognition"] = "cognition"
-    reference: CognitiveRef
-
-
-class MediaTarget(Contract):
-    kind: Literal["media"] = "media"
-    reference: MediaReference
-
-
-ContextTarget = Annotated[CognitiveTarget | MediaTarget, Field(discriminator="kind")]
 
 
 class ContextUsage(Contract):

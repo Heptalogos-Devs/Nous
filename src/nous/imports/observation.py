@@ -22,6 +22,7 @@ from nous.material.service import require_observation_in
 from nous.material.text import source_region_text
 from nous.platform.content import ContentObject
 
+from .model_generation import form
 from .observation_anchor import anchor_in
 
 if TYPE_CHECKING:
@@ -117,8 +118,11 @@ async def adopt_observation(
         "formation_catalog": [entry.model_dump(mode="json") for entry in catalog],
     }
     proposal = (
-        await self.models.form(
-            ctx.model_copy(update={"request_id": command.operation_id + ":form"}), text, source
+        await form(
+            self.models,
+            ctx.model_copy(update={"request_id": command.operation_id + ":form"}),
+            text,
+            source,
         )
         if command.llm_enabled
         else FormationProposal(memories=())

@@ -14,6 +14,7 @@ from .cognition import CognitiveRecord, CognitiveRef
 from .common import Contract, Operation
 from .derivation import DerivedBundle
 from .imports import UnitOutput
+from .model_calls import ArchivedCall
 from .references import ReferenceBinding
 
 
@@ -103,6 +104,7 @@ class BundleFileSuccess(Contract):
 
 
 class BundleVector(Contract):
+    provenance: dict[str, JsonValue] = Field(default_factory=dict)
     reference: str
     space: str
     model: str
@@ -142,3 +144,4 @@ class SubjectBundle(Contract):
     bindings: tuple[ReferenceBinding, ...] = ()
     derivations: DerivedBundle = Field(default_factory=DerivedBundle)
     vectors: tuple[BundleVector, ...] = ()
+    calls: tuple[ArchivedCall, ...] = ()

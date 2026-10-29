@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import json
 import sqlite3
@@ -14,18 +13,17 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, TypeVar
 
 import sqlalchemy as sa
-from alembic import command
-from alembic.config import Config
 from nous_wave.contracts.common import CallContext, DomainError
 from pydantic import JsonValue, TypeAdapter
 from sqlalchemy import event
+from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.engine.interfaces import DBAPICursor
 from sqlalchemy.ext.asyncio import AsyncConnection, create_async_engine
 from sqlalchemy.pool import ConnectionPoolEntry
 
+from nous.platform.concurrency import owned_thread
 from nous.platform.observability import operation_span
 
-from .payload_compat import previous_payload
 from .schema import clock, metadata, operations
 
 if TYPE_CHECKING:
@@ -35,26 +33,6 @@ T = TypeVar("T")
 
 
 _json_encoder = TypeAdapter(object)
-
-
-async def owned_thread[**Params, Result](
-    function: Callable[Params, Result], *args: Params.args, **kwargs: Params.kwargs
-) -> Result:
-    """Do not release database/filesystem resources while their thread still runs."""
-    work = asyncio.create_task(asyncio.to_thread(function, *args, **kwargs))
-    try:
-        return await asyncio.shield(work)
-    except asyncio.CancelledError as cancelled:
-        while not work.done():
-            try:
-                await asyncio.shield(work)
-            except asyncio.CancelledError:
-                continue
-            except Exception:
-                break
-        if not work.cancelled():
-            work.exception()
-        raise cancelled
 
 
 def canonical_json(value: object) -> str:
@@ -71,6 +49,20 @@ class SQLiteConnection(Protocol):
     isolation_level: str | None
 
     def cursor(self) -> DBAPICursor: ...
+
+
+def operation_key(ctx: CallContext, operation_kind: str, scope: str, operation_id: str) -> str:
+    if not operation_id or not operation_kind:
+        raise ValueError("operation_id and operation_kind are required")
+    identity = (
+        ctx.caller_id,
+        operation_kind,
+        ctx.namespace_id,
+        ctx.subject_id,
+        scope,
+        operation_id,
+    )
+    return hashlib.sha256(canonical_json(identity).encode()).hexdigest()
 
 
 class OperationConflict(ValueError):
@@ -177,7 +169,7 @@ class WriteTx:
 class Authority:
     """One physical authority database, with separate reader and writer policies.
 
-    Domain tables register before initialize(). Workers start only after migrations.
+    Domain tables share metadata before initialize(). Workers start only after schema initialization.
     The context determines operation identity, not permissions: domains still enforce
     their own authorization in this transaction.
     """
@@ -186,7 +178,6 @@ class Authority:
         self.path = Path(path).resolve()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.execution: DurableExecution | None = None
-        self._metadata = [metadata]
         self.initialized = False
         url = sa.URL.create("sqlite+aiosqlite", database=str(self.path))
         self.reader = create_async_engine(url)
@@ -212,30 +203,29 @@ class Authority:
             def begin(connection: sa.Connection, *, immediate: bool = writer) -> None:
                 connection.exec_driver_sql("BEGIN IMMEDIATE" if immediate else "BEGIN")
 
-    def register_metadata(self, domain_metadata: sa.MetaData) -> None:
-        if self.initialized:
-            raise RuntimeError("Register domain metadata before initializing the authority")
-        if domain_metadata not in self._metadata:
-            self._metadata.append(domain_metadata)
-
     async def initialize(self) -> None:
         async with self.writer.connect() as connection:
-            # WAL must be selected outside the explicit application transaction.
-            await connection.run_sync(self._migrate)
+            # SQLite changes journal mode outside the application transaction.
+            await connection.run_sync(self._enable_wal)
+            async with connection.begin():
+                await connection.run_sync(metadata.create_all, checkfirst=True)
+                await connection.execute(
+                    insert(clock)
+                    .values(singleton=1, commit_seq=0)
+                    .on_conflict_do_nothing(index_elements=[clock.c.singleton])
+                )
         self.initialized = True
 
-    def _migrate(self, connection: sa.Connection) -> None:
+    @staticmethod
+    def _enable_wal(connection: sa.Connection) -> None:
         raw = connection.connection.dbapi_connection
         if raw is None:
-            raise RuntimeError("Migration requires an open DBAPI connection")
+            raise RuntimeError("Schema initialization requires an open DBAPI connection")
         cursor = raw.cursor()
-        cursor.execute("PRAGMA journal_mode=WAL")
-        cursor.close()
-        config = Config()
-        config.set_main_option("script_location", str(Path(__file__).parent / "migrations"))
-        config.attributes["connection"] = connection
-        config.attributes["domain_metadata"] = tuple(self._metadata)
-        command.upgrade(config, "head")
+        try:
+            cursor.execute("PRAGMA journal_mode=WAL")
+        finally:
+            cursor.close()
 
     @asynccontextmanager
     async def read(self, ctx: CallContext | None = None) -> AsyncGenerator[ReadView]:
@@ -255,15 +245,9 @@ class Authority:
         scope: str = "",
         payload: object,
     ) -> AsyncGenerator[WriteTx]:
-        if not operation_id or not operation_kind:
-            raise ValueError("operation_id and operation_kind are required")
-        identity = (ctx.caller_id, ctx.namespace_id, scope, operation_id)
-        key = hashlib.sha256(canonical_json(identity).encode()).hexdigest()
+        key = operation_key(ctx, operation_kind, scope, operation_id)
         payload_hash = hashlib.sha256(
             canonical_json({"kind": operation_kind, "payload": payload}).encode()
-        ).hexdigest()
-        previous_hash = hashlib.sha256(
-            canonical_json({"kind": operation_kind, "payload": previous_payload(payload)}).encode()
         ).hexdigest()
         with operation_span(operation_kind, ctx, operation_id=operation_id) as span:
             async with self.writer.connect() as connection, connection.begin():
@@ -277,7 +261,7 @@ class Authority:
                     .first()
                 )
                 if row:
-                    if row["payload_hash"] not in {payload_hash, previous_hash}:
+                    if row["payload_hash"] != payload_hash:
                         raise OperationConflict(
                             f"Operation {operation_id!r} already has a different payload"
                         )
@@ -341,6 +325,7 @@ class Authority:
                             operation_key=key,
                             caller_id=ctx.caller_id,
                             namespace_id=ctx.namespace_id,
+                            subject_id=ctx.subject_id,
                             scope=scope,
                             operation_id=operation_id,
                             operation_kind=operation_kind,
@@ -365,14 +350,9 @@ class Authority:
         payload: object,
     ) -> OperationReceipt | None:
         """Read a completed receipt before repeating expensive external work."""
-        key = hashlib.sha256(
-            canonical_json((ctx.caller_id, ctx.namespace_id, scope, operation_id)).encode()
-        ).hexdigest()
+        key = operation_key(ctx, operation_kind, scope, operation_id)
         expected = hashlib.sha256(
             canonical_json({"kind": operation_kind, "payload": payload}).encode()
-        ).hexdigest()
-        previous_hash = hashlib.sha256(
-            canonical_json({"kind": operation_kind, "payload": previous_payload(payload)}).encode()
         ).hexdigest()
         async with self.read(ctx) as view:
             row = (
@@ -386,7 +366,7 @@ class Authority:
             )
             if row is None:
                 return None
-            if row["payload_hash"] not in {expected, previous_hash}:
+            if row["payload_hash"] != expected:
                 raise OperationConflict(
                     f"Operation {operation_id!r} already has a different payload"
                 )
@@ -429,12 +409,12 @@ class Authority:
 
     async def backup(self, destination: str | Path) -> Path:
         """Take a consistent online snapshot including DBOS and committed WAL data."""
-        return await owned_thread(self._copy_database, self.path, Path(destination))
+        return await owned_thread(lambda: self._copy_database(self.path, Path(destination)))
 
     @staticmethod
     async def restore_backup(source: str | Path, destination: str | Path) -> Path:
         """Restore into a new instance path before opening its authority or workers."""
-        return await owned_thread(Authority._copy_database, Path(source), Path(destination))
+        return await owned_thread(lambda: Authority._copy_database(Path(source), Path(destination)))
 
     @staticmethod
     def _copy_database(source: Path, destination: Path) -> Path:

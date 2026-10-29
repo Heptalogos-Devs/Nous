@@ -135,7 +135,7 @@ class ContentStore:
                         self._verify_existing, target, content.content_hash, length
                     )
                 else:
-                    os.link(temporary, target)
+                    os.replace(temporary, target)
                     target.chmod(0o444)
                     if os.name == "posix":
                         descriptor = os.open(target.parent, os.O_RDONLY)

@@ -55,6 +55,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         status = (
             401
             if code == "credential_invalid"
+            else 503
+            if code in {"model_unavailable", "capability_unavailable"}
             else 403
             if code.endswith("_forbidden")
             else 404
@@ -64,6 +66,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             or code in {"operation_result_purged", "model_invocation_unavailable"}
             else 400
         )
+        if code == "model_unavailable":
+            status = 503
         return JSONResponse(
             {"error": {"code": code, "message": str(error), "context": error.details}},
             status_code=status,
@@ -110,12 +114,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.exception_handler(NousError)
     async def service_error(request: Request, error: NousError) -> JSONResponse:
         return JSONResponse(
-            {"error": {"code": error.code, "message": str(error)}}, status_code=error.status
+            {"error": {"code": error.code, "message": str(error), "context": error.context}},
+            status_code=error.status,
         )
 
     @app.exception_handler(OperationConflict)
     async def conflict(request: Request, error: OperationConflict) -> JSONResponse:
         return JSONResponse({"error": {"code": "Conflict", "message": str(error)}}, status_code=409)
+
+    @app.exception_handler(OSError)
+    async def storage_error(request: Request, error: OSError) -> JSONResponse:
+        return JSONResponse(
+            {
+                "error": {
+                    "code": "Unavailable",
+                    "message": "The service could not complete its I/O operation",
+                    "context": {"error_type": type(error).__name__},
+                }
+            },
+            status_code=503,
+        )
 
     @app.exception_handler(ValueError)
     async def invalid_input(request: Request, error: ValueError) -> JSONResponse:
@@ -132,6 +150,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.exception_handler(LookupError)
     async def missing(request: Request, error: LookupError) -> JSONResponse:
         return JSONResponse({"error": {"code": "NotFound", "message": str(error)}}, status_code=404)
+
+    @app.exception_handler(Exception)
+    async def internal_error(request: Request, error: Exception) -> JSONResponse:
+        return JSONResponse(
+            {
+                "error": {
+                    "code": "Internal",
+                    "message": "The service could not complete the operation",
+                    "context": {"error_type": type(error).__name__},
+                }
+            },
+            status_code=500,
+        )
 
     instrument_app(app)
     return app

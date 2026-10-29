@@ -125,12 +125,22 @@ def register(cli: typer.Typer) -> None:
         mode: Literal["lexical", "dense", "hybrid", "vcp"] = "lexical",
         limit: int = 10,
         request: Path | None = None,
+        materialize: bool = False,
+        rerank: Literal["off", "optional", "required"] = "off",
+        rerank_invocation_id: str | None = None,
     ) -> None:
         """Query cognition; --request accepts the full public QueryRequest JSON."""
         payload = (
             read_command(request, QueryRequest)
             if request
-            else QueryRequest(text=text, mode=mode, limit=limit)
+            else QueryRequest(
+                text=text,
+                mode=mode,
+                limit=limit,
+                materialize=materialize,
+                rerank=rerank,
+                rerank_invocation_id=rerank_invocation_id,
+            )
         )
         invoke(ctx, lambda api: api.query_cognition(namespace_id, subject_id, payload))
 

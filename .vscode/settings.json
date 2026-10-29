@@ -1,5 +1,5 @@
 {
-  "python.defaultInterpreterPath": "${workspaceFolder}/.venv",
+  "python.defaultInterpreterPath": "${workspaceFolder}/temp/venvs/python-native",
   "python.languageServer": "None",
   "[python]": {
     "editor.defaultFormatter": "charliermarsh.ruff",

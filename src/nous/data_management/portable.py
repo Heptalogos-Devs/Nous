@@ -83,11 +83,24 @@ def project(
             "structured": body.structured,
             "external_ids": body.external_ids,
         }
+        from nous.material.named_sources import source_name
+
+        originals = {material.id: material.record for material in bundle.materials}
+        labels = {
+            label
+            for event in bundle.observations
+            if event.id in record.source_roots
+            if (label := source_name(event.record, originals.get(event.material_id))) is not None
+        }
+        named = body.metadata.get("source")
+        captured_source = (
+            named if isinstance(named, str) else next(iter(labels)) if len(labels) == 1 else ""
+        )
         row: dict[str, JsonValue] = {
             "hash": key,
             "content": body.text,
             "knowledge_type": str(body.metadata.get("knowledge_type") or "mixed"),
-            "source": str(body.metadata.get("source") or "nous-wave"),
+            "source": captured_source,
             "metadata": canonical(metadata).decode(),
             "is_deleted": 0,
             "is_permanent": int(bool(record.lifecycle and record.lifecycle.pinned)),
@@ -112,7 +125,15 @@ def project(
             for memory_id, memory in memories.items()
             if memory.reference.exact() in mentions
         ]
-        if not paragraphs:
+        if not paragraphs and not any(
+            event.id in record.source_roots
+            and any(
+                material.id == event.material_id
+                and str(material.record.get("media_type", "")).startswith("image/")
+                for material in bundle.materials
+            )
+            for event in bundle.observations
+        ):
             continue
         entities[key] = body
         tables["entities"].append(
@@ -144,7 +165,15 @@ def project(
                 for memory_id, memory in memories.items()
                 if any(link.reference == memory.reference for link in record.evidence)
             ]
-            if not paragraphs:
+            if not paragraphs and not any(
+                event.id in record.source_roots
+                and any(
+                    material.id == event.material_id
+                    and str(material.record.get("media_type", "")).startswith("image/")
+                    for material in bundle.materials
+                )
+                for event in bundle.observations
+            ):
                 continue
             tables["relations"].append(
                 {
@@ -193,6 +222,30 @@ def project(
             tables["episode_paragraphs"].extend(
                 {"episode_id": key, "paragraph_hash": member, "position": ordinal}
                 for member, ordinal in members
+            )
+    from .portable_identity import semantic_ids
+
+    identities = semantic_ids(bundle)
+    for name, values in tables.items():
+        for row in values:
+            for field in ("hash", "paragraph_hash", "entity_hash", "relation_hash", "episode_id"):
+                value = row.get(field)
+                if isinstance(value, str) and value in identities:
+                    row[field] = identities[value]
+            if name == "episodes" and isinstance(row.get("evidence_ids_json"), str):
+                row["evidence_ids_json"] = canonical(
+                    [
+                        identities.get(value, value)
+                        for value in json.loads(str(row["evidence_ids_json"]))
+                    ]
+                ).decode()
+        if name in {"paragraphs", "entities", "relations"} and len(
+            {str(row["hash"]) for row in values}
+        ) != len(values):
+            raise DomainError(
+                "bundle_portable_identity_collision",
+                "The selected Native identities collapse to one A-Memorix semantic key; select a narrower scope",
+                table=name,
             )
     docs: list[dict[str, JsonValue]] = []
     for paragraph in tables["paragraphs"]:
@@ -249,18 +302,31 @@ def project(
     return knowledge, state, {name: len(rows) for name, rows in tables.items()}
 
 
+def docs_from_knowledge(knowledge: dict[str, JsonValue]) -> list[dict[str, JsonValue]]:
+    return TypeAdapter(list[dict[str, JsonValue]]).validate_python(knowledge["docs"])
+
+
 def write_portable(bundle: SubjectBundle, command: BundleRequest) -> bytes:
-    if bundle.package is None or not bundle.package.version:
-        raise DomainError(
-            "bundle_release_required",
-            "A-Memorix export requires a package descriptor and release version",
-        )
     knowledge, state, counts = project(bundle)
     from .portable_images import project_images
     from .portable_read import image_semantics
 
+    portable_ids = {str(doc["id"]) for doc in docs_from_knowledge(knowledge)}
+    table_values = state.get("tables")
+    if isinstance(table_values, dict):
+        selected_tables = (
+            (("entities", "hash"), ("relations", "hash"), ("episodes", "episode_id"))
+            if command.content_level == "full"
+            else (("paragraph_entities", "entity_hash"), ("paragraph_relations", "relation_hash"))
+        )
+        for table, field in selected_tables:
+            values = table_values.get(table)
+            if isinstance(values, list):
+                portable_ids.update(
+                    str(value[field]) for value in values if isinstance(value, dict)
+                )
     images, image_members = (
-        project_images(bundle)
+        project_images(bundle, portable_ids)
         if command.assets is None or command.assets.include_images
         else (None, {})
     )
@@ -270,6 +336,12 @@ def write_portable(bundle: SubjectBundle, command: BundleRequest) -> bytes:
         members["state.json"] = canonical(selected_state)
         if command.assets is None or command.assets.include_images:
             members["bundle.json"] = canonical(bundle.model_dump(mode="json"))
+    from .portable_vectors import export_vectors
+
+    vector_members, fingerprint, image_fingerprint = export_vectors(
+        bundle, command, images, portable_ids
+    )
+    members.update(vector_members)
     members.update(image_members)
     if images is not None:
         members["images.json"] = canonical(images)
@@ -280,18 +352,36 @@ def write_portable(bundle: SubjectBundle, command: BundleRequest) -> bytes:
     content: dict[str, JsonValue] = {"knowledge": knowledge, "state": selected_state}
     if images is not None:
         content["images"] = image_semantics(images)
+    from nous_wave.contracts.bundles import PackageDescriptor
+
+    semantic_digest = sha256(canonical(content)).hexdigest()
+    package = bundle.package or PackageDescriptor(
+        id="amx." + semantic_digest[:16], name="A_Memorix 知识包", version="1.0.0"
+    )
+    package = package.model_copy(update={"version": package.version or "1.0.0"})
+    if "bundle.json" in members:
+        members["bundle.json"] = canonical(
+            bundle.model_copy(update={"package": package}).model_dump(mode="json")
+        )
+    if images is not None:
+        for field in ("assets", "occurrences", "observations", "links"):
+            values = images.get(field)
+            counts["image_" + field] = len(values) if isinstance(values, list) else 0
+    from .portable_vectors import coordinates
+
+    counts["vector_assets"] = sum(len(coordinates(data)[0]) for data in vector_members.values())
     manifest = {
         "format": "a-memorix-memory-bundle",
         "format_version": 2 if images is not None else 1,
         "created_at": datetime.now(UTC).isoformat(),
-        "package": bundle.package.model_dump(mode="json"),
+        "package": package.model_dump(mode="json"),
         "content_level": command.content_level,
-        "content_digest": sha256(canonical(content)).hexdigest(),
+        "content_digest": semantic_digest,
         "selector": command.selector.model_dump(mode="json"),
         "counts": counts,
         "components": sorted(members),
-        "embedding_fingerprint": None,
-        "image_embedding_fingerprint": None,
+        "embedding_fingerprint": fingerprint,
+        "image_embedding_fingerprint": image_fingerprint,
         "retention": {
             "nous_native": {"member": "bundle.json", "status": "included"}
             if "bundle.json" in members

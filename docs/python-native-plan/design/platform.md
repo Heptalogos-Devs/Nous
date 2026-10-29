@@ -9,7 +9,7 @@
 | 特有多模态 embedding / rerank | Provider 官方 Python SDK及既有成熟调用代码 | 输入parts、精确区域、向量空间、usage与来源 |
 | 数据校验 | Pydantic 2 / pydantic-settings | 配置继承、角色能力、业务不变量 |
 | 模板 | Jinja2 | Prompt资源、历史、权限、变量目录与激活 |
-| SQL | SQLAlchemy 2 Core / Alembic / SQLite | 事务中心、修订、接触与来源关系 |
+| SQL | SQLAlchemy 2 Core / SQLite | 事务中心、修订、接触与来源关系 |
 | 作业 | DBOS Python 3 / SQLite | 请求与任务的业务归属、形成条件、owned取消 |
 | API | FastAPI / Uvicorn | 正式领域操作、认证、错误、可用性 |
 | CLI | Typer / Rich | 高密度可读结果、完整参数、--json、stderr日志 |

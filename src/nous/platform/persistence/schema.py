@@ -17,6 +17,7 @@ operations = Table(
     Column("operation_key", String, primary_key=True),
     Column("caller_id", String, nullable=False),
     Column("namespace_id", String, nullable=False),
+    Column("subject_id", String),
     Column("scope", String, nullable=False),
     Column("operation_id", String, nullable=False),
     Column("operation_kind", String, nullable=False),
@@ -25,7 +26,9 @@ operations = Table(
     Column("recorded_at", String, nullable=False),
     Column("result_json", Text, nullable=False),
     Column("jobs_json", Text, nullable=False),
-    UniqueConstraint("caller_id", "namespace_id", "scope", "operation_id"),
+    UniqueConstraint(
+        "caller_id", "operation_kind", "namespace_id", "subject_id", "scope", "operation_id"
+    ),
 )
 
 job_links = Table(

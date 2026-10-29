@@ -33,14 +33,10 @@ class Selection(Contract):
     before_commit_seq: int | None = None
 
 
-def source_label(source: dict[str, JsonValue]) -> str:
-    captured = source.get("source")
-    if isinstance(captured, str) and captured:
-        return captured
-    kind = source.get("source_type")
-    origin = source.get("origin")
-    chat = origin.get("conversation_ref") if isinstance(origin, dict) else None
-    return f"{kind}:{chat}" if isinstance(chat, str) and chat else str(kind)
+def source_label(source: dict[str, JsonValue]) -> str | None:
+    from nous.material.named_sources import source_name
+
+    return source_name(source)
 
 
 async def source_admin(
@@ -58,7 +54,9 @@ async def source_admin(
     ]
     grouped: dict[str, list[str]] = defaultdict(list)
     for source in sources:
-        grouped[source_label(json_object(source))].append(source["id"])
+        label = source_label(json_object(source))
+        if label is not None:
+            grouped[label].append(source["id"])
     if command.action == "list" and tool == "memory_source_admin":
         records = await service.records(ctx, ("memory",))
         items = [

@@ -30,10 +30,11 @@ from pydantic import JsonValue, TypeAdapter
 from nous.cognition.formation_validation import validate_formation_draft
 from nous.material.service import MaterialRecord, SourceRecord, require_observation_in
 from nous.platform.content import ContentObject
-from nous.platform.models.generation import Description
 from nous.platform.persistence import ReadView, WriteTx
 
 from .media_input import selected_input
+from .model_contracts import Description
+from .model_generation import interpret
 
 if TYPE_CHECKING:
     from .media import MediaImportService
@@ -201,7 +202,8 @@ async def adopt(
         "regions": [region.model_dump(mode="json") for region in command.regions],
     }
     for attempt in range(2):
-        result = await self.models.interpret(
+        result = await interpret(
+            self.models,
             ctx,
             command.instruction,
             source,

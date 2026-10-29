@@ -53,6 +53,14 @@ async def export_archive(
         from .portable import write_portable
 
         data = await asyncio.to_thread(write_portable, bundle, command)
+        with ZipFile(BytesIO(data)) as exported:
+            portable_manifest = json.loads(exported.read("manifest.json"))
+        actual_summary = {
+            "format": portable_manifest["format"],
+            "package": portable_manifest["package"],
+            "content_level": portable_manifest["content_level"],
+            **portable_manifest["counts"],
+        }
     else:
         if command.content_level != "full" or (
             command.assets is not None and not command.assets.include_images
@@ -67,6 +75,7 @@ async def export_archive(
                 "bundle.json", json.dumps(bundle.model_dump(mode="json"), ensure_ascii=False)
             )
         data = output.getvalue()
+        actual_summary = summary(bundle)
     roots = tuple(
         sorted(
             {
@@ -76,7 +85,7 @@ async def export_archive(
             }
         )
     )
-    return BundleArchive(data, roots, summary(bundle))
+    return BundleArchive(data, roots, actual_summary)
 
 
 async def inspect_material(self: BundleService, ctx: CallContext, material_id: str):

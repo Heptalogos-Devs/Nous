@@ -438,3 +438,14 @@ web-maintenance-action-split = 拆分概念
 web-maintenance-action-memory = 记忆生命周期变更
 web-maintenance-strength = 强度
 web-maintenance-hours = 小时
+
+web-rerank = 模型重排
+web-rerank-off = 关闭重排
+web-rerank-optional = 可选模型重排
+web-rerank-required = 要求模型重排
+web-expand-sources = 展开来源
+web-source-partial = 来源展开已达到预算，或部分来源当前不可读。
+cli-rerank = 模型重排
+cli-complete = 完整
+
+web-query-expression = 结果文本

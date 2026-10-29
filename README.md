@@ -76,3 +76,13 @@ uv run pytest tests/python native/python/tests
 ```
 
 开发缓存、运行实例、上游源码和构建结果位于 `temp/`，不进入版本控制。原生源码变更后重新执行 `uv sync --locked` 并重启服务。Windows 与 macOS 由对应构建 runner 产生并验证 wheel；本地 Linux 构建按其实际平台标签使用。
+
+## 查询结果消费
+
+查询可请求来源展开与可选模型重排：`nous query <namespace-id> <subject-id> '项目操作者' --materialize --rerank optional`。复杂请求通过 `--request query.json` 传入同一公开 QueryRequest。工作台提供相同的来源展开选择与重排模式，并显示实际重排状态。
+
+QueryResult.expression 返回带准确地址的正文表达；sources 是有界来源图，保留真实 evidence、观察与精确区域，不将区域读取扩大成整份原件。`budget.source_depth`、`source_nodes`、`source_text_bytes` 控制展开，complete 指明是否完整。
+
+重排默认关闭。需要时在模型资源配置 `query_rerank` 角色，使用 purpose=rerank、text-generation 路线及 `query-rerank` Prompt。optional 在缺少模型能力时沿用基础顺序并返回 skipped 原因；真实提供方失败仍返回错误。required 要求模型能力并将失败返回。模型调用继续保存在现有账本，`rerank_invocation_id` 固定本次调用身份。详见 [SDK 查询消费](sdk/python/README.md#查询结果与来源展开)。
+
+机器查询可通过同一 QueryRequest.expression 提交 atom/any/all 树；filters 选择正式命名来源、观察身份、来源类型、origin 字段与值、标签及认知语义。budget 的 candidates/branches/depth 限制实际候选与组合。capabilities.semantic/exploration 可设 required 或 optional；require_complete_vectors 默认 false，单独控制完整向量覆盖。execution 始终报告真实 effective_mode、missing_vectors、candidate_limited 与降级原因，关闭详细 diagnostics 后仍保留；Hybrid 覆盖不足时采用真实词项通道。authority 按实际认知、证据与解释分类；外部权威和资源描述要求对应资源 owner。current=prefer 保留本地结果并报告 external_freshness_unchecked，required 缺外部时效能力时返回错误；modality 按真实原件及同一来源根过滤。

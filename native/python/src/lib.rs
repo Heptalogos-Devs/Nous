@@ -6,7 +6,7 @@ pyo3::create_exception!(_core, NativeError, pyo3::exceptions::PyRuntimeError);
 pyo3::create_exception!(_core, NousQLSyntaxError, NativeError);
 
 pub fn native_error(error: impl std::fmt::Display) -> PyErr {
-    let message = error.to_string();
+    let message = format!("{error:#}");
     let code = if message.starts_with("CANCELLED") {
         "cancelled"
     } else {

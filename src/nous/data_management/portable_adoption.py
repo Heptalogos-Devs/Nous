@@ -31,6 +31,7 @@ from nous_wave.contracts.bundles import PackageDescriptor
 from nous_wave.contracts.management import BundleMaterial, BundleObservation
 from pydantic import JsonValue, TypeAdapter
 
+from .portable import canonical
 from .portable_read import PortableArchive, rows
 
 _OBJECT = TypeAdapter(dict[str, JsonValue])
@@ -105,11 +106,12 @@ def normalize(loaded: PortableArchive, data: bytes) -> SubjectBundle:
                 "namespace_id": namespace_id,
                 "subject_id": subject_id,
                 "material_id": material_id,
-                "kind": "contact",
+                "kind": "import",
                 "origin": {"package_id": package.id},
                 "source_type": "amemorix_bundle",
                 "event_time": None,
-                "observed_at": now.model_dump(mode="json"),
+                "observed_at": None,
+                "external_recorded_at": created,
                 "recorded_at": created,
                 "commit_seq": 0,
             }
@@ -120,7 +122,7 @@ def normalize(loaded: PortableArchive, data: bytes) -> SubjectBundle:
                 namespace_id=namespace_id,
                 subject_id=subject_id,
                 material_id=material_id,
-                kind="contact",
+                kind="import",
                 active=True,
                 record=observation_record,
                 commit_seq=0,
@@ -142,6 +144,21 @@ def normalize(loaded: PortableArchive, data: bytes) -> SubjectBundle:
         raw: dict[str, JsonValue] | None = None,
     ) -> CognitiveRef:
         values = raw or {}
+        if roots == (archive_observation,) and links != evidence:
+            known = {record.reference.exact(): record for record in records}
+            roots = tuple(
+                sorted(
+                    {
+                        *[link.observation_id for link in links if link.observation_id],
+                        *[
+                            root
+                            for link in links
+                            if link.reference
+                            for root in known[link.reference.exact()].source_roots
+                        ],
+                    }
+                )
+            )
         ref = CognitiveRef(kind=body.kind, id=identity(f"{body.kind}:{key}"), revision=1)
         records.append(
             CognitiveRecord(
@@ -186,26 +203,47 @@ def normalize(loaded: PortableArchive, data: bytes) -> SubjectBundle:
             raise DomainError(
                 "bundle_paragraph", "Paragraphs require unique identities and real text"
             )
+        _, paragraph_observation = source(
+            "paragraph:" + key, canonical(paragraph), key + ".json", "application/json"
+        )
+        source_label = paragraph.get("source") or metadata(paragraph.get("metadata")).get("source")
+        if isinstance(source_label, str) and source_label:
+            next(value for value in observations if value.id == paragraph_observation).record[
+                "source"
+            ] = source_label
+            next(
+                value for value in materials if value.id == identity("material:paragraph:" + key)
+            ).record["source"] = source_label
         memories[key] = adopt(
             key,
             MemoryBody(
                 text=text,
                 external_ids={"amemorix:paragraph": key},
                 metadata=_OBJECT.validate_python(
-                    {"portable_record": paragraph, **metadata(paragraph.get("metadata"))}
+                    {
+                        "portable_record": paragraph,
+                        **metadata(paragraph.get("metadata")),
+                        **({"source": source_label} if isinstance(source_label, str) else {}),
+                    }
                 ),
                 epistemic=EpistemicStance(
                     classification="reported", attribution=f"package:{package.id}"
                 ),
             ),
+            links=(
+                EvidenceLink(observation_id=paragraph_observation, role="portable_semantic_record"),
+            ),
+            roots=(paragraph_observation,),
             raw=paragraph,
         )
     entities: dict[str, CognitiveRef] = {}
     entity_names: dict[str, CognitiveRef] = {}
+    from .portable_identity import entity_key, relation_key
+
     entity_rows = rows(tables.get("entities"))
     if not entity_rows:
         entity_rows = [
-            {"hash": str(name), "name": name}
+            {"hash": entity_key(str(name)), "name": name}
             for name in sorted(
                 {
                     str(name)
@@ -250,12 +288,12 @@ def normalize(loaded: PortableArchive, data: bytes) -> SubjectBundle:
             triples = doc.get("extracted_triples")
             if not isinstance(triples, list):
                 continue
-            for index, triple in enumerate(triples):
+            for triple in triples:
                 if not isinstance(triple, list) or len(triple) != 3:
                     raise DomainError("bundle_relation", "Extracted triples require three terms")
                 relation_rows.append(
                     {
-                        "hash": f"{doc.get('id')}:{index}",
+                        "hash": relation_key(str(triple[0]), str(triple[1]), str(triple[2])),
                         "subject": triple[0],
                         "predicate": triple[1],
                         "object": triple[2],
@@ -269,7 +307,9 @@ def normalize(loaded: PortableArchive, data: bytes) -> SubjectBundle:
         left = entity_names.get(str(relation.get("subject") or ""))
         right = entity_names.get(str(relation.get("object") or ""))
         predicate = str(relation.get("predicate") or "")
-        if not key or key in seen_relations or left is None or right is None or not predicate:
+        if key in seen_relations:
+            continue
+        if not key or left is None or right is None or not predicate:
             raise DomainError(
                 "bundle_relation", "Relations must bind actual unique Entity endpoints"
             )
@@ -279,8 +319,11 @@ def normalize(loaded: PortableArchive, data: bytes) -> SubjectBundle:
             for link in relation_links
             if link.get("relation_hash") == key
         }
-        if relation.get("paragraph_hash"):
-            mentioned.add(str(relation["paragraph_hash"]))
+        mentioned.update(
+            str(row["paragraph_hash"])
+            for row in relation_rows
+            if row.get("hash") == key and row.get("paragraph_hash")
+        )
         links = tuple(
             EvidenceLink(reference=memories[p]) for p in sorted(mentioned) if p in memories
         )
@@ -319,23 +362,41 @@ def normalize(loaded: PortableArchive, data: bytes) -> SubjectBundle:
                 members=members,
                 boundary_explanation=str(episode.get("summary") or ""),
             ),
+            links=tuple(EvidenceLink(reference=member.reference) for member in members) or evidence,
             raw=episode,
         )
+    from .portable_image_adoption import adopt_images
+
+    derivations = adopt_images(
+        loaded,
+        identity,
+        source,
+        records,
+        observations,
+        materials,
+        namespace_id,
+        subject_id,
+        now,
+        created,
+    )
+    from .portable_vectors import import_vectors
+
+    vector_targets = {key: ref.exact() for key, ref in memories.items()}
+    vector_targets.update({"entity:" + key: ref.exact() for key, ref in entities.items()})
+    vector_targets.update(
+        {
+            "relation:" + key: f"association:{identity('association:' + key)}@1"
+            for key in seen_relations
+        }
+    )
+    image_targets: dict[str, list[str]] = {}
     if loaded.images is not None:
-        assets = {str(row.get("asset_id")): row for row in rows(loaded.images.get("assets"))}
         for occurrence in rows(loaded.images.get("occurrences")):
-            key = str(occurrence.get("occurrence_id") or "")
-            asset = assets.get(str(occurrence.get("asset_id")))
-            if not key or asset is None:
-                raise DomainError(
-                    "bundle_image_occurrence", "Image occurrences require actual assets"
-                )
-            source(
-                key,
-                loaded.members[str(asset["member"])],
-                str(occurrence.get("component_path") or key),
-                str(asset.get("mime_type") or "application/octet-stream"),
+            asset_id = str(occurrence["asset_id"])
+            image_targets.setdefault(asset_id, []).append(
+                "material:" + identity("material:" + str(occurrence["occurrence_id"]))
             )
+    vector_assets = import_vectors(loaded, vector_targets, image_targets)
     return SubjectBundle(
         package=package,
         content_level="full" if loaded.manifest["content_level"] == "full" else "knowledge",
@@ -347,4 +408,6 @@ def normalize(loaded: PortableArchive, data: bytes) -> SubjectBundle:
         materials=tuple(materials),
         observations=tuple(observations),
         contents=contents,
+        derivations=derivations,
+        vectors=vector_assets,
     )

@@ -64,6 +64,8 @@ class AMemorixService:
         if tool == "get_person_profile":
             return await self.profile(ctx, ProfileInput.model_validate(arguments))
         if tool == "memory_source":
+            from nous_wave.contracts.source_graph import ExpandSources
+
             raw = arguments.get("target")
             if isinstance(raw, str):
                 target = (await self.app.references.resolve(ctx, raw)).reference
@@ -83,6 +85,9 @@ class AMemorixService:
                     "reference": target.reference,
                     "sources": record.source_roots,
                     "evidence": record.evidence,
+                    "graph": await self.app.retrieval.expand_sources(
+                        ctx, ExpandSources(targets=(target,))
+                    ),
                 }
             )
         if tool == "memory_stats":

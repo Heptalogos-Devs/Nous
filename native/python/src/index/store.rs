@@ -182,16 +182,25 @@ pub(super) fn build(
     let generation = format!("g-{}", uuid::Uuid::new_v4().simple());
     let staging = tempfile::Builder::new()
         .prefix(".building-")
-        .tempdir_in(&state.path)?;
+        .tempdir_in(&state.path)
+        .with_context(|| {
+            format!(
+                "create native generation staging in {}",
+                state.path.display()
+            )
+        })?;
     let mut frozen = assemble(staging.path(), generation.clone(), data, true, Some(token))?;
     token.check()?;
     let bytes = rmp_serde::to_vec_named(&frozen.data)?;
-    let mut file = std::fs::File::create(staging.path().join("snapshot.msgpack"))?;
+    let mut file = std::fs::File::create(staging.path().join("snapshot.msgpack"))
+        .context("create native generation snapshot")?;
     use std::io::Write;
-    file.write_all(&bytes)?;
-    file.sync_all()?;
+    file.write_all(&bytes)
+        .context("write native generation snapshot")?;
+    file.sync_all().context("sync native generation snapshot")?;
     sync_directory(staging.path())?;
-    std::fs::rename(staging.path(), state.path.join(&generation))?;
+    std::fs::rename(staging.path(), state.path.join(&generation))
+        .context("publish native generation directory")?;
     sync_directory(&state.path)?;
     // Readers and USearch arrays own their data; publication cannot invalidate them.
     frozen.generation = generation;
@@ -211,7 +220,8 @@ fn assemble(
 ) -> Result<Frozen> {
     let check = || cancel.map_or(Ok(()), CancellationToken::check);
     check()?;
-    let lexical = RetrievalIndex::open(path.join("lexical"))?;
+    let lexical =
+        RetrievalIndex::open(path.join("lexical")).context("open native lexical generation")?;
     if create {
         let documents = data
             .references
@@ -226,9 +236,11 @@ fn assemble(
                 deleted: false,
             })
             .collect::<Vec<_>>();
-        lexical.rebuild(&documents, 1)?;
+        lexical
+            .rebuild(&documents, 1)
+            .context("build native lexical generation")?;
     }
-    lexical.close()?;
+    lexical.close().context("close native lexical writer")?;
     check()?;
     let mut dense = None;
     let mut vcp = None;
@@ -258,7 +270,8 @@ fn assemble(
                 tags: vec![],
             };
             dense = Some(if create {
-                VectorGeneration::create(&path.join("dense"), snapshot)?
+                VectorGeneration::create(&path.join("dense"), snapshot)
+                    .context("build native dense generation")?
             } else {
                 VectorGeneration::open(&path.join("dense"), &snapshot)?
             });

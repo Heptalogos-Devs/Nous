@@ -1,12 +1,39 @@
 """Typed instance configuration; secrets remain references."""
 
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import AfterValidator, BaseModel, Field, JsonValue
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 ReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh"]
+
+
+def provider_options(value: dict[str, JsonValue]) -> dict[str, JsonValue]:
+    owned = {
+        "model",
+        "messages",
+        "input",
+        "response_format",
+        "tools",
+        "tool_choice",
+        "max_tokens",
+        "max_completion_tokens",
+        "temperature",
+        "reasoning_effort",
+        "stream",
+        "stream_options",
+        "dimensions",
+        "encoding_format",
+    }
+    if conflicts := owned.intersection(value):
+        raise ValueError(
+            "Provider options cannot replace owned request fields: " + ", ".join(sorted(conflicts))
+        )
+    return value
+
+
+ProviderOptions = Annotated[dict[str, JsonValue], AfterValidator(provider_options)]
 
 
 class ModelRoute(BaseModel):
@@ -20,6 +47,7 @@ class ModelRoute(BaseModel):
     reasoning_effort: ReasoningEffort | None = None
     max_calls_per_day: int = Field(default=50, ge=0)
     video_content_format: Literal["video_url"] | None = None
+    extra_body: ProviderOptions = Field(default_factory=dict)
 
 
 class EmbeddingRoute(ModelRoute):

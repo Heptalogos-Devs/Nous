@@ -269,6 +269,11 @@ class DerivedBundles(DerivedAvailability):
                         "subject_id": ctx.require_subject(),
                         "inputs": inputs,
                         "payload": payload,
+                        "producer": value.producer.model_copy(
+                            update={"model_call_id": identity(value.producer.model_call_id)}
+                        )
+                        if value.producer.model_call_id
+                        else value.producer,
                         "source_roots": roots,
                         "material_ids": tuple(sorted(material_ids)),
                         "source_regions": source_regions,

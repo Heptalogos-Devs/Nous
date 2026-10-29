@@ -3,9 +3,10 @@
 from pathlib import Path
 from typing import Literal
 
+from nous_wave.contracts.common import DomainError
 from pydantic import BaseModel, Field, model_validator
 
-from .settings import EmbeddingRoute, ModelRoute, ReasoningEffort
+from .settings import EmbeddingRoute, ModelRoute, ProviderOptions, ReasoningEffort
 
 
 class ProviderResource(BaseModel):
@@ -31,11 +32,12 @@ class RouteResource(BaseModel):
     max_output_tokens: int = Field(default=8192, gt=0)
     temperature: float | None = Field(default=None, ge=0, le=2)
     reasoning_effort: ReasoningEffort | None = None
+    extra_body: ProviderOptions = Field(default_factory=dict)
 
 
 class RoleResource(BaseModel):
     routes: tuple[str, ...] = Field(min_length=1)
-    purpose: Literal["formation", "description", "embedding", "steward", "maintenance"]
+    purpose: Literal["formation", "description", "embedding", "steward", "maintenance", "rerank"]
     prompt_id: str = "formation"
     max_calls_per_day: int = Field(default=50, ge=0)
 
@@ -67,12 +69,27 @@ class ModelConfiguration(BaseModel):
         return self
 
     def resolve(
-        self, role_id: str, route_index: int = 0
+        self, role_id: str, route_index: int = 0, *, require_configured: bool = True
     ) -> tuple[ModelRoute | EmbeddingRoute, RoleResource]:
-        role = self.roles[role_id]
-        route = self.routes[role.routes[route_index]]
-        model = self.models[route.model]
-        provider = self.providers[model.provider]
+        try:
+            role = self.roles[role_id]
+            route = self.routes[role.routes[route_index]]
+            model = self.models[route.model]
+            provider = self.providers[model.provider]
+        except (KeyError, IndexError) as error:
+            raise DomainError(
+                "model_unavailable",
+                "Model role or route is not configured",
+                role=role_id,
+                reason="resource_missing",
+            ) from error
+        if require_configured and (not model.name.strip() or not provider.base_url.strip()):
+            raise DomainError(
+                "model_unavailable",
+                "Model or provider connection is not configured",
+                role=role_id,
+                reason="model_missing",
+            )
         values = {
             **provider.model_dump(),
             "model": model.name,
@@ -80,6 +97,7 @@ class ModelConfiguration(BaseModel):
             "max_calls_per_day": role.max_calls_per_day,
             "temperature": route.temperature,
             "reasoning_effort": route.reasoning_effort,
+            "extra_body": route.extra_body,
             "video_content_format": model.video_content_format,
         }
         if role.purpose == "embedding":
@@ -123,8 +141,9 @@ def initial_resources(generation: ModelRoute, embedding: EmbeddingRoute) -> Mode
                 max_output_tokens=generation.max_output_tokens,
                 temperature=generation.temperature,
                 reasoning_effort=generation.reasoning_effort,
+                extra_body=generation.extra_body,
             ),
-            "embedding": RouteResource(model="embedding"),
+            "embedding": RouteResource(model="embedding", extra_body=embedding.extra_body),
         },
         roles={
             "formation": RoleResource(

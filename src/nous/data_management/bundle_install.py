@@ -220,6 +220,34 @@ async def install_prepared(
                 *(row["id"] for row in bundle.get("outputs", [])),
             }
         }
+        installation_id = str(uuid4())
+        call_sources = dict(mapping)
+        for reference in keys:
+            kind, identity = reference.split(":", 1)
+            identifier, at, revision = identity.partition("@")
+            call_sources[reference] = f"{kind}:{mapping[identifier]}" + (
+                f"@{revision}" if at else ""
+            )
+        for kind, identifiers in (
+            ("material", mats),
+            ("observation", obs),
+            ("source-region", {row["id"] for row in bundle.get("regions", [])}),
+            ("derived-region", {row.id for row in original.derivations.regions}),
+        ):
+            call_sources.update(
+                {
+                    f"{kind}:{identifier}": f"{kind}:{mapping[identifier]}"
+                    for identifier in identifiers
+                }
+            )
+        for representation in original.derivations.representations:
+            call_sources[representation.reference.media().exact()] = (
+                f"representation:{mapping[representation.reference.id]}@{representation.reference.revision}"
+            )
+        call_mapping = await self.ledger.import_in(
+            tx, ctx, original.calls, call_sources, installation_id
+        )
+        mapping.update(call_mapping)
         # These fields own identities; prose and arbitrary external origin strings remain literal.
         identity_fields = {
             "id",
@@ -232,11 +260,22 @@ async def install_prepared(
             "unit_id",
             "output_id",
             "parent_catalog_id",
+            "producer_call_id",
+            "model_call_id",
+            "call_id",
         }
 
         def remap(value: JsonValue, field: str = "") -> JsonValue:
             if isinstance(value, dict):
-                if field in {"origin", "identifiers", "metadata", "structured", "external_ids"}:
+                if field in {
+                    "origin",
+                    "identifiers",
+                    "metadata",
+                    "structured",
+                    "external_ids",
+                    "provenance",
+                    "calls",
+                }:
                     return value
                 if value.get("kind") == "representation" and isinstance(value.get("id"), str):
                     identity, at, revision = str(value["id"]).partition("@")
@@ -316,6 +355,13 @@ async def install_prepared(
         for new in remapped["observations"]:
             new["commit_seq"] = tx.commit_seq
             new["record"]["commit_seq"] = tx.commit_seq
+            if new["record"].get("source_type") == "amemorix_bundle":
+                new["kind"] = "import"
+                new["record"]["kind"] = "import"
+                new["record"]["recorded_at"] = tx.recorded_at
+                new["record"]["observed_at"] = TimePoint(
+                    coordinate=int(datetime.fromisoformat(tx.recorded_at).timestamp() * 1000)
+                ).model_dump(mode="json")
             new["record"]["placement"] = command.placement.model_dump(mode="json")
             await tx.connection.execute(observations.insert().values(**new))
         for name, table in (("catalogs", catalogs), ("inputs", inputs), ("units", units)):
@@ -391,9 +437,8 @@ async def install_prepared(
                     "Archived vectors conflict with the authority's existing space",
                 )
             row["commit_seq"] = tx.commit_seq
-            row["call_id"] = (
-                f"bundle:{original.id}:{archived.call_id}" if archived.call_id else None
-            )
+            row["call_id"] = call_mapping[archived.call_id] if archived.call_id else None
+            row.pop("provenance", None)
             await tx.connection.execute(vectors.insert().values(**row))
         for value, new in zip(bundle.get("outputs", []), remapped["outputs"], strict=True):
             new["attempt_job_id"] = None
@@ -425,7 +470,6 @@ async def install_prepared(
             original.id,
             tuple(ReferenceBinding.model_validate(value) for value in remapped["bindings"]),
         )
-        installation_id = str(uuid4())
         result = {
             "installation_id": installation_id,
             "package": original.package.model_dump(mode="json") if original.package else None,
@@ -441,6 +485,17 @@ async def install_prepared(
             "owned_observation_ids": [mapping[oid] for oid in obs],
             "bundle_id": bundle["id"],
             "mapping": mapping,
+            "vector_provenance": [
+                {
+                    "reference": row["reference"],
+                    "space": archived.space,
+                    "provenance": archived.provenance,
+                    "call_id": archived.call_id,
+                    "source_namespace_id": original.namespace_id,
+                    "source_subject_id": original.subject_id,
+                }
+                for archived, row in zip(original.vectors, remapped["vectors"], strict=True)
+            ],
             "cognition_count": len(records),
             "output_count": len(bundle.get("outputs", [])),
             "commit_seq": tx.commit_seq,

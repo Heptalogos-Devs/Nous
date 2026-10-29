@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from typing import Literal
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, TypeAdapter, model_validator
 
 
 class Contract(BaseModel):
@@ -87,7 +87,7 @@ class ReferenceAddresses(Contract):
 
 
 class DomainError(Exception):
-    def __init__(self, code: str, message: str, **details: JsonValue) -> None:
+    def __init__(self, code: str, message: str, **details: object) -> None:
         super().__init__(message)
         self.code = code
-        self.details = details
+        self.details = TypeAdapter(dict[str, JsonValue]).validate_python(details)

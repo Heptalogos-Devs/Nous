@@ -264,6 +264,44 @@ from .media import (
 from .media import (
     TimeSpan as TimeSpan,
 )
+from .model_roles import ModelContractRequest as ModelContractRequest
+from .model_roles import ModelInvocationPreview as ModelInvocationPreview
+from .model_roles import ModelPreviewRequest as ModelPreviewRequest
+from .model_roles import ModelRoleContract as ModelRoleContract
+from .query_conditions import (
+    OriginMatch as OriginMatch,
+)
+from .query_conditions import (
+    QueryAll as QueryAll,
+)
+from .query_conditions import (
+    QueryAny as QueryAny,
+)
+from .query_conditions import (
+    QueryAtom as QueryAtom,
+)
+from .query_conditions import (
+    QueryAuthority as QueryAuthority,
+)
+from .query_conditions import (
+    QueryBudget as QueryBudget,
+)
+from .query_conditions import (
+    QueryCapabilities as QueryCapabilities,
+)
+from .query_conditions import (
+    QueryExecution as QueryExecution,
+)
+from .query_conditions import (
+    QueryExpression as QueryExpression,
+)
+from .query_conditions import (
+    QueryFilters as QueryFilters,
+)
+from .query_conditions import (
+    QueryModality as QueryModality,
+)
+from .query_readout import RerankInfo as RerankInfo
 from .retrieval import (
     QueryCoverage as QueryCoverage,
 )
@@ -285,6 +323,10 @@ from .self_model import SeedFacet as SeedFacet
 from .self_model import SeedResult as SeedResult
 from .social import ChangeSocialRelation as ChangeSocialRelation
 from .social import LinkIdentity as LinkIdentity
+from .source_graph import ExpandedSources as ExpandedSources
+from .source_graph import ExpandSources as ExpandSources
+from .source_graph import SourceEdge as SourceEdge
+from .source_graph import SourceNode as SourceNode
 from .text_import import TextImport as TextImport
 from .text_import import TextImportCompletion as TextImportCompletion
 from .text_import import TextImportResult as TextImportResult

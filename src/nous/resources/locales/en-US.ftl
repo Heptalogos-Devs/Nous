@@ -444,3 +444,14 @@ web-maintenance-action-split = Split concept
 web-maintenance-action-memory = Memory lifecycle change
 web-maintenance-strength = Strength
 web-maintenance-hours = Hours
+
+web-rerank = Model reranking
+web-rerank-off = Reranking off
+web-rerank-optional = Optional model reranking
+web-rerank-required = Require model reranking
+web-expand-sources = Expand sources
+web-source-partial = Source expansion reached its budget or some sources are currently unavailable.
+cli-rerank = Model reranking
+cli-complete = Complete
+
+web-query-expression = Result text

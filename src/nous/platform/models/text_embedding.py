@@ -29,6 +29,7 @@ async def embed_one(
         "source_ids": list(source_ids),
         "dimensions": route.dimensions,
         "normalization": route.normalization,
+        "extra_body": route.extra_body,
     }
     call_id, cached = await ledger.reserve(ctx, "embedding", request, route.max_calls_per_day)
     if cached is not None:
@@ -37,7 +38,10 @@ async def embed_one(
         client = generation.client(route.timeout_seconds)
         sdk = AsyncOpenAI(base_url=route.base_url, api_key=key, http_client=client, max_retries=0)
         response = await sdk.embeddings.create(
-            model=route.model, input=list(texts), dimensions=route.dimensions
+            model=route.model,
+            input=list(texts),
+            dimensions=route.dimensions,
+            extra_body=route.extra_body,
         )
         vectors = [tuple(item.embedding) for item in sorted(response.data, key=lambda v: v.index)]
         if len(vectors) != len(texts) or any(len(v) != route.dimensions for v in vectors):
@@ -65,7 +69,15 @@ async def embed_one(
     except Exception as error:
         code = str(getattr(error, "status_code", type(error).__name__))
         await ledger.finish(ctx, call_id, None, {}, code)
-        raise Unavailable(f"Embedding provider failed ({code}); call {call_id}") from error
+        raise Unavailable(
+            f"Embedding provider failed ({code})",
+            context={
+                "call_id": call_id,
+                "invocation_id": None,
+                "role": "embedding",
+                "provider_code": code,
+            },
+        ) from error
 
 
 async def embed_text(

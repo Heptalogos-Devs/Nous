@@ -10,6 +10,7 @@ from uuid import uuid4
 import anyio
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse
+from nous_wave.contracts.model_roles import ModelContractRequest, ModelPreviewRequest
 from pydantic import BaseModel, Field, JsonValue
 
 from nous.platform.instance import initialize
@@ -18,6 +19,25 @@ from nous.platform.persistence import OperationConflict
 from .security import application, authorize, context
 
 router = APIRouter(prefix="/api")
+
+
+@router.post("/models/contract")
+async def model_contract(
+    request: Request,
+    command: ModelContractRequest,
+    namespace_id: str,
+    subject_id: str | None = None,
+):
+    ctx = await context(request, namespace_id, subject_id, capability="read")
+    return await application(request).models.model_contract(ctx, command)
+
+
+@router.post("/models/preview")
+async def model_preview(
+    request: Request, command: ModelPreviewRequest, namespace_id: str, subject_id: str | None = None
+):
+    ctx = await context(request, namespace_id, subject_id, capability="read")
+    return await application(request).models.model_preview(ctx, command)
 
 
 @router.post("/backups")

@@ -1,0 +1,16 @@
+"""Outputs owned by the actual source formation and description consumers."""
+
+from nous_wave.contracts.cognition import FormationDraft, ProposedMemory
+from pydantic import BaseModel, Field
+
+
+class DescriptionDraft(BaseModel):
+    description: str = Field(min_length=1)
+
+
+class Description(DescriptionDraft):
+    producer_call_id: str
+
+
+class MediaFormationDraft(FormationDraft):
+    memories: tuple[ProposedMemory, ...] = Field(min_length=1)

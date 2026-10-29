@@ -66,6 +66,9 @@ export async function query() {
       mode: $("mode").value,
       domains: domain === "both" ? ["cognition", "media"] : [domain],
       limit: 30,
+      materialize: $("query-sources").checked,
+      rerank: $("rerank").value,
+      rerank_invocation_id: $("rerank").value === "off" ? null : crypto.randomUUID(),
     },
   });
   lastQuery = result;
@@ -77,6 +80,15 @@ function renderQuery(result) {
   $("coverage").textContent = result.coverage.complete
     ? t("web-coverage-complete")
     : t("web-coverage-incomplete");
+  if (result.rerank && result.rerank.mode !== "off")
+    $("coverage").textContent += ` · ${t("web-rerank")}: ${result.rerank.status}${result.rerank.reason ? " · " + result.rerank.reason : ""}`;
+  $("query-expression")?.remove();
+  if (result.expression) {
+    const expression = el("details");
+    expression.id = "query-expression";
+    expression.append(el("summary", "", t("web-query-expression")), el("pre", "body-text", result.expression));
+    $("results").parentElement.before(expression);
+  }
   const list = $("results");
   list.replaceChildren();
   if (!result.hits.length) {
@@ -172,16 +184,37 @@ async function showDetail(item) {
       ),
     );
   panel.append(el("h3", "", t("web-source")));
-  for (const sourceId of item.source_roots || [])
-    panel.append(
-      button(sourceId, async () => {
-        const sources = await api(subjectPath("/sources"));
-        const source = sources.find((v) => v.id === sourceId);
-        if (!source) throw new Error(t("web-source-unreadable"));
-        const value = await api(subjectPath(`/materials/${source.material_id}`));
-        panel.append(jsonView(value));
-      }),
-    );
+  const sources = el("div");
+  panel.append(sources);
+  const displaySources = (graph) => {
+    sources.replaceChildren();
+    const reachable = new Set([exact(item.reference) + (item.reference.observation_id ? "#" + item.reference.observation_id : "")]);
+    for (let i = 0; i < graph.nodes.length; i++)
+      for (const edge of graph.edges)
+        if (reachable.has(edge.source)) reachable.add(edge.target);
+    for (const node of graph.nodes.filter((value) => reachable.has(value.key))) {
+      const row = el("div");
+      row.append(el("div", "ref", node.key));
+      if (node.text) row.append(el("p", "body-snippet", node.text));
+      if (node.status === "unavailable") row.append(el("p", "muted", t("web-source-unreadable")));
+      else if (node.target?.kind === "media") row.append(button(t("web-source"), async () => {
+        const value = await api("/api/sources/read", { method: "POST", body: {
+          subject_id: state.subject, reference: node.target.reference,
+        }});
+        row.append(jsonView(value));
+      }));
+      sources.append(row);
+    }
+    if (!graph.complete) sources.append(el("p", "muted", t("web-source-partial")));
+  };
+  if (lastQuery?.sources) displaySources(lastQuery.sources);
+  else sources.append(button(t("web-expand-sources"), async () => {
+    const value = await api("/api/sources/read", {method: "POST", body: {
+      subject_id: state.subject, reference: exact(item.reference),
+    }});
+    if (value.graph) displaySources(value.graph);
+    else sources.append(jsonView(value));
+  }));
 }
 export async function loadSources() {
   lastSources = await api(subjectPath("/sources"));

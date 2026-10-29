@@ -10,6 +10,7 @@ from sqlalchemy import select, update
 from nous.cognition.service import CognitionService
 from nous.identity.service import require_subject_in
 from nous.platform.content import ContentStore
+from nous.platform.models.ledger import CallLedger
 from nous.platform.persistence import Authority
 
 from . import archive, bundle_export, bundle_install
@@ -31,10 +32,13 @@ class BundleService:
         self,
         authority: Authority,
         cognition: CognitionService,
+        *,
+        ledger: CallLedger,
         content_store: ContentStore | None = None,
     ) -> None:
         self.authority, self.cognition = authority, cognition
         self.content_store = content_store
+        self.ledger = ledger
 
     async def list_installs(self, ctx: CallContext):
         async with self.authority.read(ctx) as view:

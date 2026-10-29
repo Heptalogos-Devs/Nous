@@ -155,9 +155,26 @@ def main() -> None:
                 else "Unavailable"
             )
         )
+        details = (
+            error.context
+            if isinstance(error, (ClientError, NousError))
+            else error.details
+            if isinstance(error, DomainError)
+            else {}
+        )
         if (selected and selected.json_mode) or (selected is None and "--json" in sys.argv):
             sys.stdout.write(
-                json.dumps({"error": {"code": code, "message": str(error)}}, ensure_ascii=False)
+                json.dumps(
+                    {
+                        "error": {
+                            "code": code,
+                            "message": str(error),
+                            "context": details,
+                            "trace_id": error.trace_id if isinstance(error, ClientError) else None,
+                        }
+                    },
+                    ensure_ascii=False,
+                )
                 + "\n"
             )
         else:
@@ -176,4 +193,6 @@ def main() -> None:
                 locale.text(key if locale.has(key) else category), style="red", markup=False
             )
             Console(stderr=True).print(str(error), markup=False)
+            if details:
+                Console(stderr=True).print(json.dumps(details, ensure_ascii=False), markup=False)
         raise SystemExit(130 if code == "Cancelled" else 1) from None

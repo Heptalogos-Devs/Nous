@@ -1,13 +1,17 @@
 """Native provider SDKs share managed clients, prompts and the paid call ledger."""
 
 import asyncio
-import json
 import os
 from collections.abc import Awaitable, Callable
-from typing import Literal, TypeVar
+from typing import TypeVar
 
-from nous_wave.contracts import CallContext, EmbeddingBatch, FormationProposal, MediaEmbeddingInput
-from nous_wave.contracts.cognition import FormationDraft
+from nous_wave.contracts import (
+    CallContext,
+    DomainError,
+    EmbeddingBatch,
+    MediaEmbeddingInput,
+    MediaReference,
+)
 from pydantic import BaseModel
 
 from nous.platform.configuration import EmbeddingRoute, ModelRoute, Settings
@@ -16,18 +20,16 @@ from nous.platform.configuration.service import ConfigurationService
 from nous.platform.errors import Unavailable
 from nous.platform.persistence import Authority
 from nous.platform.prompts import PromptService
-from nous.platform.time import parse_timepoint
 
+from .contracts import model_contract, model_preview, prepare_role
 from .embedding import MediaResolver, embed_media
 from .generation import (
-    Description,
-    DescriptionDraft,
     Generated,
     Generation,
-    MediaFormationDraft,
     MediaInput,
 )
 from .ledger import CallLedger
+from .roles import RoleRegistry
 from .text_embedding import embed_text
 
 os.environ.setdefault("PYDANTIC_AI_NO_BANNER", "1")
@@ -36,9 +38,14 @@ os.environ.setdefault("PYDANTIC_AI_NO_BANNER", "1")
 T = TypeVar("T", bound=BaseModel)
 
 
-def credential(route: ModelRoute) -> str:
+def credential(route: ModelRoute, role_id: str | None = None) -> str:
     if not route.model:
-        raise Unavailable("Model ID has not been configured for this role")
+        raise DomainError(
+            "model_unavailable",
+            "Model ID has not been configured for this role",
+            role=role_id,
+            reason="model_missing",
+        )
     try:
         value = (
             route.credential_file.read_text().strip()
@@ -46,13 +53,27 @@ def credential(route: ModelRoute) -> str:
             else os.environ.get(route.credential_env, "")
         )
     except OSError as error:
-        raise Unavailable("Configured model credential file is unavailable") from error
+        raise DomainError(
+            "model_unavailable",
+            "Configured model credential file is unavailable",
+            role=role_id,
+            reason="credential_unavailable",
+        ) from error
     if not value:
-        raise Unavailable(f"Model credential missing: {route.credential_env}")
+        raise DomainError(
+            "model_unavailable",
+            "Model credential is not configured",
+            role=role_id,
+            reason="credential_missing",
+        )
     return value
 
 
 class ModelService:
+    model_contract = model_contract
+    model_preview = model_preview
+    prepare_role = prepare_role
+
     def __init__(
         self,
         authority: Authority,
@@ -66,6 +87,10 @@ class ModelService:
         self.ledger = CallLedger(authority)
         self.generation = Generation(self.ledger)
         self.media_resolver: MediaResolver | None = None
+        self.preview_media_resolver: (
+            Callable[[CallContext, MediaReference], Awaitable[MediaInput]] | None
+        ) = None
+        self.roles = RoleRegistry()
 
     async def close(self) -> None:
         await self.generation.close()
@@ -78,16 +103,18 @@ class ModelService:
         for role_id, role in resources.roles.items():
             routes: list[dict[str, object]] = []
             for index, route_id in enumerate(role.routes):
-                resolved, _ = resources.resolve(role_id, index)
                 model = resources.models[resources.routes[route_id].model]
-                ready: bool | None = None
-                if resolved.model:
-                    try:
-                        await asyncio.to_thread(credential, resolved)
-                    except Unavailable:
-                        ready = False
-                    else:
-                        ready = True
+                ready = False
+                failure: dict[str, object] | None = None
+                try:
+                    resolved, _ = resources.resolve(role_id, index)
+                    await asyncio.to_thread(credential, resolved, role_id)
+                except DomainError as error:
+                    if error.code != "model_unavailable":
+                        raise
+                    failure = {"code": error.code, "message": str(error), "context": error.details}
+                else:
+                    ready = True
                 routes.append(
                     {
                         "id": route_id,
@@ -97,10 +124,11 @@ class ModelService:
                         "dimensions": model.dimensions,
                         "normalization": model.normalization,
                         "max_batch_items": model.max_batch_items
-                        if isinstance(resolved, EmbeddingRoute)
+                        if role.purpose == "embedding"
                         else None,
                         "video_content_format": model.video_content_format,
                         "credential_ready": ready,
+                        "unavailable": failure,
                         "model_configured": bool(model.name),
                     }
                 )
@@ -113,6 +141,20 @@ class ModelService:
             }
         return {"origin": effective["origin"], "roles": roles, "provider_probed": False}
 
+    async def render_prompt(
+        self, ctx: CallContext, role_id: str, variables: dict[str, object], prompt_id: str
+    ) -> dict[str, object]:
+        try:
+            return await self.prompts.render(ctx, variables, prompt_id)
+        except KeyError as error:
+            raise DomainError(
+                "model_unavailable",
+                "Model prompt resource is not configured",
+                role=role_id,
+                prompt_id=prompt_id,
+                reason="prompt_missing",
+            ) from error
+
     async def structured(
         self,
         ctx: CallContext,
@@ -122,6 +164,7 @@ class ModelService:
         *,
         source_ids: tuple[str, ...] = (),
         invocation_id: str | None = None,
+        media: tuple[MediaInput, ...] = (),
     ) -> Generated[T]:
         if invocation_id is not None:
             retained = await self.ledger.recall(ctx, role_id, invocation_id)
@@ -129,110 +172,21 @@ class ModelService:
                 return Generated(
                     output=output_type.model_validate(retained.output), call_id=retained.call_id
                 )
-        resources = ModelConfiguration.model_validate(
-            (await self.configuration.effective(ctx, "models"))["value"]
-        )
-        route, role = resources.resolve(role_id)
-        if role.purpose == "embedding":
-            raise ValueError("Structured generation requires a text generation role")
-        prompt = await self.prompts.render(ctx, variables, role.prompt_id)
-        if not prompt["variable_names"]:
-            prompt["rendered"] = (
-                str(prompt["rendered"]) + "\nInput:\n" + json.dumps(variables, ensure_ascii=False)
-            )
+        prepared = await self.prepare_role(ctx, role_id, variables, output_type=output_type)
+        route, prompt = prepared.route, prepared.prompt
         result, call_id = await self.generation.request(
             ctx,
-            role_id,
+            prepared.definition.invocation_purpose or role_id,
             route,
-            credential(route),
+            credential(route, role_id),
             prompt,
             output_type,
+            media,
             source_ids=source_ids,
             invocation_id=invocation_id,
+            budget_role=role_id,
         )
         return Generated(output=result, call_id=call_id)
-
-    async def form(
-        self, ctx: CallContext, text: str, source: dict[str, object]
-    ) -> FormationProposal:
-        resources = ModelConfiguration.model_validate(
-            (await self.configuration.effective(ctx, "models"))["value"]
-        )
-        route, role = resources.resolve("formation")
-        prompt = await self.prompts.render(
-            ctx, {"source_text": text, "source": source}, role.prompt_id
-        )
-        result, call_id = await self.generation.request(
-            ctx, "formation", route, credential(route), prompt, FormationDraft
-        )
-        proposal = FormationProposal.model_validate(result.model_dump(mode="json"))
-        event = parse_timepoint(proposal.event_expression) if proposal.event_expression else None
-        return proposal.model_copy(update={"producer_call_id": call_id, "event": event})
-
-    async def interpret(
-        self,
-        ctx: CallContext,
-        text: str,
-        source: dict[str, object],
-        media: tuple[MediaInput, ...],
-        strategy: Literal["description_only", "direct_structured", "describe_then_structure"],
-        *,
-        description_adopter: Callable[[Description], Awaitable[None]] | None = None,
-        cached_description: Description | None = None,
-    ) -> Description | FormationProposal:
-        resources = ModelConfiguration.model_validate(
-            (await self.configuration.effective(ctx, "models"))["value"]
-        )
-        variables: dict[str, object] = {
-            "source_text": text,
-            "source": source,
-            "source_context": text + "\n" + json.dumps(source, ensure_ascii=False),
-        }
-        description = cached_description
-        if strategy != "direct_structured" and description is None:
-            route, role = resources.resolve("description")
-            prompt = await self.prompts.render(ctx, variables, role.prompt_id)
-            draft_description, call_id = await self.generation.request(
-                ctx,
-                "media.description",
-                route,
-                credential(route),
-                prompt,
-                DescriptionDraft,
-                media,
-                budget_role="description",
-            )
-            description = Description(
-                description=draft_description.description, producer_call_id=call_id
-            )
-            if description_adopter is not None:
-                await description_adopter(description)
-        if strategy == "description_only":
-            assert description is not None
-            return description
-        route, role = resources.resolve("formation")
-        prompt = await self.prompts.render(ctx, variables, role.prompt_id)
-        if description is not None:
-            prompt = {
-                **prompt,
-                "description_call_id": description.producer_call_id,
-                "rendered": str(prompt["rendered"])
-                + "\n已保存的描述：\n"
-                + description.description,
-            }
-        draft, call_id = await self.generation.request(
-            ctx,
-            "media.formation",
-            route,
-            credential(route),
-            prompt,
-            MediaFormationDraft,
-            media,
-            budget_role="formation",
-        )
-        result = FormationProposal.model_validate(draft.model_dump(mode="json"))
-        event = parse_timepoint(result.event_expression) if result.event_expression else None
-        return result.model_copy(update={"producer_call_id": call_id, "event": event})
 
     async def embed(
         self, ctx: CallContext, texts: tuple[str, ...], *, source_ids: tuple[str, ...] = ()
@@ -242,9 +196,20 @@ class ModelService:
         )
         route, _ = resources.resolve("embedding")
         if not isinstance(route, EmbeddingRoute):
-            raise ValueError("Embedding role must resolve to an embedding model")
+            raise DomainError(
+                "model_unavailable",
+                "Embedding role must resolve to an embedding model",
+                role="embedding",
+                reason="capability_missing",
+            )
         return await embed_text(
-            ctx, texts, route, credential(route), self.ledger, self.generation, source_ids
+            ctx,
+            texts,
+            route,
+            credential(route, "embedding"),
+            self.ledger,
+            self.generation,
+            source_ids,
         )
 
     async def embed_media(
@@ -261,12 +226,17 @@ class ModelService:
         )
         route, _ = resources.resolve("embedding")
         if not isinstance(route, EmbeddingRoute):
-            raise ValueError("Embedding role must resolve to an embedding model")
+            raise DomainError(
+                "model_unavailable",
+                "Embedding role must resolve to an embedding model",
+                role="embedding",
+                reason="capability_missing",
+            )
         return await embed_media(
             ctx,
             inputs,
             route,
-            credential(route),
+            credential(route, "embedding"),
             self.media_resolver,
             self.ledger,
             self.generation,

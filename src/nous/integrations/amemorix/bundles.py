@@ -8,6 +8,7 @@ from nous_wave.contracts import BlobDocument, BundleRequest, CallContext, Domain
 from nous_wave.contracts.bundles import BundlePlacement
 from pydantic import JsonValue
 
+from .bundle_input import decode_bundle_arguments
 from .helpers import json_object
 
 if TYPE_CHECKING:
@@ -28,7 +29,7 @@ class BundleInput(BundleRequest):
 async def bundle_admin(
     service: AMemorixService, ctx: CallContext, arguments: dict[str, JsonValue]
 ) -> dict[str, JsonValue]:
-    command = BundleInput.model_validate(arguments)
+    command = BundleInput.model_validate(decode_bundle_arguments(arguments))
     if command.action == "get":
         if command.installation_id is None:
             raise DomainError("installation_required", "Select a bundle installation")

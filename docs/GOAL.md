@@ -6,11 +6,15 @@
 ## Decisions
 - 开发分支 codex/python-native-rewrite-cloud，源分支保持不动。
 - 执行 docs/python-native-plan 的架构与现行项目宪纲；CPython3.14、uv、PyO3、SQLAlchemy/SQLite、DBOS3。
-- 最多三个 GPT-6.1 Sol high 子代理：native、persistence、cognition；主代理负责平台、入口与集成。
+- 本机会话最多复用三个 GPT-6.1 Sol medium 标准速度子代理，按查询、公开消费、数据与包分工；主代理负责平台、契约与真实集成。
 - 所有凭据只从受保护的本地文件或环境引用，temp 为实例、缓存和构建目录。
 
 ## Current Work
-用户已停止云端开发，当前工作提交到 `codex/python-native-rewrite-cloud`，转回本机继续。以下已完成能力与未完成事项保持有效。
+当前在本机的 `codex/python-native-rewrite-cloud` 继续 Python 原生开发。独立实例位于 `temp/instances/python-local-20261029`，监听 `7442`；旧 Rust 实例及其数据保留。虚拟环境、下载缓存与构建结果统一位于 `temp`。
+
+机器查询表达式、过滤、共享候选预算、来源展开与可选重排已合入同一查询操作。Model Contract/Preview 与实际调用共用输入、Prompt、参数、目标 Schema 和媒体快照。Native 包保留实际调用历史，外部 A-Memorix 图片、语义关系、NPZ 向量与空间身份进入正式导入导出 owner。应用事务使用完整操作键和当前唯一 SQLAlchemy schema，DBOS 负责自己的调度表。
+
+本机已通过正式 SDK 完成开发讨论单元的真实形成、required 向量处理与当前用户决定接纳。正在修正 Windows 原生检索的实际 IO 故障，并完成查询、逻辑包与重启恢复的真实贯通。以下云端已完成能力继续作为功能续接依据。
 
 工具链、独立native与Python完整入口已接通；SDK、CLI、HTTP、MCP使用同一领域权威。真实生成、2048维文本/图像/图文联合向量已调用，历史数据已迁移可读地址。DBOS managed context与正式MaiBot实际模型输入、Steward、admission、完成反馈已贯通；Linux三wheel已在源码目录外安装运行，备份恢复与凭据撤销已实际验证。
 

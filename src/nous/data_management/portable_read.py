@@ -110,6 +110,27 @@ class PortableArchive:
     members: dict[str, bytes]
 
 
+def validate_images(images: dict[str, JsonValue]) -> None:
+    assets = rows(images.get("assets"))
+    occurrences = rows(images.get("occurrences"))
+    asset_ids = [str(row.get("asset_id") or "") for row in assets]
+    occurrence_ids = [str(row.get("occurrence_id") or "") for row in occurrences]
+    if (
+        any(not key for key in asset_ids + occurrence_ids)
+        or len(set(asset_ids)) != len(asset_ids)
+        or len(set(occurrence_ids)) != len(occurrence_ids)
+        or any(row.get("asset_id") not in asset_ids for row in occurrences)
+    ):
+        raise DomainError(
+            "bundle_image_identity", "Image occurrences and assets require unique closed identities"
+        )
+    for field in ("observations", "links"):
+        if any(row.get("occurrence_id") not in occurrence_ids for row in rows(images.get(field))):
+            raise DomainError(
+                "bundle_image_reference", "Image semantic rows must bind an included occurrence"
+            )
+
+
 def load(data: bytes) -> PortableArchive:
     try:
         with ZipFile(BytesIO(data)) as archive:
@@ -158,6 +179,7 @@ def load(data: bytes) -> PortableArchive:
         ):
             raise DomainError("bundle_checksums", "Archive checksum coverage or content is invalid")
         if images is not None:
+            validate_images(images)
             declared: set[str] = set()
             for asset in rows(images.get("assets")):
                 member = str(asset.get("member") or "")

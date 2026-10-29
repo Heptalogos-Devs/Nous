@@ -7,6 +7,7 @@ from uuid import uuid4
 import typer
 from nous_wave import NousClient
 from nous_wave.contracts.credentials import CreateCredential, RotateCredential
+from nous_wave.contracts.model_roles import ModelContractRequest, ModelPreviewRequest
 from nous_wave.operations import encoded, segment
 from pydantic import JsonValue
 
@@ -47,6 +48,44 @@ def _issue(ctx: typer.Context, path: str, payload: JsonValue, token_out: Path | 
 
 
 def register(cli: typer.Typer) -> None:
+    @cli.command("model-contract")
+    def model_contract(
+        ctx: typer.Context,
+        role: str,
+        namespace_id: str,
+        subject_id: str | None = None,
+        variant: str | None = None,
+    ) -> None:
+        """Read the role's real consumer schemas and active Prompt without calling a model."""
+        command = ModelContractRequest(role=role, variant=variant)
+        invoke(
+            ctx,
+            lambda api: api.model_contract(
+                {
+                    **command.model_dump(mode="json"),
+                    "namespace_id": namespace_id,
+                    "subject_id": subject_id,
+                }
+            ),
+        )
+
+    @cli.command("model-preview")
+    def model_preview(
+        ctx: typer.Context, request: Path, namespace_id: str, subject_id: str | None = None
+    ) -> None:
+        """Read ModelPreviewRequest JSON and build the real invocation without a provider call."""
+        command = read_command(request, ModelPreviewRequest)
+        invoke(
+            ctx,
+            lambda api: api.model_preview(
+                {
+                    **command.model_dump(mode="json"),
+                    "namespace_id": namespace_id,
+                    "subject_id": subject_id,
+                }
+            ),
+        )
+
     jobs = typer.Typer(help="Inspect and control durable work.", no_args_is_help=False)
     config = typer.Typer(
         help="Effective configuration and scoped overrides.", no_args_is_help=False

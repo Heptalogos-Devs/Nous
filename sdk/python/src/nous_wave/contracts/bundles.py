@@ -92,5 +92,6 @@ BundleSelector = Annotated[
 
 class BundleAssetOptions(Contract):
     include_vectors: bool = False
+    vector_spaces: tuple[str, ...] = ()
     include_images: bool = True
     include_image_related: bool = False

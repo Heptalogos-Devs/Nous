@@ -26,6 +26,20 @@ class MediaImportService:
     adopt = adopt
     derive = derive
 
+    async def generation_input(self, ctx: CallContext, reference: MediaReference) -> MediaInput:
+        if reference.kind in {"representation", "derived_region"}:
+            return await self.derived_input(ctx, reference)
+        async with self.authority.read(ctx) as view:
+            material, region, _ = await self.materials.media_source_in(view, ctx, reference)
+        return await selected_input(
+            self.content,
+            self.media,
+            ContentObject(material["content_hash"], material["byte_len"], material["media_type"]),
+            reference.id,
+            region,
+            inline_text=material["text"],
+        )
+
     def __init__(
         self,
         authority: Authority,

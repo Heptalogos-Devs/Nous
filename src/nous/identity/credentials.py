@@ -25,8 +25,8 @@ from nous_wave.contracts.credentials import (
 )
 from sqlalchemy.ext.asyncio import AsyncConnection
 
+from nous.platform.concurrency import owned_thread
 from nous.platform.persistence import Authority, WriteTx, metadata
-from nous.platform.persistence.authority import owned_thread
 
 credentials = sa.Table(
     "nous_api_credentials",

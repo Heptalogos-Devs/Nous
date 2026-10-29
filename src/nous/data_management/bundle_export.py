@@ -268,7 +268,10 @@ async def export(self: BundleService, ctx: CallContext, command: BundleRequest |
                         await asyncio.to_thread(path.read_bytes)
                     ).decode("ascii")
         result["derivations"] = derived.model_dump(mode="json")
-        if command.assets is not None and command.assets.include_vectors:
+        include_vectors = (command.format == "native" and command.assets is None) or (
+            command.assets is not None and command.assets.include_vectors
+        )
+        if include_vectors:
             vector_references = {
                 *chosen,
                 *(f"material:{row['id']}" for row in mat),
@@ -276,16 +279,70 @@ async def export(self: BundleService, ctx: CallContext, command: BundleRequest |
                 *(value.reference.media().exact() for value in derived.representations),
                 *(f"derived-region:{region.id}" for region in derived.regions),
             }
+            statement = select(vectors).where(vectors.c.reference.in_(vector_references))
+            if command.assets is not None and command.assets.vector_spaces:
+                statement = statement.where(vectors.c.space.in_(command.assets.vector_spaces))
+            from .schema import bundle_installs
+
+            installations = (
+                (
+                    await view.connection.execute(
+                        select(bundle_installs.c.record).where(
+                            bundle_installs.c.namespace_id == ctx.namespace_id,
+                            bundle_installs.c.subject_id == ctx.subject_id,
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            provenance: dict[tuple[str, str], dict[str, JsonValue]] = {}
+            for installation in sorted(installations, key=lambda value: value.get("commit_seq", 0)):
+                for value in installation.get("vector_provenance", []):
+                    provenance[(value["reference"], value["space"])] = value
             result["vectors"] = TypeAdapter(list[JsonValue]).validate_python(
                 [
-                    dict(row)
-                    for row in (
-                        await view.connection.execute(
-                            select(vectors).where(vectors.c.reference.in_(vector_references))
-                        )
-                    ).mappings()
+                    {
+                        **dict(row),
+                        "provenance": provenance.get((row["reference"], row["space"]), {}).get(
+                            "provenance", {}
+                        ),
+                    }
+                    for row in (await view.connection.execute(statement)).mappings()
                 ]
             )
+        archived_vectors = SubjectBundle.model_validate(result).vectors
+        call_ids = {
+            *[record.producer_call_id for record in records if record.producer_call_id],
+            *[
+                value.producer.model_call_id
+                for value in derived.representations
+                if value.producer.model_call_id
+            ],
+            *[value.call_id for value in archived_vectors if value.call_id],
+            *[value.producer_call_id for value in selected_outputs if value.producer_call_id],
+        }
+        archived_calls = await self.ledger.export_in(view, ctx, tuple(sorted(call_ids)))
+        archived_targets = {
+            *chosen,
+            *material_ids,
+            *observation_ids,
+            *region_ids,
+            *("material:" + str(identity) for identity in material_ids),
+            *("observation:" + identity for identity in observation_ids),
+            *("source-region:" + identity for identity in region_ids),
+            *(value.reference.media().exact() for value in derived.representations),
+            *("derived-region:" + value.id for value in derived.regions),
+        }
+        for call in archived_calls:
+            if not set(call.source_ids).issubset(archived_targets):
+                raise DomainError(
+                    "bundle_call_source_missing",
+                    "A producer call requires its complete actual source closure",
+                    call_id=call.id,
+                    missing=sorted(set(call.source_ids) - archived_targets),
+                )
+        result["calls"] = [value.model_dump(mode="json") for value in archived_calls]
         result["bindings"] = [
             binding.model_dump(mode="json")
             for binding in await export_bindings_in(

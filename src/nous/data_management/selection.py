@@ -58,7 +58,11 @@ async def select_roots_in(
                 matches = isinstance(origin, dict) and selector.conversation_ref in origin.values()
             if matches:
                 selected_sources.add(key)
-    elif isinstance(selector, (SourceSelection, MaterialSelection, ImageSelection)):
+    elif isinstance(selector, SourceSelection):
+        from nous.material.named_sources import named_source_observations_in
+
+        selected_sources = set(await named_source_observations_in(view, ctx, selector.sources))
+    elif isinstance(selector, (MaterialSelection, ImageSelection)):
         rows = (
             await view.connection.execute(
                 select(materials.c.id, materials.c.record).where(
@@ -70,16 +74,11 @@ async def select_roots_in(
         for material_id, value in rows:
             if isinstance(selector, MaterialSelection):
                 matches = material_id in selector.material_ids
-            elif isinstance(selector, ImageSelection):
-                matches = (
-                    str(value["media_type"]).startswith("image/")
-                    and value["content_hash"] in selector.content_hashes
-                )
             else:
-                matches = (
-                    value.get("source_type") in selector.sources
-                    or value.get("filename") in selector.sources
-                    or material_id in selector.sources
+                matches = str(value["media_type"]).startswith("image/") and (
+                    value["content_hash"] in selector.content_hashes
+                    or not selector.content_hashes
+                    and not selector.occurrence_ids
                 )
             if matches:
                 selected_materials.add(str(material_id))
@@ -87,7 +86,16 @@ async def select_roots_in(
             key for key, row in sources.items() if row["material_id"] in selected_materials
         }
         if isinstance(selector, ImageSelection):
-            selected_sources.update(key for key in sources if key in selector.occurrence_ids)
+            image_materials = {
+                identity
+                for identity, value in rows
+                if str(value["media_type"]).startswith("image/")
+            }
+            selected_sources.update(
+                key
+                for key, event in sources.items()
+                if key in selector.occurrence_ids and event["material_id"] in image_materials
+            )
     elif isinstance(selector, (PackageSelection, PackageTokenSelection)):
         rows = (
             await view.connection.execute(
@@ -132,6 +140,10 @@ async def select_roots_in(
             raise DomainError(
                 "import_task_not_found", "No adopted outputs match this actual import job"
             )
+    if isinstance(selector, ImageSelection) and not (
+        command.assets and command.assets.include_image_related
+    ):
+        return set(), selected_sources
     chosen = {
         key
         for key, record in records.items()

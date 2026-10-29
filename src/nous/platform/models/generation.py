@@ -7,9 +7,8 @@ from dataclasses import dataclass
 from typing import TypeVar
 
 import httpx2
-from nous_wave.contracts import CallContext, FormationDraft
-from nous_wave.contracts.cognition import ProposedMemory
-from pydantic import BaseModel, Field
+from nous_wave.contracts import CallContext, DomainError
+from pydantic import BaseModel, JsonValue, TypeAdapter
 from pydantic_ai import Agent, BinaryContent, NativeOutput, capture_run_messages
 from pydantic_ai.capabilities import Instrumentation
 from pydantic_ai.messages import ModelMessagesTypeAdapter
@@ -39,16 +38,61 @@ class MediaInput:
     source_reference: str
 
 
-class DescriptionDraft(BaseModel):
-    description: str = Field(min_length=1)
+def media_channel(media_type: str) -> str:
+    if media_type.startswith("text/") or media_type == "application/json":
+        return "text"
+    for channel in ("image", "audio", "video"):
+        if media_type.startswith(channel + "/"):
+            return channel
+    return "document" if media_type == "application/pdf" else "binary"
 
 
-class Description(DescriptionDraft):
-    producer_call_id: str
-
-
-class MediaFormationDraft(FormationDraft):
-    memories: tuple[ProposedMemory, ...] = Field(min_length=1)
+def prepare_invocation(
+    purpose: str,
+    route: ModelRoute,
+    prompt: dict[str, object],
+    output_type: type[BaseModel],
+    media: tuple[MediaInput, ...] = (),
+    source_ids: tuple[str, ...] = (),
+) -> dict[str, JsonValue]:
+    """The exact metadata admitted by generation, without credentials or provider I/O."""
+    if (
+        any(part.media_type.startswith("video/") for part in media)
+        and route.video_content_format is None
+    ):
+        raise DomainError(
+            "model_unavailable",
+            "Video generation requires a configured video content format",
+            role=purpose,
+            reason="video_protocol_missing",
+        )
+    snapshot: dict[str, object] = {
+        "purpose": purpose,
+        "source_ids": list(source_ids),
+        "model": route.model,
+        "base_url": route.base_url,
+        "parameters": {
+            "max_output_tokens": route.max_output_tokens,
+            "temperature": route.temperature,
+            "reasoning_effort": route.reasoning_effort,
+            "extra_body": route.extra_body,
+        },
+        "prompt": prompt,
+        "schema": output_type.model_json_schema(),
+        "media": [
+            {
+                "sha256": hashlib.sha256(part.data).hexdigest(),
+                "byte_len": len(part.data),
+                "media_type": part.media_type,
+                "channel": media_channel(part.media_type),
+                "source_reference": part.source_reference,
+            }
+            for part in media
+        ],
+    }
+    if any(part.media_type.startswith("video/") for part in media):
+        snapshot["video_content_format"] = route.video_content_format
+    return TypeAdapter(dict[str, JsonValue]).validate_python(snapshot)
 
 
 class Generation:
@@ -80,30 +124,7 @@ class Generation:
         invocation_id: str | None = None,
     ) -> tuple[T, str]:
         video = any(part.media_type.startswith("video/") for part in media)
-        if video and route.video_content_format is None:
-            raise Unavailable("Video generation requires a configured video content format")
-        snapshot: dict[str, object] = {
-            "source_ids": list(source_ids),
-            "model": route.model,
-            "base_url": route.base_url,
-            "parameters": {
-                "max_output_tokens": route.max_output_tokens,
-                "temperature": route.temperature,
-                "reasoning_effort": route.reasoning_effort,
-            },
-            "prompt": prompt,
-            "schema": output_type.model_json_schema(),
-            "media": [
-                {
-                    "sha256": hashlib.sha256(part.data).hexdigest(),
-                    "media_type": part.media_type,
-                    "source_reference": part.source_reference,
-                }
-                for part in media
-            ],
-        }
-        if video:
-            snapshot["video_content_format"] = route.video_content_format
+        snapshot = prepare_invocation(purpose, route, prompt, output_type, media, source_ids)
         call_id, cached = await self.ledger.reserve(
             ctx,
             purpose,
@@ -125,6 +146,8 @@ class Generation:
                 media,
                 self.ledger,
                 self.client(route.timeout_seconds),
+                role=budget_role or purpose,
+                invocation_id=invocation_id,
             )
         provider = OpenAIProvider(
             base_url=route.base_url, api_key=key, http_client=self.client(route.timeout_seconds)
@@ -160,6 +183,8 @@ class Generation:
                     settings["temperature"] = route.temperature
                 if route.reasoning_effort is not None:
                     settings["openai_reasoning_effort"] = route.reasoning_effort
+                if route.extra_body:
+                    settings["extra_body"] = route.extra_body
                 result = await agent.run(content, model_settings=settings, retries=0)
                 usage = result.usage
                 await self.ledger.finish(
@@ -187,4 +212,12 @@ class Generation:
                     {"messages": json.loads(ModelMessagesTypeAdapter.dump_json(messages))},
                     code,
                 )
-                raise Unavailable(f"Generation provider failed ({code}); call {call_id}") from error
+                raise Unavailable(
+                    f"Generation provider failed ({code})",
+                    context={
+                        "call_id": call_id,
+                        "invocation_id": invocation_id,
+                        "role": budget_role or purpose,
+                        "provider_code": code,
+                    },
+                ) from error

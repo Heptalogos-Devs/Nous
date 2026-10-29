@@ -17,6 +17,7 @@ from dbos import (
     DBOSClient,
     DBOSPortableJSONSerializer,
     EnqueueOptions,
+    PortableWorkflowError,
     WorkflowHandle,
     WorkflowHandleAsync,
     WorkflowSerializationFormat,
@@ -24,10 +25,11 @@ from dbos import (
 )
 from nous_wave.contracts.common import CallContext
 from opentelemetry.context import get_current
-from pydantic import JsonValue
+from pydantic import JsonValue, TypeAdapter
 from sqlalchemy import event
 from sqlalchemy.pool import ConnectionPoolEntry
 
+from nous.platform.errors import NousError
 from nous.platform.observability import configure_tracing
 from nous.platform.persistence import Authority, WriteTx
 from nous.platform.persistence.authority import SQLiteConnection, canonical_json
@@ -143,7 +145,7 @@ class DurableExecution:
         if self._started:
             return
         if not self.authority.initialized:
-            raise RuntimeError("Migrate the authority before starting workers")
+            raise RuntimeError("Initialize the authority schema before starting workers")
         configure_tracing()
         self._host_loop = asyncio.get_running_loop()
         self._engine = sa.create_engine(
@@ -350,7 +352,15 @@ class DurableExecution:
         handle: WorkflowHandleAsync[JsonValue] = await self.client.retrieve_workflow_async(
             workflow_id
         )
-        return await handle.get_result(polling_interval_sec=0.05)
+        try:
+            return await handle.get_result(polling_interval_sec=0.05)
+        except PortableWorkflowError as error:
+            value = TypeAdapter(JsonValue).validate_python(error.data)
+            details = value if isinstance(value, dict) else {"data": value}
+            code = str(error.code) if error.code is not None else "job_failed"
+            raise NousError(
+                code, error.message, status=503 if code == "Unavailable" else 400, context=details
+            ) from error
 
     async def cancel(self, ctx: CallContext, workflow_id: str) -> None:
         await self._require_job(ctx, workflow_id)

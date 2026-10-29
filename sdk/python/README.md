@@ -88,6 +88,20 @@ JSON 接受 `records`、`paragraphs`、`docs` 包络，JSONL 保留记录顺序�
 
 `configuration`、`prompts`、`model_contract`、`model_preview`、`model_call`、`backup` 接正式管理入口。`subject_diagnostics` 返回授权范围内的认知、向量、任务与实际 token 用量。不同凭据的 read/write/manage 能力由服务核验。
 
+模型角色的实际输入、目标 JSON Schema 和 Prompt 可在调用前读取。`model_contract(ModelContractRequest(role="formation"))` 返回登记的输入/输出 Schema、当前 Prompt 和可选 variant；形成的 `text` 与 `media` 使用各自真实输出类型。`description`、`steward`、`maintenance`、`query_rerank` 同样使用实际消费者的合同。
+
+```python
+from nous_wave.contracts import ModelContractRequest, ModelPreviewRequest
+
+contract = await api.model_contract(ModelContractRequest(role="formation"))
+preview = await api.model_preview(ModelPreviewRequest(
+    role="formation", variant="text",
+    input={"source_text": text, "source": {"source_type": "document"}},
+))
+```
+
+Preview 与实际调用共用输入校验、Prompt 渲染、参数及调用快照构造，返回真实目标 Schema、模型与媒体摘要。媒体使用 `media` 中已有的 `MediaReference`，按当前来源权限读取精确原件或选区。此操作不读取模型凭据、不预留额度、不请求提供方；未登记的角色合同返回明确错误。CLI 使用 `nous model-contract ROLE NAMESPACE_ID` 和 `nous model-preview REQUEST_JSON NAMESPACE_ID`，HTTP 为 `POST /api/models/contract`、`POST /api/models/preview`，MCP 同名工具使用同一合同。
+
 `whoami`、`credentials`、`credential`、`credential_history`、`create_credential`、`rotate_credential` 和 `revoke_credential` 使用正式凭据 owner。轮换要求 expected_revision，旧 token 立即失效，明文只在创建或轮换当次返回。
 
 `job_page(namespace_id=...,subject_id=...,kind=...,state=...,limit=...,cursor=...)` 返回真实作业及 next_cursor。过滤先于分页，state 使用 DBOS 大写状态；续页保持首个快照的提交边界。
@@ -140,3 +154,43 @@ A-Memorix `AMemorixAdapter` 保留六项工具、来源、导入、包与运行�
 `freeze_import_catalog`、`process_import_units` 与 `admit_import_files` 也接受原有单 Mapping 请求：`{namespace_id,subject_id,inputs:[{name,format,input:{kind:"inline",content:...},source}],overrides:{strategy:...}}`。`input.kind="material"` 使用已上传的 material_id；文件文档的 `{document,file_identity}` 包络继续可用。Mapping 文件接纳返回 `FileImportSubmission`；`submit_admit_documents` 是对应 typed 异步入口。
 
 `import_text` 接受同一文档形状及 form_memory/completion，返回真实父作业。等待 `wait_success((submission.job_id,),...)` 后，`text_import_result` 读取对应结果。`accepted` 完成完整逐字记录接纳，并仅返回已排入队列的 formation_jobs；`formed` 要求 form_memory=True，父作业等待这些实际子作业成功。语义形成复用逐字 Memory 的精确修订，保留独立模型调用身份。每解析记录保持一个完整 Unit；输入总字节上限 4 MiB。
+
+## 查询结果与来源展开
+
+`query_cognition`、HTTP 的 Subject `/query`、MCP `query_cognition` 和 CLI `query` 使用同一 QueryRequest/QueryResult。可用请求文件完整指定查询；CLI 也提供 `--materialize`、`--rerank off|optional|required` 和 `--rerank-invocation-id`。
+
+```python
+from nous_wave.contracts import QueryRequest
+
+result = await client.query_cognition(namespace_id, subject_id, QueryRequest(
+    text="项目操作者", materialize=True, rerank="optional",
+    rerank_invocation_id="operator-search-1",
+))
+print(result.expression)
+if result.sources:
+    for node in result.sources.nodes:
+        print(node.key, node.status, node.text)
+print(result.rerank)
+```
+
+expression 按实际顺序给出准确地址与正文摘录；source graph 按真实 evidence、观察和精确媒体区域展开，保留边的极性与角色。budget.source_depth/source_nodes/source_text_bytes 限制展开；complete=false 表示预算截断或部分来源当前不可读。`source(subject_id, cognitive_reference)` 的 graph 使用同一来源规则，媒体节点继续沿其精确 reference 读取。
+
+rerank 默认为 off。启用时，模型角色 `query_rerank` 使用 text-generation 路线、purpose=rerank 和 Prompt `query-rerank`，提交有界正文候选并保存实际调用。optional 缺少可用模型角色、凭据或 Prompt 时保留基础顺序，结果附 skipped 原因；实际提供方失败返回带 call_id、invocation_id 和 role 的错误。required 传播缺能力与调用失败。显式 `$sort` 优先，required 重排与其冲突；未评分候选保留基础相对顺序。hits.score 保留检索分，rerank_score 为实际模型分数。重用 invocation 身份与相同候选请求会复用已保存结果；未知付费结果需新身份才能再次请求。
+
+机器查询使用 `expression` 的 atom/any/all 树，每个 atom.source 是同一 NousQL 语法。`filters.sources` 按正式命名来源解析器选择完整标签；也可设置 source_ids、source_types、origin（field/value 对）、tags、cognitive_roles、formation_modes 和 epistemic_classes。`budget.candidates`、branches、depth 约束候选与组合树；来源和重排分别使用 source_* 与 rerank_* 预算。
+
+```python
+from nous_wave.contracts.query_conditions import QueryAny, QueryAtom, QueryFilters, QueryBudget, QueryCapabilities
+
+request = QueryRequest(
+    expression=QueryAny(children=(QueryAtom(source="项目"), QueryAtom(source="操作者"))),
+    filters=QueryFilters(tags=("project",)),
+    budget=QueryBudget(candidates=256, branches=16, depth=6),
+    capabilities=QueryCapabilities(semantic="optional", exploration="optional", require_complete_vectors=False),
+    mode="hybrid",
+)
+result = await client.query_cognition(namespace_id, subject_id, request)
+print(result.execution)
+```
+
+semantic/exploration 的 required 要求实际计算通道可用；require_complete_vectors 默认 False，独立控制是否要求完整向量覆盖。Hybrid 向量覆盖不完整时真实降为词项检索，execution 返回 effective_mode、missing_vectors、candidate_limited、degraded 和 reasons；组合不同通道时 effective_mode 为 mixed。`$diagnostics(none)` 只关闭详细计划，execution 仍保留。authority 支持 subject_cognition、evidence、interpretation 的实际分类；external_current_authority 与 resource_descriptor 缺少资源 owner 时返回 capability_unavailable。current=none 为默认；prefer 保留本地结果并报告 external_freshness_unchecked，required 要求外部时效 owner。modalities 支持 text/image/audio/video/document/binary，按真实原件模态及同一来源根过滤；图片的派生描述仍保留图片来源模态。

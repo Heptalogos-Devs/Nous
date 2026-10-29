@@ -15,7 +15,9 @@ from typing import IO, TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .authority import Authority, owned_thread
+from nous.platform.concurrency import owned_thread
+
+from .authority import Authority
 
 if TYPE_CHECKING:
     from nous.platform.content import ContentStore
@@ -117,12 +119,12 @@ class BackupService:
         self.content = content
 
     async def create(self, destination: str | Path) -> BackupResult:
-        target = await owned_thread(self._prepare_destination, Path(destination))
+        target = await owned_thread(lambda: self._prepare_destination(Path(destination)))
         async with self.content.preserve_all():
             with tempfile.TemporaryDirectory(prefix="nous-backup-", dir=target.parent) as temporary:
                 database = await self.authority.backup(Path(temporary) / "authority.sqlite")
                 return await owned_thread(
-                    self._pack, database, target, Path(temporary) / "installation.zip"
+                    lambda: self._pack(database, target, Path(temporary) / "installation.zip")
                 )
 
     @staticmethod
@@ -170,7 +172,7 @@ class BackupService:
         """Restore a new instance directory; existing instances are never overwritten."""
         try:
             return await owned_thread(
-                BackupService._restore, Path(archive), Path(destination), max_total_bytes
+                lambda: BackupService._restore(Path(archive), Path(destination), max_total_bytes)
             )
         except (zipfile.BadZipFile, KeyError, sqlite3.DatabaseError) as error:
             raise ValueError("The installation backup archive is invalid") from error

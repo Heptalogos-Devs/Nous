@@ -1,6 +1,7 @@
 """MCP growth tools retain the connection's namespace, subject and caller grants."""
 
 from collections.abc import Callable
+from contextlib import AbstractAsyncContextManager
 
 from nous_wave import NousClient
 from nous_wave.contracts.maintenance import (
@@ -14,7 +15,10 @@ from mcp.server import MCPServer
 
 
 def register_maintenance(
-    server: MCPServer, client: Callable[[], NousClient], namespace_id: str, subject_id: str
+    server: MCPServer,
+    client: Callable[[], AbstractAsyncContextManager[NousClient]],
+    namespace_id: str,
+    subject_id: str,
 ) -> None:
     @server.tool()
     async def start_maintenance(command: StartMaintenance) -> JsonObject:

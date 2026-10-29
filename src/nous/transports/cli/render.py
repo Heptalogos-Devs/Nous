@@ -63,6 +63,13 @@ def present(value: JsonValue, locale: Localizer) -> None:
         hits = value["hits"]
         assert isinstance(hits, list)
         coverage = value.get("coverage")
+        rerank = value.get("rerank")
+        if isinstance(rerank, dict) and rerank.get("mode") != "off":
+            console.print(
+                Text(
+                    f"{_label('rerank', locale)}: {rerank.get('status')} · {rerank.get('reason') or rerank.get('call_id') or ''}"
+                )
+            )
         if isinstance(coverage, dict):
             console.print(
                 locale.text(
@@ -96,6 +103,14 @@ def present(value: JsonValue, locale: Localizer) -> None:
                     if isinstance(body, dict)
                     else _cell(body, locale)
                 )
+            )
+        sources = value.get("sources")
+        if isinstance(sources, dict):
+            nodes = sources.get("nodes")
+            if isinstance(nodes, list):
+                _table([node for node in nodes if isinstance(node, dict)], locale)
+            console.print(
+                Text(f"{_label('complete', locale)}: {_cell(sources.get('complete'), locale)}")
             )
         return
     if isinstance(value, list):

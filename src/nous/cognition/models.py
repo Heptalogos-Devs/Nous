@@ -1,14 +1,29 @@
 """The model boundary used by formation; providers live in platform.models."""
 
-from typing import Protocol
+from __future__ import annotations
 
-from nous_wave.contracts import CallContext, EmbeddingBatch, FormationProposal, MediaEmbeddingInput
+from typing import TYPE_CHECKING, Protocol
+
+from pydantic import BaseModel
+
+if TYPE_CHECKING:
+    from nous.platform.models.generation import Generated, MediaInput
+
+from nous_wave.contracts import CallContext, EmbeddingBatch, MediaEmbeddingInput
 
 
 class ModelServices(Protocol):
-    async def form(
-        self, ctx: CallContext, text: str, source: dict[str, object]
-    ) -> FormationProposal: ...
+    async def structured[T: BaseModel](
+        self,
+        ctx: CallContext,
+        role_id: str,
+        variables: dict[str, object],
+        output_type: type[T],
+        *,
+        source_ids: tuple[str, ...] = (),
+        invocation_id: str | None = None,
+        media: tuple[MediaInput, ...] = (),
+    ) -> Generated[T]: ...
     async def embed(
         self, ctx: CallContext, texts: tuple[str, ...], *, source_ids: tuple[str, ...] = ()
     ) -> EmbeddingBatch: ...

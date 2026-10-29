@@ -1,20 +1,26 @@
 """Namespace-bound MCP tools consume the same public service contracts."""
 
+import json
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
 
 from nous_wave import NousClient
 from nous_wave.amemorix import AMemorixAdapter
-from nous_wave.contracts import AdmitFiles, AdoptCognition, QueryRequest
+from nous_wave.contracts import AdmitFiles, AdoptCognition, DomainError, QueryRequest
 from nous_wave.contracts.context import (
     ContextAdmissionCommand,
     ContextPrepare,
     ContextReport,
 )
+from nous_wave.errors import NousError as ClientError
 from nous_wave.types import JsonObject
 from pydantic import JsonValue, TypeAdapter
 
 from mcp.server import MCPServer
+from mcp.server.mcpserver.exceptions import ResourceError, ToolError
+from nous.platform.errors import NousError
 from nous.platform.observability import configure_logging
 
 from .maintenance import register_maintenance
@@ -32,10 +38,28 @@ def run(
     configure_logging("INFO")
     token_path = credential_file or instance / "credentials/admin.token"
 
-    def client() -> NousClient:
-        return NousClient(
-            url, credential_file=token_path, namespace_id=namespace_id, subject_id=subject_id
-        )
+    @asynccontextmanager
+    async def client() -> AsyncGenerator[NousClient]:
+        try:
+            async with NousClient(
+                url, credential_file=token_path, namespace_id=namespace_id, subject_id=subject_id
+            ) as api:
+                yield api
+        except (ClientError, DomainError, NousError) as error:
+            details = error.details if isinstance(error, DomainError) else error.context
+            raise ToolError(
+                json.dumps(
+                    {
+                        "error": {
+                            "code": error.code,
+                            "message": str(error),
+                            "context": details,
+                            "trace_id": error.trace_id if isinstance(error, ClientError) else None,
+                        }
+                    },
+                    ensure_ascii=False,
+                )
+            ) from error
 
     async def call(tool: str, arguments: dict[str, JsonValue]) -> JsonObject:
         async with client() as api:
@@ -213,8 +237,11 @@ def run(
     @mcp.resource("nous://query/manual")
     async def query_manual() -> str:
         """The running service's NousQL syntax and retrieval domains."""
-        async with client() as api:
-            return await api.query_manual()
+        try:
+            async with client() as api:
+                return await api.query_manual()
+        except ToolError as error:
+            raise ResourceError(str(error)) from error
 
     register_management(mcp, client, namespace_id, subject_id)
     register_maintenance(mcp, client, namespace_id, subject_id)

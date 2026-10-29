@@ -1,9 +1,11 @@
 """MCP management tools delegate to the same public SDK operation owners."""
 
 from collections.abc import Callable
+from contextlib import AbstractAsyncContextManager
 from typing import Literal
 
 from nous_wave import NousClient
+from nous_wave.contracts.model_roles import ModelContractRequest, ModelPreviewRequest
 from nous_wave.types import JsonObject
 from pydantic import JsonValue
 
@@ -12,10 +14,38 @@ from mcp.server import MCPServer
 
 def register_management(
     server: MCPServer,
-    client: Callable[[], NousClient],
+    client: Callable[[], AbstractAsyncContextManager[NousClient]],
     namespace_id: str,
     subject_id: str,
 ) -> None:
+    @server.tool()
+    async def model_contract(command: ModelContractRequest) -> JsonObject:
+        """Read a registered role's real input/output schema and active Prompt without a provider call."""
+        async with client() as api:
+            return (
+                await api.model_contract(
+                    {
+                        **command.model_dump(mode="json"),
+                        "namespace_id": namespace_id,
+                        "subject_id": subject_id,
+                    }
+                )
+            ).model_dump(mode="json")
+
+    @server.tool()
+    async def model_preview(command: ModelPreviewRequest) -> JsonObject:
+        """Build the actual Prompt, schema, parameters and authorized media snapshot without a model call."""
+        async with client() as api:
+            return (
+                await api.model_preview(
+                    {
+                        **command.model_dump(mode="json"),
+                        "namespace_id": namespace_id,
+                        "subject_id": subject_id,
+                    }
+                )
+            ).model_dump(mode="json")
+
     def scoped(action: str, command: JsonObject) -> JsonObject:
         for name, value in (("namespace_id", namespace_id), ("subject_id", subject_id)):
             if command.get(name) not in (None, value):

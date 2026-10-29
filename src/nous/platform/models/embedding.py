@@ -3,6 +3,7 @@
 import asyncio
 import base64
 import hashlib
+import json
 from collections.abc import Awaitable, Callable
 
 from nous_wave.contracts import CallContext, EmbeddingBatch, MediaEmbeddingInput
@@ -30,8 +31,13 @@ class EmbeddingResponse(BaseModel):
 
 
 def vector_space(route: EmbeddingRoute, effective_model: str) -> str:
+    options = (
+        json.dumps(route.extra_body, sort_keys=True, separators=(",", ":"))
+        if route.extra_body
+        else ""
+    )
     return hashlib.sha256(
-        f"{route.base_url}:{effective_model}:{route.dimensions}:{route.normalization}".encode()
+        f"{route.base_url}:{effective_model}:{route.dimensions}:{route.normalization}{options}".encode()
     ).hexdigest()
 
 
@@ -93,6 +99,7 @@ async def embed_media(
             ],
             "dimensions": route.dimensions,
             "normalization": route.normalization,
+            "extra_body": route.extra_body,
         }
         call_id, cached = await ledger.reserve(ctx, "embedding", snapshot, route.max_calls_per_day)
         if cached is not None:
@@ -110,6 +117,7 @@ async def embed_media(
                 route.media_path,
                 cast_to=dict[str, JsonValue],
                 body={
+                    **route.extra_body,
                     "model": route.model,
                     "input": parts,
                     "dimensions": route.dimensions,
@@ -150,7 +158,15 @@ async def embed_media(
         except Exception as error:
             code = str(getattr(error, "status_code", type(error).__name__))
             await ledger.finish(ctx, call_id, None, {"response": raw}, code)
-            raise Unavailable(f"Media embedding failed ({code}); call {call_id}") from error
+            raise Unavailable(
+                f"Media embedding failed ({code})",
+                context={
+                    "call_id": call_id,
+                    "invocation_id": None,
+                    "role": "embedding",
+                    "provider_code": code,
+                },
+            ) from error
     if effective_model is None:
         raise ValueError("Embedding batch cannot be empty")
     return EmbeddingBatch(

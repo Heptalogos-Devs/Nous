@@ -10,13 +10,19 @@ from nous.cognition.models import ModelServices
 from nous.cognition.service import CognitionService
 from nous.material.derived import DerivedService
 from nous.material.service import MaterialService
+from nous.platform.concurrency import owned_thread
 from nous.platform.persistence import Authority
 from nous.references.service import ReferenceDirectory
 
 from . import candidates, embedding, graph, query, status
+from .native import run_native
+from .readout import finalize
+from .source_expansion import expand_sources
 
 
 class RetrievalService:
+    finalize = finalize
+    expand_sources = expand_sources
     status = status.status
     eligible = candidates.eligible
     selectors = candidates.selectors
@@ -47,12 +53,23 @@ class RetrievalService:
 
     async def close(self) -> None:
         async with self.lock:
-            for store in self.stores.values():
-                store.close()
+            stores = tuple(self.stores.values())
             self.snapshots.clear()
             self.stores.clear()
+            await run_native("close", None, lambda: close_stores(stores))
 
     async def invalidate(self) -> None:
         await self.close()
-        await asyncio.to_thread(shutil.rmtree, self.index_path, True)
+        await owned_thread(lambda: shutil.rmtree(self.index_path, True))
         self.index_path.mkdir(parents=True, exist_ok=True)
+
+
+def close_stores(stores: tuple[IndexStore, ...]) -> None:
+    errors: list[Exception] = []
+    for store in stores:
+        try:
+            store.close()
+        except Exception as error:
+            errors.append(error)
+    if errors:
+        raise ExceptionGroup("Failed to close native retrieval indexes", errors)

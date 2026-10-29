@@ -19,6 +19,7 @@ from nous_wave.contracts.context import (
     MediaTarget,
 )
 from nous_wave.contracts.lifecycle import MemoryChange
+from nous_wave.contracts.source_graph import ExpandSources
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, TypeAdapter
 from sqlalchemy import select
 
@@ -166,6 +167,7 @@ async def source_read(request: Request, command: ReadReference):
             "cognition": record,
             "source_roots": record.source_roots,
             "evidence": record.evidence,
+            "graph": await app.retrieval.expand_sources(ctx, ExpandSources(targets=(target,))),
         }
     ref = target.reference
     if (

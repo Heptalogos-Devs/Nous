@@ -34,6 +34,9 @@ class Application:
         )
         self.prompts = PromptService(self.authority)
         self.models = ModelService(self.authority, settings, self.prompts, self.configuration)
+        from nous.model_roles import register as register_model_roles
+
+        register_model_roles(self.models.roles)
         self.identity = IdentityService(self.authority)
         from nous.platform.content import ContentStore
         from nous.platform.media import MediaService
@@ -65,7 +68,9 @@ class Application:
         from nous.maintenance import MaintenanceService
         from nous.retrieval.service import RetrievalService
 
-        self.bundles = BundleService(self.authority, self.cognition, content_store=self.content)
+        self.bundles = BundleService(
+            self.authority, self.cognition, ledger=self.models.ledger, content_store=self.content
+        )
         self.media_imports = MediaImportService(
             self.authority,
             self.material,
@@ -90,6 +95,7 @@ class Application:
             derivations=self.derivations,
         )
         self.models.media_resolver = self.media_imports.resolve_embedding_input
+        self.models.preview_media_resolver = self.media_imports.generation_input
         self.contexts = ContextService(
             self.authority,
             self.cognition,

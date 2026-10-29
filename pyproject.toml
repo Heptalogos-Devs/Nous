@@ -11,7 +11,7 @@ requires-python = ">=3.14,<3.15"
 dependencies = [
   "nous-wave", "nous-wave-native",
   "pydantic>=2.12,<3", "pydantic-settings>=2,<3",
-  "sqlalchemy[asyncio]>=2.0,<2.1", "aiosqlite>=0.21,<1", "alembic>=1.16,<2",
+  "sqlalchemy[asyncio]>=2.0,<2.1", "aiosqlite>=0.21,<1",
   "dbos==3.3.0",
   "fastapi>=0.118,<1", "uvicorn>=0.54,<1", "mcp>=2.3,<3",
   "typer>=0.19,<1", "rich>=14,<15",
@@ -34,7 +34,7 @@ nous = "nous.transports.cli:main"
 [dependency-groups]
 dev = [
   "basedpyright>=1.31,<2", "ruff>=0.14,<1", "maturin>=1.9,<2",
-  "patchelf>=0.17,<1", "cmake>=4,<5", "ninja>=1,<2", "pytest>=8,<10", "debugpy>=1.8,<2", "types-python-dateutil",
+  "patchelf>=0.17,<1; sys_platform == 'linux'", "cmake>=4,<5", "ninja>=1,<2", "pytest>=8,<10", "debugpy>=1.8,<2", "types-python-dateutil",
 ]
 
 [tool.uv.workspace]
@@ -53,8 +53,8 @@ include = ["src/nous", "pyproject.toml", "README.md", "docs/python-native-instal
 [tool.basedpyright]
 include = ["src", "sdk/python/src", "native/python/python"]
 exclude = ["temp", ".venv", "crates", "native/target", "dist"]
-venvPath = "."
-venv = ".venv"
+venvPath = "temp/venvs"
+venv = "python-native"
 pythonVersion = "3.14"
 typeCheckingMode = "strict"
 reportExplicitAny = "error"

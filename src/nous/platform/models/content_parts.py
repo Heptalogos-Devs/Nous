@@ -54,6 +54,9 @@ async def complete_video[T: BaseModel](
     media: tuple[MediaInput, ...],
     ledger: CallLedger,
     client: httpx2.AsyncClient,
+    *,
+    role: str,
+    invocation_id: str | None,
 ) -> tuple[T, str]:
     raw: JsonValue = None
     try:
@@ -68,7 +71,7 @@ async def complete_video[T: BaseModel](
             max_tokens=route.max_output_tokens,
             temperature=route.temperature if route.temperature is not None else omit,
             reasoning_effort=route.reasoning_effort if route.reasoning_effort is not None else omit,
-            extra_body={"messages": [{"role": "user", "content": parts}]},
+            extra_body={**route.extra_body, "messages": [{"role": "user", "content": parts}]},
         )
         raw = TypeAdapter(JsonValue).validate_json(response.content)
         parsed = response.parse()
@@ -85,4 +88,12 @@ async def complete_video[T: BaseModel](
     except Exception as error:
         code = str(getattr(error, "status_code", type(error).__name__))
         await ledger.finish(ctx, call_id, None, {"response": raw}, code)
-        raise Unavailable(f"Video generation failed ({code}); call {call_id}") from error
+        raise Unavailable(
+            f"Video generation failed ({code})",
+            context={
+                "call_id": call_id,
+                "invocation_id": invocation_id,
+                "role": role,
+                "provider_code": code,
+            },
+        ) from error

@@ -2,17 +2,20 @@
 
 import hashlib
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import uuid4
 
 import sqlalchemy as sa
 from nous_wave.contracts import CallContext, DomainError
+from nous_wave.contracts.model_calls import ArchivedCall
 from pydantic import JsonValue, TypeAdapter
 
 from nous.platform.errors import NousError
 from nous.platform.persistence import Authority, ReadView, WriteTx, metadata
 
+from . import history
 from .invocations import (
     InvocationResult,
     bind_in,
@@ -52,6 +55,17 @@ class CallLedger:
     def __init__(self, authority: Authority) -> None:
         self.authority = authority
 
+    async def export_in(
+        self, view: ReadView | WriteTx, ctx: CallContext, call_ids: tuple[str, ...]
+    ) -> tuple[ArchivedCall, ...]:
+        return await history.export_in(view, ctx, call_ids, calls)
+
+    async def import_in(
+        self, tx: WriteTx, ctx: CallContext, records: tuple[ArchivedCall, ...],
+        mapping: Mapping[str, str], installation_id: str,
+    ) -> dict[str, str]:
+        return await history.import_in(tx, ctx, records, mapping, installation_id)
+
     async def recall(
         self, ctx: CallContext, purpose: str, invocation_id: str
     ) -> InvocationResult | None:
@@ -60,6 +74,7 @@ class CallLedger:
 
     async def purge_calls_in(self, tx: WriteTx, call_ids: tuple[str, ...]) -> None:
         if call_ids:
+            await history.purge_in(tx, call_ids=call_ids)
             await tx.connection.execute(
                 calls.update()
                 .where(
@@ -138,6 +153,7 @@ class CallLedger:
             if row["record"].get("purged")
         }
         selected = set(material_ids)
+        await history.purge_in(tx, source_ids=selected | purged_roots)
         rows = (
             await tx.connection.execute(
                 sa.select(calls).where(calls.c.namespace_id == tx.ctx.namespace_id)
@@ -165,12 +181,13 @@ class CallLedger:
         self,
         ctx: CallContext,
         purpose: str,
-        request: dict[str, object],
+        request: Mapping[str, object],
         maximum: int,
         *,
         budget_role: str | None = None,
         invocation_id: str | None = None,
     ) -> tuple[str, object | None]:
+        request = dict(request)
         role = budget_role or purpose
         digest = hashlib.sha256(json.dumps(request, sort_keys=True).encode()).hexdigest()
         day = datetime.now(UTC).date().isoformat()
@@ -303,6 +320,7 @@ class CallLedger:
                 )
             ).mappings()
             result = [dict(row) for row in rows]
+            result.extend(await history.list_in(view, ctx))
             if ctx.source_groups():
                 for item in result:
                     item.pop("request", None)

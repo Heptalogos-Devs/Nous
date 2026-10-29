@@ -24,6 +24,28 @@ from .schema import addresses, imported
 _TARGET = TypeAdapter(SemanticTarget)
 
 
+async def _head_in(
+    view: ReadView | WriteTx,
+    statement: sa.Select[tuple[JsonValue]],
+    as_of_time: int | None,
+) -> JsonValue:
+    if as_of_time is None:
+        return await view.connection.scalar(
+            statement.order_by(revisions.c.revision.desc()).limit(1)
+        )
+    values = (
+        await view.connection.execute(statement.order_by(revisions.c.revision.desc()))
+    ).scalars()
+    for value in values:
+        record = CognitiveRecord.model_validate(value)
+        if (
+            record.times.recorded.domain == "unix_ms"
+            and record.times.recorded.coordinate <= as_of_time
+        ):
+            return value
+    return None
+
+
 class ReferenceDirectory:
     def __init__(
         self, authority: Authority, cognition: CognitionService, materials: MaterialService
@@ -36,6 +58,7 @@ class ReferenceDirectory:
         ctx: CallContext,
         target: SemanticTarget,
         as_of_commit: int | None,
+        as_of_time: int | None = None,
     ) -> ContextTarget:
         if isinstance(target, ObjectTarget):
             statement = sa.select(revisions.c.record).where(
@@ -46,9 +69,7 @@ class ReferenceDirectory:
             )
             if as_of_commit is not None:
                 statement = statement.where(revisions.c.commit_seq <= as_of_commit)
-            value = await view.connection.scalar(
-                statement.order_by(revisions.c.revision.desc()).limit(1)
-            )
+            value = await _head_in(view, statement, as_of_time)
             if value is None:
                 raise DomainError("reference_not_found", "Reference has no visible revision")
             target = CognitiveTarget(reference=CognitiveRecord.model_validate(value).reference)
@@ -57,6 +78,13 @@ class ReferenceDirectory:
             if as_of_commit is not None and record.commit_seq > as_of_commit:
                 raise DomainError(
                     "reference_not_found", "Reference is outside the requested history"
+                )
+            if as_of_time is not None and (
+                record.times.recorded.domain != "unix_ms"
+                or record.times.recorded.coordinate > as_of_time
+            ):
+                raise DomainError(
+                    "reference_not_found", "Reference is outside recorded-time history"
                 )
         elif target.reference.kind == "material":
             await self.materials.read_in(view, ctx, target.reference.id)
@@ -76,6 +104,7 @@ class ReferenceDirectory:
         ctx: CallContext,
         locator: str,
         as_of_commit: int | None = None,
+        as_of_time: int | None = None,
     ) -> ReferenceResolution:
         if as_of_commit is not None and (as_of_commit < 0 or as_of_commit > view.commit_seq):
             raise DomainError(
@@ -95,7 +124,7 @@ class ReferenceDirectory:
                     {"kind": kind.replace("-", "_"), "id": identity}
                 )
                 resolved = await self._resolve_target(
-                    view, ctx, MediaTarget(reference=reference), as_of_commit
+                    view, ctx, MediaTarget(reference=reference), as_of_commit, as_of_time
                 )
                 return ReferenceResolution(
                     namespace_id=ctx.namespace_id,
@@ -109,7 +138,7 @@ class ReferenceDirectory:
                     {"kind": kind, "id": object_id, "revision": int(revision)}
                 )
                 resolved = await self._resolve_target(
-                    view, ctx, CognitiveTarget(reference=cognitive), as_of_commit
+                    view, ctx, CognitiveTarget(reference=cognitive), as_of_commit, as_of_time
                 )
                 return ReferenceResolution(
                     namespace_id=ctx.namespace_id,
@@ -129,13 +158,11 @@ class ReferenceDirectory:
             statement = statement.where(revisions.c.kind == object_kind)
         if as_of_commit is not None:
             statement = statement.where(revisions.c.commit_seq <= as_of_commit)
-        value = await view.connection.scalar(
-            statement.order_by(revisions.c.revision.desc()).limit(1)
-        )
+        value = await _head_in(view, statement, as_of_time)
         if value is not None:
             cognitive = CognitiveRecord.model_validate(value).reference
             resolved = await self._resolve_target(
-                view, ctx, CognitiveTarget(reference=cognitive), as_of_commit
+                view, ctx, CognitiveTarget(reference=cognitive), as_of_commit, as_of_time
             )
             return ReferenceResolution(
                 namespace_id=ctx.namespace_id,
@@ -163,7 +190,7 @@ class ReferenceDirectory:
         for value in encoded:
             try:
                 target = await self._resolve_target(
-                    view, ctx, _TARGET.validate_json(str(value)), as_of_commit
+                    view, ctx, _TARGET.validate_json(str(value)), as_of_commit, as_of_time
                 )
                 matches[target.reference.exact()] = target
             except DomainError as error:
@@ -193,10 +220,14 @@ class ReferenceDirectory:
         )
 
     async def resolve(
-        self, ctx: CallContext, locator: str, as_of_commit: int | None = None
+        self,
+        ctx: CallContext,
+        locator: str,
+        as_of_commit: int | None = None,
+        as_of_time: int | None = None,
     ) -> ReferenceResolution:
         async with self.authority.read(ctx) as view:
-            return await self.resolve_in(view, ctx, locator, as_of_commit)
+            return await self.resolve_in(view, ctx, locator, as_of_commit, as_of_time)
 
     async def reconcile(self, ctx: CallContext, operation_id: str) -> dict[str, int]:
         """Repair missing address metadata on visible identities without revising content."""

@@ -19,7 +19,8 @@ impl VectorGeneration {
         let generation = Self::build(snapshot)?;
         let staging = tempfile::Builder::new()
             .prefix(".nous-ann-")
-            .tempdir_in(parent)?;
+            .tempdir_in(parent)
+            .context("create native ANN staging directory")?;
         let candidates_path = staging.path().join(CANDIDATES_FILE);
         let tags_path = staging.path().join(TAGS_FILE);
         generation
@@ -32,18 +33,27 @@ impl VectorGeneration {
             .context("USearch Tag save")?;
         File::options()
             .write(true)
-            .open(&candidates_path)?
-            .sync_all()?;
-        File::options().write(true).open(&tags_path)?.sync_all()?;
+            .open(&candidates_path)
+            .context("open native ANN candidate file for sync")?
+            .sync_all()
+            .context("sync native ANN candidate file")?;
+        File::options()
+            .write(true)
+            .open(&tags_path)
+            .context("open native ANN Tag file for sync")?
+            .sync_all()
+            .context("sync native ANN Tag file")?;
         let manifest = Manifest {
             engine: ENGINE.into(),
             frozen: generation.frozen.clone(),
             candidates_file: stamp(&candidates_path)?,
             tags_file: stamp(&tags_path)?,
         };
-        let mut file = File::create(staging.path().join(MANIFEST_FILE))?;
-        file.write_all(&serde_json::to_vec(&manifest)?)?;
-        file.sync_all()?;
+        let mut file = File::create(staging.path().join(MANIFEST_FILE))
+            .context("create native ANN manifest")?;
+        file.write_all(&serde_json::to_vec(&manifest)?)
+            .context("write native ANN manifest")?;
+        file.sync_all().context("sync native ANN manifest")?;
         drop(file);
         sync_directory(staging.path())?;
         fs::rename(staging.path(), path)

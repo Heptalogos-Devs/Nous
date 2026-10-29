@@ -73,6 +73,21 @@ def validate_graph(bundle: SubjectBundle) -> None:
             ),
             *(f"observation:{root}" for root in record.source_roots),
         }
+    call_ids = {call.id for call in bundle.calls}
+    producer_ids = {
+        *[record.producer_call_id for record in bundle.cognition if record.producer_call_id],
+        *[
+            record.producer.model_call_id
+            for record in bundle.derivations.representations
+            if record.producer.model_call_id
+        ],
+        *[record.call_id for record in bundle.vectors if record.call_id],
+        *[record.producer_call_id for record in bundle.outputs if record.producer_call_id],
+    }
+    if len(call_ids) != len(bundle.calls) or not producer_ids.issubset(call_ids):
+        raise DomainError(
+            "bundle_call_missing", "Every actual producer must have one archived call identity"
+        )
     if any(target not in graph for dependencies in graph.values() for target in dependencies):
         raise DomainError(
             "bundle_reference_missing", "Bundle contains an unresolved cross-domain dependency"
