@@ -3,7 +3,7 @@
 from hashlib import sha256
 from typing import TYPE_CHECKING
 
-from nous_wave.contracts import (
+from nous_sdk.contracts import (
     BlobDocument,
     CallContext,
     DomainError,
@@ -11,7 +11,7 @@ from nous_wave.contracts import (
     SourceRegion,
     TimeSpan,
 )
-from nous_wave.contracts.derivation import (
+from nous_sdk.contracts.derivation import (
     ArtifactRepresentation,
     CreateRepresentation,
     DerivationInput,

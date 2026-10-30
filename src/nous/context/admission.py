@@ -5,11 +5,11 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
-from nous_wave.contracts import (
+from nous_sdk.contracts import (
     CallContext,
     DomainError,
 )
-from nous_wave.contracts.context import (
+from nous_sdk.contracts.context import (
     CognitiveTarget,
     ContextAdmission,
     ContextAdmissionCommand,

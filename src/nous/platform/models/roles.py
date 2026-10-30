@@ -3,7 +3,7 @@
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from nous_wave.contracts import DomainError
+from nous_sdk.contracts import DomainError
 from pydantic import BaseModel, JsonValue
 
 from nous.platform.configuration.models import ModelConfiguration

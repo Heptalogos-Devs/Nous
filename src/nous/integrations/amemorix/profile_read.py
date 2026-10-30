@@ -5,8 +5,8 @@ from __future__ import annotations
 import unicodedata
 from typing import TYPE_CHECKING
 
-from nous_wave.amemorix.contracts import ProfileInput
-from nous_wave.contracts import CallContext, CognitiveRecord, DomainError, EntityBody
+from nous_sdk.amemorix.contracts import ProfileInput
+from nous_sdk.contracts import CallContext, CognitiveRecord, DomainError, EntityBody
 
 from nous.material.service import require_observation_in
 
@@ -159,8 +159,8 @@ async def read_profile(
                 and (attribute.validity is None or attribute.validity.contains(ctx.clock))
             )
             (accepted if confirmed else uncertain).append(item)
-        from nous_wave.contracts.fact_body import FactClaimBody, PersonFactScope
-        from nous_wave.contracts.facts import FactQuery
+        from nous_sdk.contracts.fact_body import FactClaimBody, PersonFactScope
+        from nous_sdk.contracts.facts import FactQuery
 
         from nous.cognition.fact_reads import query_in as fact_query_in
 

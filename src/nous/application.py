@@ -1,9 +1,9 @@
 """Explicit resource composition; domain rules stay with their owners."""
 
-from nous_wave.amemorix.contracts import AMemorixPolicy
-from nous_wave.contracts.context import ContextsPolicy
-from nous_wave.contracts.media_policy import MediaPolicy
-from nous_wave.contracts.vector_projection import VectorProjectionPolicy
+from nous_sdk.amemorix.contracts import AMemorixPolicy
+from nous_sdk.contracts.context import ContextsPolicy
+from nous_sdk.contracts.media_policy import MediaPolicy
+from nous_sdk.contracts.vector_projection import VectorProjectionPolicy
 
 from nous.identity.credentials import CredentialsService
 from nous.platform.configuration import Settings

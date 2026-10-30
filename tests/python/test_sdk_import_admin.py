@@ -4,8 +4,8 @@ import asyncio
 
 import httpx
 import pytest
-from nous_wave import NousClient, NousError
-from nous_wave.amemorix import AMemorixAdapter
+from nous_sdk import NousClient, NousError
+from nous_sdk.amemorix import AMemorixAdapter
 
 from nous.platform.configuration import Settings
 from nous.transports.http import create_app

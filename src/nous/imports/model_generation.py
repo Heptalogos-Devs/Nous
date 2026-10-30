@@ -4,9 +4,9 @@ import json
 from collections.abc import Awaitable, Callable
 from typing import Literal
 
-from nous_wave.contracts import CallContext, FormationProposal
-from nous_wave.contracts.cognition import FormationDraft
-from nous_wave.contracts.model_roles import ModelCachePolicy
+from nous_sdk.contracts import CallContext, FormationProposal
+from nous_sdk.contracts.cognition import FormationDraft
+from nous_sdk.contracts.model_roles import ModelCachePolicy
 
 from nous.cognition.models import ModelServices
 from nous.platform.models.generation import MediaInput

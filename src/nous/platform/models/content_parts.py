@@ -5,7 +5,7 @@ import base64
 from typing import TYPE_CHECKING
 
 import httpx2
-from nous_wave.contracts import CallContext, DomainError
+from nous_sdk.contracts import CallContext, DomainError
 from openai import AsyncOpenAI, omit
 from pydantic import BaseModel, JsonValue, TypeAdapter
 

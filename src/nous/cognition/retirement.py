@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import deque
 from typing import TYPE_CHECKING
 
-from nous_wave.contracts import CallContext, CognitiveRecord, CognitiveRef
+from nous_sdk.contracts import CallContext, CognitiveRecord, CognitiveRef
 from sqlalchemy import select, update
 
 from nous.material.service import observations

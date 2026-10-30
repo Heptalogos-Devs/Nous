@@ -1,12 +1,12 @@
 # 安装 Python 服务与 native 扩展
 
-主应用、客户端与原生计算分别是 `nous-wave-server`、`nous-wave`、`nous-wave-native`。服务使用标准 CPython 3.14，包含 GIL；独立 SDK 仍支持 Python 3.11 及以上。用户安装匹配平台的 native wheel，无需 Rust、C++、Node 或旧 Rust 服务。
+主应用、客户端与原生计算分别是 `nous-server`、`nous-sdk`、`nous-native`。服务使用标准 CPython 3.14，包含 GIL；独立 SDK 仍支持 Python 3.11 及以上。用户安装匹配平台的 native wheel，无需 Rust、C++、Node 或旧 Rust 服务。
 
 当前工作区正在接入模型多路线，应用组装尚未向 `ModelService` 注入必需的角色注册表；使用以下命令时请选择已完成组装的构建。运行中的开发实例使用此前加载的代码。工作区状态见[开发目标](GOAL.md)和[重构进展](python-native-plan/progress-report.md)。
 
 ## 安装发行包
 
-从同一次构建取得对应平台的完整 `nous-wave-cp314-<target>` 产物，解压后应包含三个同版本 wheel 和 `install-python.py`。Linux x64、Windows x64、macOS Apple Silicon、macOS Intel 分别使用自己的产物。不要混合不同发行版本。
+从同一次构建取得对应平台的完整 `nous-cp314-<target>` 产物，解压后应包含三个同版本 wheel 和 `install-python.py`。Linux x64、Windows x64、macOS Apple Silicon、macOS Intel 分别使用自己的产物。不要混合不同发行版本。
 
 已安装 uv 时，在解压目录运行：
 
@@ -22,7 +22,7 @@ uv run --python 3.14 --no-project install-python.py --wheels .
 python install-python.py --wheels . --venv /path/to/venv --instance /path/to/instance
 ```
 
-默认使用当前用户的数据目录：Linux 为 `~/.local/share/nous-wave`，macOS 为 `~/Library/Application Support/NousWave`，Windows 为 `%LOCALAPPDATA%\NousWave`。安装器保留已有实例和管理凭据，创建新实例时只输出凭据文件路径。凭据正文留在 `<instance>/credentials/admin.token`，不要写入命令日志或提交仓库。
+新安装默认使用当前用户的数据目录：Linux 为 `~/.local/share/nous`，macOS 为 `~/Library/Application Support/Nous`，Windows 为 `%LOCALAPPDATA%\Nous`。如果新目录不存在而旧目录已有实例，安装器继续使用旧实例目录。程序安装到独立的 `venv-nous` 环境，已有实例和管理凭据保持原位。已有服务仍使用其原先注册的程序路径；需要切换服务程序时按下方服务管理说明重新注册。凭据正文留在 `<instance>/credentials/admin.token`，不要写入命令日志或提交仓库。
 
 安装器会输出适用于当前系统的完整启动命令：
 
@@ -80,9 +80,9 @@ Linux 使用 `systemd --user`，macOS 使用当前用户 LaunchAgent，Windows �
 Linux 云端准备脚本为 `bash scripts/cloud-prepare.sh`。它复用本地已有 AGENTS/skills，不下载或安装治理仓库，不执行模型请求、不启动服务。系统需预先具备 C/C++ 编译器、pkg-config、CMake、FFmpeg；脚本安装/复用 uv、CPython 3.14、锁定的 Rust 工具链，再执行 `uv sync --locked --all-packages`。
 
 ```bash
-uv build --package nous-wave-server --sdist --wheel --no-sources --out-dir dist
-uv build --package nous-wave --sdist --wheel --no-sources --out-dir dist
-uv build --package nous-wave-native --sdist --no-sources --out-dir dist
+uv build --package nous-server --sdist --wheel --no-sources --out-dir dist
+uv build --package nous-sdk --sdist --wheel --no-sources --out-dir dist
+uv build --package nous-native --sdist --no-sources --out-dir dist
 uv run maturin build --locked --release --manifest-path native/python/Cargo.toml --interpreter python3.14 --out dist
 python scripts/install-python.py --wheels dist --venv /tmp/nous-installed --instance /tmp/nous-instance
 ```

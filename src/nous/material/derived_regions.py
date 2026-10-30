@@ -5,8 +5,8 @@ from dataclasses import dataclass
 from uuid import uuid4
 
 from jsonpointer import JsonPointerException, resolve_pointer
-from nous_wave.contracts import CallContext, DomainError, MediaReference
-from nous_wave.contracts.derivation import (
+from nous_sdk.contracts import CallContext, DomainError, MediaReference
+from nous_sdk.contracts.derivation import (
     ArtifactRepresentation,
     CreateDerivedRegion,
     DerivedRegion,

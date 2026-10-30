@@ -5,9 +5,9 @@ import binascii
 from dataclasses import dataclass
 
 from fastapi import Request
-from nous_wave.contracts import CallContext, CognitiveRef, DomainError, MediaReference
-from nous_wave.contracts.context import CognitiveTarget, ContextTarget, MediaTarget, WorkContext
-from nous_wave.source_scope import (
+from nous_sdk.contracts import CallContext, CognitiveRef, DomainError, MediaReference
+from nous_sdk.contracts.context import CognitiveTarget, ContextTarget, MediaTarget, WorkContext
+from nous_sdk.source_scope import (
     CognitionSource,
     MediaSource,
     ObservationSource,

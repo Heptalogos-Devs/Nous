@@ -2,7 +2,7 @@
 
 from typing import TYPE_CHECKING
 
-from nous_wave.contracts.derivation import DerivationQuality, DerivedRegion, DerivedRepresentation
+from nous_sdk.contracts.derivation import DerivationQuality, DerivedRegion, DerivedRepresentation
 from pydantic import JsonValue
 from sqlalchemy import select
 

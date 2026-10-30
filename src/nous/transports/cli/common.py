@@ -12,9 +12,9 @@ from typing import cast
 
 import anyio
 import typer
-from nous_wave import NousClient
-from nous_wave.source_scope import SourceReadScope
-from nous_wave.transport import ClientOptions
+from nous_sdk import NousClient
+from nous_sdk.source_scope import SourceReadScope
+from nous_sdk.transport import ClientOptions
 from pydantic import BaseModel, JsonValue, TypeAdapter
 
 from nous.platform.localization import Localizer

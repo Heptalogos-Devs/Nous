@@ -4,8 +4,8 @@ from hashlib import sha256
 
 from fastapi import APIRouter, Request
 from fastapi.responses import Response
-from nous_wave.contracts import MediaReference, SourceRegion
-from nous_wave.contracts.derivation import (
+from nous_sdk.contracts import MediaReference, SourceRegion
+from nous_sdk.contracts.derivation import (
     CreateDerivedRegion,
     CreateRepresentation,
     DeriveMedia,

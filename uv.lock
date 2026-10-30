@@ -4,9 +4,9 @@ requires-python = "==3.14.*"
 
 [manifest]
 members = [
-    "nous-wave",
-    "nous-wave-native",
-    "nous-wave-server",
+    "nous-sdk",
+    "nous-native",
+    "nous-server",
 ]
 
 [[package]]
@@ -974,7 +974,7 @@ wheels = [
 ]
 
 [[package]]
-name = "nous-wave"
+name = "nous-sdk"
 version = "0.1.0"
 source = { editable = "sdk/python" }
 dependencies = [
@@ -991,7 +991,7 @@ requires-dist = [
 ]
 
 [[package]]
-name = "nous-wave-native"
+name = "nous-native"
 version = "0.1.0"
 source = { editable = "native/python" }
 dependencies = [
@@ -1002,7 +1002,7 @@ dependencies = [
 requires-dist = [{ name = "numpy", specifier = ">=2.3,<3" }]
 
 [[package]]
-name = "nous-wave-server"
+name = "nous-server"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
@@ -1020,8 +1020,8 @@ dependencies = [
     { name = "keyring" },
     { name = "langchain-text-splitters" },
     { name = "mcp" },
-    { name = "nous-wave" },
-    { name = "nous-wave-native" },
+    { name = "nous-sdk" },
+    { name = "nous-native" },
     { name = "numpy" },
     { name = "openai" },
     { name = "opentelemetry-api" },
@@ -1073,8 +1073,8 @@ requires-dist = [
     { name = "keyring", specifier = ">=25,<27" },
     { name = "langchain-text-splitters", specifier = ">=0.3,<2" },
     { name = "mcp", specifier = ">=2.3,<3" },
-    { name = "nous-wave", editable = "sdk/python" },
-    { name = "nous-wave-native", editable = "native/python" },
+    { name = "nous-sdk", editable = "sdk/python" },
+    { name = "nous-native", editable = "native/python" },
     { name = "numpy", specifier = ">=2.3,<3" },
     { name = "openai", specifier = ">=3.31,<4" },
     { name = "opentelemetry-api", specifier = ">=1,<2" },

@@ -7,7 +7,7 @@
 +from starlette.background import BackgroundTasks
 +
 +import anyio
-+from nous_wave.files import file_name as transfer_file_name
++from nous_sdk.files import file_name as transfer_file_name
  from pydantic import BaseModel, Field
  from sqlalchemy import func
  from sqlmodel import col, select

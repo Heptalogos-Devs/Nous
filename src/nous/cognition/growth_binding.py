@@ -5,7 +5,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 
 import jsonpointer
-from nous_wave.contracts import (
+from nous_sdk.contracts import (
     CognitiveBody,
     CognitiveRecord,
     CognitiveRef,
@@ -17,7 +17,7 @@ from nous_wave.contracts import (
     MemoryBody,
     MemoryLifecycle,
 )
-from nous_wave.contracts.growth import GrowthAdoption
+from nous_sdk.contracts.growth import GrowthAdoption
 from pydantic import JsonValue, TypeAdapter, ValidationError
 
 from .projection import media_references_in, references_in

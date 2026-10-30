@@ -5,10 +5,10 @@ from __future__ import annotations
 from collections import Counter
 from typing import TYPE_CHECKING
 
-from nous_wave.amemorix.contracts import (
+from nous_sdk.amemorix.contracts import (
     ProfileInput,
 )
-from nous_wave.contracts import (
+from nous_sdk.contracts import (
     CallContext,
 )
 from pydantic import JsonValue

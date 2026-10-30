@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 from jinja2 import UndefinedError
-from nous_wave.contracts import CallContext
+from nous_sdk.contracts import CallContext
 
 from nous.platform.errors import NousError
 from nous.platform.models.ledger import CallLedger
@@ -161,8 +161,8 @@ def test_http_backup_restores_a_new_instance_only(tmp_path: Path):
 
 def test_durable_model_invocation_keeps_paid_result_across_configuration_changes(tmp_path: Path):
     async def scenario():
-        from nous_wave.contracts import DomainError
-        from nous_wave.contracts.growth import GrowthProposal
+        from nous_sdk.contracts import DomainError
+        from nous_sdk.contracts.growth import GrowthProposal
         from sqlalchemy import func, select
 
         from nous.application import Application

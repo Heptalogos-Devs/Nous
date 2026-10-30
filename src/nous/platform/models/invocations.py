@@ -4,8 +4,8 @@ from dataclasses import dataclass
 from hashlib import sha256
 
 import sqlalchemy as sa
-from nous_wave.contracts import CallContext, DomainError
-from nous_wave.contracts.model_routing import ModelCallOutcome
+from nous_sdk.contracts import CallContext, DomainError
+from nous_sdk.contracts.model_routing import ModelCallOutcome
 from pydantic import JsonValue, TypeAdapter
 from sqlalchemy.dialects.sqlite import insert
 

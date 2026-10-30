@@ -1,15 +1,15 @@
 """A directory lookup resolves identity, then delegates all visibility to its owner."""
 
 import sqlalchemy as sa
-from nous_wave.contracts import (
+from nous_sdk.contracts import (
     CallContext,
     CognitiveRecord,
     CognitiveRef,
     DomainError,
     MediaReference,
 )
-from nous_wave.contracts.context import CognitiveTarget, ContextTarget, MediaTarget
-from nous_wave.contracts.references import ObjectTarget, ReferenceResolution, SemanticTarget
+from nous_sdk.contracts.context import CognitiveTarget, ContextTarget, MediaTarget
+from nous_sdk.contracts.references import ObjectTarget, ReferenceResolution, SemanticTarget
 from pydantic import JsonValue, TypeAdapter
 
 from nous.cognition.schema import revisions
@@ -303,7 +303,7 @@ class ReferenceDirectory:
                             continue
                         reference = MediaReference.model_validate({"kind": kind, "id": row["id"]})
                         prior = await addresses_in(tx, selected, reference)
-                        from nous_wave.contracts.common import ReferenceAddresses
+                        from nous_sdk.contracts.common import ReferenceAddresses
 
                         known = row["record"].get("addresses")
                         allocated = await recover_in(

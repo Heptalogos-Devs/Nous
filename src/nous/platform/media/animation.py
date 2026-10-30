@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from nous_wave.contracts.media import PixelRect, TimeSpan
+from nous_sdk.contracts.media import PixelRect, TimeSpan
 from PIL import Image, ImageOps
 
 

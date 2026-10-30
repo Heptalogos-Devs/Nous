@@ -1,10 +1,10 @@
 """Exact cognitive lookup and lifecycle share their formal domain owner."""
 
 from fastapi import APIRouter, Request
-from nous_wave.contracts import CognitiveRef, DomainError
-from nous_wave.contracts.cognition import CognitiveKind
-from nous_wave.contracts.lifecycle import MemoryChanges
-from nous_wave.contracts.person_profiles import PersonProfileChange, RefreshPersonProfile
+from nous_sdk.contracts import CognitiveRef, DomainError
+from nous_sdk.contracts.cognition import CognitiveKind
+from nous_sdk.contracts.lifecycle import MemoryChanges
+from nous_sdk.contracts.person_profiles import PersonProfileChange, RefreshPersonProfile
 from pydantic import TypeAdapter
 from sqlalchemy import select
 

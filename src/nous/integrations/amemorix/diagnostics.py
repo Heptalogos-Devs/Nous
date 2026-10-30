@@ -2,7 +2,7 @@
 
 from typing import TYPE_CHECKING
 
-from nous_wave.contracts import CallContext
+from nous_sdk.contracts import CallContext
 from pydantic import JsonValue
 
 from .helpers import json_object

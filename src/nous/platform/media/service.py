@@ -12,8 +12,8 @@ from fractions import Fraction
 from pathlib import Path
 
 import anyio
-from nous_wave.contracts.media import MediaInfo, PixelRect, TimeSpan
-from nous_wave.contracts.media_policy import MediaPolicy
+from nous_sdk.contracts.media import MediaInfo, PixelRect, TimeSpan
+from nous_sdk.contracts.media_policy import MediaPolicy
 from PIL import Image, ImageOps
 from pydantic import BaseModel, ConfigDict, Field
 

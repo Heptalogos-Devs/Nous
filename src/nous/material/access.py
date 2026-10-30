@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from nous_wave.contracts import CallContext, CognitiveRef, DomainError, MediaReference, SourceRegion
+from nous_sdk.contracts import CallContext, CognitiveRef, DomainError, MediaReference, SourceRegion
 from sqlalchemy import select
 
 from nous.identity.service import require_subject_in

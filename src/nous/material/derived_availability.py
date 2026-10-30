@@ -2,8 +2,8 @@
 
 from typing import Literal
 
-from nous_wave.contracts import CallContext, CognitiveRecord, CognitiveRef, MediaReference
-from nous_wave.contracts.derivation import DerivedRegion, DerivedRepresentation
+from nous_sdk.contracts import CallContext, CognitiveRecord, CognitiveRef, MediaReference
+from nous_sdk.contracts.derivation import DerivedRegion, DerivedRepresentation
 from pydantic import TypeAdapter
 from sqlalchemy import select
 

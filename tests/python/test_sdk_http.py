@@ -5,8 +5,8 @@ from datetime import UTC, datetime
 
 import httpx
 import pytest
-from nous_wave import HostInputMeasurement, NousClient, NousError, SourceReadScope
-from nous_wave.contracts import (
+from nous_sdk import HostInputMeasurement, NousClient, NousError, SourceReadScope
+from nous_sdk.contracts import (
     AdmitFiles,
     AdoptCognition,
     CallContext,
@@ -16,8 +16,8 @@ from nous_wave.contracts import (
     QueryRequest,
     SourceRegion,
 )
-from nous_wave.contracts.context import CognitiveTarget, ContextUsage, ContextUse
-from nous_wave.source_scope import CognitionSource, MediaSource, OriginalMedia
+from nous_sdk.contracts.context import CognitiveTarget, ContextUsage, ContextUse
+from nous_sdk.source_scope import CognitionSource, MediaSource, OriginalMedia
 
 from nous.platform.configuration import Settings
 from nous.transports.http import create_app
@@ -60,7 +60,7 @@ def test_sdk_scopes_and_managed_real_http(tmp_path):
                 material = result.catalog.units[0].material_id
                 observation = result.outputs[0].observation_id
                 service = app.state.application
-                from nous_wave.contracts.credentials import CreateCredential, RotateCredential
+                from nous_sdk.contracts.credentials import CreateCredential, RotateCredential
 
                 assert (await client.identity({"action": "whoami"}))["caller_id"]
                 issued = await client.create_credential(
@@ -86,7 +86,7 @@ def test_sdk_scopes_and_managed_real_http(tmp_path):
                     "id"
                 ] == ref.id
                 assert len(await client.cognitive_history(ref.id)) == 1
-                from nous_wave.contracts.imports import TextSplitOptions
+                from nous_sdk.contracts.imports import TextSplitOptions
 
                 preview = await client.preview_text_import(
                     namespace.id,
@@ -238,7 +238,7 @@ def test_sdk_scopes_and_managed_real_http(tmp_path):
                         namespace.id, subject.id, QueryRequest(text="限定")
                     )
                 ).hits == ()
-                from nous_wave.contracts.context import ContextCommand
+                from nous_sdk.contracts.context import ContextCommand
 
                 await single.admit_context(
                     namespace.id,
@@ -247,7 +247,7 @@ def test_sdk_scopes_and_managed_real_http(tmp_path):
                         kind="resident", purpose="unbound historical context", references=(ref,)
                     ),
                 )
-                from nous_wave.contracts.context import ContextPrepare
+                from nous_sdk.contracts.context import ContextPrepare
 
                 unbound = await single.prepare_context(
                     namespace.id,
@@ -321,7 +321,7 @@ def test_sdk_scopes_and_managed_real_http(tmp_path):
                 await binding.close()
                 from datetime import timedelta
 
-                from nous_wave.contracts.context import (
+                from nous_sdk.contracts.context import (
                     ChangeResidents,
                     ChangeWorkContext,
                     ContextPrepare,
@@ -383,7 +383,7 @@ def test_sdk_scopes_and_managed_real_http(tmp_path):
                     ),
                 )
                 assert work.content.anchors == (target,)
-                from nous_wave.contracts.context import ChangeContextSession
+                from nous_sdk.contracts.context import ChangeContextSession
 
                 session = await single.context_session(namespace.id, subject.id, session.id)
                 await single.change_context_session(
@@ -422,8 +422,8 @@ def test_sdk_scopes_and_managed_real_http(tmp_path):
                 await single.close_context_session(
                     namespace.id, subject.id, session.id, "close-resident"
                 )
-                from nous_wave.amemorix import AMemorixAdapter
-                from nous_wave.amemorix.contracts import AMemorixPolicy
+                from nous_sdk.amemorix import AMemorixAdapter
+                from nous_sdk.amemorix.contracts import AMemorixPolicy
 
                 from nous.transports.http.amemorix import router as amemorix_router
 

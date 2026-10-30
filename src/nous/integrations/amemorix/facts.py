@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from nous_wave.amemorix.facts import FactAdminInput
-from nous_wave.contracts import CallContext, CognitiveRecord, DomainError, TimePoint, TimeRange
-from nous_wave.contracts.cognitive_identity import CognitiveIdentity
-from nous_wave.contracts.fact_body import ChatFactScope, FactClaimBody, PersonFactScope
-from nous_wave.contracts.facts import (
+from nous_sdk.amemorix.facts import FactAdminInput
+from nous_sdk.contracts import CallContext, CognitiveRecord, DomainError, TimePoint, TimeRange
+from nous_sdk.contracts.cognitive_identity import CognitiveIdentity
+from nous_sdk.contracts.fact_body import ChatFactScope, FactClaimBody, PersonFactScope
+from nous_sdk.contracts.facts import (
     ChatFactScopeInput,
     FactChange,
     FactClaimInput,
@@ -115,7 +115,7 @@ async def scope_input(
         return ChatFactScopeInput(conversation_ref=command.scope_id)
     if command.scope_type != "person":
         raise DomainError("fact_scope_invalid", "Fact scope_type must be person or chat")
-    from nous_wave.amemorix.contracts import ProfileInput
+    from nous_sdk.amemorix.contracts import ProfileInput
 
     from .profile_read import select_person
 
@@ -136,7 +136,7 @@ async def fact_admin(
         if isinstance(scope, ChatFactScopeInput):
             selected = ChatFactScope(conversation_ref=scope.conversation_ref)
         else:
-            from nous_wave.amemorix.contracts import ProfileInput
+            from nous_sdk.amemorix.contracts import ProfileInput
 
             from .profile_read import select_person
 

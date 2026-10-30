@@ -8,9 +8,9 @@ from zoneinfo import ZoneInfo
 
 import sqlalchemy as sa
 from croniter import croniter
-from nous_wave.contracts import CallContext, DomainError
-from nous_wave.contracts.common import utc_now
-from nous_wave.contracts.maintenance import (
+from nous_sdk.contracts import CallContext, DomainError
+from nous_sdk.contracts.common import utc_now
+from nous_sdk.contracts.maintenance import (
     CreateMaintenanceSchedule,
     MaintenanceSchedule,
     StartMaintenance,

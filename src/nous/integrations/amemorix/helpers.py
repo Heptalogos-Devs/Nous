@@ -1,7 +1,7 @@
 import math
 from datetime import datetime
 
-from nous_wave.contracts import DomainError, TimePoint
+from nous_sdk.contracts import DomainError, TimePoint
 from pydantic import JsonValue, TypeAdapter
 
 from nous.platform.persistence.authority import canonical_json

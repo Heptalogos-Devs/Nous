@@ -6,8 +6,8 @@ from collections.abc import Awaitable, Callable
 from hashlib import sha256
 from weakref import WeakKeyDictionary
 
-from nous_wave.contracts import CallContext, CognitiveRecord, CognitiveRef, MediaReference
-from nous_wave.contracts.vector_projection import (
+from nous_sdk.contracts import CallContext, CognitiveRecord, CognitiveRef, MediaReference
+from nous_sdk.contracts.vector_projection import (
     ProjectionReceipt,
     ProjectionResult,
     ProjectVectors,
@@ -180,7 +180,7 @@ class VectorProjectionService:
             ).scalar_one()
         request = Request.model_validate(raw)
         if request.purged:
-            from nous_wave.contracts import DomainError
+            from nous_sdk.contracts import DomainError
 
             raise DomainError("source_purged", "Projection inputs were permanently erased")
         return request

@@ -1,7 +1,7 @@
 """Source lifecycle, bundles and working contexts use the same authority."""
 
 from fastapi import APIRouter, Request
-from nous_wave.contracts import (
+from nous_sdk.contracts import (
     BundleRequest,
     ContextCommand,
     ContextFeedback,

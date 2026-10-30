@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from nous_wave.contracts import CallContext, CognitiveRecord, CognitiveRef, DomainError, EpisodeBody
-from nous_wave.contracts.episodes import EpisodeQuery, EpisodeView
+from nous_sdk.contracts import CallContext, CognitiveRecord, CognitiveRef, DomainError, EpisodeBody
+from nous_sdk.contracts.episodes import EpisodeQuery, EpisodeView
 from sqlalchemy import func, select
 
 from nous.identity.service import require_subject_in

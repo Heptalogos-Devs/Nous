@@ -564,6 +564,6 @@ impl ServerHandler for McpService {
     fn get_info(&self) -> ServerConfig {
         ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::from_build_env())
-            .with_instructions("Nous Wave provides isolated identity, immutable material, real contacts and durable work. Supply a stable operation_id for retries. Material storage and Subject contact are separate operations.")
+            .with_instructions("Nous provides isolated identity, immutable material, real contacts and durable work. Supply a stable operation_id for retries. Material storage and Subject contact are separate operations.")
     }
 }

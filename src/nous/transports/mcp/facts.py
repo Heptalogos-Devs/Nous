@@ -4,11 +4,11 @@ from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
 from uuid import uuid4
 
-from nous_wave import NousClient
-from nous_wave.amemorix import AMemorixAdapter
-from nous_wave.amemorix.facts import FactAdminInput
-from nous_wave.contracts.facts import FactChange, FactQuery
-from nous_wave.types import JsonObject
+from nous_sdk import NousClient
+from nous_sdk.amemorix import AMemorixAdapter
+from nous_sdk.amemorix.facts import FactAdminInput
+from nous_sdk.contracts.facts import FactChange, FactQuery
+from nous_sdk.types import JsonObject
 
 from mcp.server import MCPServer
 

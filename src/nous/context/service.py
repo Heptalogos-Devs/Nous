@@ -2,7 +2,7 @@
 
 from uuid import uuid4
 
-from nous_wave.contracts import (
+from nous_sdk.contracts import (
     CallContext,
     CognitiveRecord,
     CognitiveRef,

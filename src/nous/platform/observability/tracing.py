@@ -27,8 +27,8 @@ def configure_tracing() -> TracerProvider:
         provider = TracerProvider(
             resource=Resource.create(
                 {
-                    "service.name": os.getenv("OTEL_SERVICE_NAME", "nous-wave"),
-                    "service.version": version("nous-wave-server"),
+                    "service.name": os.getenv("OTEL_SERVICE_NAME", "nous"),
+                    "service.version": version("nous-server"),
                 }
             ),
             sampler=ALWAYS_OFF if disabled else None,

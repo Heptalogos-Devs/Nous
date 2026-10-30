@@ -3,7 +3,7 @@
 import re
 from hashlib import sha256
 
-from nous_wave.contracts import AssociationBody, EntityBody, MemoryBody, SubjectBundle
+from nous_sdk.contracts import AssociationBody, EntityBody, MemoryBody, SubjectBundle
 
 
 def paragraph_key(text: str) -> str:

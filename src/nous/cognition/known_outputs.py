@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from nous_wave.contracts import CallContext, CognitiveRef, DomainError
+from nous_sdk.contracts import CallContext, CognitiveRef, DomainError
 
 from nous.platform.persistence import ReadView, WriteTx
 

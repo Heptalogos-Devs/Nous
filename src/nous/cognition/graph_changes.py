@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from nous_wave.contracts import (
+from nous_sdk.contracts import (
     AdoptCognition,
     AssociationBody,
     CallContext,
@@ -20,7 +20,7 @@ from nous_wave.contracts import (
     RevisionCause,
     TimePoint,
 )
-from nous_wave.contracts.graph_management import GraphChange, GraphChangeResult
+from nous_sdk.contracts.graph_management import GraphChange, GraphChangeResult
 from sqlalchemy import func, select
 
 from nous.identity.service import require_subject_in

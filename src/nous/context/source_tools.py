@@ -5,8 +5,8 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from nous_wave.contracts import CallContext, DomainError
-from nous_wave.contracts.context import (
+from nous_sdk.contracts import CallContext, DomainError
+from nous_sdk.contracts.context import (
     CognitiveTarget,
     ContextAdmission,
     ContextReportResult,
@@ -15,7 +15,7 @@ from nous_wave.contracts.context import (
     ContextUse,
     ReadContextSource,
 )
-from nous_wave.contracts.source_graph import ExpandSources
+from nous_sdk.contracts.source_graph import ExpandSources
 from pydantic import TypeAdapter
 from sqlalchemy import select
 

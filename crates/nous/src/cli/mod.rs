@@ -41,7 +41,7 @@ use sources::{ObservationCommand, SourceCommand};
 use std::{net::SocketAddr, path::PathBuf};
 use tasks::JobCommand;
 #[derive(Parser)]
-#[command(version, about = "Nous Wave native cognition service")]
+#[command(version, about = "Nous native cognition service")]
 pub(crate) struct Cli {
     /// Emit the complete machine-readable JSON result.
     #[arg(long, global = true)]

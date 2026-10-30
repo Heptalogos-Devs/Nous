@@ -2,7 +2,7 @@
 
 from typing import TYPE_CHECKING, Literal
 
-from nous_wave.contracts import (
+from nous_sdk.contracts import (
     AdoptCognition,
     AdoptMedia,
     BlobDocument,
@@ -17,8 +17,8 @@ from nous_wave.contracts import (
     MemoryBody,
     TimePoint,
 )
-from nous_wave.contracts.cognition import ProposedMemory
-from nous_wave.contracts.derivation import (
+from nous_sdk.contracts.cognition import ProposedMemory
+from nous_sdk.contracts.derivation import (
     CreateRepresentation,
     DerivationInput,
     DerivedRepresentation,

@@ -2,7 +2,7 @@
 
 import unicodedata
 
-from nous_wave.contracts.fact_body import FactClaimSpec, FactScope
+from nous_sdk.contracts.fact_body import FactClaimSpec, FactScope
 
 
 def normalized(value: str) -> str:

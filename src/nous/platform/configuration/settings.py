@@ -3,7 +3,7 @@
 from pathlib import Path
 from typing import Annotated, Literal
 
-from nous_wave.contracts.media_policy import MediaPolicy
+from nous_sdk.contracts.media_policy import MediaPolicy
 from pydantic import AfterValidator, BaseModel, Field, JsonValue
 from pydantic_settings import BaseSettings, SettingsConfigDict
 

@@ -16,7 +16,7 @@ from uuid import UUID, uuid4
 
 import anyio
 import sqlalchemy as sa
-from nous_wave.contracts.common import CallContext
+from nous_sdk.contracts.common import CallContext
 
 from nous.platform.persistence import Authority, WriteTx, metadata
 

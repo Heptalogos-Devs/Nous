@@ -7,18 +7,18 @@ from pathlib import Path
 from typing import Literal
 from uuid import uuid4
 
-from nous_wave import NousClient
-from nous_wave.amemorix import AMemorixAdapter
-from nous_wave.amemorix.contracts import ProfileAdminInput
-from nous_wave.contracts import AdmitFiles, AdoptCognition, DomainError, QueryRequest
-from nous_wave.contracts.context import (
+from nous_sdk import NousClient
+from nous_sdk.amemorix import AMemorixAdapter
+from nous_sdk.amemorix.contracts import ProfileAdminInput
+from nous_sdk.contracts import AdmitFiles, AdoptCognition, DomainError, QueryRequest
+from nous_sdk.contracts.context import (
     ContextAdmissionCommand,
     ContextPrepare,
     ContextReport,
 )
-from nous_wave.errors import NousError as ClientError
-from nous_wave.presentation import query_text
-from nous_wave.types import JsonObject
+from nous_sdk.errors import NousError as ClientError
+from nous_sdk.presentation import query_text
+from nous_sdk.types import JsonObject
 from pydantic import JsonValue, TypeAdapter
 
 from mcp.server import MCPServer
@@ -38,7 +38,7 @@ def run(
     subject_id: str,
     credential_file: Path | None = None,
 ) -> None:
-    mcp = MCPServer("Nous Wave")
+    mcp = MCPServer("Nous")
     configure_logging("INFO")
     token_path = credential_file or instance / "credentials/admin.token"
 

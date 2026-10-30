@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from hashlib import sha256
 
-from nous_wave.contracts import CognitiveRecord, EntityBody, SubjectBundle
-from nous_wave.contracts.fact_body import FactClaimBody, PersonFactScope
+from nous_sdk.contracts import CognitiveRecord, EntityBody, SubjectBundle
+from nous_sdk.contracts.fact_body import FactClaimBody, PersonFactScope
 from pydantic import JsonValue, TypeAdapter
 
 from nous.cognition.fact_identity import normalized
@@ -63,7 +63,7 @@ def project_facts(
     }
 
     def point(value: object) -> JsonValue:
-        from nous_wave.contracts import TimePoint
+        from nous_sdk.contracts import TimePoint
 
         return (
             value.coordinate / 1000

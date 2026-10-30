@@ -2,8 +2,8 @@
 
 import asyncio
 
-from nous_wave.contracts import CallContext, EmbeddingBatch
-from nous_wave.contracts.model_routing import ModelRouteAttempt
+from nous_sdk.contracts import CallContext, EmbeddingBatch
+from nous_sdk.contracts.model_routing import ModelRouteAttempt
 from openai import AsyncOpenAI
 
 from nous.platform.configuration import EmbeddingRoute

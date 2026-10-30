@@ -4,7 +4,7 @@ import io
 from pathlib import Path
 
 import anyio
-from nous_wave.contracts import SourceRegion, TimeSpan
+from nous_sdk.contracts import SourceRegion, TimeSpan
 from pypdf import PdfReader, PdfWriter
 
 from nous.material.text import source_region_text

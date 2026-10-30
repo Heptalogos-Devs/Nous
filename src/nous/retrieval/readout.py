@@ -7,7 +7,7 @@ from hashlib import sha256
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
-from nous_wave.contracts import (
+from nous_sdk.contracts import (
     CallContext,
     CognitiveRecord,
     DomainError,
@@ -15,9 +15,9 @@ from nous_wave.contracts import (
     QueryRequest,
     QueryResult,
 )
-from nous_wave.contracts.context import CognitiveTarget, MediaTarget
-from nous_wave.contracts.query_readout import RerankInfo
-from nous_wave.contracts.source_graph import ExpandSources
+from nous_sdk.contracts.context import CognitiveTarget, MediaTarget
+from nous_sdk.contracts.query_readout import RerankInfo
+from nous_sdk.contracts.source_graph import ExpandSources
 from pydantic import BaseModel, Field
 
 from .assets import RetrievalRecord, record_text

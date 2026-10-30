@@ -3,7 +3,7 @@
 from uuid import uuid4
 
 from fastapi import APIRouter, Query, Request
-from nous_wave.contracts.credentials import (
+from nous_sdk.contracts.credentials import (
     CreateCredential,
     CredentialEvent,
     CredentialRecord,

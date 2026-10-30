@@ -6,7 +6,7 @@ from hashlib import sha256
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
-from nous_wave.contracts import (
+from nous_sdk.contracts import (
     BundleRequest,
     CallContext,
     CognitiveRecord,
@@ -125,7 +125,7 @@ async def export(self: BundleService, ctx: CallContext, command: BundleRequest |
             ):
                 selected_outputs.append(output)
                 observation_ids.add(output.observation_id)
-        from nous_wave.contracts.derivation import ArtifactRepresentation
+        from nous_sdk.contracts.derivation import ArtifactRepresentation
 
         derived = await self.cognition.derivations.export_in(
             view,

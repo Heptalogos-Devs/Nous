@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from nous_wave.contracts import CallContext, CatalogView, DomainError, ImportResult
+from nous_sdk.contracts import CallContext, CatalogView, DomainError, ImportResult
 
 from nous.platform.persistence import ReadView, WriteTx
 
@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 async def input_context_in(
     self: ImportService, view: ReadView | WriteTx, ctx: CallContext, row: dict[str, object]
 ) -> CallContext:
-    from nous_wave.contracts import AdmitFiles
+    from nous_sdk.contracts import AdmitFiles
     from pydantic import TypeAdapter
 
     captured = CallContext.model_validate(row["context"])
@@ -85,7 +85,7 @@ async def replay_result(
 
 
 async def read_admit_result(self: ImportService, ctx: CallContext, request_id: str) -> ImportResult:
-    from nous_wave.contracts import AdmitFiles
+    from nous_sdk.contracts import AdmitFiles
     from sqlalchemy import select
 
     from .schema import outputs, requests, successes
@@ -120,7 +120,7 @@ async def read_admit_result(self: ImportService, ctx: CallContext, request_id: s
         raise DomainError("import_result_pending", "Literal import has not completed")
     result = await self.replay_result(ctx, ImportResult.model_validate(receipt.result))
     if result.skipped_success_ids:
-        from nous_wave.contracts import UnitOutput
+        from nous_sdk.contracts import UnitOutput
 
         existing = {output.id: output for output in result.outputs}
         async with self.authority.read(ctx) as view:

@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from nous_wave.contracts import CallContext, DomainError
-from nous_wave.contracts.growth import GrowthDraft, GrowthProposal, GrowthSnapshot
-from nous_wave.contracts.maintenance import MaintenanceRun
+from nous_sdk.contracts import CallContext, DomainError
+from nous_sdk.contracts.growth import GrowthDraft, GrowthProposal, GrowthSnapshot
+from nous_sdk.contracts.maintenance import MaintenanceRun
 
 from nous.cognition.growth_proposal import growth_model_catalog, normalize_growth
 

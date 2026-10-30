@@ -1,7 +1,7 @@
 """Evidence-backed Social and configuration-seed operations."""
 
 from fastapi import APIRouter, Request
-from nous_wave.contracts.social import ChangeSocialRelation, LinkIdentity
+from nous_sdk.contracts.social import ChangeSocialRelation, LinkIdentity
 
 from .security import application, context
 

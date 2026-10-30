@@ -5,7 +5,7 @@ from typing import Literal
 from uuid import uuid4
 
 import typer
-from nous_wave.contracts.maintenance import (
+from nous_sdk.contracts.maintenance import (
     CreateMaintenanceSchedule,
     ReviewMaintenance,
     StartMaintenance,

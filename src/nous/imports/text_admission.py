@@ -5,9 +5,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
-from nous_wave.contracts import AdmitFiles, CallContext, DomainError
-from nous_wave.contracts.imports import ObservationFormation, ObservationFormSubmission
-from nous_wave.contracts.text_import import (
+from nous_sdk.contracts import AdmitFiles, CallContext, DomainError
+from nous_sdk.contracts.imports import ObservationFormation, ObservationFormSubmission
+from nous_sdk.contracts.text_import import (
     TextImport,
     TextImportCompletion,
     TextImportResult,

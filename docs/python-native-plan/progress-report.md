@@ -1,14 +1,14 @@
-# Nous Wave Python 重构进展
+# Nous Python 重构进展
 
 ## 总体情况
 
-Nous Wave 已经从原 Rust 应用的暂停交接，发展出一套以 Python 为应用主体、在同一进程中使用 Rust 原生计算的认知服务。真实开发讨论、图片与 GIF、模型形成与向量、查询和来源、重启续用、MaiBot 画像和上下文等路径已经实际运行。当前成果是一个有真实用户链路的开发中系统；完整认知产品、A-Memorix 全部既有能力、产品管理和发行仍有大量工作。
+Nous 已经从原 Rust 应用的暂停交接，发展出一套以 Python 为应用主体、在同一进程中使用 Rust 原生计算的认知服务。真实开发讨论、图片与 GIF、模型形成与向量、查询和来源、重启续用、MaiBot 画像和上下文等路径已经实际运行。当前成果是一个有真实用户链路的开发中系统；完整认知产品、A-Memorix 全部既有能力、产品管理和发行仍有大量工作。
 
 本报告记录截至 2026-10-30 的观察，以当时 `codex/python-native-rewrite-cloud` 上的实现代码检查点 `67e09cd` 为观察点；此前的正式功能节点为 `68fc3ae`。VCP 请求意图、Fact、Context Source 工具回执、统一修订状态、SDK/MCP 表达和模型路由已保存到 WIP 检查点。运行中的本地服务加载的是此前的实例代码，新模型服务尚未完成应用接线，检查点源码不能直接启动。各真实结果对应实际运行时使用的代码，修订状态与模型路由仍待最终集成和验证。
 
 ## 项目要完成什么
 
-[项目宪纲](https://github.com/Heptalogos-Devs/Architecture-Vault/blob/main/项目宪纲.md)将 Nous Wave 定位为独立的长期认知基础设施与人格中心：保存材料、经历、记忆、证据、来源、时间和修订；提供 NousQL、多方式检索、概念与关系、形成与维护；进一步支持自我、社会认知、语言、动机和工作认知。普通应用可以只使用记忆与检索，无须先建立人格。Nous 还要完整承接 A-Memorix 已有的实际工具、管理和消费接口。
+[项目宪纲](https://github.com/Heptalogos-Devs/Architecture-Vault/blob/main/项目宪纲.md)将 Nous 定位为独立的长期认知基础设施与人格中心：保存材料、经历、记忆、证据、来源、时间和修订；提供 NousQL、多方式检索、概念与关系、形成与维护；进一步支持自我、社会认知、语言、动机和工作认知。普通应用可以只使用记忆与检索，无须先建立人格。Nous 还要完整承接 A-Memorix 已有的实际工具、管理和消费接口。
 
 Heptalogos 是基于 MaiBot 的下一代持续主体产品，拥有世界、生活、时间、注意、选择、行动和外部效果，正式依赖 Nous 提供认知。MaiBot 的消息、平台、插件、模型资源与管理体验是主体产品的重要基础。本次重构重点是 Nous 及其真实消费者接入；MaiBot 接入取得了进展，完整 Heptalogos 世界与主体运行仍待建设。
 
@@ -117,7 +117,7 @@ Fact 实现已通过实际 MaiBot 创建、跨 key 更新、撤回、恢复、�
 | Journal                                     | 有叙事、时期、知识截点、观点、Episode 引用与 lineage 合同，参与认知形成与成长。                                 | 验证写作时知情视角、日记生成与后续修订的真实链路。                                                  |
 | Schema                                      | 有范围、命题、边界、支持、反例、lineage 和立场；成长路径能提出并采纳 Schema。                                   | 完整实现、验证反例、形成、修订及使用规则。                                                          |
 | FactClaim                                   | 有人物/会话范围、值、状态、有效期、证据及修订；实际 CRUD 与两个格式往返已运行，代码保存在 WIP 检查点。          | 完成默认查询和各消费者统一可见性，以及完整事实纠正、冲突和画像联动。                                |
-| SelfFacet、NarrativeThread、DomainKnowledge | 已有独立认知正文、成长提案和 Self/Seed 操作；SDK 可采纳种子、读取 Self 画像。                                   | 完整验证多文档种子进入记忆、设定来源、人格例外、叙事身份及知识范围的长期演化。                      |
+| EgoFacet、NarrativeThread、DomainKnowledge | 已有独立认知正文、成长提案和 Ego/Seed 操作；SDK 可采纳种子、读取 Ego 画像。                                   | 完整验证多文档种子进入记忆、设定来源、人格例外、叙事身份及知识范围的长期演化。                      |
 | SocialRelation 与平台身份                   | 有带方向、关系维度、程度、信任领域、范围、群组和判断充分性的合同；存在身份链接和社会关系操作。                  | 完成真实多会话、跨平台对应、关系积累与独立证据路径。                                                |
 | LanguageConvention                          | 有表达、意义、听众、语用和情境的认知合同及成长提案。                                                            | 接入真实群体语言形成、适用范围、修订与宿主消费。                                                    |
 | Desire、Concern 与条件                      | 有愿望、关切、组合条件、achieve/cease/maintain/avoid、持续区间和 unknown 状态合同。                             | 完成条件评价、实际 coverage、来源与持续更新，并交由 Heptalogos 使用；认知本身不代主体创建外部承诺。 |
@@ -153,7 +153,7 @@ Fact 实现已通过实际 MaiBot 创建、跨 key 更新、撤回、恢复、�
 | 材料、来源与导入            | 有原件、区域、派生、Observation、Catalog/Unit/Output、文件成功、来源管理及 Native/A 包；文本和媒体有真实往返。                      | 按真实消费者补齐全部格式、来源生命周期、删除恢复、包选择与共享资源行为。                                                                                                                                                                                                            |
 | 查询和原生计算              | 中文词项、语义、Hybrid、VCP、NousQL 解析、名称绑定、时间/历史、来源展开和图操作已有；真实图与若干查询已运行。                       | 完成目标中的全部 14 类返回域、语言与历史语义、算法组合、质量和规模验证。精确引用和受限图必须持续使用同一权威状态。                                                                                                                                                                  |
 | Memory、Episode、画像、Fact | Memory 与修订、Episode 形成和读取、画像人工控制与刷新、Fact 往返各有实际例子。Fact 及统一可见性代码已保存为 WIP，后者尚待重载验证。 | 完成 Episode 轨道、层级、局部重分段以及全部事实、画像和宿主管理行为，完成当前状态修复的真实验证。                                                                                                                                                                                   |
-| 其他认知领域                | Journal、Schema、Concept、Association、Self、Social、Language、Motivation 及成长维护已有领域合同和部分实现。                        | 按各领域补齐并验证多文档人格种子、叙事身份、知识范围、社会关系与信任、语言惯例、愿望及条件、图式反例和 lineage、反思、自然形成及真实使用反馈。                                                                                                                                      |
+| 其他认知领域                | Journal、Schema、Concept、Association、Ego、Social、Language、Motivation 及成长维护已有领域合同和部分实现。                        | 按各领域补齐并验证多文档人格种子、叙事身份、知识范围、社会关系与信任、语言惯例、愿望及条件、图式反例和 lineage、反思、自然形成及真实使用反馈。                                                                                                                                      |
 | 当前认知与工作连续性        | 持久准备、预算准入、模型接触、实际使用、结果反馈以及真实 MaiBot 例子已接通；Work/Resident/Steward 有相应实现。                      | 补齐模型切换、压缩、工具续轮、子执行者与不同宿主的完整路径，验证长期居民及持续反馈。                                                                                                                                                                                                |
 | A-Memorix 消费者            | 基础写入、检索、维护、统计、画像以及图、来源、Episode、Fact、导入、Bundle、部分 runtime 管理已接入同一认知权威。                    | 顶层 `memory_tuning_admin`、`memory_v5_admin`、`memory_correction_admin`、`memory_fuzzy_modify_admin` 当前尚无服务端分发；runtime 的部分动作和某些删除模式也返回 capability unavailable。继续逐项接通[实际合同](../../research/a-memorix-contracts.json)、MaiBot 管理页和必要协议。 |
 | 产品管理与发行              | 有中英文工作台、CLI、HTTP、MCP、SDK、安装脚本、服务管理及多平台 wheel 构建配置。                                                    | 扩充各领域管理体验；完成各平台实际安装与运行。Windows/macOS 的 runner 配置是构建路径，结果取决于对应 Actions 运行。                                                                                                                                                                 |

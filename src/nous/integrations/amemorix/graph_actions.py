@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from nous_wave.contracts import AssociationBody, CallContext, Contract, DomainError, EntityBody
-from nous_wave.contracts.graph_management import GraphChange
+from nous_sdk.contracts import AssociationBody, CallContext, Contract, DomainError, EntityBody
+from nous_sdk.contracts.graph_management import GraphChange
 from pydantic import BaseModel, Field, JsonValue, ValidationError
 
 from .graph_projection import details, edge, graph_view

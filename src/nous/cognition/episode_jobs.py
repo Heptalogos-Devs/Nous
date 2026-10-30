@@ -5,8 +5,8 @@ from __future__ import annotations
 from collections import Counter
 from typing import TYPE_CHECKING
 
-from nous_wave.contracts import CallContext, DomainError
-from nous_wave.contracts.episodes import ProcessEpisodeSources
+from nous_sdk.contracts import CallContext, DomainError
+from nous_sdk.contracts.episodes import ProcessEpisodeSources
 from pydantic import JsonValue
 
 from nous.platform.errors import NousError

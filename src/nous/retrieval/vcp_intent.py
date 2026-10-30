@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import numpy as np
-from nous_wave.contracts import (
+from nous_sdk.contracts import (
     CallContext,
     CognitiveRecord,
     CognitiveRef,
@@ -14,7 +14,7 @@ from nous_wave.contracts import (
     EmbeddingBatch,
     QueryRequest,
 )
-from nous_wave.contracts.query_vcp import QueryConcept, QueryConceptResult
+from nous_sdk.contracts.query_vcp import QueryConcept, QueryConceptResult
 from numpy.typing import NDArray
 from pydantic import JsonValue
 

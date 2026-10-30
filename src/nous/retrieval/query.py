@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 from nous_native import CancellationToken, IndexStore, NativeError
-from nous_wave.contracts import (
+from nous_sdk.contracts import (
     CallContext,
     CognitiveRecord,
     DomainError,
@@ -15,8 +15,8 @@ from nous_wave.contracts import (
     QueryRequest,
     QueryResult,
 )
-from nous_wave.contracts.query_conditions import QueryEffectiveMode, QueryExecution
-from nous_wave.contracts.query_vcp import VcpResult
+from nous_sdk.contracts.query_conditions import QueryEffectiveMode, QueryExecution
+from nous_sdk.contracts.query_vcp import VcpResult
 from numpy.typing import NDArray
 from pydantic import JsonValue
 

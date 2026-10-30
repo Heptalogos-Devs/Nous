@@ -118,7 +118,7 @@ error-subject-scope-forbidden = This credential cannot access the selected subje
 error-instance-scope-forbidden = This operation requires unrestricted instance management.
 
 # Web workbench
-web-title = Nous Wave · Cognitive Workbench
+web-title = Nous · Cognitive Workbench
 web-login-title = Connect to your knowledge
 web-access-token = Instance access token
 web-connect = Connect
@@ -351,7 +351,7 @@ web-kind-episode = Episode
 web-kind-journal = Journal
 web-kind-schema = Schema
 web-kind-association = Association
-web-kind-self-facet = Self facet
+web-kind-self-facet = Ego facet
 web-kind-narrative-thread = Narrative thread
 web-kind-domain-knowledge = Domain knowledge
 web-kind-social-relation = Social relation

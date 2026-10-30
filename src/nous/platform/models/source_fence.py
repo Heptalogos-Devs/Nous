@@ -2,7 +2,7 @@
 
 from collections.abc import Mapping
 
-from nous_wave.contracts import CallContext
+from nous_sdk.contracts import CallContext
 from pydantic import JsonValue, TypeAdapter
 from sqlalchemy import select
 

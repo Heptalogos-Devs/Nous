@@ -2,7 +2,7 @@
 
 from collections.abc import Sequence
 
-from nous_wave.contracts import CognitiveRecord, ConceptBody, ConceptPartition, DomainError
+from nous_sdk.contracts import CognitiveRecord, ConceptBody, ConceptPartition, DomainError
 
 from .growth_binding import GrowthValue
 

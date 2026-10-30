@@ -6,7 +6,7 @@ from uuid import uuid4
 import anyio
 from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
-from nous_wave.contracts import (
+from nous_sdk.contracts import (
     AdoptMedia,
     BlobDocument,
     MediaEmbeddingResult,

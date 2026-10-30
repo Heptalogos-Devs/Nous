@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from langchain_core.documents import Document
-from nous_wave.contracts import (
+from nous_sdk.contracts import (
     CallContext,
     CatalogView,
     DomainError,
@@ -18,7 +18,7 @@ from nous_wave.contracts import (
     ImportUnit,
     SourceRegion,
 )
-from nous_wave.contracts.imports import TextImportPreview, TextPreviewUnit, TextSplitOptions
+from nous_sdk.contracts.imports import TextImportPreview, TextPreviewUnit, TextSplitOptions
 from sqlalchemy import select
 
 from nous.identity.service import require_subject_in

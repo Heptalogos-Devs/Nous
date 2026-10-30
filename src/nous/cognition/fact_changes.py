@@ -4,15 +4,15 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from nous_wave.contracts import (
+from nous_sdk.contracts import (
     CallContext,
     CognitiveRecord,
     CognitiveRef,
     DomainError,
     EvidenceLink,
 )
-from nous_wave.contracts.fact_body import FactClaimBody, FactClaimSpec, FactEvidence, FactStatus
-from nous_wave.contracts.facts import FactChange
+from nous_sdk.contracts.fact_body import FactClaimBody, FactClaimSpec, FactEvidence, FactStatus
+from nous_sdk.contracts.facts import FactChange
 
 from nous.platform.persistence import WriteTx
 

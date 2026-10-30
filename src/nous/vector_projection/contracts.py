@@ -2,8 +2,8 @@
 
 from typing import Literal
 
-from nous_wave.contracts import CallContext, CognitiveRef, MediaEmbeddingInput, MediaReference
-from nous_wave.contracts.common import Contract
+from nous_sdk.contracts import CallContext, CognitiveRef, MediaEmbeddingInput, MediaReference
+from nous_sdk.contracts.common import Contract
 
 from nous.platform.models.embedding_profile import EmbeddingProfile
 

@@ -1,4 +1,4 @@
-"""Nous Wave SDK; domain contracts import without initializing transports."""
+"""Nous SDK; domain contracts import without initializing transports."""
 
 from typing import TYPE_CHECKING
 

@@ -3,15 +3,15 @@
 from uuid import uuid4
 
 from fastapi import Request
-from nous_wave.contracts import (
+from nous_sdk.contracts import (
     CallContext,
     CognitiveRef,
     DomainError,
 )
-from nous_wave.contracts.context import (
+from nous_sdk.contracts.context import (
     CognitiveTarget,
 )
-from nous_wave.contracts.credentials import Capability
+from nous_sdk.contracts.credentials import Capability
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 

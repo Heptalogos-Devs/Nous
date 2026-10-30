@@ -3,9 +3,9 @@
 from uuid import uuid4
 
 import sqlalchemy as sa
-from nous_wave.contracts import CallContext, DomainError
-from nous_wave.contracts.growth import GrowthDraft, GrowthEntry, GrowthSnapshot
-from nous_wave.contracts.maintenance import (
+from nous_sdk.contracts import CallContext, DomainError
+from nous_sdk.contracts.growth import GrowthDraft, GrowthEntry, GrowthSnapshot
+from nous_sdk.contracts.maintenance import (
     MaintenanceCatalog,
     MaintenanceReview,
     MaintenanceRun,

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import json
 
-from nous_wave.contracts import QueryHit
-from nous_wave.presentation import object_text, reference_text
+from nous_sdk.contracts import QueryHit
+from nous_sdk.presentation import object_text, reference_text
 from pydantic import JsonValue
 from rich.console import Console
 from rich.table import Table

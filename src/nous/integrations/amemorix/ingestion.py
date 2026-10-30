@@ -5,10 +5,10 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from uuid import NAMESPACE_URL, uuid5
 
-from nous_wave.amemorix.contracts import (
+from nous_sdk.amemorix.contracts import (
     IngestInput,
 )
-from nous_wave.contracts import (
+from nous_sdk.contracts import (
     AdmitFiles,
     AdoptCognition,
     AssociationBody,
@@ -21,7 +21,7 @@ from nous_wave.contracts import (
     EvidenceLink,
     ImportDocument,
 )
-from nous_wave.contracts.cognition import PersonProfileControls
+from nous_sdk.contracts.cognition import PersonProfileControls
 from pydantic import JsonValue, TypeAdapter
 
 from .helpers import json_object, json_value, point
@@ -71,7 +71,7 @@ async def ingest(
         origin["person_ids"] = ",".join(command.person_ids)
     import json
 
-    from nous_wave.contracts.imports import ImportRecord
+    from nous_sdk.contracts.imports import ImportRecord
 
     event_time = point(command.timestamp if command.timestamp is not None else command.time_start)
     record = ImportRecord(

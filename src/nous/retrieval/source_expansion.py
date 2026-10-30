@@ -5,14 +5,14 @@ from __future__ import annotations
 from collections import deque
 from typing import TYPE_CHECKING
 
-from nous_wave.contracts import (
+from nous_sdk.contracts import (
     CallContext,
     DomainError,
     MediaReference,
     MemoryBody,
 )
-from nous_wave.contracts.context import CognitiveTarget, ContextTarget, MediaTarget
-from nous_wave.contracts.source_graph import ExpandedSources, ExpandSources, SourceEdge, SourceNode
+from nous_sdk.contracts.context import CognitiveTarget, ContextTarget, MediaTarget
+from nous_sdk.contracts.source_graph import ExpandedSources, ExpandSources, SourceEdge, SourceNode
 from pydantic import JsonValue, TypeAdapter
 
 from nous.material.service import require_observation_in

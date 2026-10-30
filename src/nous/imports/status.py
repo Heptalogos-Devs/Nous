@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from nous_wave.contracts import CallContext, DomainError, UnitOutput
-from nous_wave.contracts.diagnostics import ImportVectorStatus
-from nous_wave.contracts.imports import UnitAttempt
+from nous_sdk.contracts import CallContext, DomainError, UnitOutput
+from nous_sdk.contracts.diagnostics import ImportVectorStatus
+from nous_sdk.contracts.imports import UnitAttempt
 from sqlalchemy import select
 
 from nous.cognition.schema import vectors

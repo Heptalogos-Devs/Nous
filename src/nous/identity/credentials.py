@@ -13,8 +13,8 @@ from typing import Literal
 from uuid import uuid4
 
 import sqlalchemy as sa
-from nous_wave.contracts.common import CallContext, DomainError
-from nous_wave.contracts.credentials import (
+from nous_sdk.contracts.common import CallContext, DomainError
+from nous_sdk.contracts.credentials import (
     Capability,
     CreateCredential,
     CredentialEvent,

@@ -7,9 +7,9 @@ from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from typing import TypeVar
 
-from nous_wave.contracts import CallContext, DomainError
-from nous_wave.contracts.model_roles import ModelCachePolicy
-from nous_wave.contracts.model_routing import ModelRouteAttempt
+from nous_sdk.contracts import CallContext, DomainError
+from nous_sdk.contracts.model_roles import ModelCachePolicy
+from nous_sdk.contracts.model_routing import ModelRouteAttempt
 from openai import AsyncOpenAI
 from pydantic import BaseModel, JsonValue, TypeAdapter
 from pydantic_ai import Agent, BinaryContent, capture_run_messages

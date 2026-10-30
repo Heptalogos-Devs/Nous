@@ -8,8 +8,8 @@ import re
 
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from nous_wave.contracts import DomainError
-from nous_wave.contracts.imports import TextSplitOptions
+from nous_sdk.contracts import DomainError
+from nous_sdk.contracts.imports import TextSplitOptions
 from pydantic import JsonValue
 
 SCENE = re.compile(r"(?m)^(?:#{1,6}\s+.*|Chapter\s+\d+|\*{3,}$|={3,}$)")

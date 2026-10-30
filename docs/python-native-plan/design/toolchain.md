@@ -4,7 +4,7 @@
 
 主应用使用 CPython 3.14 的标准 GIL 构建。它处于正常维护期，已有成熟 typing 与异步设施，生态有充分时间适配；暂不采用新近发布分支、自由线程构建或实验 JIT作为工程前提。用 `.python-version` 指定 `3.14`，初始化环境时由 uv 安装可用补丁版本。
 
-已有 `sdk/python` 当前发行名为 `nous-wave`、导入名为 `nous_wave`，最低 Python 3.11。本轮保留此边界。应用发行名使用 `nous-wave-server`，导入名 `nous`；native 发行名 `nous-wave-native`，导入名 `nous_native`。客户端只依赖 HTTP、公共合同及序列化，不要求安装原生计算。
+已有 `sdk/python` 当前发行名为 `nous-sdk`、导入名为 `nous_sdk`，最低 Python 3.11。本轮保留此边界。应用发行名使用 `nous-server`，导入名 `nous`；native 发行名 `nous-native`，导入名 `nous_native`。客户端只依赖 HTTP、公共合同及序列化，不要求安装原生计算。
 
 uv workspace 包含根主应用、`sdk/python`、`native/python`，共享根 `uv.lock`。运行应用时安装包含 native 的工作区；只开发 SDK 时选择 SDK 包。配置根 pyproject 的 workspace source，使用 editable 安装，避免手改 `PYTHONPATH` 或复制包进 site-packages。
 
@@ -83,7 +83,7 @@ uv run nous --help
 
 ## 安装与发行
 
-日常用户可通过 uv 管理的隔离环境安装 `nous-wave-server`，其依赖选择匹配平台的 native wheel。主程序继续提供 `nous` 命令，程序目录与实例数据分离。开发机无需因 Python 主应用每次改动重新编译成 EXE。
+日常用户可通过 uv 管理的隔离环境安装 `nous-server`，其依赖选择匹配平台的 native wheel。主程序继续提供 `nous` 命令，程序目录与实例数据分离。开发机无需因 Python 主应用每次改动重新编译成 EXE。
 
 native 使用 CPython 3.14 对应 wheel，针对 Windows x64、Linux x64、macOS 支持目标分别构建。NumPy 和 C++ 依赖加入 ABI 与 wheel 选择考量，不在未确认时宣称 abi3 一包通用。本机 Linux wheel 只适用于其平台标签；发行 wheel 使用 maturin/auditwheel 的 manylinux 规则。
 

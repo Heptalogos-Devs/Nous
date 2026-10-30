@@ -2,7 +2,7 @@
 
 from typing import NotRequired, TypedDict
 
-from nous_wave.contracts import (
+from nous_sdk.contracts import (
     CallContext,
     DomainError,
     MediaReference,

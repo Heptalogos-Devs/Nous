@@ -1,7 +1,7 @@
 """A-Memorix uses the same caller, namespace, source and domain boundaries."""
 
 from fastapi import APIRouter, Request
-from nous_wave.amemorix.contracts import AMemorixRequest
+from nous_sdk.amemorix.contracts import AMemorixRequest
 
 from nous.integrations.amemorix import AMemorixService
 

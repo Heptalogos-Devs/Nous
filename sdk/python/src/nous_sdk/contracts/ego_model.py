@@ -1,4 +1,4 @@
-"""Explicit configuration documents remain independently sourced Self evidence."""
+"""Explicit configuration documents remain independently sourced Ego evidence."""
 
 from pydantic import Field
 

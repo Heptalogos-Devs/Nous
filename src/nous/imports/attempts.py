@@ -10,8 +10,8 @@ from datetime import UTC
 from typing import TYPE_CHECKING, Literal
 from uuid import uuid4
 
-from nous_wave.contracts import CallContext, DomainError, FormationProposal, ImportUnit
-from nous_wave.contracts.imports import ImportFailure, UnitAttempt
+from nous_sdk.contracts import CallContext, DomainError, FormationProposal, ImportUnit
+from nous_sdk.contracts.imports import ImportFailure, UnitAttempt
 from sqlalchemy import select, update
 
 from nous.platform.persistence import ReadView, WriteTx

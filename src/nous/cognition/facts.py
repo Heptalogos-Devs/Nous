@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from nous_wave.contracts import (
+from nous_sdk.contracts import (
     AdoptCognition,
     CallContext,
     CognitiveRecord,
@@ -18,14 +18,14 @@ from nous_wave.contracts import (
     TimePoint,
     TimeRange,
 )
-from nous_wave.contracts.cognitive_identity import CognitiveIdentity
-from nous_wave.contracts.fact_body import (
+from nous_sdk.contracts.cognitive_identity import CognitiveIdentity
+from nous_sdk.contracts.fact_body import (
     ChatFactScope,
     FactClaimBody,
     FactClaimSpec,
     PersonFactScope,
 )
-from nous_wave.contracts.facts import (
+from nous_sdk.contracts.facts import (
     FactChange,
     FactChangeResult,
     FactClaimInput,
@@ -346,7 +346,7 @@ class FactService:
                 )
                 profile_job_id = None
                 if command.refresh_profile and isinstance(spec.scope, PersonFactScope):
-                    from nous_wave.contracts.person_profiles import RefreshPersonProfile
+                    from nous_sdk.contracts.person_profiles import RefreshPersonProfile
 
                     people = await cognitive_heads_in(
                         tx, admission.context, ("entity",), reference_ids=(spec.scope.person.id,)

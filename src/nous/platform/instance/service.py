@@ -141,7 +141,7 @@ class UserService:
         if self.manager == "systemd":
             arguments = " ".join(_quote_systemd(value) for value in self.arguments)
             return (
-                f"[Unit]\nDescription=Nous Wave user instance\nAfter=network-online.target\n\n"
+                f"[Unit]\nDescription=Nous user instance\nAfter=network-online.target\n\n"
                 f"[Service]\nType=simple\nExecStart={arguments}\nWorkingDirectory={_quote_systemd(str(self.instance), environment=False)}\n"
                 "Restart=on-failure\nRestartSec=5\nTimeoutStopSec=30\n\n[Install]\nWantedBy=default.target\n"
             ).encode()

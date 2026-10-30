@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from nous_wave.contracts import (
+from nous_sdk.contracts import (
     CallContext,
     CognitiveRecord,
     CognitiveRef,
@@ -17,7 +17,7 @@ from nous_wave.contracts import (
     MemoryChange,
     MemoryLifecycle,
 )
-from nous_wave.contracts.growth import (
+from nous_sdk.contracts.growth import (
     GrowthAdoption,
     GrowthDraft,
     GrowthMerge,
@@ -122,7 +122,7 @@ async def validate_growth_in(
         return record
 
     def planned(key: str, body: object, previous: CognitiveRecord | None = None) -> GrowthValue:
-        from nous_wave.contracts import CognitiveBody
+        from nous_sdk.contracts import CognitiveBody
         from pydantic import TypeAdapter
 
         content = TypeAdapter(CognitiveBody).validate_python(body)

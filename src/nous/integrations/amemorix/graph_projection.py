@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from nous_wave.contracts import (
+from nous_sdk.contracts import (
     AssociationBody,
     CognitiveRecord,
     DomainError,
     EntityBody,
     MemoryBody,
 )
-from nous_wave.contracts.graph_management import GraphSnapshot
+from nous_sdk.contracts.graph_management import GraphSnapshot
 from pydantic import JsonValue
 
 from nous.cognition.graph_state import resolve_entity

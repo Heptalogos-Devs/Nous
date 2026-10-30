@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Protocol
 
-from nous_wave.contracts import (
+from nous_sdk.contracts import (
     CognitiveBody,
     CognitiveRecord,
     CognitiveRef,
@@ -14,7 +14,7 @@ from nous_wave.contracts import (
     EvidenceLink,
     TimeRange,
 )
-from nous_wave.contracts.fact_body import (
+from nous_sdk.contracts.fact_body import (
     ChatFactScope,
     FactClaimBody,
     FactEvidence,

@@ -4,14 +4,14 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from nous_wave.contracts import (
+from nous_sdk.contracts import (
     CallContext,
     CognitiveRecord,
     DomainError,
     EntityBody,
     MemoryBody,
 )
-from nous_wave.contracts.graph_management import GraphSnapshot
+from nous_sdk.contracts.graph_management import GraphSnapshot
 from sqlalchemy import select
 
 from nous.identity.service import require_subject_in

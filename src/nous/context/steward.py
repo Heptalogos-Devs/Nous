@@ -3,8 +3,8 @@
 from hashlib import sha256
 from typing import Protocol
 
-from nous_wave.contracts import CallContext, DomainError, EpistemicStance
-from nous_wave.contracts.context import (
+from nous_sdk.contracts import CallContext, DomainError, EpistemicStance
+from nous_sdk.contracts.context import (
     ContextConsumerPolicy,
     ContextPrepare,
     ContextSegment,

@@ -3,7 +3,7 @@
 from typing import TYPE_CHECKING, Literal
 from uuid import uuid4
 
-from nous_wave.contracts import (
+from nous_sdk.contracts import (
     AdmitFiles,
     CallContext,
     Contract,
@@ -14,7 +14,7 @@ from nous_wave.contracts import (
     TimePoint,
     UnitOutput,
 )
-from nous_wave.contracts.imports import FormationOptionsOverride
+from nous_sdk.contracts.imports import FormationOptionsOverride
 from pydantic import Field, JsonValue, TypeAdapter
 from sqlalchemy import select
 

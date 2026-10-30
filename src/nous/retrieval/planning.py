@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import Literal, NotRequired, TypedDict
 
 from nous_native import parse_nousql
-from nous_wave.contracts import (
+from nous_sdk.contracts import (
     CallContext,
     CognitiveRecord,
     DomainError,

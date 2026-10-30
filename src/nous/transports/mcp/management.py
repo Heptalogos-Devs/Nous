@@ -4,10 +4,10 @@ from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
 from typing import Literal
 
-from nous_wave import NousClient
-from nous_wave.contracts.model_roles import ModelContractRequest, ModelPreviewRequest
-from nous_wave.contracts.vector_projection import ProjectVectors
-from nous_wave.types import JsonObject
+from nous_sdk import NousClient
+from nous_sdk.contracts.model_roles import ModelContractRequest, ModelPreviewRequest
+from nous_sdk.contracts.vector_projection import ProjectVectors
+from nous_sdk.types import JsonObject
 from pydantic import JsonValue
 
 from mcp.server import MCPServer

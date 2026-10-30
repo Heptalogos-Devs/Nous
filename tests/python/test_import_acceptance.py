@@ -4,7 +4,7 @@ import asyncio
 from pathlib import Path
 
 import pytest
-from nous_wave.contracts import AdmitFiles, CallContext, ImportDocument
+from nous_sdk.contracts import AdmitFiles, CallContext, ImportDocument
 from sqlalchemy import func, select
 
 from nous.cognition.schema import revisions

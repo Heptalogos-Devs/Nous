@@ -4,7 +4,7 @@ import asyncio
 from pathlib import Path
 
 import pytest
-from nous_wave.contracts import (
+from nous_sdk.contracts import (
     AdoptCognition,
     CallContext,
     DomainError,

@@ -4,7 +4,7 @@ import asyncio
 import zipfile
 
 import pytest
-from nous_wave.contracts import CallContext
+from nous_sdk.contracts import CallContext
 
 from nous.platform.content import ContentStore
 from nous.platform.execution import DurableExecution, JobSpec

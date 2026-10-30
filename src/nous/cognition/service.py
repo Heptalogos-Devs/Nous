@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
-from nous_wave.contracts import (
+from nous_sdk.contracts import (
     AdoptCognition,
     CallContext,
     CognitiveRecord,
@@ -37,6 +37,7 @@ from nous.references import allocate_in
 
 from . import (
     access,
+    ego_model,
     evolution,
     formation,
     graph_changes,
@@ -46,7 +47,6 @@ from . import (
     known_outputs,
     memory,
     retirement,
-    self_model,
     social,
 )
 from .projection import evidence_in, media_references_in, references_in
@@ -76,8 +76,8 @@ class CognitionService:
     graph_snapshot = graph_state.graph_snapshot
     manage_graph = graph_changes.manage_graph
     qualify_known_outputs_in = known_outputs.qualify_known_outputs_in
-    adopt_seed = self_model.adopt_seed
-    self_profile = self_model.self_profile
+    adopt_seed = ego_model.adopt_seed
+    ego_profile = ego_model.ego_profile
     merge_concepts = evolution.merge_concepts
     merge_concepts_in = evolution.merge_concepts_in
     split_concept = evolution.split_concept

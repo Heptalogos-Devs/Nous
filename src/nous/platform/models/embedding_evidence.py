@@ -2,7 +2,7 @@
 
 from typing import TYPE_CHECKING
 
-from nous_wave.contracts import CallContext, DomainError, MediaEmbeddingInput
+from nous_sdk.contracts import CallContext, DomainError, MediaEmbeddingInput
 
 from nous.platform.persistence import ReadView, WriteTx
 

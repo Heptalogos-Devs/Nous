@@ -4,7 +4,7 @@ from pathlib import Path
 from uuid import uuid4
 
 import typer
-from nous_wave.contracts.context import (
+from nous_sdk.contracts.context import (
     ChangeResidents,
     ChangeWorkContext,
     ContextAdmissionCommand,

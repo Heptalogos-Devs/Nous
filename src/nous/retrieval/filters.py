@@ -1,7 +1,7 @@
 """Query predicates select authorized facts; they never create source grants."""
 
-from nous_wave.contracts import CognitiveRecord
-from nous_wave.contracts.query_conditions import QueryAuthority, QueryFilters, QueryModality
+from nous_sdk.contracts import CognitiveRecord
+from nous_sdk.contracts.query_conditions import QueryAuthority, QueryFilters, QueryModality
 
 from nous.material.service import SourceRecord
 

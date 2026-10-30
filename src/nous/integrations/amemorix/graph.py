@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from nous_wave.amemorix.contracts import GraphSearchInput
-from nous_wave.contracts import (
+from nous_sdk.amemorix.contracts import GraphSearchInput
+from nous_sdk.contracts import (
     AssociationBody,
     CallContext,
     CognitiveRef,

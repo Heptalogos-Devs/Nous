@@ -3,7 +3,7 @@
 from hashlib import sha256
 from typing import TYPE_CHECKING
 
-from nous_wave.contracts import CallContext, CognitiveRef, DomainError
+from nous_sdk.contracts import CallContext, CognitiveRef, DomainError
 from sqlalchemy import select
 
 from nous.cognition.lifecycle import selectable

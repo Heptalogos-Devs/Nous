@@ -10,7 +10,7 @@ from uuid import uuid4
 import anyio
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse
-from nous_wave.contracts.model_roles import ModelContractRequest, ModelPreviewRequest
+from nous_sdk.contracts.model_roles import ModelContractRequest, ModelPreviewRequest
 from pydantic import BaseModel, Field, JsonValue
 
 from nous.platform.instance import initialize
@@ -175,7 +175,7 @@ async def status(request: Request):
             "status": "running",
             "commit_seq": view.commit_seq,
             "instance": str(app.settings.instance),
-            "application": "nous-wave-server",
+            "application": "nous-server",
         }
 
 

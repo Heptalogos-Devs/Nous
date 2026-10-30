@@ -3,7 +3,7 @@
 from datetime import UTC, date, datetime
 from typing import Literal
 
-from nous_wave.contracts import TimePoint
+from nous_sdk.contracts import TimePoint
 from pydantic import BaseModel
 
 

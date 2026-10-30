@@ -4,7 +4,7 @@ from uuid import uuid4
 
 import sqlalchemy as sa
 from fastapi import APIRouter, HTTPException, Request
-from nous_wave.contracts import (
+from nous_sdk.contracts import (
     AdmitFiles,
     AdoptCognition,
     FreezeCatalog,

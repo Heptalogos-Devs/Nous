@@ -12,7 +12,7 @@ from hashlib import sha256
 from io import BytesIO
 from zipfile import ZIP_DEFLATED, ZipFile
 
-from nous_wave.contracts import (
+from nous_sdk.contracts import (
     AssociationBody,
     BundleRequest,
     CognitiveRecord,
@@ -354,7 +354,7 @@ def write_portable(bundle: SubjectBundle, command: BundleRequest) -> bytes:
     content: dict[str, JsonValue] = {"knowledge": knowledge, "state": selected_state}
     if images is not None:
         content["images"] = image_semantics(images)
-    from nous_wave.contracts.bundles import PackageDescriptor
+    from nous_sdk.contracts.bundles import PackageDescriptor
 
     semantic_digest = sha256(canonical(content)).hexdigest()
     package = bundle.package or PackageDescriptor(

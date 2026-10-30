@@ -5,8 +5,8 @@ from dataclasses import dataclass
 from typing import Literal
 
 import sqlalchemy as sa
-from nous_wave.contracts import CallContext
-from nous_wave.contracts.configuration import ConfigurationCatalog, ConfigurationDefinition
+from nous_sdk.contracts import CallContext
+from nous_sdk.contracts.configuration import ConfigurationCatalog, ConfigurationDefinition
 from pydantic import BaseModel, JsonValue, TypeAdapter
 
 from nous.platform.errors import NousError

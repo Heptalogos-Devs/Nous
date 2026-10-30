@@ -2,8 +2,8 @@
 
 from uuid import uuid4
 
-from nous_wave.contracts import CallContext, DomainError
-from nous_wave.contracts.context import ContextPreparation, ContextPreparationJob, ContextPrepare
+from nous_sdk.contracts import CallContext, DomainError
+from nous_sdk.contracts.context import ContextPreparation, ContextPreparationJob, ContextPrepare
 from pydantic import JsonValue
 from sqlalchemy import select
 

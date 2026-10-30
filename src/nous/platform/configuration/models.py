@@ -3,8 +3,8 @@
 from pathlib import Path
 from typing import Literal
 
-from nous_wave.contracts.common import DomainError
-from nous_wave.contracts.model_routing import ModelRoutingPolicy
+from nous_sdk.contracts.common import DomainError
+from nous_sdk.contracts.model_routing import ModelRoutingPolicy
 from pydantic import BaseModel, Field, TypeAdapter, model_validator
 
 from .settings import EmbeddingRoute, ModelRoute, ProviderOptions, ReasoningEffort

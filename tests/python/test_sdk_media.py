@@ -5,9 +5,9 @@ import io
 
 import httpx
 import pytest
-from nous_wave import NousClient, NousError, SourceReadScope
-from nous_wave.contracts import MediaReference, PixelRect, SourceCommand
-from nous_wave.contracts.context import (
+from nous_sdk import NousClient, NousError, SourceReadScope
+from nous_sdk.contracts import MediaReference, PixelRect, SourceCommand
+from nous_sdk.contracts.context import (
     ChangeResidents,
     ChangeWorkContext,
     ContextPrepare,
@@ -17,7 +17,7 @@ from nous_wave.contracts.context import (
     OpenContextSession,
     WorkContextContent,
 )
-from nous_wave.contracts.derivation import (
+from nous_sdk.contracts.derivation import (
     CreateRepresentation,
     DerivationInput,
     DerivationProducer,
@@ -25,7 +25,7 @@ from nous_wave.contracts.derivation import (
     MediaTransformation,
     TextRepresentation,
 )
-from nous_wave.source_scope import MediaSource
+from nous_sdk.source_scope import MediaSource
 from PIL import Image
 from sqlalchemy import select
 

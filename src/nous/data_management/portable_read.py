@@ -13,7 +13,7 @@ from io import BytesIO
 from pathlib import PurePosixPath
 from zipfile import BadZipFile, ZipFile
 
-from nous_wave.contracts import DomainError
+from nous_sdk.contracts import DomainError
 from pydantic import JsonValue, TypeAdapter
 
 from .portable import canonical

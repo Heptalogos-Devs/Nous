@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from hashlib import sha256
 
-from nous_wave.contracts import (
+from nous_sdk.contracts import (
     CognitiveRecord,
     DomainError,
     EvidenceLink,
@@ -13,7 +13,7 @@ from nous_wave.contracts import (
     MemoryBody,
     TimePoint,
 )
-from nous_wave.contracts.derivation import (
+from nous_sdk.contracts.derivation import (
     ChannelAccess,
     DerivationInput,
     DerivationProducer,
@@ -23,7 +23,7 @@ from nous_wave.contracts.derivation import (
     RepresentationRef,
     TextRepresentation,
 )
-from nous_wave.contracts.management import BundleMaterial, BundleObservation
+from nous_sdk.contracts.management import BundleMaterial, BundleObservation
 from pydantic import JsonValue, TypeAdapter
 
 from .portable import canonical

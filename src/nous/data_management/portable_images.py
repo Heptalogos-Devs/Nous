@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import base64
 
-from nous_wave.contracts import DomainError, SubjectBundle
-from nous_wave.contracts.derivation import TextRepresentation
+from nous_sdk.contracts import DomainError, SubjectBundle
+from nous_sdk.contracts.derivation import TextRepresentation
 from pydantic import JsonValue, TypeAdapter
 
 from .portable_read import rows

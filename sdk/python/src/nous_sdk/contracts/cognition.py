@@ -202,7 +202,7 @@ class AssociationBody(Contract):
     )
 
 
-class SelfFacetBody(Contract):
+class EgoFacetBody(Contract):
     kind: Literal["self_facet"] = "self_facet"
     facet: str
     description: str
@@ -305,7 +305,7 @@ CognitiveBody = Annotated[
     | JournalBody
     | SchemaBody
     | AssociationBody
-    | SelfFacetBody
+    | EgoFacetBody
     | NarrativeThreadBody
     | DomainKnowledgeBody
     | SocialRelationBody

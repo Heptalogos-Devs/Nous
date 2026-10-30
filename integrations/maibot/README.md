@@ -1,4 +1,4 @@
-# MaiBot 接入 Nous Wave
+# MaiBot 接入 Nous
 
 补丁将 `src/services/memory_service.py` 的后端设为官方 Nous SDK。Planner、Replyer 和 WebUI 继续使用原 `MemoryService`；请求沿 MaiBot 的主事件循环发送。Nous 负责原文接纳、检索、维护任务、人物实体与精确来源。
 
@@ -9,7 +9,7 @@
 在 MaiBot 源码目录，为当前环境添加本地 SDK wheel：
 
 ```sh
-uv add "/绝对路径/nous_wave-0.1.0-py3-none-any.whl"
+uv add "/绝对路径/nous_sdk-0.1.0-py3-none-any.whl"
 git apply "/绝对路径/Nous-Wave/integrations/maibot/memory-service.patch"
 git apply "/绝对路径/Nous-Wave/integrations/maibot/managed-context.patch"
 git apply "/绝对路径/Nous-Wave/integrations/maibot/diagnostics-unknown.patch"
@@ -113,7 +113,7 @@ Nous 的 `contexts` 配置为每个 consumer 管理预算、居民与可选 Stew
 图谱搜索通过现有 MemoryService.graph_admin → SDK invoke → `memory_graph_admin` 接入：
 
 ```python
-from nous_wave.contracts import CognitiveRef
+from nous_sdk.contracts import CognitiveRef
 
 result = await adapter.memory_graph_admin(action="search", query="项目", limit=50)
 # MaiBot 的既有 RPC 入口传递相同合同。

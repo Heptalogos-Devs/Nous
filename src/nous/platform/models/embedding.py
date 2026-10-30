@@ -6,8 +6,8 @@ import hashlib
 import json
 from collections.abc import Awaitable, Callable
 
-from nous_wave.contracts import CallContext, DomainError, EmbeddingBatch, MediaEmbeddingInput
-from nous_wave.contracts.model_routing import ModelRouteAttempt
+from nous_sdk.contracts import CallContext, DomainError, EmbeddingBatch, MediaEmbeddingInput
+from nous_sdk.contracts.model_routing import ModelRouteAttempt
 from openai import AsyncOpenAI
 from pydantic import BaseModel, Field, JsonValue
 

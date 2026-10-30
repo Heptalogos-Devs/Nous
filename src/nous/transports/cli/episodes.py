@@ -3,8 +3,8 @@
 from pathlib import Path
 
 import typer
-from nous_wave.contracts import CognitiveRef
-from nous_wave.contracts.episodes import EpisodeQuery, ProcessEpisodeSources, RebuildEpisodes
+from nous_sdk.contracts import CognitiveRef
+from nous_sdk.contracts.episodes import EpisodeQuery, ProcessEpisodeSources, RebuildEpisodes
 
 from .common import invoke, read_command
 

@@ -4,7 +4,7 @@ requires = ["maturin>=1.9,<2"]
 build-backend = "maturin"
 
 [project]
-name = "nous-wave-native"
+name = "nous-native"
 version = "0.1.0"
 license = "CC-BY-NC-SA-4.0 AND Apache-2.0"
 license-files = ["python/nous_native/licenses/*"]

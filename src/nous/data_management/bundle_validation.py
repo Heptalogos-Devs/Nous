@@ -2,9 +2,9 @@
 
 from graphlib import CycleError, TopologicalSorter
 
-from nous_wave.contracts import DomainError, EntityBody, MediaReference, SubjectBundle
-from nous_wave.contracts.derivation import ArtifactRepresentation
-from nous_wave.contracts.fact_body import FactClaimBody, PersonFactScope
+from nous_sdk.contracts import DomainError, EntityBody, MediaReference, SubjectBundle
+from nous_sdk.contracts.derivation import ArtifactRepresentation
+from nous_sdk.contracts.fact_body import FactClaimBody, PersonFactScope
 
 from nous.cognition.projection import evidence_in, media_references_in, references_in
 

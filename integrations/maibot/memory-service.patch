@@ -7,7 +7,7 @@ index aa97321..023eb0b 100644
  from typing import Any, Dict, List, Optional
  
 -from src.A_memorix.host_service import a_memorix_host_service
-+from nous_wave.amemorix.maibot import connect_from_environment
++from nous_sdk.amemorix.maibot import connect_from_environment
  from src.common.logger import get_logger
 +from src.common.runtime_loop import run_on_main_loop
  

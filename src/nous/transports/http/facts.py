@@ -1,7 +1,7 @@
 """Every fact entry point delegates identity and transitions to one domain owner."""
 
 from fastapi import APIRouter, Request
-from nous_wave.contracts.facts import FactChange, FactQuery, FactRead
+from nous_sdk.contracts.facts import FactChange, FactQuery, FactRead
 
 from .security import application, context
 

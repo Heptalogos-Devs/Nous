@@ -36,7 +36,7 @@ src/nous/
     schema/             # 图式、支持、反证
     concept/            # Tag/Concept、别名、合并拆分
     association/        # 关联证据与来源独立性
-    self_model/         # 人格、知识范围、叙事身份
+    ego_model/         # 人格、知识范围、叙事身份
     social/             # 人物、关系、语言惯例
     motivation/         # Desire、Concern、期望条件
   retrieval/            # 查询绑定、计划、资产准备、结果物化
@@ -63,7 +63,7 @@ src/nous/
     cli/                # Typer、默认可读输出、--json
   integrations/amemorix/ # 已有真实消费者的外部协议
 resources/prompts/ / locales/
-sdk/python/src/nous_wave/ # 已有 Python 客户端，补充类型化公开合同
+sdk/python/src/nous_sdk/ # 已有 Python 客户端，补充类型化公开合同
 native/
   Cargo.toml / Cargo.lock
   vcp/                  # 沿用 nous-vcp 的纯计算
@@ -76,7 +76,7 @@ native/
 
 ### 公共合同的唯一维护位置
 
-公共命令和结果的 Pydantic 定义放在 `sdk/python/src/nous_wave/contracts/`，按实际领域分组，由该领域 owner 维护；只依赖标准库和 Pydantic。SDK 的包初始化保持轻量，导入合同不会创建 HTTP 客户端、读取配置或启动服务。Python 服务直接使用这些合同，CLI/MCP/HTTP 不分别定义相同 payload。
+公共命令和结果的 Pydantic 定义放在 `sdk/python/src/nous_sdk/contracts/`，按实际领域分组，由该领域 owner 维护；只依赖标准库和 Pydantic。SDK 的包初始化保持轻量，导入合同不会创建 HTTP 客户端、读取配置或启动服务。Python 服务直接使用这些合同，CLI/MCP/HTTP 不分别定义相同 payload。
 
 内部计算临时对象留在所属模块，SQLAlchemy Table 是持久化描述，native 数值结构是计算边界，二者不成为第二套可变领域状态。数据库行在拥有者内构造公开记录，调用者不接触 Session、RowMapping 或 ORM 懒加载。真正需要外部结构差异的 A-Memorix 转换集中在协议入口。
 

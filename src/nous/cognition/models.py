@@ -11,8 +11,8 @@ if TYPE_CHECKING:
     from nous.platform.models.generation import Generated, MediaInput
     from nous.platform.persistence import ReadView, WriteTx
 
-from nous_wave.contracts import CallContext, EmbeddingBatch, MediaEmbeddingInput
-from nous_wave.contracts.model_roles import ModelCachePolicy
+from nous_sdk.contracts import CallContext, EmbeddingBatch, MediaEmbeddingInput
+from nous_sdk.contracts.model_roles import ModelCachePolicy
 
 
 class ModelServices(Protocol):

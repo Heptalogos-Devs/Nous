@@ -4,7 +4,7 @@ import asyncio
 from pathlib import Path
 
 import pytest
-from nous_wave.contracts import (
+from nous_sdk.contracts import (
     AdoptCognition,
     BlobDocument,
     CallContext,
@@ -14,7 +14,7 @@ from nous_wave.contracts import (
     MediaReference,
     MemoryBody,
 )
-from nous_wave.contracts.derivation import (
+from nous_sdk.contracts.derivation import (
     CreateDerivedRegion,
     CreateRepresentation,
     DerivationInput,
@@ -24,7 +24,7 @@ from nous_wave.contracts.derivation import (
     MediaTransformation,
     TextRepresentation,
 )
-from nous_wave.contracts.media import PixelRect
+from nous_sdk.contracts.media import PixelRect
 from PIL import Image
 
 from nous.application import Application
@@ -234,7 +234,7 @@ def test_physical_derivation_exact_scope_revisions_and_withdrawal(tmp_path: Path
 
 def test_purge_follows_exact_input_contacts_without_erasing_other_revisions(tmp_path: Path):
     async def scenario():
-        from nous_wave.contracts import SourceCommand
+        from nous_sdk.contracts import SourceCommand
         from sqlalchemy import select
 
         from nous.data_management.sources import SourceService
@@ -276,7 +276,7 @@ def test_purge_follows_exact_input_contacts_without_erasing_other_revisions(tmp_
             app.derivations,
         )
         original = MediaReference(kind="material", id=material["id"], observation_id=source["id"])
-        from nous_wave.contracts import SourceRegion
+        from nous_sdk.contracts import SourceRegion
 
         async with app.authority.write(
             ctx, "source-region", operation_kind="material.region", payload={}

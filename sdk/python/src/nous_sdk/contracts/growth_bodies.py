@@ -120,7 +120,7 @@ class GrowthAssociation(Contract):
     )
 
 
-class GrowthSelfFacet(Contract):
+class GrowthEgoFacet(Contract):
     kind: Literal["self_facet"]
     facet: str
     description: str
@@ -211,7 +211,7 @@ GrowthBody = Annotated[
     | GrowthJournal
     | GrowthSchema
     | GrowthAssociation
-    | GrowthSelfFacet
+    | GrowthEgoFacet
     | GrowthNarrativeThread
     | GrowthDomainKnowledge
     | GrowthSocialRelation
