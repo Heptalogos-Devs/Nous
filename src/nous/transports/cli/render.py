@@ -28,6 +28,8 @@ def _cell(value: JsonValue, locale: Localizer) -> str:
         return locale.number(value)
     if isinstance(value, str):
         return value
+    if isinstance(value, dict) and set(value) == {"kind", "id", "revision"}:
+        return f"{value['kind']}:{value['id']}@{value['revision']}"
     if isinstance(value, list) and value and all(isinstance(item, (int, float)) for item in value):
         return locale.text("cli-numbers", count=len(value))
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
@@ -35,9 +37,10 @@ def _cell(value: JsonValue, locale: Localizer) -> str:
 
 def _table(items: list[dict[str, JsonValue]], locale: Localizer) -> None:
     priority = (
-        "id",
-        "reference",
         "name",
+        "primary_name",
+        "person_name",
+        "title",
         "kind",
         "status",
         "state",
@@ -46,7 +49,17 @@ def _table(items: list[dict[str, JsonValue]], locale: Localizer) -> None:
         "material_id",
         "commit_seq",
     )
-    keys = [key for key in priority if any(key in item for item in items)]
+    identity = next(
+        (
+            key
+            for key in ("episode_id", "person_id", "reference", "id")
+            if any(key in item for item in items)
+        ),
+        None,
+    )
+    keys = ([identity] if identity else []) + [
+        key for key in priority if any(key in item for item in items)
+    ]
     if not keys:
         keys = list(dict.fromkeys(key for item in items for key in item))[:6]
     table = Table(show_lines=False, header_style="bold", expand=False)
@@ -58,7 +71,48 @@ def _table(items: list[dict[str, JsonValue]], locale: Localizer) -> None:
     console.print(locale.text("cli-items", count=len(items)), style="dim")
 
 
+def _episode_record(value: JsonValue) -> dict[str, JsonValue] | None:
+    if not isinstance(value, dict) or not isinstance(record := value.get("record"), dict):
+        return None
+    body = record.get("body")
+    return record if isinstance(body, dict) and body.get("kind") == "episode" else None
+
+
+def _episode(value: dict[str, JsonValue], locale: Localizer, *, expand: bool) -> None:
+    record = _episode_record(value)
+    assert record is not None
+    body, addresses, reference = record["body"], record.get("addresses"), record.get("reference")
+    assert isinstance(body, dict)
+    exact = addresses.get("exact") if isinstance(addresses, dict) else None
+    if not exact and isinstance(reference, dict):
+        exact = f"episode:{reference['id']}@{reference['revision']}"
+    console.print(Text(f"{exact}  {body.get('title', '')}", style="bold"))
+    if summary := body.get("summary"):
+        console.print(Text(str(summary)))
+    members, sources = value.get("members"), value.get("sources")
+    console.print(
+        Text(
+            f"{_label('members', locale)}: {len(members) if isinstance(members, list) else 0}"
+            + f" · {_label('sources', locale)}: "
+            + (", ".join(str(source) for source in sources) if isinstance(sources, list) else "—"),
+            style="dim",
+        )
+    )
+    if expand and isinstance(members, list):
+        for member in members:
+            if not isinstance(member, dict):
+                continue
+            address, content = member.get("addresses"), member.get("body")
+            if isinstance(address, dict):
+                console.print(Text(str(address.get("exact", "")), style="bold"))
+            if isinstance(content, dict) and isinstance(text := content.get("text"), str):
+                console.print(Text(text))
+
+
 def present(value: JsonValue, locale: Localizer) -> None:
+    if isinstance(value, dict) and _episode_record(value) is not None:
+        _episode(value, locale, expand=True)
+        return
     if isinstance(value, dict) and isinstance(value.get("items"), list):
         items = value["items"]
         if (
@@ -78,6 +132,12 @@ def present(value: JsonValue, locale: Localizer) -> None:
                 locale,
             )
             return
+        present(items, locale)
+        for key, item in value.items():
+            if key in {"items", "count"} or key == "success" and item is True:
+                continue
+            console.print(Text(f"{_label(key, locale)}: {_cell(item, locale)}"))
+        return
     if isinstance(value, dict) and isinstance(value.get("hits"), list):
         hits = value["hits"]
         assert isinstance(hits, list)
@@ -137,6 +197,16 @@ def present(value: JsonValue, locale: Localizer) -> None:
             console.print(locale.text("cli-items", count=0))
             return
         records = [item for item in value if isinstance(item, dict)]
+        if (
+            records
+            and len(records) == len(value)
+            and all(_episode_record(item) for item in records)
+        ):
+            for item in records:
+                _episode(item, locale, expand=False)
+                console.print()
+            console.print(locale.text("cli-items", count=len(records)), style="dim")
+            return
         if len(records) == len(value) and records:
             _table(records, locale)
         else:

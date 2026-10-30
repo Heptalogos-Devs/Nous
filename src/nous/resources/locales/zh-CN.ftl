@@ -12,6 +12,8 @@ error-internal = 发生内部错误。
 
 cli-result = 结果
 cli-summary = 摘要
+cli-members = 成员
+cli-sources = 来源
 cli-details = 详情
 cli-cause = 原因
 cli-code = 错误代码

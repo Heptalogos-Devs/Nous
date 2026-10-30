@@ -12,6 +12,8 @@ error-internal = An internal error occurred.
 
 cli-result = Result
 cli-summary = Summary
+cli-members = Members
+cli-sources = Sources
 cli-details = Details
 cli-cause = Cause
 cli-code = Error code
