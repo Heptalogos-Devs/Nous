@@ -14,7 +14,15 @@ from nous.platform.persistence.authority import canonical_json
 from nous.platform.persistence.schema import job_links, operations
 
 _STATES = frozenset(
-    {"PENDING", "SUCCESS", "ERROR", "MAX_RECOVERY_ATTEMPTS_EXCEEDED", "CANCELLED", "ENQUEUED", "DELAYED"}
+    {
+        "PENDING",
+        "SUCCESS",
+        "ERROR",
+        "MAX_RECOVERY_ATTEMPTS_EXCEEDED",
+        "CANCELLED",
+        "ENQUEUED",
+        "DELAYED",
+    }
 )
 
 
@@ -111,8 +119,9 @@ async def query_jobs(
                 )
             rows = (
                 await view.connection.execute(
-                    page.order_by(operations.c.commit_seq.desc(), job_links.c.workflow_id.desc())
-                    .limit(batch_size)
+                    page.order_by(
+                        operations.c.commit_seq.desc(), job_links.c.workflow_id.desc()
+                    ).limit(batch_size)
                 )
             ).all()
             if not rows:

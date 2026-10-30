@@ -8,6 +8,7 @@ from nous_wave.contracts.context import (
     ContextAdmissionCommand,
     ContextPrepare,
     ContextReport,
+    ContextTrack,
     OpenContextSession,
 )
 
@@ -15,6 +16,16 @@ from .sdk_common import OperationIdentity
 from .security import application, context
 
 router = APIRouter()
+
+
+@router.post("/namespaces/{namespace_id}/subjects/{subject_id}/contexts/track")
+async def read_context_track(
+    request: Request, namespace_id: str, subject_id: str, command: ContextTrack
+):
+    return await application(request).contexts.read_track(
+        await context(request, namespace_id, subject_id, capability="read"),
+        command,
+    )
 
 
 @router.post("/namespaces/{namespace_id}/subjects/{subject_id}/contexts/preparations")

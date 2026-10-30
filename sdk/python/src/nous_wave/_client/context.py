@@ -8,13 +8,30 @@ from typing import Literal
 
 from pydantic import JsonValue
 
-from ..contracts.context import ContextReport, ContextReportResult, ContextUse
+from ..contracts.context import (
+    ContextInvocationOutput,
+    ContextReport,
+    ContextReportResult,
+    ContextTrack,
+    ContextTrackState,
+    ContextUse,
+)
 from ..operations import encoded, object_value
 from ..source_scope import SourceReadScope
 from .sources import SourceClient
 
 
 class ContextClient(SourceClient):
+    async def context_track(
+        self, namespace_id: str, subject_id: str, command: ContextTrack
+    ) -> ContextTrackState:
+        result = await self.request(
+            "POST",
+            self.subject_path(namespace_id, subject_id) + "/contexts/track",
+            body=encoded(command),
+        )
+        return ContextTrackState.model_validate(result)
+
     async def report_context(
         self,
         admission_id: str,
@@ -25,6 +42,7 @@ class ContextClient(SourceClient):
         outcome: Literal["completed", "failed", "cancelled"],
         occurred_at: datetime,
         uses: Sequence[ContextUse] = (),
+        output: ContextInvocationOutput | None = None,
     ) -> ContextReportResult:
         from ..managed import event_id
 
@@ -38,6 +56,7 @@ class ContextClient(SourceClient):
                 outcome=outcome,
                 occurred_at=occurred_at,
                 uses=tuple(uses),
+                output=output,
             ),
         )
 
@@ -86,6 +105,10 @@ class ContextClient(SourceClient):
         namespace, subject = await request_scope(self, values)
         action = request.get("action")
         operation_id = operation_identity(values)
+        if action == "track":
+            return encoded(
+                await self.context_track(namespace, subject, ContextTrack.model_validate(values))
+            )
         if action == "open_session":
             if "native_session" in values:
                 values["session_id"] = values.pop("native_session")

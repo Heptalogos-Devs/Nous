@@ -59,15 +59,25 @@ async def redact_attributes_in(tx: WriteTx, record: CognitiveRecord, unpurged: s
             ]
         )
         identities.append(identity.model_copy(update={"attributes": attributes}))
+    controls = record.body.profile_controls
+    aliases = controls.aliases
+    summary = controls.summary
+    if aliases is not None and not await supported_in(tx, record, aliases.evidence, unpurged):
+        aliases = None
+    if summary is not None and not await supported_in(tx, record, summary.evidence, unpurged):
+        summary = None
+    controls = controls.model_copy(update={"aliases": aliases, "summary": summary})
     if (
         len(kept) == len(record.body.attributes)
         and tuple(identities) == record.body.platform_identities
+        and controls == record.body.profile_controls
     ):
         return False
     body = record.body.model_copy(
         update={
             "attributes": kept,
             "platform_identities": tuple(identities),
+            "profile_controls": controls,
             "purged_identity_count": record.body.purged_identity_count
             + len(record.body.platform_identities)
             - len(identities),

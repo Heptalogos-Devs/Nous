@@ -14,7 +14,6 @@ from nous_wave.contracts import (
     CognitiveRef,
     CognitiveTimes,
     DomainError,
-    EntityBody,
     MediaRecord,
     MediaReference,
     MemoryBody,
@@ -50,7 +49,7 @@ from . import (
     self_model,
     social,
 )
-from .projection import media_references_in, references_in
+from .projection import evidence_in, media_references_in, references_in
 from .schema import revisions
 from .semantics import capability_for, validate_domain_in
 
@@ -267,19 +266,7 @@ class CognitionService:
             roots.add(observation_id)
             requirements.append((observation_id, region_ids))
 
-        body_evidence = (
-            tuple(link for attribute in command.body.attributes for link in attribute.evidence)
-            + tuple(
-                link
-                for identity in command.body.platform_identities
-                for link in (
-                    *identity.evidence,
-                    *(link for attribute in identity.attributes for link in attribute.evidence),
-                )
-            )
-            if isinstance(command.body, EntityBody)
-            else ()
-        )
+        body_evidence = tuple(evidence_in(command.body))
         for evidence in (*command.evidence, *body_evidence):
             if evidence.observation_id:
                 observation = await require_observation_in(

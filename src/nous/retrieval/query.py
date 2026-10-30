@@ -389,7 +389,7 @@ async def execute(
                 if bound.capabilities.exploration == "required":
                     raise DomainError(
                         "vcp_assets_unavailable",
-                        "VCP requires live, authorized Concept vectors in the query model space",
+                        "VCP requires live, authorized graph node vectors in the query model space",
                     )
                 reasons.append("vcp_assets_unavailable")
                 bound = bound.model_copy(update={"mode": "hybrid"})
@@ -482,6 +482,8 @@ async def execute(
         native_info = native_diagnostics(
             result.diagnostics_json, plan["diagnostics"], bound.budget.diagnostics_bytes
         )
+        if graph and plan["diagnostics"] != "none":
+            native_info["graph_projection"] = graph.diagnostics
         ranked = [
             (records[int(index)], float(score))
             for index, score in zip(result.row_ids, result.scores, strict=True)

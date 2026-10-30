@@ -66,6 +66,9 @@ class Application:
         self.cognition = CognitionService(
             self.authority, materials=self.material, derivations=self.derivations
         )
+        from nous.cognition.person_profiles import PersonProfileService
+
+        self.person_profiles = PersonProfileService(self.authority, self.cognition, self.models)
         from nous.references.service import ReferenceDirectory
 
         self.references = ReferenceDirectory(self.authority, self.cognition, self.material)
@@ -73,6 +76,9 @@ class Application:
             self.authority,
             queues=(QueueSpec("default"), QueueSpec("formation"), QueueSpec("embedding")),
         )
+        from nous.cognition.episodes import EpisodeService
+
+        self.episodes = EpisodeService(self.authority, self.cognition, self.models, self.execution)
 
     async def start(self) -> None:
         from nous.context.service import ContextService
@@ -149,6 +155,12 @@ class Application:
         self.execution.register("nous.imports.process", self.imports.run_process, preemptible=True)
         self.execution.register(
             "nous.vectors.project", self.vector_projection.run, preemptible=True
+        )
+        self.execution.register(
+            "nous.person_profile.refresh", self.person_profiles.run_refresh, preemptible=True
+        )
+        self.execution.register(
+            "nous.episodes.rebuild", self.episodes.run_rebuild, preemptible=True
         )
         self.execution.register("nous.imports.text", self.imports.run_text_import, preemptible=True)
         self.execution.register(

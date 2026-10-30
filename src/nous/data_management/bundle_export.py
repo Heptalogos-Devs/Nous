@@ -18,7 +18,7 @@ from nous_wave.contracts import (
 from pydantic import JsonValue, TypeAdapter
 from sqlalchemy import select
 
-from nous.cognition.projection import media_references_in, references_in
+from nous.cognition.projection import evidence_in, media_references_in, references_in
 from nous.cognition.schema import revisions, vectors
 from nous.identity.service import require_subject_in
 from nous.imports.schema import catalogs, inputs, outputs, successes, units
@@ -61,18 +61,18 @@ async def export(self: BundleService, ctx: CallContext, command: BundleRequest |
                 )
             ).mappings()
         }
-        selected, selected_observations = await select_roots_in(
-            view,
-            ctx,
-            command,
-            all_records,
-            TypeAdapter(dict[str, dict[str, JsonValue]]).validate_python(source_rows),
-        )
-        chosen = (
-            {reference.exact() for reference in command.references}
-            if command.references is not None
-            else selected
-        )
+        selected_observations: set[str]
+        if command.references is None:
+            chosen, selected_observations = await select_roots_in(
+                view,
+                ctx,
+                command,
+                all_records,
+                TypeAdapter(dict[str, dict[str, JsonValue]]).validate_python(source_rows),
+            )
+        else:
+            chosen = {reference.exact() for reference in command.references}
+            selected_observations = set()
         for observation_id in selected_observations:
             if observation_id not in source_rows or not source_permitted(
                 ctx, str(source_rows[observation_id]["material_id"]), observation_id
@@ -99,7 +99,7 @@ async def export(self: BundleService, ctx: CallContext, command: BundleRequest |
                     "source_unavailable", "Bundle includes sources outside the current scope"
                 )
             dependencies = list(references_in(record.body)) + [
-                link.reference for link in record.evidence if link.reference
+                link.reference for link in evidence_in(record) if link.reference
             ]
             for reference in dependencies:
                 if reference.exact() not in chosen:
@@ -112,7 +112,7 @@ async def export(self: BundleService, ctx: CallContext, command: BundleRequest |
         observation_ids.update(
             link.observation_id
             for record in records
-            for link in record.evidence
+            for link in evidence_in(record)
             if link.observation_id
         )
         selected_outputs: list[UnitOutput] = []

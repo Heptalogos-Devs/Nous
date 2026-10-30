@@ -24,6 +24,8 @@ from nous_wave.contracts import (
 )
 from pydantic import JsonValue, TypeAdapter
 
+from nous.cognition.projection import evidence_in
+
 TABLES = (
     "paragraphs",
     "entities",
@@ -119,22 +121,12 @@ def project(
             continue
         body = record.body
         mentions = {mention.reference.exact() for mention in body.mentions}
-        mentions.update(link.reference.exact() for link in record.evidence if link.reference)
+        mentions.update(link.reference.exact() for link in evidence_in(record) if link.reference)
         paragraphs = [
             memory_id
             for memory_id, memory in memories.items()
             if memory.reference.exact() in mentions
         ]
-        if not paragraphs and not any(
-            event.id in record.source_roots
-            and any(
-                material.id == event.material_id
-                and str(material.record.get("media_type", "")).startswith("image/")
-                for material in bundle.materials
-            )
-            for event in bundle.observations
-        ):
-            continue
         entities[key] = body
         tables["entities"].append(
             {
@@ -163,18 +155,8 @@ def project(
             paragraphs = [
                 memory_id
                 for memory_id, memory in memories.items()
-                if any(link.reference == memory.reference for link in record.evidence)
+                if any(link.reference == memory.reference for link in evidence_in(record))
             ]
-            if not paragraphs and not any(
-                event.id in record.source_roots
-                and any(
-                    material.id == event.material_id
-                    and str(material.record.get("media_type", "")).startswith("image/")
-                    for material in bundle.materials
-                )
-                for event in bundle.observations
-            ):
-                continue
             tables["relations"].append(
                 {
                     "hash": key,
@@ -203,7 +185,7 @@ def project(
                 "episode_id": key,
                 "source": body.track,
                 "title": body.title,
-                "summary": body.boundary_explanation,
+                "summary": body.summary,
                 "paragraph_count": len(members),
                 "created_at": record.times.recorded.coordinate / 1000,
                 "updated_at": record.times.recorded.coordinate / 1000,

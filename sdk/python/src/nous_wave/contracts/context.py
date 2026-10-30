@@ -61,6 +61,12 @@ class ContextPrepare(Operation):
     known_cursor: ContextCursor | None = None
 
 
+class ContextTrack(Contract):
+    session_id: str = Field(min_length=1)
+    consumer_id: str = Field(min_length=1)
+    instance_id: str = Field(min_length=1)
+
+
 class ContextSegment(Contract):
     key: str
     text: str
@@ -98,6 +104,12 @@ class ContextProjection(Contract):
     commit_seq: int
     steward_call_id: str | None = None
     degradations: tuple[str, ...] = ()
+
+
+class ContextTrackState(Contract):
+    projection: ContextProjection | None = None
+    pending_preparation_ids: tuple[str, ...] = ()
+    reset_reason: Literal["source_unavailable"] | None = None
 
 
 class ManagedContextResponse(Contract):
@@ -161,12 +173,22 @@ class ContextUse(Contract):
     ]
 
 
+class ContextInvocationOutput(Contract):
+    model: str | None = None
+    provider: str | None = None
+    response_id: str | None = None
+    status: str | None = None
+    output_item_ids: tuple[str, ...] = ()
+    tool_call_ids: tuple[str, ...] = ()
+
+
 class ContextReport(Operation):
     admission_id: str
     invocation_id: str = Field(min_length=1)
     outcome: Literal["completed", "failed", "cancelled"]
     occurred_at: datetime
     uses: tuple[ContextUse, ...] = Field(default=(), max_length=256)
+    output: ContextInvocationOutput | None = None
 
     @model_validator(mode="after")
     def timestamp(self) -> ContextReport:
@@ -184,6 +206,7 @@ class ContextReportResult(Contract):
     outcome: Literal["completed", "failed", "cancelled"]
     occurred_at: datetime
     uses: tuple[ContextUse, ...]
+    output: ContextInvocationOutput | None = None
     commit_seq: int
 
 

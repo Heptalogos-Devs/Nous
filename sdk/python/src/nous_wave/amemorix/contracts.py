@@ -4,7 +4,7 @@ from typing import Literal
 
 from pydantic import AliasChoices, Field, JsonValue
 
-from ..contracts import Contract
+from ..contracts import CognitiveRef, Contract, EvidenceLink
 
 
 class RelationInput(Contract):
@@ -85,11 +85,36 @@ class ProfileInput(Contract):
     context_text: str = ""
     limit: int = Field(default=10, ge=1, le=1000, validation_alias=AliasChoices("limit", "top_k"))
     force_refresh: bool = False
+    operation_id: str | None = None
 
 
 class ProfileAdminInput(ProfileInput):
-    action: Literal["list", "query", "evidence", "get_aliases"]
+    action: Literal[
+        "list",
+        "query",
+        "evidence",
+        "get_aliases",
+        "set_aliases",
+        "delete_aliases",
+        "set_override",
+        "delete_override",
+        "correct_evidence",
+    ]
     limit: int = Field(default=12, ge=1, le=1000, validation_alias=AliasChoices("limit", "top_k"))
+    aliases: tuple[str, ...] | None = None
+    text: str | None = Field(default=None, validation_alias=AliasChoices("text", "override_text"))
+    requested_by: str | None = Field(
+        default=None, validation_alias=AliasChoices("requested_by", "updated_by")
+    )
+    source: str | None = None
+    reason: str = "Person profile management"
+    evidence_type: str | None = None
+    evidence_key: str | None = None
+    hash: str | None = Field(default=None, validation_alias=AliasChoices("hash", "hash_value"))
+    attribute_pointer: str | None = None
+    reference: CognitiveRef | None = None
+    evidence: EvidenceLink | None = None
+    refresh: bool = True
 
 
 class AMemorixOperation(Contract):

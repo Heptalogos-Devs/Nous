@@ -55,7 +55,8 @@ def resolve_entity(records: tuple[CognitiveRecord, ...], token: str) -> Cognitiv
         and (
             token
             in {record.reference.id, record.reference.exact(), *record.body.identifiers.values()}
-            or key in {value.casefold() for value in (record.body.label, *record.body.aliases)}
+            or key
+            in {value.casefold() for value in (record.body.label, *record.body.effective_aliases)}
         )
     ]
     if len(matches) > 1:

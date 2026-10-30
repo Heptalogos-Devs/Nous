@@ -34,6 +34,10 @@ from .common import invoke, read_command, read_json
 
 
 def register(cli: typer.Typer) -> None:
+    from .episodes import register as register_episodes
+
+    register_episodes(cli)
+
     @cli.command("project-vectors")
     def project_vectors(ctx: typer.Context, namespace: str, subject: str, request: Path) -> None:
         """Submit exact cognitive/media targets from a ProjectVectors JSON file."""
@@ -165,19 +169,32 @@ def register(cli: typer.Typer) -> None:
         person_keyword: str = "",
         limit: int = 10,
         force_refresh: bool = False,
+        request: Path | None = None,
     ) -> None:
         """Browse retained person profiles and exact evidence."""
         from nous_wave.amemorix import AMemorixAdapter
 
         async def read(api: NousClient) -> object:
+            from nous_wave.amemorix.contracts import ProfileAdminInput
+
+            command = (
+                read_command(request, ProfileAdminInput)
+                if request
+                else ProfileAdminInput(
+                    action=action,
+                    person_id=person_id,
+                    person_name=person_keyword,
+                    limit=limit,
+                    force_refresh=force_refresh,
+                    operation_id=str(uuid4()),
+                )
+            )
+            values = command.model_dump(mode="json", exclude={"action"})
             return await AMemorixAdapter(
                 api, namespace_id=namespace_id, subject_id=subject_id
             ).memory_profile_admin(
-                action=action,
-                person_id=person_id,
-                person_keyword=person_keyword,
-                limit=limit,
-                force_refresh=force_refresh,
+                action=command.action,
+                **values,
             )
 
         invoke(ctx, read)

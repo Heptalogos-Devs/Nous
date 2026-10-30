@@ -281,13 +281,22 @@ class DerivedBundle(Contract):
     def material_ids(self) -> tuple[str, ...]:
         return tuple(
             sorted(
-                {identity for record in self.representations for identity in record.material_ids} | set(self.artifact_material_ids)
+                {identity for record in self.representations for identity in record.material_ids}
+                | set(self.artifact_material_ids)
             )
         )
 
     @property
     def artifact_material_ids(self) -> tuple[str, ...]:
-        return tuple(sorted({record.payload.material_id for record in self.representations if isinstance(record.payload, ArtifactRepresentation)}))
+        return tuple(
+            sorted(
+                {
+                    record.payload.material_id
+                    for record in self.representations
+                    if isinstance(record.payload, ArtifactRepresentation)
+                }
+            )
+        )
 
     @property
     def observation_ids(self) -> tuple[str, ...]:

@@ -5,14 +5,14 @@ from __future__ import annotations
 from collections import deque
 from typing import TYPE_CHECKING
 
-from nous_wave.contracts import CallContext, CognitiveRecord, CognitiveRef, EntityBody
+from nous_wave.contracts import CallContext, CognitiveRecord, CognitiveRef
 from sqlalchemy import select, update
 
 from nous.material.service import observations
 from nous.platform.persistence import WriteTx
 
 from .entities import contains_record, redact_attributes_in
-from .projection import media_references_in
+from .projection import evidence_in, media_references_in
 from .schema import revisions, vectors
 
 if TYPE_CHECKING:
@@ -58,14 +58,7 @@ async def retire_unsupported_in(
     for key, record in records.items():
         if record.purged or key in invalid_media:
             continue
-        links = list(record.evidence)
-        if isinstance(record.body, EntityBody):
-            links.extend(
-                link for attribute in record.body.attributes for link in attribute.evidence
-            )
-            links.extend(
-                link for identity in record.body.platform_identities for link in identity.evidence
-            )
+        links = tuple(evidence_in(record))
         if tuple(media_references_in(record.body)) and set(record.support_roots).intersection(
             sources
         ):

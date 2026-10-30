@@ -64,10 +64,24 @@ class AMemorixAdapter:
         )
 
     async def call(self, tool: str, arguments: Mapping[str, JsonValue]) -> JsonObject:
+        values = dict(arguments)
+        profile_write = tool == "memory_profile_admin" and values.get("action") in {
+            "set_aliases",
+            "delete_aliases",
+            "set_override",
+            "delete_override",
+            "correct_evidence",
+        }
+        profile_refresh = (
+            tool in {"memory_profile_admin", "get_person_profile"}
+            and values.get("force_refresh") is True
+        )
+        if (profile_write or profile_refresh) and not values.get("operation_id"):
+            values["operation_id"] = str(uuid4())
         command = AMemorixRequest(
             namespace_id=self.namespace_id,
             subject_id=self.subject_id,
-            operation=AMemorixOperation(tool=tool, arguments=dict(arguments)),
+            operation=AMemorixOperation(tool=tool, arguments=values),
         )
         return object_value(
             await self.client.request("POST", "/api/integrations/amemorix", body=encoded(command))
@@ -216,7 +230,7 @@ class AMemorixAdapter:
         return await self.call("memory_stats", kwargs)
 
     async def memory_profile_admin(self, *, action: str, **kwargs: JsonValue) -> JsonObject:
-        """Read retained person profiles, aliases and exact evidence through their owner."""
+        """Read or manage source-backed Person profiles."""
         return await self.call("memory_profile_admin", {"action": action, **kwargs})
 
     async def memory_graph_admin(self, *, action: str, **kwargs: JsonValue) -> JsonObject:
@@ -225,6 +239,12 @@ class AMemorixAdapter:
 
     async def memory_runtime_admin(self, *, action: str, **kwargs: JsonValue) -> JsonObject:
         return await self.call("memory_runtime_admin", {"action": action, **kwargs})
+
+    async def memory_episode_admin(self, *, action: str, **kwargs: JsonValue) -> JsonObject:
+        values = {"action": action, **kwargs}
+        if action == "rebuild":
+            values.setdefault("operation_id", str(uuid4()))
+        return await self.call("memory_episode_admin", values)
 
     async def memory_bundle_admin(self, *, action: str, **kwargs: JsonValue) -> JsonObject:
         from .bundles import bundle_admin

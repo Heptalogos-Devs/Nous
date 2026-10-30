@@ -139,8 +139,9 @@ binding = client.managed(
     session_id=actual_session_id, consumer_id="reply", instance_id=actual_worker_id,
     source_read=trusted_source_scope,
 )
+await binding.resume()  # 重建同一串行 worker 后读取已接纳 track
 prepared = await binding.prepare(
-    usage=ContextUsage(purpose="reply", intent=actual_intent),
+    usage=ContextUsage(purpose="reply", role=actual_role, audience=actual_audience, intent=actual_intent),
     max_items=64, max_text_bytes=65536,
     current_sources=actually_required_sources,
 )
@@ -151,18 +152,17 @@ await binding.admit(applied, invocation_id=actual_invocation_id,
 # 在此调用真实模型。
 await binding.report(applied, invocation_id=actual_invocation_id,
     outcome=actual_outcome, occurred_at=actual_completion_time,
-    uses=actually_observed_uses)
+    uses=actually_observed_uses, output=actual_output_metadata)
 await binding.close()
 ```
 
-prepare 提交真实持久任务并等待。renderer 接收独立副本并返回完整输入；serialize_input 编码该实际输入。`HostInputMeasurement` 包含完整输入 tokens、真实输出预留、窗口与测量来源，超窗会拒绝。SDK 管理 RESET/APPEND 游标，应用后输入变动会使接纳失败。没有显式来源范围时 managed 采用空读取范围。
+prepare 提交真实持久任务并等待。renderer 接收独立副本并返回完整输入；serialize_input 编码该实际输入。`HostInputMeasurement` 包含完整输入 tokens、真实输出预留、窗口与测量来源，超窗会拒绝。SDK 管理 RESET/APPEND 游标，应用后输入变动会使接纳失败。同一 session/consumer/instance 的已接纳完整投影持久保存；`resume()` 在相同 SourceRead 下恢复。`context_track` 返回投影与未接纳 preparation IDs，撤回来源时返回空投影和 reset_reason。已确认旧 worker 停止时，`resume(cancel_pending=True)` 通过原取消操作接管遗留准备。`close()` 释放本 binding，保留会话与已接纳 track。没有显式来源范围时 managed 采用空读取范围。
 
 `open_context_session` / `context_session` / `close_context_session` 管理真实宿主会话。`change_context_residents` 使用 `ChangeResidents.expected_revision` 修改居民；`change_work_context` 支持创建、编辑、暂停、恢复、结束、pin/unpin 与清理。工作指令和显式 current_sources 是必需项，预算不足会报错。
 
 `contexts` 配置限制 consumer 预算与来源类型。配置 `steward_role` 后使用统一模型资源、Prompt、预算与账本；Steward 只选择当前授权候选，综合保持独立归因。居民使用 DBOS schedule 维护，模型接触、实际使用和完成结果分别记录。
 
 A-Memorix `AMemorixAdapter` 保留六项工具、来源、导入、包与运行时管理入口。完整 MaiBot 补丁、模型窗口配置与真实发送边界见 [MaiBot 集成](../../integrations/maibot/README.md)。
-
 
 ## 认知整理提案
 
@@ -230,14 +230,16 @@ print(result.execution)
 
 semantic/exploration 的 required 要求实际计算通道可用；require_complete_vectors 默认 False，独立控制是否要求完整向量覆盖。Hybrid 向量覆盖不完整时真实降为词项检索，execution 返回 effective_mode、missing_vectors、candidate_limited、degraded 和 reasons；组合不同通道时 effective_mode 为 mixed。`$diagnostics(none)` 只关闭详细计划，execution 仍保留。authority 支持 subject_cognition、evidence、interpretation 的实际分类；external_current_authority 与 resource_descriptor 缺少资源 owner 时返回 capability_unavailable。current=none 为默认；prefer 保留本地结果并报告 external_freshness_unchecked，required 要求外部时效 owner。modalities 支持 text/image/audio/video/document/binary，按真实原件模态及同一来源根过滤；图片的派生描述仍保留图片来源模态。
 
-
 A-Memorix 图谱搜索使用 `adapter.memory_graph_admin(action="search", query="项目", limit=50)`；`invoke("memory_graph_admin", {"action":"search","query":"项目"})` 供原 MaiBot RPC 直接调用。结果为实际实体与关系，匹配优先级依次为精确、前缀、子串；每项 reference 经 `CognitiveRef.model_validate(item["reference"])` 读取为强类型后，交给 `client.source(subject_id, reference)` 展开来源。读取受当前 SourceReadScope 与认知可见性约束。
 
 `client.graph_snapshot(namespace_id, subject_id)` 读取正式图谱目录。`client.manage_graph(namespace_id, subject_id, GraphChange(action="create_node", name="项目", reason="调用者提交的图谱登记"))` 创建有来源的 Entity；其余 action 支持改名、软删除、创建关系、修改权重及删除关系，返回实际报告 Material、Import 观察与认知修订。更改现有身份可传 exact `reference`，旧修订会返回 revision_conflict。`weight` 与 `epistemic.confidence` 分开保存，未知权重保留 None。
 
-
-
 `client.configuration({"action":"get","key":"network","namespace_id":namespace_id,"subject_id":subject_id})` 读取应用出站网络有效策略与 origin；`action="history"` 读取同一 scope 继承范围的正式配置历史（limit 1..1000）。network 控制应用 Provider 的代理、环境信任、CA/TLS、分阶段超时和连接池；策略更新在下一次调用边界生效，已运行调用的租约结束后关闭旧池。外部 SDK 自身的 Transport 保持独立。`retrieval` 使用同一配置 get/set/reset/history 入口，默认值来自正式 Native schema。
 
+人物目录、画像证据和别名可通过 `adapter.memory_profile_admin(action="list"|"query"|"evidence"|"get_aliases", ...)` 查看，原 `get_person_profile` 复用相同人物与证据读取。person_id 接受实际 MaiBot correspondence 或 Native Entity 身份；person_keyword/keyword 接受实际主名与别名，选择歧义会明确失败。普通读取不付费。显式 `force_refresh=True` 会提交并等待该 Person 的真实模型摘要任务，需配置 `person_profile` 模型角色；自动结果保留人工覆盖。画像证据的 evidence_key 是准确 Entity 修订及属性 JSON pointer，reference 和每条 evidence 保留真实来源，可继续使用公开来源读取。
 
-人物目录、画像证据和别名可通过 `adapter.memory_profile_admin(action="list"|"query"|"evidence"|"get_aliases", ...)` 查看，原 `get_person_profile` 复用相同人物与证据读取。person_id 接受实际 MaiBot correspondence 或 Native Entity 身份；person_keyword/keyword 接受实际主名与别名，选择歧义会明确失败。force_refresh=true 返回 profile_refresh_unavailable，读取不会触发付费生成。画像证据的 evidence_key 是准确 Entity 修订及属性 JSON pointer，reference 和每条 evidence 保留真实来源，可继续使用公开来源读取。
+人物管理使用同一 Entity 修订：`memory_profile_admin(action="set_aliases", person_id=..., aliases=[...])`、`delete_aliases`、`set_override`（`override_text`）与 `delete_override`。空别名列表是显式覆盖，删除覆盖后显示自动别名。`correct_evidence` 接受 `evidence()` 返回的确切 `hash`/`evidence_key` 与 `evidence_type="entity_attribute"`；`refresh=False` 只提交纠正，默认再刷新单人物。管理输入与实际调用者保留为来源。SDK 在传输前为写入及强制刷新建立 operation_id，重试应复用该值。
+
+Native 客户端 `change_person_profile(ns, sub, PersonProfileChange(...))` 返回实际修订及输入来源；`refresh_person_profile(ns, sub, RefreshPersonProfile(...))` 返回真实 job_id，通过 `wait_success(job_id)` 等待。两者的 HTTP 路径是 subject 下 `/person-profiles/change` 与 `/person-profiles/refresh`。CLI `nous profile ns sub --request request.json` 和 MCP `memory_profile_admin(command=...)` 消费同一个 `ProfileAdminInput`。
+
+Context 的 `ContextReport.output` 保存真实模型、provider、response_id、status、输出 item IDs 与 tool call IDs；未知字段保留 None。每次实际 wire 调用各自 admit/report，相同准备可用于真实 provider 参数回退，来源与预算每次重新校验。`contexts(action="track",...)`、CLI `context track` 与 MCP 通用 contexts 接口读取同一正式 track。

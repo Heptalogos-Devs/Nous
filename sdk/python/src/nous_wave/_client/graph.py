@@ -1,11 +1,45 @@
 """Public graph operations retain canonical identities and actual report provenance."""
 
 from ..contracts.graph_management import GraphChange, GraphChangeResult, GraphSnapshot
+from ..contracts.person_profiles import (
+    PersonProfileChange,
+    PersonProfileChangeResult,
+    PersonProfileRefreshSubmission,
+    RefreshPersonProfile,
+)
 from ..operations import encoded
 from .maintenance import MaintenanceClient
 
 
 class GraphClient(MaintenanceClient):
+    async def change_person_profile(
+        self,
+        namespace_id: str,
+        subject_id: str,
+        command: PersonProfileChange,
+    ) -> PersonProfileChangeResult:
+        return PersonProfileChangeResult.model_validate(
+            await self.request(
+                "POST",
+                self.subject_path(namespace_id, subject_id) + "/person-profiles/change",
+                body=encoded(command),
+            )
+        )
+
+    async def refresh_person_profile(
+        self,
+        namespace_id: str,
+        subject_id: str,
+        command: RefreshPersonProfile,
+    ) -> PersonProfileRefreshSubmission:
+        return PersonProfileRefreshSubmission.model_validate(
+            await self.request(
+                "POST",
+                self.subject_path(namespace_id, subject_id) + "/person-profiles/refresh",
+                body=encoded(command),
+            )
+        )
+
     async def graph_snapshot(self, namespace_id: str, subject_id: str) -> GraphSnapshot:
         return GraphSnapshot.model_validate(
             await self.request("GET", self.subject_path(namespace_id, subject_id) + "/graph")

@@ -20,8 +20,10 @@ if TYPE_CHECKING:
 def names(record: CognitiveRecord) -> tuple[str, ...]:
     body = record.body
     labels = (
-        (body.label, *body.aliases)
-        if isinstance(body, (EntityBody, ConceptBody))
+        (body.label, *body.effective_aliases)
+        if isinstance(body, EntityBody)
+        else (body.label, *body.aliases)
+        if isinstance(body, ConceptBody)
         else (body.title,)
         if isinstance(body, SchemaBody)
         else ()

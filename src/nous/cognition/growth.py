@@ -11,6 +11,7 @@ from nous_wave.contracts import (
     CognitiveTimes,
     ConceptPartition,
     DomainError,
+    EntityBody,
     EvidenceLink,
     MemoryBody,
     MemoryChange,
@@ -264,6 +265,12 @@ async def apply_growth_in(
             and isinstance(body, MemoryBody)
         ):
             body = body.model_copy(update={"media": target.body.media})
+        if (
+            target is not None
+            and isinstance(target.body, EntityBody)
+            and isinstance(body, EntityBody)
+        ):
+            body = body.model_copy(update={"profile_controls": target.body.profile_controls})
         links = tuple(
             EvidenceLink(reference=catalog[key].reference, role=action.reason)
             for key in action.evidence_keys

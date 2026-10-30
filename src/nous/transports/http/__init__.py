@@ -18,6 +18,7 @@ from nous.platform.persistence import OperationConflict
 from .amemorix import router as amemorix
 from .credentials import router as credentials
 from .domain import router as domain
+from .episodes import router as episodes
 from .evolution import router as evolution
 from .knowledge import router as knowledge
 from .maintenance import router as maintenance
@@ -43,6 +44,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(knowledge)
     app.include_router(media)
     app.include_router(evolution)
+    app.include_router(episodes)
     app.include_router(sdk_routes)
     app.include_router(credentials)
     app.include_router(web)

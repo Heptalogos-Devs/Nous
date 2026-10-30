@@ -5,7 +5,7 @@ from graphlib import CycleError, TopologicalSorter
 from nous_wave.contracts import DomainError, MediaReference, SubjectBundle
 from nous_wave.contracts.derivation import ArtifactRepresentation
 
-from nous.cognition.projection import media_references_in, references_in
+from nous.cognition.projection import evidence_in, media_references_in, references_in
 
 
 def validate_graph(bundle: SubjectBundle) -> None:
@@ -65,10 +65,10 @@ def validate_graph(bundle: SubjectBundle) -> None:
         graph[record.reference.exact()] = {
             *(reference.exact() for reference in references_in(record.body)),
             *(media(reference) for reference in media_references_in(record.body)),
-            *(link.reference.exact() for link in record.evidence if link.reference),
+            *(link.reference.exact() for link in evidence_in(record) if link.reference),
             *(
                 f"observation:{link.observation_id}"
-                for link in record.evidence
+                for link in evidence_in(record)
                 if link.observation_id
             ),
             *(f"observation:{root}" for root in record.source_roots),

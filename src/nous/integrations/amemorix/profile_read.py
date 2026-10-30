@@ -46,18 +46,9 @@ async def people(self: AMemorixService, ctx: CallContext) -> tuple[CognitiveReco
     )
 
 
-def require_retained(command: ProfileInput) -> None:
-    if command.force_refresh:
-        raise DomainError(
-            "profile_refresh_unavailable",
-            "Forced profile refresh requires the profile formation operation; no refresh was submitted",
-        )
-
-
 async def select_person(
     self: AMemorixService, ctx: CallContext, command: ProfileInput
 ) -> CognitiveRecord:
-    require_retained(command)
     if not command.person_id and not command.person_name:
         raise DomainError("person_required", "Profile requires person_id or person_keyword")
     found: list[CognitiveRecord] = []
@@ -77,7 +68,8 @@ async def select_person(
         else:
             key = command.person_name.casefold().strip()
             matches = key in {
-                name.casefold().strip() for name in (record.body.label, *record.body.aliases)
+                name.casefold().strip()
+                for name in (record.body.label, *record.body.effective_aliases)
             }
         if matches:
             found.append(record)
@@ -96,9 +88,17 @@ def summary(record: CognitiveRecord) -> dict[str, object]:
         "person_id": person_id(record),
         "person_name": record.body.label,
         "profile_version": record.reference.revision,
-        "profile_text": record.body.description,
+        "profile_text": record.body.profile_text,
+        "auto_profile_text": record.body.description,
+        "manual_override_text": record.body.profile_controls.summary.text
+        if record.body.profile_controls.summary
+        else None,
         "updated_at": point.coordinate / 1000 if point.domain == "unix_ms" else None,
         "profile_source": "nous_entity",
+        "has_manual_override": record.body.profile_controls.summary is not None,
+        "manual_override": record.body.profile_controls.summary.text
+        if record.body.profile_controls.summary
+        else None,
         "reference": record.reference,
     }
 
@@ -142,8 +142,11 @@ async def read_profile(
                 continue
             item: dict[str, object] = {
                 "evidence_key": f"{record.reference.exact()}#/body/attributes/{index}",
+                "hash": f"{record.reference.exact()}#/body/attributes/{index}",
                 "evidence_type": "entity_attribute",
                 "type": "entity_attribute",
+                "deletable": True,
+                "correction_mode": "withdraw_attribute_support",
                 "content": f"{attribute.predicate}: {attribute.value}",
                 "reference": record.reference,
                 "attribute_pointer": f"/body/attributes/{index}",
@@ -167,7 +170,7 @@ async def read_profile(
         return {
             **summary(record),
             "success": True,
-            "summary": record.body.description,
+            "summary": record.body.profile_text,
             "traits": [item["content"] for item in accepted[: command.limit]],
             "evidence": accepted[: command.limit],
             "uncertain": uncertain[: command.limit],
@@ -186,6 +189,12 @@ async def aliases(
         "success": True,
         "person_id": person_id(record),
         "primary_name": record.body.label,
-        "effective_aliases": record.body.aliases,
+        "effective_aliases": record.body.effective_aliases,
+        "derived_aliases": record.body.aliases,
+        "manual_aliases": record.body.profile_controls.aliases.aliases
+        if record.body.profile_controls.aliases
+        else (),
+        "has_override": record.body.profile_controls.aliases is not None,
+        "has_manual_override": record.body.profile_controls.aliases is not None,
         "reference": record.reference,
     }

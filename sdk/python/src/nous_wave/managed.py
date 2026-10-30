@@ -19,11 +19,13 @@ from .contracts.context import (
     ContextAdmission,
     ContextAdmissionCommand,
     ContextCursor,
+    ContextInvocationOutput,
     ContextPrepare,
     ContextProjection,
     ContextReportResult,
     ContextSegment,
     ContextTarget,
+    ContextTrack,
     ContextUsage,
     ContextUse,
     EpistemicView,
@@ -92,6 +94,37 @@ class ManagedBinding:
     def _assert_open(self) -> None:
         if self._closed:
             raise RuntimeError("managed cognition binding is closed")
+
+    async def resume(self, *, cancel_pending: bool = False) -> ContextProjection | None:
+        self._assert_open()
+        if self._pending is not None or self._preparing:
+            raise RuntimeError("Cannot resume over a pending context preparation")
+        if self.namespace_id is None:
+            self.namespace_id = (await self.client.subject(self.subject_id)).namespace_id
+        state = await self.client.context_track(
+            self._namespace(),
+            self.subject_id,
+            ContextTrack(
+                session_id=self.session_id,
+                consumer_id=self.consumer_id,
+                instance_id=self.instance_id,
+            ),
+        )
+        if state.pending_preparation_ids and not cancel_pending:
+            raise RuntimeError(
+                "The track has an unadmitted preparation; explicitly cancel it to take over"
+            )
+        for preparation_id in state.pending_preparation_ids:
+            await self.client.cancel_context_preparation(
+                self._namespace(),
+                self.subject_id,
+                preparation_id,
+                event_id("cancel", self.instance_id, preparation_id),
+            )
+        projection = state.projection
+        self._projection = projection
+        self._cursor = projection.cursor if projection is not None else None
+        return projection
 
     async def prepare(
         self,
@@ -268,6 +301,7 @@ class ManagedBinding:
         outcome: Literal["completed", "failed", "cancelled"],
         occurred_at: datetime,
         uses: Sequence[ContextUse] = (),
+        output: ContextInvocationOutput | None = None,
     ) -> ContextReportResult:
         self.applied_projection(applied)
         admission_id = self._applications[applied].admissions.get(invocation_id)
@@ -281,6 +315,7 @@ class ManagedBinding:
             outcome=outcome,
             occurred_at=occurred_at,
             uses=uses,
+            output=output,
         )
 
     async def close(self) -> None:

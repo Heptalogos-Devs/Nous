@@ -136,6 +136,21 @@ class PlatformIdentity(Contract):
     evidence: tuple[EvidenceLink, ...] = Field(min_length=1)
 
 
+class PersonAliasOverride(Contract):
+    aliases: tuple[str, ...]
+    evidence: tuple[EvidenceLink, ...] = Field(min_length=1)
+
+
+class PersonSummaryOverride(Contract):
+    text: str
+    evidence: tuple[EvidenceLink, ...] = Field(min_length=1)
+
+
+class PersonProfileControls(Contract):
+    aliases: PersonAliasOverride | None = None
+    summary: PersonSummaryOverride | None = None
+
+
 class EntityBody(Contract):
     kind: Literal["entity"] = "entity"
     label: str
@@ -148,6 +163,17 @@ class EntityBody(Contract):
     purged_identity_count: int = Field(default=0, ge=0)
     mentions: tuple[EntityMention, ...] = ()
     platform_identities: tuple[PlatformIdentity, ...] = ()
+    profile_controls: PersonProfileControls = Field(default_factory=PersonProfileControls)
+
+    @property
+    def effective_aliases(self) -> tuple[str, ...]:
+        control = self.profile_controls.aliases
+        return control.aliases if control is not None else self.aliases
+
+    @property
+    def profile_text(self) -> str:
+        control = self.profile_controls.summary
+        return control.text if control is not None else self.description
 
 
 class EpisodeMember(Contract):
@@ -159,6 +185,7 @@ class EpisodeMember(Contract):
 class EpisodeBody(Contract):
     kind: Literal["episode"] = "episode"
     title: str
+    summary: str = ""
     track: str
     experience: TimeRange
     parent: CognitiveRef | None = None

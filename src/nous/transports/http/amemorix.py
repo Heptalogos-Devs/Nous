@@ -37,6 +37,10 @@ async def amemorix(request: Request, command: AMemorixRequest):
     }
     read_preview = (
         (
+            command.operation.tool == "memory_episode_admin"
+            and command.operation.arguments.get("action") in {"query", "list", "get", "status"}
+        )
+        or (
             command.operation.tool == "memory_profile_admin"
             and command.operation.arguments.get("action")
             in {"list", "query", "evidence", "get_aliases"}
@@ -67,6 +71,11 @@ async def amemorix(request: Request, command: AMemorixRequest):
         or read_preview
         else "write"
     )
+    if command.operation.tool in {
+        "get_person_profile",
+        "memory_profile_admin",
+    } and command.operation.arguments.get("force_refresh"):
+        capability = "write"
     return await AMemorixService(application(request)).execute(
         await context(request, command.namespace_id, command.subject_id, capability=capability),
         command.operation,

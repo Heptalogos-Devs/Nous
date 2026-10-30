@@ -124,7 +124,8 @@ def graph_view(snapshot: GraphSnapshot, limit: int) -> dict[str, JsonValue]:
                 "name": row.body.label,
                 "attributes": {
                     "reference": row.reference,
-                    "aliases": row.body.aliases,
+                    "aliases": row.body.effective_aliases,
+                    "profile_text": row.body.profile_text,
                     "entity_type": row.body.entity_type,
                 },
             }

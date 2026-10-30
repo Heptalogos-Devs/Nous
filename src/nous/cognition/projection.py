@@ -3,7 +3,14 @@
 from collections.abc import Iterator, Sequence
 from typing import cast
 
-from nous_wave.contracts import CognitiveBody, CognitiveRef, MediaReference, MemorySemanticsBody
+from nous_wave.contracts import (
+    CognitiveBody,
+    CognitiveRef,
+    EntityBody,
+    EvidenceLink,
+    MediaReference,
+    MemorySemanticsBody,
+)
 from pydantic import BaseModel
 
 
@@ -12,6 +19,8 @@ def body_text(body: CognitiveBody | None) -> str:
         return ""
     if isinstance(body, MemorySemanticsBody):
         return "\n".join([*(item.text for item in body.interpretations), *body.qualifications])
+    if isinstance(body, EntityBody):
+        return "\n".join((body.label, body.profile_text, *body.effective_aliases))
     value = body.model_dump(mode="json")
     return "\n".join(
         str(value[key])
@@ -55,3 +64,15 @@ def media_references_in(value: object) -> Iterator[MediaReference]:
     elif isinstance(value, (list, tuple)):
         for child in cast(Sequence[object], value):
             yield from media_references_in(child)
+
+
+def evidence_in(value: object) -> Iterator[EvidenceLink]:
+    """Traverse declared evidence fields, retaining literal metadata as opaque data."""
+    if isinstance(value, EvidenceLink):
+        yield value
+    elif isinstance(value, BaseModel):
+        for field in type(value).model_fields:
+            yield from evidence_in(getattr(value, field))
+    elif isinstance(value, (list, tuple)):
+        for child in cast(Sequence[object], value):
+            yield from evidence_in(child)

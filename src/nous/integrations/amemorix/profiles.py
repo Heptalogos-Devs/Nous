@@ -22,11 +22,9 @@ if TYPE_CHECKING:
 async def profile(
     self: AMemorixService, ctx: CallContext, command: ProfileInput
 ) -> dict[str, JsonValue]:
-    from .profile_read import read_profile, select_person
+    from .profile_admin import profile_admin
 
-    return json_object(
-        await read_profile(self, ctx, await select_person(self, ctx, command), command)
-    )
+    return await profile_admin(self, ctx, {**command.model_dump(mode="json"), "action": "query"})
 
 
 async def stats(self: AMemorixService, ctx: CallContext) -> dict[str, JsonValue]:

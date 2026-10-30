@@ -21,6 +21,7 @@ from nous_wave.contracts import (
     EvidenceLink,
     ImportDocument,
 )
+from nous_wave.contracts.cognition import PersonProfileControls
 from pydantic import JsonValue, TypeAdapter
 
 from .helpers import json_object, json_value, point
@@ -256,6 +257,21 @@ async def adopt_host_graph(
             entity_type="person" if name in command.person_ids else "other",
             identifiers=identifiers,
             attributes=tuple(attributes),
+            aliases=current.body.aliases
+            if current and isinstance(current.body, EntityBody)
+            else (),
+            description=current.body.description
+            if current and isinstance(current.body, EntityBody)
+            else "",
+            profile_controls=current.body.profile_controls
+            if current and isinstance(current.body, EntityBody)
+            else PersonProfileControls(),
+            platform_identities=current.body.platform_identities
+            if current and isinstance(current.body, EntityBody)
+            else (),
+            mentions=current.body.mentions
+            if current and isinstance(current.body, EntityBody)
+            else (),
         )
         record = await self.app.cognition.adopt(
             ctx,

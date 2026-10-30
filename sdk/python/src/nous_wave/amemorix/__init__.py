@@ -11,5 +11,6 @@ __all__ = ["AMemorixAdapter"]
 def __getattr__(name: str) -> object:
     if name == "AMemorixAdapter":
         from .client import AMemorixAdapter
+
         return AMemorixAdapter
     raise AttributeError(name)

@@ -39,6 +39,7 @@ from nous_wave.contracts import (
     ProposedSchema,
     SchemaBody,
 )
+from nous_wave.contracts.cognition import PersonProfileControls
 
 
 async def adopt_tags_in(
@@ -162,7 +163,13 @@ async def formation_catalog_in(
             if isinstance(body, SchemaBody)
             else ""
         )
-        aliases = body.aliases if isinstance(body, (ConceptBody, EntityBody)) else ()
+        aliases = (
+            body.effective_aliases
+            if isinstance(body, EntityBody)
+            else body.aliases
+            if isinstance(body, ConceptBody)
+            else ()
+        )
         if text and not any(
             term.casefold() in text.casefold() for term in (label, *aliases) if term
         ):
@@ -178,8 +185,10 @@ async def formation_catalog_in(
                 reference=record.reference,
                 label=label,
                 aliases=aliases,
-                description=body.description
-                if isinstance(body, (ConceptBody, EntityBody))
+                description=body.profile_text
+                if isinstance(body, EntityBody)
+                else body.description
+                if isinstance(body, ConceptBody)
                 else body.claim
                 if isinstance(body, SchemaBody)
                 else "",
@@ -300,6 +309,8 @@ async def adopt_semantic_proposal_in(
             entity_type=item.entity_type,
             aliases=tuple(dict.fromkeys([*(prior.aliases if prior else ()), *item.aliases])),
             description=item.description,
+            profile_controls=prior.profile_controls if prior else PersonProfileControls(),
+            platform_identities=prior.platform_identities if prior else (),
             identifiers={**(prior.identifiers if prior else {}), **item.identifiers},
             attributes=(*(prior.attributes if prior else ()), *attributes),
             mentions=(

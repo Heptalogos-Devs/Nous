@@ -78,6 +78,7 @@ class GrowthEpisodeMember(Contract):
 class GrowthEpisode(Contract):
     kind: Literal["episode"]
     title: str
+    summary: str = ""
     track: str
     experience: TimeRange
     parent: GrowthRef | None = None

@@ -96,17 +96,15 @@ source `preview` 与 `execute(dry_run=true)` 由同一来源事务生成计划�
 
 尚未提供的管理动作返回 `CapabilityUnavailable`。画像与统计异常向调用者传播，写入、检索及其他管理请求沿原有明确失败结果呈现。
 
-
 ## 模型调用与托管上下文
 
 `managed-context.patch` 在 MaiBot 的正式 `ResponseRequest` 与四类模型客户端边界接线。设置 `NOUS_MODEL_CONTEXT_WINDOWS` 后，有真实聊天会话的模型调用会先通过 SDK 提交持久准备任务，再把授权上下文渲染为实际 ContextItem。OpenAI Chat、Responses、Gemini 和插件客户端在构造完整 provider 输入后、发送前测量并接纳；结果返回后报告 completed、failed 或 cancelled。模型接触与实际使用分别记录，宿主不会把成功回复全部算作实际使用。
 
 窗口映射使用 MaiBot `model_config.toml` 的模型 **name**，必须填写供应商确认的窗口值。例中 `262144` 适用于已核实的 Doubao Seed 2.0 mini 256k 窗口（[供应商模型表](https://www.volcengine.com/docs/82379/1330310)）；其他模型使用各自窗口。测量采用实际完整 provider 输入的 UTF-8 字节上界，包含工具、格式约束与多模态数据；输出预留来自该次真正发送的参数。图片输入还要求 `NOUS_MODEL_IMAGE_TOKEN_BOUNDS={"模型name":每张图片的供应商token上界}`，避免用文本字节估计视觉 token。
 
-会话身份来自 MaiBot 正式 chat_manager 创建或读取的 session_id。来源权限按当前 conversation_ref 限定；没有会话的后台模型调用不派生聊天身份。history_generation 是实际输入历史的内容摘要，invocation_id 标识真实宿主模型调用。
+会话身份来自 MaiBot 正式 chat_manager 创建或读取的 session_id。来源权限按当前 conversation_ref 限定；没有会话的后台模型调用不派生聊天身份。history_generation 是实际输入历史的内容摘要，invocation_id 标识真实宿主模型调用。`instance_id` 使用实际 task/request_type 的串行调用 lane；同一 lane 重建后恢复已接纳 track 和游标，工具续轮继续保留完整宿主历史。role 来自实际 request_type，audience 从 chat_manager 的真实 group/direct 会话取得；未知会话会明确报错。每次调用重新按该模型的实际完整 wire 输入测量，参数回退单独接纳、记录结果。
 
 Nous 的 `contexts` 配置为每个 consumer 管理预算、居民与可选 Steward。`consumers.maibot.steward_role="steward"` 使用同一模型资源图、Prompt 和调用账本；留空时只使用确定性的检索与预算编译。Steward 只选择当前可见条目，综合结果带 `steward_interpretation` 与归因。居民过期使用 DBOS 正式 schedule，接触不会刷新其实际使用时间。
-
 
 图谱搜索通过现有 MemoryService.graph_admin → SDK invoke → `memory_graph_admin` 接入：
 
@@ -124,7 +122,6 @@ search 按实体名称、真实身份、关系两端名称与谓词进行精确�
 
 CLI 对应 `nous graph-search <namespace-id> <subject-id> <query> --limit 50`；MCP 的 `memory_graph_admin` 接受上述 action，额外字段放入 arguments；CLI `nous graph <namespace-id> <subject-id> <action> --request change.json` 使用同一字段。
 
-
 人物查看使用 MaiBot 既有 `src/services/memory_service.py::MemoryService.profile_admin`，RPC 直接传 `memory_profile_admin`，不在调用端转换成另一工具：
 
 ```python
@@ -138,4 +135,6 @@ if people["items"]:
 
 query/evidence 也可传 person_keyword（或 keyword）按真实人物主名、别名精确选择；歧义返回错误。get_person_profile 复用同一人物选择和证据读取。人物与每条属性证据均沿现有 Cognition/SourceRead owner 授权，已撤回或不可读的属性证据不会放出。profile_version 是当前 Native Entity 修订；profile_source=nous_entity，别名只返回实际 effective_aliases。原 A-Memorix get_person_profile 的 chat_id 保持其全局人物查看语义，来源范围仍由 SourceReadScope 限定。
 
-force_refresh=true 明确返回 profile_refresh_unavailable，不提交或伪报刷新。别名覆盖、画像覆盖与证据纠正需要相应写入 owner；这些写入 action 当前返回 capability_unavailable。CLI `nous profile <namespace-id> <subject-id> --action list` 与 MCP memory_profile_admin 使用同一操作。
+`force_refresh=true` 显式形成并采纳该 Person 的自动摘要和别名，需配置 `person_profile` 模型角色；人工覆盖继续生效。`set_aliases/delete_aliases`、`set_override/delete_override` 保存或撤销源支持的人工控制；`correct_evidence` 使用 evidence 返回的精确 `hash`/`evidence_key` 撤回对应属性支持，`refresh=false` 可只纠正不调用模型。CLI `nous profile <namespace-id> <subject-id> --action list` 与 MCP memory_profile_admin 使用同一操作。
+
+模型输出、reasoning、原生工具调用与工具结果继续由 MaiBot 的 ContextItems/历史 owner 持久保存；Nous overlay 不写回该历史。Context 反馈保存实际 provider/model/response身份、输出 item 与 toolcall IDs；没有观测到的 actual_use 不填。模型成功快照先于反馈提交，Nous 准备、权限和反馈错误直接向调用者传播，宿主不因此切模型重复付费。

@@ -8,7 +8,7 @@ from nous_wave.contracts import (
     MediaRecord,
 )
 from numpy.typing import NDArray
-from pydantic import BaseModel, TypeAdapter
+from pydantic import BaseModel, JsonValue, TypeAdapter
 
 from nous.cognition.projection import body_text
 from nous.material.service import SourceRecord
@@ -58,3 +58,4 @@ class GraphAssets:
     candidate_source_indices: NDArray[np.uint64]
     graph_source_indptr: NDArray[np.uint64]
     graph_source_indices: NDArray[np.uint64]
+    diagnostics: dict[str, JsonValue]

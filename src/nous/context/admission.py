@@ -44,7 +44,7 @@ async def admit_managed(
             return replay
         value = await self.read_preparation_in(tx, ctx, command.preparation_id)
         preparation = ContextPreparation.model_validate(value["preparation"])
-        if preparation.state != "prepared":
+        if preparation.state not in {"prepared", "admitted"}:
             raise DomainError("context_not_prepared", "Only a pending preparation can be admitted")
         projection = ContextProjection.model_validate(value["full_projection"])
         expected = tuple(segment.key for segment in projection.segments)
@@ -75,7 +75,7 @@ async def admit_managed(
                 select(tracks.c.record).where(tracks.c.id == projection.cursor.track_id)
             )
         ).scalar_one_or_none()
-        if preparation.response.kind == "append":
+        if preparation.state == "prepared" and preparation.response.kind == "append":
             current = ContextProjection.model_validate(prior) if prior is not None else None
             if current is None or current.cursor != preparation.request.known_cursor:
                 raise DomainError(
@@ -123,7 +123,9 @@ async def admit_managed(
                 record=record,
             )
         )
-        if prior is None:
+        if preparation.state == "admitted":
+            pass
+        elif prior is None:
             await tx.connection.execute(
                 tracks.insert().values(
                     id=projection.cursor.track_id,
@@ -281,6 +283,7 @@ async def report_managed(
             outcome=command.outcome,
             occurred_at=command.occurred_at,
             uses=command.uses,
+            output=command.output,
             commit_seq=tx.commit_seq,
         )
         await tx.connection.execute(

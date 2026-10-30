@@ -37,7 +37,16 @@ class RouteResource(BaseModel):
 
 class RoleResource(BaseModel):
     routes: tuple[str, ...] = Field(min_length=1)
-    purpose: Literal["formation", "description", "embedding", "steward", "maintenance", "rerank"]
+    purpose: Literal[
+        "formation",
+        "description",
+        "embedding",
+        "steward",
+        "maintenance",
+        "rerank",
+        "person_profile",
+        "episode",
+    ]
     output_mode: Literal["text", "json_schema"] = "json_schema"
     prompt_id: str = "formation"
     max_calls_per_day: int = Field(default=50, ge=0)

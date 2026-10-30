@@ -5,9 +5,11 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
+from uuid import uuid4
 
 from nous_wave import NousClient
 from nous_wave.amemorix import AMemorixAdapter
+from nous_wave.amemorix.contracts import ProfileAdminInput
 from nous_wave.contracts import AdmitFiles, AdoptCognition, DomainError, QueryRequest
 from nous_wave.contracts.context import (
     ContextAdmissionCommand,
@@ -129,26 +131,12 @@ def run(
         )
 
     @mcp.tool()
-    async def memory_profile_admin(
-        action: Literal["list", "query", "evidence", "get_aliases"],
-        person_id: str = "",
-        person_keyword: str = "",
-        limit: int = 10,
-        force_refresh: bool = False,
-        context_text: str = "",
-    ) -> JsonObject:
-        """Browse retained person knowledge, aliases and supported evidence. Forced refresh needs its formation operation."""
-        return await call(
-            "memory_profile_admin",
-            {
-                "action": action,
-                "person_id": person_id,
-                "person_keyword": person_keyword,
-                "limit": limit,
-                "force_refresh": force_refresh,
-                "context_text": context_text,
-            },
-        )
+    async def memory_profile_admin(command: ProfileAdminInput) -> JsonObject:
+        """Read profiles or explicitly change aliases, profile text and exact evidence."""
+        values = command.model_dump(mode="json")
+        if not values.get("operation_id"):
+            values["operation_id"] = str(uuid4())
+        return await call("memory_profile_admin", values)
 
     @mcp.tool()
     async def maintain_memory(

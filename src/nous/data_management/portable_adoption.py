@@ -28,6 +28,7 @@ from nous_wave.contracts import (
     TimeRange,
 )
 from nous_wave.contracts.bundles import PackageDescriptor
+from nous_wave.contracts.cognition import PersonProfileControls
 from nous_wave.contracts.management import BundleMaterial, BundleObservation
 from pydantic import JsonValue, TypeAdapter
 
@@ -270,16 +271,44 @@ def normalize(loaded: PortableArchive, data: bytes) -> SubjectBundle:
         refs = tuple(
             memories[paragraph] for paragraph in sorted(mentioned) if paragraph in memories
         )
+        body_metadata = metadata(entity.get("metadata"))
+        controls = PersonProfileControls.model_validate(body_metadata.get("profile_controls") or {})
+        if controls.aliases is not None or controls.summary is not None:
+            _, control_observation = source(
+                "entity:" + key, canonical(entity), key + ".json", "application/json"
+            )
+            imported_evidence = (
+                EvidenceLink(observation_id=control_observation, role="portable_profile_record"),
+            )
+            controls = controls.model_copy(
+                update={
+                    "aliases": controls.aliases.model_copy(update={"evidence": imported_evidence})
+                    if controls.aliases is not None
+                    else None,
+                    "summary": controls.summary.model_copy(update={"evidence": imported_evidence})
+                    if controls.summary is not None
+                    else None,
+                }
+            )
+        else:
+            imported_evidence = ()
         ref = adopt(
             key,
             EntityBody(
                 label=name,
                 entity_type="other",
                 identifiers={"amemorix:entity": key},
-                description=str(entity.get("description") or ""),
+                aliases=_STRINGS.validate_python(body_metadata.get("aliases") or ()),
+                description=TypeAdapter(str).validate_python(
+                    body_metadata.get("description", entity.get("description") or "")
+                ),
+                profile_controls=controls,
                 mentions=tuple(EntityMention(reference=item) for item in refs),
             ),
-            links=tuple(EvidenceLink(reference=item) for item in refs) or evidence,
+            links=(
+                *(tuple(EvidenceLink(reference=item) for item in refs) or evidence),
+                *imported_evidence,
+            ),
         )
         entities[key], entity_names[name] = ref, ref
     relation_rows = rows(tables.get("relations"))
@@ -370,7 +399,8 @@ def normalize(loaded: PortableArchive, data: bytes) -> SubjectBundle:
                     start=start.coordinate if start else None, end=end.coordinate if end else None
                 ),
                 members=members,
-                boundary_explanation=str(episode.get("summary") or ""),
+                summary=str(episode.get("summary") or ""),
+                boundary_explanation="Imported A-Memorix episode membership",
             ),
             links=tuple(EvidenceLink(reference=member.reference) for member in members) or evidence,
             raw=episode,

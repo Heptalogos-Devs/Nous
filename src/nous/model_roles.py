@@ -2,7 +2,9 @@
 
 from nous_wave.contracts.cognition import FormationDraft
 from nous_wave.contracts.context import ContextSegment, ContextUsage, StewardProposal
+from nous_wave.contracts.episodes import EpisodeSegmentationDraft, EpisodeSegmentationInput
 from nous_wave.contracts.growth import GrowthProposal
+from nous_wave.contracts.person_profiles import PersonProfileDraft, PersonProfileModelInput
 from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
 from nous.imports.model_contracts import MediaFormationDraft
@@ -100,5 +102,15 @@ def register(registry: RoleRegistry) -> None:
         RoleDefinition("steward", "selection", StewardInput, StewardProposal, default=True),
         RoleDefinition("maintenance", "proposal", MaintenanceInput, GrowthProposal, default=True),
         RoleDefinition("rerank", "ranking", RerankInput, Ranking, default=True),
+        RoleDefinition(
+            "person_profile", "text", PersonProfileModelInput, PersonProfileDraft, default=True
+        ),
+        RoleDefinition(
+            "episode",
+            "segmentation",
+            EpisodeSegmentationInput,
+            EpisodeSegmentationDraft,
+            default=True,
+        ),
     ):
         registry.register(entry)

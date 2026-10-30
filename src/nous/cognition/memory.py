@@ -23,6 +23,7 @@ from nous_wave.contracts import (
     CognitiveRecord,
     DomainError,
     EvidenceLink,
+    ImportDocument,
     MemoryBody,
     MemoryChange,
     MemoryLifecycle,
@@ -31,7 +32,12 @@ from nous_wave.contracts import (
 
 
 async def change_memory_in(
-    self: CognitionService, tx: WriteTx, ctx: CallContext, command: MemoryChange
+    self: CognitionService,
+    tx: WriteTx,
+    ctx: CallContext,
+    command: MemoryChange,
+    *,
+    revision_source: EvidenceLink | None = None,
 ) -> CognitiveRecord:
     from .lifecycle import transition
 
@@ -48,6 +54,8 @@ async def change_memory_in(
         raise DomainError("invalid_memory_edit", "A body edit is accepted only for revise")
     if command.action == "revise" and command.body is None:
         raise DomainError("invalid_memory_edit", "Revise requires the complete edited memory body")
+    if command.action == "revise" and revision_source is None:
+        raise DomainError("memory_revision_source_required", "Admit the actual edited input first")
     now = int(__import__("datetime").datetime.fromisoformat(tx.recorded_at).timestamp() * 1000)
     lifecycle = previous.lifecycle or MemoryLifecycle(
         anchor_unix_ms=previous.times.recorded.coordinate
@@ -63,11 +71,13 @@ async def change_memory_in(
             id=previous.reference.id,
             expected_revision=command.reference.revision,
             body=command.body or previous.body,
-            evidence=(
+            evidence=(revision_source,)
+            if revision_source is not None
+            else (
                 EvidenceLink(reference=previous.reference, role=command.reason or command.action),
             ),
             times=previous.times,
-            producer_call_id=previous.producer_call_id,
+            producer_call_id=None if command.action == "revise" else previous.producer_call_id,
         ),
     )
     result = result.model_copy(
@@ -166,19 +176,72 @@ async def change_memory_in(
 async def change_memory(
     self: CognitionService, ctx: CallContext, command: MemoryChange
 ) -> CognitiveRecord:
-    async with self.authority.write(
-        ctx,
-        command.operation_id,
-        operation_kind="memory.change",
-        scope=ctx.require_subject(),
-        payload=command,
-    ) as tx:
-        if tx.replayed:
-            return await self.replay_record_in(
-                tx, ctx, CognitiveRecord.model_validate(tx.replay_result)
+    document = (
+        ImportDocument(
+            text=command.model_dump_json(),
+            format="json",
+            filename="memory-revision.json",
+            media_type="application/json",
+            source_type="administrative_change",
+            source="memory_management",
+            origin={"caller_id": ctx.caller_id},
+        )
+        if command.action == "revise"
+        else None
+    )
+    store = self.materials.content_store
+    lease = (
+        await store.publish_bytes(document.inline_text().encode(), document.media_type)
+        if document is not None and store
+        else None
+    )
+    try:
+        async with self.authority.write(
+            ctx,
+            command.operation_id,
+            operation_kind="memory.change",
+            scope=ctx.require_subject(),
+            payload=command,
+        ) as tx:
+            if tx.replayed:
+                result = CognitiveRecord.model_validate(tx.replay_result)
+                if document is not None and ctx.source_groups():
+                    admission = await self.materials.restore_input_in(
+                        tx,
+                        ctx,
+                        operation_id=command.operation_id,
+                        operation_kind="memory.change",
+                        scope=ctx.require_subject(),
+                    )
+                    effective = await self.qualify_known_outputs_in(
+                        tx,
+                        ctx,
+                        (result.reference,),
+                        operation_id=command.operation_id,
+                        operation_kind="memory.change",
+                        scope=ctx.require_subject(),
+                        input_material_ids=admission.material_ids,
+                    )
+                else:
+                    effective = ctx
+                return await self.replay_record_in(tx, effective, result)
+            effective, revision_source = ctx, None
+            if document is not None:
+                await self.get_in(tx, ctx, command.reference)
+                admission = await self.materials.admit_text_in(tx, ctx, document, lease)
+                effective = admission.context
+                revision_source = EvidenceLink(
+                    observation_id=admission.event["id"], role="memory_revision"
+                )
+            result = tx.result(
+                await change_memory_in(
+                    self, tx, effective, command, revision_source=revision_source
+                )
             )
-        result = tx.result(await change_memory_in(self, tx, ctx, command))
-    if command.action == "purge" and self.invalidate:
+    finally:
+        if lease and store:
+            await store.release(lease)
+    if self.invalidate:
         await self.invalidate()
     return result
 
@@ -326,6 +389,6 @@ async def change_memories(
                 tx, ctx, TypeAdapter(tuple[CognitiveRecord, ...]).validate_python(tx.replay_result)
             )
         result = tx.result(await self.change_memories_in(tx, ctx, command))
-    if command.action == "purge" and self.invalidate:
+    if self.invalidate:
         await self.invalidate()
     return result

@@ -67,6 +67,10 @@ class AMemorixService:
             from .profile_admin import profile_admin
 
             return await profile_admin(self, ctx, arguments)
+        if tool == "memory_episode_admin":
+            from .episodes import episode_admin
+
+            return await episode_admin(self, ctx, arguments)
         if tool == "memory_source":
             from nous_wave.contracts.source_graph import ExpandSources
 

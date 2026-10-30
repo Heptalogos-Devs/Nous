@@ -20,6 +20,7 @@ class ManagedContexts(DurableContexts):
     derivations: DerivedService | None
 
     read_preparation_in = compilation.read_preparation_in
+    read_track = compilation.read_track
     require_targets_in = compilation.require_targets_in
     media_segment_in = compilation.media_segment_in
     prepare = compilation.prepare

@@ -12,6 +12,7 @@ from nous_wave.contracts.context import (
     ContextFeedback,
     ContextPrepare,
     ContextReport,
+    ContextTrack,
     OpenContextSession,
 )
 
@@ -40,6 +41,11 @@ def register(cli: typer.Typer) -> None:
     def prepare(ctx: typer.Context, namespace_id: str, subject_id: str, command: Path) -> None:
         value = read_command(command, ContextPrepare)
         invoke(ctx, lambda api: api.prepare_context(namespace_id, subject_id, value))
+
+    @group.command("track")
+    def track(ctx: typer.Context, namespace_id: str, subject_id: str, command: Path) -> None:
+        value = read_command(command, ContextTrack)
+        invoke(ctx, lambda api: api.context_track(namespace_id, subject_id, value))
 
     @group.command("preparation")
     def preparation(

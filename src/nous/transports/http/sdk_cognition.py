@@ -4,6 +4,7 @@ from fastapi import APIRouter, Request
 from nous_wave.contracts import CognitiveRef, DomainError
 from nous_wave.contracts.cognition import CognitiveKind
 from nous_wave.contracts.lifecycle import MemoryChanges
+from nous_wave.contracts.person_profiles import PersonProfileChange, RefreshPersonProfile
 from pydantic import TypeAdapter
 from sqlalchemy import select
 
@@ -13,6 +14,32 @@ from .sdk_common import OperationIdentity, cognitive_context
 from .security import application, context
 
 router = APIRouter()
+
+
+@router.post("/namespaces/{namespace_id}/subjects/{subject_id}/person-profiles/change")
+async def change_person_profile(
+    request: Request,
+    namespace_id: str,
+    subject_id: str,
+    command: PersonProfileChange,
+):
+    return await application(request).person_profiles.change(
+        await context(request, namespace_id, subject_id, capability="write"),
+        command,
+    )
+
+
+@router.post("/namespaces/{namespace_id}/subjects/{subject_id}/person-profiles/refresh")
+async def refresh_person_profile(
+    request: Request,
+    namespace_id: str,
+    subject_id: str,
+    command: RefreshPersonProfile,
+):
+    return await application(request).person_profiles.submit_refresh(
+        await context(request, namespace_id, subject_id, capability="write"),
+        command,
+    )
 
 
 class CognitiveDeletion(OperationIdentity):

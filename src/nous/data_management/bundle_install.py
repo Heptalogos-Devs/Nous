@@ -27,7 +27,7 @@ from nous_wave.contracts.references import ObjectTarget, ReferenceBinding
 from pydantic import JsonValue, TypeAdapter
 from sqlalchemy import select
 
-from nous.cognition.projection import references_in
+from nous.cognition.projection import evidence_in, references_in
 from nous.cognition.schema import revisions, vectors
 from nous.identity.service import require_subject_in
 from nous.imports.schema import catalogs, inputs, outputs, successes, units
@@ -118,7 +118,7 @@ async def install_prepared(
                 "bundle_source_missing", "Cognition has an unresolved supporting source"
             )
         for ref in list(references_in(record.body)) + [
-            link.reference for link in record.evidence if link.reference
+            link.reference for link in evidence_in(record) if link.reference
         ]:
             if ref.exact() not in keys:
                 raise DomainError(
@@ -126,7 +126,9 @@ async def install_prepared(
                     "Cognition has an unresolved exact revision",
                     reference=ref.exact(),
                 )
-        if any(link.observation_id and link.observation_id not in obs for link in record.evidence):
+        if any(
+            link.observation_id and link.observation_id not in obs for link in evidence_in(record)
+        ):
             raise DomainError(
                 "bundle_source_missing", "Cognition evidence has an unresolved observation"
             )
