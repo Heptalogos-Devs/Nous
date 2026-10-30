@@ -10,12 +10,23 @@ from nous_wave.contracts.context import (
     ContextReport,
     ContextTrack,
     OpenContextSession,
+    ReadContextSource,
 )
 
 from .sdk_common import OperationIdentity
 from .security import application, context
 
 router = APIRouter()
+
+
+@router.post("/namespaces/{namespace_id}/subjects/{subject_id}/contexts/source")
+async def context_source(
+    request: Request, namespace_id: str, subject_id: str, command: ReadContextSource
+):
+    return await application(request).contexts.read_context_source(
+        await context(request, namespace_id, subject_id, capability="write"),
+        command,
+    )
 
 
 @router.post("/namespaces/{namespace_id}/subjects/{subject_id}/contexts/track")

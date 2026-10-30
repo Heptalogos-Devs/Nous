@@ -21,13 +21,12 @@ from nous_wave.contracts import (
 from nous_wave.contracts.cognition import PersonAliasOverride, PersonSummaryOverride
 from nous_wave.contracts.lifecycle import MemoryChange
 from nous_wave.contracts.person_profiles import PersonProfileChange, PersonProfileChangeResult
-from sqlalchemy import update
 
 from nous.identity.service import require_subject_in
 from nous.platform.persistence import Authority, ReadView, WriteTx
 
 from . import person_refresh
-from .schema import revisions
+from .revision_state import RevisionState
 
 if TYPE_CHECKING:
     from .models import ModelServices
@@ -36,6 +35,7 @@ if TYPE_CHECKING:
 
 class PersonProfileService:
     submit_refresh = person_refresh.submit_refresh
+    submit_refresh_in = person_refresh.submit_refresh_in
     run_refresh = person_refresh.run_refresh
 
     def __init__(self, authority: Authority, cognition: CognitionService, models: ModelServices):
@@ -95,24 +95,13 @@ class PersonProfileService:
                 times=previous.times,
                 producer_call_id=producer_call_id,
             ),
-        )
-        value = value.model_copy(
-            update={
-                "cause": RevisionCause(
-                    action=action,
-                    actor=ctx.caller_id,
-                    reason=reason,
-                    parent=previous.reference,
-                )
-            }
-        )
-        await tx.connection.execute(
-            update(revisions)
-            .where(
-                revisions.c.id == value.reference.id,
-                revisions.c.revision == value.reference.revision,
-            )
-            .values(record=value.model_dump(mode="json"))
+            state=RevisionState(
+                cause=RevisionCause(
+                    action=action, actor=ctx.caller_id, reason=reason, parent=previous.reference
+                ),
+                lifecycle=previous.lifecycle,
+                deleted=previous.deleted,
+            ),
         )
         return value
 

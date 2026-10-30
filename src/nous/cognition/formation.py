@@ -9,6 +9,7 @@ from sqlalchemy import select
 from nous.platform.persistence import ReadView, WriteTx
 
 from .formation_validation import validate_formation_draft
+from .lifecycle import selectable
 from .schema import revisions
 
 if TYPE_CHECKING:
@@ -151,11 +152,9 @@ async def formation_catalog_in(
     ).scalars()
     for value in rows:
         record = CognitiveRecord.model_validate(value)
-        if record.deleted or not await self.visible_in(view, ctx, record):
+        if not selectable(record) or not await self.visible_in(view, ctx, record):
             continue
         body = record.body
-        if isinstance(body, ConceptBody) and body.state != "active":
-            continue
         label = (
             body.label
             if isinstance(body, (ConceptBody, EntityBody))

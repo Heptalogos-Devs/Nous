@@ -23,6 +23,7 @@ def defaults() -> RetrievalPolicy:
     }
     # Ghost vectors are request data and have no admission owner in this policy.
     del value["vcp"]["ghost_tags"]
+    del value["vcp"]["core_keys"]
     return RetrievalPolicy.model_validate(value)
 
 

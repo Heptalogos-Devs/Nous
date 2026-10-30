@@ -21,13 +21,14 @@ from nous_wave.contracts import (
     TimePoint,
 )
 from nous_wave.contracts.graph_management import GraphChange, GraphChangeResult
-from sqlalchemy import func, select, update
+from sqlalchemy import func, select
 
 from nous.identity.service import require_subject_in
 from nous.platform.persistence import WriteTx
 
 from .graph_state import heads_in, resolve_entity
-from .schema import revisions, vectors
+from .revision_state import RevisionState
+from .schema import vectors
 
 if TYPE_CHECKING:
     from .service import CognitionService
@@ -61,20 +62,13 @@ async def revised(
             ),
             times=previous.times,
         ),
-    )
-    value = value.model_copy(
-        update={
-            "cause": RevisionCause(
+        state=RevisionState(
+            cause=RevisionCause(
                 action="graph_change", actor=ctx.caller_id, reason=reason, parent=previous.reference
-            )
-        }
-    )
-    await tx.connection.execute(
-        update(revisions)
-        .where(
-            revisions.c.id == value.reference.id, revisions.c.revision == value.reference.revision
-        )
-        .values(record=value.model_dump(mode="json"))
+            ),
+            lifecycle=previous.lifecycle,
+            deleted=previous.deleted,
+        ),
     )
     return value
 

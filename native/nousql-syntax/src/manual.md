@@ -41,7 +41,7 @@ CLI、HTTP 和 MCP 使用同一 `QueryRequest`。语言放在 `input.text`，调
 讨论涉及哪些人物？ $return(entity)
 ```
 
-返回范围包括 `cognition`、`media` 和具体认知种类：`memory`、`memory_semantics`、`concept`、`entity`、`episode`、`journal`、`schema`、`association`。`cognition` 单独使用。`$limit` 设置结果数量，受实例检索额度限制。
+返回范围包括 `cognition`、`media` 和具体认知种类：`memory`、`memory_semantics`、`concept`、`entity`、`episode`、`journal`、`schema`、`association`、`fact_claim` 等正式 CognitiveKind。`$return(fact_claim)` 读取正式事实主张。`cognition` 单独使用。`$limit` 设置结果数量，受实例检索额度限制。
 
 `$materialize` 展开所选对象的正式来源视图。展开仍检查来源读取范围，完整身份、实际来源事件和清除缺口保留在机器结果中。
 
@@ -130,6 +130,10 @@ $all("发布风险", "回滚策略") $return(memory)
 字面标记用 `\$`、`\@`、`\#`、`\\` 转义。把外部文字拼入查询时，通过 `QuerySyntax.canonical()` 或等价的字面转义保留其文字含义。
 
 ## 阅读结果
+
+VCP 模式下，`@entity` 和 `@tag` 把已授权对象的精确身份作为本次 core，参与原生门控、传播、融合与直接接触评分。`#主题` 或 `#("完整查询概念")` 使用实际 embedding 生成临时查询向量；它们不登记新的 Concept、Entity 或关联。机器请求也可在 `vcp.core` 中给出精确认知引用，在 `vcp.concepts` 中提供 `{text,is_core}`。
+
+`$explore` 请求 VCP 的 Thinking 方法路线，机器入口可设 `vcp.thinking=true`。`result.vcp` 保存实际绑定的 core、查询概念 producer 和 Thinking 阶段；路线使用正式对象引用。若当前图没有可用路线，所需能力为 required 时返回明确错误，optional 时保留 unavailable 结果与降级原因。`$diagnostics(none)` 保留这些请求结果。
 
 优先阅读返回的内容与正式引用，再按需要展开来源。机器结果中的 `coverage` 说明本次覆盖状态，`plan` 包含实际绑定、截点、时间单位及分支工作量。`$diagnostics(none)` 省略计划；`full` 保留详细检索诊断。
 

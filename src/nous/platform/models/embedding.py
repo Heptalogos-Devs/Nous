@@ -7,6 +7,7 @@ import json
 from collections.abc import Awaitable, Callable
 
 from nous_wave.contracts import CallContext, DomainError, EmbeddingBatch, MediaEmbeddingInput
+from nous_wave.contracts.model_routing import ModelRouteAttempt
 from openai import AsyncOpenAI
 from pydantic import BaseModel, Field, JsonValue
 
@@ -16,6 +17,7 @@ from nous.platform.network.service import NetworkService
 
 from .generation import MediaInput
 from .ledger import CallLedger
+from .outcomes import outcome
 
 MediaResolver = Callable[[CallContext, MediaEmbeddingInput], Awaitable[MediaInput]]
 
@@ -90,6 +92,7 @@ async def embed_media(
     source_ids: tuple[str, ...],
     *,
     invocation_id: str | None = None,
+    routing: ModelRouteAttempt | None = None,
 ) -> EmbeddingBatch:
     vectors: list[tuple[float, ...]] = []
     call_ids: list[str | None] = []
@@ -111,7 +114,12 @@ async def embed_media(
         }
         identity = f"{invocation_id}:{index}" if invocation_id is not None else None
         call_id, cached = await ledger.reserve(
-            ctx, "embedding", snapshot, route.max_calls_per_day, invocation_id=identity
+            ctx,
+            "embedding",
+            snapshot,
+            route.max_calls_per_day,
+            invocation_id=identity,
+            routing=routing,
         )
         if cached is not None:
             result = retained_embedding(cached, call_id)
@@ -171,7 +179,14 @@ async def embed_media(
             raise
         except Exception as error:
             code = str(getattr(error, "status_code", type(error).__name__))
-            await ledger.finish(ctx, call_id, None, {"response": raw}, code)
+            await ledger.finish(
+                ctx,
+                call_id,
+                None,
+                {"response": raw},
+                code,
+                outcome=outcome(error, response_received=raw is not None),
+            )
             raise Unavailable(
                 f"Media embedding failed ({code})",
                 context={

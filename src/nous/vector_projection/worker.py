@@ -242,7 +242,7 @@ async def run(self: VectorProjectionService, identity: str) -> dict[str, object]
                             ctx,
                             target.target,
                             request.profile.resource_key(),
-                            head_only=False,
+                            head_only=request.head_only,
                         )
                         if actual != target.input:
                             raise DomainError(

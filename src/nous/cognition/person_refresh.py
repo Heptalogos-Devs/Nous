@@ -64,42 +64,138 @@ async def submit_refresh(
             result = PersonProfileRefreshSubmission.model_validate(tx.replay_result)
             await self.person_in(tx, ctx, result.reference)
             return result
-        await require_subject_in(tx, ctx, "memory")
-        record = await self.person_in(tx, ctx, command.reference)
-        assert isinstance(record.body, EntityBody)
-        indices: list[int] = []
-        for index, attribute in enumerate(record.body.attributes):
-            try:
-                await evidence_sources(self, tx, ctx, attribute.evidence)
-            except DomainError as error:
-                if error.code not in {
-                    "source_unavailable",
-                    "cognition_not_found",
-                    "region_not_found",
-                    "profile_evidence_unavailable",
-                }:
-                    raise
-                continue
-            indices.append(index)
-            if len(indices) == command.evidence_limit:
-                break
-        if not indices:
+        return tx.result(await submit_refresh_in(self, tx, ctx, command))
+
+
+async def submit_refresh_in(
+    self: PersonProfileService,
+    tx: WriteTx,
+    ctx: CallContext,
+    command: RefreshPersonProfile,
+) -> PersonProfileRefreshSubmission:
+    from .fact_reads import current_person_claims_in
+
+    await require_subject_in(tx, ctx, "memory")
+    record = await self.person_in(tx, ctx, command.reference)
+    assert isinstance(record.body, EntityBody)
+    indices: list[int] = []
+    for index, attribute in enumerate(record.body.attributes):
+        try:
+            await evidence_sources(self, tx, ctx, attribute.evidence)
+        except DomainError as error:
+            if error.code not in {
+                "source_unavailable",
+                "cognition_not_found",
+                "region_not_found",
+                "profile_evidence_unavailable",
+            }:
+                raise
+            continue
+        indices.append(index)
+        if len(indices) == command.evidence_limit:
+            break
+    claims = await current_person_claims_in(self.cognition, tx, ctx, record.reference.id)
+    intent = PersonProfileRefreshIntent(
+        context=ctx,
+        command=command,
+        attribute_indices=tuple(indices),
+        claim_refs=tuple(
+            claim.reference for claim in claims[: max(0, command.evidence_limit - len(indices))]
+        ),
+    )
+    job = await tx.enqueue(
+        JobSpec(
+            "nous.person_profile.refresh",
+            "formation",
+            args=(intent.model_dump(mode="json"),),
+        )
+    )
+    return PersonProfileRefreshSubmission(job_id=job.workflow_id, reference=record.reference)
+
+
+async def profile_input_in(
+    self: PersonProfileService,
+    view: ReadView | WriteTx,
+    intent: PersonProfileRefreshIntent,
+) -> tuple[PersonProfileModelInput, dict[str, tuple[EvidenceLink, ...]], tuple[str, ...]]:
+    from nous_wave.contracts.fact_body import FactClaimBody, PersonFactScope
+
+    from nous.platform.persistence.authority import canonical_json
+
+    from .fact_reads import claim_in
+
+    ctx, command = intent.context, intent.command
+    record = await self.person_in(view, ctx, command.reference)
+    assert isinstance(record.body, EntityBody)
+    head = await view.connection.scalar(
+        select(revisions.c.head).where(
+            revisions.c.id == record.reference.id,
+            revisions.c.revision == record.reference.revision,
+        )
+    )
+    if not head:
+        raise DomainError("revision_conflict", "The Person changed after its refresh was frozen")
+    catalog: dict[str, tuple[EvidenceLink, ...]] = {}
+    evidence: list[PersonProfileEvidence] = []
+    for index, position in enumerate(intent.attribute_indices):
+        attribute = record.body.attributes[position]
+        key = f"E{index + 1}"
+        catalog[key] = attribute.evidence
+        evidence.append(
+            PersonProfileEvidence(
+                key=key,
+                claim=f"{attribute.predicate}: {attribute.value}",
+                epistemic=attribute.epistemic.model_dump_json(),
+                validity=attribute.validity.model_dump_json()
+                if attribute.validity
+                else "unspecified",
+            )
+        )
+    for index, reference in enumerate(intent.claim_refs):
+        claim = await claim_in(self.cognition, view, ctx, reference)
+        body = claim.body
+        current = await view.connection.scalar(
+            select(revisions.c.head).where(
+                revisions.c.id == reference.id,
+                revisions.c.revision == reference.revision,
+            )
+        )
+        if (
+            not current
+            or claim.deleted
+            or not isinstance(body, FactClaimBody)
+            or body.status != "active"
+            or body.stability != "stable"
+            or not isinstance(body.scope, PersonFactScope)
+            or body.scope.person.id != record.reference.id
+            or claim.times.validity is not None
+            and not claim.times.validity.contains(ctx.clock)
+        ):
             raise DomainError(
-                "profile_evidence_required", "No lawful Person attributes are available to refresh"
+                "profile_evidence_changed", "A frozen profile claim has changed or expired"
             )
-        intent = PersonProfileRefreshIntent(
-            context=ctx, command=command, attribute_indices=tuple(indices)
-        )
-        job = await tx.enqueue(
-            JobSpec(
-                "nous.person_profile.refresh",
-                "formation",
-                args=(intent.model_dump(mode="json"),),
+        key = f"F{index + 1}"
+        catalog[key] = (EvidenceLink(reference=reference, role="fact_claim"),)
+        evidence.append(
+            PersonProfileEvidence(
+                key=key,
+                claim=f"{body.fact_key} ({body.polarity}): {body.value_text}",
+                epistemic=canonical_json(
+                    {
+                        "classification": "reported",
+                        "authority": body.authority,
+                        "confidence": body.confidence,
+                    }
+                ),
+                validity=claim.times.validity.model_dump_json()
+                if claim.times.validity
+                else "unspecified",
             )
         )
-        return tx.result(
-            PersonProfileRefreshSubmission(job_id=job.workflow_id, reference=record.reference)
-        )
+    roots = await evidence_sources(
+        self, view, ctx, tuple(link for links in catalog.values() for link in links)
+    )
+    return PersonProfileModelInput(name=record.body.label, evidence=tuple(evidence)), catalog, roots
 
 
 async def run_refresh(self: PersonProfileService, payload: JsonValue) -> JsonValue:
@@ -116,55 +212,33 @@ async def run_refresh(self: PersonProfileService, payload: JsonValue) -> JsonVal
     if receipt is not None:
         return receipt.result
     async with self.authority.read(ctx) as view:
-        record = await self.person_in(view, ctx, command.reference)
-        head = await view.connection.scalar(
-            select(revisions.c.head).where(
-                revisions.c.id == record.reference.id,
-                revisions.c.revision == record.reference.revision,
-            )
+        variables, catalog, source_ids = await profile_input_in(self, view, intent)
+    call_id: str | None = None
+    support: tuple[EvidenceLink, ...] = ()
+    summary, aliases = "", ()
+    if catalog:
+        generated = await self.models.generate(
+            ctx,
+            "person_profile",
+            variables.model_dump(),
+            PersonProfileDraft,
+            source_ids=source_ids,
+            invocation_id="person-profile:" + command.operation_id,
         )
-        if not head:
+        if set(generated.output.evidence_keys).difference(catalog):
             raise DomainError(
-                "revision_conflict", "The Person changed after its refresh was frozen"
+                "profile_evidence_unknown",
+                "The profile cites an unknown evidence key",
+                call_id=generated.call_id,
             )
-        assert isinstance(record.body, EntityBody)
-        attributes = [record.body.attributes[index] for index in intent.attribute_indices]
-        links = tuple(link for attribute in attributes for link in attribute.evidence)
-        source_ids = await evidence_sources(self, view, ctx, links)
-        variables = PersonProfileModelInput(
-            name=record.body.label,
-            evidence=tuple(
-                PersonProfileEvidence(
-                    key=f"E{index + 1}",
-                    claim=f"{attribute.predicate}: {attribute.value}",
-                    epistemic=attribute.epistemic.model_dump_json(),
-                    validity=attribute.validity.model_dump_json()
-                    if attribute.validity
-                    else "unspecified",
-                )
-                for index, attribute in enumerate(attributes)
-            ),
+        support = tuple(
+            dict.fromkeys(link for key in generated.output.evidence_keys for link in catalog[key])
         )
-    generated = await self.models.generate(
-        ctx,
-        "person_profile",
-        variables.model_dump(),
-        PersonProfileDraft,
-        source_ids=source_ids,
-        invocation_id="person-profile:" + command.operation_id,
-    )
-    catalog = {f"E{index + 1}": attribute for index, attribute in enumerate(attributes)}
-    if set(generated.output.evidence_keys).difference(catalog):
-        raise DomainError(
-            "profile_evidence_unknown",
-            "The profile cites an unknown evidence key",
-            call_id=generated.call_id,
+        summary, aliases, call_id = (
+            generated.output.summary,
+            generated.output.aliases,
+            generated.call_id,
         )
-    support = tuple(
-        dict.fromkeys(
-            link for key in generated.output.evidence_keys for link in catalog[key].evidence
-        )
-    )
     async with self.authority.write(
         ctx,
         adoption_id,
@@ -174,28 +248,29 @@ async def run_refresh(self: PersonProfileService, payload: JsonValue) -> JsonVal
     ) as tx:
         if tx.replayed:
             return tx.replay_result
+        await profile_input_in(self, tx, intent)
         previous = await self.person_in(tx, ctx, command.reference)
         assert isinstance(previous.body, EntityBody)
-        await evidence_sources(self, tx, ctx, links)
-        body = previous.body.model_copy(
-            update={
-                "description": generated.output.summary,
-                "aliases": generated.output.aliases,
-            }
-        )
+        body = previous.body.model_copy(update={"description": summary, "aliases": aliases})
         value = await self.revise_in(
             tx,
             ctx,
             previous,
             body,
             (*previous.evidence, *support),
-            action="person_profile.refresh",
-            reason="Explicit single-person profile refresh",
-            producer_call_id=generated.call_id,
+            action="person_profile.refresh" if catalog else "person_profile.withdraw",
+            reason="Explicit single-person profile refresh"
+            if catalog
+            else "No retained profile evidence remains",
+            producer_call_id=call_id,
         )
         result = tx.result(
             TypeAdapter(JsonValue).validate_python(
-                {"reference": value.reference.model_dump(mode="json"), "call_id": generated.call_id}
+                {
+                    "reference": value.reference.model_dump(mode="json"),
+                    "call_id": call_id,
+                    "cleared_no_evidence": not bool(catalog),
+                }
             )
         )
     if self.cognition.invalidate:

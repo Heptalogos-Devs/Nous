@@ -14,6 +14,7 @@ from nous.platform.errors import NousError, Unavailable
 
 from .completion import require_complete_text
 from .ledger import CallLedger
+from .outcomes import outcome
 
 if TYPE_CHECKING:
     from .generation import MediaInput
@@ -125,7 +126,14 @@ async def complete_video[T: BaseModel | str](
             if isinstance(error, (DomainError, NousError))
             else str(getattr(error, "status_code", type(error).__name__))
         )
-        await ledger.finish(ctx, call_id, None, {"response": raw}, code)
+        await ledger.finish(
+            ctx,
+            call_id,
+            None,
+            {"response": raw},
+            code,
+            outcome=outcome(error, response_received=raw is not None),
+        )
         raise Unavailable(
             f"Video generation failed ({code})",
             context={

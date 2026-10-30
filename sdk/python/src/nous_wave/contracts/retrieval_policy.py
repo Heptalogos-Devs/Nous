@@ -139,10 +139,10 @@ class VcpPolicy(Contract):
     pipeline: VcpPipeline
     readout: VcpReadout
     candidate_limit: int = Field(ge=1)
-    core_tags: tuple[str, ...]
     include_trace: bool
     include_fields: bool
     thinking: bool
+    thinking_min_closure: FiniteFloat = Field(ge=0, le=1)
 
 
 class RetrievalPolicy(Contract):

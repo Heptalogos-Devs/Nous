@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from hashlib import sha256
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
@@ -23,6 +22,8 @@ from pydantic import JsonValue, TypeAdapter
 from sqlalchemy import select, update
 
 from .models import contexts, feedback, preparations, reports, sessions, tracks
+from .selection import segment_eligible_in
+from .uses import record_uses_in
 
 if TYPE_CHECKING:
     from .managed import ManagedContexts
@@ -56,6 +57,12 @@ async def admit_managed(
         targets = tuple(target for segment in projection.segments for target in segment.sources)
         # The current caller scope and the accepted preparation scope must both hold.
         await self.require_targets_in(tx, ctx, targets)
+        for segment in projection.segments:
+            if not await segment_eligible_in(self, tx, ctx, segment):
+                raise DomainError(
+                    "context_selection_inactive",
+                    "An automatically selected source is inactive; prepare this input again",
+                )
         accepted_scope = TypeAdapter(tuple[str, ...] | None).validate_python(value["source_scope"])
         accepted_constraints = TypeAdapter(tuple[tuple[str, ...], ...]).validate_python(
             value.get("source_constraints", ())
@@ -212,70 +219,7 @@ async def report_managed(
                 "context_invocation_mismatch",
                 "Outcome belongs to a different actual invocation",
             )
-        for use in command.uses:
-            if use.target not in admission.sources:
-                raise DomainError(
-                    "context_use_not_admitted",
-                    "Reported use was not present in the admitted model input",
-                )
-            await self.require_targets_in(tx, ctx, (use.target,))
-            event_key = sha256(
-                f"{ctx.caller_id}\0{admission.id}\0{use.event_id}".encode()
-            ).hexdigest()
-            event = {
-                "id": event_key,
-                "event_id": use.event_id,
-                "context_id": admission.id,
-                "target": use.target.model_dump(mode="json"),
-                "kind": "actual_use",
-                "use_kind": use.kind,
-                "invocation_id": command.invocation_id,
-                "occurred_at": command.occurred_at.isoformat(),
-                "commit_seq": tx.commit_seq,
-            }
-            existing_event = await tx.connection.scalar(
-                select(feedback.c.record).where(feedback.c.id == event_key)
-            )
-            if existing_event is None:
-                await tx.connection.execute(
-                    feedback.insert().values(id=event_key, context_id=admission.id, record=event)
-                )
-            elif (
-                existing_event.get("target") != event["target"]
-                or existing_event.get("use_kind") != use.kind
-            ):
-                raise DomainError(
-                    "context_use_conflict",
-                    "Use event identity already names a different observation",
-                )
-        if command.uses:
-            from .lifecycle import session_key
-
-            current_session = await self.session_in(tx, ctx, admission.session_id)
-            updated_residents = tuple(
-                item.model_copy(
-                    update={
-                        "last_meaningful_use_at": max(
-                            command.occurred_at, item.last_meaningful_use_at or item.entered_at
-                        )
-                    }
-                )
-                if any(use.target == item.target for use in command.uses)
-                else item
-                for item in current_session.residents
-            )
-            revised_session = current_session.model_copy(
-                update={
-                    "residents": updated_residents,
-                    "revision": current_session.revision + 1,
-                    "commit_seq": tx.commit_seq,
-                }
-            )
-            await tx.connection.execute(
-                update(sessions)
-                .where(sessions.c.id == session_key(ctx, admission.session_id))
-                .values(record=revised_session.model_dump(mode="json"))
-            )
+        await record_uses_in(self, tx, ctx, admission, command.uses, command.occurred_at)
         result = ContextReportResult(
             id=str(uuid4()),
             admission_id=admission.id,

@@ -5,13 +5,12 @@ from typing import TYPE_CHECKING
 from nous_wave.contracts import (
     CallContext,
     CognitiveRecord,
-    ConceptBody,
     DomainError,
-    EpisodeBody,
     QueryRequest,
 )
 from sqlalchemy import select
 
+from nous.cognition.lifecycle import selectable
 from nous.cognition.schema import revisions, vectors
 from nous.identity.service import require_subject_in
 from nous.material.modalities import source_modalities_in
@@ -98,23 +97,14 @@ async def eligible(
                 or row.times.recorded.coordinate > plan["asof_time"]
             ):
                 continue
-            if row.deleted and not request.include_deleted:
-                continue
-            if (
-                not request.include_inactive
-                and not exact
-                and isinstance(row, CognitiveRecord)
-                and isinstance(row.body, (ConceptBody, EpisodeBody))
-                and row.body.state != "active"
-            ):
-                continue
-            if (
-                isinstance(row, CognitiveRecord)
-                and row.lifecycle is not None
-                and row.lifecycle.activation != "active"
-                and not request.include_inactive
-                and not exact
-            ):
+            if isinstance(row, CognitiveRecord):
+                if not selectable(
+                    row,
+                    include_deleted=request.include_deleted,
+                    include_inactive=request.include_inactive,
+                ):
+                    continue
+            elif row.deleted and not request.include_deleted:
                 continue
             if isinstance(row, CognitiveRecord) and not await self.cognition.visible_in(
                 view, ctx, row, roots
@@ -122,15 +112,10 @@ async def eligible(
                 continue
             if not isinstance(row, CognitiveRecord) or (
                 heads[row.reference.id].reference == row.reference
-                and (
-                    request.include_inactive
-                    or (
-                        (
-                            not isinstance(row.body, (ConceptBody, EpisodeBody))
-                            or row.body.state == "active"
-                        )
-                        and (row.lifecycle is None or row.lifecycle.activation == "active")
-                    )
+                and selectable(
+                    row,
+                    include_deleted=request.include_deleted,
+                    include_inactive=request.include_inactive,
                 )
             ):
                 catalog.append(row)

@@ -159,6 +159,49 @@ async def read_profile(
                 and (attribute.validity is None or attribute.validity.contains(ctx.clock))
             )
             (accepted if confirmed else uncertain).append(item)
+        from nous_wave.contracts.fact_body import FactClaimBody, PersonFactScope
+        from nous_wave.contracts.facts import FactQuery
+
+        from nous.cognition.fact_reads import query_in as fact_query_in
+
+        claims = await fact_query_in(
+            self.app.cognition,
+            view,
+            ctx,
+            FactQuery(
+                scope=PersonFactScope(person=record.reference),
+                statuses=("active", "conflicted"),
+                limit=command.limit,
+            ),
+        )
+        for claim in claims:
+            body = claim.body
+            assert isinstance(body, FactClaimBody)
+            item = {
+                "evidence_key": claim.reference.exact(),
+                "hash": claim.reference.exact(),
+                "evidence_type": "fact_claim",
+                "type": "fact_claim",
+                "deletable": True,
+                "correction_mode": "retract_fact_claim",
+                "reference": claim.reference,
+                "content": f"{body.fact_key} ({body.polarity}): {body.value_text}",
+                "evidence": (*claim.evidence, *(entry.link for entry in body.evidence)),
+                "metadata": {
+                    "status": body.status,
+                    "stability": body.stability,
+                    "authority": body.authority,
+                    "confidence": body.confidence,
+                    "validity": claim.times.validity,
+                },
+            }
+            confirmed = (
+                body.status == "active"
+                and body.stability == "stable"
+                and not any(entry.link.polarity == "counterexample" for entry in body.evidence)
+                and (claim.times.validity is None or claim.times.validity.contains(ctx.clock))
+            )
+            (accepted if confirmed else uncertain).append(item)
         if command.context_text:
             context = grams(command.context_text)
             uncertain.sort(

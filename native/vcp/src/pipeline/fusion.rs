@@ -28,7 +28,7 @@ pub(super) fn fuse_observation_with_pool(
     query: &[f32],
     observation: &SenseOutput,
     gated_tags: &[GatedTag],
-    core_tags: &[String],
+    core_tag_ids: &[i64],
     ghost_tags: &[GhostTagInput],
     dynamic_core_boost: f64,
     dimension: usize,
@@ -88,32 +88,17 @@ pub(super) fn fuse_observation_with_pool(
         .fold(0.0, f64::max)
         .max(if merged.is_empty() { 1.0 } else { 0.0 });
 
-    // 字符串 Core 不参与本轮 Spike 扩散；传播完成后按名称从数据库补入，
-    // 保持 JS 的“最终融合锚点”语义。
-    let mut present_names: HashSet<String> = merged
-        .iter()
-        .filter(|tag| !tag.name.is_empty())
-        .map(|tag| tag.name.to_lowercase())
-        .collect();
+    // A disconnected canonical core still participates in fusion. Identity is
+    // resolved before the numerical kernel; equal labels never merge nodes.
     let mut supplemented_core_count = 0usize;
-    for core_name in core_tags {
-        let normalized = core_name.to_lowercase();
-        if normalized.is_empty() || present_names.contains(&normalized) {
+    for id in core_tag_ids {
+        if merged.iter().any(|tag| tag.id == *id) {
             continue;
         }
-        if let Some((id, name)) = connection
-            .tag_names
-            .iter()
-            .find(|(_, name)| name.eq_ignore_ascii_case(core_name))
-            .map(|(id, name)| (*id, name.clone()))
-        {
-            if merged.iter().any(|tag| tag.id == id) {
-                continue;
-            }
-            present_names.insert(name.to_lowercase());
+        if let Some(name) = connection.tag_names.get(id) {
             merged.push(GatedTag {
-                id,
-                name,
+                id: *id,
+                name: name.clone(),
                 weight: max_base_weight * dynamic_core_boost,
                 is_core: true,
             });

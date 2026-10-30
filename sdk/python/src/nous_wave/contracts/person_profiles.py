@@ -44,6 +44,7 @@ class PersonProfileRefreshIntent(Contract):
     context: CallContext
     command: RefreshPersonProfile
     attribute_indices: tuple[int, ...]
+    claim_refs: tuple[CognitiveRef, ...] = ()
 
 
 class PersonProfileEvidence(Contract):

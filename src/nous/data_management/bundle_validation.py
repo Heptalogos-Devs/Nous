@@ -2,13 +2,54 @@
 
 from graphlib import CycleError, TopologicalSorter
 
-from nous_wave.contracts import DomainError, MediaReference, SubjectBundle
+from nous_wave.contracts import DomainError, EntityBody, MediaReference, SubjectBundle
 from nous_wave.contracts.derivation import ArtifactRepresentation
+from nous_wave.contracts.fact_body import FactClaimBody, PersonFactScope
 
 from nous.cognition.projection import evidence_in, media_references_in, references_in
 
 
 def validate_graph(bundle: SubjectBundle) -> None:
+    from nous.cognition.fact_identity import conflict_group, identity
+
+    exacts = {record.reference.exact(): record for record in bundle.cognition}
+    fact_identities: dict[str, tuple[str, str, str, str, str]] = {}
+    for record in bundle.cognition:
+        body = record.body
+        if not isinstance(body, FactClaimBody):
+            continue
+        key = identity(body)
+        if fact_identities.setdefault(record.reference.id, key) != key:
+            raise DomainError(
+                "bundle_fact_identity", "A retained claim identity changes its semantic identity"
+            )
+        if isinstance(body.scope, PersonFactScope):
+            person = exacts.get(body.scope.person.exact())
+            if person is None or (
+                not person.purged
+                and (not isinstance(person.body, EntityBody) or person.body.entity_type != "person")
+            ):
+                raise DomainError(
+                    "bundle_fact_scope",
+                    "A person claim requires its actual retained Person identity",
+                )
+        for reference in body.supersedes:
+            old = exacts.get(reference.exact())
+            if (
+                old is None
+                or reference.kind != "fact_claim"
+                or (
+                    not old.purged
+                    and (
+                        not isinstance(old.body, FactClaimBody)
+                        or conflict_group(old.body) != conflict_group(body)
+                    )
+                )
+            ):
+                raise DomainError(
+                    "bundle_fact_supersedes",
+                    "Supersession must retain an actual claim in the same conflict group",
+                )
     graph: dict[str, set[str]] = {}
     materials = {row.id for row in bundle.materials}
     observations = {row.id for row in bundle.observations}

@@ -7,7 +7,7 @@ from nous.platform.models import ModelService
 from nous.platform.persistence import Authority
 from nous.retrieval.service import RetrievalService
 
-from . import admission, compilation, purge, session_state
+from . import admission, compilation, purge, session_state, source_tools, tracking
 from .jobs import DurableContexts
 
 
@@ -20,7 +20,7 @@ class ManagedContexts(DurableContexts):
     derivations: DerivedService | None
 
     read_preparation_in = compilation.read_preparation_in
-    read_track = compilation.read_track
+    read_track = tracking.read_track
     require_targets_in = compilation.require_targets_in
     media_segment_in = compilation.media_segment_in
     prepare = compilation.prepare
@@ -30,6 +30,7 @@ class ManagedContexts(DurableContexts):
     admit_managed = admission.admit_managed
     report_managed = admission.report_managed
     read_admission = admission.read_admission
+    read_context_source = source_tools.read_context_source
     purge_references_in = purge.purge_references_in
     open_session = session_state.open_session
     close_session = session_state.close_session

@@ -4,14 +4,9 @@ from typing import Annotated, Literal
 
 from pydantic import Field
 
-from .cognition import CognitiveKind
+from .cognitive_identity import CognitiveIdentity as CognitiveIdentity
 from .common import Contract, ReferenceAddresses
 from .context import CognitiveTarget, ContextTarget, MediaTarget
-
-
-class CognitiveIdentity(Contract):
-    kind: CognitiveKind
-    id: str
 
 
 class ObjectTarget(Contract):

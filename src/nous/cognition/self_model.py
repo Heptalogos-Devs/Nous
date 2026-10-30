@@ -26,6 +26,7 @@ from nous.material.service import MaterialRecord
 from nous.platform.content import ContentLease, ContentObject
 from nous.platform.persistence import ReadView, WriteTx
 
+from .lifecycle import selectable
 from .schema import revisions
 
 if TYPE_CHECKING:
@@ -223,6 +224,6 @@ async def self_profile(self: CognitionService, ctx: CallContext) -> tuple[Cognit
         result: list[CognitiveRecord] = []
         for value in rows:
             record = CognitiveRecord.model_validate(value)
-            if not record.deleted and await self.visible_in(view, ctx, record):
+            if selectable(record) and await self.visible_in(view, ctx, record):
                 result.append(record)
         return tuple(result)

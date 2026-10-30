@@ -15,6 +15,7 @@ from nous_wave.contracts.model_roles import (
     ModelPreviewRequest,
     ModelPrompt,
     ModelRoleContract,
+    ModelRoutePreview,
 )
 from pydantic import BaseModel, TypeAdapter
 
@@ -31,10 +32,17 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class PreparedRole:
-    route: ModelRoute
+    routes: tuple[PreparedRoute, ...]
     role: RoleResource
     definition: RoleDefinition
     prompt: dict[str, object]
+
+
+@dataclass(frozen=True)
+class PreparedRoute:
+    id: str
+    index: int
+    route: ModelRoute
     model: ModelResource
 
 
@@ -52,7 +60,18 @@ async def prepare_role(
     resources = ModelConfiguration.model_validate(
         (await self.configuration.effective(ctx, "models"))["value"]
     )
-    route, role = resources.resolve(role_id, require_configured=require_configured)
+    role = resources.roles.get(role_id)
+    if role is None:
+        raise DomainError("model_unavailable", "Role is not configured", role=role_id)
+    routes = tuple(
+        PreparedRoute(
+            route_id,
+            index,
+            resources.resolve(role_id, index, require_configured=require_configured)[0],
+            resources.models[resources.routes[route_id].model],
+        )
+        for index, route_id in enumerate(role.routes)
+    )
     definition = self.roles.resolve(role.purpose, variant, output_type, role.output_mode)
     parsed, variables = definition.variables(variables)
     prompt = (
@@ -70,8 +89,7 @@ async def prepare_role(
     if definition.transform_prompt:
         prompt = definition.transform_prompt(prompt, parsed)
     prompt["hash"] = sha256(str(prompt["rendered"]).encode()).hexdigest()
-    model = resources.models[resources.routes[role.routes[0]].model]
-    return PreparedRole(route, role, definition, prompt, model)
+    return PreparedRole(routes, role, definition, prompt)
 
 
 async def model_contract(
@@ -98,6 +116,7 @@ async def model_contract(
             reason="prompt_missing",
         ) from error
     return ModelRoleContract(
+        routing_policy=role.fallback,
         role=request.role,
         purpose=role.purpose,
         variant=definition.variant,
@@ -132,16 +151,45 @@ async def model_preview(
     for reference in request.media:
         if self.preview_media_resolver is not None:
             media.append(await self.preview_media_resolver(ctx, reference))
-    invocation = prepare_invocation(
-        prepared.definition.invocation_purpose or request.role,
-        prepared.route,
-        prepared.prompt,
-        prepared.definition.output_type,
-        tuple(media),
-        request.source_ids,
-    )
+    routes: list[ModelRoutePreview] = []
+    for item in prepared.routes:
+        try:
+            invocation = prepare_invocation(
+                prepared.definition.invocation_purpose or request.role,
+                item.route,
+                prepared.prompt,
+                prepared.definition.output_type,
+                tuple(media),
+                request.source_ids,
+            )
+        except DomainError as error:
+            if error.code != "model_unavailable":
+                raise
+            routes.append(
+                ModelRoutePreview(
+                    route_id=item.id,
+                    route_index=item.index,
+                    invocation=None,
+                    capabilities=item.model.capabilities,
+                    configured=False,
+                    unavailable=json_object(
+                        {"code": error.code, "message": str(error), "details": error.details}
+                    ),
+                )
+            )
+        else:
+            routes.append(
+                ModelRoutePreview(
+                    route_id=item.id,
+                    route_index=item.index,
+                    invocation=InvocationSnapshot.model_validate(invocation),
+                    capabilities=item.model.capabilities,
+                    configured=bool(item.route.model and item.route.base_url),
+                )
+            )
     definition = prepared.definition
     contract = ModelRoleContract(
+        routing_policy=prepared.role.fallback,
         role=request.role,
         purpose=prepared.role.purpose,
         variant=definition.variant,
@@ -149,13 +197,16 @@ async def model_preview(
         input_schema=json_object(definition.input_type.model_json_schema()),
         output_schema=json_object(TypeAdapter(definition.output_type).json_schema()),
         output_mode="text" if definition.output_type is str else "json_schema",
-        provider_response_formats=response_formats(definition.output_type, prepared.route.model),
+        provider_response_formats=response_formats(
+            definition.output_type, prepared.routes[0].route.model
+        ),
         prompt_id=prepared.role.prompt_id,
         prompt=ModelPrompt.model_validate(prepared.prompt),
     )
     return ModelInvocationPreview(
         contract=contract,
-        invocation=InvocationSnapshot.model_validate(invocation),
-        capabilities=prepared.model.capabilities,
-        configured=bool(prepared.route.model and prepared.route.base_url),
+        invocation=routes[0].invocation,
+        routes=tuple(routes),
+        capabilities=prepared.routes[0].model.capabilities,
+        configured=routes[0].configured,
     )

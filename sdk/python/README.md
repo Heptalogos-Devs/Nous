@@ -178,6 +178,8 @@ A-Memorix `AMemorixAdapter` 保留六项工具、来源、导入、包与运行�
 
 `query_cognition`、HTTP 的 Subject `/query`、MCP `query_cognition` 和 CLI `query` 使用同一 QueryRequest/QueryResult。可用请求文件完整指定查询；CLI 也提供 `--materialize`、`--rerank off|optional|required` 和 `--rerank-invocation-id`。
 
+`nous_wave.presentation.query_text(result)` 输出短引用、正文、归因与不确定性，适合直接交给模型阅读。MCP 查询使用这种文本呈现，同时在 `structuredContent` 保留完整 `QueryResult`，便于程序读取诊断、向量调用来源和 Thinking 阶段；CLI 的 `--json` 同样保留完整结构。继续阅读可把结果中的精确引用传给 `source` 或 `memory_source`。
+
 ```python
 from nous_wave.contracts import QueryRequest
 
@@ -210,7 +212,24 @@ await api.configuration({
 changes = await api.configuration({"action": "history", "key": "retrieval"})
 ```
 
-查询在开始时冻结同一份有效策略，组合分支共用它。诊断中的 `plan.policy` 给出 namespace、subject、配置来源和实际策略；`plan.native` 保留原生计算诊断，组合查询在 `plan.branches` 中呈现各分支。`$diagnostics(none|summary|full)` 控制详细程度，`budget.diagnostics_bytes` 限制每次查询的原生诊断输出，超限会明确标记 truncated。VCP 的 BM25 lane 使用同一授权快照的真实词法命中，`bm25K` 参与原生 readout 选择；Ghost tags 尚无向量输入接纳 owner，未作为配置项开放。
+查询在开始时冻结同一份有效策略，组合分支共用它。诊断中的 `plan.policy` 给出 namespace、subject、配置来源和实际策略；`plan.native` 保留原生计算诊断，组合查询在 `plan.branches` 中呈现各分支。`$diagnostics(none|summary|full)` 控制详细程度，`budget.diagnostics_bytes` 限制每次查询的原生诊断输出，超限会明确标记 truncated。VCP 的 BM25 lane 使用同一授权快照的真实词法命中，`bm25K` 限制候选提供量，`readout.lexicalWeight` 决定词法分量的融合权重。
+
+VCP 请求通过 `vcp` 表达本次意图。`core` 接已有认知的精确 `CognitiveRef`，在当前授权及历史截点下绑定图节点；`concepts` 接本次查询文字，使用正式 embedding 角色批量生成同空间向量，结果保留各自真实 call_id。`@entity`、`@tag` 同时限定候选并提供精确 core；`#主题` 与 `#("较长的主题")` 在 VCP 中提供临时查询概念。`thinking=True` 或 `$explore` 请求实际方法路线。新线索只参与本次计算，来源范围继续约束已有认知的读取。
+
+```python
+from nous_wave.contracts.query_vcp import VcpIntent, QueryConcept
+
+request = QueryRequest(
+    text="还有哪些相关的发布经验？", mode="vcp",
+    vcp=VcpIntent(core=(actual_reference,),
+                  concepts=(QueryConcept(text="回滚与恢复", is_core=True),), thinking=True),
+    capabilities=QueryCapabilities(exploration="optional"),
+)
+result = await client.query_cognition(namespace_id, subject_id, request)
+print(result.vcp)
+```
+
+`budget.vcp_concepts` 和 `vcp_text_bytes` 限制本次线索数量与正文。`result.vcp.concepts` 返回实际向量空间与 producer，`result.vcp.thinking` 返回阶段、正式对象引用、父选择和真实传播路线；组合结果按 `vcp.branches` 保留各分支。诊断关闭仍保留这些请求结果。没有可用路线时，exploration=required 返回 `thinking_unavailable`，optional 返回 unavailable 与实际降级原因。CLI 的 `query --request`、HTTP 和 MCP 使用同一个 QueryRequest。
 
 机器查询使用 `expression` 的 atom/any/all 树，每个 atom.source 是同一 NousQL 语法。`filters.sources` 按正式命名来源解析器选择完整标签；也可设置 source_ids、source_types、origin（field/value 对）、tags、cognitive_roles、formation_modes 和 epistemic_classes。`budget.candidates`、branches、depth 约束候选与组合树；来源和重排分别使用 source_* 与 rerank_* 预算。
 
@@ -243,3 +262,5 @@ A-Memorix 图谱搜索使用 `adapter.memory_graph_admin(action="search", query=
 Native 客户端 `change_person_profile(ns, sub, PersonProfileChange(...))` 返回实际修订及输入来源；`refresh_person_profile(ns, sub, RefreshPersonProfile(...))` 返回真实 job_id，通过 `wait_success(job_id)` 等待。两者的 HTTP 路径是 subject 下 `/person-profiles/change` 与 `/person-profiles/refresh`。CLI `nous profile ns sub --request request.json` 和 MCP `memory_profile_admin(command=...)` 消费同一个 `ProfileAdminInput`。
 
 Context 的 `ContextReport.output` 保存真实模型、provider、response_id、status、输出 item IDs 与 tool call IDs；未知字段保留 None。每次实际 wire 调用各自 admit/report，相同准备可用于真实 provider 参数回退，来源与预算每次重新校验。`contexts(action="track",...)`、CLI `context track` 与 MCP 通用 contexts 接口读取同一正式 track。
+
+模型工具读取已接纳来源可使用 `adapter.memory_source(exact_reference, admission=ContextAdmissionRef(...), tool_call_id=actual_tool_call_id)`，或 `read_context_source(ns, sub, ReadContextSource(...))`。该操作核对已保存的实际模型输出与目标，同时受原准备范围和当前 SourceRead 限制。读取成功后复用正式 feedback owner 记录 referenced use；同一实际工具调用重放复用 use receipt。返回的来源正文按当前授权重新读取，operation receipt 仅保留身份与 commit_seq。HTTP 是 subject 下 `/contexts/source`，CLI 为 `context source`，MCP 通用 contexts 使用 action=source。

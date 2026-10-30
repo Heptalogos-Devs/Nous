@@ -7,13 +7,22 @@ from hashlib import sha256
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
-from nous_wave.contracts import CallContext, CognitiveRecord, DomainError, QueryRequest, QueryResult
+from nous_wave.contracts import (
+    CallContext,
+    CognitiveRecord,
+    DomainError,
+    QueryHit,
+    QueryRequest,
+    QueryResult,
+)
 from nous_wave.contracts.context import CognitiveTarget, MediaTarget
 from nous_wave.contracts.query_readout import RerankInfo
 from nous_wave.contracts.source_graph import ExpandSources
 from pydantic import BaseModel, Field
 
-from .assets import record_text
+from .assets import RetrievalRecord, record_text
+from .filters import authority
+from .media import source_material_ids_in
 from .source_expansion import prefix
 
 if TYPE_CHECKING:
@@ -27,6 +36,47 @@ class DocumentScore(BaseModel):
 
 class Ranking(BaseModel):
     scores: tuple[DocumentScore, ...] = Field(min_length=1)
+
+
+async def visible_hits(
+    self: RetrievalService,
+    ctx: CallContext,
+    ranked: list[tuple[RetrievalRecord, float]],
+    limit: int,
+) -> list[QueryHit]:
+    hits: list[QueryHit] = []
+    async with self.authority.read(ctx) as current:
+        roots = await self.cognition.active_roots_in(current, ctx)
+        for record, score in ranked:
+            if isinstance(record, CognitiveRecord):
+                visible = await self.cognition.visible_in(current, ctx, record, roots)
+            else:
+                try:
+                    await source_material_ids_in(
+                        current, ctx, record.reference, self.materials, self.derivations
+                    )
+                    visible = True
+                except DomainError as error:
+                    if error.code not in {
+                        "source_unavailable",
+                        "region_not_found",
+                        "representation_not_found",
+                        "derived_region_not_found",
+                    }:
+                        raise
+                    visible = False
+            if visible:
+                hits.append(
+                    QueryHit(
+                        object=record,
+                        score=score,
+                        source_roots=record.source_roots,
+                        authority=authority(record),
+                    )
+                )
+            if len(hits) >= limit:
+                break
+    return hits
 
 
 async def _revalidate(self: RetrievalService, ctx: CallContext, result: QueryResult) -> None:

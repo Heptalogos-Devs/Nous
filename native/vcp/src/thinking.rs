@@ -48,7 +48,7 @@ pub struct StageOutput {
     pub results: Vec<Selection>,
 }
 
-fn default_closure() -> f64 {
+pub fn default_closure() -> f64 {
     0.2
 }
 
@@ -259,7 +259,7 @@ pub fn plan(
     }
 
     if !selected.iter().any(|selection| selection.route.is_some()) {
-        return Err("no grounded method route; use legacy chain".into());
+        return Err("no grounded method route in the accepted observation".into());
     }
     Ok(ThinkingOutput {
         schema: "vcp-river-thinking-plan-v1",

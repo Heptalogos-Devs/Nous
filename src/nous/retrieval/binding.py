@@ -5,7 +5,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from nous_wave.contracts import CognitiveRecord, ConceptBody, DomainError, EntityBody, SchemaBody
+from nous_wave.contracts import (
+    CognitiveRecord,
+    CognitiveRef,
+    ConceptBody,
+    DomainError,
+    EntityBody,
+    SchemaBody,
+)
 
 from nous.cognition.projection import media_references_in, references_in
 from nous.material.service import SourceRecord
@@ -87,6 +94,7 @@ class BoundSelection:
     direct: bool
     terms: tuple[str, ...]
     source_material_ids: tuple[str, ...]
+    core_references: tuple[CognitiveRef, ...]
 
 
 def selectors(
@@ -99,6 +107,7 @@ def selectors(
     candidates, direct = records, False
     terms: list[str] = []
     roots: set[str] = set()
+    cores: dict[str, CognitiveRef] = {}
     for cue in plan["selectors"]:
         if cue["kind"] != "selector":
             continue
@@ -111,6 +120,10 @@ def selectors(
                 # this exact address. Candidate filters can legitimately remove it.
                 values = [record for record in records if record.reference.exact() == locator]
                 direct = True
+                for value in values:
+                    if isinstance(value, CognitiveRecord):
+                        cores[value.reference.exact()] = value.reference
+                        roots.update(value.source_roots)
             elif selector == "object":
                 values = [
                     record
@@ -129,6 +142,8 @@ def selectors(
                 participants.add(target.reference.id)
                 terms.append(names(target)[0])
                 roots.update(target.source_roots)
+                if selector in {"entity", "tag"}:
+                    cores[target.reference.exact()] = target.reference
                 values = named_targets(records, target)
             matched.append({value.reference.exact() for value in values})
         selected = matched[0].intersection(*matched[1:]) if matched else set[str]()
@@ -140,4 +155,5 @@ def selectors(
         direct,
         tuple(dict.fromkeys(terms)),
         tuple(sorted({sources[root]["material_id"] for root in roots})),
+        tuple(cores.values()),
     )

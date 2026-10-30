@@ -8,6 +8,7 @@ from pydantic import ConfigDict, Field, JsonValue, model_validator
 
 from .common import Contract
 from .media import MediaReference
+from .model_routing import ModelRouteAttempt, ModelRoutingPolicy
 
 ModelCachePolicy = Literal["shared", "invocation"]
 
@@ -25,6 +26,7 @@ class ModelPreviewRequest(ModelContractRequest):
 
 
 class ModelRoleContract(Contract):
+    routing_policy: ModelRoutingPolicy = Field(default_factory=ModelRoutingPolicy)
     role: str
     purpose: str
     variant: str
@@ -77,6 +79,7 @@ class InvocationMedia(Contract):
 
 
 class InvocationSnapshot(Contract):
+    routing: ModelRouteAttempt | None = None
     cache_policy: ModelCachePolicy = "shared"
     model_config = ConfigDict(extra="forbid", frozen=True, serialize_by_alias=True)
     purpose: str
@@ -93,9 +96,19 @@ class InvocationSnapshot(Contract):
     video_content_format: Literal["video_url"] | None = None
 
 
+class ModelRoutePreview(Contract):
+    route_id: str
+    route_index: int
+    invocation: InvocationSnapshot | None
+    capabilities: tuple[str, ...]
+    configured: bool
+    unavailable: dict[str, JsonValue] | None = None
+
+
 class ModelInvocationPreview(Contract):
     contract: ModelRoleContract
-    invocation: InvocationSnapshot
+    invocation: InvocationSnapshot | None
+    routes: tuple[ModelRoutePreview, ...] = ()
     capabilities: tuple[str, ...]
     configured: bool
     provider_called: Literal[False] = False

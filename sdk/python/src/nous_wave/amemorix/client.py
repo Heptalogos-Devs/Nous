@@ -10,7 +10,12 @@ from pydantic import JsonValue
 
 from ..client import NousClient
 from ..contracts import ImportDocument
-from ..contracts.context import ContextTarget
+from ..contracts.context import (
+    CognitiveTarget,
+    ContextAdmissionRef,
+    ContextTarget,
+    ReadContextSource,
+)
 from ..files import ManagedFiles
 from ..operations import encoded, object_value
 from ..source_scope import SourceReadScope
@@ -217,10 +222,35 @@ class AMemorixAdapter:
         )
 
     async def memory_source(
-        self, target: str | Mapping[str, JsonValue] | ContextTarget
+        self,
+        target: str | Mapping[str, JsonValue] | ContextTarget,
+        *,
+        admission: ContextAdmissionRef | None = None,
+        tool_call_id: str | None = None,
     ) -> JsonObject:
         if isinstance(target, str) and ":" not in target:
             target = (await self.client.memory(target)).reference.exact()
+        if admission is not None:
+            parsed = target_reference(target)
+            if not isinstance(parsed, CognitiveTarget) or not tool_call_id:
+                raise ValueError(
+                    "An admitted source tool requires an exact cognitive target and actual tool_call_id"
+                )
+            from ..managed import event_id
+
+            result = await self.client.read_context_source(
+                self.namespace_id,
+                self.subject_id,
+                ReadContextSource(
+                    operation_id=event_id(
+                        "source", tool_call_id, admission.admission_id + parsed.reference.exact()
+                    ),
+                    admission=admission,
+                    tool_call_id=tool_call_id,
+                    reference=parsed.reference,
+                ),
+            )
+            return {"success": True, **object_value(encoded(result))}
         return await self.call(
             "memory_source",
             {"target": target if isinstance(target, str) else encoded(target_reference(target))},
@@ -239,6 +269,12 @@ class AMemorixAdapter:
 
     async def memory_runtime_admin(self, *, action: str, **kwargs: JsonValue) -> JsonObject:
         return await self.call("memory_runtime_admin", {"action": action, **kwargs})
+
+    async def memory_fact_admin(self, *, action: str, **kwargs: JsonValue) -> JsonObject:
+        values = {"action": action, **kwargs}
+        if action in {"create", "update", "retract", "restore"}:
+            values.setdefault("operation_id", str(uuid4()))
+        return await self.call("memory_fact_admin", values)
 
     async def memory_episode_admin(self, *, action: str, **kwargs: JsonValue) -> JsonObject:
         values = {"action": action, **kwargs}

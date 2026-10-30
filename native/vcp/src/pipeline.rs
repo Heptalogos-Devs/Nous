@@ -76,7 +76,7 @@ fn normalize(vector: &mut [f64]) -> bool {
 }
 
 #[derive(Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PipelineInput {
     #[serde(default)]
     pub query_id: Option<String>,
@@ -85,7 +85,7 @@ pub struct PipelineInput {
     #[serde(default)]
     pub query_vector: Vec<f32>,
     #[serde(default)]
-    pub core_tags: Vec<String>,
+    pub core_tag_ids: Vec<i64>,
     #[serde(default)]
     pub ghost_tags: Vec<GhostTagInput>,
     #[serde(default)]

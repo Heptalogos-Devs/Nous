@@ -442,12 +442,13 @@ diff --git a/src/services/nous_context.py b/src/services/nous_context.py
 new file mode 100644
 --- /dev/null
 +++ b/src/services/nous_context.py
-@@ -0,0 +1,349 @@
+@@ -0,0 +1,366 @@
 +"""Apply authorized cognition to actual MaiBot inputs without rewriting history."""
 +
 +import asyncio
 +import json
 +import os
++from dataclasses import replace
 +from collections.abc import AsyncGenerator, Sequence
 +from contextlib import asynccontextmanager
 +from datetime import datetime, timezone
@@ -458,6 +459,7 @@ new file mode 100644
 +from nous_wave import HostInputMeasurement, SourceReadScope
 +from nous_wave.contracts.context import (
 +    ContextInvocationOutput,
++    ContextAdmissionRef,
 +    ContextSegment,
 +    ContextUsage,
 +    EpistemicView,
@@ -561,6 +563,7 @@ new file mode 100644
 +        self.applied = None
 +        self.pending: str | None = None
 +        self.sent = 0
++        self.admission = None
 +
 +    async def report(
 +        self, outcome: str, output: ContextInvocationOutput | None = None
@@ -601,6 +604,20 @@ new file mode 100644
 +                ),
 +                tool_call_ids=tuple(call.call_id for call in response.tool_calls or ()),
 +            ),
++        )
++
++        receipt = _bytes(
++            {
++                "owner": "nous.context",
++                "admission": ContextAdmissionRef(
++                    admission_id=self.admission.id,
++                    invocation_id=self.admission.invocation_id,
++                ).model_dump(mode="json"),
++            }
++        )
++        response.output_items = tuple(
++            replace(item, meta=replace(item.meta, invocation_receipt_json=receipt))
++            for item in response.output_items
 +        )
 +
 +
@@ -751,7 +768,7 @@ new file mode 100644
 +                + ":"
 +                + uuid4().hex
 +            )
-+            await run_on_main_loop(
++            call.admission = await run_on_main_loop(
 +                binding.admit(
 +                    applied,
 +                    invocation_id=invocation,
@@ -792,3 +809,183 @@ new file mode 100644
 +                raise invalid("The host did not report its actual model result")
 +    finally:
 +        await _owned_cleanup(run_on_main_loop(binding.close()))
+diff --git a/src/llm_models/payload_content/context_item.py b/src/llm_models/payload_content/context_item.py
+--- a/src/llm_models/payload_content/context_item.py
++++ b/src/llm_models/payload_content/context_item.py
+@@ -49,6 +49,7 @@
+     item_id: str
+     logical_turn_id: str | None
+     timestamp: datetime
++    invocation_receipt_json: bytes | None = None
+ 
+     def __post_init__(self) -> None:
+         if not self.item_id.strip():
+diff --git a/src/llm_models/payload_content/context_snapshot.py b/src/llm_models/payload_content/context_snapshot.py
+--- a/src/llm_models/payload_content/context_snapshot.py
++++ b/src/llm_models/payload_content/context_snapshot.py
+@@ -1,5 +1,6 @@
+ """Context Item 的纯数据快照，不加载模型客户端或请求日志。"""
+ 
++import json
+ from datetime import datetime
+ from typing import Any, Sequence
+ 
+@@ -17,6 +18,7 @@
+         "item_id": meta.item_id,
+         "logical_turn_id": meta.logical_turn_id,
+         "timestamp": meta.timestamp.isoformat(),
++        "invocation_receipt": json.loads(meta.invocation_receipt_json) if meta.invocation_receipt_json is not None else None,
+     }
+ 
+ 
+@@ -58,6 +60,7 @@
+         item_id=item_id.strip(),
+         logical_turn_id=logical_turn_id,
+         timestamp=timestamp,
++        invocation_receipt_json=json.dumps(raw_meta["invocation_receipt"],ensure_ascii=False,sort_keys=True,separators=(",", ":")).encode() if raw_meta.get("invocation_receipt") is not None else None,
+     )
+ 
+ 
+diff --git a/src/maisaka/reasoning_engine.py b/src/maisaka/reasoning_engine.py
+--- a/src/maisaka/reasoning_engine.py
++++ b/src/maisaka/reasoning_engine.py
+@@ -1,4 +1,6 @@
+ """Maisaka 推理引擎。"""
++
++import json
+ 
+ from base64 import b64decode
+ from binascii import Error as BinasciiError
+@@ -34,6 +36,7 @@
+ from src.llm_models.model_client.adapter_base import await_task_with_interrupt
+ from src.llm_models.payload_content.context_item import (
+     ContextImagePart,
++    FunctionCallItem,
+     ContextItemBuilder,
+     ContextItemMeta,
+     RoleType,
+@@ -62,6 +65,7 @@
+ from src.maisaka.context.messages import (
+     ComplexSessionMessage,
+     LLMContextMessage,
++    ModelOutputContextMessage,
+     ReferenceMessage,
+     SessionBackedMessage,
+     ToolResultMediaMessage,
+@@ -1346,6 +1350,11 @@
+             ToolInvocation: 统一工具调用对象。
+         """
+ 
++        origins = [message.output_item for message in self._runtime._chat_history
++            if isinstance(message, ModelOutputContextMessage)
++            and isinstance(message.output_item, FunctionCallItem)
++            and message.output_item.tool_call.call_id == tool_call.call_id]
++        receipt = origins[0].meta.invocation_receipt_json if len(origins) == 1 else None
+         return ToolInvocation(
+             tool_name=tool_call.func_name,
+             arguments=self._runtime.expand_message_id_aliases(dict(tool_call.args or {})),
+@@ -1353,6 +1362,7 @@
+             session_id=self._runtime.session_id,
+             stream_id=self._runtime.session_id,
+             reasoning=latest_thought,
++            metadata={"invocation_receipt":json.loads(receipt)} if receipt is not None else {},
+         )
+ 
+     def _log_tool_call_source(self, tool_call: ToolCall, *, stage: str) -> None:
+diff --git a/src/maisaka/builtin_tool/__init__.py b/src/maisaka/builtin_tool/__init__.py
+--- a/src/maisaka/builtin_tool/__init__.py
++++ b/src/maisaka/builtin_tool/__init__.py
+@@ -10,6 +10,8 @@
+ from src.llm_models.payload_content.tool_option import ToolDefinitionInput
+ 
+ from .context import BuiltinToolRuntimeContext
++from src.services.nous_source_tool import get_tool_spec as get_memory_source_tool_spec
++from src.services.nous_source_tool import handle_tool as handle_memory_source_tool
+ from .query_memory import get_tool_spec as get_query_memory_tool_spec
+ from .query_memory import handle_tool as handle_query_memory_tool
+ from .query_image_memory import get_tool_spec as get_query_image_memory_tool_spec
+@@ -99,6 +101,7 @@
+         visibility="deferred",
+     ),
+     BuiltinToolEntry("query_memory", _get_query_memory_tool_spec, handle_query_memory_tool, stage="action"),
++    BuiltinToolEntry("memory_source", get_memory_source_tool_spec, handle_memory_source_tool, stage="action"),
+     BuiltinToolEntry(
+         "query_image_memory",
+         _get_query_image_memory_tool_spec,
+diff --git a/src/services/nous_source_tool.py b/src/services/nous_source_tool.py
+new file mode 100644
+--- /dev/null
++++ b/src/services/nous_source_tool.py
+@@ -0,0 +1,72 @@
++"""The real memory_source tool consumes the model input's retained admission."""
++
++from __future__ import annotations
++
++import json
++from typing import Any
++
++from nous_wave.contracts.context import ContextAdmissionRef
++from nous_wave.errors import NousError
++from src.common.runtime_loop import run_on_main_loop
++from src.core.tooling import ToolExecutionResult, ToolInvocation, ToolSpec
++from src.services.memory_service import a_memorix_host_service
++
++
++def get_tool_spec(*, enabled: bool = True) -> ToolSpec:
++    return ToolSpec(
++        name="memory_source",
++        description="读取本次模型输入中确切认知的来源，保留其证据与归因。",
++        parameters_schema={
++            "type": "object",
++            "properties": {
++                "target": {
++                    "type": "string",
++                    "description": "本次上下文sources中的完整认知地址，包含@revision。",
++                }
++            },
++            "required": ["target"],
++            "additionalProperties": False,
++        },
++        provider_name="maisaka_builtin",
++        provider_type="builtin",
++        enabled=enabled,
++    )
++
++
++async def handle_tool(
++    tool_ctx: Any, invocation: ToolInvocation, context: Any = None
++) -> ToolExecutionResult:
++    del tool_ctx, context
++    target = invocation.arguments.get("target")
++    receipt = invocation.metadata.get("invocation_receipt")
++    if (
++        not isinstance(target, str)
++        or not isinstance(receipt, dict)
++        or receipt.get("owner") != "nous.context"
++    ):
++        return ToolExecutionResult(
++            tool_name=invocation.tool_name,
++            success=False,
++            error_message="memory_source需要实际模型输出携带的接纳回执和确切target。",
++        )
++    admission = ContextAdmissionRef.model_validate(receipt["admission"])
++    try:
++        payload = await run_on_main_loop(
++            a_memorix_host_service.memory_source(
++                target, admission=admission, tool_call_id=invocation.call_id
++            )
++        )
++    except NousError as error:
++        return ToolExecutionResult(
++            tool_name=invocation.tool_name,
++            success=False,
++            error_message=str(error),
++            metadata={"error_code": error.code, "error_context": error.context},
++        )
++    return ToolExecutionResult(
++        tool_name=invocation.tool_name,
++        success=True,
++        content=json.dumps(payload, ensure_ascii=False),
++        structured_content=payload,
++        metadata={"context_source_use": payload["use"]},
++    )

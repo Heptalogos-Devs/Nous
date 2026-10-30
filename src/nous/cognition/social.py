@@ -18,6 +18,7 @@ from sqlalchemy import select
 
 from nous.identity.service import require_subject_in
 
+from .lifecycle import selectable
 from .projection import references_in
 from .schema import revisions
 
@@ -45,7 +46,7 @@ async def resolve_identity(
             record = CognitiveRecord.model_validate(value)
             if (
                 isinstance(record.body, EntityBody)
-                and not record.deleted
+                and selectable(record)
                 and any(
                     identity.platform == platform and identity.account_id == account_id
                     for identity in record.body.platform_identities
@@ -96,7 +97,7 @@ async def link_identity(
             if (
                 record.reference.id != person.reference.id
                 and isinstance(record.body, EntityBody)
-                and not record.deleted
+                and selectable(record)
                 and any(
                     identity.platform == command.identity.platform
                     and identity.account_id == command.identity.account_id
@@ -192,7 +193,7 @@ async def social_profile(
             references = tuple(ref.id for ref in references_in(record.body))
             if (
                 (record.reference.id == entity_id or entity_id in references)
-                and not record.deleted
+                and selectable(record)
                 and await self.visible_in(view, ctx, record)
             ):
                 result.append(record)

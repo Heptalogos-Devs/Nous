@@ -166,6 +166,7 @@ from .credentials import Capability as Capability
 from .credentials import CreateCredential as CreateCredential
 from .credentials import CredentialRecord as CredentialRecord
 from .credentials import IssuedCredential as IssuedCredential
+from .fact_body import FactClaimBody as FactClaimBody
 from .graph_management import GraphChange as GraphChange
 from .graph_management import GraphChangeResult as GraphChangeResult
 from .graph_management import GraphSnapshot as GraphSnapshot

@@ -138,3 +138,5 @@ query/evidence 也可传 person_keyword（或 keyword）按真实人物主名、
 `force_refresh=true` 显式形成并采纳该 Person 的自动摘要和别名，需配置 `person_profile` 模型角色；人工覆盖继续生效。`set_aliases/delete_aliases`、`set_override/delete_override` 保存或撤销源支持的人工控制；`correct_evidence` 使用 evidence 返回的精确 `hash`/`evidence_key` 撤回对应属性支持，`refresh=false` 可只纠正不调用模型。CLI `nous profile <namespace-id> <subject-id> --action list` 与 MCP memory_profile_admin 使用同一操作。
 
 模型输出、reasoning、原生工具调用与工具结果继续由 MaiBot 的 ContextItems/历史 owner 持久保存；Nous overlay 不写回该历史。Context 反馈保存实际 provider/model/response身份、输出 item 与 toolcall IDs；没有观测到的 actual_use 不填。模型成功快照先于反馈提交，Nous 准备、权限和反馈错误直接向调用者传播，宿主不因此切模型重复付费。
+
+`memory_source` 是 Maisaka 的真实内置工具。它读取模型输入中已经接纳的精确认知：原始 FunctionCallItem 保留不透明的实际接纳回执，工具执行沿相同 SourceRead 校验并读取来源，成功后记录 referenced use。工具结果、call/output 配对与原有 replay 由原 ContextItems 历史继续管理。工具没有接纳回执、调用 ID 未出现在该模型真实输出、目标未接纳或来源已撤回时会明确失败。

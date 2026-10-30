@@ -14,6 +14,7 @@ from .query_conditions import (
     QueryFilters,
 )
 from .query_readout import RerankInfo
+from .query_vcp import VcpIntent, VcpResult
 from .source_graph import ExpandedSources
 
 
@@ -23,6 +24,7 @@ class TimeFilter(Contract):
 
 
 class QueryRequest(Contract):
+    vcp: VcpIntent = Field(default_factory=VcpIntent)
     text: str = ""
     expression: QueryExpression | None = None
     filters: QueryFilters = Field(default_factory=QueryFilters)
@@ -65,6 +67,7 @@ class QueryCoverage(Contract):
 
 
 class QueryResult(Contract):
+    vcp: VcpResult | None = None
     hits: tuple[QueryHit, ...]
     coverage: QueryCoverage
     execution: QueryExecution | None = None

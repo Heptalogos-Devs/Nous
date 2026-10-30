@@ -11,6 +11,7 @@ import sqlalchemy as sa
 from nous_wave.contracts import CallContext, DomainError
 from nous_wave.contracts.model_calls import ArchivedCall
 from nous_wave.contracts.model_roles import ModelCachePolicy
+from nous_wave.contracts.model_routing import ModelCallOutcome, ModelRouteAttempt
 from pydantic import JsonValue, TypeAdapter
 
 from nous.platform.errors import NousError
@@ -18,7 +19,9 @@ from nous.platform.persistence import Authority, ReadView, WriteTx, metadata
 
 from . import history
 from .invocations import (
+    InvocationAttempt,
     InvocationResult,
+    attempt_in,
     bind_in,
     invocation_in,
     invocation_key,
@@ -76,6 +79,35 @@ class CallLedger:
     ) -> InvocationResult | None:
         async with self.authority.read(ctx) as view:
             return await invocation_in(view, ctx, role_id, invocation_id, calls)
+
+    async def attempt(
+        self, ctx: CallContext, role_id: str, invocation_id: str
+    ) -> InvocationAttempt | None:
+        async with self.authority.read(ctx) as view:
+            return await attempt_in(view, ctx, role_id, invocation_id, calls)
+
+    async def bind_success(
+        self, ctx: CallContext, role_id: str, identity: str, call_id: str
+    ) -> None:
+        async with self.authority.write(
+            ctx,
+            identity,
+            operation_kind="model.bind_success",
+            scope=role_id,
+            payload={"call_id": call_id},
+        ) as tx:
+            if tx.replayed:
+                return
+            await self.successful_in(tx, ctx, call_id)
+            existing = await attempt_in(tx, ctx, role_id, identity, calls)
+            if existing is None:
+                await bind_in(tx, ctx, role_id, identity, call_id)
+            elif existing.call_id != call_id:
+                raise DomainError(
+                    "model_invocation_conflict",
+                    "The parent intent is already bound to another physical call",
+                )
+            tx.result({"call_id": call_id})
 
     async def purge_calls_in(self, tx: WriteTx, call_ids: tuple[str, ...]) -> None:
         if call_ids:
@@ -158,6 +190,17 @@ class CallLedger:
             if row["record"].get("purged")
         }
         selected = set(material_ids)
+
+        def accepted_plan(value: JsonValue) -> bool:
+            return (
+                isinstance(value, dict)
+                and "routes" in value
+                and "prompt" in value
+                and "role" in value
+                and bool(source_identities(value).intersection(selected | purged_roots))
+            )
+
+        await self.authority.redact_receipts_in(tx, accepted_plan)
         await history.purge_in(tx, source_ids=selected | purged_roots)
         rows = (
             await tx.connection.execute(
@@ -192,6 +235,7 @@ class CallLedger:
         budget_role: str | None = None,
         invocation_id: str | None = None,
         cache_policy: ModelCachePolicy = "shared",
+        routing: ModelRouteAttempt | None = None,
     ) -> tuple[str, object | None]:
         request = dict(request)
         if cache_policy == "invocation" and invocation_id is None:
@@ -215,6 +259,12 @@ class CallLedger:
                     status=409,
                 )
             if invocation_id is not None:
+                attempt = await attempt_in(tx, ctx, role, invocation_id, calls)
+                if attempt is not None and attempt.request_hash != digest:
+                    raise DomainError(
+                        "model_invocation_conflict",
+                        "Invocation identity already has a different provider input",
+                    )
                 retained = await invocation_in(tx, ctx, role, invocation_id, calls)
                 if retained is not None:
                     tx.result({"id": retained.call_id, "reused": True})
@@ -277,7 +327,12 @@ class CallLedger:
                     request_hash=digest,
                     day=day,
                     status="reserved",
-                    request={**request, "budget_role": role, "cache_policy": cache_policy},
+                    request={
+                        **request,
+                        "budget_role": role,
+                        "cache_policy": cache_policy,
+                        **({"routing": routing.model_dump(mode="json")} if routing else {}),
+                    },
                 )
             )
             tx.result({"id": call_id, "reused": False})
@@ -290,7 +345,14 @@ class CallLedger:
         result: object,
         usage: dict[str, object],
         error_code: str | None = None,
+        *,
+        outcome: ModelCallOutcome | None = None,
     ) -> None:
+        if error_code is not None:
+            usage = {
+                **usage,
+                "outcome": (outcome or ModelCallOutcome(kind="unknown")).model_dump(mode="json"),
+            }
         async with self.authority.write(
             ctx,
             str(uuid4()),

@@ -38,6 +38,7 @@ _PREFIXES = {
     "language_convention": "lang",
     "desire": "desire",
     "concern": "concern",
+    "fact_claim": "fact",
 }
 
 

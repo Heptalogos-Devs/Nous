@@ -30,17 +30,25 @@ async def reusable_embedding_in(
         if error.code == "model_call_unavailable":
             return None
         raise
-    route, request = profile.route, paid.request
-    if any(
-        request.get(key) != value
-        for key, value in (
-            ("model", route.model),
-            ("base_url", route.base_url),
-            ("dimensions", route.dimensions),
-            ("normalization", route.normalization),
-            ("extra_body", route.extra_body),
-        )
-    ):
+    request = paid.request
+    route = next(
+        (
+            route
+            for route in (profile.route, *profile.fallbacks)
+            if not any(
+                request.get(key) != value
+                for key, value in (
+                    ("model", route.model),
+                    ("base_url", route.base_url),
+                    ("dimensions", route.dimensions),
+                    ("normalization", route.normalization),
+                    ("extra_body", route.extra_body),
+                )
+            )
+        ),
+        None,
+    )
+    if route is None:
         return None
     recorded = request.get("source_ids")
     if not isinstance(recorded, list) or any(not isinstance(item, str) for item in recorded):

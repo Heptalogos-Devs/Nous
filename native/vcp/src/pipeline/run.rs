@@ -55,10 +55,30 @@ pub fn run_pipeline(
     let pyramid_ms = pyramid_started.elapsed().as_secs_f64() * 1000.0;
 
     let gating_started = Instant::now();
-    let (gated_tags, effective_tag_boost, dynamic_core_boost) =
-        gate_tags(&level_tags, &epa, &pyramid, &input.core_tags, &input.config);
-    // 空 Pyramid 门控不再中止：Spike 生成合法空观测，随后字符串 Core/幽灵
-    // 仍按 JS SOTA 在传播后注入；若最终仍为空，融合层返回原查询向量。
+    let (mut gated_tags, effective_tag_boost, dynamic_core_boost) = gate_tags(
+        &level_tags,
+        &epa,
+        &pyramid,
+        &input.core_tag_ids,
+        &input.config,
+    );
+    let core_energy = gated_tags.iter().map(|tag| tag.weight).fold(0.0, f64::max);
+    let core_energy = if core_energy > 0.0 { core_energy } else { 1.0 } * dynamic_core_boost;
+    for id in &input.core_tag_ids {
+        if !connection.tag_names.contains_key(id) || !connection.tag_vectors.contains_key(id) {
+            return Err(format!("MEMO_CORE_UNAVAILABLE: canonical node {id}"));
+        }
+        if !gated_tags.iter().any(|tag| tag.id == *id) {
+            gated_tags.push(GatedTag {
+                id: *id,
+                name: connection.tag_names[id].clone(),
+                weight: core_energy,
+                is_core: true,
+            });
+        }
+    }
+    // Exact cores are request seeds even when absent from the Pyramid recall.
+    // Isolated canonical nodes and transient cues can still participate in fusion.
     let seeds: Vec<SenseSeed> = gated_tags
         .iter()
         .map(|tag| SenseSeed {
@@ -112,7 +132,7 @@ pub fn run_pipeline(
         &input.query_vector,
         &observation,
         &gated_tags,
-        &input.core_tags,
+        &input.core_tag_ids,
         &input.ghost_tags,
         dynamic_core_boost,
         dimensions,

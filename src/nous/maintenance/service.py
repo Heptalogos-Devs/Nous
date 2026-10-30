@@ -16,6 +16,7 @@ from nous_wave.contracts.maintenance import (
 )
 from pydantic import JsonValue, TypeAdapter
 
+from nous.cognition.lifecycle import selectable
 from nous.cognition.projection import media_references_in
 from nous.cognition.service import CognitionService
 from nous.identity.service import require_subject_in
@@ -80,6 +81,10 @@ class MaintenanceService:
                 for entry in catalog.entries
             ]
         )
+        if any(not selectable(entry.record) for entry in entries):
+            raise DomainError(
+                "maintenance_snapshot_inactive", "Automatic maintenance requires active cognition"
+            )
         return GrowthSnapshot(
             watermark=catalog.watermark,
             entries=entries,

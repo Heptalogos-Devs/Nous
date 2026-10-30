@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from nous_wave.contracts import DomainError
 from pydantic import BaseModel, JsonValue
 
+from nous.platform.configuration.models import ModelConfiguration
+
 
 @dataclass(frozen=True)
 class RoleDefinition:
@@ -36,6 +38,29 @@ class RoleRegistry:
         return tuple(
             value.variant for value in self.definitions.values() if value.purpose == purpose
         )
+
+    def validate_resources(self, value: BaseModel) -> None:
+        resources = ModelConfiguration.model_validate(value)
+        for role in resources.roles.values():
+            if role.purpose != "embedding":
+                self.resolve(role.purpose, output_mode=role.output_mode)
+
+    def resources_schema(self) -> dict[str, JsonValue]:
+        schema = json_object(ModelConfiguration.model_json_schema())
+        definitions = schema.get("$defs")
+        role = definitions.get("RoleResource") if isinstance(definitions, dict) else None
+        properties = role.get("properties") if isinstance(role, dict) else None
+        purpose = properties.get("purpose") if isinstance(properties, dict) else None
+        if not isinstance(purpose, dict):
+            raise RuntimeError("Model resource schema has no purpose definition")
+        choices: list[JsonValue] = [
+            name
+            for name in sorted(
+                {"embedding", *(value.purpose for value in self.definitions.values())}
+            )
+        ]
+        purpose["enum"] = choices
+        return schema
 
     def resolve(
         self,

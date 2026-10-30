@@ -309,18 +309,12 @@ pub fn readout(
         fallback_anchor,
         &cosines,
     );
-    let core_tag_names: HashSet<String> = input
+    let core_tag_ids: HashSet<i64> = input
         .query_state
         .field_provenance
         .iter()
         .filter(|entry| entry.source_type == "core")
-        .filter_map(|entry| {
-            curves
-                .iter()
-                .flat_map(|curve| curve.tags.iter())
-                .find(|tag| tag.id == entry.id)
-                .map(|tag| tag.name.to_lowercase())
-        })
+        .map(|entry| entry.id)
         .collect();
 
     let mut work: Vec<ScoredWork> = curves
@@ -435,10 +429,10 @@ pub fn readout(
                 .collect::<HashSet<_>>()
                 .into_iter()
                 .collect();
-            let core_tags_matched = matched_tags
+            let core_tags_matched = item.curve.tags
                 .iter()
-                .filter(|name| core_tag_names.contains(&name.to_lowercase()))
-                .cloned()
+                .filter(|tag| core_tag_ids.contains(&tag.id))
+                .map(|tag| tag.name.clone())
                 .collect();
             let topology_v3 = if input.include_trace {
                 Some(serde_json::json!({

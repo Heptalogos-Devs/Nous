@@ -20,6 +20,7 @@ from .credentials import router as credentials
 from .domain import router as domain
 from .episodes import router as episodes
 from .evolution import router as evolution
+from .facts import router as facts
 from .knowledge import router as knowledge
 from .maintenance import router as maintenance
 from .management import router as management
@@ -45,6 +46,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(media)
     app.include_router(evolution)
     app.include_router(episodes)
+    app.include_router(facts)
     app.include_router(sdk_routes)
     app.include_router(credentials)
     app.include_router(web)

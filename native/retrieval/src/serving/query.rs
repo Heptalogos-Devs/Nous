@@ -109,6 +109,21 @@ impl ServingGeneration {
             .keys()
             .copied()
             .collect::<BTreeSet<_>>();
+        ensure!(
+            config.core_keys.len() <= 256 && config.ghost_tags.len() <= 256,
+            "VCP query cue budget exceeded"
+        );
+        let mut core_ids = BTreeSet::new();
+        for key in &config.core_keys {
+            let id = self
+                .mappings
+                .tags
+                .iter()
+                .find(|(id, value)| effective_tags.contains(*id) && *value == key)
+                .map(|(id, _)| *id)
+                .context("VCP_CORE_UNAVAILABLE: exact core is outside authorized graph assets")?;
+            core_ids.insert(id);
+        }
         let tag_search =
             |vector: &[f32], count: usize| -> std::result::Result<Vec<(i64, f64)>, String> {
                 let hits = self
@@ -135,7 +150,7 @@ impl ServingGeneration {
                 query_id: None,
                 _query_text: String::new(),
                 query_vector: normalized_query,
-                core_tags: config.core_tags,
+                core_tag_ids: core_ids.iter().copied().collect(),
                 ghost_tags: config.ghost_tags,
                 config: config.pipeline,
             },
@@ -201,7 +216,68 @@ impl ServingGeneration {
                     anchor_score: 0.0,
                 });
         }
-        let candidate_ids = offered.keys().copied().collect::<Vec<_>>();
+        let contact_score = |id: i64| {
+            assets
+                .candidates()
+                .get(&id)
+                .and_then(|data| assets.files().get(&data.file_id))
+                .map(|file| {
+                    file.tags
+                        .iter()
+                        .filter(|tag| core_ids.contains(&tag.tag_id))
+                        .map(|tag| tag.tag_id)
+                        .collect::<BTreeSet<_>>()
+                        .len() as f64
+                        / core_ids.len().max(1) as f64
+                })
+                .unwrap_or(0.0)
+        };
+        let core_limit = config
+            .readout
+            .anchor_k
+            .min(candidate_limit)
+            .min(limit)
+            .min(config.readout.max_union_candidates);
+        let mut core_offers: Vec<(i64, f64)> = Vec::new();
+        let mut core_matches = 0usize;
+        if !core_ids.is_empty() && core_limit > 0 {
+            for (index, id) in assets.candidates().keys().enumerate() {
+                if index % 256 == 0 {
+                    check_cancel()?;
+                }
+                let score = contact_score(*id);
+                if score <= 0.0 {
+                    continue;
+                }
+                core_matches += 1;
+                let position = core_offers.partition_point(|(old_id, old_score)| {
+                    old_score.total_cmp(&score).is_gt() || (*old_score == score && old_id < id)
+                });
+                if position < core_limit {
+                    core_offers.insert(position, (*id, score));
+                    core_offers.truncate(core_limit);
+                }
+            }
+        }
+        lanes.insert(
+            "core",
+            json!({"hits":core_offers.len(),"matched":core_matches,"limit":core_limit}),
+        );
+        for (id, anchor_score) in core_offers {
+            offered.entry(id).or_insert(CandidateInput {
+                id,
+                score: 0.0,
+                hybrid_score: 0.0,
+                vector_score: 0.0,
+                bm25_score: 0.0,
+                time_score: 0.0,
+                anchor_score,
+            });
+        }
+        for candidate in offered.values_mut() {
+            candidate.anchor_score = contact_score(candidate.id);
+        }
+        config.readout.max_union_candidates = config.readout.max_union_candidates.min(limit);
         let native = readout(
             assets,
             &observation,
@@ -239,16 +315,21 @@ impl ServingGeneration {
                     stages: vec![Stage {
                         diary_name: "authorized-snapshot".into(),
                         k: limit.clamp(1, 32),
-                        candidate_ids: candidate_ids.into_iter().take(256).collect(),
+                        candidate_ids: native
+                            .results
+                            .iter()
+                            .take(256)
+                            .map(|item| item.id)
+                            .collect(),
                     }],
-                    min_closure: 0.2,
+                    min_closure: config.thinking_min_closure,
                 },
             ) {
                 Ok(value) => {
                     source_mappings.extend(self.sources_for(value.stages.iter().flat_map(
                         |stage| stage.results.iter().map(|selection| selection.chunk_id),
                     ))?);
-                    json!({"status":"ready","plan":value})
+                    self.thinking_output(value)?
                 }
                 Err(error) => json!({"status":"unavailable","reason":error}),
             }
@@ -267,7 +348,8 @@ impl ServingGeneration {
             space: self.identity.space.clone(),
             source_mappings,
             diagnostics: json!({"profile":"vcp","engine":"usearch+ags+memo+river-v3","restored":self.restored,"assets":self.query_asset_diagnostics(),
-                "candidate_lanes":lanes,"pipeline":observation.metadata,"river":native.diagnostics,"omega":native.omega,"thinking":thinking,"fields":fields}),
+                "candidate_lanes":lanes,"core_keys":self.mappings.tags.iter().filter(|(id,_)|core_ids.contains(*id)).map(|(_,key)|key).collect::<Vec<_>>(),
+                "pipeline":observation.metadata,"river":native.diagnostics,"omega":native.omega,"thinking":thinking,"fields":fields}),
         })
     }
 }

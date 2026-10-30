@@ -37,7 +37,7 @@ pub(super) fn gate_tags(
     levels: &[Vec<PyramidTagWork>],
     epa: &EpaOutput,
     pyramid: &PyramidOutput,
-    core_tags: &[String],
+    core_tag_ids: &[i64],
     config: &PipelineConfig,
 ) -> (Vec<GatedTag>, f64, f64) {
     let activation_min = range_value(&config.activation_multiplier, 0, 0.5);
@@ -56,7 +56,7 @@ pub(super) fn gate_tags(
     let core_min = range_value(&config.core_boost_range, 0, 1.2);
     let core_max = range_value(&config.core_boost_range, 1, 1.4);
     let dynamic_core_boost = core_min + core_metric * (core_max - core_min);
-    let core_names: HashSet<String> = core_tags.iter().map(|name| name.to_lowercase()).collect();
+    let core_ids: HashSet<i64> = core_tag_ids.iter().copied().collect();
     let world = epa
         .dominant_axes
         .first()
@@ -75,7 +75,7 @@ pub(super) fn gate_tags(
             if tag.id <= 0 || !seen.insert(tag.id) {
                 continue;
             }
-            let is_core = core_names.contains(&tag.name.to_lowercase());
+            let is_core = core_ids.contains(&tag.id);
             // Cosine zero is a measured orthogonal relationship, not a
             // missing-score sentinel. Every pyramid candidate is measured
             // against its SQL original before entering this gate.

@@ -5,6 +5,7 @@ from hashlib import sha256
 
 import sqlalchemy as sa
 from nous_wave.contracts import CallContext, DomainError
+from nous_wave.contracts.model_routing import ModelCallOutcome
 from pydantic import JsonValue, TypeAdapter
 from sqlalchemy.dialects.sqlite import insert
 
@@ -56,13 +57,24 @@ class InvocationResult:
     output: JsonValue
 
 
-async def invocation_in(
+@dataclass(frozen=True)
+class InvocationAttempt:
+    call_id: str
+    status: str
+    output: JsonValue
+    error_code: str | None
+    outcome: ModelCallOutcome | None
+    request_hash: str
+    request: dict[str, JsonValue]
+
+
+async def attempt_in(
     view: ReadView | WriteTx,
     ctx: CallContext,
     role_id: str,
     identity: str,
     calls: sa.Table,
-) -> InvocationResult | None:
+) -> InvocationAttempt | None:
     if (
         await view.connection.scalar(
             sa.select(retirements.c.key).where(
@@ -80,7 +92,15 @@ async def invocation_in(
     row = (
         (
             await view.connection.execute(
-                sa.select(calls.c.id, calls.c.status, calls.c.result, calls.c.error_code)
+                sa.select(
+                    calls.c.id,
+                    calls.c.status,
+                    calls.c.result,
+                    calls.c.error_code,
+                    calls.c.usage,
+                    calls.c.request_hash,
+                    calls.c.request,
+                )
                 .join(invocations, invocations.c.call_id == calls.c.id)
                 .where(
                     invocations.c.key == invocation_key(ctx, role_id, identity),
@@ -94,17 +114,44 @@ async def invocation_in(
     )
     if row is None:
         return None
-    status = str(row["status"])
+    usage = TypeAdapter(dict[str, JsonValue] | None).validate_python(row["usage"])
+    outcome = (
+        ModelCallOutcome.model_validate(usage["outcome"])
+        if isinstance(usage, dict) and usage.get("outcome") is not None
+        else None
+    )
+    return InvocationAttempt(
+        str(row["id"]),
+        str(row["status"]),
+        TypeAdapter(JsonValue).validate_python(row["result"]),
+        str(row["error_code"]) if row["error_code"] is not None else None,
+        outcome,
+        str(row["request_hash"]),
+        TypeAdapter(dict[str, JsonValue]).validate_python(row["request"]),
+    )
+
+
+async def invocation_in(
+    view: ReadView | WriteTx,
+    ctx: CallContext,
+    role_id: str,
+    identity: str,
+    calls: sa.Table,
+) -> InvocationResult | None:
+    row = await attempt_in(view, ctx, role_id, identity, calls)
+    if row is None:
+        return None
+    status = row.status
     if status != "succeeded":
         raise DomainError(
             "model_invocation_unavailable",
             "The bound invocation has no retained successful result; a new invocation is required for another paid request",
             invocation_id=identity,
-            call_id=str(row["id"]),
+            call_id=row.call_id,
             status=status,
-            error_code=str(row["error_code"]) if row["error_code"] is not None else None,
+            error_code=row.error_code,
         )
-    return InvocationResult(str(row["id"]), TypeAdapter(JsonValue).validate_python(row["result"]))
+    return InvocationResult(row.call_id, row.output)
 
 
 async def bind_in(tx: WriteTx, ctx: CallContext, role_id: str, identity: str, call_id: str) -> None:

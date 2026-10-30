@@ -35,6 +35,7 @@ from nous.material.service import observations
 from nous.platform.persistence import ReadView, WriteTx
 
 from .growth_binding import bind_body
+from .lifecycle import selectable
 from .projection import media_references_in
 from .schema import revisions
 
@@ -67,7 +68,7 @@ async def growth_snapshot_in(
     roots: set[str] = set()
     for value in (await view.connection.execute(statement)).scalars():
         record = CognitiveRecord.model_validate(value)
-        if record.deleted or record.purged or not await self.visible_in(view, ctx, record):
+        if not selectable(record) or not await self.visible_in(view, ctx, record):
             continue
         entries.append(GrowthEntry(key=f"c{len(entries)}", record=record))
         roots.update(record.source_roots)
@@ -254,10 +255,10 @@ async def apply_growth_in(
                     "growth_revision_conflict", "A proposal can revise each snapshot identity once"
                 )
             revised.add(target.reference.id)
-            if target.lifecycle is not None and target.lifecycle.activation != "active":
+            if not selectable(target):
                 raise DomainError(
                     "growth_memory_inactive",
-                    "Automatic growth cannot revise frozen or retired Memory",
+                    "Automatic growth cannot revise inactive cognition",
                 )
         if (
             target is not None

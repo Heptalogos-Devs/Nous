@@ -22,6 +22,9 @@ def register_management(
     from .episodes import register_episodes
 
     register_episodes(server, client, namespace_id, subject_id)
+    from .facts import register_facts
+
+    register_facts(server, client, namespace_id, subject_id)
 
     @server.tool()
     async def project_vectors(command: ProjectVectors) -> JsonObject:
@@ -96,7 +99,7 @@ def register_management(
 
         Includes open/read/change/close_session, residents/change_residents,
         create/read/list/change_work, work_history, prepare/preparation,
-        cancel_preparation, track, admit/admission and report. Use expected_revision
+        cancel_preparation, track, source, admit/admission and report. Use expected_revision
         for concurrent changes; pin/unpin changes work anchors.
         """
         async with client() as api:

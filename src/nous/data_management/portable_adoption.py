@@ -294,16 +294,23 @@ def normalize(loaded: PortableArchive, data: bytes) -> SubjectBundle:
             imported_evidence = ()
         ref = adopt(
             key,
-            EntityBody(
-                label=name,
-                entity_type="other",
-                identifiers={"amemorix:entity": key},
-                aliases=_STRINGS.validate_python(body_metadata.get("aliases") or ()),
-                description=TypeAdapter(str).validate_python(
-                    body_metadata.get("description", entity.get("description") or "")
-                ),
-                profile_controls=controls,
-                mentions=tuple(EntityMention(reference=item) for item in refs),
+            EntityBody.model_validate(
+                {
+                    "label": name,
+                    "entity_type": body_metadata.get("entity_type", "other"),
+                    "identifiers": {
+                        **TypeAdapter(dict[str, str]).validate_python(
+                            body_metadata.get("identifiers") or {}
+                        ),
+                        "amemorix:entity": key,
+                    },
+                    "aliases": _STRINGS.validate_python(body_metadata.get("aliases") or ()),
+                    "description": TypeAdapter(str).validate_python(
+                        body_metadata.get("description", entity.get("description") or "")
+                    ),
+                    "profile_controls": controls,
+                    "mentions": tuple(EntityMention(reference=item) for item in refs),
+                }
             ),
             links=(
                 *(tuple(EvidenceLink(reference=item) for item in refs) or evidence),
@@ -405,6 +412,9 @@ def normalize(loaded: PortableArchive, data: bytes) -> SubjectBundle:
             links=tuple(EvidenceLink(reference=member.reference) for member in members) or evidence,
             raw=episode,
         )
+    from .portable_fact_adoption import adopt_facts
+
+    adopt_facts(tables, records, entities, memories, source, adopt)
     from .portable_image_adoption import adopt_images
 
     derivations = adopt_images(

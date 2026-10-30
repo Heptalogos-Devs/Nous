@@ -61,6 +61,8 @@ class QueryFilters(Contract):
 
 
 class QueryBudget(Contract):
+    vcp_concepts: int = Field(default=32, ge=0, le=256)
+    vcp_text_bytes: int = Field(default=65536, ge=0, le=1048576)
     candidates: int = Field(default=256, ge=1, le=10000)
     branches: int = Field(default=32, ge=1, le=64)
     depth: int = Field(default=8, ge=1, le=16)

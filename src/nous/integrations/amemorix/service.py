@@ -67,6 +67,10 @@ class AMemorixService:
             from .profile_admin import profile_admin
 
             return await profile_admin(self, ctx, arguments)
+        if tool == "memory_fact_admin":
+            from .facts import fact_admin
+
+            return await fact_admin(self, ctx, arguments)
         if tool == "memory_episode_admin":
             from .episodes import episode_admin
 

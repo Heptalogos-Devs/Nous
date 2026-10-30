@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Literal
 
 from nous_wave.contracts.common import DomainError
+from nous_wave.contracts.model_routing import ModelRoutingPolicy
 from pydantic import BaseModel, Field, TypeAdapter, model_validator
 
 from .settings import EmbeddingRoute, ModelRoute, ProviderOptions, ReasoningEffort
@@ -36,17 +37,9 @@ class RouteResource(BaseModel):
 
 
 class RoleResource(BaseModel):
+    fallback: ModelRoutingPolicy = Field(default_factory=ModelRoutingPolicy)
     routes: tuple[str, ...] = Field(min_length=1)
-    purpose: Literal[
-        "formation",
-        "description",
-        "embedding",
-        "steward",
-        "maintenance",
-        "rerank",
-        "person_profile",
-        "episode",
-    ]
+    purpose: str = Field(min_length=1)
     output_mode: Literal["text", "json_schema"] = "json_schema"
     prompt_id: str = "formation"
     max_calls_per_day: int = Field(default=50, ge=0)

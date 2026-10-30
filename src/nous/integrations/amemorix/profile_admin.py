@@ -53,6 +53,52 @@ async def profile_admin(
         items = [summary(record) for record in (await people(self, ctx))[:limit]]
         return json_object({"success": True, "items": items, "count": len(items)})
     record = await selected_intent(self, ctx, command)
+    if command.action == "correct_evidence" and command.evidence_type == "fact_claim":
+        assert command.operation_id is not None
+        from nous_wave.contracts.fact_body import FactClaimBody, PersonFactScope
+        from nous_wave.contracts.facts import FactChange
+
+        token = command.evidence_key or command.hash or ""
+        reference = await cognitive_reference(self, ctx, token)
+        fact = await self.app.facts.get(ctx, reference)
+        body = fact.record.body
+        if (
+            not isinstance(body, FactClaimBody)
+            or not isinstance(body.scope, PersonFactScope)
+            or body.scope.person.id != record.reference.id
+        ):
+            raise DomainError("fact_scope_mismatch", "The fact must belong to the selected Person")
+        changed = await self.app.facts.change(
+            ctx,
+            FactChange(
+                operation_id=command.operation_id + ":fact",
+                action="retract",
+                reference=reference,
+                reason=command.reason,
+                reported_by=command.requested_by,
+                refresh_profile=command.refresh,
+            ),
+        )
+        if changed.profile_job_id:
+            result = await self.app.execution.wait(ctx, changed.profile_job_id)
+            if not isinstance(result, dict):
+                raise DomainError(
+                    "profile_refresh_result_invalid", "Profile refresh returned no reference"
+                )
+            record = await self.app.cognition.get(
+                ctx, CognitiveRef.model_validate(result["reference"])
+            )
+        return json_object(
+            {
+                "success": True,
+                "operation_id": command.operation_id,
+                "fact": changed.record,
+                "refresh_queued": changed.profile_job_id is not None,
+                "profile_job_id": changed.profile_job_id,
+                "refreshed_profile": summary(record),
+                "refreshed_evidence": await read_profile(self, ctx, record, command),
+            }
+        )
     if command.action in (
         "set_aliases",
         "delete_aliases",

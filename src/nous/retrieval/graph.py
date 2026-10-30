@@ -6,11 +6,13 @@ import numpy as np
 from nous_wave.contracts import (
     AssociationBody,
     CognitiveRecord,
+    CognitiveRef,
     ConceptBody,
     EntityBody,
 )
 from numpy.typing import NDArray
 
+from nous.cognition.lifecycle import selectable
 from nous.cognition.projection import references_in
 
 from .assets import (
@@ -36,13 +38,17 @@ def graph(
     assets: dict[str, VectorAsset],
     dimensions: int,
     active_roots: dict[str, str],
+    *,
+    core_references: tuple[CognitiveRef, ...] = (),
+    include_inactive: bool = False,
 ) -> GraphAssets:
     # Numerical graph nodes retain canonical typed exact identities. Concept is
     # one domain; Entity and explicit relation endpoints are not synthesized Tags.
     cognitive = {
         record.reference.exact(): record
         for record in catalog
-        if isinstance(record, CognitiveRecord) and not record.deleted and not record.purged
+        if isinstance(record, CognitiveRecord)
+        and selectable(record, include_inactive=include_inactive)
     }
     associations = [
         record for record in cognitive.values() if isinstance(record.body, AssociationBody)
@@ -53,6 +59,7 @@ def graph(
         if isinstance(record.body, AssociationBody)
         for reference in (record.body.from_ref, record.body.to_ref)
     }
+    endpoint_keys.update(ref.exact() for ref in core_references)
     nodes = [
         record
         for record in cognitive.values()

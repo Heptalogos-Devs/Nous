@@ -8,6 +8,7 @@ from nous_wave.contracts import CallContext, CognitiveRecord
 from nous_wave.contracts.diagnostics import RetrievalStatus, VectorSpaceInventory
 from sqlalchemy import select
 
+from nous.cognition.lifecycle import selectable
 from nous.cognition.schema import revisions, vectors
 from nous.identity.service import require_subject_in
 
@@ -32,11 +33,7 @@ async def status(self: RetrievalService, ctx: CallContext) -> RetrievalStatus:
         eligible: set[str] = set()
         for value in values:
             record = CognitiveRecord.model_validate(value)
-            if (
-                not record.deleted
-                and not record.purged
-                and await self.cognition.visible_in(view, ctx, record)
-            ):
+            if selectable(record) and await self.cognition.visible_in(view, ctx, record):
                 eligible.add(record.reference.exact())
         for media in await media_records_in(
             view, ctx, self.materials, self.derivations, include_text=False

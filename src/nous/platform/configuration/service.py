@@ -1,12 +1,13 @@
 """Whole-key overrides, scoped inheritance and immutable change history."""
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal
 
 import sqlalchemy as sa
 from nous_wave.contracts import CallContext
 from nous_wave.contracts.configuration import ConfigurationCatalog, ConfigurationDefinition
-from pydantic import BaseModel, TypeAdapter
+from pydantic import BaseModel, JsonValue, TypeAdapter
 
 from nous.platform.errors import NousError
 from nous.platform.persistence import Authority, metadata
@@ -38,6 +39,14 @@ class ConfigurationEntry:
         "namespace",
         "subject",
     )
+    validator: Callable[[BaseModel], None] | None = None
+    schema: Callable[[], dict[str, JsonValue]] | None = None
+
+    def parse(self, value: object) -> BaseModel:
+        parsed = type(self.default).model_validate(value)
+        if self.validator is not None:
+            self.validator(parsed)
+        return parsed
 
 
 class ConfigurationService:
@@ -45,7 +54,8 @@ class ConfigurationService:
         self.authority = authority
         self._entries = dict(entries)
         self._defaults = {
-            key: entry.default.model_dump(mode="json") for key, entry in self._entries.items()
+            key: entry.parse(entry.default).model_dump(mode="json")
+            for key, entry in self._entries.items()
         }
 
     def entry(self, key: str) -> ConfigurationEntry:
@@ -63,7 +73,9 @@ class ConfigurationService:
         entry = self.entry(key)
         return ConfigurationDefinition(
             key=key,
-            value_schema=type(entry.default).model_json_schema(),
+            value_schema=entry.schema()
+            if entry.schema
+            else type(entry.default).model_json_schema(),
             default_value=self._defaults[key],
             write_access="instance_manage" if entry.instance_management else "manage",
             scopes=entry.scopes,
@@ -112,7 +124,7 @@ class ConfigurationService:
                 )
                 if row:
                     value, origin = row["value"], scope
-        resolved = type(entry.default).model_validate(value).model_dump(mode="json")
+        resolved = entry.parse(value).model_dump(mode="json")
         return {"key": key, "value": resolved, "origin": origin}
 
     async def history(self, ctx: CallContext, key: str, limit: int = 100) -> dict[str, object]:
@@ -152,11 +164,7 @@ class ConfigurationService:
             if scope == "instance"
             else f"{scope}:{ctx.namespace_id if scope == 'namespace' else ctx.subject_id}"
         )
-        parsed = (
-            None
-            if value is None
-            else type(entry.default).model_validate(value).model_dump(mode="json")
-        )
+        parsed = None if value is None else entry.parse(value).model_dump(mode="json")
         async with self.authority.write(
             ctx,
             operation_id,

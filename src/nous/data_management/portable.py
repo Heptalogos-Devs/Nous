@@ -133,7 +133,12 @@ def project(
                 "hash": key,
                 "name": body.label,
                 "is_deleted": 0,
-                "metadata": canonical(body.model_dump(mode="json")).decode(),
+                "metadata": canonical(
+                    {
+                        **body.model_dump(mode="json"),
+                        "reference": record.reference.model_dump(mode="json"),
+                    }
+                ).decode(),
             }
         )
         tables["paragraph_entities"].extend(
@@ -205,6 +210,9 @@ def project(
                 {"episode_id": key, "paragraph_hash": member, "position": ordinal}
                 for member, ordinal in members
             )
+    from .portable_facts import project_facts
+
+    project_facts(bundle, tables, selected)
     from .portable_identity import semantic_ids
 
     identities = semantic_ids(bundle)
@@ -327,9 +335,21 @@ def write_portable(bundle: SubjectBundle, command: BundleRequest) -> bytes:
     members.update(image_members)
     if images is not None:
         members["images.json"] = canonical(images)
-    if not knowledge["docs"] and images is None:
+    has_semantic_state = selected_state is not None and any(
+        counts[name]
+        for name in (
+            "entities",
+            "relations",
+            "episodes",
+            "fact_claims",
+            "person_profile_snapshots",
+            "person_profile_overrides",
+            "person_profile_alias_overrides",
+        )
+    )
+    if not knowledge["docs"] and images is None and not has_semantic_state:
         raise DomainError(
-            "bundle_portable_empty", "The selected scope contains no portable paragraphs"
+            "bundle_portable_empty", "The selected scope contains no portable semantic records"
         )
     content: dict[str, JsonValue] = {"knowledge": knowledge, "state": selected_state}
     if images is not None:

@@ -69,6 +69,9 @@ class Application:
         from nous.cognition.person_profiles import PersonProfileService
 
         self.person_profiles = PersonProfileService(self.authority, self.cognition, self.models)
+        from nous.cognition.facts import FactService
+
+        self.facts = FactService(self.authority, self.cognition, self.person_profiles)
         from nous.references.service import ReferenceDirectory
 
         self.references = ReferenceDirectory(self.authority, self.cognition, self.material)

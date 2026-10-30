@@ -31,7 +31,7 @@ from nous.platform.persistence import ReadView, WriteTx
 
 from .evolution_validation import validate_merge, validate_split
 from .growth_binding import GrowthValue, bind_body
-from .lifecycle import transition
+from .lifecycle import active_body, selectable, transition
 from .projection import references_in
 from .schema import revisions
 from .semantics import capability_for, validate_body
@@ -53,6 +53,10 @@ async def catalog_in(
         if entry.key in catalog or record.commit_seq > snapshot.watermark:
             raise DomainError(
                 "growth_snapshot_invalid", "Snapshot keys and knowledge cutoff are inconsistent"
+            )
+        if not selectable(record):
+            raise DomainError(
+                "growth_snapshot_inactive", "Automatic growth requires active snapshot cognition"
             )
         catalog[entry.key] = record
     return catalog
@@ -140,13 +144,11 @@ async def validate_growth_in(
             previous = await target(action.target_key) if action.target_key else None
             for key in (*action.evidence_keys, *(binding.key for binding in action.bindings)):
                 lookup(key)
-            if (
-                previous is not None
-                and previous.lifecycle
-                and previous.lifecycle.activation != "active"
+            if previous is not None and (
+                previous.deleted or not active_body(previous.body, previous.lifecycle)
             ):
                 raise DomainError(
-                    "growth_memory_inactive", "Growth cannot revise frozen or retired Memory"
+                    "growth_cognition_inactive", "Growth cannot revise inactive cognition"
                 )
             body = bind_body(action, catalog, snapshot.watermark)
             await require_subject_in(view, ctx, capability_for(body))

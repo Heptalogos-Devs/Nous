@@ -37,6 +37,9 @@ def register(cli: typer.Typer) -> None:
     from .episodes import register as register_episodes
 
     register_episodes(cli)
+    from .facts import register as register_facts
+
+    register_facts(cli)
 
     @cli.command("project-vectors")
     def project_vectors(ctx: typer.Context, namespace: str, subject: str, request: Path) -> None:

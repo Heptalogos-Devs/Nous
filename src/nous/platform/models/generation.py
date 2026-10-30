@@ -9,10 +9,12 @@ from typing import TypeVar
 
 from nous_wave.contracts import CallContext, DomainError
 from nous_wave.contracts.model_roles import ModelCachePolicy
+from nous_wave.contracts.model_routing import ModelRouteAttempt
+from openai import AsyncOpenAI
 from pydantic import BaseModel, JsonValue, TypeAdapter
 from pydantic_ai import Agent, BinaryContent, capture_run_messages
 from pydantic_ai.capabilities import Instrumentation
-from pydantic_ai.messages import ModelMessagesTypeAdapter
+from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelResponse
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.openai import OpenAIChatModel, OpenAIChatModelSettings
 from pydantic_ai.providers.openai import OpenAIProvider
@@ -24,6 +26,7 @@ from nous.platform.network.service import NetworkService
 from .completion import require_complete_text
 from .content_parts import complete_video
 from .ledger import CallLedger
+from .outcomes import outcome
 from .provider_schema import native_output, response_format
 
 T = TypeVar("T", bound=BaseModel | str)
@@ -125,6 +128,7 @@ class Generation:
         budget_role: str | None = None,
         invocation_id: str | None = None,
         cache_policy: ModelCachePolicy = "shared",
+        routing: ModelRouteAttempt | None = None,
     ) -> tuple[T, str]:
         video = any(part.media_type.startswith("video/") for part in media)
         snapshot = prepare_invocation(purpose, route, prompt, output_type, media, source_ids)
@@ -138,6 +142,7 @@ class Generation:
             budget_role=budget_role,
             invocation_id=invocation_id,
             cache_policy=cache_policy,
+            routing=routing,
         )
         if cached is not None:
             return TypeAdapter(output_type).validate_python(cached), call_id
@@ -159,7 +164,14 @@ class Generation:
                 raise
             except Exception as error:
                 code = error.code if isinstance(error, NousError) else type(error).__name__
-                await self.ledger.finish(ctx, call_id, None, {"stage": "network_acquisition"}, code)
+                await self.ledger.finish(
+                    ctx,
+                    call_id,
+                    None,
+                    {"stage": "network_acquisition"},
+                    code,
+                    outcome=outcome(error),
+                )
                 raise Unavailable(
                     "Model network client is unavailable",
                     context={
@@ -184,7 +196,14 @@ class Generation:
                     role=budget_role or purpose,
                     invocation_id=invocation_id,
                 )
-            provider = OpenAIProvider(base_url=route.base_url, api_key=key, http_client=client)
+            provider = OpenAIProvider(
+                openai_client=AsyncOpenAI(
+                    base_url=route.base_url,
+                    api_key=key,
+                    http_client=client,
+                    max_retries=0,
+                )
+            )
             agent = Agent(
                 OpenAIChatModel(route.model, provider=provider),
                 output_type=native_output(output_type),
@@ -260,6 +279,12 @@ class Generation:
                             "messages": json.loads(ModelMessagesTypeAdapter.dump_json(messages)),
                         },
                         code,
+                        outcome=outcome(
+                            error,
+                            response_received=any(
+                                isinstance(item, ModelResponse) for item in messages
+                            ),
+                        ),
                     )
                     raise Unavailable(
                         f"Generation provider failed ({code})",

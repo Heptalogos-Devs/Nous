@@ -109,16 +109,17 @@ pub enum ServingProfile {
     Vcp(Box<VcpConfig>),
 }
 #[derive(Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct VcpConfig {
     pub pipeline: PipelineConfig,
     pub readout: NativeConfig,
     pub candidate_limit: usize,
-    pub core_tags: Vec<String>,
+    pub core_keys: Vec<String>,
     pub ghost_tags: Vec<GhostTagInput>,
     pub include_trace: bool,
     pub include_fields: bool,
     pub thinking: bool,
+    pub thinking_min_closure: f64,
 }
 impl Default for VcpConfig {
     fn default() -> Self {
@@ -126,11 +127,12 @@ impl Default for VcpConfig {
             pipeline: PipelineConfig::default(),
             readout: NativeConfig::default(),
             candidate_limit: 100,
-            core_tags: vec![],
+            core_keys: vec![],
             ghost_tags: vec![],
             include_trace: false,
             include_fields: false,
             thinking: false,
+            thinking_min_closure: nous_vcp::thinking::default_closure(),
         }
     }
 }
@@ -203,5 +205,6 @@ mod assets;
 use assets::{assemble_assets, asset_diagnostics, build_assets};
 mod persistence;
 use persistence::{GraphDisk, hash};
+mod intent;
 mod query;
 mod scope;

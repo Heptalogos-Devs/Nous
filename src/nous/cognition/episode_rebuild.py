@@ -27,13 +27,12 @@ from nous_wave.contracts.episodes import (
     RebuildEpisodes,
 )
 from pydantic import JsonValue, TypeAdapter
-from sqlalchemy import update
 
 from nous.identity.service import require_subject_in
 from nous.platform.execution import JobSpec
 
 from .projection import body_text
-from .schema import revisions
+from .revision_state import RevisionState
 
 if TYPE_CHECKING:
     from .episodes import EpisodeService
@@ -258,24 +257,14 @@ async def run_rebuild(self: EpisodeService, payload: JsonValue) -> JsonValue:
                         evidence=(EvidenceLink(reference=old.reference, role="source_rebuild"),),
                         times=old.times,
                     ),
-                )
-                record = record.model_copy(
-                    update={
-                        "cause": RevisionCause(
+                    state=RevisionState(
+                        cause=RevisionCause(
                             action="episode.rebuild",
                             actor=ctx.caller_id,
                             reason="Explicit complete-source rebuild",
                             parent=old.reference,
                         )
-                    }
-                )
-                await tx.connection.execute(
-                    update(revisions)
-                    .where(
-                        revisions.c.id == record.reference.id,
-                        revisions.c.revision == record.reference.revision,
-                    )
-                    .values(record=record.model_dump(mode="json"))
+                    ),
                 )
             results.append(
                 {

@@ -15,11 +15,12 @@ from nous_wave.contracts import (
     MemoryBody,
     MemoryChange,
 )
-from sqlalchemy import select, update
+from sqlalchemy import select
 
 from nous.identity.service import require_subject_in
 from nous.platform.persistence import ReadView, WriteTx
 
+from .revision_state import RevisionState
 from .schema import revisions
 
 if TYPE_CHECKING:
@@ -162,7 +163,9 @@ async def set_deleted_in(
         )
     if previous.body is None:
         raise DomainError("cognition_purged", "A purged object cannot be changed")
-    adopted = await self.adopt_in(
+    from nous_wave.contracts import RevisionCause
+
+    return await self.adopt_in(
         tx,
         ctx,
         AdoptCognition(
@@ -172,29 +175,17 @@ async def set_deleted_in(
             evidence=(EvidenceLink(reference=reference), *evidence),
             times=previous.times,
         ),
-    )
-    from nous_wave.contracts import RevisionCause
-
-    adopted = adopted.model_copy(
-        update={
-            "deleted": deleted,
-            "cause": RevisionCause(
+        state=RevisionState(
+            deleted=deleted,
+            lifecycle=previous.lifecycle,
+            cause=RevisionCause(
                 action="trash" if deleted else "restore",
                 actor=ctx.caller_id,
                 reason=reason,
                 parent=reference,
             ),
-        }
+        ),
     )
-    await tx.connection.execute(
-        update(revisions)
-        .where(
-            revisions.c.id == adopted.reference.id,
-            revisions.c.revision == adopted.reference.revision,
-        )
-        .values(record=adopted.model_dump(mode="json"))
-    )
-    return adopted
 
 
 async def replay_record_in(

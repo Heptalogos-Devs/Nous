@@ -17,6 +17,7 @@ from sqlalchemy import select
 from nous.identity.service import require_subject_in
 from nous.platform.persistence import ReadView, WriteTx
 
+from .lifecycle import selectable
 from .projection import references_in
 from .schema import revisions
 
@@ -70,7 +71,7 @@ async def graph_snapshot(self: CognitionService, ctx: CallContext) -> GraphSnaps
         records: list[CognitiveRecord] = []
         paragraphs: dict[str, CognitiveRecord] = {}
         for record in await heads_in(view, ctx):
-            if record.deleted or record.purged or not await self.visible_in(view, ctx, record):
+            if not selectable(record) or not await self.visible_in(view, ctx, record):
                 continue
             records.append(record)
             references = tuple(references_in(record.body)) + tuple(
@@ -85,7 +86,7 @@ async def graph_snapshot(self: CognitionService, ctx: CallContext) -> GraphSnaps
                     if error.code in {"source_unavailable", "cognition_not_found"}:
                         continue
                     raise
-                if not value.deleted and isinstance(value.body, MemoryBody):
+                if selectable(value) and isinstance(value.body, MemoryBody):
                     paragraphs[reference.exact()] = value
         return GraphSnapshot(
             records=tuple(records), paragraphs=tuple(paragraphs.values()), watermark=view.commit_seq

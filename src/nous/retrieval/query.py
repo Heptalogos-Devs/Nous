@@ -16,19 +16,20 @@ from nous_wave.contracts import (
     QueryResult,
 )
 from nous_wave.contracts.query_conditions import QueryEffectiveMode, QueryExecution
+from nous_wave.contracts.query_vcp import VcpResult
 from numpy.typing import NDArray
 from pydantic import JsonValue
 
-from .assets import (
-    GraphAssets,
-    record_text,
-)
+from .assets import GraphAssets, record_text
 from .filters import authority
-from .media import source_material_ids_in
 from .native import failure, run_native
 from .planning import BoundPlan, bind
 from .policy import ResolvedPolicy, native_diagnostics
 from .policy import resolve as resolve_policy
+from .readout import visible_hits
+from .vcp_intent import embed_concepts, resolve_intent
+from .vcp_thinking import resolve_thinking
+from .work import QueryWork
 
 if TYPE_CHECKING:
     from .service import RetrievalService
@@ -37,7 +38,7 @@ if TYPE_CHECKING:
 async def query(self: RetrievalService, ctx: CallContext, request: QueryRequest) -> QueryResult:
     bound, plan = bind(ctx, request)
     policy = await resolve_policy(self.configuration, ctx)
-    result = await execute(self, ctx, bound, plan, 0, [bound.budget.branches], policy)
+    result = await execute(self, ctx, bound, plan, 0, QueryWork.from_budget(bound.budget), policy)
     if plan["diagnostics"] != "none":
         result = result.model_copy(update={"plan": {**result.plan, "policy": policy.diagnostics()}})
     result = result.model_copy(update={"expression": plan["canonical"]})
@@ -60,7 +61,7 @@ async def execute(
     bound: QueryRequest,
     plan: BoundPlan,
     depth: int,
-    branches: list[int],
+    work: QueryWork,
     policy: ResolvedPolicy,
 ) -> QueryResult:
     if depth >= bound.budget.depth:
@@ -189,7 +190,7 @@ async def execute(
                     plan["asof_time"], child_plan.get("asof_time", plan["asof_time"])
                 )
             children.append(
-                await execute(self, ctx, child_bound, child_plan, depth + 1, branches, policy)
+                await execute(self, ctx, child_bound, child_plan, depth + 1, work, policy)
             )
         keys: list[set[str]] = [
             {hit.object.reference.exact() for hit in child.hits} for child in children
@@ -220,6 +221,9 @@ async def execute(
             child.execution.effective_mode for child in children if child.execution
         }
         return QueryResult(
+            vcp=VcpResult(branches=tuple(child.vcp for child in children if child.vcp is not None))
+            if any(child.vcp is not None for child in children)
+            else None,
             hits=tuple(
                 QueryHit(
                     object=record,
@@ -267,17 +271,21 @@ async def execute(
                 ),
             ),
         )
-    branches[0] -= 1
-    if branches[0] < 0:
-        raise DomainError("query_budget_exceeded", "Query exceeds branch budget")
+    work.branch()
     view = await self.eligible(ctx, bound, plan)
     selection = self.selectors(view.records, view.catalog, plan, view.sources)
     records, direct = selection.records, selection.direct
-    if bound.mode != "lexical" and selection.terms:
+    intent = resolve_intent(bound, plan, selection, view.catalog, view.sources, policy, work)
+    if bound.mode == "vcp" and intent.thinking:
+        direct = False
+    terms = tuple(
+        dict.fromkeys((*selection.terms, *intent.terms, *(cue.text for cue in bound.vcp.concepts)))
+    )
+    if bound.mode != "lexical" and terms:
         bound = bound.model_copy(
             update={
-                "text": " ".join((bound.text, *selection.terms)).strip(),
-                "parts": (*bound.parts, *selection.terms) if bound.parts else (),
+                "text": " ".join((bound.text, *terms)).strip(),
+                "parts": (*bound.parts, *terms) if bound.parts else (),
             }
         )
     if plan.get("no_matches"):
@@ -300,7 +308,7 @@ async def execute(
             if record.reference.exact() == bound.reference
             or f"{record.reference.kind}:{record.reference.id}" == bound.reference
         ]
-        direct = True
+        direct = not (bound.mode == "vcp" and intent.thinking)
     missing = 0
     requested_mode = bound.mode
     reasons: list[str] = []
@@ -315,9 +323,16 @@ async def execute(
     graph: GraphAssets | None = None
     space: str | None = None
     native_info: dict[str, JsonValue] = {}
+    vcp_result: VcpResult | None = None
+    ghost_vectors: NDArray[np.float32] | None = None
+    core_references = intent.core
     if bound.mode != "lexical" and not direct and records:
         try:
-            batch = await self.query_embedding(ctx, bound, source_ids=selection.source_material_ids)
+            batch = await self.query_embedding(
+                ctx,
+                bound,
+                source_ids=tuple(sorted(set((*selection.source_material_ids, *intent.source_ids)))),
+            )
         except DomainError as error:
             if bound.capabilities.semantic != "optional" or error.code not in {
                 "model_unavailable",
@@ -384,7 +399,15 @@ async def execute(
         )
         query_vector = np.ascontiguousarray(batch.vectors[0], dtype=np.float32)
         if bound.mode == "vcp":
-            graph = self.graph(view.catalog, records, by_ref, batch.dimensions, view.active_roots)
+            graph = self.graph(
+                view.catalog,
+                records,
+                by_ref,
+                batch.dimensions,
+                view.active_roots,
+                core_references=intent.core,
+                include_inactive=bound.include_inactive,
+            )
             if not graph.tags:
                 if bound.capabilities.exploration == "required":
                     raise DomainError(
@@ -394,6 +417,26 @@ async def execute(
                 reasons.append("vcp_assets_unavailable")
                 bound = bound.model_copy(update={"mode": "hybrid"})
                 graph = None
+            else:
+                core_references = intent.graph_core(graph, bound, reasons)
+                ghost_vectors, concept_results = await embed_concepts(self, ctx, intent, batch)
+                vcp_result = VcpResult(core=core_references, concepts=concept_results)
+    if intent.thinking and (bound.mode != "vcp" or not records):
+        vcp_result = VcpResult(
+            core=core_references,
+            thinking=await resolve_thinking(
+                self,
+                ctx,
+                {
+                    "status": "unavailable",
+                    "reason": "no_candidates" if not records else "vcp_mode_unavailable",
+                },
+                view.catalog,
+                records,
+                bound,
+                reasons,
+            ),
+        )
     if records and (bound.text or bound.mode != "lexical") and not direct:
         refs, texts = (
             [record.reference.exact() for record in records],
@@ -476,14 +519,28 @@ async def execute(
                 allowed_rows=np.arange(len(records), dtype=np.uint64),
                 allowed_graph_nodes=np.arange(len(graph.tags), dtype=np.uint64) if graph else None,
                 options_json=json.dumps(
-                    policy.options(bound.budget.candidates, plan["diagnostics"])
+                    intent.options(
+                        policy, bound.budget.candidates, plan["diagnostics"], core_references
+                    )
+                    if bound.mode == "vcp"
+                    else policy.options(bound.budget.candidates, plan["diagnostics"])
                 ),
+                ghost_vectors=ghost_vectors,
             )
         native_info = native_diagnostics(
             result.diagnostics_json, plan["diagnostics"], bound.budget.diagnostics_bytes
         )
         if graph and plan["diagnostics"] != "none":
             native_info["graph_projection"] = graph.diagnostics
+        if vcp_result is not None and intent.thinking:
+            thinking = json.loads(result.diagnostics_json)["vcp"]["thinking"]
+            vcp_result = vcp_result.model_copy(
+                update={
+                    "thinking": await resolve_thinking(
+                        self, ctx, thinking, view.catalog, records, bound, reasons
+                    )
+                }
+            )
         ranked = [
             (records[int(index)], float(score))
             for index, score in zip(result.row_ids, result.scores, strict=True)
@@ -493,42 +550,12 @@ async def execute(
         ranked, generation = [(record, 1.0) for record in records], "authority"
     ranked = self.order(ranked, plan)
     ranked = ranked[: bound.budget.candidates]
-    hits: list[QueryHit] = []
-    async with self.authority.read(ctx) as current:
-        roots = await self.cognition.active_roots_in(current, ctx)
-        for record, score in ranked:
-            if isinstance(record, CognitiveRecord):
-                visible = await self.cognition.visible_in(current, ctx, record, roots)
-            else:
-                try:
-                    await source_material_ids_in(
-                        current, ctx, record.reference, self.materials, self.derivations
-                    )
-                    visible = True
-                except DomainError as error:
-                    if error.code not in {
-                        "source_unavailable",
-                        "region_not_found",
-                        "representation_not_found",
-                        "derived_region_not_found",
-                    }:
-                        raise
-                    visible = False
-            if visible:
-                hits.append(
-                    QueryHit(
-                        object=record,
-                        score=score,
-                        source_roots=record.source_roots,
-                        authority=authority(record),
-                    )
-                )
-            if len(hits) >= bound.limit:
-                break
+    hits = await visible_hits(self, ctx, ranked, bound.limit)
     complete = missing == 0 and (
         bound.min_commit_seq is None or view.commit_seq >= bound.min_commit_seq
     )
     return QueryResult(
+        vcp=vcp_result,
         hits=tuple(hits),
         coverage=QueryCoverage(
             indexed_through=view.commit_seq if not missing else 0,

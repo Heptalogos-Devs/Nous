@@ -33,6 +33,8 @@ def body_text(body: CognitiveBody | None) -> str:
             "narrative",
             "claim",
             "understanding",
+            "fact_key",
+            "value_text",
             "expression",
             "meaning",
             "relation",

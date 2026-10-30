@@ -12,9 +12,11 @@ from ..contracts.context import (
     ContextInvocationOutput,
     ContextReport,
     ContextReportResult,
+    ContextSourceResult,
     ContextTrack,
     ContextTrackState,
     ContextUse,
+    ReadContextSource,
 )
 from ..operations import encoded, object_value
 from ..source_scope import SourceReadScope
@@ -22,6 +24,20 @@ from .sources import SourceClient
 
 
 class ContextClient(SourceClient):
+    async def read_context_source(
+        self,
+        namespace_id: str,
+        subject_id: str,
+        command: ReadContextSource,
+    ) -> ContextSourceResult:
+        return ContextSourceResult.model_validate(
+            await self.request(
+                "POST",
+                self.subject_path(namespace_id, subject_id) + "/contexts/source",
+                body=encoded(command),
+            )
+        )
+
     async def context_track(
         self, namespace_id: str, subject_id: str, command: ContextTrack
     ) -> ContextTrackState:
@@ -108,6 +124,14 @@ class ContextClient(SourceClient):
         if action == "track":
             return encoded(
                 await self.context_track(namespace, subject, ContextTrack.model_validate(values))
+            )
+        if action == "source":
+            return encoded(
+                await self.read_context_source(
+                    namespace,
+                    subject,
+                    ReadContextSource.model_validate({"operation_id": operation_id, **values}),
+                )
             )
         if action == "open_session":
             if "native_session" in values:

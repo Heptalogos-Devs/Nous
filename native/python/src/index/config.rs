@@ -46,11 +46,12 @@ pub struct VcpOptions {
     pub pipeline: nous_vcp::pipeline::PipelineConfig,
     pub readout: nous_vcp::river::NativeConfig,
     pub candidate_limit: usize,
-    pub core_tags: Vec<String>,
+    pub core_keys: Vec<String>,
     pub ghost_tags: Vec<GhostTag>,
     pub include_trace: bool,
     pub include_fields: bool,
     pub thinking: bool,
+    pub thinking_min_closure: f64,
 }
 impl Default for VcpOptions {
     fn default() -> Self {
@@ -58,11 +59,12 @@ impl Default for VcpOptions {
             pipeline: Default::default(),
             readout: Default::default(),
             candidate_limit: 100,
-            core_tags: vec![],
+            core_keys: vec![],
             ghost_tags: vec![],
             include_trace: false,
             include_fields: false,
             thinking: false,
+            thinking_min_closure: nous_vcp::thinking::default_closure(),
         }
     }
 }
@@ -77,7 +79,7 @@ impl VcpOptions {
             pipeline: self.pipeline,
             readout: self.readout,
             candidate_limit: self.candidate_limit,
-            core_tags: self.core_tags,
+            core_keys: self.core_keys,
             ghost_tags: self
                 .ghost_tags
                 .into_iter()
@@ -91,6 +93,7 @@ impl VcpOptions {
             include_trace: self.include_trace,
             include_fields: self.include_fields,
             thinking: self.thinking,
+            thinking_min_closure: self.thinking_min_closure,
         })
     }
 }

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 
+from nous_wave.contracts import QueryHit
+from nous_wave.presentation import object_text, reference_text
 from pydantic import JsonValue
 from rich.console import Console
 from rich.table import Table
@@ -165,24 +167,14 @@ def present(value: JsonValue, locale: Localizer) -> None:
             obj = hit.get("object")
             if not isinstance(obj, dict):
                 continue
-            addresses = obj.get("addresses")
-            reference = (
-                addresses.get("exact") if isinstance(addresses, dict) else obj.get("reference")
-            )
+            parsed = QueryHit.model_validate(hit)
             console.print(
                 Text(
-                    f"{_cell(reference, locale)}  {_label('score', locale)} {_cell(hit.get('score'), locale)}",
+                    f"{reference_text(parsed.object)}  {_label('score', locale)} {_cell(hit.get('score'), locale)}",
                     style="bold",
                 )
             )
-            body = obj.get("body")
-            console.print(
-                Text(
-                    str(body.get("text", _cell(body, locale)))
-                    if isinstance(body, dict)
-                    else _cell(body, locale)
-                )
-            )
+            console.print(Text(object_text(parsed.object)))
         sources = value.get("sources")
         if isinstance(sources, dict):
             nodes = sources.get("nodes")

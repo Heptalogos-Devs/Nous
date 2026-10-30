@@ -27,8 +27,6 @@ from nous_wave.contracts.context import (
     ContextProjection,
     ContextSegment,
     ContextTarget,
-    ContextTrack,
-    ContextTrackState,
     EpistemicView,
     ManagedContextResponse,
     MediaTarget,
@@ -36,74 +34,17 @@ from nous_wave.contracts.context import (
 from pydantic import JsonValue, TypeAdapter
 from sqlalchemy import select, update
 
+from nous.cognition.lifecycle import selectable
 from nous.cognition.projection import body_text
 from nous.platform.persistence import ReadView, WriteTx
 from nous.platform.persistence.authority import canonical_json
 
 from .models import preparations, sessions, tracks
+from .selection import automatic_resident_in, segment_eligible_in
+from .tracking import track_identity
 
 if TYPE_CHECKING:
     from .managed import ManagedContexts
-
-
-def track_identity(ctx: CallContext, command: ContextTrack | ContextPrepare) -> str:
-    return sha256(
-        f"{ctx.caller_id}\0{ctx.namespace_id}\0{ctx.require_subject()}\0{command.session_id}\0{command.consumer_id}\0{command.instance_id}".encode()
-    ).hexdigest()
-
-
-async def read_track(
-    self: ManagedContexts, ctx: CallContext, command: ContextTrack
-) -> ContextTrackState:
-    async with self.authority.read(ctx) as view:
-        raw = await view.connection.scalar(
-            select(tracks.c.record).where(
-                tracks.c.id == track_identity(ctx, command),
-                tracks.c.namespace_id == ctx.namespace_id,
-                tracks.c.subject_id == ctx.require_subject(),
-            )
-        )
-        projection = ContextProjection.model_validate(raw) if raw is not None else None
-        reset_reason = None
-        if projection is not None:
-            try:
-                await self.require_targets_in(
-                    view,
-                    ctx,
-                    tuple(
-                        target
-                        for segment in projection.segments
-                        for target in (*segment.sources, *segment.dependencies)
-                    ),
-                )
-            except DomainError as error:
-                if error.code not in {
-                    "source_unavailable",
-                    "cognition_not_found",
-                    "region_not_found",
-                    "material_not_found",
-                }:
-                    raise
-                projection, reset_reason = None, "source_unavailable"
-        pending: list[str] = []
-        values = (
-            await view.connection.execute(
-                select(preparations.c.record).where(
-                    preparations.c.track_id == track_identity(ctx, command),
-                    preparations.c.namespace_id == ctx.namespace_id,
-                    preparations.c.subject_id == ctx.subject_id,
-                )
-            )
-        ).scalars()
-        for value in values:
-            if value.get("caller_id") != ctx.caller_id:
-                continue
-            prepared = ContextPreparation.model_validate(value["preparation"])
-            if prepared.state == "prepared":
-                pending.append(prepared.id)
-        return ContextTrackState(
-            projection=projection, pending_preparation_ids=tuple(pending), reset_reason=reset_reason
-        )
 
 
 async def read_preparation_in(
@@ -184,15 +125,14 @@ async def prepare(
                 : consumer.max_residents
             ]:
                 try:
-                    await self.require_targets_in(view, selected_ctx, (resident.target,))
                     if isinstance(resident.target, CognitiveTarget):
-                        offered.append(
-                            self.record_segment(
-                                await self.cognition.get_in(
-                                    view, selected_ctx, resident.target.reference
-                                )
-                            )
+                        record = await automatic_resident_in(
+                            self, view, selected_ctx, resident.target.reference
                         )
+                        if record is None:
+                            degradations.append("resident_inactive")
+                            continue
+                        offered.append(self.record_segment(record))
                     else:
                         offered.append(
                             await self.media_segment_in(view, selected_ctx, resident.target)
@@ -228,7 +168,7 @@ async def prepare(
             raise DomainError("retrieval_unavailable", "Context retrieval owner is unavailable")
         found = await self.retrieval.query(selected_ctx, query)
         for hit in found.hits:
-            if isinstance(hit.object, CognitiveRecord):
+            if isinstance(hit.object, CognitiveRecord) and selectable(hit.object):
                 offered.append(self.record_segment(hit.object))
     filtered: dict[str, ContextSegment] = {}
     for segment in offered:
@@ -364,7 +304,9 @@ async def prepare(
         selected: list[ContextSegment] = []
         used = 0
         for segment in sorted(offered, key=lambda segment: not segment.required):
-            await self.require_targets_in(tx, selected_ctx, segment.sources)
+            if not await segment_eligible_in(self, tx, selected_ctx, segment):
+                degradations.append("optional_source_inactive")
+                continue
             size = len(segment.text.encode())
             if len(selected) >= max_items or used + size > max_bytes:
                 if segment.required:

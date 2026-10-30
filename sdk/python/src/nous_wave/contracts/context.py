@@ -7,9 +7,10 @@ from typing import Literal
 
 from pydantic import Field, JsonValue, model_validator
 
-from .cognition import CognitiveRef, EpistemicStance
+from .cognition import CognitiveRecord, CognitiveRef, EpistemicStance
 from .common import Contract, Operation, TimePoint
 from .retrieval import QueryRequest
+from .source_graph import ExpandedSources
 from .targets import CognitiveTarget as CognitiveTarget
 from .targets import ContextTarget as ContextTarget
 from .targets import MediaTarget as MediaTarget
@@ -180,6 +181,30 @@ class ContextInvocationOutput(Contract):
     status: str | None = None
     output_item_ids: tuple[str, ...] = ()
     tool_call_ids: tuple[str, ...] = ()
+
+
+class ContextAdmissionRef(Contract):
+    admission_id: str
+    invocation_id: str
+
+
+class ReadContextSource(Operation):
+    admission: ContextAdmissionRef
+    tool_call_id: str = Field(min_length=1)
+    reference: CognitiveRef
+
+
+class ContextSourceReceipt(Contract):
+    admission: ContextAdmissionRef
+    tool_call_id: str
+    reference: CognitiveRef
+    commit_seq: int
+
+
+class ContextSourceResult(Contract):
+    memory: CognitiveRecord
+    sources: ExpandedSources
+    use: ContextSourceReceipt
 
 
 class ContextReport(Operation):

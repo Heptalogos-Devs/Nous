@@ -17,11 +17,13 @@ from nous_wave.contracts.context import (
     ContextReport,
 )
 from nous_wave.errors import NousError as ClientError
+from nous_wave.presentation import query_text
 from nous_wave.types import JsonObject
 from pydantic import JsonValue, TypeAdapter
 
 from mcp.server import MCPServer
 from mcp.server.mcpserver.exceptions import ResourceError, ToolError
+from mcp.types import CallToolResult, TextContent
 from nous.platform.errors import NousError
 from nous.platform.observability import configure_logging
 
@@ -198,12 +200,14 @@ def run(
                 api, namespace_id=namespace_id, subject_id=subject_id
             ).memory_source(target)
 
-    @mcp.tool()
-    async def query_cognition(command: QueryRequest) -> JsonObject:
-        """Run NousQL, multi-domain and joint text/media queries within the bound subject."""
+    @mcp.tool(structured_output=False)
+    async def query_cognition(command: QueryRequest) -> CallToolResult:
+        """Query cognition and media. Read exact references in text; structured content holds the full result."""
         async with client() as api:
-            return (await api.query_cognition(namespace_id, subject_id, command)).model_dump(
-                mode="json"
+            result = await api.query_cognition(namespace_id, subject_id, command)
+            return CallToolResult(
+                content=[TextContent(type="text", text=query_text(result))],
+                structured_content=result.model_dump(mode="json"),
             )
 
     @mcp.tool()

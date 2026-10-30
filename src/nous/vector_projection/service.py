@@ -6,7 +6,7 @@ from collections.abc import Awaitable, Callable
 from hashlib import sha256
 from weakref import WeakKeyDictionary
 
-from nous_wave.contracts import CallContext, CognitiveRef, MediaReference
+from nous_wave.contracts import CallContext, CognitiveRecord, CognitiveRef, MediaReference
 from nous_wave.contracts.vector_projection import (
     ProjectionReceipt,
     ProjectionResult,
@@ -62,7 +62,19 @@ class VectorProjectionService:
         # actual targets/context. It is not mutable execution state or a cache.
         self._policies[tx] = policy
 
-    async def changed_in(self, tx: WriteTx, ctx: CallContext, reference: CognitiveRef) -> None:
+    async def changed_in(self, tx: WriteTx, ctx: CallContext, record: CognitiveRecord) -> None:
+        from nous.cognition.lifecycle import selectable
+
+        if (
+            record.namespace_id != ctx.namespace_id
+            or record.subject_id != ctx.require_subject()
+            or record.commit_seq != tx.commit_seq
+        ):
+            raise ValueError(
+                "Automatic projection requires the actual newly written scoped revision"
+            )
+        if not selectable(record):
+            return
         policy = self._policies.get(tx)
         if policy == "disabled":
             return
@@ -72,7 +84,7 @@ class VectorProjectionService:
                 self._policies[tx] = "disabled"
                 return
             self._policies[tx] = "metadata_allowed"
-        await self.admit_in(tx, ctx, (reference,), head_only=True)
+        await self.admit_in(tx, ctx, (record.reference,), head_only=True)
 
     async def admit_in(
         self,

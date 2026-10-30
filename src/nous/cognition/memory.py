@@ -12,6 +12,7 @@ from nous.identity.service import require_subject_in
 from nous.platform.persistence import WriteTx
 
 from .projection import body_text
+from .revision_state import RevisionState
 from .schema import revisions, vectors
 
 if TYPE_CHECKING:
@@ -64,6 +65,19 @@ async def change_memory_in(
         raise DomainError(
             "memory_protected", "Memory is protected; unprotect or explicitly force the change"
         )
+    state = RevisionState(
+        lifecycle=transition(lifecycle, command, now),
+        deleted=command.action in {"trash", "purge"}
+        if command.action in {"trash", "purge", "restore"}
+        else previous.deleted,
+        purged=command.action == "purge",
+        cause=RevisionCause(
+            action=command.action,
+            actor=ctx.caller_id,
+            reason=command.reason,
+            parent=previous.reference,
+        ),
+    )
     result = await self.adopt_in(
         tx,
         ctx,
@@ -79,23 +93,9 @@ async def change_memory_in(
             times=previous.times,
             producer_call_id=None if command.action == "revise" else previous.producer_call_id,
         ),
-    )
-    result = result.model_copy(
-        update={
-            "lifecycle": transition(lifecycle, command, now),
-            "deleted": command.action in {"trash", "purge"}
-            if command.action in {"trash", "purge", "restore"}
-            else previous.deleted,
-            "cause": RevisionCause(
-                action=command.action,
-                actor=ctx.caller_id,
-                reason=command.reason,
-                parent=previous.reference,
-            ),
-        }
+        state=state,
     )
     if command.action == "purge":
-        result = result.model_copy(update={"body": None, "purged": True, "deleted": True})
         history = [
             CognitiveRecord.model_validate(value)
             for value in (
@@ -109,6 +109,8 @@ async def change_memory_in(
             ).scalars()
         ]
         for historical in history:
+            if historical.reference == result.reference:
+                continue
             tombstone = historical.model_copy(
                 update={"body": None, "purged": True, "deleted": True}
             )
@@ -162,14 +164,6 @@ async def change_memory_in(
                     }
                 )
             )
-    await tx.connection.execute(
-        update(revisions)
-        .where(
-            revisions.c.id == result.reference.id,
-            revisions.c.revision == result.reference.revision,
-        )
-        .values(record=result.model_dump(mode="json"))
-    )
     return result
 
 

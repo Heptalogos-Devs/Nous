@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 from nous_wave.contracts import CallContext, CognitiveRef, DomainError
 from sqlalchemy import select
 
+from nous.cognition.lifecycle import selectable
 from nous.cognition.projection import body_text
 from nous.cognition.schema import revisions, vectors
 from nous.material.service import observations
@@ -35,7 +36,7 @@ async def resolve_input(
     media = None
     if isinstance(target, CognitiveRef):
         record = await self.cognition.get_in(view, ctx, target)
-        if record.deleted or record.purged:
+        if not selectable(record, include_inactive=not head_only):
             return None
         if head_only and not await view.connection.scalar(
             select(revisions.c.head).where(

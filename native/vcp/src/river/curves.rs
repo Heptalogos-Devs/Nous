@@ -147,9 +147,9 @@ pub(super) fn select_superset(curves: Vec<Curve>, config: &NativeConfig) -> Vec<
         .collect();
     selected.sort_by(|left, right| {
         right
-            .sources
-            .len()
-            .cmp(&left.sources.len())
+            .direct_anchor_score
+            .total_cmp(&left.direct_anchor_score)
+            .then_with(|| right.sources.len().cmp(&left.sources.len()))
             .then_with(|| {
                 right
                     .union_score

@@ -3,6 +3,7 @@
 import asyncio
 
 from nous_wave.contracts import CallContext, EmbeddingBatch
+from nous_wave.contracts.model_routing import ModelRouteAttempt
 from openai import AsyncOpenAI
 
 from nous.platform.configuration import EmbeddingRoute
@@ -11,6 +12,7 @@ from nous.platform.network.service import NetworkService
 
 from .embedding import retained_embedding, vector_space
 from .ledger import CallLedger
+from .outcomes import outcome
 
 
 async def embed_one(
@@ -23,6 +25,7 @@ async def embed_one(
     source_ids: tuple[str, ...],
     *,
     invocation_id: str | None = None,
+    routing: ModelRouteAttempt | None = None,
 ) -> EmbeddingBatch:
     request: dict[str, object] = {
         "model": route.model,
@@ -34,10 +37,16 @@ async def embed_one(
         "extra_body": route.extra_body,
     }
     call_id, cached = await ledger.reserve(
-        ctx, "embedding", request, route.max_calls_per_day, invocation_id=invocation_id
+        ctx,
+        "embedding",
+        request,
+        route.max_calls_per_day,
+        invocation_id=invocation_id,
+        routing=routing,
     )
     if cached is not None:
         return retained_embedding(cached, call_id)
+    response_received = False
     try:
         async with network.client(ctx, timeout_seconds=route.timeout_seconds) as client:
             sdk = AsyncOpenAI(
@@ -49,6 +58,7 @@ async def embed_one(
                 dimensions=route.dimensions,
                 extra_body=route.extra_body,
             )
+        response_received = True
         vectors = [tuple(item.embedding) for item in sorted(response.data, key=lambda v: v.index)]
         if len(vectors) != len(texts) or any(len(v) != route.dimensions for v in vectors):
             raise ValueError("Provider returned inconsistent embedding dimensions")
@@ -66,14 +76,29 @@ async def embed_one(
             vectors=tuple(vectors),
             call_ids=(call_id,) * len(vectors),
         )
-        await ledger.finish(ctx, call_id, result.model_dump(mode="json"), {})
+        await ledger.finish(
+            ctx,
+            call_id,
+            result.model_dump(mode="json"),
+            {
+                "input_tokens": response.usage.prompt_tokens if response.usage else None,
+                "total_tokens": response.usage.total_tokens if response.usage else None,
+            },
+        )
         return result
     except asyncio.CancelledError:
         await asyncio.shield(ledger.finish(ctx, call_id, None, {}, "CancelledUnknownOutcome"))
         raise
     except Exception as error:
         code = str(getattr(error, "status_code", type(error).__name__))
-        await ledger.finish(ctx, call_id, None, {}, code)
+        await ledger.finish(
+            ctx,
+            call_id,
+            None,
+            {},
+            code,
+            outcome=outcome(error, response_received=response_received),
+        )
         raise Unavailable(
             f"Embedding provider failed ({code})",
             context={
@@ -95,6 +120,7 @@ async def embed_text(
     source_ids: tuple[str, ...],
     *,
     invocation_id: str | None = None,
+    routing: ModelRouteAttempt | None = None,
 ) -> EmbeddingBatch:
     if not texts or any(not text.strip() for text in texts):
         raise ValueError("Text embedding inputs must contain nonempty text")
@@ -111,6 +137,7 @@ async def embed_text(
             invocation_id=f"{invocation_id}:{offset // route.max_batch_items}"
             if invocation_id is not None
             else None,
+            routing=routing,
         )
         if batches and (batch.space, batch.model, batch.dimensions) != (
             batches[0].space,

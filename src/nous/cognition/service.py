@@ -50,6 +50,7 @@ from . import (
     social,
 )
 from .projection import evidence_in, media_references_in, references_in
+from .revision_state import RevisionState
 from .schema import revisions
 from .semantics import capability_for, validate_domain_in
 
@@ -212,7 +213,18 @@ class CognitionService:
             )
         return record
 
-    async def adopt_in(self, tx: WriteTx, ctx: CallContext, command: AdoptCognition):
+    async def adopt_in(
+        self,
+        tx: WriteTx,
+        ctx: CallContext,
+        command: AdoptCognition,
+        *,
+        state: RevisionState | None = None,
+    ):
+        if command.body.kind == "fact_claim" and tx.operation_kind != "fact.change":
+            raise DomainError(
+                "fact_owner_required", "FactClaim transitions must use the fact management owner"
+            )
         await require_subject_in(tx, ctx, capability_for(command.body))
         object_id = command.id or str(uuid4())
         head = (
@@ -347,18 +359,13 @@ class CognitionService:
             coordinate=int(datetime.fromisoformat(tx.recorded_at).timestamp() * 1000)
         )
         times = times.model_copy(update={"recorded": recorded})
-        result = CognitiveRecord(
-            reference=CognitiveRef(kind=command.body.kind, id=object_id, revision=(head or 0) + 1),
-            namespace_id=ctx.namespace_id,
-            subject_id=ctx.require_subject(),
-            body=command.body,
-            evidence=command.evidence,
-            source_roots=tuple(sorted(roots)),
-            support_roots=tuple(sorted(support)),
-            source_regions=merge_source_regions(requirements),
-            times=times,
-            producer_call_id=command.producer_call_id,
-            commit_seq=tx.commit_seq,
+        state = state or RevisionState(
+            cause=RevisionCause(
+                action="adopt",
+                actor=ctx.caller_id,
+                reason="cognitive adoption",
+                parent=existing_record.reference if existing_record else None,
+            ),
             lifecycle=(
                 existing_record.lifecycle
                 if existing_record and existing_record.lifecycle
@@ -366,12 +373,25 @@ class CognitionService:
             )
             if command.body.kind == "memory"
             else None,
-            cause=RevisionCause(
-                action="adopt",
-                actor=ctx.caller_id,
-                reason="cognitive adoption",
-                parent=existing_record.reference if existing_record else None,
-            ),
+        )
+        if state.purged and not state.deleted:
+            raise ValueError("A purged revision must be deleted")
+        result = CognitiveRecord(
+            reference=CognitiveRef(kind=command.body.kind, id=object_id, revision=(head or 0) + 1),
+            namespace_id=ctx.namespace_id,
+            subject_id=ctx.require_subject(),
+            body=None if state.purged else command.body,
+            evidence=command.evidence,
+            source_roots=tuple(sorted(roots)),
+            support_roots=tuple(sorted(support)),
+            source_regions=merge_source_regions(requirements),
+            times=times,
+            producer_call_id=command.producer_call_id,
+            commit_seq=tx.commit_seq,
+            lifecycle=state.lifecycle,
+            deleted=state.deleted,
+            purged=state.purged,
+            cause=state.cause,
         )
         result = result.model_copy(
             update={"addresses": await allocate_in(tx, ctx, result.reference)}
@@ -395,7 +415,7 @@ class CognitionService:
             )
         )
         if self.projection is not None:
-            await self.projection.changed_in(tx, ctx, result.reference)
+            await self.projection.changed_in(tx, ctx, result)
         return result
 
     async def adopt(self, ctx: CallContext, command: AdoptCognition):
