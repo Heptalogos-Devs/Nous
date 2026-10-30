@@ -6,7 +6,7 @@
 
 - [Nous暂停分支](https://github.com/Heptalogos-Devs/Nous-Wave/tree/codex/context-infrastructure-sdk)
 - [本次读取的交接文件](https://github.com/Heptalogos-Devs/Nous-Wave/blob/2458932646d6b2968db38d1e0a97103f93cd2cad/ses-nous-wave-imports-202610290007.md)
-- [现行需求副本](https://github.com/Heptalogos-Devs/Nous-Wave/blob/2458932646d6b2968db38d1e0a97103f93cd2cad/docs/requirements/项目宪纲.md)
+- [项目宪纲](https://github.com/Heptalogos-Devs/Architecture-Vault/blob/main/项目宪纲.md)
 - [Architecture-Vault宪纲](https://github.com/Heptalogos-Devs/Architecture-Vault/blob/main/项目宪纲.md)
 - [A-Memorix真实合同](https://github.com/Heptalogos-Devs/Nous-Wave/blob/2458932646d6b2968db38d1e0a97103f93cd2cad/research/a-memorix-contracts.json)
 - [现有SDK](https://github.com/Heptalogos-Devs/Nous-Wave/tree/2458932646d6b2968db38d1e0a97103f93cd2cad/sdk/python)

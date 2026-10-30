@@ -2,7 +2,7 @@
 
 云端与本机使用同一 Python 主应用、独立 `native/` workspace 和 `uv.lock`。环境需要标准 CPython 3.14、uv、项目锁定的 Rust 工具链、C/C++ 编译器、pkg-config、CMake、FFmpeg 与 ffprobe。准备命令和平台说明见[安装文档](../../python-native-install.md)。`scripts/cloud-prepare.sh` 准备工具和依赖，不读取或安装治理仓库，也不请求模型或启动服务。
 
-源码、构建缓存与运行实例分别存放；开发缓存、第三方源码和实例放在 `temp/`。旧 Rust 应用保留作迁移参考，不进入 Python 日常构建。环境已有技能与项目指令从本地读取。
+源码、构建缓存与运行实例分别存放；开发缓存、第三方源码和实例放在 `temp/`。旧 Rust 应用保留作研究参考，不进入 Python 日常构建。环境已有技能与项目指令从本地读取。
 
 ## 模型和数据
 
