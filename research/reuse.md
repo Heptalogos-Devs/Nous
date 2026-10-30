@@ -22,9 +22,9 @@ SQLx、Tokio、Axum、Clap、Reqwest、tracing 与 tempfile 通过 Cargo 依赖�
 
 ## 已研究的领域合同
 
-A-Memorix 的 RequestContext、身份解析端口、Namespace 授权、检索范围集合与工具合同用于确定 Nous 的消费者需求。M1 已建立 Namespace、Subject、Material、Observation、Memory 与模型调用的统一认知链路；M2 继续按 [合同清单](a-memorix-contracts.json) 承接 A-Memorix 的完整功能、维护、导入和公共接口。
+A-Memorix 的 RequestContext、身份解析端口、Namespace 授权、检索范围集合与工具合同用于确定 Nous 的消费者需求。[合同清单](a-memorix-contracts.json)保留实际工具、管理动作与公开协议；[开发目标与计划](../docs/GOAL.md)维护实施范围。
 
-VCP 与旧 Nous reference 已复制改编到 `crates/nous-vcp`：AGS/几何、传播资产、Sense/Pipeline/Projection、完整 RiverMemo/Thinking，以及独立旧 reference/DTSC 基线。实际原文件映射、固定 commit、原始哈希、许可与修改边界集中于 [组件来源记录](../crates/nous-vcp/UPSTREAM.md)。PR #56 与高级产品能力继续按 [能力续接清单](../docs/能力续接清单.md) 推进。
+VCP 与旧 Nous reference 曾复制改编到 `crates/nous-vcp`：AGS/几何、传播资产、Sense/Pipeline/Projection、RiverMemo/Thinking，以及独立旧 reference/DTSC 基线。原文件映射见[组件来源记录](../crates/nous-vcp/UPSTREAM.md)；当前计算落点是 [native/vcp](../native/vcp/README.md)，源码采用方向见[设计](../docs/python-native-plan/design/adoption.md)。
 
 真实向量 adapter `crates/nous-retrieval/src/vector.rs` 从旧 Nous 的 VCP 双索引及 DenseGeneration 复制改编，直接使用 USearch 2.26.2 原生 HNSW。合法快照、代际与外部身份映射由调用方供给；双索引和元数据完整发布，加载时校验后原生搜索。实际 API、来源、锁定源码和独立测试结果集中于 [检索组件来源记录](../crates/nous-retrieval/UPSTREAM.md#frozen-vector-generations)。
 
@@ -34,13 +34,13 @@ VCP 与旧 Nous reference 已复制改编到 `crates/nous-vcp`：AGS/几何、�
 
 结构化认知已从 M 的 `core/cognition.rs`、`memory/domain.rs`、`service/tag.rs`、Episode partition 与 Journal/Schema 规则复制改编到 `nous-domain::structured` 和 `nous-app::cognition::structured`，精确原文件 SHA-256 与 Apache-2.0 许可见 [领域来源记录](../crates/nous-domain/UPSTREAM.md)。来源闭包、范围、历史与修订写入复用现有 SQLx 事务。
 
-结构化模型边界从 M 的 typed schemas/consolidation/concept/longitudinal prompts，以及 P 的 `createCognition.formChanges` 来源目录和独立变更组改编。P Prompt 先复制再按当前领域合同调整；来源版本、12 个原文件摘要和两种许可保存在 [模型来源清单](../crates/nous-app/src/common/models/structured-sources.json)。模型输出使用显式逐字段引用键解析，实际 provider Schema 从领域/模型 DTO 生成；领域采纳复用共享账本、持久队列和事务。
+结构化模型边界从 M 的 typed schemas/consolidation/concept/longitudinal prompts，以及 P 的 `createCognition.formChanges` 来源目录和独立变更组改编。P Prompt 先复制再按领域合同调整；来源记录保存在[模型来源清单](../crates/nous-app/src/cognition/structured/model/sources.json)。模型输出使用显式逐字段引用键解析，实际 provider Schema 从领域/模型 DTO 生成；领域采纳复用共享账本、持久队列和事务。
 
-[能力续接清单](../docs/能力续接清单.md) 是后续来源与实施映射的维护位置：master 的媒体派生、结构化领域、managed binding/ProjectionPlanner、NousQL、reference/Native/DTSC；PR #56 的持久 ContextView、来源与独立采纳组；VCP 的 AGS、传播资产、Pyramid/Sense/Fusion/双场、RiverMemo/Thinking 共同续接。已有数值基线与当前上游算法分别保留版本、原始输入、expected 和来源，研发先做本地提取与验证。
+[源码采用设计](../docs/python-native-plan/design/adoption.md)维护这些来源到当前 owner 的映射；master 的媒体、认知、managed binding 和 NousQL，PR #56 的 ContextView 与独立采纳组，以及 VCP 的计算体系均为可复用材料。已有数值研究及来源见各 native 组件说明。
 
 ## 基础服务的实际消费链
 
-本轮在已克隆的 MaiBot `c602a2780f4f4dda4a6be46d67abc1cfb1ad420c` 与旧 Nous `412b062082afb75ccfae4c3f69fc606d3e3cc862` 上追踪公共接口和实际消费者，结论用于 [基础服务设计](../docs/基建实施规划.md)。以下为源码事实及具体采用边界。
+在已克隆的 MaiBot `c602a2780f4f4dda4a6be46d67abc1cfb1ad420c` 与旧 Nous `412b062082afb75ccfae4c3f69fc606d3e3cc862` 上追踪了公共接口和实际消费者。当前基础服务设计见[平台](../docs/python-native-plan/design/platform.md)、[架构](../docs/python-native-plan/design/architecture.md)与[事务](../docs/python-native-plan/design/transactions.md)。
 
 | 实际消费链                                                                                                                                                                                  | 统一入口承担的责任                                                             | Nous 采用方式                                                                              |
 | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------ |

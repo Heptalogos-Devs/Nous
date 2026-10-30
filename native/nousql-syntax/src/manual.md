@@ -8,7 +8,7 @@
 How does reader reclamation work?
 ```
 
-CLI、HTTP 和 MCP 使用同一 `QueryRequest`。语言放在 `input.text`，调用者同时提供真实 `subject_id`。`source_read` 继续限定可读来源；语言条件在该范围内选择结果。
+CLI、HTTP 和 MCP 使用同一 `QueryRequest`。语言放在 `text`，调用者同时提供真实 `subject_id`。`source_read` 继续限定可读来源；语言条件在该范围内选择结果。
 
 ## 选择对象
 
@@ -29,7 +29,7 @@ CLI、HTTP 和 MCP 使用同一 `QueryRequest`。语言放在 `input.text`，调
 
 词序引用由类型前缀与三组标准 Proquint 组成。Memory 对象前缀为 `mem:`，固定修订为 `memrev:`；原件为 `art:`。不要编造地址。`@ref`、Entity/Tag/Schema 选择器、`source_read` 和 `references` 工具共用目录及来源范围。知识包中的原地址按安装来源映射到接收主体；本机精确地址保持原绑定。机器认知引用形如 `kind:UUID@revision`；媒体也接受 `material:`、`source-region:`、`representation:` 或 `derived-region:` 完整引用。引用可作为双引号字符串传入。
 
-待接续的领域能力包括正式 Resource 名称目录、Observation/evidence 顶层返回和认识权威类筛选。当前查询使用本手册列出的已有目标与条件。
+待接续的领域能力包括正式 Resource 名称目录、Observation/evidence 顶层返回和外部权威资源。当前查询使用本手册列出的已有目标与条件。
 
 单独的选择器也可查询。精确读取保持所选修订，直接使用权威数据；实体、标签、图式等选择器用于召回。读取名称和标签不会创建认知对象。
 
@@ -42,6 +42,8 @@ CLI、HTTP 和 MCP 使用同一 `QueryRequest`。语言放在 `input.text`，调
 ```
 
 返回范围包括 `cognition`、`media` 和具体认知种类：`memory`、`memory_semantics`、`concept`、`entity`、`episode`、`journal`、`schema`、`association`、`fact_claim` 等正式 CognitiveKind。`$return(fact_claim)` 读取正式事实主张。`cognition` 单独使用。`$limit` 设置结果数量，受实例检索额度限制。
+
+Fact 撤回后的默认查询可见性正在统一到认知修订状态；当前工作区的修复还需加载并验证。Fact 管理操作和实际运行范围见 [SDK](../../../sdk/python/README.md#事实主张)及[重构进展](../../../docs/python-native-plan/progress-report.md)。
 
 `$materialize` 展开所选对象的正式来源视图。展开仍检查来源读取范围，完整身份、实际来源事件和清除缺口保留在机器结果中。
 
@@ -143,8 +145,8 @@ VCP 模式下，`@entity` 和 `@tag` 把已授权对象的精确身份作为本�
 
 ## 可选模型重排
 
-机器请求的 `rerank` 可取 `off`、`optional`、`required`；CLI 对应 `--rerank`。省略时采用有效配置 `retrieval.rerank.mode`，默认关闭。模型角色 `query_rerank` 绑定原生 `rerank` 协议和同名能力。
+机器请求的 `rerank` 可取 `off`、`optional`、`required`；CLI 对应 `--rerank`。默认关闭。模型角色 `query_rerank` 使用 purpose 为 `rerank` 的 text-generation 路线及 `query-rerank` Prompt，输出候选评分。
 
-重排在组合查询合并之后处理有实际文本投影的候选。精确或直接选择、单候选、空文本及显式根排序沿原顺序返回。配置限制提交的候选数量、每篇正文长度、总输入长度和等待时间；模型调用预览和账本保存实际发送的正文。原生图片等没有文本投影的候选保持基础排序。
+重排在组合查询合并之后处理有实际文本投影的候选；显式根排序优先，required 重排与其冲突。请求预算限制提交的候选数量、每篇正文长度及总输入长度；模型调用账本保存实际输入。原生图片等没有文本投影的候选保持基础排序。
 
-`optional` 在模型配置、额度或调用不可用时返回基础排序，并在 `rerank` 中给出原因；`required` 返回相应错误及任务标识。成功结果的 `rerank_score` 是供应商相关分数；完整请求、原始输出、用量和计价可通过 `model_call_id` 读取。结果返回前重新检查来源与候选资格。
+`optional` 在缺少模型资源、凭据或 Prompt 时返回基础排序，并在 `rerank` 中给出原因；实际提供方失败会返回错误。`required` 要求模型能力并传播失败。成功结果的 `rerank_score` 是模型给出的分数，调用账本保存实际输入、输出和用量。结果返回前重新检查来源与候选资格。

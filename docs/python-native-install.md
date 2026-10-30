@@ -2,6 +2,8 @@
 
 主应用、客户端与原生计算分别是 `nous-wave-server`、`nous-wave`、`nous-wave-native`。服务使用标准 CPython 3.14，包含 GIL；独立 SDK 仍支持 Python 3.11 及以上。用户安装匹配平台的 native wheel，无需 Rust、C++、Node 或旧 Rust 服务。
 
+当前工作区正在接入模型多路线，应用组装尚未向 `ModelService` 注入必需的角色注册表；使用以下命令时请选择已完成组装的构建。运行中的开发实例使用此前加载的代码。工作区状态见[开发目标](GOAL.md)和[重构进展](python-native-plan/progress-report.md)。
+
 ## 安装发行包
 
 从同一次构建取得对应平台的完整 `nous-wave-cp314-<target>` 产物，解压后应包含三个同版本 wheel 和 `install-python.py`。Linux x64、Windows x64、macOS Apple Silicon、macOS Intel 分别使用自己的产物。不要混合不同发行版本。

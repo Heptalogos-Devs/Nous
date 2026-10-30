@@ -2,22 +2,22 @@
 
 ## 先采用成熟实现
 
-| 能力 | 默认选择 | Nous 保留的语义 |
-|---|---|---|
-| HTTP / 模型传输 | HTTPX、所选官方 Provider SDK | 网络配置、来源访问范围、超时/取消与预算关系 |
-| 模型生成 | Pydantic AI slim 原生 Provider、typed output、直接请求 | Role、调用身份、Prompt版本、实际输入、付费结果采纳 |
-| 特有多模态 embedding / rerank | Provider 官方 Python SDK及既有成熟调用代码 | 输入parts、精确区域、向量空间、usage与来源 |
-| 数据校验 | Pydantic 2 / pydantic-settings | 配置继承、角色能力、业务不变量 |
-| 模板 | Jinja2 | Prompt资源、历史、权限、变量目录与激活 |
-| SQL | SQLAlchemy 2 Core / SQLite | 事务中心、修订、接触与来源关系 |
-| 作业 | DBOS Python 3 / SQLite | 请求与任务的业务归属、形成条件、owned取消 |
-| API | FastAPI / Uvicorn | 正式领域操作、认证、错误、可用性 |
-| CLI | Typer / Rich | 高密度可读结果、完整参数、--json、stderr日志 |
-| MCP | 官方 Python SDK | 现有工具、资源、实际scope及上下文能力 |
-| 观测 | logging / structlog / OpenTelemetry | 业务事件、模型费用、来源与调用关联 |
-| 文件 / 媒体 | pathlib、tempfile、标准库hash、Pillow、FFmpeg/ffprobe | Material、Artifact、区域、失效资源保全与派生谱系 |
-| 目录 / 密钥 | platformdirs、keyring、环境SecretRef | 安装实例、运行用户、凭据用途和管理权限 |
-| 国际化 / 时间 | 保留Fluent资源并用Python实现；Babel、zoneinfo、datetime、python-dateutil | 产品语言、日期精度、时间域、五轴和知情截点 |
+| 能力                          | 默认选择                                                                 | Nous 保留的语义                                    |
+| ----------------------------- | ------------------------------------------------------------------------ | -------------------------------------------------- |
+| HTTP / 模型传输               | HTTPX、所选官方 Provider SDK                                             | 网络配置、来源访问范围、超时/取消与预算关系        |
+| 模型生成                      | Pydantic AI slim 原生 Provider、typed output、直接请求                   | Role、调用身份、Prompt版本、实际输入、付费结果采纳 |
+| 特有多模态 embedding / rerank | Provider 官方 Python SDK及既有成熟调用代码                               | 输入parts、精确区域、向量空间、usage与来源         |
+| 数据校验                      | Pydantic 2 / pydantic-settings                                           | 配置继承、角色能力、业务不变量                     |
+| 模板                          | Jinja2                                                                   | Prompt资源、历史、权限、变量目录与激活             |
+| SQL                           | SQLAlchemy 2 Core / SQLite                                               | 事务中心、修订、接触与来源关系                     |
+| 作业                          | DBOS Python 3 / SQLite                                                   | 请求与任务的业务归属、形成条件、owned取消          |
+| API                           | FastAPI / Uvicorn                                                        | 正式领域操作、认证、错误、可用性                   |
+| CLI                           | Typer / Rich                                                             | 高密度可读结果、完整参数、--json、stderr日志       |
+| MCP                           | 官方 Python SDK                                                          | 现有工具、资源、实际scope及上下文能力              |
+| 观测                          | logging / structlog / OpenTelemetry                                      | 业务事件、模型费用、来源与调用关联                 |
+| 文件 / 媒体                   | pathlib、tempfile、标准库hash、Pillow、FFmpeg/ffprobe                    | Material、Artifact、区域、失效资源保全与派生谱系   |
+| 目录 / 密钥                   | platformdirs、keyring、环境SecretRef                                     | 安装实例、运行用户、凭据用途和管理权限             |
+| 国际化 / 时间                 | 保留Fluent资源并用Python实现；Babel、zoneinfo、datetime、python-dateutil | 产品语言、日期精度、时间域、五轴和知情截点         |
 
 库的稳定补丁版本在云端生成 lock；只安装当前实际使用的 Provider extras。模型服务优先选择 Pydantic AI 的 typed Provider 与结构化结果支持，不同时堆叠另一套 LiteLLM Router、LangChain Runtime 和自行开发的 Agent框架。现有兼容网关可作为 OpenAI-compatible Provider 连接。
 
@@ -32,6 +32,8 @@ Pydantic AI 的 Provider 可能依赖不同版本的 HTTPX 家族客户端；按
 文本、视觉、图文联合向量保持模型、维度、归一化、space、producer与内容身份。Ark 特有向量协议先采用官方 SDK 和 MaiBot 当前调用代码；现有 `models/ark_embedding.rs`、`embedding_request.rs` 作为参数与响应语义来源。现成SDK未暴露的字段在该Provider模块改编，其他领域仍使用完整Embedding结果。
 
 调用入口先验证角色能力和资源预算，形成实际请求快照；调用发生在数据库事务外。SDK retries、workflow retries与路线切换统一由模型服务策略安排，费用账本记录每次真实尝试。已成功的自由描述、结构化结果和向量被重复任务引用，避免为恢复重复付费。
+
+多路线的不可变计划、物理调用账本和安全失败分类正在集成。应用还需注入角色注册表，向量 Worker 还需统一整个输入目录的路线和分批，确保一个投影不混用不同语义空间；当前代码与已运行实例的区别见[重构进展](../progress-report.md#模型角色多路线)。
 
 ## Prompt 与上下文
 

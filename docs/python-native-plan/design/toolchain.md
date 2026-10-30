@@ -8,7 +8,7 @@
 
 uv workspace 包含根主应用、`sdk/python`、`native/python`，共享根 `uv.lock`。运行应用时安装包含 native 的工作区；只开发 SDK 时选择 SDK 包。配置根 pyproject 的 workspace source，使用 editable 安装，避免手改 `PYTHONPATH` 或复制包进 site-packages。
 
-首次在云端解析一次稳定依赖并提交 lock，以后使用 `uv sync --locked`。新增依赖时只解析受影响的变更；不要每次启动执行全依赖升级。模板中的主要版本约束表达选择范围，实际补丁版本由云端 lock 固定。DBOS 使用稳定 3.x，禁止自动选取 alpha。Rust 使用交接分支已锁定、能构建原计算内核的工具链，PyO3/rust-numpy/maturin 使用彼此支持的稳定组合并写入 native Cargo.lock。
+仓库根目录已有 `uv.lock`，日常使用 `uv sync --locked`。新增依赖时只解析受影响的变更；实际版本以锁文件为准。DBOS 使用稳定 3.x。Rust 使用仓库锁定的工具链，PyO3/rust-numpy/maturin 使用彼此支持的稳定组合并写入 native Cargo.lock。
 
 ## 强类型是一条日常开发路径
 
@@ -32,7 +32,7 @@ uv run ruff format src sdk/python/src native/python/python
 - 原生第三方 SDK 的无类型响应只在其接入模块内归一化。需要忽略类型时精确到诊断和局部行，并说明该实际 API 的类型缺口。不能把整个目录排除以绕开尚未建好的接口。
 - Python 类型检查与运行时校验各自承担责任。CLI 文本先解析成实际 UUID/日期/枚举，再交给严格业务命令；JSON 网络输入使用对应 JSON 验证入口，不靠松散转换吞掉格式问题。
 
-`templates/pyproject.toml` 配置 strict，额外禁止显式 Any 并检查未标注边界。第三方返回 Any 的消除以边界类型归一为主，不机械地为每个局部变量补注解。SDK 单独以 3.11 语法检查；应用和 native stub 以 3.14 检查。
+根 `pyproject.toml` 配置 strict，额外禁止显式 Any 并检查未标注边界。第三方返回 Any 的消除以边界类型归一为主，不机械地为每个局部变量补注解。SDK 单独以 3.11 语法检查；应用和 native stub 以 3.14 检查。
 
 ## 编辑器、LSP 与 AI
 
@@ -40,7 +40,7 @@ uv run ruff format src sdk/python/src native/python/python
 
 在 Cursor 里可用自带的 `anysphere.cursorpyright`（Basedpyright 分支）代替 basedpyright 扩展；二者只开其一，不要同时启用。其它 VS Code 兼容编辑器安装推荐的 basedpyright 扩展即可；CLI/格式/测试/调试配置相同，不依赖 Cursor。
 
-`templates/vscode/` 与根 `.vscode/` 对齐：解释器指向 `temp/venvs/python-native`，含测试发现与 launch 配置。不要再叠加第二套类型检查输出或第二个格式器。
+根 `.vscode/` 指向 `temp/venvs/python-native`，含测试发现与 launch 配置。不要再叠加第二套类型检查输出或第二个格式器。
 
 云端或其它 LSP 宿主可直接连接：
 
@@ -55,7 +55,7 @@ uv run ruff server
 
 ## Ruff 与代码组织
 
-Ruff 同时负责格式、导入排序和常见错误，选择 E4/E7/E9、F、I、B、UP、ASYNC 等实际有用规则，不启用全部风格规则。SDK 的语法升级规则按 3.11 目标处理。默认行宽 100，仅用于阅读和格式一致性；模块拆分按职责，不按文件行数配额。
+Ruff 同时负责格式、导入排序和常见错误，选择 E4/E7/E9、F、I、B、UP、ASYNC 等实际有用规则，不启用全部风格规则。SDK 的语法升级规则按 3.11 目标处理。默认行宽 100；模块按职责拆分，手写代码文件控制在 600 行以内。
 
 业务代码采用 async def 处理网络与等待，公开服务是显式类型化对象。默认不用元类、运行时魔术注册和动态字符串分派。注册只发生在真正的 Provider、任务处理器和功能扩展边界，普通模块用明确 import 和构造参数。
 
@@ -85,6 +85,6 @@ uv run nous --help
 
 日常用户可通过 uv 管理的隔离环境安装 `nous-wave-server`，其依赖选择匹配平台的 native wheel。主程序继续提供 `nous` 命令，程序目录与实例数据分离。开发机无需因 Python 主应用每次改动重新编译成 EXE。
 
-native 首先交付 CPython 3.14 对应 wheel，针对 Windows x64、Linux x64、macOS 支持目标分别构建。NumPy 和 C++ 依赖加入 ABI 与 wheel 选择考量，不在未确认时宣称 abi3 一包通用。Linux 的本机 wheel 用于当前云端运行；可再发行 wheel 使用 maturin/auditwheel 的 manylinux 规则，不能将任意 Ubuntu 编译产物标成通用 Linux。
+native 使用 CPython 3.14 对应 wheel，针对 Windows x64、Linux x64、macOS 支持目标分别构建。NumPy 和 C++ 依赖加入 ABI 与 wheel 选择考量，不在未确认时宣称 abi3 一包通用。本机 Linux wheel 只适用于其平台标签；发行 wheel 使用 maturin/auditwheel 的 manylinux 规则。
 
 将来需要免安装 Python 的桌面发行时，使用现成运行时分发或 Nuitka standalone 目录构建。该操作属于发行工作，不进入日常代码循环。云端 Linux 结果只报告实际运行平台；Windows/macOS 构建在对应 runner 或开发设备执行。

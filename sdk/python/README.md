@@ -1,6 +1,10 @@
 # Nous Wave Python SDK
 
-异步客户端使用正式 Python 领域合同，供 Agent、MaiBot 和普通 Python 程序调用。安装：
+异步客户端使用正式 Python 领域合同，供 Agent、MaiBot 和普通 Python 程序调用。
+
+服务与 SDK 应使用相互匹配的构建。当前工作区的模型多路线接线尚未完成；未重载的运行实例仍使用此前代码。详细范围见[重构进展](../../docs/python-native-plan/progress-report.md)。
+
+安装：
 
 ```sh
 uv add --editable /绝对路径/Nous-Wave/sdk/python
@@ -121,6 +125,8 @@ preview = await api.model_preview(ModelPreviewRequest(
 
 Preview 与实际调用共用输入校验、Prompt 渲染、参数及调用快照构造，返回真实目标 Schema、模型与媒体摘要。媒体使用 `media` 中已有的 `MediaReference`，按当前来源权限读取精确原件或选区。此操作不读取模型凭据、不预留额度、不请求提供方；未登记的角色合同返回明确错误。CLI 使用 `nous model-contract ROLE NAMESPACE_ID` 和 `nous model-preview REQUEST_JSON NAMESPACE_ID`，HTTP 为 `POST /api/models/contract`、`POST /api/models/preview`，MCP 同名工具使用同一合同。
 
+多路线预览合同新增 `routes`：各项包含 route_id、route_index、capabilities、configured 及可用时的 invocation；顶层 invocation 可以为空。该合同与路由服务仍在集成，不能据此假定回退已在当前运行服务中启用。
+
 `whoami`、`credentials`、`credential`、`credential_history`、`create_credential`、`rotate_credential` 和 `revoke_credential` 使用正式凭据 owner。轮换要求 expected_revision，旧 token 立即失效，明文只在创建或轮换当次返回。
 
 `job_page(namespace_id=...,subject_id=...,kind=...,state=...,limit=...,cursor=...)` 返回真实作业及 next_cursor。过滤先于分页，state 使用 DBOS 大写状态；续页保持首个快照的提交边界。
@@ -163,6 +169,10 @@ prepare 提交真实持久任务并等待。renderer 接收独立副本并返回
 `contexts` 配置限制 consumer 预算与来源类型。配置 `steward_role` 后使用统一模型资源、Prompt、预算与账本；Steward 只选择当前授权候选，综合保持独立归因。居民使用 DBOS schedule 维护，模型接触、实际使用和完成结果分别记录。
 
 A-Memorix `AMemorixAdapter` 保留六项工具、来源、导入、包与运行时管理入口。完整 MaiBot 补丁、模型窗口配置与真实发送边界见 [MaiBot 集成](../../integrations/maibot/README.md)。
+
+## 事实主张
+
+`change_fact(namespace_id, subject_id, FactChange(...))` 写入正式 `fact_claim` 修订，支持 assert、update、classify、retract、restore 和 add_evidence；写入携带稳定 operation_id。`query_facts(..., FactQuery(...))` 默认选择 active 状态，`fact(..., reference)` 返回记录、历史、后继和冲突。人物或聊天范围、有效时间和证据使用 `nous_wave.contracts.facts` 中的类型。当前实现已有真实 Fact 管理与包往返记录；通用查询的修订可见性正在统一，完成加载验证前请以事实管理接口和实际服务版本为准。
 
 ## 认知整理提案
 
@@ -217,6 +227,7 @@ changes = await api.configuration({"action": "history", "key": "retrieval"})
 VCP 请求通过 `vcp` 表达本次意图。`core` 接已有认知的精确 `CognitiveRef`，在当前授权及历史截点下绑定图节点；`concepts` 接本次查询文字，使用正式 embedding 角色批量生成同空间向量，结果保留各自真实 call_id。`@entity`、`@tag` 同时限定候选并提供精确 core；`#主题` 与 `#("较长的主题")` 在 VCP 中提供临时查询概念。`thinking=True` 或 `$explore` 请求实际方法路线。新线索只参与本次计算，来源范围继续约束已有认知的读取。
 
 ```python
+from nous_wave.contracts.query_conditions import QueryCapabilities
 from nous_wave.contracts.query_vcp import VcpIntent, QueryConcept
 
 request = QueryRequest(

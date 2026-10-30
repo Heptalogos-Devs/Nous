@@ -2,6 +2,8 @@
 
 This independent Cargo workspace builds `nous_native`, a CPython extension. It owns immutable lexical/vector/VCP generations and the NousQL grammar. Python owns authorization, references, temporal evaluation, model calls and persistence of application state.
 
+The application exports authorized Concept, Entity and Association data into the graph generation. Query-owned core references and transient concept cues are mapped to this snapshot; graph routes returned by Thinking are mapped back to formal references by Python. The working-tree integration and its actual run are described in the [progress report](../docs/python-native-plan/progress-report.md).
+
 ```bash
 CARGO_TARGET_DIR=/workspace/temp/build/native uv run maturin develop --manifest-path native/python/Cargo.toml
 uv run pytest native/python/tests

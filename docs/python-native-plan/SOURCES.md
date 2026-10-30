@@ -8,13 +8,12 @@
 - [本次读取的交接文件](https://github.com/Heptalogos-Devs/Nous-Wave/blob/2458932646d6b2968db38d1e0a97103f93cd2cad/ses-nous-wave-imports-202610290007.md)
 - [现行需求副本](https://github.com/Heptalogos-Devs/Nous-Wave/blob/2458932646d6b2968db38d1e0a97103f93cd2cad/docs/requirements/项目宪纲.md)
 - [Architecture-Vault宪纲](https://github.com/Heptalogos-Devs/Architecture-Vault/blob/main/项目宪纲.md)
-- [当前能力续接](https://github.com/Heptalogos-Devs/Nous-Wave/blob/2458932646d6b2968db38d1e0a97103f93cd2cad/docs/能力续接清单.md)
 - [A-Memorix真实合同](https://github.com/Heptalogos-Devs/Nous-Wave/blob/2458932646d6b2968db38d1e0a97103f93cd2cad/research/a-memorix-contracts.json)
 - [现有SDK](https://github.com/Heptalogos-Devs/Nous-Wave/tree/2458932646d6b2968db38d1e0a97103f93cd2cad/sdk/python)
 - [现有NousQL](https://github.com/Heptalogos-Devs/Nous-Wave/tree/2458932646d6b2968db38d1e0a97103f93cd2cad/crates/nous-domain/src/nousql)
 - [现有VCP](https://github.com/Heptalogos-Devs/Nous-Wave/tree/2458932646d6b2968db38d1e0a97103f93cd2cad/crates/nous-vcp)
 
-本包的Python语言边界、SQLAlchemy/DBOS同库方案和模块结构属于本次目标设计，未声称已在原仓库实现。原分支WIP的实际行为与尚未运行事项以交接和源码为准。
+Python 语言边界、SQLAlchemy/DBOS 同库方案和模块结构见本目录的设计文档；当前目标和工作见[开发目标与计划](../GOAL.md)。
 
 ## Python、静态工具与原生构建
 

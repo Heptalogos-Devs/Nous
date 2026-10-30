@@ -1,53 +1,37 @@
-# Nous Wave Goal
+# Nous Wave 开发目标与计划
 
-## Objective
-持续实现完整 Nous Wave：Python 主应用、同进程 Rust 原生计算、持久认知和完整公开消费路径。授权包括环境准备、新分支实现和真实模型调用。
+建设可独立安装、配置和管理的长期认知服务：支持普通智能体的记忆与知识工作，也作为人工主体的认知与人格中心。完整产品需求由[项目宪纲](requirements/项目宪纲.md)定义。本计划统一开发范围、有效技术决定和当前工作；[重构进展](python-native-plan/progress-report.md)记录本次重构的实际成果与证据。
 
-## Decisions
-- 开发分支 codex/python-native-rewrite-cloud，源分支保持不动。
-- 执行 docs/python-native-plan 的架构与现行项目宪纲；CPython3.14、uv、PyO3、SQLAlchemy/SQLite、DBOS3。
-- 本机会话最多复用三个 GPT-6.1 Sol medium 标准速度子代理，按查询、公开消费、数据与包分工；主代理负责平台、契约与真实集成。
-- 所有凭据只从受保护的本地文件或环境引用，temp 为实例、缓存和构建目录。
+Heptalogos 以 MaiBot 为产品基础，负责主体的世界、生活、时间、注意、选择、行动与外部效果，正式依赖 Nous 的认知接口。Nous 自己保持独立部署和通用应用价值；两者共享逻辑主体身份，各自拥有正式状态和生命周期。
 
-## Current Work
-当前在本机的 `codex/python-native-rewrite-cloud` 继续 Python 原生开发。独立实例位于 `temp/instances/python-local-20261029`，监听 `7442`；旧 Rust 实例及其数据保留。虚拟环境、下载缓存与构建结果统一位于 `temp`。
+## 完整产品范围
 
-机器查询表达式、过滤、共享候选预算、来源展开与可选重排已合入同一查询操作。Model Contract/Preview 与实际调用共用输入、Prompt、参数、目标 Schema 和媒体快照。Native 包保留实际调用历史，外部 A-Memorix 图片、语义关系、NPZ 向量与空间身份进入正式导入导出 owner。应用事务使用完整操作键和当前唯一 SQLAlchemy schema，DBOS 负责自己的调度表。
+- **材料、来源与时间**：接纳文本、文件、图片、音视频和外部资料，区分原件、精确区域、派生表示、主体实际接触与导入。记录证据、认知身份及修订、来源支持和反证、五轴时间、精度与历史知情截点；来源撤回、恢复和清除贯穿全部派生数据。
+- **认知及成长**：完整提供 Memory、MemorySemantics、Concept/Tag、Entity、Association、Episode、Journal、Schema、Fact 和各自生命周期。Self 包含多文档 Seed、facet、NarrativeThread、DomainKnowledge、例外与设定来源；Social 包含人物、跨平台身份、有方向的关系、信任领域与群体范围；LanguageConvention 保存语言的听众与语用；Motivation 包含 Desire、Concern、DesiredCondition、组合条件、持续区间和 unknown。完成自然形成、认知修订、使用反馈、离线整理和持续维护。
+- **查询与算法**：完整 NousQL、14 类返回域、精确引用、名称绑定、五轴过滤和历史；中文词项、语义、Hybrid、VCP、图、媒体与来源展开共同使用授权快照。吸收 VCP 的 AGS、EPA、Pyramid、Sense、双场、RiverMemo、DTSC 和 Thinking，并完成实际图资产、候选、直接锚点、查询线索、诊断与效果评估。
+- **多模态**：三种解释策略 `description_only`、`direct_structured` 和 `describe_then_structure`；二段形成同时使用原媒体或区域及真实描述。提供图像、音视频、GIF、文档与区域派生，保留输入、producer 和谱系；原生视觉向量、描述向量及图文联合检索采用真实空间与调用身份。
+- **当前认知与工作连续性**：Active Cognition、ResidentSet、WorkContext、Managed Context 和 Steward 按用途、听众、预算与来源编译输入。区分准备、实际输入接纳、模型接触、真实使用与结果反馈；覆盖模型切换、工具续轮、压缩、恢复及独立执行者。
+- **A-Memorix 与 MaiBot**：完整承接[上游工具、管理动作和实际协议](../research/a-memorix-contracts.json)，包括文本、摘要、图片、检索模式、图、来源、Episode、画像、Fact、运行管理、导入、Bundle、调优、修正、删除和恢复。依照实际客户端需要支持独立 RPC；通过真实 MaiBot MemoryService、工具与管理界面消费同一认知权威。
+- **产品与基础服务**：完善实例及跨平台安装、配置、模型资源与预算、Prompt、网络、权威事务与内容、索引、时间、持久执行、身份与密钥、能力扩展、媒体、可观察性、数据生命周期、接口与客户端、国际化。CLI、HTTP、MCP、Python SDK 和管理工作台提供同一领域操作。提供备份、恢复、主体迁移、可理解状态及 Windows、Ubuntu、macOS 的发行与运行体验。
 
-本机已通过正式 SDK 完成开发讨论单元的真实形成、required 向量处理与当前用户决定接纳；混合检索、可选模型重排、历史截点和精确来源读取已接通。真实 MaiBot 图片经过自由描述与原图联合结构化后保存认知，原图、两份表示及认知使用实际向量参与 VCP 图文联合查询；重启后命中一致，无新增模型调用。原生完整包保留实际调用来源，外部 A-Memorix 图片与 NPZ 经原读取器和隔离主体安装往返，原图及向量保持一致。以下云端已完成能力继续作为功能续接依据。
+## 架构与实现
 
-应用主动出站请求使用统一 NetworkService，网络策略与检索策略通过正式配置读取、修改并保留历史。检索参数默认值来自 Native Serde，VCP readout 接收实际 BM25 命中，查询可查看作用域参数和原生诊断。名称绑定使用授权目录，时间、历史与返回候选谓词独立应用。管理界面可查看生效模型输入、输出 Schema、自由文本模式、实际调用预览并进入对应提示词编辑。
+Python 主应用拥有认知规则、SQLite 权威数据和事务、来源授权、模型与网络、配置、Prompt、作业及产品入口；同进程 Rust native 负责 VCP、Tantivy/Jieba、USearch 和 NousQL 纯语法。PyO3/maturin 使用批量数组和 Rust 拥有的快照，计算释放 GIL 并在线程执行；native 不访问业务数据库、Provider 或凭据。权威对象及其消费者通过清晰的领域 owner 共享规则，派生索引可以重建。
 
-开发讨论三单元已通过正式 Worker 完整处理，续跑复用原成功单元，补齐其余单元并产生完整 FileSuccess。显式 force 使用独立调用意图，同一意图重放保留已有付费结果。Graph 管理使用唯一认知事务完成节点、关联、改名、权重和软删除，管理报告、修订原因及精确端点共同提交。隔离主体已实际完成创建、改名、权重更新及来源读取。
+采用标准 CPython 3.14、uv workspace、Basedpyright strict、Ruff；SDK 保持 Python 3.11+，native 提供 `.pyi` 和 `py.typed`。SQLAlchemy Core、aiosqlite 和 DBOS 共享 SQLite 文件，业务结果和后续入队在同一事务提交。模型生成与 Provider 协议采用 Pydantic AI、官方 SDK 和成熟实现；Jinja2、FastAPI、Typer/Rich 与官方 MCP SDK 分别承担模板和入口机制。项目负责领域语义、实际调用及费用、授权与完整用户路径。各项设计见 [Python/native 架构](python-native-plan/README.md)。
 
-配置类型、默认值与写入要求由组合根注册，配置服务提供统一目录、Schema、有效值与历史。CLI、MCP、SDK 和管理界面均可发现配置；静态资源由 Starlette 包资源服务提供。模型合同分别给出领域 Schema 和实际提供方 response format，文本输出保持自由文本。
+复用已有 Nous、A-Memorix、MaiBot 与 VCP 的有效源码和公共行为，按当前 owner 重组。旧 Rust 应用仍是迁移参考；完成一个 owner 及所有消费者后，连同专属支撑成组退出。公开客户端和真实持久数据按实际边界迁移；保持原件、来源、模型成功、失败或未知结果及历史。
 
-工具链、独立native与Python完整入口已接通；SDK、CLI、HTTP、MCP使用同一领域权威。真实生成、2048维文本/图像/图文联合向量已调用，历史数据已迁移可读地址。DBOS managed context与正式MaiBot实际模型输入、Steward、admission、完成反馈已贯通；Linux三wheel已在源码目录外安装运行，备份恢复与凭据撤销已实际验证。
+## 实施依赖
 
-中英管理界面已实际完成桌面/手机操作：资料与来源、精确引用、上下文、凭据撤销、逻辑包跨主体安装、Prompt预览及备份恢复。真实资料持久形成已在明确短键合同下成功完成；此前失败及付费结果继续保留。
+以完整用户链组织工作：初始化实例和主体 → 接纳真实资料与来源 → 形成并采纳认知 → 实际 embedding 和索引 → 查询、展开来源 → 重启后继续。Catalog、Unit、Output、文件成功、模型调用与任务保持各自真实身份和完成条件。
 
-派生媒体已接正式输入图、精确选区、历史、谱系、物理产物及桌面/手机工作台；真实三策略均形成正式表示，原件/描述/结构化与认知向量补齐后联合查询覆盖完整。原生逻辑包携带派生输入图、内容、可读绑定与实际向量空间，并已跨主体安装读取。
+在已走通的基础路径上，完成统一修订状态与模型路由，再补齐 A-Memorix 管理动作、完整查询和认知领域，以及宿主每次调用的上下文和长期维护。各功能同时接通实际 SDK、CLI、HTTP、MCP、MaiBot 或管理界面消费者。最后完成旧应用退出、产品管理和对应平台的构建、安装与运行。根据实际独立故障、关键业务行为与真实使用选择验证；已有成功的付费调用在恢复时复用。
 
-配置的 video_url 扩展已通过官方 SDK 对实际视频完成解释；WAV 也已真实理解并保存表示，通道记录分别反映原视频/原音频和未输入模态。
+## 当前工作
 
-Self/Social 正式操作已接 SDK。成长服务已用纯 LocalRef 提案生成 Schema/Concept、原子采纳并查询；工作台采纳、拒绝、定时计划及手机中英操作均已实际完成。模型调用按持久 invocation 固定付费请求，重启复用成功结果，未知结果不自动重付。
+开发分支为 `codex/python-native-rewrite-cloud`。真实文本、图像、动态媒体、模型形成与向量、来源、重启、MaiBot 画像、Episode 和 Managed Context 已有实际使用结果。VCP 请求意图、Fact、Context Source 工具及 SDK/MCP 可读输出已有真实运行记录，相关实现已保存到 WIP 代码检查点 `67e09cd`；此前正式功能节点为 `68fc3ae`。
 
-下一项：受限来源上下文中新输入的统一接纳；持续向量投影的持久工作；使用真实输入预览提示词草稿；完整查询与认知运行的剩余能力。迁移完成后清理旧实现并完成发行安装。
+下一项先完成统一 `RevisionState` 的消费者接线和重新加载，实际验证 freeze、restore、Fact retract 及查询结果。模型 Role 多路线还需向应用注入 `RoleRegistry`，将向量投影的整个输入目录与分批统一到同一模型空间，并完成 UI 和实际 Provider 路径。运行实例加载的是此前代码，检查点源码尚不能直接启动。随后继续未完成的 A-Memorix 消费路径、完整查询及各认知领域。
 
-先前提交 `93eb347` 的发行构建40756320214已在 Linux manylinux2_28、Windows x64、macOS ARM 与 macOS Intel 全部通过：分别构建 native wheel、安装完整三个wheel、从源码目录外初始化实例并启动HTTP。
-
-## 本机接续
-```bash
-git fetch origin
-git switch --track origin/codex/python-native-rewrite-cloud
-source scripts/dev-env.sh
-uv sync --locked
-```
-若本地已存在该分支，直接切换并执行 `git pull --ff-only`。开发依赖、启动与构建命令见 README 和 `docs/python-native-install.md`；使用独立 `native/` 工作区，保留旧 Rust 实现供剩余能力迁移参考。
-
-本机需自行配置凭据文件；云端 Key、访问令牌、运行实例、付费调用历史和构建缓存未提交 Git。此前实际验证使用 OpenAI 兼容地址 `https://ark.cn-beijing.volces.com/api/plan/v3`，对应生成模型 `doubao-seed-2.0-mini`、向量模型 `doubao-embedding-vision`，每批向量上限为 10。连接仍通过通用模型资源或 README 中的环境变量配置。
-
-## Blockers
-云端开发使用仓库授权资料建立了独立实例，本机已有实例与其付费历史未迁入云端。
-
-Superdesign CLI尚未认证，需要交互登录；不阻断本地管理界面实现。
+日常开发与启动见[项目 README](../README.md)，安装、服务管理与恢复见[安装说明](python-native-install.md)。开发缓存和实例使用 `temp/`；旧实例独立保留。

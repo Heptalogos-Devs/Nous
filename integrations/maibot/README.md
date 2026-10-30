@@ -2,6 +2,8 @@
 
 补丁将 `src/services/memory_service.py` 的后端设为官方 Nous SDK。Planner、Replyer 和 WebUI 继续使用原 `MemoryService`；请求沿 MaiBot 的主事件循环发送。Nous 负责原文接纳、检索、维护任务、人物实体与精确来源。
 
+补丁和服务需使用匹配的构建。当前工作区的模型多路线仍在集成，运行中的开发实例加载的是此前代码；功能与实际运行范围见[重构进展](../../docs/python-native-plan/progress-report.md)。
+
 ## 安装
 
 在 MaiBot 源码目录，为当前环境添加本地 SDK wheel：
@@ -46,7 +48,7 @@ uv run --env-file "/MaiBot实例/.env" maibot run --directory "/MaiBot实例"
 
 `memory_stats` 与原生 Subject 诊断使用同一授权快照，统计当前认知、任务、向量及模型用量。段落回填按当前语义空间中真实 Memory 输入的请求状态统计。Imported 生产历史单列，并按原生产调用去重；本机消耗保留实际调用用量与货币。
 
-`memory_runtime_admin` 已提供 `get_config`、`list_vector_spaces` 两项只读操作。模型自检、重建和配置写入仍由各正式 owner 续接。没有对应原生资源或队列的字段返回 `null`，原因放在 `unknown` 中。`diagnostics-unknown.patch` 使管理界面保留未知值：空间大小、关系开关和回填状态不会显示成零、关闭或完成。安装后重新构建 MaiBot dashboard。
+`memory_runtime_admin` 提供 `get_config`、`list_vector_spaces`，以及通过正式配置 owner 的 `set_config`。模型自检、向量重建等操作仍待续接。没有对应原生资源或队列的字段返回 `null`，原因放在 `unknown` 中。`diagnostics-unknown.patch` 使管理界面保留未知值：空间大小、关系开关和回填状态不会显示成零、关闭或完成。安装后重新构建 MaiBot dashboard。
 
 `integrations.amemorix` 配置控制聊天过滤、检索模式与接纳后的形成任务。向量检索使用 Nous 的模型资源配置；普通文本接纳可直接保存原文。
 
@@ -72,7 +74,7 @@ detail = await adapter.memory_import_admin(action="get", task_id=task_id, includ
 文件去重支持 `none`、`content_hash`、`manifest`，并保留 `force`、`clear_manifest`。全部文件跳过时仍提交真实 finalization 作业，返回清单回执。JSON/JSONL 使用完整原件与正式记录解析；上传未指定格式时由 `.json`、`.jsonl` 扩展名选择格式；显式 input_mode 保持调用方选择。请求级并发由 Nous 共享队列配置管理。
 重试使用同一目录的实际失败 UnitId；相同切分参数可重复传入，改变切分必须先创建带 parent_catalog_id 的新目录。聊天绑定作为真实 Import 事件 origin 保存，不增加读取权限。语义角色、逐字 quote 和向量状态与原生处理一致。chunk 输出来自实际 UnitAttempt；可选向量失败保留 vector_error 与已采纳的 Output。时间提取是形成调用的显式选项。当前时间归一化只接受明确 offset 的 RFC3339，日期粒度与未知时区不会在调用端补值。
 
-JSON 记录支持 `records`、`paragraphs`、`docs` 包络与 JSONL 原顺序，错误定位保留到具体记录。LPMM 转换、时序回填和 MaiBot 数据库迁移保留各自处理合同。
+JSON 记录支持 `records`、`paragraphs`、`docs` 包络与 JSONL 原顺序，错误定位保留到具体记录。LPMM 转换、时序回填和 MaiBot 数据库迁移的专用创建动作仍待接入。
 
 `memory_source_admin` 支持 list、delete 和 batch_delete，按完整来源标签进入原生来源管理。list 返回实际授权范围内的段落数量和更新时间；手动删除保持此管理接口覆盖保护的原有语义。回执中的删除 operation_id 为本实例真实 trash 提交身份，后续恢复使用同一个值：
 
@@ -94,7 +96,9 @@ operation = await adapter.memory_delete_admin(
 
 source `preview` 与 `execute(dry_run=true)` 由同一来源事务生成计划后回滚，显示目标原修订、预计退役对象和向量关联数；执行时重新核验。`get_operation` 与 `list_operations(mode="source")` 读取同一快照中的逻辑删除记录，已恢复记录显示 restored，并附真实恢复回执。删除计数来自实际 Memory、退役 Entity／Association 和向量关联行数；图谱修订另列在 native_result。
 
-尚未提供的管理动作返回 `CapabilityUnavailable`。画像与统计异常向调用者传播，写入、检索及其他管理请求沿原有明确失败结果呈现。
+`memory_episode_admin` 已接 query、list、get、status、rebuild 和 process_sources。`memory_fact_admin` 已接 create、update、retract、restore、get 和 list；写入要求稳定 operation_id，跨 key 更新保留上游撤回与新主张的语义。Fact 管理与 Native/A portable 包已有实际往返，普通查询的修订状态统一仍待加载验证。
+
+`memory_v5_admin` 的部分维护动作经 SDK 转到 `maintain_memory`；其余 V5 动作以及 `memory_tuning_admin`、`memory_correction_admin` 和 `memory_fuzzy_modify_admin` 尚未接入服务分发。runtime 的部分动作及特定删除模式也尚无对应 owner。尚未提供的管理动作返回明确错误。画像与统计异常向调用者传播，写入、检索及其他管理请求沿原有明确失败结果呈现。
 
 ## 模型调用与托管上下文
 

@@ -64,6 +64,8 @@ async with writer.connect() as conn:
 
 Provider 请求遇到“服务端可能已接受但响应丢失”时，调用账本保存未知状态及请求身份。已获得的付费结果优先复用；有服务端幂等/结果查询能力则利用。外层 workflow、Provider SDK、HTTP transport 不同时各自无限重试。
 
+当前多路线改造需保持已接受请求及旧物理调用意图，向量投影的一整个输入目录须使用同一实际语义空间。相关应用接线及 Worker 分批仍在施工，状态见[重构进展](../progress-report.md#模型角色多路线)。
+
 ## 幂等、去重与取消
 
 OperationId 处理同一个用户操作的重复提交；File dedupe 处理一个范围下相同文件的接纳资格；embedding 缓存处理同一内容与模型空间的已采用向量。这三者保持不同的键和事实。

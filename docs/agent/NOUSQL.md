@@ -1,1 +1,1 @@
-[NousQL 查询手册](../../crates/nous-domain/src/nousql/manual.md)
+[NousQL 查询手册](../../native/nousql-syntax/src/manual.md)
