@@ -4,7 +4,7 @@ import asyncio
 import os
 from collections.abc import Awaitable, Callable
 
-from nous_wave.contracts import (
+from nous_sdk.contracts import (
     CallContext,
     DomainError,
     EmbeddingBatch,

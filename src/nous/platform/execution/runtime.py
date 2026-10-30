@@ -23,7 +23,7 @@ from dbos import (
     WorkflowSerializationFormat,
     WorkflowStatus,
 )
-from nous_wave.contracts.common import CallContext
+from nous_sdk.contracts.common import CallContext
 from opentelemetry.context import get_current
 from pydantic import JsonValue, TypeAdapter
 from sqlalchemy import event

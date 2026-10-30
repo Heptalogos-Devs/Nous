@@ -52,7 +52,7 @@ if [[ -f pyproject.toml ]] && "$PYTHON" - <<'PY'
 from pathlib import Path
 import tomllib
 p = tomllib.loads(Path('pyproject.toml').read_text())
-raise SystemExit(0 if p.get('project', {}).get('name') == 'nous-wave-server' else 1)
+raise SystemExit(0 if p.get('project', {}).get('name') == 'nous-server' else 1)
 PY
 then
   if [[ -f uv.lock ]]; then

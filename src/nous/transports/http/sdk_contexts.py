@@ -1,7 +1,7 @@
 """Public SDK resource routes backed by the shared domain owners."""
 
 from fastapi import APIRouter, Request
-from nous_wave.contracts.context import (
+from nous_sdk.contracts.context import (
     ChangeContextSession,
     ChangeResidents,
     ChangeWorkContext,

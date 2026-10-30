@@ -9,8 +9,8 @@ import secrets
 import httpx
 import pytest
 import sqlalchemy as sa
-from nous_wave.contracts import DomainError
-from nous_wave.contracts.credentials import CreateCredential, RotateCredential
+from nous_sdk.contracts import DomainError
+from nous_sdk.contracts.credentials import CreateCredential, RotateCredential
 
 from nous.identity.credentials import AuthenticationError, CredentialsService, credentials
 from nous.platform.configuration import Settings

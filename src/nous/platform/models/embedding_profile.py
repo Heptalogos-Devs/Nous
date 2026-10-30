@@ -3,9 +3,9 @@
 from dataclasses import dataclass
 from hashlib import sha256
 
-from nous_wave.contracts import EmbeddingBatch
-from nous_wave.contracts.common import Contract
-from nous_wave.contracts.model_routing import ModelRoutingPolicy
+from nous_sdk.contracts import EmbeddingBatch
+from nous_sdk.contracts.common import Contract
+from nous_sdk.contracts.model_routing import ModelRoutingPolicy
 from pydantic import Field, model_validator
 
 from nous.platform.configuration import EmbeddingRoute

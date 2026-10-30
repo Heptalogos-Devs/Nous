@@ -2,8 +2,8 @@
 
 from uuid import uuid4
 
-from nous_wave.contracts import CallContext, DomainError, MediaReference
-from nous_wave.contracts.derivation import (
+from nous_sdk.contracts import CallContext, DomainError, MediaReference
+from nous_sdk.contracts.derivation import (
     ArtifactRepresentation,
     DerivedBundle,
     DerivedRegion,

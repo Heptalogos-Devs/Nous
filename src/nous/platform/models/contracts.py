@@ -7,8 +7,8 @@ from dataclasses import dataclass
 from hashlib import sha256
 from typing import TYPE_CHECKING
 
-from nous_wave.contracts import CallContext, DomainError
-from nous_wave.contracts.model_roles import (
+from nous_sdk.contracts import CallContext, DomainError
+from nous_sdk.contracts.model_roles import (
     InvocationSnapshot,
     ModelContractRequest,
     ModelInvocationPreview,

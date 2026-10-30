@@ -1,7 +1,7 @@
 """Exact-target durable vector admission, without an implicit library scan."""
 
 from fastapi import APIRouter, Request
-from nous_wave.contracts.vector_projection import ProjectVectors
+from nous_sdk.contracts.vector_projection import ProjectVectors
 
 from .security import application, context
 

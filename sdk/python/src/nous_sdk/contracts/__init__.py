@@ -39,6 +39,9 @@ from .cognition import (
     DomainKnowledgeBody as DomainKnowledgeBody,
 )
 from .cognition import (
+    EgoFacetBody as EgoFacetBody,
+)
+from .cognition import (
     EmbeddingBatch as EmbeddingBatch,
 )
 from .cognition import EntityAttribute as EntityAttribute
@@ -113,9 +116,6 @@ from .cognition import (
     SchemaBody as SchemaBody,
 )
 from .cognition import (
-    SelfFacetBody as SelfFacetBody,
-)
-from .cognition import (
     SocialRelationBody as SocialRelationBody,
 )
 from .cognition import (
@@ -166,6 +166,10 @@ from .credentials import Capability as Capability
 from .credentials import CreateCredential as CreateCredential
 from .credentials import CredentialRecord as CredentialRecord
 from .credentials import IssuedCredential as IssuedCredential
+from .ego_model import AdoptSeed as AdoptSeed
+from .ego_model import SeedDocument as SeedDocument
+from .ego_model import SeedFacet as SeedFacet
+from .ego_model import SeedResult as SeedResult
 from .fact_body import FactClaimBody as FactClaimBody
 from .graph_management import GraphChange as GraphChange
 from .graph_management import GraphChangeResult as GraphChangeResult
@@ -329,10 +333,6 @@ from .retrieval_policy import VcpPipeline as VcpPipeline
 from .retrieval_policy import VcpPolicy as VcpPolicy
 from .retrieval_policy import VcpReadout as VcpReadout
 from .retrieval_policy import VcpSpikeRouting as VcpSpikeRouting
-from .self_model import AdoptSeed as AdoptSeed
-from .self_model import SeedDocument as SeedDocument
-from .self_model import SeedFacet as SeedFacet
-from .self_model import SeedResult as SeedResult
 from .social import ChangeSocialRelation as ChangeSocialRelation
 from .social import LinkIdentity as LinkIdentity
 from .source_graph import ExpandedSources as ExpandedSources

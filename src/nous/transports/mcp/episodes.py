@@ -4,12 +4,12 @@ from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
 from uuid import uuid4
 
-from nous_wave import NousClient
-from nous_wave.amemorix import AMemorixAdapter
-from nous_wave.amemorix.episodes import EpisodeAdminInput
-from nous_wave.contracts import CognitiveRef
-from nous_wave.contracts.episodes import EpisodeQuery, RebuildEpisodes
-from nous_wave.types import JsonObject
+from nous_sdk import NousClient
+from nous_sdk.amemorix import AMemorixAdapter
+from nous_sdk.amemorix.episodes import EpisodeAdminInput
+from nous_sdk.contracts import CognitiveRef
+from nous_sdk.contracts.episodes import EpisodeQuery, RebuildEpisodes
+from nous_sdk.types import JsonObject
 
 from mcp.server import MCPServer
 

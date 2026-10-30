@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from nous_wave.amemorix.contracts import (
+from nous_sdk.amemorix.contracts import (
     AMemorixOperation,
     AMemorixPolicy,
     IngestInput,
@@ -13,13 +13,13 @@ from nous_wave.amemorix.contracts import (
     SearchInput,
     SummaryInput,
 )
-from nous_wave.contracts import (
+from nous_sdk.contracts import (
     CallContext,
     CognitiveRecord,
     CognitiveRef,
     DomainError,
 )
-from nous_wave.contracts.context import CognitiveTarget
+from nous_sdk.contracts.context import CognitiveTarget
 from pydantic import JsonValue, TypeAdapter
 from sqlalchemy import select
 
@@ -76,13 +76,13 @@ class AMemorixService:
 
             return await episode_admin(self, ctx, arguments)
         if tool == "memory_source":
-            from nous_wave.contracts.source_graph import ExpandSources
+            from nous_sdk.contracts.source_graph import ExpandSources
 
             raw = arguments.get("target")
             if isinstance(raw, str):
                 target = (await self.app.references.resolve(ctx, raw)).reference
             else:
-                from nous_wave.contracts.context import ContextTarget
+                from nous_sdk.contracts.context import ContextTarget
 
                 target = TypeAdapter(ContextTarget).validate_python(raw)
             if not isinstance(target, CognitiveTarget):

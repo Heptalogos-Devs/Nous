@@ -4,8 +4,8 @@ from hashlib import sha256
 from typing import TYPE_CHECKING, Literal
 from uuid import uuid4
 
-from nous_wave.contracts import BlobDocument, BundleRequest, CallContext, DomainError
-from nous_wave.contracts.bundles import BundlePlacement
+from nous_sdk.contracts import BlobDocument, BundleRequest, CallContext, DomainError
+from nous_sdk.contracts.bundles import BundlePlacement
 from pydantic import JsonValue
 
 from .bundle_input import decode_bundle_arguments

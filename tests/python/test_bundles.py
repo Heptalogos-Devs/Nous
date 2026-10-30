@@ -4,7 +4,7 @@ import asyncio
 from io import BytesIO
 from pathlib import Path
 
-from nous_wave.contracts import (
+from nous_sdk.contracts import (
     AdmitFiles,
     AdoptCognition,
     BlobDocument,
@@ -16,7 +16,7 @@ from nous_wave.contracts import (
     MediaInfo,
     SubjectBundle,
 )
-from nous_wave.contracts.bundles import BundleAssetOptions, PackageDescriptor
+from nous_sdk.contracts.bundles import BundleAssetOptions, PackageDescriptor
 from PIL import Image
 from sqlalchemy import select
 
@@ -168,7 +168,7 @@ def test_external_portable_and_native_vector_roundtrip(tmp_path: Path):
 
 def test_artifact_contact_inherits_inputs_and_withdrawal(tmp_path: Path):
     async def scenario():
-        from nous_wave.contracts import BlobDocument, MediaReference, SourceCommand
+        from nous_sdk.contracts import BlobDocument, MediaReference, SourceCommand
 
         from nous.data_management.sources import SourceService
 
@@ -233,7 +233,7 @@ def test_artifact_contact_inherits_inputs_and_withdrawal(tmp_path: Path):
                 )
                 assert provenance.roots == (event,)
                 assert own_contact["id"] not in provenance.roots
-            from nous_wave.contracts import MemoryBody
+            from nous_sdk.contracts import MemoryBody
 
             memory = await cognition.adopt(
                 scoped,
@@ -250,7 +250,7 @@ def test_artifact_contact_inherits_inputs_and_withdrawal(tmp_path: Path):
                 ctx,
                 SourceCommand(operation_id="withdraw", observation_ids=(event,), reason="withdraw"),
             )
-            from nous_wave.contracts import DomainError
+            from nous_sdk.contracts import DomainError
 
             try:
                 await cognition.get(scoped, memory.reference)

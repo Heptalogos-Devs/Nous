@@ -1,6 +1,6 @@
 """Outputs owned by the actual source formation and description consumers."""
 
-from nous_wave.contracts.cognition import FormationDraft, ProposedMemory
+from nous_sdk.contracts.cognition import FormationDraft, ProposedMemory
 from pydantic import BaseModel, Field
 
 

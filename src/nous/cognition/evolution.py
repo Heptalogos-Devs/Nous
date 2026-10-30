@@ -13,7 +13,7 @@ from .evolution_validation import validate_merge, validate_split
 if TYPE_CHECKING:
     from .service import CognitionService
 
-from nous_wave.contracts import (
+from nous_sdk.contracts import (
     AdoptCognition,
     CallContext,
     CognitiveRecord,

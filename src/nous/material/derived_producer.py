@@ -2,8 +2,8 @@
 
 import hashlib
 
-from nous_wave.contracts import DomainError
-from nous_wave.contracts.derivation import (
+from nous_sdk.contracts import DomainError
+from nous_sdk.contracts.derivation import (
     DerivationInput,
     DerivationProducer,
     RepresentationPayload,

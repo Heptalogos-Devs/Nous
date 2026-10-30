@@ -5,10 +5,10 @@ from __future__ import annotations
 from hashlib import sha256
 from typing import TYPE_CHECKING
 
-from nous_wave.contracts import CallContext, DomainError, EmbeddingBatch, MediaEmbeddingInput
-from nous_wave.contracts.common import Contract
-from nous_wave.contracts.model_roles import ModelCachePolicy
-from nous_wave.contracts.model_routing import ModelRouteAttempt, ModelRoutingPolicy
+from nous_sdk.contracts import CallContext, DomainError, EmbeddingBatch, MediaEmbeddingInput
+from nous_sdk.contracts.common import Contract
+from nous_sdk.contracts.model_roles import ModelCachePolicy
+from nous_sdk.contracts.model_routing import ModelRouteAttempt, ModelRoutingPolicy
 from pydantic import BaseModel, JsonValue, TypeAdapter
 
 from nous.platform.configuration import ModelRoute

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from nous_wave.contracts import CallContext, CognitiveRecord, CognitiveRef
-from nous_wave.contracts.context import CognitiveTarget, ContextSegment
+from nous_sdk.contracts import CallContext, CognitiveRecord, CognitiveRef
+from nous_sdk.contracts.context import CognitiveTarget, ContextSegment
 from sqlalchemy import select
 
 from nous.cognition.lifecycle import selectable

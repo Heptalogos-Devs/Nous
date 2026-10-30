@@ -1,7 +1,7 @@
 """Episode operations use the canonical scoped Episode and execution services."""
 
 from fastapi import APIRouter, Request
-from nous_wave.contracts.episodes import (
+from nous_sdk.contracts.episodes import (
     EpisodeGet,
     EpisodeQuery,
     ProcessEpisodeSources,

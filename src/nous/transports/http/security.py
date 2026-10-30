@@ -3,9 +3,9 @@
 from uuid import uuid4
 
 from fastapi import Request
-from nous_wave.contracts import CallContext, TimePoint
-from nous_wave.contracts.common import utc_now
-from nous_wave.contracts.credentials import Capability
+from nous_sdk.contracts import CallContext, TimePoint
+from nous_sdk.contracts.common import utc_now
+from nous_sdk.contracts.credentials import Capability
 
 from nous.application import Application
 from nous.identity.credentials import AuthenticationError, Principal

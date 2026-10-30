@@ -115,7 +115,7 @@ pub(crate) async fn serve(paths: InstancePaths, listen: Option<SocketAddr>) -> R
             &json!({"pid":std::process::id(),"version":env!("CARGO_PKG_VERSION"),"listen":address,"bootstrap_credential":app.bootstrap_credential().await?,"network":config.network}),
         )?,
     )?;
-    tracing::info!(instance=%paths.root.display(),listen=%address,"Nous Wave is serving");
+    tracing::info!(instance=%paths.root.display(),listen=%address,"Nous is serving");
     let background = app.start_background(cancellation.child_token());
     // Axum startup and cancellation wiring adapted from rmcp counter_streamhttp.rs.
     let shutdown = cancellation.clone();
@@ -132,7 +132,7 @@ pub(crate) async fn serve(paths: InstancePaths, listen: Option<SocketAddr>) -> R
     app.close().await;
     let _ = std::fs::remove_file(run_path);
     result?;
-    tracing::info!("Nous Wave stopped");
+    tracing::info!("Nous stopped");
     Ok(())
 }
 

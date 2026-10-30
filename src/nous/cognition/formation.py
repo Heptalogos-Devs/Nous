@@ -15,7 +15,7 @@ from .schema import revisions
 if TYPE_CHECKING:
     from .service import CognitionService
 
-from nous_wave.contracts import (
+from nous_sdk.contracts import (
     AdoptCognition,
     AssociationBody,
     CallContext,
@@ -40,7 +40,7 @@ from nous_wave.contracts import (
     ProposedSchema,
     SchemaBody,
 )
-from nous_wave.contracts.cognition import PersonProfileControls
+from nous_sdk.contracts.cognition import PersonProfileControls
 
 
 async def adopt_tags_in(

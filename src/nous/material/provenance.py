@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from nous_wave.contracts import CallContext, CognitiveRef, DomainError, MediaReference, SourceRegion
+from nous_sdk.contracts import CallContext, CognitiveRef, DomainError, MediaReference, SourceRegion
 from pydantic import TypeAdapter
 from sqlalchemy import select
 
@@ -34,7 +34,7 @@ async def provenance_in(
     *,
     derivations: DerivedService | None = None,
 ) -> MaterialProvenance:
-    from nous_wave.contracts.derivation import DerivedRegion
+    from nous_sdk.contracts.derivation import DerivedRegion
 
     from nous.cognition.service import CognitionService
 

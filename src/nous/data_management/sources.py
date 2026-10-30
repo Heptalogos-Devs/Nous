@@ -5,7 +5,7 @@ from collections.abc import Awaitable, Callable
 from hashlib import sha256
 from uuid import uuid4
 
-from nous_wave.contracts import (
+from nous_sdk.contracts import (
     CallContext,
     CognitiveRecord,
     CognitiveRef,

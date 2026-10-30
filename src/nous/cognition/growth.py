@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from nous_wave.contracts import (
+from nous_sdk.contracts import (
     AdoptCognition,
     CallContext,
     CognitiveRecord,
@@ -18,8 +18,8 @@ from nous_wave.contracts import (
     MergeConcepts,
     SplitConcept,
 )
-from nous_wave.contracts.cognition import CognitiveKind
-from nous_wave.contracts.growth import (
+from nous_sdk.contracts.cognition import CognitiveKind
+from nous_sdk.contracts.growth import (
     GrowthAdoption,
     GrowthDraft,
     GrowthEntry,

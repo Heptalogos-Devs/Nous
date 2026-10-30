@@ -5,8 +5,8 @@ from __future__ import annotations
 from hashlib import sha256
 from typing import TYPE_CHECKING
 
-from nous_wave.contracts import CallContext, DomainError
-from nous_wave.contracts.context import (
+from nous_sdk.contracts import CallContext, DomainError
+from nous_sdk.contracts.context import (
     ContextPreparation,
     ContextPrepare,
     ContextProjection,

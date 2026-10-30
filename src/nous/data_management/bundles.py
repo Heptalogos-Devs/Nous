@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from nous_wave.contracts import (
+from nous_sdk.contracts import (
     CallContext,
     DomainError,
     SourceCommand,

@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import httpx2
-from nous_wave.contracts import CallContext
+from nous_sdk.contracts import CallContext
 
 from nous.platform.concurrency import owned_thread
 from nous.platform.errors import Unavailable

@@ -3,7 +3,7 @@
 import asyncio
 from pathlib import Path
 
-from nous_wave.contracts import (
+from nous_sdk.contracts import (
     AdmitFiles,
     BundleRequest,
     CallContext,
@@ -145,7 +145,7 @@ def test_import_source_bundle_and_restart(tmp_path: Path):
 
 def test_purge_clears_history_receipts_and_blocks_late_adoption(tmp_path: Path):
     async def scenario():
-        from nous_wave.contracts import DomainError, MemoryChange
+        from nous_sdk.contracts import DomainError, MemoryChange
         from sqlalchemy import select
 
         from nous.cognition.schema import revisions
@@ -255,7 +255,7 @@ def test_json_original_regions_addresses_attempts_and_artifact_purge(tmp_path: P
     async def scenario():
         import json
 
-        from nous_wave.contracts import BlobDocument, DomainError
+        from nous_sdk.contracts import BlobDocument, DomainError
 
         from nous.material.service import MaterialService
         from nous.platform.content import ContentStore
@@ -337,7 +337,7 @@ def test_json_original_regions_addresses_attempts_and_artifact_purge(tmp_path: P
                 region_ctx, QueryRequest(reference=f"source-region:{region.id}", domains=("media",))
             )
             assert exact.hits[0].object.text == memory.body.text
-            from nous_wave.contracts import MediaReference, SourceRegion
+            from nous_sdk.contracts import MediaReference, SourceRegion
 
             selected = ctx.model_copy(
                 update={
@@ -455,9 +455,9 @@ def test_json_original_regions_addresses_attempts_and_artifact_purge(tmp_path: P
     asyncio.run(scenario())
 
 
-def test_self_seed_observation_reuse_and_attribute_support(tmp_path: Path):
+def test_ego_seed_observation_reuse_and_attribute_support(tmp_path: Path):
     async def scenario():
-        from nous_wave.contracts import (
+        from nous_sdk.contracts import (
             AdoptCognition,
             CognitiveTimes,
             DomainError,
@@ -466,12 +466,14 @@ def test_self_seed_observation_reuse_and_attribute_support(tmp_path: Path):
             EpistemicStance,
             EvidenceLink,
         )
-        from nous_wave.contracts.imports import FormObservation, TextSplitOptions
-        from nous_wave.contracts.self_model import AdoptSeed, SeedDocument, SeedFacet
-        from sqlalchemy import select
+        from nous_sdk.contracts.ego_model import AdoptSeed, SeedDocument, SeedFacet
+        from nous_sdk.contracts.imports import FormObservation, TextSplitOptions
+        from sqlalchemy import select, update
 
+        from nous.identity.service import subjects
         from nous.material.service import MaterialService, observations
         from nous.platform.content import ContentStore
+        from nous.platform.persistence.schema import operations
 
         authority = Authority(tmp_path / "authority.sqlite")
         content = ContentStore(authority, tmp_path / "content")
@@ -494,7 +496,7 @@ def test_self_seed_observation_reuse_and_attribute_support(tmp_path: Path):
                 "Researcher",
                 "subject-create",
                 subject_id=ctx.subject_id,
-                capabilities=("memory", "self", "social"),
+                capabilities=("memory", "ego", "social"),
             )
             seeded = await cognition.adopt_seed(
                 ctx,
@@ -517,7 +519,34 @@ def test_self_seed_observation_reuse_and_attribute_support(tmp_path: Path):
                 ),
             )
             assert len(seeded.facets) == 2 and len(seeded.memories) == 2
-            assert len(await cognition.self_profile(ctx)) == 2
+            assert len(await cognition.ego_profile(ctx)) == 2
+            # Existing subjects may have persisted the former capability name.
+            async with authority.writer.begin() as connection:
+                await connection.execute(
+                    update(subjects)
+                    .where(subjects.c.id == ctx.subject_id)
+                    .values(capabilities=["memory", "self", "social"])
+                )
+            assert len(await cognition.ego_profile(ctx)) == 2
+            assert (await identity.list_subjects(ctx))[0]["capabilities"] == [
+                "memory", "ego", "social"
+            ]
+            legacy = await identity.create_subject(
+                ctx, "Legacy", "legacy-subject", capabilities=("memory", "self")
+            )
+            async with authority.writer.begin() as connection:
+                import json
+
+                old_result = {**legacy, "capabilities": ["memory", "self"]}
+                await connection.execute(
+                    update(operations)
+                    .where(operations.c.operation_id == "legacy-subject")
+                    .values(result_json=json.dumps(old_result))
+                )
+            replayed = await identity.create_subject(
+                ctx, "Legacy", "legacy-subject", capabilities=("memory", "self")
+            )
+            assert replayed == legacy and legacy["capabilities"] == ["memory", "ego"]
             assert (
                 await cognition.get(ctx, seeded.memories[0])
             ).body.epistemic.classification == "simulated"

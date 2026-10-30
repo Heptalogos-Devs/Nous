@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, TypeVar
 
 import sqlalchemy as sa
-from nous_wave.contracts.common import CallContext, DomainError
+from nous_sdk.contracts.common import CallContext, DomainError
 from pydantic import JsonValue, TypeAdapter
 from sqlalchemy import event
 from sqlalchemy.dialects.sqlite import insert

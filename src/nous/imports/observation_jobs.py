@@ -5,8 +5,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
-from nous_wave.contracts import CallContext, DomainError, MediaReference
-from nous_wave.contracts.imports import FormObservation, ObservationFormSubmission
+from nous_sdk.contracts import CallContext, DomainError, MediaReference
+from nous_sdk.contracts.imports import FormObservation, ObservationFormSubmission
 from pydantic import JsonValue, TypeAdapter
 from sqlalchemy import select, update
 

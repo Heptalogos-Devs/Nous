@@ -1,24 +1,24 @@
-"""Multi-document Self seeds preserve actual source contacts and explicit revisions."""
+"""Multi-document Ego seeds preserve actual source contacts and explicit revisions."""
 
 from __future__ import annotations
 
 import asyncio
 from typing import TYPE_CHECKING
 
-from nous_wave.contracts import (
+from nous_sdk.contracts import (
     AdoptCognition,
     CallContext,
     CognitiveRecord,
     CognitiveRef,
     CognitiveTimes,
     DomainError,
+    EgoFacetBody,
     EpistemicStance,
     EvidenceLink,
     MemoryBody,
-    SelfFacetBody,
     TimePoint,
 )
-from nous_wave.contracts.self_model import AdoptSeed, SeedResult
+from nous_sdk.contracts.ego_model import AdoptSeed, SeedResult
 from sqlalchemy import select
 
 from nous.identity.service import require_subject_in
@@ -77,7 +77,7 @@ async def adopt_seed(self: CognitionService, ctx: CallContext, command: AdoptSee
                 self, view, ctx, command, SeedResult.model_validate(receipt.result)
             )
     async with self.authority.read(ctx) as view:
-        await require_subject_in(view, ctx, "self")
+        await require_subject_in(view, ctx, "ego")
     prepared: list[tuple[MaterialRecord | None, str, ContentLease | None]] = []
     try:
         for entry in command.documents:
@@ -117,7 +117,7 @@ async def adopt_seed(self: CognitionService, ctx: CallContext, command: AdoptSee
                 return await replay_seed(
                     self, tx, ctx, command, SeedResult.model_validate(tx.replay_result)
                 )
-            await require_subject_in(tx, ctx, "self")
+            await require_subject_in(tx, ctx, "ego")
             memories: list[CognitiveRef] = []
             facets: list[CognitiveRef] = []
             observation_ids: list[str] = []
@@ -158,10 +158,10 @@ async def adopt_seed(self: CognitionService, ctx: CallContext, command: AdoptSee
                     memories.append(memory.reference)
                 for facet in entry.facets:
                     prior = await self.get_in(tx, ctx, facet.target) if facet.target else None
-                    if prior is not None and not isinstance(prior.body, SelfFacetBody):
+                    if prior is not None and not isinstance(prior.body, EgoFacetBody):
                         raise DomainError(
                             "seed_target_invalid",
-                            "A seeded facet can only revise an existing SelfFacet",
+                            "A seeded facet can only revise an existing EgoFacet",
                         )
                     record = await self.adopt_in(
                         tx,
@@ -169,7 +169,7 @@ async def adopt_seed(self: CognitionService, ctx: CallContext, command: AdoptSee
                         AdoptCognition(
                             id=prior.reference.id if prior else None,
                             expected_revision=prior.reference.revision if prior else 0,
-                            body=SelfFacetBody(
+                            body=EgoFacetBody(
                                 facet=facet.facet,
                                 description=facet.description,
                                 contexts=facet.contexts,
@@ -208,9 +208,9 @@ async def adopt_seed(self: CognitionService, ctx: CallContext, command: AdoptSee
                     await self.materials.content_store.release(lease)
 
 
-async def self_profile(self: CognitionService, ctx: CallContext) -> tuple[CognitiveRecord, ...]:
+async def ego_profile(self: CognitionService, ctx: CallContext) -> tuple[CognitiveRecord, ...]:
     async with self.authority.read(ctx) as view:
-        await require_subject_in(view, ctx, "self")
+        await require_subject_in(view, ctx, "ego")
         rows = (
             await view.connection.execute(
                 select(revisions.c.record).where(

@@ -4,8 +4,8 @@ import asyncio
 import json
 from pathlib import Path
 
-from nous_wave.contracts import AdmitFiles, CallContext, DomainError, ImportDocument
-from nous_wave.contracts.growth import GrowthProposal
+from nous_sdk.contracts import AdmitFiles, CallContext, DomainError, ImportDocument
+from nous_sdk.contracts.growth import GrowthProposal
 from sqlalchemy import func, select
 
 from nous.cognition.growth_proposal import growth_model_catalog, normalize_growth

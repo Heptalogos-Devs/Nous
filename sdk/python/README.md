@@ -1,4 +1,4 @@
-# Nous Wave Python SDK
+# Nous Python SDK
 
 异步客户端使用正式 Python 领域合同，供 Agent、MaiBot 和普通 Python 程序调用。
 
@@ -11,8 +11,8 @@ uv add --editable /绝对路径/Nous-Wave/sdk/python
 ```
 
 ```python
-from nous_wave import ClientOptions, NousClient
-from nous_wave.contracts import AdmitFiles, ImportDocument, QueryRequest
+from nous_sdk import ClientOptions, NousClient
+from nous_sdk.contracts import AdmitFiles, ImportDocument, QueryRequest
 
 async with NousClient(
     service_url,
@@ -29,15 +29,17 @@ async with NousClient(
         QueryRequest(text="当前任务", mode="lexical"))
 ```
 
-返回值为 Pydantic 合同或明确的 JSON 对象。`nous_wave.contracts` 可以独立导入，不加载 HTTP 客户端。`NousError` 保留服务端错误码、消息与上下文。写入重试复用同一 `operation_id`；网络错误保留该身份供继续。客户端连接、凭据读取、Trace、语言、超时、代理和下载校验共用一个 transport。
+Ego 的种子和自我画像通过 `adopt_seed` 与 `ego_profile` 操作访问。已有认知记录和跨系统引用中的 `self_facet` 类型标识保持稳定；Python 合同类型使用 `EgoFacetBody`。
+
+返回值为 Pydantic 合同或明确的 JSON 对象。`nous_sdk.contracts` 可以独立导入，不加载 HTTP 客户端。`NousError` 保留服务端错误码、消息与上下文。写入重试复用同一 `operation_id`；网络错误保留该身份供继续。客户端连接、凭据读取、Trace、语言、超时、代理和下载校验共用一个 transport。
 
 `ClientOptions.cognitive_clock=TimePoint(...)` 显式提供认知形成时钟；未设置时服务使用物理 UTC。Context 的 `usage.world_time` 仅描述用途中的世界坐标。作业调度、调用预算与实际用量使用物理时间。
 
 ## 来源与地址
 
 ```python
-from nous_wave import SourceReadScope
-from nous_wave.source_scope import CognitionSource, MediaSource, OriginalMedia
+from nous_sdk import SourceReadScope
+from nous_sdk.source_scope import CognitionSource, MediaSource, OriginalMedia
 
 whole = client.with_source_read(SourceReadScope(
     subject_id=subject_id,
@@ -58,7 +60,7 @@ single = whole.with_source_read(SourceReadScope(
 `upload_file`、`upload_stream` 流式接纳原件；上传必须指定 `owner_subject_id`。`expected_content_hash` 可核验实际上传字节。`download_material`、`download_region` 和 `download_derived` 使用相同 scope 元数据、长度与散列验证，失败会清理未完成文件。
 
 ```python
-from nous_wave.contracts import FreezeCatalog, ProcessCatalog
+from nous_sdk.contracts import FreezeCatalog, ProcessCatalog
 
 material = (await client.upload_file(namespace_id, local_file,
     owner_subject_id=subject_id)).result
@@ -105,7 +107,7 @@ redone = await client.submit_catalog(namespace_id, subject_id, ProcessCatalog(
 
 `query` / `query_cognition` 支持 lexical、dense、hybrid、vcp，认知与媒体 domains、混合 parts、精确引用、事件时间、来源过滤及历史截点。`query_manual()` 返回当前原生 NousQL 手册。
 
-`adopt_cognition`、`merge_concepts`、`split_concept`、`resegment_episodes` 使用共享合同；`update_memory` 接受正式 `MemoryChange` 生命周期命令。`adopt_seed` 保存显式配置文档及 SelfFacet 证据，`self_profile` 读取当前正式 Self 画像。
+`adopt_cognition`、`merge_concepts`、`split_concept`、`resegment_episodes` 使用共享合同；`update_memory` 接受正式 `MemoryChange` 生命周期命令。`adopt_seed` 保存显式配置文档及 EgoFacet 证据，`ego_profile` 读取当前正式 Ego 画像。
 
 来源管理使用 `source_directory`、`preview_sources`、`trash_sources`、`restore_sources`、`purge_sources` 及共享 `SourceCommand`；恢复保留实际 Observation 身份。Bundle 使用 `export_bundle` 与 `install_bundle` 合同，A-Memorix 提供 ZIP 文件操作。导出产物保留实际依赖闭包，读取与来源 purge 由材料 owner 共同约束。
 
@@ -114,7 +116,7 @@ redone = await client.submit_catalog(namespace_id, subject_id, ProcessCatalog(
 模型角色的实际输入、输出模式、对应 Schema 和 Prompt 可在调用前读取。`model_contract(ModelContractRequest(role="formation"))` 返回登记的输入/输出 Schema、当前 Prompt 和可选 variant；形成的 `text` 与 `media` 使用各自真实输出类型。`description`、`steward`、`maintenance`、`query_rerank` 同样使用实际消费者的合同。description 的 output_mode=text、输出 Schema 为 string，实际模型直接返回正文；其它强类型角色使用 json_schema。自由描述及两段解释的第一步均采用文本输出，应用保存正文与真实 producer_call_id；第二步仍同时传入原媒体和已保存描述。调用账本保留实际字符串及 actual_output_mode。自定义 Prompt 保留原内容，可在管理入口按实际用途编辑。
 
 ```python
-from nous_wave.contracts import ModelContractRequest, ModelPreviewRequest
+from nous_sdk.contracts import ModelContractRequest, ModelPreviewRequest
 
 contract = await api.model_contract(ModelContractRequest(role="formation"))
 preview = await api.model_preview(ModelPreviewRequest(
@@ -138,7 +140,7 @@ Preview 与实际调用共用输入校验、Prompt 渲染、参数及调用快�
 ## 每次模型调用的 Context
 
 ```python
-from nous_wave.contracts.context import ContextUsage
+from nous_sdk.contracts.context import ContextUsage
 
 binding = client.managed(
     namespace_id=namespace_id, subject_id=subject_id,
@@ -172,7 +174,7 @@ A-Memorix `AMemorixAdapter` 保留六项工具、来源、导入、包与运行�
 
 ## 事实主张
 
-`change_fact(namespace_id, subject_id, FactChange(...))` 写入正式 `fact_claim` 修订，支持 assert、update、classify、retract、restore 和 add_evidence；写入携带稳定 operation_id。`query_facts(..., FactQuery(...))` 默认选择 active 状态，`fact(..., reference)` 返回记录、历史、后继和冲突。人物或聊天范围、有效时间和证据使用 `nous_wave.contracts.facts` 中的类型。当前实现已有真实 Fact 管理与包往返记录；通用查询的修订可见性正在统一，完成加载验证前请以事实管理接口和实际服务版本为准。
+`change_fact(namespace_id, subject_id, FactChange(...))` 写入正式 `fact_claim` 修订，支持 assert、update、classify、retract、restore 和 add_evidence；写入携带稳定 operation_id。`query_facts(..., FactQuery(...))` 默认选择 active 状态，`fact(..., reference)` 返回记录、历史、后继和冲突。人物或聊天范围、有效时间和证据使用 `nous_sdk.contracts.facts` 中的类型。当前实现已有真实 Fact 管理与包往返记录；通用查询的修订可见性正在统一，完成加载验证前请以事实管理接口和实际服务版本为准。
 
 ## 认知整理提案
 
@@ -188,10 +190,10 @@ A-Memorix `AMemorixAdapter` 保留六项工具、来源、导入、包与运行�
 
 `query_cognition`、HTTP 的 Subject `/query`、MCP `query_cognition` 和 CLI `query` 使用同一 QueryRequest/QueryResult。可用请求文件完整指定查询；CLI 也提供 `--materialize`、`--rerank off|optional|required` 和 `--rerank-invocation-id`。
 
-`nous_wave.presentation.query_text(result)` 输出短引用、正文、归因与不确定性，适合直接交给模型阅读。MCP 查询使用这种文本呈现，同时在 `structuredContent` 保留完整 `QueryResult`，便于程序读取诊断、向量调用来源和 Thinking 阶段；CLI 的 `--json` 同样保留完整结构。继续阅读可把结果中的精确引用传给 `source` 或 `memory_source`。
+`nous_sdk.presentation.query_text(result)` 输出短引用、正文、归因与不确定性，适合直接交给模型阅读。MCP 查询使用这种文本呈现，同时在 `structuredContent` 保留完整 `QueryResult`，便于程序读取诊断、向量调用来源和 Thinking 阶段；CLI 的 `--json` 同样保留完整结构。继续阅读可把结果中的精确引用传给 `source` 或 `memory_source`。
 
 ```python
-from nous_wave.contracts import QueryRequest
+from nous_sdk.contracts import QueryRequest
 
 result = await client.query_cognition(namespace_id, subject_id, QueryRequest(
     text="项目操作者", materialize=True, rerank="optional",
@@ -211,7 +213,7 @@ rerank 默认为 off。启用时，模型角色 `query_rerank` 使用 text-gener
 检索算法配置使用共享 `configuration` 的 `retrieval` 键，按 instance、namespace、subject 继承。`RetrievalPolicy` 包含融合权重、RRF 常量，以及实际 VCP pipeline、spike routing、readout 和诊断参数；初始值来自 native 的 Serde 默认定义。先读取有效对象再修改，保留完整强类型结构：
 
 ```python
-from nous_wave.contracts import RetrievalPolicy
+from nous_sdk.contracts import RetrievalPolicy
 
 effective = await api.configuration({"key": "retrieval"})
 policy = RetrievalPolicy.model_validate(effective["value"])
@@ -227,8 +229,8 @@ changes = await api.configuration({"action": "history", "key": "retrieval"})
 VCP 请求通过 `vcp` 表达本次意图。`core` 接已有认知的精确 `CognitiveRef`，在当前授权及历史截点下绑定图节点；`concepts` 接本次查询文字，使用正式 embedding 角色批量生成同空间向量，结果保留各自真实 call_id。`@entity`、`@tag` 同时限定候选并提供精确 core；`#主题` 与 `#("较长的主题")` 在 VCP 中提供临时查询概念。`thinking=True` 或 `$explore` 请求实际方法路线。新线索只参与本次计算，来源范围继续约束已有认知的读取。
 
 ```python
-from nous_wave.contracts.query_conditions import QueryCapabilities
-from nous_wave.contracts.query_vcp import VcpIntent, QueryConcept
+from nous_sdk.contracts.query_conditions import QueryCapabilities
+from nous_sdk.contracts.query_vcp import VcpIntent, QueryConcept
 
 request = QueryRequest(
     text="还有哪些相关的发布经验？", mode="vcp",
@@ -245,7 +247,7 @@ print(result.vcp)
 机器查询使用 `expression` 的 atom/any/all 树，每个 atom.source 是同一 NousQL 语法。`filters.sources` 按正式命名来源解析器选择完整标签；也可设置 source_ids、source_types、origin（field/value 对）、tags、cognitive_roles、formation_modes 和 epistemic_classes。`budget.candidates`、branches、depth 约束候选与组合树；来源和重排分别使用 source_* 与 rerank_* 预算。
 
 ```python
-from nous_wave.contracts.query_conditions import QueryAny, QueryAtom, QueryFilters, QueryBudget, QueryCapabilities
+from nous_sdk.contracts.query_conditions import QueryAny, QueryAtom, QueryFilters, QueryBudget, QueryCapabilities
 
 request = QueryRequest(
     expression=QueryAny(children=(QueryAtom(source="项目"), QueryAtom(source="操作者"))),

@@ -1,7 +1,7 @@
 """Canonical graph management shares source-backed cognitive transactions."""
 
 from fastapi import APIRouter, Request
-from nous_wave.contracts.graph_management import GraphChange
+from nous_sdk.contracts.graph_management import GraphChange
 
 from .security import application, context
 

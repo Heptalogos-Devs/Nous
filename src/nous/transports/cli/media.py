@@ -3,10 +3,10 @@
 from pathlib import Path
 
 import typer
-from nous_wave import NousClient
-from nous_wave.contracts import DomainError
-from nous_wave.contracts.context import MediaTarget
-from nous_wave.contracts.derivation import (
+from nous_sdk import NousClient
+from nous_sdk.contracts import DomainError
+from nous_sdk.contracts.context import MediaTarget
+from nous_sdk.contracts.derivation import (
     CreateDerivedRegion,
     CreateRepresentation,
     DeriveMedia,

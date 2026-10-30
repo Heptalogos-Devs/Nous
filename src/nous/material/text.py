@@ -3,7 +3,7 @@
 import json
 
 from jsonpointer import JsonPointerException, resolve_pointer
-from nous_wave.contracts import DomainError, SourceRegion
+from nous_sdk.contracts import DomainError, SourceRegion
 from pydantic import JsonValue, TypeAdapter
 
 

@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from nous_wave.amemorix.contracts import ProfileAdminInput, ProfileInput
-from nous_wave.contracts import CallContext, CognitiveRecord, CognitiveRef, DomainError, EntityBody
-from nous_wave.contracts.context import CognitiveTarget
-from nous_wave.contracts.person_profiles import PersonProfileChange, RefreshPersonProfile
+from nous_sdk.amemorix.contracts import ProfileAdminInput, ProfileInput
+from nous_sdk.contracts import CallContext, CognitiveRecord, CognitiveRef, DomainError, EntityBody
+from nous_sdk.contracts.context import CognitiveTarget
+from nous_sdk.contracts.person_profiles import PersonProfileChange, RefreshPersonProfile
 from pydantic import JsonValue
 
 from .helpers import json_object
@@ -55,8 +55,8 @@ async def profile_admin(
     record = await selected_intent(self, ctx, command)
     if command.action == "correct_evidence" and command.evidence_type == "fact_claim":
         assert command.operation_id is not None
-        from nous_wave.contracts.fact_body import FactClaimBody, PersonFactScope
-        from nous_wave.contracts.facts import FactChange
+        from nous_sdk.contracts.fact_body import FactClaimBody, PersonFactScope
+        from nous_sdk.contracts.facts import FactChange
 
         token = command.evidence_key or command.hash or ""
         reference = await cognitive_reference(self, ctx, token)

@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
-from nous_wave.contracts import (
+from nous_sdk.contracts import (
     CognitiveRecord,
     MediaRecord,
 )

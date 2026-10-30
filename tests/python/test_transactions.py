@@ -10,7 +10,7 @@ import httpx
 import pytest
 import sqlalchemy as sa
 from dbos import DBOS
-from nous_wave.contracts.common import CallContext
+from nous_sdk.contracts.common import CallContext
 
 from nous.platform.execution import DurableExecution, JobSpec
 from nous.platform.persistence import Authority, OperationConflict, OperationResultPurged

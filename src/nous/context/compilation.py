@@ -6,7 +6,7 @@ from hashlib import sha256
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
-from nous_wave.contracts import (
+from nous_sdk.contracts import (
     AssociationBody,
     CallContext,
     CognitiveRecord,
@@ -19,7 +19,7 @@ from nous_wave.contracts import (
     NarrativeThreadBody,
     QueryRequest,
 )
-from nous_wave.contracts.context import (
+from nous_sdk.contracts.context import (
     CognitiveTarget,
     ContextCursor,
     ContextPreparation,
@@ -116,7 +116,7 @@ async def prepare(
             select(sessions.c.record).where(sessions.c.id == session_key(ctx, command.session_id))
         )
         if session_record is not None:
-            from nous_wave.contracts.context import ContextSession
+            from nous_sdk.contracts.context import ContextSession
 
             session = ContextSession.model_validate(session_record)
             if session.closed:
@@ -480,7 +480,7 @@ async def media_segment_in(
     *,
     required: bool = False,
 ) -> ContextSegment:
-    from nous_wave.contracts.derivation import StructuredRepresentation, TextRepresentation
+    from nous_sdk.contracts.derivation import StructuredRepresentation, TextRepresentation
 
     await self.require_targets_in(view, ctx, (target,))
     reference = target.reference

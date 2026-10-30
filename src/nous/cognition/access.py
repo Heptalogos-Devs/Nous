@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from nous_wave.contracts import (
+from nous_sdk.contracts import (
     AdoptCognition,
     CallContext,
     CognitiveRecord,
@@ -163,7 +163,7 @@ async def set_deleted_in(
         )
     if previous.body is None:
         raise DomainError("cognition_purged", "A purged object cannot be changed")
-    from nous_wave.contracts import RevisionCause
+    from nous_sdk.contracts import RevisionCause
 
     return await self.adopt_in(
         tx,

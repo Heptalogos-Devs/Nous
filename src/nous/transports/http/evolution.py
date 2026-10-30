@@ -4,30 +4,32 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Request
 from fastapi.responses import Response
-from nous_wave.contracts import (
+from nous_sdk.contracts import (
     CognitiveRef,
     MergeConcepts,
     ResegmentEpisodes,
     SourceRegion,
     SplitConcept,
 )
-from nous_wave.contracts.self_model import AdoptSeed
+from nous_sdk.contracts.ego_model import AdoptSeed
 
 from .security import application, context
 
 router = APIRouter(prefix="/api/namespaces/{namespace_id}/subjects/{subject_id}")
 
 
-@router.post("/self/seed")
-async def seed_self(request: Request, namespace_id: str, subject_id: str, command: AdoptSeed):
+@router.post("/self/seed", include_in_schema=False)
+@router.post("/ego/seed")
+async def seed_ego(request: Request, namespace_id: str, subject_id: str, command: AdoptSeed):
     return await application(request).cognition.adopt_seed(
         await context(request, namespace_id, subject_id), command
     )
 
 
-@router.get("/self/profile")
-async def self_profile(request: Request, namespace_id: str, subject_id: str):
-    return await application(request).cognition.self_profile(
+@router.get("/self/profile", include_in_schema=False)
+@router.get("/ego/profile")
+async def ego_profile(request: Request, namespace_id: str, subject_id: str):
+    return await application(request).cognition.ego_profile(
         await context(request, namespace_id, subject_id, capability="read")
     )
 

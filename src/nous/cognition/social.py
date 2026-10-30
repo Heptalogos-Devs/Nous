@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from nous_wave.contracts import (
+from nous_sdk.contracts import (
     AdoptCognition,
     CallContext,
     CognitiveRecord,
@@ -13,7 +13,7 @@ from nous_wave.contracts import (
     EvidenceLink,
     SocialRelationBody,
 )
-from nous_wave.contracts.social import ChangeSocialRelation, LinkIdentity
+from nous_sdk.contracts.social import ChangeSocialRelation, LinkIdentity
 from sqlalchemy import select
 
 from nous.identity.service import require_subject_in

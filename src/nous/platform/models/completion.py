@@ -1,6 +1,6 @@
 """Only an explicit provider completion can publish generated text as successful."""
 
-from nous_wave.contracts import DomainError
+from nous_sdk.contracts import DomainError
 
 
 def require_complete_text(finish_reason: str | None, *, refused: bool = False) -> None:

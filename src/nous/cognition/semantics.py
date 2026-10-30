@@ -6,7 +6,7 @@ import math
 from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
-from nous_wave.contracts import (
+from nous_sdk.contracts import (
     CallContext,
     CognitiveBody,
     CognitiveRecord,
@@ -148,5 +148,5 @@ def capability_for(body: CognitiveBody) -> str:
     if body.kind in {"desire", "concern"}:
         return "motivation"
     if body.kind in {"self_facet", "narrative_thread", "domain_knowledge"}:
-        return "self"
+        return "ego"
     return "memory"

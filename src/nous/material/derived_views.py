@@ -3,7 +3,7 @@
 from datetime import datetime
 from hashlib import sha256
 
-from nous_wave.contracts import (
+from nous_sdk.contracts import (
     CallContext,
     CognitiveTimes,
     DomainError,
@@ -12,7 +12,7 @@ from nous_wave.contracts import (
     SourceRegion,
     TimePoint,
 )
-from nous_wave.contracts.derivation import (
+from nous_sdk.contracts.derivation import (
     ArtifactRepresentation,
     DerivedRegion,
     DerivedRepresentation,

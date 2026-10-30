@@ -1,7 +1,7 @@
 """Job identity admission is shared by execution and transactional retry producers."""
 
 import sqlalchemy as sa
-from nous_wave.contracts import CallContext
+from nous_sdk.contracts import CallContext
 
 from nous.platform.persistence import ReadView, WriteTx
 from nous.platform.persistence.schema import job_links

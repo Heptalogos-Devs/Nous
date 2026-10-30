@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import Counter
 from typing import TYPE_CHECKING
 
-from nous_wave.contracts import (
+from nous_sdk.contracts import (
     AdoptCognition,
     CallContext,
     CognitiveRecord,
@@ -17,7 +17,7 @@ from nous_wave.contracts import (
     RevisionCause,
     TimeRange,
 )
-from nous_wave.contracts.episodes import (
+from nous_sdk.contracts.episodes import (
     EpisodeRebuildIntent,
     EpisodeRebuildSubmission,
     EpisodeSegmentationDraft,

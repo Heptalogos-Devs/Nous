@@ -8,7 +8,7 @@ from importlib.resources.abc import Traversable
 import sqlalchemy as sa
 from jinja2 import StrictUndefined, meta
 from jinja2.sandbox import ImmutableSandboxedEnvironment
-from nous_wave.contracts import CallContext
+from nous_sdk.contracts import CallContext
 from pydantic import TypeAdapter
 
 from nous.platform.persistence import Authority, metadata

@@ -7,7 +7,7 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from jinja2 import TemplateError
-from nous_wave.contracts import DomainError
+from nous_sdk.contracts import DomainError
 from starlette.exceptions import HTTPException
 
 from nous.bootstrap import application
@@ -39,7 +39,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             app.state.application = service
             yield
 
-    app = FastAPI(title="Nous Wave", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(title="Nous", version="0.1.0", lifespan=lifespan)
     app.include_router(domain)
     app.include_router(management)
     app.include_router(knowledge)

@@ -3,11 +3,11 @@ requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [project]
-name = "nous-wave"
+name = "nous-sdk"
 version = "0.1.0"
-description = "Nous Wave asynchronous client and managed cognition binding"
+description = "Nous asynchronous client and managed cognition binding"
 requires-python = ">=3.11"
 dependencies = ["httpx>=0.28,<1", "anyio>=4,<5", "pydantic>=2.12,<3"]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/nous_wave"]
+packages = ["src/nous_sdk"]

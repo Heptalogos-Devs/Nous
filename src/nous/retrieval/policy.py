@@ -6,8 +6,8 @@ import json
 from dataclasses import dataclass
 
 from nous_native import schemas_json
-from nous_wave.contracts import CallContext
-from nous_wave.contracts.retrieval_policy import RetrievalPolicy
+from nous_sdk.contracts import CallContext
+from nous_sdk.contracts.retrieval_policy import RetrievalPolicy
 from pydantic import JsonValue, TypeAdapter
 
 from nous.platform.configuration.service import ConfigurationService

@@ -4,7 +4,7 @@ The original implementation is crates/nous-app/src/cognition/maintenance.rs.
 Protection, source lifetime, deletion and activation retain separate meanings.
 """
 
-from nous_wave.contracts import (
+from nous_sdk.contracts import (
     CognitiveBody,
     CognitiveRecord,
     ConceptBody,
@@ -12,7 +12,7 @@ from nous_wave.contracts import (
     MemoryChange,
     MemoryLifecycle,
 )
-from nous_wave.contracts.fact_body import FactClaimBody
+from nous_sdk.contracts.fact_body import FactClaimBody
 
 HOUR_MS = 3600000
 FREEZE_THRESHOLD = 0.1

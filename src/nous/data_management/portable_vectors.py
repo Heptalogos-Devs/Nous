@@ -7,8 +7,8 @@ from io import BytesIO
 from zipfile import BadZipFile, ZipFile
 
 import numpy as np
-from nous_wave.contracts import BundleRequest, DomainError, SubjectBundle
-from nous_wave.contracts.management import BundleVector
+from nous_sdk.contracts import BundleRequest, DomainError, SubjectBundle
+from nous_sdk.contracts.management import BundleVector
 from numpy.typing import NDArray
 from pydantic import JsonValue
 

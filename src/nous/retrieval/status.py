@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from nous_wave.contracts import CallContext, CognitiveRecord
-from nous_wave.contracts.diagnostics import RetrievalStatus, VectorSpaceInventory
+from nous_sdk.contracts import CallContext, CognitiveRecord
+from nous_sdk.contracts.diagnostics import RetrievalStatus, VectorSpaceInventory
 from sqlalchemy import select
 
 from nous.cognition.lifecycle import selectable

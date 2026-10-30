@@ -3,10 +3,10 @@
 import secrets
 
 import sqlalchemy as sa
-from nous_wave.contracts import CallContext, CognitiveRef, MediaReference
-from nous_wave.contracts.common import ReferenceAddresses
-from nous_wave.contracts.context import CognitiveTarget, MediaTarget
-from nous_wave.contracts.references import (
+from nous_sdk.contracts import CallContext, CognitiveRef, MediaReference
+from nous_sdk.contracts.common import ReferenceAddresses
+from nous_sdk.contracts.context import CognitiveTarget, MediaTarget
+from nous_sdk.contracts.references import (
     CognitiveIdentity,
     ObjectTarget,
     ReferenceBinding,
@@ -31,7 +31,7 @@ _PREFIXES = {
     "journal": "journal",
     "schema": "schema",
     "association": "assoc",
-    "self_facet": "self",
+    "self_facet": "ego",
     "narrative_thread": "thread",
     "domain_knowledge": "know",
     "social_relation": "rel",

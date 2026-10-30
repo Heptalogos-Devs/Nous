@@ -1,7 +1,7 @@
 """Public SDK resource routes backed by the shared domain owners."""
 
 from fastapi import APIRouter, Request
-from nous_wave.contracts import (
+from nous_sdk.contracts import (
     BlobDocument,
     CognitiveRef,
     DomainError,
@@ -14,12 +14,12 @@ from nous_wave.contracts import (
     TimePoint,
     UnitOutput,
 )
-from nous_wave.contracts.context import (
+from nous_sdk.contracts.context import (
     CognitiveTarget,
     MediaTarget,
 )
-from nous_wave.contracts.lifecycle import MemoryChange
-from nous_wave.contracts.source_graph import ExpandSources
+from nous_sdk.contracts.lifecycle import MemoryChange
+from nous_sdk.contracts.source_graph import ExpandSources
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, TypeAdapter
 from sqlalchemy import select
 

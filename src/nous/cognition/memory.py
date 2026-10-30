@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from nous_wave.contracts.lifecycle import MemoryChanges
+from nous_sdk.contracts.lifecycle import MemoryChanges
 from pydantic import JsonValue, TypeAdapter
 from sqlalchemy import select, update
 
@@ -18,7 +18,7 @@ from .schema import revisions, vectors
 if TYPE_CHECKING:
     from .service import CognitionService
 
-from nous_wave.contracts import (
+from nous_sdk.contracts import (
     AdoptCognition,
     CallContext,
     CognitiveRecord,

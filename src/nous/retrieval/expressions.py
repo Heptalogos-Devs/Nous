@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import json
 
-from nous_wave.contracts import DomainError
-from nous_wave.contracts.query_conditions import QueryAtom, QueryBudget, QueryExpression
+from nous_sdk.contracts import DomainError
+from nous_sdk.contracts.query_conditions import QueryAtom, QueryBudget, QueryExpression
 
 
 def source(expression: QueryExpression, budget: QueryBudget) -> str:

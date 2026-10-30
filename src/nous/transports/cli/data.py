@@ -7,8 +7,8 @@ from typing import Annotated, Literal
 from uuid import uuid4
 
 import typer
-from nous_wave import NousClient
-from nous_wave.contracts import (
+from nous_sdk import NousClient
+from nous_sdk.contracts import (
     AdmitFiles,
     AdoptCognition,
     AdoptMedia,
@@ -25,9 +25,9 @@ from nous_wave.contracts import (
     SourceRegion,
     SplitConcept,
 )
-from nous_wave.contracts.lifecycle import MemoryChange
-from nous_wave.contracts.vector_projection import ProjectVectors
-from nous_wave.operations import encoded, segment
+from nous_sdk.contracts.lifecycle import MemoryChange
+from nous_sdk.contracts.vector_projection import ProjectVectors
+from nous_sdk.operations import encoded, segment
 from pydantic import JsonValue, TypeAdapter
 
 from .common import invoke, read_command, read_json
@@ -175,10 +175,10 @@ def register(cli: typer.Typer) -> None:
         request: Path | None = None,
     ) -> None:
         """Browse retained person profiles and exact evidence."""
-        from nous_wave.amemorix import AMemorixAdapter
+        from nous_sdk.amemorix import AMemorixAdapter
 
         async def read(api: NousClient) -> object:
-            from nous_wave.amemorix.contracts import ProfileAdminInput
+            from nous_sdk.amemorix.contracts import ProfileAdminInput
 
             command = (
                 read_command(request, ProfileAdminInput)
@@ -207,7 +207,7 @@ def register(cli: typer.Typer) -> None:
         ctx: typer.Context, namespace_id: str, subject_id: str, query: str, limit: int = 50
     ) -> None:
         """Search graph entities and relations using the A-Memorix search contract."""
-        from nous_wave.amemorix import AMemorixAdapter
+        from nous_sdk.amemorix import AMemorixAdapter
 
         async def search(api: NousClient) -> object:
             return await AMemorixAdapter(
@@ -225,7 +225,7 @@ def register(cli: typer.Typer) -> None:
         request: Path | None = None,
     ) -> None:
         """Read graph details or apply a source-backed manual graph action from JSON."""
-        from nous_wave.amemorix import AMemorixAdapter
+        from nous_sdk.amemorix import AMemorixAdapter
 
         values = (
             TypeAdapter(dict[str, JsonValue]).validate_python(read_json(request)) if request else {}

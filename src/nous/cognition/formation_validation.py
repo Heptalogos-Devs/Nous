@@ -2,8 +2,8 @@
 
 from graphlib import CycleError, TopologicalSorter
 
-from nous_wave.contracts import DomainError, FormationCatalogEntry, ProposedConcept
-from nous_wave.contracts.cognition import FormationDraft
+from nous_sdk.contracts import DomainError, FormationCatalogEntry, ProposedConcept
+from nous_sdk.contracts.cognition import FormationDraft
 from pydantic import JsonValue, TypeAdapter
 
 

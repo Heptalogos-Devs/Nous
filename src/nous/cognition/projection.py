@@ -3,7 +3,7 @@
 from collections.abc import Iterator, Sequence
 from typing import cast
 
-from nous_wave.contracts import (
+from nous_sdk.contracts import (
     CognitiveBody,
     CognitiveRef,
     EntityBody,

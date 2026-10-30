@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from nous_wave.contracts import CognitiveRecord, EntityBody, EvidenceLink
-from nous_wave.contracts.cognition import PlatformIdentity
+from nous_sdk.contracts import CognitiveRecord, EntityBody, EvidenceLink
+from nous_sdk.contracts.cognition import PlatformIdentity
 from pydantic import JsonValue
 from sqlalchemy import select, update
 

@@ -9,7 +9,7 @@ from io import BytesIO
 from typing import TYPE_CHECKING
 from zipfile import ZIP_DEFLATED, ZipFile
 
-from nous_wave.contracts import BundleRequest, CallContext, DomainError, SubjectBundle
+from nous_sdk.contracts import BundleRequest, CallContext, DomainError, SubjectBundle
 from pydantic import JsonValue
 
 from nous.platform.content import ContentObject

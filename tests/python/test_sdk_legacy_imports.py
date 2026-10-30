@@ -4,8 +4,8 @@ import asyncio
 
 import httpx
 import pytest
-from nous_wave import NousClient
-from nous_wave.imports import upload_import_inputs
+from nous_sdk import NousClient
+from nous_sdk.imports import upload_import_inputs
 
 from nous.platform.configuration import Settings
 from nous.transports.http import create_app

@@ -45,8 +45,8 @@ from .contracts.context import (
     OpenContextSession,
     WorkContext,
 )
+from .contracts.ego_model import AdoptSeed, SeedResult
 from .contracts.lifecycle import MemoryChange
-from .contracts.self_model import AdoptSeed, SeedResult
 from .types import ContextRecord, ImportSubmission, JsonObject, QueryParam, Source
 
 T = TypeVar("T")
@@ -73,14 +73,14 @@ class TypedOperations:
         return SeedResult.model_validate(
             await self.request(
                 "POST",
-                self.subject_path(namespace_id, subject_id) + "/self/seed",
+                self.subject_path(namespace_id, subject_id) + "/ego/seed",
                 body=encoded(command),
             )
         )
 
-    async def self_profile(self, namespace_id: str, subject_id: str) -> tuple[CognitiveRecord, ...]:
+    async def ego_profile(self, namespace_id: str, subject_id: str) -> tuple[CognitiveRecord, ...]:
         return TypeAdapter(tuple[CognitiveRecord, ...]).validate_python(
-            await self.request("GET", self.subject_path(namespace_id, subject_id) + "/self/profile")
+            await self.request("GET", self.subject_path(namespace_id, subject_id) + "/ego/profile")
         )
 
     async def request(

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from nous_wave.contracts import CallContext, CognitiveRecord, DomainError, MemoryBody
-from nous_wave.contracts.imports import FormObservation
+from nous_sdk.contracts import CallContext, CognitiveRecord, DomainError, MemoryBody
+from nous_sdk.contracts.imports import FormObservation
 from sqlalchemy import exists, func, select
 
 from nous.cognition.schema import revisions

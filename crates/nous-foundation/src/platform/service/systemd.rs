@@ -30,7 +30,7 @@ impl Services {
             String::new()
         };
         let definition = format!(
-            "[Unit]\nDescription=Nous Wave {label}\n\n[Service]\nType=simple\n{identity}ExecStart={executable} --instance {instance} serve\nWorkingDirectory={instance}\nEnvironment=TEMP={temp}\nEnvironment=TMP={temp}\nEnvironment=TMPDIR={temp}\nRestart=on-failure\nRestartSec={}ms\nTimeoutStopSec={}ms\nKillMode=control-group\n\n[Install]\nWantedBy={}\n",
+            "[Unit]\nDescription=Nous {label}\n\n[Service]\nType=simple\n{identity}ExecStart={executable} --instance {instance} serve\nWorkingDirectory={instance}\nEnvironment=TEMP={temp}\nEnvironment=TMP={temp}\nEnvironment=TMPDIR={temp}\nRestart=on-failure\nRestartSec={}ms\nTimeoutStopSec={}ms\nKillMode=control-group\n\n[Install]\nWantedBy={}\n",
             self.policy.restart_delay_ms,
             self.policy.stop_timeout_ms,
             if spec.scope == ServiceScope::User {

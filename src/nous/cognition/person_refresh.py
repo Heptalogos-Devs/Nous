@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from nous_wave.contracts import CallContext, DomainError, EntityBody, EvidenceLink
-from nous_wave.contracts.person_profiles import (
+from nous_sdk.contracts import CallContext, DomainError, EntityBody, EvidenceLink
+from nous_sdk.contracts.person_profiles import (
     PersonProfileDraft,
     PersonProfileEvidence,
     PersonProfileModelInput,
@@ -118,7 +118,7 @@ async def profile_input_in(
     view: ReadView | WriteTx,
     intent: PersonProfileRefreshIntent,
 ) -> tuple[PersonProfileModelInput, dict[str, tuple[EvidenceLink, ...]], tuple[str, ...]]:
-    from nous_wave.contracts.fact_body import FactClaimBody, PersonFactScope
+    from nous_sdk.contracts.fact_body import FactClaimBody, PersonFactScope
 
     from nous.platform.persistence.authority import canonical_json
 

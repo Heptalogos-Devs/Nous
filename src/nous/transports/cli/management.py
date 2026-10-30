@@ -5,10 +5,10 @@ from pathlib import Path
 from uuid import uuid4
 
 import typer
-from nous_wave import NousClient
-from nous_wave.contracts.credentials import CreateCredential, RotateCredential
-from nous_wave.contracts.model_roles import ModelContractRequest, ModelPreviewRequest
-from nous_wave.operations import encoded, segment
+from nous_sdk import NousClient
+from nous_sdk.contracts.credentials import CreateCredential, RotateCredential
+from nous_sdk.contracts.model_roles import ModelContractRequest, ModelPreviewRequest
+from nous_sdk.operations import encoded, segment
 from pydantic import JsonValue
 
 from .common import download, invoke, read_command, read_json

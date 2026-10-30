@@ -928,6 +928,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "nous-native"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "nous-retrieval",
+ "nous-vcp",
+ "nousql-syntax",
+ "numpy",
+ "pyo3",
+ "rayon",
+ "rmp-serde",
+ "schemars",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "uuid",
+]
+
+[[package]]
 name = "nous-retrieval"
 version = "0.1.0"
 dependencies = [
@@ -954,26 +974,6 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
-]
-
-[[package]]
-name = "nous-wave-native"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "nous-retrieval",
- "nous-vcp",
- "nousql-syntax",
- "numpy",
- "pyo3",
- "rayon",
- "rmp-serde",
- "schemars",
- "serde",
- "serde_json",
- "sha2",
- "tempfile",
- "uuid",
 ]
 
 [[package]]

@@ -123,7 +123,7 @@ impl Services {
                 doc.start("service", &[])?;
                 doc.text("id", label)?;
                 doc.text("name", label)?;
-                doc.text("description", "Nous Wave cognitive service")?;
+                doc.text("description", "Nous cognitive service")?;
                 doc.text("executable", utf8(program)?)?;
                 doc.text("arguments", &arguments)?;
                 doc.text("workingdirectory", utf8(&self.paths.root)?)?;

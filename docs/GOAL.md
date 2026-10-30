@@ -1,4 +1,4 @@
-# Nous Wave 开发目标与计划
+# Nous 开发目标与计划
 
 建设可独立安装、配置和管理的长期认知服务：支持普通智能体的记忆与知识工作，也作为人工主体的认知与人格中心。完整产品需求由[项目宪纲](https://github.com/Heptalogos-Devs/Architecture-Vault/blob/main/项目宪纲.md)定义。本计划统一开发范围、有效技术决定和当前工作；[重构进展](python-native-plan/progress-report.md)记录本次重构的实际成果与证据。
 
@@ -7,7 +7,7 @@ Heptalogos 以 MaiBot 为产品基础，负责主体的世界、生活、时间�
 ## 完整产品范围
 
 - **材料、来源与时间**：接纳文本、文件、图片、音视频和外部资料，区分原件、精确区域、派生表示、主体实际接触与导入。记录证据、认知身份及修订、来源支持和反证、五轴时间、精度与历史知情截点；来源撤回、恢复和清除贯穿全部派生数据。
-- **认知及成长**：完整提供 Memory、MemorySemantics、Concept/Tag、Entity、Association、Episode、Journal、Schema、Fact 和各自生命周期。Self 包含多文档 Seed、facet、NarrativeThread、DomainKnowledge、例外与设定来源；Social 包含人物、跨平台身份、有方向的关系、信任领域与群体范围；LanguageConvention 保存语言的听众与语用；Motivation 包含 Desire、Concern、DesiredCondition、组合条件、持续区间和 unknown。完成自然形成、认知修订、使用反馈、离线整理和持续维护。
+- **认知及成长**：完整提供 Memory、MemorySemantics、Concept/Tag、Entity、Association、Episode、Journal、Schema、Fact 和各自生命周期。Ego 包含多文档 Seed、facet、NarrativeThread、DomainKnowledge、例外与设定来源；Social 包含人物、跨平台身份、有方向的关系、信任领域与群体范围；LanguageConvention 保存语言的听众与语用；Motivation 包含 Desire、Concern、DesiredCondition、组合条件、持续区间和 unknown。完成自然形成、认知修订、使用反馈、离线整理和持续维护。
 - **查询与算法**：完整 NousQL、14 类返回域、精确引用、名称绑定、五轴过滤和历史；中文词项、语义、Hybrid、VCP、图、媒体与来源展开共同使用授权快照。吸收 VCP 的 AGS、EPA、Pyramid、Sense、双场、RiverMemo、DTSC 和 Thinking，并完成实际图资产、候选、直接锚点、查询线索、诊断与效果评估。
 - **多模态**：三种解释策略 `description_only`、`direct_structured` 和 `describe_then_structure`；二段形成同时使用原媒体或区域及真实描述。提供图像、音视频、GIF、文档与区域派生，保留输入、producer 和谱系；原生视觉向量、描述向量及图文联合检索采用真实空间与调用身份。
 - **当前认知与工作连续性**：Active Cognition、ResidentSet、WorkContext、Managed Context 和 Steward 按用途、听众、预算与来源编译输入。区分准备、实际输入接纳、模型接触、真实使用与结果反馈；覆盖模型切换、工具续轮、压缩、恢复及独立执行者。

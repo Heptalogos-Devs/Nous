@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from nous_wave.contracts import DomainError
+from nous_sdk.contracts import DomainError
 from pydantic import JsonValue
 
 

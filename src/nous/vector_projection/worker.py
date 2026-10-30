@@ -5,8 +5,8 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING
 
-from nous_wave.contracts import DomainError, EmbeddingBatch
-from nous_wave.contracts.vector_projection import ProjectionResult
+from nous_sdk.contracts import DomainError, EmbeddingBatch
+from nous_sdk.contracts.vector_projection import ProjectionResult
 from sqlalchemy import select, update
 
 from nous.cognition.schema import vectors

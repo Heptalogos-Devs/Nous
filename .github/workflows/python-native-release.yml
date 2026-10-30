@@ -3,7 +3,7 @@ name: Python and native distributions
 on:
   workflow_dispatch:
   push:
-    branches: [codex/python-native-rewrite-cloud]
+    branches: [main]
     paths: [.github/workflows/python-native-release.yml]
 
 permissions:
@@ -27,9 +27,9 @@ jobs:
           toolchain: "1.97.1"
       - name: Build server, SDK and native source distributions
         run: |
-          uv build --package nous-wave-server --sdist --wheel --no-sources --out-dir dist
-          uv build --package nous-wave --sdist --wheel --no-sources --out-dir dist
-          uv build --package nous-wave-native --sdist --no-sources --out-dir dist
+          uv build --package nous-server --sdist --wheel --no-sources --out-dir dist
+          uv build --package nous-sdk --sdist --wheel --no-sources --out-dir dist
+          uv build --package nous-native --sdist --no-sources --out-dir dist
       - uses: actions/upload-artifact@v6
         with:
           name: python-source-and-universal
@@ -142,6 +142,6 @@ jobs:
           shutil.copy2('docs/python-native-install.md', output / 'INSTALL.md')
       - uses: actions/upload-artifact@v6
         with:
-          name: nous-wave-cp314-${{ matrix.target }}
+          name: nous-cp314-${{ matrix.target }}
           path: bundle/*
           if-no-files-found: error

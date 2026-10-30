@@ -11,7 +11,7 @@ import wave
 from pathlib import Path
 
 import pytest
-from nous_wave.contracts import CallContext, PixelRect, TimeSpan
+from nous_sdk.contracts import CallContext, PixelRect, TimeSpan
 from PIL import Image
 
 from nous.platform.content import ContentStore

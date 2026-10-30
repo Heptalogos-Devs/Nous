@@ -6,7 +6,7 @@ import asyncio
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from nous_wave.contracts import (
+from nous_sdk.contracts import (
     CallContext,
     CognitiveTimes,
     DomainError,

@@ -4,7 +4,7 @@ from collections import defaultdict
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
-from nous_wave.contracts import CallContext, Contract, DomainError, SourceCommand, SourceResult
+from nous_sdk.contracts import CallContext, Contract, DomainError, SourceCommand, SourceResult
 from pydantic import Field, JsonValue, TypeAdapter
 
 from .helpers import json_object

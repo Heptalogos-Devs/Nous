@@ -115,7 +115,7 @@ error-subject-scope-forbidden = 此凭据不能访问所选主体。
 error-instance-scope-forbidden = 此操作需要完整的实例管理权限。
 
 # Web workbench
-web-title = Nous Wave · 认知工作台
+web-title = Nous · 认知工作台
 web-login-title = 连接你的认知库
 web-access-token = 实例访问令牌
 web-connect = 连接

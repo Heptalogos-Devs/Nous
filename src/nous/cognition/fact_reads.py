@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from nous_wave.contracts import CallContext, CognitiveRecord, CognitiveRef, DomainError
-from nous_wave.contracts.fact_body import FactClaimBody, FactScope, PersonFactScope
-from nous_wave.contracts.facts import FactQuery, FactView
+from nous_sdk.contracts import CallContext, CognitiveRecord, CognitiveRef, DomainError
+from nous_sdk.contracts.fact_body import FactClaimBody, FactScope, PersonFactScope
+from nous_sdk.contracts.facts import FactQuery, FactView
 from sqlalchemy import select
 
 from nous.identity.service import require_subject_in

@@ -2,8 +2,8 @@
 
 import httpx
 import httpx2
-from nous_wave.contracts import DomainError
-from nous_wave.contracts.model_routing import ModelCallOutcome, ModelRoutingPolicy
+from nous_sdk.contracts import DomainError
+from nous_sdk.contracts.model_routing import ModelCallOutcome, ModelRoutingPolicy
 from openai import APIStatusError
 from pydantic import JsonValue, TypeAdapter
 from pydantic_ai.exceptions import ModelHTTPError

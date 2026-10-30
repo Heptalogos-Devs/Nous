@@ -1,8 +1,8 @@
 """Authorized transport for reviewable growth and repeat policies."""
 
 from fastapi import APIRouter, Request
-from nous_wave.contracts.common import Operation
-from nous_wave.contracts.maintenance import (
+from nous_sdk.contracts.common import Operation
+from nous_sdk.contracts.maintenance import (
     CreateMaintenanceSchedule,
     MaintenanceRun,
     MaintenanceSchedule,

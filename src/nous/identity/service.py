@@ -2,7 +2,7 @@
 
 from uuid import uuid4
 
-from nous_wave.contracts import CallContext, DomainError
+from nous_sdk.contracts import CallContext, DomainError
 from sqlalchemy import JSON, Column, Integer, String, Table, select
 
 from nous.platform.persistence import Authority, ReadView, WriteTx, metadata
@@ -24,6 +24,10 @@ subjects = Table(
 )
 
 
+def _capabilities(values: list[str] | tuple[str, ...]) -> list[str]:
+    return list(dict.fromkeys("ego" if value == "self" else value for value in values))
+
+
 async def require_subject_in(
     view: ReadView | WriteTx, ctx: CallContext, capability: str | None = None
 ):
@@ -40,9 +44,11 @@ async def require_subject_in(
     )
     if row is None:
         raise DomainError("subject_not_found", "Subject does not exist in this namespace")
-    if capability and capability not in row["capabilities"]:
+    subject = dict(row)
+    subject["capabilities"] = _capabilities(subject["capabilities"])
+    if capability and capability not in subject["capabilities"]:
         raise DomainError("capability_unavailable", f"Subject does not provide {capability}")
-    return row
+    return subject
 
 
 class IdentityService:
@@ -79,7 +85,19 @@ class IdentityService:
             payload=command,
         ) as tx:
             if tx.replayed:
-                return tx.replay_result
+                result = tx.replay_result
+                if isinstance(result, dict):
+                    stored = result.get("capabilities")
+                    if isinstance(stored, list):
+                        if any(not isinstance(value, str) for value in stored):
+                            raise ValueError("Stored subject capabilities must be strings")
+                        result = {
+                            **result,
+                            "capabilities": _capabilities(
+                                [value for value in stored if isinstance(value, str)]
+                            ),
+                        }
+                return result
             if not (
                 await tx.connection.execute(
                     select(namespaces.c.id).where(namespaces.c.id == ctx.namespace_id)
@@ -90,7 +108,7 @@ class IdentityService:
                 "id": subject_id or str(uuid4()),
                 "namespace_id": ctx.namespace_id,
                 "name": name,
-                "capabilities": list(dict.fromkeys(capabilities)),
+                "capabilities": _capabilities(capabilities),
                 "commit_seq": tx.commit_seq,
             }
             await tx.connection.execute(subjects.insert().values(**value))
@@ -99,7 +117,7 @@ class IdentityService:
     async def list_subjects(self, ctx: CallContext):
         async with self.authority.read(ctx) as view:
             return [
-                dict(row)
+                {**dict(row), "capabilities": _capabilities(row.capabilities)}
                 for row in (
                     await view.connection.execute(
                         select(subjects).where(subjects.c.namespace_id == ctx.namespace_id)

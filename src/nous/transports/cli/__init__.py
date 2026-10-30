@@ -12,8 +12,8 @@ from typing import Annotated
 import httpx
 import typer
 import uvicorn
-from nous_wave import NousError as ClientError
-from nous_wave.contracts import DomainError
+from nous_sdk import NousError as ClientError
+from nous_sdk.contracts import DomainError
 from rich.console import Console
 
 from nous.platform.configuration import Settings
@@ -30,7 +30,7 @@ from .media import register as register_media
 from .service import register as register_service
 
 cli = typer.Typer(
-    help="Nous Wave cognitive service", no_args_is_help=False, invoke_without_command=True
+    help="Nous cognitive service", no_args_is_help=False, invoke_without_command=True
 )
 _current: ContextVar[Options | None] = ContextVar("cli_options", default=None)
 

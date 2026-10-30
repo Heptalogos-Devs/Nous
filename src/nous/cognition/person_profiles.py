@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from nous_wave.contracts import (
+from nous_sdk.contracts import (
     AdoptCognition,
     CallContext,
     CognitiveRecord,
@@ -18,9 +18,9 @@ from nous_wave.contracts import (
     RevisionCause,
     TimePoint,
 )
-from nous_wave.contracts.cognition import PersonAliasOverride, PersonSummaryOverride
-from nous_wave.contracts.lifecycle import MemoryChange
-from nous_wave.contracts.person_profiles import PersonProfileChange, PersonProfileChangeResult
+from nous_sdk.contracts.cognition import PersonAliasOverride, PersonSummaryOverride
+from nous_sdk.contracts.lifecycle import MemoryChange
+from nous_sdk.contracts.person_profiles import PersonProfileChange, PersonProfileChangeResult
 
 from nous.identity.service import require_subject_in
 from nous.platform.persistence import Authority, ReadView, WriteTx

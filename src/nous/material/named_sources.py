@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from nous_wave.contracts import CallContext
+from nous_sdk.contracts import CallContext
 from pydantic import JsonValue
 from sqlalchemy import select
 

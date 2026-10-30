@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 
-from nous_wave.contracts import MemoryLifecycle, RevisionCause
+from nous_sdk.contracts import MemoryLifecycle, RevisionCause
 
 
 @dataclass(frozen=True)

@@ -8,7 +8,7 @@ from hashlib import sha256
 from typing import TYPE_CHECKING, Literal
 from uuid import uuid4
 
-from nous_wave.contracts import (
+from nous_sdk.contracts import (
     CallContext,
     CatalogView,
     CognitiveRecord,
@@ -21,9 +21,9 @@ from nous_wave.contracts import (
     TimePoint,
     UnitOutput,
 )
-from nous_wave.contracts.bundles import BundlePlacement
-from nous_wave.contracts.context import CognitiveTarget
-from nous_wave.contracts.references import ObjectTarget, ReferenceBinding
+from nous_sdk.contracts.bundles import BundlePlacement
+from nous_sdk.contracts.context import CognitiveTarget
+from nous_sdk.contracts.references import ObjectTarget, ReferenceBinding
 from pydantic import JsonValue, TypeAdapter
 from sqlalchemy import select
 

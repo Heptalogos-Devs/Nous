@@ -15,20 +15,22 @@ import sys
 import zipfile
 from pathlib import Path
 
-PACKAGES = ("nous-wave-server", "nous-wave", "nous-wave-native")
+PACKAGES = ("nous-server", "nous-sdk", "nous-native")
 
 
 def data_directory() -> Path:
     if sys.platform == "win32":
-        return (
-            Path(os.environ.get("LOCALAPPDATA", str(Path.home() / "AppData" / "Local")))
-            / "NousWave"
-        )
-    if sys.platform == "darwin":
-        return Path.home() / "Library" / "Application Support" / "NousWave"
-    return (
-        Path(os.environ.get("XDG_DATA_HOME", str(Path.home() / ".local" / "share"))) / "nous-wave"
-    )
+        parent = Path(os.environ.get("LOCALAPPDATA", str(Path.home() / "AppData" / "Local")))
+        current, previous = parent / "Nous", parent / "NousWave"
+    elif sys.platform == "darwin":
+        parent = Path.home() / "Library" / "Application Support"
+        current, previous = parent / "Nous", parent / "NousWave"
+    else:
+        parent = Path(os.environ.get("XDG_DATA_HOME", str(Path.home() / ".local" / "share")))
+        current, previous = parent / "nous", parent / "nous-wave"
+    if not current.exists() and (previous / "instance").is_dir():
+        return previous
+    return current
 
 
 def wheel_versions(directory: Path) -> dict[str, dict[str, list[Path]]]:
@@ -63,7 +65,7 @@ def main() -> None:
     parser.add_argument(
         "--version", help="Choose a version when the wheel directory contains several releases"
     )
-    parser.add_argument("--venv", type=Path, default=data_directory() / "venv")
+    parser.add_argument("--venv", type=Path, default=data_directory() / "venv-nous")
     parser.add_argument("--instance", type=Path, default=data_directory() / "instance")
     parser.add_argument("--python", default="3.14", help="CPython 3.14 selector for uv")
     parser.add_argument(
@@ -120,6 +122,20 @@ def main() -> None:
             "sys.exit(0 if valid else 'Nous requires standard CPython 3.14 with the GIL')",
         ]
     )
+    old_distributions = subprocess.run(
+        [
+            str(python), "-I", "-c",
+            "from importlib.metadata import distributions; "
+            "names={d.metadata['Name'].lower().replace('_','-') for d in distributions()}; "
+            "print(', '.join(sorted(names & {'nous-wave-server','nous-wave','nous-wave-native'})))",
+        ],
+        check=True, capture_output=True, text=True,
+    ).stdout.strip()
+    if old_distributions:
+        parser.error(
+            "The selected environment contains the previous distribution; "
+            "choose a new --venv to preserve it and its installed files"
+        )
     requirements = [str(versions[name][version][0]) for name in PACKAGES]
     options = ["--only-binary=:all:", "--find-links", str(directory)]
     if args.offline:
@@ -139,10 +155,10 @@ def main() -> None:
             "-I",
             "-c",
             "import importlib.metadata as m; "
-            "import nous,nous_wave.contracts,nous_native; "
+            "import nous,nous_sdk.contracts,nous_native; "
             "expected=__import__('sys').argv[1]; "
             "assert all(m.version(name)==expected for name in "
-            "('nous-wave-server','nous-wave','nous-wave-native'))",
+            "('nous-server','nous-sdk','nous-native'))",
             version,
         ]
     )
@@ -150,7 +166,7 @@ def main() -> None:
     run([str(nous), "init", "--instance", str(instance)])
     command = [str(nous), "serve", "--instance", str(instance)]
     display = subprocess.list2cmdline(command) if os.name == "nt" else shlex.join(command)
-    print(f"Installed Nous Wave {version} into {environment}")
+    print(f"Installed Nous {version} into {environment}")
     print(f"Start the service: {display}")
     print("The protected instance credential stays in the instance's credentials/admin.token file.")
 

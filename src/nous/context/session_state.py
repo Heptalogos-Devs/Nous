@@ -6,11 +6,11 @@ from hashlib import sha256
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
-from nous_wave.contracts import (
+from nous_sdk.contracts import (
     CallContext,
     DomainError,
 )
-from nous_wave.contracts.context import (
+from nous_sdk.contracts.context import (
     ChangeContextSession,
     ContextPreparation,
     ContextSession,
@@ -90,7 +90,7 @@ async def open_session(
 async def close_session(
     self: ManagedContexts, ctx: CallContext, session_id: str, operation_id: str
 ):
-    from nous_wave.contracts.context import ContextSession
+    from nous_sdk.contracts.context import ContextSession
 
     key = sha256(
         f"{ctx.caller_id}\0{ctx.namespace_id}\0{ctx.require_subject()}\0{session_id}".encode()

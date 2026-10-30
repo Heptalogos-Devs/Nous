@@ -9,7 +9,7 @@ from datetime import datetime
 from hashlib import sha256
 from uuid import NAMESPACE_URL, uuid5
 
-from nous_wave.contracts import (
+from nous_sdk.contracts import (
     AssociationBody,
     CognitiveBody,
     CognitiveRecord,
@@ -27,9 +27,9 @@ from nous_wave.contracts import (
     TimePoint,
     TimeRange,
 )
-from nous_wave.contracts.bundles import PackageDescriptor
-from nous_wave.contracts.cognition import PersonProfileControls
-from nous_wave.contracts.management import BundleMaterial, BundleObservation
+from nous_sdk.contracts.bundles import PackageDescriptor
+from nous_sdk.contracts.cognition import PersonProfileControls
+from nous_sdk.contracts.management import BundleMaterial, BundleObservation
 from pydantic import JsonValue, TypeAdapter
 
 from .portable import canonical

@@ -3,7 +3,7 @@
 from io import BytesIO
 from zipfile import BadZipFile, ZipFile
 
-from nous_wave.contracts import DomainError, SubjectBundle
+from nous_sdk.contracts import DomainError, SubjectBundle
 
 
 def decode(data: bytes) -> SubjectBundle:

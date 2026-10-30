@@ -4,12 +4,12 @@ requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [project]
-name = "nous-wave-server"
+name = "nous-server"
 version = "0.1.0"
-description = "Nous Wave cognitive service"
+description = "Nous cognitive service"
 requires-python = ">=3.14,<3.15"
 dependencies = [
-  "nous-wave", "nous-wave-native",
+  "nous-sdk", "nous-native",
   "pydantic>=2.12,<3", "pydantic-settings>=2,<3",
   "sqlalchemy[asyncio]>=2.0,<2.1", "aiosqlite>=0.21,<1",
   "dbos>=3.3,<4",
@@ -37,8 +37,8 @@ dev = [
 members = ["sdk/python", "native/python"]
 
 [tool.uv.sources]
-nous-wave = { workspace = true }
-nous-wave-native = { workspace = true }
+nous-sdk = { workspace = true }
+nous-native = { workspace = true }
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/nous"]

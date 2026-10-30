@@ -5,8 +5,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import cast
 
-from nous_wave.contracts import CognitiveRef, EvidenceLink, MediaReference
-from nous_wave.contracts.growth import (
+from nous_sdk.contracts import CognitiveRef, EvidenceLink, MediaReference
+from nous_sdk.contracts.growth import (
     GrowthAction,
     GrowthAdoption,
     GrowthBinding,
@@ -15,7 +15,7 @@ from nous_wave.contracts.growth import (
     GrowthProposalAdoption,
     GrowthSnapshot,
 )
-from nous_wave.contracts.growth_bodies import GrowthAttribute, GrowthRef
+from nous_sdk.contracts.growth_bodies import GrowthAttribute, GrowthRef
 from pydantic import BaseModel, JsonValue, TypeAdapter
 
 _OBJECT = TypeAdapter(dict[str, JsonValue])

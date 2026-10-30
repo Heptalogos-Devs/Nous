@@ -8,10 +8,10 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 import sqlalchemy as sa
-from nous_wave.contracts import CallContext, DomainError
-from nous_wave.contracts.model_calls import ArchivedCall
-from nous_wave.contracts.model_roles import ModelCachePolicy
-from nous_wave.contracts.model_routing import ModelCallOutcome, ModelRouteAttempt
+from nous_sdk.contracts import CallContext, DomainError
+from nous_sdk.contracts.model_calls import ArchivedCall
+from nous_sdk.contracts.model_roles import ModelCachePolicy
+from nous_sdk.contracts.model_routing import ModelCallOutcome, ModelRouteAttempt
 from pydantic import JsonValue, TypeAdapter
 
 from nous.platform.errors import NousError

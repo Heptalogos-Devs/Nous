@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from nous_wave.contracts import (
+from nous_sdk.contracts import (
     AdmitFiles,
     CallContext,
     CatalogView,
@@ -14,7 +14,7 @@ from nous_wave.contracts import (
     ProcessCatalog,
     UnitOutput,
 )
-from nous_wave.contracts.imports import UnitAttempt
+from nous_sdk.contracts.imports import UnitAttempt
 from pydantic import JsonValue
 from sqlalchemy import or_, select
 

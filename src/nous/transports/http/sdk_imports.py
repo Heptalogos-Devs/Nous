@@ -1,9 +1,9 @@
 """SDK import conveniences delegate original selection and attempts to their owner."""
 
 from fastapi import APIRouter, Request
-from nous_wave.contracts import AdmitFiles, ImportDocument
-from nous_wave.contracts.imports import FormObservation, TextSplitOptions
-from nous_wave.contracts.text_import import TextImport
+from nous_sdk.contracts import AdmitFiles, ImportDocument
+from nous_sdk.contracts.imports import FormObservation, TextSplitOptions
+from nous_sdk.contracts.text_import import TextImport
 from pydantic import BaseModel, ConfigDict, Field
 
 from .sdk_common import OperationIdentity

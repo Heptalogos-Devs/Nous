@@ -3,9 +3,9 @@
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from nous_wave.amemorix.contracts import MaintainInput
-from nous_wave.contracts import CallContext, CognitiveRecord, DomainError, MemoryBody, QueryRequest
-from nous_wave.contracts.lifecycle import MemoryChanges
+from nous_sdk.amemorix.contracts import MaintainInput
+from nous_sdk.contracts import CallContext, CognitiveRecord, DomainError, MemoryBody, QueryRequest
+from nous_sdk.contracts.lifecycle import MemoryChanges
 from pydantic import JsonValue, TypeAdapter
 
 from .helpers import json_object

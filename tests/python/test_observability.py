@@ -8,7 +8,7 @@ import logging
 
 import httpx
 import pytest
-from nous_wave.contracts import CallContext
+from nous_sdk.contracts import CallContext
 from opentelemetry import baggage, context
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter

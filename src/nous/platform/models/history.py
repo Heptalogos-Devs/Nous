@@ -4,8 +4,8 @@ from collections.abc import Mapping
 from uuid import uuid4
 
 import sqlalchemy as sa
-from nous_wave.contracts import CallContext, DomainError
-from nous_wave.contracts.model_calls import ArchivedCall, CallOrigin
+from nous_sdk.contracts import CallContext, DomainError
+from nous_sdk.contracts.model_calls import ArchivedCall, CallOrigin
 from pydantic import JsonValue, TypeAdapter
 from sqlalchemy.engine import RowMapping
 

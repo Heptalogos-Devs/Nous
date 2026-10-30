@@ -5,8 +5,8 @@ import asyncio
 import pytest
 import sqlalchemy as sa
 from dbos import PortableWorkflowError
-from nous_wave.contracts import AdmitFiles, CallContext, DomainError, ImportDocument, SourceCommand
-from nous_wave.contracts.maintenance import (
+from nous_sdk.contracts import AdmitFiles, CallContext, DomainError, ImportDocument, SourceCommand
+from nous_sdk.contracts.maintenance import (
     CreateMaintenanceSchedule,
     ReviewMaintenance,
     StartMaintenance,

@@ -1,4 +1,4 @@
-# Nous Wave：Python 主应用与 Rust 原生计算
+# Nous：Python 主应用与 Rust 原生计算
 
 采用 Python 作为 Nous 的应用语言，现有 Rust Native 承担检索计算、原生索引和 NousQL 语法解析；后续性能热点可按实际收益采用合适的语言或成熟库。两个语言在同一服务进程内通过 PyO3 扩展协作。Python 拥有认知规则、权威数据库、业务事务、模型调用和持久作业；Rust 接受明确的计算输入并返回结果。
 
@@ -22,7 +22,7 @@
 | 观测            | 标准 logging + structlog、OpenTelemetry、现有调用账本与费用语义        |
 | 发行            | Python 安装包 + 各目标平台 native wheel；终端入口仍为 `nous`           |
 
-只增加三个 Python 发行单元：主应用 `nous-wave-server`、已有 SDK `nous-wave`、原生模块 `nous-wave-native`。其余职责是同一应用内部的 Python 模块。Heptalogos 继续是 MaiBot 派生产品和 Nous 的正式消费者，其现行主线直接继承 MaiBot，主体内核及 Nous 连接仍待开发。
+只增加三个 Python 发行单元：主应用 `nous-server`、已有 SDK `nous-sdk`、原生模块 `nous-native`。其余职责是同一应用内部的 Python 模块。Heptalogos 继续是 MaiBot 派生产品和 Nous 的正式消费者，其现行主线直接继承 MaiBot，主体内核及 Nous 连接仍待开发。
 
 ## 阅读顺序
 

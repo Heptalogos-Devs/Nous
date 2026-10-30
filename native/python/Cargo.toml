@@ -1,5 +1,5 @@
 [package]
-name = "nous-wave-native"
+name = "nous-native"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

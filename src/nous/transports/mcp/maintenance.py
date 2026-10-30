@@ -3,13 +3,13 @@
 from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
 
-from nous_wave import NousClient
-from nous_wave.contracts.maintenance import (
+from nous_sdk import NousClient
+from nous_sdk.contracts.maintenance import (
     CreateMaintenanceSchedule,
     ReviewMaintenance,
     StartMaintenance,
 )
-from nous_wave.types import JsonObject
+from nous_sdk.types import JsonObject
 
 from mcp.server import MCPServer
 

@@ -6,8 +6,8 @@ from datetime import datetime
 from hashlib import sha256
 from typing import TYPE_CHECKING
 
-from nous_wave.contracts import CallContext, DomainError
-from nous_wave.contracts.context import ContextAdmission, ContextUse
+from nous_sdk.contracts import CallContext, DomainError
+from nous_sdk.contracts.context import ContextAdmission, ContextUse
 from sqlalchemy import select, update
 
 from nous.platform.persistence import WriteTx

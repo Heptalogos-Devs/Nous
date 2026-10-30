@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from nous_wave.amemorix.episodes import EpisodeAdminInput
-from nous_wave.contracts import (
+from nous_sdk.amemorix.episodes import EpisodeAdminInput
+from nous_sdk.contracts import (
     CallContext,
     CognitiveRef,
     DomainError,
@@ -13,7 +13,7 @@ from nous_wave.contracts import (
     MemoryBody,
     TimeRange,
 )
-from nous_wave.contracts.episodes import (
+from nous_sdk.contracts.episodes import (
     EpisodeQuery,
     EpisodeView,
     ProcessEpisodeSources,
@@ -79,7 +79,7 @@ async def episode_admin(
     if command.action in {"query", "list"}:
         person: CognitiveRef | None = None
         if command.person_id:
-            from nous_wave.amemorix.contracts import ProfileInput
+            from nous_sdk.amemorix.contracts import ProfileInput
 
             from .profile_read import select_person
 
@@ -112,7 +112,7 @@ async def episode_admin(
             else "episode:" + command.episode_id
         )
         resolved = await self.app.references.resolve(ctx, address)
-        from nous_wave.contracts.context import CognitiveTarget
+        from nous_sdk.contracts.context import CognitiveTarget
 
         if (
             not isinstance(resolved.reference, CognitiveTarget)

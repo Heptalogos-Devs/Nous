@@ -2,8 +2,8 @@
 
 from dataclasses import dataclass
 
-from nous_wave.contracts import DomainError
-from nous_wave.contracts.query_conditions import QueryBudget
+from nous_sdk.contracts import DomainError
+from nous_sdk.contracts.query_conditions import QueryBudget
 
 
 @dataclass

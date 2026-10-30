@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Literal
 
-from nous_wave.contracts import (
+from nous_sdk.contracts import (
     CallContext,
     CognitiveRecord,
     CognitiveRef,
@@ -12,8 +12,8 @@ from nous_wave.contracts import (
     MediaReference,
     QueryRequest,
 )
-from nous_wave.contracts.common import Contract
-from nous_wave.contracts.query_vcp import (
+from nous_sdk.contracts.common import Contract
+from nous_sdk.contracts.query_vcp import (
     QueryThinking,
     ThinkingRoute,
     ThinkingSelection,

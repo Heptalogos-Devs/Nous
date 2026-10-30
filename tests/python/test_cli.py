@@ -10,7 +10,7 @@ import time
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
-from nous_wave import NousClient
+from nous_sdk import NousClient
 from opentelemetry.instrumentation.utils import suppress_http_instrumentation
 
 
@@ -205,7 +205,7 @@ def test_cli_literal_query_and_revocable_readonly_token(tmp_path):
                                 reader, writer, read_timeout_seconds=15
                             ) as session:
                                 initialized = await session.initialize()
-                                assert initialized.server_info.name == "Nous Wave"
+                                assert initialized.server_info.name == "Nous"
                                 tools = await session.list_tools()
                                 assert {"manage_sources", "list_jobs", "query_cognition"} <= {
                                     tool.name for tool in tools.tools
