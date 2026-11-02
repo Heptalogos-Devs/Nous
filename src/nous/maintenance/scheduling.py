@@ -2,25 +2,29 @@
 
 from __future__ import annotations
 
+from hashlib import sha256
 from typing import TYPE_CHECKING
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 import sqlalchemy as sa
 from croniter import croniter
-from nous_sdk.contracts import CallContext, DomainError
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.common import utc_now
 from nous_sdk.contracts.maintenance import (
     CreateMaintenanceSchedule,
+    MaintenanceRun,
     MaintenanceSchedule,
     StartMaintenance,
 )
 from pydantic import JsonValue
 
-from nous.identity.service import require_subject_in
+from nous.identity.access import require_namespace_in
 from nous.platform.persistence import ReadView, WriteTx
+from nous.platform.persistence.authority import canonical_json
 
-from .schema import schedules
+from .schema import runs, schedules
 
 if TYPE_CHECKING:
     from .service import MaintenanceService
@@ -45,7 +49,6 @@ async def schedule_in(
         sa.select(schedules.c.record).where(
             schedules.c.id == identity,
             schedules.c.namespace_id == ctx.namespace_id,
-            schedules.c.subject_id == ctx.require_subject(),
         )
     )
     if raw is None:
@@ -63,39 +66,27 @@ async def create_schedule(
     if not croniter.is_valid(command.cron, second_at_beginning=True):
         raise ValueError("Invalid maintenance cron expression")
     ZoneInfo(command.timezone)
-    async with self.authority.write(
-        ctx,
-        command.operation_id,
-        operation_kind="maintenance.schedule.create",
-        scope=ctx.require_subject(),
-        payload=command,
-    ) as tx:
-        if tx.replayed:
-            identity = str(tx.replay_result)
-        else:
-            await require_subject_in(tx, ctx)
-            identity = "maintenance:" + str(uuid4())
-            record = MaintenanceSchedule(
+    async with self.authority.write(ctx) as tx:
+        await require_namespace_in(tx, ctx)
+        identity = "maintenance:" + str(uuid4())
+        record = MaintenanceSchedule(
+            id=identity,
+            namespace_id=ctx.namespace_id,
+            created_by=ctx.caller_id,
+            created_at=tx.recorded_at,
+            name=command.name,
+            cron=command.cron,
+            timezone=command.timezone,
+            command=command.command,
+        )
+        await tx.connection.execute(
+            schedules.insert().values(
                 id=identity,
                 namespace_id=ctx.namespace_id,
-                subject_id=ctx.require_subject(),
-                created_by=ctx.caller_id,
-                created_at=tx.recorded_at,
-                name=command.name,
-                cron=command.cron,
-                timezone=command.timezone,
-                command=command.command,
+                context=ctx.model_dump(mode="json"),
+                record=record.model_dump(mode="json"),
             )
-            await tx.connection.execute(
-                schedules.insert().values(
-                    id=identity,
-                    namespace_id=ctx.namespace_id,
-                    subject_id=ctx.subject_id,
-                    context=ctx.model_dump(mode="json"),
-                    record=record.model_dump(mode="json"),
-                )
-            )
-            tx.result(identity)
+        )
     async with self.authority.read(ctx) as view:
         record = await schedule_in(view, ctx, identity)
     await reconcile_schedule(self, record)
@@ -106,13 +97,12 @@ async def list_schedules(
     self: MaintenanceService, ctx: CallContext
 ) -> tuple[MaintenanceSchedule, ...]:
     async with self.authority.read(ctx) as view:
-        await require_subject_in(view, ctx)
+        await require_namespace_in(view, ctx)
         rows = (
             await view.connection.execute(
                 sa.select(schedules.c.record)
                 .where(
                     schedules.c.namespace_id == ctx.namespace_id,
-                    schedules.c.subject_id == ctx.subject_id,
                 )
                 .order_by(schedules.c.id)
             )
@@ -126,23 +116,15 @@ async def stop_schedule(
     identity: str,
     operation_id: str,
 ) -> MaintenanceSchedule:
-    async with self.authority.write(
-        ctx,
-        operation_id,
-        operation_kind="maintenance.schedule.stop",
-        scope=ctx.require_subject(),
-        payload={"schedule_id": identity},
-    ) as tx:
-        if not tx.replayed:
-            record = await schedule_in(tx, ctx, identity)
-            if record.stopped_at is None:
-                record = record.model_copy(update={"stopped_at": tx.recorded_at})
-                await tx.connection.execute(
-                    schedules.update()
-                    .where(schedules.c.id == identity)
-                    .values(record=record.model_dump(mode="json"))
-                )
-            tx.result(identity)
+    async with self.authority.write(ctx) as tx:
+        record = await schedule_in(tx, ctx, identity)
+        if record.stopped_at is None:
+            record = record.model_copy(update={"stopped_at": tx.recorded_at})
+            await tx.connection.execute(
+                schedules.update()
+                .where(schedules.c.id == identity)
+                .values(record=record.model_dump(mode="json"))
+            )
     async with self.authority.read(ctx) as view:
         record = await schedule_in(view, ctx, identity)
     await reconcile_schedule(self, record)
@@ -190,18 +172,71 @@ async def run_tick(self: MaintenanceService, scheduled_at: str, context: JsonVal
         return {"stopped": True}
     ctx = CallContext.model_validate(raw).model_copy(update={"clock": utc_now()})
     operation_id = identity + ":" + scheduled_at
-    async with self.authority.write(
-        ctx,
-        operation_id,
-        operation_kind="maintenance.tick",
-        scope=ctx.require_subject(),
-        payload={"schedule_id": identity, "scheduled_at": scheduled_at},
-    ) as tx:
-        if tx.replayed:
-            return tx.replay_result
+    async with self.authority.write(ctx) as tx:
+        pass
         record = await schedule_in(tx, ctx, identity)
         if record.stopped_at is not None:
-            return tx.result({"stopped": True})
+            return {"stopped": True}
         command = StartMaintenance(**record.command.model_dump(), operation_id=operation_id)
+        from .natural import snapshot_in
+
+        snapshot = await snapshot_in(self, tx, ctx, command)
+        roots = {root for entry in snapshot.entries for root in entry.record.source_roots}
+        roots.update(
+            link.observation_id
+            for source in snapshot.sources
+            for link in source.evidence
+            if link.observation_id is not None
+        )
+        digest = sha256(
+            canonical_json(
+                {
+                    "roots": sorted(roots),
+                    "materials": snapshot.material_ids,
+                    "command": record.command.model_dump(mode="json", exclude_defaults=True),
+                    "capabilities": sorted(snapshot.capabilities),
+                }
+            ).encode()
+        ).hexdigest()
+        if record.last_input_digest is None:
+            previous = await tx.connection.scalar(
+                sa.select(runs.c.record)
+                .where(
+                    runs.c.namespace_id == ctx.namespace_id,
+                    runs.c.record["command"]["operation_id"].as_string().startswith(identity + ":"),
+                    runs.c.record["created_by"].as_string() == ctx.caller_id,
+                )
+                .order_by(runs.c.commit_seq.desc())
+                .limit(1)
+            )
+            if previous is not None:
+                previous = MaintenanceRun.model_validate(previous)
+                if (
+                    previous.catalog is not None
+                    and set(previous.catalog.observation_ids) == roots
+                    and set(previous.catalog.material_ids) == set(snapshot.material_ids)
+                    and previous.command.model_dump(
+                        mode="json", exclude={"operation_id"}, exclude_defaults=True
+                    )
+                    == record.command.model_dump(mode="json", exclude_defaults=True)
+                ):
+                    record = record.model_copy(
+                        update={"last_input_digest": digest, "last_run_id": previous.id}
+                    )
+                    await tx.connection.execute(
+                        schedules.update()
+                        .where(schedules.c.id == identity)
+                        .values(record=record.model_dump(mode="json"))
+                    )
+        if not roots or record.last_input_digest == digest:
+            return {"unchanged": True, "run_id": record.last_run_id}
         submission = await self.submit_in(tx, ctx, command)
-        return tx.result(submission.model_dump(mode="json"))
+        updated = record.model_copy(
+            update={"last_input_digest": digest, "last_run_id": submission.run_id}
+        )
+        await tx.connection.execute(
+            schedules.update()
+            .where(schedules.c.id == identity)
+            .values(record=updated.model_dump(mode="json"))
+        )
+        return submission.model_dump(mode="json")

@@ -1,15 +1,19 @@
 """Resolve projections through the same exact source and cognition owners."""
 
+import math
 from hashlib import sha256
 from typing import TYPE_CHECKING
 
-from nous_sdk.contracts import CallContext, CognitiveRef, DomainError
+from nous_sdk.contracts import CognitiveRef
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
+from nous_sdk.presentation import body_text
 from sqlalchemy import select
 
 from nous.cognition.lifecycle import selectable
-from nous.cognition.projection import body_text
-from nous.cognition.schema import revisions, vectors
+from nous.cognition.schema import revisions
 from nous.material.service import observations
+from nous.platform.models.embedding import vector_space
 from nous.platform.persistence import ReadView, WriteTx
 from nous.platform.persistence.authority import canonical_json
 from nous.retrieval.media import embedding_input, media_records_in, source_material_ids_in
@@ -43,7 +47,6 @@ async def resolve_input(
                 revisions.c.id == target.id,
                 revisions.c.revision == target.revision,
                 revisions.c.namespace_id == ctx.namespace_id,
-                revisions.c.subject_id == ctx.require_subject(),
             )
         ):
             return None
@@ -59,7 +62,6 @@ async def resolve_input(
                         await view.connection.execute(
                             select(observations.c.material_id).where(
                                 observations.c.namespace_id == ctx.namespace_id,
-                                observations.c.subject_id == ctx.require_subject(),
                                 observations.c.id.in_(record.source_roots),
                             )
                         )
@@ -71,7 +73,7 @@ async def resolve_input(
         selected = [
             record
             for record in await media_records_in(
-                view, ctx, self.materials, self.derivations, include_text=False
+                view, ctx, self.materials, self.derivations, include_text=True
             )
             if record.reference.exact() == target.exact()
             and (
@@ -86,7 +88,11 @@ async def resolve_input(
         if not selected:
             raise DomainError("source_unavailable", "Projection media source is unavailable")
         record = max(selected, key=lambda item: item.commit_seq)
-        media = embedding_input(record)
+        content = embedding_input(record)
+        if isinstance(content, str):
+            text = content
+        else:
+            media = content
         source_ids = await source_material_ids_in(
             view, ctx, target, self.materials, self.derivations
         )
@@ -94,7 +100,7 @@ async def resolve_input(
         canonical_json(
             (
                 ctx.namespace_id,
-                ctx.require_subject(),
+                ctx.namespace_id,
                 resource,
                 text,
                 media.model_dump(mode="json") if media else None,
@@ -112,66 +118,44 @@ async def retained_content_in(
     target: Target,
     value: Input,
     profile: EmbeddingProfile,
+    *,
+    repair: bool = False,
 ) -> Content | None:
-    raw = await view.connection.scalar(select(contents.c.record).where(contents.c.key == value.key))
+    raw = await view.connection.scalar(
+        select(contents.c.record).where(
+            contents.c.namespace_id == ctx.namespace_id,
+            contents.c.key == value.key,
+        )
+    )
     if raw is not None:
         content = Content.model_validate(raw)
-        await self.models.successful_embedding_in(view, ctx, content.call_id)
-        return content
-    references = [target.exact()]
-    if isinstance(target, CognitiveRef):
-        references.extend(
-            CognitiveRef(kind=target.kind, id=target.id, revision=int(revision)).exact()
-            for revision in (
-                await view.connection.execute(
-                    select(revisions.c.revision).where(
-                        revisions.c.id == target.id,
-                        revisions.c.namespace_id == ctx.namespace_id,
-                        revisions.c.subject_id == ctx.require_subject(),
-                        revisions.c.revision < target.revision,
-                    )
-                )
-            ).scalars()
+        current_input = content.input.model_dump(mode="json")
+        expected_input = value.model_dump(mode="json")
+        route_matches = any(
+            content.dimensions == route.dimensions
+            and content.space == vector_space(route, content.model)
+            for route in (profile.route, *profile.fallbacks)
         )
-    rows = (
-        await view.connection.execute(
-            select(vectors)
-            .where(
-                vectors.c.reference.in_(references),
-                vectors.c.call_id.is_not(None),
-            )
-            .order_by(vectors.c.commit_seq.desc())
+        vector_valid = len(content.vector) == content.dimensions and all(
+            math.isfinite(component) for component in content.vector
         )
-    ).mappings()
-    for row in rows:
-        evidence = await self.models.reusable_embedding_in(
-            view,
-            ctx,
-            str(row["call_id"]),
-            profile,
-            text=value.text,
-            media=value.media,
-            source_ids=value.source_ids,
-        )
-        if evidence is None:
-            continue
-        batch = evidence.batch
-        if (row["space"], row["model"], row["dimensions"], tuple(row["vector"])) != (
-            batch.space,
-            batch.model,
-            batch.dimensions,
-            batch.vectors[0],
+        if (
+            current_input == expected_input
+            and route_matches
+            and vector_valid
+            and content.producer.task == "embedding"
+            and content.producer.model_id == content.model
         ):
+            return content
+        if not repair:
             raise DomainError(
-                "embedding_producer_conflict", "The adopted vector differs from its paid result"
+                "embedding_cache_conflict",
+                "Cached vector result differs from its exact input or space",
             )
-        return Content(
-            input=value,
-            space=batch.space,
-            model=batch.model,
-            dimensions=batch.dimensions,
-            vector=batch.vectors[0],
-            call_id=str(row["call_id"]),
-            call_source_ids=evidence.source_ids,
+        await view.connection.execute(
+            contents.delete().where(
+                contents.c.namespace_id == ctx.namespace_id,
+                contents.c.key == value.key,
+            )
         )
     return None

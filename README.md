@@ -19,9 +19,9 @@ NousQL 是整个 Nous 的查询语言，由 Wave 执行检索。Ego 持有主体
 
 ## 当前状态
 
-当前 `main` 以 Python/Native 实现为基础。模型多路线改造尚未完成应用组装：`ModelService` 需要 `RoleRegistry`，当前源码尚不能直接启动。已有运行结果使用此前加载的代码；实际记录和待完成事项见[重构进展](docs/python-native-plan/progress-report.md)。下一步完成角色注册与应用接线，并继续统一修订状态、A-Memorix 完整操作及真实 MaiBot 消费路径。
+当前 `main` 使用 Python/Native 实现，已恢复应用启动与资源关闭。项目 Markdown 已通过 CLI 完成真实模型形成、向量投影及词项/Dense 查询。原生认知目录提供稳定游标、批量精确读取、历史与管理视图，CLI、HTTP、MCP 和 SDK 共用同一认知权威。完整领域能力、A-Memorix 消费路径与首轮真实测评继续按[开发目标](docs/GOAL.md)推进，实际结果和剩余工作见[重构进展](docs/python-native-plan/progress-report.md)。
 
-仓库保留独立工作台源码；主要管理入口为 API 与 CLI，工作台的后续去留依据真实用户需要决定。开发目标见[GOAL](docs/GOAL.md)，技术组织见 [Python/Native 设计](docs/python-native-plan/README.md)，安装与开发命令见[安装说明](docs/python-native-install.md)。上述启动缺口修复后，按实际版本使用这些说明。
+仓库保留独立工作台源码；本轮使用 API、CLI、MCP 和 SDK 完成独立操作。技术组织见 [Python/Native 设计](docs/python-native-plan/README.md)，安装与开发命令见[安装说明](docs/python-native-install.md)。
 
 ## 产品范围
 

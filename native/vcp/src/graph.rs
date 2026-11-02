@@ -168,6 +168,73 @@ impl NativeArtifact {
         0.0
     }
 
+    /// A read-only authority projection of a published CSR; no geometry or
+    /// numerical asset generation is performed here.
+    pub fn authorized_view(
+        &self,
+        nodes: &HashSet<i64>,
+        roots: &HashSet<i64>,
+    ) -> Result<Self, String> {
+        let mut out = Self::default();
+        out.node_ids = self
+            .node_ids
+            .iter()
+            .copied()
+            .filter(|id| nodes.contains(id))
+            .collect();
+        out.node_index = out
+            .node_ids
+            .iter()
+            .enumerate()
+            .map(|(slot, id)| (*id, slot))
+            .collect();
+        out.anchor_gain = out.node_ids.iter().map(|id| (*id, 1.0)).collect();
+        out.row_offsets.push(0);
+        let all_roots = self
+            .provenance
+            .values()
+            .flatten()
+            .all(|(root, _)| roots.contains(root));
+        for source in &out.node_ids {
+            let row = self.node_index[source];
+            for cursor in self.row_offsets[row]..self.row_offsets[row + 1] {
+                let target = self.node_ids[self.targets[cursor]];
+                let Some(&target_slot) = out.node_index.get(&target) else {
+                    continue;
+                };
+                let (fraction, contributions) =
+                    if let Some(values) = self.provenance.get(&(*source, target)) {
+                        let kept = values
+                            .iter()
+                            .copied()
+                            .filter(|(root, _)| roots.contains(root))
+                            .collect::<Vec<_>>();
+                        let total: f64 = values.iter().map(|(_, mass)| *mass).sum();
+                        let mass: f64 = kept.iter().map(|(_, mass)| *mass).sum();
+                        (if total > 0.0 { mass / total } else { 0.0 }, kept)
+                    } else {
+                        (if all_roots { 1.0 } else { 0.0 }, Vec::new())
+                    };
+                let weight = self.weights[cursor] * fraction;
+                if weight <= 0.0 {
+                    continue;
+                }
+                out.targets.push(target_slot);
+                out.weights.push(weight);
+                *out.inbound.entry(target).or_default() += weight;
+                if !contributions.is_empty() {
+                    out.provenance.insert((*source, target), contributions);
+                }
+                if self.wormhole_edges.contains(&(*source, target)) {
+                    out.wormhole_edges.insert((*source, target));
+                }
+            }
+            out.row_offsets.push(out.targets.len());
+        }
+        out.max_inbound = out.inbound.values().copied().fold(0.0, f64::max);
+        out.try_prepared()
+    }
+
     pub fn independent_fraction(&self, source: i64, target: i64, file_id: i64) -> f64 {
         self.independent_fraction_excluding(source, target, &[file_id])
     }

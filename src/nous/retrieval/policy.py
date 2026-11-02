@@ -6,7 +6,7 @@ import json
 from dataclasses import dataclass
 
 from nous_native import schemas_json
-from nous_sdk.contracts import CallContext
+from nous.platform.call_context import CallContext
 from nous_sdk.contracts.retrieval_policy import RetrievalPolicy
 from pydantic import JsonValue, TypeAdapter
 
@@ -32,16 +32,19 @@ class ResolvedPolicy:
     value: RetrievalPolicy
     origin: str
     namespace_id: str
-    subject_id: str
 
-    def options(self, limit: int, diagnostics: str) -> dict[str, JsonValue]:
+    def options(
+        self, limit: int, diagnostics: str, *, strict: bool = False
+    ) -> dict[str, JsonValue]:
         value = self.value.model_dump(mode="json")
         if diagnostics == "none":
             value["vcp"]["include_trace"] = False
             value["vcp"]["include_fields"] = False
         elif diagnostics == "full":
             value["vcp"]["include_trace"] = True
-        return _JSON.validate_python({**value, "limit": limit})
+        return _JSON.validate_python(
+            {**value, "limit": limit, **({"strict_capabilities": True} if strict else {})}
+        )
 
     def diagnostics(self) -> dict[str, JsonValue]:
         return _JSON.validate_python(
@@ -49,7 +52,6 @@ class ResolvedPolicy:
                 "key": KEY,
                 "origin": self.origin,
                 "namespace_id": self.namespace_id,
-                "subject_id": self.subject_id,
                 "effective": self.value.model_dump(mode="json"),
             }
         )
@@ -61,7 +63,6 @@ async def resolve(configuration: ConfigurationService, ctx: CallContext) -> Reso
         RetrievalPolicy.model_validate(effective["value"]),
         str(effective["origin"]),
         ctx.namespace_id,
-        ctx.require_subject(),
     )
 
 

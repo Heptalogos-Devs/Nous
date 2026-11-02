@@ -1,286 +1,392 @@
-"""Namespace-bound MCP tools consume the same public service contracts."""
+"""Small, Namespace-bound MCP operations over the public SDK."""
 
+from __future__ import annotations
+
+import base64
 import json
-from collections.abc import AsyncGenerator
+import tempfile
+from collections.abc import AsyncIterator, Awaitable
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Literal
-from uuid import uuid4
+from typing import Annotated, Literal
+from urllib.parse import quote
 
+import anyio
 from nous_sdk import NousClient
-from nous_sdk.amemorix import AMemorixAdapter
-from nous_sdk.amemorix.contracts import ProfileAdminInput
-from nous_sdk.contracts import AdmitFiles, AdoptCognition, DomainError, QueryRequest
-from nous_sdk.contracts.context import (
-    ContextAdmissionCommand,
-    ContextPrepare,
-    ContextReport,
-)
-from nous_sdk.errors import NousError as ClientError
-from nous_sdk.presentation import query_text
-from nous_sdk.types import JsonObject
-from pydantic import JsonValue, TypeAdapter
+from nous_sdk.contracts import ImportDocument, MediaReference
+from nous_sdk.contracts.common import FormationPurpose
+from nous_sdk.contracts.context import ChangeWorkContext, WorkContextContent
+from nous_sdk.contracts.media import MediaStrategy, PixelRect, TimeSpan
+from nous_sdk.contracts.public import ReadView
+from nous_sdk.contracts.targets import MediaTarget
+from nous_sdk.contracts.text_import import TextImport
+from nous_sdk.errors import NousError
+from nous_sdk.namespace import NamespaceClient
+from nous_sdk.presentation import present, present_query
+from pydantic import Field, JsonValue, TypeAdapter
 
 from mcp.server import MCPServer
-from mcp.server.mcpserver.exceptions import ResourceError, ToolError
-from mcp.types import CallToolResult, TextContent
-from nous.platform.errors import NousError
-from nous.platform.observability import configure_logging
+from mcp.server.mcpserver import Context
+from mcp.server.mcpserver.exceptions import ToolError
+from mcp.types import CallToolResult, ImageContent, ResourceLink, TextContent, ToolAnnotations
+from nous.platform.errors import DomainError
+from nous.transports.ingestion import import_result, job_result
 
-from .maintenance import register_maintenance
-from .management import register_management
+_MEDIA_TYPES = {
+    "image/jpeg": "jpeg",
+    "image/png": "png",
+    "image/webp": "webp",
+    "image/gif": "gif",
+    "video/mp4": "mp4",
+    "video/webm": "webm",
+    "audio/mpeg": "mp3",
+    "audio/wav": "wav",
+    "application/pdf": "pdf",
+}
+_INLINE_IMAGE_BYTES = 5 * 1024 * 1024
+
+
+async def media_bytes(namespace: NamespaceClient, reference: MediaReference) -> tuple[bytes, str]:
+    with tempfile.TemporaryDirectory(prefix="nous-mcp-media-") as directory:
+        destination = Path(directory) / "content"
+        downloaded = await namespace.materials.download(reference, destination)
+        data = await anyio.Path(destination).read_bytes()
+    return data, (downloaded.media_type or "application/octet-stream").split(";", 1)[0]
+
+
+async def media_info(namespace: NamespaceClient, value: ReadView) -> tuple[str, int | None] | None:
+    if not isinstance(value.value, dict):
+        return None
+    if value.kind == "material":
+        data = value.value
+    elif value.kind == "source_region":
+        material_id = value.value.get("material_id")
+        if not isinstance(material_id, str):
+            return None
+        material = await namespace.materials.get(material_id)
+        media_type = material.media_type
+        if material.media_info and material.media_info.frames and material.media_info.frames > 1:
+            media_type = "video/mp4"
+        elif (value.value.get("time_span") or value.value.get("pixel_rect")) and media_type.startswith("video/"):
+            media_type = "video/mp4"
+        elif value.value.get("time_span") and media_type.startswith("audio/"):
+            media_type = "audio/wav"
+        elif value.value.get("pixel_rect") and media_type.startswith("image/"):
+            media_type = "image/png"
+        return media_type, material.byte_len
+    elif value.kind in {"representation", "derived_region"}:
+        data = value.value.get("payload")
+        if not isinstance(data, dict) or data.get("kind") != "artifact":
+            return None
+    else:
+        return None
+    media_type = data.get("media_type")
+    length = data.get("byte_len")
+    if not isinstance(media_type, str):
+        return None
+    return media_type, length if isinstance(length, int) else None
+
+
+def media_uri(reference: MediaReference, media_type: str) -> str:
+    kind = _MEDIA_TYPES.get(media_type, "binary")
+    parts = (reference.kind, reference.id, reference.observation_id or "-")
+    return "nous://media/" + kind + "/" + "/".join(quote(part, safe="") for part in parts)
+
+
+def result(value: object) -> CallToolResult:
+    data = TypeAdapter(dict[str, JsonValue]).validate_python(present(value))
+    text = data.get("text")
+    if not isinstance(text, str):
+        text = json.dumps(data, ensure_ascii=False, indent=2)
+    return CallToolResult(content=[TextContent(type="text", text=text)], structured_content=data)
+
+
+async def complete(operation: Awaitable[object]) -> CallToolResult:
+    try:
+        return result(await operation)
+    except (NousError, DomainError, ValueError) as error:
+        raise ToolError(str(error)) from error
+
+
+def create_server(
+    instance: Path,
+    url: str,
+    namespace: str,
+    credential_file: Path | None = None,
+    *,
+    read_only: bool = False,
+) -> MCPServer:
+    @asynccontextmanager
+    async def lifespan(server: MCPServer) -> AsyncIterator[NamespaceClient]:
+        async with NousClient(
+            url, credential_file=credential_file or instance / "credentials" / "admin.token"
+        ) as root:
+            yield await root.namespace(namespace)
+
+    server = MCPServer(
+        "Nous",
+        instructions="Search with nous_query, then read returned references with nous_read. Sources and earlier revisions remain available. Work references retain a continuing goal and its reading anchors.",
+        lifespan=lifespan,
+    )
+    read = ToolAnnotations(read_only_hint=True, destructive_hint=False)
+    write = ToolAnnotations(read_only_hint=False, destructive_hint=False)
+
+    def bound(ctx: Context[NamespaceClient, object]) -> NamespaceClient:
+        return ctx.request_context.lifespan_context
+
+    async def media_resource(
+        ctx: Context[NamespaceClient, object], kind: str, identity: str, observation: str
+    ) -> bytes:
+        reference = MediaReference.model_validate(
+            {
+                "kind": kind,
+                "id": identity,
+                "observation_id": None if observation == "-" else observation,
+            }
+        )
+        data, _ = await media_bytes(bound(ctx), reference)
+        return data
+
+    for media_type, name in (*_MEDIA_TYPES.items(), ("application/octet-stream", "binary")):
+        _ = server.resource(
+            "nous://media/" + name + "/{kind}/{identity}/{observation}",
+            name="media_" + name,
+            description="Read an authorized material or exact media region.",
+            mime_type=media_type,
+        )(media_resource)
+
+    @server.tool(annotations=read)
+    async def nous_query(
+        ctx: Context[NamespaceClient, object],
+        query: str,
+        context: str | None = None,
+        background: str = "",
+        references: list[str] | None = None,
+        limit: Annotated[int, Field(ge=1, le=50)] = 8,
+        profile: str | None = None,
+        media: list[str] | None = None,
+        trace: bool = False,
+    ) -> CallToolResult:
+        """Find relevant text using natural language or NousQL. media accepts material or region references from ingest, read or a previous query. Set trace to inspect the retrieval channels."""
+        try:
+            found = await bound(ctx).query(
+                query, context=context, background=background, references=tuple(references or ()),
+                limit=limit, profile=profile, media=tuple(media or ())
+            )
+            if trace:
+                return result(
+                    {
+                        **present_query(found).model_dump(mode="json"),
+                        "trace": found.plan,
+                        "execution": found.execution.model_dump(mode="json")
+                        if found.execution else None,
+                    }
+                )
+            return result(found)
+        except (NousError, DomainError, ValueError) as error:
+            raise ToolError(str(error)) from error
+
+    @server.tool(annotations=read if read_only else write)
+    async def nous_read(
+        ctx: Context[NamespaceClient, object],
+        ref: str,
+        sources: bool = False,
+        cursor: str | None = None,
+        offset: Annotated[int, Field(ge=0)] = 0,
+        max_chars: Annotated[int, Field(ge=1, le=64000)] = 12000,
+        time_span: TimeSpan | None = None,
+        pixel_rect: PixelRect | None = None,
+    ) -> CallToolResult:
+        """Read a result, object, original or region. Select a time_span or pixel_rect on an original to create a reusable region. Images include visible content when small; media links can be read as MCP resources. Set sources to inspect provenance."""
+        try:
+            namespace = bound(ctx)
+            selected_ref = ref
+            if time_span is not None or pixel_rect is not None:
+                if read_only:
+                    raise ValueError("Creating a media region requires write access")
+                selected = await namespace.materials.select(
+                    ref, time_span=time_span, pixel_rect=pixel_rect
+                )
+                selected_ref = (
+                    selected.addresses.exact if selected.addresses else 'source-region:' + selected.id
+                )
+            value = await namespace.read(
+                selected_ref, sources=sources, cursor=cursor, offset=offset, max_chars=max_chars
+            )
+            response = result(value)
+            info = await media_info(namespace, value)
+            if info is None:
+                return response
+            target = (await namespace.resolve_reference(selected_ref)).reference
+            if not isinstance(target, MediaTarget):
+                return response
+            media_type, size = info
+            data = None
+            if media_type.startswith("image/") and size is not None and size <= _INLINE_IMAGE_BYTES:
+                data, media_type = await media_bytes(namespace, target.reference)
+                size = len(data)
+            uri = media_uri(target.reference, media_type)
+            response.content.append(
+                ResourceLink(
+                    name=value.title or "media",
+                    uri=uri,
+                    mime_type=media_type,
+                    size=size if data is not None or value.kind not in {"source_region", "derived_region"} else None,
+                    description="Read this resource to obtain the authorized media bytes.",
+                )
+            )
+            if data is not None and media_type.startswith("image/") and len(data) <= _INLINE_IMAGE_BYTES:
+                response.content.append(
+                    ImageContent(data=base64.b64encode(data).decode("ascii"), mime_type=media_type)
+                )
+            assert response.structured_content is not None
+            response.structured_content["resource"] = uri
+            response.structured_content["media_type"] = media_type
+            return response
+        except (NousError, DomainError, ValueError, OSError) as error:
+            raise ToolError(str(error)) from error
+
+    @server.tool(annotations=read)
+    async def nous_history(
+        ctx: Context[NamespaceClient, object], ref: str, limit: Annotated[int, Field(ge=1, le=100)] = 20
+    ) -> CallToolResult:
+        """Read retained revisions of a cognitive object."""
+        values = await bound(ctx).history(ref, limit=limit)
+        return result({"items": [present(value) for value in values]})
+
+    @server.tool(annotations=read)
+    async def nous_status(ctx: Context[NamespaceClient, object], ref: str | None = None) -> CallToolResult:
+        """Inspect a job or recent work. A completed import returns its source and cognition references."""
+        scope = bound(ctx)
+        if ref:
+            async def read_status() -> object:
+                return await job_result(scope, await scope.jobs.get(ref))
+
+            return await complete(read_status())
+        return result(
+            {
+                "namespace": scope.identity.slug,
+                "state": scope.identity.state,
+                "jobs": await scope.jobs.list(limit=10),
+            }
+        )
+
+    if not read_only:
+
+        @server.tool(annotations=write)
+        async def nous_remember(
+            ctx: Context[NamespaceClient, object],
+            content: str,
+            source: str | None = None,
+            tags: list[str] | None = None,
+            pin: bool = False,
+        ) -> CallToolResult:
+            """Save explicit content as a memory with its original source, optional tags and retention pin."""
+            return await complete(
+                bound(ctx).remember(content, source=source, tags=tuple(tags or ()), pin=pin)
+            )
+
+        @server.tool(annotations=write)
+        async def nous_correct(
+            ctx: Context[NamespaceClient, object], ref: str, content: str, reason: str = "", source: str | None = None
+        ) -> CallToolResult:
+            """Correct the selected memory, retaining its earlier revision and provenance."""
+            return await complete(bound(ctx).correct(ref, content, reason=reason, source=source))
+
+        @server.tool(annotations=write)
+        async def nous_ingest(
+            ctx: Context[NamespaceClient, object],
+            content: str | None = None,
+            path: str | None = None,
+            source: str | None = None,
+            formation_purpose: FormationPurpose | None = None,
+            media_strategy: MediaStrategy = "direct_structured",
+            wait: bool = True,
+        ) -> CallToolResult:
+            """Import either text or a file path accessible to this MCP server. Set formation_purpose for memory, graph or both; omit it to save the original without a model. When wait is false, use nous_status with the returned job reference to get the result."""
+            try:
+                if (content is None) == (path is None):
+                    raise ValueError("Provide either content or one accessible file path")
+                namespace = bound(ctx)
+                completion = "formed" if formation_purpose is not None and wait else "accepted"
+                if path is not None:
+                    expanded = await anyio.Path(path).expanduser()
+                    selected = Path(await expanded.resolve())
+                    files = [{"path": str(selected), "source": source}] if source else [selected]
+                    submission = await namespace.client.import_files(
+                        namespace.namespace_id,
+                        files,
+                        transfer_root=selected.parent,
+                        formation_purpose=formation_purpose,
+                        media_strategy=media_strategy,
+                        completion=completion,
+                    )
+                else:
+                    assert content is not None
+                    job = await namespace.ingest(
+                        TextImport(
+                            inputs=(ImportDocument(text=content, source=source),),
+                            formation_purpose=formation_purpose,
+                            completion=completion,
+                        )
+                    )
+                    submission = job.submission
+                return result(await import_result(namespace, submission, wait=wait))
+            except (NousError, DomainError, ValueError, OSError) as error:
+                raise ToolError(str(error)) from error
+
+        @server.tool(annotations=write)
+        async def nous_work_open(
+            ctx: Context[NamespaceClient, object], goal: str, background: str = "", anchors: list[str] | None = None
+        ) -> CallToolResult:
+            """Start continuing work with a goal, known background and exact reading references."""
+            from nous_sdk.contracts.targets import CognitiveTarget, MediaTarget
+
+            scope = bound(ctx)
+            targets = []
+            for ref in anchors or ():
+                value = await scope.resolve_reference(ref)
+                if isinstance(value.reference, (CognitiveTarget, MediaTarget)):
+                    targets.append(value.reference)
+            return await complete(
+                scope.runtime.create_work(
+                    ChangeWorkContext(action='create', content=WorkContextContent(purpose=goal, context_text=background, anchors=tuple(targets))),
+                )
+            )
+
+        @server.tool(annotations=write)
+        async def nous_work_update(
+            ctx: Context[NamespaceClient, object],
+            ref: str,
+            background: str | None = None,
+            questions: list[str] | None = None,
+            action: Literal["edit", "pause", "resume", "end"] = "edit",
+        ) -> CallToolResult:
+            """Update work progress and unresolved questions, or pause, resume or finish the work."""
+            scope = bound(ctx)
+            current = await scope.runtime.work(ref)
+            updates = {}
+            if background is not None:
+                updates["context_text"] = background
+            if questions is not None:
+                updates["unresolved_questions"] = tuple(questions)
+            return await complete(
+                scope.runtime.change_work(
+                    ChangeWorkContext(work_context_id=current.id, expected_revision=current.revision, action=action, content=current.content.model_copy(update=updates) if action == 'edit' else None),
+                )
+            )
+
+    return server
 
 
 def run(
     instance: Path,
     url: str,
     namespace_id: str,
-    subject_id: str,
     credential_file: Path | None = None,
+    *,
+    read_only: bool = False,
 ) -> None:
-    mcp = MCPServer("Nous")
-    configure_logging("INFO")
-    token_path = credential_file or instance / "credentials/admin.token"
-
-    @asynccontextmanager
-    async def client() -> AsyncGenerator[NousClient]:
-        try:
-            async with NousClient(
-                url, credential_file=token_path, namespace_id=namespace_id, subject_id=subject_id
-            ) as api:
-                yield api
-        except (ClientError, DomainError, NousError) as error:
-            details = error.details if isinstance(error, DomainError) else error.context
-            raise ToolError(
-                json.dumps(
-                    {
-                        "error": {
-                            "code": error.code,
-                            "message": str(error),
-                            "context": details,
-                            "trace_id": error.trace_id if isinstance(error, ClientError) else None,
-                        }
-                    },
-                    ensure_ascii=False,
-                )
-            ) from error
-
-    async def call(tool: str, arguments: dict[str, JsonValue]) -> JsonObject:
-        async with client() as api:
-            adapter = AMemorixAdapter(api, namespace_id=namespace_id, subject_id=subject_id)
-            return await adapter.call(tool, arguments)
-
-    @mcp.tool()
-    async def search_memory(
-        query: str,
-        limit: int = 10,
-        mode: Literal["search", "time", "hybrid", "episode", "aggregate"] = "search",
-        chat_id: str = "",
-        person_id: str = "",
-    ) -> JsonObject:
-        """Search the configured subject's memories and exact provenance."""
-        return await call(
-            "search_memory",
-            {
-                "query": query,
-                "limit": limit,
-                "mode": mode,
-                "chat_id": chat_id,
-                "person_id": person_id,
-            },
-        )
-
-    @mcp.tool()
-    async def ingest_text(
-        external_id: str,
-        text: str,
-        source_type: str,
-        chat_id: str = "",
-        person_ids: tuple[str, ...] = (),
-    ) -> JsonObject:
-        """Adopt actual text with stable external identity and source attribution."""
-        return await call(
-            "ingest_text",
-            {
-                "external_id": external_id,
-                "text": text,
-                "source_type": source_type,
-                "chat_id": chat_id,
-                "person_ids": list(person_ids),
-            },
-        )
-
-    @mcp.tool()
-    async def ingest_summary(
-        external_id: str, text: str, chat_id: str, participants: tuple[str, ...] = ()
-    ) -> JsonObject:
-        """Adopt a reported conversation summary with its actual participants."""
-        return await call(
-            "ingest_summary",
-            {
-                "external_id": external_id,
-                "text": text,
-                "chat_id": chat_id,
-                "participants": list(participants),
-            },
-        )
-
-    @mcp.tool()
-    async def get_person_profile(person_id: str, chat_id: str = "", limit: int = 10) -> JsonObject:
-        """Read the configured subject's supported knowledge about a person."""
-        return await call(
-            "get_person_profile", {"person_id": person_id, "chat_id": chat_id, "limit": limit}
-        )
-
-    @mcp.tool()
-    async def memory_profile_admin(command: ProfileAdminInput) -> JsonObject:
-        """Read profiles or explicitly change aliases, profile text and exact evidence."""
-        values = command.model_dump(mode="json")
-        if not values.get("operation_id"):
-            values["operation_id"] = str(uuid4())
-        return await call("memory_profile_admin", values)
-
-    @mcp.tool()
-    async def maintain_memory(
-        action: Literal[
-            "reinforce", "weaken", "protect", "restore", "freeze", "forget", "recycle_bin"
-        ],
-        target: str = "",
-        hours: float | None = None,
-        reason: str = "",
-    ) -> JsonObject:
-        """Apply a memory lifecycle change or read the recycle bin."""
-        from uuid import uuid4
-
-        return await call(
-            "maintain_memory",
-            {
-                "action": action,
-                "target": target,
-                "hours": hours,
-                "reason": reason,
-                "operation_id": str(uuid4()),
-            },
-        )
-
-    @mcp.tool()
-    async def memory_stats() -> JsonObject:
-        """Read actual cognitive and source counts."""
-        return await call("memory_stats", {})
-
-    @mcp.tool()
-    async def memory_graph_admin(
-        query: str = "",
-        limit: int = 50,
-        action: Literal[
-            "search",
-            "get_graph",
-            "node_detail",
-            "edge_detail",
-            "create_node",
-            "rename_node",
-            "delete_node",
-            "create_edge",
-            "update_edge_weight",
-            "delete_edge",
-        ] = "search",
-        arguments: dict[str, JsonValue] | None = None,
-    ) -> JsonObject:
-        """Read graph/search/details or apply source-backed create, rename, weight and delete actions."""
-        return await call(
-            "memory_graph_admin",
-            {**(arguments or {}), "action": action, "query": query, "limit": limit},
-        )
-
-    @mcp.tool()
-    async def memory_source(target: str) -> JsonObject:
-        """Expand a precise cognitive reference's permitted provenance."""
-        async with client() as api:
-            return await AMemorixAdapter(
-                api, namespace_id=namespace_id, subject_id=subject_id
-            ).memory_source(target)
-
-    @mcp.tool(structured_output=False)
-    async def query_cognition(command: QueryRequest) -> CallToolResult:
-        """Query cognition and media. Read exact references in text; structured content holds the full result."""
-        async with client() as api:
-            result = await api.query_cognition(namespace_id, subject_id, command)
-            return CallToolResult(
-                content=[TextContent(type="text", text=query_text(result))],
-                structured_content=result.model_dump(mode="json"),
-            )
-
-    @mcp.tool()
-    async def service_status() -> JsonObject:
-        """Read the running instance status."""
-        async with client() as api:
-            return TypeAdapter(JsonObject).validate_python(await api.request("GET", "/api/status"))
-
-    @mcp.tool()
-    async def resolve_reference(reference: str, as_of_commit: int | None = None) -> JsonObject:
-        """Resolve a readable or canonical reference within the configured subject."""
-        async with client() as api:
-            return (
-                await api.resolve_reference(subject_id, reference, as_of_commit=as_of_commit)
-            ).model_dump(mode="json")
-
-    @mcp.tool()
-    async def admit_documents(command: AdmitFiles) -> JsonObject:
-        """Preserve real documents and form cognition under the supplied completion policy."""
-        async with client() as api:
-            return (await api.admit_documents(namespace_id, subject_id, command)).model_dump(
-                mode="json"
-            )
-
-    @mcp.tool()
-    async def adopt_cognition(command: AdoptCognition) -> JsonObject:
-        """Adopt structured cognition supported by exact, already observed evidence."""
-        async with client() as api:
-            return (await api.adopt_cognition(namespace_id, subject_id, command)).model_dump(
-                mode="json"
-            )
-
-    @mcp.tool()
-    async def prepare_context(command: ContextPrepare) -> JsonObject:
-        """Prepare scoped cognition for one host model invocation; this does not admit its use."""
-        async with client() as api:
-            return (await api.prepare_context(namespace_id, subject_id, command)).model_dump(
-                mode="json"
-            )
-
-    @mcp.tool()
-    async def admit_context(command: ContextAdmissionCommand) -> JsonObject:
-        """Record the host's applied segments, rendered digest and complete input measurement."""
-        async with client() as api:
-            return (await api.admit_managed_context(namespace_id, subject_id, command)).model_dump(
-                mode="json"
-            )
-
-    @mcp.tool()
-    async def report_context(command: ContextReport) -> JsonObject:
-        """Report an admitted invocation's actual outcome and meaningful cognition uses."""
-        async with client() as api:
-            return (await api.report_managed_context(namespace_id, subject_id, command)).model_dump(
-                mode="json"
-            )
-
-    @mcp.tool()
-    async def read_job(job_id: str) -> JsonObject:
-        """Read a durable import or context preparation job in the bound subject."""
-        async with client() as api:
-            return (
-                await api.job(job_id, namespace_id=namespace_id, subject_id=subject_id)
-            ).model_dump(mode="json")
-
-    @mcp.resource("nous://query/manual")
-    async def query_manual() -> str:
-        """The running service's NousQL syntax and retrieval domains."""
-        try:
-            async with client() as api:
-                return await api.query_manual()
-        except ToolError as error:
-            raise ResourceError(str(error)) from error
-
-    register_management(mcp, client, namespace_id, subject_id)
-    register_maintenance(mcp, client, namespace_id, subject_id)
-    mcp.run(transport="stdio")
+    create_server(instance, url, namespace_id, credential_file, read_only=read_only).run(
+        transport="stdio"
+    )

@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from nous_sdk.contracts import CallContext, MediaInfo
+from nous_sdk.contracts import MediaInfo
+from nous.platform.call_context import CallContext
 from nous_sdk.contracts.query_conditions import QueryModality
 from pydantic import JsonValue
 from sqlalchemy import select
@@ -50,10 +51,10 @@ async def source_modalities_in(
     rows = (
         await view.connection.execute(
             select(observations.c.id, materials.c.record)
-            .join(materials, materials.c.id == observations.c.material_id)
+            .join(materials, (materials.c.id == observations.c.material_id) & (materials.c.namespace_id == observations.c.namespace_id))
             .where(
                 observations.c.namespace_id == ctx.namespace_id,
-                observations.c.subject_id == ctx.require_subject(),
+                
                 materials.c.namespace_id == ctx.namespace_id,
                 observations.c.id.in_(authorized_observation_ids),
             )

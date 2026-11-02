@@ -92,7 +92,8 @@ impl Frozen {
                         .map(|id| self.data.assets.tags[*id as usize].key.clone())
                         .collect()
                 });
-                let config = options.vcp.into_config(ghost_vectors)?;
+                let mut config = options.vcp.into_config(ghost_vectors)?;
+                config.strict_capabilities = options.strict_capabilities;
                 let lexical_hits = if text.trim().is_empty() {
                     Vec::new()
                 } else {

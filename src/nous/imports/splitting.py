@@ -8,7 +8,7 @@ import re
 
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from nous_sdk.contracts import DomainError
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.imports import TextSplitOptions
 from pydantic import JsonValue
 

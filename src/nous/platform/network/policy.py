@@ -20,6 +20,16 @@ class NetworkPolicy(BaseModel):
     max_keepalive_connections: int = Field(default=20, ge=0)
     keepalive_expiry_seconds: float = Field(default=5, gt=0, allow_inf_nan=False)
     follow_redirects: bool = False
+    user_agent: str = Field(
+        default="Nous (+https://github.com/Heptalogos-Devs/Nous-Wave)", min_length=1, max_length=1024
+    )
+
+    @field_validator("user_agent")
+    @classmethod
+    def agent_header(cls, value: str) -> str:
+        if any(character in value for character in "\r\n\x00"):
+            raise ValueError("User agent must be one HTTP header value")
+        return value
 
     @field_validator("proxy_url")
     @classmethod

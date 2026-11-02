@@ -4,13 +4,15 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from nous_sdk.contracts import CallContext, DomainError, UnitOutput
+from nous_sdk.contracts import UnitOutput
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.diagnostics import ImportVectorStatus
 from nous_sdk.contracts.imports import UnitAttempt
 from sqlalchemy import select
 
 from nous.cognition.schema import vectors
-from nous.identity.service import require_subject_in
+from nous.identity.access import require_namespace_in
 
 from .schema import outputs, requests
 
@@ -20,7 +22,7 @@ if TYPE_CHECKING:
 
 async def vector_status(self: ImportService, ctx: CallContext) -> ImportVectorStatus:
     async with self.authority.read(ctx) as view:
-        await require_subject_in(view, ctx)
+        await require_namespace_in(view, ctx)
         values = (await view.connection.execute(select(outputs.c.record))).scalars()
         visible: list[UnitOutput] = []
         for value in values:
@@ -37,9 +39,7 @@ async def vector_status(self: ImportService, ctx: CallContext) -> ImportVectorSt
         references = {reference.exact() for output in visible for reference in output.cognition}
         rows = (
             await view.connection.execute(
-                select(vectors.c.reference, vectors.c.space).where(
-                    vectors.c.reference.in_(references)
-                )
+                select(vectors.c.reference, vectors.c.space).where(vectors.c.namespace_id == ctx.namespace_id, vectors.c.reference.in_(references))
             )
         ).all()
         per_space: dict[str, set[str]] = {}

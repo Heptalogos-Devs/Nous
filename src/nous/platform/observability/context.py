@@ -7,7 +7,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 
 import structlog
-from nous_sdk.contracts import CallContext
+from nous.platform.call_context import CallContext
 from opentelemetry import propagate, trace
 from opentelemetry.trace import Span, StatusCode
 
@@ -46,7 +46,7 @@ def correlation(
     fields = {
         "caller_id": ctx.caller_id,
         "namespace_id": ctx.namespace_id,
-        "subject_id": ctx.subject_id,
+        
         "request_id": request_id() or ctx.request_id,
         "operation_id": operation_id,
         "job_id": job_id,

@@ -3,13 +3,16 @@
 from collections.abc import Callable
 
 from nous_native import CancellationToken, NativeError
+from nous.platform.errors import DomainError
 from pydantic import JsonValue, TypeAdapter
 
 from nous.platform.concurrency import owned_thread
 from nous.platform.errors import NousError
 
 
-def failure(error: NativeError, phase: str) -> NousError:
+def failure(error: NativeError, phase: str) -> NousError | DomainError:
+    if error.code == "capability_unavailable":
+        return DomainError("capability_unavailable", str(error), phase=phase)
     return NousError(
         "native_retrieval_error",
         str(error),

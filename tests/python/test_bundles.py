@@ -1,271 +1,94 @@
-"""Real archive interoperability retains immutable sources and exact vector identity."""
+"""A Namespace bundle preserves original material and cognition over the SDK."""
 
 import asyncio
-from io import BytesIO
+from hashlib import sha256
 from pathlib import Path
 
-from nous_sdk.contracts import (
-    AdmitFiles,
-    AdoptCognition,
-    BlobDocument,
-    BundleRequest,
-    CallContext,
-    EntityBody,
-    EvidenceLink,
-    ImportDocument,
-    MediaInfo,
-    SubjectBundle,
-)
-from nous_sdk.contracts.bundles import BundleAssetOptions, PackageDescriptor
-from PIL import Image
+import httpx
+from nous_sdk import NousClient
+from nous_sdk.contracts import ModelProvenance, SourceCommand
+from nous.platform.call_context import CallContext
 from sqlalchemy import select
 
 from nous.cognition.schema import vectors
-from nous.cognition.service import CognitionService
-from nous.data_management.archive_read import decode
-from nous.data_management.bundles import BundleService
-from nous.data_management.portable_read import load
-from nous.identity.service import IdentityService
-from nous.imports.service import ImportService
-from nous.material.service import MaterialService
-from nous.platform.content import ContentStore
-from nous.platform.persistence import Authority
+from nous.platform.configuration import Settings
+from nous.transports.http import create_app
 
 
-class LiteralModels:
-    async def form(self, *args, **kwargs):
-        raise AssertionError("Literal archive setup does not form with a model")
+def test_bundle_sdk_roundtrip_between_namespaces(tmp_path: Path):
+    text = Path("README.md").read_text(encoding="utf-8")[:400]
 
-    async def embed(self, *args, **kwargs):
-        raise AssertionError("Archive transfer does not replace adopted vector coordinates")
-
-
-def test_external_portable_and_native_vector_roundtrip(tmp_path: Path):
     async def scenario():
-        authority = Authority(tmp_path / "authority.sqlite")
-        content = ContentStore(authority, tmp_path / "content")
-        materials = MaterialService(authority, content)
-        cognition = CognitionService(authority, materials=materials)
-        imports = ImportService(authority, cognition, LiteralModels(), materials=materials)
-        bundles = BundleService(authority, cognition, content)
-        identity = IdentityService(authority)
-        await authority.initialize()
-        ctx = CallContext(
-            credential_source_ids=None, caller_id="owner", namespace_id="ns", subject_id="sender"
-        )
-        try:
-            await identity.create_namespace(ctx, "namespace", "namespace")
-            await identity.create_subject(ctx, "sender", "sender", subject_id="sender")
-            result = await imports.admit_files(
-                ctx,
-                AdmitFiles(
-                    operation_id="literal",
-                    inputs=(ImportDocument(text="Alice chooses coffee.", filename="source.txt"),),
-                    llm_enabled=False,
-                    vectors="disabled",
-                ),
+        settings = Settings(instance=tmp_path / "instance")
+        app = create_app(settings)
+        async with app.router.lifespan_context(app):
+            client = NousClient("http://test", credential_file=settings.token_file)
+            await client.transport.http.aclose()
+            client.transport.http = httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://test"
             )
-            memory = await cognition.get(ctx, result.outputs[0].cognition[0])
-            await cognition.adopt(
-                ctx,
-                AdoptCognition(
-                    operation_id="entity",
-                    body=EntityBody(label="Alice", entity_type="person"),
-                    evidence=(EvidenceLink(reference=memory.reference),),
-                ),
-            )
-            async with authority.write(
-                ctx, "vector", operation_kind="vector-fixture", payload={}
-            ) as tx:
-                await tx.connection.execute(
-                    vectors.insert().values(
-                        reference=memory.reference.exact(),
-                        space="known-model:2",
-                        model="known-model",
-                        dimensions=2,
-                        vector=[0.25, -0.5],
-                        call_id=None,
-                        commit_seq=tx.commit_seq,
-                    )
-                )
-                tx.result(None)
-            pixels = BytesIO()
-            Image.new("RGB", (3, 2), (10, 80, 120)).save(pixels, format="PNG")
-            lease = await content.publish_bytes(pixels.getvalue(), "image/png")
-            image_document = BlobDocument(filename="image.png", media_type="image/png")
             try:
-                async with authority.write(ctx, "image", operation_kind="image", payload={}) as tx:
-                    image_material = await materials.put_blob_in(
-                        tx,
-                        ctx,
-                        lease,
-                        image_document,
-                        MediaInfo(kind="image", media_type="image/png", width=3, height=2),
-                    )
-                    await materials.observe_in(
-                        tx, ctx, image_material["id"], image_document, "contact"
-                    )
-                    tx.result(None)
-            finally:
-                await content.release(lease)
-            native = await bundles.export_archive(
-                ctx, BundleRequest(assets=BundleAssetOptions(include_vectors=True))
-            )
-            decoded = decode(native.data)
-            assert len(decoded.vectors) == 1
-            receiver = ctx.model_copy(update={"subject_id": "receiver"})
-            await identity.create_subject(receiver, "receiver", "receiver", subject_id="receiver")
-            installed = await bundles.install_zip(receiver, native.data, "native-install")
-            copied_ref = "memory:" + installed["mapping"][memory.reference.id] + "@1"
-            async with authority.read(receiver) as view:
-                copied = (
-                    (
-                        await view.connection.execute(
-                            select(vectors).where(vectors.c.reference == copied_ref)
+                source = await client.namespaces.create("bundle-source")
+                target = await client.namespaces.create("bundle-target")
+                source_ns = await client.namespace_by_id(source.id)
+                target_ns = await client.namespace_by_id(target.id)
+                memory = await source_ns.remember(text, source="README.md")
+                ctx = CallContext(
+                    caller_id="bundle-test", namespace_id=source.id, credential_source_ids=None
+                )
+                service = app.state.application
+                async with service.authority.write(ctx) as tx:
+                    await tx.connection.execute(
+                        vectors.insert().values(
+                            namespace_id=source.id,
+                            reference=memory.reference.exact(),
+                            space="fixture-space",
+                            model="fixture-model",
+                            dimensions=2,
+                            vector=[0.25, -0.5],
+                            producer=ModelProvenance(
+                                model_id="fixture-model",
+                                task="embedding",
+                                prompt_digest=sha256(b"embedding").hexdigest(),
+                                schema_digest=sha256(b"vector:2").hexdigest(),
+                                input_digest=sha256(text.encode()).hexdigest(),
+                                output_digest=sha256(b"[0.25,-0.5]").hexdigest(),
+                                generated_at=ctx.clock,
+                            ).model_dump(mode="json"),
+                            commit_seq=tx.commit_seq,
                         )
                     )
-                    .mappings()
-                    .one()
-                )
-                assert copied["space"] == "known-model:2"
-                assert copied["vector"] == [0.25, -0.5]
-            command = BundleRequest(
-                format="amemorix",
-                content_level="knowledge",
-                package=PackageDescriptor(id="coffee", name="Coffee", version="1"),
-            )
-            portable = await bundles.export_archive(ctx, command)
-            checked = load(portable.data)
-            assert "bundle.json" not in checked.members
-            assert checked.knowledge["docs"]
-            assert checked.manifest["format_version"] == 2
-            assert checked.images["assets"][0]["content_hash"] == image_material["content_hash"]
-            normalized = decode(portable.data)
-            assert (
-                SubjectBundle.model_validate(normalized).cognition[0].body.text
-                == "Alice chooses coffee."
-            )
-            target = ctx.model_copy(update={"subject_id": "external"})
-            await identity.create_subject(target, "external", "external", subject_id="external")
-            adopted = await bundles.install_zip(target, portable.data, "portable-install")
-            assert adopted["cognition_count"] == 2
-            assert len(await bundles.list_installs(target)) == 1
-            assert await bundles.install_zip(target, portable.data, "portable-install") == adopted
-            async with authority.read(target) as view:
-                for row in normalized.materials:
-                    assert (await materials.read_in(view, target, adopted["mapping"][row.id]))[
-                        "content_hash"
-                    ]
-            await bundles.uninstall(target, adopted["installation_id"], "uninstall")
-            assert (await bundles.get_installation(target, adopted["installation_id"]))[
-                "state"
-            ] == "uninstalled"
-        finally:
-            await authority.close()
-
-    asyncio.run(scenario())
-
-
-def test_artifact_contact_inherits_inputs_and_withdrawal(tmp_path: Path):
-    async def scenario():
-        from nous_sdk.contracts import BlobDocument, MediaReference, SourceCommand
-
-        from nous.data_management.sources import SourceService
-
-        authority = Authority(tmp_path / "authority.sqlite")
-        store = ContentStore(authority, tmp_path / "content")
-        materials = MaterialService(authority, store)
-        cognition = CognitionService(authority, materials=materials)
-        imports = ImportService(authority, cognition, LiteralModels(), materials=materials)
-        sources = SourceService(authority, cognition, content_store=store)
-        identity = IdentityService(authority)
-        await authority.initialize()
-        ctx = CallContext(
-            credential_source_ids=None, caller_id="owner", namespace_id="ns", subject_id="subject"
-        )
-        try:
-            await identity.create_namespace(ctx, "namespace", "namespace")
-            await identity.create_subject(ctx, "subject", "subject", subject_id="subject")
-            imported = await imports.admit_files(
-                ctx,
-                AdmitFiles(
-                    operation_id="original",
-                    inputs=(
-                        ImportDocument(text="Retained original source.", filename="original.txt"),
+                bundle = await source_ns.bundles.export()
+                assert bundle.cognition and bundle.materials and bundle.vectors
+                installed = await target_ns.bundles.install(bundle)
+                installation_id = installed.installation_id
+                assert (await target_ns.bundles.installation(installation_id)).state == "active"
+                assert len(await target_ns.bundles.installations()) == 1
+                copied = await target_ns.read(memory.reference.exact(), sources=True)
+                assert copied.text == text and copied.sources is not None
+                target_ctx = ctx.model_copy(update={"namespace_id": target.id})
+                async with service.authority.read(target_ctx) as view:
+                    row = (
+                        await view.connection.execute(
+                            select(vectors).where(
+                                vectors.c.namespace_id == target.id,
+                                vectors.c.reference == memory.reference.exact(),
+                            )
+                        )
+                    ).mappings().one()
+                    assert row["vector"] == [0.25, -0.5]
+                await target_ns.bundles.uninstall(installation_id)
+                assert (await target_ns.bundles.installation(installation_id)).state == "uninstalled"
+                await client.purge_sources(
+                    target.id,
+                    SourceCommand(
+                        observation_ids=installed.owned_observation_ids,
+                        reason="Remove the uninstalled copy",
+                        force=True,
                     ),
-                    llm_enabled=False,
-                    vectors="disabled",
-                ),
-            )
-            event = imported.outputs[0].observation_id
-            original = imported.catalog.units[0].material_id
-            lease = await store.publish_bytes(b"Derived excerpt.", "text/plain")
-            try:
-                async with authority.write(
-                    ctx, "artifact", operation_kind="artifact", payload={}
-                ) as tx:
-                    artifact = await materials.put_blob_in(
-                        tx,
-                        ctx,
-                        lease,
-                        BlobDocument(filename="excerpt.txt", media_type="text/plain"),
-                        required_source_ids=(f"material:{original}",),
-                        required_observation_ids=(event,),
-                    )
-                    own_contact = await materials.observe_in(
-                        tx,
-                        ctx,
-                        artifact["id"],
-                        BlobDocument(filename="excerpt.txt", media_type="text/plain"),
-                        "contact",
-                    )
-                    tx.result(None)
+                )
+                assert (await source_ns.read(memory.reference.exact())).text == text
             finally:
-                await store.release(lease)
-            scoped = ctx.model_copy(update={"allowed_source_ids": (artifact["id"],)})
-            async with authority.read(scoped) as view:
-                provenance = await materials.provenance_in(
-                    view,
-                    scoped,
-                    MediaReference(
-                        kind="material", id=artifact["id"], observation_id=own_contact["id"]
-                    ),
-                )
-                assert provenance.roots == (event,)
-                assert own_contact["id"] not in provenance.roots
-            from nous_sdk.contracts import MemoryBody
-
-            memory = await cognition.adopt(
-                scoped,
-                AdoptCognition(
-                    operation_id="artifact-memory",
-                    body=MemoryBody(text="Derived excerpt."),
-                    evidence=(EvidenceLink(observation_id=own_contact["id"]),),
-                ),
-            )
-            assert memory.source_roots == (event,)
-            assert memory.body.media[0].observation_id == own_contact["id"]
-            assert (await cognition.get(scoped, memory.reference)).body.text == "Derived excerpt."
-            await sources.trash(
-                ctx,
-                SourceCommand(operation_id="withdraw", observation_ids=(event,), reason="withdraw"),
-            )
-            from nous_sdk.contracts import DomainError
-
-            try:
-                await cognition.get(scoped, memory.reference)
-            except DomainError as error:
-                assert error.code == "source_unavailable"
-            else:
-                raise AssertionError(
-                    "An artifact contact must not become an independent support root"
-                )
-            await sources.restore(
-                ctx,
-                SourceCommand(operation_id="restore", observation_ids=(event,), reason="restore"),
-            )
-            assert (await cognition.get(scoped, memory.reference)).body.text == "Derived excerpt."
-        finally:
-            await authority.close()
+                await client.close()
 
     asyncio.run(scenario())

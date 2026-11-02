@@ -1,12 +1,12 @@
 """A resolved embedding route snapshot, with no credential values."""
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from hashlib import sha256
 
-from nous_sdk.contracts import EmbeddingBatch
 from nous_sdk.contracts.common import Contract
-from nous_sdk.contracts.model_routing import ModelRoutingPolicy
-from pydantic import Field, model_validator
+from nous_sdk.contracts.model_roles import ModelCachePolicy
+from pydantic import Field, JsonValue, model_validator
 
 from nous.platform.configuration import EmbeddingRoute
 from nous.platform.persistence.authority import canonical_json
@@ -16,7 +16,7 @@ class EmbeddingProfile(Contract):
     route: EmbeddingRoute
     fallbacks: tuple[EmbeddingRoute, ...] = ()
     route_ids: tuple[str, ...] = ()
-    fallback_policy: ModelRoutingPolicy = Field(default_factory=ModelRoutingPolicy)
+    cache_policy: ModelCachePolicy = "shared"
 
     @model_validator(mode="after")
     def route_identities(self) -> EmbeddingProfile:
@@ -26,15 +26,14 @@ class EmbeddingProfile(Contract):
 
     def resource_key(self) -> str:
         route = self.route
-        # Actual response model and space remain part of each paid content fact.
-        # Credentials, timeouts and budgets do not define mathematical input space.
+        # Provider identity and vector geometry define the mathematical input space.
         values: tuple[object, ...] = (
             route.base_url,
+            route.protocol,
             route.model,
             route.dimensions,
             route.normalization,
             route.extra_body,
-            route.media_path,
         )
         if self.fallbacks:
             values = (
@@ -42,11 +41,11 @@ class EmbeddingProfile(Contract):
                 tuple(
                     (
                         item.base_url,
+                        item.protocol,
                         item.model,
                         item.dimensions,
                         item.normalization,
                         item.extra_body,
-                        item.media_path,
                     )
                     for item in self.fallbacks
                 ),
@@ -55,6 +54,8 @@ class EmbeddingProfile(Contract):
 
 
 @dataclass(frozen=True)
-class EmbeddingEvidence:
-    batch: EmbeddingBatch
-    source_ids: tuple[str, ...]
+class EmbeddingSpaceEvidence:
+    space: str
+    model: str
+    dimensions: int
+    route_indexes: tuple[int, ...] = ()

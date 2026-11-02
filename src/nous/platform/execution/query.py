@@ -6,12 +6,16 @@ from dataclasses import dataclass
 
 import sqlalchemy as sa
 from dbos import DBOSClient, WorkflowStatus
-from nous_sdk.contracts import CallContext
+from nous.platform.call_context import CallContext
+from nous_sdk.contracts.execution import ExecutionJob
 from pydantic import BaseModel, ConfigDict, Field
 
 from nous.platform.persistence import Authority
 from nous.platform.persistence.authority import canonical_json
-from nous.platform.persistence.schema import job_links, operations
+from nous.platform.persistence.schema import job_links
+
+from .results import job_results, retained_status
+from .scope import JobPurpose, require_job_purpose
 
 _STATES = frozenset(
     {
@@ -53,6 +57,8 @@ async def query_jobs(
     state: str | None = None,
     limit: int = 50,
     cursor: str | None = None,
+    purpose: JobPurpose = "actor",
+    workflow_ids: tuple[str, ...] | None = None,
 ) -> JobPage:
     """Newest admission first; state stays live while new admissions cannot move a page.
 
@@ -60,6 +66,7 @@ async def query_jobs(
     scanned in bounded batches until the page fills, so sparse matches are never
     lost behind a limit applied to unfiltered jobs. No scheduling state is copied.
     """
+    require_job_purpose(ctx, purpose)
     if not 1 <= limit <= 1000:
         raise ValueError("Job page limit must be between 1 and 1000")
     if state is not None and state not in _STATES:
@@ -68,7 +75,16 @@ async def query_jobs(
         raise ValueError("Job kind must be a workflow name")
     binding = hashlib.sha256(
         canonical_json(
-            (ctx.caller_id, ctx.namespace_id, ctx.subject_id, scope, kind, state)
+            (
+                ctx.caller_id,
+                ctx.namespace_id,
+                ctx.namespace_id,
+                scope,
+                kind,
+                state,
+                purpose,
+                sorted(workflow_ids) if workflow_ids is not None else None,
+            )
         ).encode()
     ).hexdigest()
     position: _Cursor | None = None
@@ -84,35 +100,34 @@ async def query_jobs(
         except ValueError as error:
             raise ValueError("Invalid job cursor for this scope and query") from error
 
-    query = (
-        sa.select(job_links.c.workflow_id, operations.c.commit_seq)
-        .join(operations, operations.c.operation_key == job_links.c.operation_key)
-        .where(
-            job_links.c.caller_id == ctx.caller_id,
-            job_links.c.namespace_id == ctx.namespace_id,
-        )
+    query = sa.select(job_links.c.workflow_id, job_links.c.commit_seq).where(
+        job_links.c.namespace_id == ctx.namespace_id,
     )
-    if ctx.subject_id is not None:
-        query = query.where(job_links.c.subject_id == ctx.subject_id)
+    if purpose == "actor":
+        query = query.where(job_links.c.caller_id == ctx.caller_id)
+    if ctx.namespace_id is not None:
+        query = query.where(job_links.c.namespace_id == ctx.namespace_id)
     if scope is not None:
         query = query.where(job_links.c.scope == scope)
     if kind is not None:
         query = query.where(job_links.c.workflow_name == kind)
+    if workflow_ids is not None:
+        query = query.where(job_links.c.workflow_id.in_(workflow_ids))
     collected: list[tuple[WorkflowStatus, int]] = []
     batch_size = max(128, min(limit + 1, 512))
     async with authority.read(ctx) as view:
         snapshot = position.snapshot if position is not None else view.commit_seq
         if snapshot > view.commit_seq:
             raise ValueError("Job cursor refers to an unavailable snapshot")
-        query = query.where(operations.c.commit_seq <= snapshot)
+        query = query.where(job_links.c.commit_seq <= snapshot)
         while True:
             page = query
             if position is not None:
                 page = page.where(
                     sa.or_(
-                        operations.c.commit_seq < position.sequence,
+                        job_links.c.commit_seq < position.sequence,
                         sa.and_(
-                            operations.c.commit_seq == position.sequence,
+                            job_links.c.commit_seq == position.sequence,
                             job_links.c.workflow_id < position.workflow_id,
                         ),
                     )
@@ -120,7 +135,7 @@ async def query_jobs(
             rows = (
                 await view.connection.execute(
                     page.order_by(
-                        operations.c.commit_seq.desc(), job_links.c.workflow_id.desc()
+                        job_links.c.commit_seq.desc(), job_links.c.workflow_id.desc()
                     ).limit(batch_size)
                 )
             ).all()
@@ -136,6 +151,20 @@ async def query_jobs(
                 load_output=False,
             )
             by_id = {item.workflow_id: item for item in matches}
+            archived = (
+                await view.connection.execute(
+                    sa.select(job_results.c.record).where(
+                        job_results.c.workflow_id.in_(ids),
+                        job_results.c.namespace_id == ctx.namespace_id,
+                    )
+                )
+            ).scalars()
+            for raw in archived:
+                saved = ExecutionJob.model_validate(raw)
+                if (kind is None or saved.workflow_name == kind) and (
+                    state is None or saved.state == state
+                ):
+                    by_id[saved.workflow_id] = retained_status(saved)
             for row in rows:
                 item = by_id.get(str(row.workflow_id))
                 if item is not None:

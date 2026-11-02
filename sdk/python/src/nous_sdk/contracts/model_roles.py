@@ -7,10 +7,10 @@ from typing import Literal
 from pydantic import ConfigDict, Field, JsonValue, model_validator
 
 from .common import Contract
-from .media import MediaReference
-from .model_routing import ModelRouteAttempt, ModelRoutingPolicy
+from .media import MediaInfo, MediaReference
+from .prompt_compilation import CompiledPrompt, PromptMessage
 
-ModelCachePolicy = Literal["shared", "invocation"]
+ModelCachePolicy = Literal["none", "shared"]
 
 
 class ModelContractRequest(Contract):
@@ -23,10 +23,11 @@ class ModelPreviewRequest(ModelContractRequest):
     media: tuple[MediaReference, ...] = ()
     source_ids: tuple[str, ...] = ()
     draft_template: str | None = None
+    context_messages: tuple[PromptMessage, ...] = ()
+    max_output_tokens: int | None = Field(default=None, ge=1)
 
 
 class ModelRoleContract(Contract):
-    routing_policy: ModelRoutingPolicy = Field(default_factory=ModelRoutingPolicy)
     role: str
     purpose: str
     variant: str
@@ -34,8 +35,8 @@ class ModelRoleContract(Contract):
     input_schema: dict[str, JsonValue]
     output_schema: dict[str, JsonValue]
     output_mode: Literal["text", "json_schema"]
-    provider_response_formats: dict[str, dict[str, JsonValue] | None]
-    prompt_id: str
+    provider_response_format: dict[str, JsonValue] | None
+    template_id: str
     prompt: ModelPrompt
     provider_called: Literal[False] = False
 
@@ -51,7 +52,6 @@ class ModelPrompt(Contract):
     variables: dict[str, JsonValue] | None = None
     rendered: str | None = None
     hash: str | None = None
-    description_call_id: str | None = None
 
     @model_validator(mode="after")
     def revision_identity(self) -> ModelPrompt:
@@ -64,6 +64,7 @@ class ModelPrompt(Contract):
 
 
 class InvocationParameters(Contract):
+    timeout_seconds: float
     max_output_tokens: int
     temperature: float | None
     reasoning_effort: str | None
@@ -76,39 +77,29 @@ class InvocationMedia(Contract):
     media_type: str
     source_reference: str
     channel: str | None = None
+    position: int
+    ordinal: int
+    media_info: MediaInfo | None = None
 
 
 class InvocationSnapshot(Contract):
-    routing: ModelRouteAttempt | None = None
-    cache_policy: ModelCachePolicy = "shared"
     model_config = ConfigDict(extra="forbid", frozen=True, serialize_by_alias=True)
     purpose: str
     source_ids: tuple[str, ...]
     model: str
     base_url: str
+    protocol: Literal["openai-chat", "openai-responses", "volcengine-ark"]
     parameters: InvocationParameters
-    prompt: ModelPrompt
+    prompt: CompiledPrompt
     output_schema: dict[str, JsonValue] = Field(alias="schema")
     output_mode: Literal["text", "json_schema"]
-    provider_schema_backend: Literal["pydantic_ai", "openai_sdk"]
     provider_response_format: dict[str, JsonValue] | None
     media: tuple[InvocationMedia, ...]
-    video_content_format: Literal["video_url"] | None = None
-
-
-class ModelRoutePreview(Contract):
-    route_id: str
-    route_index: int
-    invocation: InvocationSnapshot | None
-    capabilities: tuple[str, ...]
-    configured: bool
-    unavailable: dict[str, JsonValue] | None = None
 
 
 class ModelInvocationPreview(Contract):
     contract: ModelRoleContract
     invocation: InvocationSnapshot | None
-    routes: tuple[ModelRoutePreview, ...] = ()
     capabilities: tuple[str, ...]
     configured: bool
     provider_called: Literal[False] = False

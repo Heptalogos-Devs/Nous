@@ -134,6 +134,9 @@ impl MemoAssets {
             files: input.files,
         })
     }
+    pub fn epa_available(&self) -> bool {
+        self.epa.is_some()
+    }
     pub fn dimension(&self) -> usize {
         self.dimension
     }

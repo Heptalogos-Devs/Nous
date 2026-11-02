@@ -5,11 +5,13 @@ from typing import Literal
 from pydantic import Field
 
 from .cognition import CognitiveRef
+from .cognitive_identity import CognitiveKind
 from .common import Contract, Operation
 from .media import MediaReference
 
 
 class VectorProjectionPolicy(Contract):
+    kinds: tuple[CognitiveKind, ...] | None = None
     mode: Literal["disabled", "changed_heads"] = "disabled"
 
 
@@ -27,4 +29,3 @@ class ProjectionResult(Contract):
     references: tuple[str, ...] = ()
     omitted: tuple[str, ...] = ()
     spaces: tuple[str, ...] = ()
-    call_ids: tuple[str, ...] = ()

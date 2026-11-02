@@ -4,8 +4,9 @@ import asyncio
 
 import pytest
 import sqlalchemy as sa
-from dbos import PortableWorkflowError
-from nous_sdk.contracts import AdmitFiles, CallContext, DomainError, ImportDocument, SourceCommand
+from nous_sdk.contracts import AdmitFiles, ImportDocument, SourceCommand
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.maintenance import (
     CreateMaintenanceSchedule,
     ReviewMaintenance,
@@ -15,7 +16,6 @@ from nous_sdk.contracts.maintenance import (
 from nous.bootstrap import application
 from nous.material.service import materials
 from nous.platform.configuration import Settings
-from nous.platform.errors import Unavailable
 from nous.platform.persistence import OperationConflict
 
 
@@ -76,9 +76,8 @@ def test_empty_snapshot_review_and_real_dbos_schedule_reconciliation(tmp_path):
             result = await asyncio.wait_for(
                 handle.get_result(polling_interval_sec=0.05), timeout=10
             )
-            assert result["run_id"] != submitted.run_id
-            await app.execution.wait(ctx, result["job_id"])
-            assert len(await app.maintenance.list_runs(ctx)) == 2
+            assert result == {"unchanged": True, "run_id": None}
+            assert len(await app.maintenance.list_runs(ctx)) == 1
             stopped = await app.maintenance.stop_schedule(ctx, schedule.id, "stop")
             assert stopped.stopped_at
             assert await dbos.get_schedule_async(schedule.id) is None
@@ -89,7 +88,49 @@ def test_empty_snapshot_review_and_real_dbos_schedule_reconciliation(tmp_path):
     asyncio.run(scenario())
 
 
-def test_contact_purge_clears_run_payload_while_shared_original_survives(tmp_path):
+def test_schedule_does_not_resubmit_unchanged_real_sources(tmp_path):
+    async def scenario():
+        from pathlib import Path
+
+
+        async with application(Settings(instance=tmp_path / "instance")) as app:
+            ctx = CallContext(
+                caller_id="owner",
+                namespace_id="ns",
+                subject_id="subject",
+                credential_source_ids=None,
+            )
+            await app.identity.create_namespace(ctx, "Project", "ns")
+            await app.identity.create_subject(ctx, "Project", "subject", subject_id="subject")
+            text = await asyncio.to_thread(Path("README.md").read_text, encoding="utf-8")
+            await app.imports.admit_files(
+                ctx,
+                AdmitFiles(
+                    inputs=(ImportDocument(text=text, filename="README.md"),),
+                    llm_enabled=False,
+                    vectors="disabled",
+                ),
+            )
+            schedule = await app.maintenance.create_schedule(
+                ctx, CreateMaintenanceSchedule(name="Project", cron="0 0 1 * *")
+            )
+            first = await app.maintenance.run_tick(
+                "2026-01-01T00:00:00Z", {"schedule_id": schedule.id}
+            )
+            with pytest.raises(DomainError):
+                await app.execution.wait(ctx, first["job_id"])
+            second = await app.maintenance.run_tick(
+                "2026-01-02T00:00:00Z", {"schedule_id": schedule.id}
+            )
+            assert second == {"unchanged": True, "run_id": first["run_id"]}
+            assert len(await app.maintenance.list_runs(ctx)) == 1
+            assert await app.models.ledger.list(ctx) == []
+            await app.maintenance.stop_schedule(ctx, schedule.id, "stop-project-schedule")
+
+    asyncio.run(scenario())
+
+
+def test_source_purge_clears_run_payload_while_shared_bytes_survive(tmp_path):
     async def scenario():
         async with application(Settings(instance=tmp_path / "instance")) as app:
             ctx = CallContext(
@@ -116,19 +157,58 @@ def test_contact_purge_clears_run_payload_while_shared_original_survives(tmp_pat
                 ),
             )
             assert len(imported.catalog.input_source_ids) == 2
-            material_id = imported.catalog.units[0].material_id
-            assert imported.catalog.units[1].material_id == material_id
+            material_id = imported.catalog.units[1].material_id
+            assert imported.catalog.units[0].material_id != material_id
+            async with app.authority.read(ctx) as view:
+                originals = (
+                    (
+                        await view.connection.execute(
+                            sa.select(materials.c.content_hash).where(
+                                materials.c.id.in_(
+                                    [unit.material_id for unit in imported.catalog.units]
+                                )
+                            )
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+            assert len(set(originals)) == 1
             submitted = await app.maintenance.submit(
                 ctx, StartMaintenance(instruction=source, operation_id="unsupported-provider")
             )
             # No provider is configured. Its real failed job still froze exact source
             # identities, so scope projection and contact-only purge are exercised.
-            with pytest.raises(
-                (Unavailable, PortableWorkflowError), match="Model ID has not been configured"
-            ):
+
+            with pytest.raises(DomainError) as unavailable:
                 await asyncio.wait_for(app.execution.wait(ctx, submitted.job_id), timeout=10)
+            assert unavailable.value.code == "model_unavailable"
             run = await app.maintenance.read(ctx, submitted.run_id)
             assert run.catalog and len(run.catalog.observation_ids) == 2
+            from nous_sdk.contracts.maintenance import MaintenanceReview
+
+            from nous.maintenance.schema import runs
+
+            async with app.authority.write(ctx) as tx:
+                old_review = MaintenanceReview(
+                    decision="adopt",
+                    reason=source,
+                    caller_id=ctx.caller_id,
+                    recorded_at=run.created_at,
+                    commit_seq=tx.commit_seq,
+                )
+                historic = run.model_copy(update={"review_history": (old_review,)})
+                await tx.connection.execute(
+                    runs.update()
+                    .where(runs.c.id == run.id)
+                    .values(record=historic.model_dump(mode="json"))
+                )
+            async with app.authority.write(ctx) as tx:
+                await tx.connection.execute(
+                    runs.update()
+                    .where(runs.c.id == run.id)
+                    .values(record=historic.model_dump(mode="json"))
+                )
             denied = await app.maintenance.read(
                 ctx.model_copy(update={"allowed_source_ids": ()}), run.id
             )
@@ -151,5 +231,27 @@ def test_contact_purge_clears_run_payload_while_shared_original_survives(tmp_pat
             assert purged.purged_at and not purged.sources_available
             assert source not in purged.model_dump_json()
             assert purged.command.instruction == ""
+            assert purged.review_history[0].reason == ""
+            from nous.platform.persistence import OperationResultPurged
+
+            with pytest.raises(OperationResultPurged):
+                await app.authority.receipt(
+                    ctx,
+                    "legacy-review-history",
+                    operation_kind="maintenance.legacy_export",
+                    payload={"run_id": run.id},
+                )
+            with pytest.raises(OperationResultPurged):
+                await app.authority.receipt(
+                    ctx,
+                    "legacy-anonymous-review",
+                    operation_kind="maintenance.review",
+                    payload={"run_id": run.id},
+                )
+            async with app.authority.read(ctx) as view:
+                stored = await view.connection.scalar(
+                    sa.select(runs.c.record).where(runs.c.id == run.id)
+                )
+                assert source not in __import__("json").dumps(stored)
 
     asyncio.run(scenario())

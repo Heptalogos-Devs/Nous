@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from hashlib import sha256
 from typing import TYPE_CHECKING
-from uuid import uuid4
 
-from nous_sdk.contracts import CallContext, DomainError, MediaReference
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.imports import FormObservation, ObservationFormSubmission
 from pydantic import JsonValue, TypeAdapter
 from sqlalchemy import select, update
@@ -19,6 +20,35 @@ if TYPE_CHECKING:
     from .service import ImportService
 
 
+def formation_request_id(ctx: CallContext, command: FormObservation) -> str:
+    return (
+        "observation:"
+        + sha256(f"{ctx.namespace_id}:{ctx.caller_id}:{command.operation_id}".encode()).hexdigest()
+    )
+
+
+async def observation_jobs(
+    self: ImportService, ctx: CallContext, observation_ids: tuple[str, ...]
+) -> tuple[str, ...]:
+    async with self.authority.read(ctx) as view:
+        for identifier in observation_ids:
+            await self.materials.accepted_source_in(view, ctx, identifier)
+        values = (
+            await view.connection.execute(
+                select(requests.c.record).where(
+                    requests.c.record["context"]["namespace_id"].as_string() == ctx.namespace_id,
+                    requests.c.record["kind"].as_string() == "observation_form",
+                    requests.c.record["command"]["observation_id"].as_string().in_(observation_ids),
+                )
+            )
+        ).scalars()
+        return tuple(
+            str(value["job_id"])
+            for value in values
+            if value.get("job_id") and not value.get("purged")
+        )
+
+
 async def submit_form_observation_in(
     self: ImportService,
     tx: WriteTx,
@@ -27,24 +57,21 @@ async def submit_form_observation_in(
     *,
     owned_parent: str | None = None,
 ) -> ObservationFormSubmission:
-    from nous.material.service import require_observation_in
-
-    reference = command.source
-    region_id = reference.id if reference and reference.kind == "source_region" else None
-    event = await require_observation_in(tx, ctx, command.observation_id, region_id=region_id)
-    source = reference or MediaReference(kind="material", id=event["material_id"])
-    if source.observation_id is not None and source.observation_id != command.observation_id:
-        raise DomainError(
-            "observation_source_mismatch", "Formation must use its actual source observation"
-        )
-    material, _, _ = await self.materials.media_source_in(
-        tx, ctx, source.model_copy(update={"observation_id": command.observation_id})
+    selected = await self.materials.accepted_source_in(tx, ctx, command.observation_id, command.source)
+    material = selected.material
+    request_id = formation_request_id(ctx, command)
+    existing = await tx.connection.scalar(
+        select(requests.c.record).where(requests.c.id == request_id)
     )
-    if material["id"] != event["material_id"]:
-        raise DomainError(
-            "observation_source_mismatch", "Formation source belongs to a different original"
+    if existing is not None:
+        if existing["command"] != command.model_dump(mode="json"):
+            raise DomainError(
+                "formation_request_conflict", "Formation request has different accepted input"
+            )
+        return ObservationFormSubmission(
+            request_id=request_id, job_id=existing["job_id"], observation_id=command.observation_id
         )
-    request_id = str(uuid4())
+
     await tx.connection.execute(
         requests.insert().values(
             id=request_id,
@@ -62,6 +89,7 @@ async def submit_form_observation_in(
             queue_name="formation",
             args=(request_id,),
             owned_parent=owned_parent,
+            scope=command.observation_id,
         )
     )
     row = await tx.connection.scalar(select(requests.c.record).where(requests.c.id == request_id))
@@ -83,16 +111,8 @@ async def submit_form_observation_in(
 async def submit_form_observation(
     self: ImportService, ctx: CallContext, command: FormObservation
 ) -> ObservationFormSubmission:
-    async with self.authority.write(
-        ctx,
-        command.operation_id,
-        operation_kind="imports.form.submit",
-        scope=ctx.require_subject(),
-        payload=command,
-    ) as tx:
-        if tx.replayed:
-            return ObservationFormSubmission.model_validate(tx.replay_result)
-        return tx.result(await self.submit_form_observation_in(tx, ctx, command))
+    async with self.authority.write(ctx) as tx:
+        return await self.submit_form_observation_in(tx, ctx, command)
 
 
 async def run_form_observation(self: ImportService, request_id: str):
@@ -110,7 +130,7 @@ async def run_form_observation(self: ImportService, request_id: str):
     return {
         "observation_id": result.observation_id,
         "cognition": [reference.model_dump(mode="json") for reference in result.cognition],
-        "producer_call_id": result.producer_call_id,
+        "representations": [reference.model_dump(mode="json") for reference in result.representations],
         "commit_seq": result.commit_seq,
         "vector_policy": result.vector_policy,
         "vector_error": result.vector_error.model_dump(mode="json")

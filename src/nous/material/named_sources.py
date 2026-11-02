@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from nous_sdk.contracts import CallContext
+from nous.platform.call_context import CallContext
 from pydantic import JsonValue
 from sqlalchemy import select
 
@@ -32,7 +32,7 @@ async def named_source_observations_in(
 
     # Query callers pass roots already authorized by the region-aware visibility owner.
     # This whitelist narrows metadata matching; it creates no additional SourceRead grant.
-    ctx.require_subject()
+    ctx.namespace_id
     rows = (
         await view.connection.execute(
             select(
@@ -41,10 +41,10 @@ async def named_source_observations_in(
                 observations.c.record,
                 materials.c.record.label("material_record"),
             )
-            .join(materials, materials.c.id == observations.c.material_id)
+            .join(materials, (materials.c.id == observations.c.material_id) & (materials.c.namespace_id == observations.c.namespace_id))
             .where(
                 observations.c.namespace_id == ctx.namespace_id,
-                observations.c.subject_id == ctx.subject_id,
+                
                 materials.c.namespace_id == ctx.namespace_id,
             )
         )

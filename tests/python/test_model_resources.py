@@ -1,249 +1,222 @@
-"""Prompt restoration and one role budget across actual request purposes."""
+"""Current model resources, compiled provider messages, and immutable completed results."""
 
 import asyncio
+import json
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from threading import Thread
+from uuid import uuid4
 
 import pytest
-from jinja2 import UndefinedError
-from nous_sdk.contracts import CallContext
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
+from nous_sdk.contracts.prompt_compilation import PromptMessage
+from pydantic import BaseModel
 
-from nous.platform.errors import NousError
-from nous.platform.models.ledger import CallLedger
-from nous.platform.persistence import Authority
-from nous.platform.prompts import PromptService
+from nous.application import Application
+from nous.platform.configuration import Settings
+from nous.platform.configuration.models import ModelConfiguration
+from nous.platform.models.roles import RoleDefinition
 
 
-def test_prompt_preview_history_restore_and_restart(tmp_path: Path):
-    async def scenario():
-        path = tmp_path / "authority.sqlite"
-        authority = Authority(path)
-        prompts = PromptService(authority)
-        await authority.initialize()
-        ctx = CallContext(
-            credential_source_ids=None, caller_id="instance-admin", namespace_id="instance"
-        )
-        try:
-            default = await prompts.get(ctx, "formation")
-            assert "source_text" in default["variable_names"]
-            await prompts.save(ctx, "formation", "Remember {{ source_text }}", "edit-one")
-            preview = prompts.preview(
+class SelectionInput(BaseModel):
+    question: str
+    passages: tuple[str, ...]
+
+
+def test_compiled_messages_primitive_output_and_resource_budget(tmp_path, monkeypatch):
+    received = []
+    readme = Path("README.md").read_text(encoding="utf-8")[:1000]
+
+    class Provider(BaseHTTPRequestHandler):
+        def log_message(self, *_args):
+            pass
+
+        def do_POST(self):
+            body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            received.append(body)
+            result = json.dumps(
                 {
-                    "id": "formation",
-                    "revision": None,
-                    "template": "Draft {{ text }}",
-                    "active": False,
-                },
-                {"text": "真实材料"},
-            )
-            assert preview["rendered"] == "Draft 真实材料"
-            with pytest.raises(UndefinedError):
-                prompts.preview(
-                    {
-                        "id": "formation",
-                        "revision": None,
-                        "template": "{{ missing }}",
-                        "active": False,
-                    },
-                    {},
-                )
-            assert (await prompts.get(ctx, "formation"))["revision"] == 1
-            await prompts.save(ctx, "formation", "Changed {{ source_text }}", "edit-two")
-            await prompts.activate(ctx, "formation", 1, "restore-one")
-            result = await prompts.render(ctx, {"source_text": "原件"}, "formation")
-            assert result["rendered"] == "Remember 原件"
-            history = await prompts.history(ctx, "formation")
-            assert [row["revision"] for row in history] == [2, 1, 0]
-            assert [row["revision"] for row in history if row["active"]] == [1]
-            await prompts.activate(ctx, "formation", 0, "restore-default")
-            assert (await prompts.get(ctx, "formation"))["template_hash"] == default[
-                "template_hash"
-            ]
-        finally:
-            await authority.close()
-        reopened = Authority(path)
-        await reopened.initialize()
-        try:
-            value = await PromptService(reopened).get(ctx, "formation")
-            assert value["revision"] == 0 and value["source"] == "bundled"
-        finally:
-            await reopened.close()
+                    "id": f"wire-{len(received)}",
+                    "object": "chat.completion",
+                    "created": 1,
+                    "model": body["model"],
+                    "choices": [
+                        {
+                            "index": 0,
+                            "message": {"role": "assistant", "content": '{"response":[0]}'},
+                            "finish_reason": "stop",
+                        }
+                    ],
+                    "usage": {"prompt_tokens": 20, "completion_tokens": 5, "total_tokens": 25},
+                }
+            ).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(result)))
+            self.end_headers()
+            self.wfile.write(result)
 
-    asyncio.run(scenario())
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Provider)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    monkeypatch.setenv("NOUS_WIRE_TEST_KEY", "local-protocol-fixture")
 
-
-def test_text_and_media_share_one_formation_role_budget(tmp_path: Path):
     async def scenario():
-        authority = Authority(tmp_path / "authority.sqlite")
-        ledger = CallLedger(authority)
-        await authority.initialize()
-        ctx = CallContext(
-            credential_source_ids=None,
-            caller_id="worker",
-            namespace_id="research",
-            subject_id="owner",
+        app = Application(Settings(instance=tmp_path / "instance"))
+        app.models.roles.register(
+            RoleDefinition("wire_selection", "indices", SelectionInput, list[int], default=True)
         )
+        await app.authority.initialize()
+        await app.configuration.initialize()
+        ctx = CallContext(caller_id="owner", namespace_id=str(uuid4()), credential_source_ids=None)
         try:
-            call_id, _ = await ledger.reserve(
-                ctx, "media.formation", {"input": "image"}, 1, budget_role="formation"
+            await app.identity.create_namespace(
+                ctx, "protocol", "create", namespace_id=ctx.namespace_id
             )
-            await ledger.finish(ctx, call_id, {"result": "retained"}, {})
-            reused, output = await ledger.reserve(
-                ctx, "media.formation", {"input": "image"}, 1, budget_role="formation"
+            await app.configuration.set(ctx, "network", {"trust_env": False})
+            await app.prompts.save(
+                ctx,
+                "wire-selection",
+                "选择相关段落，返回编号。\n<!-- input -->\n{{ question }}\n{{ passages | tojson }}",
+                "prompt",
             )
-            assert reused == call_id and output == {"result": "retained"}
-            with pytest.raises(NousError) as caught:
-                await ledger.reserve(ctx, "formation", {"input": "text"}, 1)
-            assert caught.value.code == "ResourceExhausted"
-            # Description has its own configured role allowance.
-            await ledger.reserve(
-                ctx, "media.description", {"input": "image"}, 1, budget_role="description"
+            await app.configuration.set(
+                ctx,
+                "models",
+                {
+                    "providers": {
+                        "wire": {
+                            "base_url": f"http://127.0.0.1:{server.server_port}/v1",
+                            "credential_env": "NOUS_WIRE_TEST_KEY",
+                        }
+                    },
+                    "catalog": {
+                        "wire": {
+                            "provider": "wire",
+                            "actual_name": "gpt-4.1-mini",
+                            "operations": ["generation"],
+                            "max_requests_per_day": 1,
+                        }
+                    },
+                    "presets": {"wire": {"model": "wire", "max_output_tokens": 128}},
+                    "roles": {
+                        role: {
+                            "preset": "wire",
+                            "purpose": "wire_selection",
+                            "prompt_id": "wire-selection",
+                            "budget": {"max_calls_per_day": 4},
+                        }
+                        for role in ("wire", "wire_other")
+                    },
+                },
             )
+            variables = {
+                "question": "软件提供什么能力？",
+                "passages": [readme],
+            }
+            context = (PromptMessage(role="user", content="当前任务：阅读项目介绍。"),)
+            generated = await app.models.generate(
+                ctx,
+                "wire",
+                variables,
+                list[int],
+                invocation_id="selection",
+                context_messages=context,
+            )
+            assert generated.output == [0]
+            assert len(received) == 1
+            request = received[0]
+            assert request["messages"][0] == {
+                "role": "system",
+                "content": "选择相关段落，返回编号。",
+            }
+            assert any(item.get("content") == context[0].content for item in request["messages"])
+            assert request["response_format"]["type"] == "json_schema"
+            assert (
+                request["response_format"]["json_schema"]["schema"]["properties"]["response"][
+                    "type"
+                ]
+                == "array"
+            )
+            assert "tools" not in request
+            await app.prompts.save(
+                ctx,
+                "wire-selection",
+                "新的编辑说明。\n<!-- input -->\n{{ question }}\n{{ passages | tojson }}",
+                "edit-prompt",
+            )
+            reused = await app.models.generate(
+                ctx,
+                "wire",
+                variables,
+                list[int],
+                invocation_id="selection",
+                context_messages=context,
+            )
+            assert (
+                reused.call_id == generated.call_id and reused.output == [0] and len(received) == 1
+            )
+            with pytest.raises(DomainError) as exhausted:
+                await app.models.generate(
+                    ctx, "wire_other", variables, list[int], invocation_id="other"
+                )
+            assert exhausted.value.code == "model_budget_exhausted" and len(received) == 1
+            resources = ModelConfiguration.model_validate(
+                (await app.configuration.effective(ctx, "models"))["value"]
+            )
+            resources.catalog["wire"] = resources.catalog["wire"].model_copy(
+                update={"max_requests_per_day": 2}
+            )
+            await app.configuration.set(
+                ctx, "models", resources.model_dump(mode="json")
+            )
+            resumed = await app.models.generate(
+                ctx, "wire_other", variables, list[int], invocation_id="other"
+            )
+            assert resumed.output == [0] and len(received) == 2
         finally:
-            await authority.close()
+            await app.close()
 
-    asyncio.run(scenario())
+    try:
+        asyncio.run(scenario())
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
 
 
-def test_http_backup_restores_a_new_instance_only(tmp_path: Path):
+def test_toml_reload_scope_and_restart(tmp_path):
     async def scenario():
-        import httpx
-
-        from nous.platform.configuration import Settings
-        from nous.transports.http import create_app
-
-        settings = Settings(instance=tmp_path / "original")
-        app = create_app(settings)
-        async with app.router.lifespan_context(app):
-            async with httpx.AsyncClient(
-                transport=httpx.ASGITransport(app=app),
-                base_url="http://test",
-                headers={"Authorization": "Bearer " + settings.token_file.read_text().strip()},
-            ) as client:
-                created = await client.post("/api/backups")
-                assert created.status_code == 200
-                archive = await client.get("/api/backups/" + created.json()["filename"])
-                assert archive.status_code == 200
-                restored = await client.post(
-                    "/api/backups/restore",
-                    params={"instance_name": "restored"},
-                    content=archive.content,
-                    headers={"Content-Type": "application/zip"},
-                )
-                assert restored.status_code == 200
-                value = restored.json()
-                target = tmp_path / "restored"
-                assert value["instance"] == str(target)
-                assert (target / "data" / "authority.sqlite").is_file()
-                new_token = await asyncio.to_thread(Path(value["credential_file"]).read_text)
-                original_token = await asyncio.to_thread(settings.token_file.read_text)
-                assert new_token != original_token
-                again = await client.post(
-                    "/api/backups/restore",
-                    params={"instance_name": "restored"},
-                    content=archive.content,
-                )
-                assert again.status_code == 409
-                escaped = await client.post(
-                    "/api/backups/restore",
-                    params={"instance_name": "../escape"},
-                    content=archive.content,
-                )
-                assert escaped.status_code == 400
-                invalid = await client.post(
-                    "/api/backups/restore",
-                    params={"instance_name": "invalid"},
-                    content=b"broken archive",
-                )
-                assert invalid.status_code == 400 and not (tmp_path / "invalid").exists()
-
-    asyncio.run(scenario())
-
-
-def test_durable_model_invocation_keeps_paid_result_across_configuration_changes(tmp_path: Path):
-    async def scenario():
-        from nous_sdk.contracts import DomainError
-        from nous_sdk.contracts.growth import GrowthProposal
-        from sqlalchemy import func, select
-
-        from nous.application import Application
-        from nous.platform.configuration import Settings
-        from nous.platform.models.ledger import calls
-
         app = Application(Settings(instance=tmp_path / "instance"))
         await app.authority.initialize()
-        ctx = CallContext(
-            credential_source_ids=None,
-            caller_id="worker",
-            namespace_id="research",
-            subject_id="owner",
+        await app.configuration.initialize()
+        ctx = CallContext(caller_id="owner", namespace_id=str(uuid4()), credential_source_ids=None)
+        await app.identity.create_namespace(
+            ctx, "settings", "create", namespace_id=ctx.namespace_id
         )
         try:
-            call, output = await app.models.ledger.reserve(
-                ctx,
-                "maintenance",
-                {"prompt": "original frozen request"},
-                10,
-                invocation_id="run:one",
+            await app.configuration.set(
+                ctx, "growth", {"mode": "review", "max_snapshot_entries": 17}
             )
-            assert output is None
-            with pytest.raises(DomainError) as pending:
-                await app.models.ledger.reserve(
-                    ctx,
-                    "maintenance",
-                    {"prompt": "changed request"},
-                    10,
-                    invocation_id="run:one",
-                )
-            assert pending.value.code == "model_invocation_unavailable"
-            await app.models.ledger.finish(
-                ctx,
-                call,
-                {"summary": "retained result", "rationale": "retained basis", "actions": []},
-                {},
+            await app.configuration.set(
+                ctx, "growth", {"mode": "off"}, scope="namespace"
             )
-            await app.prompts.save(ctx, "maintenance", "Changed prompt {{ source }}", "change")
-            # The role has no configured model or key: recovery reads the existing invocation first.
-            recovered = await app.models.generate(
-                ctx,
-                "maintenance",
-                {"different": "variables"},
-                GrowthProposal,
-                invocation_id="run:one",
-            )
-            assert recovered.call_id == call and recovered.output.summary == "retained result"
-            async with app.authority.read(ctx) as view:
-                assert await view.connection.scalar(select(func.count()).select_from(calls)) == 1
-            unknown, _ = await app.models.ledger.reserve(
-                ctx,
-                "maintenance",
-                {"prompt": "unknown outcome"},
-                10,
-                invocation_id="run:unknown",
-            )
-            await app.models.ledger.finish(ctx, unknown, None, {}, "CancelledUnknownOutcome")
-            with pytest.raises(DomainError) as unavailable:
-                await app.models.generate(
-                    ctx, "maintenance", {}, GrowthProposal, invocation_id="run:unknown"
-                )
-            assert unavailable.value.details["error_code"] == "CancelledUnknownOutcome"
-            async with app.authority.write(
-                ctx, "erase-before-reserve", operation_kind="source.erase", payload={}
-            ) as tx:
-                await app.models.ledger.purge_invocations_in(
-                    tx, ctx, "maintenance", ("run:erased-before-admission",)
-                )
-                tx.result(None)
-            with pytest.raises(DomainError) as retired:
-                await app.models.ledger.reserve(
-                    ctx,
-                    "maintenance",
-                    {"prompt": "already erased"},
-                    10,
-                    invocation_id="run:erased-before-admission",
-                )
-            assert retired.value.details["status"] == "purged"
+            effective = (await app.configuration.effective(ctx, "growth"))["value"]
+            assert effective["mode"] == "off" and effective["max_snapshot_entries"] == 17
+            path = app.configuration.path(ctx, "namespace")
+            path.write_text('[growth]\nmode="review"\n', encoding="utf-8")
+            await app.configuration.reload(ctx, "namespace")
+            assert (await app.configuration.effective(ctx, "growth"))["value"]["mode"] == "review"
         finally:
-            await app.network.close()
-            await app.authority.close()
+            await app.close()
+        restored = Application(Settings(instance=tmp_path / "instance"))
+        await restored.authority.initialize()
+        await restored.configuration.initialize()
+        try:
+            result = (await restored.configuration.effective(ctx, "growth"))["value"]
+            assert result["mode"] == "review" and result["max_snapshot_entries"] == 17
+        finally:
+            await restored.close()
 
     asyncio.run(scenario())

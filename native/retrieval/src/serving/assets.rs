@@ -15,11 +15,11 @@ pub(super) fn root_rows(prepared: &Prepared) -> Vec<FileTag> {
         .flat_map(|(id, root)| {
             prepared.root_tags[root]
                 .iter()
-                .enumerate()
-                .map(|(position, key)| FileTag {
+                .map(|key| FileTag {
                     file_id: *id,
                     tag_id: tags[key],
-                    position: position as i64 + 1,
+                    // Membership supplies co-occurrence, not a fabricated temporal order.
+                    position: 0,
                 })
                 .collect::<Vec<_>>()
         })
@@ -53,14 +53,55 @@ pub(super) fn build_assets(prepared: &Prepared) -> Result<(MemoAssets, Value, Gr
     })
     .map_err(anyhow::Error::msg)?;
     let tag_vectors = tag_vectors(prepared);
-    let artifact = if let Some(edges) = &explicit_edges {
+    let mut anchor_gain = geometry.anchor_gain.clone();
+    if let Some(usage) = prepared
+        .snapshot
+        .artifact_config
+        .get("usage_gain")
+        .and_then(Value::as_object)
+    {
+        for (id, key) in &prepared.mappings.tags {
+            if let Some(gain) = usage.get(key).and_then(Value::as_f64) {
+                ensure!(
+                    gain.is_finite() && gain >= 0.0,
+                    "invalid usage accessibility gain"
+                );
+                *anchor_gain.entry(*id).or_insert(1.0) *= 1.0 + gain;
+            }
+        }
+    }
+    let cooccurrence = build_artifact(ArtifactInput {
+        dimension: prepared.identity.dimension,
+        model_sig: prepared.identity.space.clone(),
+        generation: prepared.identity.generation.clone(),
+        geometry_sig: geometry.signature.clone(),
+        rows,
+        tag_vectors,
+        anchor_gain: anchor_gain.clone(),
+        config: prepared.snapshot.artifact_config.clone(),
+    })
+    .map_err(anyhow::Error::msg)?;
+    let artifact = if let Some(explicit) = &explicit_edges {
+        let base = &cooccurrence.graph;
+        let mut edges = explicit.clone();
+        for (row, source) in base.node_ids.iter().enumerate() {
+            for cursor in base.row_offsets[row]..base.row_offsets[row + 1] {
+                edges.push((
+                    *source,
+                    base.node_ids[base.targets[cursor]],
+                    base.weights[cursor],
+                ));
+            }
+        }
         let graph = nous_vcp::artifact::graph_from_edges(
-            edges,
-            geometry.anchor_gain.clone(),
+            &edges,
+            anchor_gain,
             &prepared.snapshot.artifact_config,
         )
         .map_err(anyhow::Error::msg)?;
         let mut owned = (*graph).clone();
+        owned.provenance = cooccurrence.graph.provenance.clone();
+
         if let Some(explicit) = &prepared.snapshot.graph {
             let tag_ids = prepared
                 .mappings
@@ -113,20 +154,10 @@ pub(super) fn build_assets(prepared: &Prepared) -> Result<(MemoAssets, Value, Gr
         );
         nous_vcp::artifact::ArtifactOutput {
             graph,
-            metadata: json!({"artifactSig":digest,"graph_source":"explicit","positive_edges":edges.len(),"negative_edges":prepared.snapshot.graph.as_ref().map(|graph|graph.polarities.iter().filter(|polarity|**polarity<0).count()).unwrap_or(0)}),
+            metadata: json!({"artifactSig":digest,"graph_source":"cooccurrence+association","cooccurrence_edges":base.weights.len(),"association_edges":explicit.len(),"usage_nodes":prepared.snapshot.artifact_config.get("usage_gain").and_then(Value::as_object).map_or(0,serde_json::Map::len),"positive_edges":edges.len(),"negative_edges":prepared.snapshot.graph.as_ref().map(|graph|graph.polarities.iter().filter(|polarity|**polarity<0).count()).unwrap_or(0)}),
         }
     } else {
-        build_artifact(ArtifactInput {
-            dimension: prepared.identity.dimension,
-            model_sig: prepared.identity.space.clone(),
-            generation: prepared.identity.generation.clone(),
-            geometry_sig: geometry.signature.clone(),
-            rows,
-            tag_vectors,
-            anchor_gain: geometry.anchor_gain.clone(),
-            config: prepared.snapshot.artifact_config.clone(),
-        })
-        .map_err(anyhow::Error::msg)?
+        cooccurrence
     };
     let graph = GraphDisk::capture(&artifact.graph);
     let geometry = serde_json::to_value(geometry)?;

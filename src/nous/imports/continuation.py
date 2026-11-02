@@ -6,20 +6,18 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from nous_sdk.contracts import (
-    AdmitFiles,
-    CallContext,
     CatalogView,
-    DomainError,
     ImportUnit,
     ProcessCatalog,
     UnitOutput,
 )
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.imports import UnitAttempt
 from pydantic import JsonValue
 from sqlalchemy import or_, select
 
 from nous.cognition.graph_state import heads_in
-from nous.cognition.schema import vectors
 from nous.material.service import require_observation_in
 from nous.platform.execution import require_job_in
 from nous.platform.persistence import ReadView, WriteTx
@@ -43,6 +41,8 @@ def formation_options(unit: ImportUnit, command: ProcessCatalog) -> dict[str, Js
 
 
 def same_content(unit: ImportUnit, previous: ProcessCatalog, current: ProcessCatalog) -> bool:
+    if previous.formation_purpose != current.formation_purpose:
+        return False
     if previous.deferred_formation != current.deferred_formation:
         return False
     if unit.requires_llm and previous.llm_enabled != current.llm_enabled:
@@ -61,18 +61,15 @@ def process_request(row: dict[str, JsonValue]) -> ProcessCatalog | None:
     if not isinstance(value, dict):
         return None
     if row.get("kind") == "files":
-        source = AdmitFiles.model_validate(value)
         catalog_id = row.get("catalog_id")
         if not isinstance(catalog_id, str):
             return None
-        return ProcessCatalog(
-            operation_id=source.operation_id + ":process",
-            force=source.force,
-            catalog_id=catalog_id,
-            deferred_formation=source.deferred_formation,
-            llm_enabled=source.llm_enabled,
-            formation_retries=source.formation_retries,
-            vectors=source.vectors,
+        return ProcessCatalog.model_validate(
+            {
+                **{key: item for key, item in value.items() if key in ProcessCatalog.model_fields},
+                "operation_id": str(value["operation_id"]) + ":process",
+                "catalog_id": catalog_id,
+            }
         )
     return ProcessCatalog.model_validate(value) if "catalog_id" in value else None
 
@@ -84,7 +81,6 @@ async def request_profiles_in(
         await view.connection.execute(
             select(requests.c.record).where(
                 requests.c.record["context"]["namespace_id"].as_string() == ctx.namespace_id,
-                requests.c.record["context"]["subject_id"].as_string() == ctx.require_subject(),
                 or_(
                     requests.c.record["command"]["catalog_id"].as_string() == catalog_id,
                     requests.c.record["catalog_id"].as_string() == catalog_id,
@@ -113,19 +109,12 @@ async def validate_retry_in(
         raise DomainError("import_retry_mismatch", "Retry parent is not processing this catalog")
 
 
-async def vectors_complete_in(view: ReadView | WriteTx, output: UnitOutput) -> bool:
-    requested = {ref.exact() for ref in output.cognition}
-    if not requested:
-        return False
-    rows = (
-        await view.connection.execute(
-            select(vectors.c.reference, vectors.c.space).where(vectors.c.reference.in_(requested))
-        )
-    ).all()
-    spaces: dict[str, set[str]] = {}
-    for reference, space in rows:
-        spaces.setdefault(str(space), set()).add(str(reference))
-    return any(requested.issubset(present) for present in spaces.values())
+async def vectors_complete_in(self: ImportService, ctx: CallContext, output: UnitOutput) -> bool:
+    return (
+        bool(output.cognition)
+        and self.projection is not None
+        and not await self.projection.missing(ctx, output.cognition, head_only=False)
+    )
 
 
 @dataclass(frozen=True)
@@ -221,6 +210,6 @@ async def unit_candidates_in(
             rank = {"disabled": 0, "metadata_allowed": 1, "required": 2}
             complete = complete and rank[previous.vectors] >= rank[command.vectors]
             if command.vectors == "required":
-                complete = complete and await vectors_complete_in(view, output)
+                complete = complete and await vectors_complete_in(self, ctx, output)
         result.setdefault(unit.id, []).append(UnitCandidate(output, attempt, complete))
     return result

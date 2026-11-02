@@ -6,6 +6,7 @@ from contextlib import AbstractAsyncContextManager
 from nous_sdk import NousClient
 from nous_sdk.contracts.maintenance import (
     CreateMaintenanceSchedule,
+    EditMaintenanceProposal,
     ReviewMaintenance,
     StartMaintenance,
 )
@@ -18,8 +19,16 @@ def register_maintenance(
     server: MCPServer,
     client: Callable[[], AbstractAsyncContextManager[NousClient]],
     namespace_id: str,
-    subject_id: str,
+    
 ) -> None:
+    @server.tool()
+    async def edit_maintenance(run_id: str, command: EditMaintenanceProposal) -> JsonObject:
+        """Compile an explicit human edit while keeping already adopted groups."""
+        async with client() as api:
+            return (
+                await api.edit_maintenance(namespace_id,  run_id, command)
+            ).model_dump(mode="json")
+
     @server.tool()
     async def start_maintenance(command: StartMaintenance) -> JsonObject:
         """Freeze supported knowledge and generate a reviewable proposal through the configured model.
@@ -28,7 +37,7 @@ def register_maintenance(
         or rejecting; generation itself never adopts the proposed cognition.
         """
         async with client() as api:
-            return (await api.start_maintenance(namespace_id, subject_id, command)).model_dump(
+            return (await api.start_maintenance(namespace_id,  command)).model_dump(
                 mode="json"
             )
 
@@ -39,7 +48,7 @@ def register_maintenance(
             return {
                 "items": [
                     run.model_dump(mode="json")
-                    for run in await api.maintenance_runs(namespace_id, subject_id, limit=limit)
+                    for run in await api.maintenance_runs(namespace_id,  limit=limit)
                 ]
             }
 
@@ -47,20 +56,19 @@ def register_maintenance(
     async def read_maintenance(run_id: str) -> JsonObject:
         """Read exact proposal actions/catalog/revision and review facts; read_job supplies execution state."""
         async with client() as api:
-            return (await api.maintenance_run(namespace_id, subject_id, run_id)).model_dump(
+            return (await api.maintenance_run(namespace_id,  run_id)).model_dump(
                 mode="json"
             )
 
     @server.tool()
     async def review_maintenance(run_id: str, command: ReviewMaintenance) -> JsonObject:
-        """Explicitly adopt all proposed actions atomically, or reject, using expected_revision.
+        """Adopt selected ready groups and their prerequisites, or reject, using expected_revision.
 
-        Exact evidence, local references, current revision and Journal knowledge
-        cutoff are checked by the cognition owner; no partial adoption is reported.
+        Independent failed groups remain readable and editable; each coupled group is atomic.
         """
         async with client() as api:
             return (
-                await api.review_maintenance(namespace_id, subject_id, run_id, command)
+                await api.review_maintenance(namespace_id,  run_id, command)
             ).model_dump(mode="json")
 
     @server.tool()
@@ -72,7 +80,7 @@ def register_maintenance(
         """
         async with client() as api:
             return (
-                await api.create_maintenance_schedule(namespace_id, subject_id, command)
+                await api.create_maintenance_schedule(namespace_id,  command)
             ).model_dump(mode="json")
 
     @server.tool()
@@ -82,7 +90,7 @@ def register_maintenance(
             return {
                 "items": [
                     policy.model_dump(mode="json")
-                    for policy in await api.maintenance_schedules(namespace_id, subject_id)
+                    for policy in await api.maintenance_schedules(namespace_id)
                 ]
             }
 
@@ -94,6 +102,6 @@ def register_maintenance(
         async with client() as api:
             return (
                 await api.stop_maintenance_schedule(
-                    namespace_id, subject_id, schedule_id, operation_id=operation_id
+                    namespace_id,  schedule_id, operation_id=operation_id
                 )
             ).model_dump(mode="json")

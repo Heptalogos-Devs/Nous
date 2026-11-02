@@ -2,56 +2,129 @@
 
 from __future__ import annotations
 
+from nous_sdk.presentation import body_text
+
+from collections import Counter
 from typing import TYPE_CHECKING
 
-from nous_sdk.contracts import CallContext, CognitiveRecord, CognitiveRef, DomainError, EpisodeBody
-from nous_sdk.contracts.episodes import EpisodeQuery, EpisodeView
+from nous_sdk.contracts import (
+    AdoptCognition,
+    CognitiveRecord,
+    CognitiveRef,
+    EpisodeBody,
+    EpisodeMember,
+    EvidenceLink,
+    RevisionCause,
+    TimeRange,
+)
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
+from nous_sdk.contracts.episodes import (
+    EpisodeQuery,
+    EpisodeRebuildSubmission,
+    EpisodeSegmentationDraft,
+    EpisodeSegmentationInput,
+    EpisodeSegmentationMember,
+    EpisodeView,
+    ProcessEpisodeSources,
+    RebuildEpisodes,
+)
+from nous_sdk.contracts.common import Contract, ModelProvenance
+from pydantic import JsonValue, TypeAdapter
 from sqlalchemy import func, select
 
-from nous.identity.service import require_subject_in
+from nous.identity.access import require_namespace_in
 from nous.material.named_sources import named_source_observations_in, source_name
 from nous.material.service import materials, observations, require_observation_in
-from nous.platform.execution import DurableExecution
+from nous.platform.execution import DurableExecution, JobSpec
 from nous.platform.persistence import Authority, ReadView, WriteTx
 
-from . import episode_jobs, episode_rebuild
-from .projection import body_text, references_in
+from .lifecycle import selectable
+from .projection import references_in
+from .revision_state import RevisionState
 from .schema import revisions
 
 if TYPE_CHECKING:
     from .models import ModelServices
-    from .service import CognitionService
+    from .records import CognitiveRecords
+
+
+class EpisodeSourceSnapshot(Contract):
+    source: str
+    members: tuple[CognitiveRef, ...]
+    originals: tuple[CognitiveRef, ...]
+    observations: tuple[str, ...]
+
+
+class EpisodeRebuildIntent(Contract):
+    context: CallContext
+    command: RebuildEpisodes
+    snapshots: tuple[EpisodeSourceSnapshot, ...]
+
+
+def groups(
+    records: tuple[CognitiveRecord, ...], command: RebuildEpisodes
+) -> list[list[CognitiveRecord]]:
+    """Adapt A-Memorix's interval-component ordering before model-call size splitting.
+
+    Native occurrence points and clock domains are retained. Formation order only
+    places unknown-time inputs in a batch; it never supplies an occurrence time.
+    """
+
+    def order(record: CognitiveRecord) -> tuple[str, int, str]:
+        point = record.times.event
+        return (
+            point.domain if point else "",
+            point.coordinate if point else record.times.formation.coordinate,
+            record.reference.exact(),
+        )
+
+    result: list[list[CognitiveRecord]] = []
+    current: list[CognitiveRecord] = []
+    size = 0
+    previous: tuple[str, int, str] | None = None
+    for record in sorted(records, key=order):
+        point = order(record)
+        length = len(body_text(record.body))
+        boundary = previous is not None and (
+            point[0] != previous[0]
+            or (bool(point[0]) and point[1] > previous[1] + command.group_gap_ms)
+        )
+        if current and (
+            boundary
+            or len(current) >= command.max_members_per_call
+            or size + length > command.max_characters_per_call
+        ):
+            result.append(current)
+            current, size = ([], 0)
+        current.append(record)
+        size += length
+        previous = point
+    if current:
+        result.append(current)
+    return result
 
 
 class EpisodeService:
-    submit_rebuild = episode_rebuild.submit_rebuild
-    run_rebuild = episode_rebuild.run_rebuild
-    status = episode_jobs.status
-    process_sources = episode_jobs.process_sources
-
     async def source_names(self, ctx: CallContext) -> tuple[str, ...]:
         names: set[str] = set()
         async with self.authority.read(ctx) as view:
-            await require_subject_in(view, ctx)
+            await require_namespace_in(view, ctx)
             for kind in ("memory", "episode"):
                 for record in await self.heads_in(view, ctx, kind):
-                    if (
-                        not record.deleted
-                        and not record.purged
-                        and await self.cognition.visible_in(view, ctx, record)
-                    ):
+                    if selectable(record) and await self.cognition.visible_in(view, ctx, record):
                         names.update(await self.names_in(view, ctx, record))
         return tuple(sorted(names))
 
     def __init__(
         self,
         authority: Authority,
-        cognition: CognitionService,
+        cognition: CognitiveRecords,
         models: ModelServices,
         execution: DurableExecution,
     ):
-        self.authority, self.cognition = authority, cognition
-        self.models, self.execution = models, execution
+        self.authority, self.cognition = (authority, cognition)
+        self.models, self.execution = (models, execution)
 
     async def heads_in(
         self,
@@ -64,7 +137,6 @@ class EpisodeService:
     ) -> tuple[CognitiveRecord, ...]:
         statement = select(revisions.c.record).where(
             revisions.c.namespace_id == ctx.namespace_id,
-            revisions.c.subject_id == ctx.require_subject(),
             revisions.c.kind == kind,
             revisions.c.head.is_(True),
         )
@@ -74,7 +146,7 @@ class EpisodeService:
                 select(roots.c.value).where(roots.c.value.in_(source_roots)).exists()
             )
         if track is not None:
-            statement = statement.where(revisions.c.record["body"]["track"].as_string() == track)
+            statement = statement.where(revisions.c.namespace_id == ctx.namespace_id, revisions.c.record['body']['track'].as_string() == track)
         return tuple(
             CognitiveRecord.model_validate(value)
             for value in (await view.connection.execute(statement)).scalars()
@@ -92,7 +164,6 @@ class EpisodeService:
                 await view.connection.execute(
                     select(observations.c.id).where(
                         observations.c.namespace_id == ctx.namespace_id,
-                        observations.c.subject_id == ctx.require_subject(),
                         observations.c.active.is_(True),
                     )
                 )
@@ -107,7 +178,7 @@ class EpisodeService:
             await require_observation_in(view, ctx, identifier)
         members: list[CognitiveRecord] = []
         for record in await self.heads_in(view, ctx, "memory", source_roots=selected):
-            if record.deleted or record.purged or not selected.intersection(record.source_roots):
+            if not selectable(record) or not selected.intersection(record.source_roots):
                 continue
             members.append(await self.cognition.get_in(view, ctx, record.reference))
         originals: list[CognitiveRecord] = []
@@ -115,10 +186,10 @@ class EpisodeService:
             if (
                 record.deleted
                 or record.purged
-                or not isinstance(record.body, EpisodeBody)
-                or record.body.state != "active"
-                or record.body.track != "source:" + source
-                or not selected.intersection(record.source_roots)
+                or (not isinstance(record.body, EpisodeBody))
+                or (record.body.state != "active")
+                or (record.body.track != "source:" + source)
+                or (not selected.intersection(record.source_roots))
             ):
                 continue
             originals.append(await self.cognition.get_in(view, ctx, record.reference))
@@ -140,10 +211,9 @@ class EpisodeService:
         rows = (
             await view.connection.execute(
                 select(observations.c.record, materials.c.record.label("material_record"))
-                .join(materials, materials.c.id == observations.c.material_id)
+                .join(materials, (materials.c.id == observations.c.material_id) & (materials.c.namespace_id == observations.c.namespace_id))
                 .where(
                     observations.c.namespace_id == ctx.namespace_id,
-                    observations.c.subject_id == ctx.subject_id,
                     observations.c.id.in_(record.source_roots),
                 )
             )
@@ -160,13 +230,15 @@ class EpisodeService:
 
     async def query(self, ctx: CallContext, command: EpisodeQuery) -> tuple[EpisodeView, ...]:
         async with self.authority.read(ctx) as view:
-            await require_subject_in(view, ctx)
+    
+            await require_namespace_in(view, ctx, "episodes")
+            await require_namespace_in(view, ctx)
             person_members: set[str] | None = None
             if command.person is not None:
                 person = await self.cognition.get_in(view, ctx, command.person)
                 if person.reference.kind != "entity":
                     raise DomainError("person_required", "Episode person filter requires an Entity")
-                person_members = {reference.exact() for reference in references_in(person.body)}
+                person_members = {reference.id for reference in references_in(person.body)}
             found: list[CognitiveRecord] = []
             for record in await self.heads_in(view, ctx, "episode"):
                 body = record.body
@@ -174,31 +246,39 @@ class EpisodeService:
                     record.deleted
                     or not isinstance(body, EpisodeBody)
                     or body.state != "active"
-                    or not await self.cognition.visible_in(view, ctx, record)
+                    or (not await self.cognition.visible_in(view, ctx, record))
                 ):
                     continue
                 if command.query.casefold() not in body_text(body).casefold():
+                    continue
+                if command.track is not None and body.track != command.track:
                     continue
                 if command.source is not None and command.source not in await self.names_in(
                     view, ctx, record
                 ):
                     continue
-                if person_members is not None and not person_members.intersection(
-                    member.reference.exact() for member in body.members
+                if person_members is not None and (
+                    not person_members.intersection(member.reference.id for member in body.members)
                 ):
                     continue
-                wanted, actual = command.experience, body.experience
+                wanted, actual = (command.experience, body.experience)
                 if wanted is not None and (
                     wanted.domain != actual.domain
-                    or (wanted.start is not None or wanted.end is not None)
-                    and actual.start is None
-                    and actual.end is None
-                    or wanted.start is not None
-                    and actual.end is not None
-                    and actual.end < wanted.start
-                    or wanted.end is not None
-                    and actual.start is not None
-                    and actual.start > wanted.end
+                    or (
+                        (wanted.start is not None or wanted.end is not None)
+                        and actual.start is None
+                        and (actual.end is None)
+                    )
+                    or (
+                        wanted.start is not None
+                        and actual.end is not None
+                        and (actual.end <= wanted.start)
+                    )
+                    or (
+                        wanted.end is not None
+                        and actual.start is not None
+                        and (actual.start >= wanted.end)
+                    )
                 ):
                     continue
                 found.append(record)
@@ -236,7 +316,7 @@ class EpisodeService:
         if not 1 <= paragraph_limit <= 1000:
             raise DomainError("invalid_limit", "Paragraph limit must be between 1 and 1000")
         async with self.authority.read(ctx) as view:
-            await require_subject_in(view, ctx)
+            await require_namespace_in(view, ctx)
             record = await self.cognition.get_in(view, ctx, reference)
             return await self.view_in(view, ctx, record, paragraph_limit)
 
@@ -247,3 +327,201 @@ class EpisodeService:
         if any(record.reference.kind != "episode" for record in records):
             raise DomainError("episode_required", "The identity must identify an Episode")
         return records
+
+    async def submit_rebuild(
+        self, ctx: CallContext, command: RebuildEpisodes
+    ) -> EpisodeRebuildSubmission:
+        if len(set(command.sources)) != len(command.sources):
+            raise DomainError("episode_source_duplicate", "Source names must be distinct")
+        async with self.authority.write(ctx) as tx:
+            await require_namespace_in(tx, ctx, "memory")
+    
+            await require_namespace_in(tx, ctx, "episodes")
+            snapshots: list[EpisodeSourceSnapshot] = []
+            for source in command.sources:
+                members, originals, observation_ids = await self.source_snapshot_in(tx, ctx, source)
+                snapshots.append(
+                    EpisodeSourceSnapshot(
+                        source=source,
+                        observations=observation_ids,
+                        members=tuple(record.reference for record in members),
+                        originals=tuple(record.reference for record in originals),
+                    )
+                )
+            intent = EpisodeRebuildIntent(context=ctx, command=command, snapshots=tuple(snapshots))
+            job = await tx.enqueue(
+                JobSpec('nous.episodes.rebuild', 'formation', args=(intent.model_dump(mode='json'),), scope=ctx.namespace_id)
+            )
+            return EpisodeRebuildSubmission(job_id=job.workflow_id, sources=command.sources)
+
+    async def run_rebuild(self, payload: JsonValue) -> JsonValue:
+        intent = EpisodeRebuildIntent.model_validate(payload)
+        ctx, command = (intent.context, intent.command)
+        operation = command.operation_id + ":publish"
+        plans: list[tuple[EpisodeSourceSnapshot, list[tuple[EpisodeBody, ModelProvenance]]]] = []
+        for snapshot in intent.snapshots:
+            async with self.authority.read(ctx) as view:
+                members, originals, observation_ids = await self.source_snapshot_in(
+                    view, ctx, snapshot.source
+                )
+                if (
+                    tuple(record.reference for record in members) != snapshot.members
+                    or tuple(record.reference for record in originals) != snapshot.originals
+                    or observation_ids != snapshot.observations
+                ):
+                    raise DomainError(
+                        "episode_source_changed", "Source changed after rebuild admission"
+                    )
+            planned: list[tuple[EpisodeBody, ModelProvenance]] = []
+            for index, group in enumerate(groups(members, command)):
+                catalog = {f"M{ordinal + 1}": record for ordinal, record in enumerate(group)}
+                variables = EpisodeSegmentationInput(
+                    source=snapshot.source,
+                    members=tuple(
+                        (
+                            EpisodeSegmentationMember(
+                                key=key,
+                                reference=record.reference,
+                                content=body_text(record.body),
+                                event=TimeRange(
+                                    domain=record.times.event.domain,
+                                    start=record.times.event.coordinate,
+                                    end=record.times.event.coordinate,
+                                )
+                                if record.times.event
+                                else None,
+                            )
+                            for key, record in catalog.items()
+                        )
+                    ),
+                )
+                generated = await self.models.generate(
+                    ctx,
+                    "episode",
+                    variables.model_dump(),
+                    EpisodeSegmentationDraft,
+                    source_ids=tuple(
+                        sorted({root for record in group for root in record.source_roots})
+                    ),
+                )
+                assigned = [
+                    key for segment in generated.output.episodes for key in segment.member_keys
+                ]
+                if Counter(assigned) != Counter(catalog.keys()):
+                    raise DomainError(
+                        "episode_coverage",
+                        "Every frozen member must occur exactly once",
+                    )
+                for segment in generated.output.episodes:
+                    planned.append(
+                        (
+                            EpisodeBody(
+                                title=segment.title,
+                                summary=segment.summary,
+                                track="source:" + snapshot.source,
+                                experience=segment.experience,
+                                members=tuple(
+                                    (
+                                        EpisodeMember(
+                                            reference=catalog[key].reference, ordinal=ordinal
+                                        )
+                                        for ordinal, key in enumerate(segment.member_keys)
+                                    )
+                                ),
+                                boundary_explanation=segment.boundary_explanation,
+                                lineage=snapshot.originals,
+                            ),
+                            generated.producer,
+                        )
+                    )
+            plans.append((snapshot, planned))
+        async with self.authority.write(ctx) as tx:
+            await require_namespace_in(tx, ctx, "memory")
+            results: list[dict[str, JsonValue]] = []
+            for snapshot, planned in plans:
+                members, originals, observation_ids = await self.source_snapshot_in(
+                    tx, ctx, snapshot.source
+                )
+                if (
+                    tuple(record.reference for record in members) != snapshot.members
+                    or tuple(record.reference for record in originals) != snapshot.originals
+                    or observation_ids != snapshot.observations
+                ):
+                    raise DomainError(
+                        "episode_source_changed", "Source changed before Episode publication"
+                    )
+                created: list[CognitiveRef] = []
+                for body, producer in planned:
+                    record = await self.cognition.adopt_in(
+                        tx,
+                        ctx,
+                        AdoptCognition(
+                            body=body,
+                            evidence=tuple(
+                                EvidenceLink(reference=member.reference) for member in body.members
+                            ),
+                            producer=producer,
+                        ),
+                    )
+                    created.append(record.reference)
+                for old in originals:
+                    assert isinstance(old.body, EpisodeBody)
+                    record = await self.cognition.adopt_in(
+                        tx,
+                        ctx,
+                        AdoptCognition(
+                            id=old.reference.id,
+                            expected_revision=old.reference.revision,
+                            body=old.body.model_copy(
+                                update={"state": "resegmented", "successors": tuple(created)}
+                            ),
+                            evidence=(
+                                EvidenceLink(reference=old.reference, role="source_rebuild"),
+                            ),
+                            times=old.times,
+                        ),
+                        state=RevisionState(
+                            cause=RevisionCause(
+                                action="episode.rebuild",
+                                actor=ctx.caller_id,
+                                reason="Explicit complete-source rebuild",
+                                parent=old.reference,
+                            )
+                        ),
+                    )
+                results.append(
+                    {
+                        "source": snapshot.source,
+                        "episode_count": len(created),
+                        "paragraph_count": len(members),
+                        "references": [reference.model_dump(mode="json") for reference in created],
+                    }
+                )
+            value = {'sources': results, 'rebuilt': len(results), 'commit_seq': tx.commit_seq}
+        return TypeAdapter(JsonValue).validate_python(value)
+
+    async def status(self, ctx: CallContext, limit: int = 20) -> dict[str, JsonValue]:
+        return await self.execution.summarize_jobs(ctx, kind="nous.episodes.rebuild", limit=limit)
+
+    async def process_sources(
+        self, ctx: CallContext, command: ProcessEpisodeSources
+    ) -> dict[str, JsonValue]:
+        batch = await self.execution.process_jobs(
+            ctx, kind="nous.episodes.rebuild", limit=command.limit, max_retry=command.max_retry
+        )
+        completed = batch["items"]
+        assert isinstance(completed, list)
+        results = [item["result"] for item in completed if isinstance(item, dict)]
+        rebuilt = sum(
+            count
+            for result in results
+            if isinstance(result, dict) and isinstance((count := result.get("rebuilt")), int)
+        )
+        return {
+            "processed": batch["processed"],
+            "unfinished": batch["unfinished"],
+            "rebuilt": rebuilt,
+            "failed": batch["failed"],
+            "failures": batch["failures"],
+            "results": results,
+        }

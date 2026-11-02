@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import email.parser
+import json
 import os
 import platform
 import re
@@ -14,6 +15,7 @@ import subprocess
 import sys
 import zipfile
 from pathlib import Path
+from typing import cast
 
 PACKAGES = ("nous-server", "nous-sdk", "nous-native")
 
@@ -21,15 +23,13 @@ PACKAGES = ("nous-server", "nous-sdk", "nous-native")
 def data_directory() -> Path:
     if sys.platform == "win32":
         parent = Path(os.environ.get("LOCALAPPDATA", str(Path.home() / "AppData" / "Local")))
-        current, previous = parent / "Nous", parent / "NousWave"
+        current = parent / "Nous"
     elif sys.platform == "darwin":
         parent = Path.home() / "Library" / "Application Support"
-        current, previous = parent / "Nous", parent / "NousWave"
+        current = parent / "Nous"
     else:
         parent = Path(os.environ.get("XDG_DATA_HOME", str(Path.home() / ".local" / "share")))
-        current, previous = parent / "nous", parent / "nous-wave"
-    if not current.exists() and (previous / "instance").is_dir():
-        return previous
+        current = parent / "nous"
     return current
 
 
@@ -66,7 +66,7 @@ def main() -> None:
         "--version", help="Choose a version when the wheel directory contains several releases"
     )
     parser.add_argument("--venv", type=Path, default=data_directory() / "venv-nous")
-    parser.add_argument("--instance", type=Path, default=data_directory() / "instance")
+    parser.add_argument("--instance", type=Path)
     parser.add_argument("--python", default="3.14", help="CPython 3.14 selector for uv")
     parser.add_argument(
         "--offline",
@@ -92,7 +92,6 @@ def main() -> None:
             "Use the matching platform bundle with exactly one wheel per project and version"
         )
     environment = args.venv.resolve()
-    instance = args.instance.resolve()
     scripts = environment / ("Scripts" if os.name == "nt" else "bin")
     python = scripts / ("python.exe" if os.name == "nt" else "python")
     nous = scripts / ("nous.exe" if os.name == "nt" else "nous")
@@ -122,20 +121,6 @@ def main() -> None:
             "sys.exit(0 if valid else 'Nous requires standard CPython 3.14 with the GIL')",
         ]
     )
-    old_distributions = subprocess.run(
-        [
-            str(python), "-I", "-c",
-            "from importlib.metadata import distributions; "
-            "names={d.metadata['Name'].lower().replace('_','-') for d in distributions()}; "
-            "print(', '.join(sorted(names & {'nous-wave-server','nous-wave','nous-wave-native'})))",
-        ],
-        check=True, capture_output=True, text=True,
-    ).stdout.strip()
-    if old_distributions:
-        parser.error(
-            "The selected environment contains the previous distribution; "
-            "choose a new --venv to preserve it and its installed files"
-        )
     requirements = [str(versions[name][version][0]) for name in PACKAGES]
     options = ["--only-binary=:all:", "--find-links", str(directory)]
     if args.offline:
@@ -163,10 +148,26 @@ def main() -> None:
         ]
     )
     run([str(nous), "--help"], quiet=True)
-    run([str(nous), "init", "--instance", str(instance)])
+    initialize = [str(nous), "--json"]
+    if args.instance is not None:
+        initialize.extend(["--instance", str(args.instance.resolve())])
+    initialize.append("init")
+    initialized = subprocess.run(
+        initialize, check=True, capture_output=True, text=True, encoding="utf-8"
+    )
+    receipt: object = json.loads(initialized.stdout)
+    if not isinstance(receipt, dict):
+        raise ValueError("Installed nous init returned no instance path")
+    instance_value = cast(dict[str, object], receipt).get("instance")
+    if not isinstance(instance_value, str):
+        raise ValueError("Installed nous init returned no instance path")
+    instance = Path(instance_value)
+    if not instance.is_absolute():
+        raise ValueError("Installed nous init returned a relative instance path")
     command = [str(nous), "serve", "--instance", str(instance)]
     display = subprocess.list2cmdline(command) if os.name == "nt" else shlex.join(command)
     print(f"Installed Nous {version} into {environment}")
+    print(f"Initialized instance: {instance}")
     print(f"Start the service: {display}")
     print("The protected instance credential stays in the instance's credentials/admin.token file.")
 

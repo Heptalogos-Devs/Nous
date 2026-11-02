@@ -2,11 +2,11 @@
 
 ## 一条正式应用路径
 
-Python 主应用拥有认知与产品语义。Rust 拥有计算算法和派生索引的操作细节。SQLite 保存权威状态。外部 HTTP、MCP、CLI 及 A-Memorix 协议进入同一套 Python 操作。默认一个实例由一个服务进程持有写入与后台执行；不同实例可以使用不同进程和目录。
+Python 主应用拥有认知与产品语义。Rust 拥有计算算法和派生索引的操作细节。SQLite 保存权威状态。HTTP、MCP、CLI 与 SDK 使用同一套 Python 操作。默认一个实例由一个服务进程持有写入与后台执行；不同实例可以使用不同进程和目录。
 
 ```mermaid
 flowchart TB
-  API[HTTP / MCP / CLI / A-Memorix] --> APP[Python 领域操作]
+  API[HTTP / MCP / CLI / SDK] --> APP[Python 领域操作]
   APP --> DB[SQLite 权威事务]
   APP --> MODEL[模型与 Prompt 服务]
   APP --> CTX[上下文与来源授权]
@@ -61,7 +61,6 @@ src/nous/
     http/               # FastAPI 参数、身份、状态码
     mcp/                # 官方 SDK 工具和资源
     cli/                # Typer、默认可读输出、--json
-  integrations/amemorix/ # 已有真实消费者的外部协议
 resources/prompts/ / locales/
 sdk/python/src/nous_sdk/ # 已有 Python 客户端，补充类型化公开合同
 native/
@@ -78,7 +77,7 @@ native/
 
 公共命令和结果的 Pydantic 定义放在 `sdk/python/src/nous_sdk/contracts/`，按实际领域分组，由该领域 owner 维护；只依赖标准库和 Pydantic。SDK 的包初始化保持轻量，导入合同不会创建 HTTP 客户端、读取配置或启动服务。Python 服务直接使用这些合同，CLI/MCP/HTTP 不分别定义相同 payload。
 
-内部计算临时对象留在所属模块，SQLAlchemy Table 是持久化描述，native 数值结构是计算边界，二者不成为第二套可变领域状态。数据库行在拥有者内构造公开记录，调用者不接触 Session、RowMapping 或 ORM 懒加载。真正需要外部结构差异的 A-Memorix 转换集中在协议入口。
+内部计算临时对象留在所属模块，SQLAlchemy Table 是持久化描述，native 数值结构是计算边界，二者不成为第二套可变领域状态。数据库行在拥有者内构造公开记录，调用者不接触 Session、RowMapping 或 ORM 懒加载。A-Memorix 公共协议由后续独立适配器通过正式 SDK 实现。
 
 SDK 不依赖应用、数据库、DBOS 或 native wheel。TypeScript 仅用于确需的 Web 管理视图与对应客户端；不重新加入 Node 后端、第二个查询中心或私有 RPC Kernel。
 
@@ -106,7 +105,7 @@ SDK 不依赖应用、数据库、DBOS 或 native wheel。TypeScript 仅用于�
 ```python
 async def adopt_unit(ctx: CallContext, command: AdoptUnit) -> AdoptionResult:
     # 模型结果已在事务外取得；此处只完成授权、版本和正式采纳。
-    async with authority.write(ctx, command.operation_id) as tx:
+    async with authority.write(ctx) as tx:
         source = await materials.require_import_in(tx, command.observation)
         accepted = await memory.adopt_in(tx, source, command.proposal)
         output = await imports.record_output_in(tx, command.unit_id, accepted)

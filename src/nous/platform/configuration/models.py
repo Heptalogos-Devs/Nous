@@ -1,84 +1,121 @@
-"""Providers, model capabilities, routes and roles have distinct identities."""
+"""Provider connections, factual model capabilities, presets, and task roles."""
 
 from pathlib import Path
 from typing import Literal
 
-from nous_sdk.contracts.common import DomainError
-from nous_sdk.contracts.model_routing import ModelRoutingPolicy
-from pydantic import BaseModel, Field, TypeAdapter, model_validator
+from nous.platform.errors import DomainError
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from .settings import EmbeddingRoute, ModelRoute, ProviderOptions, ReasoningEffort
+from .settings import EmbeddingRoute, ModelRoute, ProviderOptions
 
 
-class ProviderResource(BaseModel):
-    base_url: str
+class Resource(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+class ProviderResource(Resource):
+    protocol: Literal["openai-chat", "openai-responses", "volcengine-ark"] = "openai-chat"
+    base_url: str = "https://api.openai.com/v1"
     credential_file: Path | None = None
     credential_env: str = "NOUS_MODEL_API_KEY"
     timeout_seconds: float = Field(default=120, gt=0)
 
 
-class ModelResource(BaseModel):
+class ModelResource(Resource):
     provider: str
-    name: str
-    capabilities: tuple[Literal["text", "image", "audio", "video", "embedding"], ...]
+    actual_name: str = ""
+    tokenizer: str | None = None
+    capability_source: str | None = None
+    operations: tuple[Literal["generation", "embedding", "rerank", "transcription"], ...]
+    input_modalities: tuple[Literal["text", "image", "audio", "video", "document"], ...] = ("text",)
+    output_modalities: tuple[Literal["text", "image", "audio", "video", "document"], ...] = (
+        "text",
+    )
+    context_window: int = Field(default=32768, gt=0)
+    max_output_tokens: int = Field(default=8192, gt=0)
+    structured_output_mode: Literal["native", "tool", "text"] = "native"
+    tools: bool = False
+    cache_capabilities: tuple[str, ...] = ()
+    allowed_provider_options: tuple[str, ...] = ()
+    allowed_reasoning_options: tuple[str, ...] = ("effort",)
+    media_limits: dict[str, int] = Field(default_factory=dict)
     dimensions: int | None = Field(default=None, gt=0)
     normalization: Literal["none", "l2"] = "none"
-    media_path: str = "embeddings/multimodal"
     max_batch_items: int = Field(default=64, ge=1, le=2048)
-    video_content_format: Literal["video_url"] | None = None
 
 
-class RouteResource(BaseModel):
+class PresetResource(Resource):
     model: str
-    max_output_tokens: int = Field(default=8192, gt=0)
+    max_output_tokens: int = Field(default=4096, gt=0)
     temperature: float | None = Field(default=None, ge=0, le=2)
-    reasoning_effort: ReasoningEffort | None = None
-    extra_body: ProviderOptions = Field(default_factory=dict)
+    reasoning_options: dict[str, str | int | bool] = Field(default_factory=dict)
+    timeout_seconds: float | None = Field(default=None, gt=0)
+    provider_options: ProviderOptions = Field(default_factory=dict)
 
 
-class RoleResource(BaseModel):
-    fallback: ModelRoutingPolicy = Field(default_factory=ModelRoutingPolicy)
-    routes: tuple[str, ...] = Field(min_length=1)
+class RoleResource(Resource):
+    preset: str
+    allowed_fallback_presets: tuple[str, ...] = ()
     purpose: str = Field(min_length=1)
+    operation: Literal["generation", "embedding", "rerank", "transcription"] = "generation"
     output_mode: Literal["text", "json_schema"] = "json_schema"
-    prompt_id: str = "formation"
-    max_calls_per_day: int = Field(default=50, ge=0)
 
-    @model_validator(mode="before")
-    @classmethod
-    def role_output_default(cls, value: object) -> object:
-        if not isinstance(value, dict):
-            return value
-        parsed = TypeAdapter(dict[str, object]).validate_python(value)
-        if parsed.get("purpose") == "description" and "output_mode" not in parsed:
-            return {**parsed, "output_mode": "text"}
-        return parsed
+    def preset_ids(self) -> tuple[str, ...]:
+        return (self.preset, *self.allowed_fallback_presets)
 
 
-class ModelConfiguration(BaseModel):
+class ModelConfiguration(Resource):
     providers: dict[str, ProviderResource]
-    models: dict[str, ModelResource]
-    routes: dict[str, RouteResource]
+    catalog: dict[str, ModelResource]
+    presets: dict[str, PresetResource]
     roles: dict[str, RoleResource]
 
     @model_validator(mode="after")
     def references_exist(self) -> ModelConfiguration:
-        for model in self.models.values():
+        for model_id, model in self.catalog.items():
             if model.provider not in self.providers:
-                raise ValueError(f"Unknown provider {model.provider}")
-            if "embedding" in model.capabilities and model.dimensions is None:
-                raise ValueError("Embedding models require an explicit vector dimension")
-        for route in self.routes.values():
-            if route.model not in self.models:
-                raise ValueError(f"Unknown model resource {route.model}")
-        for role in self.roles.values():
-            for route_id in role.routes:
-                if route_id not in self.routes:
-                    raise ValueError(f"Unknown route {route_id}")
-                model = self.models[self.routes[route_id].model]
-                capability = "embedding" if role.purpose == "embedding" else "text"
-                if capability not in model.capabilities:
-                    raise ValueError(f"Role {role.purpose} requires {capability}")
+                raise ValueError(
+                    f"models.catalog.{model_id}.provider: unknown provider {model.provider}"
+                )
+            if "embedding" in model.operations and model.dimensions is None:
+                raise ValueError(
+                    f"models.catalog.{model_id}.dimensions: embedding dimension is required"
+                )
+        for preset_id, preset in self.presets.items():
+            if preset.model not in self.catalog:
+                raise ValueError(f"models.presets.{preset_id}.model: unknown model {preset.model}")
+            model = self.catalog[preset.model]
+            if preset.max_output_tokens > min(model.max_output_tokens, model.context_window):
+                raise ValueError(
+                    f"models.presets.{preset_id}.max_output_tokens exceeds model {preset.model}"
+                )
+            unsupported = set(preset.provider_options).difference(model.allowed_provider_options)
+            if unsupported:
+                raise ValueError(
+                    f"models.presets.{preset_id}.provider_options: model {preset.model} does not support {sorted(unsupported)}"
+                )
+            unsupported = set(preset.reasoning_options).difference(model.allowed_reasoning_options)
+            if unsupported:
+                raise ValueError(
+                    f"models.presets.{preset_id}.reasoning_options: model {preset.model} does not support {sorted(unsupported)}"
+                )
+        for role_id, role in self.roles.items():
+            for preset_id in role.preset_ids():
+                if preset_id not in self.presets:
+                    raise ValueError(f"models.roles.{role_id}: unknown preset {preset_id}")
+                model = self.catalog[self.presets[preset_id].model]
+                if (
+                    role.output_mode == "json_schema"
+                    and role.operation == "generation"
+                    and model.structured_output_mode == "text"
+                ):
+                    raise ValueError(
+                        f"models.roles.{role_id}: model {model.actual_name} requires native structured output or tools"
+                    )
+                if role.operation not in model.operations:
+                    raise ValueError(
+                        f"models.roles.{role_id}: model {model.actual_name} does not support {role.operation}"
+                    )
         return self
 
     def resolve(
@@ -86,17 +123,17 @@ class ModelConfiguration(BaseModel):
     ) -> tuple[ModelRoute | EmbeddingRoute, RoleResource]:
         try:
             role = self.roles[role_id]
-            route = self.routes[role.routes[route_index]]
-            model = self.models[route.model]
+            preset = self.presets[role.preset_ids()[route_index]]
+            model = self.catalog[preset.model]
             provider = self.providers[model.provider]
         except (KeyError, IndexError) as error:
             raise DomainError(
                 "model_unavailable",
-                "Model role or route is not configured",
+                "Model role or preset is not configured",
                 role=role_id,
                 reason="resource_missing",
             ) from error
-        if require_configured and (not model.name.strip() or not provider.base_url.strip()):
+        if require_configured and (not model.actual_name.strip() or not provider.base_url.strip()):
             raise DomainError(
                 "model_unavailable",
                 "Model or provider connection is not configured",
@@ -104,89 +141,130 @@ class ModelConfiguration(BaseModel):
                 reason="model_missing",
             )
         values = {
-            **provider.model_dump(),
-            "model": model.name,
-            "max_output_tokens": route.max_output_tokens,
-            "max_calls_per_day": role.max_calls_per_day,
-            "temperature": route.temperature,
-            "reasoning_effort": route.reasoning_effort,
-            "extra_body": route.extra_body,
-            "video_content_format": model.video_content_format,
+            **provider.model_dump(exclude={"timeout_seconds"}),
+            "model": model.actual_name,
+            "timeout_seconds": preset.timeout_seconds or provider.timeout_seconds,
+            "max_output_tokens": preset.max_output_tokens,
+            "temperature": preset.temperature,
+            "reasoning_effort": preset.reasoning_options.get("effort"),
+            "extra_body": preset.provider_options,
+            "input_modalities": model.input_modalities,
+            "context_window": model.context_window,
+            "structured_output_mode": model.structured_output_mode,
+            "tools": model.tools,
+            "media_limits": model.media_limits,
+            "tokenizer": model.tokenizer,
         }
-        if role.purpose == "embedding":
+        if role.operation == "embedding":
             return EmbeddingRoute.model_validate(
                 {
                     **values,
                     "dimensions": model.dimensions,
                     "normalization": model.normalization,
-                    "media_path": model.media_path,
                     "max_batch_items": model.max_batch_items,
                 }
             ), role
         return ModelRoute.model_validate(values), role
 
 
-def initial_resources(generation: ModelRoute, embedding: EmbeddingRoute) -> ModelConfiguration:
-    generation_provider = ProviderResource.model_validate(generation.model_dump(), extra="ignore")
-    embedding_provider = ProviderResource.model_validate(embedding.model_dump(), extra="ignore")
+def initial_resources() -> ModelConfiguration:
+    generation, embedding = ModelRoute(), EmbeddingRoute()
+    generation_provider = ProviderResource()
+    embedding_provider = ProviderResource(credential_env="NOUS_EMBEDDING_API_KEY")
     return ModelConfiguration(
         providers={"generation": generation_provider, "embedding": embedding_provider},
-        models={
+        catalog={
             "generation": ModelResource(
                 provider="generation",
-                name=generation.model,
-                capabilities=("text", "image", "audio", "video"),
-                video_content_format=generation.video_content_format,
+                actual_name=generation.model,
+                operations=("generation",),
+                input_modalities=("text",),
             ),
             "embedding": ModelResource(
                 provider="embedding",
-                name=embedding.model,
-                capabilities=("embedding",),
+                actual_name=embedding.model,
+                operations=("embedding",),
                 dimensions=embedding.dimensions,
                 normalization=embedding.normalization,
-                media_path=embedding.media_path,
                 max_batch_items=embedding.max_batch_items,
             ),
         },
-        routes={
-            "formation": RouteResource(
+        presets={
+            "formation": PresetResource(
                 model="generation",
                 max_output_tokens=generation.max_output_tokens,
                 temperature=generation.temperature,
-                reasoning_effort=generation.reasoning_effort,
-                extra_body=generation.extra_body,
+                reasoning_options={},
+                provider_options=generation.extra_body,
             ),
-            "embedding": RouteResource(model="embedding", extra_body=embedding.extra_body),
+            "embedding": PresetResource(model="embedding", provider_options=embedding.extra_body),
         },
         roles={
             "formation": RoleResource(
-                routes=("formation",),
+                preset="formation",
                 purpose="formation",
-                max_calls_per_day=generation.max_calls_per_day,
             ),
             "description": RoleResource(
-                routes=("formation",),
+                preset="formation",
                 purpose="description",
                 output_mode="text",
-                prompt_id="media.describe",
-                max_calls_per_day=generation.max_calls_per_day,
             ),
             "embedding": RoleResource(
-                routes=("embedding",),
+                preset="embedding",
                 purpose="embedding",
-                max_calls_per_day=embedding.max_calls_per_day,
+                operation="embedding",
             ),
             "steward": RoleResource(
-                routes=("formation",),
+                preset="formation",
                 purpose="steward",
-                prompt_id="context-steward",
-                max_calls_per_day=generation.max_calls_per_day,
             ),
-            "maintenance": RoleResource(
-                routes=("formation",),
-                purpose="maintenance",
-                prompt_id="maintenance",
-                max_calls_per_day=generation.max_calls_per_day,
+            "seed": RoleResource(
+                preset="formation",
+                purpose="seed",
+            ),
+            "correction": RoleResource(
+                preset="formation",
+                purpose="correction",
+            ),
+            "feedback": RoleResource(
+                preset="formation",
+                purpose="feedback",
+            ),
+            "motivation": RoleResource(
+                preset="formation",
+                purpose="motivation",
+            ),
+            "symbols": RoleResource(
+                preset="formation",
+                purpose="symbols",
+            ),
+            "person_profile": RoleResource(
+                preset="formation",
+                purpose="person_profile",
+            ),
+            "episode": RoleResource(
+                preset="formation",
+                purpose="episode",
+            ),
+            "journal": RoleResource(preset="formation", purpose="journal"),
+            "reflect": RoleResource(preset="formation", purpose="reflect"),
+            "dream": RoleResource(preset="formation", purpose="dream"),
+            "context_compress": RoleResource(
+                preset="formation",
+                purpose="context_compress",
+                output_mode="text",
+            ),
+            "work_summary": RoleResource(
+                preset="formation",
+                purpose="work_summary",
+                output_mode="text",
+            ),
+            "work_questions": RoleResource(
+                preset="formation", purpose="work_questions"
+            ),
+            "query_rerank": RoleResource(
+                preset="formation",
+                purpose="rerank",
             ),
         },
     )

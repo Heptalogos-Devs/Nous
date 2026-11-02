@@ -3,15 +3,17 @@
 import asyncio
 import io
 import math
-import os
+import shutil
 import struct
 import sys
 import time
 import wave
 from pathlib import Path
 
+import psutil
 import pytest
-from nous_sdk.contracts import CallContext, PixelRect, TimeSpan
+from nous_sdk.contracts import PixelRect, TimeSpan
+from nous.platform.call_context import CallContext
 from PIL import Image
 
 from nous.platform.content import ContentStore
@@ -19,6 +21,11 @@ from nous.platform.execution import DurableExecution, JobSpec
 from nous.platform.media import MediaService, run_process
 from nous.platform.media import service as media_service
 from nous.platform.persistence import Authority
+
+requires_codecs = pytest.mark.skipif(
+    shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None,
+    reason="Real media codecs require both ffmpeg and ffprobe on PATH",
+)
 
 
 def test_shared_content_references_and_rollback_leases_control_purge(tmp_path):
@@ -31,44 +38,29 @@ def test_shared_content_references_and_rollback_leases_control_purge(tmp_path):
         first = await store.publish_bytes(b"original", "application/octet-stream")
         second = await store.publish_bytes(b"original", "application/octet-stream")
         assert first.content_hash == second.content_hash
-        async with authority.write(
-            ctx, "attach", operation_kind="material.attach", payload={}
-        ) as tx:
+        async with authority.write(ctx) as tx:
             await store.attach_in(tx, first, "material:a")
             await store.attach_in(tx, second, "material:b")
-            tx.result({"attached": True})
         await store.release(first)
         await store.release(second)
         other = CallContext(
             credential_source_ids=None, caller_id="owner", namespace_id="other-namespace"
         )
         third = await store.publish_bytes(b"original", "application/octet-stream")
-        async with authority.write(
-            other, "attach", operation_kind="material.attach", payload={}
-        ) as tx:
+        async with authority.write(other) as tx:
             await store.attach_in(tx, third, "material:a")
-            tx.result(None)
         await store.release(third)
-        async with authority.write(
-            ctx, "detach-a", operation_kind="material.detach", payload={}
-        ) as tx:
+        async with authority.write(ctx) as tx:
             await store.detach_in(tx, "material:a")
-            tx.result(None)
         assert await store.purge(ctx, (first.content_hash,)) == ()
         async with store.protect(first) as original:
-            async with authority.write(
-                ctx, "detach-b", operation_kind="material.detach", payload={}
-            ) as tx:
+            async with authority.write(ctx) as tx:
                 await store.detach_in(tx, "material:b")
-                tx.result(None)
             assert await store.purge(ctx, (first.content_hash,)) == ()
             assert original.read_bytes() == b"original"
         assert await store.purge(ctx, (first.content_hash,)) == ()
-        async with authority.write(
-            other, "detach", operation_kind="material.detach", payload={}
-        ) as tx:
+        async with authority.write(other) as tx:
             await store.detach_in(tx, "material:a")
-            tx.result(None)
         assert await store.purge(ctx, (first.content_hash,)) == (first.content_hash,)
         with pytest.raises(ValueError, match="size limit"):
             await store.publish_bytes(b"too-large", "application/octet-stream")
@@ -107,6 +99,7 @@ def test_image_crop_preserves_original_and_exact_coordinates(tmp_path):
     asyncio.run(scenario())
 
 
+@requires_codecs
 def test_audio_clip_and_video_frame_preparation_use_real_codecs(tmp_path):
     async def scenario():
         authority = Authority(tmp_path / "authority.sqlite")
@@ -196,15 +189,17 @@ def test_process_cancellation_waits_for_actual_process_exit(tmp_path):
             raise TimeoutError("Child did not start")
 
         pid = await asyncio.to_thread(wait_pid)
+        child = psutil.Process(pid)
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
-        with pytest.raises(ProcessLookupError):
-            os.kill(pid, 0)
+        await asyncio.to_thread(child.wait, timeout=5)
+        assert not child.is_running()
 
     asyncio.run(scenario())
 
 
+@requires_codecs
 def test_successful_early_transcode_is_rejected_before_content_publication(tmp_path, monkeypatch):
     async def scenario():
         authority = Authority(tmp_path / "authority.sqlite")
@@ -257,11 +252,10 @@ def test_persistent_cancellation_reaches_preemptible_owned_subprocess(tmp_path):
         await execution.start()
         ctx = CallContext(credential_source_ids=None, caller_id="owner", namespace_id="namespace")
         try:
-            async with authority.write(ctx, "prepare", operation_kind="prepare", payload={}) as tx:
+            async with authority.write(ctx) as tx:
                 job = await tx.enqueue(
                     JobSpec("preemptible-media", "default", args=("original-ref",))
                 )
-                tx.result({"job": job.workflow_id})
 
             def wait_pid():
                 deadline = time.monotonic() + 10
@@ -272,19 +266,10 @@ def test_persistent_cancellation_reaches_preemptible_owned_subprocess(tmp_path):
                 raise TimeoutError("Durable preparation did not start")
 
             pid = await asyncio.to_thread(wait_pid)
+            child = psutil.Process(pid)
             await execution.cancel(ctx, job.workflow_id)
-
-            def wait_stopped():
-                deadline = time.monotonic() + 10
-                while time.monotonic() < deadline:
-                    try:
-                        os.kill(pid, 0)
-                    except ProcessLookupError:
-                        return
-                    time.sleep(0.01)
-                raise TimeoutError("Cancelled workflow retained its media subprocess")
-
-            await asyncio.to_thread(wait_stopped)
+            await asyncio.to_thread(child.wait, timeout=10)
+            assert not child.is_running()
             assert (await execution.status(ctx, job.workflow_id)).status == "CANCELLED"
         finally:
             await execution.close()

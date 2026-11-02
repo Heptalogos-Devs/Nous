@@ -4,14 +4,14 @@ from datetime import datetime
 from hashlib import sha256
 
 from nous_sdk.contracts import (
-    CallContext,
     CognitiveTimes,
-    DomainError,
     MediaRecord,
     MediaReference,
     SourceRegion,
     TimePoint,
 )
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.derivation import (
     ArtifactRepresentation,
     DerivedRegion,
@@ -86,7 +86,7 @@ class DerivedViews(DerivedRegions):
             reference=reference,
             addresses=addresses,
             namespace_id=ctx.namespace_id,
-            subject_id=ctx.require_subject(),
+            
             material_id=material_id,
             content_hash=digest,
             byte_len=size,
@@ -113,7 +113,7 @@ class DerivedViews(DerivedRegions):
                 await view.connection.execute(
                     select(representations.c.record).where(
                         representations.c.namespace_id == ctx.namespace_id,
-                        representations.c.subject_id == ctx.require_subject(),
+                        
                         representations.c.head.is_(True),
                     )
                 )
@@ -125,7 +125,7 @@ class DerivedViews(DerivedRegions):
                 await view.connection.execute(
                     select(derived_regions.c.id).where(
                         derived_regions.c.namespace_id == ctx.namespace_id,
-                        derived_regions.c.subject_id == ctx.require_subject(),
+                        
                     )
                 )
             ).scalars()
@@ -182,7 +182,7 @@ class DerivedViews(DerivedRegions):
                     await view.connection.execute(
                         select(representations.c.record).where(
                             representations.c.namespace_id == ctx.namespace_id,
-                            representations.c.subject_id == ctx.require_subject(),
+                            
                         )
                     )
                 ).scalars():
@@ -203,7 +203,7 @@ class DerivedViews(DerivedRegions):
                                 await view.connection.execute(
                                     select(observations.c.material_id).where(
                                         observations.c.namespace_id == ctx.namespace_id,
-                                        observations.c.subject_id == ctx.require_subject(),
+                                        
                                         observations.c.id.in_(info.roots),
                                     )
                                 )

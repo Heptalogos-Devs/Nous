@@ -2,6 +2,8 @@
 
 from nous_sdk.contracts import CognitiveRecord
 from nous_sdk.contracts.query_conditions import QueryAuthority, QueryFilters, QueryModality
+from nous_sdk.contracts.resources import ResourceRecord
+from nous_sdk.contracts.source_objects import EvidenceRelationRecord, ObservationRecord
 
 from nous.material.service import SourceRecord
 
@@ -11,6 +13,10 @@ from .assets import RetrievalRecord
 def authority(record: RetrievalRecord) -> QueryAuthority:
     if isinstance(record, CognitiveRecord):
         return "subject_cognition"
+    if isinstance(record, ResourceRecord):
+        return "resource_descriptor"
+    if isinstance(record, (ObservationRecord, EvidenceRelationRecord)):
+        return "evidence"
     return (
         "interpretation"
         if record.reference.kind in {"representation", "derived_region"}

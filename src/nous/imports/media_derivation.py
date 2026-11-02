@@ -1,30 +1,26 @@
 """Publish deterministic media transformations with their exact source closure."""
 
-from hashlib import sha256
 from typing import TYPE_CHECKING
 
 from nous_sdk.contracts import (
     BlobDocument,
-    CallContext,
-    DomainError,
     MediaReference,
     SourceRegion,
     TimeSpan,
 )
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.derivation import (
     ArtifactRepresentation,
     CreateRepresentation,
     DerivationInput,
-    DerivationProducer,
     DerivedRepresentation,
     DeriveMedia,
     MediaTransformation,
 )
-from pydantic import TypeAdapter
 
 from nous.platform.content import ContentLease, ContentObject
 from nous.platform.media import DerivedContent, MediaService
-from nous.platform.persistence.authority import canonical_json
 
 from .media_input import selected_input
 
@@ -101,19 +97,6 @@ async def derive(
     ctx: CallContext,
     command: DeriveMedia,
 ) -> tuple[DerivedRepresentation, ...]:
-    receipt = await self.authority.receipt(
-        ctx,
-        command.operation_id,
-        operation_kind="media.derive",
-        scope=ctx.require_subject(),
-        payload=command,
-    )
-    if receipt is not None:
-        values = TypeAdapter(tuple[DerivedRepresentation, ...]).validate_python(receipt.result)
-        async with self.authority.read(ctx) as view:
-            return tuple(
-                [await self.derivations.read_in(view, ctx, value.reference) for value in values]
-            )
     media = await self.media.freeze()
     source, region = await source_object(self, ctx, command.source)
     if not source.media_type.startswith(("image/", "video/", "audio/")):
@@ -129,48 +112,13 @@ async def derive(
             source = prepared
         results = await transform(media, source, command.transformation)
         infos = [await media.probe(item.lease) for item in results]
-        config = {
-            "max_pixels": media.policy.max_pixels,
-            "max_frames": media.policy.max_frames,
-            "max_derivative_bytes": media.policy.max_derivative_bytes,
-        }
-
-        def digest(value: object) -> str:
-            return sha256(canonical_json(value).encode()).hexdigest()
-
-        async with self.authority.write(
-            ctx,
-            command.operation_id,
-            operation_kind="media.derive",
-            scope=ctx.require_subject(),
-            payload=command,
-        ) as tx:
-            if tx.replayed:
-                values = TypeAdapter(tuple[DerivedRepresentation, ...]).validate_python(
-                    tx.replay_result
-                )
-                return tuple(
-                    [await self.derivations.read_in(tx, ctx, value.reference) for value in values]
-                )
+        async with self.authority.write(ctx) as tx:
             source_info = await self.derivations.source_in(tx, ctx, command.source)
             adopted: list[DerivedRepresentation] = []
             for ordinal, (item, info) in enumerate(zip(results, infos, strict=True)):
                 selection = command.transformation
                 if item.at_ms is not None:
                     selection = selection.model_copy(update={"sample_at_ms": (item.at_ms,)})
-                producer = DerivationProducer(
-                    implementation="nous.media/1",
-                    config_digest=digest(config),
-                    preprocessing_digest=digest(selection),
-                    signature=digest(
-                        {
-                            "source": source.content_hash,
-                            "transformation": selection,
-                            "implementation": "nous.media/1",
-                            "config": config,
-                        }
-                    ),
-                )
                 document = BlobDocument(
                     filename=f"{command.transformation.action}-{ordinal}.{item.lease.media_type.split('/')[-1]}",
                     media_type=item.lease.media_type,
@@ -199,7 +147,7 @@ async def derive(
                             strategy="preprocess",
                             transformation=selection,
                             timeline=source_info.reference,
-                            producer=producer,
+                            processor="nous.media/1",
                             payload=ArtifactRepresentation(
                                 material_id=material["id"],
                                 content_hash=item.lease.content_hash,
@@ -210,7 +158,8 @@ async def derive(
                         ),
                     )
                 )
-            return tx.result(tuple(adopted))
+            result = tuple(adopted)
+        return result
     finally:
         for result in results:
             await self.content.release(result.lease)

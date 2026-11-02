@@ -1,49 +1,23 @@
-"""Validate semantic proposals before publication, with one explicit correction call."""
+"""Preserve independently validated semantic change groups before adoption."""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from nous_sdk.contracts import CallContext, DomainError
-from nous_sdk.contracts.growth import GrowthDraft, GrowthProposal, GrowthSnapshot
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
+from nous_sdk.contracts.common import ModelProvenance
+from nous_sdk.contracts.ego_model import SeedProposal
+from nous_sdk.contracts.growth import GrowthSnapshot
 from nous_sdk.contracts.maintenance import MaintenanceRun
+from nous_sdk.contracts.maintenance_tasks import DreamDraft, JournalDraft, ReflectionDraft
 
-from nous.cognition.growth_proposal import growth_model_catalog, normalize_growth
+from nous.cognition.growth_proposal import growth_model_catalog
+from nous.platform.models.generation import MediaInput
+from pydantic import JsonValue, TypeAdapter
 
 if TYPE_CHECKING:
     from .service import MaintenanceService
-
-# Only known proposal semantics authorize another paid call. Source withdrawal,
-# stale targets, permission failures, provider errors and unknown outcomes do not.
-_CORRECTABLE = frozenset(
-    {
-        "growth_key_conflict",
-        "growth_key_unknown",
-        "growth_target_unknown",
-        "growth_binding_required",
-        "growth_binding_invalid",
-        "growth_body_invalid",
-        "growth_reference_unknown",
-        "growth_media_reference_unknown",
-        "growth_structural_action_required",
-        "cognitive_kind_immutable",
-        "identity_conflict",
-        "memory_semantics_anchor",
-        "journal_episode_required",
-        "support_required",
-        "episode_order",
-        "social_entity_required",
-        "social_group_required",
-        "social_trust_invalid",
-        "language_audience_required",
-        "language_audience_invalid",
-        "episode_parent_invalid",
-        "knowledge_cutoff",
-        "concept_merge",
-        "concept_split",
-        "concept_partition",
-    }
-)
 
 
 async def generate_validated(
@@ -51,50 +25,68 @@ async def generate_validated(
     ctx: CallContext,
     run: MaintenanceRun,
     snapshot: GrowthSnapshot,
-) -> tuple[GrowthDraft, str]:
-    variables: dict[str, object] = {
-        "maintenance_run_id": run.id,
-        "instruction": run.command.instruction,
-        "snapshot": growth_model_catalog(snapshot),
-        "body_schema": GrowthProposal.model_json_schema(),
-    }
+) -> tuple[JsonValue, ModelProvenance]:
+    from .inputs import materials, range_text
+
+    if run.command.kind == "journal":
+        variables: dict[str, object] = {
+            "instruction": run.command.instruction,
+            "style": "主体日记" if run.command.style == "diary" else "资料学习或工作回顾",
+            "materials": materials(snapshot),
+            "period": range_text(run.command.period),
+        }
+    elif run.command.kind in {"reflect", "growth"}:
+        variables = {"question": run.command.instruction, "materials": materials(snapshot)}
+    elif run.command.kind == "dream":
+        variables = {"theme": run.command.instruction, "materials": materials(snapshot)}
+    else:
+        variables = {
+            "maintenance_run_id": run.id,
+            "instruction": run.command.instruction,
+            "snapshot": growth_model_catalog(snapshot),
+        }
     source_ids = tuple(
         dict.fromkeys(
             (
                 *snapshot.material_ids,
                 *(root for entry in snapshot.entries for root in entry.record.source_roots),
+                *(
+                    link.observation_id
+                    for source in snapshot.sources
+                    for link in source.evidence
+                    if link.observation_id is not None
+                ),
             )
         )
     )
-    for attempt in range(2):
-        invocation = "maintenance:" + run.id + (":correction:1" if attempt else "")
-        generated = await self.models.generate(
-            ctx,
-            "maintenance",
-            variables,
-            GrowthProposal,
-            source_ids=source_ids,
-            invocation_id=invocation,
-        )
-        await self.record_generation_call(ctx, run.id, generated.call_id)
-        draft = normalize_growth(generated.output)
-        try:
-            # ReadView enforces query_only at the connection, so the domain's
-            # validation cannot allocate identities or write cognitive facts.
-            async with self.authority.read(ctx) as view:
-                await self.cognition.validate_growth_in(view, ctx, draft, snapshot)
-        except DomainError as error:
-            if attempt or error.code not in _CORRECTABLE:
-                raise
-            variables = {
-                **variables,
-                "previous_proposal": generated.output.model_dump(mode="json"),
-                "validation_error": {
-                    "code": error.code,
-                    "message": str(error),
-                    "context": error.details,
-                },
-            }
-        else:
-            return draft, generated.call_id
-    raise RuntimeError("A maintenance proposal must pass domain validation before publication")
+    output_type = {
+        "seed": SeedProposal,
+        "growth": ReflectionDraft,
+        "journal": JournalDraft,
+        "reflect": ReflectionDraft,
+        "dream": DreamDraft,
+    }[run.command.kind]
+    role = "reflect" if run.command.kind == "growth" else run.command.kind
+    media: list[MediaInput] = []
+    for source in snapshot.sources:
+        if source.requires_media:
+            if self.models.preview_media_resolver is None:
+                raise DomainError(
+                    "media_unavailable",
+                    "The selected material requires its configured media reader",
+                )
+            media.append(await self.models.preview_media_resolver(ctx, source.source))
+    generated = await self.models.generate(
+        ctx,
+        role,
+        variables,
+        output_type,
+        source_ids=source_ids,
+        media=tuple(media),
+    )
+    return (
+        TypeAdapter(JsonValue).validate_python(
+            TypeAdapter(object).dump_python(generated.output, mode="json")
+        ),
+        generated.producer,
+    )

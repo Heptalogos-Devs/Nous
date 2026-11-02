@@ -3,7 +3,8 @@
 import json
 
 from jsonpointer import JsonPointerException, resolve_pointer
-from nous_sdk.contracts import DomainError, SourceRegion
+from nous_sdk.contracts import SourceRegion
+from nous.platform.errors import DomainError
 from pydantic import JsonValue, TypeAdapter
 
 

@@ -4,9 +4,10 @@ from typing import Annotated, Literal
 
 from pydantic import Field, JsonValue
 
-from .cognition import CognitiveRecord
-from .common import Contract
+from .cognition import CognitiveRecord, CognitiveRef, EvidenceLink
+from .common import CognitiveTimes, Contract
 from .growth_bodies import GrowthBody
+from .media import MediaReference
 
 
 class GrowthEntry(Contract):
@@ -14,16 +15,27 @@ class GrowthEntry(Contract):
     record: CognitiveRecord
 
 
+class GrowthSource(Contract):
+    key: str
+    source: MediaReference
+    evidence: tuple[EvidenceLink, ...] = Field(min_length=1)
+    times: CognitiveTimes
+    text: str = ""
+    requires_media: bool = False
+
+
 class GrowthSnapshot(Contract):
     watermark: int
     entries: tuple[GrowthEntry, ...]
     material_ids: tuple[str, ...]
     capabilities: tuple[str, ...] = ()
+    sources: tuple[GrowthSource, ...] = ()
 
 
 class GrowthBinding(Contract):
     path: str = Field(min_length=1)
     key: str = Field(min_length=1)
+    kind: Literal["cognitive", "media", "evidence"] = "cognitive"
 
 
 class GrowthAdoption(Contract):
@@ -76,8 +88,31 @@ class GrowthMemoryChange(Contract):
     reason: str = Field(min_length=1)
 
 
+class GrowthRetentionChange(Contract):
+    action: Literal["retention"] = "retention"
+    key: str = Field(min_length=1)
+    target_key: str
+    transition: Literal[
+        "reinforce",
+        "weaken",
+        "protect",
+        "unprotect",
+        "pin",
+        "unpin",
+        "freeze",
+        "forget",
+        "restore",
+        "remember_forever",
+        "allow_decay",
+    ]
+    strength: float = Field(default=1, ge=0, allow_inf_nan=False)
+    hours: float | None = Field(default=None, ge=0, le=1000000, allow_inf_nan=False)
+    reason: str = Field(min_length=1)
+
+
 GrowthAction = Annotated[
-    GrowthAdoption | GrowthMerge | GrowthSplit | GrowthMemoryChange, Field(discriminator="action")
+    GrowthAdoption | GrowthMerge | GrowthSplit | GrowthMemoryChange | GrowthRetentionChange,
+    Field(discriminator="action"),
 ]
 
 
@@ -85,6 +120,11 @@ class GrowthDraft(Contract):
     summary: str = Field(min_length=1)
     rationale: str = Field(min_length=1)
     actions: tuple[GrowthAction, ...] = Field(default=(), max_length=100)
+
+
+class GrowthApplication(Contract):
+    records: tuple[CognitiveRecord, ...]
+    bindings: dict[str, CognitiveRef]
 
 
 class GrowthProposalAdoption(Contract):
@@ -97,7 +137,7 @@ class GrowthProposalAdoption(Contract):
 
 
 GrowthProposalAction = Annotated[
-    GrowthProposalAdoption | GrowthMerge | GrowthSplit | GrowthMemoryChange,
+    GrowthProposalAdoption | GrowthMerge | GrowthSplit | GrowthMemoryChange | GrowthRetentionChange,
     Field(discriminator="action"),
 ]
 

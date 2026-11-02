@@ -159,7 +159,7 @@ class BackupService:
                 objects=objects,
             )
             archive.writestr("manifest.json", manifest.model_dump_json())
-        with archive_path.open("rb") as archive:
+        with archive_path.open("rb+") as archive:
             os.fsync(archive.fileno())
         os.link(archive_path, target)
         _sync_directory(target.parent)

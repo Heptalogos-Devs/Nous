@@ -3,10 +3,20 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, TypeAdapter, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SerializerFunctionWrapHandler,
+    model_serializer,
+    model_validator,
+)
+
+ObservationKind = Literal["import", "contact", "external_snapshot"]
+FormationPurpose = Literal["memory", "graph", "memory_and_graph"]
 
 
 class Contract(BaseModel):
@@ -18,6 +28,16 @@ class TimePoint(Contract):
     coordinate: int
     precision: Literal["instant", "day", "month", "year", "tick"] = "instant"
     original: str | None = None
+
+
+class ModelProvenance(Contract):
+    model_id: str = Field(min_length=1)
+    task: str = Field(min_length=1)
+    prompt_digest: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
+    schema_digest: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
+    input_digest: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
+    output_digest: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
+    generated_at: TimePoint
 
 
 class TimeRange(Contract):
@@ -39,6 +59,21 @@ class TimeRange(Contract):
         )
 
 
+class ApplicableInput(Contract):
+    """An omitted applicability permits inference; explicit null records unknown applicability."""
+
+    validity: TimeRange | None = None
+
+    @model_serializer(mode="wrap")
+    def preserve_explicit_validity(
+        self, handler: SerializerFunctionWrapHandler
+    ) -> dict[str, object]:
+        value: dict[str, object] = handler(self)
+        if "validity" not in self.model_fields_set:
+            value.pop("validity", None)
+        return value
+
+
 def utc_now() -> TimePoint:
     return TimePoint(coordinate=int(datetime.now(UTC).timestamp() * 1000))
 
@@ -51,47 +86,12 @@ class CognitiveTimes(Contract):
     recorded: TimePoint
 
 
-class CallContext(Contract):
-    """Trusted context constructed by the authenticated transport or worker."""
-
-    caller_id: str
-    namespace_id: str
-    subject_id: str | None = None
-    request_id: str = Field(default_factory=lambda: str(uuid4()))
-    locale: str = "en"
-    clock: TimePoint = Field(default_factory=utc_now)
-    credential_source_ids: tuple[str, ...] | None
-    allowed_source_ids: tuple[str, ...] | None = None
-    source_constraints: tuple[tuple[str, ...], ...] = ()
-
-    def source_groups(self) -> tuple[tuple[str, ...], ...]:
-        groups = self.source_constraints or (
-            () if self.allowed_source_ids is None else (self.allowed_source_ids,)
-        )
-        if self.credential_source_ids is not None and self.credential_source_ids not in groups:
-            groups = (*groups, self.credential_source_ids)
-        return groups
-
-    def for_source_group(self, group: tuple[str, ...]) -> CallContext:
-        return self.model_copy(update={"allowed_source_ids": group, "source_constraints": ()})
-
-    def require_subject(self) -> str:
-        if self.subject_id is None:
-            raise DomainError("subject_required", "This operation requires a subject")
-        return self.subject_id
-
-
 class Operation(Contract):
+    """Automatically assigned request identity; transaction commits own persistence."""
+
     operation_id: str = Field(default_factory=lambda: str(uuid4()))
 
 
 class ReferenceAddresses(Contract):
     object: str | None = None
     exact: str
-
-
-class DomainError(Exception):
-    def __init__(self, code: str, message: str, **details: object) -> None:
-        super().__init__(message)
-        self.code = code
-        self.details = TypeAdapter(dict[str, JsonValue]).validate_python(details)

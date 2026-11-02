@@ -1,4 +1,5 @@
 import json
+import mimetypes
 from pathlib import Path, PureWindowsPath
 from uuid import uuid4
 
@@ -119,7 +120,23 @@ class ManagedFiles:
             for candidate in candidates:
                 if not candidate.is_file():
                     continue
-                if candidate.suffix.lower() not in {".txt", ".md", ".json", ".jsonl"}:
+                if candidate.suffix.lower() not in {
+                    ".txt",
+                    ".md",
+                    ".markdown",
+                    ".html",
+                    ".htm",
+                    ".pdf",
+                    ".json",
+                    ".jsonl",
+                    ".parquet",
+                    ".sqlite",
+                    ".sqlite3",
+                    ".db",
+                    ".graphml",
+                } and not (mimetypes.guess_type(candidate.name)[0] or "").startswith(
+                    ("image/", "audio/", "video/")
+                ):
                     continue
                 path = self.local_file(candidate)
                 if not path.is_relative_to(root):

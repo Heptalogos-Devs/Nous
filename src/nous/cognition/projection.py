@@ -14,36 +14,6 @@ from nous_sdk.contracts import (
 from pydantic import BaseModel
 
 
-def body_text(body: CognitiveBody | None) -> str:
-    if body is None:
-        return ""
-    if isinstance(body, MemorySemanticsBody):
-        return "\n".join([*(item.text for item in body.interpretations), *body.qualifications])
-    if isinstance(body, EntityBody):
-        return "\n".join((body.label, body.profile_text, *body.effective_aliases))
-    value = body.model_dump(mode="json")
-    return "\n".join(
-        str(value[key])
-        for key in (
-            "text",
-            "summary",
-            "label",
-            "description",
-            "title",
-            "narrative",
-            "claim",
-            "understanding",
-            "fact_key",
-            "value_text",
-            "expression",
-            "meaning",
-            "relation",
-            "facet",
-        )
-        if value.get(key)
-    )
-
-
 def references_in(value: object) -> Iterator[CognitiveRef]:
     """Only typed reference fields carry owner identity; opaque metadata stays literal."""
     if isinstance(value, CognitiveRef):

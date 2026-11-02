@@ -16,7 +16,7 @@ from uuid import UUID, uuid4
 
 import anyio
 import sqlalchemy as sa
-from nous_sdk.contracts.common import CallContext
+from nous.platform.call_context import CallContext
 
 from nous.platform.persistence import Authority, WriteTx, metadata
 
@@ -260,12 +260,9 @@ class ContentStore:
             self.path_for(digest)
         removed: list[str] = []
         # Serialize deletion with attach_in: committed references cannot race unlink.
-        async with self.authority.write(
-            ctx, str(uuid4()), operation_kind="content.purge", scope="content", payload=hashes
-        ) as tx:
+        async with self.authority.write(ctx) as tx:
             async with self._lock:
                 if any(self.guards.iterdir()):
-                    tx.result({"removed": removed})
                     return ()
                 pinned = {
                     json.loads(path.read_text())["content_hash"]
@@ -289,7 +286,6 @@ class ContentStore:
                                 path.chmod(0o600)
                             path.unlink()
                             removed.append(digest)
-            tx.result({"removed": removed})
         return tuple(removed)
 
     async def purge_unreferenced(self, ctx: CallContext) -> tuple[str, ...]:

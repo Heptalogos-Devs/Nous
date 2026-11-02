@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from sqlalchemy import JSON, Column, String, Table
+from sqlalchemy import JSON, Column, String, Table, UniqueConstraint
 
 from nous.platform.persistence import metadata
 
@@ -11,7 +11,6 @@ catalogs = Table(
     metadata,
     Column("id", String, primary_key=True),
     Column("namespace_id", String, nullable=False),
-    Column("subject_id", String, nullable=False),
     Column("record", JSON, nullable=False),
 )
 
@@ -39,6 +38,7 @@ outputs = Table(
     Column("unit_id", String, nullable=False, index=True),
     Column("operation_id", String, nullable=False),
     Column("record", JSON, nullable=False),
+    UniqueConstraint("unit_id", "operation_id"),
 )
 
 successes = Table(
@@ -46,7 +46,6 @@ successes = Table(
     metadata,
     Column("id", String, primary_key=True),
     Column("namespace_id", String, nullable=False),
-    Column("subject_id", String, nullable=False),
     Column("input_source_id", String, nullable=False),
     Column("record", JSON, nullable=False),
 )

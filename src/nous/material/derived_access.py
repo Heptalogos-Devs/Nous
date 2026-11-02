@@ -2,7 +2,9 @@
 
 from dataclasses import dataclass
 
-from nous_sdk.contracts import CallContext, DomainError, MediaInfo, MediaReference
+from nous_sdk.contracts import MediaInfo, MediaReference
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.derivation import (
     ArtifactRepresentation,
     ChannelAccess,
@@ -10,6 +12,7 @@ from nous_sdk.contracts.derivation import (
     DerivedRepresentation,
     RepresentationRef,
 )
+from nous_sdk.contracts.identity import IdentityPurpose
 from sqlalchemy import select
 
 from nous.platform.persistence import Authority, ReadView, WriteTx
@@ -85,7 +88,7 @@ class DerivedAccess:
         value = await view.connection.scalar(
             select(representations.c.record).where(
                 representations.c.namespace_id == ctx.namespace_id,
-                representations.c.subject_id == ctx.require_subject(),
+                
                 representations.c.id == reference.id,
                 representations.c.revision == reference.revision,
             )
@@ -129,7 +132,7 @@ class DerivedAccess:
         value = await view.connection.scalar(
             select(derived_regions.c.record).where(
                 derived_regions.c.namespace_id == ctx.namespace_id,
-                derived_regions.c.subject_id == ctx.require_subject(),
+                
                 derived_regions.c.id == region_id,
             )
         )
@@ -150,13 +153,20 @@ class DerivedAccess:
             return await self.read_region_in(view, ctx, region_id)
 
     async def source_in(
-        self, view: ReadView | WriteTx, ctx: CallContext, reference: MediaReference
+        self,
+        view: ReadView | WriteTx,
+        ctx: CallContext,
+        reference: MediaReference,
+        *,
+        purpose: IdentityPurpose = "active",
     ) -> SourceInfo:
         if reference.kind in {"material", "source_region"}:
             material, region, observation_id = await self.materials.media_source_in(
-                view, ctx, reference
+                view, ctx, reference, purpose=purpose
             )
-            provenance = await self.materials.provenance_in(view, ctx, reference)
+            provenance = await self.materials.provenance_in(
+                view, ctx, reference, purpose=purpose
+            )
             details = material.get("media_info")
             info = MediaInfo.model_validate(details) if details else None
             media_type = material["media_type"]

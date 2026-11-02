@@ -7,27 +7,27 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 from nous_sdk.contracts import (
-    CallContext,
     CognitiveRecord,
     CognitiveRef,
-    DomainError,
     EmbeddingBatch,
     QueryRequest,
 )
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.query_vcp import QueryConcept, QueryConceptResult
 from numpy.typing import NDArray
 from pydantic import JsonValue
 
 from nous.material.service import SourceRecord
 
-from .assets import GraphAssets, RetrievalRecord, record_text
+from .assets import RetrievalRecord, record_text
 from .binding import BoundSelection
 from .planning import BoundPlan
 from .policy import ResolvedPolicy
 from .work import QueryWork
+from nous.platform.models.generation import ModelResult
 
 if TYPE_CHECKING:
-    from .service import RetrievalService
+    pass
 
 
 @dataclass(frozen=True)
@@ -39,9 +39,15 @@ class BoundVcp:
     terms: tuple[str, ...]
 
     def options(
-        self, policy: ResolvedPolicy, limit: int, diagnostics: str, core: tuple[CognitiveRef, ...]
+        self,
+        policy: ResolvedPolicy,
+        limit: int,
+        diagnostics: str,
+        core: tuple[CognitiveRef, ...],
+        *,
+        strict: bool = False,
     ) -> dict[str, JsonValue]:
-        result = policy.options(limit, diagnostics)
+        result = policy.options(limit, diagnostics, strict=strict)
         vcp = result["vcp"]
         if not isinstance(vcp, dict):
             raise ValueError("VCP policy must have its typed configuration object")
@@ -51,9 +57,8 @@ class BoundVcp:
         return result
 
     def graph_core(
-        self, graph: GraphAssets, request: QueryRequest, reasons: list[str]
+        self, available: set[str], request: QueryRequest, reasons: list[str]
     ) -> tuple[CognitiveRef, ...]:
-        available = {tag["key"] for tag in graph.tags}
         missing = tuple(ref for ref in self.core if ref.exact() not in available)
         if missing:
             if request.capabilities.exploration == "required":
@@ -161,34 +166,23 @@ def resolve_intent(
     )
 
 
-async def embed_concepts(
-    self: RetrievalService, ctx: CallContext, intent: BoundVcp, query: EmbeddingBatch
+def concept_vectors(
+    intent: BoundVcp, result: ModelResult[EmbeddingBatch]
 ) -> tuple[NDArray[np.float32] | None, tuple[QueryConceptResult, ...]]:
     if not intent.concepts:
         return None, ()
-    # These are caller-supplied query cues, not readings or persisted evidence.
-    batch = await self.models.embed(ctx, tuple(cue.text for cue in intent.concepts), source_ids=())
-    if (batch.space, batch.model, batch.dimensions) != (query.space, query.model, query.dimensions):
+    query = result.output
+    if len(query.vectors) != 1 + len(intent.concepts):
         raise DomainError(
-            "embedding_space_conflict",
-            "Query concepts and query vector must use the same actual model space",
+            "invalid_embedding", "Query concepts require one vector per supplied cue"
         )
-    if (
-        len(batch.vectors) != len(intent.concepts)
-        or len(batch.call_ids) != len(intent.concepts)
-        or any(call is None for call in batch.call_ids)
-    ):
-        raise DomainError(
-            "invalid_embedding", "Query concepts require one vector and actual producer per cue"
-        )
-    vectors = np.ascontiguousarray(batch.vectors, dtype=np.float32)
+    vectors = np.ascontiguousarray(query.vectors[1:], dtype=np.float32)
     if vectors.shape != (len(intent.concepts), query.dimensions) or not np.isfinite(vectors).all():
         raise DomainError(
             "invalid_embedding", "Query concept vectors have invalid dimensions or coordinates"
         )
     results = tuple(
-        QueryConceptResult(concept=cue, call_id=call, space=batch.space)
-        for cue, call in zip(intent.concepts, batch.call_ids, strict=True)
-        if call is not None
+        QueryConceptResult(concept=cue, producer=result.producer, space=query.space)
+        for cue in intent.concepts
     )
     return vectors, results

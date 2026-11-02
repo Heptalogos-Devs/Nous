@@ -7,29 +7,14 @@ from typing import Literal
 
 from pydantic import Field, JsonValue, model_validator
 
-from .cognition import CognitiveRecord, CognitiveRef, EpistemicStance
-from .common import Contract, Operation, TimePoint
-from .retrieval import QueryRequest
-from .source_graph import ExpandedSources
+from .cognition import CognitiveRef, EpistemicStance
+from .common import Contract, TimePoint
+from .common import ModelProvenance
+from .history import HistorySummary
+from .social import SymbolSelection
 from .targets import CognitiveTarget as CognitiveTarget
 from .targets import ContextTarget as ContextTarget
 from .targets import MediaTarget as MediaTarget
-
-
-class ContextCommand(Operation):
-    references: tuple[CognitiveRef, ...]
-    purpose: str
-    kind: Literal["active", "resident", "work", "managed"] = "work"
-    executor: str = "subject"
-    token_budget: int = Field(default=8192, gt=0)
-
-
-class ContextFeedback(Operation):
-    context_id: str
-    reference: CognitiveRef
-    kind: Literal["model_contact", "actual_use", "behavior_adoption", "outcome"]
-    description: str
-    outcome: Literal["helpful", "unhelpful", "unknown"] = "unknown"
 
 
 class ContextUsage(Contract):
@@ -41,6 +26,12 @@ class ContextUsage(Contract):
     activity_ref: str | None = None
     world_id: str | None = None
     world_time: TimePoint | None = None
+    audience_entities: tuple[CognitiveRef, ...] = ()
+    situations: tuple[str, ...] = ()
+    symbols: SymbolSelection | None = Field(default=None, exclude_if=lambda value: value is None)
+    symbols_mode: Literal["understand", "express"] = Field(
+        default="understand", exclude_if=lambda value: value == "understand"
+    )
 
 
 class ContextCursor(Contract):
@@ -48,24 +39,6 @@ class ContextCursor(Contract):
     epoch_id: str
     revision: int = Field(ge=1)
     projection_id: str
-
-
-class ContextPrepare(Operation):
-    session_id: str = Field(min_length=1)
-    consumer_id: str = Field(min_length=1)
-    instance_id: str = Field(min_length=1)
-    usage: ContextUsage
-    max_items: int = Field(default=64, ge=1, le=256)
-    max_text_bytes: int = Field(default=65536, ge=1, le=1048576)
-    current_sources: tuple[ContextTarget, ...] = ()
-    query: QueryRequest | None = None
-    known_cursor: ContextCursor | None = None
-
-
-class ContextTrack(Contract):
-    session_id: str = Field(min_length=1)
-    consumer_id: str = Field(min_length=1)
-    instance_id: str = Field(min_length=1)
 
 
 class ContextSegment(Contract):
@@ -79,6 +52,7 @@ class ContextSegment(Contract):
     ]
     provenance: dict[str, JsonValue] = Field(default_factory=dict)
     epistemic: EpistemicStance | None = None
+    producer: ModelProvenance | None = None
 
 
 class EpistemicView(Contract):
@@ -91,7 +65,7 @@ class EpistemicView(Contract):
 class ContextProjection(Contract):
     id: str
     namespace_id: str
-    subject_id: str
+
     session_id: str
     consumer_id: str
     instance_id: str
@@ -103,158 +77,24 @@ class ContextProjection(Contract):
     config_digest: str
     recorded_at: str
     commit_seq: int
-    steward_call_id: str | None = None
+    steward_decision: StewardDecision | None = None
     degradations: tuple[str, ...] = ()
-
-
-class ContextTrackState(Contract):
-    projection: ContextProjection | None = None
-    pending_preparation_ids: tuple[str, ...] = ()
-    reset_reason: Literal["source_unavailable"] | None = None
-
-
-class ManagedContextResponse(Contract):
-    kind: Literal["reset", "append"]
-    cursor: ContextCursor
-    projection: ContextProjection
-
-
-class ContextPreparation(Contract):
-    id: str
-    state: Literal["prepared", "cancelled", "admitted"]
-    request: ContextPrepare
-    response: ManagedContextResponse
-
-
-class HostInputMeasurement(Contract):
-    input_tokens: int = Field(ge=0)
-    reserved_output_tokens: int = Field(ge=0)
-    context_window_tokens: int = Field(gt=0)
-    source: str = Field(min_length=1, max_length=256)
-
-    @model_validator(mode="after")
-    def within_window(self) -> HostInputMeasurement:
-        if self.input_tokens + self.reserved_output_tokens > self.context_window_tokens:
-            raise ValueError("the complete input and reserved output exceed the context window")
-        return self
-
-
-class ContextAdmissionCommand(Operation):
-    preparation_id: str
-    invocation_id: str = Field(min_length=1)
-    applied_segment_ids: tuple[str, ...]
-    rendered_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
-    history_generation: str = Field(min_length=1)
-    measurement: HostInputMeasurement
-
-
-class ContextAdmission(Contract):
-    id: str
-    projection_id: str
-    namespace_id: str
-    subject_id: str
-    session_id: str
-    consumer_id: str
-    instance_id: str
-    invocation_id: str
-    rendered_digest: str
-    history_generation: str
-    segments: tuple[str, ...]
-    sources: tuple[ContextTarget, ...]
-    measurement: HostInputMeasurement
-    recorded_at: str
-    commit_seq: int
-
-
-class ContextUse(Contract):
-    event_id: str = Field(min_length=1)
-    target: ContextTarget
-    kind: Literal[
-        "referenced", "acted_on", "result_supported", "result_refuted", "corrected", "pinned"
-    ]
-
-
-class ContextInvocationOutput(Contract):
-    model: str | None = None
-    provider: str | None = None
-    response_id: str | None = None
-    status: str | None = None
-    output_item_ids: tuple[str, ...] = ()
-    tool_call_ids: tuple[str, ...] = ()
-
-
-class ContextAdmissionRef(Contract):
-    admission_id: str
-    invocation_id: str
-
-
-class ReadContextSource(Operation):
-    admission: ContextAdmissionRef
-    tool_call_id: str = Field(min_length=1)
-    reference: CognitiveRef
-
-
-class ContextSourceReceipt(Contract):
-    admission: ContextAdmissionRef
-    tool_call_id: str
-    reference: CognitiveRef
-    commit_seq: int
-
-
-class ContextSourceResult(Contract):
-    memory: CognitiveRecord
-    sources: ExpandedSources
-    use: ContextSourceReceipt
-
-
-class ContextReport(Operation):
-    admission_id: str
-    invocation_id: str = Field(min_length=1)
-    outcome: Literal["completed", "failed", "cancelled"]
-    occurred_at: datetime
-    uses: tuple[ContextUse, ...] = Field(default=(), max_length=256)
-    output: ContextInvocationOutput | None = None
-
-    @model_validator(mode="after")
-    def timestamp(self) -> ContextReport:
-        if self.occurred_at.tzinfo is None:
-            raise ValueError("context outcome requires a timestamp with an explicit timezone")
-        if len({use.event_id for use in self.uses}) != len(self.uses):
-            raise ValueError("Context use event IDs must be distinct")
-        return self
-
-
-class ContextReportResult(Contract):
-    id: str
-    admission_id: str
-    invocation_id: str
-    outcome: Literal["completed", "failed", "cancelled"]
-    occurred_at: datetime
-    uses: tuple[ContextUse, ...]
-    output: ContextInvocationOutput | None = None
-    commit_seq: int
-
-
-class OpenContextSession(Operation):
-    session_id: str | None = None
-    parent_session_id: str | None = None
-    history_generation: str | None = None
 
 
 class ContextSession(Contract):
     id: str
     namespace_id: str
-    subject_id: str
+
     closed: bool
     recorded_at: str
     closed_at: str | None = None
     commit_seq: int
     revision: int = Field(default=1, ge=1)
-    history_generation: str | None = None
     active_work_context_id: str | None = None
     residents: tuple[ContextResident, ...] = ()
     parent_session_id: str | None = None
     history_invalidated: bool = False
+    host_instances: dict[str, dict[str, JsonValue]] = Field(default_factory=dict)
 
 
 class ContextResident(Contract):
@@ -275,7 +115,7 @@ class ContextResident(Contract):
         return self
 
 
-class ChangeResidents(Operation):
+class ChangeResidents(Contract):
     session_id: str
     expected_revision: int = Field(ge=1)
     action: Literal["admit", "evict", "clear"]
@@ -314,7 +154,7 @@ class WorkContext(Contract):
     purged: bool = False
     id: str
     namespace_id: str
-    subject_id: str
+
     state: Literal["open", "suspended", "ended"] = "open"
     revision: int = Field(ge=1)
     content: WorkContextContent
@@ -323,7 +163,7 @@ class WorkContext(Contract):
     commit_seq: int
 
 
-class ChangeWorkContext(Operation):
+class ChangeWorkContext(Contract):
     work_context_id: str | None = None
     expected_revision: int | None = Field(default=None, ge=1)
     action: Literal[
@@ -333,11 +173,10 @@ class ChangeWorkContext(Operation):
     anchors: tuple[ContextTarget, ...] = ()
 
 
-class ChangeContextSession(Operation):
+class ChangeContextSession(Contract):
     session_id: str
     expected_revision: int = Field(ge=1)
     active_work_context_id: str | None = None
-    history_generation: str | None = None
     close: bool = False
     invalidate_history: bool = False
 
@@ -349,6 +188,9 @@ class ContextConsumerPolicy(Contract):
     allowed_kinds: tuple[str, ...] = ()
     allow_media: bool = True
     steward_role: str | None = None
+    steward_max_tool_calls: int = Field(default=3, ge=0, le=16)
+    steward_max_model_requests: int = Field(default=4, ge=1, le=16)
+    steward_timeout_seconds: float = Field(default=30, gt=0, le=300)
 
 
 class ContextsPolicy(Contract):
@@ -364,19 +206,21 @@ class ContextsPolicy(Contract):
     resident_idle_seconds: int = Field(default=86400, ge=60)
 
 
-class StewardProposal(Contract):
-    selected_ids: tuple[str, ...] = Field(default=(), max_length=64)
-    summary: str | None = Field(default=None, max_length=8192)
-
-    @model_validator(mode="after")
-    def selections(self) -> StewardProposal:
-        if len(set(self.selected_ids)) != len(self.selected_ids):
-            raise ValueError("Steward selections must be distinct")
-        if self.summary and not self.selected_ids:
-            raise ValueError("Steward interpretation requires selected sources")
-        return self
+class StewardDecision(Contract):
+    selection_note: str | None = None
+    group_summaries: tuple[HistorySummary, ...] = ()
+    evict: tuple[ContextTarget, ...] = ()
+    promote: tuple[ContextTarget, ...] = ()
+    work_summary: str | None = None
+    unresolved: tuple[str, ...] = ()
+    sources: tuple[ContextTarget, ...] = ()
+    producers: tuple[ModelProvenance, ...] = ()
 
 
-class ContextPreparationJob(Contract):
-    request_id: str
-    job_id: str
+class SelectionResult(Contract):
+    paragraphs: list[int] = Field(
+        default_factory=list, max_length=64, description="本批相关段落的编号，从1开始"
+    )
+    note: str | None = Field(
+        default=None, max_length=512, description="关键歧义或缺少必要信息时的简短线索；其它情况留空"
+    )

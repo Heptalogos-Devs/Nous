@@ -5,23 +5,23 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Literal
 
 from nous_sdk.contracts import (
-    CallContext,
     CognitiveRecord,
     CognitiveRef,
-    DomainError,
-    MediaReference,
     QueryRequest,
 )
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.common import Contract
 from nous_sdk.contracts.query_vcp import (
     QueryThinking,
+    ThinkingReference,
     ThinkingRoute,
     ThinkingSelection,
     ThinkingStage,
 )
 
 from .assets import RetrievalRecord
-from .media import source_material_ids_in
+from .readout import require_record_in
 
 if TYPE_CHECKING:
     from .service import RetrievalService
@@ -91,7 +91,7 @@ async def resolve_thinking(
     async with self.authority.read(ctx) as view:
         checked: set[str] = set()
 
-        async def candidate(key: str) -> CognitiveRef | MediaReference:
+        async def candidate(key: str) -> ThinkingReference:
             record = candidates.get(key)
             if record is None:
                 raise DomainError(
@@ -99,12 +99,7 @@ async def resolve_thinking(
                     "A method selection escaped the authorized candidate snapshot",
                 )
             if key not in checked:
-                if isinstance(record, CognitiveRecord):
-                    await self.cognition.get_in(view, ctx, record.reference)
-                else:
-                    await source_material_ids_in(
-                        view, ctx, record.reference, self.materials, self.derivations
-                    )
+                await require_record_in(self, view, ctx, record)
                 checked.add(key)
             return record.reference
 

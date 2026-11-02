@@ -5,7 +5,9 @@ from dataclasses import dataclass
 from uuid import uuid4
 
 from jsonpointer import JsonPointerException, resolve_pointer
-from nous_sdk.contracts import CallContext, DomainError, MediaReference
+from nous_sdk.contracts import MediaReference
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.derivation import (
     ArtifactRepresentation,
     CreateDerivedRegion,
@@ -139,13 +141,16 @@ class DerivedRegions(DerivedAccess):
         select_payload(representation, command.selector)
         region_id = command.id or str(uuid4())
         existing = await tx.connection.scalar(
-            select(derived_regions.c.record).where(derived_regions.c.id == region_id)
+            select(derived_regions.c.record).where(
+                derived_regions.c.namespace_id == ctx.namespace_id,
+                derived_regions.c.id == region_id,
+            )
         )
         if existing is not None:
             saved = DerivedRegion.model_validate(existing)
             if (
                 saved.namespace_id != ctx.namespace_id
-                or saved.subject_id != ctx.subject_id
+                or saved.namespace_id != ctx.namespace_id
                 or saved.representation != command.representation
                 or saved.selector != command.selector
                 or saved.parent_id != command.parent_id
@@ -162,7 +167,6 @@ class DerivedRegions(DerivedAccess):
                 tx, ctx, MediaReference(kind="derived_region", id=region_id)
             ),
             namespace_id=ctx.namespace_id,
-            subject_id=ctx.require_subject(),
             representation=command.representation,
             selector=command.selector,
             parent_id=command.parent_id,
@@ -173,27 +177,21 @@ class DerivedRegions(DerivedAccess):
             derived_regions.insert().values(
                 id=value.id,
                 namespace_id=ctx.namespace_id,
-                subject_id=ctx.require_subject(),
                 record=value.model_dump(mode="json"),
                 commit_seq=tx.commit_seq,
             )
         )
+        from nous.retrieval.maintenance import enqueue_index_in
+
+        await enqueue_index_in(tx, ctx)
         return value
 
     async def register_region(
         self, ctx: CallContext, command: CreateDerivedRegion
     ) -> DerivedRegion:
-        async with self.authority.write(
-            ctx,
-            command.operation_id,
-            operation_kind="media.derived_region",
-            scope=ctx.require_subject(),
-            payload=command,
-        ) as tx:
-            if tx.replayed:
-                replay = DerivedRegion.model_validate(tx.replay_result)
-                return await self.read_region_in(tx, ctx, replay.id)
-            return tx.result(await self.adopt_region_in(tx, ctx, command))
+        async with self.authority.write(ctx) as tx:
+            pass
+            return await self.adopt_region_in(tx, ctx, command)
 
     async def selected_in(
         self, view: ReadView | WriteTx, ctx: CallContext, reference: MediaReference

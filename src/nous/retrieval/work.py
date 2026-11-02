@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 
-from nous_sdk.contracts import DomainError
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.query_conditions import QueryBudget
 
 

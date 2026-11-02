@@ -1,6 +1,8 @@
 """Resolve bundle selectors to actual scoped observation and cognition identities."""
 
-from nous_sdk.contracts import BundleRequest, CallContext, CognitiveRecord, DomainError
+from nous_sdk.contracts import BundleRequest, CognitiveRecord
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.bundles import (
     AllSelection,
     ChatSelection,
@@ -101,7 +103,7 @@ async def select_roots_in(
             await view.connection.execute(
                 select(bundle_installs.c.record).where(
                     bundle_installs.c.namespace_id == ctx.namespace_id,
-                    bundle_installs.c.subject_id == ctx.subject_id,
+                    
                 )
             )
         ).scalars()

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -9,10 +10,10 @@ from nous_sdk.contracts import (
     CognitiveRecord,
     CognitiveRef,
     ConceptBody,
-    DomainError,
     EntityBody,
     SchemaBody,
 )
+from nous.platform.errors import DomainError
 
 from nous.cognition.projection import media_references_in, references_in
 from nous.material.service import SourceRecord
@@ -45,7 +46,7 @@ def names(record: CognitiveRecord) -> tuple[str, ...]:
 
 
 def resolve_name(
-    catalog: list[RetrievalRecord],
+    catalog: Sequence[RetrievalRecord],
     selector: str,
     locator: str,
 ) -> CognitiveRecord:

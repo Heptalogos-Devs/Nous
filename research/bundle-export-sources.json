@@ -22,8 +22,8 @@
     "_replace_json_tokens"
   ],
   "nous_owners": [
-    "crates/nous-app/src/bundles",
-    "crates/nous-storage/src/bundle"
+    "src/nous/data_management",
+    "src/nous/integrations/amemorix/bundles.py"
   ],
   "adapted_responsibilities": [
     "semantic digest and archive inventory",

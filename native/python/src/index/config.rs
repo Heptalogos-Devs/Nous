@@ -76,6 +76,7 @@ impl VcpOptions {
             "ghost_vectors rows must match vcp.ghost_tags metadata"
         );
         Ok(VcpConfig {
+            strict_capabilities: false,
             pipeline: self.pipeline,
             readout: self.readout,
             candidate_limit: self.candidate_limit,
@@ -100,6 +101,7 @@ impl VcpOptions {
 #[derive(Deserialize, Serialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct QueryOptions {
+    pub strict_capabilities: bool,
     pub limit: usize,
     pub lexical_weight: f64,
     pub dense_weight: f64,
@@ -109,6 +111,7 @@ pub struct QueryOptions {
 impl Default for QueryOptions {
     fn default() -> Self {
         Self {
+            strict_capabilities: false,
             limit: 20,
             lexical_weight: 1.0,
             dense_weight: 1.0,

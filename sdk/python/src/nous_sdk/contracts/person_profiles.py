@@ -4,8 +4,46 @@ from typing import Literal
 
 from pydantic import Field
 
-from .cognition import CognitiveRecord, CognitiveRef, EvidenceLink
-from .common import CallContext, Contract, Operation
+from .cognition import CognitiveRecord, CognitiveRef, EpistemicStance, EvidenceLink
+from .common import Contract, Operation, TimeRange
+
+
+class PersonProfilesQuery(Contract):
+    reference: CognitiveRef | None = None
+    identifier: str = ""
+    platform: str | None = None
+    name: str = ""
+    limit: int = Field(default=50, ge=1, le=1000)
+    evidence_limit: int = Field(default=10, ge=0, le=1000)
+    context_text: str = Field(default="", max_length=8192)
+
+
+class PersonProfileEvidenceItem(Contract):
+    key: str
+    kind: Literal["entity_description", "entity_attribute", "fact_claim"]
+    content: str
+    reference: CognitiveRef
+    evidence: tuple[EvidenceLink, ...]
+    attribute_pointer: str | None = None
+    epistemic: EpistemicStance | None = None
+    validity: TimeRange | None = None
+    status: str | None = None
+    stability: str | None = None
+    authority: str | None = None
+    confidence: float | None = None
+
+
+class PersonProfileView(Contract):
+    record: CognitiveRecord
+    evidence: tuple[PersonProfileEvidenceItem, ...]
+    uncertain: tuple[PersonProfileEvidenceItem, ...]
+    evidence_count: int
+    uncertain_count: int
+    watermark: int
+
+
+class PersonProfilesResult(Contract):
+    items: tuple[PersonProfileView, ...]
 
 
 class PersonProfileChange(Operation):
@@ -38,13 +76,6 @@ class RefreshPersonProfile(Operation):
 class PersonProfileRefreshSubmission(Contract):
     job_id: str
     reference: CognitiveRef
-
-
-class PersonProfileRefreshIntent(Contract):
-    context: CallContext
-    command: RefreshPersonProfile
-    attribute_indices: tuple[int, ...]
-    claim_refs: tuple[CognitiveRef, ...] = ()
 
 
 class PersonProfileEvidence(Contract):

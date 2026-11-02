@@ -7,13 +7,13 @@ import pytest
 from nous_sdk.contracts import (
     AdoptCognition,
     BlobDocument,
-    CallContext,
-    DomainError,
     EvidenceLink,
     InstallBundle,
     MediaReference,
     MemoryBody,
 )
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.derivation import (
     CreateDerivedRegion,
     CreateRepresentation,
@@ -53,13 +53,10 @@ def test_physical_derivation_exact_scope_revisions_and_withdrawal(tmp_path: Path
         document = BlobDocument(filename="image.png", media_type="image/png")
         info = await app.media.probe(lease)
         try:
-            async with app.authority.write(
-                ctx, "capture", operation_kind="capture", payload={}
-            ) as tx:
+            async with app.authority.write(ctx) as tx:
                 material = await app.material.put_blob_in(tx, ctx, lease, document, info)
                 first = await app.material.observe_in(tx, ctx, material["id"], document)
                 second = await app.material.observe_in(tx, ctx, material["id"], document)
-                tx.result(material)
         finally:
             await app.content.release(lease)
         service = MediaImportService(
@@ -163,26 +160,27 @@ def test_physical_derivation_exact_scope_revisions_and_withdrawal(tmp_path: Path
         )
         from nous.data_management.bundles import BundleService
 
-        bundles = BundleService(app.authority, app.cognition, content_store=app.content)
+        bundles = BundleService(
+            app.authority, app.cognition, ledger=app.models.ledger, content_store=app.content
+        )
         exported = await bundles.export(ctx)
         recipient = ctx.model_copy(update={"subject_id": "recipient"})
         await app.identity.create_subject(
             recipient, "Recipient", "recipient", subject_id=recipient.subject_id
         )
-        installed = await bundles.install(
-            recipient, InstallBundle(operation_id="receive", bundle=exported)
+        await bundles.install(
+            recipient, InstallBundle(bundle=exported)
         )
-        mapping = installed["mapping"]
-        received_ref = cropped.reference.model_copy(update={"id": mapping[cropped.reference.id]})
+        received_ref = cropped.reference
         received = await app.derivations.read(recipient, received_ref)
         assert received.payload is not None and received.payload.kind == "artifact"
         assert received.payload.content_hash == cropped.payload.content_hash
-        assert received.source_roots == (mapping[first["id"]],)
+        assert received.source_roots == (first["id"],)
         assert (await app.material.read(recipient, received.payload.material_id))[
             "content_hash"
         ] == cropped.payload.content_hash
         received_memory = await app.cognition.get(
-            recipient, memory.reference.model_copy(update={"id": mapping[memory.reference.id]})
+            recipient, memory.reference
         )
         assert isinstance(received_memory.body, MemoryBody)
         assert received_memory.body.media[0] == received_ref.media()
@@ -212,13 +210,10 @@ def test_physical_derivation_exact_scope_revisions_and_withdrawal(tmp_path: Path
             )
         from nous.material.service import observations
 
-        async with app.authority.write(
-            ctx, "withdraw", operation_kind="withdraw", payload={}
-        ) as tx:
+        async with app.authority.write(ctx) as tx:
             await tx.connection.execute(
                 observations.update().where(observations.c.id == first["id"]).values(active=False)
             )
-            tx.result(None)
         with pytest.raises(DomainError):
             await app.derivations.read(ctx, cropped.reference)
         with pytest.raises(DomainError):
@@ -258,12 +253,9 @@ def test_purge_follows_exact_input_contacts_without_erasing_other_revisions(tmp_
         document = BlobDocument(filename="image.png", media_type="image/png")
         try:
             info = await app.media.probe(lease)
-            async with app.authority.write(
-                ctx, "source", operation_kind="capture", payload={}
-            ) as tx:
+            async with app.authority.write(ctx) as tx:
                 material = await app.material.put_blob_in(tx, ctx, lease, document, info)
                 source = await app.material.observe_in(tx, ctx, material["id"], document)
-                tx.result(None)
         finally:
             await app.content.release(lease)
         media = MediaImportService(
@@ -278,9 +270,7 @@ def test_purge_follows_exact_input_contacts_without_erasing_other_revisions(tmp_
         original = MediaReference(kind="material", id=material["id"], observation_id=source["id"])
         from nous_sdk.contracts import SourceRegion
 
-        async with app.authority.write(
-            ctx, "source-region", operation_kind="material.region", payload={}
-        ) as tx:
+        async with app.authority.write(ctx) as tx:
             selected = await app.material.register_region_in(
                 tx,
                 ctx,
@@ -290,7 +280,6 @@ def test_purge_follows_exact_input_contacts_without_erasing_other_revisions(tmp_
                     pixel_rect=PixelRect(x=0, y=0, width=2, height=2),
                 ),
             )
-            tx.result(selected)
         author = DerivationProducer(
             signature="a" * 64, config_digest="b" * 64, implementation="manual annotation"
         )
@@ -338,9 +327,7 @@ def test_purge_follows_exact_input_contacts_without_erasing_other_revisions(tmp_
             ),
         )
         assert cropped.payload is not None and cropped.payload.kind == "artifact"
-        async with app.authority.write(
-            ctx, "repeat-contact", operation_kind="contact", payload={}
-        ) as tx:
+        async with app.authority.write(ctx) as tx:
             first = str(
                 await tx.connection.scalar(
                     select(observations.c.id).where(
@@ -354,7 +341,6 @@ def test_purge_follows_exact_input_contacts_without_erasing_other_revisions(tmp_
                 cropped.payload.material_id,
                 BlobDocument(filename="another delivery", media_type="image/png"),
             )
-            tx.result(None)
         producer = DerivationProducer(
             signature="a" * 64, config_digest="b" * 64, implementation="manual annotation"
         )

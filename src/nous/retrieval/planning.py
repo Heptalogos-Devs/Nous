@@ -9,14 +9,13 @@ from typing import Literal, NotRequired, TypedDict
 
 from nous_native import parse_nousql
 from nous_sdk.contracts import (
-    CallContext,
-    CognitiveRecord,
-    DomainError,
-    MediaRecord,
     QueryRequest,
     TimeFilter,
     TimeRange,
 )
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
+from pydantic import JsonValue
 
 from .expressions import source as expression_source
 
@@ -58,6 +57,8 @@ class Composition(TypedDict):
 
 
 class BoundPlan(TypedDict):
+    wave: NotRequired[dict[str, object]]
+    query_context: NotRequired[dict[str, JsonValue]]
     canonical: str
     selectors: list[Cue]
     preferences: list[Preference]
@@ -71,6 +72,25 @@ class BoundPlan(TypedDict):
     explore: NotRequired[bool]
     root_controls: list[str]
     no_matches: NotRequired[bool]
+    checked_resources: NotRequired[list[str]]
+    resource_refresh_complete: NotRequired[bool]
+
+
+def current_selection(request: QueryRequest, plan: BoundPlan) -> bool:
+    return not (
+        request.history
+        or request.as_of_commit is not None
+        or "asof_time" in plan
+        or request.include_deleted
+        or request.include_inactive
+        or request.reference is not None
+        and "@" in request.reference
+        or any(
+            cue.get("selector") == "ref"
+            and any("@" in locator for locator in cue.get("locators", []))
+            for cue in plan["selectors"]
+        )
+    )
 
 
 def coordinate(value: str | int, domain: str = "unix_ms") -> int:
@@ -99,6 +119,13 @@ def duration(value: str | int) -> int:
 
 
 def bind(ctx: CallContext, request: QueryRequest) -> tuple[QueryRequest, BoundPlan]:
+    clock = (
+        request.context.reference_time
+        if request.context is not None
+        and not isinstance(request.context, str)
+        and request.context.reference_time is not None
+        else ctx.clock
+    )
     source = request.text
     if request.expression is not None:
         source = expression_source(request.expression, request.budget) + " " + source
@@ -124,14 +151,24 @@ def bind(ctx: CallContext, request: QueryRequest) -> tuple[QueryRequest, BoundPl
             directive.get("named", {}),
         )
         validate_directive(name, args, named)
+        option = "source_type" if name == "source" else name
+        if name in {"mode", "limit", "source", "current"}:
+            previous = update.get(option, getattr(request, option))
+            if (option in request.model_fields_set or option in update) and previous != args[0]:
+                raise DomainError(
+                    "query_option_conflict",
+                    "Query syntax and explicit options disagree",
+                    field=option,
+                    directive=name,
+                )
+
         if name in {"asof", "history", "limit", "effort", "diagnostics", "materialize"}:
             extra["root_controls"].append(name)
         if name == "return":
-            kinds = tuple(value for value in args if value not in {"cognition", "media"})
+            domains = ("cognition", "media", "observation", "evidence", "resource")
+            kinds = tuple(value for value in args if value not in domains)
             update["domains"] = tuple(
-                domain
-                for domain in ("cognition", "media")
-                if domain in args or domain == "cognition" and kinds
+                domain for domain in domains if domain in args or domain == "cognition" and kinds
             )
             update["kinds"] = (
                 tuple(value for value in request.kinds if value in kinds)
@@ -180,14 +217,14 @@ def bind(ctx: CallContext, request: QueryRequest) -> tuple[QueryRequest, BoundPl
             domain = named.get("domain", "unix_ms")
             start = end = None
             if "within" in named:
-                if ctx.clock.domain != domain or domain != "unix_ms":
+                if clock.domain != domain or domain != "unix_ms":
                     raise DomainError(
                         "time_domain_uncalibrated",
                         "Relative duration requires a calibrated clock in the requested domain",
                     )
                 start, end = (
-                    ctx.clock.coordinate - duration(named["within"]),
-                    ctx.clock.coordinate + 1,
+                    clock.coordinate - duration(named["within"]),
+                    clock.coordinate + 1,
                 )
             elif "at" in named:
                 start = coordinate(named["at"], domain)
@@ -205,12 +242,10 @@ def bind(ctx: CallContext, request: QueryRequest) -> tuple[QueryRequest, BoundPl
                 "domain": named.get("domain", "unix_ms"),
             }
         elif name == "asof":
-            if "ago" in named and ctx.clock.domain != "unix_ms":
+            if "ago" in named and clock.domain != "unix_ms":
                 raise DomainError("time_domain_uncalibrated", "$asof(ago) requires a unix_ms clock")
             extra["asof_time"] = (
-                ctx.clock.coordinate - duration(named["ago"])
-                if "ago" in named
-                else coordinate(args[0])
+                clock.coordinate - duration(named["ago"]) if "ago" in named else coordinate(args[0])
             )
         elif name in {"any", "all"}:
             extra["composition"] = {"operation": name, "children": args}
@@ -243,7 +278,9 @@ def bind(ctx: CallContext, request: QueryRequest) -> tuple[QueryRequest, BoundPl
     )
     update["text"] = text.strip()
     # Revalidate after language binding, so a directive cannot bypass request limits.
-    bound = QueryRequest.model_validate({**request.model_dump(mode="json"), **update})
+    bound = QueryRequest.model_validate(
+        {**request.model_dump(mode="json", exclude_unset=True), **update}
+    )
     return bound, extra
 
 
@@ -301,28 +338,3 @@ def validate_directive(name: str, args: list[object], named: dict[str, object]) 
         valid = valid and (selectors in ({"within"}, {"at"}, {"from"}, {"to"}, {"from", "to"}))
     if not valid:
         raise DomainError("invalid_query", f"Invalid arguments for ${name}")
-
-
-def time_matches(record: CognitiveRecord | MediaRecord, filters: tuple[TimeFilter, ...]) -> bool:
-    for condition in filters:
-        value = getattr(record.times, condition.axis)
-        if value is None:
-            return False
-        if condition.axis == "validity":
-            if condition.range.domain != value.domain:
-                return False
-            if (
-                value.end is not None
-                and condition.range.start is not None
-                and value.end <= condition.range.start
-            ):
-                return False
-            if (
-                condition.range.end is not None
-                and value.start is not None
-                and condition.range.end <= value.start
-            ):
-                return False
-        elif not condition.range.contains(value):
-            return False
-    return True

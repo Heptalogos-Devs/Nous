@@ -3,15 +3,22 @@
 import secrets
 
 import sqlalchemy as sa
-from nous_sdk.contracts import CallContext, CognitiveRef, MediaReference
+from nous_sdk.contracts import CognitiveRef
+from nous.platform.call_context import CallContext
 from nous_sdk.contracts.common import ReferenceAddresses
 from nous_sdk.contracts.context import CognitiveTarget, MediaTarget
 from nous_sdk.contracts.references import (
     CognitiveIdentity,
+    EvidenceTarget,
+    ExactReference,
     ObjectTarget,
+    ObservationTarget,
     ReferenceBinding,
+    ResourceTarget,
     SemanticTarget,
 )
+from nous_sdk.contracts.resources import ResourceReference
+from nous_sdk.contracts.source_objects import EvidenceReference, ObservationReference
 from pydantic import TypeAdapter
 from sqlalchemy.dialects.sqlite import insert
 
@@ -47,6 +54,12 @@ def prefix(target: SemanticTarget) -> str:
         return _PREFIXES[target.identity.kind]
     if isinstance(target, CognitiveTarget):
         return _PREFIXES[target.reference.kind] + "rev"
+    if isinstance(target, ResourceTarget):
+        return "resource"
+    if isinstance(target, ObservationTarget):
+        return "obs"
+    if isinstance(target, EvidenceTarget):
+        return "evidence"
     return {
         "material": "art",
         "source_region": "src",
@@ -60,23 +73,29 @@ def validate_address(address: str, target: SemanticTarget | None = None) -> None
     allowed = (
         set(_PREFIXES.values())
         | {v + "rev" for v in _PREFIXES.values()}
-        | {"art", "src", "repr", "region"}
+        | {"art", "src", "repr", "region", "resource", "obs", "evidence"}
     )
     if not separator or kind not in allowed or (target is not None and kind != prefix(target)):
         raise ValueError("Readable reference has an invalid type prefix")
     decode(value)
 
 
-def targets(reference: CognitiveRef | MediaReference) -> tuple[SemanticTarget, ...]:
+def targets(reference: ExactReference) -> tuple[SemanticTarget, ...]:
     if isinstance(reference, CognitiveRef):
         return (
             ObjectTarget(identity=CognitiveIdentity(kind=reference.kind, id=reference.id)),
             CognitiveTarget(reference=reference),
         )
+    if isinstance(reference, ResourceReference):
+        return (ResourceTarget(reference=reference),)
+    if isinstance(reference, ObservationReference):
+        return (ObservationTarget(reference=reference),)
+    if isinstance(reference, EvidenceReference):
+        return (EvidenceTarget(reference=reference),)
     return (MediaTarget(reference=reference.model_copy(update={"observation_id": None})),)
 
 
-async def _ensure(tx: WriteTx, ctx: CallContext, target: SemanticTarget) -> str:
+async def allocate_target_in(tx: WriteTx, ctx: CallContext, target: SemanticTarget) -> str:
     encoded = canonical_json(target)
     existing = await tx.connection.scalar(
         sa.select(addresses.c.address).where(
@@ -103,10 +122,10 @@ async def _ensure(tx: WriteTx, ctx: CallContext, target: SemanticTarget) -> str:
 
 
 async def allocate_in(
-    tx: WriteTx, ctx: CallContext, reference: CognitiveRef | MediaReference
+    tx: WriteTx, ctx: CallContext, reference: ExactReference
 ) -> ReferenceAddresses:
     selected = targets(reference)
-    allocated = [await _ensure(tx, ctx, target) for target in selected]
+    allocated = [await allocate_target_in(tx, ctx, target) for target in selected]
     return ReferenceAddresses(
         object=allocated[0] if len(allocated) == 2 else None, exact=allocated[-1]
     )
@@ -115,7 +134,7 @@ async def allocate_in(
 async def recover_in(
     tx: WriteTx,
     ctx: CallContext,
-    reference: CognitiveRef | MediaReference,
+    reference: ExactReference,
     known: ReferenceAddresses | None,
 ) -> ReferenceAddresses:
     """Recover saved names without taking a name already bound to another identity."""
@@ -141,7 +160,7 @@ async def recover_in(
 
 
 async def addresses_in(
-    view: ReadView | WriteTx, ctx: CallContext, reference: CognitiveRef | MediaReference
+    view: ReadView | WriteTx, ctx: CallContext, reference: ExactReference
 ) -> ReferenceAddresses | None:
     selected = targets(reference)
     resolved: list[str] = []
@@ -163,7 +182,7 @@ async def addresses_in(
 async def export_bindings_in(
     view: ReadView | WriteTx,
     ctx: CallContext,
-    references: tuple[CognitiveRef | MediaReference, ...],
+    references: tuple[ExactReference, ...],
 ) -> tuple[ReferenceBinding, ...]:
     encoded = {canonical_json(target) for ref in references for target in targets(ref)}
     rows = (
@@ -177,7 +196,7 @@ async def export_bindings_in(
         await view.connection.execute(
             sa.select(imported.c.address, imported.c.target).where(
                 imported.c.namespace_id == ctx.namespace_id,
-                imported.c.subject_id == ctx.subject_id,
+                
                 imported.c.target.in_(encoded),
             )
         )
@@ -198,7 +217,7 @@ async def import_bindings_in(
             insert(imported)
             .values(
                 namespace_id=ctx.namespace_id,
-                subject_id=ctx.require_subject(),
+                
                 bundle_id=bundle_id,
                 address=binding.address,
                 target=canonical_json(binding.target),

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 import numpy as np
 from nous_sdk.contracts import (
     AssociationBody,
@@ -21,9 +19,6 @@ from .assets import (
     VectorAsset,
 )
 
-if TYPE_CHECKING:
-    from .service import RetrievalService
-
 
 def node_label(record: CognitiveRecord) -> str:
     if isinstance(record.body, (ConceptBody, EntityBody)) and record.body.label.strip():
@@ -32,7 +27,6 @@ def node_label(record: CognitiveRecord) -> str:
 
 
 def graph(
-    self: RetrievalService,
     catalog: list[RetrievalRecord],
     records: list[RetrievalRecord],
     assets: dict[str, VectorAsset],

@@ -5,7 +5,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
-from nous_sdk.contracts import CallContext, CognitiveRecord, CognitiveRef, DomainError, UnitOutput
+from nous_sdk.contracts import CognitiveRecord, CognitiveRef, UnitOutput
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.imports import EmbeddingSyncResult, VectorAdoption
 from nous_sdk.contracts.vector_projection import ProjectionReceipt, ProjectionResult
 from sqlalchemy import select
@@ -35,10 +37,16 @@ async def embed_records(
     ctx: CallContext,
     references: tuple[CognitiveRef, ...],
     operation_id: str,
+    *,
+    replace_existing: bool = False,
 ) -> VectorAdoption:
     if self.projection is None:
         raise RuntimeError("The vector projection owner is not composed")
-    return adoption(await self.projection.project(ctx, references, operation_id))
+    return adoption(
+        await self.projection.project(
+            ctx, references, operation_id, replace_existing=replace_existing
+        )
+    )
 
 
 async def embed_output(
@@ -90,7 +98,6 @@ async def embedding_sync(
                 select(revisions.c.record)
                 .where(
                     revisions.c.namespace_id == ctx.namespace_id,
-                    revisions.c.subject_id == ctx.require_subject(),
                     revisions.c.head.is_(True),
                 )
                 .order_by(revisions.c.commit_seq, revisions.c.id)
@@ -109,7 +116,9 @@ async def embedding_sync(
     selected = missing[:limit]
     if not selected:
         return EmbeddingSyncResult(embedded=0, remaining=0, space=None)
-    result = await self.embed_records(ctx, selected, operation_id or str(uuid4()))
+    result = await self.embed_records(
+        ctx, selected, operation_id or str(uuid4()), replace_existing=True
+    )
     return EmbeddingSyncResult(
         embedded=result.embedded, remaining=len(missing) - len(selected), space=result.space
     )

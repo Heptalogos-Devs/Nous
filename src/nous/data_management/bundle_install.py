@@ -5,34 +5,32 @@ import base64
 import json
 from datetime import datetime
 from hashlib import sha256
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from nous_sdk.contracts import (
-    CallContext,
-    CatalogView,
     CognitiveRecord,
-    DomainError,
     FileSuccess,
     InstallBundle,
     MediaReference,
+    NamespaceBundle,
     SourceRegion,
-    SubjectBundle,
     TimePoint,
-    UnitOutput,
 )
-from nous_sdk.contracts.bundles import BundlePlacement
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.context import CognitiveTarget
-from nous_sdk.contracts.references import ObjectTarget, ReferenceBinding
-from pydantic import JsonValue, TypeAdapter
+from nous_sdk.contracts.identity import IdentityPurpose
+from nous_sdk.contracts.references import ObjectTarget
+from pydantic import TypeAdapter
 from sqlalchemy import select
 
 from nous.cognition.projection import evidence_in, references_in
 from nous.cognition.schema import revisions, vectors
-from nous.identity.service import require_subject_in
+from nous.identity.access import require_namespace_in
 from nous.imports.schema import catalogs, inputs, outputs, successes, units
 from nous.material.service import MaterialRecord, materials, observations, regions
-from nous.platform.content import ContentLease, ContentObject
+from nous.platform.content import ContentLease
 from nous.references import allocate_in, import_bindings_in
 
 from .schema import bundle_installs
@@ -41,26 +39,23 @@ if TYPE_CHECKING:
     from .bundles import BundleService
 
 
-async def install_zip(self: BundleService, ctx: CallContext, data: bytes, operation_id: str):
+async def install_zip(self: BundleService, ctx: CallContext, data: bytes):
     from .archive_read import decode
 
     bundle = await asyncio.to_thread(decode, data)
     return await self.install(
-        ctx, InstallBundle(operation_id=operation_id, bundle=bundle.model_dump(mode="json"))
+        ctx, InstallBundle(bundle=bundle.model_dump(mode="json"))
     )
 
 
-async def install(self: BundleService, ctx: CallContext, command: InstallBundle):
-    receipt = await self.authority.receipt(
-        ctx,
-        command.operation_id,
-        operation_kind="bundle.install",
-        scope=ctx.require_subject(),
-        payload=command,
-    )
-    if receipt is not None:
-        return receipt.result
-    bundle = SubjectBundle.model_validate(command.bundle)
+async def install(
+    self: BundleService,
+    ctx: CallContext,
+    command: InstallBundle,
+    *,
+    purpose: IdentityPurpose = "active",
+):
+    bundle = NamespaceBundle.model_validate(command.bundle)
     from .bundle_validation import validate_graph
 
     validate_graph(bundle)
@@ -91,7 +86,13 @@ async def install(self: BundleService, ctx: CallContext, command: InstallBundle)
                 leases[row.content_hash] = await self.content_store.publish_bytes(
                     data, material["media_type"]
                 )
-        return await self.install_prepared(ctx, command, bundle, leases)
+        return await self.install_prepared(
+            ctx,
+            command,
+            bundle,
+            leases,
+            purpose=purpose,
+        )
     finally:
         if self.content_store:
             for lease in leases.values():
@@ -102,18 +103,21 @@ async def install_prepared(
     self: BundleService,
     ctx: CallContext,
     command: InstallBundle,
-    original: SubjectBundle,
+    original: NamespaceBundle,
     leases: dict[str, ContentLease],
+    *,
+    purpose: IdentityPurpose = "active",
 ):
     bundle = original.model_dump(mode="json")
-    if bundle.get("format") != "nous.subject" or bundle.get("version") != 1:
-        raise DomainError("bundle_format", "Unsupported Nous subject bundle format")
+    if bundle.get("format") != "nous.namespace.bundle" or bundle.get("version") != 2:
+        raise DomainError("bundle_format", "Unsupported Nous namespace bundle format")
     records = [CognitiveRecord.model_validate(value) for value in bundle["cognition"]]
     obs = {row["id"]: row for row in bundle["observations"]}
     mats = {row["id"]: row for row in bundle["materials"]}
     keys = {record.reference.exact() for record in records}
     for record in records:
-        if not record.source_roots or any(oid not in obs for oid in record.source_roots):
+        # Empty source_roots are valid for system-formed cognition; only named roots must resolve.
+        if any(oid not in obs for oid in record.source_roots):
             raise DomainError(
                 "bundle_source_missing", "Cognition has an unresolved supporting source"
             )
@@ -133,7 +137,9 @@ async def install_prepared(
                 "bundle_source_missing", "Cognition evidence has an unresolved observation"
             )
     for row in obs.values():
-        if row["material_id"] not in mats or row["kind"] not in {"import", "contact"}:
+        # NamespaceBundle has validated the shared ObservationKind, including
+        # immutable snapshots read from registered external resources.
+        if row["material_id"] not in mats:
             raise DomainError(
                 "bundle_observation", "Observation has invalid material or event kind"
             )
@@ -146,34 +152,18 @@ async def install_prepared(
             raise DomainError(
                 "bundle_content_hash", "Material bytes do not match their content hash"
             )
-    async with self.authority.write(
-        ctx,
-        command.operation_id,
-        operation_kind="bundle.install",
-        scope=ctx.require_subject(),
-        payload=command,
-    ) as tx:
-        if tx.replayed:
-            return tx.replay_result
-        await require_subject_in(tx, ctx, "memory")
-        if command.archive_material_id:
-            await self.cognition.materials.read_in(tx, ctx, command.archive_material_id)
+    async with self.authority.write(ctx) as tx:
+        await require_namespace_in(tx, ctx, "memory", purpose=purpose)
         if command.mode == "restore":
             if original.content_level != "full":
                 raise DomainError(
-                    "bundle_restore_full_required", "Restore requires a full subject archive"
+                    "bundle_restore_full_required", "Restore requires a full namespace archive"
                 )
             for table in (revisions, catalogs, observations):
-                statement = select(table.c.id).where(
-                    table.c.namespace_id == ctx.namespace_id, table.c.subject_id == ctx.subject_id
-                )
-                if table is observations and command.archive_material_id:
-                    statement = statement.where(
-                        observations.c.material_id != command.archive_material_id
-                    )
+                statement = select(table.c.id).where(table.c.namespace_id == ctx.namespace_id)
                 if await tx.connection.scalar(statement.limit(1)) is not None:
                     raise DomainError(
-                        "bundle_restore_nonempty", "Restore requires an empty receiving Subject"
+                        "bundle_restore_nonempty", "Restore requires an empty receiving Namespace"
                     )
         digest = sha256(
             json.dumps(
@@ -188,7 +178,6 @@ async def install_prepared(
                 await tx.connection.execute(
                     select(bundle_installs.c.record).where(
                         bundle_installs.c.namespace_id == ctx.namespace_id,
-                        bundle_installs.c.subject_id == ctx.subject_id,
                     )
                 )
             ).scalars()
@@ -205,128 +194,24 @@ async def install_prepared(
                             "bundle_release_conflict",
                             "This package release already has different content in the receiving placement",
                         )
-                    return tx.result(existing)
-        mapping = {
-            value: str(uuid4())
-            for value in {
-                *(record.reference.id for record in records),
-                *(record.reference.id for record in original.derivations.representations),
-                *(region.id for region in original.derivations.regions),
-                *obs,
-                *mats,
-                *(
-                    row["id"]
-                    for name in ("catalogs", "inputs", "units", "file_successes", "regions")
-                    for row in bundle.get(name, [])
-                ),
-                *(row["id"] for row in bundle.get("outputs", [])),
-            }
+                    return existing
+        formal_ids = {
+            *(record.reference.id for record in records),
+            *(record.reference.id for record in original.derivations.representations),
+            *(region.id for region in original.derivations.regions),
+            *obs,
+            *mats,
+            *(row["id"] for row in bundle.get("regions", [])),
         }
-        installation_id = str(uuid4())
-        call_sources = dict(mapping)
-        for reference in keys:
-            kind, identity = reference.split(":", 1)
-            identifier, at, revision = identity.partition("@")
-            call_sources[reference] = f"{kind}:{mapping[identifier]}" + (
-                f"@{revision}" if at else ""
-            )
-        for kind, identifiers in (
-            ("material", mats),
-            ("observation", obs),
-            ("source-region", {row["id"] for row in bundle.get("regions", [])}),
-            ("derived-region", {row.id for row in original.derivations.regions}),
-        ):
-            call_sources.update(
-                {
-                    f"{kind}:{identifier}": f"{kind}:{mapping[identifier]}"
-                    for identifier in identifiers
-                }
-            )
-        for representation in original.derivations.representations:
-            call_sources[representation.reference.media().exact()] = (
-                f"representation:{mapping[representation.reference.id]}@{representation.reference.revision}"
-            )
-        call_mapping = await self.ledger.import_in(
-            tx, ctx, original.calls, call_sources, installation_id
+        runtime_rows = (
+            *original.catalogs,
+            *original.inputs,
+            *original.units,
+            *original.outputs,
+            *original.file_successes,
         )
-        mapping.update(call_mapping)
-        # These fields own identities; prose and arbitrary external origin strings remain literal.
-        identity_fields = {
-            "id",
-            "namespace_id",
-            "subject_id",
-            "catalog_id",
-            "input_source_id",
-            "material_id",
-            "observation_id",
-            "unit_id",
-            "output_id",
-            "parent_catalog_id",
-            "producer_call_id",
-            "model_call_id",
-            "call_id",
-        }
-
-        def remap(value: JsonValue, field: str = "") -> JsonValue:
-            if isinstance(value, dict):
-                if field in {
-                    "origin",
-                    "identifiers",
-                    "metadata",
-                    "structured",
-                    "external_ids",
-                    "provenance",
-                    "calls",
-                }:
-                    return value
-                if value.get("kind") == "representation" and isinstance(value.get("id"), str):
-                    identity, at, revision = str(value["id"]).partition("@")
-                    return {
-                        **{key: remap(item, key) for key, item in value.items() if key != "id"},
-                        "id": mapping.get(identity, identity) + (f"@{revision}" if at else ""),
-                    }
-                if field == "source_regions":
-                    return {
-                        mapping[key]: [
-                            mapping.get(region, region)
-                            for region in items
-                            if isinstance(region, str)
-                        ]
-                        for key, items in value.items()
-                        if isinstance(items, list)
-                    }
-                if field == "unit_outputs":
-                    return {
-                        mapping[key]: mapping[item]
-                        for key, item in value.items()
-                        if isinstance(item, str)
-                    }
-                return {key: remap(item, key) for key, item in value.items()}
-            if isinstance(value, list):
-                return [remap(item, field) for item in value]
-            if field == "namespace_id":
-                return ctx.namespace_id
-            if field == "subject_id":
-                return ctx.subject_id
-            if field in {"required_source_ids", "reference"} and isinstance(value, str):
-                if ":" not in value:
-                    return mapping.get(value, value)
-                kind, identity = value.split(":", 1)
-                object_id, at, revision = identity.partition("@")
-                return f"{kind}:{mapping.get(object_id, object_id)}" + (
-                    f"@{revision}" if at else ""
-                )
-            if field in identity_fields or field in {
-                "source_roots",
-                "support_roots",
-                "input_source_ids",
-                "material_ids",
-                "required_observation_ids",
-            }:
-                return mapping.get(value, value) if isinstance(value, str) else value
-            return value
-
-        remapped = SubjectBundle.model_validate(remap(bundle)).model_dump(mode="json")
+        mapping = {row.id: str(uuid4()) for row in runtime_rows}
+        installation_id = str(uuid4())
         for binding in original.bindings:
             target = binding.target
             identity = (
@@ -334,57 +219,99 @@ async def install_prepared(
             )
             if "@" in identity:
                 identity = identity.rsplit("@", 1)[0]
-            if identity not in mapping or (
+            if (identity not in formal_ids and identity not in mapping) or (
                 isinstance(target, CognitiveTarget) and target.reference.exact() not in keys
             ):
                 raise DomainError(
                     "bundle_reference_missing", "Readable binding points outside the bundle"
                 )
-        for new in remapped["materials"]:
+        for archived in original.materials:
+            new = {
+                "id": archived.id,
+                "namespace_id": ctx.namespace_id,
+                "content_hash": archived.content_hash,
+                "record": {**archived.record},
+            }
+            new["record"]["namespace_id"] = ctx.namespace_id
             new["record"]["commit_seq"] = tx.commit_seq
             new["record"]["addresses"] = (
-                await allocate_in(tx, ctx, MediaReference(kind="material", id=new["id"]))
+                await allocate_in(tx, ctx, MediaReference(kind="material", id=archived.id))
             ).model_dump(mode="json")
             await tx.connection.execute(materials.insert().values(**new))
-            if self.content_store and new["content_hash"] in leases:
-                await self.content_store.attach_in(tx, leases[new["content_hash"]], new["id"])
-        for new in remapped["regions"]:
+            if self.content_store and archived.content_hash in leases:
+                await self.content_store.attach_in(
+                    tx, leases[archived.content_hash], archived.id
+                )
+        for archived in original.regions:
+            new = {**archived, "namespace_id": ctx.namespace_id, "record": {**archived["record"]}}
             new["record"]["addresses"] = (
                 await allocate_in(tx, ctx, MediaReference(kind="source_region", id=new["id"]))
             ).model_dump(mode="json")
             SourceRegion.model_validate(new["record"])
             await tx.connection.execute(regions.insert().values(**new))
-        for new in remapped["observations"]:
+        for archived in original.observations:
+            new = archived.model_dump(mode="json")
+            new["namespace_id"] = ctx.namespace_id
             new["commit_seq"] = tx.commit_seq
+            new["record"]["namespace_id"] = ctx.namespace_id
             new["record"]["commit_seq"] = tx.commit_seq
-            if new["record"].get("source_type") == "amemorix_bundle":
-                new["kind"] = "import"
-                new["record"]["kind"] = "import"
-                new["record"]["recorded_at"] = tx.recorded_at
-                new["record"]["observed_at"] = TimePoint(
-                    coordinate=int(datetime.fromisoformat(tx.recorded_at).timestamp() * 1000)
-                ).model_dump(mode="json")
             new["record"]["placement"] = command.placement.model_dump(mode="json")
             await tx.connection.execute(observations.insert().values(**new))
-        for name, table in (("catalogs", catalogs), ("inputs", inputs), ("units", units)):
-            for new in remapped[name]:
-                if name == "catalogs":
-                    CatalogView.model_validate(new["record"])
-                await tx.connection.execute(table.insert().values(**new))
+        for archived in original.catalogs:
+            record = {**archived.record}
+            record["id"] = mapping[archived.id]
+            record["namespace_id"] = ctx.namespace_id
+            record["unit_ids"] = [mapping[identifier] for identifier in record["unit_ids"]]
+            record["input_source_ids"] = [
+                mapping[identifier] for identifier in record["input_source_ids"]
+            ]
+            await tx.connection.execute(
+                catalogs.insert().values(
+                    id=mapping[archived.id],
+                    namespace_id=ctx.namespace_id,
+                    record=record,
+                )
+            )
+        for archived in original.inputs:
+            record = {**archived.record}
+            record["id"] = mapping[archived.id]
+            record["catalog_id"] = mapping[archived.catalog_id]
+            await tx.connection.execute(
+                inputs.insert().values(
+                    id=mapping[archived.id],
+                    catalog_id=mapping[archived.catalog_id],
+                    material_id=archived.material_id,
+                    record=record,
+                )
+            )
+        for archived in original.units:
+            record = {**archived.record}
+            record["id"] = mapping[archived.id]
+            record["catalog_id"] = mapping[archived.catalog_id]
+            record["input_source_id"] = mapping[record["input_source_id"]]
+            await tx.connection.execute(
+                units.insert().values(
+                    id=mapping[archived.id],
+                    catalog_id=mapping[archived.catalog_id],
+                    record=record,
+                )
+            )
         if original.derivations.representations or original.derivations.regions:
-            await self.cognition.derivations.install_in(tx, ctx, original.derivations, mapping)
+            await self.cognition.derivations.install_in(
+                tx, ctx, original.derivations, purpose=purpose
+            )
         heads: dict[str, int] = {}
         for record in records:
             heads[record.reference.id] = max(
                 heads.get(record.reference.id, 0), record.reference.revision
             )
-        for record, value in zip(records, remapped["cognition"], strict=True):
-            value["commit_seq"] = tx.commit_seq
-            adopted = CognitiveRecord.model_validate(value)
-            adopted = adopted.model_copy(
+        for record in records:
+            adopted = record.model_copy(
                 update={
-                    "addresses": await allocate_in(tx, ctx, adopted.reference),
-                    "times": adopted.times.model_copy(
+                    "namespace_id": ctx.namespace_id,
+                    "commit_seq": tx.commit_seq,
+                    "addresses": await allocate_in(tx, ctx, record.reference),
+                    "times": record.times.model_copy(
                         update={
                             "recorded": TimePoint(
                                 coordinate=int(
@@ -400,9 +327,8 @@ async def install_prepared(
                     id=adopted.reference.id,
                     revision=adopted.reference.revision,
                     namespace_id=ctx.namespace_id,
-                    subject_id=ctx.require_subject(),
                     kind=adopted.reference.kind,
-                    head=heads[record.reference.id] == record.reference.revision,
+                    head=heads[adopted.reference.id] == adopted.reference.revision,
                     record=adopted.model_dump(mode="json"),
                     commit_seq=tx.commit_seq,
                 )
@@ -415,7 +341,7 @@ async def install_prepared(
             *(f"derived-region:{region.id}" for region in original.derivations.regions),
         }
         spaces: dict[str, tuple[str, int]] = {}
-        for archived, row in zip(original.vectors, remapped["vectors"], strict=True):
+        for archived in original.vectors:
             if archived.reference not in vector_targets:
                 raise DomainError(
                     "bundle_vector_reference", "A vector must identify an archived exact object"
@@ -428,8 +354,7 @@ async def install_prepared(
                 )
             current = (
                 await tx.connection.execute(
-                    select(vectors.c.model, vectors.c.dimensions)
-                    .where(vectors.c.space == archived.space)
+                    select(vectors.c.model, vectors.c.dimensions).where(vectors.c.namespace_id == ctx.namespace_id, vectors.c.space == archived.space)
                     .limit(1)
                 )
             ).first()
@@ -438,18 +363,19 @@ async def install_prepared(
                     "embedding_space_conflict",
                     "Archived vectors conflict with the authority's existing space",
                 )
+            row = archived.model_dump(mode="json", exclude={"provenance"})
             row["commit_seq"] = tx.commit_seq
-            row["call_id"] = call_mapping[archived.call_id] if archived.call_id else None
-            row.pop("provenance", None)
-            await tx.connection.execute(vectors.insert().values(**row))
-        for value, new in zip(bundle.get("outputs", []), remapped["outputs"], strict=True):
-            new["attempt_job_id"] = None
-            new["commit_seq"] = tx.commit_seq
-            output = UnitOutput.model_validate(new)
-            if output.observation_id not in mapping.values() or not any(
-                row["id"] == value["observation_id"] and row["kind"] == "import"
-                for row in obs.values()
-            ):
+            await tx.connection.execute(vectors.insert().values(**{**row, "namespace_id": ctx.namespace_id}))
+        for archived in original.outputs:
+            output = archived.model_copy(
+                update={
+                    "id": mapping[archived.id],
+                    "unit_id": mapping[archived.unit_id],
+                    "attempt_job_id": None,
+                    "commit_seq": tx.commit_seq,
+                }
+            )
+            if output.observation_id not in obs or obs[output.observation_id]["kind"] != "import":
                 raise DomainError(
                     "bundle_output_observation",
                     "UnitOutput must reference its real Import observation",
@@ -458,19 +384,36 @@ async def install_prepared(
                 outputs.insert().values(
                     id=output.id,
                     unit_id=output.unit_id,
-                    operation_id=command.operation_id,
+                    operation_id=installation_id,
                     record=output.model_dump(mode="json"),
                 )
             )
-        for new in remapped["file_successes"]:
-            new["record"]["commit_seq"] = tx.commit_seq
-            FileSuccess.model_validate(new["record"])
-            await tx.connection.execute(successes.insert().values(**new))
+        for archived in original.file_successes:
+            record = {**archived.record}
+            record.update(
+                id=mapping[archived.id],
+                catalog_id=mapping[record["catalog_id"]],
+                input_source_id=mapping[archived.input_source_id],
+                unit_outputs={
+                    mapping[unit_id]: mapping[output_id]
+                    for unit_id, output_id in record["unit_outputs"].items()
+                },
+                commit_seq=tx.commit_seq,
+            )
+            FileSuccess.model_validate(record)
+            await tx.connection.execute(
+                successes.insert().values(
+                    id=mapping[archived.id],
+                    namespace_id=ctx.namespace_id,
+                    input_source_id=mapping[archived.input_source_id],
+                    record=record,
+                )
+            )
         await import_bindings_in(
             tx,
             ctx,
             original.id,
-            tuple(ReferenceBinding.model_validate(value) for value in remapped["bindings"]),
+            original.bindings,
         )
         result = {
             "installation_id": installation_id,
@@ -479,65 +422,30 @@ async def install_prepared(
             "mode": command.mode,
             "placement": command.placement.model_dump(mode="json"),
             "content_digest": digest,
-            "archive_material_id": command.archive_material_id,
             "source_namespace_id": original.namespace_id,
-            "source_subject_id": original.subject_id,
             "installed_at": tx.recorded_at,
             "state": "active",
-            "owned_observation_ids": [mapping[oid] for oid in obs],
+            "owned_observation_ids": list(obs),
             "bundle_id": bundle["id"],
             "mapping": mapping,
             "vector_provenance": [
                 {
-                    "reference": row["reference"],
+                    "reference": archived.reference,
                     "space": archived.space,
                     "provenance": archived.provenance,
-                    "call_id": archived.call_id,
                     "source_namespace_id": original.namespace_id,
-                    "source_subject_id": original.subject_id,
                 }
-                for archived, row in zip(original.vectors, remapped["vectors"], strict=True)
+                for archived in original.vectors
             ],
             "cognition_count": len(records),
-            "output_count": len(bundle.get("outputs", [])),
+            "output_count": len(original.outputs),
             "commit_seq": tx.commit_seq,
         }
         await tx.connection.execute(
             bundle_installs.insert().values(
                 id=installation_id,
                 namespace_id=ctx.namespace_id,
-                subject_id=ctx.require_subject(),
                 record=result,
             )
         )
-        return tx.result(result)
-
-
-async def install_material(
-    self: BundleService,
-    ctx: CallContext,
-    material_id: str,
-    operation_id: str,
-    mode: Literal["merge", "restore"] = "merge",
-    placement: BundlePlacement | None = None,
-):
-    if self.content_store is None:
-        raise DomainError("content_unavailable", "Bundle archive bytes are unavailable")
-    material = await self.cognition.materials.read(ctx, material_id)
-    async with self.content_store.protect(
-        ContentObject(material["content_hash"], material["byte_len"], material["media_type"])
-    ) as path:
-        data = await asyncio.to_thread(path.read_bytes)
-    from .archive_read import decode
-
-    bundle = (await asyncio.to_thread(decode, data)).model_dump(mode="json")
-    return await self.install(
-        ctx,
-        InstallBundle(
-            operation_id=operation_id,
-            bundle=bundle,
-            mode=mode,
-            placement=placement or BundlePlacement(),
-            archive_material_id=material_id,
-        ),
-    )
+        return result

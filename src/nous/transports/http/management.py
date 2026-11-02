@@ -18,7 +18,17 @@ from nous.platform.persistence import OperationConflict
 
 from .security import application, authorize, context
 
-router = APIRouter(prefix="/api")
+router = APIRouter(prefix="/api/manage")
+
+
+@router.post("/stop")
+async def stop_host(request: Request) -> dict[str, bool]:
+    (await authorize(request, capability="manage")).require_instance_management()
+    shutdown = getattr(request.app.state, "request_shutdown", None)
+    if shutdown is None:
+        raise HTTPException(status_code=503, detail="This host has no shutdown controller")
+    shutdown()
+    return {"stopping": True}
 
 
 @router.post("/models/contract")
@@ -26,17 +36,17 @@ async def model_contract(
     request: Request,
     command: ModelContractRequest,
     namespace_id: str,
-    subject_id: str | None = None,
+    
 ):
-    ctx = await context(request, namespace_id, subject_id, capability="read")
+    ctx = await context(request, namespace_id,  capability="read")
     return await application(request).models.model_contract(ctx, command)
 
 
 @router.post("/models/preview")
 async def model_preview(
-    request: Request, command: ModelPreviewRequest, namespace_id: str, subject_id: str | None = None
+    request: Request, command: ModelPreviewRequest, namespace_id: str
 ):
-    ctx = await context(request, namespace_id, subject_id, capability="read")
+    ctx = await context(request, namespace_id,  capability="read")
     return await application(request).models.model_preview(ctx, command)
 
 
@@ -106,8 +116,8 @@ async def restore_backup(request: Request, instance_name: str) -> dict[str, obje
 
 class ConfigChange(BaseModel):
     value: JsonValue
-    scope: Literal["instance", "namespace", "subject"] = "instance"
-    operation_id: str = Field(default_factory=lambda: str(uuid4()))
+    scope: Literal["instance", "namespace"] = "instance"
+    expected_version: int | None = Field(default=None, ge=0)
 
 
 class PromptChange(BaseModel):
@@ -181,39 +191,26 @@ async def status(request: Request):
 
 @router.get("/configuration")
 async def configuration_catalog(
-    request: Request, namespace_id: str = "instance", subject_id: str | None = None
+    request: Request, namespace_id: str = "instance"
 ):
-    await context(request, namespace_id, subject_id, capability="read")
+    await context(request, namespace_id,  capability="read")
     return application(request).configuration.catalog()
 
 
 @router.get("/configuration/{key}/schema")
 async def configuration_schema(
-    request: Request, key: str, namespace_id: str = "instance", subject_id: str | None = None
+    request: Request, key: str, namespace_id: str = "instance"
 ):
-    await context(request, namespace_id, subject_id, capability="read")
+    await context(request, namespace_id,  capability="read")
     return application(request).configuration.describe(key)
 
 
 @router.get("/configuration/{key}")
 async def configuration(
-    request: Request, key: str, namespace_id: str = "instance", subject_id: str | None = None
+    request: Request, key: str, namespace_id: str = "instance"
 ):
     return await application(request).configuration.effective(
-        await context(request, namespace_id, subject_id, capability="read"), key
-    )
-
-
-@router.get("/configuration/{key}/history")
-async def configuration_history(
-    request: Request,
-    key: str,
-    namespace_id: str = "instance",
-    subject_id: str | None = None,
-    limit: int = 100,
-):
-    return await application(request).configuration.history(
-        await context(request, namespace_id, subject_id, capability="read"), key, limit
+        await context(request, namespace_id,  capability="read"), key
     )
 
 
@@ -223,18 +220,18 @@ async def configure(
     key: str,
     command: ConfigChange,
     namespace_id: str = "instance",
-    subject_id: str | None = None,
+    
 ):
     principal = await authorize(request, capability="manage")
     service = application(request).configuration
     if command.scope == "instance" or service.entry(key).instance_management:
         principal.require_instance_management()
     return await service.set(
-        await context(request, namespace_id, subject_id, capability="manage"),
+        await context(request, namespace_id,  capability="manage"),
         key,
         command.value,
-        command.operation_id,
         command.scope,
+        expected_version=command.expected_version,
     )
 
 
@@ -256,42 +253,3 @@ async def save_prompt(
         command.template,
         command.operation_id,
     )
-
-
-@router.get("/model-calls")
-async def model_calls(request: Request, namespace_id: str, subject_id: str | None = None):
-    return await application(request).models.ledger.list(
-        await context(request, namespace_id, subject_id, capability="read")
-    )
-
-
-@router.get("/jobs/{job_id}")
-async def job(request: Request, job_id: str, namespace_id: str, subject_id: str | None = None):
-    app = application(request)
-    value = await app.execution.status(
-        await context(request, namespace_id, subject_id, capability="read"), job_id
-    )
-    return {"job": value}
-
-
-@router.post("/jobs/{job_id}/{action}")
-async def job_action(
-    request: Request,
-    job_id: str,
-    action: Literal["cancel", "resume", "wait"],
-    namespace_id: str,
-    subject_id: str | None = None,
-    wait_seconds: float = 120,
-):
-    app = application(request)
-    ctx = await context(
-        request, namespace_id, subject_id, capability="read" if action == "wait" else "write"
-    )
-    if action == "wait":
-        async with asyncio.timeout(wait_seconds):
-            return await app.execution.wait(ctx, job_id)
-    if action == "cancel":
-        await app.execution.cancel(ctx, job_id)
-    else:
-        await app.execution.resume(ctx, job_id)
-    return {"id": job_id, "action": action}

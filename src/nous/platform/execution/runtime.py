@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import hashlib
 import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from functools import wraps
 from typing import ParamSpec, TypeVar, cast
 from uuid import uuid4
@@ -23,7 +25,9 @@ from dbos import (
     WorkflowSerializationFormat,
     WorkflowStatus,
 )
-from nous_sdk.contracts.common import CallContext
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
+from nous_sdk.contracts.execution import ExecutionFailure, ExecutionJob, ExecutionSnapshot
 from opentelemetry.context import get_current
 from pydantic import JsonValue, TypeAdapter
 from sqlalchemy import event
@@ -31,12 +35,14 @@ from sqlalchemy.pool import ConnectionPoolEntry
 
 from nous.platform.errors import NousError
 from nous.platform.observability import configure_tracing
-from nous.platform.persistence import Authority, WriteTx
+from nous.platform.persistence import Authority, ReadView, WriteTx
 from nous.platform.persistence.authority import SQLiteConnection, canonical_json
 from nous.platform.persistence.schema import job_links
 
+from .batches import process_jobs, retry_jobs, summarize_jobs
 from .query import JobPage, query_jobs
-from .scope import require_job_in
+from .results import TERMINAL, job_results, retained_status
+from .scope import JobPurpose, require_job_in
 
 P = ParamSpec("P")
 R = TypeVar("R")
@@ -52,6 +58,7 @@ class JobSpec:
     owned_parent: str | None = None
     partition_key: str | None = None
     delay_seconds: float | None = None
+    scope: str = ""
 
 
 @dataclass(frozen=True)
@@ -69,6 +76,10 @@ class QueueSpec:
 
 
 class DurableExecution:
+    retry_jobs = retry_jobs
+    summarize_jobs = summarize_jobs
+    process_jobs = process_jobs
+
     def __init__(
         self,
         authority: Authority,
@@ -249,6 +260,38 @@ class DurableExecution:
         # Only portable JSON values enter durable execution, never model objects.
         arguments = json.loads(canonical_json({"args": spec.args, "kwargs": spec.kwargs}))
         workflow_id = spec.workflow_id or str(uuid4())
+        command_digest = hashlib.sha256(
+            canonical_json(
+                {
+                    "workflow": spec.workflow_name,
+                    "queue": spec.queue_name,
+                    "arguments": arguments,
+                    "scope": spec.scope,
+                    "owned_parent": spec.owned_parent,
+                    "partition_key": spec.partition_key,
+                    "delay_seconds": spec.delay_seconds,
+                }
+            ).encode()
+        ).hexdigest()
+        existing = (
+            (
+                await tx.connection.execute(
+                    sa.select(job_links).where(job_links.c.workflow_id == workflow_id)
+                )
+            )
+            .mappings()
+            .first()
+        )
+        if existing is not None:
+            if (existing["caller_id"], existing["namespace_id"], existing["command_digest"]) != (
+                tx.ctx.caller_id,
+                tx.ctx.namespace_id,
+                command_digest,
+            ):
+                raise DomainError(
+                    "job_identity_conflict", "Durable work identity has different scope or command"
+                )
+            return JobRef(workflow_id)
         if spec.owned_parent is not None:
             if spec.owned_parent == workflow_id:
                 raise ValueError("A job cannot own itself")
@@ -278,8 +321,8 @@ class DurableExecution:
             # DBOS persists W3C trace context only; baggage and payload are excluded.
             "otel_context": get_current(),
             "attributes": {
-                "scope": tx.scope,
-                "operation_id": tx.operation_id,
+                "scope": spec.scope,
+                "request_id": tx.ctx.request_id,
                 "namespace_id": tx.ctx.namespace_id,
             },
         }
@@ -297,11 +340,11 @@ class DurableExecution:
         await tx.connection.execute(
             job_links.insert().values(
                 workflow_id=handle.get_workflow_id(),
-                operation_key=tx.operation_key,
+                command_digest=command_digest,
+                commit_seq=tx.commit_seq,
                 caller_id=tx.ctx.caller_id,
                 namespace_id=tx.ctx.namespace_id,
-                subject_id=tx.ctx.subject_id,
-                scope=tx.scope,
+                scope=spec.scope,
                 owned_parent=spec.owned_parent,
                 workflow_name=spec.workflow_name,
                 queue_name=spec.queue_name,
@@ -309,12 +352,224 @@ class DurableExecution:
         )
         return JobRef(handle.get_workflow_id())
 
-    async def _require_job(self, ctx: CallContext, workflow_id: str) -> None:
-        async with self.authority.read(ctx) as view:
-            await require_job_in(view, ctx, workflow_id)
+    async def export_namespace_in(
+        self, view: ReadView, ctx: CallContext, *, workflow_ids: tuple[str, ...] | None = None
+    ) -> ExecutionSnapshot:
+        from .scope import require_job_purpose
 
-    async def status(self, ctx: CallContext, workflow_id: str) -> WorkflowStatus:
-        await self._require_job(ctx, workflow_id)
+        require_job_purpose(ctx, "management")
+        query = sa.select(job_links).where(job_links.c.namespace_id == ctx.namespace_id)
+        if workflow_ids is not None:
+            query = query.where(job_links.c.workflow_id.in_(workflow_ids))
+        links = (await view.connection.execute(query)).mappings().all()
+        jobs: list[ExecutionJob] = []
+        for offset in range(0, len(links), 200):
+            batch = links[offset : offset + 200]
+            identities = [str(row["workflow_id"]) for row in batch]
+            retained = {
+                str(row.workflow_id): ExecutionJob.model_validate(row.record)
+                for row in (
+                    await view.connection.execute(
+                        sa.select(job_results.c.workflow_id, job_results.c.record).where(
+                            job_results.c.workflow_id.in_(identities),
+                            job_results.c.namespace_id == ctx.namespace_id,
+                        )
+                    )
+                ).all()
+            }
+            pending = [identity for identity in identities if identity not in retained]
+            actual = (
+                await self.client.list_workflows_async(
+                    workflow_ids=pending, limit=len(pending), load_input=True, load_output=True
+                )
+                if pending
+                else []
+            )
+            by_id = {job.workflow_id: job for job in actual}
+            for row in batch:
+                identity = str(row["workflow_id"])
+                if identity in retained:
+                    jobs.append(retained[identity])
+                    continue
+                status = by_id.get(identity)
+                if status is None or status.input is None:
+                    raise DomainError(
+                        "execution_snapshot_incomplete",
+                        "An admitted job has no retained command",
+                        workflow_id=identity,
+                    )
+                failure = None
+                if isinstance(status.error, PortableWorkflowError):
+                    failure = ExecutionFailure(
+                        name=status.error.name,
+                        code=str(status.error.code or "job_failed"),
+                        message=status.error.message,
+                        data=TypeAdapter(JsonValue).validate_python(status.error.data),
+                    )
+                elif status.error is not None:
+                    failure = ExecutionFailure(
+                        name=type(status.error).__name__,
+                        code="job_failed",
+                        message=str(status.error),
+                    )
+                jobs.append(
+                    ExecutionJob(
+                        workflow_id=identity,
+                        workflow_name=str(row["workflow_name"]),
+                        queue_name=str(row["queue_name"]),
+                        caller_id=str(row["caller_id"]),
+                        commit_seq=int(row["commit_seq"]),
+                        scope=str(row["scope"]),
+                        owned_parent=str(row["owned_parent"]) if row["owned_parent"] else None,
+                        args=TypeAdapter(tuple[JsonValue, ...]).validate_python(
+                            status.input["args"]
+                        ),
+                        kwargs=TypeAdapter(dict[str, JsonValue]).validate_python(
+                            status.input["kwargs"]
+                        ),
+                        state=status.status,
+                        result=TypeAdapter(JsonValue).validate_python(status.output),
+                        error=failure,
+                        partition_key=status.queue_partition_key,
+                        delay_until_epoch_ms=status.delay_until_epoch_ms,
+                        created_at=status.created_at,
+                        completed_at=status.completed_at,
+                    )
+                )
+        return ExecutionSnapshot(
+            namespace_id=ctx.namespace_id, authority_commit_seq=view.commit_seq, jobs=tuple(jobs)
+        )
+
+    async def restore_namespace_in(
+        self, tx: WriteTx, ctx: CallContext, snapshot: ExecutionSnapshot
+    ) -> tuple[str, ...]:
+        from .scope import require_job_purpose
+
+        require_job_purpose(ctx, "management")
+        if snapshot.namespace_id != ctx.namespace_id:
+            raise DomainError(
+                "execution_snapshot_scope", "Job snapshot must name its receiving Namespace"
+            )
+        identities = {job.workflow_id for job in snapshot.jobs}
+        if len(identities) != len(snapshot.jobs):
+            raise DomainError("execution_snapshot_identity", "Task identities must be unique")
+        restored: list[str] = []
+        for job in snapshot.jobs:
+            if job.state not in TERMINAL and (
+                job.workflow_name not in self._workflows
+                or job.queue_name not in {queue.name for queue in self.queues}
+            ):
+                raise DomainError(
+                    "execution_workflow_unavailable",
+                    "A restored task requires an unavailable workflow or queue",
+                    workflow_name=job.workflow_name,
+                    queue_name=job.queue_name,
+                )
+            if job.owned_parent is not None and job.owned_parent not in identities:
+                parent = await tx.connection.scalar(
+                    sa.select(job_links.c.workflow_id).where(
+                        job_links.c.workflow_id == job.owned_parent,
+                        job_links.c.namespace_id == ctx.namespace_id,
+                    )
+                )
+                if parent is None:
+                    raise DomainError(
+                        "execution_snapshot_parent", "A restored task has an unavailable owner"
+                    )
+            existing = await tx.connection.scalar(
+                sa.select(job_links.c.workflow_id).where(job_links.c.workflow_id == job.workflow_id)
+            )
+            if existing is not None:
+                raise DomainError(
+                    "execution_identity_conflict",
+                    "A restored task identity already exists",
+                    workflow_id=job.workflow_id,
+                )
+            if job.state in TERMINAL:
+                await tx.connection.execute(
+                    job_links.insert().values(
+                        workflow_id=job.workflow_id,
+                        command_digest=hashlib.sha256(
+                            canonical_json(
+                                {
+                                    "workflow": job.workflow_name,
+                                    "args": job.args,
+                                    "kwargs": job.kwargs,
+                                }
+                            ).encode()
+                        ).hexdigest(),
+                        commit_seq=tx.commit_seq,
+                        caller_id=job.caller_id,
+                        namespace_id=ctx.namespace_id,
+                        scope=job.scope,
+                        owned_parent=job.owned_parent,
+                        workflow_name=job.workflow_name,
+                        queue_name=job.queue_name,
+                    )
+                )
+                await tx.connection.execute(
+                    job_results.insert().values(
+                        workflow_id=job.workflow_id,
+                        namespace_id=ctx.namespace_id,
+                        record=job.model_dump(mode="json"),
+                    )
+                )
+                continue
+            delay = (
+                max(0.0, (job.delay_until_epoch_ms / 1000) - datetime.now(UTC).timestamp())
+                if job.delay_until_epoch_ms is not None
+                else None
+            )
+            # Re-admit the saved domain command through DBOS's transaction API.
+            # Ownership is already admitted in the snapshot; no running parent is required.
+            await tx.enqueue(
+                JobSpec(
+                    workflow_name=job.workflow_name,
+                    queue_name=job.queue_name,
+                    workflow_id=job.workflow_id,
+                    scope=job.scope,
+                    args=job.args,
+                    kwargs=job.kwargs,
+                    partition_key=job.partition_key,
+                    delay_seconds=delay,
+                )
+            )
+            await tx.connection.execute(
+                job_links.update()
+                .where(job_links.c.workflow_id == job.workflow_id)
+                .values(
+                    commit_seq=tx.commit_seq,
+                    caller_id=job.caller_id,
+                    scope=job.scope,
+                    owned_parent=job.owned_parent,
+                )
+            )
+            restored.append(job.workflow_id)
+        return tuple(restored)
+
+    async def retained_job(self, ctx: CallContext, workflow_id: str) -> ExecutionJob | None:
+        async with self.authority.read(ctx) as view:
+            raw = await view.connection.scalar(
+                sa.select(job_results.c.record).where(
+                    job_results.c.workflow_id == workflow_id,
+                    job_results.c.namespace_id == ctx.namespace_id,
+                )
+            )
+        return ExecutionJob.model_validate(raw) if raw is not None else None
+
+    async def _require_job(
+        self, ctx: CallContext, workflow_id: str, *, purpose: JobPurpose = "actor"
+    ) -> None:
+        async with self.authority.read(ctx) as view:
+            await require_job_in(view, ctx, workflow_id, purpose=purpose)
+
+    async def status(
+        self, ctx: CallContext, workflow_id: str, *, purpose: JobPurpose = "actor"
+    ) -> WorkflowStatus:
+        await self._require_job(ctx, workflow_id, purpose=purpose)
+        retained = await self.retained_job(ctx, workflow_id)
+        if retained is not None:
+            return retained_status(retained)
         handle: WorkflowHandleAsync[JsonValue] = await self.client.retrieve_workflow_async(
             workflow_id
         )
@@ -335,6 +590,8 @@ class DurableExecution:
         state: str | None = None,
         limit: int = 50,
         cursor: str | None = None,
+        purpose: JobPurpose = "actor",
+        workflow_ids: tuple[str, ...] | None = None,
     ) -> JobPage:
         return await query_jobs(
             self.authority,
@@ -345,10 +602,27 @@ class DurableExecution:
             state=state,
             limit=limit,
             cursor=cursor,
+            purpose=purpose,
+            workflow_ids=workflow_ids,
         )
 
-    async def wait(self, ctx: CallContext, workflow_id: str) -> JsonValue:
-        await self._require_job(ctx, workflow_id)
+    async def wait(
+        self, ctx: CallContext, workflow_id: str, *, purpose: JobPurpose = "actor"
+    ) -> JsonValue:
+        await self._require_job(ctx, workflow_id, purpose=purpose)
+        retained = await self.retained_job(ctx, workflow_id)
+        if retained is not None:
+            if retained.state == "SUCCESS":
+                return retained.result
+            if retained.error is not None:
+                raise DomainError(
+                    retained.error.code, retained.error.message, details=retained.error.data
+                )
+            raise DomainError(
+                "job_" + retained.state.lower(),
+                "Retained task ended with " + retained.state,
+                workflow_id=workflow_id,
+            )
         handle: WorkflowHandleAsync[JsonValue] = await self.client.retrieve_workflow_async(
             workflow_id
         )
@@ -358,12 +632,18 @@ class DurableExecution:
             value = TypeAdapter(JsonValue).validate_python(error.data)
             details = value if isinstance(value, dict) else {"data": value}
             code = str(error.code) if error.code is not None else "job_failed"
+            if error.name == "DomainError":
+                raise DomainError(code, error.message, **details) from error
             raise NousError(
                 code, error.message, status=503 if code == "Unavailable" else 400, context=details
             ) from error
 
-    async def cancel(self, ctx: CallContext, workflow_id: str) -> None:
-        await self._require_job(ctx, workflow_id)
+    async def cancel(
+        self, ctx: CallContext, workflow_id: str, *, purpose: JobPurpose = "actor"
+    ) -> None:
+        await self._require_job(ctx, workflow_id, purpose=purpose)
+        if await self.retained_job(ctx, workflow_id) is not None:
+            return
         # Mark the parent first. Its SQLite write waits for any in-progress child
         # admission to commit; subsequent admissions see a terminal parent. The
         # following ownership snapshot therefore includes every accepted child.
@@ -376,17 +656,75 @@ class DurableExecution:
                         sa.select(job_links.c.workflow_id).where(
                             job_links.c.owned_parent == workflow_id,
                             job_links.c.namespace_id == ctx.namespace_id,
-                            job_links.c.caller_id == ctx.caller_id,
+                            sa.true()
+                            if purpose == "management"
+                            else job_links.c.caller_id == ctx.caller_id,
                         )
                     )
                 ).scalars()
             )
         for child in owned:
-            await self.cancel(ctx, child)
+            await self.cancel(ctx, child, purpose=purpose)
 
-    async def resume(self, ctx: CallContext, workflow_id: str) -> None:
-        await self._require_job(ctx, workflow_id)
+    async def resume(
+        self, ctx: CallContext, workflow_id: str, *, purpose: JobPurpose = "actor"
+    ) -> None:
+        await self._require_job(ctx, workflow_id, purpose=purpose)
+        retained = await self.retained_job(ctx, workflow_id)
+        if retained is not None:
+            if retained.state == "SUCCESS":
+                raise DomainError(
+                    "job_completed", "The retained task already completed", workflow_id=workflow_id
+                )
+            async with self.authority.write(ctx) as tx:
+                await tx.connection.execute(
+                    job_results.delete().where(job_results.c.workflow_id == workflow_id)
+                )
+                await tx.connection.execute(
+                    job_links.delete().where(job_links.c.workflow_id == workflow_id)
+                )
+                await tx.enqueue(
+                    JobSpec(
+                        workflow_name=retained.workflow_name,
+                        queue_name=retained.queue_name,
+                        workflow_id=workflow_id,
+                        args=retained.args,
+                        kwargs=retained.kwargs,
+                        partition_key=retained.partition_key,
+                        scope=ctx.namespace_id,
+                    )
+                )
+            return
         await self.client.resume_workflow_async(workflow_id)
+
+    async def purge_namespace_jobs(self, ctx: CallContext, schedules: tuple[str, ...] = ()) -> None:
+        from nous.identity.access import require_namespace_in
+
+        from .scope import require_job_purpose
+
+        require_job_purpose(ctx, "management")
+        async with self.authority.read(ctx) as view:
+            namespace = await require_namespace_in(view, ctx, purpose="management")
+            if not namespace.purging or namespace.state != "trashed":
+                raise DomainError(
+                    "namespace_purge_scope_forbidden",
+                    "Job removal requires the admitted complete Namespace",
+                )
+            identities = [
+                str(value)
+                for value in (
+                    await view.connection.execute(
+                        sa.select(job_links.c.workflow_id).where(
+                            job_links.c.namespace_id == ctx.namespace_id
+                        )
+                    )
+                ).scalars()
+            ]
+        for schedule in schedules:
+            await self.client.delete_schedule_async(schedule)
+        if identities:
+            await self.client.cancel_workflows_async(identities, cancel_children=True)
+            await self.client.delete_workflows_async(identities, delete_children=True)
 
     async def close(self) -> None:
         if self._engine is None:

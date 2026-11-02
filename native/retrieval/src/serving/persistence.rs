@@ -36,7 +36,6 @@ impl ServingGeneration {
         let mut asset_diagnostics = asset_diagnostics(&assets, &prepared.mappings);
         asset_diagnostics["graph"] = manifest.artifact_meta.clone();
         Ok(Self {
-            prepared: prepared.clone(),
             identity: prepared.identity,
             assets,
             ann,
@@ -63,9 +62,9 @@ impl ServingGeneration {
         let graph = graph.restore()?;
         let assets = assemble_assets(prepared, graph, &geometry, &manifest.artifact_meta)?;
         let ann = VectorGeneration::open(&path.join("ann"), &prepared.vectors)?;
-        let asset_diagnostics = asset_diagnostics(&assets, &mappings);
+        let mut asset_diagnostics = asset_diagnostics(&assets, &mappings);
+        asset_diagnostics["graph"] = manifest.artifact_meta.clone();
         Ok(Self {
-            prepared: prepared.clone(),
             identity: prepared.identity.clone(),
             assets,
             ann,

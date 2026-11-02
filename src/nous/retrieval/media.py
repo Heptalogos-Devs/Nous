@@ -7,9 +7,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from nous_sdk.contracts import (
-    CallContext,
     CognitiveTimes,
-    DomainError,
     MediaEmbeddingInput,
     MediaRecord,
     MediaReference,
@@ -17,6 +15,8 @@ from nous_sdk.contracts import (
     SourceRegion,
     TimePoint,
 )
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from sqlalchemy import select
 
 from nous.material.service import materials, observations, regions, source_permitted
@@ -42,7 +42,6 @@ async def media_records_in(
             await view.connection.execute(
                 select(observations).where(
                     observations.c.namespace_id == ctx.namespace_id,
-                    observations.c.subject_id == ctx.subject_id,
                     observations.c.active.is_(True),
                 )
             )
@@ -141,7 +140,7 @@ async def media_records_in(
                     text = ""
             text = text or f"{material['filename']} {material['media_type']}"
             provenance = (
-                await material_service.provenance_in(view, ctx, reference, derivations=derivations)
+                await material_service.provenance_in(view, ctx, reference)
                 if material_service is not None
                 else None
             )
@@ -154,7 +153,6 @@ async def media_records_in(
                     if material.get("addresses")
                     else None,
                     namespace_id=ctx.namespace_id,
-                    subject_id=ctx.require_subject(),
                     material_id=row["material_id"],
                     content_hash=material["content_hash"],
                     media_type=material["media_type"],
@@ -178,7 +176,9 @@ async def media_records_in(
     return result
 
 
-def embedding_input(record: MediaRecord) -> MediaEmbeddingInput:
+def embedding_input(record: MediaRecord) -> str | MediaEmbeddingInput:
+    if record.media_type.startswith("text/") or "json" in record.media_type:
+        return record.text
     return MediaEmbeddingInput(
         reference=record.reference,
         content_hash=record.content_hash,
@@ -195,7 +195,7 @@ async def source_material_ids_in(
     materials: MaterialService,
     derivations: DerivedService | None,
 ) -> tuple[str, ...]:
-    """Revalidate all exact media inputs and return their actual paid-call source roots."""
+    """Revalidate exact media inputs and return their supporting source material IDs."""
     if reference.kind in {"representation", "derived_region"}:
         if derivations is None:
             raise DomainError("source_unavailable", "Derived media authority is unavailable")

@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import httpx2
-from nous_sdk.contracts import CallContext
+from nous.platform.call_context import CallContext
 
 from nous.platform.concurrency import owned_thread
 from nous.platform.errors import Unavailable
@@ -66,7 +66,7 @@ class NetworkService:
         effective = await self.configuration.effective(ctx, "network")
         policy = NetworkPolicy.model_validate(effective["value"])
         fingerprint = policy.model_dump_json()
-        scope = (ctx.caller_id, ctx.namespace_id, ctx.subject_id)
+        scope = (ctx.caller_id, ctx.namespace_id, ctx.namespace_id)
         key = (*scope, fingerprint, timeout_seconds)
         async with self._condition:
             if self._closing:
@@ -90,6 +90,7 @@ class NetworkService:
                         trust_env=policy.trust_env,
                         proxy=policy.proxy_url,
                         follow_redirects=policy.follow_redirects,
+                        headers={"User-Agent": policy.user_agent},
                         timeout=httpx2.Timeout(
                             connect=timeout(policy.connect_timeout_seconds),
                             read=timeout(policy.read_timeout_seconds),

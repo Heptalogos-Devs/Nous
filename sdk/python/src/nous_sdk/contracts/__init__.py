@@ -67,9 +67,7 @@ from .cognition import (
 from .cognition import (
     FormationDraft as FormationDraft,
 )
-from .cognition import (
-    FormationProposal as FormationProposal,
-)
+from .cognition import GeneratedPersonProfile as GeneratedPersonProfile
 from .cognition import (
     JournalBody as JournalBody,
 )
@@ -108,6 +106,7 @@ from .cognition import (
 from .cognition import (
     ProposedSchema as ProposedSchema,
 )
+from .cognition import ReferencePartition as ReferencePartition
 from .cognition import (
     ResegmentEpisodes as ResegmentEpisodes,
 )
@@ -122,17 +121,12 @@ from .cognition import (
     SplitConcept as SplitConcept,
 )
 from .common import (
-    CallContext as CallContext,
-)
-from .common import (
     CognitiveTimes as CognitiveTimes,
 )
 from .common import (
     Contract as Contract,
 )
-from .common import (
-    DomainError as DomainError,
-)
+from .common import ModelProvenance as ModelProvenance
 from .common import (
     Operation as Operation,
 )
@@ -145,34 +139,42 @@ from .common import (
 )
 from .configuration import ConfigurationCatalog as ConfigurationCatalog
 from .configuration import ConfigurationDefinition as ConfigurationDefinition
+from .contact import ContactMaterial as ContactMaterial
+from .contact import ContactReceipt as ContactReceipt
 from .context import ChangeContextSession as ChangeContextSession
 from .context import ChangeResidents as ChangeResidents
 from .context import ChangeWorkContext as ChangeWorkContext
-from .context import (
-    ContextCommand as ContextCommand,
-)
 from .context import ContextConsumerPolicy as ContextConsumerPolicy
-from .context import (
-    ContextFeedback as ContextFeedback,
-)
-from .context import ContextPreparationJob as ContextPreparationJob
 from .context import ContextResident as ContextResident
 from .context import ContextResidentAdmission as ContextResidentAdmission
 from .context import ContextsPolicy as ContextsPolicy
-from .context import StewardProposal as StewardProposal
 from .context import WorkContext as WorkContext
 from .context import WorkContextContent as WorkContextContent
 from .credentials import Capability as Capability
 from .credentials import CreateCredential as CreateCredential
 from .credentials import CredentialRecord as CredentialRecord
 from .credentials import IssuedCredential as IssuedCredential
-from .ego_model import AdoptSeed as AdoptSeed
-from .ego_model import SeedDocument as SeedDocument
-from .ego_model import SeedFacet as SeedFacet
-from .ego_model import SeedResult as SeedResult
+from .dataset_imports import BackfillSourceTimes as BackfillSourceTimes
+from .dataset_imports import ImportDataset as ImportDataset
+from .diagnostics import NamespaceDiagnostics as NamespaceDiagnostics
+from .entities import EntityPartition as EntityPartition
+from .entities import MergeEntities as MergeEntities
+from .entities import SplitEntity as SplitEntity
 from .fact_body import FactClaimBody as FactClaimBody
+from .formation import EntityResolution as EntityResolution
+from .formation import GraphDraft as GraphDraft
+from .formation import GraphEntity as GraphEntity
+from .formation import GraphRelation as GraphRelation
+from .formation import GraphResolutionDraft as GraphResolutionDraft
+from .formation import GraphResolutionInput as GraphResolutionInput
+from .formation import MemoryNote as MemoryNote
+from .formation import NotesDraft as NotesDraft
 from .graph_management import GraphChange as GraphChange
 from .graph_management import GraphChangeResult as GraphChangeResult
+from .graph_management import GraphReadQuery as GraphReadQuery
+from .graph_management import GraphSearchMatch as GraphSearchMatch
+from .graph_management import GraphSearchQuery as GraphSearchQuery
+from .graph_management import GraphSearchResult as GraphSearchResult
 from .graph_management import GraphSnapshot as GraphSnapshot
 from .growth import GrowthAction as GrowthAction
 from .growth import GrowthAdoption as GrowthAdoption
@@ -184,6 +186,17 @@ from .growth import GrowthMerge as GrowthMerge
 from .growth import GrowthPartition as GrowthPartition
 from .growth import GrowthSnapshot as GrowthSnapshot
 from .growth import GrowthSplit as GrowthSplit
+from .identity import BindSubject as BindSubject
+from .identity import BoundSubject as BoundSubject
+from .identity import ChangeNamespace as ChangeNamespace
+from .identity import CreateNamespace as CreateNamespace
+from .identity import IdentityCapabilities as IdentityCapabilities
+from .identity import IdentityDirectoryQuery as IdentityDirectoryQuery
+from .identity import IdentityPurpose as IdentityPurpose
+from .identity import Namespace as Namespace
+from .identity import NamespacePage as NamespacePage
+from .identity import ReadSubjectBinding as ReadSubjectBinding
+from .identity import SubjectBinding as SubjectBinding
 from .imports import (
     AdmitFiles as AdmitFiles,
 )
@@ -194,16 +207,21 @@ from .imports import EmbeddingSyncResult as EmbeddingSyncResult
 from .imports import (
     FileSuccess as FileSuccess,
 )
+from .imports import FormationPurpose as FormationPurpose
 from .imports import FormObservation as FormObservation
 from .imports import (
     FreezeCatalog as FreezeCatalog,
 )
+from .imports import ImportAssertions as ImportAssertions
 from .imports import (
     ImportDocument as ImportDocument,
 )
+from .imports import ImportFact as ImportFact
 from .imports import ImportFailure as ImportFailure
+from .imports import ImportFormat as ImportFormat
 from .imports import ImportRecord as ImportRecord
 from .imports import ImportRecordError as ImportRecordError
+from .imports import ImportReference as ImportReference
 from .imports import (
     ImportResult as ImportResult,
 )
@@ -214,6 +232,7 @@ from .imports import ObservationFormation as ObservationFormation
 from .imports import (
     ProcessCatalog as ProcessCatalog,
 )
+from .imports import RecordSelection as RecordSelection
 from .imports import TextImportPreview as TextImportPreview
 from .imports import TextPreviewUnit as TextPreviewUnit
 from .imports import TextSplitOptions as TextSplitOptions
@@ -235,12 +254,17 @@ from .maintenance import MaintenanceSubmission as MaintenanceSubmission
 from .maintenance import ReviewMaintenance as ReviewMaintenance
 from .maintenance import SnapshotReference as SnapshotReference
 from .maintenance import StartMaintenance as StartMaintenance
-from .management import (
-    BundleRequest as BundleRequest,
-)
+from .maintenance_tasks import CreateJournal as CreateJournal
+from .maintenance_tasks import DreamRequest as DreamRequest
+from .maintenance_tasks import ReflectRequest as ReflectRequest
+from .maintenance_tasks import SummarizeWork as SummarizeWork
+from .management import BundleInstallation as BundleInstallation
+from .management import BundleRemoval as BundleRemoval
+from .management import BundleRequest as BundleRequest
 from .management import (
     InstallBundle as InstallBundle,
 )
+from .management import NamespaceBundle as NamespaceBundle
 from .management import (
     SourceCommand as SourceCommand,
 )
@@ -250,7 +274,7 @@ from .management import (
 from .management import (
     SourceResult as SourceResult,
 )
-from .management import SubjectBundle as SubjectBundle
+from .management import SourceSelection as SourceSelection
 from .media import (
     AdoptMedia as AdoptMedia,
 )
@@ -279,6 +303,15 @@ from .model_roles import ModelContractRequest as ModelContractRequest
 from .model_roles import ModelInvocationPreview as ModelInvocationPreview
 from .model_roles import ModelPreviewRequest as ModelPreviewRequest
 from .model_roles import ModelRoleContract as ModelRoleContract
+from .namespace_archives import NamespaceArchive as NamespaceArchive
+from .namespace_archives import NamespaceRestoreResult as NamespaceRestoreResult
+from .namespace_archives import RestoreNamespace as RestoreNamespace
+from .namespace_policy import FormationPolicy as FormationPolicy
+from .namespace_policy import NamespaceQuota as NamespaceQuota
+from .person_profiles import PersonProfileEvidenceItem as PersonProfileEvidenceItem
+from .person_profiles import PersonProfilesQuery as PersonProfilesQuery
+from .person_profiles import PersonProfilesResult as PersonProfilesResult
+from .person_profiles import PersonProfileView as PersonProfileView
 from .query_conditions import (
     OriginMatch as OriginMatch,
 )
@@ -312,7 +345,34 @@ from .query_conditions import (
 from .query_conditions import (
     QueryModality as QueryModality,
 )
+from .query_context import QueryContext as QueryContext
 from .query_readout import RerankInfo as RerankInfo
+from .records import (
+    ReadRecords as ReadRecords,
+)
+from .records import (
+    RecordDetail as RecordDetail,
+)
+from .records import (
+    RecordEntry as RecordEntry,
+)
+from .records import (
+    RecordPurpose as RecordPurpose,
+)
+from .records import (
+    RecordsCoverage as RecordsCoverage,
+)
+from .records import (
+    RecordsPage as RecordsPage,
+)
+from .records import (
+    RecordsQuery as RecordsQuery,
+)
+from .retention import RetentionChange as RetentionChange
+from .retention import RetentionChanges as RetentionChanges
+from .retention import RetentionExpectation as RetentionExpectation
+from .retention import RetentionSnapshot as RetentionSnapshot
+from .retention import RetentionState as RetentionState
 from .retrieval import (
     QueryCoverage as QueryCoverage,
 )
@@ -343,3 +403,14 @@ from .text_import import TextImport as TextImport
 from .text_import import TextImportCompletion as TextImportCompletion
 from .text_import import TextImportResult as TextImportResult
 from .text_import import TextImportSubmission as TextImportSubmission
+from .tuning import ApplyRetrievalProfile as ApplyRetrievalProfile
+from .tuning import CreateTuning as CreateTuning
+from .tuning import RankingMetrics as RankingMetrics
+from .tuning import RollbackRetrievalProfile as RollbackRetrievalProfile
+from .tuning import TuningCase as TuningCase
+from .tuning import TuningParameter as TuningParameter
+from .tuning import TuningQueryResult as TuningQueryResult
+from .tuning import TuningRound as TuningRound
+from .tuning import TuningRoundsPage as TuningRoundsPage
+from .tuning import TuningTask as TuningTask
+from .tuning import TuningTasksPage as TuningTasksPage

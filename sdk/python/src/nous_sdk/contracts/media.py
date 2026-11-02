@@ -2,9 +2,20 @@
 
 from typing import Literal
 
-from pydantic import Field, model_validator
+from pydantic import Field, JsonValue, model_validator
 
-from .common import CognitiveTimes, Contract, Operation, ReferenceAddresses, TimePoint
+from .common import (
+    ApplicableInput,
+    CognitiveTimes,
+    Contract,
+    FormationPurpose,
+    ModelProvenance,
+    Operation,
+    ReferenceAddresses,
+    TimePoint,
+)
+
+MediaStrategy = Literal["description_only", "direct_structured", "describe_then_structure"]
 
 
 class MediaInfo(Contract):
@@ -89,7 +100,7 @@ class SourceRegion(Contract):
         return self
 
 
-class BlobDocument(Contract):
+class BlobDocument(ApplicableInput):
     filename: str
     media_type: str
     source_type: str = "media"
@@ -102,15 +113,24 @@ class BlobDocument(Contract):
 class AdoptMedia(Operation):
     observation_id: str | None = None
     material_id: str
+    source: MediaReference | None = None
     regions: tuple[SourceRegion, ...] = ()
-    strategy: Literal["native", "description", "description_then_native"] = "native"
-    instruction: str = "Describe and remember the supplied material."
+    media_strategy: MediaStrategy = "description_only"
+    formation_purpose: FormationPurpose = "memory"
+    background: str = ""
 
     @model_validator(mode="after")
     def distinct_regions(self) -> "AdoptMedia":
+        if self.source is not None and (self.observation_id is None or self.regions):
+            raise ValueError(
+                "An exact source requires its accepted Observation and replaces regions"
+            )
         if len({region.id for region in self.regions}) != len(self.regions):
             raise ValueError("Media interpretation regions must have distinct source identities")
         return self
+
+    def identity_payload(self) -> dict[str, JsonValue]:
+        return self.model_dump(mode="json", exclude={"source"} if self.source is None else set())
 
 
 class MediaEmbeddingInput(Contract):
@@ -126,7 +146,7 @@ class MediaEmbeddingResult(Contract):
     space: str
     model: str
     dimensions: int
-    call_ids: tuple[str | None, ...]
+    producer: ModelProvenance
     commit_seq: int
 
 
@@ -134,7 +154,7 @@ class MediaRecord(Contract):
     reference: MediaReference
     addresses: ReferenceAddresses | None = None
     namespace_id: str
-    subject_id: str
+    
     material_id: str
     content_hash: str
     media_type: str

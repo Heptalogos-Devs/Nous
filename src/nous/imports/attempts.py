@@ -10,7 +10,9 @@ from datetime import UTC
 from typing import TYPE_CHECKING, Literal
 from uuid import uuid4
 
-from nous_sdk.contracts import CallContext, DomainError, FormationProposal, ImportUnit
+from nous_sdk.contracts import ImportUnit
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.imports import ImportFailure, UnitAttempt
 from sqlalchemy import select, update
 
@@ -34,16 +36,9 @@ def failure(error: BaseException) -> ImportFailure:
 class AttemptRecorder:
     def __init__(self, service: ImportService, ctx: CallContext, value: UnitAttempt) -> None:
         self.service, self.ctx, self.value = service, ctx, value
-        self.proposal: FormationProposal | None = None
 
     async def save(self) -> None:
-        async with self.service.authority.write(
-            self.ctx,
-            str(uuid4()),
-            operation_kind="imports.unit_attempt",
-            scope=self.ctx.require_subject(),
-            payload=self.value,
-        ) as tx:
+        async with self.service.authority.write(self.ctx) as tx:
             row = await tx.connection.scalar(
                 select(requests.c.record).where(requests.c.id == self.value.id)
             )
@@ -52,7 +47,6 @@ class AttemptRecorder:
                 await tx.connection.execute(
                     update(requests).where(requests.c.id == self.value.id).values(record=row)
                 )
-            tx.result(None)
 
     async def advance(
         self, stage: Literal["formation", "adoption", "embedding", "complete"]
@@ -70,13 +64,7 @@ async def record_attempt(
     job_id: str | None,
 ) -> AsyncGenerator[AttemptRecorder]:
     attempt_id = str(uuid4())
-    async with service.authority.write(
-        ctx,
-        attempt_id + ":start",
-        operation_kind="imports.unit_attempt",
-        scope=ctx.require_subject(),
-        payload={"unit_id": unit.id, "operation_id": operation_id, "job_id": job_id},
-    ) as tx:
+    async with service.authority.write(ctx) as tx:
         value = UnitAttempt(
             id=attempt_id,
             catalog_id=unit.catalog_id,
@@ -96,7 +84,6 @@ async def record_attempt(
                 },
             )
         )
-        tx.result(None)
     recorder = AttemptRecorder(service, ctx, value)
     try:
         yield recorder
@@ -144,7 +131,6 @@ async def attempts_in(
     statement = select(requests.c.record).where(
         requests.c.record["kind"].as_string() == "unit_attempt",
         requests.c.record["context"]["namespace_id"].as_string() == ctx.namespace_id,
-        requests.c.record["context"]["subject_id"].as_string() == ctx.require_subject(),
         requests.c.record["attempt"]["catalog_id"].as_string() == catalog_id,
     )
     if unit_ids is not None:

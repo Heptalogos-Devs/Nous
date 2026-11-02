@@ -103,7 +103,26 @@ impl ServingGeneration {
         };
         check_cancel()?;
         let scoped_assets = self.restrict_assets(scope.allowed, scope.tags)?;
-        let assets = scoped_assets.as_ref().unwrap_or(&self.assets);
+        let assets = scoped_assets
+            .as_ref()
+            .map(|view| &view.assets)
+            .unwrap_or(&self.assets);
+        let geometry_scope_unavailable = scoped_assets
+            .as_ref()
+            .is_some_and(|view| !view.geometry_available);
+        ensure!(
+            !config.strict_capabilities || !geometry_scope_unavailable,
+            "CAPABILITY_MISSING: geometry is not available for the authorized source scope"
+        );
+        let epa_unavailable = config.pipeline.epa_enabled && !assets.epa_available();
+        if epa_unavailable {
+            ensure!(
+                !config.strict_capabilities,
+                "CAPABILITY_MISSING: EPA has no basis for the authorized graph generation"
+            );
+            config.pipeline.epa_enabled = false;
+        }
+
         let effective_tags = assets
             .tag_vectors()
             .keys()
@@ -347,9 +366,9 @@ impl ServingGeneration {
             generation: self.identity.generation.clone(),
             space: self.identity.space.clone(),
             source_mappings,
-            diagnostics: json!({"profile":"vcp","engine":"usearch+ags+memo+river-v3","restored":self.restored,"assets":self.query_asset_diagnostics(),
+            diagnostics: json!({"profile":"vcp","engine":"usearch+ags+memo+river-v3","restored":self.restored,"assets":if scoped_assets.is_some() { json!({"candidate_count":assets.candidates().len(),"tag_count":effective_tags.len(),"source_root_count":assets.candidates().values().flat_map(|candidate| candidate.source_ids.iter()).collect::<BTreeSet<_>>().len(),"graph_source":"published_authority_view"}) } else { self.query_asset_diagnostics() },
                 "candidate_lanes":lanes,"core_keys":self.mappings.tags.iter().filter(|(id,_)|core_ids.contains(*id)).map(|(_,key)|key).collect::<Vec<_>>(),
-                "pipeline":observation.metadata,"river":native.diagnostics,"omega":native.omega,"thinking":thinking,"fields":fields}),
+                "scoped_stage_availability":{"epa":if epa_unavailable { "unavailable_in_scope" } else { "available" },"geometry":if geometry_scope_unavailable { "unavailable_in_scope" } else { "available" }},"pipeline":observation.metadata,"river":native.diagnostics,"omega":native.omega,"thinking":thinking,"fields":fields}),
         })
     }
 }

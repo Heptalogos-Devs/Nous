@@ -9,7 +9,7 @@ import secrets
 import httpx
 import pytest
 import sqlalchemy as sa
-from nous_sdk.contracts import DomainError
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.credentials import CreateCredential, RotateCredential
 
 from nous.identity.credentials import AuthenticationError, CredentialsService, credentials

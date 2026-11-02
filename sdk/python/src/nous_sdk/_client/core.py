@@ -26,7 +26,7 @@ class ClientCore(TypedOperations):
         credential_file: str | Path | None = None,
         options: ClientOptions | None = None,
         namespace_id: str | None = None,
-        subject_id: str | None = None,
+        
     ) -> None:
         if (token is None) == (credential_file is None):
             raise ValueError("supply token or credential_file")
@@ -34,7 +34,7 @@ class ClientCore(TypedOperations):
             assert credential_file is not None
             token = token_file(credential_file)
         self.transport = Transport(url, token, options or ClientOptions())
-        self.namespace_id, self.subject_id = namespace_id, subject_id
+        self.namespace_id = namespace_id
         self._source_read: tuple[SourceReadScope, ...] = ()
         self._owns_transport = True
         self._closed = False
@@ -58,6 +58,12 @@ class ClientCore(TypedOperations):
 
     async def __aexit__(self, exc_type: object, exc: object, traceback: object) -> None:
         await self.close()
+
+    def require_namespace(self, namespace_id: str | None = None) -> str:
+        selected = namespace_id or self.namespace_id
+        if selected is None:
+            raise ValueError("Select a Namespace for this operation")
+        return selected
 
     async def request(
         self,

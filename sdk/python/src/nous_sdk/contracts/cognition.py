@@ -4,7 +4,13 @@ from __future__ import annotations
 
 from typing import Annotated, Literal
 
-from pydantic import Field, JsonValue, model_validator
+from pydantic import (
+    Field,
+    JsonValue,
+    SerializerFunctionWrapHandler,
+    model_serializer,
+    model_validator,
+)
 
 from .cognitive_identity import (
     CognitiveKind as CognitiveKind,
@@ -18,9 +24,21 @@ from .cognitive_identity import (
 from .cognitive_identity import (
     EvidenceLink as EvidenceLink,
 )
-from .common import CognitiveTimes, Contract, Operation, ReferenceAddresses, TimePoint, TimeRange
+from .common import (
+    CognitiveTimes,
+    Contract,
+    Operation,
+    ReferenceAddresses,
+    TimePoint,
+    TimeRange,
+)
+from .common import ModelProvenance
 from .fact_body import FactClaimBody as FactClaimBody
 from .media import MediaReference
+from .personality import FacetCategory, RelationshipRequirement
+from .retention import RetentionState
+
+MemoryLifecycle = RetentionState
 
 
 class MemoryBody(Contract):
@@ -28,6 +46,7 @@ class MemoryBody(Contract):
     text: str = Field(min_length=1)
     summary: str | None = None
     media: tuple[MediaReference, ...] = ()
+    contact_observation_id: str | None = None
     tags: tuple[str, ...] = ()
     external_ids: dict[str, str] = Field(default_factory=dict)
     metadata: dict[str, JsonValue] = Field(default_factory=dict)
@@ -113,6 +132,19 @@ class PersonProfileControls(Contract):
     summary: PersonSummaryOverride | None = None
 
 
+class GeneratedPersonProfile(Contract):
+    summary: str
+    aliases: tuple[str, ...] = ()
+    evidence: tuple[EvidenceLink, ...] = Field(min_length=1)
+    producer: ModelProvenance | None = None
+
+    @model_validator(mode="after")
+    def positive_support(self) -> GeneratedPersonProfile:
+        if not any(link.polarity == "support" for link in self.evidence):
+            raise ValueError("Generated profiles require positive supporting evidence")
+        return self
+
+
 class EntityBody(Contract):
     kind: Literal["entity"] = "entity"
     label: str
@@ -126,16 +158,52 @@ class EntityBody(Contract):
     mentions: tuple[EntityMention, ...] = ()
     platform_identities: tuple[PlatformIdentity, ...] = ()
     profile_controls: PersonProfileControls = Field(default_factory=PersonProfileControls)
+    generated_profile: GeneratedPersonProfile | None = None
+    state: Literal["active", "merged", "split"] = "active"
+    canonical: CognitiveRef | None = None
+    successors: tuple[CognitiveRef, ...] = ()
+    lineage: tuple[CognitiveRef, ...] = ()
+
+    @model_serializer(mode="wrap")
+    def preserve_explicit_profile(
+        self, handler: SerializerFunctionWrapHandler
+    ) -> dict[str, object]:
+        value: dict[str, object] = handler(self)
+        if "generated_profile" not in self.model_fields_set:
+            value.pop("generated_profile", None)
+        return value
 
     @property
     def effective_aliases(self) -> tuple[str, ...]:
         control = self.profile_controls.aliases
-        return control.aliases if control is not None else self.aliases
+        return (
+            control.aliases
+            if control is not None
+            else tuple(
+                dict.fromkeys(
+                    (
+                        *self.aliases,
+                        *(self.generated_profile.aliases if self.generated_profile else ()),
+                    )
+                )
+            )
+        )
 
     @property
     def profile_text(self) -> str:
         control = self.profile_controls.summary
-        return control.text if control is not None else self.description
+        if control is not None:
+            return control.text
+        return "\n\n".join(
+            dict.fromkeys(
+                text
+                for text in (
+                    self.description,
+                    self.generated_profile.summary if self.generated_profile else "",
+                )
+                if text
+            )
+        )
 
 
 class EpisodeMember(Contract):
@@ -158,8 +226,14 @@ class EpisodeBody(Contract):
     successors: tuple[CognitiveRef, ...] = ()
 
 
+class JournalParagraphSource(Contract):
+    paragraph: int = Field(ge=0)
+    evidence: tuple[EvidenceLink, ...] = Field(min_length=1)
+
+
 class JournalBody(Contract):
     kind: Literal["journal"] = "journal"
+    paragraph_sources: tuple[JournalParagraphSource, ...] = ()
     title: str
     narrative: str
     period: TimeRange
@@ -182,6 +256,7 @@ class SchemaBody(Contract):
 
 
 class AssociationBody(Contract):
+    external_ids: dict[str, str] = Field(default_factory=dict, exclude_if=lambda value: not value)
     weight: float | None = Field(default=None, ge=0, le=1)
     kind: Literal["association"] = "association"
     from_ref: CognitiveRef
@@ -209,6 +284,9 @@ class EgoFacetBody(Contract):
     epistemic: EpistemicStance = Field(default_factory=EpistemicStance)
     contexts: tuple[str, ...] = ()
     exceptions: tuple[str, ...] = ()
+    category: FacetCategory = "other"
+    audience: tuple[CognitiveRef, ...] = ()
+    relationship: RelationshipRequirement | None = None
 
 
 class NarrativeThreadBody(Contract):
@@ -258,6 +336,16 @@ class LanguageConventionBody(Contract):
     audience: tuple[CognitiveRef, ...]
     pragmatics: str
     contexts: tuple[str, ...] = ()
+    carriers: tuple[MediaReference, ...] = ()
+    content_description: str = ""
+    emotions: tuple[str, ...] = ()
+    intentions: tuple[str, ...] = ()
+    speakers: tuple[CognitiveRef, ...] = ()
+    targets: tuple[CognitiveRef, ...] = ()
+    groups: tuple[CognitiveRef, ...] = ()
+    usage_events: tuple[CognitiveRef, ...] = ()
+    avoid_for: tuple[CognitiveRef, ...] = ()
+    epistemic: EpistemicStance = Field(default_factory=EpistemicStance)
 
 
 class DesiredCondition(Contract):
@@ -321,18 +409,18 @@ class CognitiveRecord(Contract):
     reference: CognitiveRef
     addresses: ReferenceAddresses | None = None
     namespace_id: str
-    subject_id: str
+
     body: CognitiveBody | None
     evidence: tuple[EvidenceLink, ...]
     source_roots: tuple[str, ...]
     support_roots: tuple[str, ...] = ()
     source_regions: dict[str, tuple[str, ...]] = Field(default_factory=dict)
     times: CognitiveTimes
-    producer_call_id: str | None = None
+    producer: ModelProvenance | None = None
     commit_seq: int
     deleted: bool = False
     purged: bool = False
-    lifecycle: MemoryLifecycle | None = None
+    lifecycle: RetentionState | None = None
     cause: RevisionCause | None = None
 
     @model_validator(mode="after")
@@ -350,7 +438,7 @@ class AdoptCognition(Operation):
     times: CognitiveTimes | None = None
     id: str | None = None
     expected_revision: int = Field(default=0, ge=0)
-    producer_call_id: str | None = None
+    producer: ModelProvenance | None = None
 
 
 class ProposedEntityAttribute(Contract):
@@ -423,6 +511,7 @@ class FormationCatalogEntry(Contract):
 
 
 class ProposedAssociation(Contract):
+    external_ids: dict[str, str] = Field(default_factory=dict, exclude_if=lambda value: not value)
     weight: float | None = Field(default=None, ge=0, le=1)
     from_key: str = Field(
         description="Exactly memory, a key declared in entities/concepts/schemas, or a source.formation_catalog key; never a free-form label or invented ID."
@@ -457,24 +546,11 @@ class FormationDraft(Contract):
     schemas: tuple[ProposedSchema, ...] = ()
 
 
-class FormationProposal(FormationDraft):
-    producer_call_id: str | None = None
-    event: TimePoint | None = None
-    validity: TimeRange | None = None
-
-
 class EmbeddingBatch(Contract):
     model: str
     space: str
     dimensions: int = Field(gt=0)
     vectors: tuple[tuple[float, ...], ...]
-    call_ids: tuple[str | None, ...]
-
-    @model_validator(mode="after")
-    def exact_vector_producers(self) -> EmbeddingBatch:
-        if len(self.call_ids) != len(self.vectors):
-            raise ValueError("Each embedding vector requires its actual producer entry")
-        return self
 
 
 class MergeConcepts(Operation):
@@ -488,33 +564,22 @@ class ConceptPartition(Contract):
     members: tuple[CognitiveRef, ...] = Field(min_length=1)
 
 
+class ReferencePartition(Contract):
+    consumer: CognitiveRef
+    partition: int = Field(ge=0)
+
+
 class SplitConcept(Operation):
     source: CognitiveRef
     partitions: tuple[ConceptPartition, ...] = Field(min_length=2)
     reason: str = Field(min_length=1)
+    consumers: tuple[ReferencePartition, ...] = ()
 
 
 class ResegmentEpisodes(Operation):
     originals: tuple[CognitiveRef, ...] = Field(min_length=1)
     replacements: tuple[EpisodeBody, ...] = Field(min_length=1)
     reason: str = Field(min_length=1)
-
-
-class MemoryLifecycle(Contract):
-    strength: float = Field(default=1, ge=0, le=1)
-    anchor_unix_ms: int
-    activation: Literal["active", "frozen", "forgotten", "weakened", "decayed"] = "active"
-    pinned: bool = False
-    protected_until_unix_ms: int | None = None
-    inactive_since_unix_ms: int | None = None
-    last_reinforced_unix_ms: int | None = None
-
-    def protected(self, now_unix_ms: int) -> bool:
-        return (
-            self.pinned
-            or self.protected_until_unix_ms is not None
-            and self.protected_until_unix_ms > now_unix_ms
-        )
 
 
 class RevisionCause(Contract):

@@ -1,20 +1,26 @@
 """Adopt exact derivations in the same authority as their actual inputs."""
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, TypeVar
 from uuid import uuid4
 
-from nous_sdk.contracts import CallContext, DomainError
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.derivation import (
     ArtifactRepresentation,
     CreateRepresentation,
-    DerivationProducer,
+    DerivationInput,
+    DerivationStrategy,
     DerivedRepresentation,
     RepresentationRef,
+    StructuredRepresentation,
 )
-from pydantic import TypeAdapter
-from sqlalchemy import select
+from nous_sdk.contracts.media import MediaReference
+from pydantic import JsonValue, TypeAdapter
+from sqlalchemy import func, select
 
-from nous.identity.service import require_subject_in
-from nous.platform.models.ledger import CallLedger
+from nous.identity.access import require_namespace_in
 from nous.platform.persistence import Authority, ReadView, WriteTx
 from nous.references import allocate_in
 
@@ -22,30 +28,56 @@ from .coverage import merge_source_regions
 from .derived_access import SourceInfo, merge_access, representation_ref
 from .derived_bundles import DerivedBundles
 from .derived_erasure import purge_materials_in
-from .derived_producer import producer, verify_result
+from .derived_producer import verify_result
 from .derived_schema import representations
 from .service import MaterialService
+
+if TYPE_CHECKING:
+    from nous.platform.models.generation import ModelResult
+
+T = TypeVar("T")
 
 
 class DerivedService(DerivedBundles):
     def __init__(self, authority: Authority, materials: MaterialService) -> None:
         self.authority, self.materials = authority, materials
-        self.ledger = CallLedger(authority)
 
-    async def producer_for_call_in(
-        self, view: ReadView | WriteTx, ctx: CallContext, call_id: str
-    ) -> DerivationProducer:
-        return producer(await self.ledger.successful_in(view, ctx, call_id))
+    async def for_material_in(
+        self, view: ReadView | WriteTx, ctx: CallContext, material_id: str
+    ) -> tuple[DerivedRepresentation, ...]:
+        await self.materials.read_in(view, ctx, material_id)
+        ids = func.json_each(representations.c.record, "$.material_ids").table_valued("value")
+        rows = (
+            await view.connection.execute(
+                select(representations.c.record)
+                .where(
+                    representations.c.namespace_id == ctx.namespace_id,
+                    representations.c.head.is_(True),
+                    select(ids.c.value).where(ids.c.value == material_id).exists(),
+                )
+                .order_by(representations.c.commit_seq, representations.c.id)
+            )
+        ).scalars()
+        result = []
+        for raw in rows:
+            value = DerivedRepresentation.model_validate(raw)
+            result.append(await self.read_in(view, ctx, value.reference))
+        return tuple(result)
+
+    async def for_material(
+        self, ctx: CallContext, material_id: str
+    ) -> tuple[DerivedRepresentation, ...]:
+        async with self.authority.read(ctx) as view:
+            return await self.for_material_in(view, ctx, material_id)
 
     async def adopt_in(
         self, tx: WriteTx, ctx: CallContext, command: CreateRepresentation
     ) -> DerivedRepresentation:
-        await require_subject_in(tx, ctx)
+        await require_namespace_in(tx, ctx)
         object_id = command.id or str(uuid4())
         head = await tx.connection.scalar(
             select(representations.c.record).where(
                 representations.c.namespace_id == ctx.namespace_id,
-                representations.c.subject_id == ctx.require_subject(),
                 representations.c.id == object_id,
                 representations.c.head.is_(True),
             )
@@ -124,34 +156,32 @@ class DerivedService(DerivedBundles):
                     "derivation_artifact_scope", "Artifact must retain all exact input dependencies"
                 )
             material_ids = tuple(sorted({*material_ids, command.payload.material_id}))
-        if command.producer.model_call_id:
-            call = await self.ledger.successful_in(tx, ctx, command.producer.model_call_id)
-            verify_result(call, command.producer, command.payload, inputs)
-            if command.strategy == "describe_then_structure":
-                prompt = TypeAdapter(dict[str, object]).validate_python(
-                    call.request.get("prompt", {})
-                )
-                description_calls: set[str] = set()
-                for item in inputs:
-                    if item.role not in {"description", "transcript"}:
-                        continue
-                    reference = (
-                        representation_ref(item.source)
-                        if item.source.kind == "representation"
-                        else (await self.read_region_in(tx, ctx, item.source.id)).representation
-                    )
-                    parent = await self.read_in(tx, ctx, reference)
-                    if parent.producer.model_call_id:
-                        description_calls.add(parent.producer.model_call_id)
-                description_call = prompt.get("description_call_id")
-                if (
-                    not isinstance(description_call, str)
-                    or description_call not in description_calls
-                ):
-                    raise DomainError(
-                        "derivation_description_conflict",
-                        "Second-stage request did not use the selected description",
-                    )
+        if command.producer is not None:
+            expected_task = (
+                {
+                    "nous.memory-notes/1": "formation.notes",
+                    "nous.graph-extraction/1": "formation.graph",
+                    "nous.graph-resolution/1": "formation.entity-resolution",
+                }.get(command.payload.schema_id)
+                if isinstance(command.payload, StructuredRepresentation)
+                else "media.describe"
+                if command.kind
+                in {
+                    "image_description",
+                    "audio_description",
+                    "scene_description",
+                    "resource_synopsis",
+                }
+                else None
+            )
+            verify_result(command.producer, command.payload, expected_task=expected_task)
+        elif (
+            isinstance(command.payload, StructuredRepresentation)
+            and command.kind != "parsed_record"
+        ):
+            raise DomainError(
+                "producer_required", "Structured interpretation requires model provenance"
+            )
         reference = RepresentationRef(id=object_id, revision=command.expected_revision + 1)
         source_regions = merge_source_regions(
             (root, info.regions.get(root, ())) for info in infos for root in info.roots
@@ -160,12 +190,12 @@ class DerivedService(DerivedBundles):
             reference=reference,
             addresses=await allocate_in(tx, ctx, reference.media()),
             namespace_id=ctx.namespace_id,
-            subject_id=ctx.require_subject(),
             inputs=inputs,
             kind=command.kind,
             strategy=command.strategy,
             payload=command.payload,
             producer=command.producer,
+            processor=command.processor,
             access=access,
             quality=command.quality,
             source_roots=tuple(sorted({root for info in infos for root in info.roots})),
@@ -183,7 +213,6 @@ class DerivedService(DerivedBundles):
             .where(
                 representations.c.id == object_id,
                 representations.c.namespace_id == ctx.namespace_id,
-                representations.c.subject_id == ctx.subject_id,
             )
             .values(head=False)
         )
@@ -192,26 +221,47 @@ class DerivedService(DerivedBundles):
                 id=reference.id,
                 revision=reference.revision,
                 namespace_id=ctx.namespace_id,
-                subject_id=ctx.require_subject(),
                 head=True,
                 record=value.model_dump(mode="json"),
                 commit_seq=tx.commit_seq,
             )
         )
+        from nous.retrieval.maintenance import enqueue_index_in
+
+        await enqueue_index_in(tx, ctx)
         return value
 
-    async def adopt(self, ctx: CallContext, command: CreateRepresentation) -> DerivedRepresentation:
-        async with self.authority.write(
+    async def adopt_model_result_in(
+        self,
+        tx: WriteTx,
+        ctx: CallContext,
+        result: ModelResult[T],
+        *,
+        inputs: tuple[DerivationInput, ...],
+        schema_id: str,
+        strategy: DerivationStrategy = "direct_structured",
+        timeline: MediaReference | None = None,
+    ) -> DerivedRepresentation:
+        value = TypeAdapter(dict[str, JsonValue]).validate_python(
+            TypeAdapter(object).dump_python(result.output, mode="json")
+        )
+        return await self.adopt_in(
+            tx,
             ctx,
-            command.operation_id,
-            operation_kind="media.represent",
-            scope=ctx.require_subject(),
-            payload=command,
-        ) as tx:
-            if tx.replayed:
-                replay = DerivedRepresentation.model_validate(tx.replay_result)
-                return await self.read_in(tx, ctx, replay.reference)
-            return tx.result(await self.adopt_in(tx, ctx, command))
+            CreateRepresentation(
+                inputs=inputs,
+                kind="structured_interpretation",
+                strategy=strategy,
+                payload=StructuredRepresentation(schema_id=schema_id, value=value),
+                producer=result.producer,
+                timeline=timeline,
+            ),
+        )
+
+    async def adopt(self, ctx: CallContext, command: CreateRepresentation) -> DerivedRepresentation:
+        async with self.authority.write(ctx) as tx:
+            value = await self.adopt_in(tx, ctx, command)
+        return value
 
     async def history(
         self, ctx: CallContext, representation_id: str
@@ -223,7 +273,6 @@ class DerivedService(DerivedBundles):
                     .where(
                         representations.c.id == representation_id,
                         representations.c.namespace_id == ctx.namespace_id,
-                        representations.c.subject_id == ctx.require_subject(),
                     )
                     .order_by(representations.c.revision)
                 )

@@ -4,16 +4,37 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from nous_sdk.contracts import CallContext, DomainError
+from nous_sdk.contracts import SourceResult
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from pydantic import JsonValue
 from sqlalchemy import select
 
+from nous.identity.access import require_namespace_in
 from nous.material.service import require_observation_in
+from nous.platform.persistence import ReadView, WriteTx
 
 from .schema import source_operations
 
 if TYPE_CHECKING:
     from .sources import SourceService
+
+
+async def authorize_result_in(
+    self: SourceService, view: ReadView | WriteTx, ctx: CallContext, result: SourceResult
+) -> None:
+    await require_namespace_in(view, ctx)
+    for observation_id in result.observation_ids:
+        await require_observation_in(view, ctx, observation_id, active=False)
+    roots = await self.cognition.source_roots_in(
+        view, ctx, purpose="management", include_purged=True
+    )
+    for reference in result.affected or result.references:
+        record = await self.cognition.get_in(view, ctx, reference, check_visibility=False)
+        if not await self.cognition.visible_in(view, ctx, record, roots, purpose="management"):
+            raise DomainError(
+                "source_unavailable", "Operation objects exceed the current source scope"
+            )
 
 
 async def get_operation(
@@ -28,9 +49,10 @@ async def get_operation(
             "source_operation_selector", "Select one source operation identity or commit sequence"
         )
     async with self.authority.read(ctx) as view:
+        await require_namespace_in(view, ctx)
         statement = select(source_operations).where(
             source_operations.c.namespace_id == ctx.namespace_id,
-            source_operations.c.subject_id == ctx.subject_id,
+            
         )
         if source_operation_id is not None:
             statement = statement.where(source_operations.c.id == source_operation_id)
@@ -47,8 +69,9 @@ async def get_operation(
                 "This commit contains multiple source operations; select a log identity",
             )
         row = rows[0]
-        for observation_id in row["record"]["result"]["observation_ids"]:
-            await require_observation_in(view, ctx, observation_id, active=False)
+        await self.authorize_result_in(
+            view, ctx, SourceResult.model_validate(row["record"]["result"])
+        )
         return {"source_operation_id": str(row["id"]), **row["record"]}
 
 
@@ -58,10 +81,11 @@ async def list_operations(
     if not 1 <= limit <= 1000:
         raise DomainError("invalid_limit", "Source operation limit must be between 1 and 1000")
     async with self.authority.read(ctx) as view:
+        await require_namespace_in(view, ctx)
         sequence = source_operations.c.record["result"]["commit_seq"].as_integer()
         statement = select(source_operations).where(
             source_operations.c.namespace_id == ctx.namespace_id,
-            source_operations.c.subject_id == ctx.subject_id,
+            
         )
         if before_commit_seq is not None:
             statement = statement.where(sequence < before_commit_seq)
@@ -71,14 +95,14 @@ async def list_operations(
         for row in rows:
             value = row["record"]
             permitted = True
-            for observation_id in value["result"]["observation_ids"]:
-                try:
-                    await require_observation_in(view, ctx, observation_id, active=False)
-                except DomainError as error:
-                    if error.code != "source_unavailable":
-                        raise
-                    permitted = False
-                    break
+            try:
+                await self.authorize_result_in(
+                    view, ctx, SourceResult.model_validate(value["result"])
+                )
+            except DomainError as error:
+                if error.code not in {"source_unavailable", "cognition_not_found"}:
+                    raise
+                permitted = False
             if permitted:
                 result.append({"source_operation_id": str(row["id"]), **value})
             if len(result) >= limit:

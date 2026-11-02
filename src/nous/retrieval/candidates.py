@@ -1,21 +1,25 @@
 from __future__ import annotations
 
+from nous.cognition.entities import project_entity_in
+
 from typing import TYPE_CHECKING
 
 from nous_sdk.contracts import (
-    CallContext,
     CognitiveRecord,
-    DomainError,
     QueryRequest,
 )
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
+from nous_sdk.contracts.media import MediaRecord
 from sqlalchemy import select
 
 from nous.cognition.lifecycle import selectable
 from nous.cognition.schema import revisions, vectors
-from nous.identity.service import require_subject_in
+from nous.identity.access import require_namespace_in
 from nous.material.modalities import source_modalities_in
 from nous.material.named_sources import named_source_observations_in
 from nous.material.service import SourceRecord, observations
+from nous.platform.time.filtering import time_matches
 
 from .assets import (
     VECTOR_ROWS,
@@ -25,7 +29,7 @@ from .assets import (
 )
 from .filters import matches
 from .media import media_records_in
-from .planning import AXES, BoundPlan, time_matches
+from .planning import AXES, BoundPlan
 
 if TYPE_CHECKING:
     from .service import RetrievalService
@@ -35,19 +39,18 @@ async def eligible(
     self: RetrievalService, ctx: CallContext, request: QueryRequest, plan: BoundPlan
 ) -> CandidateView:
     async with self.authority.read(ctx) as view:
-        await require_subject_in(view, ctx)
+        namespace = await require_namespace_in(view, ctx)
         if request.as_of_commit is not None and request.as_of_commit > view.commit_seq:
             raise DomainError(
                 "invalid_history", "Query history cutoff is outside committed history"
             )
         statement = select(revisions.c.record).where(
             revisions.c.namespace_id == ctx.namespace_id,
-            revisions.c.subject_id == ctx.subject_id,
         )
         if request.as_of_commit is not None:
-            statement = statement.where(revisions.c.commit_seq <= request.as_of_commit)
+            statement = statement.where(revisions.c.namespace_id == ctx.namespace_id, revisions.c.commit_seq <= request.as_of_commit)
         rows = [
-            CognitiveRecord.model_validate(row)
+            await project_entity_in(self.cognition, view, ctx, CognitiveRecord.model_validate(row))
             for row in (await view.connection.execute(statement)).scalars()
         ]
         if "asof_time" in plan:
@@ -71,11 +74,28 @@ async def eligible(
                 heads[row.reference.id] = row
         if not request.history and not exact:
             rows = list(heads.values())
-        candidates: list[RetrievalRecord] = [
-            *rows,
-            *(await media_records_in(view, ctx, self.materials, self.derivations)),
-        ]
-        roots = await self.cognition.active_roots_in(view, ctx)
+        candidates: list[RetrievalRecord] = list(rows)
+        if "media" in request.domains:
+            candidates.extend(await media_records_in(view, ctx, self.materials, self.derivations))
+        if "observation" in request.domains:
+            candidates.extend(await self.references.observation_records_in(view, ctx))
+        if "evidence" in request.domains:
+            candidates.extend(
+                await self.references.evidence_records_in(
+                    view, ctx, history=request.history or exact
+                )
+            )
+        if "resource" in request.domains:
+            if self.resources is None:
+                raise DomainError(
+                    "resource_directory_unavailable", "External resource directory is unavailable"
+                )
+            candidates.extend(
+                await self.resources.records_in(
+                    view, ctx, as_of_commit=request.as_of_commit, history=request.history or exact
+                )
+            )
+        roots = await self.cognition.source_roots_in(view, ctx)
         allowed: list[RetrievalRecord] = []
         catalog: list[RetrievalRecord] = []
         source_rows: dict[str, SourceRecord] = {
@@ -84,7 +104,6 @@ async def eligible(
                 await view.connection.execute(
                     select(observations.c.id, observations.c.record).where(
                         observations.c.namespace_id == ctx.namespace_id,
-                        observations.c.subject_id == ctx.subject_id,
                     )
                 )
             ).mappings()
@@ -98,13 +117,20 @@ async def eligible(
             ):
                 continue
             if isinstance(row, CognitiveRecord):
+                if (
+                    row.reference.kind == "episode"
+                    and "episodes" not in namespace.enabled_features
+                    and not exact
+                    and not request.history
+                ):
+                    continue
                 if not selectable(
                     row,
                     include_deleted=request.include_deleted,
                     include_inactive=request.include_inactive,
                 ):
                     continue
-            elif row.deleted and not request.include_deleted:
+            elif isinstance(row, MediaRecord) and row.deleted and not request.include_deleted:
                 continue
             if isinstance(row, CognitiveRecord) and not await self.cognition.visible_in(
                 view, ctx, row, roots
@@ -164,7 +190,7 @@ async def eligible(
                 deduped[item.reference.exact()] = item
         allowed = list(deduped.values())
         assets = VECTOR_ROWS.validate_python(
-            (await view.connection.execute(select(vectors))).mappings().all()
+            (await view.connection.execute(select(vectors).where(vectors.c.namespace_id == ctx.namespace_id))).mappings().all()
         )
         return CandidateView(allowed, catalog, assets, view.commit_seq, source_rows, roots)
 

@@ -105,6 +105,10 @@ pub struct GhostTagInput {
 #[derive(Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(default, rename_all = "camelCase")]
 pub struct PipelineConfig {
+    pub epa_enabled: bool,
+    pub gating_enabled: bool,
+    pub topology_enabled: bool,
+    pub fields_enabled: bool,
     pub base_tag_boost: f64,
     pub core_boost_factor: f64,
     pub local_alpha: f64,
@@ -122,9 +126,6 @@ pub struct PipelineConfig {
     pub activation_multiplier: Vec<f64>,
     pub dynamic_boost_range: Vec<f64>,
     pub core_boost_range: Vec<f64>,
-    pub lang_confidence_enabled: bool,
-    pub lang_penalty_unknown: f64,
-    pub lang_penalty_cross_domain: f64,
     pub deduplication_threshold: f64,
     pub max_fusion_tags: usize,
     pub max_emergent_nodes: usize,
@@ -138,6 +139,10 @@ pub struct PipelineConfig {
 impl Default for PipelineConfig {
     fn default() -> Self {
         Self {
+            epa_enabled: true,
+            gating_enabled: true,
+            topology_enabled: true,
+            fields_enabled: true,
             base_tag_boost: 0.6,
             core_boost_factor: 1.33,
             local_alpha: 0.15,
@@ -155,9 +160,6 @@ impl Default for PipelineConfig {
             activation_multiplier: vec![0.5, 1.5],
             dynamic_boost_range: vec![0.3, 2.0],
             core_boost_range: vec![1.2, 1.4],
-            lang_confidence_enabled: true,
-            lang_penalty_unknown: 0.05,
-            lang_penalty_cross_domain: 0.2,
             deduplication_threshold: 0.88,
             max_fusion_tags: 128,
             max_emergent_nodes: 50,

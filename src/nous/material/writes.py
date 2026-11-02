@@ -8,15 +8,16 @@ from uuid import uuid4
 
 from nous_sdk.contracts import (
     BlobDocument,
-    CallContext,
-    DomainError,
     ImportDocument,
     MediaInfo,
     MediaReference,
 )
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
+from nous_sdk.contracts.common import ObservationKind
 from sqlalchemy import select
 
-from nous.identity.service import require_subject_in
+from nous.identity.access import require_namespace_in
 from nous.platform.content import ContentLease
 from nous.platform.persistence import ReadView, WriteTx
 from nous.references import allocate_in
@@ -131,13 +132,13 @@ async def observe_in(
     ctx: CallContext,
     material_id: str,
     document: ImportDocument | BlobDocument,
-    kind: str = "import",
+    kind: ObservationKind = "import",
     *,
     sources: tuple[MediaReference, ...] = (),
 ) -> SourceRecord:
     from .service import materials, observations
 
-    await require_subject_in(tx, ctx)
+    await require_namespace_in(tx, ctx)
     material = (
         await tx.connection.execute(
             select(materials.c.record).where(
@@ -152,8 +153,13 @@ async def observe_in(
         )
     if sources:
         for reference in sources:
-            selected, _, _ = await self.media_source_in(tx, ctx, reference)
-            if selected["id"] != material_id:
+            if reference.kind in {"representation", "derived_region"}:
+                info = await self.provenance_in(tx, ctx, reference)
+                matches = material_id in info.material_ids
+            else:
+                selected, _, _ = await self.media_source_in(tx, ctx, reference)
+                matches = selected["id"] == material_id
+            if not matches:
                 raise DomainError(
                     "source_material_conflict", "Observation source belongs to another Material"
                 )
@@ -162,7 +168,6 @@ async def observe_in(
     value: SourceRecord = {
         "id": str(uuid4()),
         "namespace_id": ctx.namespace_id,
-        "subject_id": ctx.require_subject(),
         "material_id": material_id,
         "kind": kind,
         "origin": document.origin,
@@ -173,11 +178,14 @@ async def observe_in(
         "recorded_at": str(tx.recorded_at),
         "commit_seq": tx.commit_seq,
     }
+    if "validity" in document.model_fields_set:
+        value["validity"] = (
+            document.validity.model_dump(mode="json") if document.validity is not None else None
+        )
     await tx.connection.execute(
         observations.insert().values(
             id=value["id"],
             namespace_id=ctx.namespace_id,
-            subject_id=ctx.require_subject(),
             material_id=material_id,
             kind=kind,
             active=True,
@@ -185,6 +193,9 @@ async def observe_in(
             commit_seq=tx.commit_seq,
         )
     )
+    from nous.retrieval.maintenance import enqueue_index_in
+
+    await enqueue_index_in(tx, ctx)
     return value
 
 
@@ -197,7 +208,6 @@ async def require_observation_exists_in(
         select(observations.c.id).where(
             observations.c.id == observation_id,
             observations.c.namespace_id == ctx.namespace_id,
-            observations.c.subject_id == ctx.require_subject(),
             observations.c.active.is_(True),
         )
     )

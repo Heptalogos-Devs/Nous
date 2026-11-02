@@ -33,12 +33,16 @@ pub fn run_pipeline(
     {
         return Err("Invalid epaGateMode".into());
     }
-    let epa = analyze_epa_with_mode(
-        connection,
-        &input.query_vector,
-        dimensions,
-        &input.config.epa_gate_mode,
-    );
+    let epa = if input.config.epa_enabled {
+        analyze_epa_with_mode(
+            connection,
+            &input.query_vector,
+            dimensions,
+            &input.config.epa_gate_mode,
+        )
+    } else {
+        super::epa::unavailable_epa()
+    };
     let epa_ms = epa_started.elapsed().as_secs_f64() * 1000.0;
 
     let mut tag_vectors = TagVectorPool::new();
@@ -111,13 +115,18 @@ pub fn run_pipeline(
             wormholes.reuse_score(layer, tag.id, tag.similarity);
         }
     }
+    let mut sensing_config = input.config.spike_routing.clone();
+    if !input.config.topology_enabled {
+        sensing_config.max_safe_hops = 0;
+        sensing_config.dynamic_wormholes = false;
+    }
     let observation = sense_prevalidated(
         &artifact,
         artifact_sig,
         SenseInput {
             query_id: input.query_id.clone(),
             seeds,
-            config: input.config.spike_routing.clone(),
+            config: sensing_config,
         },
         Some(&mut wormholes),
         cancelled,
@@ -144,7 +153,11 @@ pub fn run_pipeline(
     let dual_fields = solve_dual_fields_with_pool(
         &artifact,
         connection,
-        &observation.source_field,
+        if input.config.fields_enabled {
+            &observation.source_field
+        } else {
+            &[]
+        },
         dimensions,
         &input.config,
         &mut tag_vectors,
@@ -196,6 +209,25 @@ pub fn run_pipeline(
         core_tags_matched,
         effective_tag_boost,
         diagnostics: PipelineDiagnostics {
+            stages: [
+                ("epa", input.config.epa_enabled),
+                ("pyramid", input.config.max_levels > 0),
+                ("gating", input.config.gating_enabled),
+                ("topology", input.config.topology_enabled),
+                ("fields", input.config.fields_enabled),
+            ]
+            .into_iter()
+            .map(|(name, enabled)| {
+                (
+                    name.to_string(),
+                    if enabled {
+                        "completed".to_string()
+                    } else {
+                        "disabled".to_string()
+                    },
+                )
+            })
+            .collect(),
             backend: "rust-unified-memo-pipeline".to_string(),
             runtime_ownership: "typed-query-output".to_string(),
             epa_ms,

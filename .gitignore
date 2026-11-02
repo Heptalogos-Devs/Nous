@@ -1,16 +1,70 @@
+# Local workspace and runtime files
 /temp/
-/.env
-/.env.*
-/target/
+/work/
+.env
+.env.*
+!.env.example
+!.env.*.example
+*.log
 
+# Python environments, caches, and distributions
 .venv/
+venv/
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
 .pytest_cache/
 .ruff_cache/
-dist/
+.mypy_cache/
+.pyright/
+.hypothesis/
+.tox/
+.nox/
+.coverage
+.coverage.*
+htmlcov/
 *.egg-info/
+.eggs/
+build/
+dist/
 
+# Rust and native extensions
+target/
 /native/python/python/nous_native/_core*.so
 /native/python/python/nous_native/_core*.pyd
 /native/python/python/nous_native/_core*.dll
+/native/python/python/nous_native/_core*.pdb
+
+# Node.js dependencies and caches
+node_modules/
+.npm/
+.pnpm-store/
+.yarn/cache/
+.yarn/unplugged/
+.yarn/build-state.yml
+.yarn/install-state.gz
+
+# Editors and IDEs
+.idea/
+.vs/
+*.swp
+*.swo
+*~
+.vscode/*
+!.vscode/extensions.json
+!.vscode/launch.json
+!.vscode/settings.json
+
+# macOS, Windows, and Linux desktop metadata
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100/
+.Trashes/
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+[Dd]esktop.ini
+$RECYCLE.BIN/
+.directory

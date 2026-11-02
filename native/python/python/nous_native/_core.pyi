@@ -65,6 +65,7 @@ class IndexStore:
         *,
         references: Sequence[str],
         texts: Sequence[str],
+        base_generation: str | None = None,
         assets_json: str = "{}",
         cancel: CancellationToken | None = None,
         vectors: NDArray[np.float32] | None = None,
@@ -83,3 +84,5 @@ class IndexStore:
     ) -> Snapshot: ...
     def open_snapshot(self, generation: str) -> Snapshot: ...
     def close(self) -> None: ...
+
+def lexical_scores(query: str, texts: Sequence[str]) -> list[float | None]: ...

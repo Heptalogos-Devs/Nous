@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import json
 from typing import Literal
 
-from pydantic import Field, model_validator
+from pydantic import Field, JsonValue, model_validator
 
 from .common import Contract
 
@@ -51,11 +52,24 @@ class EpistemicStance(Contract):
 
 
 class EvidenceLink(Contract):
+    details: dict[str, JsonValue] = Field(default_factory=dict, exclude_if=lambda value: not value)
     observation_id: str | None = None
     reference: CognitiveRef | None = None
     region_id: str | None = None
     polarity: Literal["support", "counterexample", "boundary"] = "support"
     role: str = "grounding"
+
+    def __hash__(self) -> int:
+        return hash(
+            (
+                self.observation_id,
+                self.reference,
+                self.region_id,
+                self.polarity,
+                self.role,
+                json.dumps(self.details, sort_keys=True, ensure_ascii=False, separators=(",", ":")),
+            )
+        )
 
     @model_validator(mode="after")
     def source_identity(self) -> EvidenceLink:

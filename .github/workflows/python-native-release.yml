@@ -90,7 +90,7 @@ jobs:
           name: python-source-and-universal
           path: dist
       - name: Install complete wheel set and initialize an instance
-        run: python scripts/install-python.py --wheels dist --venv .release-env --instance .release-instance
+        run: python scripts/install-python.py --wheels dist --venv .release-env --instance .release-instance --amemorix-rpc
       - name: Verify installed service starts outside the source tree
         shell: python
         run: |

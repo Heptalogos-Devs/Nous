@@ -40,7 +40,7 @@ SourceReadRef = Annotated[
 
 
 class SourceReadScope(Contract):
-    subject_id: str = Field(min_length=1)
+    
     source_refs: tuple[SourceReadRef, ...] = Field(default=(), max_length=1024)
     origin_conversation_refs: tuple[str, ...] = Field(default=(), max_length=64)
     observation_ids: tuple[str, ...] = Field(default=(), max_length=1024)

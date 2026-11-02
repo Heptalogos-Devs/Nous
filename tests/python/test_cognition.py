@@ -6,7 +6,6 @@ from pathlib import Path
 from nous_sdk.contracts import (
     AdmitFiles,
     BundleRequest,
-    CallContext,
     ContextCommand,
     ContextFeedback,
     ImportDocument,
@@ -14,14 +13,18 @@ from nous_sdk.contracts import (
     QueryRequest,
     SourceCommand,
 )
+from nous.platform.call_context import CallContext
 
-from nous.cognition.service import CognitionService
+from nous.cognition.records import CognitiveRecords
 from nous.context.service import ContextService
 from nous.data_management.bundles import BundleService
 from nous.data_management.sources import SourceService
 from nous.identity.service import IdentityService
 from nous.imports.service import ImportService
+from nous.platform.configuration.namespace_policy import entries as namespace_entries
+from nous.platform.configuration.service import ConfigurationEntry, ConfigurationService
 from nous.platform.persistence import Authority
+from nous.retrieval.policy import defaults as retrieval_defaults
 from nous.retrieval.service import RetrievalService
 
 
@@ -37,9 +40,18 @@ def test_import_source_bundle_and_restart(tmp_path: Path):
     async def scenario():
         path = tmp_path / "authority.sqlite"
         authority = Authority(path)
-        cognition = CognitionService(authority)
+        cognition = CognitiveRecords(authority)
         imports = ImportService(authority, cognition, UnusedModels())
-        retrieval = RetrievalService(authority, cognition, UnusedModels(), tmp_path / "index")
+        retrieval = RetrievalService(
+            authority,
+            cognition,
+            UnusedModels(),
+            tmp_path / "index",
+            configuration=ConfigurationService(
+                {**namespace_entries(), "retrieval": ConfigurationEntry(retrieval_defaults())},
+                instance=tmp_path,
+            ),
+        )
         bundles = BundleService(authority, cognition)
         sources = SourceService(authority, cognition)
         contexts = ContextService(authority, cognition)
@@ -99,7 +111,7 @@ def test_import_source_bundle_and_restart(tmp_path: Path):
             target = ctx.model_copy(update={"subject_id": "receiver"})
             await identity.create_subject(ctx, "Receiver", "receiver-create", subject_id="receiver")
             installed = await bundles.install(
-                target, InstallBundle(operation_id="bundle-install", bundle=bundle)
+                target, InstallBundle(bundle=bundle)
             )
             assert installed["output_count"] == 1
             assert len((await retrieval.query(target, QueryRequest(text="回滚"))).hits) == 1
@@ -130,8 +142,17 @@ def test_import_source_bundle_and_restart(tmp_path: Path):
             await retrieval.close()
             await authority.close()
         reopened = Authority(path)
-        cognition = CognitionService(reopened)
-        retrieval = RetrievalService(reopened, cognition, UnusedModels(), tmp_path / "index")
+        cognition = CognitiveRecords(reopened)
+        retrieval = RetrievalService(
+            reopened,
+            cognition,
+            UnusedModels(),
+            tmp_path / "index",
+            configuration=ConfigurationService(
+                {**namespace_entries(), "retrieval": ConfigurationEntry(retrieval_defaults())},
+                instance=tmp_path,
+            ),
+        )
         await reopened.initialize()
         try:
             found = await retrieval.query(ctx, QueryRequest(text="回滚"))
@@ -145,7 +166,8 @@ def test_import_source_bundle_and_restart(tmp_path: Path):
 
 def test_purge_clears_history_receipts_and_blocks_late_adoption(tmp_path: Path):
     async def scenario():
-        from nous_sdk.contracts import DomainError, MemoryChange
+        from nous_sdk.contracts import MemoryChange
+        from nous.platform.errors import DomainError
         from sqlalchemy import select
 
         from nous.cognition.schema import revisions
@@ -155,9 +177,18 @@ def test_purge_clears_history_receipts_and_blocks_late_adoption(tmp_path: Path):
         authority = Authority(tmp_path / "authority.sqlite")
         content = ContentStore(authority, tmp_path / "content")
         materials = MaterialService(authority, content)
-        cognition = CognitionService(authority)
+        cognition = CognitiveRecords(authority)
         imports = ImportService(authority, cognition, UnusedModels(), materials=materials)
-        retrieval = RetrievalService(authority, cognition, UnusedModels(), tmp_path / "index")
+        retrieval = RetrievalService(
+            authority,
+            cognition,
+            UnusedModels(),
+            tmp_path / "index",
+            configuration=ConfigurationService(
+                {**namespace_entries(), "retrieval": ConfigurationEntry(retrieval_defaults())},
+                instance=tmp_path,
+            ),
+        )
         sources = SourceService(
             authority, cognition, content_store=content, invalidate=retrieval.invalidate
         )
@@ -231,15 +262,8 @@ def test_purge_clears_history_receipts_and_blocks_late_adoption(tmp_path: Path):
             else:
                 raise AssertionError("A purged receipt must not replay source text")
             try:
-                async with authority.write(
-                    ctx,
-                    "late-formation",
-                    operation_kind="late.adoption",
-                    scope=ctx.require_subject(),
-                    payload={"material_id": unit.material_id},
-                ) as tx:
+                async with authority.write(ctx) as tx:
                     await materials.observe_in(tx, ctx, unit.material_id, command.inputs[0])
-                    tx.result({})
             except DomainError as error:
                 assert error.code == "source_purged"
             else:
@@ -255,7 +279,8 @@ def test_json_original_regions_addresses_attempts_and_artifact_purge(tmp_path: P
     async def scenario():
         import json
 
-        from nous_sdk.contracts import BlobDocument, DomainError
+        from nous_sdk.contracts import BlobDocument
+        from nous.platform.errors import DomainError
 
         from nous.material.service import MaterialService
         from nous.platform.content import ContentStore
@@ -275,13 +300,21 @@ def test_json_original_regions_addresses_attempts_and_artifact_purge(tmp_path: P
         authority = Authority(tmp_path / "authority.sqlite")
         content = ContentStore(authority, tmp_path / "content")
         materials = MaterialService(authority, content)
-        cognition = CognitionService(authority)
+        cognition = CognitiveRecords(authority)
         imports = ImportService(authority, cognition, UnusedModels(), materials=materials)
         retrieval = RetrievalService(
-            authority, cognition, UnusedModels(), tmp_path / "index", materials=materials
+            authority,
+            cognition,
+            UnusedModels(),
+            tmp_path / "index",
+            materials=materials,
+            configuration=ConfigurationService(
+                {**namespace_entries(), "retrieval": ConfigurationEntry(retrieval_defaults())},
+                instance=tmp_path,
+            ),
         )
         sources = SourceService(authority, cognition, content_store=content)
-        bundles = BundleService(authority, cognition, content)
+        bundles = BundleService(authority, cognition, content_store=content)
         identity = IdentityService(authority)
         await authority.initialize()
         ctx = CallContext(
@@ -297,15 +330,9 @@ def test_json_original_regions_addresses_attempts_and_artifact_purge(tmp_path: P
             )
             lease = await content.publish_bytes(content_bytes, "application/x-ndjson")
             blob = BlobDocument(filename="records.jsonl", media_type=lease.media_type)
-            async with authority.write(
-                ctx,
-                "upload-json",
-                operation_kind="material.upload",
-                payload={"hash": lease.content_hash},
-            ) as tx:
+            async with authority.write(ctx) as tx:
                 material = await materials.put_blob_in(tx, ctx, lease, blob)
                 uploaded = await materials.observe_in(tx, ctx, material["id"], blob)
-                tx.result({"material_id": material["id"]})
             await content.release(lease)
             result = await imports.admit_files(
                 ctx,
@@ -332,11 +359,13 @@ def test_json_original_regions_addresses_attempts_and_artifact_purge(tmp_path: P
             unit = result.catalog.units[0]
             region_ctx = ctx.model_copy(update={"allowed_source_ids": (unit.source_region_id,)})
             region = await materials.read_region(region_ctx, unit.source_region_id)
-            assert region.line_number == 1 and region.json_pointer == "/text"
+            assert region.line_number == 1 and region.json_pointer is None
             exact = await retrieval.query(
                 region_ctx, QueryRequest(reference=f"source-region:{region.id}", domains=("media",))
             )
-            assert exact.hits[0].object.text == memory.body.text
+            selected_record = json.loads(exact.hits[0].object.text)
+            assert selected_record["text"] == memory.body.text
+            assert selected_record["metadata"] == memory.body.metadata
             from nous_sdk.contracts import MediaReference, SourceRegion
 
             selected = ctx.model_copy(
@@ -400,25 +429,20 @@ def test_json_original_regions_addresses_attempts_and_artifact_purge(tmp_path: P
             bundle = await bundles.export(ctx)
             receiver = ctx.model_copy(update={"subject_id": "receiver"})
             await identity.create_subject(ctx, "Receiver", "receiver-create", subject_id="receiver")
-            installation = await bundles.install(
-                receiver, InstallBundle(operation_id="install-json", bundle=bundle)
+            await bundles.install(
+                receiver, InstallBundle(bundle=bundle)
             )
             restored = await retrieval.query(
                 receiver, QueryRequest(reference=memory.addresses.exact)
             )
             assert (
-                restored.hits[0].object.reference.id == installation["mapping"][memory.reference.id]
+                restored.hits[0].object.reference == memory.reference
             )
             assert restored.hits[0].object.addresses.exact != memory.addresses.exact
             scope = ctx.model_copy(update={"allowed_source_ids": (memory.reference.exact(),)})
             artifact_lease = await content.publish_bytes(memory.body.text.encode(), "text/plain")
             artifact_blob = BlobDocument(filename="selection.txt", media_type="text/plain")
-            async with authority.write(
-                scope,
-                "artifact",
-                operation_kind="material.artifact",
-                payload={"reference": memory.reference.exact()},
-            ) as tx:
+            async with authority.write(scope) as tx:
                 artifact = await materials.put_blob_in(
                     tx,
                     scope,
@@ -427,7 +451,6 @@ def test_json_original_regions_addresses_attempts_and_artifact_purge(tmp_path: P
                     required_source_ids=(memory.reference.exact(),),
                 )
                 await materials.observe_in(tx, scope, artifact["id"], artifact_blob)
-                tx.result({"material_id": artifact["id"]})
             await content.release(artifact_lease)
             assert (await materials.read(scope, artifact["id"]))["required_source_ids"] == [
                 memory.reference.exact()
@@ -455,183 +478,3 @@ def test_json_original_regions_addresses_attempts_and_artifact_purge(tmp_path: P
     asyncio.run(scenario())
 
 
-def test_ego_seed_observation_reuse_and_attribute_support(tmp_path: Path):
-    async def scenario():
-        from nous_sdk.contracts import (
-            AdoptCognition,
-            CognitiveTimes,
-            DomainError,
-            EntityAttribute,
-            EntityBody,
-            EpistemicStance,
-            EvidenceLink,
-        )
-        from nous_sdk.contracts.ego_model import AdoptSeed, SeedDocument, SeedFacet
-        from nous_sdk.contracts.imports import FormObservation, TextSplitOptions
-        from sqlalchemy import select, update
-
-        from nous.identity.service import subjects
-        from nous.material.service import MaterialService, observations
-        from nous.platform.content import ContentStore
-        from nous.platform.persistence.schema import operations
-
-        authority = Authority(tmp_path / "authority.sqlite")
-        content = ContentStore(authority, tmp_path / "content")
-        materials = MaterialService(authority, content)
-        cognition = CognitionService(authority, materials=materials)
-        imports = ImportService(authority, cognition, UnusedModels(), materials=materials)
-        sources = SourceService(authority, cognition, content_store=content)
-        identity = IdentityService(authority)
-        await authority.initialize()
-        ctx = CallContext(
-            credential_source_ids=None,
-            caller_id="owner",
-            namespace_id="namespace",
-            subject_id="subject",
-        )
-        try:
-            await identity.create_namespace(ctx, "People", "namespace-create")
-            await identity.create_subject(
-                ctx,
-                "Researcher",
-                "subject-create",
-                subject_id=ctx.subject_id,
-                capabilities=("memory", "ego", "social"),
-            )
-            seeded = await cognition.adopt_seed(
-                ctx,
-                AdoptSeed(
-                    operation_id="seed",
-                    documents=(
-                        SeedDocument(
-                            document=ImportDocument(text="我喜欢记录观察。", filename="soul.md"),
-                            facets=(SeedFacet(facet="preference", description="喜欢记录观察"),),
-                        ),
-                        SeedDocument(
-                            document=ImportDocument(
-                                text="我在资料不足时保留疑问。", filename="values.md"
-                            ),
-                            facets=(
-                                SeedFacet(facet="epistemics", description="资料不足时保留疑问"),
-                            ),
-                        ),
-                    ),
-                ),
-            )
-            assert len(seeded.facets) == 2 and len(seeded.memories) == 2
-            assert len(await cognition.ego_profile(ctx)) == 2
-            # Existing subjects may have persisted the former capability name.
-            async with authority.writer.begin() as connection:
-                await connection.execute(
-                    update(subjects)
-                    .where(subjects.c.id == ctx.subject_id)
-                    .values(capabilities=["memory", "self", "social"])
-                )
-            assert len(await cognition.ego_profile(ctx)) == 2
-            assert (await identity.list_subjects(ctx))[0]["capabilities"] == [
-                "memory", "ego", "social"
-            ]
-            legacy = await identity.create_subject(
-                ctx, "Legacy", "legacy-subject", capabilities=("memory", "self")
-            )
-            async with authority.writer.begin() as connection:
-                import json
-
-                old_result = {**legacy, "capabilities": ["memory", "self"]}
-                await connection.execute(
-                    update(operations)
-                    .where(operations.c.operation_id == "legacy-subject")
-                    .values(result_json=json.dumps(old_result))
-                )
-            replayed = await identity.create_subject(
-                ctx, "Legacy", "legacy-subject", capabilities=("memory", "self")
-            )
-            assert replayed == legacy and legacy["capabilities"] == ["memory", "ego"]
-            assert (
-                await cognition.get(ctx, seeded.memories[0])
-            ).body.epistemic.classification == "simulated"
-            preview = await imports.preview_text_import(
-                ctx,
-                ImportDocument(text="一行\n二行\n三行\n四行\n五行"),
-                TextSplitOptions(strategy_override="quote"),
-            )
-            assert len(preview.units) == 1 and not preview.units[0].requires_llm
-            async with authority.read(ctx) as view:
-                before = len((await view.connection.execute(select(observations.c.id))).all())
-            formed = await imports.form_observation(
-                ctx,
-                FormObservation(
-                    operation_id="form-existing",
-                    observation_id=seeded.observation_ids[0],
-                    llm_enabled=False,
-                ),
-            )
-            async with authority.read(ctx) as view:
-                after = len((await view.connection.execute(select(observations.c.id))).all())
-            assert before == after
-            assert (await cognition.get(ctx, formed.cognition[0])).source_roots == (
-                seeded.observation_ids[0],
-            )
-            evidence = tuple(EvidenceLink(observation_id=value) for value in seeded.observation_ids)
-            times = CognitiveTimes(formation=ctx.clock, recorded=ctx.clock)
-            async with authority.write(
-                ctx,
-                "person",
-                operation_kind="person.adopt",
-                scope=ctx.require_subject(),
-                payload={"observations": list(seeded.observation_ids)},
-            ) as tx:
-                entity = await cognition.adopt_in(
-                    tx,
-                    ctx,
-                    AdoptCognition(
-                        body=EntityBody(
-                            entity_type="person",
-                            label="李明",
-                            attributes=(
-                                EntityAttribute(
-                                    predicate="private_note",
-                                    value="仅第一份材料支持的资料",
-                                    epistemic=EpistemicStance(classification="reported"),
-                                    evidence=(evidence[0],),
-                                ),
-                                EntityAttribute(
-                                    predicate="public_note",
-                                    value="仍有第二份材料支持的资料",
-                                    epistemic=EpistemicStance(classification="reported"),
-                                    evidence=(evidence[1],),
-                                ),
-                            ),
-                        ),
-                        evidence=evidence,
-                        times=times,
-                    ),
-                )
-                tx.result(entity)
-            await sources.purge(
-                ctx,
-                SourceCommand(
-                    operation_id="purge-one",
-                    observation_ids=(seeded.observation_ids[0],),
-                    reason="remove first source",
-                ),
-            )
-            retained = await cognition.get(ctx, entity.reference)
-            assert retained.body.purged_attribute_count == 1
-            assert [item.predicate for item in retained.body.attributes] == ["public_note"]
-            try:
-                await authority.receipt(
-                    ctx,
-                    "person",
-                    operation_kind="person.adopt",
-                    scope=ctx.require_subject(),
-                    payload={"observations": list(seeded.observation_ids)},
-                )
-            except DomainError as error:
-                assert error.code == "operation_result_purged"
-            else:
-                raise AssertionError("A historical receipt cannot retain the removed attribute")
-        finally:
-            await authority.close()
-
-    asyncio.run(scenario())

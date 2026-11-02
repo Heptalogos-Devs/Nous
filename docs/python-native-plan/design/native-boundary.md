@@ -60,8 +60,8 @@ Python 取消等待时先设置 token，并等 native 释放 index reader、文�
 
 ## 内核包的拆分方式
 
-- `native/vcp`：从现有 `crates/nous-vcp` 直接采用算法；删除只因旧应用框架产生的依赖，保留数值合同和必要研究样本。
-- `native/retrieval`：迁入 `crates/nous-retrieval`，保留 Tantivy 中文索引和 USearch。候选物化、账本和来源权限上移 Python。
+- `native/vcp`：采用已保留来源记录的 VCP 算法；删除只因旧应用框架产生的依赖，保留数值合同和必要研究样本。
+- `native/retrieval`：提供 Tantivy 中文索引和 USearch。候选物化、账本和来源权限上移 Python。
 - `native/nousql-syntax`：从现有 parser 及对应AST中提取纯语法。剥离对 QueryRequest、storage、运行配置和 clock 的依赖。
 - `native/python`：一个 PyO3 模块负责参数转换、所有权和异常映射，提供 NumPy 批量入口、schema/stub。不得在这里实现认知规则。
 

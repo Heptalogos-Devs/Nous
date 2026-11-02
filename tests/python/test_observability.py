@@ -8,7 +8,7 @@ import logging
 
 import httpx
 import pytest
-from nous_sdk.contracts import CallContext
+from nous.platform.call_context import CallContext
 from opentelemetry import baggage, context
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
@@ -87,16 +87,8 @@ def test_http_transaction_and_durable_worker_share_trace_without_content(tmp_pat
                     assert submitted.headers["x-nous-request-id"]
                     # Failure must neither consume a commit nor report a committed sequence.
                     with pytest.raises(ValueError, match="sensitive"):
-                        async with service.authority.write(
-                            ctx, "aborted", operation_kind="observability.rollback", payload={}
-                        ):
+                        async with service.authority.write(ctx):
                             raise ValueError("sensitive exception: " + private)
-                    for _ in range(2):
-                        async with service.authority.write(
-                            ctx, "accepted", operation_kind="observability.replay", payload={}
-                        ) as tx:
-                            if not tx.replayed:
-                                tx.result({"accepted": True})
                     try:
                         raise ValueError(private)
                     except ValueError:
@@ -106,19 +98,16 @@ def test_http_transaction_and_durable_worker_share_trace_without_content(tmp_pat
         chain = [span for span in spans if f"{span.context.trace_id:032x}" == trace_id]
         by_id = {span.context.span_id: span for span in chain}
         request = next(span for span in chain if span.name.startswith("POST "))
-        submit = next(span for span in chain if span.name == "imports.submit")
+        submit = next(span for span in chain if span.name == "authority.write")
         workflow = next(span for span in chain if span.name == "nous.imports.process")
         assert submit.parent.span_id == request.context.span_id
         assert workflow.parent.span_id == submit.context.span_id
         assert workflow.attributes["operationUUID"] == job_id
-        assert any(span.name == "imports.adopt" and span.parent.span_id in by_id for span in chain)
+        assert any(span.name == "authority.write" and span.parent and span.parent.span_id in by_id for span in chain)
         assert submit.attributes["nous.commit_seq"] > 0
-        failed = next(span for span in spans if span.name == "observability.rollback")
-        assert failed.status.status_code == StatusCode.ERROR
-        assert "nous.commit_seq" not in failed.attributes
-        replays = [span for span in spans if span.name == "observability.replay"]
-        assert [span.attributes["nous.replayed"] for span in replays] == [False, True]
-        assert replays[0].attributes["nous.commit_seq"] == replays[1].attributes["nous.commit_seq"]
+        failed = [span for span in spans if span.name == "authority.write" and span.status.status_code == StatusCode.ERROR]
+        assert failed
+        assert all("nous.commit_seq" not in span.attributes for span in failed)
         assert private not in logs.getvalue()
         assert token not in logs.getvalue()
         entries = [

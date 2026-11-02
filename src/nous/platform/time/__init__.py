@@ -1,10 +1,11 @@
 """Preserve temporal precision instead of guessing a timezone."""
 
+import math
 from datetime import UTC, date, datetime
 from typing import Literal
 
 from nous_sdk.contracts import TimePoint
-from pydantic import BaseModel
+from pydantic import BaseModel, JsonValue
 
 
 class TemporalValue(BaseModel):
@@ -93,3 +94,25 @@ def parse_timepoint(expression: str) -> TimePoint | None:
         + point.microsecond // 1000
     )
     return TimePoint(domain="calendar:gregorian:local", coordinate=coordinate, original=expression)
+
+
+def parse_source_time(
+    value: JsonValue, *, numeric_unit: Literal["seconds", "milliseconds"] = "seconds"
+) -> TimePoint | None:
+    """Decode explicitly declared source units while retaining calendar precision."""
+    if value is None or value == "":
+        return None
+    if isinstance(value, dict):
+        return TimePoint.model_validate(value)
+    if isinstance(value, bool):
+        raise ValueError("A source timestamp cannot be a boolean")
+    if isinstance(value, (int, float)):
+        if not math.isfinite(value):
+            raise ValueError("Source timestamps must be finite")
+        return TimePoint(
+            coordinate=round(value * (1000 if numeric_unit == "seconds" else 1)),
+            original=str(value),
+        )
+    if isinstance(value, str):
+        return parse_timepoint(value)
+    raise ValueError("Source timestamp must contain a declared coordinate or date")

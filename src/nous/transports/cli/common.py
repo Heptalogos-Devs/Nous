@@ -8,18 +8,22 @@ import sys
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import anyio
 import typer
 from nous_sdk import NousClient
-from nous_sdk.source_scope import SourceReadScope
+from nous_sdk.presentation import present as compact
 from nous_sdk.transport import ClientOptions
 from pydantic import BaseModel, JsonValue, TypeAdapter
 
 from nous.platform.localization import Localizer
 
+from .client_state import ClientState
 from .render import present
+
+if TYPE_CHECKING:
+    from nous_sdk.namespace import NamespaceClient
 
 _JSON = TypeAdapter(JsonValue)
 _ENCODER = TypeAdapter(object)
@@ -32,7 +36,11 @@ class Options:
     credential_file: Path | None
     locale: str
     json_mode: bool
-    source_scope: Path | None = None
+    namespace: str | None = None
+    raw: bool = False
+    fields: tuple[str, ...] = ()
+    client_file: Path | None = None
+    client_state: ClientState | None = None
 
 
 def options(ctx: typer.Context) -> Options:
@@ -73,7 +81,13 @@ async def download(
 
 def emit(ctx: typer.Context, value: object) -> None:
     selected = options(ctx)
-    data = _JSON.validate_python(_ENCODER.dump_python(value, mode="json"))
+    data = (
+        _JSON.validate_python(_ENCODER.dump_python(value, mode="json"))
+        if selected.raw
+        else _JSON.validate_python(compact(value))
+    )
+    if selected.fields and isinstance(data, dict):
+        data = {field: data[field] for field in selected.fields if field in data}
     if selected.json_mode:
         if isinstance(data, list):
             data = {"items": data, "count": len(data)}
@@ -94,13 +108,17 @@ def invoke(ctx: typer.Context, operation: Callable[[NousClient], Awaitable[objec
             or selected.instance / "credentials" / "admin.token",
             options=ClientOptions(language=selected.locale),
         ) as root:
-            client = root
-            if selected.source_scope is not None:
-                scopes = TypeAdapter(tuple[SourceReadScope, ...]).validate_python(
-                    read_json(selected.source_scope)
-                )
-                for scope in scopes:
-                    client = client.with_source_read(scope)
-            emit(ctx, await operation(client))
+            emit(ctx, await operation(root))
 
     asyncio.run(run())
+
+
+def invoke_bound(ctx: typer.Context, operation: Callable[[NamespaceClient], Awaitable[object]]) -> None:
+    async def bound(root: NousClient) -> object:
+        selected = options(ctx)
+        if selected.namespace is None:
+            raise ValueError("Choose a Namespace with 'nous use NAME' or --namespace NAME")
+        namespace = await root.namespace(selected.namespace)
+        return await operation(namespace)
+
+    invoke(ctx, bound)

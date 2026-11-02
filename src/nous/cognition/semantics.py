@@ -4,13 +4,11 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping
-from typing import TYPE_CHECKING
 
 from nous_sdk.contracts import (
-    CallContext,
     CognitiveBody,
     CognitiveRecord,
-    DomainError,
+    EgoFacetBody,
     EntityBody,
     EpisodeBody,
     JournalBody,
@@ -19,21 +17,24 @@ from nous_sdk.contracts import (
     SchemaBody,
     SocialRelationBody,
 )
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from sqlalchemy import select
 
 from nous.platform.persistence import WriteTx
 
-from .projection import references_in
 from .schema import revisions
-
-if TYPE_CHECKING:
-    from .service import CognitionService
 
 
 async def validate_domain_in(
-    self: CognitionService, tx: WriteTx, ctx: CallContext, body: CognitiveBody, object_id: str
+    tx: WriteTx,
+    ctx: CallContext,
+    body: CognitiveBody,
+    object_id: str,
+    related: Mapping[str, CognitiveBody | None],
+    retiring_entities: frozenset[str] = frozenset(),
 ) -> None:
-    if isinstance(body, EntityBody) and body.platform_identities:
+    if isinstance(body, EntityBody) and body.state == "active" and body.platform_identities:
         own = {(identity.platform, identity.account_id) for identity in body.platform_identities}
         if len(own) != len(body.platform_identities):
             raise DomainError(
@@ -43,7 +44,6 @@ async def validate_domain_in(
             await tx.connection.execute(
                 select(revisions.c.record).where(
                     revisions.c.namespace_id == ctx.namespace_id,
-                    revisions.c.subject_id == ctx.subject_id,
                     revisions.c.kind == "entity",
                     revisions.c.head.is_(True),
                     revisions.c.id != object_id,
@@ -54,7 +54,9 @@ async def validate_domain_in(
             record = CognitiveRecord.model_validate(value)
             if (
                 isinstance(record.body, EntityBody)
-                and not record.deleted
+                and (not record.deleted)
+                and (record.body.state == "active")
+                and (record.reference.id not in retiring_entities)
                 and own.intersection(
                     (identity.platform, identity.account_id)
                     for identity in record.body.platform_identities
@@ -64,10 +66,6 @@ async def validate_domain_in(
                     "identity_conflict",
                     "A platform account already belongs to another person in this subject",
                 )
-    related = {
-        reference.exact(): (await self.get_in(tx, ctx, reference)).body
-        for reference in references_in(body)
-    }
     validate_body(body, object_id, related)
 
 
@@ -84,12 +82,28 @@ def validate_body(
         raise DomainError(
             "journal_episode_required", "Journal episode references must identify Episodes"
         )
-    if isinstance(body, SchemaBody) and not body.support:
+    if isinstance(body, JournalBody) and any(
+        reference.kind != "journal" for reference in body.lineage
+    ):
+        raise DomainError(
+            "journal_lineage_required", "Journal lineage must identify prior Journal revisions"
+        )
+    if isinstance(body, SchemaBody) and (not body.support):
         raise DomainError("support_required", "Schema requires supporting cognition")
     if isinstance(body, EpisodeBody):
         ordinals = [member.ordinal for member in body.members]
         if len(ordinals) != len(set(ordinals)):
             raise DomainError("episode_order", "Episode member ordinals must be unique")
+    if isinstance(body, EgoFacetBody):
+        for reference in (
+            *body.audience,
+            *((body.relationship.from_entity,) if body.relationship else ()),
+        ):
+            if not isinstance(related.get(reference.exact()), EntityBody):
+                raise DomainError(
+                    "ego_audience_invalid",
+                    "Personality applicability requires actual Entity references",
+                )
     if isinstance(body, SocialRelationBody):
         for reference in (body.from_entity, body.to_entity):
             source = related.get(reference.exact())

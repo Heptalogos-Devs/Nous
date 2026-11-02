@@ -6,6 +6,7 @@ from typing import Annotated, Literal
 from pydantic import Field, JsonValue, TypeAdapter
 
 from ..contracts import Contract, ImportDocument, TimePoint
+from ..contracts.imports import ImportFormat
 from ..operations import object_value
 from ..types import JsonObject
 
@@ -22,7 +23,7 @@ class MaterialInput(Contract):
 
 class DocumentInput(Contract):
     name: str | None = None
-    format: Literal["text", "json", "jsonl"]
+    format: ImportFormat
     input: Annotated[InlineInput | MaterialInput, Field(discriminator="kind")]
     source: str | None = None
 
@@ -122,7 +123,6 @@ def split_options(values: JsonObject) -> None:
 
 def validate_flags(values: JsonObject) -> None:
     for key in (
-        "form_memory",
         "llm_enabled",
         "extract_time",
         "force",

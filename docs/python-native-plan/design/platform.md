@@ -45,9 +45,9 @@ Context不是Prompt拼字符串的附属品。context owner保留当前身份、
 
 ## 配置来源与生效
 
-各模块声明一份typed配置，composition注册。默认值→部署文件→Instance→Namespace→Subject→实际允许的角色覆盖，保留每项来源。当前分支按配置key整体替换，继续采用此规则；完整父对象key只由一个owner注册。例如 `integrations.amemorix.imports` 是 `integrations.amemorix` 内的字段，不再独立注册重叠key。
+各模块声明类型化配置，由组合根注册。默认值、实例 TOML 和 Namespace TOML 按范围合并，配置服务验证文件并发布共享有效快照。
 
-管理UI可对对象内字段做patch，但交由其owner构造完整候选值后验证，存储仍是一份该key的覆盖。数组整体替换；clear恢复继承。跨字段与下级范围约束由该配置owner检查，单次变更原子写入历史。
+配置 owner 验证完整候选值并原子写入 TOML。数组整体替换；清除覆盖后恢复继承。
 
 active、desired和restart-required有实际含义。Live配置先建立新资源快照，在调用边界切换；旧网络client有活跃调用时由引用/任务完成后关闭。Restart配置保持desired直到资源成功重建。Prompt版本按调用开始时确定。配置保存失败与实际应用失败分别记录，不能显示一个尚未被运行资源使用的“已生效”值。
 
@@ -65,11 +65,11 @@ Nous负责认知时间：五轴、已知/未知精度、历史截点、时间域
 
 ## 运维、CLI、MCP与界面
 
-默认一个服务进程运行DBOS与HTTP/MCP，CLI在线管理走同一服务；离线初始化、备份检查、路径设置等只在对应模式获得实例锁。`mcp stdio`连接已配置服务；MCP标准输出只发协议，日志写stderr。正式SDK继续复用当前 `sdk/python` 的 client、managed、imports、files、sources和A-Memorix模块。
+默认一个服务进程运行 DBOS 与 HTTP，CLI 在线管理走同一服务；离线初始化、备份检查、路径设置等只在对应模式获得实例锁。`nous mcp` 连接已配置服务；MCP 标准输出只发协议，日志写 stderr。Python SDK 通过正式 HTTP 操作访问原生能力。
 
 CLI默认给人类和模型读内容、短引用、状态和下一项可用操作，`--json`输出严格对象；不要输出整份数据库行、签名或内部owner解释。query/search支持分批展开，避免为省token删掉查找下一页与精确引用能力。
 
-Fluent/i18n覆盖CLI、错误、配置说明与管理页面；日志code和领域身份不随界面语言改变。管理操作通过 API 和 CLI 提供；MaiBot Dashboard 和 A-Memorix 现有管理消费者通过正式接口接入。现有独立工作台源码暂时保留，其后续去留按真实用户需要决定。
+Fluent/i18n 覆盖 CLI 与错误说明；日志 code 和领域身份不随界面语言改变。管理操作通过 API 和 CLI 提供，后续宿主通过正式接口接入。
 
 ## 可观测性与资源生命周期
 

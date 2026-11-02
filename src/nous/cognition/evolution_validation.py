@@ -2,7 +2,8 @@
 
 from collections.abc import Sequence
 
-from nous_sdk.contracts import CognitiveRecord, ConceptBody, ConceptPartition, DomainError
+from nous_sdk.contracts import CognitiveRecord, ConceptBody, ConceptPartition
+from nous.platform.errors import DomainError
 
 from .growth_binding import GrowthValue
 

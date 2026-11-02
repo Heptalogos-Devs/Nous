@@ -2,10 +2,9 @@
 
 ## 总体情况
 
-Nous 已经从原 Rust 应用的暂停交接，发展出一套以 Python 为应用主体、在同一进程中使用 Rust 原生计算的认知服务。真实开发讨论、图片与 GIF、模型形成与向量、查询和来源、重启续用、MaiBot 画像和上下文等路径已经实际运行。当前成果是一个有真实用户链路的开发中系统；完整认知产品、A-Memorix 全部既有能力、产品管理和发行仍有大量工作。
+Nous 当前以 Python 应用和同进程 Native 计算运行。Namespace/Subject、材料与来源、认知修订、形成与维护、查询与图、Context、模型资源及 A-Memorix 公开入口共用原生所有者。根旧 Rust 应用和专属 crates 已移除，保留的原生算法位于 `native/`。
 
-本报告记录截至 2026-10-30 的观察，以当时 `codex/python-native-rewrite-cloud` 上的实现代码检查点 `67e09cd` 为观察点；此前的正式功能节点为 `68fc3ae`。VCP 请求意图、Fact、Context Source 工具回执、统一修订状态、SDK/MCP 表达和模型路由已保存到 WIP 检查点。运行中的本地服务加载的是此前的实例代码，新模型服务尚未完成应用接线，检查点源码不能直接启动。各真实结果对应实际运行时使用的代码，修订状态与模型路由仍待最终集成和验证。
-
+本轮已实际恢复启动和真实模型调用，接通来源与对象的删除恢复、完整 Namespace 备份、人物画像、Ego 种子、Social、Symbols、Motivation、检索调优和宿主描述投递。隔离 MaiBot 的 MemoryService、Records 管理路由和原有工作台消费均有实际结果。Windows 发行包已在中文空格目录以标准 CPython 3.14.4 独立安装，HTTP、可选 RPC、CLI 和 MCP 实际读取通过；Linux/macOS 的发行安装和正式公开文本基准仍需对应运行。下文历史记录保留各自原配置与数据条件。
 ## 项目要完成什么
 
 [项目宪纲](https://github.com/Heptalogos-Devs/Architecture-Vault/blob/main/项目宪纲.md)将 Nous 定位为独立的长期认知基础设施与人格中心：保存材料、经历、记忆、证据、来源、时间和修订；提供 NousQL、多方式检索、概念与关系、形成与维护；进一步支持自我、社会认知、语言、动机和工作认知。普通应用可以只使用记忆与检索，无须先建立人格。Nous 还要完整承接 A-Memorix 已有的实际工具、管理和消费接口。
@@ -22,7 +21,7 @@ Heptalogos 是基于 MaiBot 的下一代持续主体产品，拥有世界、生�
 
 SQLAlchemy Core 和 aiosqlite 使用 SQLite 保存权威状态。DBOS 与业务表共用同一 SQLite 文件，业务结果和后续任务接纳由同一事务提交；网络、模型和耗时媒体处理在短事务外执行。模型由 Pydantic AI 和官方 SDK 承担提供方协议，应用管理角色、Prompt、调用身份、来源、结果与费用；出站网络策略和客户端生命周期集中到 NetworkService。uv workspace 管理服务、Python SDK 和 native 扩展三个发行单元，服务使用标准 CPython 3.14，SDK 保留 Python 3.11 及以上范围。具体设计见[架构](design/architecture.md)、[事务与作业](design/transactions.md)、[原生边界](design/native-boundary.md)和[公共基础能力](design/platform.md)。
 
-旧 `crates/` 仍在仓库中供研究。后续以当前 Python 模块实现产品能力，只按实际需要吸收算法思路或必要纯计算。
+Rust 计算实现集中在 `native/`，构建与发行使用其独立 workspace；产品能力由当前 Python 领域模块提供。
 
 ## 从交接到现在的主要工作
 
@@ -70,7 +69,7 @@ VCP 请求意图进一步支持精确核心实体、具名 concept cue、`#` 概
 
 真实 MaiBot `MemoryService` 经 A-Memorix adapter 使用 Native 人物画像：查询、证据、人工别名和摘要覆盖、删除覆盖以及实际模型刷新均已运行。人工控制在刷新后保留，Native 和 A-Memorix portable 导入分别保留相应内容与证据。相关记录包括 `actual-maibot-profile-control-*`、`actual-profile-auto-vector-job.json` 和 `actual-profile-controls-roundtrip-summary.json`。
 
-Fact 实现已通过实际 MaiBot 创建、跨 key 更新、撤回、恢复、读取和列表，并完成 Native 与 A-Memorix 纯事实包往返；代码已保存到 WIP 检查点。Native 保存两个事实身份、五条修订；portable 包包含两条 claim、五条 evidence、五条 transition，保留状态、时间和来源。跨 key 更新按上游语义执行 retract 加 assert。见 `actual-maibot-fact-*` 和 `actual-fact-roundtrip-summary.json`。普通 NousQL 曾默认返回已撤回 Fact，统一可见性修复仍需在新代码加载后验证。
+Fact 实现已通过实际 MaiBot 创建、跨 key 更新、撤回、恢复、读取和列表，并完成 Native 与 A-Memorix 纯事实包往返；代码已保存到 WIP 检查点。Native 保存两个事实身份、五条修订；portable 包包含两条 claim、五条 evidence、五条 transition，保留状态、时间和来源。跨 key 更新按上游语义执行 retract 加 assert。见 `actual-maibot-fact-*` 和 `actual-fact-roundtrip-summary.json`。该组历史记录取得于统一可见性修复前；当前原生目录已统一状态和来源过滤，断续有效期、撤回及画像联动另按当前合同验证。
 
 ### MaiBot 模型调用与上下文
 
@@ -86,22 +85,22 @@ Fact 实现已通过实际 MaiBot 创建、跨 key 更新、撤回、恢复、�
 
 | 服务                                                | 当前 owner 与已接主路径                                                                                                                                    | 尚需完成或确认                                                                                         |
 | --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| Instance / Platform：实例与跨平台                   | `platform/instance`、`bootstrap.py` 管理实例路径、初始化和锁；CLI 提供服务安装及启动停止。三包安装和独立实例已运行。                                       | 新工作区的角色注册尚未接线；逐平台核实当前版本的安装、服务管理、升级与迁移，完成可交付发行。           |
-| Configuration：配置                                 | `platform/configuration` 提供类型化配置、注册、实例/Namespace/Subject 有效值、来源、历史及管理入口；网络、检索、媒体、模型和上下文消费实际配置。           | 模型角色新注册表与配置 validator/schema 的应用组合仍在施工；继续完善配置生效和管理体验。               |
-| ModelResources / ModelCalls：模型资源与调用         | `platform/models` 管理 Provider、Model、Route、Role、Prompt 输入快照、真实调用与用量。实际生成、embedding、媒体及重排已使用该服务，成功结果可恢复复用。    | 多路线、每次物理调用与安全回退在施工；需完成应用注入、整目录向量空间及实际 Provider 验证。             |
-| Prompts：提示词                                     | `platform/prompts` 和 `resources/prompts` 提供随包资源、用户修订、激活、Jinja 渲染和预览；实际形成、媒体、画像、Episode、Steward、维护及重排使用各自合同。 | 继续覆盖全部模型职责，并让管理界面同步新路线预览；预览与实际请求必须保持相同输入及输出合同。           |
-| Contexts / ModelInput：上下文与模型输入             | `context` 保存准备、接纳、游标、居民、工作上下文和反馈；SDK managed binding 与真实 MaiBot 模型输入和来源工具已运行。                                       | 统一新修订可见性，完成切模型、压缩、各类宿主工具续轮及子执行者路径，完善真实使用反馈。                 |
-| Network：网络                                       | `platform/network` 集中 HTTPX 家族客户端、连接池、代理、CA、TLS、超时与生命周期；模型、向量及提供方请求使用配置快照。                                      | 继续核实各实际 Provider 和外部资源的协议适配及受限网络行为。                                           |
-| Authority / Objects / Indexes：权威存储、内容与索引 | `platform/persistence`、`platform/content` 和 native 检索分别拥有 SQLite 事务、不可变内容和可重建索引；领域写入及 DBOS 入队同库提交。                      | 完成修订状态统一、各数据生命周期和大规模索引发布恢复；数据库是权威，索引及缓存需按权威状态失效或重建。 |
-| Clock / Scheduler：时间与调度                       | `platform/time`、公开时间合同及 DBOS schedule 支持物理时间、认知时间、五轴查询、时区与定时任务；历史截点已有实际查询。                                     | 完整处理不确定精度、跨时间域和实际使用场景；世界日历和时间推进由 Heptalogos 负责。                     |
-| Tasks / Execution：持久执行                         | `platform/execution` 使用 DBOS 队列和持久 workflow；导入、形成、向量、Episode 与维护有任务、等待和恢复路径。                                               | 补齐所有长期工作、取消与多执行者行为；向量新路线恢复必须保持既有实际调用意图。                         |
-| Identity / Secrets：身份与密钥                      | `identity` 管理 Namespace、Subject、凭据、权限和来源约束；凭据轮换撤销及受限来源读取已有实现。模型凭据通过受保护引用读取。                                 | 继续覆盖所有消费者的授权、跨主体和迁移场景，完成完整身份和扩展权限体验。                               |
-| Capabilities / Extensions：能力与扩展               | 应用组合注册配置、角色、处理器和 Subject 相关能力，领域通过正式入口供给。                                                                                  | 完整的第三方扩展发现、安装、启停、健康和生命周期仍是产品目标；目前的内部注册不应当作完整插件平台。     |
-| Content / Media：内容与媒体                         | `platform/content`、`platform/media`、`material` 管理原件、区域、派生、谱系和 FFmpeg/Pillow 处理；图片、GIF、视频及音频路径有真实使用记录。                | 继续覆盖更多媒体和提供方、精确区域授权、资源限制与端到端消费。                                         |
-| Observability：可观察性                             | `platform/observability`、结构化日志、OpenTelemetry 接线和模型账本关联请求、任务、调用、来源与实际用量；管理入口提供诊断。                                 | 完善跨活动追踪、运行状态和告警，以及费用和未知结果的完整操作者体验。                                   |
-| DataLifecycle：数据生命周期                         | `data_management`、`imports`、材料和认知 owner 协作处理来源、导入、包、删除恢复与在线备份；Native/A 包及部分跨主体安装有实际结果。                         | 补齐完整级联、保留、清除、主体迁移及全部 A-Memorix 操作，确保各派生副本跟随权威生命周期。              |
-| Interfaces / Clients：接口与客户端                  | `transports/http`、`cli`、`mcp` 和 `sdk/python` 共享合同；工作台与 MaiBot 补丁消费同一服务，MCP 可读文本及机器结构已实际返回。                             | 完整覆盖所有领域操作、A-Memorix 管理页面、按实际消费者需要的协议和一致错误；当前部分入口仍在开发。     |
-| Locale：国际化                                      | `platform/localization`、Fluent 资源和客户端语言选项提供中英文文本；工作台和 CLI 已有本地化路径。                                                          | 补齐新增功能、错误、帮助和地区格式，持续核对全部管理路径。                                             |
+| Instance / Platform：实例与跨平台 | `platform/paths`、实例锁和 bootstrap 统一默认目录与应用生命周期；三包发行、Windows 独立安装、HTTP 和可选 RPC 已接。 | Linux/macOS 仍需在对应平台实际构建、安装和服务管理。 |
+| Configuration：配置 | 类型化配置拥有实例、Namespace、Subject 的有效值、来源和历史；显式应用/回滚使用真实 commit 和 previous_value，模型、网络、检索、媒体、成长消费同一配置。 | 配置修改继续通过正式 configuration 操作。 |
+| ModelResources / ModelCalls：模型资源与调用 | 统一 RoleRegistry、冻结调用目录、物理 attempt、账本与用量；安全回退、Retry-After、结果未知暂停、已存响应恢复和整目录同空间投影已接。 | 未确认的调用保持未知状态；提供方 alias 与实际型号映射由空间所有者统一。 |
+| Prompts：提示词 | 随包提示词、实例修订、Jinja 渲染、合同和实际请求预览共用消费者定义；Seed 与 Symbols 的输出读取、恢复使用原物理响应。 | 新提示词只作用于后续请求，历史响应保持原事实。 |
+| Contexts / ModelInput：上下文与模型输入 | 准备、预算准入、原生请求、游标、居民、工作态和反馈已有 owner；真实 Host 重启重放复用同 call，MaiBot 使用正式 managed binding。 | Entity 有效字段变化会拒绝旧准备；保存的 Motivation 评价按同一精确条件修订供给。 |
+| Network：网络 | NetworkService 统一 HTTPX 客户端、策略、代理、CA、TLS、超时及关闭；模型与资源读取使用实际客户端。 | 新提供方按实际协议接入。 |
+| Authority / Objects / Indexes：权威存储、内容与索引 | SQLite/SQLAlchemy、ContentStore 和 Native 索引各有所有者；领域写入与 DBOS 入队同库提交，修订、内容引用及派生失效共用权限和生命周期。 | 质量与规模表现需要有效数据和实际负载验证。 |
+| Clock / Scheduler：时间与调度 | 五轴时间、时区、有效区间、历史截点和 DBOS schedule 已接；Fact 不同适用窗口独立保存，冲突仅按重叠区间判断。 | 世界日历和时间推进归 Heptalogos。 |
+| Tasks / Execution：持久执行 | 导入、描述形成、向量、Episode、画像、调优、成长和反馈使用 DBOS；取消、重试和批量处理复用同一执行所有者。 | 副本的未完成工作暂停，保留来源和恢复状态。 |
+| Identity / Secrets：身份与密钥 | Namespace/Subject 提供分页、能力配置、启停、回收站、恢复、稳定宿主绑定；凭据轮换、撤销、到期和 Source 上限共用可信入口。 | 清除身份保留退役记录，恢复保留原身份。 |
+| Capabilities / Extensions：能力与扩展 | 服务支持能力、主体配置能力和启用能力有正式 typed 合同；角色、配置和领域处理器由应用显式注册。 | 宿主扩展通过公共 SDK 与协议消费。 |
+| Content / Media：内容与媒体 | 原件、区域、派生、Resource、导入和接触共用 Material/Content 所有者；HTML/PDF、图音视频和 GIF 处理已接。描述补偿由原生有租约 outbox 的 claim/complete 管理。 | 投递只使用已保存描述与真实宿主消息身份。 |
+| Observability：可观察性 | 结构化日志、OpenTelemetry、原生 Subject 诊断和模型账本关联请求、作业、Source、attempt 和用量；HTTP/CLI/MCP/SDK共用诊断。 | 未知结果及历史托管调用分别呈现。 |
+| DataLifecycle：数据生命周期 | 来源/对象预览、操作记录、回收站、恢复、永久清除、Subject 迁移及 Namespace ZIP/分块备份已接；outbox 与原生精确引用随副本重绑，失效租约清除。 | 语义共享包、Namespace 备份和安装备份保留各自范围。 |
+| Interfaces / Clients：接口与客户端 | CLI、HTTP、MCP、SDK 与可选 A-Memorix gRPC 消费同一原生业务；真实 MaiBot Records、画像、图、调优和上下文入口已有使用结果。 | 原有工作台只维护现有读取与操作合同。 |
+| Locale：国际化 | Fluent 与客户端 locale 支持中英文；模型实际解释消费调用者语言，Symbols 恢复使用原响应及当前合同。 | 地区与语言按真实调用者参数处理。 |
 
 ## 认知对象与成长能力
 
@@ -109,72 +108,45 @@ Fact 实现已通过实际 MaiBot 创建、跨 key 更新、撤回、恢复、�
 
 | 对象或能力                                  | 已有内容                                                                                                        | 仍需完成的目标                                                                                      |
 | ------------------------------------------- | --------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| Memory 与 MemorySemantics                   | 保存正文、摘要、媒体、角色、形成方式、认识立场与精确来源；Memory 维护和语义形成有真实文本与媒体案例。           | 持续完善使用反馈、强度与遗忘策略、时间和完整消费者管理。                                            |
-| Concept / Tag                               | 有稳定概念、别名、成员、合并拆分和 lineage，查询可绑定名称；实际 VCP 使用概念线索。                             | 完成语义吸积、合并拆分及成员变更的完整真实工作流。                                                  |
-| Entity / Person                             | 有人物及其他实体、属性证据、平台身份、提及和画像人工控制；MaiBot 画像及真实刷新已运行。                         | 补跨平台身份解析、人物关系、完整证据纠正及管理消费者。                                              |
-| Association                                 | 有有向端点、极性、证据、可选 weight 和认识立场；正式图管理与真实图资产已运行。                                  | 完成独立证据根、关系演化与更复杂图查询；历史端点保持精确身份。                                      |
-| Episode                                     | 有轨道、成员、父级、边界说明、lineage 和重分段合同；三条 Memory 形成三个 Episode 并经 MaiBot 读取。             | 完成轨道层级、局部重分段与完整管理、持续形成。                                                      |
-| Journal                                     | 有叙事、时期、知识截点、观点、Episode 引用与 lineage 合同，参与认知形成与成长。                                 | 验证写作时知情视角、日记生成与后续修订的真实链路。                                                  |
-| Schema                                      | 有范围、命题、边界、支持、反例、lineage 和立场；成长路径能提出并采纳 Schema。                                   | 完整实现、验证反例、形成、修订及使用规则。                                                          |
-| FactClaim                                   | 有人物/会话范围、值、状态、有效期、证据及修订；实际 CRUD 与两个格式往返已运行，代码保存在 WIP 检查点。          | 完成默认查询和各消费者统一可见性，以及完整事实纠正、冲突和画像联动。                                |
-| EgoFacet、NarrativeThread、DomainKnowledge | 已有独立认知正文、成长提案和 Ego/Seed 操作；SDK 可采纳种子、读取 Ego 画像。                                   | 完整验证多文档种子进入记忆、设定来源、人格例外、叙事身份及知识范围的长期演化。                      |
-| SocialRelation 与平台身份                   | 有带方向、关系维度、程度、信任领域、范围、群组和判断充分性的合同；存在身份链接和社会关系操作。                  | 完成真实多会话、跨平台对应、关系积累与独立证据路径。                                                |
-| LanguageConvention                          | 有表达、意义、听众、语用和情境的认知合同及成长提案。                                                            | 接入真实群体语言形成、适用范围、修订与宿主消费。                                                    |
-| Desire、Concern 与条件                      | 有愿望、关切、组合条件、achieve/cease/maintain/avoid、持续区间和 unknown 状态合同。                             | 完成条件评价、实际 coverage、来源与持续更新，并交由 Heptalogos 使用；认知本身不代主体创建外部承诺。 |
-| 成长与维护                                  | 持久作业可以生成、审阅、采纳或拒绝提案，采纳检查原修订；定时计划已有入口，Schema/Concept 形成和采纳有实际例子。 | 补齐各领域独有策略、反思、离线整理、可观察结果和使用反馈，不把任务完成视为认知自动采纳。            |
+| Memory 与 MemorySemantics | 正文、媒体、认识立场、接触与形成、精确来源和修订共用 Native Memory；真实文本、视觉向量及 Host 续接已运行。 | 使用质量与规模按真实场景继续测量。 |
+| Concept / Tag | 稳定概念、别名、成员、吸积、合并拆分与 lineage 已纳入原生查询和成长，VCP 消费同一授权图。 | 正式质量比较仍需公开基准。 |
+| Entity / Person | 身份、属性、平台认识和来源描述独立保留；生成画像具有自己的证据，当前读取过滤失活部分。原著副本免费刷新、撤回、清除和旧格式迁移已验证。 | 真实长期人物认识效果由后续使用观察。 |
+| Association | 独立有向关系与证据、权重及立场进入 Native 图；与 Memory 共用 Retention 状态，九项前提保护实际删除计划。 | 复杂图查询与长期维护效果按实际负载验证。 |
+| Episode | 轨道、成员、层级、局部重分段、迁移状态和来源处理进入 Episode owner；重建和批处理使用同一 Execution。 | 扩大真实经历使用场景。 |
+| Journal | 时期、知情截点、视角和 Episode 引用由原生合同与采纳校验管理，进入成长与查询。 | 真实日记与长期叙事使用仍需扩展。 |
+| Schema | 命题、范围、边界、支持与反例、立场和 lineage 由原生形成、修订与提案处理。 | 反例和使用效果按实际材料继续验证。 |
+| FactClaim | 人物/会话范围、适用区间、冲突、撤回/恢复和画像联动已接；不同有效窗口独立，当前目录不混入旧已撤回修订。 | 更大真实数据规模的行为与效果继续观测。 |
+| EgoFacet、NarrativeThread、DomainKnowledge | 种子材料、提案读取/编辑/独立分组采用、自我侧面、叙事和知识边界已有原生路径；原第三回六项认识与四项Ego实际导出。 | 人格的长期成长质量仍需真实连续使用。 |
+| SocialRelation 与平台身份 | 关系、维度、信任、情境和社会群体有原生合同；身份假说、链接和撤销保留来源证据，Context按实际对象和关系门槛供给。 | 跨平台真实主体使用场景继续扩展。 |
+| LanguageConvention | Symbols统一目录、选择、组合解释、媒体依赖、语言和保留响应恢复；语义解释保存为局部工件，原始付费状态保持。 | 更广泛真实社会语境下的理解质量继续观察。 |
+| Desire、Concern 与条件 | 达到、保持、避免与停止使用区间/三值评价；真实语义判断、显式保存、精确条件历史、coverage/gaps和Context读取已运行。 | 持续评价效果依赖后续真实事件和证据。 |
+| 成长与维护 | 接触、形成、定时维护、提案分组、审阅采用、反馈及失败恢复接到原生owner；失败动作保留并可人工编辑。 | 长期形成与遗忘效果需要连续使用验证。 |
 
 ## A-Memorix 工具和动作
 
-对照[上游工具及动作清单](../../research/a-memorix-contracts.json)，当前 Python 适配器将已接操作转到同一材料、认知、任务和来源 owner。下表是当前源码覆盖；其中画像、Fact、Episode、图、包和上下文的实际运行证据见上文，其他动作仍需按真实上游消费者逐项完成。
+[上游公开工具及动作](../../research/a-memorix-contracts.json)由 Python 适配器映射到原生 owner，CLI `amemorix`、HTTP、MCP 与 SDK 使用同一分发。当前主路径如下：
 
-| 工具                                           | 已接范围                                                                                                                                                                    | 未完成或需要继续核实                                                                                                                                                           |
-| ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `search_memory`                                | search、time、hybrid、episode、aggregate 均有查询分派，支持人物、聊天、时间与来源过滤。                                                                                     | 逐模式核实上游返回语义、过滤边界和实际消费者。                                                                                                                                 |
-| `ingest_text`、`ingest_summary`                | 接纳正文、来源、外部身份、参与者和时间，并按配置提交形成。                                                                                                                  | 覆盖上游各输入与错误语义，以及完整多模态和宿主接入。                                                                                                                           |
-| `get_person_profile`、`memory_stats`           | 人物画像和授权范围内的诊断统计已有读取；画像有真实 MaiBot 消费。                                                                                                            | 完善统计字段、画像的全部上游条件与未知项。                                                                                                                                     |
-| `maintain_memory`                              | reinforce、weaken、protect、unprotect、freeze、forget、restore、trash、purge、decay、recycle_bin 进入认知生命周期。                                                         | 完成状态统一后验证冻结、恢复及其他入口的共同效果。                                                                                                                             |
-| `memory_graph_admin`                           | search、get_graph、node_detail、edge_detail、create_node、rename_node、delete_node、create_edge、update_edge_weight、delete_edge 已接。                                     | 继续核实所有参数、授权和管理 UI，完善历史端点与图资产消费。                                                                                                                    |
-| `memory_source_admin`、`memory_delete_admin`   | 来源 list、delete、batch_delete；source 模式的 preview、execute、restore、purge、get_operation、list_operations 已接。                                                      | 非 source 删除模式、延迟级联及完整上游删除合同仍需对应 owner。                                                                                                                 |
-| `memory_episode_admin`                         | query、list、get、status、rebuild、process_sources 已接；真实形成和重放已运行。                                                                                             | `discard_migration_backfill` 及完整迁移、局部重分段行为待完成。                                                                                                                |
-| `memory_profile_admin`                         | list、query、evidence、get_aliases、set/delete_aliases、set/delete_override、correct_evidence 与显式刷新已有路径。                                                          | 上游 `status`、`process_pending` 不在当前输入合同中，需完成相关后台管理流程。                                                                                                  |
-| `memory_fact_admin`                            | create、update、retract、restore、get、list 已有实现和真实操作，代码保存在 WIP 检查点。                                                                                     | 完成通用查询状态与其他消费者一致性，扩充上游场景。                                                                                                                             |
-| `memory_runtime_admin`                         | get_config、list_vector_spaces，以及通过配置 owner 的 set_config 路径。                                                                                                     | 上游 self_check、refresh_self_check、recover_embedding、rebuild_all_vectors、paragraph_backfill_once、save、set_auto_save 等仍需接入实际 owner。                               |
-| `memory_import_admin`                          | settings/get_settings/get_guide、list/get/chunks/get_chunks、cancel、retry_failed、create_upload/create_raw_scan/create_paste 已接；路径别名和解析由宿主 SDK 文件管理提供。 | 上游 LPMM 转换、OpenIE、MaiBot 数据迁移、temporal backfill 的独立创建动作与完整消费者仍待接续。                                                                                |
-| `memory_bundle_admin`                          | export、import、inspect、list、resolve_file、uninstall 已接；原生及上游便携包已有真实往返。                                                                                 | 完善所有选择、冲突、卸载及更广泛历史资源场景。                                                                                                                                 |
-| tuning、V5、correction、fuzzy modify、feedback | SDK 的 `invoke` 将 V5 的 reinforce、weaken、remember_forever、restore、forget、recycle_bin 等维护动作转入 `maintain_memory`；相关底层生命周期和认知修订有原生能力。         | V5 的 status 和服务端完整分发，以及 `memory_tuning_admin`、`memory_correction_admin`、`memory_fuzzy_modify_admin` 尚待实现；feedback 的 get/list/rollback 也需按上游入口落实。 |
+- 检索、写入、摘要、人物读取、统计、图、Episode、Fact、画像管理、导入和 Bundle 已有正式分发；人物状态和待办处理进入原生执行服务。
+- Memory 和 Association 共用 Retention 状态、保护、强度、冻结、遗忘和恢复；V5 status 与维护动作使用真实记录状态。
+- 来源/对象管理支持 source、paragraph、entity、relation、mixed，提供预览、操作历史、恢复和清除；九项关系状态前提在原生写事务重新核对。
+- 调优使用调用方提供的查询和标签、Optuna 与 ir-measures，显式 apply/rollback；纠错与模糊修改使用原生 plan/apply/rollback 和精确修订。
+- runtime 的诊断、空间目录、进度、恢复、重建、回填和持久状态均消费原生 owner。原生配置修改使用 configuration；关闭每次事务持久化会被明确拒绝。
+- LPMM、OpenIE、MaiBot 数据与时间回填进入原生导入所有者；主机文件传输由 SDK 的 transfer_root 约束。反馈的队列、状态与回滚使用原生 Feedback 和 Context。
 
-独立 A-Memorix gRPC 中 Namespace、记忆、任务、认证和备份等 RPC 也在清单中；需要以实际客户端和协议要求完成支持。Python 当前的 HTTP、MCP、CLI 和 SDK 操作不应被当作这组 RPC 全部已经迁移。
+可选 gRPC 已接 Auth、Namespace、Memory、Job、Backup 的发布协议，认证和 Source 范围由同一身份所有者检查。Namespace 备份明确声明 `nous-namespace-backup` ZIP 格式及 producer 版本，保存原生材料、作业、Context 和状态；跨 Namespace 副本重新分配身份，旧付费调用进入历史托管。
 
 ## 现有能力和剩余范围
 
-| 能力                        | 当前情况                                                                                                                            | 继续工作                                                                                                                                                                                                                                                                            |
-| --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 实例和基础服务              | Python 应用、实例目录、授权、配置、Prompt、网络、持久任务、备份恢复和多入口已有实现；部分真实链路已运行。                           | 完成各入口与管理界面的全功能接线、安装和真实使用。                                                                                                                                                                                                                                  |
-| 材料、来源与导入            | 有原件、区域、派生、Observation、Catalog/Unit/Output、文件成功、来源管理及 Native/A 包；文本和媒体有真实往返。                      | 按真实消费者补齐全部格式、来源生命周期、删除恢复、包选择与共享资源行为。                                                                                                                                                                                                            |
-| 查询和原生计算              | 中文词项、语义、Hybrid、VCP、NousQL 解析、名称绑定、时间/历史、来源展开和图操作已有；真实图与若干查询已运行。                       | 完成目标中的全部 14 类返回域、语言与历史语义、算法组合、质量和规模验证。精确引用和受限图必须持续使用同一权威状态。                                                                                                                                                                  |
-| Memory、Episode、画像、Fact | Memory 与修订、Episode 形成和读取、画像人工控制与刷新、Fact 往返各有实际例子。Fact 及统一可见性代码已保存为 WIP，后者尚待重载验证。 | 完成 Episode 轨道、层级、局部重分段以及全部事实、画像和宿主管理行为，完成当前状态修复的真实验证。                                                                                                                                                                                   |
-| 其他认知领域                | Journal、Schema、Concept、Association、Ego、Social、Language、Motivation 及成长维护已有领域合同和部分实现。                        | 按各领域补齐并验证多文档人格种子、叙事身份、知识范围、社会关系与信任、语言惯例、愿望及条件、图式反例和 lineage、反思、自然形成及真实使用反馈。                                                                                                                                      |
-| 当前认知与工作连续性        | 持久准备、预算准入、模型接触、实际使用、结果反馈以及真实 MaiBot 例子已接通；Work/Resident/Steward 有相应实现。                      | 补齐模型切换、压缩、工具续轮、子执行者与不同宿主的完整路径，验证长期居民及持续反馈。                                                                                                                                                                                                |
-| A-Memorix 消费者            | 基础写入、检索、维护、统计、画像以及图、来源、Episode、Fact、导入、Bundle、部分 runtime 管理已接入同一认知权威。                    | 顶层 `memory_tuning_admin`、`memory_v5_admin`、`memory_correction_admin`、`memory_fuzzy_modify_admin` 当前尚无服务端分发；runtime 的部分动作和某些删除模式也返回 capability unavailable。继续逐项接通[实际合同](../../research/a-memorix-contracts.json)、MaiBot 管理页和必要协议。 |
-| 产品管理与发行              | 有中英文工作台、CLI、HTTP、MCP、SDK、安装脚本、服务管理及多平台 wheel 构建配置。                                                    | 扩充各领域管理体验；完成各平台实际安装与运行。Windows/macOS 的 runner 配置是构建路径，结果取决于对应 Actions 运行。                                                                                                                                                                 |
-| Heptalogos                  | MaiBot 作为真实认知消费者已有补丁和实际模型调用。                                                                                   | 以 MaiBot 派生产品建设持续世界、生活、注意、自主行为、设备与效果，并完整继承插件和管理体验。                                                                                                                                                                                        |
+当前核心能力已进入本轮发行安装阶段：正式 API、CLI、MCP、SDK 和可选 RPC 共用原生所有者；材料/认知/Source/模型/向量/作业的状态和权限已连接。人物的来源描述与自动画像分开保存，Source 失活过滤派生部分；原著第三回已形成六项实际认识，原实例与模型历史保留。
 
-表中的“已有实现”表示对应 owner 或入口存在；实际进度以当前代码与运行记录判断。完整范围和实施依赖见[开发目标与计划](../GOAL.md)。
+已运行的真实链路包括隔离 MaiBot 的写检、Records 详情与历史、画像和调优，原生 Host 的真实模型调用与重启重放，文学种子的逐组读取/人工编辑/采用，愿望评价的真实语义调用、保存及 Context 读取，以及真实媒体的描述、社会符号解释和向量投影。具体小样本保持各自原件、候选池和参数规模。
+
+Windows 完整包已安装并读取；剩余为 Linux/macOS 对应平台验证及官方文本基准的检索和评分。官方 LongMemEval 六题共享282会话池已完成Lexical/Dense/Hybrid各6次：Recall-any/all@10均为1，MRR分别0.875000/0.861111/0.916667，nDCG@10分别0.859495/0.892701/0.904644。VCP首题缺图资产失败，其余5题未执行。实际规模、原延迟与调用统计见 `dist/nous-first-evaluation-20261031/README.md`。Heptalogos 的持续世界、生活和外部行动仍是独立产品工作；本轮维护既有工作台消费，不新增工作台功能。
 
 ## 当前施工与未决问题
 
-### 认知修订状态与可见性
+修订写入和可选择条件由 Cognition 统一；原生目录、Graph、Context、Fact、Retention 与 Source 清除使用同一状态和权限。Entity 的原始描述和别名保留来源断言，自动人物摘要保存独立证据，旧存储修订按真实 cause 迁移。Context 会拒绝与当前有效 Entity 字段不一致的旧准备。
 
-Fact 撤回后，普通 NousQL 默认结果曾仍包含该 Fact。问题涉及 Cognition、Retrieval、Graph、Context 和向量 Worker 对同一修订状态的判断。当前工作把最终 `RevisionState` 和可选择条件集中到共同 owner，并迁移消费者；写入最终 Record 后再发送通知，移除延后状态写入和外层覆盖。Context 消费者已迁移，存储侧代码已落盘。还需要完成组合、加载新代码，并通过实际 freeze、restore、Fact retract 等操作检验查询、上下文和派生工作的一致结果。
+模型角色、多路线与整目录空间已经接线。生成请求保留实际合同、提供方响应格式与物理状态；只读恢复不会把失败调用改成成功。向量恢复固定已接纳目录、同一提供方实际模型与空间，成功物理批复用；已证实的 alias/actual 型号映射已由空间所有者统一，实际重开目录 complete=True，未重发模型调用。外部 MemeCap 原图检索的实际范围为 3 张图、候选池 3，原始 caption 的 Dense top1 为 3/3；记录见 `temp/public-benchmarks/memecap/image-retrieval-results.json`。
 
-### 模型角色多路线
-
-此前 Role 虽有 routes，实际只解析首条。当前工作正在建立冻结的调用计划和统一路由 owner：记录每一次真实物理调用及结果，父调用绑定真正成功的 Call；保存实际输入、来源和凭据范围；Pydantic AI 的底层 OpenAI 客户端显式关闭隐藏的 SDK 重试。明确未发送或特定可确认拒绝的情况可以切换路线；超时、断线等结果未知的调用保持未知并停止，避免误判后重复付费。既有成功或未知调用继续使用原意图，既有已接纳的单路线请求保留原事实。
-
-角色 purpose 从平台硬编码集合转为应用注册；配置校验和 schema 使用同一个注册表。预览合同也已扩展为展示路线。定点类型检查和 Ruff 已通过，但尚未启动新应用或调用真实 Provider。[application.py](../../src/nous/application.py) 还需先创建、注册并注入必需的 `RoleRegistry`；因此当前工作区不能视为可重启完成。
-
-向量 Worker 仍先按首选路线的 batch 大小切组，并分别循环文本和媒体。若各组回退到不同模型，整份投影可能混入不同语义空间。下一步要把完整逻辑输入目录、逐项来源、路线选择与物理分批交给模型 owner，固定整目录的同一空间；同时保留旧已接纳作业的物理调用意图，避免把恢复变成新付费请求。随后还需完成模型预览 UI、所有入口与真实集成验证。
-
-### 后续依赖
-
-先完成修订状态和模型路由的共同 owner、应用接线与向量目录契约，再在真实实例中验证修改和重启。随后沿 A-Memorix 未覆盖动作、MaiBot 实际管理消费者和完整查询合同补齐能力；认知领域与持续维护依照各自 owner 继续落地。按真实需要整理旧源码，并完成平台安装、管理和发行。真实原件、已发生的模型调用和费用、来源与历史应随这些工作继续保留。
+最终包采用标准 CPython 3.14，服务/SDK/Native 分开分发源码与 wheel；Windows 中文空格目录已独立安装全部三包及可选 gRPC，HTTP/SDK、CLI 和 MCP（139 个工具）读取现有 README 成功，RPC 读取 Namespace 成功，服务均正常关闭。官方基准消费上游原始数据与现成评分。Source N+1修复后同首题无profile的SDK测量为1.967892秒、HTTP span1.811654秒、238条SQL；50条exactref及顺序不变，模型账本37→37，原六题正式延迟保留。

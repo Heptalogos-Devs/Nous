@@ -8,24 +8,29 @@ from nous_sdk.contracts import (
     CognitiveBody,
     CognitiveRecord,
     ConceptBody,
+    EntityBody,
     EpisodeBody,
     MemoryChange,
-    MemoryLifecycle,
+    RetentionChange,
+    RetentionSnapshot,
+    RetentionState,
 )
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.fact_body import FactClaimBody
 
 HOUR_MS = 3600000
+HALF_LIFE_HOURS = 24.0
 FREEZE_THRESHOLD = 0.1
 REVIVE_THRESHOLD = 0.15
 
 
-def active_body(body: CognitiveBody | None, lifecycle: MemoryLifecycle | None = None) -> bool:
+def active_body(body: CognitiveBody | None, lifecycle: RetentionState | None = None) -> bool:
     """One activation rule also serves planned growth before a revision exists."""
     if body is None:
         return False
     if lifecycle is not None and lifecycle.activation != "active":
         return False
-    if isinstance(body, (ConceptBody, EpisodeBody)):
+    if isinstance(body, (ConceptBody, EpisodeBody, EntityBody)):
         return body.state == "active"
     if isinstance(body, FactClaimBody):
         return body.status == "active"
@@ -35,6 +40,21 @@ def active_body(body: CognitiveBody | None, lifecycle: MemoryLifecycle | None = 
 def is_active(record: CognitiveRecord) -> bool:
     """Current domain activation; source access and deletion remain separate decisions."""
     return not record.purged and active_body(record.body, record.lifecycle)
+
+
+def record_state(record: CognitiveRecord) -> str:
+    if record.purged:
+        return "purged"
+    if record.deleted:
+        return "deleted"
+    if record.lifecycle is not None and record.lifecycle.activation != "active":
+        return record.lifecycle.activation
+    body = record.body
+    if isinstance(body, FactClaimBody):
+        return body.status
+    if isinstance(body, (ConceptBody, EpisodeBody, EntityBody)):
+        return body.state
+    return "active"
 
 
 def selectable(
@@ -49,11 +69,48 @@ def selectable(
     )
 
 
-def retention(state: MemoryLifecycle, now: int) -> float:
-    return state.strength * 2 ** (-max(0, now - state.anchor_unix_ms) / (24 * HOUR_MS))
+def retention(state: RetentionState, now: int) -> float:
+    return state.strength * 2 ** (-max(0, now - state.anchor_unix_ms) / (HALF_LIFE_HOURS * HOUR_MS))
 
 
-def transition(state: MemoryLifecycle, command: MemoryChange, now: int) -> MemoryLifecycle:
+def state_for(record: CognitiveRecord) -> RetentionState:
+    if (
+        record.reference.kind not in {"memory", "association"}
+        or record.purged
+        or record.body is None
+    ):
+        raise DomainError(
+            "retention_unavailable", "Retention requires a nonpurged Memory or Association"
+        )
+    return record.lifecycle or RetentionState(anchor_unix_ms=record.times.recorded.coordinate)
+
+
+def snapshot(record: CognitiveRecord, now: int) -> RetentionSnapshot:
+    state = state_for(record)
+    reason = {
+        "active": "",
+        "frozen": "manual_freeze",
+        "forgotten": "manual_forget",
+        "weakened": "weaken",
+        "decayed": "decay",
+    }[state.activation]
+    return RetentionSnapshot(
+        reference=record.reference,
+        strength=state.strength,
+        anchor_unix_ms=state.anchor_unix_ms,
+        inactive_since_unix_ms=state.inactive_since_unix_ms,
+        inactive_reason=reason,
+        inactive=state.activation != "active",
+        permanent=state.permanent,
+        pinned=state.pinned,
+        protected_until_unix_ms=state.protected_until_unix_ms,
+        score=retention(state, now),
+    )
+
+
+def transition(
+    state: RetentionState, command: MemoryChange | RetentionChange, now: int
+) -> RetentionState:
     now = max(
         now,
         state.anchor_unix_ms,
@@ -63,6 +120,23 @@ def transition(state: MemoryLifecycle, command: MemoryChange, now: int) -> Memor
     current = retention(state, now)
     result = state.model_dump()
     action = command.action
+    if action in {"trash", "purge"}:
+        return state
+    if action == "remember_forever":
+        return state.model_copy(
+            update={
+                "permanent": True,
+                "strength": 1.0,
+                "activation": "active",
+                "anchor_unix_ms": now,
+                "inactive_since_unix_ms": None,
+                "last_reinforced_unix_ms": now,
+            }
+        )
+    if action == "allow_decay":
+        return state.model_copy(update={"permanent": False})
+    if action in {"pin", "unpin"}:
+        return state.model_copy(update={"pinned": action == "pin"})
     if action == "protect":
         result.update(
             pinned=command.hours is None or command.hours <= 0,
@@ -70,22 +144,26 @@ def transition(state: MemoryLifecycle, command: MemoryChange, now: int) -> Memor
             if command.hours is None or command.hours <= 0
             else now + int(command.hours * HOUR_MS),
         )
-        return MemoryLifecycle.model_validate(result)
+        return RetentionState.model_validate(result)
     if action == "unprotect":
         return state.model_copy(update={"pinned": False, "protected_until_unix_ms": None})
     if action == "decay":
         if (
             state.activation == "active"
-            and not state.protected(now)
-            and current <= FREEZE_THRESHOLD
+            and (not state.protected(now))
+            and (current <= FREEZE_THRESHOLD)
         ):
             result.update(activation="decayed", inactive_since_unix_ms=now)
-        return MemoryLifecycle.model_validate(result)
+        return RetentionState.model_validate(result)
     if action == "freeze":
         result.update(strength=current, activation="frozen")
     elif action == "forget":
         result.update(
-            strength=0, activation="forgotten", pinned=False, protected_until_unix_ms=None
+            strength=0,
+            activation="forgotten",
+            pinned=False,
+            permanent=False,
+            protected_until_unix_ms=None,
         )
     elif action == "reinforce":
         strength = min(1, current + min(1, 0.5 * command.strength) * (1 - current))
@@ -116,4 +194,4 @@ def transition(state: MemoryLifecycle, command: MemoryChange, now: int) -> Memor
     result["inactive_since_unix_ms"] = (
         None if result["activation"] == "active" else state.inactive_since_unix_ms or now
     )
-    return MemoryLifecycle.model_validate(result)
+    return RetentionState.model_validate(result)

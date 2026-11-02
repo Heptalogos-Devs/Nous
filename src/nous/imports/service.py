@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING
 
+from nous.cognition.formation import FormationService
 from nous.cognition.models import ModelServices
-from nous.cognition.service import CognitionService
+from nous.cognition.records import CognitiveRecords
 from nous.material.service import MaterialService
+from nous.platform.configuration.service import ConfigurationService
 from nous.platform.content import ContentStore
 from nous.platform.persistence import Authority
 
@@ -14,12 +17,13 @@ from . import (
     admission,
     attempts,
     catalog,
+    contact,
     embedding,
     file_completion,
     observation,
     observation_jobs,
     processing,
-    replay,
+    results,
     status,
     text_admission,
 )
@@ -27,17 +31,17 @@ from . import (
 if TYPE_CHECKING:
     from nous.vector_projection.service import VectorProjectionService
 
+    from .media import MediaImportService
+
 
 class ImportService:
+    jobs_for_observations = observation_jobs.observation_jobs
+    contact = contact.contact
     submit_text_import = text_admission.submit_text_import
     read_text_import = text_admission.read_text_import
     run_text_import = text_admission.run_text_import
-    replay_catalog_in = replay.replay_catalog_in
-    replay_catalog = replay.replay_catalog
-    replay_result_in = replay.replay_result_in
-    replay_result = replay.replay_result
-    read_admit_result = replay.read_admit_result
-    input_context_in = replay.input_context_in
+    read_admit_result = results.read_admit_result
+    input_context_in = results.input_context_in
     vector_status = status.vector_status
     prepare_document = catalog.prepare_document
     freeze_catalog = catalog.freeze_catalog
@@ -67,14 +71,81 @@ class ImportService:
     def __init__(
         self,
         authority: Authority,
-        cognition: CognitionService,
+        cognition: CognitiveRecords,
         models: ModelServices,
-        content_store: ContentStore | None = None,
-        materials: MaterialService | None = None,
+        content_store: ContentStore,
+        materials: MaterialService,
+        *,
+        projection: VectorProjectionService,
+        media_imports: MediaImportService,
+        formation: FormationService,
+        configuration: ConfigurationService,
     ) -> None:
+        self.configuration = configuration
+        self.formation = formation
         self.authority = authority
         self.cognition = cognition
         self.models = models
-        self.materials = materials or MaterialService(authority, content_store)
-        self.content_store = self.materials.content_store
-        self.projection: VectorProjectionService | None = None
+        self.materials = materials
+        self.content_store = content_store
+        self.projection = projection
+        self.media_imports = media_imports
+
+    async def read_unit_in(self, view, ctx, unit_id: str, *, catalog_id: str | None = None):
+        from sqlalchemy import select
+        from nous_sdk.contracts import ImportUnit, MediaReference
+        from nous.platform.errors import DomainError
+        from nous_sdk.contracts.derivation import TextRepresentation, StructuredRepresentation
+        from nous.material.service import require_observation_in
+        from nous.material.text import source_region_text
+        from nous.platform.content import ContentObject
+        from .schema import catalogs, units
+
+        statement = (
+            select(units.c.record)
+            .join(catalogs, catalogs.c.id == units.c.catalog_id)
+            .where(units.c.id == unit_id, catalogs.c.namespace_id == ctx.namespace_id)
+        )
+        if catalog_id is not None:
+            statement = statement.where(units.c.catalog_id == catalog_id)
+        raw = await view.connection.scalar(statement)
+        if raw is None:
+            raise DomainError("unit_not_found", "Import unit is unavailable in this Namespace")
+        value = dict(raw)
+        if value.get("observation_id"):
+            await require_observation_in(
+                view,
+                ctx,
+                value["observation_id"],
+                active=not value.get("purged", False),
+                region_id=value.get("source_region_id"),
+            )
+        if value.get("purged"):
+            return ImportUnit.model_validate(
+                {**value, "text": "", "context": {}, "split_context": {}}
+            )
+        reference = MediaReference.model_validate(value["source"])
+        text = ""
+        if reference.kind in {"representation", "derived_region"}:
+            payload = (await self.cognition.derivations.selected_in(view, ctx, reference)).payload
+            if (
+                isinstance(payload, StructuredRepresentation)
+                and payload.schema_id == "nous.import-unit/1"
+            ):
+                value.update(payload.value)
+                return ImportUnit.model_validate(value)
+            if isinstance(payload, TextRepresentation):
+                text = payload.text
+        elif value.get("strategy") != "media":
+            material, region, _ = await self.materials.media_source_in(view, ctx, reference)
+            text = material["text"]
+            if text is None:
+                async with self.content_store.protect(
+                    ContentObject(
+                        material["content_hash"], material["byte_len"], material["media_type"]
+                    )
+                ) as path:
+                    text = (await asyncio.to_thread(path.read_bytes)).decode("utf-8-sig")
+            if region is not None:
+                text = source_region_text(text, region)
+        return ImportUnit.model_validate({**value, "text": text})

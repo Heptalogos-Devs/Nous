@@ -4,7 +4,7 @@ from typing import Annotated, Literal
 
 from pydantic import Field, JsonValue, model_validator
 
-from .common import Contract, Operation, ReferenceAddresses, TimePoint
+from .common import Contract, ModelProvenance, Operation, ReferenceAddresses, TimePoint
 from .media import MediaInfo, MediaReference, PixelRect, SourceRegion, TimeSpan
 
 Digest = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
@@ -17,6 +17,7 @@ RepresentationKind = Literal[
     "scene_description",
     "summary",
     "structured_interpretation",
+    "parsed_record",
     "resource_synopsis",
     "sampled_frame",
     "audio_track",
@@ -82,16 +83,6 @@ class ChannelAccess(Contract):
     source_text: Literal["original", "representation", "unavailable"] = "unavailable"
 
 
-class DerivationProducer(Contract):
-    signature: Digest
-    implementation: str = Field(min_length=1, max_length=256)
-    model_call_id: str | None = None
-    prompt_digest: Digest | None = None
-    schema_digest: Digest | None = None
-    config_digest: Digest
-    preprocessing_digest: Digest | None = None
-
-
 class DerivationQuality(Contract):
     truncated: bool = False
     limitations: tuple[str, ...] = ()
@@ -131,7 +122,8 @@ class CreateRepresentation(Operation):
     kind: RepresentationKind
     strategy: DerivationStrategy = "description_only"
     payload: RepresentationPayload
-    producer: DerivationProducer
+    producer: ModelProvenance | None = None
+    processor: str | None = None
     quality: DerivationQuality = Field(default_factory=DerivationQuality)
     timeline: MediaReference | None = None
     transformation: MediaTransformation | None = None
@@ -147,7 +139,7 @@ class CreateRepresentation(Operation):
         if self.kind == "structured_interpretation":
             if (
                 not isinstance(self.payload, StructuredRepresentation)
-                or not self.producer.schema_digest
+                or self.producer is None
             ):
                 raise ValueError(
                     "Structured interpretation requires a schema-bound structured payload"
@@ -156,8 +148,18 @@ class CreateRepresentation(Operation):
                 raise ValueError(
                     "Description-only derivation cannot claim structured interpretation"
                 )
+        elif self.kind == "parsed_record":
+            if (
+                not isinstance(self.payload, StructuredRepresentation)
+                or self.producer is not None
+                or self.processor is None
+                or self.strategy != "preprocess"
+            ):
+                raise ValueError(
+                    "Parsed records require a versioned processor and structured preprocessing output"
+                )
         elif isinstance(self.payload, StructuredRepresentation):
-            raise ValueError("Structured payload requires structured_interpretation kind")
+            raise ValueError("Structured payload requires structured_interpretation or parsed_record kind")
         return self
 
 
@@ -165,12 +167,13 @@ class DerivedRepresentation(Contract):
     reference: RepresentationRef
     addresses: ReferenceAddresses | None = None
     namespace_id: str
-    subject_id: str
+    
     inputs: tuple[DerivationInput, ...]
     kind: RepresentationKind
     strategy: DerivationStrategy
     payload: RepresentationPayload | None
-    producer: DerivationProducer
+    producer: ModelProvenance | None = None
+    processor: str | None = None
     access: ChannelAccess
     quality: DerivationQuality
     source_roots: tuple[str, ...]
@@ -254,7 +257,7 @@ class DerivedRegion(Contract):
     id: str
     addresses: ReferenceAddresses | None = None
     namespace_id: str
-    subject_id: str
+    
     representation: RepresentationRef
     selector: DerivedSelector | None
     parent_id: str | None = None

@@ -3,11 +3,10 @@
 from pathlib import Path
 from typing import Annotated, Literal
 
-from nous_sdk.contracts.media_policy import MediaPolicy
 from pydantic import AfterValidator, BaseModel, Field, JsonValue
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from nous.platform.network.policy import NetworkPolicy
+from nous.platform.paths import default_instance_path
 
 ReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh"]
 
@@ -40,6 +39,14 @@ ProviderOptions = Annotated[dict[str, JsonValue], AfterValidator(provider_option
 
 
 class ModelRoute(BaseModel):
+    tokenizer: str | None = None
+
+    protocol: Literal["openai-chat", "openai-responses", "volcengine-ark"] = "openai-chat"
+    input_modalities: tuple[str, ...] = ("text",)
+    tools: bool = False
+    media_limits: dict[str, int] = Field(default_factory=dict)
+    context_window: int = Field(default=32768, gt=0)
+    structured_output_mode: Literal["native", "tool", "text"] = "native"
     base_url: str = "https://api.openai.com/v1"
     model: str = ""
     credential_file: Path | None = None
@@ -48,8 +55,6 @@ class ModelRoute(BaseModel):
     max_output_tokens: int = Field(default=4096, gt=0)
     temperature: float | None = Field(default=None, ge=0, le=2)
     reasoning_effort: ReasoningEffort | None = None
-    max_calls_per_day: int = Field(default=50, ge=0)
-    video_content_format: Literal["video_url"] | None = None
     extra_body: ProviderOptions = Field(default_factory=dict)
 
 
@@ -57,20 +62,15 @@ class EmbeddingRoute(ModelRoute):
     model: str = ""
     dimensions: int = Field(default=2048, gt=0)
     normalization: Literal["none", "l2"] = "none"
-    media_path: str = "embeddings/multimodal"
     max_batch_items: int = Field(default=64, ge=1, le=2048)
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="NOUS_", env_nested_delimiter="__")
-    instance: Path = Path("temp/instances/default")
+    instance: Path = Field(default_factory=default_instance_path)
     host: str = "127.0.0.1"
     port: int = Field(default=7441, ge=1, le=65535)
     locale: str = "zh-CN"
-    model: ModelRoute = Field(default_factory=ModelRoute)
-    embedding: EmbeddingRoute = Field(default_factory=EmbeddingRoute)
-    network: NetworkPolicy = Field(default_factory=NetworkPolicy)
-    media: MediaPolicy = Field(default_factory=MediaPolicy)
     log_level: str = "INFO"
 
     @property

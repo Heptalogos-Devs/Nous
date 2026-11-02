@@ -2,20 +2,20 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator, AsyncIterable, Mapping
+from collections.abc import AsyncGenerator, AsyncIterable
 from pathlib import Path
 from uuid import uuid4
 
 import anyio
 
 from ..contracts import (
+    ContactMaterial,
+    ContactReceipt,
     TimePoint,
 )
-from ..errors import NousError
-from ..operations import encoded, object_value, segment
+from ..operations import encoded, segment
 from ..types import (
     Download,
-    JsonObject,
     Material,
     MaterialReceipt,
     QueryParam,
@@ -24,28 +24,14 @@ from .identity import IdentityClient
 
 
 class MaterialClient(IdentityClient):
-    async def put_text(
-        self,
-        namespace_id: str,
-        text: str,
-        *,
-        owner_subject_id: str | None = None,
-        source: str | None = None,
-        event_time: TimePoint | None = None,
-        operation_id: str | None = None,
-    ) -> Material:
-        return Material.model_validate(
+    async def contact(
+        self, namespace_id: str,  command: ContactMaterial
+    ) -> ContactReceipt:
+        return ContactReceipt.model_validate(
             await self.request(
                 "POST",
-                "/api/materials",
-                body={
-                    "namespace_id": namespace_id,
-                    "subject_id": owner_subject_id or self.subject_id,
-                    "text": text,
-                    "source": source,
-                    "event_time": encoded(event_time) if event_time is not None else None,
-                    "operation_id": operation_id or str(uuid4()),
-                },
+                self.namespace_path(namespace_id) + "/materials/contact",
+                body=encoded(command),
             )
         )
 
@@ -54,7 +40,7 @@ class MaterialClient(IdentityClient):
         namespace_id: str,
         path: str | Path,
         *,
-        owner_subject_id: str | None = None,
+
         media_type: str = "application/octet-stream",
         source: str | None = None,
         event_time: TimePoint | None = None,
@@ -73,7 +59,7 @@ class MaterialClient(IdentityClient):
                 namespace_id,
                 chunks(),
                 byte_len=length,
-                owner_subject_id=owner_subject_id,
+                
                 media_type=media_type,
                 source=source or path.name,
                 event_time=event_time,
@@ -87,7 +73,7 @@ class MaterialClient(IdentityClient):
         content: AsyncIterable[bytes],
         *,
         byte_len: int,
-        owner_subject_id: str | None = None,
+
         media_type: str = "application/octet-stream",
         source: str | None = None,
         event_time: TimePoint | None = None,
@@ -96,12 +82,8 @@ class MaterialClient(IdentityClient):
     ) -> MaterialReceipt:
         if self._closed:
             raise RuntimeError("Nous client is closed")
-        owner = owner_subject_id or self.subject_id
-        if owner is None:
-            raise ValueError("upload requires owner_subject_id")
         params: dict[str, QueryParam] = {
             "namespace_id": namespace_id,
-            "owner_subject_id": owner,
             "operation_id": operation_id or str(uuid4()),
         }
         if source is not None:
@@ -120,41 +102,26 @@ class MaterialClient(IdentityClient):
         destination: str | Path,
         *,
         namespace_id: str | None = None,
-        subject_id: str | None = None,
+        
     ) -> Download:
-        namespace, subject = namespace_id or self.namespace_id, subject_id or self.subject_id
-        if namespace is None or subject is None:
-            metadata = await self.material(material_id)
-            namespace = metadata.namespace_id
-            subject = subject or await self._material_subject(material_id)
+        namespace = self.require_namespace(namespace_id)
         return await self.transport.download(
             material_id,
             Path(destination),
             self._source_read,
             namespace_id=namespace,
-            subject_id=subject,
+            
         )
-
-    async def _material_subject(self, material_id: str) -> str:
-        value = object_value(
-            await self.request("GET", f"/api/materials/{segment(material_id)}/scope")
-        )
-        subject = value.get("subject_id")
-        if not isinstance(subject, str):
-            raise NousError(
-                {"code": "invalid_response", "message": "Material scope has no subject"}
-            )
-        return subject
 
     async def download_region(
-        self, namespace_id: str, subject_id: str, region_id: str, destination: str | Path
+        self, namespace_id: str,  region_id: str, destination: str | Path
     ) -> Download:
         from ..contracts import SourceRegion
 
         region = SourceRegion.model_validate(
             await self.request(
                 "GET",
-                self.subject_path(namespace_id, subject_id) + f"/regions/{segment(region_id)}",
+                self.namespace_path(namespace_id) + f"/regions/{segment(region_id)}",
             )
         )
         return await self.transport.download(
@@ -162,34 +129,11 @@ class MaterialClient(IdentityClient):
             Path(destination),
             self._source_read,
             namespace_id=namespace_id,
-            subject_id=subject_id,
+            
             region_id=region_id,
         )
 
-    async def material(self, material_id: str) -> Material:
+    async def material(self, material_id: str, *, namespace_id: str | None = None) -> Material:
         return Material.model_validate(
-            await self.request("GET", f"/api/materials/{segment(material_id)}")
-        )
-
-    async def observe(
-        self,
-        subject_id: str,
-        material_id: str,
-        *,
-        observed_at: TimePoint | None = None,
-        origin: Mapping[str, str] | None = None,
-        operation_id: str | None = None,
-    ) -> JsonObject:
-        return object_value(
-            await self.request(
-                "POST",
-                "/api/observations",
-                body={
-                    "subject_id": subject_id,
-                    "material_id": material_id,
-                    "observed_at": encoded(observed_at) if observed_at is not None else None,
-                    "origin": dict(origin or {}),
-                    "operation_id": operation_id or str(uuid4()),
-                },
-            )
+            await self.request("GET", self.namespace_path(self.require_namespace(namespace_id)) + f"/materials/{segment(material_id)}")
         )

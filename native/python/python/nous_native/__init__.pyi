@@ -19,6 +19,7 @@ from ._core import (
 from ._core import (
     Snapshot as Snapshot,
 )
+from ._core import lexical_scores as lexical_scores
 from ._core import (
     nousql_manual as nousql_manual,
 )

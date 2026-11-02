@@ -3,11 +3,12 @@
 from pydantic import Field
 
 from .cognition import CognitiveRecord, CognitiveRef
-from .common import CallContext, Contract, Operation, TimeRange
+from .common import Contract, Operation, TimeRange
 
 
 class EpisodeQuery(Contract):
     query: str = ""
+    track: str | None = None
     source: str | None = None
     person: CognitiveRef | None = None
     experience: TimeRange | None = None
@@ -40,19 +41,6 @@ class RebuildEpisodes(Operation):
 class EpisodeRebuildSubmission(Contract):
     job_id: str
     sources: tuple[str, ...]
-
-
-class EpisodeSourceSnapshot(Contract):
-    source: str
-    members: tuple[CognitiveRef, ...]
-    originals: tuple[CognitiveRef, ...]
-    observations: tuple[str, ...]
-
-
-class EpisodeRebuildIntent(Contract):
-    context: CallContext
-    command: RebuildEpisodes
-    snapshots: tuple[EpisodeSourceSnapshot, ...]
 
 
 class EpisodeSegmentationMember(Contract):

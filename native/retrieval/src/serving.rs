@@ -111,6 +111,7 @@ pub enum ServingProfile {
 #[derive(Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct VcpConfig {
+    pub strict_capabilities: bool,
     pub pipeline: PipelineConfig,
     pub readout: NativeConfig,
     pub candidate_limit: usize,
@@ -124,6 +125,7 @@ pub struct VcpConfig {
 impl Default for VcpConfig {
     fn default() -> Self {
         Self {
+            strict_capabilities: false,
             pipeline: PipelineConfig::default(),
             readout: NativeConfig::default(),
             candidate_limit: 100,
@@ -175,7 +177,6 @@ struct Mappings {
 /// Immutable group. App owns any in-candidate generation cache and publication gate.
 pub struct ServingGeneration {
     identity: VectorGenerationIdentity,
-    prepared: Prepared,
     assets: MemoAssets,
     ann: VectorGeneration,
     mappings: Mappings,

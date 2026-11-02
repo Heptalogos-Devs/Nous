@@ -7,14 +7,13 @@ from uuid import uuid4
 from pydantic import JsonValue
 
 from ..operations import object_value
-from ..types import JsonObject, Subject
+from ..types import JsonObject
 
 
 class ScopedClient(Protocol):
     namespace_id: str | None
-    subject_id: str | None
+    
 
-    async def subject(self, subject_id: str) -> Subject: ...
 
 
 def operation_values(request: Mapping[str, JsonValue]) -> JsonObject:
@@ -44,11 +43,14 @@ def required_text(values: JsonObject, key: str) -> str:
     return value
 
 
-async def request_scope(client: ScopedClient, values: JsonObject) -> tuple[str, str]:
-    subject = values.pop("subject_id", None) or client.subject_id
-    namespace = values.pop("namespace_id", None) or client.namespace_id
-    if not isinstance(subject, str):
-        raise ValueError("operation requires subject_id")
-    if not isinstance(namespace, str):
-        namespace = (await client.subject(subject)).namespace_id
-    return namespace, subject
+def resolve_scope(client: ScopedClient, values: Mapping[str, JsonValue], *, default_namespace: str | None = None) -> str | None:
+    namespace = values.get('namespace_id', client.namespace_id) or default_namespace
+    if namespace is not None and (not isinstance(namespace,str) or not namespace.strip()):
+        raise ValueError('namespace_id must be nonempty text')
+    return namespace
+
+async def request_scope(client: ScopedClient, values: JsonObject) -> str:
+    namespace = resolve_scope(client, values)
+    values.pop('namespace_id',None)
+    if namespace is None: raise ValueError('Bind or supply a Namespace')
+    return namespace

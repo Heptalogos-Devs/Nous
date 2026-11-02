@@ -5,8 +5,10 @@ import binascii
 from dataclasses import dataclass
 
 from fastapi import Request
-from nous_sdk.contracts import CallContext, CognitiveRef, DomainError, MediaReference
-from nous_sdk.contracts.context import CognitiveTarget, ContextTarget, MediaTarget, WorkContext
+from nous_sdk.contracts import MediaReference
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
+from nous_sdk.contracts.context import CognitiveTarget, MediaTarget, WorkContext
 from nous_sdk.source_scope import (
     CognitionSource,
     MediaSource,
@@ -19,8 +21,8 @@ from pydantic import TypeAdapter, ValidationError
 from sqlalchemy import select
 
 from nous.application import Application
-from nous.context.models import contexts
-from nous.identity.service import require_subject_in
+from nous.context.models import works
+from nous.identity.access import require_namespace_in
 from nous.material.service import SourceRecord, observations, regions
 
 _SCOPES = TypeAdapter(tuple[SourceReadScope, ...])
@@ -66,7 +68,7 @@ def union_selectors(alternatives: list[list[set[str]]]) -> list[set[str]]:
 async def resolve_scope(
     request: Request,
     namespace_id: str,
-    subject_id: str | None,
+    
 ) -> ResolvedSourceScope:
     header = request.headers.get("x-nous-source-read")
     if header is None:
@@ -80,26 +82,21 @@ async def resolve_scope(
         raise DomainError("source_scope_invalid", "Invalid source-read metadata") from error
     if not scopes or len(scopes) > 32:
         raise DomainError("source_scope_invalid", "Source-read metadata requires 1 to 32 scopes")
-    selected_subject = subject_id or scopes[0].subject_id
-    if any(scope.subject_id != selected_subject for scope in scopes):
-        raise DomainError(
-            "source_scope_forbidden", "Source-read scope belongs to a different subject"
-        )
     app: Application = request.app.state.application
     unrestricted = CallContext(
         caller_id="instance-admin",
         namespace_id=namespace_id,
-        subject_id=selected_subject,
+        
         credential_source_ids=None,
     )
     clauses: list[set[str]] = []
     async with app.authority.read(unrestricted) as view:
-        await require_subject_in(view, unrestricted)
+        await require_namespace_in(view, unrestricted)
         source_rows = (
             await view.connection.execute(
                 select(observations.c.id, observations.c.active, observations.c.record).where(
                     observations.c.namespace_id == namespace_id,
-                    observations.c.subject_id == selected_subject,
+                    
                 )
             )
         ).all()
@@ -202,25 +199,11 @@ async def resolve_scope(
                 elif isinstance(ref, CognitionSource):
                     alternatives.append(await cognition_selector(ref))
                 elif isinstance(ref, WorkContextSource):
-                    value = await view.connection.scalar(
-                        select(contexts.c.record).where(
-                            contexts.c.id == ref.id,
-                            contexts.c.namespace_id == namespace_id,
-                            contexts.c.subject_id == selected_subject,
-                        )
-                    )
+                    value = await view.connection.scalar(select(works.c.record).where(
+                        works.c.id == ref.id, works.c.namespace_id == namespace_id, works.c.head.is_(True)))
                     if value is None:
-                        raise DomainError("context_not_found", "Selected context is unavailable")
-                    targets: tuple[ContextTarget, ...]
-                    if "work_context" in value:
-                        targets = WorkContext.model_validate(value["work_context"]).content.anchors
-                    else:
-                        targets = tuple(
-                            CognitiveTarget(reference=reference)
-                            for reference in TypeAdapter(tuple[CognitiveRef, ...]).validate_python(
-                                value["references"]
-                            )
-                        )
+                        raise DomainError("work_context_not_found", "Selected Work is unavailable")
+                    targets = WorkContext.model_validate(value).content.anchors
                     for target in targets:
                         if isinstance(target, CognitiveTarget):
                             alternatives.append(

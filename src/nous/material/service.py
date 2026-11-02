@@ -3,19 +3,20 @@
 from typing import NotRequired, TypedDict
 
 from nous_sdk.contracts import (
-    CallContext,
-    DomainError,
     MediaReference,
     SourceRegion,
 )
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
+from nous_sdk.contracts.common import ObservationKind
 from pydantic import JsonValue, TypeAdapter
-from sqlalchemy import JSON, Boolean, Column, Integer, String, Table, select
+from sqlalchemy import JSON, Boolean, Column, Integer, String, Table, UniqueConstraint, select
 
 from nous.platform.content import ContentStore
 from nous.platform.persistence import Authority, ReadView, WriteTx, metadata
 from nous.references import allocate_in
 
-from . import admission, writes
+from . import admission, observation, writes
 from .access import media_source_in
 from .provenance import provenance_in
 
@@ -23,7 +24,7 @@ materials = Table(
     "materials",
     metadata,
     Column("id", String, primary_key=True),
-    Column("namespace_id", String, nullable=False, index=True),
+    Column("namespace_id", String, primary_key=True, index=True),
     Column("content_hash", String, nullable=False, index=True),
     Column("record", JSON, nullable=False),
 )
@@ -31,19 +32,21 @@ observations = Table(
     "observations",
     metadata,
     Column("id", String, primary_key=True),
-    Column("namespace_id", String, nullable=False),
-    Column("subject_id", String, nullable=False, index=True),
+    Column("namespace_id", String, primary_key=True),
     Column("material_id", String, nullable=False, index=True),
     Column("kind", String, nullable=False),
+    Column("caller_id", String),
+    Column("external_event_id", String),
     Column("active", Boolean, nullable=False, default=True),
     Column("record", JSON, nullable=False),
     Column("commit_seq", Integer, nullable=False),
+    UniqueConstraint("namespace_id", "caller_id", "external_event_id"),
 )
 regions = Table(
     "source_regions",
     metadata,
     Column("id", String, primary_key=True),
-    Column("namespace_id", String, nullable=False),
+    Column("namespace_id", String, primary_key=True),
     Column("material_id", String, nullable=False, index=True),
     Column("record", JSON, nullable=False),
 )
@@ -71,22 +74,31 @@ class MaterialRecord(TypedDict):
 
 
 class SourceRecord(TypedDict):
+    trashed_at: NotRequired[str]
     id: str
     namespace_id: str
-    subject_id: str
+
     material_id: str
-    kind: str
+    kind: ObservationKind
     origin: dict[str, str]
     source_type: str
     source: NotRequired[str | None]
     event_time: dict[str, JsonValue] | None
     observed_at: dict[str, JsonValue]
+    validity: NotRequired[dict[str, JsonValue] | None]
     recorded_at: str
     commit_seq: int
     purged: NotRequired[bool]
     placement: NotRequired[dict[str, JsonValue]]
     previous_observation_id: NotRequired[str]
     retry_parent_job_id: NotRequired[str]
+    external_event_id: NotRequired[str]
+    caller_id: NotRequired[str]
+    contact_source: NotRequired[dict[str, JsonValue]]
+    participants: NotRequired[list[str]]
+    audience: NotRequired[list[str]]
+    related_cognition: NotRequired[list[dict[str, JsonValue]]]
+    statement: NotRequired[str]
 
 
 _MATERIAL = TypeAdapter(MaterialRecord)
@@ -114,7 +126,6 @@ async def require_observation_in(
                 select(observations).where(
                     observations.c.id == observation_id,
                     observations.c.namespace_id == ctx.namespace_id,
-                    observations.c.subject_id == ctx.subject_id,
                 )
             )
         )
@@ -159,6 +170,7 @@ async def require_observation_in(
 
 
 class MaterialService:
+    accepted_source_in = observation.accepted_source_in
     put_in = writes.put_in
     put_blob_in = writes.put_blob_in
     observe_in = writes.observe_in
@@ -171,7 +183,7 @@ class MaterialService:
 
     media_source_in = media_source_in
 
-    def __init__(self, authority: Authority, content_store: ContentStore | None = None) -> None:
+    def __init__(self, authority: Authority, content_store: ContentStore) -> None:
         self.authority = authority
         self.content_store = content_store
 
@@ -183,7 +195,6 @@ class MaterialService:
                 await tx.connection.execute(
                     select(observations.c.id).where(
                         observations.c.namespace_id == ctx.namespace_id,
-                        observations.c.subject_id == ctx.subject_id,
                         observations.c.material_id == region.material_id,
                         observations.c.active.is_(True),
                     )
@@ -199,7 +210,11 @@ class MaterialService:
                 "source_unavailable", "Creating a region requires access to its original material"
             )
         existing = (
-            await tx.connection.execute(select(regions.c.record).where(regions.c.id == region.id))
+            await tx.connection.execute(
+                select(regions.c.record).where(
+                    regions.c.namespace_id == ctx.namespace_id, regions.c.id == region.id
+                )
+            )
         ).scalar_one_or_none()
         if existing is not None:
             stored = SourceRegion.model_validate(existing)
@@ -223,6 +238,9 @@ class MaterialService:
                 record=region.model_dump(mode="json"),
             )
         )
+        from nous.retrieval.maintenance import enqueue_index_in
+
+        await enqueue_index_in(tx, ctx)
         return region
 
     async def read_region(self, ctx: CallContext, region_id: str) -> SourceRegion:
@@ -247,7 +265,6 @@ class MaterialService:
                 await view.connection.execute(
                     select(observations.c.id).where(
                         observations.c.namespace_id == ctx.namespace_id,
-                        observations.c.subject_id == ctx.subject_id,
                         observations.c.material_id == region.material_id,
                         observations.c.active.is_(True),
                     )
@@ -295,6 +312,29 @@ class MaterialService:
     async def read(self, ctx: CallContext, material_id: str) -> MaterialRecord:
         async with self.authority.read(ctx) as view:
             return await self.read_in(view, ctx, material_id)
+
+    async def text_in(
+        self, view: ReadView | WriteTx, ctx: CallContext, reference: MediaReference
+    ) -> str:
+        """Read exact retained original text under the source's current authorization."""
+        from asyncio import to_thread
+
+        from nous.platform.content import ContentObject
+
+        from .text import source_region_text
+
+        material, region, _ = await self.media_source_in(view, ctx, reference)
+        text = material.get("text")
+        if text is None:
+            if not (material["media_type"].startswith("text/") or "json" in material["media_type"]):
+                return ""
+            async with self.content_store.protect(
+                ContentObject(
+                    material["content_hash"], material["byte_len"], material["media_type"]
+                )
+            ) as path:
+                text = (await to_thread(path.read_bytes)).decode("utf-8-sig")
+        return source_region_text(text, region) if region is not None else text
 
     async def read_in(
         self, view: ReadView | WriteTx, ctx: CallContext, material_id: str

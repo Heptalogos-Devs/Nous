@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from nous_sdk.contracts import CallContext
+from nous.platform.call_context import CallContext
 from pydantic import JsonValue
 from sqlalchemy import select, update
 
@@ -75,30 +75,25 @@ async def purge_artifacts_in(self: SourceService, tx: WriteTx, ctx: CallContext)
             if not any([await lost_in(tx, ctx.namespace_id, locator) for locator in required]):
                 continue
             await tx.connection.execute(
-                update(materials)
-                .where(materials.c.id == material_id)
+                update(materials).where(materials.c.namespace_id == ctx.namespace_id, materials.c.id == material_id)
                 .values(record={**value, "text": None, "purged": True})
             )
             sources = (
                 await tx.connection.execute(
-                    select(observations.c.id, observations.c.record).where(
-                        observations.c.material_id == material_id
-                    )
+                    select(observations.c.id, observations.c.record).where(observations.c.namespace_id == ctx.namespace_id, observations.c.material_id == material_id)
                 )
             ).all()
             for observation_id, record in sources:
                 await tx.connection.execute(
-                    update(observations)
-                    .where(observations.c.id == observation_id)
+                    update(observations).where(observations.c.namespace_id == ctx.namespace_id, observations.c.id == observation_id)
                     .values(active=False, record={**record, "purged": True})
                 )
             await tx.connection.execute(
-                vectors.delete().where(vectors.c.reference == f"material:{material_id}")
+                vectors.delete().where(vectors.c.namespace_id == ctx.namespace_id, vectors.c.reference == f'material:{material_id}')
             )
             if self.content_store:
                 detached.extend(await self.content_store.detach_in(tx, str(material_id)))
-            if self.purge_in:
-                await self.purge_in(tx, (str(material_id),))
+            await self.lifecycle.purge_model_inputs_in(tx, (str(material_id),))
             changed = True
         if not changed:
             return detached

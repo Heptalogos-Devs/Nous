@@ -5,7 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from nous_sdk.contracts import CallContext, CognitiveRef, DomainError, MediaReference, SourceRegion
+from nous_sdk.contracts import MediaReference, SourceRegion
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
+from nous_sdk.contracts.identity import IdentityPurpose
 from pydantic import TypeAdapter
 from sqlalchemy import select
 
@@ -14,7 +17,6 @@ from nous.platform.persistence import ReadView, WriteTx
 from .coverage import merge_source_regions
 
 if TYPE_CHECKING:
-    from .derived import DerivedService
     from .service import MaterialService
 
 
@@ -32,24 +34,15 @@ async def provenance_in(
     ctx: CallContext,
     reference: MediaReference,
     *,
-    derivations: DerivedService | None = None,
+    purpose: IdentityPurpose = "active",
 ) -> MaterialProvenance:
     from nous_sdk.contracts.derivation import DerivedRegion
 
-    from nous.cognition.service import CognitionService
-
     from .derived_access import representation_ref
     from .derived_availability import dependency_availability_in
-    from .derived_schema import derived_regions
+    from .derived_schema import derived_regions, representations
     from .service import MaterialRecord, materials, observations, regions
     from .writes import require_observation_exists_in
-
-    if derivations is None:
-        from .derived import DerivedService
-
-        derivations = DerivedService(self.authority, self)
-    material, region, event = await self.media_source_in(view, ctx, reference)
-    cognition = CognitionService(self.authority, materials=self, derivations=derivations)
 
     async def facts(ref: MediaReference) -> tuple[MaterialRecord, SourceRegion | None, str]:
         selected = None
@@ -75,11 +68,13 @@ async def provenance_in(
         statement = select(observations.c.id).where(
             observations.c.material_id == identifier,
             observations.c.namespace_id == ctx.namespace_id,
-            observations.c.subject_id == ctx.require_subject(),
             observations.c.active.is_(True),
         )
         if ref.observation_id:
-            statement = statement.where(observations.c.id == ref.observation_id)
+            statement = statement.where(
+                observations.c.namespace_id == ctx.namespace_id,
+                observations.c.id == ref.observation_id,
+            )
         source_event = await view.connection.scalar(statement.order_by(observations.c.id).limit(1))
         if source_event is None:
             raise DomainError("source_unavailable", "A provenance source event is unavailable")
@@ -94,18 +89,30 @@ async def provenance_in(
                 raise DomainError(
                     "source_unavailable", "A declared derivation input is unavailable", state=state
                 )
+            from .access import require_dependencies_in
+
+            await require_dependencies_in(self, view, ctx, (ref.exact(),))
             if ref.kind == "derived_region":
                 raw = await view.connection.scalar(
                     select(derived_regions.c.record).where(
                         derived_regions.c.id == ref.id,
                         derived_regions.c.namespace_id == ctx.namespace_id,
-                        derived_regions.c.subject_id == ctx.require_subject(),
                     )
                 )
                 selected_region = DerivedRegion.model_validate(raw)
-                derived = await derivations.raw_in(view, ctx, selected_region.representation)
+                selected_ref = selected_region.representation
             else:
-                derived = await derivations.raw_in(view, ctx, representation_ref(ref))
+                selected_ref = representation_ref(ref)
+            from nous_sdk.contracts.derivation import DerivedRepresentation
+
+            raw = await view.connection.scalar(
+                select(representations.c.record).where(
+                    representations.c.namespace_id == ctx.namespace_id,
+                    representations.c.id == selected_ref.id,
+                    representations.c.revision == selected_ref.revision,
+                )
+            )
+            derived = DerivedRepresentation.model_validate(raw)
             return MaterialProvenance(
                 ref, derived.source_roots, derived.source_regions, derived.material_ids
             )
@@ -126,7 +133,6 @@ async def provenance_in(
                                 observations.c.id.in_(pins),
                                 observations.c.material_id == material_id,
                                 observations.c.namespace_id == ctx.namespace_id,
-                                observations.c.subject_id == ctx.subject_id,
                                 observations.c.active.is_(True),
                             )
                         )
@@ -167,30 +173,13 @@ async def provenance_in(
                 )
                 merge(await visit(media, seen | {material_id}, own_pins))
                 continue
-            if colon and "@" in identity:
-                object_id, revision = identity.rsplit("@", 1)
-                record = await cognition.get_in(
-                    view,
-                    ctx,
-                    TypeAdapter(CognitiveRef).validate_python(
-                        {"kind": kind, "id": object_id, "revision": int(revision)}
-                    ),
-                    check_visibility=False,
-                )
-                if record.purged:
-                    raise DomainError(
-                        "source_unavailable", "A declared cognitive dependency is erased"
-                    )
-                merge(MaterialProvenance(reference, record.source_roots, record.source_regions, ()))
-                continue
-            # Legacy bare dependency identities are material, region or actual Observation IDs.
+            # Bare identities identify a source material, region or Observation.
             pin = locator.removeprefix("observation:")
             source_row = (
                 await view.connection.execute(
                     select(observations.c.material_id).where(
                         observations.c.id == pin,
                         observations.c.namespace_id == ctx.namespace_id,
-                        observations.c.subject_id == ctx.subject_id,
                     )
                 )
             ).scalar_one_or_none()
@@ -215,7 +204,6 @@ async def provenance_in(
                 select(observations.c.material_id).where(
                     observations.c.id == pin,
                     observations.c.namespace_id == ctx.namespace_id,
-                    observations.c.subject_id == ctx.require_subject(),
                 )
             )
             if source_id is not None:
@@ -228,6 +216,9 @@ async def provenance_in(
             tuple(sorted(material_ids)),
         )
 
+    if reference.kind in {"representation", "derived_region"}:
+        return await visit(reference, frozenset())
+    material, region, event = await self.media_source_in(view, ctx, reference, purpose=purpose)
     if material.get("required_source_ids"):
         return await visit(reference.model_copy(update={"observation_id": event}), frozenset())
     return MaterialProvenance(

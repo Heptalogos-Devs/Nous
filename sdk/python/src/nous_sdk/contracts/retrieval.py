@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import Field, JsonValue
+from pydantic import Field, JsonValue, model_validator
 
 from .cognition import CognitiveKind, CognitiveRecord
 from .common import Contract, TimeRange
@@ -13,9 +13,17 @@ from .query_conditions import (
     QueryExpression,
     QueryFilters,
 )
+from .query_context import QueryContext
 from .query_readout import RerankInfo
 from .query_vcp import VcpIntent, VcpResult
+from .resources import ResourceRecord
+from .retrieval_policy import RetrievalPolicy
 from .source_graph import ExpandedSources
+from .source_objects import EvidenceRelationRecord, ObservationRecord
+
+QueryObject = (
+    CognitiveRecord | MediaRecord | ObservationRecord | EvidenceRelationRecord | ResourceRecord
+)
 
 
 class TimeFilter(Contract):
@@ -24,6 +32,13 @@ class TimeFilter(Contract):
 
 
 class QueryRequest(Contract):
+    context: QueryContext | str | None = None
+    background: str = Field(default="", max_length=8192)
+    references: tuple[str, ...] = Field(default=(), max_length=64)
+    wave_profile: str | None = None
+    capability_policy: Literal["strict", "best_effort"] | None = None
+    reranker: Literal["compute", "cross_encoder", "llm", "off"] | None = None
+    profile: RetrievalPolicy | None = None
     vcp: VcpIntent = Field(default_factory=VcpIntent)
     text: str = ""
     expression: QueryExpression | None = None
@@ -32,11 +47,21 @@ class QueryRequest(Contract):
     capabilities: QueryCapabilities = Field(default_factory=QueryCapabilities)
     current: Literal["none", "prefer", "required"] = "none"
     rerank: Literal["off", "optional", "required"] = "off"
-    rerank_invocation_id: str | None = None
     materialize: bool = False
     mode: Literal["lexical", "dense", "hybrid", "vcp"] = "lexical"
     kinds: tuple[CognitiveKind, ...] = ()
-    domains: tuple[Literal["cognition", "media"], ...] = ("cognition",)
+    domains: tuple[Literal["cognition", "media", "observation", "evidence", "resource"], ...] = (
+        "cognition",
+        "media",
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def typed_query_domain(cls, value):
+        if isinstance(value, dict) and value.get("kinds") and "domains" not in value:
+            return {**value, "domains": ("cognition",)}
+        return value
+
     media: tuple[MediaReference, ...] = ()
     parts: tuple[str | MediaReference, ...] = ()
     limit: int = Field(default=10, ge=1, le=1000)
@@ -52,7 +77,7 @@ class QueryRequest(Contract):
 
 
 class QueryHit(Contract):
-    object: CognitiveRecord | MediaRecord
+    object: QueryObject
     score: float
     source_roots: tuple[str, ...]
     rerank_score: float | None = None
@@ -67,6 +92,17 @@ class QueryCoverage(Contract):
 
 
 class QueryResult(Contract):
+    result_refs: tuple[str, ...] = ()
+
+    @property
+    def text(self) -> str:
+        return self.view().text
+
+    def view(self):
+        from nous_sdk.presentation import present_query
+
+        return present_query(self)
+
     vcp: VcpResult | None = None
     hits: tuple[QueryHit, ...]
     coverage: QueryCoverage

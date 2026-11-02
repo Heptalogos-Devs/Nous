@@ -1,72 +1,64 @@
-"""Commit actual media contacts and paid derivations before cognitive adoption."""
+"""Commit model-derived media representations before cognitive adoption."""
 
-from typing import TYPE_CHECKING, Literal
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 from nous_sdk.contracts import (
-    AdoptCognition,
     AdoptMedia,
     BlobDocument,
-    CallContext,
-    CognitiveTimes,
-    DomainError,
-    EpistemicStance,
+    CognitiveRecord,
     EvidenceLink,
-    FormationDraft,
-    FormationProposal,
     MediaReference,
-    MemoryBody,
     TimePoint,
 )
-from nous_sdk.contracts.cognition import ProposedMemory
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.derivation import (
     CreateRepresentation,
     DerivationInput,
     DerivedRepresentation,
-    StructuredRepresentation,
+    RepresentationRef,
     TextRepresentation,
 )
-from pydantic import JsonValue, TypeAdapter
-
-from nous.cognition.formation_validation import validate_formation_draft
-from nous.material.service import MaterialRecord, SourceRecord, require_observation_in
+from nous.material.observation import cognitive_times
+from nous.material.service import MaterialRecord, SourceRecord
 from nous.platform.content import ContentObject
 from nous.platform.persistence import ReadView, WriteTx
 
 from .media_input import selected_input
-from .model_contracts import Description
-from .model_generation import interpret
+from nous.cognition.formation_models import describe, extract_graph, form_notes, resolve_graph
 
 if TYPE_CHECKING:
     from .media import MediaImportService
 
 
-async def authorize_result(
+async def accepted_media_in(
     self: MediaImportService,
     view: ReadView | WriteTx,
     ctx: CallContext,
     command: AdoptMedia,
-    value: object,
-) -> dict[str, object]:
-    result = TypeAdapter(dict[str, object]).validate_python(value)
-    if command.observation_id is None and ctx.source_groups():
-        ctx = (
-            await self.materials.restore_input_in(
-                view,
-                ctx,
-                (command.material_id,),
-                operation_id=command.operation_id + ":contact",
-                operation_kind="media.contact",
-                scope=ctx.require_subject(),
-            )
-        ).context
-    observation_id = TypeAdapter(str).validate_python(result["observation_id"])
-    references = tuple(
-        MediaReference(kind="source_region", id=region.id, observation_id=observation_id)
-        for region in command.regions
-    ) or (MediaReference(kind="material", id=command.material_id, observation_id=observation_id),)
+    observation_id: str,
+) -> SourceRecord:
+    references = (
+        (command.source,)
+        if command.source is not None
+        else tuple(
+            MediaReference(kind="source_region", id=region.id, observation_id=observation_id)
+            for region in command.regions
+        )
+        or (MediaReference(kind="material", id=command.material_id, observation_id=observation_id),)
+    )
+    event: SourceRecord | None = None
     for reference in references:
-        await self.materials.media_source_in(view, ctx, reference)
-    return result
+        selected = await self.materials.accepted_source_in(view, ctx, observation_id, reference)
+        if selected.material["id"] != command.material_id:
+            raise DomainError(
+                "observation_material_conflict", "Observation belongs to a different original"
+            )
+        event = selected.event
+    assert event is not None
+    return event
 
 
 async def observe(
@@ -81,36 +73,7 @@ async def observe(
         if material["event_time"]
         else None,
     )
-    async with self.authority.write(
-        ctx,
-        command.operation_id + ":contact",
-        operation_kind="media.contact",
-        scope=ctx.require_subject(),
-        payload=command,
-    ) as tx:
-        if tx.replayed:
-            value = TypeAdapter(SourceRecord).validate_python(tx.replay_result)
-            effective = (
-                (
-                    await self.materials.restore_input_in(
-                        tx,
-                        ctx,
-                        (command.material_id,),
-                        operation_id=command.operation_id + ":contact",
-                        operation_kind="media.contact",
-                        scope=ctx.require_subject(),
-                    )
-                ).context
-                if command.observation_id is None and ctx.source_groups()
-                else ctx
-            )
-            await require_observation_in(
-                tx,
-                effective,
-                value["id"],
-                region_id=command.regions[0].id if command.regions else None,
-            )
-            return value, effective
+    async with self.authority.write(ctx) as tx:
         if command.observation_id is None:
             sources = tuple(
                 MediaReference(kind="source_region", id=region.id) for region in command.regions
@@ -120,38 +83,61 @@ async def observe(
             )
             value, effective = admission.event, admission.context
         else:
-            existing = await require_observation_in(
-                tx,
-                ctx,
-                command.observation_id,
-                region_id=command.regions[0].id if command.regions else None,
-            )
-            if existing["material_id"] != command.material_id:
-                raise DomainError(
-                    "observation_material_conflict", "Observation belongs to a different original"
-                )
-            for region in command.regions[1:]:
-                await require_observation_in(tx, ctx, command.observation_id, region_id=region.id)
-            value = TypeAdapter(SourceRecord).validate_python(existing["record"])
+            value = await accepted_media_in(self, tx, ctx, command, command.observation_id)
             effective = ctx
-        tx.result(value)
         return value, effective
+
+
+def description_kind(media_type: str) -> str:
+    return (
+        "image_description"
+        if media_type.startswith("image/")
+        else "audio_description"
+        if media_type.startswith("audio/")
+        else "scene_description"
+        if media_type.startswith("video/")
+        else "resource_synopsis"
+    )
+
+
+async def cached_description(
+    self: MediaImportService,
+    ctx: CallContext,
+    inputs: tuple[DerivationInput, ...],
+    kind: str,
+) -> DerivedRepresentation | None:
+    identities = tuple(item.source.exact() for item in inputs)
+    async with self.authority.read(ctx) as view:
+        material_ids: set[str] = set()
+        for item in inputs:
+            info = await self.derivations.source_in(view, ctx, item.source)
+            material_ids.update(info.material_ids)
+        for material_id in sorted(material_ids):
+            for representation in await self.derivations.for_material_in(view, ctx, material_id):
+                if (
+                    representation.kind == kind
+                    and isinstance(representation.payload, TextRepresentation)
+                    and tuple(item.source.exact() for item in representation.inputs) == identities
+                ):
+                    return representation
+    return None
 
 
 async def adopt(
     self: MediaImportService, ctx: CallContext, command: AdoptMedia
 ) -> dict[str, object]:
-    completed = await self.authority.receipt(
-        ctx,
-        command.operation_id,
-        operation_kind="media.adopt",
-        scope=ctx.require_subject(),
-        payload=command,
-    )
-    if completed is not None:
+    if command.source is not None:
+        assert command.observation_id is not None
         async with self.authority.read(ctx) as view:
-            return await authorize_result(self, view, ctx, command, completed.result)
-    if command.regions:
+            selected = await self.materials.accepted_source_in(
+                view, ctx, command.observation_id, command.source
+            )
+            material = selected.material
+        if material["id"] != command.material_id:
+            raise DomainError(
+                "observation_material_conflict", "Selected source belongs to a different original"
+            )
+    elif command.regions:
         if any(region.material_id != command.material_id for region in command.regions):
             raise DomainError(
                 "region_material_conflict", "Every region must belong to the selected original"
@@ -162,15 +148,8 @@ async def adopt(
             except DomainError as error:
                 if error.code != "region_not_found":
                     raise
-                async with self.authority.write(
-                    ctx,
-                    f"{command.operation_id}:region:{region.id}",
-                    operation_kind="material.region",
-                    scope=ctx.require_subject(),
-                    payload=region,
-                ) as tx:
-                    if not tx.replayed:
-                        tx.result(await self.materials.register_region_in(tx, ctx, region))
+                async with self.authority.write(ctx) as tx:
+                    await self.materials.register_region_in(tx, ctx, region)
             else:
                 if saved.model_dump(exclude={"addresses"}) != region.model_dump(
                     exclude={"addresses"}
@@ -183,21 +162,30 @@ async def adopt(
         material = await self.materials.read(ctx, command.material_id)
     observation, ctx = await observe(self, ctx, command, material)
     observation_id = observation["id"]
-    references = tuple(
-        MediaReference(kind="source_region", id=region.id, observation_id=observation_id)
-        for region in command.regions
-    ) or (MediaReference(kind="material", id=command.material_id, observation_id=observation_id),)
+    contact_source = observation.get("contact_source")
+    references = (
+        (MediaReference.model_validate(contact_source),)
+        if contact_source is not None
+        else (command.source,)
+        if command.source is not None
+        else tuple(
+            MediaReference(kind="source_region", id=region.id, observation_id=observation_id)
+            for region in command.regions
+        )
+        or (MediaReference(kind="material", id=command.material_id, observation_id=observation_id),)
+    )
     source_inputs = tuple(
         DerivationInput(ordinal=index, source=reference)
         for index, reference in enumerate(references)
     )
+    source_ids = tuple(reference.exact() for reference in references)
     prepared_media = await self.media.freeze()
-    if command.regions:
+    if command.source is not None:
+        media = (await self.generation_input(ctx, references[0], media=prepared_media),)
+    elif command.regions:
         media = tuple(
-            [
-                await self.region_input(ctx, region.id, media=prepared_media)
-                for region in command.regions
-            ]
+            await self.region_input(ctx, region.id, media=prepared_media)
+            for region in command.regions
         )
     else:
         obj = ContentObject(material["content_hash"], material["byte_len"], material["media_type"])
@@ -206,188 +194,167 @@ async def adopt(
                 self.content, prepared_media, obj, command.material_id, inline_text=material["text"]
             ),
         )
-    description_record: DerivedRepresentation | None = None
-    description: Description | None = None
 
-    async def save_description(value: Description) -> None:
-        nonlocal description_record, description
-        async with self.authority.read(ctx) as view:
-            producer = await self.derivations.producer_for_call_in(
-                view, ctx, value.producer_call_id
-            )
-        description_record = await self.derivations.adopt(
-            ctx,
-            CreateRepresentation(
-                operation_id=command.operation_id + ":description",
-                inputs=source_inputs,
-                kind="image_description"
-                if material["media_type"].startswith("image/")
-                else "audio_description"
-                if material["media_type"].startswith("audio/")
-                else "scene_description"
-                if material["media_type"].startswith("video/")
-                else "resource_synopsis",
-                payload=TextRepresentation(text=value.description),
-                producer=producer,
-            ),
-        )
-        description = value
-
-    strategies: dict[
-        str, Literal["description_only", "direct_structured", "describe_then_structure"]
-    ] = {
-        "native": "direct_structured",
-        "description": "description_only",
-        "description_then_native": "describe_then_structure",
+    descriptions: list[DerivedRepresentation] = []
+    description_text: str | None = None
+    needs_description = command.media_strategy in {
+        "description_only",
+        "describe_then_structure",
     }
-    source: dict[str, object] = {
-        "material_id": command.material_id,
-        "filename": material["filename"],
-        "observation_id": observation_id,
-        "source_material_ids": [command.material_id],
-        "regions": [region.model_dump(mode="json") for region in command.regions],
-    }
-    for attempt in range(2):
-        result = await interpret(
-            self.models,
-            ctx,
-            command.instruction,
-            source,
-            media,
-            strategies[command.strategy],
-            description_adopter=save_description,
-            cached_description=description,
-        )
-        if isinstance(result, Description):
-            proposal = FormationProposal(
-                memories=(ProposedMemory(text=result.description),),
-                producer_call_id=result.producer_call_id,
+    if needs_description:
+        kind = description_kind(media[0].media_type)
+        description_record = await cached_description(self, ctx, source_inputs, kind)
+        if description_record is None:
+            description_result = await describe(
+                self.models,
+                ctx,
+                material["text"] or "",
+                background=command.background,
+                source_ids=source_ids,
+                media=media,
             )
-            break
-        try:
-            validate_formation_draft(result)
-        except DomainError as error:
-            if attempt or error.code not in {
-                "formation_key_unknown",
-                "formation_key_conflict",
-                "formation_target_unknown",
-                "formation_cycle",
-            }:
-                raise
-            source = {
-                **source,
-                "formation_correction": {
-                    "code": error.code,
-                    "message": str(error),
-                    **error.details,
-                    "previous_call_id": result.producer_call_id,
-                    "previous_proposal": result.model_dump(mode="json"),
-                },
-            }
-        else:
-            proposal = result
-            break
-    else:
-        raise RuntimeError("Media formation exhausted its explicit correction attempts")
-    async with self.authority.write(
-        ctx,
-        command.operation_id,
-        operation_kind="media.adopt",
-        scope=ctx.require_subject(),
-        payload=command,
-    ) as tx:
-        if tx.replayed:
-            return await authorize_result(self, tx, ctx, command, tx.replay_result)
-        for reference in references:
-            await self.materials.media_source_in(tx, ctx, reference)
-        representation = description_record
-        if not isinstance(result, Description):
-            if proposal.producer_call_id is None:
-                raise DomainError(
-                    "producer_required", "Media interpretation requires its actual model call"
-                )
-            producer = await self.derivations.producer_for_call_in(
-                tx, ctx, proposal.producer_call_id
-            )
-            inputs = source_inputs
-            if description_record is not None:
-                inputs = (
-                    *inputs,
-                    DerivationInput(
-                        ordinal=len(inputs),
-                        source=description_record.reference.media(),
-                        role="description",
-                    ),
-                )
-            representation = await self.derivations.adopt_in(
-                tx,
+            description_text = description_result.output
+            description_record = await self.derivations.adopt(
                 ctx,
                 CreateRepresentation(
-                    operation_id=command.operation_id + ":structure",
-                    inputs=inputs,
-                    kind="structured_interpretation",
-                    strategy=strategies[command.strategy],
-                    payload=StructuredRepresentation(
-                        schema_id="nous.formation-draft.v1",
-                        value=TypeAdapter(dict[str, JsonValue]).validate_python(
-                            proposal.model_dump(
-                                mode="json", include=set(FormationDraft.model_fields)
-                            )
-                        ),
-                    ),
-                    producer=producer,
+                    operation_id=command.operation_id + ":description",
+                    inputs=source_inputs,
+                    kind=kind,
+                    strategy="description_only",
+                    payload=TextRepresentation(text=description_result.output),
+                    producer=description_result.producer,
                 ),
             )
-        evidence = tuple(
-            EvidenceLink(observation_id=observation_id, region_id=region.id)
-            for region in command.regions
-        ) or (EvidenceLink(observation_id=observation_id),)
-        times = CognitiveTimes(
-            formation=ctx.clock,
-            observation=TimePoint.model_validate(observation["observed_at"]),
-            recorded=ctx.clock,
-            event=proposal.event or document_event(material),
-            validity=proposal.validity,
-        )
-        if not proposal.memories:
-            raise DomainError(
-                "media_empty_formation", "Media interpretation returned no description"
-            )
-        anchor = await self.cognition.adopt_in(
-            tx,
-            ctx,
-            AdoptCognition(
-                body=MemoryBody(
-                    media=(representation.reference.media(),) if representation else (),
-                    text="\n\n".join(item.text for item in proposal.memories),
-                    tags=tuple(
-                        dict.fromkeys(tag for item in proposal.memories for tag in item.tags)
-                    ),
-                    epistemic=EpistemicStance(
-                        classification="derived", attribution=material["filename"]
-                    ),
-                ),
-                evidence=evidence,
-                times=times,
-                producer_call_id=proposal.producer_call_id,
+        else:
+            if not isinstance(description_record.payload, TextRepresentation):
+                raise DomainError("description_result_invalid", "Saved description has no readable text")
+            description_text = description_record.payload.text
+        descriptions.append(description_record)
+
+    if command.media_strategy == "description_only":
+        return {
+            "observation_id": observation_id,
+            "cognition": [],
+            "representations": [item.reference.model_dump(mode="json") for item in descriptions],
+            "description": description_text,
+        }
+
+    semantic_text = (
+        description_text
+        if command.media_strategy == "describe_then_structure"
+        else material["text"]
+    ) or ""
+    semantic_inputs = source_inputs
+    if command.media_strategy == "describe_then_structure":
+        assert descriptions
+        semantic_inputs = (
+            *source_inputs,
+            DerivationInput(
+                ordinal=len(source_inputs),
+                source=descriptions[0].reference.media(),
+                role="description",
             ),
         )
-        semantic = await self.cognition.adopt_semantic_proposal_in(tx, ctx, anchor, proposal, times)
-        return tx.result(
-            {
-                "observation_id": observation_id,
-                "cognition": [record.model_dump(mode="json") for record in (anchor, *semantic)],
-                "representation": representation.model_dump(mode="json")
-                if representation
-                else None,
-                "description_reference": description_record.reference.media().model_dump(
-                    mode="json"
-                )
-                if description_record
-                else None,
-                "producer_call_id": proposal.producer_call_id,
-            }
+    notes_result = None
+    graph_result = None
+    graph_plan = None
+    graph_resolution = None
+    if command.formation_purpose in {"memory", "memory_and_graph"}:
+        notes_result = await form_notes(
+            self.models,
+            ctx,
+            semantic_text,
+            configuration=self.configuration,
+            background=command.background,
+            source_ids=source_ids,
+            media=media,
         )
+    if command.formation_purpose in {"graph", "memory_and_graph"}:
+        graph_result = await extract_graph(
+            self.models,
+            ctx,
+            semantic_text,
+            configuration=self.configuration,
+            background=command.background,
+            source_ids=source_ids,
+            media=media,
+        )
+        async with self.authority.read(ctx) as view:
+            catalog = await self.formation.formation_catalog_in(view, ctx, semantic_text)
+        graph_plan = self.formation.graph_resolution_plan(
+            graph_result.output, semantic_text, catalog
+        )
+        if graph_plan.request is not None:
+            graph_resolution = await resolve_graph(
+                self.models, ctx, graph_plan.request, source_ids=source_ids
+            )
+
+    evidence = tuple(
+        dict.fromkeys(
+            EvidenceLink(
+                observation_id=observation_id,
+                region_id=reference.id if reference.kind == "source_region" else None,
+            )
+            for reference in references
+        )
+    )
+    if not evidence:
+        evidence = (EvidenceLink(observation_id=observation_id),)
+    async with self.authority.write(ctx) as tx:
+        await accepted_media_in(self, tx, ctx, command, observation_id)
+        for reference in references:
+            if reference.kind in {"representation", "derived_region"}:
+                await self.derivations.source_in(tx, ctx, reference)
+            else:
+                await self.materials.media_source_in(tx, ctx, reference)
+        from nous_sdk.contracts.common import utc_now
+
+        times = cognitive_times(
+            observation,
+            utc_now(),
+            inferred_event=document_event(material),
+        )
+        records: list[CognitiveRecord] = []
+        representations: list[RepresentationRef] = [
+            item.reference for item in descriptions
+        ]
+        if notes_result is not None:
+            adopted, representation = await self.formation.adopt_notes_result_in(
+                tx,
+                ctx,
+                notes_result,
+                observation_id=observation_id,
+                region_id=references[0].id if references[0].kind == "source_region" else None,
+                times=times,
+                inputs=semantic_inputs,
+                evidence=evidence,
+                media=references,
+                strategy=command.media_strategy,
+            )
+            records.extend(adopted)
+            representations.append(representation)
+        if graph_result is not None and graph_plan is not None:
+            adopted, graph_representations = await self.formation.adopt_graph_result_in(
+                tx,
+                ctx,
+                graph_result,
+                resolution=graph_resolution,
+                plan=graph_plan,
+                observation_id=observation_id,
+                times=times,
+                inputs=semantic_inputs,
+                evidence=evidence,
+                media=references,
+                strategy=command.media_strategy,
+            )
+            records.extend(adopted)
+            representations.extend(graph_representations)
+        return {
+            "observation_id": observation_id,
+            "cognition": [record.model_dump(mode="json") for record in records],
+            "representations": [item.model_dump(mode="json") for item in representations],
+            "description": description_text,
+        }
 
 
 def document_event(material: MaterialRecord) -> TimePoint | None:
