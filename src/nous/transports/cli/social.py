@@ -6,7 +6,6 @@ import typer
 from nous_sdk.contracts.motivation import AssessMotivation, MotivationAssessmentsQuery
 from nous_sdk.contracts.social import (
     IdentityHypothesis,
-    RecoverSymbolResult,
     SymbolSelection,
     UnlinkIdentity,
 )
@@ -17,11 +16,6 @@ from .common import invoke, read_command
 def register(cli: typer.Typer) -> None:
     group = typer.Typer(help="Read scoped social meanings and manage account correspondence.")
     cli.add_typer(group, name="social")
-
-    @group.command("recover")
-    def recover(ctx: typer.Context, namespace_id: str, request: Path) -> None:
-        command = read_command(request, RecoverSymbolResult)
-        invoke(ctx, lambda api: api.recover_symbol_result(namespace_id, command))
 
     @cli.command("motivation-history")
     def motivation_history(ctx: typer.Context, namespace_id: str, request: Path) -> None:

@@ -40,7 +40,6 @@ class Material(Contract):
     media_info: MediaInfo | None = None
     required_source_ids: tuple[str, ...] = ()
     required_observation_ids: tuple[str, ...] = ()
-    dependency_purpose: Literal["active", "history"] = "active"
     addresses: ReferenceAddresses | None = None
     purged: bool = False
 

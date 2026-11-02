@@ -4,7 +4,7 @@ from typing import Literal
 
 from pydantic import Field, JsonValue
 
-from .cognition import CognitiveRecord, CognitiveRef
+from .cognition import CognitiveRecord, CognitiveRef, EvidenceLink
 from .common import Contract, Operation
 
 
@@ -23,10 +23,9 @@ class GraphChange(Operation):
     subject: str | None = None
     predicate: str | None = None
     object: str | None = None
-    relation_hash: str | None = None
     weight: float | None = Field(default=None, ge=0, le=1)
     confidence: float | None = Field(default=None, ge=0, le=1)
-    source_paragraph: str | None = None
+    evidence: tuple[EvidenceLink, ...] = ()
     metadata: dict[str, JsonValue] = Field(default_factory=dict)
     reported_by: str | None = None
     reason: str = Field(default="Manual graph management", min_length=1, max_length=4096)
@@ -34,7 +33,6 @@ class GraphChange(Operation):
 
 class GraphSnapshot(Contract):
     records: tuple[CognitiveRecord, ...]
-    paragraphs: tuple[CognitiveRecord, ...]
     watermark: int
 
 

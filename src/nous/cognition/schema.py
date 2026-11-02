@@ -10,7 +10,7 @@ revisions = Table(
     metadata,
     Column("id", String, primary_key=True),
     Column("revision", Integer, primary_key=True),
-    Column("namespace_id", String, nullable=False, index=True),
+    Column("namespace_id", String, primary_key=True, index=True),
     Column("kind", String, nullable=False, index=True),
     Column("head", Boolean, nullable=False),
     Column("record", JSON, nullable=False),
@@ -33,11 +33,12 @@ Index(
 vectors = Table(
     "cognitive_vectors",
     metadata,
+    Column("namespace_id", String, primary_key=True),
     Column("reference", String, primary_key=True),
     Column("space", String, primary_key=True),
     Column("model", String, nullable=False),
     Column("dimensions", Integer, nullable=False),
     Column("vector", JSON, nullable=False),
-    Column("call_id", String),
+    Column("producer", JSON, nullable=False),
     Column("commit_seq", Integer, nullable=False),
 )

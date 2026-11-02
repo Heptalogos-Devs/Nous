@@ -1,9 +1,0 @@
-These generated protocol bindings originate from A-Dawn/A_memorix,
-commit 28db65dd96f546f736d65c043a39254cbae2c4e9.
-
-Source: https://github.com/A-Dawn/A_memorix/tree/28db65dd96f546f736d65c043a39254cbae2c4e9/proto/a_memorix/api/v1
-
-The upstream AGPL-3.0 license is preserved in the Nous package at
-resources/licenses/A-Memorix-AGPL-3.0.txt. Python import/module locations
-have been changed to the Nous package; protobuf package names, service
-paths, field numbers and message descriptors retain the upstream wire contract.

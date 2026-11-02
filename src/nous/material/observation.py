@@ -19,7 +19,6 @@ from sqlalchemy import select
 from nous.platform.persistence import ReadView, WriteTx
 
 if TYPE_CHECKING:
-    from .derived import DerivedService
     from .service import MaterialRecord, MaterialService, SourceRecord
 
 
@@ -59,10 +58,7 @@ async def accepted_source_in(
     ctx: CallContext,
     observation_id: str,
     source: MediaReference | None = None,
-    *,
-    derivations: DerivedService | None = None,
 ) -> AcceptedSource:
-    from .derived import DerivedService
     from .service import (
         MaterialRecord,
         SourceRecord,
@@ -75,7 +71,6 @@ async def accepted_source_in(
         select(observations.c.record).where(
             observations.c.id == observation_id,
             observations.c.namespace_id == ctx.namespace_id,
-            
             observations.c.active.is_(True),
         )
     )
@@ -105,8 +100,7 @@ async def accepted_source_in(
         source = contact
     region_id = source.id if source.kind == "source_region" else None
     if source.kind in {"representation", "derived_region"}:
-        derivations = derivations or DerivedService(self.authority, self)
-        info = await derivations.source_in(view, ctx, source)
+        info = await self.provenance_in(view, ctx, source)
         if event["material_id"] not in info.material_ids or (
             contact is None
             and observation_id not in info.roots

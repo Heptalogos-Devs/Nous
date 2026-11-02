@@ -9,11 +9,10 @@ from typing_extensions import TypeForm
 
 if TYPE_CHECKING:
     from nous.platform.models.embedding_profile import (
-        EmbeddingEvidence,
         EmbeddingProfile,
         EmbeddingSpaceEvidence,
     )
-    from nous.platform.models.generation import Generated, MediaInput
+    from nous.platform.models.generation import MediaInput, ModelResult
     from nous.platform.persistence import ReadView, WriteTx
 from nous_sdk.contracts import CallContext, EmbeddingBatch, MediaEmbeddingInput
 from nous_sdk.contracts.model_roles import ModelCachePolicy
@@ -24,17 +23,6 @@ class ModelServices(Protocol):
         self, view: ReadView | WriteTx, ctx: CallContext, profile: EmbeddingProfile
     ) -> tuple[EmbeddingSpaceEvidence, ...]: ...
 
-    async def find_embedding_in(
-        self,
-        view: ReadView | WriteTx,
-        ctx: CallContext,
-        profile: EmbeddingProfile,
-        *,
-        text: str | None,
-        media: MediaEmbeddingInput | None,
-        source_ids: tuple[str, ...],
-    ) -> EmbeddingEvidence | None: ...
-
     async def generate[T](
         self,
         ctx: CallContext,
@@ -43,12 +31,12 @@ class ModelServices(Protocol):
         output_type: TypeForm[T],
         *,
         source_ids: tuple[str, ...] = (),
-        invocation_id: str | None = None,
-        cache_policy: ModelCachePolicy = "shared",
+        cache_policy: ModelCachePolicy = "none",
+        allow_fallback: bool = False,
         media: tuple[MediaInput, ...] = (),
         context_messages: tuple[PromptMessage, ...] = (),
         max_output_tokens: int | None = None,
-    ) -> Generated[T]: ...
+    ) -> ModelResult[T]: ...
 
     async def embed(
         self,
@@ -56,28 +44,12 @@ class ModelServices(Protocol):
         texts: tuple[str, ...],
         *,
         source_ids: tuple[str, ...] = (),
-        invocation_id: str | None = None,
         profile: EmbeddingProfile | None = None,
-        retry_authorization: str | None = None,
-    ) -> EmbeddingBatch: ...
+        cache_policy: ModelCachePolicy | None = None,
+        allow_fallback: bool = False,
+    ) -> ModelResult[EmbeddingBatch]: ...
 
     async def prepare_embedding(self, ctx: CallContext) -> EmbeddingProfile: ...
-
-    async def successful_embedding_in(
-        self, view: ReadView | WriteTx, ctx: CallContext, call_id: str
-    ) -> EmbeddingBatch: ...
-
-    async def reusable_embedding_in(
-        self,
-        view: ReadView | WriteTx,
-        ctx: CallContext,
-        call_id: str,
-        profile: EmbeddingProfile,
-        *,
-        text: str | None,
-        media: MediaEmbeddingInput | None,
-        source_ids: tuple[str, ...],
-    ) -> EmbeddingEvidence | None: ...
 
     async def embed_media(
         self,
@@ -85,7 +57,7 @@ class ModelServices(Protocol):
         inputs: tuple[tuple[str | MediaEmbeddingInput, ...], ...],
         *,
         source_ids: tuple[str, ...] = (),
-        invocation_id: str | None = None,
         profile: EmbeddingProfile | None = None,
-        retry_authorization: str | None = None,
-    ) -> EmbeddingBatch: ...
+        cache_policy: ModelCachePolicy | None = None,
+        allow_fallback: bool = False,
+    ) -> ModelResult[EmbeddingBatch]: ...

@@ -15,8 +15,8 @@ class RoleDefinition:
     variant: str
     input_type: type[BaseModel]
     output_type: TypeForm[object]
+    template_id: str
     default: bool = False
-    invocation_purpose: str | None = None
 
     def variables(self, variables: dict[str, object]) -> tuple[BaseModel, dict[str, object]]:
         parsed = self.input_type.model_validate(variables)

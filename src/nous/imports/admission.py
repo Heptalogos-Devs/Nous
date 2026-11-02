@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 from hashlib import sha256
 from typing import TYPE_CHECKING
-from uuid import uuid4
 
 from nous_sdk.contracts import (
     AdmitFiles,
@@ -16,7 +15,6 @@ from nous_sdk.contracts import (
     ProcessCatalog,
     UnitOutput,
 )
-from pydantic import JsonValue, TypeAdapter
 from sqlalchemy import delete, select, update
 
 from nous.cognition.schema import revisions, vectors
@@ -111,7 +109,7 @@ async def eligible_file_in(
         output = UnitOutput.model_validate(value)
         if deferred_formation and output.formation is None:
             return None
-        if not deferred_formation and llm_enabled and (output.producer_call_id is None):
+        if not deferred_formation and llm_enabled and not output.representations:
             original_unit = await view.connection.scalar(
                 select(units.c.record).where(units.c.id == output.unit_id)
             )
@@ -124,7 +122,9 @@ async def eligible_file_in(
                 current = (
                     await view.connection.execute(
                         select(revisions.c.record).where(
-                            revisions.c.id == reference.id, revisions.c.head.is_(True)
+                            revisions.c.namespace_id == ctx.namespace_id,
+                            revisions.c.id == reference.id,
+                            revisions.c.head.is_(True),
                         )
                     )
                 ).scalar_one()
@@ -135,7 +135,10 @@ async def eligible_file_in(
                     and (
                         await view.connection.execute(
                             select(vectors.c.reference)
-                            .where(vectors.c.reference == reference.exact())
+                            .where(
+                                vectors.c.namespace_id == ctx.namespace_id,
+                                vectors.c.reference == reference.exact(),
+                            )
                             .limit(1)
                         )
                     ).first()
@@ -156,13 +159,14 @@ async def accept_admit(
     attempt_job_id: str | None = None,
     parent_request_id: str | None = None,
 ):
-    operation_id = command.operation_id if enqueue else f"{command.operation_id}:accept"
-    operation_kind = "imports.files.submit" if enqueue else "imports.files.accept"
-    receipt = await self.authority.receipt(
-        ctx, operation_id, operation_kind=operation_kind, scope=ctx.namespace_id, payload=command
+    request_id = (
+        "files:"
+        + sha256(f"{ctx.caller_id}:{ctx.namespace_id}:{command.operation_id}".encode()).hexdigest()
     )
-    if receipt is not None:
-        return TypeAdapter(dict[str, JsonValue]).validate_python(receipt.result)
+    submitted_digest = sha256(
+        json.dumps(command.model_dump(mode="json"), sort_keys=True).encode()
+    ).hexdigest()
+    operation_id = command.operation_id if enqueue else f"{command.operation_id}:accept"
     prepared = [await self.prepare_document(ctx, document) for document in command.inputs]
     from .document_extraction import chunks_for
 
@@ -177,15 +181,24 @@ async def accept_admit(
                 if self.content_store and item.material is None
                 else None
             )
-        async with self.authority.write(
-            ctx,
-            operation_id,
-            operation_kind=operation_kind,
-            scope=ctx.namespace_id,
-            payload=command,
-        ) as tx:
-            if tx.replayed:
-                return TypeAdapter(dict[str, JsonValue]).validate_python(tx.replay_result)
+        async with self.authority.write(ctx) as tx:
+            existing = await tx.connection.scalar(
+                select(requests.c.record).where(requests.c.id == request_id)
+            )
+            if existing is not None:
+                if existing.get("submitted_digest") != submitted_digest:
+                    raise DomainError(
+                        "import_request_conflict", "Import request identity has different input"
+                    )
+                effective = await self.input_context_in(tx, ctx, existing)
+                if existing.get("catalog_id"):
+                    await self.read_catalog_in(tx, effective, existing["catalog_id"])
+                return {
+                    "request_id": request_id,
+                    "catalog_id": existing.get("catalog_id"),
+                    "job_id": existing.get("job_id"),
+                    "skipped_success_ids": existing["skipped_success_ids"],
+                }
             await require_namespace_in(tx, ctx, "memory")
             if command.clear_manifest:
                 origins = [document.origin for document in command.inputs]
@@ -254,6 +267,19 @@ async def accept_admit(
                         "inputs": tuple(prepared[index].document for index in selected),
                     }
                 )
+                accepted_inputs = None
+                if parent_request_id is not None:
+                    parent = await tx.connection.scalar(
+                        select(requests.c.record).where(requests.c.id == parent_request_id)
+                    )
+                    if (
+                        parent is None
+                        or CallContext.model_validate(parent["context"]).caller_id != ctx.caller_id
+                    ):
+                        raise DomainError(
+                            "import_request_not_found", "Parent import request is unavailable"
+                        )
+                    accepted_inputs = parent.get("input_observations")
                 frozen = await self.freeze_catalog_in(
                     tx,
                     ctx,
@@ -261,11 +287,11 @@ async def accept_admit(
                     [leases[index] for index in selected],
                     [prepared[index] for index in selected],
                     [split[index] for index in selected],
+                    admitted_observations=accepted_inputs,
                 )
                 catalog = frozen.catalog
                 effective = frozen.context
                 material_ids.extend(unit.material_id for unit in catalog.units)
-            request_id = str(uuid4())
             work_command = (
                 command.model_copy(update={"operation_id": f"{command.operation_id}:files"})
                 if enqueue
@@ -286,13 +312,19 @@ async def accept_admit(
             }
             request = {
                 "kind": "files",
-                "input_operation": {
-                    "operation_id": operation_id,
-                    "operation_kind": operation_kind,
-                    "scope": ctx.namespace_id,
-                },
+                "submitted_digest": submitted_digest,
+                "original_material_ids": [
+                    item.material["id"] for item in prepared if item.material
+                ],
+                "input_observation_ids": list(
+                    dict.fromkeys(
+                        unit.observation_id for unit in catalog.units if unit.observation_id
+                    )
+                )
+                if catalog
+                else [],
                 "context": effective.model_dump(mode="json"),
-                "command": work_command.model_dump(mode="json"),
+                "command": work_command.model_dump(mode="json", exclude={"inputs"}),
                 "catalog_id": catalog.id if catalog else None,
                 "manifest_keys": keys,
                 "skipped_success_ids": skipped,
@@ -305,6 +337,7 @@ async def accept_admit(
                         workflow_name="nous.imports.process",
                         queue_name="default" if command.deferred_formation else "formation",
                         args=(request_id,),
+                        scope=ctx.namespace_id,
                     )
                 )
                 if enqueue
@@ -344,14 +377,7 @@ async def accept_admit(
                         }
                     )
                 )
-            return tx.result(
-                {
-                    "request_id": request_id,
-                    "catalog_id": catalog.id if catalog else None,
-                    "job_id": job.workflow_id if job else attempt_job_id,
-                    "skipped_success_ids": skipped,
-                }
-            )
+            return {'request_id': request_id, 'catalog_id': catalog.id if catalog else None, 'job_id': job.workflow_id if job else attempt_job_id, 'skipped_success_ids': skipped}
     finally:
         if self.content_store:
             for lease in leases:
@@ -369,65 +395,59 @@ async def finish_admit(self: ImportService, ctx: CallContext, request_id: str) -
         ctx = await self.input_context_in(view, ctx, value)
     if value.get("purged"):
         raise DomainError("source_purged", "The import request's source was purged")
-    command = AdmitFiles.model_validate(value["command"])
-    receipt = await self.authority.receipt(
-        ctx,
-        command.operation_id,
-        operation_kind="imports.manifest",
-        scope=ctx.namespace_id,
-        payload=command,
-    )
-    if receipt is not None:
-        return await self.replay_result(ctx, ImportResult.model_validate(receipt.result))
+    command = value["command"]
+    if value.get("result") is not None:
+        return await self.read_admit_result(ctx, request_id)
     if value["catalog_id"]:
         result = await self.process_catalog(
             ctx,
             ProcessCatalog(
-                operation_id=f"{command.operation_id}:process",
-                force=command.force,
+                operation_id=command["operation_id"] + ":process",
+                force=command["force"],
                 catalog_id=value["catalog_id"],
-                llm_enabled=command.llm_enabled,
-                deferred_formation=command.deferred_formation,
-                formation_retries=command.formation_retries,
-                vectors=command.vectors,
+                llm_enabled=command["llm_enabled"],
+                deferred_formation=command["deferred_formation"],
+                formation_purpose=command["formation_purpose"],
+                vectors=command["vectors"],
             ),
             attempt_job_id=value.get("job_id"),
         )
     else:
         result = ImportResult(catalog=None, outputs=(), file_successes=())
-    async with self.authority.write(
-        ctx,
-        command.operation_id,
-        operation_kind="imports.manifest",
-        scope=ctx.namespace_id,
-        payload=command,
-    ) as tx:
-        if tx.replayed:
-            return await self.replay_result_in(
-                tx, ctx, ImportResult.model_validate(tx.replay_result)
-            )
+    async with self.authority.write(ctx) as tx:
         for output in result.outputs:
             await require_observation_in(tx, ctx, output.observation_id)
         for fact in result.file_successes:
-            if command.dedupe_policy != "none":
+            if command["dedupe_policy"] != "none":
                 key = value["manifest_keys"][fact.input_source_id]
                 await tx.connection.execute(delete(manifest).where(manifest.c.key == key))
                 await tx.connection.execute(manifest.insert().values(key=key, success_id=fact.id))
-        return tx.result(
-            result.model_copy(update={"skipped_success_ids": tuple(value["skipped_success_ids"])})
+        result = result.model_copy(
+            update={"skipped_success_ids": tuple(value["skipped_success_ids"])}
         )
+        current = await tx.connection.scalar(
+            select(requests.c.record).where(requests.c.id == request_id)
+        )
+        await tx.connection.execute(
+            update(requests)
+            .where(requests.c.id == request_id)
+            .values(
+                record={
+                    **current,
+                    "result": {
+                        **result.model_dump(
+                            mode="json", exclude={"catalog", "outputs", "file_successes"}
+                        ),
+                        "output_ids": [output.id for output in result.outputs],
+                        "file_success_ids": [fact.id for fact in result.file_successes],
+                    },
+                }
+            )
+        )
+        return result
 
 
 async def admit_files(self: ImportService, ctx: CallContext, command: AdmitFiles) -> ImportResult:
-    receipt = await self.authority.receipt(
-        ctx,
-        command.operation_id,
-        operation_kind="imports.manifest",
-        scope=ctx.namespace_id,
-        payload=command,
-    )
-    if receipt is not None:
-        return await self.replay_result(ctx, ImportResult.model_validate(receipt.result))
     accepted = await self.accept_admit(ctx, command, enqueue=False)
     return await self.finish_admit(ctx, str(accepted["request_id"]))
 

@@ -1,11 +1,16 @@
 """The application registers the contracts owned by its actual model consumers."""
 
-from nous_sdk.contracts.cognition import FormationDraft
 from nous_sdk.contracts.context import SelectionResult
 from nous_sdk.contracts.corrections import CorrectionDraft, CorrectionModelInput
 from nous_sdk.contracts.ego_model import SeedProposal
 from nous_sdk.contracts.episodes import EpisodeSegmentationDraft, EpisodeSegmentationInput
 from nous_sdk.contracts.feedback import FeedbackDecision, FeedbackInput
+from nous_sdk.contracts.formation import (
+    GraphDraft,
+    GraphResolutionDraft,
+    GraphResolutionInput,
+    NotesDraft,
+)
 from nous_sdk.contracts.maintenance_tasks import (
     DreamDraft,
     JournalDraft,
@@ -17,7 +22,9 @@ from nous_sdk.contracts.person_profiles import PersonProfileDraft, PersonProfile
 from nous_sdk.contracts.social import SymbolDecision, SymbolSemanticInput
 from pydantic import BaseModel, ConfigDict, JsonValue
 
-from nous.imports.model_contracts import MediaFormationDraft
+from nous.imports.model_contracts import (
+    DescriptionInput,
+)
 from nous.platform.models.roles import RoleDefinition, RoleRegistry
 from nous.retrieval.readout import Ranking
 
@@ -28,17 +35,7 @@ class RoleInput(BaseModel):
 
 class FormationInput(RoleInput):
     source_text: str
-    source: dict[str, JsonValue]
-
-
-class SavedDescription(RoleInput):
-    description: str
-    producer_call_id: str
-
-
-class MediaFormationInput(FormationInput):
-    source_context: str
-    saved_description: SavedDescription | None = None
+    background: str = ""
 
 
 class SelectionInput(RoleInput):
@@ -98,53 +95,72 @@ class MotivationInput(RoleInput):
 
 def register(registry: RoleRegistry) -> None:
     for entry in (
-        RoleDefinition("formation", "text", FormationInput, FormationDraft, default=True),
+        RoleDefinition(
+            "formation", "notes", FormationInput, NotesDraft, "formation.notes", default=True
+        ),
+        RoleDefinition("formation", "graph", FormationInput, GraphDraft, "formation.graph"),
         RoleDefinition(
             "formation",
-            "media",
-            MediaFormationInput,
-            MediaFormationDraft,
-            invocation_purpose="media.formation",
+            "entity_resolution",
+            GraphResolutionInput,
+            GraphResolutionDraft,
+            "formation.entity-resolution",
         ),
         RoleDefinition(
-            "description",
-            "media",
-            MediaFormationInput,
-            str,
-            default=True,
-            invocation_purpose="media.description",
-        ),
-        RoleDefinition("steward", "selection", SelectionInput, SelectionResult, default=True),
-        RoleDefinition("context_compress", "text", StewardInput, str, default=True),
-        RoleDefinition("history_topics", "groups", StewardInput, list[list[int]], default=True),
-        RoleDefinition("work_summary", "text", StewardInput, str, default=True),
-        RoleDefinition("work_questions", "questions", StewardInput, list[str], default=True),
-        RoleDefinition("local_learning", "notes", StewardInput, list[LearningPhrase], default=True),
-        RoleDefinition("knowledge_update", "text", StewardInput, str, default=True),
-        RoleDefinition("seed", "proposal", SeedInput, SeedProposal, default=True),
-        RoleDefinition("journal", "entry", JournalInput, JournalDraft, default=True),
-        RoleDefinition("reflect", "local", ReflectionInput, ReflectionDraft, default=True),
-        RoleDefinition("dream", "hypotheses", DreamInput, DreamDraft, default=True),
-        RoleDefinition(
-            "correction", "proposal", CorrectionModelInput, CorrectionDraft, default=True
-        ),
-        RoleDefinition("rerank", "ranking", RerankInput, Ranking, default=True),
-        RoleDefinition("feedback", "classification", FeedbackInput, FeedbackDecision, default=True),
-        RoleDefinition(
-            "symbols", "interpretation", SymbolSemanticInput, SymbolDecision, default=True
+            "description", "media", DescriptionInput, str, "media.describe", default=True
         ),
         RoleDefinition(
-            "motivation", "interpretation", MotivationInput, MotivationInterpretation, default=True
+            "steward", "selection", SelectionInput, SelectionResult, "context-steward", default=True
+        ),
+        RoleDefinition("context_compress", "text", StewardInput, str, "context-compress", True),
+        RoleDefinition(
+            "history_topics", "groups", StewardInput, list[list[int]], "history-topics", True
+        ),
+        RoleDefinition("work_summary", "text", StewardInput, str, "work-summary", True),
+        RoleDefinition(
+            "work_questions", "questions", StewardInput, list[str], "work-questions", True
         ),
         RoleDefinition(
-            "person_profile", "text", PersonProfileModelInput, PersonProfileDraft, default=True
+            "local_learning", "notes", StewardInput, list[LearningPhrase], "context-steward", True
+        ),
+        RoleDefinition("knowledge_update", "text", StewardInput, str, "context-steward", True),
+        RoleDefinition("seed", "proposal", SeedInput, SeedProposal, "seed", True),
+        RoleDefinition("journal", "entry", JournalInput, JournalDraft, "journal", True),
+        RoleDefinition("reflect", "local", ReflectionInput, ReflectionDraft, "reflect", True),
+        RoleDefinition("dream", "hypotheses", DreamInput, DreamDraft, "dream", True),
+        RoleDefinition(
+            "correction", "proposal", CorrectionModelInput, CorrectionDraft, "correction", True
+        ),
+        RoleDefinition("rerank", "ranking", RerankInput, Ranking, "query-rerank", True),
+        RoleDefinition(
+            "feedback", "classification", FeedbackInput, FeedbackDecision, "feedback", True
+        ),
+        RoleDefinition(
+            "symbols", "interpretation", SymbolSemanticInput, SymbolDecision, "social-symbols", True
+        ),
+        RoleDefinition(
+            "motivation",
+            "interpretation",
+            MotivationInput,
+            MotivationInterpretation,
+            "motivation",
+            True,
+        ),
+        RoleDefinition(
+            "person_profile",
+            "text",
+            PersonProfileModelInput,
+            PersonProfileDraft,
+            "person-profile",
+            True,
         ),
         RoleDefinition(
             "episode",
             "segmentation",
             EpisodeSegmentationInput,
             EpisodeSegmentationDraft,
-            default=True,
+            "episode-segmentation",
+            True,
         ),
     ):
         registry.register(entry)

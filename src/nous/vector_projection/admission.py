@@ -70,12 +70,12 @@ class ProjectionAdmission:
         replace_existing: bool = False,
         profile: EmbeddingProfile | None = None,
     ) -> ProjectionReceipt:
-        if tx.authority is not self.authority or tx.replayed:
+        if tx.authority is not self.authority:
             raise ValueError("Projection admission requires the actual authority write")
         identity = sha256(
             canonical_json(
                 (
-                    tx.operation_key,
+                    tx.commit_seq,
                     ctx.model_dump(mode="json"),
                     head_only,
                 )
@@ -99,6 +99,7 @@ class ProjectionAdmission:
                     queue_name="embedding",
                     args=(identity,),
                     workflow_id=f"vectors:{identity}",
+                    scope=identity,
                 )
             )
             request = Request(

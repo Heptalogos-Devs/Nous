@@ -50,7 +50,7 @@ async def preview_text(request: Request, namespace_id: str,  command: TextPrevie
     )
 
 
-@router.post('/namespaces/{namespace_id}/memories/form')
+@router.post('/namespaces/{namespace_id}/observations/formation')
 async def form_observation(
     request: Request, namespace_id: str,  command: FormObservation
 ):

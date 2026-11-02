@@ -3,15 +3,20 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+from datetime import datetime
+from nous_sdk.contracts import CognitiveRef, RecordsQuery, RetentionChanges, RetentionExpectation
+from nous_sdk.contracts.retention import DecayRetention, RetentionDecayResult
+from .lifecycle import snapshot, state_for, transition
 
 from nous_sdk.contracts.lifecycle import MemoryChanges
 from nous_sdk.contracts.public import RememberInput
 from nous_sdk.contracts.common import utc_now
-from pydantic import TypeAdapter
 from sqlalchemy import select
 
 from nous.identity.access import require_namespace_in
-from nous.platform.persistence import WriteTx
+from nous.platform.persistence import Authority, ReadView, WriteTx
+from nous.platform.content import ContentStore
+from nous.material.service import MaterialService
 
 from .revision_state import RevisionState
 from .schema import revisions, vectors
@@ -35,21 +40,57 @@ from nous_sdk.contracts import (
 
 
 class MemoryService:
-    def __init__(self, records: CognitiveRecords):
+    def __init__(
+        self,
+        authority: Authority,
+        records: CognitiveRecords,
+        *,
+        materials: MaterialService,
+        content: ContentStore,
+    ):
+        self.authority = authority
         self.records = records
+        self.materials = materials
+        self.content = content
 
     async def remember(self, ctx: CallContext, command: RememberInput) -> CognitiveRecord:
-        document = ImportDocument(text=command.content, filename='memory.txt', source=command.source, source_type='explicit_memory', origin={'caller_id':ctx.caller_id})
-        store = self.records.materials.content_store
-        lease = await store.publish_bytes(command.content.encode(), document.media_type) if store else None
+        document = ImportDocument(
+            text=command.content,
+            filename="memory.txt",
+            source=command.source,
+            source_type="explicit_memory",
+            origin={"caller_id": ctx.caller_id},
+        )
+        store = self.content
+        lease = (
+            await store.publish_bytes(command.content.encode(), document.media_type)
+            if store
+            else None
+        )
         try:
-            async with self.records.authority.write(ctx, command.operation_id, operation_kind='memory.remember', scope=ctx.namespace_id, payload=command) as tx:
-                if tx.replayed:
-                    record = CognitiveRecord.model_validate(tx.replay_result)
-                    return await self.records.replay_record_in(tx, ctx, record)
-                admission = await self.records.materials.admit_text_in(tx, ctx, document, lease)
-                record = await self.records.adopt_in(tx, admission.context, AdoptCognition(body=MemoryBody(text=command.content,tags=command.tags),evidence=(EvidenceLink(observation_id=admission.event['id'],role='explicit_memory'),)), state=RevisionState(cause=RevisionCause(action='memory.remember',actor=ctx.caller_id,reason='Explicit memory'),lifecycle=RetentionState(anchor_unix_ms=utc_now().coordinate,pinned=command.pin)))
-                return tx.result(record)
+            async with self.authority.write(ctx) as tx:
+                admission = await self.materials.admit_text_in(tx, ctx, document, lease)
+                record = await self.records.adopt_in(
+                    tx,
+                    admission.context,
+                    AdoptCognition(
+                        body=MemoryBody(text=command.content, tags=command.tags),
+                        evidence=(
+                            EvidenceLink(
+                                observation_id=admission.event["id"], role="explicit_memory"
+                            ),
+                        ),
+                    ),
+                    state=RevisionState(
+                        cause=RevisionCause(
+                            action="memory.remember", actor=ctx.caller_id, reason="Explicit memory"
+                        ),
+                        lifecycle=RetentionState(
+                            anchor_unix_ms=utc_now().coordinate, pinned=command.pin
+                        ),
+                    ),
+                )
+                return record
         finally:
             if lease and store:
                 await store.release(lease)
@@ -65,7 +106,7 @@ class MemoryService:
         if command.reference.kind != "memory":
             raise DomainError("memory_required", "Memory operations require a Memory reference")
         if command.action != "revise":
-            return await self.records.change_retention_in(
+            return await self.change_retention_in(
                 tx,
                 ctx,
                 RetentionChange(
@@ -181,7 +222,6 @@ class MemoryService:
                     ),
                 ),
                 times=times,
-                producer_call_id=None,
             ),
             state=state,
         )
@@ -220,7 +260,7 @@ class MemoryService:
                     ),
                 ),
                 times=previous.times.model_copy(update=changes),
-                producer_call_id=previous.producer_call_id,
+                producer=previous.producer,
             ),
             state=RevisionState(
                 cause=RevisionCause(
@@ -236,7 +276,10 @@ class MemoryService:
         assets = (
             (
                 await tx.connection.execute(
-                    select(vectors).where(vectors.c.reference == previous.reference.exact())
+                    select(vectors).where(
+                        vectors.c.namespace_id == ctx.namespace_id,
+                        vectors.c.reference == previous.reference.exact(),
+                    )
                 )
             )
             .mappings()
@@ -264,55 +307,23 @@ class MemoryService:
             if command.action == "revise"
             else None
         )
-        store = self.records.materials.content_store
+        store = self.content
         lease = (
             await store.publish_bytes(document.inline_text().encode(), document.media_type)
             if document is not None and store
             else None
         )
         try:
-            async with self.records.authority.write(
-                ctx,
-                command.operation_id,
-                operation_kind="memory.change",
-                scope=ctx.namespace_id,
-                payload=command,
-            ) as tx:
-                if tx.replayed:
-                    result = CognitiveRecord.model_validate(tx.replay_result)
-                    if document is not None and ctx.source_groups():
-                        admission = await self.records.materials.restore_input_in(
-                            tx,
-                            ctx,
-                            operation_id=command.operation_id,
-                            operation_kind="memory.change",
-                            scope=ctx.namespace_id,
-                        )
-                        effective = await self.records.qualify_known_outputs_in(
-                            tx,
-                            ctx,
-                            (result.reference,),
-                            operation_id=command.operation_id,
-                            operation_kind="memory.change",
-                            scope=ctx.namespace_id,
-                            input_material_ids=admission.material_ids,
-                        )
-                    else:
-                        effective = ctx
-                    return await self.records.replay_record_in(tx, effective, result)
+            async with self.authority.write(ctx) as tx:
                 effective, revision_evidence = (ctx, ())
                 if document is not None:
                     await self.records.get_in(tx, ctx, command.reference)
-                    admission = await self.records.materials.admit_text_in(tx, ctx, document, lease)
+                    admission = await self.materials.admit_text_in(tx, ctx, document, lease)
                     effective = admission.context
                     revision_evidence = (
                         EvidenceLink(observation_id=admission.event["id"], role="memory_revision"),
                     )
-                result = tx.result(
-                    await self.change_memory_in(
-                        tx, effective, command, revision_evidence=revision_evidence
-                    )
-                )
+                result = await self.change_memory_in(tx, effective, command, revision_evidence=revision_evidence)
         finally:
             if lease and store:
                 await store.release(lease)
@@ -321,7 +332,7 @@ class MemoryService:
     async def recycle_bin(self, ctx: CallContext, limit: int = 50) -> tuple[CognitiveRecord, ...]:
         if not 1 <= limit <= 1000:
             raise DomainError("invalid_limit", "Recycle-bin limit must be between 1 and 1000")
-        async with self.records.authority.read(ctx) as view:
+        async with self.authority.read(ctx) as view:
             await require_namespace_in(view, ctx, "memory")
             result: list[CognitiveRecord] = []
             roots = await self.records.source_roots_in(view, ctx)
@@ -346,27 +357,12 @@ class MemoryService:
     async def decay_memories(self, ctx: CallContext, operation_id: str, limit: int = 1000):
         from nous_sdk.contracts.retention import DecayRetention
 
-        async with self.records.authority.write(
-            ctx,
-            operation_id,
-            operation_kind="memory.decay",
-            scope=ctx.namespace_id,
-            payload={"limit": limit},
-        ) as tx:
-            if tx.replayed:
-                return tx.replay_result
+        async with self.authority.write(ctx) as tx:
             await require_namespace_in(tx, ctx, "memory")
-            result = await self.records.decay_retention_in(
+            result = await self.decay_retention_in(
                 tx, ctx, DecayRetention(kinds=("memory",), limit=limit)
             )
-            return tx.result(
-                {
-                    "scanned": result.scanned,
-                    "changed": [ref.exact() for ref in result.changed],
-                    "complete": result.complete,
-                    "next_cursor": result.next_cursor,
-                }
-            )
+            return {'scanned': result.scanned, 'changed': [ref.exact() for ref in result.changed], 'complete': result.complete, 'next_cursor': result.next_cursor}
 
     async def change_memories_in(
         self, tx: WriteTx, ctx: CallContext, command: MemoryChanges
@@ -375,7 +371,7 @@ class MemoryService:
 
         if any(reference.kind != "memory" for reference in command.references):
             raise DomainError("memory_required", "Memory operations require Memory references")
-        return await self.records.change_retentions_in(
+        return await self.change_retentions_in(
             tx, ctx, RetentionChanges.model_validate(command.model_dump())
         )
 
@@ -383,18 +379,262 @@ class MemoryService:
         self, ctx: CallContext, command: MemoryChanges
     ) -> tuple[CognitiveRecord, ...]:
         """Execute a frozen selection once; no repeated query can change its membership."""
-        async with self.records.authority.write(
+        async with self.authority.write(ctx) as tx:
+            result = await self.change_memories_in(tx, ctx, command)
+        return result
+
+    async def require_retention_preconditions_in(
+        self,
+        view: ReadView | WriteTx,
+        ctx: CallContext,
+        expectations: tuple[RetentionExpectation, ...],
+    ) -> None:
+        if not expectations:
+            return
+        await require_namespace_in(view, ctx)
+        for expected in expectations:
+            raw = await view.connection.scalar(
+                select(revisions.c.record).where(
+                    revisions.c.namespace_id == ctx.namespace_id,
+                    revisions.c.kind == expected.reference.kind,
+                    revisions.c.id == expected.reference.id,
+                    revisions.c.head.is_(True),
+                )
+            )
+            if raw is None:
+                raise DomainError(
+                    "retention_precondition_failed",
+                    "The expected retained object is no longer present",
+                    reference=expected.reference.exact(),
+                )
+            record = CognitiveRecord.model_validate(raw)
+            await self.records.get_in(view, ctx, record.reference, purpose="management")
+            if record.purged or record.reference.kind not in {"memory", "association"}:
+                raise DomainError(
+                    "retention_precondition_failed",
+                    "The expected retained object is unavailable",
+                    reference=expected.reference.exact(),
+                )
+            actual = snapshot(
+                record,
+                int(datetime.fromisoformat(view.recorded_at).timestamp() * 1000)
+                if isinstance(view, WriteTx)
+                else utc_now().coordinate,
+            )
+            actual_fields = actual.model_dump(mode="json", exclude={"score"})
+            wanted = expected.model_dump(mode="json")
+            if actual_fields != wanted:
+                raise DomainError(
+                    "retention_precondition_failed",
+                    "Retention state changed after selection",
+                    reference=expected.reference.exact(),
+                    current=record.reference.exact(),
+                    fields=[name for name in wanted if actual_fields.get(name) != wanted[name]],
+                )
+
+    async def change_retention_in(
+        self, tx: WriteTx, ctx: CallContext, command: RetentionChange
+    ) -> CognitiveRecord:
+        previous = await self.records.get_in(tx, ctx, command.reference)
+        lifecycle = state_for(previous)
+        current = await tx.connection.scalar(
+            select(revisions.c.revision).where(
+                revisions.c.id == previous.reference.id,
+                revisions.c.namespace_id == ctx.namespace_id,
+                revisions.c.head.is_(True),
+            )
+        )
+        if current != command.reference.revision:
+            raise DomainError(
+                "retention_revision_conflict",
+                "The retained object changed after selection",
+                reference=command.reference.exact(),
+            )
+        if previous.deleted and command.action not in {"restore", "purge"}:
+            raise DomainError("retention_deleted", "Restore the retained object before changing it")
+        if command.hours is not None and command.action != "protect":
+            raise DomainError("invalid_retention_hours", "Hours applies to protection")
+        now = int(datetime.fromisoformat(tx.recorded_at).timestamp() * 1000)
+        if (
+            command.action in {"trash", "purge"}
+            and lifecycle.protected(now)
+            and (not command.force)
+        ):
+            raise DomainError(
+                "retention_protected",
+                "The retained object is protected; unprotect it or explicitly force the change",
+            )
+        updated = transition(lifecycle, command, now)
+        deleted = (
+            command.action in {"trash", "purge"}
+            if command.action in {"trash", "purge", "restore"}
+            else previous.deleted
+        )
+        if updated == lifecycle and deleted == previous.deleted and (command.action != "purge"):
+            return previous
+        assert previous.body is not None
+        result = await self.records.adopt_in(
+            tx,
             ctx,
-            command.operation_id,
-            operation_kind="memory.change_many",
-            scope=ctx.namespace_id,
-            payload=command,
-        ) as tx:
-            if tx.replayed:
-                return await self.records.replay_records_in(
+            AdoptCognition(
+                id=previous.reference.id,
+                expected_revision=previous.reference.revision,
+                body=previous.body,
+                evidence=(
+                    EvidenceLink(
+                        reference=previous.reference, role=command.reason or command.action
+                    ),
+                ),
+                times=previous.times,
+                producer=previous.producer,
+            ),
+            state=RevisionState(
+                lifecycle=updated,
+                deleted=deleted,
+                purged=command.action == "purge",
+                cause=RevisionCause(
+                    action=command.action,
+                    actor=ctx.caller_id,
+                    reason=command.reason,
+                    parent=previous.reference,
+                ),
+            ),
+        )
+        if command.action == "purge":
+            await self.records.erase_history_in(tx, ctx, previous.reference.id)
+        else:
+            for asset in (
+                await tx.connection.execute(
+                    select(vectors).where(
+                        vectors.c.namespace_id == ctx.namespace_id,
+                        vectors.c.reference == previous.reference.exact(),
+                    )
+                )
+            ).mappings():
+                await tx.connection.execute(
+                    vectors.insert().values(
+                        **{
+                            **asset,
+                            "reference": result.reference.exact(),
+                            "commit_seq": tx.commit_seq,
+                        }
+                    )
+                )
+        return result
+
+    async def change_retentions_in(
+        self, tx: WriteTx, ctx: CallContext, command: RetentionChanges
+    ) -> tuple[CognitiveRecord, ...]:
+        if len({ref.id for ref in command.references}) != len(command.references):
+            raise DomainError("retention_selection", "Select each retained identity once")
+        for reference in command.references:
+            record = await self.records.get_in(tx, ctx, reference)
+            state_for(record)
+            current = await tx.connection.scalar(
+                select(revisions.c.revision).where(
+                    revisions.c.id == reference.id,
+                    revisions.c.namespace_id == ctx.namespace_id,
+                    revisions.c.head.is_(True),
+                )
+            )
+            if current != reference.revision:
+                raise DomainError(
+                    "retention_revision_conflict",
+                    "The frozen lifecycle selection changed",
+                    reference=reference.exact(),
+                )
+        return tuple(
+            [
+                await self.change_retention_in(
                     tx,
                     ctx,
-                    TypeAdapter(tuple[CognitiveRecord, ...]).validate_python(tx.replay_result),
+                    RetentionChange(
+                        reference=reference,
+                        action=command.action,
+                        strength=command.strength,
+                        hours=command.hours,
+                        reason=command.reason,
+                        force=command.force,
+                    ),
                 )
-            result = tx.result(await self.change_memories_in(tx, ctx, command))
+                for reference in command.references
+            ]
+        )
+
+    async def change_retention(self, ctx: CallContext, command: RetentionChange) -> CognitiveRecord:
+        async with self.authority.write(ctx) as tx:
+            result = await self.change_retention_in(tx, ctx, command)
         return result
+
+    async def change_retentions(
+        self, ctx: CallContext, command: RetentionChanges
+    ) -> tuple[CognitiveRecord, ...]:
+
+        async with self.authority.write(ctx) as tx:
+            result = await self.change_retentions_in(tx, ctx, command)
+        return result
+
+    async def retention_snapshot(self, ctx: CallContext, reference: CognitiveRef):
+        async with self.authority.read(ctx) as view:
+            await require_namespace_in(view, ctx)
+            return snapshot(
+                await self.records.get_in(view, ctx, reference, purpose="management"),
+                utc_now().coordinate,
+            )
+
+    async def decay_retention_in(
+        self, tx: WriteTx, ctx: CallContext, command: DecayRetention
+    ) -> RetentionDecayResult:
+        page = await self.records.records_in(
+            tx, ctx, RecordsQuery(kinds=command.kinds, limit=command.limit, cursor=command.cursor)
+        )
+        now = int(datetime.fromisoformat(tx.recorded_at).timestamp() * 1000)
+        changed: list[CognitiveRef] = []
+        for entry in page.items:
+            before = state_for(entry.record)
+            change = RetentionChange(
+                reference=entry.record.reference, action="decay", reason="retention evaluation"
+            )
+            if transition(before, change, now) != before:
+                changed.append((await self.change_retention_in(tx, ctx, change)).reference)
+        return RetentionDecayResult(
+            scanned=len(page.items),
+            changed=tuple(changed),
+            next_cursor=page.next_cursor,
+            complete=page.next_cursor is None,
+        )
+
+    async def decay_retention(
+        self, ctx: CallContext, command: DecayRetention
+    ) -> RetentionDecayResult:
+        async with self.authority.write(ctx) as tx:
+            result = await self.decay_retention_in(tx, ctx, command)
+        return result
+
+    async def purge_retained_in(
+        self,
+        tx: WriteTx,
+        ctx: CallContext,
+        reference: CognitiveRef,
+        *,
+        force: bool = False,
+        reason: str,
+    ) -> CognitiveRecord:
+        previous = await self.records.get_in(tx, ctx, reference, purpose="management")
+        if previous.purged:
+            return previous
+        if await self.records.visible_in(tx, ctx, previous):
+            return await self.change_retention_in(
+                tx,
+                ctx,
+                RetentionChange(reference=reference, action="purge", force=force, reason=reason),
+            )
+        lifecycle = state_for(previous)
+        now = round(datetime.fromisoformat(tx.recorded_at).timestamp() * 1000)
+        if lifecycle.protected(now) and not force:
+            raise DomainError(
+                "retention_protected",
+                "The retained object is protected; explicitly force its removal",
+            )
+        await self.records.erase_history_in(tx, ctx, reference.id)
+        return previous.model_copy(update={"body": None, "purged": True, "deleted": True})

@@ -10,6 +10,7 @@ from uuid import uuid4
 
 import typer
 from nous_sdk.contracts import ImportFormat, MediaReference, QueryRequest
+from nous_sdk.contracts.imports import FormationPurpose
 from nous_sdk.contracts.context import ChangeWorkContext, WorkContextContent
 from nous_sdk.presentation import present, present_query
 
@@ -99,7 +100,7 @@ def register(cli: typer.Typer) -> None:
                     namespace.namespace_id,
                     paths,
                     transfer_root=Path(commonpath([str(path.resolve().parent) for path in paths])),
-                    form_memory=False,
+                    formation_purpose=None,
                 )
                 await namespace.client.wait_success(
                     (submission.job_id,), namespace_id=namespace.namespace_id
@@ -177,11 +178,12 @@ def register(cli: typer.Typer) -> None:
     def import_files(
         ctx: typer.Context,
         paths: Annotated[list[Path], typer.Argument(exists=True, dir_okay=False)],
-        no_model: bool = False,
+        purpose: FormationPurpose = "memory",
+        no_formation: bool = False,
         wait: Annotated[bool, typer.Option("--wait/--no-wait")] = True,
         format: ImportFormat | None = None,
     ) -> None:
-        """Capture originals and optionally form memory; report the actual job."""
+        """Capture originals and form memory notes, graph links, or both."""
 
         async def run(namespace):
             submission = await namespace.client.import_files(
@@ -189,8 +191,8 @@ def register(cli: typer.Typer) -> None:
                 paths,
                 transfer_root=Path(commonpath([str(path.resolve().parent) for path in paths])),
                 input_format=format,
-                form_memory=not no_model,
-                completion="formed" if not no_model and wait else "accepted",
+                formation_purpose=None if no_formation else purpose,
+                completion="formed" if not no_formation and wait else "accepted",
             )
             if not wait:
                 return {"ref": "job:" + submission.job_id, "status": "queued"}
@@ -223,7 +225,7 @@ def register(cli: typer.Typer) -> None:
     @cli.command("status")
     def status(ctx: typer.Context) -> None:
         async def run(root):
-            response = await root.request("GET", "/api/v1/status")
+            response = await root.request("GET", "/api/manage/status")
             if options(ctx).raw:
                 return response
             result: dict[str, object] = {"service": "connected", "url": options(ctx).url}
@@ -255,18 +257,11 @@ def register(cli: typer.Typer) -> None:
 
             targets = []
             for ref in anchor or ():
-                value = await namespace.client.resolve_reference(namespace.namespace_id, ref)
+                value = await namespace.resolve_reference(ref)
                 if isinstance(value.reference, (CognitiveTarget, MediaTarget)):
                     targets.append(value.reference)
-            created = await namespace.client.change_work_context(
-                namespace.namespace_id,
-                ChangeWorkContext(
-                    operation_id=str(uuid4()),
-                    action="create",
-                    content=WorkContextContent(
-                        purpose=title, context_text=text, anchors=tuple(targets)
-                    ),
-                ),
+            created = await namespace.runtime.create_work(
+                ChangeWorkContext(action='create', content=WorkContextContent(purpose=title, context_text=text, anchors=tuple(targets))),
             )
             selected = options(ctx)
             state = selected.client_state or ClientState()
@@ -297,7 +292,7 @@ def register(cli: typer.Typer) -> None:
                 return {
                     "items": [
                         present(value)
-                        for value in await namespace.client.work_contexts(namespace.namespace_id)
+                        for value in await namespace.runtime.works()
                     ]
                 }
             return await namespace.read(chosen)
@@ -314,9 +309,7 @@ def register(cli: typer.Typer) -> None:
         selected = content(text)
 
         async def run(namespace):
-            current = await namespace.client.work_context(
-                namespace.namespace_id, ref.removeprefix("work:")
-            )
+            current = await namespace.runtime.work(ref)
             updated = current.content.model_copy(
                 update={
                     "context_text": selected,
@@ -325,32 +318,17 @@ def register(cli: typer.Typer) -> None:
                     else current.content.unresolved_questions,
                 }
             )
-            return await namespace.client.change_work_context(
-                namespace.namespace_id,
-                ChangeWorkContext(
-                    operation_id=str(uuid4()),
-                    work_context_id=current.id,
-                    expected_revision=current.revision,
-                    action="edit",
-                    content=updated,
-                ),
+            return await namespace.runtime.change_work(
+                ChangeWorkContext(work_context_id=current.id, expected_revision=current.revision, action='edit', content=updated),
             )
 
         invoke_bound(ctx, run)
 
     def change_work(ctx: typer.Context, ref: str, action: Literal["pause", "resume", "end"]):
         async def run(namespace):
-            current = await namespace.client.work_context(
-                namespace.namespace_id, ref.removeprefix("work:")
-            )
-            return await namespace.client.change_work_context(
-                namespace.namespace_id,
-                ChangeWorkContext(
-                    operation_id=str(uuid4()),
-                    work_context_id=current.id,
-                    expected_revision=current.revision,
-                    action=action,
-                ),
+            current = await namespace.runtime.work(ref)
+            return await namespace.runtime.change_work(
+                ChangeWorkContext(work_context_id=current.id, expected_revision=current.revision, action=action),
             )
 
         invoke_bound(ctx, run)

@@ -4,7 +4,7 @@ import io
 from pathlib import Path
 
 import anyio
-from nous_sdk.contracts import SourceRegion, TimeSpan
+from nous_sdk.contracts import MediaInfo, SourceRegion, TimeSpan
 from pypdf import PdfReader, PdfWriter
 
 from nous.material.text import source_region_text
@@ -42,7 +42,12 @@ async def selected_input(
             raise ValueError("Page selection requires a PDF")
         async with content.protect(source) as path:
             data = await anyio.to_thread.run_sync(pdf_pages, path, region)
-        return MediaInput(data, "application/pdf", reference)
+        return MediaInput(
+            data,
+            "application/pdf",
+            reference,
+            MediaInfo(kind="document", media_type="application/pdf"),
+        )
     textual = region is not None and any(
         v is not None
         for v in (region.text_start, region.text_end, region.json_pointer, region.line_number)
@@ -91,13 +96,25 @@ async def selected_input(
         limit = media.policy.max_derivative_bytes if textual else 32 * 1024 * 1024
         if selected.byte_len > limit:
             raise ValueError("Selected input exceeds the instance media processing limit")
+        info = (
+            image_info
+            if selected.content_hash == source.content_hash and image_info is not None
+            else await media.probe(selected)
+            if selected.media_type.startswith(("image/", "video/", "audio/"))
+            else None
+        )
         async with content.protect(selected) as path:
             data = await anyio.to_thread.run_sync(path.read_bytes)
         if textual and region:
             data = source_region_text(data.decode("utf-8"), region).encode("utf-8")
         if len(data) > 32 * 1024 * 1024:
             raise ValueError("Selected model input exceeds 32 MiB")
-        return MediaInput(data, "text/plain" if textual else selected.media_type, reference)
+        return MediaInput(
+            data,
+            "text/plain" if textual else selected.media_type,
+            reference,
+            info,
+        )
     finally:
         if audio:
             await content.release(audio.lease)

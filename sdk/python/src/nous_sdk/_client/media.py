@@ -20,11 +20,11 @@ from ..contracts.derivation import (
 from ..operations import encoded, segment
 from ..source_scope import SourceReadScope
 from ..types import Download
-from .bundles import BundleClient
+from .management import ManagementClient
 from .requests import operation_identity, operation_values, request_scope, required_text
 
 
-class MediaClient(BundleClient):
+class MediaClient(ManagementClient):
     async def embed_media(
         self,
         namespace_id: str,

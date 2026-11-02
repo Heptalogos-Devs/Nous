@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import Field, JsonValue
+from pydantic import Field, JsonValue, model_validator
 
 from .cognition import CognitiveKind, CognitiveRecord
 from .common import Contract, TimeRange
@@ -45,13 +45,21 @@ class QueryRequest(Contract):
     capabilities: QueryCapabilities = Field(default_factory=QueryCapabilities)
     current: Literal["none", "prefer", "required"] = "none"
     rerank: Literal["off", "optional", "required"] = "off"
-    rerank_invocation_id: str | None = None
     materialize: bool = False
     mode: Literal["lexical", "dense", "hybrid", "vcp"] = "lexical"
     kinds: tuple[CognitiveKind, ...] = ()
     domains: tuple[Literal["cognition", "media", "observation", "evidence", "resource"], ...] = (
         "cognition",
+        "media",
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def typed_query_domain(cls, value):
+        if isinstance(value, dict) and value.get("kinds") and "domains" not in value:
+            return {**value, "domains": ("cognition",)}
+        return value
+
     media: tuple[MediaReference, ...] = ()
     parts: tuple[str | MediaReference, ...] = ()
     limit: int = Field(default=10, ge=1, le=1000)
@@ -90,6 +98,7 @@ class QueryResult(Contract):
 
     def view(self):
         from nous_sdk.presentation import present_query
+
         return present_query(self)
 
     vcp: VcpResult | None = None

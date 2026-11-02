@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-from uuid import uuid4
 
 from pydantic import JsonValue, TypeAdapter
 
@@ -24,45 +23,34 @@ class SettingsResource:
     async def export(self) -> str:
         value = TypeAdapter(dict[str, JsonValue]).validate_python(
             await self.client.request(
-                "GET", "/api/v1/configuration/files/current", params=self.parameters()
+                "GET", "/api/manage/configuration/files/current", params=self.parameters()
             )
         )
         return TypeAdapter(str).validate_python(value["content"])
 
-    async def replace(
-        self, content: str, *, operation_id: str | None = None
-    ) -> dict[str, JsonValue]:
+    async def replace(self, content: str) -> dict[str, JsonValue]:
         return TypeAdapter(dict[str, JsonValue]).validate_python(
             await self.client.request(
                 "PUT",
-                "/api/v1/configuration/files/current",
+                "/api/manage/configuration/files/current",
                 params=self.parameters(),
-                body={"content": content, "operation_id": operation_id or str(uuid4())},
+                body={"content": content},
             )
         )
 
-    async def reload(self, *, operation_id: str | None = None) -> dict[str, JsonValue]:
+    async def reload(self) -> dict[str, JsonValue]:
         return TypeAdapter(dict[str, JsonValue]).validate_python(
             await self.client.request(
                 "POST",
-                "/api/v1/configuration/reload",
+                "/api/manage/configuration/reload",
                 params=self.parameters(),
-                body={"scope": self.scope, "operation_id": operation_id or str(uuid4())},
+                body={"scope": self.scope},
             )
         )
 
     async def get(self, key: str) -> dict[str, JsonValue]:
         return TypeAdapter(dict[str, JsonValue]).validate_python(
             await self.client.request(
-                "GET", f"/api/v1/configuration/{segment(key)}", params=self.parameters()
-            )
-        )
-
-    async def history(self, key: str, *, limit: int = 100) -> dict[str, JsonValue]:
-        return TypeAdapter(dict[str, JsonValue]).validate_python(
-            await self.client.request(
-                "GET",
-                f"/api/v1/configuration/{segment(key)}/history",
-                params={**self.parameters(), "limit": limit},
+                "GET", f"/api/manage/configuration/{segment(key)}", params=self.parameters()
             )
         )

@@ -129,7 +129,7 @@ class FactService:
                     ),
                 ),
                 times=previous.times,
-                producer_call_id=previous.producer_call_id,
+                producer=previous.producer,
             ),
             state=RevisionState(
                 deleted=previous.deleted,
@@ -395,34 +395,7 @@ class FactService:
             else None
         )
         try:
-            async with self.authority.write(
-                ctx,
-                command.operation_id,
-                operation_kind="fact.change",
-                scope=ctx.namespace_id,
-                payload=command.model_dump(mode="json", exclude_unset=True),
-            ) as tx:
-                if tx.replayed:
-                    result = FactChangeResult.model_validate(tx.replay_result)
-                    effective = (
-                        await self.cognition.qualify_known_outputs_in(
-                            tx,
-                            ctx,
-                            (
-                                result.record.reference,
-                                *(record.reference for record in result.changed),
-                            ),
-                            operation_id=command.operation_id,
-                            operation_kind="fact.change",
-                            scope=ctx.namespace_id,
-                            input_material_ids=(result.report_material_id,),
-                        )
-                        if ctx.source_groups()
-                        else ctx
-                    )
-                    for record in (result.record, *result.changed):
-                        await self.cognition.replay_record_in(tx, effective, record)
-                    return result
+            async with self.authority.write(ctx) as tx:
                 await require_namespace_in(tx, ctx, capability="memory")
                 if command.reference is not None and command.claim_id is not None:
                     raise DomainError(
@@ -528,17 +501,7 @@ class FactService:
                         ),
                     )
                     profile_job_id = submission.job_id
-                value = tx.result(
-                    FactChangeResult(
-                        record=result,
-                        changed=changed,
-                        conflicting=conflicts,
-                        report_material_id=admission.material["id"],
-                        observation_id=admission.event["id"],
-                        commit_seq=tx.commit_seq,
-                        profile_job_id=profile_job_id,
-                    )
-                )
+                value = FactChangeResult(record=result, changed=changed, conflicting=conflicts, report_material_id=admission.material['id'], observation_id=admission.event['id'], commit_seq=tx.commit_seq, profile_job_id=profile_job_id)
             return value
         finally:
             if lease and store:

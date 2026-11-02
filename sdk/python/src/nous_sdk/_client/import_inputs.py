@@ -123,7 +123,6 @@ def split_options(values: JsonObject) -> None:
 
 def validate_flags(values: JsonObject) -> None:
     for key in (
-        "form_memory",
         "llm_enabled",
         "extract_time",
         "force",

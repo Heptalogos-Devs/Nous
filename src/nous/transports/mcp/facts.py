@@ -2,11 +2,8 @@
 
 from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
-from uuid import uuid4
 
 from nous_sdk import NousClient
-from nous_sdk.amemorix import AMemorixAdapter
-from nous_sdk.amemorix.facts import FactAdminInput
 from nous_sdk.contracts.facts import FactChange, FactQuery
 from nous_sdk.types import JsonObject
 
@@ -41,17 +38,3 @@ def register_facts(
         """Read the canonical claim, evidence and retained transitions."""
         async with client() as api:
             return (await api.fact(namespace_id,  claim_id)).model_dump(mode="json")
-
-    @server.tool()
-    async def memory_fact_admin(command: FactAdminInput) -> JsonObject:
-        """Consume the actual MaiBot get/list/create/update/retract/restore actions."""
-        values = command.model_dump(mode="json", exclude_unset=True)
-        if (
-            command.action in {"create", "update", "retract", "restore"}
-            and not command.operation_id
-        ):
-            values["operation_id"] = str(uuid4())
-        async with client() as api:
-            return await AMemorixAdapter(
-                api, namespace_id=namespace_id
-            ).call("memory_fact_admin", values)

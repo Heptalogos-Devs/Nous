@@ -65,37 +65,27 @@ async def create_schedule(
     if not croniter.is_valid(command.cron, second_at_beginning=True):
         raise ValueError("Invalid maintenance cron expression")
     ZoneInfo(command.timezone)
-    async with self.authority.write(
-        ctx,
-        command.operation_id,
-        operation_kind="maintenance.schedule.create",
-        scope=ctx.namespace_id,
-        payload=command,
-    ) as tx:
-        if tx.replayed:
-            identity = str(tx.replay_result)
-        else:
-            await require_namespace_in(tx, ctx)
-            identity = "maintenance:" + str(uuid4())
-            record = MaintenanceSchedule(
+    async with self.authority.write(ctx) as tx:
+        await require_namespace_in(tx, ctx)
+        identity = "maintenance:" + str(uuid4())
+        record = MaintenanceSchedule(
+            id=identity,
+            namespace_id=ctx.namespace_id,
+            created_by=ctx.caller_id,
+            created_at=tx.recorded_at,
+            name=command.name,
+            cron=command.cron,
+            timezone=command.timezone,
+            command=command.command,
+        )
+        await tx.connection.execute(
+            schedules.insert().values(
                 id=identity,
                 namespace_id=ctx.namespace_id,
-                created_by=ctx.caller_id,
-                created_at=tx.recorded_at,
-                name=command.name,
-                cron=command.cron,
-                timezone=command.timezone,
-                command=command.command,
+                context=ctx.model_dump(mode="json"),
+                record=record.model_dump(mode="json"),
             )
-            await tx.connection.execute(
-                schedules.insert().values(
-                    id=identity,
-                    namespace_id=ctx.namespace_id,
-                    context=ctx.model_dump(mode="json"),
-                    record=record.model_dump(mode="json"),
-                )
-            )
-            tx.result(identity)
+        )
     async with self.authority.read(ctx) as view:
         record = await schedule_in(view, ctx, identity)
     await reconcile_schedule(self, record)
@@ -125,23 +115,15 @@ async def stop_schedule(
     identity: str,
     operation_id: str,
 ) -> MaintenanceSchedule:
-    async with self.authority.write(
-        ctx,
-        operation_id,
-        operation_kind="maintenance.schedule.stop",
-        scope=ctx.namespace_id,
-        payload={"schedule_id": identity},
-    ) as tx:
-        if not tx.replayed:
-            record = await schedule_in(tx, ctx, identity)
-            if record.stopped_at is None:
-                record = record.model_copy(update={"stopped_at": tx.recorded_at})
-                await tx.connection.execute(
-                    schedules.update()
-                    .where(schedules.c.id == identity)
-                    .values(record=record.model_dump(mode="json"))
-                )
-            tx.result(identity)
+    async with self.authority.write(ctx) as tx:
+        record = await schedule_in(tx, ctx, identity)
+        if record.stopped_at is None:
+            record = record.model_copy(update={"stopped_at": tx.recorded_at})
+            await tx.connection.execute(
+                schedules.update()
+                .where(schedules.c.id == identity)
+                .values(record=record.model_dump(mode="json"))
+            )
     async with self.authority.read(ctx) as view:
         record = await schedule_in(view, ctx, identity)
     await reconcile_schedule(self, record)
@@ -189,18 +171,11 @@ async def run_tick(self: MaintenanceService, scheduled_at: str, context: JsonVal
         return {"stopped": True}
     ctx = CallContext.model_validate(raw).model_copy(update={"clock": utc_now()})
     operation_id = identity + ":" + scheduled_at
-    async with self.authority.write(
-        ctx,
-        operation_id,
-        operation_kind="maintenance.tick",
-        scope=ctx.namespace_id,
-        payload={"schedule_id": identity, "scheduled_at": scheduled_at},
-    ) as tx:
-        if tx.replayed:
-            return tx.replay_result
+    async with self.authority.write(ctx) as tx:
+        pass
         record = await schedule_in(tx, ctx, identity)
         if record.stopped_at is not None:
-            return tx.result({"stopped": True})
+            return {"stopped": True}
         command = StartMaintenance(**record.command.model_dump(), operation_id=operation_id)
         from .natural import snapshot_in
 
@@ -253,7 +228,7 @@ async def run_tick(self: MaintenanceService, scheduled_at: str, context: JsonVal
                         .values(record=record.model_dump(mode="json"))
                     )
         if not roots or record.last_input_digest == digest:
-            return tx.result({"unchanged": True, "run_id": record.last_run_id})
+            return {"unchanged": True, "run_id": record.last_run_id}
         submission = await self.submit_in(tx, ctx, command)
         updated = record.model_copy(
             update={"last_input_digest": digest, "last_run_id": submission.run_id}
@@ -263,4 +238,4 @@ async def run_tick(self: MaintenanceService, scheduled_at: str, context: JsonVal
             .where(schedules.c.id == identity)
             .values(record=updated.model_dump(mode="json"))
         )
-        return tx.result(submission.model_dump(mode="json"))
+        return submission.model_dump(mode="json")

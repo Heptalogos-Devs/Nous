@@ -1,8 +1,6 @@
 from .authority import (
     Authority,
     OperationConflict,
-    OperationReceipt,
-    OperationResultPurged,
     ReadView,
     WriteTx,
 )
@@ -14,8 +12,6 @@ __all__ = [
     "BackupResult",
     "BackupService",
     "OperationConflict",
-    "OperationReceipt",
-    "OperationResultPurged",
     "ReadView",
     "WriteTx",
     "metadata",

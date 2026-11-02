@@ -74,9 +74,11 @@ class SeedService:
                     await self.cognition.materials.restore_input_in(
                         view,
                         ctx,
-                        operation_id=frozen.operation_id,
-                        operation_kind="imports.freeze",
-                        scope=ctx.namespace_id,
+                        observation_ids=tuple(
+                            dict.fromkeys(
+                                unit.observation_id for unit in catalog.units if unit.observation_id
+                            )
+                        ),
                     )
                 ).context
         return await self.maintenance.submit(

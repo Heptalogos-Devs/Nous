@@ -6,6 +6,7 @@ from pydantic import Field, model_validator
 
 from .cognition import CognitiveKind, CognitiveRef
 from .common import Contract, Operation, TimePoint
+from .common import ModelProvenance
 from .media import MediaReference
 from .vector_projection import ProjectionReceipt
 
@@ -64,7 +65,6 @@ class VectorRebuild(Contract):
     remaining: int
     projection: ProjectionReceipt | None = None
     commit_seq: int
-    blocked_references: tuple[str, ...] = ()
 
 
 class RecoverVectors(Operation):
@@ -75,7 +75,6 @@ class RecoverVectors(Operation):
 
 class VectorRecovery(Contract):
     resumed: tuple[ProjectionReceipt, ...]
-    frozen: tuple[str, ...]
     backfill: VectorRebuild
 
 
@@ -91,7 +90,6 @@ class VectorProjectionProgress(Contract):
     prepared_contents: int
     adopted_references: int
     spaces: tuple[str, ...] = ()
-    call_ids: tuple[str, ...] = ()
     error: str | None = None
 
 
@@ -120,7 +118,7 @@ class VectorSpaceCheck(Contract):
     provider_probed: bool
     provider_ready: bool | None = None
     probe_space: str | None = None
-    producer_call_id: str | None = None
+    producer: ModelProvenance | None = None
 
 
 class PersistenceState(Contract):

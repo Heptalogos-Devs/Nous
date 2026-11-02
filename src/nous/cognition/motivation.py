@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from hashlib import sha256
 from typing import TYPE_CHECKING, Literal
 
 from nous_sdk.contracts import (
@@ -27,7 +26,6 @@ from nous_sdk.contracts.motivation import (
 from pydantic import JsonValue
 
 from nous.platform.errors import NousError
-from nous.platform.persistence.authority import canonical_json
 
 from .fact_identity import normalized
 from .lifecycle import selectable
@@ -160,12 +158,6 @@ async def assess_motivation(
                 },
                 MotivationInterpretation,
                 source_ids=source_ids,
-                invocation_id="motivation:"
-                + request.operation_id
-                + ":"
-                + sha256(canonical_json(condition).encode()).hexdigest()
-                if request.save
-                else None,
             )
         except (DomainError, NousError) as error:
             if request.semantic == "required":
@@ -196,7 +188,7 @@ async def assess_motivation(
                     state=item.state,
                     confidence=item.confidence,
                     reason=item.reason,
-                    producer_call_id=generated.call_id,
+                    producer=generated.producer,
                 )
         return (judgments, "ready", None)
 

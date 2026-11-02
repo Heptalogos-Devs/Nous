@@ -11,9 +11,12 @@ from nous_sdk.contracts import (
     MediaReference,
     QueryRequest,
 )
+from nous_sdk.contracts.common import ModelProvenance
+from pydantic_ai.usage import RunUsage
 from sqlalchemy import select
 
 from nous.cognition.schema import vectors
+from nous.platform.models.generation import ModelResult
 
 from .media import embedding_input, media_records_in, source_material_ids_in
 
@@ -28,7 +31,7 @@ async def query_embedding(
     *,
     source_ids: tuple[str, ...] = (),
     concepts: tuple[str, ...] = (),
-) -> EmbeddingBatch:
+) -> ModelResult[EmbeddingBatch]:
     parts = request.parts or (request.text, *request.media)
     media_parts = tuple(part for part in parts if isinstance(part, MediaReference))
     if (
@@ -45,7 +48,10 @@ async def query_embedding(
                 (
                     await view.connection.execute(
                         select(vectors)
-                        .where(vectors.c.reference == reference.exact())
+                        .where(
+                            vectors.c.namespace_id == ctx.namespace_id,
+                            vectors.c.reference == reference.exact(),
+                        )
                         .order_by(vectors.c.commit_seq.desc(), vectors.c.space)
                     )
                 )
@@ -53,12 +59,15 @@ async def query_embedding(
                 .first()
             )
             if saved is not None:
-                return EmbeddingBatch(
-                    model=saved["model"],
-                    space=saved["space"],
-                    dimensions=saved["dimensions"],
-                    vectors=(tuple(saved["vector"]),),
-                    call_ids=(saved["call_id"],),
+                return ModelResult(
+                    output=EmbeddingBatch(
+                        model=saved["model"],
+                        space=saved["space"],
+                        dimensions=saved["dimensions"],
+                        vectors=(tuple(saved["vector"]),),
+                    ),
+                    producer=ModelProvenance.model_validate(saved["producer"]),
+                    usage=RunUsage(),
                 )
     if not any(isinstance(part, MediaReference) for part in parts):
         return await self.models.embed(
@@ -99,6 +108,12 @@ async def query_embedding(
                     view, ctx, record.reference, self.materials, self.derivations
                 )
             )
+    if all(isinstance(part, str) for part in converted):
+        return await self.models.embed(
+            ctx.model_copy(update={"request_id": f"{ctx.request_id}:query"}),
+            ("\n".join(converted), *concepts),
+            source_ids=tuple(sorted(input_sources)),
+        )
     return await self.models.embed_media(
         ctx.model_copy(update={"request_id": f"{ctx.request_id}:query-media"}),
         (tuple(converted), *((text,) for text in concepts)),
@@ -120,6 +135,7 @@ async def embed_media(
             (
                 await view.connection.execute(
                     select(vectors).where(
+                        vectors.c.namespace_id == ctx.namespace_id,
                         vectors.c.reference == reference.exact(),
                         vectors.c.space == result.spaces[0],
                     )
@@ -133,6 +149,6 @@ async def embed_media(
             space=str(row["space"]),
             model=str(row["model"]),
             dimensions=int(row["dimensions"]),
-            call_ids=(str(row["call_id"]),),
+            producer=ModelProvenance.model_validate(row["producer"]),
             commit_seq=int(row["commit_seq"]),
         )

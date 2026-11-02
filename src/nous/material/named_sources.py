@@ -41,7 +41,7 @@ async def named_source_observations_in(
                 observations.c.record,
                 materials.c.record.label("material_record"),
             )
-            .join(materials, materials.c.id == observations.c.material_id)
+            .join(materials, (materials.c.id == observations.c.material_id) & (materials.c.namespace_id == observations.c.namespace_id))
             .where(
                 observations.c.namespace_id == ctx.namespace_id,
                 

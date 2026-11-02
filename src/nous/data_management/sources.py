@@ -12,7 +12,6 @@ from nous_sdk.contracts import (
     CognitiveRecord,
     CognitiveRef,
     DomainError,
-    MemoryBody,
     RecordsQuery,
     RetentionChange,
     SourceCommand,
@@ -26,6 +25,7 @@ from sqlalchemy import select, update
 from nous.cognition.lifecycle import selectable
 from nous.cognition.lifecycle import snapshot as retention_snapshot
 from nous.cognition.records import CognitiveRecords
+from nous.cognition.memory import MemoryService
 from nous.cognition.schema import revisions, vectors
 from nous.data_management.lifecycle import DataLifecycleService
 from nous.identity.access import require_namespace_in
@@ -51,10 +51,12 @@ class SourceService:
         content_store: ContentStore | None = None,
         *,
         lifecycle: DataLifecycleService,
+        memories: MemoryService,
     ) -> None:
         self.authority, self.cognition = (authority, cognition)
         self.content_store = content_store
         self.lifecycle = lifecycle
+        self.memories = memories
 
     async def purge_namespace_in(self, tx: WriteTx, ctx: CallContext) -> tuple[str, ...]:
         """Retire all supporting originals inside an admitted Namespace removal."""
@@ -81,7 +83,9 @@ class SourceService:
         ).mappings():
             await tx.connection.execute(
                 observations.update()
-                .where(observations.c.id == row["id"])
+                .where(
+                    observations.c.namespace_id == ctx.namespace_id, observations.c.id == row["id"]
+                )
                 .values(active=False, record={**row["record"], "purged": True})
             )
         await self.lifecycle.purge_model_inputs_in(tx, material_ids)
@@ -121,7 +125,7 @@ class SourceService:
         action: Literal["trash", "restore", "purge"] = "trash",
     ) -> SourcePreview:
         await require_namespace_in(view, ctx)
-        await self.cognition.require_retention_preconditions_in(view, ctx, retention_expectations)
+        await self.memories.require_retention_preconditions_in(view, ctx, retention_expectations)
         observation_ids, objects = await self.resolve_selection_in(
             view, ctx, observation_ids, references, source_names, records
         )
@@ -231,23 +235,12 @@ class SourceService:
         self, ctx: CallContext, command: SourceCommand, kind: Literal["trash", "restore", "purge"]
     ) -> SourceResult:
         detached: list[str] = []
-        async with self.authority.write(
-            ctx,
-            command.operation_id,
-            operation_kind=f"sources.{kind}",
-            scope=ctx.namespace_id,
-            payload=command.operation_payload(),
-        ) as tx:
+        async with self.authority.write(ctx) as tx:
             await require_namespace_in(tx, ctx)
-            if tx.replayed:
-                result = SourceResult.model_validate(tx.replay_result)
-                await self.authorize_result_in(tx, ctx, result)
-            else:
-                result, detached = await self.change_in(tx, ctx, command, kind)
-                from nous.retrieval.maintenance import enqueue_index_in
+            result, detached = await self.change_in(tx, ctx, command, kind)
+            from nous.retrieval.maintenance import enqueue_index_in
 
-                await enqueue_index_in(tx, ctx)
-                tx.result(result)
+            await enqueue_index_in(tx, ctx)
         if detached and self.content_store:
             await self.content_store.purge(ctx, detached)
         return result
@@ -260,6 +253,7 @@ class SourceService:
         kind: Literal["trash", "restore", "purge"],
     ) -> tuple[SourceResult, list[str]]:
         detached: list[str] = []
+        removed_materials: set[str] = set()
         preview = await self.preview_in(
             tx,
             ctx,
@@ -303,9 +297,13 @@ class SourceService:
                         )
                 value["purged"] = True
                 value.pop("statement", None)
+                value.pop("submitted_contact", None)
             await tx.connection.execute(
                 update(observations)
-                .where(observations.c.id == observation_id)
+                .where(
+                    observations.c.namespace_id == ctx.namespace_id,
+                    observations.c.id == observation_id,
+                )
                 .values(active=kind == "restore", record=value)
             )
             if kind == "purge":
@@ -313,6 +311,7 @@ class SourceService:
                     (
                         await tx.connection.execute(
                             select(observations.c.record).where(
+                                observations.c.namespace_id == ctx.namespace_id,
                                 observations.c.material_id == row["material_id"],
                                 observations.c.id != observation_id,
                             )
@@ -324,29 +323,38 @@ class SourceService:
                 if all(peer.get("purged") for peer in peers):
                     material = (
                         await tx.connection.execute(
-                            select(materials.c.record).where(materials.c.id == row["material_id"])
+                            select(materials.c.record).where(
+                                materials.c.namespace_id == ctx.namespace_id,
+                                materials.c.id == row["material_id"],
+                            )
                         )
                     ).scalar_one()
                     material = {**material, "text": None, "purged": True}
                     await tx.connection.execute(
                         update(materials)
-                        .where(materials.c.id == row["material_id"])
+                        .where(
+                            materials.c.namespace_id == ctx.namespace_id,
+                            materials.c.id == row["material_id"],
+                        )
                         .values(record=material)
                     )
                     if self.content_store:
                         detached.extend(await self.content_store.detach_in(tx, row["material_id"]))
-                    await self.lifecycle.purge_model_inputs_in(tx, (row["material_id"],))
+                    removed_materials.add(row["material_id"])
             if kind in {"trash", "purge"}:
                 for reference in preview.retiring:
                     await tx.connection.execute(
-                        vectors.delete().where(vectors.c.reference == reference.exact())
+                        vectors.delete().where(
+                            vectors.c.namespace_id == ctx.namespace_id,
+                            vectors.c.reference == reference.exact(),
+                        )
                     )
         if kind == "purge":
-            await self.lifecycle.purge_model_inputs_in(tx, ())
+            await self.lifecycle.purge_model_inputs_in(tx, tuple(sorted(removed_materials)))
             retired = await self.cognition.retire_unsupported_in(tx, ctx)
             detached.extend(await purge_artifacts_in(self, tx, ctx))
             retired += await self.cognition.retire_unsupported_in(tx, ctx)
-            await self._purge_import_payloads_in(tx, ctx)
+            await self._retire_imports_in(tx, ctx, tuple(sorted(removed_materials)))
             await self.lifecycle.purge_cognitive_references_in(
                 tx, ctx, tuple(dict.fromkeys(retired))
             )
@@ -433,13 +441,19 @@ class SourceService:
                             "deletion_grace_pending",
                             "The selected object has not completed its deletion grace period",
                         )
-                changed = await self.cognition.purge_cognition_in(
-                    tx, ctx, reference, force=command.force, reason=command.reason
+                changed = (
+                    await self.memories.purge_retained_in(
+                        tx, ctx, reference, force=command.force, reason=command.reason
+                    )
+                    if reference.kind in {"memory", "association"}
+                    else await self.cognition.purge_cognition_in(
+                        tx, ctx, reference, force=command.force, reason=command.reason
+                    )
                 )
             elif previous.deleted == (kind == "trash"):
                 changed = previous
-            elif isinstance(previous.body, MemoryBody):
-                changed = await self.cognition.change_retention_in(
+            elif reference.kind in {"memory", "association"}:
+                changed = await self.memories.change_retention_in(
                     tx,
                     ctx,
                     RetentionChange(
@@ -456,143 +470,85 @@ class SourceService:
             result.append(changed.reference)
         return result
 
-    async def _purge_import_payloads_in(self, tx: WriteTx, ctx: CallContext) -> None:
+    async def _retire_imports_in(
+        self, tx: WriteTx, ctx: CallContext, material_ids: tuple[str, ...]
+    ) -> None:
         from nous.imports.schema import catalogs, inputs, requests, units
 
-        source_rows = (
-            (
-                await tx.connection.execute(
-                    select(observations.c.material_id, observations.c.record).where(
-                        observations.c.namespace_id == ctx.namespace_id
-                    )
-                )
-            )
-            .mappings()
-            .all()
-        )
-        purged_materials = {
-            row["material_id"] for row in source_rows if row["record"].get("purged")
-        }.difference(row["material_id"] for row in source_rows if not row["record"].get("purged"))
-        if not purged_materials:
+        if not material_ids:
             return
-        owned = (
-            (
-                await tx.connection.execute(
-                    select(catalogs).where(catalogs.c.namespace_id == ctx.namespace_id)
-                )
-            )
-            .mappings()
-            .all()
-        )
-        catalog_ids = {row["id"] for row in owned}
-        for row in (
-            (
-                await tx.connection.execute(
-                    select(inputs).where(
-                        inputs.c.catalog_id.in_(catalog_ids),
-                        inputs.c.material_id.in_(purged_materials),
-                    )
-                )
-            )
-            .mappings()
-            .all()
-        ):
-            value = {
-                **row["record"],
-                "purged": True,
-                "document": {
-                    **row["record"]["document"],
-                    "text": None,
-                    "material_id": row["material_id"],
-                },
-            }
+        owned = select(catalogs.c.id).where(catalogs.c.namespace_id == ctx.namespace_id)
+        affected_inputs = (
             await tx.connection.execute(
-                update(inputs).where(inputs.c.id == row["id"]).values(record=value)
+                select(inputs.c.id, inputs.c.record).where(
+                    inputs.c.catalog_id.in_(owned),
+                    inputs.c.material_id.in_(material_ids),
+                )
             )
-        for row in (
-            (await tx.connection.execute(select(units).where(units.c.catalog_id.in_(catalog_ids))))
-            .mappings()
-            .all()
-        ):
-            if row["record"]["material_id"] in purged_materials:
+        ).all()
+        input_ids = [row.id for row in affected_inputs]
+        for row in affected_inputs:
+            await tx.connection.execute(
+                update(inputs)
+                .where(inputs.c.id == row.id)
+                .values(record={**row.record, "purged": True})
+            )
+        affected_units = (
+            await tx.connection.execute(
+                select(units.c.id, units.c.record).where(
+                    units.c.catalog_id.in_(owned),
+                    units.c.record["input_source_id"].as_string().in_(input_ids),
+                )
+            )
+        ).all()
+        for row in affected_units:
+            await tx.connection.execute(
+                update(units)
+                .where(units.c.id == row.id)
+                .values(
+                    record={
+                        **row.record,
+                        "purged": True,
+                        "context": {},
+                        "split_context": {},
+                    }
+                )
+            )
+        rows = (
+            await tx.connection.execute(
+                select(requests.c.id, requests.c.record).where(
+                    requests.c.record["context"]["namespace_id"].as_string() == ctx.namespace_id,
+                )
+            )
+        ).all()
+        for row in rows:
+            if set(row.record.get("material_ids", ())).intersection(material_ids):
                 await tx.connection.execute(
-                    update(units)
-                    .where(units.c.id == row["id"])
+                    update(requests)
+                    .where(requests.c.id == row.id)
                     .values(
                         record={
-                            **row["record"],
-                            "text": "",
-                            "context": dict[str, JsonValue](),
+                            **row.record,
                             "purged": True,
                         }
                     )
                 )
-        for row in owned:
-            value = {
-                **row["record"],
-                "units": [
-                    {**unit, "text": "", "context": dict[str, JsonValue](), "purged": True}
-                    if unit["material_id"] in purged_materials
-                    else unit
-                    for unit in row["record"]["units"]
-                ],
-            }
-            await tx.connection.execute(
-                update(catalogs).where(catalogs.c.id == row["id"]).values(record=value)
-            )
-        for row in (await tx.connection.execute(select(requests))).mappings().all():
-            context = row["record"].get("context", {})
-            if (
-                context.get("namespace_id") == ctx.namespace_id
-                and context.get("namespace_id") == ctx.namespace_id
-                and set(row["record"].get("material_ids", ())).intersection(purged_materials)
-            ):
-                await tx.connection.execute(
-                    update(requests)
-                    .where(requests.c.id == row["id"])
-                    .values(record={**row["record"], "command": None, "purged": True})
-                )
-        await self.lifecycle.purge_model_inputs_in(tx, tuple(sorted(purged_materials)))
 
-        def affected_receipt(value: JsonValue) -> bool:
-            if isinstance(value, list):
-                return any(affected_receipt(child) for child in value)
-            if not isinstance(value, dict):
-                return False
-            if any(
-                isinstance(value.get(key), str) and value.get(key) in purged_materials
-                for key in ("material_id", "id")
-            ) and any(value.get(key) is not None for key in ("text", "document")):
-                return True
-            reference = value.get("reference")
-            if isinstance(reference, dict) and "body" in value:
-                source_roots = value.get("support_roots") or value.get("source_roots")
-                if (
-                    isinstance(source_roots, list)
-                    and source_roots
-                    and (
-                        not any(
-                            root in live_observations
-                            for root in source_roots
-                            if isinstance(root, str)
-                        )
-                    )
-                ):
-                    return True
-            return any(affected_receipt(child) for child in value.values())
-
-        live_observations = {
-            row["id"]
-            for row in (
-                await tx.connection.execute(
-                    select(observations.c.id, observations.c.record).where(
-                        observations.c.namespace_id == ctx.namespace_id
-                    )
-                )
-            ).mappings()
-            if not row["record"].get("purged")
-        }
-        await self.authority.redact_receipts_in(tx, affected_receipt)
+    async def set_deleted(
+        self, ctx: CallContext, reference: CognitiveRef, deleted: bool, operation_id: str
+    ) -> CognitiveRecord:
+        result = await self._change(
+            ctx,
+            SourceCommand(
+                operation_id=operation_id,
+                references=(reference,),
+                reason="Manual cognitive lifecycle change",
+                requested_by=ctx.caller_id,
+            ),
+            "trash" if deleted else "restore",
+        )
+        changed = next(ref for ref in result.references if ref.id == reference.id)
+        return await self.cognition.get(ctx, changed)
 
     async def trash(self, ctx: CallContext, command: SourceCommand):
         return await self._change(ctx, command, "trash")
@@ -600,15 +556,7 @@ class SourceService:
     async def submit_trash(self, ctx: CallContext, command: SourceCommand) -> str:
         from nous.platform.execution import JobSpec
 
-        async with self.authority.write(
-            ctx,
-            command.operation_id + ":submit",
-            operation_kind="sources.submit_trash",
-            scope=ctx.namespace_id,
-            payload=command.operation_payload(),
-        ) as tx:
-            if tx.replayed:
-                return str(tx.replay_result)
+        async with self.authority.write(ctx) as tx:
             await self.preview_in(
                 tx,
                 ctx,
@@ -623,9 +571,10 @@ class SourceService:
                     workflow_name="nous.sources.trash",
                     queue_name="default",
                     args=(ctx.model_dump(mode="json"), command.model_dump(mode="json")),
+                    scope=ctx.namespace_id,
                 )
             )
-            return tx.result(job.workflow_id)
+            return job.workflow_id
 
     async def run_trash(self, context: JsonValue, payload: JsonValue) -> dict[str, JsonValue]:
         ctx, command = (CallContext.model_validate(context), SourceCommand.model_validate(payload))

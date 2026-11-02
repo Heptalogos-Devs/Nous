@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .selection import SelectionRequest
+
 import asyncio
 from datetime import UTC, datetime
 from hashlib import sha256
@@ -15,9 +17,9 @@ from nous_sdk.contracts import (
     MediaRecord,
     QueryRequest,
 )
+from nous_sdk.contracts.common import ModelProvenance
 from nous_sdk.contracts.context import (
     ContextConsumerPolicy,
-    ContextPrepare,
     ContextSegment,
     ContextSession,
     ContextTarget,
@@ -102,7 +104,7 @@ def passages(segments: list[ContextSegment], text_bytes: int) -> str:
 
 
 def compress_segments(
-    selected: list[ContextSegment], summary: str, call_id: str, role: str
+    selected: list[ContextSegment], summary: str, producer: ModelProvenance, role: str
 ) -> ContextSegment:
     sources = tuple(
         {
@@ -112,7 +114,8 @@ def compress_segments(
         }.values()
     )
     return ContextSegment(
-        key="summary:" + sha256(canonical_json((sources, summary)).encode()).hexdigest(),
+        key="summary:"
+        + sha256(canonical_json((sources, summary, producer.output_digest)).encode()).hexdigest(),
         text=summary,
         sources=sources,
         dependencies=sources,
@@ -120,15 +123,15 @@ def compress_segments(
         epistemic=EpistemicStance(classification="inferred", attribution=role),
         provenance=TypeAdapter(dict[str, JsonValue]).validate_python(
             {
-                "producer_call_id": call_id,
                 "source_roots": sorted({root for segment in selected for root in roots(segment)}),
             }
         ),
+        producer=producer,
     )
 
 
 async def supplemental(
-    service: StewardOwner, ctx: CallContext, command: ContextPrepare, limit: int
+    service: StewardOwner, ctx: CallContext, command: SelectionRequest, limit: int
 ) -> list[ContextSegment]:
     if not command.usage.intent.strip():
         return []
@@ -202,7 +205,7 @@ async def history_inputs(
 async def residency(
     service: StewardOwner,
     ctx: CallContext,
-    command: ContextPrepare,
+    command: SelectionRequest,
     policy: ContextConsumerPolicy,
     selected: list[ContextSegment],
 ) -> tuple[tuple[ContextTarget, ...], tuple[ContextTarget, ...], str]:
@@ -251,19 +254,19 @@ async def residency(
 async def steward_select(
     service: StewardOwner,
     ctx: CallContext,
-    command: ContextPrepare,
+    command: SelectionRequest,
     policy: ContextConsumerPolicy,
     offered: list[ContextSegment],
-) -> tuple[list[ContextSegment], str | None, StewardDecision | None]:
-    if policy.steward_role is None:
-        return offered, None, None
+) -> tuple[list[ContextSegment], StewardDecision | None]:
+    if policy.steward_role is None and not (command.trigger == "budget" and command.working_groups):
+        return offered, None
     maximum = min(command.max_text_bytes, policy.max_text_bytes)
     pressure = (
         len(offered) > min(command.max_items, policy.max_items)
         or sum(len(item.text.encode("utf-8")) for item in offered) > maximum
     )
     if command.trigger == "ordinary" and not pressure:
-        return offered, None, None
+        return offered, None
     try:
         async with asyncio.timeout(policy.steward_timeout_seconds):
             return await run_tasks(service, ctx, command, policy, offered, maximum, pressure)
@@ -276,13 +279,12 @@ async def steward_select(
 async def run_tasks(
     service: StewardOwner,
     ctx: CallContext,
-    command: ContextPrepare,
+    command: SelectionRequest,
     policy: ContextConsumerPolicy,
     offered: list[ContextSegment],
     maximum: int,
     pressure: bool,
-) -> tuple[list[ContextSegment], str | None, StewardDecision | None]:
-    assert policy.steward_role is not None
+) -> tuple[list[ContextSegment], StewardDecision]:
     evict_initial, promote_initial, work = await residency(service, ctx, command, policy, [])
     goal = command.usage.purpose
     background = work
@@ -340,7 +342,11 @@ async def run_tasks(
     if command.trigger == "budget":
         for group in command.working_groups:
             segments, covered, lookup_budget = await history_inputs(
-                service, ctx, group.sources, lookup_budget, maximum
+                service,
+                ctx,
+                group.sources,
+                lookup_budget,
+                max(maximum, command.history_source_bytes),
             )
             if set(item.model_dump_json() for item in covered) == set(
                 item.model_dump_json() for item in group.sources
@@ -353,12 +359,12 @@ async def run_tasks(
         )
         background += "\n\n" + "\n\n".join(item.text for item in recent)
     remaining = policy.steward_max_model_requests
-    calls: list[str] = []
+    producers: list[ModelProvenance] = []
     question = command.usage.intent or command.usage.purpose
     reserved = len(group_inputs) + int(pressure) + int(command.trigger in {"pause", "resume"})
     selected = optional
     selection_note: str | None = None
-    if optional and remaining > reserved:
+    if optional and policy.steward_role is not None and remaining > reserved:
         generated = await service.models.generate(
             ctx,
             policy.steward_role,
@@ -371,10 +377,9 @@ async def run_tasks(
             },
             SelectionResult,
             source_ids=await source_ids(service, ctx, optional),
-            invocation_id="steward:" + command.operation_id + ":selection",
         )
         remaining -= 1
-        calls.append(generated.call_id)
+        producers.append(generated.producer)
         indices = generated.output.paragraphs
         selection_note = generated.output.note
         if any(index < 1 or index > len(optional) for index in indices):
@@ -403,10 +408,9 @@ async def run_tasks(
                 },
                 list[list[int]],
                 source_ids=ids,
-                invocation_id="steward:" + command.operation_id + ":topics:" + group.group_id,
             )
             remaining -= 1
-            calls.append(grouped.call_id)
+            producers.append(grouped.producer)
             flattened = [index for topic in grouped.output for index in topic]
             if sorted(flattened) != list(range(1, len(parts) + 1)) or any(
                 not topic for topic in grouped.output
@@ -438,16 +442,10 @@ async def run_tasks(
                 {"question": instruction, "passages": "\n\n".join(parts[part] for part in topic)},
                 str,
                 source_ids=ids,
-                invocation_id="steward:"
-                + command.operation_id
-                + ":history:"
-                + group.group_id
-                + ":"
-                + str(index),
                 max_output_tokens=tokens,
             )
             remaining -= 1
-            calls.append(generated.call_id)
+            producers.append(generated.producer)
             summaries.append(generated.output)
         summary = "\n\n".join(summaries)
         measurement = await service.models.measure_native(
@@ -462,7 +460,7 @@ async def run_tasks(
                 group_id=group.group_id,
                 text=summary,
                 covered_sources=group.sources,
-                producer_call_id=calls[-1],
+                producer=producers[-1],
             )
         )
     available_bytes = max(0, maximum - sum(len(item.text.encode("utf-8")) for item in required))
@@ -483,10 +481,9 @@ async def run_tasks(
             },
             str,
             source_ids=await source_ids(service, ctx, selected),
-            invocation_id="steward:" + command.operation_id + ":compression",
         )
         remaining -= 1
-        calls.append(generated.call_id)
+        producers.append(generated.producer)
         summary = generated.output
         if len(summary.encode("utf-8")) > available_bytes and remaining:
             generated = await service.models.generate(
@@ -495,13 +492,14 @@ async def run_tasks(
                 {"question": "再概括成更短的一小段话。", "passages": summary},
                 str,
                 source_ids=await source_ids(service, ctx, selected),
-                invocation_id="steward:" + command.operation_id + ":compression-shorter",
             )
             remaining -= 1
-            calls.append(generated.call_id)
+            producers.append(generated.producer)
             summary = generated.output
         if len(summary.encode("utf-8")) <= available_bytes:
-            selected = [compress_segments(selected, summary, generated.call_id, "context_compress")]
+            selected = [
+                compress_segments(selected, summary, generated.producer, "context_compress")
+            ]
     evict, promote, work = await residency(service, ctx, command, policy, selected)
     work_summary = None
     unresolved: tuple[str, ...] = ()
@@ -512,10 +510,9 @@ async def run_tasks(
             {"question": question, "passages": work},
             str,
             source_ids=await source_ids(service, ctx, [*required, *selected]),
-            invocation_id="steward:" + command.operation_id + ":work",
         )
         remaining -= 1
-        calls.append(generated.call_id)
+        producers.append(generated.producer)
         work_summary = generated.output
     if command.trigger in {"pause", "resume", "task_change"} and work and remaining:
         generated = await service.models.generate(
@@ -524,10 +521,9 @@ async def run_tasks(
             {"question": question, "passages": work},
             list[str],
             source_ids=await source_ids(service, ctx, [*required, *selected]),
-            invocation_id="steward:" + command.operation_id + ":questions",
         )
         remaining -= 1
-        calls.append(generated.call_id)
+        producers.append(generated.producer)
         unresolved = tuple(generated.output[:32])
     bounded = list(required)
     used = sum(len(item.text.encode("utf-8")) for item in bounded)
@@ -551,7 +547,6 @@ async def run_tasks(
         group_summaries=tuple(group_summaries),
         unresolved=unresolved,
         sources=sources,
-        producer_call_id=calls[-1] if calls else None,
-        producer_call_ids=tuple(calls),
+        producers=tuple(producers),
     )
-    return bounded, calls[-1] if calls else None, decision
+    return bounded, decision

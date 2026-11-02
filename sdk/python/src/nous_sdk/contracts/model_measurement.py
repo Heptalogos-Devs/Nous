@@ -16,13 +16,3 @@ class ModelMeasurement(Contract):
     @property
     def complete(self) -> bool:
         return all(item.get("tokens") is not None for item in self.media_items)
-
-    def host_measurement(self):
-        from .context import HostInputMeasurement
-
-        return HostInputMeasurement(
-            input_tokens=self.input_tokens,
-            reserved_output_tokens=self.output_reserve,
-            context_window_tokens=self.context_window,
-            source=self.method + (":estimated" if self.estimated else ":measured"),
-        )

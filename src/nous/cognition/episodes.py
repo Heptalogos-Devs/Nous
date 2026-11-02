@@ -31,6 +31,7 @@ from nous_sdk.contracts.episodes import (
     ProcessEpisodeSources,
     RebuildEpisodes,
 )
+from nous_sdk.contracts.common import ModelProvenance
 from pydantic import JsonValue, TypeAdapter
 from sqlalchemy import func, select
 
@@ -134,7 +135,7 @@ class EpisodeService:
                 select(roots.c.value).where(roots.c.value.in_(source_roots)).exists()
             )
         if track is not None:
-            statement = statement.where(revisions.c.record["body"]["track"].as_string() == track)
+            statement = statement.where(revisions.c.namespace_id == ctx.namespace_id, revisions.c.record['body']['track'].as_string() == track)
         return tuple(
             CognitiveRecord.model_validate(value)
             for value in (await view.connection.execute(statement)).scalars()
@@ -199,7 +200,7 @@ class EpisodeService:
         rows = (
             await view.connection.execute(
                 select(observations.c.record, materials.c.record.label("material_record"))
-                .join(materials, materials.c.id == observations.c.material_id)
+                .join(materials, (materials.c.id == observations.c.material_id) & (materials.c.namespace_id == observations.c.namespace_id))
                 .where(
                     observations.c.namespace_id == ctx.namespace_id,
                     observations.c.id.in_(record.source_roots),
@@ -321,18 +322,7 @@ class EpisodeService:
     ) -> EpisodeRebuildSubmission:
         if len(set(command.sources)) != len(command.sources):
             raise DomainError("episode_source_duplicate", "Source names must be distinct")
-        async with self.authority.write(
-            ctx,
-            command.operation_id,
-            operation_kind="episode.rebuild",
-            scope=ctx.namespace_id,
-            payload=command,
-        ) as tx:
-            if tx.replayed:
-                result = EpisodeRebuildSubmission.model_validate(tx.replay_result)
-                for source in result.sources:
-                    await self.source_snapshot_in(tx, ctx, source)
-                return result
+        async with self.authority.write(ctx) as tx:
             await require_namespace_in(tx, ctx, "memory")
     
             await require_namespace_in(tx, ctx, "episodes")
@@ -349,24 +339,15 @@ class EpisodeService:
                 )
             intent = EpisodeRebuildIntent(context=ctx, command=command, snapshots=tuple(snapshots))
             job = await tx.enqueue(
-                JobSpec(
-                    "nous.episodes.rebuild", "formation", args=(intent.model_dump(mode="json"),)
-                )
+                JobSpec('nous.episodes.rebuild', 'formation', args=(intent.model_dump(mode='json'),), scope=ctx.namespace_id)
             )
-            return tx.result(
-                EpisodeRebuildSubmission(job_id=job.workflow_id, sources=command.sources)
-            )
+            return EpisodeRebuildSubmission(job_id=job.workflow_id, sources=command.sources)
 
     async def run_rebuild(self, payload: JsonValue) -> JsonValue:
         intent = EpisodeRebuildIntent.model_validate(payload)
         ctx, command = (intent.context, intent.command)
         operation = command.operation_id + ":publish"
-        receipt = await self.authority.receipt(
-            ctx, operation, operation_kind="episode.publish", scope=ctx.namespace_id, payload=intent
-        )
-        if receipt is not None:
-            return receipt.result
-        plans: list[tuple[EpisodeSourceSnapshot, list[tuple[EpisodeBody, str]]]] = []
+        plans: list[tuple[EpisodeSourceSnapshot, list[tuple[EpisodeBody, ModelProvenance]]]] = []
         for snapshot in intent.snapshots:
             async with self.authority.read(ctx) as view:
                 members, originals, observation_ids = await self.source_snapshot_in(
@@ -380,7 +361,7 @@ class EpisodeService:
                     raise DomainError(
                         "episode_source_changed", "Source changed after rebuild admission"
                     )
-            planned: list[tuple[EpisodeBody, str]] = []
+            planned: list[tuple[EpisodeBody, ModelProvenance]] = []
             for index, group in enumerate(groups(members, command)):
                 catalog = {f"M{ordinal + 1}": record for ordinal, record in enumerate(group)}
                 variables = EpisodeSegmentationInput(
@@ -411,7 +392,6 @@ class EpisodeService:
                     source_ids=tuple(
                         sorted({root for record in group for root in record.source_roots})
                     ),
-                    invocation_id=f"episode:{command.operation_id}:{snapshot.source}:{index}",
                 )
                 assigned = [
                     key for segment in generated.output.episodes for key in segment.member_keys
@@ -420,7 +400,6 @@ class EpisodeService:
                     raise DomainError(
                         "episode_coverage",
                         "Every frozen member must occur exactly once",
-                        call_id=generated.call_id,
                     )
                 for segment in generated.output.episodes:
                     planned.append(
@@ -441,15 +420,11 @@ class EpisodeService:
                                 boundary_explanation=segment.boundary_explanation,
                                 lineage=snapshot.originals,
                             ),
-                            generated.call_id,
+                            generated.producer,
                         )
                     )
             plans.append((snapshot, planned))
-        async with self.authority.write(
-            ctx, operation, operation_kind="episode.publish", scope=ctx.namespace_id, payload=intent
-        ) as tx:
-            if tx.replayed:
-                return tx.replay_result
+        async with self.authority.write(ctx) as tx:
             await require_namespace_in(tx, ctx, "memory")
             results: list[dict[str, JsonValue]] = []
             for snapshot, planned in plans:
@@ -465,7 +440,7 @@ class EpisodeService:
                         "episode_source_changed", "Source changed before Episode publication"
                     )
                 created: list[CognitiveRef] = []
-                for body, call_id in planned:
+                for body, producer in planned:
                     record = await self.cognition.adopt_in(
                         tx,
                         ctx,
@@ -474,7 +449,7 @@ class EpisodeService:
                             evidence=tuple(
                                 EvidenceLink(reference=member.reference) for member in body.members
                             ),
-                            producer_call_id=call_id,
+                            producer=producer,
                         ),
                     )
                     created.append(record.reference)
@@ -511,9 +486,7 @@ class EpisodeService:
                         "references": [reference.model_dump(mode="json") for reference in created],
                     }
                 )
-            value = tx.result(
-                {"sources": results, "rebuilt": len(results), "commit_seq": tx.commit_seq}
-            )
+            value = {'sources': results, 'rebuilt': len(results), 'commit_seq': tx.commit_seq}
         return TypeAdapter(JsonValue).validate_python(value)
 
     async def status(self, ctx: CallContext, limit: int = 20) -> dict[str, JsonValue]:

@@ -23,7 +23,6 @@ from nous.platform.persistence import ReadView, WriteTx
 from nous.references import allocate_in
 
 if TYPE_CHECKING:
-    from .archive_dependencies import VerifiedHistoryArchive
     from .service import MaterialRecord, MaterialService, SourceRecord
 
 
@@ -80,7 +79,6 @@ async def put_blob_in(
     *,
     required_source_ids: tuple[str, ...] = (),
     required_observation_ids: tuple[str, ...] = (),
-    history_archive: VerifiedHistoryArchive | None = None,
 ) -> MaterialRecord:
     from .service import materials, require_observation_in
 
@@ -88,15 +86,7 @@ async def put_blob_in(
         raise DomainError("content_unavailable", "Immutable content storage is not configured")
     from .access import require_dependencies_in
 
-    if history_archive is not None:
-        from .archive_dependencies import history_dependencies_in
-
-        if history_archive.content_hash != lease.content_hash or history_archive.sources != frozenset(required_source_ids):
-            raise DomainError("bundle_history_mismatch", "Archive bytes and historical dependencies differ")
-        state = await history_dependencies_in(tx, ctx, required_source_ids)
-        if state != "available":
-            raise DomainError("source_unavailable", "Archive historical dependency is unavailable", state=state)
-    elif required_source_ids:
+    if required_source_ids:
         await require_dependencies_in(self, tx, ctx, required_source_ids)
     for observation_id in required_observation_ids:
         if required_source_ids:
@@ -121,8 +111,6 @@ async def put_blob_in(
         "recorded_at": str(tx.recorded_at),
         "commit_seq": tx.commit_seq,
     }
-    if history_archive is not None:
-        value["dependency_purpose"] = "history"
     value["addresses"] = (
         await allocate_in(tx, ctx, MediaReference(kind="material", id=value["id"]))
     ).model_dump(mode="json")
@@ -166,9 +154,7 @@ async def observe_in(
     if sources:
         for reference in sources:
             if reference.kind in {"representation", "derived_region"}:
-                from .derived import DerivedService
-
-                info = await DerivedService(self.authority, self).source_in(tx, ctx, reference)
+                info = await self.provenance_in(tx, ctx, reference)
                 matches = material_id in info.material_ids
             else:
                 selected, _, _ = await self.media_source_in(tx, ctx, reference)
@@ -182,7 +168,6 @@ async def observe_in(
     value: SourceRecord = {
         "id": str(uuid4()),
         "namespace_id": ctx.namespace_id,
-        
         "material_id": material_id,
         "kind": kind,
         "origin": document.origin,
@@ -201,7 +186,6 @@ async def observe_in(
         observations.insert().values(
             id=value["id"],
             namespace_id=ctx.namespace_id,
-            
             material_id=material_id,
             kind=kind,
             active=True,
@@ -209,6 +193,9 @@ async def observe_in(
             commit_seq=tx.commit_seq,
         )
     )
+    from nous.retrieval.maintenance import enqueue_index_in
+
+    await enqueue_index_in(tx, ctx)
     return value
 
 
@@ -221,7 +208,6 @@ async def require_observation_exists_in(
         select(observations.c.id).where(
             observations.c.id == observation_id,
             observations.c.namespace_id == ctx.namespace_id,
-            
             observations.c.active.is_(True),
         )
     )

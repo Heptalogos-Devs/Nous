@@ -37,44 +37,29 @@ def test_shared_content_references_and_rollback_leases_control_purge(tmp_path):
         first = await store.publish_bytes(b"original", "application/octet-stream")
         second = await store.publish_bytes(b"original", "application/octet-stream")
         assert first.content_hash == second.content_hash
-        async with authority.write(
-            ctx, "attach", operation_kind="material.attach", payload={}
-        ) as tx:
+        async with authority.write(ctx) as tx:
             await store.attach_in(tx, first, "material:a")
             await store.attach_in(tx, second, "material:b")
-            tx.result({"attached": True})
         await store.release(first)
         await store.release(second)
         other = CallContext(
             credential_source_ids=None, caller_id="owner", namespace_id="other-namespace"
         )
         third = await store.publish_bytes(b"original", "application/octet-stream")
-        async with authority.write(
-            other, "attach", operation_kind="material.attach", payload={}
-        ) as tx:
+        async with authority.write(other) as tx:
             await store.attach_in(tx, third, "material:a")
-            tx.result(None)
         await store.release(third)
-        async with authority.write(
-            ctx, "detach-a", operation_kind="material.detach", payload={}
-        ) as tx:
+        async with authority.write(ctx) as tx:
             await store.detach_in(tx, "material:a")
-            tx.result(None)
         assert await store.purge(ctx, (first.content_hash,)) == ()
         async with store.protect(first) as original:
-            async with authority.write(
-                ctx, "detach-b", operation_kind="material.detach", payload={}
-            ) as tx:
+            async with authority.write(ctx) as tx:
                 await store.detach_in(tx, "material:b")
-                tx.result(None)
             assert await store.purge(ctx, (first.content_hash,)) == ()
             assert original.read_bytes() == b"original"
         assert await store.purge(ctx, (first.content_hash,)) == ()
-        async with authority.write(
-            other, "detach", operation_kind="material.detach", payload={}
-        ) as tx:
+        async with authority.write(other) as tx:
             await store.detach_in(tx, "material:a")
-            tx.result(None)
         assert await store.purge(ctx, (first.content_hash,)) == (first.content_hash,)
         with pytest.raises(ValueError, match="size limit"):
             await store.publish_bytes(b"too-large", "application/octet-stream")
@@ -266,11 +251,10 @@ def test_persistent_cancellation_reaches_preemptible_owned_subprocess(tmp_path):
         await execution.start()
         ctx = CallContext(credential_source_ids=None, caller_id="owner", namespace_id="namespace")
         try:
-            async with authority.write(ctx, "prepare", operation_kind="prepare", payload={}) as tx:
+            async with authority.write(ctx) as tx:
                 job = await tx.enqueue(
                     JobSpec("preemptible-media", "default", args=("original-ref",))
                 )
-                tx.result({"job": job.workflow_id})
 
             def wait_pid():
                 deadline = time.monotonic() + 10

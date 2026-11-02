@@ -6,6 +6,7 @@ import numpy as np
 from nous_sdk.contracts import (
     CognitiveRecord,
 )
+from nous_sdk.contracts.common import ModelProvenance
 from nous_sdk.contracts.resources import ResourceRecord
 from nous_sdk.contracts.retrieval import QueryObject
 from nous_sdk.contracts.source_objects import EvidenceRelationRecord, ObservationRecord
@@ -22,7 +23,7 @@ class VectorAsset(BaseModel):
     model: str
     dimensions: int
     vector: list[float]
-    call_id: str | None
+    producer: ModelProvenance
     commit_seq: int
 
 

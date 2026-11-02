@@ -59,6 +59,12 @@ class ClientCore(TypedOperations):
     async def __aexit__(self, exc_type: object, exc: object, traceback: object) -> None:
         await self.close()
 
+    def require_namespace(self, namespace_id: str | None = None) -> str:
+        selected = namespace_id or self.namespace_id
+        if selected is None:
+            raise ValueError("Select a Namespace for this operation")
+        return selected
+
     async def request(
         self,
         method: str,

@@ -8,7 +8,7 @@ import sys
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import anyio
 import typer
@@ -21,6 +21,9 @@ from nous.platform.localization import Localizer
 
 from .client_state import ClientState
 from .render import present
+
+if TYPE_CHECKING:
+    from nous_sdk.namespace import NamespaceClient
 
 _JSON = TypeAdapter(JsonValue)
 _ENCODER = TypeAdapter(object)
@@ -110,8 +113,8 @@ def invoke(ctx: typer.Context, operation: Callable[[NousClient], Awaitable[objec
     asyncio.run(run())
 
 
-def invoke_bound(ctx: typer.Context, operation) -> None:
-    async def bound(root: NousClient):
+def invoke_bound(ctx: typer.Context, operation: Callable[[NamespaceClient], Awaitable[object]]) -> None:
+    async def bound(root: NousClient) -> object:
         selected = options(ctx)
         if selected.namespace is None:
             raise ValueError("Choose a Namespace with 'nous use NAME' or --namespace NAME")

@@ -1,132 +1,142 @@
-"""Retained people keep only attributes with surviving independent support."""
+"""Entity attributes and profile projections share their exact evidence rules."""
 
 from __future__ import annotations
 
-from nous_sdk.contracts import CognitiveRecord, EntityBody, EvidenceLink
-from nous_sdk.contracts.cognition import PlatformIdentity
-from pydantic import JsonValue
+from typing import TYPE_CHECKING
+from nous_sdk.contracts import CallContext, CognitiveRecord, EntityBody
 from sqlalchemy import select, update
+from nous.platform.persistence import ReadView, WriteTx
+from .projection import evidence_in
+from .schema import revisions, vectors
 
-from nous.cognition.schema import revisions, vectors
-from nous.platform.persistence import WriteTx
+if TYPE_CHECKING:
+    from .records import CognitiveRecords
 
 
-async def supported_in(
-    tx: WriteTx, record: CognitiveRecord, links: tuple[EvidenceLink, ...], unpurged: set[str]
-) -> bool:
-    for link in links:
+async def project_entity_in(
+    cognition: CognitiveRecords,
+    view: ReadView | WriteTx,
+    ctx: CallContext,
+    record: CognitiveRecord,
+    *,
+    roots: dict[str, str] | None = None,
+    permanent: bool = False,
+) -> CognitiveRecord:
+    if not isinstance(record.body, EntityBody):
+        return record
+    body = record.body
+    roots = roots if roots is not None else await cognition.source_roots_in(view, ctx)
+    base_links = await cognition.live_links_in(view, ctx, record.evidence, roots)
+    base_live = bool(base_links)
+    attributes = tuple(
+        [
+            attribute
+            for attribute in body.attributes
+            if await cognition.links_live_in(view, ctx, attribute.evidence, roots)
+        ]
+    )
+    identities = []
+    for identity in body.platform_identities:
+        if not await cognition.links_live_in(view, ctx, identity.evidence, roots):
+            continue
+        kept = tuple(
+            [
+                attribute
+                for attribute in identity.attributes
+                if await cognition.links_live_in(view, ctx, attribute.evidence, roots)
+            ]
+        )
+        identities.append(identity.model_copy(update={"attributes": kept}))
+    controls = body.profile_controls
+    if controls.aliases is not None and (
+        not await cognition.links_live_in(view, ctx, controls.aliases.evidence, roots)
+    ):
+        controls = controls.model_copy(update={"aliases": None})
+    if controls.summary is not None and (
+        not await cognition.links_live_in(view, ctx, controls.summary.evidence, roots)
+    ):
+        controls = controls.model_copy(update={"summary": None})
+    generated = body.generated_profile
+    if generated is not None and (
+        not await cognition.links_live_in(view, ctx, generated.evidence, roots, require_all=True)
+    ):
+        generated = None
+    body = body.model_copy(
+        update={
+            "description": body.description if base_live else "",
+            "aliases": body.aliases if base_live else (),
+            "attributes": attributes,
+            "platform_identities": tuple(identities),
+            "purged_identity_count": body.purged_identity_count
+            + (len(body.platform_identities) - len(identities) if permanent else 0),
+            "purged_attribute_count": body.purged_attribute_count
+            + (len(body.attributes) - len(attributes) if permanent else 0),
+            "profile_controls": controls,
+            "generated_profile": generated,
+        }
+    )
+    supported: set[str] = set()
+    for link in (*base_links, *tuple(evidence_in(body))):
         if link.polarity != "support":
             continue
-        if link.observation_id and link.observation_id in unpurged:
-            return True
-        if link.reference:
-            value = await tx.connection.scalar(
+        if link.observation_id is not None and link.observation_id in roots:
+            supported.add(link.observation_id)
+        elif link.reference is not None:
+            raw = await view.connection.scalar(
                 select(revisions.c.record).where(
-                    revisions.c.namespace_id == record.namespace_id,
+                    revisions.c.namespace_id == ctx.namespace_id,
                     revisions.c.id == link.reference.id,
                     revisions.c.revision == link.reference.revision,
                 )
             )
-            if value is not None:
-                source = CognitiveRecord.model_validate(value)
-                if not source.purged and set(
-                    source.support_roots or source.source_roots
-                ).intersection(unpurged):
-                    return True
-    return False
-
-
-async def redact_attributes_in(tx: WriteTx, record: CognitiveRecord, unpurged: set[str]) -> bool:
-    if not isinstance(record.body, EntityBody):
-        return False
-    kept = tuple(
-        [
-            attribute
-            for attribute in record.body.attributes
-            if await supported_in(tx, record, attribute.evidence, unpurged)
-        ]
-    )
-    identities: list[PlatformIdentity] = []
-    for identity in record.body.platform_identities:
-        if not await supported_in(tx, record, identity.evidence, unpurged):
-            continue
-        attributes = tuple(
-            [
-                attribute
-                for attribute in identity.attributes
-                if await supported_in(tx, record, attribute.evidence, unpurged)
-            ]
-        )
-        identities.append(identity.model_copy(update={"attributes": attributes}))
-    controls = record.body.profile_controls
-    aliases = controls.aliases
-    summary = controls.summary
-    if aliases is not None and (not await supported_in(tx, record, aliases.evidence, unpurged)):
-        aliases = None
-    if summary is not None and (not await supported_in(tx, record, summary.evidence, unpurged)):
-        summary = None
-    controls = controls.model_copy(update={"aliases": aliases, "summary": summary})
-    generated = record.body.generated_profile
-    if generated is not None and (
-        not all(
-            [
-                await supported_in(tx, record, (link,), unpurged)
-                for link in generated.evidence
-                if link.polarity == "support"
-            ]
-        )
-    ):
-        generated = None
-    base_live = await supported_in(tx, record, record.evidence, unpurged)
-    description = record.body.description if base_live else ""
-    base_aliases = record.body.aliases if base_live else ()
-    if (
-        len(kept) == len(record.body.attributes)
-        and tuple(identities) == record.body.platform_identities
-        and (controls == record.body.profile_controls)
-        and (generated == record.body.generated_profile)
-        and (description == record.body.description)
-        and (base_aliases == record.body.aliases)
-    ):
-        return False
-    body = record.body.model_copy(
+            if raw is not None:
+                source = CognitiveRecord.model_validate(raw)
+                supported.update(root for root in source.source_roots if root in roots)
+    return record.model_copy(
         update={
-            "attributes": kept,
-            "platform_identities": tuple(identities),
-            "profile_controls": controls,
-            "generated_profile": generated,
-            "description": description,
-            "aliases": base_aliases,
-            "purged_identity_count": record.body.purged_identity_count
-            + len(record.body.platform_identities)
-            - len(identities),
-            "purged_attribute_count": record.body.purged_attribute_count
-            + len(record.body.attributes)
-            - len(kept),
+            "body": body,
+            "evidence": base_links,
+            "source_roots": tuple(sorted(supported)),
+            "support_roots": tuple(sorted(supported)),
+            "source_regions": {
+                root: selectors
+                for root, selectors in record.source_regions.items()
+                if root in supported
+            },
         }
     )
-    value = record.model_copy(update={"body": body})
+
+
+async def redact_attributes_in(
+    cognition: CognitiveRecords,
+    tx: WriteTx,
+    ctx: CallContext,
+    record: CognitiveRecord,
+    unpurged: set[str],
+) -> bool:
+    if not isinstance(record.body, EntityBody):
+        return False
+    roots = await cognition.source_roots_in(tx, ctx, purpose="management")
+    value = await project_entity_in(
+        cognition,
+        tx,
+        ctx,
+        record,
+        roots={key: material for key, material in roots.items() if key in unpurged},
+        permanent=True,
+    )
+    if value == record:
+        return False
     await tx.connection.execute(
         update(revisions)
         .where(
-            revisions.c.id == record.reference.id, revisions.c.revision == record.reference.revision
+            revisions.c.namespace_id == ctx.namespace_id,
+            revisions.c.id == record.reference.id,
+            revisions.c.revision == record.reference.revision,
         )
         .values(record=value.model_dump(mode="json"))
     )
     await tx.connection.execute(
-        vectors.delete().where(vectors.c.reference == record.reference.exact())
+        vectors.delete().where(vectors.c.namespace_id == ctx.namespace_id, vectors.c.reference == record.reference.exact())
     )
     return True
-
-
-def contains_record(value: JsonValue, references: set[str]) -> bool:
-    if isinstance(value, list):
-        return any(contains_record(child, references) for child in value)
-    if not isinstance(value, dict):
-        return False
-    reference = value.get("reference")
-    if "body" in value and isinstance(reference, dict):
-        key = f"{reference.get('kind')}:{reference.get('id')}@{reference.get('revision')}"
-        if key in references:
-            return True
-    return any(contains_record(child, references) for child in value.values())

@@ -46,5 +46,3 @@ class NamespaceDiagnostics(Contract):
     retrieval: RetrievalStatus
     imports: ImportVectorStatus
     models: dict[str, JsonValue]
-    model_calls: int
-    model_usage: dict[str, int]

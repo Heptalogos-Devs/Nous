@@ -215,85 +215,38 @@ class RetrievalTuningService:
         return saved
 
     async def create(self, ctx: CallContext, command: CreateTuning) -> TuningTask:
-        async with self.authority.write(
-            ctx,
-            command.operation_id,
-            operation_kind="retrieval.tuning.create",
-            scope=ctx.namespace_id,
-            payload=command,
-        ) as tx:
-            if tx.replayed:
-                identity = TypeAdapter(str).validate_python(tx.replay_result)
-            else:
-                await require_namespace_in(tx, ctx)
-                snapshot = tx.commit_seq - 1
-                baseline = RetrievalPolicy.model_validate(
-                    (await self.configuration.effective_in(tx, ctx, "retrieval"))["value"]
-                )
-                material_ids: set[str] = set()
-                source_map = await self.cognition.source_roots_in(tx, ctx)
-                cases: list[TuningCase] = []
-                for case in command.cases:
-                    relevance: dict[str, int] = {}
-                    for locator, grade in case.relevance.items():
-                        resolved = await self.references.resolve_in(tx, ctx, locator, snapshot)
-                        exact = resolved.reference.reference.exact()
-                        relevance[exact] = max(grade, relevance.get(exact, 0))
-                        target = resolved.reference
-                        if isinstance(target, CognitiveTarget):
-                            roots = (
-                                await self.cognition.get_in(tx, ctx, target.reference)
-                            ).source_roots
-                        elif isinstance(target, MediaTarget):
-                            provenance = await self.material.provenance_in(
-                                tx, ctx, target.reference
-                            )
-                            material_ids.update(provenance.material_ids)
-                            roots = provenance.roots
-                        elif isinstance(target, (ObservationTarget, EvidenceTarget)):
-                            roots = (
-                                await self.references.read_source_object_in(
-                                    tx, ctx, target.reference
-                                )
-                            ).source_roots
-                        else:
-                            roots = (
-                                await self.resources.get_in(
-                                    tx, ctx, target.reference.id, target.reference.revision
-                                )
-                            ).source_roots
-                        material_ids.update(
-                            source_map[root] for root in roots if root in source_map
-                        )
-                    cases.append(case.model_copy(update={"relevance": relevance}))
-                frozen = command.model_copy(update={"cases": tuple(cases)})
-                profiles = candidates(baseline, frozen)
-                identity = str(uuid4())
-                job = await tx.enqueue(
-                    JobSpec(
-                        workflow_name="nous.retrieval.tune", queue_name="default", args=(identity,)
-                    )
-                )
-                saved = SavedTask(
-                    context=ctx,
-                    request=frozen,
-                    profiles=profiles,
-                    snapshot_commit=snapshot,
-                    job_id=job.workflow_id,
-                    material_ids=tuple(sorted(material_ids)),
-                    model_configuration=_JSON.validate_python(
-                        (await self.configuration.effective_in(tx, ctx, "models"))["value"]
-                    ),
-                )
-                await tx.connection.execute(
-                    tasks.insert().values(
-                        id=identity,
-                        namespace_id=ctx.namespace_id,
-                        caller_id=ctx.caller_id,
-                        record=saved.model_dump(mode="json"),
-                    )
-                )
-                tx.result(identity)
+        async with self.authority.write(ctx) as tx:
+            await require_namespace_in(tx, ctx)
+            snapshot = tx.commit_seq - 1
+            baseline = RetrievalPolicy.model_validate((await self.configuration.effective(ctx, 'retrieval'))['value'])
+            material_ids: set[str] = set()
+            source_map = await self.cognition.source_roots_in(tx, ctx)
+            cases: list[TuningCase] = []
+            for case in command.cases:
+                relevance: dict[str, int] = {}
+                for locator, grade in case.relevance.items():
+                    resolved = await self.references.resolve_in(tx, ctx, locator, snapshot)
+                    exact = resolved.reference.reference.exact()
+                    relevance[exact] = max(grade, relevance.get(exact, 0))
+                    target = resolved.reference
+                    if isinstance(target, CognitiveTarget):
+                        roots = (await self.cognition.get_in(tx, ctx, target.reference)).source_roots
+                    elif isinstance(target, MediaTarget):
+                        provenance = await self.material.provenance_in(tx, ctx, target.reference)
+                        material_ids.update(provenance.material_ids)
+                        roots = provenance.roots
+                    elif isinstance(target, (ObservationTarget, EvidenceTarget)):
+                        roots = (await self.references.read_source_object_in(tx, ctx, target.reference)).source_roots
+                    else:
+                        roots = (await self.resources.get_in(tx, ctx, target.reference.id, target.reference.revision)).source_roots
+                    material_ids.update((source_map[root] for root in roots if root in source_map))
+                cases.append(case.model_copy(update={'relevance': relevance}))
+            frozen = command.model_copy(update={'cases': tuple(cases)})
+            profiles = candidates(baseline, frozen)
+            identity = str(uuid4())
+            job = await tx.enqueue(JobSpec(workflow_name='nous.retrieval.tune', queue_name='default', args=(identity,), scope=ctx.namespace_id))
+            saved = SavedTask(context=ctx, request=frozen, profiles=profiles, snapshot_commit=snapshot, job_id=job.workflow_id, material_ids=tuple(sorted(material_ids)), model_configuration=_JSON.validate_python((await self.configuration.effective(ctx, 'models'))['value']))
+            await tx.connection.execute(tasks.insert().values(id=identity, namespace_id=ctx.namespace_id, caller_id=ctx.caller_id, record=saved.model_dump(mode='json')))
         return await self.get(ctx, identity)
 
     async def read_rounds(
@@ -470,28 +423,11 @@ class RetrievalTuningService:
                     or metrics.mean_latency_ms <= command.max_mean_latency_ms
                 ),
             )
-            async with self.authority.write(
-                ctx,
-                f"{task_id}:round:{index}",
-                operation_kind="retrieval.tuning.round",
-                scope=ctx.namespace_id,
-                payload={"task_id": task_id, "index": index},
-            ) as tx:
-                if not tx.replayed:
-                    current = await self.saved_in(tx, ctx, task_id)
-                    if current.purged:
-                        raise DomainError(
-                            "tuning_sources_purged", "Tuning input was permanently cleared"
-                        )
-                    await tx.connection.execute(
-                        rounds.insert().values(
-                            task_id=task_id,
-                            index=index,
-                            namespace_id=ctx.namespace_id,
-                            record=measured.model_dump(mode="json"),
-                        )
-                    )
-                    tx.result({"task_id": task_id, "index": index})
+            async with self.authority.write(ctx) as tx:
+                current = await self.saved_in(tx, ctx, task_id)
+                if current.purged:
+                    raise DomainError('tuning_sources_purged', 'Tuning input was permanently cleared')
+                await tx.connection.execute(rounds.insert().values(task_id=task_id, index=index, namespace_id=ctx.namespace_id, record=measured.model_dump(mode='json')))
         choices = [item for item in (await self.read_rounds(ctx, task_id)).items if item.feasible]
         if not choices:
             raise DomainError(
@@ -504,32 +440,12 @@ class RetrievalTuningService:
         baseline_holdout = (
             await self.evaluate(ctx, saved, saved.profiles[0], "holdout") if best.index else holdout
         )
-        async with self.authority.write(
-            ctx,
-            task_id + ":finish",
-            operation_kind="retrieval.tuning.finish",
-            scope=ctx.namespace_id,
-            payload={"task_id": task_id},
-        ) as tx:
-            if not tx.replayed:
-                current = await self.saved_in(tx, ctx, task_id)
-                if current.purged:
-                    raise DomainError(
-                        "tuning_sources_purged", "Tuning input was permanently cleared"
-                    )
-                current = current.model_copy(
-                    update={
-                        "best_index": best.index,
-                        "holdout": holdout,
-                        "baseline_holdout": baseline_holdout,
-                    }
-                )
-                await tx.connection.execute(
-                    tasks.update()
-                    .where(tasks.c.id == task_id)
-                    .values(record=current.model_dump(mode="json"))
-                )
-                tx.result({"task_id": task_id})
+        async with self.authority.write(ctx) as tx:
+            current = await self.saved_in(tx, ctx, task_id)
+            if current.purged:
+                raise DomainError('tuning_sources_purged', 'Tuning input was permanently cleared')
+            current = current.model_copy(update={'best_index': best.index, 'holdout': holdout, 'baseline_holdout': baseline_holdout})
+            await tx.connection.execute(tasks.update().where(tasks.c.id == task_id).values(record=current.model_dump(mode='json')))
         return {"task_id": task_id}
 
     async def cancel(self, ctx: CallContext, task_id: str) -> TuningTask:
@@ -540,7 +456,8 @@ class RetrievalTuningService:
     async def profile(self, ctx: CallContext) -> JsonObject:
         async with self.authority.read(ctx) as view:
             await require_namespace_in(view, ctx)
-            effective = await self.configuration.effective_in(view, ctx, "retrieval")
+        effective = await self.configuration.effective(ctx, "retrieval")
+        effective["version"] = self.configuration.values.version(f"namespace:{ctx.namespace_id}")
         return _JSON.validate_python(effective)
 
     async def change_profile(
@@ -550,34 +467,25 @@ class RetrievalTuningService:
             raise DomainError(
                 "tuning_scope_forbidden", "Profile changes require the complete Subject scope"
             )
-        async with self.authority.write(
-            ctx,
-            command.operation_id,
-            operation_kind="retrieval.profile.change",
-            scope=ctx.namespace_id,
-            payload=command,
-        ) as tx:
-            if tx.replayed:
-                return _JSON.validate_python(tx.replay_result)
-            await require_namespace_in(tx, ctx)
-            before = await self.configuration.effective_in(tx, ctx, "retrieval")
-            sequence = int(str(before["commit_seq"]))
-            if command.expected_commit_seq is not None and command.expected_commit_seq != sequence:
+        async with self.authority.read(ctx) as view:
+            await require_namespace_in(view, ctx)
+            version = self.configuration.values.version(f"namespace:{ctx.namespace_id}")
+            if command.expected_version is not None and command.expected_version != version:
                 raise DomainError(
                     "retrieval_profile_conflict",
                     "Retrieval profile changed since it was read",
-                    expected=command.expected_commit_seq,
-                    current=sequence,
+                    expected=command.expected_version,
+                    current=version,
                 )
             if isinstance(command, ApplyRetrievalProfile):
                 value = command.profile
                 if command.task_id:
-                    saved = await self.saved_in(tx, ctx, command.task_id)
+                    saved = await self.saved_in(view, ctx, command.task_id)
                     if saved.purged or saved.best_index is None:
                         raise DomainError(
                             "tuning_not_ready", "Select a completed, retained tuning result"
                         )
-                    models = await self.configuration.effective_in(tx, ctx, "models")
+                    models = await self.configuration.effective(ctx, "models")
                     if models["value"] != saved.model_configuration:
                         raise DomainError(
                             "tuning_model_resources_changed",
@@ -587,15 +495,11 @@ class RetrievalTuningService:
                 assert value is not None
                 target: object = value
             else:
-                return tx.result(
-                    _JSON.validate_python(
-                        await self.configuration.restore_in(
-                            tx, ctx, "retrieval", command.commit_seq, "namespace"
-                        )
-                    )
-                )
-            result = await self.configuration.set_in(tx, ctx, "retrieval", target, "namespace")
-            return tx.result(_JSON.validate_python(result))
+                target = None
+        result = await self.configuration.set(
+            ctx, "retrieval", target, "namespace", expected_version=version
+        )
+        return _JSON.validate_python(result)
 
     async def purge_in(
         self,
@@ -644,6 +548,3 @@ class RetrievalTuningService:
                 .values(record=erased.model_dump(mode="json"))
             )
             await tx.connection.execute(rounds.delete().where(rounds.c.task_id == identity))
-            await self.authority.redact_receipts_in(
-                tx, lambda _value: True, commit_sequences=(saved.snapshot_commit + 1,)
-            )

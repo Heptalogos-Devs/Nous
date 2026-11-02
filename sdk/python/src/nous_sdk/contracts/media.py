@@ -8,12 +8,14 @@ from .common import (
     ApplicableInput,
     CognitiveTimes,
     Contract,
+    FormationPurpose,
+    ModelProvenance,
     Operation,
     ReferenceAddresses,
     TimePoint,
 )
 
-MediaStrategy = Literal["native", "description", "description_then_native"]
+MediaStrategy = Literal["description_only", "direct_structured", "describe_then_structure"]
 
 
 class MediaInfo(Contract):
@@ -113,8 +115,9 @@ class AdoptMedia(Operation):
     material_id: str
     source: MediaReference | None = None
     regions: tuple[SourceRegion, ...] = ()
-    strategy: MediaStrategy = "native"
-    instruction: str = "Describe and remember the supplied material."
+    media_strategy: MediaStrategy = "description_only"
+    formation_purpose: FormationPurpose = "memory"
+    background: str = ""
 
     @model_validator(mode="after")
     def distinct_regions(self) -> "AdoptMedia":
@@ -143,7 +146,7 @@ class MediaEmbeddingResult(Contract):
     space: str
     model: str
     dimensions: int
-    call_ids: tuple[str | None, ...]
+    producer: ModelProvenance
     commit_seq: int
 
 

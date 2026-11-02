@@ -3,7 +3,6 @@
 from fastapi import APIRouter, Request
 from nous_sdk.contracts.common import Operation
 from nous_sdk.contracts.maintenance import (
-    CaptureMaintenanceOutput,
     CreateMaintenanceSchedule,
     EditMaintenanceProposal,
     MaintenanceRun,
@@ -15,20 +14,7 @@ from nous_sdk.contracts.maintenance import (
 
 from .security import application, context
 
-router = APIRouter(prefix='/api/v1/namespaces/{namespace_id}/maintenance')
-
-
-@router.post("/runs/{run_id}/capture-output")
-async def capture_output(
-    request: Request,
-    namespace_id: str,
-    
-    run_id: str,
-    command: CaptureMaintenanceOutput,
-) -> MaintenanceRun:
-    return await application(request).maintenance.capture_retained(
-        await context(request, namespace_id), run_id, command
-    )
+router = APIRouter(prefix='/api/knowledge/namespaces/{namespace_id}/maintenance')
 
 
 @router.post("/runs/{run_id}/edit")

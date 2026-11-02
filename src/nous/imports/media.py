@@ -27,7 +27,7 @@ class MediaImportService(MediaInputResolver):
         models: ModelService,
         content: ContentStore,
         media: MediaService,
-        derivations: DerivedService | None = None,
+        derivations: DerivedService,
         *,
         formation: FormationService,
         configuration: ConfigurationService,
@@ -39,6 +39,6 @@ class MediaImportService(MediaInputResolver):
             materials,
             content,
             media,
-            derivations or DerivedService(authority, materials),
+            derivations,
         )
         self.cognition, self.models = (cognition, models)

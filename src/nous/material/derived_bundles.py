@@ -1,6 +1,5 @@
 """Portable representation graphs retain exact identity and physical dependency closure."""
 
-from uuid import uuid4
 
 from nous_sdk.contracts import CallContext, DomainError, MediaReference
 from nous_sdk.contracts.derivation import (
@@ -8,7 +7,6 @@ from nous_sdk.contracts.derivation import (
     DerivedBundle,
     DerivedRegion,
     DerivedRepresentation,
-    RepresentationRef,
 )
 from nous_sdk.contracts.identity import IdentityPurpose
 from sqlalchemy import select
@@ -98,39 +96,10 @@ class DerivedBundles(DerivedAvailability):
         tx: WriteTx,
         ctx: CallContext,
         bundle: DerivedBundle,
-        mapping: dict[str, str],
         *,
         purpose: IdentityPurpose = "active",
     ) -> tuple[MediaReference, ...]:
         """Install archived provenance after its materials and observations, in the same transaction."""
-        representation_ids = {value.reference.id for value in bundle.representations}
-        region_ids = {value.id for value in bundle.regions}
-        for original_id in representation_ids | region_ids:
-            mapping.setdefault(original_id, str(uuid4()))
-
-        def identity(value: str) -> str:
-            if value not in mapping:
-                raise DomainError(
-                    "bundle_reference_missing",
-                    "Derived dependency is outside the bundle",
-                    reference=value,
-                )
-            return mapping[value]
-
-        def reference(value: MediaReference) -> MediaReference:
-            original = representation_ref(value) if value.kind == "representation" else None
-            target = (
-                f"{identity(original.id)}@{original.revision}" if original else identity(value.id)
-            )
-            return value.model_copy(
-                update={
-                    "id": target,
-                    "observation_id": identity(value.observation_id)
-                    if value.observation_id
-                    else None,
-                }
-            )
-
         heads: dict[str, int] = {}
         for value in bundle.representations:
             heads[value.reference.id] = max(
@@ -145,7 +114,7 @@ class DerivedBundles(DerivedAvailability):
         while pending or region_pending:
             progress = False
             for region in list(region_pending):
-                if reference(region.representation.media()).exact() not in {
+                if region.representation.media().exact() not in {
                     r.exact() for r in installed
                 }:
                     continue
@@ -157,17 +126,14 @@ class DerivedBundles(DerivedAvailability):
                     continue
                 updated = region.model_copy(
                     update={
-                        "id": identity(region.id),
+                        "id": region.id,
                         "namespace_id": ctx.namespace_id,
                         
                         "addresses": await allocate_in(
-                            tx, ctx, reference(MediaReference(kind="derived_region", id=region.id))
+                            tx, ctx, MediaReference(kind="derived_region", id=region.id)
                         ),
-                        "representation": RepresentationRef(
-                            id=identity(region.representation.id),
-                            revision=region.representation.revision,
-                        ),
-                        "parent_id": identity(region.parent_id) if region.parent_id else None,
+                        "representation": region.representation,
+                        "parent_id": region.parent_id,
                         "recorded_at": tx.recorded_at,
                         "commit_seq": tx.commit_seq,
                     }
@@ -207,17 +173,12 @@ class DerivedBundles(DerivedAvailability):
                     dep.kind == "representation" and dep.exact() in exacts for dep in dependencies
                 ):
                     continue
-                inputs = tuple(
-                    item.model_copy(update={"source": reference(item.source)})
-                    for item in value.inputs
-                )
                 infos = [
                     await self.source_in(tx, ctx, item.source, purpose=purpose)
-                    for item in inputs
+                    for item in value.inputs
                 ]
                 roots = tuple(sorted({root for info in infos for root in info.roots}))
-                mapped_roots = tuple(sorted(identity(root) for root in value.source_roots))
-                if roots != mapped_roots:
+                if roots != tuple(sorted(value.source_roots)):
                     raise DomainError(
                         "bundle_source_conflict",
                         "Derived roots differ from their actual archived inputs",
@@ -229,9 +190,6 @@ class DerivedBundles(DerivedAvailability):
                         "Erased representations cannot supply portable content",
                     )
                 if isinstance(payload, ArtifactRepresentation):
-                    payload = payload.model_copy(
-                        update={"material_id": identity(payload.material_id)}
-                    )
                     from .service import materials
 
                     raw = await tx.connection.scalar(
@@ -252,7 +210,7 @@ class DerivedBundles(DerivedAvailability):
                 material_ids = {mid for info in infos for mid in info.material_ids}
                 if isinstance(payload, ArtifactRepresentation):
                     material_ids.add(payload.material_id)
-                if material_ids != {identity(mid) for mid in value.material_ids}:
+                if material_ids != set(value.material_ids):
                     raise DomainError(
                         "bundle_source_conflict",
                         "Derived material closure differs from its archived inputs",
@@ -266,28 +224,22 @@ class DerivedBundles(DerivedAvailability):
                 source_regions = merge_source_regions(
                     (root, info.regions.get(root, ())) for info in infos for root in info.roots
                 )
-                target = reference(value.reference.media())
+                target = value.reference.media()
                 updated = value.model_copy(
                     update={
                         "reference": representation_ref(target),
                         "addresses": await allocate_in(tx, ctx, target),
                         "namespace_id": ctx.namespace_id,
                         
-                        "inputs": inputs,
+                        "inputs": value.inputs,
                         "payload": payload,
-                        "producer": value.producer.model_copy(
-                            update={"model_call_id": identity(value.producer.model_call_id)}
-                        )
-                        if value.producer.model_call_id
-                        else value.producer,
+                        "producer": value.producer,
                         "source_roots": roots,
                         "material_ids": tuple(sorted(material_ids)),
                         "source_regions": source_regions,
                         "access": access,
-                        "timeline": reference(value.timeline) if value.timeline else None,
-                        "previous": RepresentationRef(
-                            id=identity(value.previous.id), revision=value.previous.revision
-                        )
+                        "timeline": value.timeline,
+                        "previous": value.previous
                         if value.previous
                         and value.previous.media().exact()
                         in {v.reference.media().exact() for v in bundle.representations}

@@ -6,7 +6,6 @@ from pydantic import TypeAdapter
 
 from ..contracts.ego_model import InterpretSeed
 from ..contracts.maintenance import (
-    CaptureMaintenanceOutput,
     CreateMaintenanceSchedule,
     EditMaintenanceProposal,
     MaintenanceRun,
@@ -20,18 +19,6 @@ from .social import SocialClient
 
 
 class MaintenanceClient(SocialClient):
-    async def capture_maintenance_output(
-        self, namespace_id: str,  run_id: str, command: CaptureMaintenanceOutput
-    ) -> MaintenanceRun:
-        return MaintenanceRun.model_validate(
-            await self.request(
-                "POST",
-                self.namespace_path(namespace_id)
-                + f"/maintenance/runs/{segment(run_id)}/capture-output",
-                body=encoded(command),
-            )
-        )
-
     async def edit_maintenance(
         self, namespace_id: str,  run_id: str, command: EditMaintenanceProposal
     ) -> MaintenanceRun:

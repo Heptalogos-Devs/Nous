@@ -12,13 +12,12 @@ from pathlib import Path
 import httpx
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
-from nous_sdk import NousClient
-from opentelemetry.instrumentation.utils import suppress_http_instrumentation
 
 
 def test_installed_default_instance_is_independent_of_cwd_and_keeps_overrides(tmp_path):
     command = [sys.executable, "-I", "-c", "from nous.transports.cli import main; main()"]
     environment = os.environ.copy()
+    environment["NOUS_CLIENT_CONFIG"] = str(tmp_path / "client.toml")
     for name in ("NOUS_INSTANCE", "NOUS_CREDENTIAL_FILE"):
         environment.pop(name, None)
     environment.update(
@@ -105,7 +104,7 @@ def test_installed_default_instance_is_independent_of_cwd_and_keeps_overrides(tm
     url = f"http://127.0.0.1:{port}"
     with (tmp_path / "default-host.log").open("w", encoding="utf-8") as log:
         host = subprocess.Popen(
-            [*command, "serve", "--no-rpc", "--port", str(port)],
+            [*command, "serve", "--port", str(port)],
             cwd=first,
             env=environment,
             stdout=log,
@@ -116,7 +115,7 @@ def test_installed_default_instance_is_independent_of_cwd_and_keeps_overrides(tm
             deadline = time.monotonic() + 40
             while True:
                 try:
-                    response = httpx.get(url + "/api/status", headers=headers, timeout=1)
+                    response = httpx.get(url + "/api/manage/status", headers=headers, timeout=1)
                     if response.is_success:
                         break
                 except httpx.HTTPError:
@@ -131,247 +130,164 @@ def test_installed_default_instance_is_independent_of_cwd_and_keeps_overrides(tm
         finally:
             if host.poll() is None:
                 try:
-                    httpx.post(url + "/api/stop", headers=headers, timeout=5)
+                    httpx.post(url + "/api/manage/stop", headers=headers, timeout=5)
                     host.wait(timeout=25)
                 except httpx.HTTPError, subprocess.TimeoutExpired:
                     host.terminate()
                     host.wait(timeout=10)
 
 
-def test_cli_literal_query_and_revocable_readonly_token(tmp_path):
+def test_cli_namespace_workflow_and_mcp_reads(tmp_path):
     command = [sys.executable, "-c", "from nous.transports.cli import main; main()"]
     instance = tmp_path / "instance"
+    environment = {**os.environ, "NOUS_CLIENT_CONFIG": str(tmp_path / "client.toml")}
     with socket.socket() as available:
         available.bind(("127.0.0.1", 0))
         port = available.getsockname()[1]
-    connection = ["--instance", str(instance), "--url", f"http://127.0.0.1:{port}"]
+    url = f"http://127.0.0.1:{port}"
+    connection = ["--instance", str(instance), "--url", url, "--json"]
 
-    def invoke(*arguments, credential=None, success=True, human=False):
+    def invoke(*arguments, credential=None, success=True):
         options = connection.copy()
         if credential is not None:
             options += ["--credential-file", str(credential)]
-        if not human:
-            options += ["--json"]
         response = subprocess.run(
-            [*command, *options, *arguments], capture_output=True, encoding="utf-8", timeout=40
+            [*command, *options, *arguments],
+            env=environment,
+            capture_output=True,
+            encoding="utf-8",
+            timeout=60,
         )
         assert (response.returncode == 0) == success, (response.stdout, response.stderr)
-        if human:
-            return response.stdout
-        result = json.loads(response.stdout)
-        assert isinstance(result, dict)
-        return result
+        return json.loads(response.stdout)
 
     initialized = invoke("init")
-    assert "credential_file" in initialized
-    with (tmp_path / "host.log").open("w", encoding="utf-8") as log:
+    assert initialized["namespace"] == "default"
+    document = tmp_path / "field-notes.txt"
+    document.write_text(
+        "NATIVE-CLI-ALPHA-73 records how import and retrieval share one namespace.",
+        encoding="utf-8",
+    )
+    log = tmp_path / "host.log"
+    with log.open("w", encoding="utf-8") as diagnostics:
         host = subprocess.Popen(
-            [*command, *connection, "serve", "--port", str(port)], stdout=log, stderr=log
+            [*command, "--instance", str(instance), "--url", url, "serve", "--port", str(port)],
+            env=environment,
+            stdout=diagnostics,
+            stderr=diagnostics,
         )
+        headers = {
+            "Authorization": "Bearer "
+            + (instance / "credentials" / "admin.token").read_text(encoding="utf-8").strip()
+        }
         try:
             deadline = time.monotonic() + 40
             while True:
-                status = subprocess.run(
-                    [*command, *connection, "--json", "status"],
-                    capture_output=True,
-                    encoding="utf-8",
-                    timeout=10,
+                try:
+                    response = httpx.get(
+                        url + "/api/manage/status", headers=headers, timeout=1
+                    )
+                    if response.is_success:
+                        break
+                except httpx.HTTPError:
+                    pass
+                assert host.poll() is None and time.monotonic() < deadline, log.read_text(
+                    encoding="utf-8"
                 )
-                if status.returncode == 0:
-                    break
-                assert host.poll() is None and time.monotonic() < deadline, (
-                    tmp_path / "host.log"
-                ).read_text(encoding="utf-8")
                 time.sleep(0.1)
-            namespace = invoke("namespace", "create", "CLI")["id"]
-            subject = invoke("subject", "create", namespace)["id"]
 
-            async def streaming_request_isolation():
-                async with NousClient(
-                    f"http://127.0.0.1:{port}",
-                    credential_file=instance / "credentials/admin.token",
-                ) as api:
-                    observed = []
+            selected = invoke("use", "default")
+            namespace_id = selected["ref"].removeprefix("namespace:")
+            imported = invoke("import", str(document), "--no-formation")
+            assert imported["status"] == "completed" and imported["materials"]
 
-                    async def capture(response):
-                        observed.append(
-                            (
-                                response.request.headers.get("traceparent"),
-                                response.headers["x-nous-trace-id"],
-                            )
-                        )
+            found = invoke("query", "NATIVE-CLI-ALPHA-73")
+            short_ref = found["items"][0]["ref"]
+            assert short_ref and len(short_ref) <= 24 and "@" not in short_ref
+            read = invoke("read", short_ref)
+            assert "NATIVE-CLI-ALPHA-73" in read["text"]
 
-                    api.transport.http.event_hooks = {"response": [capture]}
-                    chunk = b"No model stream bytes." * 4096
-
-                    async def chunks():
-                        for _ in range(4):
-                            yield chunk
-                            await asyncio.sleep(0)
-
-                    with suppress_http_instrumentation():
-                        await api.upload_stream(
-                            namespace,
-                            chunks(),
-                            byte_len=4 * len(chunk),
-                            owner_subject_id=subject,
-                            media_type="text/plain",
-                        )
-                        await api.request("GET", "/api/status")
-                        await api.request("GET", "/api/status")
-                        assert all(parent is None for parent, _ in observed)
-                        assert len({identity for _, identity in observed}) == 3
-                        headers = await api.transport.headers()
-                        headers["traceparent"] = "00-" + "a" * 32 + "-" + "b" * 16 + "-01"
-                        response = await api.transport.http.get("/api/status", headers=headers)
-                        assert response.headers["x-nous-trace-id"] == "a" * 32
-
-            asyncio.run(streaming_request_isolation())
-            document = tmp_path / "notes.txt"
-            document.write_text(
-                "Rollback preserves atomic transactions. 回滚保护原子性。", encoding="utf-8"
+            memory = invoke(
+                "remember", "The service keeps each write in one atomic transaction."
             )
-            invoke("import", namespace, subject, str(document), "--no-llm", "--vectors", "disabled")
-            assert len(invoke("query", namespace, subject, "Rollback")["hits"]) == 1
-            rendered = invoke(
-                "--locale", "zh-CN", "query", namespace, subject, "Rollback", human=True
+            corrected = invoke(
+                "correct",
+                memory["ref"],
+                "The service commits each accepted write atomically.",
+                "--reason",
+                "Use the current transaction contract.",
             )
-            assert "命中" in rendered and "回滚保护原子性" in rendered
-            config = tmp_path / "credential.json"
-            config.write_text(
-                json.dumps(
-                    {
-                        "name": "Reader",
-                        "namespace_ids": [namespace],
-                        "subject_ids": [subject],
-                        "capabilities": ["read"],
-                    }
-                ),
-                encoding="utf-8",
+            assert corrected["text"] == "Correction saved."
+            work = invoke(
+                "work",
+                "start",
+                "Review the transaction contract",
+                "--text",
+                "Confirm the updated wording in the next implementation pass.",
+                "--anchor",
+                memory["ref"],
             )
-            token_file = tmp_path / "reader.token"
-            created = invoke("credentials", "create", str(config), "--token-out", str(token_file))
-            assert "token" not in created
-            if os.name != "nt":
-                assert token_file.stat().st_mode & 0o777 == 0o600
-            identity = invoke("credentials", "whoami", credential=token_file)
-            assert identity["credential_id"] == created["record"]["id"]
-            assert invoke("credentials", "history", created["record"]["id"])["count"] == 1
-            rotation = tmp_path / "rotation.json"
-            rotation.write_text(
-                json.dumps(
-                    {"operation_id": "cli-rotate", "expected_revision": 1, "reason": "CLI rollover"}
-                ),
-                encoding="utf-8",
-            )
-            invoke(
-                "credentials",
-                "rotate",
-                created["record"]["id"],
-                str(rotation),
-                "--token-out",
-                str(token_file),
-                success=False,
-            )
-            assert invoke("credentials", "read", created["record"]["id"])["revision"] == 1
-            replacement = tmp_path / "replacement.token"
-            rotated = invoke(
-                "credentials",
-                "rotate",
-                created["record"]["id"],
-                str(rotation),
-                "--token-out",
-                str(replacement),
-            )
-            assert "token" not in rotated and rotated["record"]["revision"] == 2
-            rejected = invoke(
-                "query", namespace, subject, "Rollback", credential=token_file, success=False
-            )
-            assert rejected["error"]["code"] == "credential_invalid"
-            replay_target = tmp_path / "replay.token"
-            replay = invoke(
-                "credentials",
-                "rotate",
-                created["record"]["id"],
-                str(rotation),
-                "--token-out",
-                str(replay_target),
-            )
-            assert replay["token"] is None and not replay_target.exists()
-            token_file = replacement
-            assert invoke("credentials", "history", created["record"]["id"])["count"] == 2
-            assert (
-                len(invoke("query", namespace, subject, "Rollback", credential=token_file)["hits"])
-                == 1
-            )
-            denied = invoke("subject", "create", namespace, credential=token_file, success=False)
-            assert "forbidden" in denied["error"]["code"].lower()
+            assert work["ref"].startswith("work:")
 
             async def mcp_protocol():
-                for readonly in (False, True):
-                    parameters = StdioServerParameters(
-                        command=command[0],
-                        args=[
-                            *command[1:],
-                            *connection,
-                            "mcp",
-                            "--namespace-id",
-                            namespace,
-                            "--subject-id",
-                            subject,
-                            "--credential-file",
-                            str(token_file if readonly else instance / "credentials/admin.token"),
-                        ],
-                    )
-                    with (tmp_path / "mcp.log").open("a", encoding="utf-8") as diagnostics:
-                        async with stdio_client(parameters, errlog=diagnostics) as (reader, writer):
-                            async with ClientSession(
-                                reader, writer, read_timeout_seconds=15
-                            ) as session:
-                                initialized = await session.initialize()
-                                assert initialized.server_info.name == "Nous"
-                                tools = await session.list_tools()
-                                assert {"manage_sources", "list_jobs", "query_cognition"} <= {
-                                    tool.name for tool in tools.tools
-                                }
-                                arguments = {
-                                    "command": {
-                                        "inputs": [{"text": "MCP protocol durability."}],
-                                        "llm_enabled": False,
-                                        "vectors": "disabled",
-                                    }
-                                }
-                                admitted = await session.call_tool("admit_documents", arguments)
-                                assert admitted.is_error == readonly
-                                found = await session.call_tool(
-                                    "query_cognition", {"command": {"text": "protocol"}}
-                                )
-                                assert not found.is_error
-                                assert len(found.structured_content["hits"]) == 1
-                                wrong = await session.call_tool(
-                                    "manage_sources",
-                                    {"action": "list", "command": {"subject_id": "different"}},
-                                )
-                                assert wrong.is_error
-                                manual = await session.read_resource("nous://query/manual")
-                                assert manual.contents
+                parameters = StdioServerParameters(
+                    command=command[0],
+                    env=environment,
+                    args=[
+                        *command[1:],
+                        *connection,
+                        "--namespace",
+                        namespace_id,
+                        "mcp",
+                    ],
+                )
+                async with stdio_client(
+                    parameters, errlog=sys.stderr
+                ) as (reader, writer):
+                    async with ClientSession(
+                        reader, writer, read_timeout_seconds=30
+                    ) as session:
+                        initialized = await session.initialize()
+                        assert initialized.server_info.name == "Nous"
+                        tools = {tool.name for tool in (await session.list_tools()).tools}
+                        assert {"nous_query", "nous_read", "nous_correct", "nous_work_open"} <= tools
+                        result = await session.call_tool(
+                            "nous_query", {"query": "NATIVE-CLI-ALPHA-73"}
+                        )
+                        assert not result.is_error
+                        reference = result.structured_content["items"][0]["ref"]
+                        assert len(reference) <= 24 and "@" not in reference
+                        detail = await session.call_tool("nous_read", {"ref": reference})
+                        assert not detail.is_error
+                        assert "NATIVE-CLI-ALPHA-73" in detail.structured_content["text"]
+                        followup = await session.call_tool(
+                            "nous_work_open",
+                            {
+                                "goal": "Recheck imported notes",
+                                "background": "The note came from the CLI import.",
+                                "anchors": [reference],
+                            },
+                        )
+                        assert not followup.is_error
+                        assert followup.structured_content["ref"].startswith("work:")
 
             asyncio.run(mcp_protocol())
-            assert len(invoke("query", namespace, subject, "protocol")["hits"]) == 1
-            assert invoke("jobs", "page", namespace, "--subject-id", subject)["items"] == []
-            invoke("credentials", "revoke", created["record"]["id"])
-            revoked = invoke(
-                "query", namespace, subject, "Rollback", credential=token_file, success=False
-            )
-            assert revoked["error"]["code"] == "credential_invalid"
-            invalid = invoke("unknown-command", success=False)
-            assert invalid["error"]["code"] == "InvalidArgument"
-            assert invoke("source", success=False)["error"]["code"] == "InvalidArgument"
-            assert invoke("model-calls", namespace, "--subject-id", subject)["count"] == 0
+
+            archive = tmp_path / "knowledge.json"
+            invoke("bundle", "export", str(archive))
+            invoke("namespace", "create", "bundle-target")
+            invoke("use", "bundle-target")
+            invoke("bundle", "install", str(archive))
+            imported_memory = invoke("read", memory["ref"], "--sources")
+            assert imported_memory["text"] == "The service keeps each write in one atomic transaction."
+            revised_ref = next(item["ref"] for item in corrected["items"] if item["kind"] == "memory")
+            revised = invoke("read", revised_ref)
+            assert revised["text"] == "The service commits each accepted write atomically."
         finally:
-            host.terminate()
-            try:
-                host.wait(timeout=25)
-            except subprocess.TimeoutExpired:
-                host.kill()
-                host.wait(timeout=5)
+            if host.poll() is None:
+                try:
+                    httpx.post(url + "/api/manage/stop", headers=headers, timeout=5)
+                    host.wait(timeout=25)
+                except (httpx.HTTPError, subprocess.TimeoutExpired):
+                    host.terminate()
+                    host.wait(timeout=10)

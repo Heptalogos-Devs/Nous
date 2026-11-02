@@ -52,12 +52,12 @@ def test_fact_source_withdrawal_and_object_state_preserve_claim_content(tmp_path
             )
             current = (await app.facts.query(ctx, FactQuery()))[0]
             assert current.reference == record.reference and current.body == record.body
-            trashed = await app.cognition.set_deleted(ctx, record.reference, True, "trash-object")
+            trashed = await app.sources.set_deleted(ctx, record.reference, True, "trash-object")
             assert trashed.deleted and trashed.body == record.body
             assert trashed.times.model_dump(exclude={"recorded"}) == record.times.model_dump(
                 exclude={"recorded"}
             )
-            restored = await app.cognition.set_deleted(
+            restored = await app.sources.set_deleted(
                 ctx, trashed.reference, False, "restore-object"
             )
             assert not restored.deleted and restored.body == record.body
@@ -80,9 +80,7 @@ def test_fact_source_withdrawal_and_object_state_preserve_claim_content(tmp_path
                 ),
             ):
                 with pytest.raises(DomainError, match="Fact owner"):
-                    async with app.authority.write(
-                        ctx, "forged-owner", operation_kind="state.update", payload={}
-                    ) as tx:
+                    async with app.authority.write(ctx) as tx:
                         await app.cognition.adopt_in(
                             tx,
                             ctx,

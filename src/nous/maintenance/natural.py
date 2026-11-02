@@ -138,9 +138,7 @@ async def snapshot_in(
             material_ids = (
                 *material_ids,
                 *(
-                    await self.cognition.materials.provenance_in(
-                        tx, ctx, source.source, derivations=self.cognition.derivations
-                    )
+                    await self.cognition.materials.provenance_in(tx, ctx, source.source)
                 ).material_ids,
             )
     return GrowthSnapshot(

@@ -4,7 +4,6 @@ from pathlib import Path
 from typing import Literal
 
 from nous_sdk.contracts.common import DomainError
-from nous_sdk.contracts.model_routing import ModelRoutingPolicy
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .settings import EmbeddingRoute, ModelRoute, ProviderOptions
@@ -15,7 +14,7 @@ class Resource(BaseModel):
 
 
 class ProviderResource(Resource):
-    protocol: Literal["openai-chat", "openai-responses"] = "openai-chat"
+    protocol: Literal["openai-chat", "openai-responses", "volcengine-ark"] = "openai-chat"
     base_url: str = "https://api.openai.com/v1"
     credential_file: Path | None = None
     credential_env: str = "NOUS_MODEL_API_KEY"
@@ -23,7 +22,6 @@ class ProviderResource(Resource):
 
 
 class ModelResource(Resource):
-    max_requests_per_day: int = Field(default=50, ge=0)
     provider: str
     actual_name: str = ""
     tokenizer: str | None = None
@@ -43,9 +41,7 @@ class ModelResource(Resource):
     media_limits: dict[str, int] = Field(default_factory=dict)
     dimensions: int | None = Field(default=None, gt=0)
     normalization: Literal["none", "l2"] = "none"
-    media_path: str = "embeddings/multimodal"
     max_batch_items: int = Field(default=64, ge=1, le=2048)
-    video_content_format: Literal["video_url"] | None = None
 
 
 class PresetResource(Resource):
@@ -57,20 +53,12 @@ class PresetResource(Resource):
     provider_options: ProviderOptions = Field(default_factory=dict)
 
 
-class RoleBudget(Resource):
-    max_calls_per_day: int = Field(default=50, ge=0)
-
-
 class RoleResource(Resource):
-    failure_policy: ModelRoutingPolicy = Field(default_factory=ModelRoutingPolicy)
     preset: str
     allowed_fallback_presets: tuple[str, ...] = ()
     purpose: str = Field(min_length=1)
     operation: Literal["generation", "embedding", "rerank", "transcription"] = "generation"
     output_mode: Literal["text", "json_schema"] = "json_schema"
-    prompt_id: str = "formation"
-    budget: RoleBudget = Field(default_factory=RoleBudget)
-    automatic_enabled: bool = False
 
     def preset_ids(self) -> tuple[str, ...]:
         return (self.preset, *self.allowed_fallback_presets)
@@ -157,12 +145,9 @@ class ModelConfiguration(Resource):
             "model": model.actual_name,
             "timeout_seconds": preset.timeout_seconds or provider.timeout_seconds,
             "max_output_tokens": preset.max_output_tokens,
-            "max_calls_per_day": role.budget.max_calls_per_day,
-            "resource_request_budget": model.max_requests_per_day,
             "temperature": preset.temperature,
             "reasoning_effort": preset.reasoning_options.get("effort"),
             "extra_body": preset.provider_options,
-            "video_content_format": model.video_content_format,
             "input_modalities": model.input_modalities,
             "context_window": model.context_window,
             "structured_output_mode": model.structured_output_mode,
@@ -176,7 +161,6 @@ class ModelConfiguration(Resource):
                     **values,
                     "dimensions": model.dimensions,
                     "normalization": model.normalization,
-                    "media_path": model.media_path,
                     "max_batch_items": model.max_batch_items,
                 }
             ), role
@@ -195,7 +179,6 @@ def initial_resources() -> ModelConfiguration:
                 actual_name=generation.model,
                 operations=("generation",),
                 input_modalities=("text",),
-                video_content_format=generation.video_content_format,
             ),
             "embedding": ModelResource(
                 provider="embedding",
@@ -203,7 +186,6 @@ def initial_resources() -> ModelConfiguration:
                 operations=("embedding",),
                 dimensions=embedding.dimensions,
                 normalization=embedding.normalization,
-                media_path=embedding.media_path,
                 max_batch_items=embedding.max_batch_items,
             ),
         },
@@ -221,92 +203,68 @@ def initial_resources() -> ModelConfiguration:
             "formation": RoleResource(
                 preset="formation",
                 purpose="formation",
-                budget=RoleBudget(max_calls_per_day=generation.max_calls_per_day),
             ),
             "description": RoleResource(
                 preset="formation",
                 purpose="description",
                 output_mode="text",
-                prompt_id="media.describe",
-                budget=RoleBudget(max_calls_per_day=generation.max_calls_per_day),
             ),
             "embedding": RoleResource(
                 preset="embedding",
                 purpose="embedding",
                 operation="embedding",
-                budget=RoleBudget(max_calls_per_day=embedding.max_calls_per_day),
             ),
             "steward": RoleResource(
                 preset="formation",
                 purpose="steward",
-                prompt_id="context-steward",
-                budget=RoleBudget(max_calls_per_day=generation.max_calls_per_day),
             ),
             "seed": RoleResource(
                 preset="formation",
                 purpose="seed",
-                prompt_id="seed",
-                budget=RoleBudget(max_calls_per_day=generation.max_calls_per_day),
             ),
             "correction": RoleResource(
                 preset="formation",
                 purpose="correction",
-                prompt_id="correction",
-                budget=RoleBudget(max_calls_per_day=generation.max_calls_per_day),
             ),
             "feedback": RoleResource(
                 preset="formation",
                 purpose="feedback",
-                prompt_id="feedback",
-                budget=RoleBudget(max_calls_per_day=generation.max_calls_per_day),
             ),
             "motivation": RoleResource(
                 preset="formation",
                 purpose="motivation",
-                prompt_id="motivation",
-                budget=RoleBudget(max_calls_per_day=generation.max_calls_per_day),
             ),
             "symbols": RoleResource(
                 preset="formation",
                 purpose="symbols",
-                prompt_id="social-symbols",
-                budget=RoleBudget(max_calls_per_day=generation.max_calls_per_day),
             ),
             "person_profile": RoleResource(
                 preset="formation",
                 purpose="person_profile",
-                prompt_id="person-profile",
-                budget=RoleBudget(max_calls_per_day=generation.max_calls_per_day),
             ),
             "episode": RoleResource(
                 preset="formation",
                 purpose="episode",
-                prompt_id="episode-segmentation",
-                budget=RoleBudget(max_calls_per_day=generation.max_calls_per_day),
             ),
-            "journal": RoleResource(preset="formation", purpose="journal", prompt_id="journal"),
-            "reflect": RoleResource(preset="formation", purpose="reflect", prompt_id="reflect"),
-            "dream": RoleResource(preset="formation", purpose="dream", prompt_id="dream"),
+            "journal": RoleResource(preset="formation", purpose="journal"),
+            "reflect": RoleResource(preset="formation", purpose="reflect"),
+            "dream": RoleResource(preset="formation", purpose="dream"),
             "context_compress": RoleResource(
                 preset="formation",
                 purpose="context_compress",
-                prompt_id="context-compress",
                 output_mode="text",
             ),
             "work_summary": RoleResource(
                 preset="formation",
                 purpose="work_summary",
-                prompt_id="work-summary",
                 output_mode="text",
             ),
             "work_questions": RoleResource(
-                preset="formation", purpose="work_questions", prompt_id="work-questions"
+                preset="formation", purpose="work_questions"
             ),
             "query_rerank": RoleResource(
                 preset="formation",
                 purpose="rerank",
-                prompt_id="query-rerank",
-                budget=RoleBudget(max_calls_per_day=generation.max_calls_per_day),
             ),
         },
     )

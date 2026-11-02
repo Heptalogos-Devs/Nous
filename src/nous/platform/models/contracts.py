@@ -1,4 +1,4 @@
-"""Read-only contracts and actual preparation shared with paid execution."""
+"""Role contracts and previews built from prepared provider requests."""
 
 from __future__ import annotations
 
@@ -8,13 +8,11 @@ from typing import TYPE_CHECKING
 
 from nous_sdk.contracts import CallContext, DomainError
 from nous_sdk.contracts.model_roles import (
-    InvocationSnapshot,
     ModelContractRequest,
     ModelInvocationPreview,
     ModelPreviewRequest,
     ModelPrompt,
     ModelRoleContract,
-    ModelRoutePreview,
 )
 from nous_sdk.contracts.prompt_compilation import CompiledPrompt, PromptMessage, TokenEstimate
 from pydantic import TypeAdapter
@@ -23,8 +21,8 @@ from typing_extensions import TypeForm
 from nous.platform.configuration import ModelRoute
 from nous.platform.configuration.models import ModelConfiguration, ModelResource, RoleResource
 
-from .generation import MediaInput, prepare_invocation
-from .provider_schema import response_formats
+from .generation import MediaInput
+from .provider_schema import response_format
 from .roles import RoleDefinition, json_object
 
 if TYPE_CHECKING:
@@ -88,10 +86,15 @@ async def prepare_role(
     definition = self.roles.resolve(role.purpose, variant, output_type, role.output_mode)
     parsed, variables = definition.variables(variables)
     prompt = (
-        await self.render_prompt(ctx, role_id, variables, role.prompt_id)
+        await self.render_prompt(ctx, role_id, variables, definition.template_id)
         if draft_template is None
         else self.prompts.preview(
-            {"id": role.prompt_id, "revision": None, "template": draft_template, "active": False},
+            {
+                "id": definition.template_id,
+                "revision": None,
+                "template": draft_template,
+                "active": False,
+            },
             variables,
         )
     )
@@ -144,17 +147,16 @@ async def model_contract(
         ) from error
     definition = self.roles.resolve(role.purpose, request.variant, output_mode=role.output_mode)
     try:
-        prompt = await self.prompts.get(ctx, role.prompt_id)
+        prompt = await self.prompts.get(ctx, definition.template_id)
     except KeyError as error:
         raise DomainError(
             "model_unavailable",
             "Model prompt resource is not configured",
             role=request.role,
-            prompt_id=role.prompt_id,
+            template_id=definition.template_id,
             reason="prompt_missing",
         ) from error
     return ModelRoleContract(
-        routing_policy=role.failure_policy,
         role=request.role,
         purpose=role.purpose,
         variant=definition.variant,
@@ -162,11 +164,12 @@ async def model_contract(
         input_schema=json_object(definition.input_type.model_json_schema()),
         output_schema=json_object(TypeAdapter(definition.output_type).json_schema()),
         output_mode="text" if definition.output_type is str else "json_schema",
-        provider_response_formats=response_formats(
+        provider_response_format=response_format(
             definition.output_type,
             resources.resolve(request.role, require_configured=False)[0].model,
+            mode=role.output_mode,
         ),
-        prompt_id=role.prompt_id,
+        template_id=definition.template_id,
         prompt=ModelPrompt.model_validate(prompt),
     )
 
@@ -191,45 +194,18 @@ async def model_preview(
     for reference in request.media:
         if self.preview_media_resolver is not None:
             media.append(await self.preview_media_resolver(ctx, reference))
-    routes: list[ModelRoutePreview] = []
-    for item in prepared.routes:
-        try:
-            invocation = prepare_invocation(
-                prepared.definition.invocation_purpose or request.role,
-                item.route,
-                prepared.prompt,
-                prepared.definition.output_type,
-                tuple(media),
-                request.source_ids,
-            )
-        except DomainError as error:
-            if error.code != "model_unavailable":
-                raise
-            routes.append(
-                ModelRoutePreview(
-                    route_id=item.id,
-                    route_index=item.index,
-                    invocation=None,
-                    capabilities=item.model.input_modalities,
-                    configured=False,
-                    unavailable=json_object(
-                        {"code": error.code, "message": str(error), "details": error.details}
-                    ),
-                )
-            )
-        else:
-            routes.append(
-                ModelRoutePreview(
-                    route_id=item.id,
-                    route_index=item.index,
-                    invocation=InvocationSnapshot.model_validate(invocation),
-                    capabilities=item.model.input_modalities,
-                    configured=bool(item.route.model and item.route.base_url),
-                )
-            )
     definition = prepared.definition
+    selected = prepared.routes[0]
+    prepared_request = self.generation.prepare(
+        request.role,
+        selected.route,
+        prepared.prompt,
+        definition.output_type,
+        tuple(media),
+        request.source_ids,
+        "none",
+    )
     contract = ModelRoleContract(
-        routing_policy=prepared.role.failure_policy,
         role=request.role,
         purpose=prepared.role.purpose,
         variant=definition.variant,
@@ -237,16 +213,15 @@ async def model_preview(
         input_schema=json_object(definition.input_type.model_json_schema()),
         output_schema=json_object(TypeAdapter(definition.output_type).json_schema()),
         output_mode="text" if definition.output_type is str else "json_schema",
-        provider_response_formats=response_formats(
-            definition.output_type, prepared.routes[0].route.model
+        provider_response_format=response_format(
+            definition.output_type, selected.route.model, mode=prepared.role.output_mode
         ),
-        prompt_id=prepared.role.prompt_id,
-        prompt=ModelPrompt.model_validate(await self.prompts.get(ctx, prepared.role.prompt_id)),
+        template_id=definition.template_id,
+        prompt=ModelPrompt.model_validate(await self.prompts.get(ctx, definition.template_id)),
     )
     return ModelInvocationPreview(
         contract=contract,
-        invocation=routes[0].invocation,
-        routes=tuple(routes),
-        capabilities=prepared.routes[0].model.input_modalities,
-        configured=routes[0].configured,
+        invocation=prepared_request.preview,
+        capabilities=selected.model.input_modalities,
+        configured=bool(selected.route.model and selected.route.base_url),
     )

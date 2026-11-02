@@ -95,7 +95,6 @@ class NamespaceBackupStore:
         namespace: Namespace,
         source: Path,
         *,
-        source_config_version: int = 0,
         created_at: datetime | None = None,
     ) -> NamespaceBackupInfo:
         self.initialize()
@@ -110,7 +109,6 @@ class NamespaceBackupStore:
                 namespace=namespace,
                 source=Path(source),
                 created_at=timestamp,
-                source_config_version=source_config_version,
             )
             archive_sha256 = _hash_file(temporary_path)
             info = _backup_info(
@@ -401,7 +399,6 @@ class NamespaceBackupStore:
         namespace: Namespace,
         source: Path,
         created_at: datetime,
-        source_config_version: int,
     ) -> NamespaceBackupManifest:
         if not source.is_dir():
             raise NamespaceIntegrityError("namespace data directory is missing")
@@ -437,7 +434,6 @@ class NamespaceBackupStore:
                 source_namespace_id=namespace.id,
                 created_at=created_at,
                 producer_version=_producer_version(),
-                source_config_version=source_config_version,
                 namespace=namespace,
                 data_size_bytes=sum(item.size_bytes for item in manifest_files),
                 files=tuple(manifest_files),
@@ -577,7 +573,6 @@ def _backup_info(
         created_at=manifest.created_at,
         format_version=manifest.format_version,
         producer_version=manifest.producer_version,
-        source_config_version=manifest.source_config_version,
         archive_size_bytes=archive_size_bytes,
         data_size_bytes=manifest.data_size_bytes,
         file_count=len(manifest.files),

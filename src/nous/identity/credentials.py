@@ -60,7 +60,7 @@ def _scope_subset(child: tuple[str, ...] | None, parent: tuple[str, ...] | None)
 class Principal:
     caller_id: str
     namespace_ids: tuple[str, ...] | None = None
-    
+
     source_ids: tuple[str, ...] | None = None
     capabilities: frozenset[Capability] = frozenset()
     credential_id: str | None = None
@@ -82,9 +82,7 @@ class Principal:
 
     def require_instance_management(self) -> None:
         self.require("manage")
-        if any(
-            scope is not None for scope in (self.namespace_ids, self.source_ids)
-        ):
+        if any(scope is not None for scope in (self.namespace_ids, self.source_ids)):
             raise DomainError(
                 "instance_scope_forbidden",
                 "This operation requires unrestricted instance management",
@@ -99,9 +97,8 @@ class Principal:
         return tuple(value for value in dict.fromkeys(requested) if value in self.source_ids)
 
     def permits_record(self, record: CredentialRecord) -> bool:
-        return (
-            _scope_subset(record.namespace_ids, self.namespace_ids)
-            and _scope_subset(record.source_ids, self.source_ids)
+        return _scope_subset(record.namespace_ids, self.namespace_ids) and _scope_subset(
+            record.source_ids, self.source_ids
         )
 
 
@@ -161,7 +158,6 @@ class CredentialsService:
             caller_id=actor.caller_id,
             credential_id=actor.credential_id,
             namespace_ids=actor.namespace_ids,
-            
             source_ids=actor.source_ids,
             capabilities=tuple(sorted(actor.capabilities)),
         )
@@ -268,26 +264,14 @@ class CredentialsService:
                     "credential_scope_forbidden", "Credential scope exceeds the issuer's authority"
                 )
             scopes[field] = requested
-        payload = {
+        {
             "name": command.name,
             **scopes,
             "capabilities": sorted(set(command.capabilities)),
             **({"reason": command.reason} if command.reason else {}),
             **({"expires_at": command.expires_at} if command.expires_at is not None else {}),
         }
-        async with self.authority.write(
-            self._context(actor),
-            command.operation_id,
-            operation_kind="credentials.create",
-            scope="credentials",
-            payload=payload,
-        ) as tx:
-            if tx.replayed:
-                record = CredentialRecord.model_validate(tx.replay_result)
-                current = await tx.connection.scalar(
-                    sa.select(credentials.c.record).where(credentials.c.id == record.id)
-                )
-                return IssuedCredential(record=CredentialRecord.model_validate(current), token=None)
+        async with self.authority.write(self._context(actor)) as tx:
             if command.expires_at is not None and command.expires_at <= datetime.now(UTC):
                 raise DomainError(
                     "credential_expiry_invalid", "A new credential must expire in the future"
@@ -299,7 +283,6 @@ class CredentialsService:
                 caller_id=f"api-key:{credential_id}",
                 name=command.name,
                 namespace_ids=scopes["namespace_ids"],
-                
                 source_ids=scopes["source_ids"],
                 capabilities=tuple(sorted(set(command.capabilities))),
                 created_by=actor.caller_id,
@@ -315,7 +298,6 @@ class CredentialsService:
                 )
             )
             await self._event_in(tx, actor, record, "created", command.reason)
-            tx.result(record)
             return IssuedCredential(record=record, token=token)
 
     async def list(
@@ -350,23 +332,7 @@ class CredentialsService:
         actor.require("manage")
         if (expected_revision is not None and expected_revision < 1) or len(reason) > 4096:
             raise ValueError("Invalid credential revision or reason")
-        async with self.authority.write(
-            self._context(actor),
-            operation_id,
-            operation_kind="credentials.revoke",
-            scope="credentials",
-            payload={
-                "credential_id": credential_id,
-                **(
-                    {"expected_revision": expected_revision}
-                    if expected_revision is not None
-                    else {}
-                ),
-                **({"reason": reason} if reason else {}),
-            },
-        ) as tx:
-            if tx.replayed:
-                return CredentialRecord.model_validate(tx.replay_result)
+        async with self.authority.write(self._context(actor)) as tx:
             record = await self._record_in(tx.connection, actor, credential_id)
             self._revision(record, expected_revision)
             if record.revoked_at is None:
@@ -383,23 +349,13 @@ class CredentialsService:
                     .values(record=record.model_dump(mode="json"))
                 )
                 await self._event_in(tx, actor, record, "revoked", reason)
-            return tx.result(record)
+            return record
 
     async def rotate(
         self, actor: Principal, credential_id: str, command: RotateCredential
     ) -> IssuedCredential:
         actor.require("manage")
-        async with self.authority.write(
-            self._context(actor),
-            command.operation_id,
-            operation_kind="credentials.rotate",
-            scope="credentials",
-            payload={"credential_id": credential_id, "command": command},
-        ) as tx:
-            if tx.replayed:
-                original = CredentialRecord.model_validate(tx.replay_result)
-                current = await self._record_in(tx.connection, actor, original.id)
-                return IssuedCredential(record=current, token=None)
+        async with self.authority.write(self._context(actor)) as tx:
             record = await self._record_in(tx.connection, actor, credential_id)
             if not set(record.capabilities).issubset(actor.capabilities):
                 raise DomainError(
@@ -424,5 +380,4 @@ class CredentialsService:
                 )
             )
             await self._event_in(tx, actor, record, "rotated", command.reason)
-            tx.result(record)
             return IssuedCredential(record=record, token=token)

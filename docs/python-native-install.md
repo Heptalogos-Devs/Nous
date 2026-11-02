@@ -14,8 +14,6 @@ uv run --python 3.14 --no-project install-python.py --wheels .
 
 已有标准 CPython 3.14 时也可运行 `python install-python.py --wheels .`；脚本优先使用 uv，否则使用标准 `venv` 与 pip。三个项目 wheel 在一次依赖解析中安装，强制使用二进制分发；平台不匹配时安装失败，不会偷偷编译 Rust。普通第三方依赖从包索引下载，完整离线 wheelhouse 可加 `--offline`。
 
-需要 A-Memorix gRPC 时加 `--amemorix-rpc`，安装可选传输依赖；启动时用 `nous serve --rpc --rpc-port PORT` 启用监听。
-
 安装目录和实例目录独立，可显式指定：
 
 ```bash
@@ -72,7 +70,7 @@ nous --instance /path/to/instance query NAMESPACE_ID SUBJECT_ID rollback --mode 
 
 创建凭据可填写带时区的 `expires_at`，例如 `"2027-01-01T00:00:00Z"`；到期后请求返回 `credential_expired`。轮换保留原到期时间。
 
-`amemorix NAMESPACE_ID SUBJECT_ID operation.json` 调用 A-Memorix 公共工具；文件使用 `AMemorixOperation`，例如 `{"tool":"memory_source","arguments":{"target":"memory:OBJECT_ID@REVISION"}}` 读取已有记忆及原件依据。导入、导出工具按需指定 `--transfer-root DIRECTORY`；工具等待时限可用 `--timeout-ms`。它与 SDK `AMemorixAdapter` 使用同一公开入口。
+`nous bundle export bundle.json` 将当前 Namespace 的认知、来源和原件导出到文件；切换目标 Namespace 后用 `nous bundle install bundle.json` 安装。`nous bundle list` 列出安装记录，`nous bundle uninstall INSTALLATION_ID` 撤回该安装拥有的来源。
 
 ```bash
 nous --instance /path/to/instance backup --output nous-backup.zip
@@ -120,7 +118,7 @@ nous maintenance review NAMESPACE_ID SUBJECT_ID RUN_ID adopt REVISION --group GR
 
 当前人格可用 `nous ego read NAMESPACE_ID SUBJECT_ID --output persona.md` 导出。Windows 发行目录的 `examples/literature-ego/ego.md` 是实际文学实例的系统输出：四项 Ego 认识；`profile.json` 保留对应完整记录，`records.json` 保留包含人物身份和病情自述记忆在内的六项当前认识。`source-resource.json`、`source-catalogs.json` 与 `hongloumeng-chapter-003-oldid2703828.html` 保留原第三回固定版本和精确来源。示例用于阅读，不会由安装器导入实例。
 
-人物 Entity 的 `description` 和 `aliases` 保留来源认识，`generated_profile` 保存人物画像的自动摘要及其精确证据。SDK 的 `profile_text`、`effective_aliases` 给出当前有效内容；A-Memorix 人物读取使用相同规则。刷新只有原描述可用的人物会保留该描述，并跳过模型。证据撤回后，派生画像从当前读取中移除，仍有独立来源的描述和别名继续可用；已准备的旧 Context 会要求重新准备。
+人物 Entity 的 `description` 和 `aliases` 保留来源认识，`generated_profile` 保存人物画像的自动摘要及其精确证据。SDK 的 `profile_text`、`effective_aliases` 给出当前有效内容。刷新只有原描述可用的人物会保留该描述，并跳过模型。证据撤回后，派生画像从当前读取中移除，仍有独立来源的描述和别名继续可用；已准备的旧 Context 会要求重新准备。
 
 `AssessMotivation` 默认即时返回评价。显式传入 `save: true` 和固定 `operation_id`，会保存原 Desire/Concern 精确修订、原条件、证据、评价时点、区间覆盖与空缺、三值结果和模型判断。返回的 `assessment_id` 可读取完整保存记录。同一操作重放复用原结果。
 
@@ -132,7 +130,7 @@ nous motivation-history NAMESPACE_ID SUBJECT_ID history-query.json
 
 `history-query.json` 使用 `MotivationAssessmentsQuery`，可含 `reference`、`limit`、`cursor`。SDK 对应 `assess_motivation`、`motivation_assessment`、`motivation_assessments`，MCP 同名。Context 为选中的 Desire/Concern 携带同一精确修订最近保存的评价；准备 Context 时读取已有结果。条件产生新修订后，旧评价继续留在原修订历史中。来源永久清除同时清除相关评价与缓存正文；Namespace 备份包含评价及其精确引用。
 
-来源和对象管理的预览会返回 `retention_states`，包含所选 Memory/Association 的实际修订、强度、时间锚点、非活跃原因、永久与保护状态。将其中所需状态去掉动态 `score`，作为 `SourceCommand.retention_expectations` 提交，可阻止过期计划修改已经变化的对象。A-Memorix `expected_relation_states` 的九个字段映射到同一原生前置条件；执行事务重新读取并授权，变化返回 `retention_precondition_failed`。
+来源和对象管理的预览会返回 `retention_states`，包含所选 Memory/Association 的实际修订、强度、时间锚点、非活跃原因、永久与保护状态。将其中所需状态去掉动态 `score`，作为 `SourceCommand.retention_expectations` 提交，可阻止过期计划修改已经变化的对象。执行事务重新读取并授权，变化返回 `retention_precondition_failed`。
 
 ## 检索调优
 
@@ -147,19 +145,7 @@ nous tuning apply NAMESPACE_ID SUBJECT_ID selected-profile.json
 nous tuning rollback NAMESPACE_ID SUBJECT_ID rollback.json
 ```
 
-创建操作返回实际 `job_id`，用 `jobs wait` 等待；`tuning cancel` 取消未完成工作。`ApplyRetrievalProfile` 可指定完整 `profile` 或已完成的 `task_id`。试验不改变正式配置；应用和回滚各产生新的配置修订，可携带 `expected_commit_seq` 检查并发变更。SDK 提供同名 typed 操作；MCP 提供 `create_retrieval_tuning`、查询任务、轮次和配置应用操作。A-Memorix 的 `memory_tuning_admin` 使用同一所有者。
-
-CLI 可通过 `amemorix NAMESPACE_ID SUBJECT_ID operation.json` 使用 A-Memorix 公共工具。文件采用 SDK `AMemorixOperation` 合同，例如 `{"tool":"memory_profile_admin","arguments":{"action":"status"}}`。`process_pending` 继续当前调用范围内已接纳的画像刷新任务；状态统计来自持久任务目录。导入、Bundle 等需要本地文件的操作加 `--transfer-root /path/to/files`，SDK 在该目录内完成文件传输。
-
-```bash
-nous --json amemorix NAMESPACE_ID SUBJECT_ID operation.json
-```
-
-## 可选 A-Memorix gRPC
-
-安装器增加 `--amemorix-rpc` 可安装协议依赖，包安装可选择 `nous-server[amemorix-rpc]`。运行 `nous serve --rpc --rpc-port 7442` 启动同一应用的附加监听器；环境配置为 `NOUS_RPC__ENABLED=true`、`NOUS_RPC__HOST` 和 `NOUS_RPC__PORT`。普通 HTTP 实例保持默认配置即可运行。
-
-服务使用上游 `a_memorix.api.v1` 的 Auth、Namespace、Memory、Job、Backup 协议和标准 gRPC health。客户端在 metadata 中提交 `authorization: Bearer TOKEN`。Namespace 管理配置绑定一个 memory-only Subject；认证凭据决定实际调用者和允许范围。备份上传、还原和 Namespace 永久清除需要实例管理权限。
+创建操作返回实际 `job_id`，用 `jobs wait` 等待；`tuning cancel` 取消未完成工作。`ApplyRetrievalProfile` 可指定完整 `profile` 或已完成的 `task_id`。试验不改变正式配置；应用和回滚各产生新的配置修订，可携带 `expected_commit_seq` 检查并发变更。SDK 提供同名 typed 操作。
 
 ## 当前用户后台服务
 

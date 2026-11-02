@@ -1,123 +1,36 @@
-"""Bounded provider-neutral text embedding batches share actual paid results."""
+"""Provider embeddings use the shared typed result cache and HTTP client."""
+
+from __future__ import annotations
 
 import asyncio
 import math
+import time
 
-from nous_sdk.contracts import CallContext, EmbeddingBatch
+from nous_sdk.contracts import CallContext, DomainError, EmbeddingBatch
 from nous_sdk.contracts.model_roles import ModelCachePolicy
-from nous_sdk.contracts.model_routing import ModelRouteAttempt, ModelRoutingPolicy
 from openai import AsyncOpenAI
+from pydantic import JsonValue, TypeAdapter
+from pydantic_ai.usage import RunUsage
 
 from nous.platform.configuration import EmbeddingRoute
 from nous.platform.errors import Unavailable
 from nous.platform.network.service import NetworkService
 
-from .embedding import retained_embedding, vector_space
-from .ledger import CallLedger
-from .outcomes import outcome
-from .retries import rate_limited
+from .embedding import combine_usage, vector_space
+from .generation import Generation, ModelResult
 
 
-async def embed_one(
-    ctx: CallContext,
-    texts: tuple[str, ...],
-    route: EmbeddingRoute,
-    key: str,
-    ledger: CallLedger,
-    network: NetworkService,
-    source_ids: tuple[str, ...],
-    *,
-    invocation_id: str | None = None,
-    routing: ModelRouteAttempt | None = None,
-    cache_policy: ModelCachePolicy = "shared",
-) -> EmbeddingBatch:
-    request: dict[str, object] = {
-        "model": route.model,
-        "base_url": route.base_url,
-        "texts": list(texts),
-        "source_ids": list(source_ids),
-        "dimensions": route.dimensions,
-        "normalization": route.normalization,
-        "extra_body": route.extra_body,
-    }
-    call_id, cached = await ledger.reserve(
-        ctx,
-        "embedding",
-        request,
-        route.max_calls_per_day,
-        budget_resource=route.budget_resource,
-        resource_maximum=route.resource_request_budget,
-        invocation_id=invocation_id,
-        routing=routing,
-        cache_policy=cache_policy,
+def usage_from(response) -> RunUsage:
+    usage = response.usage
+    if usage is None:
+        return RunUsage(requests=1)
+    input_tokens = int(usage.prompt_tokens or 0)
+    total_tokens = int(usage.total_tokens or input_tokens)
+    return RunUsage(
+        requests=1,
+        input_tokens=input_tokens,
+        output_tokens=max(0, total_tokens - input_tokens),
     )
-    if cached is not None:
-        return retained_embedding(cached, call_id)
-    response_received = False
-    try:
-        async with network.client(ctx, timeout_seconds=route.timeout_seconds) as client:
-            sdk = AsyncOpenAI(
-                base_url=route.base_url, api_key=key, http_client=client, max_retries=0
-            )
-            response = await sdk.embeddings.create(
-                model=route.model,
-                input=list(texts),
-                dimensions=route.dimensions,
-                extra_body=route.extra_body,
-            )
-        response_received = True
-        vectors = [tuple(item.embedding) for item in sorted(response.data, key=lambda v: v.index)]
-        if sorted(item.index for item in response.data) != list(range(len(texts))) or any(
-            len(v) != route.dimensions or not all(math.isfinite(value) for value in v)
-            for v in vectors
-        ):
-            raise ValueError("Provider returned inconsistent embedding dimensions")
-        if route.normalization == "l2":
-            import numpy as np
-
-            array = np.asarray(vectors, dtype=np.float64)
-            norms = np.linalg.norm(array, axis=1, keepdims=True)
-            vectors = [tuple(row) for row in array / np.where(norms == 0, 1, norms)]
-        space = vector_space(route, response.model)
-        result = EmbeddingBatch(
-            model=response.model,
-            space=space,
-            dimensions=route.dimensions,
-            vectors=tuple(vectors),
-            call_ids=(call_id,) * len(vectors),
-        )
-        await ledger.finish(
-            ctx,
-            call_id,
-            result.model_dump(mode="json"),
-            {
-                "input_tokens": response.usage.prompt_tokens if response.usage else None,
-                "total_tokens": response.usage.total_tokens if response.usage else None,
-            },
-        )
-        return result
-    except asyncio.CancelledError:
-        await asyncio.shield(ledger.finish(ctx, call_id, None, {}, "CancelledUnknownOutcome"))
-        raise
-    except Exception as error:
-        code = str(getattr(error, "status_code", type(error).__name__))
-        await ledger.finish(
-            ctx,
-            call_id,
-            None,
-            {},
-            code,
-            outcome=outcome(error, response_received=response_received),
-        )
-        raise Unavailable(
-            f"Embedding provider failed ({code})",
-            context={
-                "call_id": call_id,
-                "invocation_id": invocation_id,
-                "role": "embedding",
-                "provider_code": code,
-            },
-        ) from error
 
 
 async def embed_text(
@@ -125,58 +38,146 @@ async def embed_text(
     texts: tuple[str, ...],
     route: EmbeddingRoute,
     key: str,
-    ledger: CallLedger,
     network: NetworkService,
+    generation: Generation,
     source_ids: tuple[str, ...],
     *,
-    invocation_id: str | None = None,
-    routing: ModelRouteAttempt | None = None,
-    retry_policy: ModelRoutingPolicy | None = None,
-    cache_policy: ModelCachePolicy = "shared",
-    retry_authorization: str | None = None,
-) -> EmbeddingBatch:
+    cache_policy: ModelCachePolicy = "none",
+) -> ModelResult[EmbeddingBatch]:
     if not texts or any(not text.strip() for text in texts):
         raise ValueError("Text embedding inputs must contain nonempty text")
-    batches: list[EmbeddingBatch] = []
-    for offset in range(0, len(texts), route.max_batch_items):
-        group = texts[offset : offset + route.max_batch_items]
-
-        async def request(identity: str | None, group: tuple[str, ...] = group) -> EmbeddingBatch:
-            return await embed_one(
-                ctx,
-                group,
-                route,
-                key,
-                ledger,
-                network,
-                source_ids,
-                invocation_id=identity,
-                routing=routing,
-                cache_policy=cache_policy,
-            )
-
-        batch = await rate_limited(
-            ctx,
-            "embedding",
-            f"{invocation_id}:{offset // route.max_batch_items}"
-            if invocation_id is not None
-            else None,
-            retry_policy or ModelRoutingPolicy(),
-            ledger,
-            request,
-            authorization=retry_authorization,
-        )
-        if batches and (batch.space, batch.model, batch.dimensions) != (
-            batches[0].space,
-            batches[0].model,
-            batches[0].dimensions,
-        ):
-            raise ValueError("Provider changed embedding spaces within one input batch")
-        batches.append(batch)
-    return EmbeddingBatch(
-        model=batches[0].model,
-        space=batches[0].space,
-        dimensions=batches[0].dimensions,
-        vectors=tuple(vector for batch in batches for vector in batch.vectors),
-        call_ids=tuple(call_id for batch in batches for call_id in batch.call_ids),
+    output_schema = TypeAdapter(EmbeddingBatch).json_schema()
+    task = "embedding"
+    prompt_digest = generation.digest({"task": task, "operation": "text_embedding"})
+    input_digest = generation.digest({"texts": texts})
+    schema_digest = generation.digest(output_schema)
+    parameters = {
+        "path": "/embeddings",
+        "dimensions": route.dimensions,
+        "normalization": route.normalization,
+        "max_batch_items": route.max_batch_items,
+        "extra_body": route.extra_body,
+        "timeout_seconds": route.timeout_seconds,
+    }
+    cache_key = generation.digest(
+        {
+            "task": task,
+            "endpoint": route.base_url,
+            "protocol": route.protocol,
+            "model": route.model,
+            "parameters": parameters,
+            "input_digest": input_digest,
+            "schema_digest": schema_digest,
+        }
     )
+    if cache_policy == "shared":
+        cached = generation.cache_get(cache_key, EmbeddingBatch)
+        if cached is not None:
+            generation.record_result(
+                ctx,
+                task=task,
+                model=cached.producer.model_id,
+                protocol=route.protocol,
+                parameters=TypeAdapter(dict[str, object]).validate_python(parameters),
+                schema=output_schema,
+                response_format=None,
+                messages=[{"role": "input", "content": texts}],
+                media=[],
+                output=cached.output,
+                producer=cached.producer,
+                usage=cached.usage,
+                cache_hit=True,
+                elapsed_ms=0,
+            )
+            return cached
+    vectors: list[tuple[float, ...]] = []
+    usages: list[RunUsage] = []
+    effective_model: str | None = None
+    started = time.perf_counter()
+    try:
+        async with network.client(ctx, timeout_seconds=route.timeout_seconds) as client:
+            sdk = AsyncOpenAI(
+                base_url=route.base_url,
+                api_key=key,
+                http_client=client,
+                max_retries=0,
+            )
+            for offset in range(0, len(texts), route.max_batch_items):
+                group = texts[offset : offset + route.max_batch_items]
+                response = await sdk.embeddings.create(
+                    model=route.model,
+                    input=list(group),
+                    dimensions=route.dimensions,
+                    extra_body=route.extra_body,
+                )
+                records = sorted(response.data, key=lambda item: item.index)
+                if [item.index for item in records] != list(range(len(group))):
+                    raise ValueError("Provider returned inconsistent embedding indexes")
+                group_vectors = [tuple(item.embedding) for item in records]
+                if any(
+                    len(vector) != route.dimensions
+                    or not all(math.isfinite(value) for value in vector)
+                    for vector in group_vectors
+                ):
+                    raise ValueError("Provider returned inconsistent embedding dimensions")
+                if route.normalization == "l2":
+                    normalized: list[tuple[float, ...]] = []
+                    for vector in group_vectors:
+                        norm = math.sqrt(sum(value * value for value in vector))
+                        normalized.append(tuple(value / norm for value in vector) if norm else vector)
+                    group_vectors = normalized
+                if effective_model is not None and effective_model != response.model:
+                    raise DomainError(
+                        "embedding_space_conflict",
+                        "Provider changed model versions within one embedding request",
+                    )
+                effective_model = response.model
+                vectors.extend(group_vectors)
+                usages.append(usage_from(response))
+    except asyncio.CancelledError:
+        raise
+    except (DomainError, Unavailable):
+        raise
+    except Exception as error:
+        code = str(getattr(error, "status_code", type(error).__name__))
+        raise Unavailable(
+            f"Text embedding provider failed ({code})",
+            context={"task": task, "provider_code": code},
+        ) from error
+    assert effective_model is not None
+    batch = EmbeddingBatch(
+        model=effective_model,
+        space=vector_space(route, effective_model),
+        dimensions=route.dimensions,
+        vectors=tuple(vectors),
+    )
+    usage = combine_usage(tuple(usages))
+    result = generation.create_result(
+        output=batch,
+        output_type=EmbeddingBatch,
+        usage=usage,
+        task=task,
+        model_id=effective_model,
+        prompt_digest=prompt_digest,
+        schema_digest=schema_digest,
+        input_digest=input_digest,
+    )
+    if cache_policy == "shared":
+        generation.cache_put(cache_key, result)
+    generation.record_result(
+        ctx,
+        task=task,
+        model=effective_model,
+        protocol=route.protocol,
+        parameters=TypeAdapter(dict[str, object]).validate_python(parameters),
+        schema=output_schema,
+        response_format=None,
+        messages=[{"role": "input", "content": texts}],
+        media=[],
+        output=batch,
+        producer=result.producer,
+        usage=result.usage,
+        cache_hit=False,
+        elapsed_ms=round((time.perf_counter() - started) * 1000),
+    )
+    return result

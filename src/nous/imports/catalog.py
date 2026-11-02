@@ -11,7 +11,6 @@ from nous_sdk.contracts import (
     CallContext,
     CatalogView,
     DomainError,
-    FormationCatalogEntry,
     FreezeCatalog,
     ImportDocument,
     ImportRecordError,
@@ -56,32 +55,6 @@ class PreparedInput:
 class FrozenCatalog:
     catalog: CatalogView
     context: CallContext
-
-
-async def replay_frozen(
-    self: ImportService,
-    view: ReadView | WriteTx,
-    ctx: CallContext,
-    command: FreezeCatalog,
-    cached: CatalogView,
-) -> CatalogView:
-    for document in command.inputs:
-        if document.material_id is not None:
-            await self.materials.read_in(view, ctx, document.material_id)
-    effective = (
-        (
-            await self.materials.restore_input_in(
-                view,
-                ctx,
-                operation_id=command.operation_id,
-                operation_kind="imports.freeze",
-                scope=ctx.namespace_id,
-            )
-        ).context
-        if ctx.source_groups()
-        else ctx
-    )
-    return await self.replay_catalog_in(view, effective, cached)
 
 
 async def prepare_document(
@@ -203,18 +176,6 @@ async def prepare_document(
 async def freeze_catalog(
     self: ImportService, ctx: CallContext, command: FreezeCatalog
 ) -> CatalogView:
-    receipt = await self.authority.receipt(
-        ctx,
-        command.operation_id,
-        operation_kind="imports.freeze",
-        scope=ctx.namespace_id,
-        payload=command,
-    )
-    if receipt is not None:
-        async with self.authority.read(ctx) as view:
-            return await replay_frozen(
-                self, view, ctx, command, CatalogView.model_validate(receipt.result)
-            )
     if command.chunk_overlap >= command.chunk_size:
         raise DomainError("invalid_split", "Chunk overlap must be smaller than chunk size")
     prepared = [await self.prepare_document(ctx, document) for document in command.inputs]
@@ -246,19 +207,9 @@ async def freeze_catalog_prepared(
     from .document_extraction import chunks_for
 
     split = [[chunks_for(parsed, command) for parsed in item.records] for item in prepared]
-    async with self.authority.write(
-        ctx,
-        command.operation_id,
-        operation_kind="imports.freeze",
-        scope=ctx.namespace_id,
-        payload=command,
-    ) as tx:
-        if tx.replayed:
-            return await replay_frozen(
-                self, tx, ctx, command, CatalogView.model_validate(tx.replay_result)
-            )
+    async with self.authority.write(ctx) as tx:
         frozen = await self.freeze_catalog_in(tx, ctx, command, leases, prepared, split)
-        return tx.result(frozen.catalog)
+        return frozen.catalog
 
 
 async def freeze_catalog_in(
@@ -269,13 +220,15 @@ async def freeze_catalog_in(
     leases: list[ContentLease | None],
     prepared: list[PreparedInput],
     split: list[list[list[Document]]],
+    *,
+    admitted_observations: dict[str, str] | None = None,
 ) -> FrozenCatalog:
     await require_namespace_in(tx, ctx, "memory")
     from nous_sdk.contracts.namespace_policy import FormationPolicy
 
     from .document_extraction import chunks_for
 
-    policy = await self.configuration.policy_in(tx, ctx, "formation", FormationPolicy)
+    policy = await self.configuration.policy(ctx, "formation", FormationPolicy)
     chunk_size = min(command.chunk_size, policy.max_chunk_chars)
     overlap = (
         command.chunk_overlap
@@ -298,6 +251,10 @@ async def freeze_catalog_in(
         initial_event = None
         if item.material:
             material = await self.materials.read_in(tx, ctx, item.material["id"])
+            if admitted_observations and material["id"] in admitted_observations:
+                initial_event = (
+                    await require_observation_in(tx, ctx, admitted_observations[material["id"]])
+                )["record"]
         else:
             admission = await self.materials.admit_text_in(tx, effective, document, lease)
             material, effective = admission.material, admission.context
@@ -307,7 +264,10 @@ async def freeze_catalog_in(
         source = {
             "id": source_id,
             "material_id": material["id"],
-            "document": document.model_dump(mode="json", exclude_unset=True),
+            "document": {
+                **document.model_dump(mode="json", exclude={"text"}, exclude_unset=True),
+                "material_id": material["id"],
+            },
             "content_hash": material["content_hash"],
             "original_unit_count": sum(len(chunks) for chunks in record_chunks),
         }
@@ -441,11 +401,51 @@ async def freeze_catalog_in(
                         "content_category": command.content_category,
                     },
                 )
+                stored = unit.model_dump(mode="json", exclude={"text"})
+                basic_context = {
+                    "external_id",
+                    "source",
+                    "source_type",
+                    "origin",
+                    "event_time",
+                    "observed_at",
+                    "validity",
+                    "media_strategy",
+                }
+                if document.format in {"json", "jsonl", "parquet", "sqlite", "graphml"} or set(
+                    context
+                ).difference(basic_context):
+                    from nous_sdk.contracts.derivation import (
+                        CreateRepresentation,
+                        DerivationInput,
+                        StructuredRepresentation,
+                    )
+
+                    parsed_value = await self.cognition.derivations.adopt_in(
+                        tx,
+                        effective,
+                        CreateRepresentation(
+                            inputs=(DerivationInput(ordinal=0, source=selected_source),),
+                            kind="parsed_record",
+                            strategy="preprocess",
+                            processor="nous.import-parser/1",
+                            payload=StructuredRepresentation(
+                                schema_id="nous.import-unit/1",
+                                value={
+                                    "text": unit.text,
+                                    "context": unit.context,
+                                    "split_context": unit.split_context,
+                                },
+                            ),
+                        ),
+                    )
+                    unit = unit.model_copy(update={"source": parsed_value.reference.media()})
+                    stored.update(
+                        source=unit.source.model_dump(mode="json"), context={}, split_context={}
+                    )
                 frozen.append(unit)
                 await tx.connection.execute(
-                    units.insert().values(
-                        id=unit.id, catalog_id=catalog_id, record=unit.model_dump(mode="json")
-                    )
+                    units.insert().values(id=unit.id, catalog_id=catalog_id, record=stored)
                 )
     result = CatalogView(
         split_options=TextSplitOptions.model_validate(
@@ -466,7 +466,13 @@ async def freeze_catalog_in(
         catalogs.insert().values(
             id=catalog_id,
             namespace_id=ctx.namespace_id,
-            record=result.model_dump(mode="json"),
+            record={
+                **result.model_dump(mode="json", exclude={"units", "formation_catalog"}),
+                "unit_ids": [unit.id for unit in result.units],
+                "formation_references": [
+                    entry.reference.model_dump(mode="json") for entry in result.formation_catalog
+                ],
+            },
         )
     )
     return FrozenCatalog(result, effective)
@@ -485,28 +491,18 @@ async def read_catalog_in(
     ).scalar_one_or_none()
     if value is None:
         raise DomainError("catalog_not_found", "Import catalog is unavailable")
-    result = CatalogView.model_validate(value)
-    for unit in result.units:
-        if unit.observation_id:
-            await require_observation_in(
-                view,
-                ctx,
-                unit.observation_id,
-                active=not unit.purged,
-                region_id=unit.source_region_id,
-            )
-        elif ctx.source_groups():
-            await self.materials.read_in(view, ctx, unit.material_id)
-    visible_catalog: list[FormationCatalogEntry] = []
-    for entry in result.formation_catalog:
-        try:
-            await self.cognition.get_in(view, ctx, entry.reference)
-        except DomainError as error:
-            if error.code not in {"source_unavailable", "cognition_not_found"}:
-                raise
-        else:
-            visible_catalog.append(entry)
-    return result.model_copy(update={"formation_catalog": tuple(visible_catalog)})
+    from nous_sdk.contracts import CognitiveRef
+
+    header = dict(value)
+    unit_ids = header.pop("unit_ids")
+    references = tuple(
+        CognitiveRef.model_validate(item) for item in header.pop("formation_references", ())
+    )
+    hydrated = tuple(
+        [await self.read_unit_in(view, ctx, unit_id, catalog_id=catalog_id) for unit_id in unit_ids]
+    )
+    hints = await self.formation.formation_catalog_in(view, ctx, references=references)
+    return CatalogView.model_validate({**header, "units": hydrated, "formation_catalog": hints})
 
 
 async def read_catalog(self: ImportService, ctx: CallContext, catalog_id: str) -> CatalogView:

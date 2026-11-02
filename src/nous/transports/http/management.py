@@ -18,7 +18,7 @@ from nous.platform.persistence import OperationConflict
 
 from .security import application, authorize, context
 
-router = APIRouter(prefix="/api/v1")
+router = APIRouter(prefix="/api/manage")
 
 
 @router.post("/stop")
@@ -48,13 +48,6 @@ async def model_preview(
 ):
     ctx = await context(request, namespace_id,  capability="read")
     return await application(request).models.model_preview(ctx, command)
-
-
-@router.get("/models/calls/{call_id}/output")
-async def retained_model_output(request: Request, call_id: str, namespace_id: str,  management: bool = False):
-    purpose = "management" if management else "active"
-    ctx = await context(request, namespace_id,  capability="manage" if management else "read", identity_purpose=purpose)
-    return await application(request).models.retained_output(ctx, call_id, purpose=purpose)
 
 
 @router.post("/backups")
@@ -124,7 +117,7 @@ async def restore_backup(request: Request, instance_name: str) -> dict[str, obje
 class ConfigChange(BaseModel):
     value: JsonValue
     scope: Literal["instance", "namespace"] = "instance"
-    operation_id: str = Field(default_factory=lambda: str(uuid4()))
+    expected_version: int | None = Field(default=None, ge=0)
 
 
 class PromptChange(BaseModel):
@@ -221,19 +214,6 @@ async def configuration(
     )
 
 
-@router.get("/configuration/{key}/history")
-async def configuration_history(
-    request: Request,
-    key: str,
-    namespace_id: str = "instance",
-    
-    limit: int = 100,
-):
-    return await application(request).configuration.history(
-        await context(request, namespace_id,  capability="read"), key, limit
-    )
-
-
 @router.put("/configuration/{key}")
 async def configure(
     request: Request,
@@ -250,8 +230,8 @@ async def configure(
         await context(request, namespace_id,  capability="manage"),
         key,
         command.value,
-        command.operation_id,
         command.scope,
+        expected_version=command.expected_version,
     )
 
 
@@ -273,61 +253,3 @@ async def save_prompt(
         command.template,
         command.operation_id,
     )
-
-
-@router.get("/model-calls")
-async def model_calls(request: Request, namespace_id: str):
-    return await application(request).models.ledger.list(
-        await context(request, namespace_id,  capability="read")
-    )
-
-
-@router.get("/jobs/{job_id}")
-async def job(
-    request: Request,
-    job_id: str,
-    namespace_id: str,
-    
-    purpose: Literal["actor", "management"] = "actor",
-):
-    app = application(request)
-    value = await app.execution.status(
-        await context(
-            request,
-            namespace_id,
-            
-            capability="manage" if purpose == "management" else "read",
-        ),
-        job_id,
-        purpose=purpose,
-    )
-    return {"job": value}
-
-
-@router.post("/jobs/{job_id}/{action}")
-async def job_action(
-    request: Request,
-    job_id: str,
-    action: Literal["cancel", "resume", "wait"],
-    namespace_id: str,
-    
-    wait_seconds: float = 120,
-    purpose: Literal["actor", "management"] = "actor",
-):
-    app = application(request)
-    ctx = await context(
-        request,
-        namespace_id,
-        
-        capability="manage"
-        if purpose == "management"
-        else ("read" if action == "wait" else "write"),
-    )
-    if action == "wait":
-        async with asyncio.timeout(wait_seconds):
-            return await app.execution.wait(ctx, job_id, purpose=purpose)
-    if action == "cancel":
-        await app.execution.cancel(ctx, job_id, purpose=purpose)
-    else:
-        await app.execution.resume(ctx, job_id, purpose=purpose)
-    return {"id": job_id, "action": action}

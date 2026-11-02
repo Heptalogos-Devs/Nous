@@ -2,9 +2,8 @@
 
 from typing import Literal
 
-from nous_sdk.contracts import CallContext, CognitiveRecord, CognitiveRef, MediaReference
+from nous_sdk.contracts import CallContext, MediaReference
 from nous_sdk.contracts.derivation import DerivedRegion, DerivedRepresentation
-from pydantic import TypeAdapter
 from sqlalchemy import select
 
 from nous.platform.persistence import ReadView, WriteTx
@@ -36,7 +35,6 @@ async def dependency_availability_in(
                 select(derived_regions.c.record).where(
                     derived_regions.c.id == reference.id,
                     derived_regions.c.namespace_id == ctx.namespace_id,
-                    
                 )
             )
             if raw_region is None:
@@ -52,7 +50,6 @@ async def dependency_availability_in(
                 representations.c.id == ref.id,
                 representations.c.revision == ref.revision,
                 representations.c.namespace_id == ctx.namespace_id,
-                
             )
         )
         if raw is None:
@@ -105,7 +102,6 @@ async def dependency_availability_in(
                     await view.connection.execute(
                         select(observations.c.id).where(
                             observations.c.namespace_id == ctx.namespace_id,
-                            
                             observations.c.material_id == material_id,
                         )
                     )
@@ -133,19 +129,8 @@ async def dependency_availability_in(
         return "missing"
     if any(row.get("purged") for row in material_rows):
         return "purged"
-    from nous.cognition.schema import revisions
 
     for material in material_rows:
-        if material.get("dependency_purpose") == "history":
-            from .archive_dependencies import history_dependencies_in
-
-            state = await history_dependencies_in(
-                view, ctx, tuple(material.get("required_source_ids", ())), authorize=False,
-                purged_observations=purged_observations, purged_cognition=purged_cognition,
-            )
-            if state != "available":
-                return state
-            continue
         for locator in material.get("required_source_ids", ()):
             kind, colon, identity = str(locator).partition(":")
             if kind in {
@@ -166,46 +151,6 @@ async def dependency_availability_in(
                 )
                 if state != "available":
                     return state
-            elif colon and "@" in identity:
-                identifier, revision = identity.rsplit("@", 1)
-                cognitive_reference = TypeAdapter(CognitiveRef).validate_python(
-                    {"kind": kind, "id": identifier, "revision": int(revision)}
-                )
-                raw = await view.connection.scalar(
-                    select(revisions.c.record).where(
-                        revisions.c.id == cognitive_reference.id,
-                        revisions.c.revision == cognitive_reference.revision,
-                        revisions.c.kind == cognitive_reference.kind,
-                        revisions.c.namespace_id == ctx.namespace_id,
-                        
-                    )
-                )
-                if raw is None:
-                    return "missing"
-                record = CognitiveRecord.model_validate(raw)
-                if (
-                    record.purged
-                    or record.reference.exact() in purged_cognition
-                    or record.reference.id in purged_cognition
-                ):
-                    return "purged"
-                active = set(
-                    (
-                        await view.connection.execute(
-                            select(observations.c.id).where(
-                                observations.c.namespace_id == ctx.namespace_id,
-                                
-                                observations.c.id.in_(record.support_roots or record.source_roots),
-                                observations.c.active.is_(True),
-                                observations.c.id.not_in(
-                                    withdrawn_observations | purged_observations
-                                ),
-                            )
-                        )
-                    ).scalars()
-                )
-                if not active:
-                    return "withdrawn"
             elif not colon:
                 known = await view.connection.scalar(
                     select(materials.c.id).where(
@@ -239,7 +184,6 @@ async def dependency_availability_in(
                 await view.connection.execute(
                     select(observations).where(
                         observations.c.namespace_id == ctx.namespace_id,
-                        
                         observations.c.id.in_((*roots, *required_pins)),
                     )
                 )

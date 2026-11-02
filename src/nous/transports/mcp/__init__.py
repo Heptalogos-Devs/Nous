@@ -10,6 +10,7 @@ from typing import Annotated, Literal
 from uuid import uuid4
 
 from nous_sdk import NousClient
+from nous_sdk.contracts.imports import FormationPurpose
 from nous_sdk.contracts import DomainError
 from nous_sdk.contracts.context import ChangeWorkContext, WorkContextContent
 from nous_sdk.errors import NousError
@@ -137,10 +138,15 @@ def create_server(
 
         @server.tool(annotations=write)
         async def nous_ingest(
-            ctx: Context[NamespaceClient, object], content: str, source: str | None = None, form_memory: bool = False
+            ctx: Context[NamespaceClient, object],
+            content: str,
+            source: str | None = None,
+            formation_purpose: FormationPurpose | None = None,
         ) -> CallToolResult:
-            """Capture a document's original text and start background processing. Set form_memory only when semantic formation is wanted. Returns a job reference."""
-            job = await bound(ctx).ingest(content, source=source, form_memory=form_memory)
+            """Capture a document and optionally form memory notes, graph links, or both."""
+            job = await bound(ctx).ingest(
+                content, source=source, formation_purpose=formation_purpose
+            )
             return result({"ref": job.ref, "status": "queued"})
 
         @server.tool(annotations=write)
@@ -153,19 +159,12 @@ def create_server(
             scope = bound(ctx)
             targets = []
             for ref in anchors or ():
-                value = await scope.client.resolve_reference(scope.namespace_id, ref)
+                value = await scope.resolve_reference(ref)
                 if isinstance(value.reference, (CognitiveTarget, MediaTarget)):
                     targets.append(value.reference)
             return await complete(
-                scope.client.change_work_context(
-                    scope.namespace_id,
-                    ChangeWorkContext(
-                        operation_id=str(uuid4()),
-                        action="create",
-                        content=WorkContextContent(
-                            purpose=goal, context_text=background, anchors=tuple(targets)
-                        ),
-                    ),
+                scope.runtime.create_work(
+                    ChangeWorkContext(action='create', content=WorkContextContent(purpose=goal, context_text=background, anchors=tuple(targets))),
                 )
             )
 
@@ -179,24 +178,15 @@ def create_server(
         ) -> CallToolResult:
             """Update work progress and unresolved questions, or pause, resume or finish the work."""
             scope = bound(ctx)
-            current = await scope.client.work_context(scope.namespace_id, ref.removeprefix("work:"))
+            current = await scope.runtime.work(ref)
             updates = {}
             if background is not None:
                 updates["context_text"] = background
             if questions is not None:
                 updates["unresolved_questions"] = tuple(questions)
             return await complete(
-                scope.client.change_work_context(
-                    scope.namespace_id,
-                    ChangeWorkContext(
-                        operation_id=str(uuid4()),
-                        work_context_id=current.id,
-                        expected_revision=current.revision,
-                        action=action,
-                        content=current.content.model_copy(update=updates)
-                        if action == "edit"
-                        else None,
-                    ),
+                scope.runtime.change_work(
+                    ChangeWorkContext(work_context_id=current.id, expected_revision=current.revision, action=action, content=current.content.model_copy(update=updates) if action == 'edit' else None),
                 )
             )
 

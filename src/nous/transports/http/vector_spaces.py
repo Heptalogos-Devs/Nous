@@ -9,7 +9,7 @@ from nous_sdk.contracts.vector_spaces import (
 
 from .security import application, context
 
-router = APIRouter(prefix="/api/v1/namespaces/{namespace_id}")
+router = APIRouter(prefix="/api/knowledge/namespaces/{namespace_id}")
 
 
 @router.get("/vector-spaces")

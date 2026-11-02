@@ -15,7 +15,6 @@ imported = sa.Table(
     "imported_reference_addresses",
     metadata,
     sa.Column("namespace_id", sa.String, primary_key=True),
-    
     sa.Column("bundle_id", sa.String, primary_key=True),
     sa.Column("address", sa.String, primary_key=True),
     sa.Column("target", sa.Text, primary_key=True),
@@ -23,10 +22,11 @@ imported = sa.Table(
 )
 
 query_groups = sa.Table(
-    'query_result_groups', metadata,
-    sa.Column('namespace_id',sa.String,primary_key=True),
-    sa.Column('group_ref',sa.String,primary_key=True),
-    sa.Column('caller_id',sa.String,nullable=False),
-    sa.Column('targets',sa.JSON,nullable=False),
-    sa.Column('commit_seq',sa.Integer,nullable=False),
+    "query_result_groups",
+    metadata,
+    sa.Column("namespace_id", sa.String, primary_key=True),
+    sa.Column("group_ref", sa.String, primary_key=True),
+    sa.Column("caller_id", sa.String, primary_key=True),
+    sa.Column("targets", sa.JSON, nullable=False),
+    sa.Column("commit_seq", sa.Integer, nullable=False),
 )

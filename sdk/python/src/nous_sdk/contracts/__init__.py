@@ -67,9 +67,6 @@ from .cognition import (
 from .cognition import (
     FormationDraft as FormationDraft,
 )
-from .cognition import (
-    FormationProposal as FormationProposal,
-)
 from .cognition import GeneratedPersonProfile as GeneratedPersonProfile
 from .cognition import (
     JournalBody as JournalBody,
@@ -135,6 +132,7 @@ from .common import (
 from .common import (
     DomainError as DomainError,
 )
+from .common import ModelProvenance as ModelProvenance
 from .common import (
     Operation as Operation,
 )
@@ -152,14 +150,7 @@ from .contact import ContactReceipt as ContactReceipt
 from .context import ChangeContextSession as ChangeContextSession
 from .context import ChangeResidents as ChangeResidents
 from .context import ChangeWorkContext as ChangeWorkContext
-from .context import (
-    ContextCommand as ContextCommand,
-)
 from .context import ContextConsumerPolicy as ContextConsumerPolicy
-from .context import (
-    ContextFeedback as ContextFeedback,
-)
-from .context import ContextPreparationJob as ContextPreparationJob
 from .context import ContextResident as ContextResident
 from .context import ContextResidentAdmission as ContextResidentAdmission
 from .context import ContextsPolicy as ContextsPolicy
@@ -176,6 +167,14 @@ from .entities import EntityPartition as EntityPartition
 from .entities import MergeEntities as MergeEntities
 from .entities import SplitEntity as SplitEntity
 from .fact_body import FactClaimBody as FactClaimBody
+from .formation import EntityResolution as EntityResolution
+from .formation import GraphDraft as GraphDraft
+from .formation import GraphEntity as GraphEntity
+from .formation import GraphRelation as GraphRelation
+from .formation import GraphResolutionDraft as GraphResolutionDraft
+from .formation import GraphResolutionInput as GraphResolutionInput
+from .formation import MemoryNote as MemoryNote
+from .formation import NotesDraft as NotesDraft
 from .graph_management import GraphChange as GraphChange
 from .graph_management import GraphChangeResult as GraphChangeResult
 from .graph_management import GraphReadQuery as GraphReadQuery
@@ -214,6 +213,7 @@ from .imports import EmbeddingSyncResult as EmbeddingSyncResult
 from .imports import (
     FileSuccess as FileSuccess,
 )
+from .imports import FormationPurpose as FormationPurpose
 from .imports import FormObservation as FormObservation
 from .imports import (
     FreezeCatalog as FreezeCatalog,
@@ -264,9 +264,9 @@ from .maintenance_tasks import CreateJournal as CreateJournal
 from .maintenance_tasks import DreamRequest as DreamRequest
 from .maintenance_tasks import ReflectRequest as ReflectRequest
 from .maintenance_tasks import SummarizeWork as SummarizeWork
-from .management import (
-    BundleRequest as BundleRequest,
-)
+from .management import BundleInstallation as BundleInstallation
+from .management import BundleRemoval as BundleRemoval
+from .management import BundleRequest as BundleRequest
 from .management import (
     InstallBundle as InstallBundle,
 )

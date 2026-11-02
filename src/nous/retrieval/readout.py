@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-import json
-from hashlib import sha256
 from typing import TYPE_CHECKING
-from uuid import uuid4
 
 from nous_sdk.contracts import (
     CallContext,
@@ -21,7 +18,8 @@ from nous_sdk.contracts.query_readout import RerankInfo
 from nous_sdk.contracts.resources import ResourceRecord
 from nous_sdk.contracts.source_graph import ExpandSources
 from nous_sdk.contracts.source_objects import EvidenceRelationRecord, ObservationRecord
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, JsonValue, TypeAdapter
+from pydantic_ai.usage import RunUsage
 
 from nous.platform.persistence import ReadView
 
@@ -199,21 +197,8 @@ async def finalize(
                     )
                 info = info.model_copy(update={"reason": "no_text_candidates"})
             else:
-                snapshot = {
-                    "query": request.model_dump(mode="json"),
-                    "documents": documents,
-                    "references": [hit.object.reference.exact() for hit in hits],
-                }
-                digest = sha256(
-                    json.dumps(snapshot, sort_keys=True, ensure_ascii=False).encode()
-                ).hexdigest()
-                invocation = (
-                    "query-rerank:"
-                    + sha256((request.rerank_invocation_id or str(uuid4())).encode()).hexdigest()
-                    + ":"
-                    + digest
-                )
-                call_id: str | None = None
+                producer = None
+                usage = None
                 try:
                     generated = await self.models.generate(
                         ctx,
@@ -223,9 +208,11 @@ async def finalize(
                         source_ids=tuple(
                             sorted({root for hit in hits for root in hit.source_roots})
                         ),
-                        invocation_id=invocation,
                     )
-                    call_id = generated.call_id
+                    producer = generated.producer
+                    usage = TypeAdapter(dict[str, JsonValue]).validate_python(
+                        TypeAdapter(RunUsage).dump_python(generated.usage, mode="json")
+                    )
                     scored = generated.output.scores
                     available = {document["key"] for document in documents}
                     keys = [item.key for item in scored]
@@ -243,8 +230,8 @@ async def finalize(
                     info = RerankInfo(
                         mode=request.rerank,
                         status="completed",
-                        call_id=call_id,
-                        invocation_id=invocation,
+                        producer=producer,
+                        usage=usage,
                         scored_documents=len(scores),
                         retained_base_order=len(hits) - len(scores),
                     )
@@ -260,7 +247,6 @@ async def finalize(
                     info = RerankInfo(
                         mode=request.rerank,
                         status="skipped",
-                        invocation_id=invocation,
                         retained_base_order=len(hits),
                         reason=str(error),
                     )

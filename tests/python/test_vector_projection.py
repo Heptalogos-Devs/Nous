@@ -92,7 +92,7 @@ def test_later_batch_rejection_reprojects_the_complete_directory(
                     ),
                 }
             )
-            await app.configuration.set(ctx, "models", resources, "models")
+            await app.configuration.set(ctx, "models", resources)
             imported = await app.imports.admit_files(
                 ctx,
                 AdmitFiles(

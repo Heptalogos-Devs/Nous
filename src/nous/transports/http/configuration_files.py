@@ -1,25 +1,22 @@
 """Complete configuration documents use the configuration owner's file operations."""
 
 from typing import Literal
-from uuid import uuid4
 
 from fastapi import APIRouter, Request
 from nous_sdk.contracts import CallContext
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from .security import application, authorize, context
 
-router = APIRouter(prefix="/api/v1/configuration")
+router = APIRouter(prefix="/api/manage/configuration")
 
 
 class DocumentChange(BaseModel):
     content: str
-    operation_id: str = Field(default_factory=lambda: str(uuid4()))
 
 
 class ReloadDocument(BaseModel):
     scope: Literal["instance", "namespace"] = "namespace"
-    operation_id: str = Field(default_factory=lambda: str(uuid4()))
 
 
 async def file_context(
@@ -65,11 +62,11 @@ async def replace_file(
 ):
     ctx = await file_context(request, scope, namespace_id, command.content)
     return await application(request).configuration.replace(
-        ctx, command.content, command.operation_id, scope
+        ctx, command.content, scope
     )
 
 
 @router.post("/reload")
 async def reload_file(request: Request, command: ReloadDocument, namespace_id: str | None = None):
     ctx = await file_context(request, command.scope, namespace_id)
-    return await application(request).configuration.reload(ctx, command.scope, command.operation_id)
+    return await application(request).configuration.reload(ctx, command.scope)

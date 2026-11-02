@@ -49,15 +49,6 @@ class NamespaceDiagnosticsService:
                 command = command.model_copy(update={"cursor": page.next_cursor})
             watermark = view.commit_seq
         jobs = await self.execution.list_jobs(ctx)
-        calls = await self.models.ledger.list(ctx)
-        usage: dict[str, int] = {}
-        for call in calls:
-            measured = TypeAdapter(JsonValue).validate_python(call.get("usage"))
-            if isinstance(measured, dict):
-                for key in ("input_tokens", "output_tokens", "total_tokens"):
-                    value = measured.get(key)
-                    if isinstance(value, int):
-                        usage[key] = usage.get(key, 0) + value
         return NamespaceDiagnostics(
             namespace_id=ctx.namespace_id,
             authority_commit_seq=watermark,
@@ -68,6 +59,4 @@ class NamespaceDiagnosticsService:
             models=TypeAdapter(dict[str, JsonValue]).validate_python(
                 await self.models.status(ctx)
             ),
-            model_calls=len(calls),
-            model_usage=usage,
         )

@@ -281,7 +281,7 @@ def test_namespace_semantic_archive_and_subject_transfer_use_native_bundles(tmp_
                     caller_id="instance-admin", namespace_id=ns.id, credential_source_ids=None
                 )
                 await owner.configuration.set(
-                    ns_ctx, "growth", {"mode": "review"}, "archive-growth", "namespace"
+                    ns_ctx, "growth", {"mode": "review"}, "namespace"
                 )
                 await api.change_namespace(
                     ns.id, ChangeNamespace(action="bind_memory_subject", subject_id=subject.id)
@@ -363,12 +363,7 @@ def test_namespace_semantic_archive_and_subject_transfer_use_native_bundles(tmp_
                 lease = await owner.content.publish_bytes(original.encode(), "text/plain")
 
                 try:
-                    async with owner.authority.write(
-                        source_ctx,
-                        "pending-backup",
-                        operation_kind="backup-fixture",
-                        payload={"reference": reference},
-                    ) as tx:
+                    async with owner.authority.write(source_ctx) as tx:
                         unobserved = await owner.material.put_in(
                             tx, ns_ctx, unobserved_document, lease
                         )
@@ -380,7 +375,6 @@ def test_namespace_semantic_archive_and_subject_transfer_use_native_bundles(tmp_
                                 delay_seconds=3600,
                             )
                         )
-                        tx.result({"job": waiting.workflow_id, "material": unobserved["id"]})
                 finally:
                     await owner.content.release(lease)
                 ledger_request = {

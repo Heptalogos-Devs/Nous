@@ -23,6 +23,7 @@ from nous.platform.localization import Localizer
 from nous.platform.paths import default_instance_path
 
 from .client_state import ClientState, load, save
+from .bundles import register as register_bundles
 from .commands import register as register_commands
 from .common import Options, emit, options
 from .configuration import register as register_configuration
@@ -80,7 +81,7 @@ def init(ctx: typer.Context, instance: Path | None = None, name: str = "default"
     """Create a local instance, credential and initial Namespace."""
     from uuid import uuid4
 
-    from nous_sdk.contracts import CallContext
+    from nous_sdk.contracts import CallContext, DomainError
 
     from nous.application import Application
 
@@ -92,13 +93,22 @@ def init(ctx: typer.Context, instance: Path | None = None, name: str = "default"
         app = Application(Settings(instance=location))
         await app.authority.initialize()
         try:
-            namespace_id = str(uuid4())
-            context = CallContext(
-                caller_id="nous.init", namespace_id=namespace_id, credential_source_ids=None
-            )
-            domain = await app.identity.create_namespace(
-                context, name, "init:" + name, namespace_id
-            )
+            try:
+                domain = await app.identity.resolve(name)
+                if domain.slug != name:
+                    domain = None
+            except DomainError as error:
+                if error.code != "namespace_not_found":
+                    raise
+                domain = None
+            if domain is None:
+                namespace_id = str(uuid4())
+                context = CallContext(
+                    caller_id="nous.init", namespace_id=namespace_id, credential_source_ids=None
+                )
+                domain = await app.identity.create_namespace(
+                    context, name, "init:" + name, namespace_id
+                )
             state = selected.client_state or ClientState()
             assert selected.client_file is not None
             save(
@@ -177,6 +187,7 @@ def restore(ctx: typer.Context, archive: Path, instance: Path) -> None:
 
 
 register_commands(cli)
+register_bundles(cli)
 register_configuration(cli)
 admin = typer.Typer(help="Configure resources and manage cognitive data.", no_args_is_help=True)
 cli.add_typer(admin, name="admin")

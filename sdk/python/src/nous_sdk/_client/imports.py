@@ -21,6 +21,7 @@ from ..contracts import (
 from ..contracts.dataset_imports import BackfillSourceTimes, ImportDataset
 from ..contracts.imports import (
     EmbeddingSyncResult,
+    FormationPurpose,
     FormObservation,
     ImportFormat,
     ImportUnit,
@@ -166,7 +167,7 @@ class ImportClient(TuningClient):
         *,
         transfer_root: str | Path,
         input_format: ImportFormat | None = None,
-        form_memory: bool = False,
+        formation_purpose: FormationPurpose | None = None,
         completion: Literal["accepted", "formed"] = "accepted",
         origin: Mapping[str, str] | None = None,
         operation_id: str | None = None,
@@ -180,7 +181,7 @@ class ImportClient(TuningClient):
             files,
             transfer_root=transfer_root,
             input_format=input_format,
-            form_memory=form_memory,
+            formation_purpose=formation_purpose,
             completion=completion,
             origin=origin,
             operation_id=operation_id,
@@ -197,7 +198,7 @@ class ImportClient(TuningClient):
         pattern: str = "*",
         recursive: bool = True,
         input_format: ImportFormat | None = None,
-        form_memory: bool = False,
+        formation_purpose: FormationPurpose | None = None,
         completion: Literal["accepted", "formed"] = "accepted",
         origin: Mapping[str, str] | None = None,
         operation_id: str | None = None,
@@ -214,7 +215,7 @@ class ImportClient(TuningClient):
             pattern=pattern,
             recursive=recursive,
             input_format=input_format,
-            form_memory=form_memory,
+            formation_purpose=formation_purpose,
             completion=completion,
             origin=origin,
             operation_id=operation_id,
@@ -364,11 +365,13 @@ class ImportClient(TuningClient):
             )
         )
 
-    async def form_memory(
+    async def form_observation(
         self,
         namespace_id: str,
         observation_id: str,
         *,
+        formation_purpose: FormationPurpose = "memory",
+        background: str = "",
         source: MediaReference | Mapping[str, JsonValue] | None = None,
         operation_id: str | None = None,
         llm_enabled: bool = True,
@@ -383,12 +386,14 @@ class ImportClient(TuningClient):
             operation_id=operation_id or str(uuid4()),
             observation_id=observation_id,
             source=media,
+            formation_purpose=formation_purpose,
+            background=background,
             llm_enabled=llm_enabled,
         )
         return ObservationFormation.model_validate(
             await self.request(
                 "POST",
-                self.namespace_path(namespace, namespace_id) + "/memories/form",
+                self.namespace_path(namespace, namespace_id) + "/observations/formation",
                 body=encoded(command),
             )
         )

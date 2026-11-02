@@ -15,62 +15,62 @@ class IdentityClient(NamespaceBackupClient):
     async def create_namespace(self, slug: str, *, namespace_id: str | None = None, display_name: str | None = None, mode: str = 'knowledge', subject_key: str | None = None, enabled_features: tuple[str,...] | None = None, operation_id: str | None = None) -> Namespace:
         from ..contracts.identity import CreateNamespace
         command = CreateNamespace(slug=slug, id=namespace_id, display_name=display_name, mode=mode, subject_key=subject_key, enabled_features=enabled_features, operation_id=operation_id or str(uuid4()))
-        return Namespace.model_validate(await self.request('POST','/api/v1/namespaces',body=encoded(command)))
+        return Namespace.model_validate(await self.request('POST','/api/manage/namespaces',body=encoded(command)))
 
 
     async def get_namespace(self, namespace_id: str, *, purpose: IdentityPurpose = 'active') -> Namespace:
-        return Namespace.model_validate(await self.request('GET',f'/api/v1/namespaces/{segment(namespace_id)}',params={'purpose':purpose}))
+        return Namespace.model_validate(await self.request('GET',f'/api/manage/namespaces/{segment(namespace_id)}',params={'purpose':purpose}))
 
     async def namespace_page(self, command: IdentityDirectoryQuery | None = None) -> NamespacePage:
-        return NamespacePage.model_validate(await self.request('POST','/api/v1/namespaces/query',body=encoded(command or IdentityDirectoryQuery())))
+        return NamespacePage.model_validate(await self.request('POST','/api/manage/namespaces/query',body=encoded(command or IdentityDirectoryQuery())))
 
     async def change_namespace(self, namespace_id: str, command: ChangeNamespace) -> Namespace:
-        return Namespace.model_validate(await self.request('POST',f'/api/v1/namespaces/{segment(namespace_id)}/change',body=encoded(command)))
+        return Namespace.model_validate(await self.request('POST',f'/api/manage/namespaces/{segment(namespace_id)}/change',body=encoded(command)))
 
     async def identity_capabilities(self, namespace_id: str, *, purpose: IdentityPurpose = 'active') -> IdentityCapabilities:
-        return IdentityCapabilities.model_validate(await self.request('GET',f'/api/v1/namespaces/{segment(namespace_id)}/capabilities',params={'purpose':purpose}))
+        return IdentityCapabilities.model_validate(await self.request('GET',f'/api/manage/namespaces/{segment(namespace_id)}/capabilities',params={'purpose':purpose}))
 
     async def bind_subject(self, namespace_id: str, command: BindSubject) -> BoundSubject:
-        return BoundSubject.model_validate(await self.request('POST',f'/api/v1/namespaces/{segment(namespace_id)}/subject-bindings',body=encoded(command)))
+        return BoundSubject.model_validate(await self.request('POST',f'/api/manage/namespaces/{segment(namespace_id)}/subject-bindings',body=encoded(command)))
 
     async def subject_binding(self, namespace_id: str, external_id: str, *, purpose: IdentityPurpose = 'active') -> BoundSubject:
-        return BoundSubject.model_validate(await self.request('POST',f'/api/v1/namespaces/{segment(namespace_id)}/subject-bindings/read',body=encoded(ReadSubjectBinding(external_id=external_id,purpose=purpose))))
+        return BoundSubject.model_validate(await self.request('POST',f'/api/manage/namespaces/{segment(namespace_id)}/subject-bindings/read',body=encoded(ReadSubjectBinding(external_id=external_id,purpose=purpose))))
 
     async def namespace_diagnostics(self, namespace_id: str) -> NamespaceDiagnostics:
-        return NamespaceDiagnostics.model_validate(await self.request('GET',f'/api/v1/namespaces/{segment(namespace_id)}/diagnostics'))
+        return NamespaceDiagnostics.model_validate(await self.request('GET',f'/api/manage/namespaces/{segment(namespace_id)}/diagnostics'))
 
     async def purge_namespace(self, namespace_id: str, command: PurgeNamespace) -> NamespacePurgeResult:
-        return NamespacePurgeResult.model_validate(await self.request('POST',f'/api/v1/namespaces/{segment(namespace_id)}/purge',body=encoded(command)))
+        return NamespacePurgeResult.model_validate(await self.request('POST',f'/api/manage/namespaces/{segment(namespace_id)}/purge',body=encoded(command)))
 
     async def export_namespace_archive(self, namespace_id: str) -> NamespaceArchive:
-        return NamespaceArchive.model_validate(await self.request('POST',f'/api/v1/namespaces/{segment(namespace_id)}/archive'))
+        return NamespaceArchive.model_validate(await self.request('POST',f'/api/manage/namespaces/{segment(namespace_id)}/archive'))
 
     async def restore_namespace_archive(self, namespace_id: str, command: RestoreNamespace) -> NamespaceRestoreResult:
-        return NamespaceRestoreResult.model_validate(await self.request('POST',f'/api/v1/namespaces/{segment(namespace_id)}/restore-archive',body=encoded(command)))
+        return NamespaceRestoreResult.model_validate(await self.request('POST',f'/api/manage/namespaces/{segment(namespace_id)}/restore-archive',body=encoded(command)))
 
     async def whoami(self) -> PrincipalRecord:
-        return PrincipalRecord.model_validate(await self.request("GET", "/api/v1/credentials/whoami"))
+        return PrincipalRecord.model_validate(await self.request("GET", "/api/manage/credentials/whoami"))
 
     async def create_credential(self, command: CreateCredential) -> IssuedCredential:
         return IssuedCredential.model_validate(
-            await self.request("POST", "/api/v1/credentials", body=encoded(command))
+            await self.request("POST", "/api/manage/credentials", body=encoded(command))
         )
 
     async def credentials(self, *, include_revoked: bool = True) -> tuple[CredentialRecord, ...]:
         return TypeAdapter(tuple[CredentialRecord, ...]).validate_python(
             await self.request(
-                "GET", "/api/v1/credentials", params={"include_revoked": include_revoked}
+                "GET", "/api/manage/credentials", params={"include_revoked": include_revoked}
             )
         )
 
     async def credential(self, credential_id: str) -> CredentialRecord:
         return CredentialRecord.model_validate(
-            await self.request("GET", f"/api/v1/credentials/{segment(credential_id)}")
+            await self.request("GET", f"/api/manage/credentials/{segment(credential_id)}")
         )
 
     async def credential_history(self, credential_id: str) -> tuple[CredentialEvent, ...]:
         return TypeAdapter(tuple[CredentialEvent, ...]).validate_python(
-            await self.request("GET", f"/api/v1/credentials/{segment(credential_id)}/history")
+            await self.request("GET", f"/api/manage/credentials/{segment(credential_id)}/history")
         )
 
     async def rotate_credential(
@@ -78,7 +78,7 @@ class IdentityClient(NamespaceBackupClient):
     ) -> IssuedCredential:
         return IssuedCredential.model_validate(
             await self.request(
-                "POST", f"/api/v1/credentials/{segment(credential_id)}/rotate", body=encoded(command)
+                "POST", f"/api/manage/credentials/{segment(credential_id)}/rotate", body=encoded(command)
             )
         )
 
@@ -93,7 +93,7 @@ class IdentityClient(NamespaceBackupClient):
         return CredentialRecord.model_validate(
             await self.request(
                 "DELETE",
-                f"/api/v1/credentials/{segment(credential_id)}",
+                f"/api/manage/credentials/{segment(credential_id)}",
                 params={
                     "operation_id": operation_id or str(uuid4()),
                     "expected_revision": expected_revision,

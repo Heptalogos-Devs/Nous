@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 
 
 # These are authoritative user records, including retained revision history.
-# Import working sets, paid invocations, operation receipts, jobs, indexes and
+# Import working sets, jobs, indexes and
 # shared derived representations are system/rebuildable space, not this quota.
 USER_TABLES = frozenset(
     {
@@ -44,8 +44,7 @@ class NamespaceLimits:
 
     @asynccontextmanager
     async def request(self, ctx: CallContext, *, authority: Authority) -> AsyncGenerator[None]:
-        async with authority.read(ctx) as view:
-            quota = await self.quota_in(view, ctx)
+        quota = self.quota(ctx)
         limiter = self._requests.setdefault(ctx.namespace_id, anyio.CapacityLimiter(inf))
         limiter.total_tokens = quota.max_concurrent_requests or inf
         borrower = object()
@@ -66,8 +65,8 @@ class NamespaceLimits:
         finally:
             limiter.release_on_behalf_of(borrower)
 
-    async def quota_in(self, view: ReadView | WriteTx, ctx: CallContext) -> NamespaceQuota:
-        return await self.values.policy_in(view, ctx, "namespace.quota", NamespaceQuota)
+    def quota(self, ctx: CallContext) -> NamespaceQuota:
+        return self.values.policy(ctx, "namespace.quota", NamespaceQuota)
 
     async def usage_in(self, view: ReadView | WriteTx, ctx: CallContext) -> dict[str, object]:
         totals: dict[str, int] = {}
@@ -112,8 +111,6 @@ class NamespaceLimits:
             "storage_measure": "logical_utf8_records_and_distinct_original_bytes",
             "excluded_space": [
                 "shared_derivations",
-                "paid_model_invocations",
-                "operation_receipts",
                 "jobs",
                 "import_working_sets",
                 "indexes",
@@ -122,7 +119,7 @@ class NamespaceLimits:
         }
 
     async def enforce_in(self, tx: WriteTx, ctx: CallContext, before: int) -> None:
-        quota = await self.quota_in(tx, ctx)
+        quota = self.quota(ctx)
         if quota.max_storage_bytes is None:
             return
         usage = await self.usage_in(tx, ctx)

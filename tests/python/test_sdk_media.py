@@ -121,35 +121,14 @@ def test_sdk_derived_content_and_pure_media_context_purge(tmp_path):
                 work = await text_client.change_work_context(
                     namespace.id,
                     subject.id,
-                    ChangeWorkContext(
-                        operation_id="cached-work",
-                        action="create",
-                        content=WorkContextContent(
-                            purpose="MEDIA-CACHE-ERASE purpose",
-                            context_text="MEDIA-CACHE-ERASE notes",
-                            unresolved_questions=("MEDIA-CACHE-ERASE question",),
-                            constraints={"secret": "MEDIA-CACHE-ERASE"},
-                            anchors=(MediaTarget(reference=synopsis_source),),
-                        ),
-                    ),
+                    ChangeWorkContext(action='create', content=WorkContextContent(purpose='MEDIA-CACHE-ERASE purpose', context_text='MEDIA-CACHE-ERASE notes', unresolved_questions=('MEDIA-CACHE-ERASE question',), constraints={'secret': 'MEDIA-CACHE-ERASE'}, anchors=(MediaTarget(reference=synopsis_source),))),
                 )
                 session = await text_client.open_context_session(
                     namespace.id,
                     subject.id,
                     OpenContextSession(operation_id="actual-session", session_id="host-session"),
                 )
-                resident_command = ChangeResidents(
-                    operation_id="cached-resident",
-                    session_id=session.id,
-                    expected_revision=session.revision,
-                    action="admit",
-                    residents=(
-                        ContextResidentAdmission(
-                            target=MediaTarget(reference=synopsis_source),
-                            entry_reason="MEDIA-CACHE-ERASE resident note",
-                        ),
-                    ),
-                )
+                resident_command = ChangeResidents(session_id=session.id, expected_revision=session.revision, action='admit', residents=(ContextResidentAdmission(target=MediaTarget(reference=synopsis_source), entry_reason='MEDIA-CACHE-ERASE resident note'),))
                 await text_client.change_context_residents(
                     namespace.id, subject.id, resident_command
                 )

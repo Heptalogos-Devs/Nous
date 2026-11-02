@@ -6,6 +6,7 @@ from pydantic import Field
 
 from .cognition import CognitiveRecord, CognitiveRef
 from .common import Contract, Operation, TimePoint
+from .common import ModelProvenance
 from .corrections import CorrectionResult
 
 
@@ -69,7 +70,7 @@ class FeedbackTask(Contract):
     supports: tuple[CognitiveRef, ...] = ()
     input: FeedbackInput | None = None
     decision: FeedbackDecision | None = None
-    producer_call_id: str | None = None
+    producer: ModelProvenance | None = None
     correction_plan_id: str | None = None
     result: CorrectionResult | None = None
     error: dict[str, str] | None = None

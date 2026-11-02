@@ -10,10 +10,8 @@ from nous_sdk.contracts import (
     CatalogView,
     FileSuccess,
     ImportDocument,
-    ImportUnit,
     ProcessCatalog,
 )
-from pydantic import TypeAdapter
 from sqlalchemy import delete, select
 
 from .continuation import request_profiles_in, unit_candidates_in
@@ -36,28 +34,22 @@ async def complete_files(
     )
     touched = {unit.input_source_id for unit in catalog.units if unit.id in selected}
     result: list[FileSuccess] = []
-    async with self.authority.write(
-        ctx,
-        command.operation_id + ":complete",
-        operation_kind="imports.complete",
-        scope=ctx.namespace_id,
-        payload=command,
-    ) as tx:
-        if tx.replayed:
-            return TypeAdapter(list[FileSuccess]).validate_python(tx.replay_result)
+    async with self.authority.write(ctx) as tx:
         for source_id in sorted(touched):
             if any(error.input_source_id == source_id for error in catalog.errors):
                 continue
             file_units = tuple(
-                ImportUnit.model_validate(value)
-                for value in (
-                    await tx.connection.execute(
-                        select(units.c.record).where(
-                            units.c.catalog_id == catalog.id,
-                            units.c.record["input_source_id"].as_string() == source_id,
+                [
+                    await self.read_unit_in(tx, ctx, unit_id, catalog_id=catalog.id)
+                    for unit_id in (
+                        await tx.connection.scalars(
+                            select(units.c.id).where(
+                                units.c.catalog_id == catalog.id,
+                                units.c.record["input_source_id"].as_string() == source_id,
+                            )
                         )
-                    )
-                ).scalars()
+                    ).all()
+                ]
             )
             source = (
                 await tx.connection.execute(select(inputs.c.record).where(inputs.c.id == source_id))
@@ -146,5 +138,4 @@ async def complete_files(
                 await tx.connection.execute(delete(manifest).where(manifest.c.key == key))
                 await tx.connection.execute(manifest.insert().values(key=key, success_id=fact.id))
             result.append(fact)
-        tx.result(result)
     return result

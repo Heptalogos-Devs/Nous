@@ -1,40 +1,84 @@
-# Nous 开发目标与计划
+# Nous 近期开发目标
+
+## 当前优先工作
+
+沿当前 WIP 分支交付完整、可独立使用的 Nous。近期围绕真实资料形成、连续 Host 调用、长期认知和正式入口推进；下一处修改应接通这些操作或消除其源头阻碍。现有内部接口、开发数据、旧测试和目录结构均可直接替换。异常恢复和边界检查安排在完整正常使用链之后。
+
+当前首要尺度是架构简单、使用简单、流程简单。围绕完整业务操作减少重复状态、无效层次和用户步骤，让更多原生能力由更少代码承担。SDK 随原生接口演进；独立 A-Memorix 适配器开发和产品发行在 Nous 功能与接口完整、稳定之后开展。
+
+### 模型任务与供应商边界
+
+- 修改 `cognition/formation.py`、`imports/model_generation.py`、`imports/processing.py`、`imports/observation.py`、`imports/media_formation.py`：自动形成返回 `notes[{text, topics, time_expression?}]`，逐条采用为 Memory，各有来源、时间和生成出处。原件通过 Material/Region 读取；图结果直接引用材料、接触与区域。删除强制复制原文 Memory、保留短键 `memory` 和 `records[0]` 等单 anchor 假设。显式 `remember` 与逐字采用继续保存用户指定内容。
+- 实体与关系提取作为单独目的，直接读取原文；只有明确需要两种结果时才同时调用记忆和图任务。概念、图式和再解释按各自目的调用。MemorySemantics 用于对已有 Memory 的独立理解，引用精确修订及新证据。
+- 让 `RoleDefinition` 选择具体任务模板，共用模型资源与预设。手工 `FormationDraft` 保留领域用途，模型响应使用小型语言合同；不重新拼成一个只有单个 producer 的大提案。程序绑定身份、证据、修订和采用策略。
+- 修改实际 Prompt：system 提供明确任务、判断标准、输出含义及有用示例；user 提供真实内容、必要背景、局部短键及当次长度指引。移除 UUID、完整 formation policy、切分参数、权重、修订目标和工作集管理字段。每条认识保留原文的作者、否定、条件与推测。
+- 收敛 `platform/models` 与 SDK 模型合同：通用模型描述保存真实模态、结构化输出能力、上下文和向量空间；供应商请求路径与媒体编码归连接实现。删除 `complete_video` 第二条生成执行链，复用 Pydantic AI 的消息、Schema、工具输出和用量流程，以必要的小型映射支持原生视频。多模态 Embedding 保持通用输入组和同空间向量结果，具体 API 映射归模型边界。
+- 三种媒体解释策略按当次目的调用小任务；已有描述直接复用。媒体预算使用实际尺寸、时长和模型估算规则，真实用量从提供方取得。用真实文字、图片和视频接通形成、读取与查询。
+- Import owner 提供一个完整导入操作，按用途组织小型 NLP、采用、投影与索引。普通用户直接导入并查询；图目的作为实际可选用途，内部任务由程序编排。
+
+### 新认知直接进入 Wave
+
+- 让新 notes、实体关系及媒体表示进入既有投影、索引和数据代际，迁移仍假定原文 Memory anchor 的消费者。
+- 在同批真实资料上完成词项、Dense、明确图目的及已有图资产下的 VCP 查询，按短引用展开认识、精确原文与媒体区域。检索沿当前数据模型工作，不为这一步另立算法研究工程。
+- SDK、CLI、MCP 和 HTTP 的形成输入允许表达实际图用途；同一个完整操作安排必要语言任务及索引。查询轨迹显示真实通道、来源和采用的能力。
+
+### 连续工作与长期认知
+
+- 在 `context/runtime.py` 及既有工作/选择模块中，用唯一 Session、Call 和独立 WorkContext 完成工作切换、工具续轮及预算压力下的压缩接续。保存实际输入输出与精确来源；摘要覆盖程序选定的已完成原生消息范围，短引用可继续读取原文。
+- 接通真实 Host 接触到后台形成的正常路径：非 system 原事件、确定性文字表示和形成作业同事务接纳；采用形成结果后，由既有 DBOS 工作推动长期认知。移除失效回调及旧事务协议。
+- Host 角色属于执行用途，Work 保存任务事实。Ego 使用管理员明确采用的稳定身份、自我资料与有据认识；Seed 的创作来源与后续经历分别保存。让 Ego、Social、Motivation 进入实际工作供给，让 Episode、Journal、反思与 Dreaming 消费真实接触和结果，各自执行明确语言任务；前台不等待可延期整理。
+- Runtime 的模型输入、Work、Resident 和长期来源按引用连接；删除旧 managed、preparation、admission、report、track 的平行持久状态与消费者。程序负责检索、预算、来源及状态，模型负责相关性判断、主题摘要等语义工作。
+
+### 原生入口与操作收敛
+
+- SDK 只绑定一次 Namespace；`remember/query/read/ingest/correct/history/work/runtime` 走同一原生业务操作。HTTP 使用 `/api/knowledge`、`/api/runtime`、`/api/manage`，迁移 SDK、CLI、MCP、后台调用和帮助中的实际消费者，删除旧路由、别名与重复读法。
+- 保持人和终端 Agent 的连续操作：导入真实文件 → 查询取得 `qN:n` → 阅读原文和来源 → 纠正 → 继续当前 Work。SDK 返回完整 DTO；CLI/MCP 默认返回正文、短引用、来源和必要状态。正式 Runtime 回调自动处理准备、发送、完整模型回复及工具结果。
+- 删除没有业务用途的通用 `Operation` 字段与传播；外部事件、导入运行和持久工作保留各自必要稳定身份。配置只通过 TOML 所有者与共享有效快照修改，旧 SQL 配置镜像、付费请求托管和旧格式恢复路径退出。
+- 完善 Nous 原生的记忆、图片、人物、Episode、来源、图谱、纠正、维护和 Bundle 操作，把妨碍原生所有者的 A-Memorix 专有耦合移出本体。独立适配包与 RPC 映射后移；需要的业务能力先由 Nous 自己提供。
+
+## 后续交付
+
+正常完整使用链贯通后，补必要的异常与边界行为，运行小规模公开测评，完成安装产物、当前用户指南和 SDK 示例。Nous 自身功能与接口完整、稳定后，再交付独立 SDK 与仅消费正式 SDK 的 A-Memorix 适配器。Heptalogos 本轮只接收正式接口及接线资料。目标按下面完整范围保持，近期动作以上述具体能力为准。
+
+## 完整产品目标
 
 建设可独立安装、配置和管理的长期认知服务：支持普通智能体的记忆与知识工作，也作为人工主体的认知与人格中心。完整产品需求由[项目宪纲](https://github.com/Heptalogos-Devs/Architecture-Vault/blob/main/项目宪纲.md)定义。本文件规定产品范围、架构要求和交付目标。
 
 Heptalogos 以 MaiBot 为产品基础，负责主体的世界、生活、时间、注意、选择、行动与外部效果，正式依赖 Nous 的认知接口。Nous 自己保持独立部署和通用应用价值；两者共享逻辑主体身份，各自拥有正式状态和生命周期。
 
-## 完整产品范围
+### 完整产品范围
 
 - **材料、来源与时间**：接纳文本、文件、图片、音视频和外部资料，区分原件、精确区域、派生表示、主体实际接触与导入。记录证据、认知身份及修订、来源支持和反证、五轴时间、精度与历史知情截点；来源撤回、恢复和清除贯穿全部派生数据。
 - **认知及成长**：完整提供 Memory、MemorySemantics、Concept/Tag、Entity、Association、Episode、Journal、Schema、Fact 和各自生命周期。Ego 包含多文档 Seed、facet、NarrativeThread、DomainKnowledge、例外与设定来源；Social 包含人物、跨平台身份、有方向的关系、信任领域与群体范围；LanguageConvention 保存语言的听众与语用；Motivation 包含 Desire、Concern、DesiredCondition、组合条件、持续区间和 unknown。完成自然形成、认知修订、使用反馈、离线整理和持续维护。
 - **查询与算法**：完整 NousQL、14 类返回域、精确引用、名称绑定、五轴过滤和历史；中文词项、语义、Hybrid、VCP、图、媒体与来源展开共同使用授权快照。吸收 VCP 的 AGS、EPA、Pyramid、Sense、双场、RiverMemo、DTSC 和 Thinking，并完成实际图资产、候选、直接锚点、查询线索、诊断与效果评估。
 - **多模态**：三种解释策略 `description_only`、`direct_structured` 和 `describe_then_structure`；二段形成同时使用原媒体或区域及真实描述。提供图像、音视频、GIF、文档与区域派生，保留输入、producer 和谱系；原生视觉向量、描述向量及图文联合检索采用真实空间与调用身份。
-- **当前认知与工作连续性**：Active Cognition、ResidentSet、WorkContext、Managed Context 和 Steward 按用途、听众、预算与来源编译输入。区分准备、实际输入接纳、模型接触、真实使用与结果反馈；覆盖模型切换、工具续轮、压缩、恢复及独立执行者。
-- **A-Memorix 与 MaiBot**：完整承接[上游工具、管理动作和实际协议](../research/a-memorix-contracts.json)，包括文本、摘要、图片、检索模式、图、来源、Episode、画像、Fact、运行管理、导入、Bundle、调优、修正、删除和恢复。依照实际客户端需要支持独立 RPC；通过真实 MaiBot MemoryService、工具与管理界面消费同一认知权威。
-- **产品与基础服务**：完善实例及跨平台安装、配置、模型资源与预算、Prompt、网络、权威事务与内容、索引、时间、持久执行、身份与密钥、能力扩展、媒体、可观察性、数据生命周期、接口与客户端、国际化。CLI、HTTP、MCP 和 Python SDK 提供领域操作；工作台源码暂时保留，后续按真实用户需要决定。提供备份、恢复、主体迁移、可理解状态及 Windows、Ubuntu、macOS 的发行与运行体验。
+- **当前认知与工作连续性**：ContextRuntime 拥有会话、当前居民及实际模型调用状态，按用途、听众、预算与来源编译输入；WorkContext 拥有可跨会话接续的任务目标、决定、进展和未解问题。Steward 由程序管理检索、预算、来源与压缩覆盖，模型承担独立的相关性判断、主题摘要等语言任务。区分准备、实际发送、模型接触、真实使用与结果反馈；覆盖模型切换、工具续轮、压缩、恢复及独立执行者。
+- **A-Memorix 独立适配**：完整承接[上游工具、管理动作和实际协议](https://github.com/A-Dawn/A_memorix)，包括文本、摘要、图片、检索模式、图、来源、Episode、画像、Fact、运行管理、导入、Bundle、调优、修正、删除和恢复。独立发行包只通过正式 SDK 提供兼容协议和 RPC，并接通真实消费者。MaiBot 的宿主接线归 Heptalogos。
+- **产品与基础服务**：完善实例及跨平台安装、配置、模型资源与预算、Prompt、网络、权威事务与内容、索引、时间、持久执行、身份与密钥、能力扩展、媒体、可观察性、数据生命周期、接口与客户端、国际化。CLI、HTTP、MCP 和 Python SDK 提供领域操作。提供备份、恢复、主体迁移、可理解状态及 Windows、Ubuntu、macOS 的发行与运行体验。
 
-## 架构与实现
+### 架构与实现
 
 一份 Namespace 拥有独立认知状态；`mode`、`subject_key`、`enabled_features` 表达主体能力与跨产品身份。领域操作拥有业务语义，共同记录能力拥有认知身份、修订、证据、时间、生命周期和读取。组合根构造明确依赖并管理资源生命周期。
 
 Python 主应用拥有认知规则、SQLite 权威数据和事务、来源授权、模型与网络、配置、Prompt、作业及产品入口；同进程 Rust native 负责 VCP、Tantivy/Jieba、USearch 和 NousQL 纯语法。PyO3/maturin 使用批量数组和 Rust 拥有的快照，计算释放 GIL 并在线程执行；native 不访问业务数据库、Provider 或凭据。权威对象及其消费者通过清晰的领域 owner 共享规则，派生索引可以重建。
 
-采用标准 CPython 3.14、uv workspace、Basedpyright strict、Ruff；SDK 保持 Python 3.11+，native 提供 `.pyi` 和 `py.typed`。SQLAlchemy Core、aiosqlite 和 DBOS 共享 SQLite 文件，业务结果和后续入队在同一事务提交。模型生成与 Provider 协议采用 Pydantic AI、官方 SDK 和成熟实现；Jinja2、FastAPI、Typer/Rich 与官方 MCP SDK 分别承担模板和入口机制。项目负责领域语义、实际调用及费用、授权与完整用户路径。各项设计见 [Python/native 架构](python-native-plan/README.md)。
+采用标准 CPython 3.14、uv workspace、Basedpyright strict、Ruff；SDK 保持 Python 3.11+，native 提供 `.pyi` 和 `py.typed`。SQLAlchemy Core、aiosqlite 和 DBOS 共享 SQLite 文件，Authority 提供唯一的短写事务，完整业务操作在同一事务中提交状态与后续任务。外部事件、导入单元和作业使用各自稳定业务键处理重复投递。模型生成与 Provider 协议采用 Pydantic AI、官方 SDK 和成熟实现；Jinja2、FastAPI、Typer/Rich 与官方 MCP SDK 分别承担模板和入口机制。
 
 原件和大字节保存于内容存储，权威状态与元数据保存于 SQLite。Wave 维护可重建的固定索引代际，各检索通道产生候选并融合。自然语言按原文查询，可选 QueryContext 提供真实情境，NousQL 解析显式查询语法。
 
-可编辑 TOML 是业务配置的正式来源。模型执行统一绑定 Provider、Model、Preset、Role，编译有角色的消息并执行目的明确的局部任务。任务恢复复用保存的输入、结果和业务待办。
+材料、实际接触和长期认识分别持有身份。自动形成的各条认识直接成为 Memory，拥有各自的来源、时间和修订；原文按 Material 与 Region 读取。MemorySemantics 表达对已有 Memory 的独立再解释，并引用其精确修订及新证据。显式记忆保存用户指定的内容。模型执行记忆提炼、实体关系提取等明确语言任务，程序负责领域对象、身份、来源与采用；各任务结果保留各自的生成出处。
 
-优先采用成熟依赖，保留 Nous 的领域模型与完整原生操作。A-Memorix 的公共协议由仅依赖正式 SDK 的独立 `adapters/amemorix` 发行包提供。保留真实资料、来源、历史及模型结果。
+可编辑 TOML 保存期望配置，进程内保存校验后的有效快照。模型执行统一绑定 Provider、Model、Preset、Role，编译最终有角色的消息与媒体，执行目的明确的局部任务，返回输出、实际用量和精简的生成出处。采用结果的来源随正式派生表示保存；结果缓存与调用诊断可按容量和时间淘汰。并发、超时及单次资源限制由执行器承担，持久任务由 DBOS 接续。
 
-## 实施依赖
+优先采用成熟依赖，保留 Nous 的领域模型、真实算法与完整原生操作。A-Memorix 的公共协议由仅依赖正式 SDK 的独立 `adapters/amemorix` 发行包提供。原件、来源、正式认知及采用的模型结果具有独立于运行缓存和诊断的生命周期。
 
-以完整用户链组织工作：初始化实例和 Namespace → 接纳真实资料与来源 → 形成并采纳认知 → 实际 embedding 和索引 → 查询、展开来源 → 重启后继续。Catalog、Unit、Output、文件成功、模型调用与任务保持各自真实身份和完成条件。
+### 实施依赖
 
-先统一原生职责、Namespace 和真实数据，再贯通模型与媒体、Wave、长期领域、主动上下文和后台成长。SDK、HTTP、CLI、MCP 随完整操作接通；独立 A-Memorix 适配器通过正式 SDK 提供上游协议，随后进行真实使用、小规模公开测评和安装交付。
+以完整用户链组织工作：初始化实例和 Namespace → 接纳真实资料与来源 → 形成并采纳认知 → 实际 embedding 和索引 → 查询、展开来源 → 重启后继续。导入保存真实原件、输入单元、采用结果和处理状态，支持部分完成及继续未完成工作。
 
-## 交付要求
+沿资料接纳、认知形成、投影检索、模型实际应用和长期成长串起完整产品。职责、Namespace 与事务在对应操作的负责处统一，迁移同一契约的全部生产者、消费者与专属支撑；现有可用能力继续连接下一段操作。SDK、HTTP、CLI、MCP 同步消费原生操作；Nous 本身完整、稳定后，再进行独立适配与发行。
+
+### 交付要求
 
 交付可独立安装、配置和持续使用的 Nous 源码、安装产物、用户指南及完整 SDK 示例。使用者能够接纳和查询真实文字与媒体，读取来源、修订认识、恢复任务，并在连续模型及工具调用中自动取得人格、活跃记忆与当前工作。
 

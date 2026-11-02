@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+from hashlib import sha256
 from typing import TYPE_CHECKING
-from uuid import uuid4
 
 from nous_sdk.contracts import CallContext, DomainError
 from nous_sdk.contracts.imports import FormObservation, ObservationFormSubmission
@@ -19,14 +19,19 @@ if TYPE_CHECKING:
     from .service import ImportService
 
 
+def formation_request_id(ctx: CallContext, command: FormObservation) -> str:
+    return (
+        "observation:"
+        + sha256(f"{ctx.namespace_id}:{ctx.caller_id}:{command.operation_id}".encode()).hexdigest()
+    )
+
+
 async def observation_jobs(
     self: ImportService, ctx: CallContext, observation_ids: tuple[str, ...]
 ) -> tuple[str, ...]:
     async with self.authority.read(ctx) as view:
         for identifier in observation_ids:
-            await self.materials.accepted_source_in(
-                view, ctx, identifier, derivations=self.cognition.derivations
-            )
+            await self.materials.accepted_source_in(view, ctx, identifier)
         values = (
             await view.connection.execute(
                 select(requests.c.record).where(
@@ -51,11 +56,21 @@ async def submit_form_observation_in(
     *,
     owned_parent: str | None = None,
 ) -> ObservationFormSubmission:
-    selected = await self.materials.accepted_source_in(
-        tx, ctx, command.observation_id, command.source, derivations=self.cognition.derivations
-    )
+    selected = await self.materials.accepted_source_in(tx, ctx, command.observation_id, command.source)
     material = selected.material
-    request_id = str(uuid4())
+    request_id = formation_request_id(ctx, command)
+    existing = await tx.connection.scalar(
+        select(requests.c.record).where(requests.c.id == request_id)
+    )
+    if existing is not None:
+        if existing["command"] != command.model_dump(mode="json"):
+            raise DomainError(
+                "formation_request_conflict", "Formation request has different accepted input"
+            )
+        return ObservationFormSubmission(
+            request_id=request_id, job_id=existing["job_id"], observation_id=command.observation_id
+        )
+
     await tx.connection.execute(
         requests.insert().values(
             id=request_id,
@@ -73,6 +88,7 @@ async def submit_form_observation_in(
             queue_name="formation",
             args=(request_id,),
             owned_parent=owned_parent,
+            scope=command.observation_id,
         )
     )
     row = await tx.connection.scalar(select(requests.c.record).where(requests.c.id == request_id))
@@ -94,16 +110,8 @@ async def submit_form_observation_in(
 async def submit_form_observation(
     self: ImportService, ctx: CallContext, command: FormObservation
 ) -> ObservationFormSubmission:
-    async with self.authority.write(
-        ctx,
-        command.operation_id,
-        operation_kind="imports.form.submit",
-        scope=ctx.namespace_id,
-        payload=command.identity_payload(),
-    ) as tx:
-        if tx.replayed:
-            return ObservationFormSubmission.model_validate(tx.replay_result)
-        return tx.result(await self.submit_form_observation_in(tx, ctx, command))
+    async with self.authority.write(ctx) as tx:
+        return await self.submit_form_observation_in(tx, ctx, command)
 
 
 async def run_form_observation(self: ImportService, request_id: str):
@@ -121,7 +129,7 @@ async def run_form_observation(self: ImportService, request_id: str):
     return {
         "observation_id": result.observation_id,
         "cognition": [reference.model_dump(mode="json") for reference in result.cognition],
-        "producer_call_id": result.producer_call_id,
+        "representations": [reference.model_dump(mode="json") for reference in result.representations],
         "commit_seq": result.commit_seq,
         "vector_policy": result.vector_policy,
         "vector_error": result.vector_error.model_dump(mode="json")

@@ -28,9 +28,7 @@ def test_journal_and_dream_bind_sources_and_keep_hypotheses(tmp_path: Path):
         ctx = CallContext(caller_id="author", namespace_id=str(uuid4()), credential_source_ids=None)
         try:
             await app.identity.create_namespace(ctx, "long-term", "namespace")
-            async with app.authority.write(
-                ctx, "source", operation_kind="material.admit", payload={}
-            ) as tx:
+            async with app.authority.write(ctx) as tx:
                 admitted = await app.material.admit_text_in(
                     tx,
                     ctx,
@@ -39,7 +37,6 @@ def test_journal_and_dream_bind_sources_and_keep_hypotheses(tmp_path: Path):
                         filename="calibration.txt",
                     ),
                 )
-                tx.result(admitted.material["id"])
             memory = await app.cognition.adopt(
                 ctx,
                 AdoptCognition(
@@ -79,11 +76,8 @@ def test_journal_and_dream_bind_sources_and_keep_hypotheses(tmp_path: Path):
                     journal.model_dump(include={"summary", "rationale", "actions"})
                 )
             )
-            async with app.authority.write(
-                ctx, "journal", operation_kind="journal.adopt", payload=draft
-            ) as tx:
+            async with app.authority.write(ctx) as tx:
                 application = await app.growth.apply_growth_in(tx, ctx, draft, snapshot)
-                tx.result(application)
             written = application.records[0]
             assert written.body.kind == "journal"
             assert written.body.knowledge_cutoff == snapshot.watermark
@@ -132,11 +126,8 @@ def test_journal_and_dream_bind_sources_and_keep_hypotheses(tmp_path: Path):
                     hypothesis.model_dump(include={"summary", "rationale", "actions"})
                 )
             )
-            async with app.authority.write(
-                ctx, "hypothesis", operation_kind="dream.adopt", payload=dream_draft
-            ) as tx:
+            async with app.authority.write(ctx) as tx:
                 application = await app.growth.apply_growth_in(tx, ctx, dream_draft, snapshot)
-                tx.result(application)
             assert application.records[0].body.epistemic.classification == "inferred"
             assert hypothesis.questions == ("Does the pattern recur?",)
         finally:
@@ -154,9 +145,7 @@ def test_journal_job_retains_local_input_while_model_is_unconfigured(tmp_path: P
         ctx = CallContext(caller_id="host", namespace_id=str(uuid4()), credential_source_ids=None)
         try:
             await app.identity.create_namespace(ctx, "journal-job", "namespace")
-            async with app.authority.write(
-                ctx, "source", operation_kind="material.admit", payload={}
-            ) as tx:
+            async with app.authority.write(ctx) as tx:
                 admitted = await app.material.admit_text_in(
                     tx,
                     ctx,
@@ -164,7 +153,6 @@ def test_journal_job_retains_local_input_while_model_is_unconfigured(tmp_path: P
                         text="The observed calibration finished.", filename="calibration.txt"
                     ),
                 )
-                tx.result(admitted.material["id"])
             memory = await app.cognition.adopt(
                 ctx,
                 AdoptCognition(

@@ -57,10 +57,8 @@ class JobClient(MaterialClient):
         return JobPage.model_validate(
             await self.request(
                 "GET",
-                "/api/v1/job-pages",
+                f"/api/runtime/namespaces/{segment(namespace_id or self.namespace_id)}/jobs",
                 params={
-                    "namespace_id": namespace_id or self.namespace_id,
-                    
                     "limit": limit,
                     "cursor": cursor,
                     "scope": scope,
@@ -82,10 +80,8 @@ class JobClient(MaterialClient):
         return JobDetail.model_validate(
             await self.request(
                 "GET",
-                f"/api/v1/jobs/{segment(job_id)}",
+                f"/api/runtime/namespaces/{segment(namespace_id or self.namespace_id)}/jobs/{segment(job_id)}",
                 params={
-                    "namespace_id": namespace_id or self.namespace_id,
-                    
                     "purpose": purpose,
                 },
             )
@@ -102,10 +98,8 @@ class JobClient(MaterialClient):
         return object_value(
             await self.request(
                 "POST",
-                f"/api/v1/jobs/{segment(job_id)}/cancel",
+                f"/api/runtime/namespaces/{segment(namespace_id or self.namespace_id)}/jobs/{segment(job_id)}/cancel",
                 params={
-                    "namespace_id": namespace_id or self.namespace_id,
-                    
                     "purpose": purpose,
                 },
             )

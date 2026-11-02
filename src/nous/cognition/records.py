@@ -32,18 +32,14 @@ from nous_sdk.contracts import (
     RecordsCoverage,
     RecordsPage,
     RecordsQuery,
-    RetentionChange,
-    RetentionChanges,
-    RetentionExpectation,
     RetentionState,
     RevisionCause,
     TimePoint,
 )
 from nous_sdk.contracts import EntityBody as EntityBody
-from nous_sdk.contracts.common import Contract, utc_now
+from nous_sdk.contracts.common import Contract
 from nous_sdk.contracts.fact_body import FactClaimBody
-from nous_sdk.contracts.retention import DecayRetention, RetentionDecayResult
-from pydantic import Field, JsonValue, ValidationError
+from pydantic import Field, ValidationError
 from sqlalchemy import and_, func, select, true, tuple_
 from sqlalchemy import update as update
 
@@ -61,9 +57,8 @@ from nous.platform.persistence.authority import canonical_json
 from nous.platform.time.filtering import time_matches
 from nous.references import allocate_in
 
-from .entities import contains_record as contains_record
-from .entities import redact_attributes_in as redact_attributes_in
-from .lifecycle import record_state, selectable, snapshot, state_for, transition
+from .entities import project_entity_in, redact_attributes_in
+from .lifecycle import record_state, selectable
 from .projection import media_references_in, references_in
 from .projection import evidence_in as evidence_in
 from .revision_state import RevisionState
@@ -73,8 +68,6 @@ from .semantics import capability_for, validate_domain_in
 
 if TYPE_CHECKING:
     from nous.vector_projection.admission import ProjectionAdmission
-
-    from .models import ModelServices
 
 
 class _Cursor(Contract):
@@ -126,15 +119,13 @@ class CognitiveRecords:
         self,
         authority: Authority,
         *,
-        materials: MaterialService | None = None,
-        derivations: DerivedService | None = None,
-        models: ModelServices | None = None,
-        projection: ProjectionAdmission | None = None,
+        materials: MaterialService,
+        derivations: DerivedService,
+        projection: ProjectionAdmission,
     ) -> None:
         self.authority = authority
-        self.materials = materials or MaterialService(authority)
-        self.derivations = derivations or DerivedService(authority, self.materials)
-        self.models = models
+        self.materials = materials
+        self.derivations = derivations
         self.projection = projection
 
     async def source_roots_in(
@@ -233,9 +224,7 @@ class CognitiveRecords:
                             info = await self.derivations.source_in(view, scoped, media)
                             media_roots.update(info.roots)
                         else:
-                            provenance = await self.materials.provenance_in(
-                                view, scoped, media, derivations=self.derivations
-                            )
+                            provenance = await self.materials.provenance_in(view, scoped, media)
                             media_roots.update(provenance.roots)
                         media_roots.update(
                             (oid for oid, source in contact_sources.items() if source == media)
@@ -318,7 +307,7 @@ class CognitiveRecords:
         if purpose == "management":
             return await self.get_in(view, ctx, reference, purpose=purpose)
         record = await self.get_in(view, ctx, reference, check_visibility=False, purpose=purpose)
-        record = await self.project_record_in(view, ctx, record)
+        record = await project_entity_in(self, view, ctx, record)
         if not await self.visible_in(view, ctx, record, purpose=purpose):
             raise DomainError(
                 "source_unavailable", "Cognitive sources are unavailable in this scope"
@@ -386,7 +375,9 @@ class CognitiveRecords:
                 (
                     await tx.connection.execute(
                         select(revisions.c.record).where(
-                            revisions.c.id == object_id, revisions.c.revision == head
+                            revisions.c.namespace_id == ctx.namespace_id,
+                            revisions.c.id == object_id,
+                            revisions.c.revision == head,
                         )
                     )
                 ).scalar_one()
@@ -398,7 +389,9 @@ class CognitiveRecords:
             existing_kind = (
                 await tx.connection.execute(
                     select(revisions.c.kind).where(
-                        revisions.c.id == object_id, revisions.c.revision == head
+                        revisions.c.namespace_id == ctx.namespace_id,
+                        revisions.c.id == object_id,
+                        revisions.c.revision == head,
                     )
                 )
             ).scalar_one()
@@ -409,7 +402,6 @@ class CognitiveRecords:
         if command.body.kind == "episode" and (
             existing_record is None or command.body != existing_record.body
         ):
-    
             await require_namespace_in(tx, ctx, "episodes")
         roots: set[str] = set()
         support: set[str] = set()
@@ -451,9 +443,7 @@ class CognitiveRecords:
                     id=evidence.region_id or observation["material_id"],
                     observation_id=evidence.observation_id,
                 )
-                provenance = await self.materials.provenance_in(
-                    tx, ctx, source_ref, derivations=self.derivations
-                )
+                provenance = await self.materials.provenance_in(tx, ctx, source_ref)
                 for root in provenance.roots:
                     require_root(root, provenance.regions.get(root, ()))
                 if evidence.polarity == "support":
@@ -489,9 +479,7 @@ class CognitiveRecords:
                     require_root(observation_id, info.regions.get(observation_id, ()))
                 support.update(info.roots)
             else:
-                provenance = await self.materials.provenance_in(
-                    tx, ctx, media, derivations=self.derivations
-                )
+                provenance = await self.materials.provenance_in(tx, ctx, media)
                 for root in provenance.roots:
                     require_root(root, provenance.regions.get(root, ()))
                 support.update(provenance.roots)
@@ -577,7 +565,7 @@ class CognitiveRecords:
             support_roots=tuple(sorted(support)),
             source_regions=merge_source_regions(requirements),
             times=times,
-            producer_call_id=command.producer_call_id,
+            producer=command.producer,
             commit_seq=tx.commit_seq,
             lifecycle=state.lifecycle,
             deleted=state.deleted,
@@ -590,7 +578,11 @@ class CognitiveRecords:
         if head:
             await tx.connection.execute(
                 update(revisions)
-                .where(revisions.c.id == object_id, revisions.c.head.is_(True))
+                .where(
+                    revisions.c.namespace_id == ctx.namespace_id,
+                    revisions.c.id == object_id,
+                    revisions.c.head.is_(True),
+                )
                 .values(head=False)
             )
         await tx.connection.execute(
@@ -604,30 +596,28 @@ class CognitiveRecords:
                 commit_seq=tx.commit_seq,
             )
         )
-        if self.projection is not None and (
-            not (
-                command.body.kind in {"memory", "association"}
-                and existing_record is not None
-                and (command.body == existing_record.body)
-                and (
-                    state.cause.action
-                    in {
-                        "reinforce",
-                        "weaken",
-                        "protect",
-                        "unprotect",
-                        "pin",
-                        "unpin",
-                        "freeze",
-                        "forget",
-                        "restore",
-                        "trash",
-                        "purge",
-                        "decay",
-                        "remember_forever",
-                        "allow_decay",
-                    }
-                )
+        if not (
+            command.body.kind in {"memory", "association"}
+            and existing_record is not None
+            and (command.body == existing_record.body)
+            and (
+                state.cause.action
+                in {
+                    "reinforce",
+                    "weaken",
+                    "protect",
+                    "unprotect",
+                    "pin",
+                    "unpin",
+                    "freeze",
+                    "forget",
+                    "restore",
+                    "trash",
+                    "purge",
+                    "decay",
+                    "remember_forever",
+                    "allow_decay",
+                }
             )
         ):
             await self.projection.changed_in(tx, ctx, result)
@@ -637,18 +627,8 @@ class CognitiveRecords:
         return result
 
     async def adopt(self, ctx: CallContext, command: AdoptCognition):
-        async with self.authority.write(
-            ctx,
-            command.operation_id,
-            operation_kind="cognition.adopt",
-            scope=ctx.namespace_id,
-            payload=command,
-        ) as tx:
-            if tx.replayed:
-                return await self.replay_record_in(
-                    tx, ctx, CognitiveRecord.model_validate(tx.replay_result)
-                )
-            return tx.result(await self.adopt_in(tx, ctx, command))
+        async with self.authority.write(ctx) as tx:
+            return await self.adopt_in(tx, ctx, command)
 
     async def get(self, ctx: CallContext, reference: CognitiveRef):
         async with self.authority.read(ctx) as view:
@@ -712,9 +692,13 @@ class CognitiveRecords:
                 and_(revisions.c.id == latest.c.id, revisions.c.revision == latest.c.revision),
             )
         if command.kinds:
-            query = query.where(revisions.c.kind.in_(command.kinds))
+            query = query.where(
+                revisions.c.namespace_id == ctx.namespace_id, revisions.c.kind.in_(command.kinds)
+            )
         if command.object_ids:
-            query = query.where(revisions.c.id.in_(command.object_ids))
+            query = query.where(
+                revisions.c.namespace_id == ctx.namespace_id, revisions.c.id.in_(command.object_ids)
+            )
         order = (revisions.c.commit_seq, revisions.c.id, revisions.c.revision)
         query = query.order_by(*(column.desc() for column in order))
         roots = await self.source_roots_in(view, ctx, purpose=command.purpose)
@@ -735,7 +719,7 @@ class CognitiveRecords:
             for raw in rows:
                 record = CognitiveRecord.model_validate(raw)
                 if command.purpose != "management":
-                    record = await self.project_record_in(view, ctx, record)
+                    record = await project_entity_in(self, view, ctx, record)
                 examined += 1
                 position = _Cursor(
                     binding=binding,
@@ -850,7 +834,7 @@ class CognitiveRecords:
             if record is None:
                 raise DomainError("cognition_not_found", "Cognitive revision is unavailable")
             if command.purpose != "management":
-                record = await self.project_record_in(view, ctx, record)
+                record = await project_entity_in(self, view, ctx, record)
             if command.purpose == "current" and (
                 heads.get(reference.id) != reference.revision or not selectable(record)
             ):
@@ -897,263 +881,6 @@ class CognitiveRecords:
                 history=history,
             )
 
-    async def require_retention_preconditions_in(
-        self: CognitiveRecords,
-        view: ReadView | WriteTx,
-        ctx: CallContext,
-        expectations: tuple[RetentionExpectation, ...],
-    ) -> None:
-        if not expectations:
-            return
-        await require_namespace_in(view, ctx)
-        for expected in expectations:
-            raw = await view.connection.scalar(
-                select(revisions.c.record).where(
-                    revisions.c.namespace_id == ctx.namespace_id,
-                    revisions.c.kind == expected.reference.kind,
-                    revisions.c.id == expected.reference.id,
-                    revisions.c.head.is_(True),
-                )
-            )
-            if raw is None:
-                raise DomainError(
-                    "retention_precondition_failed",
-                    "The expected retained object is no longer present",
-                    reference=expected.reference.exact(),
-                )
-            record = CognitiveRecord.model_validate(raw)
-            await self.get_in(view, ctx, record.reference, purpose="management")
-            if record.purged or record.reference.kind not in {"memory", "association"}:
-                raise DomainError(
-                    "retention_precondition_failed",
-                    "The expected retained object is unavailable",
-                    reference=expected.reference.exact(),
-                )
-            actual = snapshot(
-                record,
-                int(datetime.fromisoformat(view.recorded_at).timestamp() * 1000)
-                if isinstance(view, WriteTx)
-                else utc_now().coordinate,
-            )
-            actual_fields = actual.model_dump(mode="json", exclude={"score"})
-            wanted = expected.model_dump(mode="json")
-            if actual_fields != wanted:
-                raise DomainError(
-                    "retention_precondition_failed",
-                    "Retention state changed after selection",
-                    reference=expected.reference.exact(),
-                    current=record.reference.exact(),
-                    fields=[name for name in wanted if actual_fields.get(name) != wanted[name]],
-                )
-
-    async def change_retention_in(
-        self: CognitiveRecords, tx: WriteTx, ctx: CallContext, command: RetentionChange
-    ) -> CognitiveRecord:
-        previous = await self.get_in(tx, ctx, command.reference)
-        lifecycle = state_for(previous)
-        current = await tx.connection.scalar(
-            select(revisions.c.revision).where(
-                revisions.c.id == previous.reference.id,
-                revisions.c.namespace_id == ctx.namespace_id,
-                revisions.c.head.is_(True),
-            )
-        )
-        if current != command.reference.revision:
-            raise DomainError(
-                "retention_revision_conflict",
-                "The retained object changed after selection",
-                reference=command.reference.exact(),
-            )
-        if previous.deleted and command.action not in {"restore", "purge"}:
-            raise DomainError("retention_deleted", "Restore the retained object before changing it")
-        if command.hours is not None and command.action != "protect":
-            raise DomainError("invalid_retention_hours", "Hours applies to protection")
-        now = int(datetime.fromisoformat(tx.recorded_at).timestamp() * 1000)
-        if (
-            command.action in {"trash", "purge"}
-            and lifecycle.protected(now)
-            and (not command.force)
-        ):
-            raise DomainError(
-                "retention_protected",
-                "The retained object is protected; unprotect it or explicitly force the change",
-            )
-        updated = transition(lifecycle, command, now)
-        deleted = (
-            command.action in {"trash", "purge"}
-            if command.action in {"trash", "purge", "restore"}
-            else previous.deleted
-        )
-        if updated == lifecycle and deleted == previous.deleted and (command.action != "purge"):
-            return previous
-        assert previous.body is not None
-        result = await self.adopt_in(
-            tx,
-            ctx,
-            AdoptCognition(
-                id=previous.reference.id,
-                expected_revision=previous.reference.revision,
-                body=previous.body,
-                evidence=(
-                    EvidenceLink(
-                        reference=previous.reference, role=command.reason or command.action
-                    ),
-                ),
-                times=previous.times,
-                producer_call_id=previous.producer_call_id,
-            ),
-            state=RevisionState(
-                lifecycle=updated,
-                deleted=deleted,
-                purged=command.action == "purge",
-                cause=RevisionCause(
-                    action=command.action,
-                    actor=ctx.caller_id,
-                    reason=command.reason,
-                    parent=previous.reference,
-                ),
-            ),
-        )
-        if command.action == "purge":
-            await self.erase_history_in(tx, ctx, previous.reference.id)
-        else:
-            for asset in (
-                await tx.connection.execute(
-                    select(vectors).where(vectors.c.reference == previous.reference.exact())
-                )
-            ).mappings():
-                await tx.connection.execute(
-                    vectors.insert().values(
-                        **{
-                            **asset,
-                            "reference": result.reference.exact(),
-                            "commit_seq": tx.commit_seq,
-                        }
-                    )
-                )
-        return result
-
-    async def change_retentions_in(
-        self: CognitiveRecords, tx: WriteTx, ctx: CallContext, command: RetentionChanges
-    ) -> tuple[CognitiveRecord, ...]:
-        if len({ref.id for ref in command.references}) != len(command.references):
-            raise DomainError("retention_selection", "Select each retained identity once")
-        for reference in command.references:
-            record = await self.get_in(tx, ctx, reference)
-            state_for(record)
-            current = await tx.connection.scalar(
-                select(revisions.c.revision).where(
-                    revisions.c.id == reference.id,
-                    revisions.c.namespace_id == ctx.namespace_id,
-                    revisions.c.head.is_(True),
-                )
-            )
-            if current != reference.revision:
-                raise DomainError(
-                    "retention_revision_conflict",
-                    "The frozen lifecycle selection changed",
-                    reference=reference.exact(),
-                )
-        return tuple(
-            [
-                await self.change_retention_in(
-                    tx,
-                    ctx,
-                    RetentionChange(
-                        reference=reference,
-                        action=command.action,
-                        strength=command.strength,
-                        hours=command.hours,
-                        reason=command.reason,
-                        force=command.force,
-                    ),
-                )
-                for reference in command.references
-            ]
-        )
-
-    async def change_retention(
-        self: CognitiveRecords, ctx: CallContext, command: RetentionChange
-    ) -> CognitiveRecord:
-        async with self.authority.write(
-            ctx,
-            command.operation_id,
-            operation_kind="retention.change",
-            scope=ctx.namespace_id,
-            payload=command,
-        ) as tx:
-            if tx.replayed:
-                return await self.replay_record_in(
-                    tx, ctx, CognitiveRecord.model_validate(tx.replay_result)
-                )
-            result = tx.result(await self.change_retention_in(tx, ctx, command))
-        return result
-
-    async def change_retentions(
-        self: CognitiveRecords, ctx: CallContext, command: RetentionChanges
-    ) -> tuple[CognitiveRecord, ...]:
-        from pydantic import TypeAdapter
-
-        async with self.authority.write(
-            ctx,
-            command.operation_id,
-            operation_kind="retention.change_many",
-            scope=ctx.namespace_id,
-            payload=command,
-        ) as tx:
-            if tx.replayed:
-                return await self.replay_records_in(
-                    tx,
-                    ctx,
-                    TypeAdapter(tuple[CognitiveRecord, ...]).validate_python(tx.replay_result),
-                )
-            result = tx.result(await self.change_retentions_in(tx, ctx, command))
-        return result
-
-    async def retention_snapshot(self: CognitiveRecords, ctx: CallContext, reference: CognitiveRef):
-        async with self.authority.read(ctx) as view:
-            await require_namespace_in(view, ctx)
-            return snapshot(
-                await self.get_in(view, ctx, reference, purpose="management"), utc_now().coordinate
-            )
-
-    async def decay_retention_in(
-        self: CognitiveRecords, tx: WriteTx, ctx: CallContext, command: DecayRetention
-    ) -> RetentionDecayResult:
-        page = await self.records_in(
-            tx, ctx, RecordsQuery(kinds=command.kinds, limit=command.limit, cursor=command.cursor)
-        )
-        now = int(datetime.fromisoformat(tx.recorded_at).timestamp() * 1000)
-        changed: list[CognitiveRef] = []
-        for entry in page.items:
-            before = state_for(entry.record)
-            change = RetentionChange(
-                reference=entry.record.reference, action="decay", reason="retention evaluation"
-            )
-            if transition(before, change, now) != before:
-                changed.append((await self.change_retention_in(tx, ctx, change)).reference)
-        return RetentionDecayResult(
-            scanned=len(page.items),
-            changed=tuple(changed),
-            next_cursor=page.next_cursor,
-            complete=page.next_cursor is None,
-        )
-
-    async def decay_retention(
-        self: CognitiveRecords, ctx: CallContext, command: DecayRetention
-    ) -> RetentionDecayResult:
-        async with self.authority.write(
-            ctx,
-            command.operation_id,
-            operation_kind="retention.decay",
-            scope=ctx.namespace_id,
-            payload=command,
-        ) as tx:
-            if tx.replayed:
-                return RetentionDecayResult.model_validate(tx.replay_result)
-            result = tx.result(await self.decay_retention_in(tx, ctx, command))
-        return result
-
     async def retirement_plan_in(
         self: CognitiveRecords,
         view: ReadView | WriteTx,
@@ -1197,23 +924,24 @@ class CognitiveRecords:
             await tx.connection.execute(
                 update(revisions)
                 .where(
+                    revisions.c.namespace_id == ctx.namespace_id,
                     revisions.c.id == record.reference.id,
                     revisions.c.revision == record.reference.revision,
                 )
                 .values(record=tombstone.model_dump(mode="json"))
             )
             await tx.connection.execute(
-                vectors.delete().where(vectors.c.reference == record.reference.exact())
+                vectors.delete().where(
+                    vectors.c.namespace_id == ctx.namespace_id,
+                    vectors.c.reference == record.reference.exact(),
+                )
             )
             retired.append(record.reference)
         for record in records.values():
             if record.reference.exact() in supported and await redact_attributes_in(
-                tx, record, sources
+                self, tx, ctx, record, sources
             ):
                 retired.append(record.reference)
-        if retired:
-            keys = {reference.exact() for reference in retired}
-            await self.authority.redact_receipts_in(tx, lambda value: contains_record(value, keys))
         return tuple(retired)
 
     async def qualify_known_outputs_in(
@@ -1222,18 +950,14 @@ class CognitiveRecords:
         ctx: CallContext,
         references: tuple[CognitiveRef, ...],
         *,
-        operation_id: str,
-        operation_kind: str,
-        scope: str,
+        observation_ids: tuple[str, ...],
         input_material_ids: tuple[str, ...] | None = None,
     ) -> CallContext:
         admission = await self.materials.restore_input_in(
             view,
             ctx,
             input_material_ids,
-            operation_id=operation_id,
-            operation_kind=operation_kind,
-            scope=scope,
+            observation_ids=observation_ids,
         )
         if not admission.observation_ids:
             raise DomainError(
@@ -1387,8 +1111,8 @@ class CognitiveRecords:
             ).scalars()
             result: list[CognitiveRecord] = []
             for value in values:
-                record = await self.project_record_in(
-                    view, ctx, CognitiveRecord.model_validate(value)
+                record = await project_entity_in(
+                    self, view, ctx, CognitiveRecord.model_validate(value)
                 )
                 if await self.visible_in(view, ctx, record):
                     result.append(record)
@@ -1434,39 +1158,6 @@ class CognitiveRecords:
                 )
             return matches[0]
 
-    async def set_deleted(
-        self: CognitiveRecords,
-        ctx: CallContext,
-        reference: CognitiveRef,
-        deleted: bool,
-        operation_id: str,
-    ) -> CognitiveRecord:
-        async with self.authority.read(ctx) as view:
-            previous = await self.get_in(view, ctx, reference)
-        if isinstance(previous.body, MemoryBody):
-            return await self.change_retention(
-                ctx,
-                RetentionChange(
-                    operation_id=operation_id,
-                    reference=reference,
-                    action="trash" if deleted else "restore",
-                ),
-            )
-        async with self.authority.write(
-            ctx,
-            operation_id,
-            operation_kind="cognition.set_deleted",
-            scope=ctx.namespace_id,
-            payload={"reference": reference.model_dump(mode="json"), "deleted": deleted},
-        ) as tx:
-            if tx.replayed:
-                return await self.replay_record_in(
-                    tx, ctx, CognitiveRecord.model_validate(tx.replay_result)
-                )
-            adopted = await self.set_deleted_in(tx, ctx, reference, deleted)
-            result = tx.result(adopted)
-        return result
-
     async def set_deleted_in(
         self: CognitiveRecords,
         tx: WriteTx,
@@ -1478,16 +1169,6 @@ class CognitiveRecords:
         reason: str = "Manual cognitive lifecycle change",
     ) -> CognitiveRecord:
         previous = await self.get_in(tx, ctx, reference)
-        if previous.reference.kind in {"memory", "association"}:
-            from nous_sdk.contracts import RetentionChange
-
-            return await self.change_retention_in(
-                tx,
-                ctx,
-                RetentionChange(
-                    reference=reference, action="trash" if deleted else "restore", reason=reason
-                ),
-            )
         if previous.body is None:
             raise DomainError("cognition_purged", "A purged object cannot be changed")
         from nous_sdk.contracts import RevisionCause
@@ -1505,7 +1186,7 @@ class CognitiveRecords:
                     *(link.model_copy(update={"polarity": "boundary"}) for link in evidence),
                 ),
                 times=previous.times,
-                producer_call_id=previous.producer_call_id,
+                producer=previous.producer,
             ),
             state=RevisionState(
                 deleted=deleted,
@@ -1518,12 +1199,6 @@ class CognitiveRecords:
                 ),
             ),
         )
-
-    async def replay_record_in(
-        self: CognitiveRecords, view: ReadView | WriteTx, ctx: CallContext, record: CognitiveRecord
-    ) -> CognitiveRecord:
-        """An operation receipt never preserves an older, broader source authorization."""
-        return await self.get_in(view, ctx, record.reference)
 
     async def automatic_in(
         self: CognitiveRecords, view: ReadView | WriteTx, ctx: CallContext, reference: CognitiveRef
@@ -1543,88 +1218,10 @@ class CognitiveRecords:
         )
         if raw is None:
             return None
-        head = await self.project_record_in(view, ctx, CognitiveRecord.model_validate(raw))
+        head = await project_entity_in(self, view, ctx, CognitiveRecord.model_validate(raw))
         if not selectable(head) or not await self.visible_in(view, ctx, head):
             return None
         return exact
-
-    async def replay_records_in(
-        self: CognitiveRecords,
-        view: ReadView | WriteTx,
-        ctx: CallContext,
-        records: tuple[CognitiveRecord, ...],
-    ) -> tuple[CognitiveRecord, ...]:
-        return tuple([await self.replay_record_in(view, ctx, record) for record in records])
-
-    async def project_record_in(
-        self: CognitiveRecords, view: ReadView | WriteTx, ctx: CallContext, record: CognitiveRecord
-    ) -> CognitiveRecord:
-        if not isinstance(record.body, EntityBody):
-            return record
-        body = record.body
-        roots = await self.source_roots_in(view, ctx)
-        base_links = await self.live_links_in(view, ctx, record.evidence, roots)
-        base_live = bool(base_links)
-        attributes = tuple(
-            [
-                attribute
-                for attribute in body.attributes
-                if await self.links_live_in(view, ctx, attribute.evidence, roots)
-            ]
-        )
-        controls = body.profile_controls
-        if controls.aliases is not None and (
-            not await self.links_live_in(view, ctx, controls.aliases.evidence, roots)
-        ):
-            controls = controls.model_copy(update={"aliases": None})
-        if controls.summary is not None and (
-            not await self.links_live_in(view, ctx, controls.summary.evidence, roots)
-        ):
-            controls = controls.model_copy(update={"summary": None})
-        generated = body.generated_profile
-        if generated is not None and (
-            not await self.links_live_in(view, ctx, generated.evidence, roots, require_all=True)
-        ):
-            generated = None
-        body = body.model_copy(
-            update={
-                "description": body.description if base_live else "",
-                "aliases": body.aliases if base_live else (),
-                "attributes": attributes,
-                "profile_controls": controls,
-                "generated_profile": generated,
-            }
-        )
-        supported: set[str] = set()
-        for link in (*base_links, *tuple(evidence_in(body))):
-            if link.polarity != "support":
-                continue
-            if link.observation_id is not None and link.observation_id in roots:
-                supported.add(link.observation_id)
-            elif link.reference is not None:
-                raw = await view.connection.scalar(
-                    select(revisions.c.record).where(
-                        revisions.c.namespace_id == ctx.namespace_id,
-                        revisions.c.id == link.reference.id,
-                        revisions.c.revision == link.reference.revision,
-                    )
-                )
-                if raw is not None:
-                    source = CognitiveRecord.model_validate(raw)
-                    supported.update(root for root in source.source_roots if root in roots)
-        return record.model_copy(
-            update={
-                "body": body,
-                "evidence": base_links,
-                "source_roots": tuple(sorted(supported)),
-                "support_roots": tuple(sorted(supported)),
-                "source_regions": {
-                    root: selectors
-                    for root, selectors in record.source_regions.items()
-                    if root in supported
-                },
-            }
-        )
 
     async def erase_history_in(
         self: CognitiveRecords, tx: WriteTx, ctx: CallContext, identity: str
@@ -1644,7 +1241,9 @@ class CognitiveRecords:
             await tx.connection.execute(
                 update(revisions)
                 .where(
-                    revisions.c.id == identity, revisions.c.revision == record.reference.revision
+                    revisions.c.namespace_id == ctx.namespace_id,
+                    revisions.c.id == identity,
+                    revisions.c.revision == record.reference.revision,
                 )
                 .values(record=tombstone.model_dump(mode="json"))
             )
@@ -1652,7 +1251,10 @@ class CognitiveRecords:
             tx, ctx
         )
         await tx.connection.execute(
-            vectors.delete().where(vectors.c.reference.in_([ref.exact() for ref in refs]))
+            vectors.delete().where(
+                vectors.c.namespace_id == ctx.namespace_id,
+                vectors.c.reference.in_([ref.exact() for ref in refs]),
+            )
         )
         from nous.platform.execution import JobSpec
         from nous.retrieval.maintenance import enqueue_index_in
@@ -1664,6 +1266,7 @@ class CognitiveRecords:
                     workflow_name="nous.cognition.purge_dependents",
                     queue_name="default",
                     workflow_id=job_id,
+                    scope=identity,
                     args=(
                         ctx.model_dump(mode="json"),
                         [ref.model_dump(mode="json") for ref in refs],
@@ -1672,21 +1275,6 @@ class CognitiveRecords:
                 )
             )
         await enqueue_index_in(tx, ctx)
-
-        def contains(value: JsonValue) -> bool:
-            if isinstance(value, list):
-                return any(contains(item) for item in value)
-            if not isinstance(value, dict):
-                return False
-            reference = value.get("reference")
-            return (
-                isinstance(reference, dict)
-                and reference.get("id") == identity
-                and ("body" in value)
-                or any(contains(item) for item in value.values())
-            )
-
-        await self.authority.redact_receipts_in(tx, contains)
 
     async def purge_cognition_in(
         self: CognitiveRecords,
@@ -1700,19 +1288,6 @@ class CognitiveRecords:
         previous = await self.get_in(tx, ctx, reference, purpose="management")
         if previous.purged:
             return previous
-        if isinstance(previous.body, MemoryBody) and await self.visible_in(tx, ctx, previous):
-            return await self.change_retention_in(
-                tx,
-                ctx,
-                RetentionChange(reference=reference, action="purge", force=force, reason=reason),
-            )
-        if isinstance(previous.body, MemoryBody) and previous.lifecycle is not None:
-            now = round(datetime.fromisoformat(tx.recorded_at).timestamp() * 1000)
-            if previous.lifecycle.protected(now) and (not force):
-                raise DomainError(
-                    "memory_protected",
-                    "Memory is protected; unprotect or explicitly force the change",
-                )
         await self.erase_history_in(tx, ctx, reference.id)
         return previous.model_copy(update={"body": None, "purged": True, "deleted": True})
 
@@ -1908,7 +1483,7 @@ class CognitiveRecords:
                     ),
                 ),
                 times=previous.times,
-                producer_call_id=previous.producer_call_id,
+                producer=previous.producer,
             ),
             state=RevisionState(
                 deleted=previous.deleted,

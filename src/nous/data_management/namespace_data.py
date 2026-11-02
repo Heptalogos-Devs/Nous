@@ -12,7 +12,6 @@ from nous.identity.service import IdentityService, require_management_scope
 from nous.platform.concurrency import owned_thread
 from nous.platform.content import ContentStore
 from nous.platform.execution import DurableExecution
-from nous.platform.models.ledger import calls
 from nous.platform.persistence import Authority, metadata
 
 from .namespace_backups import NamespaceBackupService
@@ -38,17 +37,6 @@ class NamespaceDataService:
     ) -> NamespacePurgeResult:
         require_management_scope(ctx)
         async with self.identity.namespace_lock(ctx.namespace_id):
-            receipt = await self.authority.receipt(
-                ctx,
-                command.operation_id,
-                operation_kind="namespace.purge",
-                scope=ctx.namespace_id,
-                payload=command,
-            )
-            if receipt is not None:
-                result = NamespacePurgeResult.model_validate(receipt.result)
-                await self.content.purge(ctx, result.released_hashes)
-                return result
             await self.identity.begin_namespace_purge(
                 ctx, command.operation_id, command.expected_revision
             )
@@ -60,79 +48,45 @@ class NamespaceDataService:
             await self.backups.purge_namespace_custody(ctx)
             hashes = tuple(
                 dict.fromkeys(
-                    str(row["content_hash"])
-                    for row in tables.get("nous_content_references", ())
+                    str(row["content_hash"]) for row in tables.get("nous_content_references", ())
                 )
             )
-            async with self.authority.write(
-                ctx,
-                command.operation_id,
-                operation_kind="namespace.purge",
-                scope=ctx.namespace_id,
-                payload=command,
-            ) as tx:
-                if tx.replayed:
-                    result = NamespacePurgeResult.model_validate(tx.replay_result)
-                else:
-                    current = await require_namespace_in(tx, ctx, purpose="management")
-                    if current.state != 'trashed' or not current.purging:
-                        raise DomainError(
-                            "namespace_not_trashed", "Namespace permanent removal is not admitted"
-                        )
-                    await self.sources.purge_namespace_in(tx, ctx)
-                    deleted = 0
-                    for name, rows in tables.items():
-                        if name not in metadata.tables or name in {
-                            "namespaces",
-                            "subject_bindings",
-                            "identity_retirements",
-                            "nous_model_calls",
-                        }:
-                            continue
-                        table = metadata.tables[name]
-                        if "namespace_id" in table.c:
+            async with self.authority.write(ctx) as tx:
+                current = await require_namespace_in(tx, ctx, purpose="management")
+                if current.state != "trashed" or not current.purging:
+                    raise DomainError(
+                        "namespace_not_trashed", "Namespace permanent removal is not admitted"
+                    )
+                await self.sources.purge_namespace_in(tx, ctx)
+                deleted = 0
+                for name, rows in tables.items():
+                    if name not in metadata.tables or name in {
+                        "namespaces",
+                        "subject_bindings",
+                        "identity_retirements",
+                    }:
+                        continue
+                    table = metadata.tables[name]
+                    if "namespace_id" in table.c:
+                        statement = table.delete().where(table.c.namespace_id == ctx.namespace_id)
+                        deleted += max(0, (await tx.connection.execute(statement)).rowcount)
+                    else:
+                        keys = tuple(table.primary_key.columns)
+                        for row in rows:
+                            if not keys:
+                                raise DomainError(
+                                    "namespace_purge_integrity",
+                                    "Owned data has no stable deletion identity",
+                                    table=name,
+                                )
                             statement = table.delete().where(
-                                table.c.namespace_id == ctx.namespace_id
+                                sa.and_(*(column == row[column.name] for column in keys))
                             )
                             deleted += max(0, (await tx.connection.execute(statement)).rowcount)
-                        else:
-                            keys = tuple(table.primary_key.columns)
-                            for row in rows:
-                                if not keys:
-                                    raise DomainError(
-                                        "namespace_purge_integrity",
-                                        "Owned data has no stable deletion identity",
-                                        table=name,
-                                    )
-                                statement = table.delete().where(
-                                    sa.and_(*(column == row[column.name] for column in keys))
-                                )
-                                deleted += max(0, (await tx.connection.execute(statement)).rowcount)
-                    await tx.connection.execute(
-                        calls.update()
-                        .where(calls.c.namespace_id == ctx.namespace_id)
-                        .values(
-                            status="purged",
-                            request={"purged": True},
-                            result=None,
-                            usage=None,
-                            error_code="namespace_purged",
-                        )
-                    )
-                    deleted += (
-                        len(tables.get("namespaces", ()))
-                        + len(tables.get("subject_bindings", ()))
-                    )
-                    await self.identity.retire_namespace_in(tx, ctx)
-                    result = tx.result(
-                        NamespacePurgeResult(
-                            namespace_id=ctx.namespace_id,
-                            commit_seq=tx.commit_seq,
-                            deleted_rows=deleted,
-                            released_hashes=hashes,
-                        )
-                    )
+                deleted += len(tables.get("namespaces", ())) + len(
+                    tables.get("subject_bindings", ())
+                )
+                await self.identity.retire_namespace_in(tx, ctx)
+                result = NamespacePurgeResult(namespace_id=ctx.namespace_id, commit_seq=tx.commit_seq, deleted_rows=deleted, released_hashes=hashes)
             await self.content.purge(ctx, hashes)
-            if self.sources.invalidate:
-                await self.sources.invalidate()
             return result

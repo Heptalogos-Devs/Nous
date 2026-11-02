@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import hashlib
 import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -35,7 +36,7 @@ from nous.platform.errors import NousError
 from nous.platform.observability import configure_tracing
 from nous.platform.persistence import Authority, ReadView, WriteTx
 from nous.platform.persistence.authority import SQLiteConnection, canonical_json
-from nous.platform.persistence.schema import job_links, operations
+from nous.platform.persistence.schema import job_links
 
 from .batches import process_jobs, retry_jobs, summarize_jobs
 from .query import JobPage, query_jobs
@@ -56,6 +57,7 @@ class JobSpec:
     owned_parent: str | None = None
     partition_key: str | None = None
     delay_seconds: float | None = None
+    scope: str = ""
 
 
 @dataclass(frozen=True)
@@ -257,6 +259,38 @@ class DurableExecution:
         # Only portable JSON values enter durable execution, never model objects.
         arguments = json.loads(canonical_json({"args": spec.args, "kwargs": spec.kwargs}))
         workflow_id = spec.workflow_id or str(uuid4())
+        command_digest = hashlib.sha256(
+            canonical_json(
+                {
+                    "workflow": spec.workflow_name,
+                    "queue": spec.queue_name,
+                    "arguments": arguments,
+                    "scope": spec.scope,
+                    "owned_parent": spec.owned_parent,
+                    "partition_key": spec.partition_key,
+                    "delay_seconds": spec.delay_seconds,
+                }
+            ).encode()
+        ).hexdigest()
+        existing = (
+            (
+                await tx.connection.execute(
+                    sa.select(job_links).where(job_links.c.workflow_id == workflow_id)
+                )
+            )
+            .mappings()
+            .first()
+        )
+        if existing is not None:
+            if (existing["caller_id"], existing["namespace_id"], existing["command_digest"]) != (
+                tx.ctx.caller_id,
+                tx.ctx.namespace_id,
+                command_digest,
+            ):
+                raise DomainError(
+                    "job_identity_conflict", "Durable work identity has different scope or command"
+                )
+            return JobRef(workflow_id)
         if spec.owned_parent is not None:
             if spec.owned_parent == workflow_id:
                 raise ValueError("A job cannot own itself")
@@ -286,8 +320,8 @@ class DurableExecution:
             # DBOS persists W3C trace context only; baggage and payload are excluded.
             "otel_context": get_current(),
             "attributes": {
-                "scope": tx.scope,
-                "operation_id": tx.operation_id,
+                "scope": spec.scope,
+                "request_id": tx.ctx.request_id,
                 "namespace_id": tx.ctx.namespace_id,
             },
         }
@@ -305,10 +339,11 @@ class DurableExecution:
         await tx.connection.execute(
             job_links.insert().values(
                 workflow_id=handle.get_workflow_id(),
-                operation_key=tx.operation_key,
+                command_digest=command_digest,
+                commit_seq=tx.commit_seq,
                 caller_id=tx.ctx.caller_id,
                 namespace_id=tx.ctx.namespace_id,
-                scope=tx.scope,
+                scope=spec.scope,
                 owned_parent=spec.owned_parent,
                 workflow_name=spec.workflow_name,
                 queue_name=spec.queue_name,
@@ -382,7 +417,7 @@ class DurableExecution:
                         workflow_name=str(row["workflow_name"]),
                         queue_name=str(row["queue_name"]),
                         caller_id=str(row["caller_id"]),
-                        operation_key=str(row["operation_key"]),
+                        commit_seq=int(row["commit_seq"]),
                         scope=str(row["scope"]),
                         owned_parent=str(row["owned_parent"]) if row["owned_parent"] else None,
                         args=TypeAdapter(tuple[JsonValue, ...]).validate_python(
@@ -429,21 +464,6 @@ class DurableExecution:
                     workflow_name=job.workflow_name,
                     queue_name=job.queue_name,
                 )
-            if (
-                job.operation_key != tx.operation_key
-                and await tx.connection.scalar(
-                    sa.select(operations.c.operation_key).where(
-                        operations.c.operation_key == job.operation_key,
-                        operations.c.namespace_id == ctx.namespace_id,
-                    )
-                )
-                is None
-            ):
-                raise DomainError(
-                    "execution_snapshot_operation",
-                    "A restored task requires its receiving Namespace operation",
-                    workflow_id=job.workflow_id,
-                )
             if job.owned_parent is not None and job.owned_parent not in identities:
                 parent = await tx.connection.scalar(
                     sa.select(job_links.c.workflow_id).where(
@@ -468,7 +488,16 @@ class DurableExecution:
                 await tx.connection.execute(
                     job_links.insert().values(
                         workflow_id=job.workflow_id,
-                        operation_key=job.operation_key,
+                        command_digest=hashlib.sha256(
+                            canonical_json(
+                                {
+                                    "workflow": job.workflow_name,
+                                    "args": job.args,
+                                    "kwargs": job.kwargs,
+                                }
+                            ).encode()
+                        ).hexdigest(),
+                        commit_seq=tx.commit_seq,
                         caller_id=job.caller_id,
                         namespace_id=ctx.namespace_id,
                         scope=job.scope,
@@ -497,6 +526,7 @@ class DurableExecution:
                     workflow_name=job.workflow_name,
                     queue_name=job.queue_name,
                     workflow_id=job.workflow_id,
+                    scope=job.scope,
                     args=job.args,
                     kwargs=job.kwargs,
                     partition_key=job.partition_key,
@@ -507,7 +537,7 @@ class DurableExecution:
                 job_links.update()
                 .where(job_links.c.workflow_id == job.workflow_id)
                 .values(
-                    operation_key=job.operation_key,
+                    commit_seq=tx.commit_seq,
                     caller_id=job.caller_id,
                     scope=job.scope,
                     owned_parent=job.owned_parent,
@@ -645,31 +675,24 @@ class DurableExecution:
                 raise DomainError(
                     "job_completed", "The retained task already completed", workflow_id=workflow_id
                 )
-            async with self.authority.write(
-                ctx,
-                "resume:" + workflow_id,
-                operation_kind="execution.resume_retained",
-                scope=ctx.namespace_id,
-                payload={"workflow_id": workflow_id},
-            ) as tx:
-                if not tx.replayed:
-                    await tx.connection.execute(
-                        job_results.delete().where(job_results.c.workflow_id == workflow_id)
+            async with self.authority.write(ctx) as tx:
+                await tx.connection.execute(
+                    job_results.delete().where(job_results.c.workflow_id == workflow_id)
+                )
+                await tx.connection.execute(
+                    job_links.delete().where(job_links.c.workflow_id == workflow_id)
+                )
+                await tx.enqueue(
+                    JobSpec(
+                        workflow_name=retained.workflow_name,
+                        queue_name=retained.queue_name,
+                        workflow_id=workflow_id,
+                        args=retained.args,
+                        kwargs=retained.kwargs,
+                        partition_key=retained.partition_key,
+                        scope=ctx.namespace_id,
                     )
-                    await tx.connection.execute(
-                        job_links.delete().where(job_links.c.workflow_id == workflow_id)
-                    )
-                    await tx.enqueue(
-                        JobSpec(
-                            workflow_name=retained.workflow_name,
-                            queue_name=retained.queue_name,
-                            workflow_id=workflow_id,
-                            args=retained.args,
-                            kwargs=retained.kwargs,
-                            partition_key=retained.partition_key,
-                        )
-                    )
-                    tx.result({"resumed": workflow_id})
+                )
             return
         await self.client.resume_workflow_async(workflow_id)
 

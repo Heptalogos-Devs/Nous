@@ -4,6 +4,7 @@ from typing import Literal
 
 from nous_sdk.contracts import CallContext, CognitiveRef, MediaEmbeddingInput, MediaReference
 from nous_sdk.contracts.common import Contract
+from nous_sdk.contracts.common import ModelProvenance
 
 from nous.platform.models.embedding_profile import EmbeddingProfile
 
@@ -41,8 +42,7 @@ class Request(Contract):
     purged: bool = False
     replace_existing: bool = False
     admitted_commit: int | None = None
-    parent_request_id: str | None = None
-    retry_operation_id: str | None = None
+    retry_count: int = 0
 
 
 class Content(Contract):
@@ -51,5 +51,4 @@ class Content(Contract):
     model: str
     dimensions: int
     vector: tuple[float, ...]
-    call_id: str
-    call_source_ids: tuple[str, ...]
+    producer: ModelProvenance

@@ -72,10 +72,3 @@ def register(cli: typer.Typer) -> None:
             return await (await resource(ctx, root, instance_scope)).reload()
 
         invoke(ctx, run)
-
-    @group.command("history")
-    def history(ctx: typer.Context, key: str, instance_scope: bool = False):
-        async def run(root):
-            return await (await resource(ctx, root, instance_scope)).history(key)
-
-        invoke(ctx, run)

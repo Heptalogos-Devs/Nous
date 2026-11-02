@@ -10,7 +10,7 @@ from .identity import Namespace
 from .execution import ExecutionSnapshot
 
 NAMESPACE_BACKUP_FORMAT = "nous-namespace-backup"
-NAMESPACE_BACKUP_FORMAT_VERSION = 1
+NAMESPACE_BACKUP_FORMAT_VERSION = 2
 
 
 class NamespaceBackupFile(Contract):
@@ -34,12 +34,11 @@ class NamespaceBackupFile(Contract):
 
 class NamespaceBackupManifest(Contract):
     format: Literal["nous-namespace-backup"] = NAMESPACE_BACKUP_FORMAT
-    format_version: Literal[1] = NAMESPACE_BACKUP_FORMAT_VERSION
+    format_version: Literal[2] = NAMESPACE_BACKUP_FORMAT_VERSION
     backup_id: str = Field(pattern=r"^[0-9a-f]{32}$")
     source_namespace_id: str
     created_at: AwareDatetime
     producer_version: str
-    source_config_version: int = Field(ge=0)
     namespace: Namespace
     data_size_bytes: int = Field(ge=0)
     files: tuple[NamespaceBackupFile, ...]
@@ -62,7 +61,6 @@ class NamespaceBackupInfo(Contract):
     created_at: AwareDatetime
     format_version: int
     producer_version: str
-    source_config_version: int
     archive_size_bytes: int = Field(ge=0)
     data_size_bytes: int = Field(ge=0)
     file_count: int = Field(ge=0)
@@ -97,13 +95,13 @@ class NamespaceBackupRestored(Contract):
     mapping: dict[str, str]
     resumed_jobs: tuple[str, ...] = ()
     authority_commit_seq: int
-    frozen_invocations: int = 0
 
 
 class NamespaceState(Contract):
     format: Literal["nous.namespace-state"] = "nous.namespace-state"
-    version: Literal[1] = 1
+    version: Literal[2] = 2
     namespace_id: str
     authority_commit_seq: int
     tables: dict[str, tuple[dict[str, JsonValue], ...]]
+    configuration_toml: str
     execution: ExecutionSnapshot

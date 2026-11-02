@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator, AsyncIterable, Mapping
+from collections.abc import AsyncGenerator, AsyncIterable
 from pathlib import Path
 from uuid import uuid4
 
@@ -13,11 +13,9 @@ from ..contracts import (
     ContactReceipt,
     TimePoint,
 )
-from ..errors import NousError
-from ..operations import encoded, object_value, segment
+from ..operations import encoded, segment
 from ..types import (
     Download,
-    JsonObject,
     Material,
     MaterialReceipt,
     QueryParam,
@@ -34,31 +32,6 @@ class MaterialClient(IdentityClient):
                 "POST",
                 self.namespace_path(namespace_id) + "/materials/contact",
                 body=encoded(command),
-            )
-        )
-
-    async def put_text(
-        self,
-        namespace_id: str,
-        text: str,
-        *,
-
-        source: str | None = None,
-        event_time: TimePoint | None = None,
-        operation_id: str | None = None,
-    ) -> Material:
-        return Material.model_validate(
-            await self.request(
-                "POST",
-                "/api/v1/materials",
-                body={
-                    "namespace_id": namespace_id,
-                    
-                    "text": text,
-                    "source": source,
-                    "event_time": encoded(event_time) if event_time is not None else None,
-                    "operation_id": operation_id or str(uuid4()),
-                },
             )
         )
 
@@ -131,9 +104,7 @@ class MaterialClient(IdentityClient):
         namespace_id: str | None = None,
         
     ) -> Download:
-        namespace = namespace_id or self.namespace_id
-        if namespace is None:
-            namespace = (await self.material(material_id)).namespace_id
+        namespace = self.require_namespace(namespace_id)
         return await self.transport.download(
             material_id,
             Path(destination),
@@ -141,17 +112,6 @@ class MaterialClient(IdentityClient):
             namespace_id=namespace,
             
         )
-
-    async def _material_subject(self, material_id: str) -> str:
-        value = object_value(
-            await self.request("GET", f"/api/v1/materials/{segment(material_id)}/scope")
-        )
-        subject = value.get('namespace_id')
-        if not isinstance(subject, str):
-            raise NousError(
-                {"code": "invalid_response", "message": "Material scope has no subject"}
-            )
-        return subject
 
     async def download_region(
         self, namespace_id: str,  region_id: str, destination: str | Path
@@ -173,30 +133,7 @@ class MaterialClient(IdentityClient):
             region_id=region_id,
         )
 
-    async def material(self, material_id: str) -> Material:
+    async def material(self, material_id: str, *, namespace_id: str | None = None) -> Material:
         return Material.model_validate(
-            await self.request("GET", f"/api/v1/materials/{segment(material_id)}")
-        )
-
-    async def observe(
-        self,
-        namespace_id: str,
-        material_id: str,
-        *,
-        observed_at: TimePoint | None = None,
-        origin: Mapping[str, str] | None = None,
-        operation_id: str | None = None,
-    ) -> JsonObject:
-        return object_value(
-            await self.request(
-                "POST",
-                "/api/v1/observations",
-                body={
-                    
-                    "material_id": material_id,
-                    "observed_at": encoded(observed_at) if observed_at is not None else None,
-                    "origin": dict(origin or {}),
-                    "operation_id": operation_id or str(uuid4()),
-                },
-            )
+            await self.request("GET", self.namespace_path(self.require_namespace(namespace_id)) + f"/materials/{segment(material_id)}")
         )

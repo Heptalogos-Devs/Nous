@@ -199,7 +199,7 @@ def test_semantic_symbol_sdk_context_replay_and_source_withdrawal(tmp_path, monk
                 configuration.models["generation"] = configuration.models["generation"].model_copy(
                     update={"name": ""}
                 )
-                await app.configuration.set(ctx, "models", configuration, "disable-symbol-provider")
+                await app.configuration.set(ctx, "models", configuration)
                 optional = await client.understand_symbol(
                     namespace.id,
                     subject.id,

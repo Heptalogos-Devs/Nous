@@ -61,12 +61,9 @@ class Application:
         )
         self.namespace_limits = NamespaceLimits(values)
         self.authority = Authority(settings.database, namespace_limits=self.namespace_limits)
-        from nous.platform.configuration.namespace_policy import entries as namespace_entries
 
         self.credentials = CredentialsService(self.authority, settings.token_file)
-        self.configuration = ConfigurationService(
-            self.authority, values, instance=settings.instance
-        )
+        self.configuration = ConfigurationService(values, instance=settings.instance)
         self.prompts = PromptService(self.authority)
         self.network = NetworkService(self.configuration)
         self.identity = IdentityService(self.authority)
@@ -93,7 +90,6 @@ class Application:
             self.authority, self.material, self.content, self.media, self.derivations
         )
         self.models = ModelService(
-            self.authority,
             settings,
             self.prompts,
             self.configuration,
@@ -109,7 +105,6 @@ class Application:
             self.authority,
             materials=self.material,
             derivations=self.derivations,
-            models=self.models,
             projection=self.projection_admission,
         )
         from nous.cognition.ego_model import EgoService
@@ -124,16 +119,22 @@ class Application:
         from nous.cognition.person_profiles import PersonProfileService
         from nous.cognition.social import SocialService
 
-        self.memories = MemoryService(self.cognition)
-        self.person_profiles = PersonProfileService(self.authority, self.cognition, self.models)
+        self.memories = MemoryService(
+            self.authority, self.cognition, materials=self.material, content=self.content
+        )
+        self.person_profiles = PersonProfileService(
+            self.authority, self.cognition, self.models, memories=self.memories
+        )
         self.facts = FactService(self.authority, self.cognition, self.person_profiles)
         self.evolution = EvolutionService(self.cognition)
-        self.growth = GrowthService(self.cognition, evolution=self.evolution)
+        self.growth = GrowthService(
+            self.cognition, evolution=self.evolution, memories=self.memories
+        )
         self.formation = FormationService(
             self.cognition, facts=self.facts, configuration=self.configuration
         )
         self.entities = EntityService(self.cognition, facts=self.facts)
-        self.graphs = GraphService(self.cognition)
+        self.graphs = GraphService(self.cognition, memories=self.memories)
         self.social = SocialService(self.cognition)
         self.motivation = MotivationService(self.cognition)
         self.ego = EgoService(self.cognition)
@@ -154,7 +155,7 @@ class Application:
         from nous.cognition.episodes import EpisodeService
 
         self.episodes = EpisodeService(self.authority, self.cognition, self.models, self.execution)
-        from nous.context.service import ContextService
+        from nous.context.runtime import ContextRuntime
         from nous.data_management.bundles import BundleService
         from nous.data_management.namespace_archives import NamespaceArchiveService
         from nous.data_management.sources import SourceService
@@ -190,17 +191,13 @@ class Application:
             self.cognition,
             self.models,
             materials=self.material,
+            content_store=self.content,
             projection=self.vector_projection,
             media_imports=self.media_imports,
             formation=self.formation,
             configuration=self.configuration,
         )
         from nous.data_management.dataset_imports import DatasetImportService
-        from nous.material.description_deliveries import DescriptionDeliveryService
-
-        self.description_deliveries = DescriptionDeliveryService(
-            self.authority, self.cognition, self.configuration, memories=self.memories
-        )
         self.retrieval = RetrievalService(
             self.authority,
             self.cognition,
@@ -279,11 +276,13 @@ class Application:
         self.reading = ReadingService(
             self.references, self.retrieval, self.execution, self.maintenance
         )
-        self.contexts = ContextService(
+        self.runtime = ContextRuntime(
             self.authority,
             self.cognition,
             retrieval=self.retrieval,
             materials=self.material,
+            content=self.content,
+            imports=self.imports,
             configuration=self.configuration,
             models=self.models,
             execution=self.execution,
@@ -297,21 +296,22 @@ class Application:
 
         self.lifecycle = DataLifecycleService(
             authority=self.authority,
-            contexts=self.contexts,
-            description_deliveries=self.description_deliveries,
+            contexts=self.runtime,
             vector_projection=self.vector_projection,
-            models=self.models,
             derivations=self.derivations,
             maintenance=self.maintenance,
             corrections=self.corrections,
             resources=self.resources,
-            symbols=self.symbols,
             tuning=self.tuning,
             motivation=self.motivation,
             feedback=self.feedback,
         )
         self.sources = SourceService(
-            self.authority, self.cognition, content_store=self.content, lifecycle=self.lifecycle
+            self.authority,
+            self.cognition,
+            content_store=self.content,
+            lifecycle=self.lifecycle,
+            memories=self.memories,
         )
         from nous.data_management.namespace_data import NamespaceDataService
 
@@ -321,11 +321,11 @@ class Application:
             self.content,
             settings.instance / "namespace-backups",
             execution=self.execution,
+            configuration=self.configuration,
         )
         self.bundles = BundleService(
             self.authority,
             self.cognition,
-            ledger=self.models.ledger,
             content_store=self.content,
             sources=self.sources,
         )
@@ -349,22 +349,6 @@ class Application:
             self.sources,
             self.namespace_backups,
         )
-        from nous.context.contact import ContextContactService
-
-        self.context_contacts = ContextContactService(
-            self.authority, self.contexts, self.material, self.content, self.imports
-        )
-        from nous.context.runtime import RuntimeService
-
-        self.runtime = RuntimeService(
-            self.authority,
-            self.contexts,
-            self.material,
-            self.content,
-            self.derivations,
-            self.imports,
-            self.models,
-        )
 
     async def start(self) -> None:
         self.execution.register(
@@ -380,9 +364,6 @@ class Application:
             "nous.imports.temporal_backfill", self.datasets.run_time_backfill, preemptible=True
         )
         self.execution.register("nous.feedback.evaluate", self.feedback.run, preemptible=True)
-        self.execution.register(
-            "nous.feedback.contact", self.context_contacts.capture_context_event, preemptible=True
-        )
         self.execution.register("nous.sources.trash", self.sources.run_trash, preemptible=True)
         self.execution.register("nous.retrieval.tune", self.tuning.run, preemptible=True)
         self.execution.register(
@@ -398,12 +379,11 @@ class Application:
         self.execution.register(
             "nous.imports.form_observation", self.imports.run_form_observation, preemptible=True
         )
-        self.execution.register("nous.context.prepare", self.contexts.run_prepare, preemptible=True)
         self.execution.register(
-            "nous.context.resident_tick", self.contexts.resident_tick, preemptible=True
+            "nous.context.resident_tick", self.runtime.resident_tick, preemptible=True
         )
         self.execution.register(
-            "nous.context.maintain", self.contexts.run_maintenance, preemptible=True
+            "nous.context.maintain", self.runtime.run_maintenance, preemptible=True
         )
         self.execution.register(
             "nous.maintenance.generate", self.maintenance.run_generate, preemptible=True

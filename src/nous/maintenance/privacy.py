@@ -1,7 +1,6 @@
 """One source-withdrawal projection for current and historical proposal content."""
 
 from nous_sdk.contracts.maintenance import MaintenanceRun
-from pydantic import JsonValue
 
 
 def redact(record: MaintenanceRun) -> MaintenanceRun:
@@ -25,25 +24,3 @@ def redact(record: MaintenanceRun) -> MaintenanceRun:
             ),
         }
     )
-
-
-def receipt_contains_content(value: JsonValue, run_id: str) -> bool:
-    if isinstance(value, dict):
-        if (value.get("id") == run_id or value.get("run_id") == run_id) and any(
-            key in value
-            for key in (
-                "proposal",
-                "edits",
-                "draft",
-                "review",
-                "review_history",
-                "groups",
-                "questions",
-                "instruction",
-            )
-        ):
-            return True
-        return any(receipt_contains_content(child, run_id) for child in value.values())
-    if isinstance(value, list):
-        return any(receipt_contains_content(child, run_id) for child in value)
-    return False

@@ -5,7 +5,7 @@ from nous_sdk.contracts.facts import FactChange, FactQuery, FactRead
 
 from .security import application, context
 
-router = APIRouter(prefix='/api/v1/namespaces/{namespace_id}/facts')
+router = APIRouter(prefix='/api/knowledge/namespaces/{namespace_id}/facts')
 
 
 @router.post("/change")

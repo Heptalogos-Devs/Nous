@@ -1,6 +1,7 @@
 """Program-selected complete native history ranges and their continuation summaries."""
 from pydantic import Field
 from .common import Contract
+from .common import ModelProvenance
 from .targets import ContextTarget
 
 class WorkingHistoryGroup(Contract):
@@ -18,4 +19,4 @@ class HistorySummary(Contract):
     group_id: str
     text: str
     covered_sources: tuple[ContextTarget,...]
-    producer_call_id: str | None = None
+    producer: ModelProvenance | None = None

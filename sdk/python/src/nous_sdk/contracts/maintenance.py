@@ -6,6 +6,7 @@ from pydantic import Field, JsonValue
 
 from .cognition import CognitiveKind, CognitiveRef
 from .common import Contract, Operation, TimeRange
+from .common import ModelProvenance
 from .growth import GrowthDraft, GrowthSource
 from .media import MediaReference
 from .retrieval import QueryRequest
@@ -83,14 +84,9 @@ class MaintenanceProposal(Contract):
     actions: tuple[JsonValue, ...] = ()
     origin: Literal["model", "human"] = "model"
     complete: bool = True
-    source_call_id: str | None = None
+    producer: ModelProvenance | None = None
     validation_errors: tuple[dict[str, JsonValue], ...] = ()
     questions: tuple[str, ...] = ()
-
-
-class CaptureMaintenanceOutput(Operation):
-    expected_revision: int = Field(ge=1)
-    call_id: str
 
 
 class EditMaintenanceProposal(Operation):
@@ -104,7 +100,7 @@ class MaintenanceEdit(Contract):
     recorded_at: str
     commit_seq: int
     reason: str
-    source_call_id: str | None = None
+    producer: ModelProvenance | None = None
 
 
 class MaintenanceRun(Contract):
@@ -121,8 +117,6 @@ class MaintenanceRun(Contract):
     command: StartMaintenance
     catalog: MaintenanceCatalog | None = None
     draft: GrowthDraft | None = None
-    producer_call_id: str | None = None
-    generation_call_ids: tuple[str, ...] = ()
     review: MaintenanceReview | None = None
     review_history: tuple[MaintenanceReview, ...] = ()
     purged_at: str | None = None

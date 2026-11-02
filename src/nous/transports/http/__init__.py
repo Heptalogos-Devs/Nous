@@ -1,16 +1,19 @@
 """FastAPI host for the same operations exposed by CLI and MCP."""
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from jinja2 import TemplateError
 from nous_sdk.contracts import DomainError
 from starlette.exceptions import HTTPException
+
 from nous.bootstrap import application
 from nous.platform.configuration import Settings
 from nous.platform.errors import NousError
 from nous.platform.persistence import OperationConflict
+
 from .corrections import router as corrections
 from .credentials import router as credentials
 from .domain import router as domain
@@ -29,7 +32,7 @@ from .retention import router as retention
 from .runtime import router as runtime
 from .sdk_routes import router as sdk_routes
 from .vector_spaces import router as vector_spaces
-from .web import router as web
+
 
 def create_app(settings: Settings | None=None) -> FastAPI:
     settings = settings or Settings()
@@ -60,7 +63,6 @@ def create_app(settings: Settings | None=None) -> FastAPI:
     app.include_router(vector_spaces)
     app.include_router(credentials)
     app.include_router(corrections)
-    app.include_router(web)
     app.include_router(maintenance)
 
     @app.exception_handler(DomainError)

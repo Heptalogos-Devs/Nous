@@ -42,6 +42,7 @@ from nous_sdk.contracts.person_profiles import (
     RefreshPersonProfile,
 )
 from nous_sdk.contracts.records import RecordsQuery
+from nous_sdk.contracts.common import ModelProvenance
 from pydantic import JsonValue, TypeAdapter
 from sqlalchemy import select
 
@@ -57,6 +58,7 @@ from .schema import revisions
 if TYPE_CHECKING:
     from .models import ModelServices
     from .records import CognitiveRecords
+    from .memory import MemoryService
 
 
 def grams(value: str) -> set[str]:
@@ -76,8 +78,9 @@ _UNAVAILABLE = {"source_unavailable", "cognition_not_found", "region_not_found"}
 
 class PersonProfileService:
     def __init__(
-        self, authority: Authority, cognition: CognitiveRecords, models: ModelServices | None
+        self, authority: Authority, cognition: CognitiveRecords, models: ModelServices | None, *, memories: MemoryService
     ):
+        self.memories = memories
         self.authority, self.cognition, self.models = (authority, cognition, models)
 
     async def output_context(
@@ -89,9 +92,7 @@ class PersonProfileService:
                     view,
                     ctx,
                     (result.record.reference,),
-                    operation_id=command.operation_id,
-                    operation_kind="person_profile.change",
-                    scope=ctx.namespace_id,
+                    observation_ids=(result.observation_id,),
                     input_material_ids=(result.report_material_id,),
                 )
                 if ctx.source_groups()
@@ -123,7 +124,7 @@ class PersonProfileService:
         *,
         action: str,
         reason: str,
-        producer_call_id: str | None = None,
+        producer: ModelProvenance | None = None,
     ) -> CognitiveRecord:
 
         await require_namespace_in(tx, ctx, "person_profiles")
@@ -136,7 +137,7 @@ class PersonProfileService:
                 body=body,
                 evidence=evidence,
                 times=previous.times,
-                producer_call_id=producer_call_id,
+                producer=producer,
             ),
             state=RevisionState(
                 cause=RevisionCause(
@@ -179,30 +180,7 @@ class PersonProfileService:
             else None
         )
         try:
-            async with self.authority.write(
-                ctx,
-                command.operation_id,
-                operation_kind="person_profile.change",
-                scope=ctx.namespace_id,
-                payload=command,
-            ) as tx:
-                if tx.replayed:
-                    result = PersonProfileChangeResult.model_validate(tx.replay_result)
-                    effective = (
-                        await self.cognition.qualify_known_outputs_in(
-                            tx,
-                            ctx,
-                            (result.record.reference,),
-                            operation_id=command.operation_id,
-                            operation_kind="person_profile.change",
-                            scope=ctx.namespace_id,
-                            input_material_ids=(result.report_material_id,),
-                        )
-                        if ctx.source_groups()
-                        else ctx
-                    )
-                    await self.cognition.replay_record_in(tx, effective, result.record)
-                    return result
+            async with self.authority.write(ctx) as tx:
                 await require_namespace_in(tx, ctx, "memory")
                 previous = await self.person_in(tx, ctx, command.reference)
                 assert isinstance(previous.body, EntityBody)
@@ -261,7 +239,7 @@ class PersonProfileService:
                 )
                 corrected_memory = None
                 if command.action == "correct_evidence" and command.memory_reference is not None:
-                    corrected_memory = await self.cognition.change_retention_in(
+                    corrected_memory = await self.memories.change_retention_in(
                         tx,
                         ctx,
                         RetentionChange(
@@ -270,15 +248,7 @@ class PersonProfileService:
                             reason=command.reason,
                         ),
                     )
-                result = tx.result(
-                    PersonProfileChangeResult(
-                        record=value,
-                        corrected_memory=corrected_memory,
-                        report_material_id=admission.material["id"],
-                        observation_id=admission.event["id"],
-                        commit_seq=tx.commit_seq,
-                    )
-                )
+                result = PersonProfileChangeResult(record=value, corrected_memory=corrected_memory, report_material_id=admission.material['id'], observation_id=admission.event['id'], commit_seq=tx.commit_seq)
             return result
         finally:
             if lease and store:
@@ -474,18 +444,8 @@ class PersonProfileService:
     async def submit_refresh(
         self, ctx: CallContext, command: RefreshPersonProfile
     ) -> PersonProfileRefreshSubmission:
-        async with self.authority.write(
-            ctx,
-            command.operation_id,
-            operation_kind="person_profile.refresh",
-            scope=ctx.namespace_id,
-            payload=command,
-        ) as tx:
-            if tx.replayed:
-                result = PersonProfileRefreshSubmission.model_validate(tx.replay_result)
-                await self.person_in(tx, ctx, result.reference)
-                return result
-            return tx.result(await self.submit_refresh_in(tx, ctx, command))
+        async with self.authority.write(ctx) as tx:
+            return await self.submit_refresh_in(tx, ctx, command)
 
     async def submit_refresh_in(
         self, tx: WriteTx, ctx: CallContext, command: RefreshPersonProfile
@@ -552,10 +512,7 @@ class PersonProfileService:
         record = await self.stored_person_in(view, ctx, command.reference)
         assert isinstance(record.body, EntityBody)
         head = await view.connection.scalar(
-            select(revisions.c.head).where(
-                revisions.c.id == record.reference.id,
-                revisions.c.revision == record.reference.revision,
-            )
+            select(revisions.c.head).where(revisions.c.namespace_id == ctx.namespace_id, revisions.c.id == record.reference.id, revisions.c.revision == record.reference.revision)
         )
         if not head:
             raise DomainError(
@@ -603,9 +560,7 @@ class PersonProfileService:
             claim = await claim_in(self.cognition, view, ctx, reference)
             body = claim.body
             current = await view.connection.scalar(
-                select(revisions.c.head).where(
-                    revisions.c.id == reference.id, revisions.c.revision == reference.revision
-                )
+                select(revisions.c.head).where(revisions.c.namespace_id == ctx.namespace_id, revisions.c.id == reference.id, revisions.c.revision == reference.revision)
             )
             if (
                 not current
@@ -654,18 +609,9 @@ class PersonProfileService:
         intent = PersonProfileRefreshIntent.model_validate(payload)
         ctx, command = (intent.context, intent.command)
         adoption_id = command.operation_id + ":adopt"
-        receipt = await self.authority.receipt(
-            ctx,
-            adoption_id,
-            operation_kind="person_profile.form",
-            scope=ctx.namespace_id,
-            payload=intent,
-        )
-        if receipt is not None:
-            return receipt.result
         async with self.authority.read(ctx) as view:
             variables, catalog, source_ids = await self.profile_input_in(view, intent)
-        call_id: str | None = None
+        producer: ModelProvenance | None = None
         support: tuple[EvidenceLink, ...] = ()
         summary, aliases = ("", ())
         if set(catalog) - {"D0"}:
@@ -680,74 +626,50 @@ class PersonProfileService:
                 variables.model_dump(),
                 PersonProfileDraft,
                 source_ids=source_ids,
-                invocation_id="person-profile:" + command.operation_id,
             )
             if set(generated.output.evidence_keys).difference(catalog):
                 raise DomainError(
                     "profile_evidence_unknown",
                     "The profile cites an unknown evidence key",
-                    call_id=generated.call_id,
+                    output_digest=generated.producer.output_digest,
                 )
             support = tuple(
                 dict.fromkeys(
                     link for key in generated.output.evidence_keys for link in catalog[key]
                 )
             )
-            summary, aliases, call_id = (
+            summary, aliases, producer = (
                 generated.output.summary,
                 generated.output.aliases,
-                generated.call_id,
+                generated.producer,
             )
-        async with self.authority.write(
-            ctx,
-            adoption_id,
-            operation_kind="person_profile.form",
-            scope=ctx.namespace_id,
-            payload=intent,
-        ) as tx:
-            if tx.replayed:
-                return tx.replay_result
+        async with self.authority.write(ctx) as tx:
             await self.profile_input_in(tx, intent)
             previous = await self.stored_person_in(tx, ctx, command.reference)
             assert isinstance(previous.body, EntityBody)
             profile = (
                 GeneratedPersonProfile(
-                    summary=summary, aliases=aliases, evidence=support, producer_call_id=call_id
+                    summary=summary, aliases=aliases, evidence=support, producer=producer
                 )
-                if call_id is not None
+                if producer is not None
                 else None
             )
             body = previous.body.model_copy(update={"generated_profile": profile})
             if body == previous.body:
-                return tx.result(
-                    {
-                        "reference": previous.reference.model_dump(mode="json"),
-                        "call_id": call_id,
-                        "cleared_no_evidence": not bool(catalog),
-                        "unchanged": True,
-                    }
-                )
+                return {'reference': previous.reference.model_dump(mode='json'), 'producer': producer.model_dump(mode='json') if producer else None, 'cleared_no_evidence': not bool(catalog), 'unchanged': True}
             value = await self.revise_in(
                 tx,
                 ctx,
                 previous,
                 body,
                 previous.evidence,
-                action="person_profile.refresh" if call_id else "person_profile.withdraw",
+                action="person_profile.refresh" if producer else "person_profile.withdraw",
                 reason="Explicit single-person profile refresh"
-                if call_id
+                if producer
                 else "No retained attributes or stable claims remain for automatic synthesis",
-                producer_call_id=call_id,
+                producer=producer,
             )
-            result = tx.result(
-                TypeAdapter(JsonValue).validate_python(
-                    {
-                        "reference": value.reference.model_dump(mode="json"),
-                        "call_id": call_id,
-                        "cleared_no_evidence": not bool(catalog),
-                    }
-                )
-            )
+            result = TypeAdapter(JsonValue).validate_python({'reference': value.reference.model_dump(mode='json'), 'producer': producer.model_dump(mode='json') if producer else None, 'cleared_no_evidence': not bool(catalog)})
         return result
 
 

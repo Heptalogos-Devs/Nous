@@ -14,7 +14,6 @@ from ..contracts.social import (
     ChangeSocialRelation,
     IdentityHypothesis,
     LinkIdentity,
-    RecoverSymbolResult,
     SymbolCandidates,
     SymbolSelection,
     UnlinkIdentity,
@@ -24,17 +23,6 @@ from .media import MediaClient
 
 
 class SocialClient(MediaClient):
-    async def recover_symbol_result(
-        self, namespace_id: str,  command: RecoverSymbolResult
-    ) -> SymbolCandidates:
-        return SymbolCandidates.model_validate(
-            await self.request(
-                "POST",
-                self.namespace_path(namespace_id) + "/social/symbols/recover",
-                body=encoded(command),
-            )
-        )
-
     async def motivation_assessment(
         self, namespace_id: str,  assessment_id: str
     ) -> SavedMotivationAssessment:

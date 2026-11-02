@@ -5,18 +5,14 @@ from .common import Contract, Operation
 from .identity import Namespace, SubjectBinding
 from .management import NamespaceBundle
 
-class ArchivedConfiguration(Contract):
-    key: str
-    value: JsonValue
-
 class NamespaceArchive(Contract):
     format: Literal['nous.namespace'] = 'nous.namespace'
-    version: Literal[2] = 2
+    version: Literal[3] = 3
     namespace: Namespace
     authority_commit_seq: int
     bundle: NamespaceBundle
     bindings: tuple[SubjectBinding, ...] = ()
-    configuration: tuple[ArchivedConfiguration, ...] = ()
+    configuration_toml: str
 
 class RestoreNamespace(Operation):
     archive: NamespaceArchive

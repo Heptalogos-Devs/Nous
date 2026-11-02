@@ -18,7 +18,6 @@ from nous_sdk.contracts import (
     SplitEntity,
 )
 from nous_sdk.contracts.cognition import PersonAliasOverride, PersonSummaryOverride
-from pydantic import TypeAdapter
 from sqlalchemy import select
 
 from nous.cognition.facts import FactService
@@ -58,19 +57,7 @@ class EntityService:
     async def merge_entities(
         self, ctx: CallContext, command: MergeEntities
     ) -> tuple[CognitiveRecord, ...]:
-        async with self.records.authority.write(
-            ctx,
-            command.operation_id,
-            operation_kind="entity.merge",
-            scope=ctx.namespace_id,
-            payload=command,
-        ) as tx:
-            if tx.replayed:
-                return await self.records.replay_records_in(
-                    tx,
-                    ctx,
-                    TypeAdapter(tuple[CognitiveRecord, ...]).validate_python(tx.replay_result),
-                )
+        async with self.records.authority.write(ctx) as tx:
             values = [
                 await entity_in(self.records, tx, ctx, ref)
                 for ref in (command.target, *command.sources)
@@ -219,24 +206,12 @@ class EntityService:
                     exclude=frozenset(record.reference.id for record in values),
                 )
             )
-            return tx.result(tuple(result))
+            return tuple(result)
 
     async def split_entity(
         self, ctx: CallContext, command: SplitEntity
     ) -> tuple[CognitiveRecord, ...]:
-        async with self.records.authority.write(
-            ctx,
-            command.operation_id,
-            operation_kind="entity.split",
-            scope=ctx.namespace_id,
-            payload=command,
-        ) as tx:
-            if tx.replayed:
-                return await self.records.replay_records_in(
-                    tx,
-                    ctx,
-                    TypeAdapter(tuple[CognitiveRecord, ...]).validate_python(tx.replay_result),
-                )
+        async with self.records.authority.write(ctx) as tx:
             original = await entity_in(self.records, tx, ctx, command.source)
             assert isinstance(original.body, EntityBody)
             bodies = [part.body for part in command.partitions]
@@ -357,6 +332,8 @@ class EntityService:
             )
             if claim_mapping:
                 result.extend(
-                    await replace_references_in(self.records, tx, ctx, claim_mapping, command.reason)
+                    await replace_references_in(
+                        self.records, tx, ctx, claim_mapping, command.reason
+                    )
                 )
-            return tx.result(tuple(result))
+            return tuple(result)

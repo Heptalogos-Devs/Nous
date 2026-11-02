@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import math
 from typing import Literal
 
@@ -11,10 +13,9 @@ from .bundles import (
     PackageDescriptor,
 )
 from .cognition import CognitiveRecord, CognitiveRef
-from .common import Contract, ObservationKind, Operation
+from .common import Contract, ModelProvenance, ObservationKind, Operation
 from .derivation import DerivedBundle
 from .imports import UnitOutput
-from .model_calls import ArchivedCall
 from .records import RecordsQuery
 from .references import ReferenceBinding
 from .retention import RetentionExpectation, RetentionSnapshot
@@ -75,17 +76,43 @@ class SourceResult(Contract):
 class BundleRequest(Contract):
     package: PackageDescriptor | None = None
     content_level: Literal["full", "knowledge"] = "full"
-    format: Literal["native", "amemorix"] = "native"
     selector: BundleSelector = Field(default_factory=AllSelection)
     assets: BundleAssetOptions | None = None
     references: tuple[CognitiveRef, ...] | None = None
 
 
-class InstallBundle(Operation):
+class InstallBundle(Contract):
     mode: Literal["merge", "restore"] = "merge"
     placement: BundlePlacement = Field(default_factory=BundlePlacement)
-    archive_material_id: str | None = None
     bundle: dict[str, JsonValue]
+
+
+class BundleInstallation(Contract):
+    installation_id: str
+    package: PackageDescriptor | None = None
+    content_level: Literal["full", "knowledge"]
+    mode: Literal["merge", "restore"]
+    placement: BundlePlacement
+    content_digest: str
+    source_namespace_id: str
+    installed_at: str
+    state: Literal["active", "uninstalled"]
+    owned_observation_ids: tuple[str, ...]
+    bundle_id: str
+    mapping: dict[str, str]
+    vector_provenance: tuple[dict[str, JsonValue], ...]
+    cognition_count: int
+    output_count: int
+    commit_seq: int
+    uninstalled_commit_seq: int | None = None
+
+
+class BundleRemoval(Contract):
+    installation_id: str
+    state: Literal["uninstalled"]
+    affected: tuple[str, ...] = ()
+    commit_seq: int | None = None
+    already_uninstalled: bool = False
 
 
 class BundleMaterial(Contract):
@@ -101,6 +128,8 @@ class BundleObservation(Contract):
 
     material_id: str
     kind: ObservationKind
+    caller_id: str | None = None
+    external_event_id: str | None = None
     active: bool
     record: dict[str, JsonValue]
     commit_seq: int
@@ -136,16 +165,16 @@ class BundleFileSuccess(Contract):
 
 class BundleVector(Contract):
     provenance: dict[str, JsonValue] = Field(default_factory=dict)
+    producer: ModelProvenance | None = None
     reference: str
     space: str
     model: str
     dimensions: int = Field(ge=1)
     vector: tuple[float, ...]
-    call_id: str | None = None
     commit_seq: int
 
     @model_validator(mode="after")
-    def actual_coordinates(self) -> "BundleVector":
+    def actual_coordinates(self) -> BundleVector:
         if len(self.vector) != self.dimensions or not all(
             math.isfinite(value) for value in self.vector
         ):
@@ -157,7 +186,7 @@ class NamespaceBundle(Contract):
     package: PackageDescriptor | None = None
     content_level: Literal["full", "knowledge"] = "full"
     format: Literal["nous.namespace.bundle"] = "nous.namespace.bundle"
-    version: Literal[1] = 1
+    version: Literal[2] = 2
     id: str
     namespace_id: str
 
@@ -175,7 +204,6 @@ class NamespaceBundle(Contract):
     bindings: tuple[ReferenceBinding, ...] = ()
     derivations: DerivedBundle = Field(default_factory=DerivedBundle)
     vectors: tuple[BundleVector, ...] = ()
-    calls: tuple[ArchivedCall, ...] = ()
 
     @model_validator(mode="after")
     def single_namespace(self) -> NamespaceBundle:

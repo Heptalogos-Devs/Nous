@@ -44,17 +44,17 @@ class RetrievalService:
         cognition: CognitiveRecords,
         models: ModelServices,
         index_path: str | Path,
-        materials: MaterialService | None = None,
-        derivations: DerivedService | None = None,
+        materials: MaterialService,
+        derivations: DerivedService,
         *,
         configuration: ConfigurationService,
-        resources: ResourceService | None = None,
-        projection: VectorProjectionService | None = None,
+        resources: ResourceService,
+        projection: VectorProjectionService,
     ) -> None:
         self.authority, self.cognition, self.models = authority, cognition, models
         self.configuration = configuration
-        self.materials = materials or MaterialService(authority)
-        self.derivations = derivations or cognition.derivations
+        self.materials = materials
+        self.derivations = derivations
         self.references = ReferenceDirectory(
             authority, cognition, self.materials, resources=resources
         )

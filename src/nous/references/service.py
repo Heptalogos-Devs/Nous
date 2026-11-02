@@ -139,7 +139,7 @@ class ReferenceDirectory:
                 revisions.c.kind == target.identity.kind,
             )
             if as_of_commit is not None:
-                statement = statement.where(revisions.c.commit_seq <= as_of_commit)
+                statement = statement.where(revisions.c.namespace_id == ctx.namespace_id, revisions.c.commit_seq <= as_of_commit)
             value = await _head_in(view, statement, as_of_time)
             if value is None:
                 raise DomainError("reference_not_found", "Reference has no visible revision")
@@ -183,14 +183,10 @@ class ReferenceDirectory:
                 raise DomainError(
                     "reference_not_found", "Source object is outside recorded-time history"
                 )
-        elif target.reference.kind == "material":
+        elif target.reference.kind in {"material", "source_region"}:
             await self.materials.media_source_in(view, ctx, target.reference)
-        elif target.reference.kind == "source_region":
-            await self.materials.read_region_in(view, ctx, target.reference.id)
         else:
-            await self.derivations.authorize_in(
-                view, ctx, target.reference
-            )
+            await self.derivations.authorize_in(view, ctx, target.reference)
         return target
 
     async def resolve_in(
@@ -205,15 +201,23 @@ class ReferenceDirectory:
             raise DomainError(
                 "invalid_history", "Reference history cutoff is outside committed history"
             )
-        group_ref, separator, item = locator.partition(':')
-        if separator and group_ref.startswith('q') and group_ref[1:].isdigit() and item.isdigit():
-            targets = await view.connection.scalar(sa.select(query_groups.c.targets).where(query_groups.c.namespace_id==ctx.namespace_id,query_groups.c.group_ref==group_ref))
-            position=int(item)-1
-            if targets is None or position<0 or position>=len(targets):
-                raise DomainError('reference_not_found','Query result reference does not exist in this Namespace')
-            target=_TARGET.validate_python(targets[position])
-            resolved=await self.resolve_target_in(view,ctx,target,as_of_commit,as_of_time)
-            return ReferenceResolution(namespace_id=ctx.namespace_id,reference=resolved)
+        group_ref, separator, item = locator.partition(":")
+        if separator and group_ref.startswith("q") and group_ref[1:].isdigit() and item.isdigit():
+            targets = await view.connection.scalar(
+                sa.select(query_groups.c.targets).where(
+                    query_groups.c.namespace_id == ctx.namespace_id,
+                    query_groups.c.group_ref == group_ref,
+                    query_groups.c.caller_id == ctx.caller_id,
+                )
+            )
+            position = int(item) - 1
+            if targets is None or position < 0 or position >= len(targets):
+                raise DomainError(
+                    "reference_not_found", "Query result reference does not exist in this Namespace"
+                )
+            target = _TARGET.validate_python(targets[position])
+            resolved = await self.resolve_target_in(view, ctx, target, as_of_commit, as_of_time)
+            return ReferenceResolution(namespace_id=ctx.namespace_id, reference=resolved)
         if ":" in locator:
             kind, identity = locator.split(":", 1)
             if kind == "resource":
@@ -286,9 +290,9 @@ class ReferenceDirectory:
             revisions.c.id == object_id,
         )
         if separator:
-            statement = statement.where(revisions.c.kind == object_kind)
+            statement = statement.where(revisions.c.namespace_id == ctx.namespace_id, revisions.c.kind == object_kind)
         if as_of_commit is not None:
-            statement = statement.where(revisions.c.commit_seq <= as_of_commit)
+            statement = statement.where(revisions.c.namespace_id == ctx.namespace_id, revisions.c.commit_seq <= as_of_commit)
         value = await _head_in(view, statement, as_of_time)
         if value is not None:
             cognitive = CognitiveRecord.model_validate(value).reference
@@ -360,38 +364,42 @@ class ReferenceDirectory:
             return await self.resolve_in(view, ctx, locator, as_of_commit, as_of_time)
 
     async def retain_query(self, ctx: CallContext, result):
-        from uuid import uuid4
 
         from nous_sdk.contracts.resources import ResourceRecord
         from nous_sdk.contracts.retrieval import QueryResult
         from nous_sdk.contracts.source_objects import ObservationRecord
-        targets=[]
+
+        targets = []
         for hit in result.hits:
-            record=hit.object
-            if isinstance(record,CognitiveRecord): target=CognitiveTarget(reference=record.reference)
-            elif isinstance(record,ResourceRecord):target=ResourceTarget(reference=record.reference)
-            elif isinstance(record,ObservationRecord):target=ObservationTarget(reference=record.reference)
-            elif isinstance(record.reference,MediaReference):target=MediaTarget(reference=record.reference)
-            else:target=EvidenceTarget(reference=record.reference)
-            targets.append(target.model_dump(mode='json'))
-        async with self.authority.write(ctx,str(uuid4()),operation_kind='query.references',scope=ctx.namespace_id,payload={'targets':targets}) as tx:
-            group_ref='q'+str(tx.commit_seq)
-            await tx.connection.execute(query_groups.insert().values(namespace_id=ctx.namespace_id,group_ref=group_ref,caller_id=ctx.caller_id,targets=targets,commit_seq=tx.commit_seq))
-            refs=tuple(group_ref+':'+str(index+1) for index in range(len(targets)))
-            tx.result({'refs':refs})
-        return QueryResult.model_validate({**result.model_dump(), 'result_refs':refs})
+            record = hit.object
+            if isinstance(record, CognitiveRecord):
+                target = CognitiveTarget(reference=record.reference)
+            elif isinstance(record, ResourceRecord):
+                target = ResourceTarget(reference=record.reference)
+            elif isinstance(record, ObservationRecord):
+                target = ObservationTarget(reference=record.reference)
+            elif isinstance(record.reference, MediaReference):
+                target = MediaTarget(reference=record.reference)
+            else:
+                target = EvidenceTarget(reference=record.reference)
+            targets.append(target.model_dump(mode="json"))
+        async with self.authority.write(ctx) as tx:
+            group_ref = "q" + str(tx.commit_seq)
+            await tx.connection.execute(
+                query_groups.insert().values(
+                    namespace_id=ctx.namespace_id,
+                    group_ref=group_ref,
+                    caller_id=ctx.caller_id,
+                    targets=targets,
+                    commit_seq=tx.commit_seq,
+                )
+            )
+            refs = tuple(group_ref + ":" + str(index + 1) for index in range(len(targets)))
+        return QueryResult.model_validate({**result.model_dump(), "result_refs": refs})
 
     async def reconcile(self, ctx: CallContext, operation_id: str) -> dict[str, int]:
         """Repair missing address metadata on visible identities without revising content."""
-        async with self.authority.write(
-            ctx,
-            operation_id,
-            operation_kind="references.reconcile",
-            scope=ctx.namespace_id or ctx.namespace_id,
-            payload={"namespace_id": ctx.namespace_id},
-        ) as tx:
-            if tx.replayed:
-                return TypeAdapter(dict[str, int]).validate_python(tx.replay_result)
+        async with self.authority.write(ctx) as tx:
             scopes = [ctx]
             statement = sa.select(revisions).where(revisions.c.namespace_id == ctx.namespace_id)
             if ctx.namespace_id is not None:
@@ -412,11 +420,7 @@ class ReferenceDirectory:
                     updated = dict(row["record"])
                     updated["addresses"] = allocated.model_dump(mode="json")
                     await tx.connection.execute(
-                        revisions.update()
-                        .where(
-                            revisions.c.id == record.reference.id,
-                            revisions.c.revision == record.reference.revision,
-                        )
+                        revisions.update().where(revisions.c.namespace_id == ctx.namespace_id, revisions.c.id == record.reference.id, revisions.c.revision == record.reference.revision)
                         .values(record=updated)
                     )
                     counts["cognition"] += 1
@@ -461,4 +465,4 @@ class ReferenceDirectory:
                             )
                             counts[counter] += 1
                         break
-            return tx.result(counts)
+            return counts

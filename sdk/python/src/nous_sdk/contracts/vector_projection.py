@@ -29,4 +29,3 @@ class ProjectionResult(Contract):
     references: tuple[str, ...] = ()
     omitted: tuple[str, ...] = ()
     spaces: tuple[str, ...] = ()
-    call_ids: tuple[str, ...] = ()

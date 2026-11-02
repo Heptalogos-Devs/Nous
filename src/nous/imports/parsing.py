@@ -66,7 +66,7 @@ def _record(
             record = ImportRecord.model_validate(fields)
         else:
             field = "passage" if kind == "lpmm_openie" else "content"
-            if kind == "a_memorix_paragraph" and isinstance(value, str):
+            if kind == "paragraph" and isinstance(value, str):
                 text = value
                 fields = {}
             elif isinstance(value, dict):
@@ -179,8 +179,6 @@ def parse_document(
     if isinstance(payload, list):
         records, kind, prefix = payload, "native", ""
     elif isinstance(payload, dict):
-        if payload.get("format") == "a-memorix-memory-bundle":
-            raise DomainError("bundle_required", "Memory bundles require the bundle installer")
         keys = [key for key in ("records", "paragraphs", "docs") if key in payload]
         if len(keys) != 1 or not isinstance(payload[keys[0]], list):
             raise DomainError(
@@ -190,7 +188,7 @@ def parse_document(
         records_value = payload[key]
         assert isinstance(records_value, list)
         records = records_value
-        kind = {"records": "native", "paragraphs": "a_memorix_paragraph", "docs": "lpmm_openie"}[
+        kind = {"records": "native", "paragraphs": "paragraph", "docs": "lpmm_openie"}[
             key
         ]
         context = {name: value for name, value in payload.items() if name != key}

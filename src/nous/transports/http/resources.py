@@ -5,7 +5,7 @@ from nous_sdk.contracts.resources import ChangeResource, ReadResource, RegisterR
 
 from .security import application, context
 
-router = APIRouter(prefix='/api/v1/namespaces/{namespace_id}/resources')
+router = APIRouter(prefix='/api/knowledge/namespaces/{namespace_id}/resources')
 
 
 @router.post("")

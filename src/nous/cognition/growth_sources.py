@@ -33,9 +33,7 @@ async def evidence_in(
     for source in snapshot.sources:
         if source.key in keys or source.key in result:
             raise DomainError("growth_key_conflict", "Material and cognitive keys must be distinct")
-        provenance = await self.materials.provenance_in(
-            view, ctx, source.source, derivations=self.derivations
-        )
+        provenance = await self.materials.provenance_in(view, ctx, source.source)
         for link in source.evidence:
             if link.observation_id is None or link.observation_id not in provenance.roots:
                 raise DomainError(
@@ -101,9 +99,7 @@ async def from_references_in(
 ) -> tuple[GrowthSource, ...]:
     values: list[GrowthSource] = []
     for index, reference in enumerate(references, start):
-        provenance = await self.materials.provenance_in(
-            view, ctx, reference, derivations=self.derivations
-        )
+        provenance = await self.materials.provenance_in(view, ctx, reference)
         event_id = reference.observation_id or (
             provenance.roots[0] if len(provenance.roots) == 1 else None
         )

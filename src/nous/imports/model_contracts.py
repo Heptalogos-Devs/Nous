@@ -1,13 +1,10 @@
-"""Outputs owned by the actual source formation and description consumers."""
+"""Media description input supplied to the registered model role."""
 
-from nous_sdk.contracts.cognition import FormationDraft, ProposedMemory
-from pydantic import BaseModel, Field
-
-
-class Description(BaseModel):
-    description: str = Field(min_length=1)
-    producer_call_id: str
+from pydantic import BaseModel, ConfigDict
 
 
-class MediaFormationDraft(FormationDraft):
-    memories: tuple[ProposedMemory, ...] = Field(min_length=1)
+class DescriptionInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source_text: str = ""
+    background: str = ""

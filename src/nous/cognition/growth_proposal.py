@@ -145,10 +145,7 @@ def growth_model_catalog(snapshot: GrowthSnapshot) -> dict[str, JsonValue]:
     for entry in snapshot.entries:
         body = _OBJECT.validate_python(project(entry.record.body))
         epistemic = body.get("epistemic")
-        if (
-            isinstance(epistemic, dict)
-            and epistemic.get("attribution") == entry.record.producer_call_id
-        ):
+        if isinstance(epistemic, dict) and entry.record.producer is not None:
             epistemic["attribution"] = "model_derived"
         entries.append(
             {

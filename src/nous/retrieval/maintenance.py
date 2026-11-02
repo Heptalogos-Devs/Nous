@@ -21,6 +21,7 @@ async def enqueue_index_in(tx: WriteTx, ctx: CallContext) -> None:
             workflow_name="nous.retrieval.index",
             queue_name="default",
             workflow_id=identity,
+            scope=ctx.namespace_id,
             kwargs={"namespace_id": ctx.namespace_id, "through_commit_seq": tx.commit_seq},
         )
     )

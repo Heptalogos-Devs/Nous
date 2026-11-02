@@ -5,7 +5,6 @@ from contextlib import AbstractAsyncContextManager
 
 from nous_sdk import NousClient
 from nous_sdk.contracts.maintenance import (
-    CaptureMaintenanceOutput,
     CreateMaintenanceSchedule,
     EditMaintenanceProposal,
     ReviewMaintenance,
@@ -23,18 +22,8 @@ def register_maintenance(
     
 ) -> None:
     @server.tool()
-    async def capture_maintenance_output(
-        run_id: str, command: CaptureMaintenanceOutput
-    ) -> JsonObject:
-        """Read a retained model response into reviewable groups without invoking a model."""
-        async with client() as api:
-            return (
-                await api.capture_maintenance_output(namespace_id,  run_id, command)
-            ).model_dump(mode="json")
-
-    @server.tool()
     async def edit_maintenance(run_id: str, command: EditMaintenanceProposal) -> JsonObject:
-        """Compile an explicit human edit, preserving the original paid response and adopted groups."""
+        """Compile an explicit human edit while keeping already adopted groups."""
         async with client() as api:
             return (
                 await api.edit_maintenance(namespace_id,  run_id, command)

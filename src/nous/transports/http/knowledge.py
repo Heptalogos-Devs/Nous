@@ -5,8 +5,6 @@ from typing import Literal
 from fastapi import APIRouter, Request
 from nous_sdk.contracts import (
     BundleRequest,
-    ContextCommand,
-    ContextFeedback,
     InstallBundle,
     SourceCommand,
 )
@@ -14,7 +12,7 @@ from nous_sdk.contracts.management import SourceSelection
 
 from .security import application, context
 
-router = APIRouter(prefix='/api/v1/namespaces/{namespace_id}')
+router = APIRouter(prefix='/api/knowledge/namespaces/{namespace_id}')
 
 
 @router.get("/sources")
@@ -82,26 +80,22 @@ async def install_bundle(
     )
 
 
-@router.post("/contexts")
-async def admit_context(
-    request: Request, namespace_id: str,  command: ContextCommand
-):
-    return await application(request).contexts.admit(
-        await context(request, namespace_id), command
+@router.get("/bundles/installations")
+async def bundle_installations(request: Request, namespace_id: str):
+    return await application(request).bundles.list_installs(
+        await context(request, namespace_id, capability="read")
     )
 
 
-@router.get("/contexts/{context_id}")
-async def read_context(request: Request, namespace_id: str,  context_id: str):
-    return await application(request).contexts.read(
-        await context(request, namespace_id,  capability="read"), context_id
+@router.get("/bundles/installations/{installation_id}")
+async def bundle_installation(request: Request, namespace_id: str, installation_id: str):
+    return await application(request).bundles.get_installation(
+        await context(request, namespace_id, capability="read"), installation_id
     )
 
 
-@router.post("/contexts/feedback")
-async def context_feedback(
-    request: Request, namespace_id: str,  command: ContextFeedback
-):
-    return await application(request).contexts.record_feedback(
-        await context(request, namespace_id), command
+@router.post("/bundles/installations/{installation_id}/uninstall")
+async def uninstall_bundle(request: Request, namespace_id: str, installation_id: str):
+    return await application(request).bundles.uninstall(
+        await context(request, namespace_id, capability="manage"), installation_id
     )

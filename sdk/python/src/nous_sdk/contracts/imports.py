@@ -5,7 +5,9 @@ from typing import Literal
 from pydantic import Field, JsonValue, model_validator
 
 from .cognition import CognitiveRef, FormationCatalogEntry, FormationDraft, ProposedMemory
-from .common import ApplicableInput, Contract, Operation, TimePoint, TimeRange
+from .common import ApplicableInput, Contract, FormationPurpose, Operation, TimePoint, TimeRange
+from .common import ModelProvenance
+from .derivation import RepresentationRef
 from .fact_body import FactClaimValue
 from .media import MediaReference, MediaStrategy
 from .vector_projection import ProjectionReceipt
@@ -13,8 +15,6 @@ from .vector_projection import ProjectionReceipt
 ImportFormat = Literal[
     "text", "markdown", "html", "pdf", "json", "jsonl", "media", "parquet", "sqlite", "graphml"
 ]
-
-
 class RecordSelection(Contract):
     after_sequence: int | None = Field(default=None, ge=0)
     through_sequence: int | None = Field(default=None, ge=0)
@@ -29,7 +29,7 @@ class ImportDocument(ApplicableInput):
     text: str | None = Field(default=None, min_length=1)
     material_id: str | None = None
     format: ImportFormat = "text"
-    media_strategy: MediaStrategy = "description"
+    media_strategy: MediaStrategy = "description_only"
     filename: str = "input.txt"
     media_type: str = "text/plain"
     file_identity: str | None = None
@@ -184,10 +184,10 @@ class ProcessCatalog(Operation):
     origin: dict[str, str] | None = None
     retry_parent_job_id: str | None = None
     catalog_id: str
+    formation_purpose: FormationPurpose = "memory"
     unit_ids: tuple[str, ...] | None = None
     formation_options_override: FormationOptionsOverride | None = None
     llm_enabled: bool = True
-    formation_retries: int = Field(default=1, ge=0, le=3)
     vectors: Literal["disabled", "metadata_allowed", "required"] = "metadata_allowed"
 
 
@@ -198,8 +198,8 @@ class UnitOutput(Contract):
     unit_id: str
     observation_id: str
     cognition: tuple[CognitiveRef, ...]
+    representations: tuple[RepresentationRef, ...] = ()
     attempt_job_id: str | None = None
-    producer_call_id: str | None = None
     vector_policy: Literal["disabled", "metadata_allowed", "required"]
     commit_seq: int
 
@@ -228,7 +228,7 @@ class ImportResult(Contract):
 class AdmitFiles(FreezeCatalog):
     deferred_formation: bool = False
     llm_enabled: bool = True
-    formation_retries: int = Field(default=1, ge=0, le=3)
+    formation_purpose: FormationPurpose = "memory"
     vectors: Literal["disabled", "metadata_allowed", "required"] = "metadata_allowed"
     dedupe_policy: Literal["none", "content_hash", "manifest"] = "content_hash"
     force: bool = False
@@ -256,7 +256,6 @@ class UnitAttempt(Contract):
     started_at: str
     finished_at: str | None = None
     output_id: str | None = None
-    producer_call_id: str | None = None
     error: ImportFailure | None = None
     vector_error: ImportFailure | None = None
 
@@ -279,18 +278,16 @@ class TextImportPreview(Contract):
 
 
 class FormObservation(Operation):
-    media_strategy: MediaStrategy = "description"
-    anchor: CognitiveRef | None = None
+    media_strategy: MediaStrategy = "description_only"
+    formation_purpose: FormationPurpose = "memory"
+    background: str = ""
     vectors: Literal["disabled", "metadata_allowed", "required"] = "disabled"
     observation_id: str
     source: MediaReference | None = None
     llm_enabled: bool = True
 
     def identity_payload(self) -> dict[str, JsonValue]:
-        return self.model_dump(
-            mode="json",
-            exclude={"media_strategy"} if self.media_strategy == "description" else set(),
-        )
+        return self.model_dump(mode="json")
 
 
 class ObservationFormation(Contract):
@@ -299,7 +296,7 @@ class ObservationFormation(Contract):
     vector_error: ImportFailure | None = None
     observation_id: str
     cognition: tuple[CognitiveRef, ...]
-    producer_call_id: str | None = None
+    representations: tuple[RepresentationRef, ...] = ()
     commit_seq: int
 
 

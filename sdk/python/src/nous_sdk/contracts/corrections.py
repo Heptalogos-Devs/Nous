@@ -6,6 +6,7 @@ from pydantic import Field, model_validator
 
 from .cognition import CognitiveBody, CognitiveRecord, CognitiveRef
 from .common import Contract, Operation
+from .common import ModelProvenance
 from .records import RecordsQuery
 
 
@@ -109,7 +110,7 @@ class CorrectionPlan(Contract):
     state: Literal["generating", "ready", "applied", "rolled_back", "unavailable"]
     source_material_id: str
     source_observation_id: str
-    producer_call_id: str | None = None
+    producer: ModelProvenance | None = None
     applied: tuple[CorrectionAppliedGroup, ...] = ()
     results: tuple[CorrectionResult, ...] = ()
     commit_seq: int

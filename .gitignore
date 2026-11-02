@@ -15,3 +15,4 @@ dist/
 /native/python/python/nous_native/_core*.so
 /native/python/python/nous_native/_core*.pyd
 /native/python/python/nous_native/_core*.dll
+/native/python/python/nous_native/_core*.pdb

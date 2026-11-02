@@ -10,7 +10,6 @@ from sqlalchemy import select, update
 from nous.cognition.records import CognitiveRecords
 from nous.identity.access import require_namespace_in
 from nous.platform.content import ContentStore
-from nous.platform.models.ledger import CallLedger
 from nous.platform.persistence import Authority
 
 from . import archive, bundle_export, bundle_install
@@ -20,14 +19,12 @@ from .sources import SourceService
 
 class BundleService:
     export_archive = archive.export_archive
-    inspect_material = archive.inspect_material
     export = bundle_export.export
     export_in = bundle_export.export_in
     export_zip = bundle_export.export_zip
     inspect_zip = bundle_export.inspect_zip
     install = bundle_install.install
     install_zip = bundle_install.install_zip
-    install_material = bundle_install.install_material
     install_prepared = bundle_install.install_prepared
 
     def __init__(
@@ -35,13 +32,11 @@ class BundleService:
         authority: Authority,
         cognition: CognitiveRecords,
         *,
-        ledger: CallLedger,
         sources: SourceService,
         content_store: ContentStore | None = None,
     ) -> None:
         self.authority, self.cognition = authority, cognition
         self.content_store = content_store
-        self.ledger = ledger
         self.sources = sources
 
     async def list_installs(self, ctx: CallContext):
@@ -58,16 +53,8 @@ class BundleService:
                 ).scalars()
             ]
 
-    async def uninstall(self, ctx: CallContext, installation_id: str, operation_id: str):
-        async with self.authority.write(
-            ctx,
-            operation_id,
-            operation_kind="bundle.uninstall",
-            scope=ctx.namespace_id,
-            payload={"installation_id": installation_id},
-        ) as tx:
-            if tx.replayed:
-                return tx.replay_result
+    async def uninstall(self, ctx: CallContext, installation_id: str):
+        async with self.authority.write(ctx) as tx:
             value = (
                 await tx.connection.execute(
                     select(bundle_installs.c.record).where(
@@ -79,13 +66,7 @@ class BundleService:
             if value is None:
                 raise DomainError("bundle_install_not_found", "Bundle installation is unavailable")
             if value.get("state") == "uninstalled":
-                return tx.result(
-                    {
-                        "installation_id": installation_id,
-                        "state": "uninstalled",
-                        "already_uninstalled": True,
-                    }
-                )
+                return {'installation_id': installation_id, 'state': 'uninstalled', 'already_uninstalled': True}
             owned = tuple(value.get("owned_observation_ids", ()))
             affected: list[str] = []
             if owned:
@@ -93,7 +74,6 @@ class BundleService:
                     tx,
                     ctx,
                     SourceCommand(
-                        operation_id=operation_id,
                         observation_ids=owned,
                         reason=f"uninstall bundle {value['bundle_id']}",
                     ),
@@ -103,7 +83,6 @@ class BundleService:
             value = {
                 **value,
                 "state": "uninstalled",
-                "uninstall_operation_id": operation_id,
                 "uninstalled_commit_seq": tx.commit_seq,
             }
             await tx.connection.execute(
@@ -111,14 +90,7 @@ class BundleService:
                 .where(bundle_installs.c.id == installation_id)
                 .values(record=value)
             )
-            return tx.result(
-                {
-                    "installation_id": installation_id,
-                    "state": "uninstalled",
-                    "affected": affected,
-                    "commit_seq": tx.commit_seq,
-                }
-            )
+            return {'installation_id': installation_id, 'state': 'uninstalled', 'affected': affected, 'commit_seq': tx.commit_seq}
 
     async def get_installation(self, ctx: CallContext, installation_id: str):
         values = await self.list_installs(ctx)

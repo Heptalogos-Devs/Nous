@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-from uuid import uuid4
 
 from nous_sdk.contracts import AdmitFiles, CallContext, DomainError
 from nous_sdk.contracts.imports import ObservationFormation, ObservationFormSubmission
@@ -31,14 +30,16 @@ def admission_command(command: TextImport) -> AdmitFiles:
         document.model_copy(update={"origin": {**(command.origin or {}), **document.origin}})
         for document in command.inputs
     )
-    vector_policy = command.vectors or ("metadata_allowed" if command.form_memory else "disabled")
+    has_formation = command.formation_purpose is not None
+    vector_policy = command.vectors or ("metadata_allowed" if has_formation else "disabled")
     return AdmitFiles.model_validate(
         {
             "operation_id": command.operation_id + ":records",
             "inputs": [document.model_dump(mode="json") for document in inputs],
             "record_units": True,
-            "llm_enabled": command.form_memory,
-            "deferred_formation": command.form_memory or vector_policy != "disabled",
+            "llm_enabled": has_formation,
+            "deferred_formation": False,
+            "formation_purpose": command.formation_purpose or "memory",
             "vectors": vector_policy,
             "dedupe_policy": "none",
         }
@@ -68,64 +69,88 @@ async def request_in(
 async def submit_text_import(
     self: ImportService, ctx: CallContext, command: TextImport
 ) -> TextImportSubmission:
-    async with self.authority.write(
-        ctx,
-        command.operation_id,
-        operation_kind="imports.text.submit",
-        scope=ctx.namespace_id,
-        payload=command,
-    ) as tx:
-        if tx.replayed:
-            saved = TextImportSubmission.model_validate(tx.replay_result)
-            await request_in(tx, ctx, saved.request_id)
-            return saved
-        await require_namespace_in(tx, ctx, "memory")
-        total_bytes = 0
+    from hashlib import sha256
+    from nous.platform.persistence.authority import canonical_json
+
+    request_id = (
+        "text:"
+        + sha256(f"{ctx.namespace_id}:{ctx.caller_id}:{command.operation_id}".encode()).hexdigest()
+    )
+    submitted_digest = sha256(canonical_json(command).encode()).hexdigest()
+    leases = []
+    try:
         for item in command.inputs:
-            if item.material_id is not None:
-                retained = await self.materials.read_in(tx, ctx, item.material_id)
-                total_bytes += retained["byte_len"]
-            else:
-                total_bytes += len(item.inline_text().encode("utf-8"))
-        if total_bytes > 4 * 1024 * 1024:
-            raise DomainError("import_size_limit", "Combined text import inputs exceed 4 MiB")
-        request_id = str(uuid4())
-        await tx.connection.execute(
-            requests.insert().values(
-                id=request_id,
-                record={
-                    "kind": "text_import",
-                    "context": ctx.model_dump(mode="json"),
-                    "command": command.model_dump(mode="json"),
-                    "material_ids": [
-                        item.material_id for item in command.inputs if item.material_id
-                    ],
-                },
+            leases.append(
+                await self.content_store.publish_bytes(item.inline_text().encode(), item.media_type)
+                if item.material_id is None
+                else None
             )
-        )
-        job = await tx.enqueue(JobSpec("nous.imports.text", "default", args=(request_id,)))
-        await tx.connection.execute(
-            update(requests)
-            .where(requests.c.id == request_id)
-            .values(
-                record={
-                    "kind": "text_import",
-                    "context": ctx.model_dump(mode="json"),
-                    "command": command.model_dump(mode="json"),
-                    "job_id": job.workflow_id,
-                    "material_ids": [
-                        item.material_id for item in command.inputs if item.material_id
-                    ],
-                }
+        async with self.authority.write(ctx) as tx:
+            await require_namespace_in(tx, ctx, "memory")
+            existing = await tx.connection.scalar(
+                select(requests.c.record).where(requests.c.id == request_id)
             )
-        )
-        return tx.result(
-            TextImportSubmission(
-                request_id=request_id,
-                job_id=job.workflow_id,
-                completion=command.completion,
+            if existing is not None:
+                if existing.get("submitted_digest") != submitted_digest:
+                    raise DomainError(
+                        "import_request_conflict",
+                        "Text import identity has different actual inputs",
+                    )
+                if existing.get("purged"):
+                    raise DomainError("source_purged", "Text import source is unavailable")
+                return TextImportSubmission(
+                    request_id=request_id, job_id=existing["job_id"], completion=command.completion
+                )
+            effective = ctx
+            documents = []
+            captured_events = {}
+            total_bytes = 0
+            for item, lease in zip(command.inputs, leases, strict=True):
+                if item.material_id is None:
+                    admission = await self.materials.admit_text_in(tx, effective, item, lease)
+                    effective = admission.context
+                    material = admission.material
+                    captured_events[material["id"]] = admission.event["id"]
+                    documents.append(
+                        item.model_copy(update={"text": None, "material_id": material["id"]})
+                    )
+                else:
+                    material = await self.materials.read_in(tx, ctx, item.material_id)
+                    documents.append(item)
+                total_bytes += material["byte_len"]
+            if total_bytes > 4 * 1024 * 1024:
+                raise DomainError("import_size_limit", "Combined text import inputs exceed 4 MiB")
+            captured_command = command.model_copy(update={"inputs": tuple(documents)})
+            job = await tx.enqueue(
+                JobSpec(
+                    "nous.imports.text",
+                    "default",
+                    args=(request_id,),
+                    workflow_id="import:" + request_id,
+                    scope=ctx.namespace_id,
+                )
             )
-        )
+            await tx.connection.execute(
+                requests.insert().values(
+                    id=request_id,
+                    record={
+                        "kind": "text_import",
+                        "context": effective.model_dump(mode="json"),
+                        "command": captured_command.model_dump(mode="json"),
+                        "submitted_digest": submitted_digest,
+                        "job_id": job.workflow_id,
+                        "material_ids": [item.material_id for item in documents],
+                        "input_observations": captured_events,
+                    },
+                )
+            )
+            return TextImportSubmission(
+                request_id=request_id, job_id=job.workflow_id, completion=command.completion
+            )
+    finally:
+        for lease in leases:
+            if lease is not None:
+                await self.content_store.release(lease)
 
 
 async def read_text_import(
@@ -196,14 +221,14 @@ async def run_text_import(self: ImportService, request_id: str) -> dict[str, Jso
             actual = await execution.wait(ctx, child.job_id)
             formed.append(ObservationFormation.model_validate(actual))
         for output in admission.outputs:
-            if output.formation is None and output.producer_call_id is not None:
+            if output.formation is None:
                 if output.projection is not None:
                     await execution.wait(ctx, output.projection.job_id)
                 formed.append(
                     ObservationFormation(
                         observation_id=output.observation_id,
                         cognition=output.cognition,
-                        producer_call_id=output.producer_call_id,
+                        representations=output.representations,
                         commit_seq=output.commit_seq,
                         projection=output.projection,
                         vector_policy=output.vector_policy,
@@ -214,25 +239,12 @@ async def run_text_import(self: ImportService, request_id: str) -> dict[str, Jso
         "formation_jobs": [item.model_dump(mode="json") for item in formations],
         "formations": [item.model_dump(mode="json") for item in formed],
     }
-    async with self.authority.write(
-        ctx,
-        request_id + ":complete",
-        operation_kind="imports.text.complete",
-        scope=ctx.namespace_id,
-        payload={"request_id": request_id},
-    ) as tx:
-        if not tx.replayed:
-            current = await request_in(tx, ctx, request_id)
-            await tx.connection.execute(
-                update(requests)
-                .where(requests.c.id == request_id)
-                .values(
-                    record={
-                        **current,
-                        "outcome": result,
-                    }
-                )
-            )
-            tx.result({"request_id": request_id})
-    # Actual content remains in source-aware domain receipts, not DBOS results.
+    async with self.authority.write(ctx) as tx:
+        current = await request_in(tx, ctx, request_id)
+        await tx.connection.execute(
+            update(requests)
+            .where(requests.c.id == request_id)
+            .values(record={**current, "outcome": result})
+        )
+    # Adopted content is read through its formal sources and cognitive references.
     return {"request_id": request_id, "completion": command.completion}

@@ -1,12 +1,9 @@
-"""Scoped Episode tools share typed HTTP/SDK operations and the actual A facade."""
+"""Scoped Episode tools share typed HTTP/SDK operations."""
 
 from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
-from uuid import uuid4
 
 from nous_sdk import NousClient
-from nous_sdk.amemorix import AMemorixAdapter
-from nous_sdk.amemorix.episodes import EpisodeAdminInput
 from nous_sdk.contracts import CognitiveRef
 from nous_sdk.contracts.episodes import EpisodeQuery, RebuildEpisodes
 from nous_sdk.types import JsonObject
@@ -57,14 +54,3 @@ def register_episodes(
             return (await api.rebuild_episodes(namespace_id,  command)).model_dump(
                 mode="json"
             )
-
-    @server.tool()
-    async def memory_episode_admin(command: EpisodeAdminInput) -> JsonObject:
-        """Use the real MaiBot Episode list/get/status/rebuild/process_sources contract."""
-        values = command.model_dump(mode="json")
-        if command.action == "rebuild" and not command.operation_id:
-            values["operation_id"] = str(uuid4())
-        async with client() as api:
-            return await AMemorixAdapter(
-                api, namespace_id=namespace_id
-            ).call("memory_episode_admin", values)

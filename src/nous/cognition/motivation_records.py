@@ -133,34 +133,8 @@ class MotivationService:
         )
         if not request.save:
             return await evaluate_motivation(self.records, ctx, request)
-        receipt = await self.records.authority.receipt(
-            ctx,
-            request.operation_id,
-            operation_kind="motivation.assess",
-            scope=ctx.namespace_id,
-            payload=request,
-        )
-        if receipt is not None:
-            result = MotivationAssessment.model_validate(receipt.result)
-            assert result.assessment_id is not None
-            return (await self.motivation_assessment(ctx, result.assessment_id)).assessment
         result = await evaluate_motivation(self.records, ctx, request)
-        async with self.records.authority.write(
-            ctx,
-            request.operation_id,
-            operation_kind="motivation.assess",
-            scope=ctx.namespace_id,
-            payload=request,
-        ) as tx:
-            if tx.replayed:
-                result = MotivationAssessment.model_validate(tx.replay_result)
-                assert result.assessment_id is not None
-                raw = await tx.connection.scalar(
-                    sa.select(assessments.c.record).where(assessments.c.id == result.assessment_id)
-                )
-                saved = SavedMotivationAssessment.model_validate(raw)
-                await authorize_in(self.records, tx, ctx, saved)
-                return result
+        async with self.records.authority.write(ctx) as tx:
             await require_namespace_in(tx, ctx, "motivation")
             target = await self.records.get_in(tx, ctx, request.reference)
             if not isinstance(target.body, (DesireBody, ConcernBody)):
@@ -212,7 +186,7 @@ class MotivationService:
                     commit_seq=tx.commit_seq,
                 )
             )
-            return tx.result(result)
+            return result
 
     async def motivation_assessments(
         self, ctx: CallContext, query: MotivationAssessmentsQuery
@@ -296,6 +270,3 @@ class MotivationService:
             ):
                 continue
             await tx.connection.execute(assessments.delete().where(assessments.c.id == saved.id))
-            await self.records.authority.redact_receipts_in(
-                tx, lambda _value: True, commit_sequences=(saved.commit_seq,)
-            )

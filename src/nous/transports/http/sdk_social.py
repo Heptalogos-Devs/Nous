@@ -5,7 +5,6 @@ from nous_sdk.contracts.social import (
     ChangeSocialRelation,
     IdentityHypothesis,
     LinkIdentity,
-    RecoverSymbolResult,
     SymbolSelection,
     UnlinkIdentity,
 )
@@ -13,15 +12,6 @@ from nous_sdk.contracts.social import (
 from .security import application, context
 
 router = APIRouter()
-
-
-@router.post('/namespaces/{namespace_id}/social/symbols/recover')
-async def recover_symbol_result(
-    request: Request, namespace_id: str,  command: RecoverSymbolResult
-):
-    return await application(request).symbols.recover(
-        await context(request, namespace_id,  capability="read"), command
-    )
 
 
 @router.post('/namespaces/{namespace_id}/social/identities/hypotheses')

@@ -34,7 +34,6 @@ def test_published_generations_and_partial_semantic_coverage(tmp_path: Path):
         cognition = CognitiveRecords(authority)
         materials = MaterialService(authority)
         configuration = ConfigurationService(
-            authority,
             {
                 **entries(),
                 "retrieval": ConfigurationEntry(defaults()),
@@ -56,13 +55,10 @@ def test_published_generations_and_partial_semantic_coverage(tmp_path: Path):
             await IdentityService(authority).create_namespace(ctx, "wave", "namespace")
 
             async def admit(text: str, operation: str):
-                async with authority.write(
-                    ctx, operation, operation_kind="material.admit", payload={"text": text}
-                ) as tx:
+                async with authority.write(ctx) as tx:
                     admitted = await materials.admit_text_in(
                         tx, ctx, ImportDocument(text=text, filename=operation + ".txt")
                     )
-                    tx.result(admitted.material["id"])
                 return admitted
 
             first = await admit("alpha semantic", "first")
@@ -87,9 +83,7 @@ def test_published_generations_and_partial_semantic_coverage(tmp_path: Path):
                 for hit in delta.hits
                 if hit.object.material_id == first.material["id"]
             )
-            async with authority.write(
-                ctx, "vector", operation_kind="test.vector", payload={"reference": reference}
-            ) as tx:
+            async with authority.write(ctx) as tx:
                 await tx.connection.execute(
                     vectors.insert().values(
                         reference=reference,
@@ -101,7 +95,6 @@ def test_published_generations_and_partial_semantic_coverage(tmp_path: Path):
                         commit_seq=tx.commit_seq,
                     )
                 )
-                tx.result(reference)
             await retrieval.rebuild_namespace(ctx.namespace_id, 0)
             before = {path.name for path in (tmp_path / "indexes").rglob("g-*")}
             hybrid = await retrieval.query(
@@ -290,15 +283,12 @@ def test_query_context_retains_query_and_scoped_session_work(tmp_path: Path):
         await app.authority.initialize()
         try:
             await app.identity.create_namespace(ctx, "query-context", "create")
-            async with app.authority.write(
-                ctx, "source", operation_kind="material.admit", payload={}
-            ) as tx:
+            async with app.authority.write(ctx) as tx:
                 admitted = await app.material.admit_text_in(
                     tx,
                     ctx,
                     ImportDocument(text="Alice and Bob are known people.", filename="people.txt"),
                 )
-                tx.result(admitted.material["id"])
             people = []
             for label in ("Alice", "Bob"):
                 people.append(
@@ -313,24 +303,12 @@ def test_query_context_retains_query_and_scoped_session_work(tmp_path: Path):
                 )
             work = await app.contexts.change_work(
                 ctx,
-                ChangeWorkContext(
-                    operation_id="work",
-                    action="create",
-                    content=WorkContextContent(
-                        purpose="Find Alice's decisions",
-                        anchors=(CognitiveTarget(reference=people[0].reference),),
-                    ),
-                ),
+                ChangeWorkContext(action='create', content=WorkContextContent(purpose="Find Alice's decisions", anchors=(CognitiveTarget(reference=people[0].reference),))),
             )
             session = await app.contexts.open_session(ctx, "session")
             await app.contexts.change_session(
                 ctx,
-                ChangeContextSession(
-                    operation_id="select-work",
-                    session_id=session.id,
-                    expected_revision=session.revision,
-                    active_work_context_id=work.id,
-                ),
+                ChangeContextSession(session_id=session.id, expected_revision=session.revision, active_work_context_id=work.id),
             )
             result = await app.retrieval.query(
                 ctx, QueryRequest(text="Alice", mode="lexical", context="session:" + session.id)

@@ -16,7 +16,7 @@ from sqlalchemy import select
 
 from nous.cognition.schema import revisions
 
-from .sdk_common import OperationIdentity, cognitive_context
+from .sdk_common import OperationIdentity
 from .security import application, context
 
 router = APIRouter()
@@ -130,10 +130,10 @@ class CognitiveDeletion(OperationIdentity):
     deleted: bool
 
 
-@router.get("/cognition/{object_id}")
-async def cognitive_object(request: Request, object_id: str, revision: int | None = None):
+@router.get("/namespaces/{namespace_id}/cognition/{object_id}")
+async def cognitive_object(request: Request, namespace_id: str, object_id: str, revision: int | None = None):
     app = application(request)
-    ctx = await cognitive_context(request, object_id)
+    ctx = await context(request, namespace_id, capability="read")
     if revision is None:
         history = await app.cognition.history(ctx, object_id, 1)
         if not history:
@@ -141,7 +141,7 @@ async def cognitive_object(request: Request, object_id: str, revision: int | Non
         return history[0]
     async with app.authority.read(ctx) as view:
         kind = await view.connection.scalar(
-            select(revisions.c.kind).where(revisions.c.id == object_id).limit(1)
+            select(revisions.c.kind).where(revisions.c.namespace_id == ctx.namespace_id, revisions.c.id == object_id).limit(1)
         )
         reference = CognitiveRef(
             kind=TypeAdapter(CognitiveKind).validate_python(kind), id=object_id, revision=revision
@@ -149,10 +149,10 @@ async def cognitive_object(request: Request, object_id: str, revision: int | Non
         return await app.cognition.get_in(view, ctx, reference)
 
 
-@router.get("/cognition/{object_id}/history")
-async def cognitive_history(request: Request, object_id: str, limit: int = 100):
+@router.get("/namespaces/{namespace_id}/cognition/{object_id}/history")
+async def cognitive_history(request: Request, namespace_id: str, object_id: str, limit: int = 100):
     return await application(request).cognition.history(
-        await cognitive_context(request, object_id), object_id, limit
+        await context(request, namespace_id, capability="read"), object_id, limit
     )
 
 
@@ -167,7 +167,7 @@ async def concept_alias(request: Request, namespace_id: str,  alias: str):
 async def set_cognitive_deleted(
     request: Request, namespace_id: str,  command: CognitiveDeletion
 ):
-    return await application(request).cognition.set_deleted(
+    return await application(request).sources.set_deleted(
         await context(request, namespace_id),
         command.reference,
         command.deleted,

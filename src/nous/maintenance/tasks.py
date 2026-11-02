@@ -4,7 +4,14 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from nous_sdk.contracts import CallContext, CognitiveRecord, DomainError, QueryRequest, TimeFilter
+from nous_sdk.contracts import (
+    CallContext,
+    CognitiveRecord,
+    DomainError,
+    MediaRecord,
+    QueryRequest,
+    TimeFilter,
+)
 from nous_sdk.contracts.maintenance import MaintenanceSubmission, StartMaintenance
 from nous_sdk.contracts.maintenance_tasks import (
     CreateJournal,
@@ -183,6 +190,8 @@ async def prepare_scope(
         for hit in selected.hits:
             if isinstance(hit.object, CognitiveRecord):
                 references.setdefault(hit.object.reference.exact(), hit.object.reference)
+            elif isinstance(hit.object, MediaRecord):
+                sources.append(hit.object.reference)
             elif isinstance(hit.object, ObservationRecord):
                 sources.append(hit.object.source)
     if command.kind in {"journal", "reflect", "dream"}:

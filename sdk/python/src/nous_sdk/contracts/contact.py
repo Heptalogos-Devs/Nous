@@ -20,14 +20,14 @@ class ContactMaterial(Operation):
         default=None, min_length=1, max_length=1000000, exclude_if=lambda value: value is None
     )
     form_long_term: bool = False
-    media_strategy: MediaStrategy = "description"
+    media_strategy: MediaStrategy = "description_only"
     related: tuple[CognitiveRef, ...] = Field(
         default=(), max_length=1000, exclude_if=lambda values: not values
     )
 
     def identity_payload(self) -> dict[str, JsonValue]:
         excluded = {"operation_id"}
-        if self.media_strategy == "description":
+        if self.media_strategy == "description_only":
             excluded.add("media_strategy")
         return self.model_dump(mode="json", exclude=excluded)
 

@@ -12,8 +12,8 @@
 
 Python 管理领域、材料、来源、授权、模型调用、事务、持久任务及公开接口；PyO3 传递授权后的冻结计算输入。原生发行包携带所采用的 VCP 与 Apache-2.0 许可证，源目录保留详细来源记录。
 
-A-Memorix 的 RequestContext、Namespace、身份、检索范围和管理工具用于核对真实消费者需求。[合同清单](a-memorix-contracts.json)保存已读取的公开协议；`src/nous/integrations/amemorix` 将其参数与结果适配到相同的 Nous 领域 owner。画像读取、图搜索、修订与统计由原生服务提供，Python SDK、HTTP、CLI、MCP 和兼容层分别消费。
+A-Memorix 的 RequestContext、Namespace、身份、检索范围和管理工具用于核对真实消费者需求。[合同清单](a-memorix-contracts.json)保存已读取的公开协议。画像读取、图搜索、修订与统计由 Nous 领域服务提供，Python SDK、HTTP、CLI 和 MCP 消费原生操作。
 
-Bundle 的来源和采用责任见 [Bundle 来源清单](bundle-export-sources.json)。当前实现由 `src/nous/data_management` 管理原件、逻辑对象、安装映射和事务，兼容格式由 A-Memorix 边界转换。
+Bundle 的来源和采用责任见 [Bundle 来源清单](bundle-export-sources.json)。当前实现由 `src/nous/data_management` 管理原件、逻辑对象、安装映射和事务。
 
 SQLAlchemy/aiosqlite 与 DBOS 共用同一 SQLite 权威文件；Pydantic AI、官方模型 SDK 与 HTTPX 提供模型及网络基础能力。具体职责见[架构](../docs/python-native-plan/design/architecture.md)、[事务](../docs/python-native-plan/design/transactions.md)与[源码采用](../docs/python-native-plan/design/adoption.md)。旧 Rust 应用及其研究记录可从 Git 历史读取。

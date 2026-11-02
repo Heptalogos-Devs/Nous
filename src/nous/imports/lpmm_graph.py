@@ -146,21 +146,11 @@ async def convert_lpmm_graph(
             raise DomainError("lpmm_graph_invalid", str(error)) from error
     lease = await content.publish_bytes(converted, "application/graphml+xml")
     try:
-        operation = (
+        (
             "lpmm-graphml:"
             + sha256((material_id + ":" + material["content_hash"]).encode()).hexdigest()
         )
-        async with authority.write(
-            ctx,
-            operation,
-            operation_kind="imports.lpmm_graph",
-            scope=ctx.namespace_id,
-            payload={"material_id": material_id},
-        ) as tx:
-            if tx.replayed:
-                identifier = str(tx.replay_result)
-                await materials.read_in(tx, ctx, identifier)
-                return identifier
+        async with authority.write(ctx) as tx:
             document = BlobDocument(
                 filename="graph.graphml",
                 media_type="application/graphml+xml",
@@ -174,6 +164,6 @@ async def convert_lpmm_graph(
                 tx, ctx, lease, document, required_source_ids=(material_id,)
             )
             await materials.observe_in(tx, ctx, result["id"], document)
-            return tx.result(result["id"])
+            return result['id']
     finally:
         await content.release(lease)

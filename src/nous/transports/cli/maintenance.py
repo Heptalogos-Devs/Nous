@@ -6,7 +6,6 @@ from uuid import uuid4
 
 import typer
 from nous_sdk.contracts.maintenance import (
-    CaptureMaintenanceOutput,
     CreateMaintenanceSchedule,
     EditMaintenanceProposal,
     ReviewMaintenance,
@@ -22,12 +21,6 @@ def register(cli: typer.Typer) -> None:
         no_args_is_help=False,
     )
     cli.add_typer(group, name="maintenance")
-
-    @group.command("capture-output")
-    def capture(ctx: typer.Context, namespace_id: str, run_id: str, command: Path) -> None:
-        """Read a retained model call into independently validated proposal groups; no provider call."""
-        value = read_command(command, CaptureMaintenanceOutput)
-        invoke(ctx, lambda api: api.capture_maintenance_output(namespace_id, run_id, value))
 
     @group.command("edit")
     def edit(ctx: typer.Context, namespace_id: str, run_id: str, command: Path) -> None:

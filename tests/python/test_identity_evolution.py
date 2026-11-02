@@ -40,9 +40,7 @@ def test_merge_split_migrates_graph_and_fact_scopes_without_rewriting_history(tm
             await app.identity.create_subject(
                 ctx, "S", "subject", subject_id="s", capabilities=("memory", "social")
             )
-            async with app.authority.write(
-                ctx, "source", operation_kind="material.put", payload={}
-            ) as tx:
+            async with app.authority.write(ctx) as tx:
                 original = await app.material.admit_text_in(
                     tx, ctx, ImportDocument(text="Identity correction report")
                 )
@@ -114,7 +112,7 @@ def test_merge_split_migrates_graph_and_fact_scopes_without_rewriting_history(tm
                         evidence=evidence,
                     ),
                 )
-                tx.result({"memory": memory.reference.model_dump(mode="json")})
+                {'memory': memory.reference.model_dump(mode='json')}
             left = (
                 await app.facts.change(
                     ctx,

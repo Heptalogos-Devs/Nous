@@ -37,12 +37,11 @@ from nous.material.derived_schema import derived_regions, representations
 from nous.material.service import materials, observations, regions
 from nous.platform.execution import JobSpec
 from nous.platform.persistence import ReadView, WriteTx
-from nous.platform.persistence.schema import operations
 from nous.retrieval.media import media_records_in
 
 from .contracts import Request, Target
 from .inputs import resolve_input
-from .schema import claims, contents, requests, space_retirements, subscriptions
+from .schema import checks, claims, contents, requests, space_retirements, subscriptions
 
 if TYPE_CHECKING:
     from nous.cognition.records import CognitiveRecords
@@ -198,7 +197,7 @@ class VectorSpaceService:
             rows = (
                 (
                     await view.connection.execute(
-                        select(vectors).where(vectors.c.reference.in_(owned))
+                        select(vectors).where(vectors.c.namespace_id == ctx.namespace_id, vectors.c.reference.in_(owned))
                     )
                 )
                 .mappings()
@@ -280,23 +279,13 @@ class VectorSpaceService:
                 "vector_scope_forbidden",
                 "Deleting shared vector storage requires complete Namespace management",
             )
-        async with self.authority.write(
-            ctx,
-            command.operation_id,
-            operation_kind="vectors.delete_space",
-            scope=ctx.namespace_id,
-            payload=command,
-        ) as tx:
+        async with self.authority.write(ctx) as tx:
             await require_namespace_in(tx, ctx)
-            if tx.replayed:
-                return VectorSpaceDeleted.model_validate(tx.replay_result)
             owned = await self.references_in(tx, ctx)
             rows = list(
                 (
                     await tx.connection.scalars(
-                        select(vectors.c.reference).where(
-                            vectors.c.reference.in_(owned), vectors.c.space == command.space_id
-                        )
+                        select(vectors.c.reference).where(vectors.c.namespace_id == ctx.namespace_id, vectors.c.reference.in_(owned), vectors.c.space == command.space_id)
                     )
                 ).all()
             )
@@ -311,9 +300,7 @@ class VectorSpaceService:
                 ).all()
             )
             await tx.connection.execute(
-                delete(vectors).where(
-                    vectors.c.reference.in_(owned), vectors.c.space == command.space_id
-                )
+                delete(vectors).where(vectors.c.namespace_id == ctx.namespace_id, vectors.c.reference.in_(owned), vectors.c.space == command.space_id)
             )
             if cached:
                 await tx.connection.execute(delete(contents).where(contents.c.key.in_(cached)))
@@ -337,14 +324,7 @@ class VectorSpaceService:
             from nous.retrieval.maintenance import enqueue_index_in
 
             await enqueue_index_in(tx, ctx)
-            result = tx.result(
-                VectorSpaceDeleted(
-                    space_id=command.space_id,
-                    vectors_deleted=len(rows),
-                    contents_deleted=len(cached),
-                    commit_seq=tx.commit_seq,
-                )
-            )
+            result = VectorSpaceDeleted(space_id=command.space_id, vectors_deleted=len(rows), contents_deleted=len(cached), commit_seq=tx.commit_seq)
         return result
 
     async def rebuild(self, ctx: CallContext, command: RebuildVectors) -> VectorRebuild:
@@ -369,15 +349,7 @@ class VectorSpaceService:
                     ),
                 }
             )
-        async with self.authority.write(
-            ctx,
-            command.operation_id,
-            operation_kind="vectors.rebuild",
-            scope=ctx.namespace_id,
-            payload=command,
-        ) as tx:
-            if tx.replayed:
-                return VectorRebuild.model_validate(tx.replay_result)
+        async with self.authority.write(ctx) as tx:
             eligible = await self.eligible_in(
                 tx, ctx, include_media=command.include_media, kinds=command.kinds
             )
@@ -385,10 +357,7 @@ class VectorSpaceService:
             coverage = {space.space: set[str]() for space in configured_spaces}
             for row in (
                 await tx.connection.execute(
-                    select(vectors).where(
-                        vectors.c.reference.in_(ref.exact() for ref in eligible),
-                        vectors.c.space.in_(coverage),
-                    )
+                    select(vectors).where(vectors.c.namespace_id == ctx.namespace_id, vectors.c.reference.in_((ref.exact() for ref in eligible)), vectors.c.space.in_(coverage))
                 )
             ).mappings():
                 if valid_payload(
@@ -400,26 +369,11 @@ class VectorSpaceService:
                 ref for ref in eligible if command.mode == "all" or ref.exact() not in indexed
             )
             selected_values: list[Target] = []
-            blocked: list[str] = []
             for target in candidates[: command.limit]:
                 value = await resolve_input(
                     self.projection, tx, ctx, target, profile.resource_key(), head_only=True
                 )
                 if value is None:
-                    continue
-                try:
-                    await self.models.find_embedding_in(
-                        tx,
-                        ctx,
-                        profile,
-                        text=value.text,
-                        media=value.media,
-                        source_ids=value.source_ids,
-                    )
-                except DomainError as error:
-                    if error.code != "model_invocation_unavailable":
-                        raise
-                    blocked.append(target.exact())
                     continue
                 selected_values.append(target)
             selected = tuple(selected_values)
@@ -428,17 +382,7 @@ class VectorSpaceService:
                 receipt = await self.projection.admit_in(
                     tx, ctx, selected, head_only=True, replace_existing=True, profile=profile
                 )
-            return tx.result(
-                VectorRebuild(
-                    mode=command.mode,
-                    references=selected,
-                    total_eligible=len(eligible),
-                    remaining=max(0, len(candidates) - len(selected)),
-                    projection=receipt,
-                    commit_seq=tx.commit_seq,
-                    blocked_references=tuple(blocked),
-                )
-            )
+            return VectorRebuild(mode=command.mode, references=selected, total_eligible=len(eligible), remaining=max(0, len(candidates) - len(selected)), projection=receipt, commit_seq=tx.commit_seq)
 
     async def recover(self, ctx: CallContext, command: RecoverVectors) -> VectorRecovery:
         async with self.authority.read(ctx) as view:
@@ -456,18 +400,8 @@ class VectorSpaceService:
                     )
                 ).all()
             ]
-            roots = [
-                request
-                for request in stored
-                if request.parent_request_id is None
-                and not any(
-                    request.id.startswith(other.id + ":route:")
-                    for other in stored
-                    if other.id != request.id
-                )
-            ]
+            roots = stored
         resumed: list[ProjectionReceipt] = []
-        frozen: list[str] = []
         remaining = command.limit
         for request in roots[: command.limit]:
             if not remaining:
@@ -485,44 +419,9 @@ class VectorSpaceService:
             if status.status not in {"ERROR", "CANCELLED", "MAX_RECOVERY_ATTEMPTS_EXCEEDED"}:
                 continue
             async with self.authority.read(ctx) as view:
-                retries = int(
-                    await view.connection.scalar(
-                        select(func.count())
-                        .select_from(operations)
-                        .where(
-                            operations.c.namespace_id == ctx.namespace_id,
-                            operations.c.operation_kind == "vectors.retry",
-                            func.json_extract(operations.c.result_json, "$.request_id")
-                            == request.id,
-                        )
-                    )
-                    or 0
-                )
+                current_retry = await view.connection.scalar(select(requests.c.record).where(requests.c.id == request.id))
+                retries = Request.model_validate(current_retry).retry_count
                 if retries >= command.max_retry:
-                    continue
-                uncertain = False
-                for attempt in (
-                    value
-                    for value in stored
-                    if value.job_id == request.job_id and value.plan is not None
-                ):
-                    assert attempt.plan is not None
-                    for item in attempt.plan.owned:
-                        try:
-                            await self.models.find_embedding_in(
-                                view,
-                                ctx,
-                                attempt.profile,
-                                text=item.text,
-                                media=item.media,
-                                source_ids=item.source_ids,
-                            )
-                        except DomainError as error:
-                            if error.code != "model_invocation_unavailable":
-                                raise
-                            uncertain = True
-                if uncertain:
-                    frozen.append(request.id)
                     continue
             resumed.append(
                 await self.retry(
@@ -542,7 +441,7 @@ class VectorSpaceService:
                 limit=remaining,
             ),
         )
-        return VectorRecovery(resumed=tuple(resumed), frozen=tuple(frozen), backfill=backfill)
+        return VectorRecovery(resumed=tuple(resumed), backfill=backfill)
 
     async def progress(self, ctx: CallContext, request_id: str) -> VectorProjectionProgress:
         async with self.authority.read(ctx) as view:
@@ -575,7 +474,9 @@ class VectorSpaceService:
             }
             prepared = int(
                 await view.connection.scalar(
-                    select(func.count()).select_from(contents).where(contents.c.key.in_(keys))
+                    select(func.count())
+                    .select_from(contents)
+                    .where(contents.c.namespace_id == ctx.namespace_id, contents.c.key.in_(keys))
                 )
                 or 0
             )
@@ -595,36 +496,18 @@ class VectorSpaceService:
             prepared_contents=prepared,
             adopted_references=len(result.references) if result else 0,
             spaces=result.spaces if result else (),
-            call_ids=result.call_ids if result else (),
             error=str(status.error) if status.error else None,
         )
 
     async def retry(self, ctx: CallContext, command: RetryVectorProjection) -> ProjectionReceipt:
         async with self.authority.read(ctx) as view:
             await require_namespace_in(view, ctx)
-        saved = await self.authority.receipt(
-            ctx,
-            command.operation_id,
-            operation_kind="vectors.retry",
-            scope=ctx.namespace_id,
-            payload=command,
-        )
-        if saved is not None:
-            return ProjectionReceipt.model_validate(saved.result)
         original = await self.progress(ctx, command.request_id)
         if original.status not in {"ERROR", "CANCELLED", "MAX_RECOVERY_ATTEMPTS_EXCEEDED"}:
             raise DomainError(
                 "projection_not_failed", "Only failed or cancelled projections can resume"
             )
-        async with self.authority.write(
-            ctx,
-            command.operation_id,
-            operation_kind="vectors.retry",
-            scope=ctx.namespace_id,
-            payload=command,
-        ) as tx:
-            if tx.replayed:
-                return ProjectionReceipt.model_validate(tx.replay_result)
+        async with self.authority.write(ctx) as tx:
             rows = (
                 await tx.connection.execute(
                     select(requests.c.id, requests.c.record).where(
@@ -650,20 +533,18 @@ class VectorSpaceService:
                     "Projection recovery requires its accepted caller and source scope",
                 )
             job = await self.projection.execution().enqueue_in(
-                tx, JobSpec("nous.vectors.project", "embedding", args=(command.request_id,))
+                tx, JobSpec('nous.vectors.project', 'embedding', args=(command.request_id,), scope=ctx.namespace_id)
             )
             for row in rows:
                 value = Request.model_validate(row.record).model_copy(
-                    update={"job_id": job.workflow_id, "retry_operation_id": command.operation_id}
+                    update={"job_id": job.workflow_id, "retry_count": current.retry_count + 1}
                 )
                 await tx.connection.execute(
                     update(requests)
                     .where(requests.c.id == row.id)
                     .values(record=value.model_dump(mode="json"))
                 )
-            return tx.result(
-                ProjectionReceipt(request_id=command.request_id, job_id=job.workflow_id)
-            )
+            return ProjectionReceipt(request_id=command.request_id, job_id=job.workflow_id)
 
     async def check(self, ctx: CallContext, command: CheckVectorSpaces) -> VectorSpaceCheck:
         model_status = TypeAdapter(dict[str, JsonValue]).validate_python(
@@ -694,7 +575,7 @@ class VectorSpaceService:
             rows = (
                 (
                     await view.connection.execute(
-                        select(vectors).where(vectors.c.reference.in_(owned))
+                        select(vectors).where(vectors.c.namespace_id == ctx.namespace_id, vectors.c.reference.in_(owned))
                     )
                 )
                 .mappings()
@@ -713,23 +594,8 @@ class VectorSpaceService:
             if command.sample_reference is not None:
                 record = await self.cognition.get_in(view, ctx, command.sample_reference)
                 text, sources = body_text(record.body), record.source_roots
-        saved = await self.authority.receipt(
-            ctx,
-            command.operation_id,
-            operation_kind="vectors.check",
-            scope=ctx.namespace_id or ctx.namespace_id,
-            payload=command,
-        )
-        if saved is not None:
-            result = VectorSpaceCheck.model_validate(saved.result)
-            return result.model_copy(
-                update={
-                    "invalid_references": tuple(
-                        reference for reference in result.invalid_references if reference in owned
-                    )
-                }
-            )
-        space = call = None
+        space = None
+        producer = None
         if command.probe:
             if profile is None:
                 raise DomainError("model_unavailable", "The embedding role is unavailable")
@@ -738,14 +604,14 @@ class VectorSpaceService:
                     "embedding_probe_input_required",
                     "An embedding probe requires actual supplied text or a real cognitive reference",
                 )
-            batch = await self.models.embed(
+            result = await self.models.embed(
                 ctx,
                 (text,),
                 source_ids=sources,
-                invocation_id="vector-check:" + command.operation_id,
-                profile=profile.model_copy(update={"cache_policy": "invocation"}),
+                profile=profile,
+                cache_policy="none",
             )
-            space, call = batch.space, batch.call_ids[0]
+            space, producer = result.output.space, result.producer
         result = VectorSpaceCheck(
             checked_at=utc_now(),
             authority_commit_seq=watermark,
@@ -756,18 +622,15 @@ class VectorSpaceService:
             provider_probed=command.probe,
             provider_ready=True if command.probe else None,
             probe_space=space,
-            producer_call_id=call,
+            producer=producer,
         )
-        async with self.authority.write(
-            ctx,
-            command.operation_id,
-            operation_kind="vectors.check",
-            scope=ctx.namespace_id or ctx.namespace_id,
-            payload=command,
-        ) as tx:
-            if tx.replayed:
-                return VectorSpaceCheck.model_validate(tx.replay_result)
-            return tx.result(result)
+        async with self.authority.write(ctx) as tx:
+            await tx.connection.execute(insert(checks).values(
+                namespace_id=ctx.namespace_id, caller_id=ctx.caller_id,
+                record=result.model_dump(mode="json"), commit_seq=tx.commit_seq,
+            ).on_conflict_do_update(index_elements=[checks.c.namespace_id, checks.c.caller_id],
+                set_={"record": result.model_dump(mode="json"), "commit_seq": tx.commit_seq}))
+            return result
 
     async def backfill_status(self, ctx: CallContext) -> dict[str, int]:
         profile = await self.models.prepare_embedding(ctx)
@@ -779,9 +642,7 @@ class VectorSpaceService:
             coverage = {space.space: set[str]() for space in configured_spaces}
             for row in (
                 await view.connection.execute(
-                    select(vectors).where(
-                        vectors.c.reference.in_(eligible), vectors.c.space.in_(coverage)
-                    )
+                    select(vectors).where(vectors.c.namespace_id == ctx.namespace_id, vectors.c.reference.in_(eligible), vectors.c.space.in_(coverage))
                 )
             ).mappings():
                 if valid_payload(
@@ -845,29 +706,16 @@ class VectorSpaceService:
         async with self.authority.read(ctx) as view:
             await require_namespace_in(view, ctx)
             raw = await view.connection.scalar(
-                select(operations.c.result_json)
-                .where(
-                    operations.c.namespace_id == ctx.namespace_id,
-                    operations.c.caller_id == ctx.caller_id,
-                    operations.c.operation_kind == "vectors.check",
+                select(checks.c.record).where(
+                    checks.c.namespace_id == ctx.namespace_id,
+                    checks.c.caller_id == ctx.caller_id,
                 )
-                .order_by(operations.c.commit_seq.desc())
-                .limit(1)
             )
             if raw is None:
                 return None
-            value = TypeAdapter(JsonValue).validate_json(raw)
-            if isinstance(value, dict) and "$nous_operation_result" in value:
-                return None
+            value = raw
             result = VectorSpaceCheck.model_validate(value)
             owned = await self.references_in(view, ctx)
-            if result.producer_call_id is not None:
-                try:
-                    await self.models.ledger.successful_in(view, ctx, result.producer_call_id)
-                except DomainError as error:
-                    if error.code not in {"model_call_unavailable", "model_call_forbidden"}:
-                        raise
-                    return None
             return result.model_copy(
                 update={
                     "invalid_references": tuple(

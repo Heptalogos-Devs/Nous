@@ -50,7 +50,7 @@ async def source_modalities_in(
     rows = (
         await view.connection.execute(
             select(observations.c.id, materials.c.record)
-            .join(materials, materials.c.id == observations.c.material_id)
+            .join(materials, (materials.c.id == observations.c.material_id) & (materials.c.namespace_id == observations.c.namespace_id))
             .where(
                 observations.c.namespace_id == ctx.namespace_id,
                 

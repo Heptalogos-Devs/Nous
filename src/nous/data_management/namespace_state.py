@@ -7,6 +7,8 @@ from pathlib import Path
 from nous_sdk.contracts import DomainError
 from pydantic import JsonValue, TypeAdapter
 
+from nous.platform.persistence import metadata
+
 type RawRow = dict[str, str | int | float | None]
 _ROW = TypeAdapter(RawRow)
 _OBJECT = TypeAdapter(dict[str, JsonValue])
@@ -27,7 +29,11 @@ def capture(database: Path, namespace_id: str) -> tuple[int, dict[str, tuple[Raw
         }
         rows: dict[str, list[RawRow]] = {}
         for table, columns in tables.items():
-            if "namespace_id" in columns and table not in {"nous_job_results", "nous_model_budget_allocations"}:
+            if (
+                table in metadata.tables
+                and "namespace_id" in columns
+                and table != "nous_job_results"
+            ):
                 rows[table] = [
                     _ROW.validate_python(dict(row))
                     for row in connection.execute(
@@ -66,29 +72,7 @@ def capture(database: Path, namespace_id: str) -> tuple[int, dict[str, tuple[Raw
         child("import_manifest_heads", "success_id", "import_file_successes")
         child("vector_projection_claims", "request_id", "vector_projection_requests")
         child("vector_projection_subscriptions", "request_id", "vector_projection_requests")
-        child("nous_model_invocations", "call_id", "nous_model_calls")
-        archived_call_ids = {row["id"] for row in rows.get("nous_imported_model_calls", [])}
-        if archived_call_ids:
-            retained = [
-                _ROW.validate_python(dict(row))
-                for row in connection.execute("SELECT * FROM nous_model_invocations")
-                if row["call_id"] in archived_call_ids
-            ]
-            rows["nous_model_invocations"] = list(
-                {
-                    str(row["key"]): row
-                    for row in (*rows.get("nous_model_invocations", []), *retained)
-                }.values()
-            )
-        child("nous_model_invocation_retirements", "key", "nous_model_invocations", "key")
         rows.pop("namespace_backup_uploads", None)
-        scopes = {f"namespace:{namespace_id}"}
-        for table in ("nous_configuration", "nous_configuration_history"):
-            rows[table] = [
-                _ROW.validate_python(dict(row))
-                for row in connection.execute(f"SELECT * FROM {quoted(table)}")
-                if row["scope"] in scopes
-            ]
         for table in ("import_requests",):
             rows[table] = []
             for row in connection.execute(f"SELECT * FROM {quoted(table)}"):
@@ -100,23 +84,6 @@ def capture(database: Path, namespace_id: str) -> tuple[int, dict[str, tuple[Raw
                     or value.get("namespace_id") == namespace_id
                 ):
                     rows[table].append(_ROW.validate_python(dict(row)))
-        references = {
-            f"{row['kind']}:{row['id']}@{row['revision']}"
-            for row in rows.get("cognitive_revisions", [])
-        }
-        references.update(f"material:{row['id']}" for row in rows.get("materials", []))
-        references.update(f"source-region:{row['id']}" for row in rows.get("source_regions", []))
-        references.update(
-            f"representation:{row['id']}@{row['revision']}"
-            for row in rows.get("derived_representations", [])
-        )
-        references.update(f"derived-region:{row['id']}" for row in rows.get("derived_regions", []))
-        rows["cognitive_vectors"] = [
-            _ROW.validate_python(dict(row))
-            for row in connection.execute("SELECT * FROM cognitive_vectors")
-            if row["reference"] in references
-        ]
-
         workflow_ids = tuple(str(row['workflow_id']) for row in rows.pop('nous_job_links', []))
         commit = connection.execute(
             "SELECT commit_seq FROM nous_commit_clock WHERE singleton=1"

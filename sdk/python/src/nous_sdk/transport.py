@@ -178,11 +178,18 @@ class Transport:
     ) -> JsonValue:
         headers = await self.headers(source_read=source_read)
         headers.update({"Content-Type": media_type, "Content-Length": str(length)})
+        namespace_id = params.get("namespace_id")
+        if not isinstance(namespace_id, str) or not namespace_id:
+            raise ValueError("Original uploads require a Namespace identity")
         try:
             async with self.http.stream(
                 "POST",
-                "/api/v1/media/materials",
-                params={key: value for key, value in params.items() if value is not None},
+                f"/api/knowledge/namespaces/{quote(namespace_id, safe='')}/media/materials",
+                params={
+                    key: value
+                    for key, value in params.items()
+                    if value is not None and key != "namespace_id"
+                },
                 content=content,
                 headers=headers,
             ) as response:
@@ -208,16 +215,15 @@ class Transport:
         reference: MediaReference | None = None,
     ) -> Download:
         headers = await self.headers(source_read=source_read)
-        resource = (
-            f"regions/{quote(region_id, safe='')}"
-            if region_id is not None
-            else f"materials/{quote(material_id, safe='')}"
-        )
         if reference is not None:
             resource = f"media/{reference.kind}/{quote(reference.id, safe='')}"
+        elif region_id is not None:
+            resource = f"regions/{quote(region_id, safe='')}"
+        else:
+            resource = f"materials/{quote(material_id, safe='')}"
         async with self.http.stream(
             "GET",
-            f"/api/v1/namespaces/{quote(namespace_id, safe='')}/subjects/{quote(namespace_id, safe='')}/{resource}/content",
+            f"/api/knowledge/namespaces/{quote(namespace_id, safe='')}/{resource}/content",
             headers=headers,
         ) as response:
             if not response.is_success:

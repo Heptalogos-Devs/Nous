@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import uuid4
 
 from pydantic import (
@@ -18,6 +18,7 @@ from pydantic import (
 )
 
 ObservationKind = Literal["import", "contact", "external_snapshot"]
+FormationPurpose = Literal["memory", "graph", "memory_and_graph"]
 
 
 class Contract(BaseModel):
@@ -29,6 +30,16 @@ class TimePoint(Contract):
     coordinate: int
     precision: Literal["instant", "day", "month", "year", "tick"] = "instant"
     original: str | None = None
+
+
+class ModelProvenance(Contract):
+    model_id: str = Field(min_length=1)
+    task: str = Field(min_length=1)
+    prompt_digest: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
+    schema_digest: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
+    input_digest: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
+    output_digest: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
+    generated_at: TimePoint
 
 
 class TimeRange(Contract):
@@ -104,6 +115,8 @@ class CallContext(Contract):
 
 
 class Operation(Contract):
+    """Automatically assigned request identity; transaction commits own persistence."""
+
     operation_id: str = Field(default_factory=lambda: str(uuid4()))
 
 

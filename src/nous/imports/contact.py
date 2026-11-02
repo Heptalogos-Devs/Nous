@@ -36,6 +36,7 @@ async def contact(
 ) -> ContactReceipt:
     # Event identity belongs to the authenticated host and subject. Transport retry
     # operation IDs may change; the reported encounter remains one event.
+    submitted = command.model_dump(mode="json", exclude={"operation_id"})
     identity = sha256(
         canonical_json(
             (ctx.caller_id, ctx.namespace_id, ctx.namespace_id, command.external_event_id)
@@ -84,24 +85,25 @@ async def contact(
                 text = source_region_text(text, region)
         if text is None and command.statement is not None:
             text = command.statement
-    async with self.authority.write(
-        ctx,
-        identity,
-        operation_kind="material.contact",
-        scope=ctx.namespace_id,
-        payload=command.identity_payload(),
-    ) as tx:
+    async with self.authority.write(ctx) as tx:
         for reference in command.related:
             await self.cognition.get_in(tx, ctx, reference)
-        if tx.replayed:
-            receipt = ContactReceipt.model_validate(tx.replay_result)
-            await self.materials.accepted_source_in(
-                tx,
-                ctx,
-                receipt.observation_id,
-                receipt.source,
-                derivations=self.cognition.derivations,
+        existing = await tx.connection.scalar(
+            select(observations.c.record).where(
+                observations.c.namespace_id == ctx.namespace_id,
+                observations.c.caller_id == ctx.caller_id,
+                observations.c.external_event_id == command.external_event_id,
             )
+        )
+        if existing is not None:
+            if existing.get("purged"):
+                raise DomainError("source_unavailable", "Contact source is unavailable")
+            if existing.get("submitted_contact") != submitted:
+                raise DomainError(
+                    "contact_event_conflict", "Contact event has different actual content"
+                )
+            receipt = ContactReceipt.model_validate(existing["contact_result"])
+            await self.materials.accepted_source_in(tx, ctx, receipt.observation_id, receipt.source)
             for reference in receipt.cognition:
                 await self.cognition.get_in(tx, ctx, reference)
             return receipt
@@ -133,7 +135,7 @@ async def contact(
         if command.statement is not None:
             event["statement"] = command.statement
         await tx.connection.execute(
-            update(observations).where(observations.c.id == event["id"]).values(record=event)
+            update(observations).where(observations.c.namespace_id == ctx.namespace_id, observations.c.id == event['id']).values(record=event)
         )
         refs = ()
         if text:
@@ -170,6 +172,7 @@ async def contact(
                     source=source,
                     anchor=refs[0] if refs else None,
                     media_strategy=command.media_strategy,
+                    background=command.statement or "",
                 ),
             )
         from nous.platform.execution import JobSpec
@@ -188,18 +191,26 @@ async def contact(
                             for ref in dict.fromkeys((*refs, *command.related))
                         ],
                     ),
+                    scope=ctx.namespace_id,
                 )
             )
-        return tx.result(
-            ContactReceipt(
-                observation_id=event["id"],
-                namespace_id=ctx.namespace_id,
-                caller_id=ctx.caller_id,
-                external_event_id=command.external_event_id,
-                source=source,
-                active_sources=(source,),
-                cognition=refs,
-                formation=formation,
-                commit_seq=tx.commit_seq,
+        result = ContactReceipt(
+            observation_id=event["id"],
+            namespace_id=ctx.namespace_id,
+            caller_id=ctx.caller_id,
+            external_event_id=command.external_event_id,
+            source=source,
+            active_sources=(source,),
+            cognition=refs,
+            formation=formation,
+            commit_seq=tx.commit_seq,
+        )
+        event["submitted_contact"] = submitted
+        event["contact_result"] = result.model_dump(mode="json")
+        await tx.connection.execute(
+            update(observations).where(observations.c.namespace_id == ctx.namespace_id, observations.c.id == event['id'])
+            .values(
+                record=event, caller_id=ctx.caller_id, external_event_id=command.external_event_id
             )
         )
+        return result

@@ -96,11 +96,8 @@ def test_pure_growth_and_actual_adoption(tmp_path: Path):
                     await view.connection.scalar(select(func.count()).select_from(revisions))
                     == count
                 )
-            async with authority.write(
-                ctx, "growth", operation_kind="growth-review", payload=draft
-            ) as tx:
+            async with authority.write(ctx) as tx:
                 adopted = (await cognition.apply_growth_in(tx, ctx, draft, snapshot)).records
-                tx.result(adopted)
             assert adopted[0].body.support == (memory,)
             assert adopted[1].body.members == (adopted[0].reference,)
             assert all(not record.reference.id.startswith("proposal/") for record in adopted)
@@ -135,11 +132,8 @@ def test_pure_growth_and_actual_adoption(tmp_path: Path):
             )
             async with authority.read(ctx) as view:
                 await cognition.validate_growth_in(view, ctx, sequential, snapshot)
-            async with authority.write(
-                ctx, "sequential", operation_kind="growth-review", payload=sequential
-            ) as tx:
+            async with authority.write(ctx) as tx:
                 changed = (await cognition.apply_growth_in(tx, ctx, sequential, snapshot)).records
-                tx.result(changed)
             assert changed[0].reference.id == changed[1].reference.id == memory.id
             assert changed[1].reference.revision == changed[0].reference.revision + 1
             assert changed[1].body.text == "Corrected preference."

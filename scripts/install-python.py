@@ -71,9 +71,6 @@ def main() -> None:
     parser.add_argument("--instance", type=Path)
     parser.add_argument("--python", default="3.14", help="CPython 3.14 selector for uv")
     parser.add_argument(
-        "--amemorix-rpc", action="store_true", help="Install the optional A-Memorix gRPC transport"
-    )
-    parser.add_argument(
         "--offline",
         action="store_true",
         help="Require all dependency wheels in --wheels; disable package indexes",
@@ -144,12 +141,7 @@ def main() -> None:
             "The selected environment contains the previous distribution; "
             "choose a new --venv to preserve it and its installed files"
         )
-    requirements = [
-        f"nous-server[amemorix-rpc] @ {versions[name][version][0].as_uri()}"
-        if name == "nous-server" and args.amemorix_rpc
-        else str(versions[name][version][0])
-        for name in PACKAGES
-    ]
+    requirements = [str(versions[name][version][0]) for name in PACKAGES]
     options = ["--only-binary=:all:", "--find-links", str(directory)]
     if args.offline:
         options.append("--no-index")
@@ -176,8 +168,6 @@ def main() -> None:
         ]
     )
     run([str(nous), "--help"], quiet=True)
-    if args.amemorix_rpc:
-        run([str(python), "-I", "-c", "import grpc; import nous.integrations.amemorix.rpc"])
     initialize = [str(nous), "--json"]
     if args.instance is not None:
         initialize.extend(["--instance", str(args.instance.resolve())])

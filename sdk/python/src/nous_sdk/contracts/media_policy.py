@@ -14,5 +14,3 @@ class MediaPolicy(Contract):
     process_concurrency: int = Field(default=2, ge=1, le=64)
     probe_timeout_seconds: float = Field(default=30, gt=0)
     transform_timeout_seconds: float = Field(default=120, gt=0)
-    description_delivery_lease_seconds: float = Field(default=120, gt=0)
-    description_delivery_max_attempts: int = Field(default=6, ge=1)

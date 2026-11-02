@@ -132,7 +132,7 @@ class TuningRoundsPage(Contract):
 class ApplyRetrievalProfile(Operation):
     profile: RetrievalPolicy | None = None
     task_id: str | None = None
-    expected_commit_seq: int | None = Field(default=None, ge=0)
+    expected_version: int | None = Field(default=None, ge=0)
 
     @model_validator(mode="after")
     def selection(self) -> "ApplyRetrievalProfile":
@@ -142,5 +142,4 @@ class ApplyRetrievalProfile(Operation):
 
 
 class RollbackRetrievalProfile(Operation):
-    commit_seq: int | None = Field(default=None, ge=1)
-    expected_commit_seq: int | None = Field(default=None, ge=0)
+    expected_version: int | None = Field(default=None, ge=0)

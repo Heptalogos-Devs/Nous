@@ -8,6 +8,7 @@ from pydantic import Field, FiniteFloat
 
 from .cognition import CognitiveRef
 from .common import Contract
+from .common import ModelProvenance
 from .media import MediaReference
 from .resources import ResourceReference
 from .source_objects import EvidenceReference, ObservationReference
@@ -30,7 +31,7 @@ class VcpIntent(Contract):
 
 class QueryConceptResult(Contract):
     concept: QueryConcept
-    call_id: str
+    producer: ModelProvenance
     space: str
 
 

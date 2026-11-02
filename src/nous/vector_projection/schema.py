@@ -45,3 +45,11 @@ space_retirements = Table(
     Column("commit_seq", Integer, nullable=False),
     Column("reason", String, nullable=False),
 )
+
+checks = Table(
+    "vector_space_checks", metadata,
+    Column("namespace_id", String, primary_key=True),
+    Column("caller_id", String, primary_key=True),
+    Column("record", JSON, nullable=False),
+    Column("commit_seq", Integer, nullable=False),
+)

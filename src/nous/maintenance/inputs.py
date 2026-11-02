@@ -56,7 +56,7 @@ def materials(snapshot: GrowthSnapshot) -> str:
             if stance.classification:
                 labels.append(nature.get(stance.classification, stance.classification))
             attribution = stance.attribution
-            if attribution and attribution != record.producer_call_id:
+            if attribution and record.producer and attribution != record.producer.model_id:
                 labels.append("归属：" + attribution)
         if stamp := time_text(record.times.event):
             labels.append("所述时间：" + stamp)

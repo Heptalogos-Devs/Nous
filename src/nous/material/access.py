@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from nous_sdk.contracts import CallContext, CognitiveRef, DomainError, MediaReference, SourceRegion
+from nous_sdk.contracts import CallContext, DomainError, MediaReference, SourceRegion
 from nous_sdk.contracts.identity import IdentityPurpose
 from sqlalchemy import select
 
@@ -22,31 +22,76 @@ async def require_dependencies_in(
     required: tuple[str, ...],
     seen: frozenset[str] = frozenset(),
 ) -> None:
-    from nous.cognition.records import CognitiveRecords
-    from nous.material.derived import DerivedService
-    from nous.references.service import ReferenceDirectory
-
+    from nous_sdk.contracts.derivation import DerivedRegion, DerivedRepresentation
+    from .derived_access import representation_ref
+    from .derived_availability import dependency_availability_in
+    from .derived_schema import derived_regions, representations
     from .service import materials, observations, regions, require_observation_in
 
-    cognition = CognitiveRecords(
-        service.authority, materials=service, derivations=DerivedService(service.authority, service)
-    )
-    directory = ReferenceDirectory(service.authority, cognition, service)
+    async def authorize_media(reference: MediaReference, selected_ctx: CallContext) -> None:
+        if reference.kind in {"material", "source_region"}:
+            if reference.kind == "material":
+                await read_material_in(
+                    service, view, selected_ctx, reference.id, seen, reference.observation_id
+                )
+            else:
+                await service.media_source_in(view, selected_ctx, reference)
+            return
+        state = await dependency_availability_in(view, selected_ctx, reference)
+        if state != "available":
+            raise DomainError(
+                "source_unavailable", "A required derived input is unavailable", state=state
+            )
+        if reference.kind == "derived_region":
+            raw = await view.connection.scalar(
+                select(derived_regions.c.record).where(
+                    derived_regions.c.namespace_id == selected_ctx.namespace_id,
+                    derived_regions.c.id == reference.id,
+                )
+            )
+            parent = DerivedRegion.model_validate(raw).representation
+        else:
+            parent = representation_ref(reference)
+        raw = await view.connection.scalar(
+            select(representations.c.record).where(
+                representations.c.namespace_id == selected_ctx.namespace_id,
+                representations.c.id == parent.id,
+                representations.c.revision == parent.revision,
+            )
+        )
+        value = DerivedRepresentation.model_validate(raw)
+        for group in selected_ctx.source_groups():
+            if reference.id in group or reference.exact() in group:
+                continue
+            scoped = selected_ctx.for_source_group(group)
+            for item in value.inputs:
+                await authorize_media(item.source, scoped)
+
     for locator in required:
         if locator.startswith("material:"):
             await read_material_in(service, view, ctx, locator.removeprefix("material:"), seen)
             continue
         if ":" in locator:
-            resolved = await directory.resolve_in(view, ctx, locator)
-            reference = resolved.reference.reference
-            if reference.kind == "material":
-                await read_material_in(service, view, ctx, reference.id, seen)
-            elif isinstance(reference, CognitiveRef):
-                record = await cognition.get_in(view, ctx, reference)
-                if record.purged:
-                    raise DomainError(
-                        "source_unavailable", "Artifact cognition dependency has been purged"
-                    )
+            kind, _, identifier = locator.partition(":")
+            if kind == "observation":
+                await require_observation_in(view, ctx, identifier)
+            elif kind.replace("-", "_") in {
+                "material",
+                "source_region",
+                "representation",
+                "derived_region",
+            }:
+                await authorize_media(
+                    MediaReference.model_validate(
+                        {"kind": kind.replace("-", "_"), "id": identifier}
+                    ),
+                    ctx,
+                )
+            else:
+                raise DomainError(
+                    "source_dependency_invalid",
+                    "Material dependencies must identify actual source inputs",
+                )
             continue
         material = await view.connection.scalar(
             select(materials.c.id).where(
@@ -68,7 +113,6 @@ async def require_dependencies_in(
             select(observations.c.id).where(
                 observations.c.id == locator,
                 observations.c.namespace_id == ctx.namespace_id,
-                
             )
         )
         if observation is not None:
@@ -111,7 +155,6 @@ async def read_material_in(
             await view.connection.execute(
                 select(observations.c.id).where(
                     observations.c.material_id == material_id,
-                    
                     observations.c.namespace_id == ctx.namespace_id,
                     observations.c.active.is_(True),
                 )
@@ -129,18 +172,7 @@ async def read_material_in(
     for dependency in value.get("required_observation_ids", ()):
         await require_observation_exists_in(view, ctx, dependency)
     required = tuple(value.get("required_source_ids", ()))
-    if required and value.get("dependency_purpose") == "history":
-        from .archive_dependencies import history_dependencies_in
-
-        state = await history_dependencies_in(view, ctx, required, authorize=False)
-        if state != "available":
-            raise DomainError("source_unavailable", "Archive history dependency is unavailable", state=state)
-        for group in ctx.source_groups():
-            scoped = ctx.for_source_group(group)
-            if any(source_permitted(scoped, material_id, event) for event in events):
-                continue
-            await history_dependencies_in(view, scoped, required)
-    elif required:
+    if required:
         from .derived_availability import dependency_availability_in
 
         state = await dependency_availability_in(
@@ -226,7 +258,6 @@ async def media_source_in(
             await view.connection.execute(
                 select(observations.c.id).where(
                     observations.c.namespace_id == ctx.namespace_id,
-                    
                     observations.c.material_id == material["id"],
                     observations.c.active.is_(True),
                 )

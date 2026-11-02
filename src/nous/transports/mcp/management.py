@@ -7,7 +7,6 @@ from typing import Literal
 
 from nous_sdk import NousClient
 from nous_sdk.contracts import CognitiveRef, SourceCommand
-from nous_sdk.contracts.context import ContextModelCall, ContextModelPreview
 from nous_sdk.contracts.corrections import ApplyCorrection, PlanCorrection, RollbackCorrection
 from nous_sdk.contracts.feedback import (
     EnqueueFeedback,
@@ -75,12 +74,6 @@ def register_management(
             return (await api.retention_snapshot(namespace_id,  reference)).model_dump(mode="json")
 
     @server.tool()
-    async def retained_model_output(call_id: str, management: bool = False) -> JsonObject:
-        """Read exact retained provider text and independently reparse its current contract without another model call."""
-        async with client() as api:
-            return (await api.retained_model_output(namespace_id,  call_id, management=management)).model_dump(mode="json")
-
-    @server.tool()
     async def recover_vectors(command: RecoverVectors) -> JsonObject:
         """Resume original failed projections and backfill current missing vectors, preserving unknown outcomes."""
         async with client() as api:
@@ -104,7 +97,7 @@ def register_management(
 
     @server.tool()
     async def delete_vector_space(command: DeleteVectorSpace) -> JsonObject:
-        """Delete derived Namespace vector storage, preserving the paid call ledger."""
+        """Delete derived vector storage in the selected Namespace."""
         async with client() as api:
             return (await api.delete_vector_space(namespace_id, command)).model_dump(mode="json")
 
@@ -126,7 +119,7 @@ def register_management(
 
     @server.tool()
     async def retry_vector_projection(command: RetryVectorProjection) -> JsonObject:
-        """Resume the original projection plan and reuse its retained physical model results."""
+        """Retry the saved projection for its original targets."""
         async with client() as api:
             return (
                 await api.retry_vector_projection(namespace_id,  command)
@@ -168,37 +161,11 @@ def register_management(
 
     @server.tool()
     async def retry_feedback(command: RetryFeedback) -> JsonObject:
-        """Resume a failed feedback task with its frozen input and paid invocation."""
+        """Retry a failed feedback task from its saved request and evidence."""
         async with client() as api:
             return (await api.retry_feedback(namespace_id,  command)).model_dump(
                 mode="json"
             )
-
-    @server.tool()
-    async def preview_context_model(command: ContextModelPreview) -> JsonObject:
-        """Freeze the complete native provider request directory for host admission."""
-        async with client() as api:
-            return (await api.preview_context_model(namespace_id,  command)).model_dump(
-                mode="json"
-            )
-
-    @server.tool()
-    async def invoke_context_model(command: ContextModelCall) -> JsonObject:
-        """Invoke the admitted request through the paid ledger and retain its actual report."""
-        async with client() as api:
-            return (await api.invoke_context_model(namespace_id,  command)).model_dump(
-                mode="json"
-            )
-
-    @server.tool()
-    async def memory_tuning_admin(action: str, arguments: JsonObject | None = None) -> JsonObject:
-        """Manage bounded retrieval tuning with supplied queries and explicit profile changes."""
-        from nous_sdk.amemorix import AMemorixAdapter
-
-        async with client() as api:
-            return await AMemorixAdapter(
-                api, namespace_id=namespace_id
-            ).memory_tuning_admin(action=action, **(arguments or {}))
 
     @server.tool()
     async def create_retrieval_tuning(command: CreateTuning) -> JsonObject:
@@ -256,7 +223,7 @@ def register_management(
 
     @server.tool()
     async def rollback_retrieval_profile(command: RollbackRetrievalProfile) -> JsonObject:
-        """Publish the preceding effective profile or a selected retained revision."""
+        """Reset the Namespace profile override to its inherited configuration."""
         async with client() as api:
             return await api.rollback_retrieval_profile(namespace_id,  command)
 
@@ -616,44 +583,22 @@ def register_management(
             return await api.sources(scoped(action, command))
 
     @server.tool()
-    async def manage_bundles(action: str, command: JsonObject) -> JsonObject:
-        """Export/preview/install/list/get/uninstall logical bundles in the bound subject.
-
-        The command is the public BundleOperation request; install accepts the
-        exported bundle object. Permissions and provenance are checked by Nous.
-        """
-        async with client() as api:
-            return await api.bundles(scoped(action, command))
-
-    @server.tool()
-    async def manage_contexts(action: str, command: JsonObject) -> JsonValue:
-        """Use public ContextsRequest operations in the bound subject.
-
-        Includes open/read/change/close_session, residents/change_residents,
-        create/read/list/change_work, work_history, prepare/preparation,
-        cancel_preparation, track, source, admit/admission and report. Use expected_revision
-        for concurrent changes; pin/unpin changes work anchors.
-        """
-        async with client() as api:
-            return await api.contexts(scoped(action, command))
-
-    @server.tool()
-    async def manage_cognition(action: str, command: JsonObject) -> JsonValue:
-        """Read/history/source, adopt/revise, query and evolve cognition in the bound subject.
-
-        Use the public CognitionRequest action and request. Revisions require
-        exact evidence and the expected current revision; model formation can
-        invoke the configured provider.
-        """
+    async def manage_cognition(
+        action: Literal[
+            "create",
+            "revise",
+            "adopt",
+            "concept_resolve",
+            "form",
+            "merge_concepts",
+            "split_concept",
+            "resegment_episodes",
+        ],
+        command: JsonObject,
+    ) -> JsonValue:
+        """Adopt, revise or evolve cognition using exact source-backed operations."""
         request = scoped(action, command)
         async with client() as api:
-            if action in {"get", "history", "source", "set_deleted"}:
-                identity = command.get("id")
-                if not isinstance(identity, str):
-                    raise ValueError("Cognitive read requires id")
-                record = await api.cognitive_object(identity)
-                if record.namespace_id != namespace_id or record.namespace_id != namespace_id:
-                    raise ValueError("Cognition is unavailable in the bound subject")
             return await api.cognition(request)
 
     @server.tool()
@@ -669,11 +614,8 @@ def register_management(
                 material = command.get("material_id")
                 if not isinstance(material, str):
                     raise ValueError("Media inspection requires material_id")
-                # This scoped source read authorizes the material before returning
-                # the SDK's globally addressed immutable metadata.
-                from nous_sdk.contracts import MediaReference
-
-                await api.source(namespace_id, MediaReference(kind="material", id=material))
+                namespace = await api.namespace_by_id(namespace_id)
+                await namespace.materials.get(material)
             return await api.media(scoped(action, command))
 
     @server.tool()
@@ -689,10 +631,10 @@ def register_management(
 
     @server.tool()
     async def configuration(
-        action: Literal["list", "schema", "get", "effective", "history", "set", "reset"],
+        action: Literal["list", "schema", "get", "effective", "set", "reset"],
         command: JsonObject,
     ) -> JsonObject:
-        """Read registered keys, schemas, effective values and history or change a scoped override.
+        """Read registered keys and effective values or change a scoped override.
 
         command has key, value, scope and operation_id as applicable. Model
         resources and instance-wide changes require unrestricted management.
@@ -715,7 +657,7 @@ def register_management(
         """Read/preview prompt revisions; global save/activate needs instance management.
 
         command supplies id, template, variables, revision or operation_id.
-        Preview renders a template without paying for a model invocation.
+        Preview renders a template without contacting a provider.
         """
         async with client() as api:
             return await api.prompts({**command, "action": action, "namespace_id": namespace_id})

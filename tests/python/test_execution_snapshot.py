@@ -29,21 +29,15 @@ def test_namespace_restore_retains_results_and_readmits_pending_work(tmp_path: P
                 await app.identity.create_namespace(
                     context, slug, "create:" + slug, namespace_id=context.namespace_id
                 )
-            async with app.authority.write(
-                source, "completed", operation_kind="test.calculate", payload={"value": 7}
-            ) as tx:
+            async with app.authority.write(source) as tx:
                 done = await tx.enqueue(
                     JobSpec("test.snapshot.calculate", "default", args=(7,))
                 )
-                tx.result(done.workflow_id)
             assert await app.execution.wait(source, done.workflow_id) == {"value": 14}
-            async with app.authority.write(
-                source, "pending", operation_kind="test.calculate", payload={"value": 8}
-            ) as tx:
+            async with app.authority.write(source) as tx:
                 pending = await tx.enqueue(
                     JobSpec("test.snapshot.calculate", "default", args=(8,), delay_seconds=3600)
                 )
-                tx.result(pending.workflow_id)
             async with app.authority.read(source) as view:
                 snapshot = await app.execution.export_namespace_in(view, source)
             assert {job.workflow_id for job in snapshot.jobs} == {
@@ -51,9 +45,7 @@ def test_namespace_restore_retains_results_and_readmits_pending_work(tmp_path: P
                 pending.workflow_id,
             }
             mapping = {job.workflow_id: str(uuid4()) for job in snapshot.jobs}
-            async with app.authority.write(
-                target, "restore", operation_kind="test.restore", payload={"jobs": mapping}
-            ) as tx:
+            async with app.authority.write(target) as tx:
                 receiving = snapshot.model_copy(
                     update={
                         "namespace_id": target.namespace_id,
@@ -61,7 +53,7 @@ def test_namespace_restore_retains_results_and_readmits_pending_work(tmp_path: P
                             job.model_copy(
                                 update={
                                     "workflow_id": mapping[job.workflow_id],
-                                    "operation_key": tx.operation_key,
+                                    "commit_seq": tx.commit_seq,
                                     "delay_until_epoch_ms": None,
                                 }
                             )
@@ -70,7 +62,6 @@ def test_namespace_restore_retains_results_and_readmits_pending_work(tmp_path: P
                     }
                 )
                 resumed = await app.execution.restore_namespace_in(tx, target, receiving)
-                tx.result({"resumed": resumed})
             assert resumed == (mapping[pending.workflow_id],)
             assert await app.execution.wait(target, mapping[done.workflow_id]) == {"value": 14}
             assert await app.execution.wait(target, mapping[pending.workflow_id]) == {"value": 16}

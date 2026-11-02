@@ -8,7 +8,6 @@ from nous_sdk.contracts.ego_model import InterpretSeed
 from nous_sdk.contracts.motivation import AssessMotivation, MotivationAssessmentsQuery
 from nous_sdk.contracts.social import (
     IdentityHypothesis,
-    RecoverSymbolResult,
     SymbolSelection,
     UnlinkIdentity,
 )
@@ -47,7 +46,7 @@ def register_ego_social(
 
     @server.tool()
     async def retry_maintenance(run_id: str, operation_id: str | None = None) -> JsonObject:
-        """Continue a failed run/group while reusing its frozen sources and paid model output."""
+        """Continue a failed run/group with its captured sources and saved proposal state."""
         async with client() as api:
             return (
                 await api.retry_maintenance(
@@ -76,14 +75,6 @@ def register_ego_social(
         """Read applicable text/media meanings for the actual audience and social context."""
         async with client() as api:
             return (await api.understand_symbol(namespace_id,  command)).model_dump(
-                mode="json"
-            )
-
-    @server.tool()
-    async def recover_symbol_result(command: RecoverSymbolResult) -> JsonObject:
-        """Reparse and project retained output without another model request."""
-        async with client() as api:
-            return (await api.recover_symbol_result(namespace_id,  command)).model_dump(
                 mode="json"
             )
 

@@ -52,9 +52,7 @@ async def status(self: RetrievalService, ctx: CallContext) -> RetrievalStatus:
         grouped: dict[tuple[str, str, int], set[str]] = {}
         rows = (
             await view.connection.execute(
-                select(
-                    vectors.c.reference, vectors.c.space, vectors.c.model, vectors.c.dimensions
-                ).where(vectors.c.reference.in_(eligible))
+                select(vectors.c.reference, vectors.c.space, vectors.c.model, vectors.c.dimensions).where(vectors.c.namespace_id == ctx.namespace_id, vectors.c.reference.in_(eligible))
             )
         ).all()
         for row in rows:

@@ -23,7 +23,6 @@ from nous.identity.service import IdentityService
 from nous.imports.service import ImportService
 from nous.platform.configuration.namespace_policy import entries as namespace_entries
 from nous.platform.configuration.service import ConfigurationEntry, ConfigurationService
-from nous.platform.models.ledger import CallLedger
 from nous.platform.persistence import Authority
 from nous.retrieval.policy import defaults as retrieval_defaults
 from nous.retrieval.service import RetrievalService
@@ -49,10 +48,11 @@ def test_import_source_bundle_and_restart(tmp_path: Path):
             UnusedModels(),
             tmp_path / "index",
             configuration=ConfigurationService(
-                authority, {**namespace_entries(), "retrieval": ConfigurationEntry(retrieval_defaults())}
+                {**namespace_entries(), "retrieval": ConfigurationEntry(retrieval_defaults())},
+                instance=tmp_path,
             ),
         )
-        bundles = BundleService(authority, cognition,ledger=CallLedger(authority))
+        bundles = BundleService(authority, cognition)
         sources = SourceService(authority, cognition)
         contexts = ContextService(authority, cognition)
         identity = IdentityService(authority)
@@ -111,7 +111,7 @@ def test_import_source_bundle_and_restart(tmp_path: Path):
             target = ctx.model_copy(update={"subject_id": "receiver"})
             await identity.create_subject(ctx, "Receiver", "receiver-create", subject_id="receiver")
             installed = await bundles.install(
-                target, InstallBundle(operation_id="bundle-install", bundle=bundle)
+                target, InstallBundle(bundle=bundle)
             )
             assert installed["output_count"] == 1
             assert len((await retrieval.query(target, QueryRequest(text="回滚"))).hits) == 1
@@ -143,8 +143,16 @@ def test_import_source_bundle_and_restart(tmp_path: Path):
             await authority.close()
         reopened = Authority(path)
         cognition = CognitiveRecords(reopened)
-        retrieval = RetrievalService(reopened, cognition, UnusedModels(), tmp_path / "index",
-            configuration=ConfigurationService(reopened, {**namespace_entries(), "retrieval": ConfigurationEntry(retrieval_defaults())}))
+        retrieval = RetrievalService(
+            reopened,
+            cognition,
+            UnusedModels(),
+            tmp_path / "index",
+            configuration=ConfigurationService(
+                {**namespace_entries(), "retrieval": ConfigurationEntry(retrieval_defaults())},
+                instance=tmp_path,
+            ),
+        )
         await reopened.initialize()
         try:
             found = await retrieval.query(ctx, QueryRequest(text="回滚"))
@@ -176,7 +184,8 @@ def test_purge_clears_history_receipts_and_blocks_late_adoption(tmp_path: Path):
             UnusedModels(),
             tmp_path / "index",
             configuration=ConfigurationService(
-                authority, {**namespace_entries(), "retrieval": ConfigurationEntry(retrieval_defaults())}
+                {**namespace_entries(), "retrieval": ConfigurationEntry(retrieval_defaults())},
+                instance=tmp_path,
             ),
         )
         sources = SourceService(
@@ -252,15 +261,8 @@ def test_purge_clears_history_receipts_and_blocks_late_adoption(tmp_path: Path):
             else:
                 raise AssertionError("A purged receipt must not replay source text")
             try:
-                async with authority.write(
-                    ctx,
-                    "late-formation",
-                    operation_kind="late.adoption",
-                    scope=ctx.require_subject(),
-                    payload={"material_id": unit.material_id},
-                ) as tx:
+                async with authority.write(ctx) as tx:
                     await materials.observe_in(tx, ctx, unit.material_id, command.inputs[0])
-                    tx.result({})
             except DomainError as error:
                 assert error.code == "source_purged"
             else:
@@ -305,11 +307,12 @@ def test_json_original_regions_addresses_attempts_and_artifact_purge(tmp_path: P
             tmp_path / "index",
             materials=materials,
             configuration=ConfigurationService(
-                authority, {**namespace_entries(), "retrieval": ConfigurationEntry(retrieval_defaults())}
+                {**namespace_entries(), "retrieval": ConfigurationEntry(retrieval_defaults())},
+                instance=tmp_path,
             ),
         )
         sources = SourceService(authority, cognition, content_store=content)
-        bundles = BundleService(authority, cognition,ledger=CallLedger(authority),content_store=content)
+        bundles = BundleService(authority, cognition, content_store=content)
         identity = IdentityService(authority)
         await authority.initialize()
         ctx = CallContext(
@@ -325,15 +328,9 @@ def test_json_original_regions_addresses_attempts_and_artifact_purge(tmp_path: P
             )
             lease = await content.publish_bytes(content_bytes, "application/x-ndjson")
             blob = BlobDocument(filename="records.jsonl", media_type=lease.media_type)
-            async with authority.write(
-                ctx,
-                "upload-json",
-                operation_kind="material.upload",
-                payload={"hash": lease.content_hash},
-            ) as tx:
+            async with authority.write(ctx) as tx:
                 material = await materials.put_blob_in(tx, ctx, lease, blob)
                 uploaded = await materials.observe_in(tx, ctx, material["id"], blob)
-                tx.result({"material_id": material["id"]})
             await content.release(lease)
             result = await imports.admit_files(
                 ctx,
@@ -430,25 +427,20 @@ def test_json_original_regions_addresses_attempts_and_artifact_purge(tmp_path: P
             bundle = await bundles.export(ctx)
             receiver = ctx.model_copy(update={"subject_id": "receiver"})
             await identity.create_subject(ctx, "Receiver", "receiver-create", subject_id="receiver")
-            installation = await bundles.install(
-                receiver, InstallBundle(operation_id="install-json", bundle=bundle)
+            await bundles.install(
+                receiver, InstallBundle(bundle=bundle)
             )
             restored = await retrieval.query(
                 receiver, QueryRequest(reference=memory.addresses.exact)
             )
             assert (
-                restored.hits[0].object.reference.id == installation["mapping"][memory.reference.id]
+                restored.hits[0].object.reference == memory.reference
             )
             assert restored.hits[0].object.addresses.exact != memory.addresses.exact
             scope = ctx.model_copy(update={"allowed_source_ids": (memory.reference.exact(),)})
             artifact_lease = await content.publish_bytes(memory.body.text.encode(), "text/plain")
             artifact_blob = BlobDocument(filename="selection.txt", media_type="text/plain")
-            async with authority.write(
-                scope,
-                "artifact",
-                operation_kind="material.artifact",
-                payload={"reference": memory.reference.exact()},
-            ) as tx:
+            async with authority.write(scope) as tx:
                 artifact = await materials.put_blob_in(
                     tx,
                     scope,
@@ -457,7 +449,6 @@ def test_json_original_regions_addresses_attempts_and_artifact_purge(tmp_path: P
                     required_source_ids=(memory.reference.exact(),),
                 )
                 await materials.observe_in(tx, scope, artifact["id"], artifact_blob)
-                tx.result({"material_id": artifact["id"]})
             await content.release(artifact_lease)
             assert (await materials.read(scope, artifact["id"]))["required_source_ids"] == [
                 memory.reference.exact()

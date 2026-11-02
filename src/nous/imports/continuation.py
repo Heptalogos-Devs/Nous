@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from nous_sdk.contracts import (
-    AdmitFiles,
     CallContext,
     CatalogView,
     DomainError,
@@ -42,6 +41,8 @@ def formation_options(unit: ImportUnit, command: ProcessCatalog) -> dict[str, Js
 
 
 def same_content(unit: ImportUnit, previous: ProcessCatalog, current: ProcessCatalog) -> bool:
+    if previous.formation_purpose != current.formation_purpose:
+        return False
     if previous.deferred_formation != current.deferred_formation:
         return False
     if unit.requires_llm and previous.llm_enabled != current.llm_enabled:
@@ -60,18 +61,15 @@ def process_request(row: dict[str, JsonValue]) -> ProcessCatalog | None:
     if not isinstance(value, dict):
         return None
     if row.get("kind") == "files":
-        source = AdmitFiles.model_validate(value)
         catalog_id = row.get("catalog_id")
         if not isinstance(catalog_id, str):
             return None
-        return ProcessCatalog(
-            operation_id=source.operation_id + ":process",
-            force=source.force,
-            catalog_id=catalog_id,
-            deferred_formation=source.deferred_formation,
-            llm_enabled=source.llm_enabled,
-            formation_retries=source.formation_retries,
-            vectors=source.vectors,
+        return ProcessCatalog.model_validate(
+            {
+                **{key: item for key, item in value.items() if key in ProcessCatalog.model_fields},
+                "operation_id": str(value["operation_id"]) + ":process",
+                "catalog_id": catalog_id,
+            }
         )
     return ProcessCatalog.model_validate(value) if "catalog_id" in value else None
 

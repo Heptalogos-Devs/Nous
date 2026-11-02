@@ -34,9 +34,7 @@ def test_cutoff_covers_evidence_and_allows_prior_journal_lineage(tmp_path):
         try:
             await identity.create_namespace(ctx, "N", "namespace")
             await identity.create_subject(ctx, "S", "subject", subject_id="s")
-            async with authority.write(
-                ctx, "known", operation_kind="material.put", payload={}
-            ) as tx:
+            async with authority.write(ctx) as tx:
                 source = await cognition.materials.admit_text_in(
                     tx, ctx, ImportDocument(text="An earlier observation")
                 )
@@ -63,10 +61,7 @@ def test_cutoff_covers_evidence_and_allows_prior_journal_lineage(tmp_path):
                     ),
                 )
                 cutoff = tx.commit_seq
-                tx.result(episode)
-            async with authority.write(
-                ctx, "later", operation_kind="material.put", payload={}
-            ) as tx:
+            async with authority.write(ctx) as tx:
                 later = await cognition.materials.admit_text_in(
                     tx, ctx, ImportDocument(text="A later observation")
                 )
@@ -78,7 +73,6 @@ def test_cutoff_covers_evidence_and_allows_prior_journal_lineage(tmp_path):
                         evidence=(EvidenceLink(observation_id=later.event["id"]),),
                     ),
                 )
-                tx.result(later_memory)
             body = JournalBody(
                 title="Earlier view",
                 narrative="Knowledge available at the cutoff",
@@ -115,8 +109,10 @@ def test_cutoff_covers_evidence_and_allows_prior_journal_lineage(tmp_path):
             )
             assert (await cognition.get(ctx, journal.reference)).body.narrative == body.narrative
             assert edited.body.knowledge_cutoff == cutoff
-            trashed = await cognition.set_deleted(ctx, edited.reference, True, "trash")
-            restored = await cognition.set_deleted(ctx, trashed.reference, False, "restore")
+            async with authority.write(ctx) as tx:
+                trashed = await cognition.set_deleted_in(tx, ctx, edited.reference, True)
+            async with authority.write(ctx) as tx:
+                restored = await cognition.set_deleted_in(tx, ctx, trashed.reference, False)
             assert not restored.deleted and restored.body.knowledge_cutoff == cutoff
             with pytest.raises(DomainError, match="recorded history"):
                 await cognition.adopt(

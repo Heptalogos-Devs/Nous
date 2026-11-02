@@ -18,13 +18,30 @@ from nous_sdk.contracts.growth_bodies import (
     GrowthRef,
 )
 from nous_sdk.contracts.maintenance import MaintenanceProposal, MaintenanceRun
+from nous_sdk.contracts.common import ModelProvenance
 from nous_sdk.contracts.maintenance_tasks import DreamDraft, JournalDraft, ReflectionDraft
+from nous_sdk.contracts.ego_model import SeedProposal
 from pydantic import JsonValue, TypeAdapter
 
 
 def document(
-    run: MaintenanceRun, snapshot: GrowthSnapshot, value: JsonValue, call_id: str
+    run: MaintenanceRun,
+    snapshot: GrowthSnapshot,
+    value: JsonValue,
+    producer: ModelProvenance,
 ) -> MaintenanceProposal:
+    if run.command.kind == "seed":
+        output = SeedProposal.model_validate(value)
+        return MaintenanceProposal(
+            summary=output.summary,
+            rationale=output.rationale,
+            actions=tuple(
+                TypeAdapter(JsonValue).validate_python(action.model_dump(mode="json"))
+                for action in output.actions
+            ),
+            questions=output.questions,
+            producer=producer,
+        )
     if run.command.kind == "journal":
         output = JournalDraft.model_validate(value)
         keys = {entry.key: entry for entry in snapshot.entries}
@@ -113,7 +130,7 @@ def document(
                 TypeAdapter(JsonValue).validate_python(action.model_dump(mode="json"))
                 for action in proposal.actions
             ),
-            source_call_id=call_id,
+            producer=producer,
         )
     keys = tuple(entry.key for entry in snapshot.entries) + tuple(
         source.key for source in snapshot.sources
@@ -147,7 +164,7 @@ def document(
             rationale="",
             actions=tuple(actions),
             questions=thought.questions,
-            source_call_id=call_id,
+            producer=producer,
         )
     thought = DreamDraft.model_validate(value)
     cognitive_keys = tuple(entry.key for entry in snapshot.entries)
@@ -181,5 +198,5 @@ def document(
         rationale="",
         actions=tuple(actions),
         questions=thought.questions,
-        source_call_id=call_id,
+        producer=producer,
     )

@@ -126,15 +126,7 @@ class FeedbackService:
         when = command.queried_at or utc_now()
         if when.domain != "unix_ms":
             raise DomainError("feedback_time_invalid", "Feedback windows require Unix time")
-        async with self.authority.write(
-            ctx,
-            command.operation_id,
-            operation_kind="feedback.enqueue",
-            scope=ctx.namespace_id,
-            payload=command,
-        ) as tx:
-            if tx.replayed:
-                return await self.get_in(tx, ctx, str(tx.replay_result))
+        async with self.authority.write(ctx) as tx:
             await require_namespace_in(tx, ctx)
             for reference in command.references:
                 await self.cognition.get_in(tx, ctx, reference)
@@ -157,13 +149,7 @@ class FeedbackService:
             if policy.enabled:
                 job = await self.execution.enqueue_in(
                     tx,
-                    JobSpec(
-                        "nous.feedback.evaluate",
-                        "default",
-                        args=(ctx.model_dump(mode="json"), task.id),
-                        workflow_id="feedback:" + task.id,
-                        delay_seconds=max(0, (due - utc_now().coordinate) / 1000),
-                    ),
+                    JobSpec('nous.feedback.evaluate', 'default', args=(ctx.model_dump(mode='json'), task.id), workflow_id='feedback:' + task.id, delay_seconds=max(0, (due - utc_now().coordinate) / 1000), scope=ctx.namespace_id),
                 )
                 task = task.model_copy(update={"job_id": job.workflow_id})
             await tx.connection.execute(
@@ -173,22 +159,13 @@ class FeedbackService:
                     record=task.model_dump(mode="json"),
                 )
             )
-            tx.result(task.id)
             return task
 
     async def _save(
         self, ctx: CallContext, task_id: str, phase: str, **changes: object
     ) -> FeedbackTask:
-        async with self.authority.write(
-            ctx,
-            f"feedback:{task_id}:{phase}",
-            operation_kind="feedback.update",
-            scope=ctx.namespace_id,
-            payload={"task_id": task_id, "phase": phase, **changes},
-        ) as tx:
+        async with self.authority.write(ctx) as tx:
             task = await self.get_in(tx, ctx, task_id)
-            if tx.replayed:
-                return task
             if task.state == "unavailable":
                 raise DomainError("source_unavailable", "Feedback sources are unavailable")
             value = FeedbackTask.model_validate(
@@ -199,7 +176,6 @@ class FeedbackService:
                 .where(tasks.c.id == task_id)
                 .values(record=value.model_dump(mode="json"))
             )
-            tx.result(task_id)
             return value
 
     async def _freeze(self, ctx: CallContext, task: FeedbackTask) -> FeedbackTask:
@@ -296,21 +272,16 @@ class FeedbackService:
             raise
 
     async def retry(self, ctx: CallContext, command: RetryFeedback) -> FeedbackTask:
-        async with self.authority.write(ctx, command.operation_id, operation_kind="feedback.retry",
-            scope=ctx.namespace_id, payload=command) as tx:
+        async with self.authority.write(ctx) as tx:
             task = await self.get_in(tx, ctx, command.task_id)
-            if tx.replayed:
-                return task
             if task.state != "failed":
                 raise DomainError("feedback_not_failed", "Only failed feedback evaluation can be resumed")
-            if not FeedbackPolicy.model_validate((await self.configuration.effective_in(tx, ctx, "feedback"))["value"]).enabled:
+            if not FeedbackPolicy.model_validate((await self.configuration.effective(ctx, "feedback"))["value"]).enabled:
                 raise DomainError("feedback_disabled", "Feedback correction is disabled")
-            job = await self.execution.enqueue_in(tx, JobSpec("nous.feedback.evaluate", "default",
-                args=(ctx.model_dump(mode="json"), task.id)))
+            job = await self.execution.enqueue_in(tx, JobSpec('nous.feedback.evaluate', 'default', args=(ctx.model_dump(mode='json'), task.id), scope=ctx.namespace_id))
             updated = task.model_copy(update={"state": "pending", "error": None,
                 "job_id": job.workflow_id, "commit_seq": tx.commit_seq})
             await tx.connection.execute(update(tasks).where(tasks.c.id == task.id).values(record=updated.model_dump(mode="json")))
-            tx.result(task.id)
             return updated
 
     async def evaluate(self, ctx: CallContext, task_id: str) -> dict[str, object]:
@@ -340,7 +311,6 @@ class FeedbackService:
                         }
                     )
                 ),
-                invocation_id="feedback:" + task.id,
             )
             decision = generated.output
             keys = {target.key for target in task.input.targets}
@@ -352,7 +322,7 @@ class FeedbackService:
             if not set(decision.message_keys).issubset(message.key for message in task.input.messages):
                 raise DomainError("feedback_evidence_invalid", "Feedback selected evidence outside its actual messages")
             task = await self._save(
-                ctx, task_id, "classify", decision=decision, producer_call_id=generated.call_id
+                ctx, task_id, "classify", decision=decision, producer=generated.producer
             )
         decision = task.decision
         assert decision is not None
@@ -464,9 +434,6 @@ class FeedbackService:
                     .values(record=cleaned.model_dump(mode="json"))
                 )
                 task_id = value.id
-                await self.authority.redact_receipts_in(
-                    tx, lambda raw, task_id=task_id: task_mentions(raw, task_id, ids)
-                )
 
 
 def task_mentions(value: JsonValue, task_id: str, references: set[str]) -> bool:

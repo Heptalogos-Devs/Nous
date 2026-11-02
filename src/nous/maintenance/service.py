@@ -5,9 +5,10 @@ from uuid import uuid4
 
 import sqlalchemy as sa
 from nous_sdk.contracts import CallContext, DomainError
-from nous_sdk.contracts.growth import GrowthDraft, GrowthEntry, GrowthSnapshot
+from nous_sdk.contracts.growth import GrowthEntry, GrowthSnapshot
 from nous_sdk.contracts.maintenance import (
     MaintenanceCatalog,
+    MaintenanceProposal,
     MaintenanceReview,
     MaintenanceRun,
     MaintenanceSubmission,
@@ -34,7 +35,7 @@ from nous.retrieval.service import RetrievalService
 
 from . import natural, proposals, scheduling, tasks
 from .generation import generate_validated
-from .privacy import receipt_contains_content, redact
+from .privacy import redact
 
 if TYPE_CHECKING:
     from nous.imports.service import ImportService
@@ -46,7 +47,6 @@ class MaintenanceService:
     reflect = tasks.reflect
     dream = tasks.dream
     summarize_work = tasks.summarize_work
-    capture_retained = proposals.capture_retained
     edit_proposal = proposals.edit_proposal
     working_snapshot_in = proposals.working_snapshot_in
     on_contact_in = natural.on_contact_in
@@ -84,16 +84,8 @@ class MaintenanceService:
 
         ctx = CallContext.model_validate(context)
         refs = tuple(CognitiveRef.model_validate(value) for value in references)
-        async with self.authority.write(
-            ctx,
-            "contact-growth:" + observation_id,
-            operation_kind="maintenance.contact",
-            scope=ctx.namespace_id,
-            payload={"observation_id": observation_id, "references": refs},
-        ) as tx:
-            if not tx.replayed:
-                await self.on_contact_in(tx, ctx, observation_id, refs)
-                tx.result({"accepted": True})
+        async with self.authority.write(ctx) as tx:
+            await self.on_contact_in(tx, ctx, observation_id, refs)
 
     async def run_in(
         self, view: ReadView | WriteTx, ctx: CallContext, run_id: str
@@ -191,29 +183,15 @@ class MaintenanceService:
             )
 
     async def submit(self, ctx: CallContext, command: StartMaintenance) -> MaintenanceSubmission:
-        async with self.authority.write(
-            ctx,
-            command.operation_id,
-            operation_kind="maintenance.submit",
-            scope=ctx.namespace_id,
-            payload=command,
-        ) as tx:
-            if tx.replayed:
-                return MaintenanceSubmission.model_validate(tx.replay_result)
-            return tx.result(await self.submit_in(tx, ctx, command))
+        async with self.authority.write(ctx) as tx:
+            pass
+            return await self.submit_in(tx, ctx, command)
 
     async def retry(
         self, ctx: CallContext, run_id: str, operation_id: str
     ) -> MaintenanceSubmission:
-        async with self.authority.write(
-            ctx,
-            operation_id,
-            operation_kind="maintenance.retry",
-            scope=ctx.namespace_id,
-            payload={"run_id": run_id},
-        ) as tx:
-            if tx.replayed:
-                return MaintenanceSubmission.model_validate(tx.replay_result)
+        async with self.authority.write(ctx) as tx:
+            pass
             current = await self.run_in(tx, ctx, run_id)
             state = await self.execution.status(ctx, current.job_id)
             failed_groups = any(group.status == "failed" for group in current.groups)
@@ -272,7 +250,7 @@ class MaintenanceService:
                 .where(runs.c.id == run_id)
                 .values(record=updated.model_dump(mode="json"))
             )
-            return tx.result(MaintenanceSubmission(run_id=run_id, job_id=job.workflow_id))
+            return MaintenanceSubmission(run_id=run_id, job_id=job.workflow_id)
 
     async def submit_in(
         self, tx: WriteTx, ctx: CallContext, command: StartMaintenance
@@ -311,21 +289,14 @@ class MaintenanceService:
             if initial.catalog is None
             else initial.command
         )
-        async with self.authority.write(
-            ctx,
-            run_id + ":catalog",
-            operation_kind="maintenance.snapshot",
-            scope=ctx.namespace_id,
-            payload={"run_id": run_id},
-        ) as tx:
-            if not tx.replayed:
-                record = await self.run_in(tx, ctx, run_id)
-                if record.command != initial.command and record.catalog is None:
+        async with self.authority.write(ctx) as tx:
+            record = await self.run_in(tx, ctx, run_id)
+            if record.catalog is None:
+                if record.command != initial.command:
                     raise OperationConflict(
                         "Maintenance inputs changed before the batch was frozen"
                     )
                 snapshot = await natural.snapshot_in(self, tx, ctx, prepared)
-
                 catalog = MaintenanceCatalog(
                     watermark=snapshot.watermark,
                     entries=tuple(
@@ -358,7 +329,6 @@ class MaintenanceService:
                     .where(runs.c.id == run_id)
                     .values(record=record.model_dump(mode="json"))
                 )
-                tx.result({"run_id": run_id})
         record = await self.read(ctx, run_id)
         if not record.sources_available:
             raise DomainError(
@@ -370,6 +340,7 @@ class MaintenanceService:
         assert record.catalog is not None
         async with self.authority.read(ctx) as view:
             snapshot = await self.snapshot_in(view, ctx, record.catalog)
+        proposal: MaintenanceProposal
         with operation_span(
             "maintenance.generate",
             ctx,
@@ -379,76 +350,71 @@ class MaintenanceService:
         ):
             if snapshot.entries or snapshot.sources:
                 try:
-                    draft, call_id = await generate_validated(self, ctx, record, snapshot)
+                    output, producer = await generate_validated(self, ctx, record, snapshot)
+                    from .task_proposals import document
+
+                    proposal = document(record, snapshot, output, producer)
                 except (DomainError, NousError) as error:
                     if error.code not in {
+                        "Unavailable",
                         "model_unavailable",
                         "model_not_configured",
                         "configuration_missing",
                         "capability_unavailable",
-                        "model_budget_exceeded",
-                        "model_invocation_unavailable",
                     }:
                         raise
-                    async with self.authority.write(
-                        ctx,
-                        run_id + ":waiting:" + str(record.revision),
-                        operation_kind="maintenance.waiting",
-                        scope=ctx.namespace_id,
-                        payload={"run_id": run_id, "code": error.code},
-                    ) as tx:
-                        if not tx.replayed:
-                            current = await self.run_in(tx, ctx, run_id)
-                            current = current.model_copy(
-                                update={
-                                    "waiting_reason": {"code": error.code, "message": str(error)},
-                                    "status": "waiting",
-                                    "revision": current.revision + 1,
-                                }
-                            )
-                            await tx.connection.execute(
-                                runs.update()
-                                .where(runs.c.id == run_id)
-                                .values(record=current.model_dump(mode="json"))
-                            )
-                            tx.result({"run_id": run_id, "waiting_reason": error.code})
+                    async with self.authority.write(ctx) as tx:
+                        current = await self.run_in(tx, ctx, run_id)
+                        current = current.model_copy(
+                            update={
+                                "waiting_reason": {"code": error.code, "message": str(error)},
+                                "status": "waiting",
+                                "revision": current.revision + 1,
+                            }
+                        )
+                        await tx.connection.execute(
+                            runs.update()
+                            .where(runs.c.id == run_id)
+                            .values(record=current.model_dump(mode="json"))
+                        )
                     return {"run_id": run_id, "status": "waiting", "waiting_reason": error.code}
 
             else:
-                draft = GrowthDraft(
+                proposal = MaintenanceProposal(
                     summary="No supported cognition is available.",
                     rationale="The authorized knowledge snapshot is empty.",
                     actions=(),
                 )
-                call_id = None
-        async with self.authority.write(
-            ctx,
-            run_id + ":proposal",
-            operation_kind="maintenance.propose",
-            scope=ctx.namespace_id,
-            payload={"run_id": run_id},
-        ) as tx:
-            if not tx.replayed:
-                current = await self.run_in(tx, ctx, run_id)
-                if current.purged_at is not None:
-                    raise DomainError(
-                        "maintenance_source_purged", "Maintenance sources have been purged"
-                    )
-                updated = current.model_copy(
-                    update={
-                        "draft": draft,
-                        "producer_call_id": call_id,
-                        "status": "proposed",
-                        "waiting_reason": None,
-                        "revision": current.revision + 1,
-                    }
+        async with self.authority.write(ctx) as tx:
+            current = await self.run_in(tx, ctx, run_id)
+            if current.purged_at is not None:
+                raise DomainError(
+                    "maintenance_source_purged", "Maintenance sources have been purged"
                 )
-                await tx.connection.execute(
-                    runs.update()
-                    .where(runs.c.id == run_id)
-                    .values(record=updated.model_dump(mode="json"))
+            if current.catalog is None:
+                raise DomainError(
+                    "maintenance_source_unavailable", "Maintenance source catalog is unavailable"
                 )
-                tx.result({"run_id": run_id})
+            frozen = await self.snapshot_in(tx, ctx, current.catalog)
+            groups = await proposals.compile_proposal(
+                self, tx, ctx, proposal, frozen, role=current.command.kind, previous=current.groups
+            )
+            updated = current.model_copy(
+                update={
+                    "proposal": proposal,
+                    "draft": proposals.compiled_draft(proposal, groups),
+                    "groups": groups,
+                    "status": "proposed",
+                    "waiting_reason": None,
+                    "questions": proposal.questions,
+                    "revision": current.revision + 1,
+                }
+            )
+            await tx.connection.execute(
+                runs.update()
+                .where(runs.c.id == run_id)
+                .values(record=updated.model_dump(mode="json"))
+            )
         await self.adopt_automatic(ctx, await self.read(ctx, run_id))
         return {"run_id": run_id}
 
@@ -489,15 +455,8 @@ class MaintenanceService:
         for group in record.groups:
             if group.key not in wanted or group.status != "ready" or group.draft is None:
                 continue
-            async with self.authority.write(
-                ctx,
-                record.id + ":group:" + group.key + ":revision:" + str(record.revision),
-                operation_kind="maintenance.apply_group",
-                scope=ctx.namespace_id,
-                payload={"run_id": record.id, "group": group.key},
-            ) as tx:
-                if tx.replayed:
-                    continue
+            async with self.authority.write(ctx) as tx:
+                pass
                 current = await self.run_in(tx, ctx, record.id)
                 if current.revision != record.revision or (
                     current.review is not None and current.review.decision == "reject"
@@ -509,7 +468,6 @@ class MaintenanceService:
                     for value in current.groups
                     if value.key in group.dependencies
                 ):
-                    tx.result({"run_id": record.id, "group": group.key, "blocked": True})
                     continue
                 assert current.catalog is not None
                 assert group.draft is not None
@@ -523,7 +481,7 @@ class MaintenanceService:
                             ctx,
                             group.draft,
                             snapshot,
-                            producer_call_id=current.producer_call_id,
+                            producer=current.proposal.producer if current.proposal else None,
                         )
                 except DomainError as error:
                     del tx.jobs[jobs_before:]
@@ -562,7 +520,6 @@ class MaintenanceService:
                     .where(runs.c.id == record.id)
                     .values(record=updated.model_dump(mode="json"))
                 )
-                tx.result({"run_id": record.id, "group": group.key})
 
     async def review(
         self, ctx: CallContext, run_id: str, command: ReviewMaintenance
@@ -577,71 +534,66 @@ class MaintenanceService:
             and (initial.review is None or initial.review.decision == "adopt")
         ):
             await self.apply_groups(ctx, initial, command.group_keys)
-        async with self.authority.write(
-            ctx,
-            command.operation_id,
-            operation_kind="maintenance.review",
-            scope=ctx.namespace_id,
-            payload={"run_id": run_id, "command": command},
-        ) as tx:
-            if not tx.replayed:
-                record = await self.run_in(tx, ctx, run_id)
-                if record.revision != command.expected_revision:
-                    raise OperationConflict("Maintenance proposal revision changed")
-                if record.purged_at is not None or record.draft is None or record.catalog is None:
-                    raise DomainError(
-                        "maintenance_proposal_unavailable",
-                        "A retained proposal is required for review",
-                    )
-                if record.review is not None and (
-                    record.review.decision == "reject" or command.decision == "reject"
-                ):
-                    raise OperationConflict("Maintenance proposal has already been reviewed")
-                adopted = ()
-                if command.decision == "adopt" and record.groups:
-                    adopted = tuple(
-                        [
-                            await self.cognition.get_in(tx, ctx, reference)
-                            for group in record.groups
-                            for reference in group.adopted
-                        ]
-                    )
-                elif command.decision == "adopt":
-                    snapshot = await self.snapshot_in(tx, ctx, record.catalog)
-                    application = await self.growth.apply_growth_in(
-                        tx, ctx, record.draft, snapshot, producer_call_id=record.producer_call_id
-                    )
-                    adopted = application.records
-                review = MaintenanceReview(
-                    decision=command.decision,
-                    reason=command.reason,
-                    caller_id=ctx.caller_id,
-                    recorded_at=tx.recorded_at,
-                    commit_seq=tx.commit_seq,
-                    adopted=tuple(item.reference for item in adopted),
+        async with self.authority.write(ctx) as tx:
+            record = await self.run_in(tx, ctx, run_id)
+            if record.revision != command.expected_revision:
+                raise OperationConflict("Maintenance proposal revision changed")
+            if record.purged_at is not None or record.draft is None or record.catalog is None:
+                raise DomainError(
+                    "maintenance_proposal_unavailable", "A retained proposal is required for review"
                 )
-                updated = record.model_copy(
-                    update={
-                        "review": review,
-                        "status": "rejected"
-                        if command.decision == "reject"
-                        else "adopted"
-                        if not record.groups
-                        or all(group.status == "adopted" for group in record.groups)
-                        else "proposed",
-                        "review_history": (
-                            *record.review_history,
-                            *((record.review,) if record.review else ()),
-                        ),
-                        "revision": record.revision + 1,
-                    }
+            if record.review is not None and (
+                record.review.decision == "reject" or command.decision == "reject"
+            ):
+                raise OperationConflict("Maintenance proposal has already been reviewed")
+            adopted = ()
+            if command.decision == "adopt" and record.groups:
+                adopted = tuple(
+                    [
+                        await self.cognition.get_in(tx, ctx, reference)
+                        for group in record.groups
+                        for reference in group.adopted
+                    ]
                 )
-                await tx.connection.execute(
-                    runs.update()
-                    .where(runs.c.id == run_id)
-                    .values(record=updated.model_dump(mode="json"))
+            elif command.decision == "adopt":
+                snapshot = await self.snapshot_in(tx, ctx, record.catalog)
+                application = await self.growth.apply_growth_in(
+                    tx,
+                    ctx,
+                    record.draft,
+                    snapshot,
+                    producer=record.proposal.producer if record.proposal else None,
                 )
-                tx.result({"run_id": run_id})
+                adopted = application.records
+            review = MaintenanceReview(
+                decision=command.decision,
+                reason=command.reason,
+                caller_id=ctx.caller_id,
+                recorded_at=tx.recorded_at,
+                commit_seq=tx.commit_seq,
+                adopted=tuple((item.reference for item in adopted)),
+            )
+            updated = record.model_copy(
+                update={
+                    "review": review,
+                    "status": "rejected"
+                    if command.decision == "reject"
+                    else "adopted"
+                    if not record.groups
+                    or all((group.status == "adopted" for group in record.groups))
+                    else "proposed",
+                    "review_history": (
+                        *record.review_history,
+                        *((record.review,) if record.review else ()),
+                    ),
+                    "revision": record.revision + 1,
+                }
+            )
+            await tx.connection.execute(
+                runs.update()
+                .where(runs.c.id == run_id)
+                .values(record=updated.model_dump(mode="json"))
+            )
         return await self.read(ctx, run_id)
 
     async def purge_materials_in(self, tx: WriteTx, material_ids: tuple[str, ...]) -> None:
@@ -668,9 +620,6 @@ class MaintenanceService:
                     runs.update()
                     .where(runs.c.id == record.id)
                     .values(record=updated.model_dump(mode="json"))
-                )
-                await self.authority.redact_receipts_in(
-                    tx, lambda value, identity=record.id: receipt_contains_content(value, identity)
                 )
             return
         purged_roots = {
@@ -724,17 +673,7 @@ class MaintenanceService:
                 or set(catalog.material_ids).intersection(material_ids)
                 or set(catalog.observation_ids).intersection(purged_roots)
             ):
-                call_ids = set(record.generation_call_ids)
-                if record.producer_call_id is not None:
-                    call_ids.add(record.producer_call_id)
-                await self.models.ledger.purge_calls_in(tx, tuple(call_ids))
-                creator = tx.ctx.model_copy(update={"caller_id": record.created_by})
-                await self.models.ledger.purge_invocations_in(
-                    tx,
-                    creator,
-                    record.command.kind,
-                    ("maintenance:" + record.id, "maintenance:" + record.id + ":correction:1"),
-                )
+                self.models.purge_sources(material_ids)
                 updated = redact(record).model_copy(
                     update={"purged_at": tx.recorded_at, "revision": record.revision + 1}
                 )
@@ -743,17 +682,3 @@ class MaintenanceService:
                     .where(runs.c.id == record.id)
                     .values(record=updated.model_dump(mode="json"))
                 )
-                await self.authority.redact_receipts_in(
-                    tx, lambda value, identity=record.id: receipt_contains_content(value, identity)
-                )
-                review_sequences = tuple(
-                    review.commit_seq
-                    for review in (
-                        *record.review_history,
-                        *((record.review,) if record.review else ()),
-                    )
-                )
-                if review_sequences:
-                    await self.authority.redact_receipts_in(
-                        tx, lambda value: True, commit_sequences=review_sequences
-                    )

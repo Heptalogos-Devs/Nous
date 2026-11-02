@@ -98,9 +98,7 @@ def test_reconcile_recovers_old_names_only_within_visible_sources(tmp_path: Path
         try:
             await identity.create_namespace(ctx, "Research", "namespace")
             await identity.create_subject(ctx, "Researcher", "subject", subject_id=ctx.subject_id)
-            async with authority.write(
-                ctx, "adopt", operation_kind="test.adopt", scope=ctx.require_subject(), payload=None
-            ) as tx:
+            async with authority.write(ctx) as tx:
                 records = []
                 for text in ("可读的独立资料。", "当前范围以外的独立资料。"):
                     document = ImportDocument(text=text)
@@ -116,12 +114,9 @@ def test_reconcile_recovers_old_names_only_within_visible_sources(tmp_path: Path
                             ),
                         )
                     )
-                tx.result(records)
             first, second = records
             assert first.addresses is not None and second.addresses is not None
-            async with authority.write(
-                ctx, "lost-directory", operation_kind="test.directory_loss", payload=None
-            ) as tx:
+            async with authority.write(ctx) as tx:
                 encoded = [
                     canonical_json(target)
                     for record in records
@@ -130,7 +125,6 @@ def test_reconcile_recovers_old_names_only_within_visible_sources(tmp_path: Path
                 await tx.connection.execute(
                     addresses.delete().where(addresses.c.target.in_(encoded))
                 )
-                tx.result(None)
             limited = ctx.model_copy(update={"allowed_source_ids": (first.reference.exact(),)})
             recovered = await directory.reconcile(limited, "limited-recovery")
             assert recovered["cognition"] == 1
@@ -185,6 +179,7 @@ def test_source_objects_round_trip_through_query_and_public_source_read(tmp_path
                 )
                 namespace = await api.create_namespace("Source references")
                 subject = await api.create_subject(namespace.id)
+                namespace_client = await api.namespace_by_id(namespace.id)
                 resource = await api.register_resource(
                     namespace.id,
                     subject.id,
@@ -199,11 +194,7 @@ def test_source_objects_round_trip_through_query_and_public_source_read(tmp_path
                     ReadResource(resource_id=resource.reference.id, current="required"),
                 )
                 assert saved.snapshot is not None and saved.text == original_text
-                queried = await api.query_cognition(
-                    namespace.id,
-                    subject.id,
-                    QueryRequest(reference=saved.reference.exact(), materialize=True),
-                )
+                queried = await namespace_client.query(QueryRequest(reference=saved.reference.exact(), materialize=True))
                 assert len(queried.hits) == 1 and isinstance(queried.hits[0].object, ResourceRecord)
                 resolved = await api.resolve_reference(subject.id, "resource:Project README")
                 assert (
@@ -223,9 +214,7 @@ def test_source_objects_round_trip_through_query_and_public_source_read(tmp_path
                     ),
                 )
                 observation = imported.outputs[0].observation_id
-                events = await api.query_cognition(
-                    namespace.id, subject.id, QueryRequest(reference=f"observation:{observation}")
-                )
+                events = await namespace_client.query(QueryRequest(reference=f"observation:{observation}"))
                 assert len(events.hits) == 1 and isinstance(
                     events.hits[0].object, ObservationRecord
                 )
@@ -238,28 +227,20 @@ def test_source_objects_round_trip_through_query_and_public_source_read(tmp_path
                 event_source = await api.source(subject.id, events.hits[0].object.reference)
                 assert event_source["observation"]["source"]["observation_id"] == observation
 
-                edges = await api.query_cognition(
-                    namespace.id, subject.id, QueryRequest(domains=("evidence",), limit=100)
-                )
+                edges = await namespace_client.query(QueryRequest(domains=("evidence",), limit=100))
                 assert edges.hits and all(
                     isinstance(hit.object, EvidenceRelationRecord) for hit in edges.hits
                 )
                 edge = edges.hits[0].object
                 resolved = await api.resolve_reference(subject.id, edge.reference)
                 assert isinstance(resolved.reference, EvidenceTarget)
-                exact = await api.query_cognition(
-                    namespace.id, subject.id, QueryRequest(reference=edge.reference.exact())
-                )
+                exact = await namespace_client.query(QueryRequest(reference=edge.reference.exact()))
                 assert len(exact.hits) == 1 and exact.hits[0].object.reference == edge.reference
                 source = await api.source(subject.id, edge.reference)
                 assert source["evidence"]["target"]["id"] == edge.target.id
 
                 document.unlink()
-                stale = await api.query_cognition(
-                    namespace.id,
-                    subject.id,
-                    QueryRequest(text='@resource("Project README")', current="prefer"),
-                )
+                stale = await namespace_client.query(QueryRequest(text='@resource("Project README")', current="prefer"))
                 assert stale.execution and "external_snapshot_stale" in stale.execution.reasons
                 assert stale.hits[0].object.snapshot.source == saved.snapshot.source
                 assert (

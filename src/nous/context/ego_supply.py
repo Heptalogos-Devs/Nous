@@ -26,11 +26,11 @@ from nous.identity.access import require_namespace_in
 from nous.platform.persistence import ReadView, WriteTx
 
 if TYPE_CHECKING:
-    from .managed import ManagedContexts
+    from .runtime import ContextRuntime
 
 
 async def segments_in(
-    self: ManagedContexts, view: ReadView | WriteTx, ctx: CallContext, usage: ContextUsage
+    self: ContextRuntime, view: ReadView | WriteTx, ctx: CallContext, usage: ContextUsage
 ) -> tuple[ContextSegment, ...]:
     subject = await require_namespace_in(view, ctx)
     # A worker/reviewer does not acquire the subject's personality merely by
@@ -153,17 +153,14 @@ async def segments_in(
         elif isinstance(body, LanguageConventionBody):
             from nous_sdk.contracts.social import SymbolSelection
 
-            selected = (
-                usage.symbols is None
-                and self.symbols.scoped(
-                    body,
-                    SymbolSelection(
-                        audience=usage.audience_entities,
-                        groups=tuple(groups),
-                        contexts=usage.situations,
-                    ),
-                    express=True,
-                )
+            selected = usage.symbols is None and self.symbols.scoped(
+                body,
+                SymbolSelection(
+                    audience=usage.audience_entities,
+                    groups=tuple(groups),
+                    contexts=usage.situations,
+                ),
+                express=True,
             )
             selected = selected and (
                 not body.contexts
@@ -179,7 +176,7 @@ async def segments_in(
                         "required": required,
                         "provenance": {
                             **segment.provenance,
-                            "supply": "stable_ego" if required else "task_related_cognition",
+                            "supply": "current_personality" if required else "task_related_cognition",
                             "audience": usage.audience,
                         },
                     }

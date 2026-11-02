@@ -10,7 +10,7 @@ from nous_sdk.contracts.episodes import (
 
 from .security import application, context
 
-router = APIRouter(prefix='/api/v1/namespaces/{namespace_id}/episodes')
+router = APIRouter(prefix='/api/knowledge/namespaces/{namespace_id}/episodes')
 
 
 @router.post("/query")

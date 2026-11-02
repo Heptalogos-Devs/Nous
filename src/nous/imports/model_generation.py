@@ -1,33 +1,25 @@
-"""Source formation uses the generic model owner and its registered invocation contract."""
+"""Single-purpose language tasks over original import and media content."""
 
-import json
-from collections.abc import Awaitable, Callable
-from typing import Literal
+from __future__ import annotations
 
-from nous_sdk.contracts import CallContext, DomainError, FormationProposal
-from nous_sdk.contracts.cognition import FormationDraft
+from nous_sdk.contracts import CallContext, DomainError
+from nous_sdk.contracts.formation import (
+    GraphDraft,
+    GraphResolutionDraft,
+    GraphResolutionInput,
+    NotesDraft,
+)
 from nous_sdk.contracts.model_roles import ModelCachePolicy
 from nous_sdk.contracts.namespace_policy import FormationPolicy
 
-from nous.cognition.formation_validation import validate_formation_policy
 from nous.cognition.models import ModelServices
 from nous.platform.configuration.service import ConfigurationService
-from nous.platform.models.generation import MediaInput
-from nous.platform.time import parse_timepoint
-
-from .model_contracts import Description, MediaFormationDraft
+from nous.platform.models.generation import MediaInput, ModelResult
 
 
-async def form(
-    models: ModelServices,
-    ctx: CallContext,
-    text: str,
-    source: dict[str, object],
-    *,
-    configuration: ConfigurationService,
-    invocation_id: str | None = None,
-    cache_policy: ModelCachePolicy = "shared",
-) -> FormationProposal:
+async def require_formation(
+    configuration: ConfigurationService, ctx: CallContext, text: str
+) -> FormationPolicy:
     policy = await configuration.policy(ctx, "formation", FormationPolicy)
     if not policy.enabled:
         raise DomainError("formation_disabled", "Namespace semantic formation is disabled")
@@ -35,55 +27,92 @@ async def form(
         raise DomainError(
             "formation_chunk_limit", "Source exceeds the namespace formation chunk limit"
         )
-    source = {**source, "formation_policy": policy.model_dump(mode="json")}
-    generated = await models.generate(
-        ctx,
-        "formation",
-        {"source_text": text, "source": source},
-        FormationDraft,
-        invocation_id=invocation_id,
-        cache_policy=cache_policy,
-    )
-    proposal = FormationProposal.model_validate(generated.output.model_dump(mode="json"))
-    validate_formation_policy(proposal, policy)
-    event = parse_timepoint(proposal.event_expression) if proposal.event_expression else None
-    return proposal.model_copy(update={"producer_call_id": generated.call_id, "event": event})
+    return policy
 
 
-async def interpret(
+async def form_notes(
     models: ModelServices,
     ctx: CallContext,
     text: str,
-    source: dict[str, object],
-    media: tuple[MediaInput, ...],
-    strategy: Literal["description_only", "direct_structured", "describe_then_structure"],
     *,
     configuration: ConfigurationService,
-    description_adopter: Callable[[Description], Awaitable[None]] | None = None,
-    cached_description: Description | None = None,
-) -> Description | FormationProposal:
-    policy = await configuration.policy(ctx, "formation", FormationPolicy)
-    if strategy != "description_only" and not policy.enabled:
-        raise DomainError("formation_disabled", "Namespace semantic formation is disabled")
-    source = {**source, "formation_policy": policy.model_dump(mode="json")}
-    variables: dict[str, object] = {
-        "source_text": text,
-        "source": source,
-        "source_context": text + "\n" + json.dumps(source, ensure_ascii=False),
-    }
-    description = cached_description
-    if strategy != "direct_structured" and description is None:
-        generated = await models.generate(ctx, "description", variables, str, media=media)
-        description = Description(description=generated.output, producer_call_id=generated.call_id)
-        if description_adopter is not None:
-            await description_adopter(description)
-    if strategy == "description_only":
-        assert description is not None
-        return description
-    if description is not None:
-        variables["saved_description"] = description.model_dump(mode="json")
-    formed = await models.generate(ctx, "formation", variables, MediaFormationDraft, media=media)
-    result = FormationProposal.model_validate(formed.output.model_dump(mode="json"))
-    validate_formation_policy(result, policy)
-    event = parse_timepoint(result.event_expression) if result.event_expression else None
-    return result.model_copy(update={"producer_call_id": formed.call_id, "event": event})
+    background: str = "",
+    source_ids: tuple[str, ...] = (),
+    cache_policy: ModelCachePolicy = "none",
+    media: tuple[MediaInput, ...] = (),
+) -> ModelResult[NotesDraft]:
+    await require_formation(configuration, ctx, text)
+    return await models.generate(
+        ctx,
+        "formation",
+        {"source_text": text, "background": background},
+        NotesDraft,
+        source_ids=source_ids,
+        cache_policy=cache_policy,
+        media=media,
+    )
+
+
+async def extract_graph(
+    models: ModelServices,
+    ctx: CallContext,
+    text: str,
+    *,
+    configuration: ConfigurationService,
+    background: str = "",
+    source_ids: tuple[str, ...] = (),
+    cache_policy: ModelCachePolicy = "none",
+    media: tuple[MediaInput, ...] = (),
+) -> ModelResult[GraphDraft]:
+    policy = await require_formation(configuration, ctx, text)
+    result = await models.generate(
+        ctx,
+        "formation",
+        {"source_text": text, "background": background},
+        GraphDraft,
+        source_ids=source_ids,
+        cache_policy=cache_policy,
+        media=media,
+    )
+    if policy.max_entities is not None and len(result.output.entities) > policy.max_entities:
+        raise DomainError("formation_entity_limit", "Graph extraction exceeded the entity limit")
+    if policy.max_relations is not None and len(result.output.relations) > policy.max_relations:
+        raise DomainError(
+            "formation_relation_limit", "Graph extraction exceeded the relation limit"
+        )
+    return result
+
+
+async def resolve_graph(
+    models: ModelServices,
+    ctx: CallContext,
+    request: GraphResolutionInput,
+    *,
+    source_ids: tuple[str, ...] = (),
+) -> ModelResult[GraphResolutionDraft]:
+    return await models.generate(
+        ctx,
+        "formation",
+        request.model_dump(mode="json"),
+        GraphResolutionDraft,
+        source_ids=source_ids,
+    )
+
+
+async def describe(
+    models: ModelServices,
+    ctx: CallContext,
+    text: str,
+    *,
+    background: str = "",
+    source_ids: tuple[str, ...] = (),
+    media: tuple[MediaInput, ...],
+) -> ModelResult[str]:
+    return await models.generate(
+        ctx,
+        "description",
+        {"source_text": text, "background": background},
+        str,
+        source_ids=source_ids,
+        media=media,
+    )

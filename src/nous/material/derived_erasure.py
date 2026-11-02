@@ -103,37 +103,10 @@ async def purge_materials_in(
             affected_regions.add(region.id)
             if not region.purged:
                 await tx.connection.execute(
-                    derived_regions.update()
-                    .where(derived_regions.c.id == region.id)
+                    derived_regions.update().where(derived_regions.c.namespace_id == tx.ctx.namespace_id, derived_regions.c.id == region.id)
                     .values(
                         record=region.model_copy(
                             update={"purged": True, "selector": None}
                         ).model_dump(mode="json")
                     )
                 )
-
-    def contains(value: JsonValue) -> bool:
-        if isinstance(value, dict):
-            kind, identity = value.get("kind"), value.get("id")
-            if (
-                kind == "representation"
-                and isinstance(identity, str)
-                and f"representation:{identity}" in affected
-            ):
-                return True
-            if (
-                kind == "derived_region"
-                and isinstance(identity, str)
-                and identity in affected_regions
-            ):
-                return True
-            if (
-                exact_ref(value.get("reference")) in affected
-                or exact_ref(value.get("representation")) in affected
-            ):
-                return True
-            return any(contains(item) for item in value.values())
-        return isinstance(value, list) and any(contains(item) for item in value)
-
-    if affected:
-        await self.authority.redact_receipts_in(tx, contains)

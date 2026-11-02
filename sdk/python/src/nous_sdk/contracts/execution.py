@@ -29,7 +29,7 @@ class ExecutionJob(Contract):
     workflow_name: str
     queue_name: str
     caller_id: str
-    operation_key: str
+    commit_seq: int = Field(ge=0)
     scope: str
     owned_parent: str | None = None
     args: tuple[JsonValue, ...]

@@ -32,9 +32,7 @@ class VectorProjectionService:
                 if isinstance(target, CognitiveRef):
                     await self.cognition.get_in(view, ctx, target)
                 else:
-                    await self.materials.provenance_in(
-                        view, ctx, target, derivations=self.derivations
-                    )
+                    await self.materials.provenance_in(view, ctx, target)
             values = (
                 await view.connection.execute(
                     select(requests.c.record).where(
@@ -124,21 +122,11 @@ class VectorProjectionService:
     ) -> ProjectionReceipt:
         from nous.identity.access import require_namespace_in
 
-        async with self.authority.write(
-            ctx,
-            command.operation_id,
-            operation_kind="vectors.submit",
-            scope=ctx.namespace_id,
-            payload=command,
-        ) as tx:
-            if tx.replayed:
-                receipt = ProjectionReceipt.model_validate(tx.replay_result)
-            else:
-                await require_namespace_in(tx, ctx)
-                receipt = await self.admit_in(
-                    tx, ctx, command.targets, replace_existing=replace_existing
-                )
-                tx.result(receipt)
+        async with self.authority.write(ctx) as tx:
+            await require_namespace_in(tx, ctx)
+            receipt = await self.admit_in(
+                tx, ctx, command.targets, replace_existing=replace_existing
+            )
         return receipt
 
     async def read_request(self, identity: str) -> Request:
@@ -173,19 +161,9 @@ class VectorProjectionService:
                     self, view, ctx, target, profile.resource_key(), head_only=head_only
                 )
                 if value is not None:
-                    try:
-                        content = await retained_content_in(
-                            self, view, ctx, target, value, profile, repair=True
-                        )
-                    except DomainError as error:
-                        # Unresolved prior paid outcomes freeze that exact input. Rebuild already
-                        # skips them; sync must not abort the rest of the missing set.
-                        if error.code in {
-                            "model_invocation_unavailable",
-                            "embedding_producer_conflict",
-                        }:
-                            continue
-                        raise
+                    content = await retained_content_in(
+                        self, view, ctx, target, value, profile, repair=True
+                    )
                     if content is None:
                         missing.append(target)
                     else:
@@ -193,10 +171,7 @@ class VectorProjectionService:
 
                         if (
                             await view.connection.scalar(
-                                select(vectors.c.reference).where(
-                                    vectors.c.reference == target.exact(),
-                                    vectors.c.space == content.space,
-                                )
+                                select(vectors.c.reference).where(vectors.c.namespace_id == ctx.namespace_id, vectors.c.reference == target.exact(), vectors.c.space == content.space)
                             )
                             is None
                         ):
@@ -245,15 +220,4 @@ class VectorProjectionService:
                     delete(subscriptions).where(subscriptions.c.request_id == request.id)
                 )
         if erased:
-            await self.authority.redact_receipts_in(
-                tx,
-                lambda value: (
-                    isinstance(value, dict)
-                    and (
-                        isinstance(value.get("id"), str)
-                        and value["id"] in erased
-                        or isinstance(value.get("request_id"), str)
-                        and value["request_id"] in erased
-                    )
-                ),
-            )
+            pass

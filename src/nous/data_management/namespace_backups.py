@@ -4,7 +4,6 @@ import base64
 import shutil
 import tempfile
 from pathlib import Path
-from uuid import uuid4
 
 import sqlalchemy as sa
 from nous_sdk.contracts import CallContext, DomainError
@@ -17,13 +16,13 @@ from nous_sdk.contracts.namespace_backups import (
     NamespaceState,
     RestoreNamespaceBackup,
 )
-from pydantic import TypeAdapter
 
 from nous.identity.service import IdentityService, require_management_scope
 from nous.platform.concurrency import owned_thread
+from nous.platform.configuration.service import ConfigurationService
 from nous.platform.content import ContentLease, ContentStore
-from nous.platform.persistence import Authority, metadata
 from nous.platform.execution import DurableExecution
+from nous.platform.persistence import Authority, metadata
 
 from .namespace_backup_store import NamespaceBackupStore
 from .namespace_state import capture
@@ -39,10 +38,18 @@ uploads = sa.Table(
 
 class NamespaceBackupService:
     def __init__(
-        self, authority: Authority, identity: IdentityService, content: ContentStore, root: Path, *, execution: DurableExecution
+        self,
+        authority: Authority,
+        identity: IdentityService,
+        content: ContentStore,
+        root: Path,
+        *,
+        execution: DurableExecution,
+        configuration: ConfigurationService,
     ):
         self.authority, self.identity, self.content = authority, identity, content
         self.execution = execution
+        self.configuration = configuration
         self.root = root
         self.store = NamespaceBackupStore(root / "archives", root / "uploads")
 
@@ -78,15 +85,8 @@ class NamespaceBackupService:
         for upload_id in pending:
             await owned_thread(lambda identifier=upload_id: self.store.abort_upload(identifier))
         if pending:
-            async with self.authority.write(
-                ctx,
-                str(uuid4()),
-                operation_kind="namespace.backup.upload.purge",
-                scope=ctx.namespace_id,
-                payload={},
-            ) as tx:
+            async with self.authority.write(ctx) as tx:
                 await tx.connection.execute(uploads.delete().where(uploads.c.id.in_(pending)))
-                tx.result(None)
 
     @staticmethod
     def require_scope(ctx: CallContext, source_namespace_id: str | None = None) -> None:
@@ -106,6 +106,8 @@ class NamespaceBackupService:
             if namespace.purging:
                 raise DomainError("namespace_purging", "Namespace permanent removal is in progress")
             await owned_thread(self.store.initialize)
+            async with self.configuration.write_lock():
+                configuration_toml = await self.configuration.export(ctx, "namespace")
             with tempfile.TemporaryDirectory(prefix="snapshot-", dir=self.root) as temporary:
                 temporary_path = Path(temporary)
                 async with self.content.preserve_all():
@@ -117,21 +119,18 @@ class NamespaceBackupService:
                             execution = await self.execution.export_namespace_in(view, ctx, workflow_ids=workflow_ids)
                     finally:
                         await snapshot_authority.close()
-                    state = NamespaceState(namespace_id=ctx.namespace_id, authority_commit_seq=commit, tables=tables, execution=execution)
+                    state = NamespaceState(
+                        namespace_id=ctx.namespace_id,
+                        authority_commit_seq=commit,
+                        tables=tables,
+                        configuration_toml=configuration_toml,
+                        execution=execution,
+                    )
                     namespace = await self.identity.namespace(ctx, "management")
                     source = temporary_path / "namespace"
                     await owned_thread(lambda: self._stage(state, source))
-                    version = max(
-                        (
-                            TypeAdapter(int).validate_python(row["commit_seq"])
-                            for row in state.tables.get("nous_configuration_history", ())
-                        ),
-                        default=0,
-                    )
                     return await owned_thread(
-                        lambda: self.store.create_backup(
-                            namespace, source, source_config_version=version
-                        )
+                        lambda: self.store.create_backup(namespace, source)
                     )
 
     def _stage(self, state: NamespaceState, target: Path) -> None:
@@ -213,19 +212,12 @@ class NamespaceBackupService:
         self.require_scope(ctx)
         upload = await owned_thread(self.store.begin_upload)
         try:
-            async with self.authority.write(
-                ctx,
-                upload.upload_id,
-                operation_kind="namespace.backup.upload.begin",
-                scope="namespace-backups",
-                payload={},
-            ) as tx:
+            async with self.authority.write(ctx) as tx:
                 await tx.connection.execute(
                     uploads.insert().values(
                         id=upload.upload_id, caller_id=ctx.caller_id, namespace_id=ctx.namespace_id
                     )
                 )
-                tx.result(upload)
             return upload
         except BaseException:
             await owned_thread(lambda: self.store.abort_upload(upload.upload_id))
@@ -272,16 +264,8 @@ class NamespaceBackupService:
         return info
 
     async def _end_upload(self, ctx: CallContext, upload_id: str) -> None:
-        async with self.authority.write(
-            ctx,
-            upload_id,
-            operation_kind="namespace.backup.upload.end",
-            scope="namespace-backups",
-            payload={},
-        ) as tx:
-            if not tx.replayed:
-                await tx.connection.execute(uploads.delete().where(uploads.c.id == upload_id))
-                tx.result(None)
+        async with self.authority.write(ctx) as tx:
+            await tx.connection.execute(uploads.delete().where(uploads.c.id == upload_id))
 
     async def abort_upload(self, ctx: CallContext, upload_id: str) -> None:
         await self._upload(ctx, upload_id)
@@ -291,7 +275,7 @@ class NamespaceBackupService:
     async def restore(
         self, ctx: CallContext, command: RestoreNamespaceBackup
     ) -> NamespaceBackupRestored:
-        from .namespace_restore import restore
+        from .namespace_restore import restore, validate
 
         self.require_scope(ctx)
         await owned_thread(self.store.initialize)
@@ -307,6 +291,7 @@ class NamespaceBackupService:
                     "namespace_backup_integrity",
                     "Namespace state does not match the backup manifest",
                 )
+            validate(state)
             leases: dict[str, ContentLease] = {}
             try:
                 for row in state.tables.get("nous_content_references", ()):
@@ -322,9 +307,35 @@ class NamespaceBackupService:
                                 "Restored content differs from its authoritative reference",
                             )
                         leases[digest] = lease
-                return await restore(
-                    self.authority, self.identity, self.content, self.execution, ctx, command, state, leases
-                )
+                async with self.configuration.write_lock():
+                    try:
+                        await self.identity.namespace(ctx, "management")
+                    except DomainError as error:
+                        if error.code != "namespace_not_found":
+                            raise
+                    else:
+                        raise DomainError(
+                            "namespace_conflict", "Namespace identity already exists"
+                        )
+                    async with self.authority.read(ctx) as view:
+                        await self.identity.require_fresh_identity_in(
+                            view, "namespace", ctx.namespace_id
+                        )
+                    prepared = await self.configuration.prepare_document_locked(
+                        ctx, state.configuration_toml, "namespace"
+                    )
+                    result = await restore(
+                        self.authority,
+                        self.identity,
+                        self.content,
+                        self.execution,
+                        ctx,
+                        command,
+                        state,
+                        leases,
+                    )
+                    self.configuration.publish_prepared(prepared)
+                    return result
             finally:
                 for lease in leases.values():
                     await self.content.release(lease)

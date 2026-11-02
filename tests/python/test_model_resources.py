@@ -73,7 +73,7 @@ def test_compiled_messages_primitive_output_and_resource_budget(tmp_path, monkey
             await app.identity.create_namespace(
                 ctx, "protocol", "create", namespace_id=ctx.namespace_id
             )
-            await app.configuration.set(ctx, "network", {"trust_env": False}, "local-network")
+            await app.configuration.set(ctx, "network", {"trust_env": False})
             await app.prompts.save(
                 ctx,
                 "wire-selection",
@@ -109,7 +109,6 @@ def test_compiled_messages_primitive_output_and_resource_budget(tmp_path, monkey
                         for role in ("wire", "wire_other")
                     },
                 },
-                "wire-config",
             )
             variables = {
                 "question": "软件提供什么能力？",
@@ -169,7 +168,7 @@ def test_compiled_messages_primitive_output_and_resource_budget(tmp_path, monkey
                 update={"max_requests_per_day": 2}
             )
             await app.configuration.set(
-                ctx, "models", resources.model_dump(mode="json"), "increase-budget"
+                ctx, "models", resources.model_dump(mode="json")
             )
             resumed = await app.models.generate(
                 ctx, "wire_other", variables, list[int], invocation_id="other"
@@ -197,10 +196,10 @@ def test_toml_reload_scope_and_restart(tmp_path):
         )
         try:
             await app.configuration.set(
-                ctx, "growth", {"mode": "review", "max_snapshot_entries": 17}, "instance-growth"
+                ctx, "growth", {"mode": "review", "max_snapshot_entries": 17}
             )
             await app.configuration.set(
-                ctx, "growth", {"mode": "off"}, "namespace-growth", scope="namespace"
+                ctx, "growth", {"mode": "off"}, scope="namespace"
             )
             effective = (await app.configuration.effective(ctx, "growth"))["value"]
             assert effective["mode"] == "off" and effective["max_snapshot_entries"] == 17

@@ -12,6 +12,7 @@ from .cognition import (
     SocialRelationBody,
 )
 from .common import CognitiveTimes, Contract, Operation, TimePoint
+from .common import ModelProvenance
 from .media import MediaReference
 from .targets import ContextTarget
 
@@ -71,17 +72,6 @@ class SymbolSelection(Contract):
     semantic: Literal["off", "optional", "required"] = Field(
         default="off", exclude_if=lambda value: value == "off"
     )
-    invocation_id: str | None = Field(
-        default=None, max_length=400, exclude_if=lambda value: value is None
-    )
-
-
-class RecoverSymbolResult(Contract):
-    selection: SymbolSelection
-    call_id: str = Field(min_length=1)
-    mode: Literal["understand", "express"] = "understand"
-
-
 class SymbolEvidence(Contract):
     key: str
     kind: Literal["input", "cognition", "media"]
@@ -120,9 +110,7 @@ class SymbolCandidates(Contract):
     matches: tuple[SymbolMatch, ...] = ()
     local_interpretation: SymbolInterpretation | None = None
     semantic_status: Literal["off", "used", "unavailable"] = "off"
-    producer_call_id: str | None = None
-    producer_call_status: Literal["succeeded", "failed"] | None = None
-    reparsed: bool = False
+    producer: ModelProvenance | None = None
     dependencies: tuple[ContextTarget, ...] = ()
     at: TimePoint | None = None
     degradations: tuple[str, ...] = ()

@@ -9,12 +9,9 @@ from nous_sdk.contracts.derivation import (
     CreateDerivedRegion,
     CreateRepresentation,
     DerivationInput,
-    DerivationProducer,
     DerivedSelector,
     TextRepresentation,
 )
-
-from nous.material.derived_producer import digest
 from nous.platform.persistence import WriteTx
 
 if TYPE_CHECKING:
@@ -31,11 +28,6 @@ async def adopt_extracted_in(
     end: int,
     implementation: str,
 ) -> MediaReference:
-    config = {
-        "implementation": implementation,
-        "tables": True,
-        "source": original.model_dump(mode="json"),
-    }
     representation = await self.cognition.derivations.adopt_in(
         tx,
         ctx,
@@ -44,11 +36,7 @@ async def adopt_extracted_in(
             kind="extracted_text",
             strategy="preprocess",
             payload=TextRepresentation(text=text),
-            producer=DerivationProducer(
-                implementation=implementation,
-                signature=digest((config, text)),
-                config_digest=digest(config),
-            ),
+            processor=implementation,
         ),
     )
     region = await self.cognition.derivations.adopt_region_in(

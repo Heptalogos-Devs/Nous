@@ -33,7 +33,7 @@ def measure(
     *,
     context_window: int | None = None,
     output_reserve: int = 0,
-    binary_media: tuple[tuple[str, bytes], ...] = (),
+    binary_media: tuple[tuple[str, bytes, dict[str, JsonValue] | None], ...] = (),
     tokenizer_name: str | None = None,
     media_limits: dict[str, int] | None = None,
 ) -> ModelMeasurement:
@@ -44,7 +44,7 @@ def measure(
     items: list[dict[str, JsonValue]] = []
 
     def media(kind: str, value: dict[str, JsonValue], data: bytes | None = None) -> None:
-        tokens: int | None = limits.get(kind + "_tokens")
+        tokens: int | None = None if kind == "video" else limits.get(kind + "_tokens")
         method = "configured_per_item" if tokens is not None else "unmeasured"
         width, height = value.get("width"), value.get("height")
         if kind == "image" and data is not None:
@@ -59,8 +59,23 @@ def measure(
         elif kind == "image" and limits.get("image_max_tokens") is not None:
             tokens, method = limits["image_max_tokens"], "configured_image_upper_bound"
         duration = value.get("duration_seconds")
+        if duration is None and isinstance(value.get("duration_ms"), int):
+            duration = value["duration_ms"] / 1000
+        width, height = value.get("width"), value.get("height")
+        video_rate = limits.get("video_tokens_per_megapixel_second")
+        if (
+            kind == "video"
+            and isinstance(duration, int | float)
+            and isinstance(width, int)
+            and isinstance(height, int)
+            and video_rate is not None
+        ):
+            tokens, method = (
+                math.ceil(video_rate * duration * width * height / 1_000_000),
+                "configured_video_megapixel_seconds",
+            )
         rate = limits.get(kind + "_tokens_per_second")
-        if rate is not None and isinstance(duration, int | float):
+        if kind != "video" and rate is not None and isinstance(duration, int | float):
             tokens, method = math.ceil(rate * duration), "configured_duration_rate"
         pages = value.get("pages")
         if kind == "document" and isinstance(pages, int) and "document_tokens_per_page" in limits:
@@ -140,12 +155,12 @@ def measure(
         native = ModelMessagesTypeAdapter.validate_python(payload.get("messages", []))
         payload["messages"] = json.loads(ModelMessagesTypeAdapter.dump_json(native))
     visit(payload)
-    for mime, data in binary_media:
+    for mime, data, details in binary_media:
         channel = mime.split("/", 1)[0] if not mime.startswith("application/") else "document"
         if channel == "text" or mime == "application/json":
             texts.append(data.decode("utf-8"))
         else:
-            media(channel, {}, data if channel == "image" else None)
+            media(channel, details or {}, data if channel == "image" else None)
     for field in ("max_output_tokens", "max_completion_tokens", "max_tokens"):
         candidate = request.get(field)
         if isinstance(candidate, int) and not isinstance(candidate, bool):

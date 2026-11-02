@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 
+import unicodedata
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from sqlalchemy import select
+from sqlalchemy import select, tuple_
 
+from nous.cognition.entities import project_entity_in
 from nous.cognition.facts import FactService
 from nous.platform.configuration.service import ConfigurationService
 from nous.platform.persistence import ReadView, WriteTx
 
-from .formation_validation import validate_formation_draft
 from .lifecycle import selectable
 from .schema import revisions
 
@@ -29,21 +31,39 @@ from nous_sdk.contracts import (
     EntityAttribute,
     EntityBody,
     EntityMention,
-    EpistemicStance,
     EvidenceLink,
     FormationCatalogEntry,
-    FormationProposal,
+    FormationDraft,
     ImportRecord,
     MediaReference,
     MemoryBody,
-    MemoryInterpretation,
-    MemorySemanticsBody,
     ProposedConcept,
     ProposedSchema,
     SchemaBody,
 )
-from nous_sdk.contracts.cognition import PersonProfileControls
+from nous_sdk.contracts.derivation import DerivationInput, DerivationStrategy, RepresentationRef
+from nous_sdk.contracts.formation import (
+    GraphDraft,
+    GraphResolutionDraft,
+    GraphResolutionInput,
+    NotesDraft,
+)
 from nous_sdk.contracts.imports import ImportFact, ImportReference
+
+from nous.platform.time import parse_timepoint
+
+if TYPE_CHECKING:
+    from nous.platform.models.generation import ModelResult
+
+
+@dataclass(frozen=True)
+class GraphResolutionPlan:
+    request: GraphResolutionInput | None
+    entity_keys: tuple[str, ...]
+    relation_keys: tuple[str, ...]
+    candidates: dict[str, FormationCatalogEntry]
+    entity_candidates: dict[str, tuple[str, ...]]
+    relation_endpoints: dict[str, tuple[str, str]]
 
 
 class FormationService:
@@ -54,91 +74,14 @@ class FormationService:
         self.facts = facts
         self.records = records
 
-    async def adopt_tags_in(
-        self, tx: WriteTx, ctx: CallContext, memory: CognitiveRecord, labels: tuple[str, ...]
-    ) -> tuple[CognitiveRecord, ...]:
-        import unicodedata
-
-        keys = dict.fromkeys(
-            unicodedata.normalize("NFC", label).strip() for label in labels if label.strip()
-        )
-        existing = [
-            CognitiveRecord.model_validate(value)
-            for value in (
-                await tx.connection.execute(
-                    select(revisions.c.record).where(
-                        revisions.c.namespace_id == ctx.namespace_id,
-                        revisions.c.kind == "concept",
-                        revisions.c.head.is_(True),
-                    )
-                )
-            ).scalars()
-        ]
-        result: list[CognitiveRecord] = []
-        for label in keys:
-            matches = [
-                record
-                for record in existing
-                if isinstance(record.body, ConceptBody)
-                and record.body.state == "active"
-                and (
-                    label.casefold()
-                    in [
-                        record.body.label.casefold(),
-                        *(alias.casefold() for alias in record.body.aliases),
-                    ]
-                )
-                and await self.records.visible_in(tx, ctx, record)
-            ]
-            if len(matches) > 1:
-                raise DomainError(
-                    "ambiguous_tag",
-                    "Tag label resolves to multiple Concepts",
-                    candidates=[record.reference.model_dump() for record in matches],
-                )
-            if matches:
-                previous = matches[0]
-                assert isinstance(previous.body, ConceptBody)
-                if any(ref.id == memory.reference.id for ref in previous.body.members):
-                    result.append(previous)
-                    continue
-                body = previous.body.model_copy(
-                    update={"members": (*previous.body.members, memory.reference)}
-                )
-                record = await self.records.adopt_in(
-                    tx,
-                    ctx,
-                    AdoptCognition(
-                        id=previous.reference.id,
-                        expected_revision=previous.reference.revision,
-                        body=body,
-                        evidence=(
-                            EvidenceLink(reference=previous.reference),
-                            EvidenceLink(reference=memory.reference),
-                        ),
-                        times=memory.times,
-                    ),
-                )
-                existing = [
-                    record if item.reference.id == previous.reference.id else item
-                    for item in existing
-                ]
-            else:
-                record = await self.records.adopt_in(
-                    tx,
-                    ctx,
-                    AdoptCognition(
-                        body=ConceptBody(label=label, members=(memory.reference,)),
-                        evidence=(EvidenceLink(reference=memory.reference),),
-                        times=memory.times,
-                    ),
-                )
-                existing.append(record)
-            result.append(record)
-        return tuple(result)
-
     async def formation_catalog_in(
-        self, view: ReadView | WriteTx, ctx: CallContext, text: str = "", limit: int = 128
+        self,
+        view: ReadView | WriteTx,
+        ctx: CallContext,
+        text: str = "",
+        limit: int = 128,
+        *,
+        references: tuple[CognitiveRef, ...] | None = None,
     ) -> tuple[FormationCatalogEntry, ...]:
         result: list[FormationCatalogEntry] = []
         active_roots = await self.records.source_roots_in(view, ctx)
@@ -147,15 +90,19 @@ class FormationService:
                 select(revisions.c.record)
                 .where(
                     revisions.c.namespace_id == ctx.namespace_id,
-                    revisions.c.head.is_(True),
+                    revisions.c.head.is_(True)
+                    if references is None
+                    else tuple_(revisions.c.id, revisions.c.revision).in_(
+                        [(ref.id, ref.revision) for ref in references]
+                    ),
                     revisions.c.kind.in_(("entity", "concept", "schema")),
                 )
                 .order_by(revisions.c.commit_seq.desc())
             )
         ).scalars()
         for value in rows:
-            record = await self.records.project_record_in(
-                view, ctx, CognitiveRecord.model_validate(value)
+            record = await project_entity_in(
+                self.records, view, ctx, CognitiveRecord.model_validate(value)
             )
             if not selectable(record) or not await self.records.visible_in(view, ctx, record):
                 continue
@@ -212,199 +159,427 @@ class FormationService:
         async with self.records.authority.read(ctx) as view:
             return await self.formation_catalog_in(view, ctx, text, limit)
 
-    async def adopt_text_formation_in(
+    async def adopt_notes_result_in(
         self,
         tx: WriteTx,
         ctx: CallContext,
-        unit_text: str,
-        source_record: ImportRecord,
-        proposal: FormationProposal,
+        result: ModelResult[NotesDraft],
+        *,
+        observation_id: str,
+        region_id: str | None,
+        times: CognitiveTimes,
+        inputs: tuple[DerivationInput, ...],
+        evidence: tuple[EvidenceLink, ...],
+        source_record: ImportRecord | None = None,
+        media: tuple[MediaReference, ...] = (),
+        strategy: DerivationStrategy = "direct_structured",
+        extract_time: bool = True,
+    ) -> tuple[tuple[CognitiveRecord, ...], RepresentationRef]:
+        from nous.material.service import require_observation_in
+
+        event = await require_observation_in(tx, ctx, observation_id, region_id=region_id)
+        contact_id = observation_id if event["kind"] == "contact" else None
+        if contact_id is not None:
+            selected = MediaReference.model_validate(event["record"]["contact_source"])
+            media = tuple(dict.fromkeys((*media, selected)))
+        representation = await self.records.derivations.adopt_model_result_in(
+            tx,
+            ctx,
+            result,
+            inputs=inputs,
+            schema_id="nous.memory-notes/1",
+            strategy=strategy,
+        )
+        records: list[CognitiveRecord] = []
+        for note in result.output.notes:
+            if not note.text.strip():
+                continue
+            event_time = (
+                parse_timepoint(note.time_expression)
+                if extract_time and note.time_expression
+                else None
+            )
+            note_times = times.model_copy(update={"event": event_time or times.event})
+            tags = tuple(
+                dict.fromkeys((*(source_record.tags if source_record else ()), *note.topics))
+            )
+            body = MemoryBody(
+                text=note.text,
+                media=media,
+                contact_observation_id=contact_id,
+                tags=tags,
+                external_ids=(
+                    {**source_record.identifiers, "import": source_record.external_id}
+                    if source_record
+                    else {}
+                ),
+                metadata=source_record.metadata if source_record else {},
+                structured=source_record.structured if source_record else None,
+            )
+            records.append(
+                await self.records.adopt_in(
+                    tx,
+                    ctx,
+                    AdoptCognition(
+                        body=body,
+                        evidence=evidence,
+                        times=note_times,
+                        producer=result.producer,
+                    ),
+                )
+            )
+        return tuple(records), representation.reference
+
+    @staticmethod
+    def graph_resolution_plan(
+        graph: GraphDraft,
+        source_text: str,
+        catalog: tuple[FormationCatalogEntry, ...],
+    ) -> GraphResolutionPlan:
+        def normalized(value: str) -> str:
+            return unicodedata.normalize("NFC", value).strip().casefold()
+
+        entity_keys = tuple(f"E{index + 1}" for index in range(len(graph.entities)))
+        relation_keys = tuple(f"R{index + 1}" for index in range(len(graph.relations)))
+        existing = tuple(item for item in catalog if item.reference.kind == "entity")
+        candidate_rows: dict[str, FormationCatalogEntry] = {}
+        entity_candidates: dict[str, tuple[str, ...]] = {}
+        resolution_entities: list[dict[str, object]] = []
+        needs_resolution = False
+        next_candidate = 1
+        for key, entity in zip(entity_keys, graph.entities, strict=True):
+            names = {normalized(value) for value in (entity.name, *entity.aliases) if value.strip()}
+            matches = [
+                item
+                for item in existing
+                if names.intersection(
+                    normalized(value) for value in (item.label, *item.aliases) if value.strip()
+                )
+            ]
+            keys = []
+            rows = []
+            for item in matches:
+                candidate_key = f"C{next_candidate}"
+                next_candidate += 1
+                candidate_rows[candidate_key] = item
+                keys.append(candidate_key)
+                rows.append(
+                    {
+                        "key": candidate_key,
+                        "name": item.label,
+                        "aliases": list(item.aliases),
+                        "description": item.description,
+                    }
+                )
+            entity_candidates[key] = tuple(keys)
+            needs_resolution = needs_resolution or bool(keys)
+            resolution_entities.append(
+                {
+                    "key": key,
+                    "name": entity.name,
+                    "entity_type": entity.entity_type,
+                    "description": entity.description,
+                    "candidates": rows,
+                }
+            )
+
+        names_to_keys: dict[str, list[str]] = {}
+        for key, entity in zip(entity_keys, graph.entities, strict=True):
+            for label in (entity.name, *entity.aliases):
+                normalized_label = normalized(label)
+                if normalized_label:
+                    names_to_keys.setdefault(normalized_label, []).append(key)
+
+        relation_endpoints: dict[str, tuple[str, str]] = {}
+        for key, relation in zip(relation_keys, graph.relations, strict=True):
+            subjects = tuple(dict.fromkeys(names_to_keys.get(normalized(relation.subject), ())))
+            objects = tuple(dict.fromkeys(names_to_keys.get(normalized(relation.object), ())))
+            for endpoint, label, matches in (
+                ("subject", relation.subject, subjects),
+                ("object", relation.object, objects),
+            ):
+                if len(matches) != 1:
+                    raise DomainError(
+                        "formation_relation_entity_unknown"
+                        if not matches
+                        else "formation_relation_entity_ambiguous",
+                        "A graph relation endpoint must identify exactly one extracted entity",
+                        relation_key=key,
+                        endpoint=endpoint,
+                        name=label,
+                    )
+            relation_endpoints[key] = (subjects[0], objects[0])
+
+        request = (
+            GraphResolutionInput(
+                source_text=source_text,
+                resolution_data={"entities": resolution_entities},
+            )
+            if needs_resolution
+            else None
+        )
+        return GraphResolutionPlan(
+            request=request,
+            entity_keys=entity_keys,
+            relation_keys=relation_keys,
+            candidates=candidate_rows,
+            entity_candidates=entity_candidates,
+            relation_endpoints=relation_endpoints,
+        )
+
+    async def adopt_graph_result_in(
+        self,
+        tx: WriteTx,
+        ctx: CallContext,
+        result: ModelResult[GraphDraft],
+        *,
+        resolution: ModelResult[GraphResolutionDraft] | None,
+        plan: GraphResolutionPlan,
+        observation_id: str,
+        times: CognitiveTimes,
+        inputs: tuple[DerivationInput, ...],
+        evidence: tuple[EvidenceLink, ...],
+        media: tuple[MediaReference, ...],
+        strategy: DerivationStrategy = "direct_structured",
+    ) -> tuple[tuple[CognitiveRecord, ...], tuple[RepresentationRef, ...]]:
+        if (plan.request is None) != (resolution is None):
+            raise DomainError(
+                "formation_resolution_mismatch",
+                "Semantic disambiguation is required exactly when extracted names are ambiguous",
+            )
+        assignments: dict[str, str | None] = {key: None for key in plan.entity_keys}
+        if resolution is not None:
+            entity_assignments = {
+                item.entity_key: item.candidate_key for item in resolution.output.entities
+            }
+            if set(entity_assignments) != set(plan.entity_keys):
+                raise DomainError(
+                    "formation_resolution_invalid",
+                    "Entity resolution omitted or repeated a local key",
+                )
+            for key, candidate in entity_assignments.items():
+                if candidate is not None and candidate not in plan.entity_candidates.get(key, ()):
+                    raise DomainError(
+                        "formation_resolution_invalid",
+                        "Entity resolution selected a candidate outside its supplied list",
+                        entity_key=key,
+                    )
+                assignments[key] = candidate
+
+        representation = await self.records.derivations.adopt_model_result_in(
+            tx,
+            ctx,
+            result,
+            inputs=inputs,
+            schema_id="nous.graph-extraction/1",
+            strategy=strategy,
+        )
+        representations = [representation.reference]
+        if resolution is not None:
+            resolution_inputs = (
+                *inputs,
+                DerivationInput(
+                    ordinal=len(inputs),
+                    source=representation.reference.media(),
+                    role="context",
+                ),
+            )
+            resolved = await self.records.derivations.adopt_model_result_in(
+                tx,
+                ctx,
+                resolution,
+                inputs=resolution_inputs,
+                schema_id="nous.graph-resolution/1",
+                strategy=strategy,
+            )
+            representations.append(resolved.reference)
+        from .lifecycle import selectable
+
+        def normalized(value: str) -> str:
+            return unicodedata.normalize("NFC", value).strip().casefold()
+
+        source_mentions = tuple(
+            EntityMention(reference=reference, role="extracted_from_source") for reference in media
+        )
+        entities = dict(zip(plan.entity_keys, result.output.entities, strict=True))
+        entity_records: dict[str, CognitiveRecord] = {}
+        grouped_candidates: dict[str, list[str]] = {}
+        for key, candidate in assignments.items():
+            if candidate is not None:
+                grouped_candidates.setdefault(candidate, []).append(key)
+        for candidate_key, keys in grouped_candidates.items():
+            previous = await self.records.get_in(tx, ctx, plan.candidates[candidate_key].reference)
+            if not isinstance(previous.body, EntityBody) or not selectable(previous):
+                raise DomainError(
+                    "formation_entity_target", "Resolved graph candidate is not an active Entity"
+                )
+            proposed = [entities[key] for key in keys]
+            aliases = tuple(
+                dict.fromkeys(
+                    alias
+                    for item in proposed
+                    for alias in (item.name, *item.aliases)
+                    if normalized(alias) != normalized(previous.body.label)
+                )
+            )
+            descriptions = tuple(
+                dict.fromkeys(
+                    item.description.strip() for item in proposed if item.description.strip()
+                )
+            )
+            body = previous.body.model_copy(
+                update={
+                    "aliases": tuple(dict.fromkeys((*previous.body.aliases, *aliases))),
+                    "description": previous.body.description or "\n".join(descriptions),
+                    "mentions": tuple(dict.fromkeys((*previous.body.mentions, *source_mentions))),
+                }
+            )
+            adopted = await self.records.adopt_in(
+                tx,
+                ctx,
+                AdoptCognition(
+                    id=previous.reference.id,
+                    expected_revision=previous.reference.revision,
+                    body=body,
+                    evidence=(*evidence, EvidenceLink(reference=previous.reference)),
+                    times=times,
+                    producer=result.producer,
+                ),
+            )
+            for key in keys:
+                entity_records[key] = adopted
+
+        output_records: list[CognitiveRecord] = []
+        for key in plan.entity_keys:
+            if key in entity_records:
+                output_records.append(entity_records[key])
+                continue
+            item = entities[key]
+            record = await self.records.adopt_in(
+                tx,
+                ctx,
+                AdoptCognition(
+                    body=EntityBody(
+                        label=item.name,
+                        entity_type=item.entity_type,
+                        aliases=item.aliases,
+                        description=item.description,
+                        mentions=source_mentions,
+                    ),
+                    evidence=evidence,
+                    times=times,
+                    producer=result.producer,
+                ),
+            )
+            entity_records[key] = record
+            output_records.append(record)
+
+        for key, item in zip(plan.relation_keys, result.output.relations, strict=True):
+            subject_key, object_key = plan.relation_endpoints[key]
+            relation = AssociationBody(
+                from_ref=entity_records[subject_key].reference,
+                to_ref=entity_records[object_key].reference,
+                relation=item.relation,
+                basis_class="source_evidence",
+                description=item.explanation,
+            )
+            output_records.append(
+                await self.records.adopt_in(
+                    tx,
+                    ctx,
+                    AdoptCognition(
+                        body=relation,
+                        evidence=evidence,
+                        times=times,
+                        producer=result.producer,
+                    ),
+                )
+            )
+        return tuple(output_records), tuple(representations)
+
+    async def adopt_manual_draft_in(
+        self,
+        tx: WriteTx,
+        ctx: CallContext,
+        draft: FormationDraft,
+        *,
         observation_id: str,
         region_id: str | None,
         times: CognitiveTimes,
         catalog: tuple[FormationCatalogEntry, ...] = (),
-        *,
         media: tuple[MediaReference, ...] = (),
-    ) -> tuple[CognitiveRecord, ...]:
-        """One faithful Memory and a separately identified interpretation of its revision."""
-        original = await self.records.adopt_in(
-            tx,
-            ctx,
-            AdoptCognition(
-                body=MemoryBody(
-                    text=unit_text,
-                    media=media,
-                    tags=source_record.tags,
-                    external_ids={**source_record.identifiers, "import": source_record.external_id},
-                    metadata=source_record.metadata,
-                    structured=source_record.structured,
-                ),
-                evidence=(EvidenceLink(observation_id=observation_id, region_id=region_id),),
-                times=times,
-            ),
-        )
-        return (
-            original,
-            *await self.adopt_semantic_proposal_in(
-                tx,
-                ctx,
-                original,
-                proposal,
-                times,
-                catalog,
-                facts=source_record.assertions.facts if source_record.assertions else (),
-                source_references=source_record.assertions.references
-                if source_record.assertions
-                else (),
-            ),
-        )
-
-    async def adopt_semantic_proposal_in(
-        self,
-        tx: WriteTx,
-        ctx: CallContext,
-        anchor: CognitiveRecord,
-        proposal: FormationProposal,
-        times: CognitiveTimes,
-        catalog: tuple[FormationCatalogEntry, ...] = (),
-        *,
         facts: tuple[ImportFact, ...] = (),
         source_references: tuple[ImportReference, ...] = (),
     ) -> tuple[CognitiveRecord, ...]:
-        """Resolve model-local keys to real identities before adopting semantic objects."""
-        from nous_sdk.contracts.namespace_policy import FormationPolicy
-
-        from .formation_validation import validate_formation_policy
-
-        if proposal.producer_call_id is not None:
-            policy = await self.configuration.policy_in(tx, ctx, "formation", FormationPolicy)
-            if not policy.enabled:
-                raise DomainError("formation_disabled", "Namespace model formation is disabled")
-            validate_formation_policy(proposal, policy)
         from graphlib import CycleError, TopologicalSorter
 
-        if not isinstance(anchor.body, MemoryBody):
-            raise DomainError(
-                "formation_anchor", "Semantic formation requires an actual adopted Memory"
-            )
+        from nous.material.service import require_observation_in
+
         if source_references:
-            from .graph_state import heads_in
-
-            entries: list[FormationCatalogEntry] = []
-            for binding in source_references:
-                matches: list[CognitiveRecord] = []
-                for record in await heads_in(tx, ctx, (binding.kind,)):
-                    identifiers = (
-                        record.body.identifiers
-                        if isinstance(record.body, EntityBody)
-                        else record.body.external_ids
-                        if isinstance(record.body, (MemoryBody, AssociationBody))
-                        else {}
-                    )
-                    if (
-                        identifiers.get(binding.identifier_key)
-                        in {binding.identifier, *binding.aliases}
-                        and selectable(record)
-                        and await self.records.visible_in(tx, ctx, record)
-                    ):
-                        matches.append(record)
-                if len(matches) != 1:
-                    raise DomainError(
-                        "source_reference_missing" if not matches else "source_reference_ambiguous",
-                        "Imported source reference must resolve to one current authorized object",
-                        key=binding.key,
-                    )
-                selected = matches[0]
-                entries.append(
-                    FormationCatalogEntry(
-                        key=binding.key, reference=selected.reference, label=binding.identifier
-                    )
-                )
-            catalog = (*catalog, *entries)
-        validate_formation_draft(proposal, catalog)
-        result: list[CognitiveRecord] = []
-        references = {entry.key: entry.reference for entry in catalog}
-        references["memory"] = anchor.reference
-        proposed_keys = [
-            item.key for item in (*proposal.entities, *proposal.concepts, *proposal.schemas)
-        ]
-        if len(set(proposed_keys)) != len(proposed_keys) or set(proposed_keys).intersection(
-            references
-        ):
             raise DomainError(
-                "formation_key_conflict",
-                "Model-local keys must be unique and distinct from the input catalog",
+                "manual_source_reference_unsupported",
+                "Manual source references require an explicit identity owner",
             )
-
-        async def resolve(key: str) -> CognitiveRef:
-            reference = references.get(key)
-            if reference is None:
-                raise DomainError(
-                    "formation_key_unknown",
-                    "Model reference is absent from the supplied catalog",
-                    key=key,
+        event = await require_observation_in(tx, ctx, observation_id, region_id=region_id)
+        event_time = parse_timepoint(draft.event_expression) if draft.event_expression else None
+        times = times.model_copy(update={"event": event_time or times.event})
+        evidence = (EvidenceLink(observation_id=observation_id, region_id=region_id),)
+        contact_id = observation_id if event["kind"] == "contact" else None
+        if contact_id is not None:
+            media = tuple(
+                dict.fromkeys(
+                    (*media, MediaReference.model_validate(event["record"]["contact_source"]))
                 )
-            await self.records.get_in(tx, ctx, reference)
-            return reference
-
-        evidence = (EvidenceLink(reference=anchor.reference),)
-        for item in proposal.entities:
-            previous = (
-                await self.records.get_in(tx, ctx, await resolve(item.target_key))
-                if item.target_key
-                else None
             )
-            if previous is None and proposal.producer_call_id is None:
-                from .graph_state import heads_in, resolve_entity
+        references: dict[str, CognitiveRef] = {
+            entry.key: entry.reference for entry in catalog
+        }
+        output: list[CognitiveRecord] = []
+        manual_memories: list[CognitiveRecord] = []
+        for proposal in draft.memories:
+            record = await self.records.adopt_in(
+                tx,
+                ctx,
+                AdoptCognition(
+                    body=MemoryBody(
+                        text=proposal.text,
+                        summary=proposal.summary,
+                        tags=proposal.tags,
+                        media=media,
+                        contact_observation_id=contact_id,
+                        role=proposal.role,
+                        formation_mode=proposal.formation_mode,
+                        epistemic=proposal.epistemic,
+                    ),
+                    evidence=evidence,
+                    times=times,
+                ),
+            )
+            manual_memories.append(record)
+            output.append(record)
+        if len(manual_memories) == 1:
+            references["memory"] = manual_memories[0].reference
 
-                existing = await heads_in(tx, ctx, ("entity",))
-                if item.identifiers:
-                    explicit_identifiers = {
-                        key: value
-                        for key, value in item.identifiers.items()
-                        if not key.endswith(":name")
-                    }
-                    identity = (
-                        {
-                            key: value
-                            for key, value in explicit_identifiers.items()
-                            if key.startswith("dataset:")
-                        }
-                        or explicit_identifiers
-                        or item.identifiers
-                    )
-                    matches = [
-                        record
-                        for record in existing
-                        if isinstance(record.body, EntityBody)
-                        and any(
-                            (
-                                record.body.identifiers.get(key) == value
-                                for key, value in identity.items()
-                            )
-                        )
-                        and selectable(record)
-                    ]
-                    if len(matches) > 1:
-                        raise DomainError(
-                            "source_entity_ambiguous",
-                            "Source identifiers resolve to multiple active Entities",
-                        )
-                    previous = matches[0] if matches else None
-                else:
-                    previous = resolve_entity(existing, item.label)
-                if previous is not None:
-                    await self.records.get_in(tx, ctx, previous.reference)
-            if previous is not None and (not isinstance(previous.body, EntityBody)):
+        graph_items = (*draft.entities, *draft.concepts, *draft.schemas)
+        keys = [item.key for item in graph_items]
+        if len(set(keys)) != len(keys) or set(keys).intersection(references):
+            raise DomainError("formation_key_conflict", "Manual proposal keys must be unique")
+        for item in graph_items:
+            if item.target_key is not None and item.target_key not in {
+                entry.key for entry in catalog
+            }:
                 raise DomainError(
-                    "formation_entity_target",
-                    "An entity update must target an Entity catalog entry",
+                    "formation_target_unknown",
+                    "An update target must identify a supplied existing source",
+                    key=item.target_key,
                 )
-            prior = (
-                previous.body
-                if previous is not None and isinstance(previous.body, EntityBody)
-                else None
-            )
+
+        for item in draft.entities:
+            previous = None
+            if item.target_key is not None:
+                previous = await self.records.get_in(tx, ctx, references[item.target_key])
+                if not isinstance(previous.body, EntityBody):
+                    raise DomainError("formation_entity_target", "Manual entity target is not an Entity")
             attributes = tuple(
                 EntityAttribute(
                     predicate=attribute.predicate,
@@ -415,26 +590,34 @@ class FormationService:
                 )
                 for attribute in item.attributes
             )
-            body = EntityBody(
-                label=item.label,
-                entity_type=prior.entity_type
-                if prior is not None
-                and proposal.producer_call_id is None
-                and (item.entity_type == "other")
-                else item.entity_type,
-                aliases=tuple(dict.fromkeys([*(prior.aliases if prior else ()), *item.aliases])),
-                description=item.description or (prior.description if prior is not None else ""),
-                generated_profile=prior.generated_profile
-                if prior is not None and (not item.description) and (not attributes)
-                else None,
-                profile_controls=prior.profile_controls if prior else PersonProfileControls(),
-                platform_identities=prior.platform_identities if prior else (),
-                identifiers={**(prior.identifiers if prior else {}), **item.identifiers},
-                attributes=(*(prior.attributes if prior else ()), *attributes),
-                mentions=(
-                    *(prior.mentions if prior else ()),
-                    EntityMention(reference=anchor.reference),
-                ),
+            body = (
+                previous.body.model_copy(
+                    update={
+                        "entity_type": item.entity_type
+                        if item.entity_type != "other"
+                        else previous.body.entity_type,
+                        "aliases": tuple(dict.fromkeys((*previous.body.aliases, *item.aliases))),
+                        "description": item.description or previous.body.description,
+                        "identifiers": {**previous.body.identifiers, **item.identifiers},
+                        "attributes": (*previous.body.attributes, *attributes),
+                        "mentions": tuple(
+                            dict.fromkeys(
+                                (*previous.body.mentions,
+                                *(EntityMention(reference=ref) for ref in media))
+                            )
+                        ),
+                    }
+                )
+                if previous is not None
+                else EntityBody(
+                    label=item.label,
+                    entity_type=item.entity_type,
+                    aliases=item.aliases,
+                    description=item.description,
+                    identifiers=item.identifiers,
+                    attributes=attributes,
+                    mentions=tuple(EntityMention(reference=ref) for ref in media),
+                )
             )
             record = await self.records.adopt_in(
                 tx,
@@ -443,43 +626,15 @@ class FormationService:
                     id=previous.reference.id if previous else None,
                     expected_revision=previous.reference.revision if previous else 0,
                     body=body,
-                    evidence=(
-                        *evidence,
-                        *((EvidenceLink(reference=previous.reference),) if previous else ()),
-                    ),
+                    evidence=(*evidence, *((EvidenceLink(reference=previous.reference),) if previous else ())),
                     times=times,
-                    producer_call_id=proposal.producer_call_id,
                 ),
             )
             references[item.key] = record.reference
-            result.append(record)
-        if facts:
-            from nous_sdk.contracts.facts import FactClaimInput
+            output.append(record)
 
-            for fact in facts:
-                scope = (
-                    {"kind": "person", "person": (await resolve(fact.person_key)).model_dump()}
-                    if fact.person_key is not None
-                    else {"kind": "chat", "conversation_ref": fact.conversation_ref}
-                )
-                claim = FactClaimInput.model_validate(
-                    {
-                        **fact.model_dump(exclude={"person_key", "conversation_ref", "validity"}),
-                        "scope": scope,
-                    }
-                )
-                result.extend(
-                    await self.facts.assert_source_in(
-                        tx,
-                        ctx,
-                        claim,
-                        anchor,
-                        fact.validity,
-                        validity_explicit="validity" in fact.model_fields_set,
-                    )
-                )
         nodes: dict[str, ProposedConcept | ProposedSchema] = {
-            item.key: item for item in (*proposal.concepts, *proposal.schemas)
+            item.key: item for item in (*draft.concepts, *draft.schemas)
         }
         dependencies = {
             key: set(
@@ -489,12 +644,8 @@ class FormationService:
             )
             for key, item in nodes.items()
         }
-        for values in dependencies.values():
-            if values.difference(references).difference(nodes):
-                raise DomainError(
-                    "formation_key_unknown",
-                    "Semantic proposal has a reference outside the supplied catalog",
-                )
+        if any(values.difference(references).difference(nodes) for values in dependencies.values()):
+            raise DomainError("formation_key_unknown", "Manual proposal refers to an unavailable key")
         try:
             ordered = tuple(
                 TopologicalSorter(
@@ -502,59 +653,39 @@ class FormationService:
                 ).static_order()
             )
         except CycleError as error:
-            raise DomainError(
-                "formation_cycle",
-                "Concept membership and Schema support must resolve without circular revisions",
-            ) from error
-        tag_labels = tuple(
-            dict.fromkeys(
-                [*anchor.body.tags, *(tag for item in proposal.memories for tag in item.tags)]
-            )
-        )
+            raise DomainError("formation_cycle", "Manual concept and schema references are cyclic") from error
         for key in ordered:
             item = nodes[key]
             previous = (
-                await self.records.get_in(tx, ctx, await resolve(item.target_key))
+                await self.records.get_in(tx, ctx, references[item.target_key])
                 if item.target_key
                 else None
             )
             if isinstance(item, ProposedConcept):
-                if previous is not None and (not isinstance(previous.body, ConceptBody)):
-                    raise DomainError(
-                        "formation_concept_target", "Concept updates must target a Concept"
-                    )
-                members = [await resolve(member) for member in item.member_keys]
-                if item.label in tag_labels and anchor.reference not in members:
-                    members.append(anchor.reference)
-                prior_members = (
-                    previous.body.members
-                    if previous is not None and isinstance(previous.body, ConceptBody)
-                    else ()
-                )
-                unique_members = {
-                    reference.exact(): reference for reference in (*prior_members, *members)
-                }
+                if previous is not None and not isinstance(previous.body, ConceptBody):
+                    raise DomainError("formation_concept_target", "Manual target is not a Concept")
+                prior = previous.body if previous is not None else None
+                members = tuple(dict.fromkeys(
+                    (*(prior.members if isinstance(prior, ConceptBody) else ()),
+                    *(references[value] for value in item.member_keys))
+                ))
                 body: CognitiveBody = ConceptBody(
                     label=item.label,
                     description=item.description,
                     aliases=item.aliases,
-                    members=tuple(unique_members.values()),
+                    members=members,
                     lineage=(previous.reference,) if previous else (),
                 )
             else:
-                if previous is not None and (not isinstance(previous.body, SchemaBody)):
-                    raise DomainError(
-                        "formation_schema_target", "Schema updates must target a Schema"
-                    )
+                if previous is not None and not isinstance(previous.body, SchemaBody):
+                    raise DomainError("formation_schema_target", "Manual target is not a Schema")
                 body = SchemaBody(
                     title=item.title,
                     claim=item.claim,
                     scope=item.scope,
                     boundary=item.boundary,
-                    support=tuple([await resolve(member) for member in item.support_keys]),
-                    counterexamples=tuple(
-                        [await resolve(member) for member in item.counterexample_keys]
-                    ),
+                    support=tuple(references[value] for value in item.support_keys),
+                    counterexamples=tuple(references[value] for value in item.counterexample_keys),
                     lineage=(previous.reference,) if previous else (),
                     epistemic=item.epistemic,
                 )
@@ -565,21 +696,20 @@ class FormationService:
                     id=previous.reference.id if previous else None,
                     expected_revision=previous.reference.revision if previous else 0,
                     body=body,
-                    evidence=(
-                        *evidence,
-                        *((EvidenceLink(reference=previous.reference),) if previous else ()),
-                    ),
+                    evidence=(*evidence, *((EvidenceLink(reference=previous.reference),) if previous else ())),
                     times=times,
-                    producer_call_id=proposal.producer_call_id,
                 ),
             )
             references[key] = record.reference
-            result.append(record)
-        for item in proposal.associations:
-            body = AssociationBody(
+            output.append(record)
+
+        for item in draft.associations:
+            if item.from_key not in references or item.to_key not in references:
+                raise DomainError("formation_key_unknown", "Manual relation has an unavailable endpoint")
+            relation = AssociationBody(
                 external_ids=item.external_ids,
-                from_ref=await resolve(item.from_key),
-                to_ref=await resolve(item.to_key),
+                from_ref=references[item.from_key],
+                to_ref=references[item.to_key],
                 relation=item.relation,
                 polarity=item.polarity,
                 basis_class="source_evidence",
@@ -587,70 +717,41 @@ class FormationService:
                 epistemic=item.epistemic,
                 weight=item.weight,
             )
-            result.append(
+            output.append(
                 await self.records.adopt_in(
                     tx,
                     ctx,
-                    AdoptCognition(
-                        body=body,
-                        evidence=evidence,
-                        times=times,
-                        producer_call_id=proposal.producer_call_id,
-                    ),
+                    AdoptCognition(body=relation, evidence=evidence, times=times),
                 )
             )
-        concepts = await self.adopt_tags_in(tx, ctx, anchor, tag_labels)
-        result.extend(
-            record
-            for record in concepts
-            if record.reference.exact() not in {item.reference.exact() for item in result}
-        )
-        if proposal.memories or proposal.event_expression:
-            all_concepts = tuple(
-                {
-                    record.reference.exact(): record.reference
-                    for record in (*result, *concepts)
-                    if isinstance(record.body, ConceptBody)
-                }.values()
-            )
-            semantics = MemorySemanticsBody(
-                memory=anchor.reference,
-                event_expression=proposal.event_expression,
-                event_parse_status="resolved"
-                if proposal.event is not None
-                else "unresolved"
-                if proposal.event_expression
-                else "not_provided",
-                cognitive_role="declarative",
-                formation_mode="grounded",
-                epistemic=EpistemicStance(
-                    classification="derived", attribution=proposal.producer_call_id or ctx.caller_id
-                ),
-                concepts=all_concepts,
-                grounding_observation=anchor.source_roots[0]
-                if len(anchor.source_roots) == 1
-                else None,
-                interpretations=tuple(
-                    MemoryInterpretation(
-                        text=item.text,
-                        role=item.role,
-                        formation_mode=item.formation_mode,
-                        epistemic=item.epistemic,
-                        tags=item.tags,
+
+        if facts:
+            if len(manual_memories) != 1:
+                raise DomainError(
+                    "manual_fact_memory_required",
+                    "Manual facts require exactly one explicitly supplied Memory",
+                )
+            from nous_sdk.contracts.facts import FactClaimInput
+
+            anchor = manual_memories[0]
+            for fact in facts:
+                scope = (
+                    {"kind": "person", "person": references[fact.person_key].model_dump()}
+                    if fact.person_key is not None
+                    else {"kind": "chat", "conversation_ref": fact.conversation_ref}
+                )
+                claim = FactClaimInput.model_validate(
+                    fact.model_dump(exclude={"person_key", "conversation_ref", "validity"})
+                    | {"scope": scope}
+                )
+                output.extend(
+                    await self.facts.assert_source_in(
+                        tx,
+                        ctx,
+                        claim,
+                        anchor,
+                        fact.validity,
+                        validity_explicit="validity" in fact.model_fields_set,
                     )
-                    for item in proposal.memories
-                ),
-            )
-            result.append(
-                await self.records.adopt_in(
-                    tx,
-                    ctx,
-                    AdoptCognition(
-                        body=semantics,
-                        evidence=evidence,
-                        times=times,
-                        producer_call_id=proposal.producer_call_id,
-                    ),
                 )
-            )
-        return tuple(result)
+        return tuple(output)

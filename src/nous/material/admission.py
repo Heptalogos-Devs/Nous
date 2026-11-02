@@ -13,11 +13,11 @@ from nous_sdk.contracts import (
     MediaInfo,
     MediaReference,
 )
+from nous_sdk.contracts.common import ObservationKind
 from sqlalchemy import JSON, Boolean, Column, Integer, String, Table, select
 
 from nous.platform.content import ContentLease
 from nous.platform.persistence import ReadView, WriteTx, metadata
-from nous.platform.persistence.authority import operation_key
 
 if TYPE_CHECKING:
     from .service import MaterialRecord, MaterialService, SourceRecord
@@ -30,10 +30,8 @@ input_admissions = Table(
     Column("material_id", String, nullable=False),
     Column("new_material", Boolean, nullable=False),
     Column("source_references", JSON, nullable=False),
-    Column("namespace_id", String, nullable=False),
-    
+    Column("namespace_id", String, primary_key=True),
     Column("caller_id", String, nullable=False),
-    Column("operation_key", String, nullable=False, index=True),
     Column("commit_seq", Integer, nullable=False),
 )
 
@@ -151,10 +149,12 @@ async def admit_blob_in(
     lease: ContentLease,
     document: BlobDocument,
     info: MediaInfo | None = None,
+    *,
+    kind: ObservationKind = "import",
 ) -> InputAdmission:
     _require_transaction(tx, ctx)
     material = await self.put_blob_in(tx, ctx, lease, document, info)
-    event = await self.observe_in(tx, ctx, material["id"], document, kind="import")
+    event = await self.observe_in(tx, ctx, material["id"], document, kind=kind)
     await _record_admission(tx, ctx, material["id"], event["id"], True)
     return InputAdmission(material, event, _context_for_input(ctx, material["id"], event["id"]))
 
@@ -176,9 +176,7 @@ async def _record_admission(
                 reference.model_dump(mode="json") for reference in source_references
             ],
             namespace_id=ctx.namespace_id,
-            
             caller_id=ctx.caller_id,
-            operation_key=tx.operation_key,
             commit_seq=tx.commit_seq,
         )
     )
@@ -228,32 +226,26 @@ async def restore_input_in(
     ctx: CallContext,
     material_ids: tuple[str, ...] | None = None,
     *,
-    operation_id: str,
-    operation_kind: str,
-    scope: str,
+    observation_ids: tuple[str, ...],
 ) -> RestoredInputAdmission:
     from pydantic import TypeAdapter
 
-    from nous.platform.persistence.schema import operations
-
     from .service import MaterialRecord, SourceRecord, materials, observations
 
-    key = operation_key(ctx, operation_kind, scope, operation_id)
-    receipt_seq = await view.connection.scalar(
-        select(operations.c.commit_seq).where(operations.c.operation_key == key)
-    )
-    if receipt_seq is None:
+    if not observation_ids:
         raise DomainError(
-            "input_admission_unavailable", "The original input operation is not retained"
+            "input_admission_unavailable", "Actual admitted observations are required"
         )
     statement = select(input_admissions).where(
         input_admissions.c.namespace_id == ctx.namespace_id,
-        
         input_admissions.c.caller_id == ctx.caller_id,
-        input_admissions.c.operation_key == key,
+        input_admissions.c.observation_id.in_(observation_ids),
     )
     if material_ids is not None:
-        statement = statement.where(input_admissions.c.material_id.in_(material_ids))
+        statement = statement.where(
+            input_admissions.c.namespace_id == ctx.namespace_id,
+            input_admissions.c.material_id.in_(material_ids),
+        )
     facts = (
         (
             await view.connection.execute(
@@ -269,11 +261,16 @@ async def restore_input_in(
         {row["material_id"] for row in facts}
     ):
         raise DomainError(
-            "input_admission_unavailable", "The receipt does not establish this submitted input"
+            "input_admission_unavailable", "The accepted input does not establish these submitted materials"
+        )
+    if {str(fact["observation_id"]) for fact in facts} != set(observation_ids):
+        raise DomainError(
+            "input_admission_unavailable", "Submitted input provenance is unavailable"
         )
     effective = ctx
     fresh_materials: set[str] = set()
     for fact in facts:
+        admitted_seq = int(fact["commit_seq"])
         value = await view.connection.scalar(
             select(materials.c.record).where(
                 materials.c.id == fact["material_id"], materials.c.namespace_id == ctx.namespace_id
@@ -284,12 +281,11 @@ async def restore_input_in(
                 observations.c.id == fact["observation_id"],
                 observations.c.material_id == fact["material_id"],
                 observations.c.namespace_id == ctx.namespace_id,
-                
-                observations.c.commit_seq == receipt_seq,
+                observations.c.commit_seq == admitted_seq,
                 observations.c.active.is_(True),
             )
         )
-        if fact["commit_seq"] != receipt_seq or value is None or event_value is None:
+        if value is None or event_value is None:
             raise DomainError(
                 "input_admission_unavailable",
                 "The admission's original resource facts are unavailable",
@@ -302,7 +298,7 @@ async def restore_input_in(
             or material["id"] != fact["material_id"]
             or material["namespace_id"] != ctx.namespace_id
             or event["namespace_id"] != ctx.namespace_id
-            or event['namespace_id'] != ctx.namespace_id
+            or event["namespace_id"] != ctx.namespace_id
         ):
             raise DomainError(
                 "input_admission_unavailable",
@@ -311,7 +307,7 @@ async def restore_input_in(
         if (
             material.get("purged")
             or event.get("purged")
-            or (fact["new_material"] and material["commit_seq"] != receipt_seq)
+            or (fact["new_material"] and material["commit_seq"] != admitted_seq)
         ):
             raise DomainError(
                 "input_admission_unavailable", "The original submitted content is unavailable"
@@ -341,7 +337,7 @@ async def restore_input_in(
         )
     return RestoredInputAdmission(
         effective,
-        int(receipt_seq),
+        max(int(fact["commit_seq"]) for fact in facts),
         tuple(dict.fromkeys(str(fact["material_id"]) for fact in facts)),
         tuple(str(fact["observation_id"]) for fact in facts),
     )

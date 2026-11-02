@@ -105,15 +105,7 @@ class PromptService:
     async def activate(
         self, ctx: CallContext, prompt_id: str, revision: int, operation_id: str
     ) -> dict[str, object]:
-        async with self.authority.write(
-            ctx,
-            operation_id,
-            operation_kind="prompt.activate",
-            payload={"id": prompt_id, "revision": revision},
-        ) as tx:
-            if tx.replayed:
-                assert tx.receipt is not None
-                return TypeAdapter(dict[str, object]).validate_python(tx.receipt.result)
+        async with self.authority.write(ctx) as tx:
             found = await tx.connection.scalar(
                 sa.select(prompts.c.revision).where(
                     prompts.c.id == prompt_id, prompts.c.revision == revision
@@ -132,7 +124,7 @@ class PromptService:
                     .where(prompts.c.id == prompt_id, prompts.c.revision == revision)
                     .values(active=True)
                 )
-            return tx.result({"id": prompt_id, "revision": revision})
+            return {'id': prompt_id, 'revision': revision}
 
     async def get(self, ctx: CallContext, prompt_id: str = "formation") -> dict[str, object]:
         async with self.authority.read(ctx) as view:
@@ -162,15 +154,7 @@ class PromptService:
         self, ctx: CallContext, prompt_id: str, template: str, operation_id: str
     ) -> dict[str, object]:
         self.environment.parse(template)
-        async with self.authority.write(
-            ctx,
-            operation_id,
-            operation_kind="prompt.save",
-            payload={"id": prompt_id, "template": template},
-        ) as tx:
-            if tx.replayed:
-                assert tx.receipt is not None
-                return TypeAdapter(dict[str, object]).validate_python(tx.receipt.result)
+        async with self.authority.write(ctx) as tx:
             revision = (
                 int(
                     await tx.connection.scalar(
@@ -188,7 +172,7 @@ class PromptService:
                     id=prompt_id, revision=revision, template=template, active=True
                 )
             )
-            return tx.result({"id": prompt_id, "revision": revision, "template": template})
+            return {'id': prompt_id, 'revision': revision, 'template': template}
 
     async def render(
         self, ctx: CallContext, variables: dict[str, object], prompt_id: str = "formation"

@@ -20,16 +20,16 @@ from ..types import (
     JsonObject,
     QueryParam,
 )
-from .context import ContextClient
 from .requests import resolve_scope
+from .sources import SourceClient
 
 
-class ManagementClient(ContextClient):
+class ManagementClient(SourceClient):
     async def configuration_catalog(self) -> ConfigurationCatalog:
         return ConfigurationCatalog.model_validate(
             await self.request(
                 "GET",
-                "/api/v1/configuration",
+                "/api/manage/configuration",
                 params={
                     "namespace_id": self.namespace_id or "instance",
                     
@@ -41,7 +41,7 @@ class ManagementClient(ContextClient):
         return ConfigurationDefinition.model_validate(
             await self.request(
                 "GET",
-                f"/api/v1/configuration/{segment(key)}/schema",
+                f"/api/manage/configuration/{segment(key)}/schema",
                 params={
                     "namespace_id": self.namespace_id or "instance",
                     
@@ -65,35 +65,28 @@ class ManagementClient(ContextClient):
             return object_value(
                 await self.request(
                     "GET",
-                    "/api/v1/configuration"
+                    "/api/manage/configuration"
                     if action == "list"
-                    else f"/api/v1/configuration/{segment(key)}/schema",
+                    else f"/api/manage/configuration/{segment(key)}/schema",
                     params=params,
                 )
             )
         if action in {"get", "effective"}:
             return object_value(
-                await self.request("GET", f"/api/v1/configuration/{segment(key)}", params=params)
-            )
-        if action == "history":
-            params["limit"] = int(str(request.get("limit", 100)))
-            return object_value(
-                await self.request(
-                    "GET", f"/api/v1/configuration/{segment(key)}/history", params=params
-                )
+                await self.request("GET", f"/api/manage/configuration/{segment(key)}", params=params)
             )
         if action in {"set", "reset"}:
             return object_value(
                 await self.request(
                     "PUT",
-                    f"/api/v1/configuration/{segment(key)}",
+                    f"/api/manage/configuration/{segment(key)}",
                     params=params,
                     body={
                         "value": None if action == "reset" else request.get("value"),
                         "scope": request.get(
                             "scope", "namespace" if params["namespace_id"] != "instance" else "instance"
                         ),
-                        "operation_id": request.get("operation_id") or str(uuid4()),
+                        "expected_version": request.get("expected_version"),
                     },
                 )
             )
@@ -107,17 +100,17 @@ class ManagementClient(ContextClient):
         namespace = resolve_scope(self, request, default_namespace="instance")
         params: dict[str, QueryParam] = {"namespace_id": namespace}
         if action == "list":
-            return await self.request("GET", "/api/v1/prompts", params=params)
+            return await self.request("GET", "/api/manage/prompts", params=params)
         if action in {"get", "history"}:
             return await self.request(
                 "GET",
-                f"/api/v1/prompts/{segment(prompt_id)}" + ("/history" if action == "history" else ""),
+                f"/api/manage/prompts/{segment(prompt_id)}" + ("/history" if action == "history" else ""),
                 params=params,
             )
         if action in {"save", "put"}:
             return await self.request(
                 "PUT",
-                f"/api/v1/prompts/{segment(prompt_id)}",
+                f"/api/manage/prompts/{segment(prompt_id)}",
                 params=params,
                 body={
                     "template": request.get("template"),
@@ -127,7 +120,7 @@ class ManagementClient(ContextClient):
         if action == "activate":
             return await self.request(
                 "POST",
-                f"/api/v1/prompts/{segment(prompt_id)}/activate",
+                f"/api/manage/prompts/{segment(prompt_id)}/activate",
                 params=params,
                 body={
                     "revision": request.get("revision"),
@@ -137,7 +130,7 @@ class ManagementClient(ContextClient):
         if action in {"preview", "render"}:
             return await self.request(
                 "POST",
-                f"/api/v1/prompts/{segment(prompt_id)}/preview",
+                f"/api/manage/prompts/{segment(prompt_id)}/preview",
                 params=params,
                 body={"variables": request.get("variables", {})},
             )
@@ -163,7 +156,7 @@ class ManagementClient(ContextClient):
         return ModelRoleContract.model_validate(
             await self.request(
                 "POST",
-                "/api/v1/models/contract",
+                "/api/manage/models/contract",
                 params={"namespace_id": namespace},
                 body=command.model_dump(mode="json"),
             )
@@ -189,31 +182,11 @@ class ManagementClient(ContextClient):
         return ModelInvocationPreview.model_validate(
             await self.request(
                 "POST",
-                "/api/v1/models/preview",
+                "/api/manage/models/preview",
                 params={"namespace_id": namespace},
                 body=command.model_dump(mode="json"),
             )
         )
 
-    async def model_call(
-        self, call_id: str, *, namespace_id: str | None = None
-    ) -> JsonObject:
-        values = TypeAdapter(tuple[JsonObject, ...]).validate_python(
-            await self.request(
-                "GET",
-                "/api/v1/model-calls",
-                params={
-                    "namespace_id": namespace_id or self.namespace_id,
-                    
-                },
-            )
-        )
-        for value in values:
-            if value.get("id") == call_id:
-                return value
-        raise NousError(
-            {"code": "model_call_not_found", "message": "Model call is unavailable in this scope"}
-        )
-
     async def backup(self) -> JsonObject:
-        return object_value(await self.request("POST", "/api/v1/backups"))
+        return object_value(await self.request("POST", "/api/manage/backups"))

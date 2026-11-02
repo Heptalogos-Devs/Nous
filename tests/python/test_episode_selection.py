@@ -31,9 +31,7 @@ def test_person_and_tracks_survive_member_revision_without_touching_time_boundar
         try:
             await app.identity.create_namespace(ctx, "N", "namespace")
             await app.identity.create_subject(ctx, "S", "subject", subject_id="s")
-            async with app.authority.write(
-                ctx, "source", operation_kind="material.put", payload={}
-            ) as tx:
+            async with app.authority.write(ctx) as tx:
                 original = await app.material.admit_text_in(
                     tx, ctx, ImportDocument(text="An accepted encounter")
                 )
@@ -56,7 +54,6 @@ def test_person_and_tracks_survive_member_revision_without_touching_time_boundar
                         evidence=(EvidenceLink(reference=memory.reference),),
                     ),
                 )
-                tx.result(person)
             revised = await app.memories.change_memory(
                 ctx,
                 MemoryChange(

@@ -39,7 +39,7 @@ def test_directory_snapshot_batch_states_and_source_authority(tmp_path):
         try:
             await identity.create_namespace(ctx, "Namespace", "namespace")
             await identity.create_subject(ctx, "Subject", "subject", subject_id="s")
-            async with authority.write(ctx, "admit", operation_kind="test.admit", payload={}) as tx:
+            async with authority.write(ctx) as tx:
                 source = await cognition.materials.admit_text_in(
                     tx, ctx, ImportDocument(text="Meeting on Tuesday", filename="meeting.txt")
                 )
@@ -70,7 +70,6 @@ def test_directory_snapshot_batch_states_and_source_authority(tmp_path):
                         evidence=evidence,
                     ),
                 )
-                tx.result({"source": source.event["id"]})
             expected = {record.reference for record in (memory, person, other)}
             first = await cognition.records(ctx, RecordsQuery(limit=1))
             assert first.next_cursor is not None
@@ -82,9 +81,6 @@ def test_directory_snapshot_batch_states_and_source_authority(tmp_path):
                 ),
             )
             assert frozen.lifecycle.activation == "frozen"
-            assert memory.reference not in {
-                record.reference for record in (await cognition.graph_snapshot(ctx)).paragraphs
-            }
             async with authority.read(ctx) as view:
                 assert await cognition.automatic_in(view, ctx, memory.reference) is None
             seen = {first.items[0].record.reference}
@@ -146,7 +142,6 @@ def test_directory_snapshot_batch_states_and_source_authority(tmp_path):
             assert (
                 await cognition.record_detail(ctx, memory.reference)
             ).entry.current_reference == restored.reference
-            assert (await cognition.graph_snapshot(ctx)).paragraphs[0].reference == memory.reference
             trashed = await cognition.change_memory(
                 ctx,
                 MemoryChange(
@@ -183,7 +178,7 @@ def test_directory_snapshot_batch_states_and_source_authority(tmp_path):
             assert not await cognition.history(ctx, memory.reference.id)
             with pytest.raises(DomainError, match="sources"):
                 async with authority.read(ctx) as view:
-                    await cognition.replay_record_in(view, ctx, trashed)
+                    await cognition.get_in(view, ctx, trashed.reference)
         finally:
             await authority.close()
 
@@ -208,11 +203,8 @@ def test_actual_contacts_replay_and_knowledge_package_import(tmp_path):
             document = ImportDocument(text="Workshop is Thursday in room 503.")
             lease = await app.content.publish_bytes(document.inline_text().encode(), "text/plain")
             try:
-                async with app.authority.write(
-                    ctx, "original", operation_kind="material.put", payload={}
-                ) as tx:
+                async with app.authority.write(ctx) as tx:
                     original = await app.material.admit_text_in(tx, ctx, document, lease)
-                    tx.result(original.material)
             finally:
                 await app.content.release(lease)
             assert not (await app.cognition.records(ctx, RecordsQuery())).items
@@ -288,9 +280,7 @@ def test_derived_contact_observation_uses_the_selected_source_authority(tmp_path
             await app.identity.create_namespace(ctx, "N", "namespace")
             await app.identity.create_subject(ctx, "S", "subject", subject_id="s")
             text = "Private prefix. Shared text."
-            async with app.authority.write(
-                ctx, "source", operation_kind="material.put", payload={}
-            ) as tx:
+            async with app.authority.write(ctx) as tx:
                 original = await app.material.admit_text_in(tx, ctx, ImportDocument(text=text))
                 represented = await app.derivations.adopt_in(
                     tx,
@@ -324,7 +314,6 @@ def test_derived_contact_observation_uses_the_selected_source_authority(tmp_path
                         selector=DerivedSelector(kind="text_span", start=16, end=len(text)),
                     ),
                 )
-                tx.result({"region_id": region.id})
             source = MediaReference(kind="derived_region", id=region.id)
             scoped = ctx.model_copy(update={"allowed_source_ids": (source.exact(),)})
             contact = await app.imports.contact(

@@ -32,7 +32,6 @@ from nous_sdk.contracts.resources import (
     ResourceSnapshot,
     ResourceTextMethod,
 )
-from pydantic import JsonValue
 from sqlalchemy import JSON, Boolean, Column, Integer, String, Table, select
 
 from nous.identity.access import require_namespace_in
@@ -50,7 +49,6 @@ resources = Table(
     Column("id", String, primary_key=True),
     Column("revision", Integer, primary_key=True),
     Column("namespace_id", String, nullable=False, index=True),
-    
     Column("head", Boolean, nullable=False, index=True),
     Column("location", JSON, nullable=False),
     Column("max_bytes", Integer, nullable=False),
@@ -100,7 +98,6 @@ class ResourceService:
         statement = select(resources).where(
             resources.c.id == resource_id,
             resources.c.namespace_id == ctx.namespace_id,
-            
         )
         statement = (
             statement.where(resources.c.head.is_(True))
@@ -202,7 +199,6 @@ class ResourceService:
             await require_namespace_in(view, ctx)
             statement = select(resources.c.record).where(
                 resources.c.namespace_id == ctx.namespace_id,
-                
                 resources.c.head.is_(True),
             )
             if cursor is not None:
@@ -234,9 +230,7 @@ class ResourceService:
         as_of_commit: int | None = None,
         history: bool = False,
     ) -> list[ResourceRecord]:
-        statement = select(resources.c.record).where(
-            resources.c.namespace_id == ctx.namespace_id
-        )
+        statement = select(resources.c.record).where(resources.c.namespace_id == ctx.namespace_id)
         if as_of_commit is None and not history:
             statement = statement.where(resources.c.head.is_(True))
         records: list[ResourceRecord] = []
@@ -295,7 +289,6 @@ class ResourceService:
                 id=reference.id,
                 revision=reference.revision,
                 namespace_id=record.namespace_id,
-                
                 head=True,
                 location=location.model_dump(mode="json"),
                 max_bytes=max_bytes,
@@ -311,25 +304,14 @@ class ResourceService:
                 "resource_scope_forbidden",
                 "Registering a new external source requires an unrestricted source scope",
             )
-        async with self.authority.write(
-            ctx,
-            command.operation_id,
-            operation_kind="resource.register",
-            scope=ctx.namespace_id,
-            payload=command,
-        ) as tx:
+        async with self.authority.write(ctx) as tx:
             await require_namespace_in(tx, ctx)
-            if tx.replayed:
-                return await self._visible_in(
-                    tx, ctx, ResourceRecord.model_validate(tx.replay_result)
-                )
             now = TimePoint(
                 coordinate=int(datetime.fromisoformat(tx.recorded_at).timestamp() * 1000)
             )
             record = ResourceRecord(
                 reference=ResourceReference(id=str(uuid4()), revision=1),
                 namespace_id=ctx.namespace_id,
-                
                 name=command.name,
                 description=command.description,
                 address=command.location.address,
@@ -346,14 +328,13 @@ class ResourceService:
                     id=record.reference.id,
                     revision=1,
                     namespace_id=ctx.namespace_id,
-                    
                     head=True,
                     location=command.location.model_dump(mode="json"),
                     max_bytes=command.max_bytes,
                     record=record.model_dump(mode="json"),
                 )
             )
-            return tx.result(record)
+            return record
 
     async def change(self, ctx: CallContext, command: ChangeResource) -> ResourceRecord:
         if command.location is not None:
@@ -363,15 +344,7 @@ class ResourceService:
                     "resource_scope_forbidden",
                     "Changing an external source location requires unrestricted source authorization",
                 )
-        async with self.authority.write(
-            ctx,
-            command.operation_id,
-            operation_kind="resource.change",
-            scope=ctx.namespace_id,
-            payload=command,
-        ) as tx:
-            if tx.replayed:
-                return ResourceRecord.model_validate(tx.replay_result)
+        async with self.authority.write(ctx) as tx:
             row = await self._row_in(tx, ctx, command.reference.id)
             current = ResourceRecord.model_validate(row["record"])
             await self._visible_in(tx, ctx, current)
@@ -404,15 +377,7 @@ class ResourceService:
                 update["status"] = (
                     "available" if update.get("snapshot", current.snapshot) else "registered"
                 )
-            return tx.result(
-                await self._save_in(
-                    tx,
-                    current,
-                    current.model_copy(update=update),
-                    location,
-                    command.max_bytes if command.max_bytes is not None else int(row["max_bytes"]),
-                )
-            )
+            return await self._save_in(tx, current, current.model_copy(update=update), location, command.max_bytes if command.max_bytes is not None else int(row['max_bytes']))
 
     async def _fetch(
         self,
@@ -576,22 +541,6 @@ class ResourceService:
                 "resource_scope_forbidden",
                 "Refreshing an external source requires its unrestricted source authorization",
             )
-        receipt = await self.authority.receipt(
-            ctx,
-            command.operation_id,
-            operation_kind="resource.read",
-            scope=ctx.namespace_id,
-            payload=command,
-        )
-        if receipt:
-            saved = ResourceRecord.model_validate(receipt.result)
-            async with self.authority.read(ctx) as view:
-                saved = await self._visible_in(view, ctx, saved)
-            if command.current == "required" and saved.error_code:
-                raise DomainError(
-                    saved.error_code, "The requested current resource version is unavailable"
-                )
-            return saved
         failure: str | None = None
         lease = None
         fetched_at = _now()
@@ -633,84 +582,75 @@ class ResourceService:
                 previous.text,
             )
         try:
-            async with self.authority.write(
-                ctx,
-                command.operation_id,
-                operation_kind="resource.read",
-                scope=ctx.namespace_id,
-                payload=command,
-            ) as tx:
-                if tx.replayed:
-                    saved = ResourceRecord.model_validate(tx.replay_result)
-                else:
-                    snapshot = previous.snapshot
-                    if lease and (
-                        snapshot is None
-                        or snapshot.content_hash != lease.content_hash
-                        or snapshot.media_type != media_type
-                    ):
-                        document = BlobDocument(
-                            filename=Path(urlsplit(location.address).path).name or previous.name,
-                            media_type=media_type,
-                            source_type="external_resource",
-                            source=location.address,
-                            origin={
-                                "resource_id": previous.reference.id,
-                                "consumer": "external_resource_reader",
-                                "caller_id": ctx.caller_id,
-                            },
-                        )
-                        material = await self.materials.put_blob_in(tx, ctx, lease, document)
-                        observation = await self.materials.observe_in(
-                            tx, ctx, material["id"], document, kind="external_snapshot"
-                        )
-                        snapshot = ResourceSnapshot(
-                            source=MediaReference(
-                                kind="material", id=material["id"], observation_id=observation["id"]
-                            ),
-                            content_hash=lease.content_hash,
-                            byte_len=lease.byte_len,
-                            media_type=media_type,
-                            fetched_at=fetched_at,
-                            version=version,
-                            etag=etag,
-                            last_modified=modified,
-                            text_method=method,
-                            page_count=page_count,
-                            text_pages=text_pages,
-                        )
-                    elif snapshot and failure is None:
-                        snapshot = snapshot.model_copy(
-                            update={
-                                "fetched_at": fetched_at,
-                                "version": version,
-                                "etag": etag,
-                                "last_modified": modified,
-                                "text_method": method,
-                                "page_count": page_count,
-                                "text_pages": text_pages,
-                            }
-                        )
-                    record = previous.model_copy(
+            async with self.authority.write(ctx) as tx:
+                snapshot = previous.snapshot
+                if lease and (
+                    snapshot is None
+                    or snapshot.content_hash != lease.content_hash
+                    or snapshot.media_type != media_type
+                ):
+                    document = BlobDocument(
+                        filename=Path(urlsplit(location.address).path).name or previous.name,
+                        media_type=media_type,
+                        source_type="external_resource",
+                        source=location.address,
+                        origin={
+                            "resource_id": previous.reference.id,
+                            "consumer": "external_resource_reader",
+                            "caller_id": ctx.caller_id,
+                        },
+                    )
+                    material = await self.materials.put_blob_in(tx, ctx, lease, document)
+                    observation = await self.materials.observe_in(
+                        tx, ctx, material["id"], document, kind="external_snapshot"
+                    )
+                    snapshot = ResourceSnapshot(
+                        source=MediaReference(
+                            kind="material", id=material["id"], observation_id=observation["id"]
+                        ),
+                        content_hash=lease.content_hash,
+                        byte_len=lease.byte_len,
+                        media_type=media_type,
+                        fetched_at=fetched_at,
+                        version=version,
+                        etag=etag,
+                        last_modified=modified,
+                        text_method=method,
+                        page_count=page_count,
+                        text_pages=text_pages,
+                    )
+                elif snapshot and failure is None:
+                    snapshot = snapshot.model_copy(
                         update={
-                            "snapshot": snapshot,
-                            "checked_at": fetched_at,
-                            "error_code": failure,
-                            "text": text,
-                            "status": "forbidden"
-                            if failure and failure.endswith("forbidden")
-                            else "unavailable"
-                            if failure
-                            else "available",
-                            "source_roots": (snapshot.source.observation_id,)
-                            if snapshot and snapshot.source.observation_id
-                            else (),
-                            "support_roots": (snapshot.source.observation_id,)
-                            if snapshot and snapshot.source.observation_id
-                            else (),
+                            "fetched_at": fetched_at,
+                            "version": version,
+                            "etag": etag,
+                            "last_modified": modified,
+                            "text_method": method,
+                            "page_count": page_count,
+                            "text_pages": text_pages,
                         }
                     )
-                    saved = tx.result(await self._save_in(tx, previous, record, location, maximum))
+                record = previous.model_copy(
+                    update={
+                        "snapshot": snapshot,
+                        "checked_at": fetched_at,
+                        "error_code": failure,
+                        "text": text,
+                        "status": "forbidden"
+                        if failure and failure.endswith("forbidden")
+                        else "unavailable"
+                        if failure
+                        else "available",
+                        "source_roots": (snapshot.source.observation_id,)
+                        if snapshot and snapshot.source.observation_id
+                        else (),
+                        "support_roots": (snapshot.source.observation_id,)
+                        if snapshot and snapshot.source.observation_id
+                        else (),
+                    }
+                )
+                saved = await self._save_in(tx, previous, record, location, maximum)
         finally:
             if lease and self.materials.content_store:
                 await self.materials.content_store.release(lease)
@@ -746,21 +686,3 @@ class ResourceService:
                     .where(resources.c.id == row["id"], resources.c.revision == row["revision"])
                     .values(record=redacted.model_dump(mode="json"))
                 )
-
-        def contains_snapshot(value: JsonValue) -> bool:
-            if isinstance(value, list):
-                return any(contains_snapshot(item) for item in value)
-            if not isinstance(value, dict):
-                return False
-            snapshot = value.get("snapshot")
-            if isinstance(snapshot, dict):
-                source = snapshot.get("source")
-                if (
-                    isinstance(source, dict)
-                    and source.get("kind") == "material"
-                    and source.get("id") in removed
-                ):
-                    return True
-            return any(contains_snapshot(item) for item in value.values())
-
-        await self.authority.redact_receipts_in(tx, contains_snapshot)

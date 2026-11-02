@@ -15,7 +15,7 @@ from nous_sdk.contracts import (
     EntityBody,
     EpistemicStance,
     EvidenceLink,
-    MemoryBody,
+    RetentionChange,
     RevisionCause,
 )
 from nous_sdk.contracts import ImportDocument as ImportDocument
@@ -32,16 +32,17 @@ from nous_sdk.contracts.graph_management import GraphChangeResult as GraphChange
 from sqlalchemy import func as func
 from sqlalchemy import select
 
+from nous.cognition.entities import project_entity_in
 from nous.identity.access import require_namespace_in
 from nous.platform.persistence import ReadView, WriteTx
 
 from .lifecycle import selectable
-from .projection import references_in
 from .revision_state import RevisionState
 from .schema import revisions
 from .schema import vectors as vectors
 
 if TYPE_CHECKING:
+    from .memory import MemoryService
     from .records import CognitiveRecords
 
 
@@ -58,7 +59,7 @@ async def heads_in(
         revisions.c.kind.in_(kinds),
     )
     if reference_ids is not None:
-        statement = statement.where(revisions.c.id.in_(reference_ids))
+        statement = statement.where(revisions.c.namespace_id == ctx.namespace_id, revisions.c.id.in_(reference_ids))
     values = (await view.connection.execute(statement.order_by(revisions.c.id))).scalars()
     return tuple(CognitiveRecord.model_validate(value) for value in values)
 
@@ -97,36 +98,21 @@ def text(value: str | None, field: str) -> str:
 
 
 class GraphService:
-    def __init__(self, records: CognitiveRecords):
+    def __init__(self, records: CognitiveRecords, *, memories: MemoryService):
+        self.memories = memories
         self.records = records
 
     async def graph_snapshot(self, ctx: CallContext) -> GraphSnapshot:
         async with self.records.authority.read(ctx) as view:
             await require_namespace_in(view, ctx)
             records: list[CognitiveRecord] = []
-            paragraphs: dict[str, CognitiveRecord] = {}
             for record in await heads_in(view, ctx):
-                record = await self.records.project_record_in(view, ctx, record)
+                record = await project_entity_in(self.records, view, ctx, record)
                 if not selectable(record) or not await self.records.visible_in(view, ctx, record):
                     continue
                 records.append(record)
-                references = tuple(references_in(record.body)) + tuple(
-                    link.reference for link in record.evidence if link.reference
-                )
-                for reference in references:
-                    if reference.kind != "memory" or reference.exact() in paragraphs:
-                        continue
-                    try:
-                        value = await self.records.automatic_in(view, ctx, reference)
-                    except DomainError as error:
-                        if error.code in {"source_unavailable", "cognition_not_found"}:
-                            continue
-                        raise
-                    if value is not None and isinstance(value.body, MemoryBody):
-                        paragraphs[reference.exact()] = value
             return GraphSnapshot(
                 records=tuple(records),
-                paragraphs=tuple(paragraphs.values()),
                 watermark=view.commit_seq,
             )
 
@@ -244,19 +230,8 @@ class GraphService:
             for record in snapshot.records
             if isinstance(record.body, EntityBody) and record.reference.id in identities
         )
-        evidence = {
-            reference.id
-            for record in selected
-            for reference in (
-                *references_in(record.body),
-                *(link.reference for link in record.evidence if link.reference),
-            )
-        }
         return GraphSnapshot(
             records=tuple(selected),
-            paragraphs=tuple(
-                record for record in snapshot.paragraphs if record.reference.id in evidence
-            ),
             watermark=snapshot.watermark,
         )
 
@@ -281,30 +256,7 @@ class GraphService:
             else None
         )
         try:
-            async with self.records.authority.write(
-                ctx,
-                command.operation_id,
-                operation_kind="graph.change",
-                scope=ctx.namespace_id,
-                payload=command,
-            ) as tx:
-                if tx.replayed:
-                    result = GraphChangeResult.model_validate(tx.replay_result)
-                    effective = (
-                        await self.records.qualify_known_outputs_in(
-                            tx,
-                            ctx,
-                            tuple(record.reference for record in result.records),
-                            operation_id=command.operation_id,
-                            operation_kind="graph.change",
-                            scope=ctx.namespace_id,
-                            input_material_ids=(result.report_material_id,),
-                        )
-                        if ctx.source_groups()
-                        else ctx
-                    )
-                    await self.records.replay_records_in(tx, effective, result.records)
-                    return result
+            async with self.records.authority.write(ctx) as tx:
                 await require_namespace_in(tx, ctx, "memory")
                 now = TimePoint(
                     coordinate=int(datetime.fromisoformat(tx.recorded_at).timestamp() * 1000)
@@ -322,9 +274,7 @@ class GraphService:
                 ]
                 retired_vectors = int(
                     await tx.connection.scalar(
-                        select(func.count())
-                        .select_from(vectors)
-                        .where(vectors.c.reference.in_(retired))
+                        select(func.count()).select_from(vectors).where(vectors.c.namespace_id == ctx.namespace_id, vectors.c.reference.in_(retired))
                     )
                     or 0
                 )
@@ -338,7 +288,6 @@ class GraphService:
                     commit_seq=tx.commit_seq,
                     retired_vector_associations=retired_vectors,
                 )
-                tx.result(result)
             return result
         finally:
             if lease and self.records.materials.content_store:
@@ -393,7 +342,7 @@ class GraphService:
         changed: list[CognitiveRecord] = []
         created: list[CognitiveRef] = []
         revived: list[CognitiveRef] = []
-        report = (EvidenceLink(observation_id=event_id, role=command.reason),)
+        report = (EvidenceLink(observation_id=event_id, role="graph_management"), *command.evidence)
 
         async def entity(token: str, create: bool = False) -> CognitiveRecord:
             existing = resolve_entity(tuple(records), token, include_deleted=create)
@@ -452,23 +401,21 @@ class GraphService:
             if command.action == "delete_node":
                 for row in related:
                     changed.append(
-                        await self.records.set_deleted_in(
+                        await self.memories.change_retention_in(
                             tx,
                             admitted_ctx,
-                            row.reference,
-                            True,
-                            evidence=report,
-                            reason=command.reason,
+                            RetentionChange(
+                                reference=row.reference, action="trash", reason=command.reason
+                            ),
                         )
                     )
                 changed.append(
-                    await self.records.set_deleted_in(
+                    await self.memories.change_retention_in(
                         tx,
                         admitted_ctx,
-                        previous.reference,
-                        True,
-                        evidence=report,
-                        reason=command.reason,
+                        RetentionChange(
+                            reference=previous.reference, action="trash", reason=command.reason
+                        ),
                     )
                 )
             else:
@@ -517,12 +464,11 @@ class GraphService:
             else None
         )
         associations = [row for row in records if isinstance(row.body, AssociationBody)]
-        if command.reference or command.relation_hash:
-            selector = command.reference.id if command.reference else command.relation_hash
+        if command.reference:
             matches = [
                 row
                 for row in associations
-                if row.reference.id == selector or row.reference.exact() == selector
+                if row.reference.id == command.reference.id
             ]
         else:
             matches = [
@@ -552,32 +498,6 @@ class GraphService:
                     "The endpoints have multiple matching Association identities",
                 )
             evidence = report
-            if command.source_paragraph:
-                memories = await heads_in(tx, ctx, ("memory",))
-                targets = [
-                    row
-                    for row in memories
-                    if isinstance(row.body, MemoryBody)
-                    and (not row.deleted)
-                    and (not row.purged)
-                    and (
-                        command.source_paragraph
-                        in {
-                            row.reference.id,
-                            row.reference.exact(),
-                            *row.body.external_ids.values(),
-                        }
-                    )
-                ]
-                if len(targets) != 1:
-                    raise DomainError(
-                        "memory_not_found", "source_paragraph must identify an actual Memory"
-                    )
-                await self.records.get_in(tx, ctx, targets[0].reference)
-                evidence = (
-                    *evidence,
-                    EvidenceLink(reference=targets[0].reference, role="source_paragraph"),
-                )
             stance = EpistemicStance(
                 classification="reported", attribution=event_id, confidence=command.confidence
             )
@@ -622,13 +542,12 @@ class GraphService:
                     raise DomainError("revision_conflict", "The Association has a newer revision")
                 assert isinstance(previous.body, AssociationBody)
                 if command.action == "delete_edge":
-                    value = await self.records.set_deleted_in(
+                    value = await self.memories.change_retention_in(
                         tx,
                         admitted_ctx,
-                        previous.reference,
-                        True,
-                        evidence=report,
-                        reason=command.reason,
+                        RetentionChange(
+                            reference=previous.reference, action="trash", reason=command.reason
+                        ),
                     )
                 else:
                     value = await self.revised(

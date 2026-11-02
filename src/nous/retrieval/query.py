@@ -373,21 +373,21 @@ async def execute(
         batch = None
     if batch is not None:
         if (
-            len(batch.vectors) != 1 + len(intent.concepts)
-            or len(batch.vectors[0]) != batch.dimensions
-            or not np.isfinite(batch.vectors[0]).all()
+            len(batch.output.vectors) != 1 + len(intent.concepts)
+            or len(batch.output.vectors[0]) != batch.output.dimensions
+            or not np.isfinite(batch.output.vectors[0]).all()
         ):
             raise DomainError(
                 "invalid_embedding", "Query embedding has invalid dimensions or coordinates"
             )
-        space = batch.space
+        space = batch.output.space
         by_ref = {
             row.reference: row
             for row in view.vectors
             if row.space == space
-            and row.model == batch.model
-            and row.dimensions == batch.dimensions
-            and len(row.vector) == batch.dimensions
+            and row.model == batch.output.model
+            and row.dimensions == batch.output.dimensions
+            and len(row.vector) == batch.output.dimensions
             and np.isfinite(row.vector).all()
             and any(row.vector)
         }
@@ -411,7 +411,7 @@ async def execute(
             reasons.append("partial_semantic_coverage")
         if bound.mode != "hybrid":
             records = eligible
-        query_vector = np.ascontiguousarray(batch.vectors[0], dtype=np.float32)
+        query_vector = np.ascontiguousarray(batch.output.vectors[0], dtype=np.float32)
         if bound.mode == "vcp":
             semantic_generation = index_generations.get(space)
             available = set(semantic_generation.graph_keys) if semantic_generation else set()

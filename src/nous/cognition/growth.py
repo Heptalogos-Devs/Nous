@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from nous.cognition.entities import project_entity_in
+
 from datetime import UTC as UTC
 from datetime import datetime as datetime
 from typing import TYPE_CHECKING
@@ -25,6 +27,7 @@ from nous_sdk.contracts import ConceptBody as ConceptBody
 from nous_sdk.contracts import JournalBody as JournalBody
 from nous_sdk.contracts import RetentionState as RetentionState
 from nous_sdk.contracts.cognition import CognitiveKind
+from nous_sdk.contracts.common import ModelProvenance
 from nous_sdk.contracts.growth import (
     GrowthAdoption,
     GrowthApplication,
@@ -58,6 +61,7 @@ from .semantics import validate_body as validate_body
 
 if TYPE_CHECKING:
     from .records import CognitiveRecords
+    from .memory import MemoryService
 if TYPE_CHECKING:
     from .records import CognitiveRecords
 
@@ -79,7 +83,8 @@ def check_keys(draft: GrowthDraft, snapshot_keys: frozenset[str]) -> None:
 
 
 class GrowthService:
-    def __init__(self, records: CognitiveRecords, *, evolution: EvolutionService):
+    def __init__(self, records: CognitiveRecords, *, evolution: EvolutionService, memories: MemoryService):
+        self.memories = memories
         self.evolution = evolution
         self.records = records
 
@@ -298,13 +303,11 @@ class GrowthService:
             .order_by(revisions.c.commit_seq.desc(), revisions.c.id)
         )
         if kinds is not None:
-            statement = statement.where(revisions.c.kind.in_(kinds))
+            statement = statement.where(revisions.c.namespace_id == ctx.namespace_id, revisions.c.kind.in_(kinds))
         entries: list[GrowthEntry] = []
         roots: set[str] = set()
         for value in (await view.connection.execute(statement)).scalars():
-            record = await self.records.project_record_in(
-                view, ctx, CognitiveRecord.model_validate(value)
-            )
+            record = await project_entity_in(self.records, view, ctx, CognitiveRecord.model_validate(value))
             if not selectable(record) or not await self.records.visible_in(view, ctx, record):
                 continue
             entries.append(GrowthEntry(key=f"c{len(entries)}", record=record))
@@ -338,9 +341,7 @@ class GrowthService:
                 else:
                     all_materials.update(
                         (
-                            await self.records.materials.provenance_in(
-                                view, internal, media, derivations=self.records.derivations
-                            )
+                            await self.records.materials.provenance_in(view, internal, media)
                         ).material_ids
                     )
         return GrowthSnapshot(
@@ -357,7 +358,7 @@ class GrowthService:
         draft: GrowthDraft,
         snapshot: GrowthSnapshot,
         *,
-        producer_call_id: str | None = None,
+        producer: ModelProvenance | None = None,
     ) -> GrowthApplication:
         await self.validate_growth_in(tx, ctx, draft, snapshot)
         source_evidence = await material_evidence_in(self.records, tx, ctx, snapshot)
@@ -466,7 +467,7 @@ class GrowthService:
                             "memory_required", "The public memory action requires a Memory target"
                         )
                     changed = (
-                        await self.records.change_retention_in(
+                        await self.memories.change_retention_in(
                             tx,
                             ctx,
                             RetentionChange(
@@ -536,7 +537,7 @@ class GrowthService:
                     expected_revision=target.reference.revision if target else 0,
                     body=body,
                     evidence=links,
-                    producer_call_id=producer_call_id,
+                    producer=producer,
                     times=CognitiveTimes(formation=ctx.clock, recorded=ctx.clock),
                 ),
             )

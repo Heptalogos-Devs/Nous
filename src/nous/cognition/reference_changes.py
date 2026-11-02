@@ -136,7 +136,6 @@ async def replace_references_in(
                 body=body,
                 evidence=record.evidence,
                 times=record.times,
-                producer_call_id=None,
             ),
             state=RevisionState(
                 lifecycle=record.lifecycle,

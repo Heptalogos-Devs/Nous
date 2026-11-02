@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from pydantic import TypeAdapter
 
 from nous.platform.persistence import WriteTx
 
@@ -34,20 +33,8 @@ class EvolutionService:
     async def merge_concepts(
         self, ctx: CallContext, command: MergeConcepts
     ) -> tuple[CognitiveRecord, ...]:
-        async with self.records.authority.write(
-            ctx,
-            command.operation_id,
-            operation_kind="concept.merge",
-            scope=ctx.namespace_id,
-            payload=command,
-        ) as tx:
-            if tx.replayed:
-                return await self.records.replay_records_in(
-                    tx,
-                    ctx,
-                    TypeAdapter(tuple[CognitiveRecord, ...]).validate_python(tx.replay_result),
-                )
-            return tx.result(await self.merge_concepts_in(tx, ctx, command))
+        async with self.records.authority.write(ctx) as tx:
+            return await self.merge_concepts_in(tx, ctx, command)
 
     async def merge_concepts_in(
         self, tx: WriteTx, ctx: CallContext, command: MergeConcepts
@@ -134,20 +121,8 @@ class EvolutionService:
     async def split_concept(
         self, ctx: CallContext, command: SplitConcept
     ) -> tuple[CognitiveRecord, ...]:
-        async with self.records.authority.write(
-            ctx,
-            command.operation_id,
-            operation_kind="concept.split",
-            scope=ctx.namespace_id,
-            payload=command,
-        ) as tx:
-            if tx.replayed:
-                return await self.records.replay_records_in(
-                    tx,
-                    ctx,
-                    TypeAdapter(tuple[CognitiveRecord, ...]).validate_python(tx.replay_result),
-                )
-            return tx.result(await self.split_concept_in(tx, ctx, command))
+        async with self.records.authority.write(ctx) as tx:
+            return await self.split_concept_in(tx, ctx, command)
 
     async def split_concept_in(
         self, tx: WriteTx, ctx: CallContext, command: SplitConcept
@@ -217,20 +192,8 @@ class EvolutionService:
     async def resegment_episodes(
         self, ctx: CallContext, command: ResegmentEpisodes
     ) -> tuple[CognitiveRecord, ...]:
-        async with self.records.authority.write(
-            ctx,
-            command.operation_id,
-            operation_kind="episode.resegment",
-            scope=ctx.namespace_id,
-            payload=command,
-        ) as tx:
-            if tx.replayed:
-                return await self.records.replay_records_in(
-                    tx,
-                    ctx,
-                    TypeAdapter(tuple[CognitiveRecord, ...]).validate_python(tx.replay_result),
-                )
-            return tx.result(await self.resegment_episodes_in(tx, ctx, command))
+        async with self.records.authority.write(ctx) as tx:
+            return await self.resegment_episodes_in(tx, ctx, command)
 
     async def resegment_episodes_in(
         self, tx: WriteTx, ctx: CallContext, command: ResegmentEpisodes

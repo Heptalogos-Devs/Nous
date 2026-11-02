@@ -7,6 +7,7 @@ from pydantic import Field, JsonValue
 from .cognition import DesiredCondition
 from .cognitive_identity import CognitiveRef
 from .common import Contract, Operation, TimePoint, TimeRange
+from .common import ModelProvenance
 
 MotivationSemanticStatus = Literal["off", "not_needed", "ready", "unavailable"]
 
@@ -36,7 +37,7 @@ class MotivationJudgment(Contract):
     state: Literal["true", "false", "unknown"]
     confidence: float = Field(ge=0, le=1)
     reason: str
-    producer_call_id: str | None = None
+    producer: ModelProvenance | None = None
 
 
 class ConditionAssessment(Contract):

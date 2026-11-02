@@ -1,14 +1,13 @@
-"""Atomic restoration of a scoped Namespace snapshot; copies retain paid custody."""
+"""Restore one Namespace snapshot into its new Namespace identity."""
 
 import hashlib
 import json
-from typing import Literal
 from uuid import NAMESPACE_URL, uuid5
 
 import sqlalchemy as sa
 from nous_sdk.contracts import CallContext, DomainError
+from nous_sdk.contracts.execution import ExecutionSnapshot
 from nous_sdk.contracts.identity import Namespace, SubjectBinding
-from nous_sdk.contracts.model_calls import ArchivedCall, CallOrigin, InvocationBinding
 from nous_sdk.contracts.namespace_backups import (
     NamespaceBackupRestored,
     NamespaceState,
@@ -19,12 +18,8 @@ from pydantic import JsonValue, TypeAdapter
 
 from nous.identity.service import IdentityService
 from nous.platform.content import ContentLease, ContentStore
-from nous.platform.models.history import imported_calls
-from nous.platform.models.invocation_transfer import restore_in as restore_invocations_in
-from nous.platform.models.source_fence import source_identities
-from nous.platform.persistence import Authority, metadata
 from nous.platform.execution import DurableExecution
-from nous_sdk.contracts.execution import ExecutionSnapshot
+from nous.platform.persistence import Authority, metadata
 from nous.platform.persistence.authority import canonical_json, operation_key
 from nous.platform.persistence.schema import clock
 from nous.references.allocation import allocate_target_in
@@ -40,19 +35,13 @@ _CHILDREN = {
     "import_outputs",
     "import_manifest_heads",
     "import_requests",
-    "cognitive_vectors",
     "vector_projection_claims",
     "vector_projection_subscriptions",
-    "nous_model_invocations",
-    "nous_model_invocation_retirements",
-    "nous_configuration",
-    "nous_configuration_history",
 }
 _JSON = {
     "record",
     "context",
     "value",
-    "previous_value",
     "target",
     "request",
     "result",
@@ -95,9 +84,6 @@ _IDENTITIES = {
     "contact_observation_id",
     "previous_observation_id",
     "retry_parent_job_id",
-    "producer_call_id",
-    "model_call_id",
-    "call_id",
     "workflow_id",
     "workflow_uuid",
     "destination_uuid",
@@ -131,7 +117,6 @@ _IDENTITIES = {
     "allowed_source_ids",
     "accepted_observation_ids",
     "source_material_ids",
-    "model_call_ids",
     "refs",
     "unit_outputs",
 }
@@ -179,10 +164,6 @@ def validate(state: NamespaceState) -> None:
             if (
                 "namespace_id" in row
                 and row["namespace_id"] != state.namespace_id
-                and not (
-                    name in {"nous_model_invocations", "nous_model_invocation_retirements"}
-                    and row["namespace_id"] is None
-                )
             ):
                 raise DomainError(
                     "namespace_backup_scope_forbidden",
@@ -196,16 +177,10 @@ def validate(state: NamespaceState) -> None:
         raise DomainError(
             "namespace_backup_integrity", "Backup has no single consistent Namespace identity"
         )
-    owners = {state.namespace_id}
-
     def trusted_contexts(value: JsonValue) -> None:
         if isinstance(value, dict):
             if {"caller_id", "namespace_id", "credential_source_ids"}.issubset(value):
-                if (
-                    value["namespace_id"] != state.namespace_id
-                    or value.get('namespace_id') is not None
-                    and value['namespace_id'] not in owners
-                ):
+                if value["namespace_id"] != state.namespace_id:
                     raise DomainError(
                         "namespace_backup_scope_forbidden",
                         "Saved work contains a context outside the archived Namespace",
@@ -219,10 +194,10 @@ def validate(state: NamespaceState) -> None:
 
     for rows in state.tables.values():
         for row in rows:
-            if row.get('namespace_id') is not None and str(row['namespace_id']) not in owners:
+            if row.get("namespace_id") is not None and str(row["namespace_id"]) != state.namespace_id:
                 raise DomainError(
                     "namespace_backup_scope_forbidden",
-                    "Backup row belongs to an unretained Subject",
+                    "Backup row belongs to another Namespace",
                 )
             for field in ("context", "inputs"):
                 if row.get(field) is not None:
@@ -232,12 +207,6 @@ def validate(state: NamespaceState) -> None:
                 decoded = document(record)
                 if isinstance(decoded, dict) and "context" in decoded:
                     trusted_contexts(decoded["context"])
-    scopes = {"namespace:" + state.namespace_id}
-    for name in ("nous_configuration", "nous_configuration_history"):
-        if any(row["scope"] not in scopes for row in state.tables.get(name, ())):
-            raise DomainError(
-                "namespace_backup_scope_forbidden", "Backup includes foreign configuration"
-            )
     for child, field, parent, parent_field in (
         ("context_feedback", "context_id", "cognitive_contexts", "id"),
         ("import_inputs", "catalog_id", "import_catalogs", "id"),
@@ -272,15 +241,7 @@ async def restore(
         )
     if ctx.namespace_id == "instance":
         raise DomainError("namespace_backup_scope_forbidden", "Select a new receiving Namespace")
-    async with authority.write(
-        ctx,
-        command.operation_id,
-        operation_kind="namespace.backup.restore",
-        scope=ctx.namespace_id,
-        payload=command,
-    ) as tx:
-        if tx.replayed:
-            return NamespaceBackupRestored.model_validate(tx.replay_result)
+    async with authority.write(ctx) as tx:
         original = state.tables
         mapping: dict[str, str] = {state.namespace_id: ctx.namespace_id}
 
@@ -431,49 +392,7 @@ async def restore(
         skip |= {
             "nous_job_links",
             "nous_job_results",
-            "nous_model_budget_allocations",
-            "nous_model_calls",
-            "nous_model_invocations",
-            "nous_model_invocation_retirements",
         }
-        for raw in original.get("nous_model_calls", ()):
-            request = _OBJECT.validate_python(document(raw["request"]))
-            archived = ArchivedCall(
-                id=mapping[str(raw["id"])],
-                origin=CallOrigin(
-                    namespace_id=state.namespace_id,
-                    
-                    call_id=str(raw["id"]),
-                ),
-                purpose=str(raw["purpose"]),
-                request_hash=str(raw["request_hash"]),
-                day=str(raw["day"]),
-                status=TypeAdapter(
-                    Literal["reserved", "succeeded", "failed", "purged"]
-                ).validate_python(raw["status"]),
-                request=request,
-                result=document(raw["result"]),
-                usage=TypeAdapter(dict[str, JsonValue] | None).validate_python(
-                    document(raw["usage"])
-                ),
-                error_code=str(raw["error_code"]) if raw["error_code"] else None,
-                source_ids=tuple(token(item) for item in sorted(source_identities(request))),
-            )
-            if raw['namespace_id'] is None:
-                raise DomainError(
-                    "namespace_backup_model_scope",
-                    "Namespace model custody requires a retained Subject",
-                )
-            await tx.connection.execute(
-                imported_calls.insert().values(
-                    id=archived.id,
-                    namespace_id=ctx.namespace_id,
-                    
-                    installation_id=command.operation_id,
-                    archive_id=str(raw["id"]),
-                    record=archived.model_dump(mode="json"),
-                )
-            )
         tables = sorted(
             original,
             key=lambda name: (
@@ -509,28 +428,8 @@ async def restore(
                         try:
                             decoded = TypeAdapter(JsonValue).validate_json(value)
                             changed = remap(decoded, field)
-                            if (
-                                name == "nous_imported_model_calls"
-                                and field == "record"
-                                and isinstance(decoded, dict)
-                                and isinstance(changed, dict)
-                            ):
-                                changed = {
-                                    **changed,
-                                    **{
-                                        key: decoded[key]
-                                        for key in (
-                                            "origin",
-                                            "request",
-                                            "request_hash",
-                                            "result",
-                                            "usage",
-                                        )
-                                        if key in decoded
-                                    },
-                                }
                             values[field] = canonical_json(changed)
-                        except ValueError, TypeError:
+                        except (ValueError, TypeError):
                             if field in {"output", "error", "message"}:
                                 values[field] = value
                             else:
@@ -542,17 +441,6 @@ async def restore(
                                 ) from None
                     else:
                         values[field] = remap(value, field)
-                if name == "material_description_deliveries":
-                    delivery = _OBJECT.validate_python(document(values["record"]))
-                    status = delivery.get("status")
-                    delivery.update({"lease_token": None, "lease_until": None})
-                    if status == "running" or (
-                        not command.preserve_ids and status in {"pending", "failed"}
-                    ):
-                        delivery["status"] = "pending"
-                    if not command.preserve_ids and status in {"pending", "running", "failed"}:
-                        delivery["attempt_count"] = 0
-                    values["record"] = canonical_json(delivery)
                 if name == "nous_operations":
                     operation_ctx = ctx.model_copy(
                         update={
@@ -591,30 +479,6 @@ async def restore(
                     f"INSERT INTO {quoted(name)} ({','.join(quoted(field) for field in names)}) VALUES ({','.join('?' for _ in names)})",
                     tuple(values[field] for field in names),
                 )
-        frozen = 0
-        bindings = tuple(
-            InvocationBinding.model_validate(
-                {
-                    **{key: value for key, value in row.items() if key != "commit_seq"},
-                    "retired": name == "nous_model_invocation_retirements",
-                }
-            )
-            for name in ("nous_model_invocations", "nous_model_invocation_retirements")
-            for row in original.get(name, ())
-        )
-        report = await restore_invocations_in(
-            tx,
-            ctx,
-            bindings,
-            namespace_mapping=mapping,
-            caller_mapping={
-                binding.caller_id: binding.caller_id if command.preserve_ids else ctx.caller_id
-                for binding in bindings
-                if binding.caller_id is not None
-            },
-            call_mapping=mapping,
-        )
-        frozen = report.frozen
         execution_data = remap(state.execution.model_dump(mode='json'))
         if not command.preserve_ids:
             for job in execution_data['jobs']:
@@ -627,12 +491,9 @@ async def restore(
         await tx.connection.execute(
             clock.update().where(clock.c.singleton == 1).values(commit_seq=final_seq)
         )
-        return tx.result(
-            NamespaceBackupRestored(
-                namespace=ns,
-                mapping=mapping,
-                resumed_jobs=tuple(paused),
-                authority_commit_seq=final_seq,
-                frozen_invocations=frozen,
-            )
+        return NamespaceBackupRestored(
+            namespace=ns,
+            mapping=mapping,
+            resumed_jobs=tuple(paused),
+            authority_commit_seq=final_seq,
         )

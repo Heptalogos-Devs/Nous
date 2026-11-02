@@ -44,7 +44,7 @@ async def observation_records_in(
         observations.c.active.is_(True),
     )
     if observation_id is not None:
-        statement = statement.where(observations.c.id == observation_id)
+        statement = statement.where(observations.c.namespace_id == ctx.namespace_id, observations.c.id == observation_id)
     for row in (await view.connection.execute(statement)).mappings():
         source = row["record"]
         reference = (
@@ -53,9 +53,7 @@ async def observation_records_in(
             else MediaReference(kind="material", id=row["material_id"], observation_id=row["id"])
         )
         try:
-            accepted = await self.materials.accepted_source_in(
-                view, ctx, row["id"], reference, derivations=self.derivations
-            )
+            accepted = await self.materials.accepted_source_in(view, ctx, row['id'], reference)
             reference = accepted.source
             filename = accepted.material["filename"]
         except DomainError as error:
@@ -135,19 +133,7 @@ async def evidence_records_in(
                 source = None
                 if link.observation_id:
                     try:
-                        selected = await self.materials.accepted_source_in(
-                            view,
-                            ctx,
-                            link.observation_id,
-                            MediaReference(
-                                kind="source_region",
-                                id=link.region_id,
-                                observation_id=link.observation_id,
-                            )
-                            if link.region_id
-                            else None,
-                            derivations=self.derivations,
-                        )
+                        selected = await self.materials.accepted_source_in(view, ctx, link.observation_id, MediaReference(kind='source_region', id=link.region_id, observation_id=link.observation_id) if link.region_id else None)
                     except DomainError as error:
                         if error.code != "source_unavailable":
                             raise
@@ -174,9 +160,7 @@ async def require_source_object_in(
     record: ObservationRecord | EvidenceRelationRecord,
 ) -> None:
     if isinstance(record, ObservationRecord):
-        await self.materials.accepted_source_in(
-            view, ctx, record.reference.id, record.source, derivations=self.derivations
-        )
+        await self.materials.accepted_source_in(view, ctx, record.reference.id, record.source)
     else:
         target = await self.cognition.get_in(view, ctx, record.target)
         if target.purged or record.evidence not in target.evidence:
@@ -222,17 +206,7 @@ async def read_source_object_in(
     link = record.evidence[index]
     source = None
     if link.observation_id:
-        selected = await self.materials.accepted_source_in(
-            view,
-            ctx,
-            link.observation_id,
-            MediaReference(
-                kind="source_region", id=link.region_id, observation_id=link.observation_id
-            )
-            if link.region_id
-            else None,
-            derivations=self.derivations,
-        )
+        selected = await self.materials.accepted_source_in(view, ctx, link.observation_id, MediaReference(kind='source_region', id=link.region_id, observation_id=link.observation_id) if link.region_id else None)
         source = selected.source
     result = evidence_record(record, index, source)
     await require_source_object_in(self, view, ctx, result)
@@ -259,9 +233,7 @@ async def material_ids_in(
         else:
             material_ids.update(
                 (
-                    await self.materials.provenance_in(
-                        view, ctx, target.reference, derivations=self.derivations
-                    )
+                    await self.materials.provenance_in(view, ctx, target.reference)
                 ).material_ids
             )
     if roots:

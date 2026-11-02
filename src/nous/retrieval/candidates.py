@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from nous.cognition.entities import project_entity_in
+
 from typing import TYPE_CHECKING
 
 from nous_sdk.contracts import (
@@ -46,9 +48,9 @@ async def eligible(
             revisions.c.namespace_id == ctx.namespace_id,
         )
         if request.as_of_commit is not None:
-            statement = statement.where(revisions.c.commit_seq <= request.as_of_commit)
+            statement = statement.where(revisions.c.namespace_id == ctx.namespace_id, revisions.c.commit_seq <= request.as_of_commit)
         rows = [
-            await self.cognition.project_record_in(view, ctx, CognitiveRecord.model_validate(row))
+            await project_entity_in(self.cognition, view, ctx, CognitiveRecord.model_validate(row))
             for row in (await view.connection.execute(statement)).scalars()
         ]
         if "asof_time" in plan:
@@ -188,7 +190,7 @@ async def eligible(
                 deduped[item.reference.exact()] = item
         allowed = list(deduped.values())
         assets = VECTOR_ROWS.validate_python(
-            (await view.connection.execute(select(vectors))).mappings().all()
+            (await view.connection.execute(select(vectors).where(vectors.c.namespace_id == ctx.namespace_id))).mappings().all()
         )
         return CandidateView(allowed, catalog, assets, view.commit_seq, source_rows, roots)
 

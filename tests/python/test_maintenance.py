@@ -187,12 +187,7 @@ def test_source_purge_clears_run_payload_while_shared_bytes_survive(tmp_path):
 
             from nous.maintenance.schema import runs
 
-            async with app.authority.write(
-                ctx,
-                "legacy-anonymous-review",
-                operation_kind="maintenance.review",
-                payload={"run_id": run.id},
-            ) as tx:
+            async with app.authority.write(ctx) as tx:
                 old_review = MaintenanceReview(
                     decision="adopt",
                     reason=source,
@@ -206,19 +201,12 @@ def test_source_purge_clears_run_payload_while_shared_bytes_survive(tmp_path):
                     .where(runs.c.id == run.id)
                     .values(record=historic.model_dump(mode="json"))
                 )
-                tx.result(old_review)
-            async with app.authority.write(
-                ctx,
-                "legacy-review-history",
-                operation_kind="maintenance.legacy_export",
-                payload={"run_id": run.id},
-            ) as tx:
+            async with app.authority.write(ctx) as tx:
                 await tx.connection.execute(
                     runs.update()
                     .where(runs.c.id == run.id)
                     .values(record=historic.model_dump(mode="json"))
                 )
-                tx.result(historic)
             denied = await app.maintenance.read(
                 ctx.model_copy(update={"allowed_source_ids": ()}), run.id
             )

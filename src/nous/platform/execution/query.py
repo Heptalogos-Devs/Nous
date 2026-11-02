@@ -12,7 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from nous.platform.persistence import Authority
 from nous.platform.persistence.authority import canonical_json
-from nous.platform.persistence.schema import job_links, operations
+from nous.platform.persistence.schema import job_links
 
 from .results import job_results, retained_status
 from .scope import JobPurpose, require_job_purpose
@@ -100,12 +100,8 @@ async def query_jobs(
         except ValueError as error:
             raise ValueError("Invalid job cursor for this scope and query") from error
 
-    query = (
-        sa.select(job_links.c.workflow_id, operations.c.commit_seq)
-        .join(operations, operations.c.operation_key == job_links.c.operation_key)
-        .where(
-            job_links.c.namespace_id == ctx.namespace_id,
-        )
+    query = sa.select(job_links.c.workflow_id, job_links.c.commit_seq).where(
+        job_links.c.namespace_id == ctx.namespace_id,
     )
     if purpose == "actor":
         query = query.where(job_links.c.caller_id == ctx.caller_id)
@@ -123,15 +119,15 @@ async def query_jobs(
         snapshot = position.snapshot if position is not None else view.commit_seq
         if snapshot > view.commit_seq:
             raise ValueError("Job cursor refers to an unavailable snapshot")
-        query = query.where(operations.c.commit_seq <= snapshot)
+        query = query.where(job_links.c.commit_seq <= snapshot)
         while True:
             page = query
             if position is not None:
                 page = page.where(
                     sa.or_(
-                        operations.c.commit_seq < position.sequence,
+                        job_links.c.commit_seq < position.sequence,
                         sa.and_(
-                            operations.c.commit_seq == position.sequence,
+                            job_links.c.commit_seq == position.sequence,
                             job_links.c.workflow_id < position.workflow_id,
                         ),
                     )
@@ -139,7 +135,7 @@ async def query_jobs(
             rows = (
                 await view.connection.execute(
                     page.order_by(
-                        operations.c.commit_seq.desc(), job_links.c.workflow_id.desc()
+                        job_links.c.commit_seq.desc(), job_links.c.workflow_id.desc()
                     ).limit(batch_size)
                 )
             ).all()

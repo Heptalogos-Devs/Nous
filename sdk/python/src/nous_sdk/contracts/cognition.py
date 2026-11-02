@@ -24,7 +24,15 @@ from .cognitive_identity import (
 from .cognitive_identity import (
     EvidenceLink as EvidenceLink,
 )
-from .common import CognitiveTimes, Contract, Operation, ReferenceAddresses, TimePoint, TimeRange
+from .common import (
+    CognitiveTimes,
+    Contract,
+    Operation,
+    ReferenceAddresses,
+    TimePoint,
+    TimeRange,
+)
+from .common import ModelProvenance
 from .fact_body import FactClaimBody as FactClaimBody
 from .media import MediaReference
 from .personality import FacetCategory, RelationshipRequirement
@@ -128,7 +136,7 @@ class GeneratedPersonProfile(Contract):
     summary: str
     aliases: tuple[str, ...] = ()
     evidence: tuple[EvidenceLink, ...] = Field(min_length=1)
-    producer_call_id: str | None = None
+    producer: ModelProvenance | None = None
 
     @model_validator(mode="after")
     def positive_support(self) -> GeneratedPersonProfile:
@@ -408,7 +416,7 @@ class CognitiveRecord(Contract):
     support_roots: tuple[str, ...] = ()
     source_regions: dict[str, tuple[str, ...]] = Field(default_factory=dict)
     times: CognitiveTimes
-    producer_call_id: str | None = None
+    producer: ModelProvenance | None = None
     commit_seq: int
     deleted: bool = False
     purged: bool = False
@@ -430,7 +438,7 @@ class AdoptCognition(Operation):
     times: CognitiveTimes | None = None
     id: str | None = None
     expected_revision: int = Field(default=0, ge=0)
-    producer_call_id: str | None = None
+    producer: ModelProvenance | None = None
 
 
 class ProposedEntityAttribute(Contract):
@@ -538,24 +546,11 @@ class FormationDraft(Contract):
     schemas: tuple[ProposedSchema, ...] = ()
 
 
-class FormationProposal(FormationDraft):
-    producer_call_id: str | None = None
-    event: TimePoint | None = None
-    validity: TimeRange | None = None
-
-
 class EmbeddingBatch(Contract):
     model: str
     space: str
     dimensions: int = Field(gt=0)
     vectors: tuple[tuple[float, ...], ...]
-    call_ids: tuple[str | None, ...]
-
-    @model_validator(mode="after")
-    def exact_vector_producers(self) -> EmbeddingBatch:
-        if len(self.call_ids) != len(self.vectors):
-            raise ValueError("Each embedding vector requires its actual producer entry")
-        return self
 
 
 class MergeConcepts(Operation):

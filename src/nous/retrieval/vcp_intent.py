@@ -24,6 +24,7 @@ from .binding import BoundSelection
 from .planning import BoundPlan
 from .policy import ResolvedPolicy
 from .work import QueryWork
+from nous.platform.models.generation import ModelResult
 
 if TYPE_CHECKING:
     pass
@@ -166,18 +167,14 @@ def resolve_intent(
 
 
 def concept_vectors(
-    intent: BoundVcp, query: EmbeddingBatch
+    intent: BoundVcp, result: ModelResult[EmbeddingBatch]
 ) -> tuple[NDArray[np.float32] | None, tuple[QueryConceptResult, ...]]:
     if not intent.concepts:
         return None, ()
-    # The query and its transient cues share one ordered model request, including fallback.
-    if (
-        len(query.vectors) != 1 + len(intent.concepts)
-        or len(query.call_ids) != 1 + len(intent.concepts)
-        or any(call is None for call in query.call_ids)
-    ):
+    query = result.output
+    if len(query.vectors) != 1 + len(intent.concepts):
         raise DomainError(
-            "invalid_embedding", "Query concepts require one vector and actual producer per cue"
+            "invalid_embedding", "Query concepts require one vector per supplied cue"
         )
     vectors = np.ascontiguousarray(query.vectors[1:], dtype=np.float32)
     if vectors.shape != (len(intent.concepts), query.dimensions) or not np.isfinite(vectors).all():
@@ -185,8 +182,7 @@ def concept_vectors(
             "invalid_embedding", "Query concept vectors have invalid dimensions or coordinates"
         )
     results = tuple(
-        QueryConceptResult(concept=cue, call_id=call, space=query.space)
-        for cue, call in zip(intent.concepts, query.call_ids[1:], strict=True)
-        if call is not None
+        QueryConceptResult(concept=cue, producer=result.producer, space=query.space)
+        for cue in intent.concepts
     )
     return vectors, results

@@ -41,9 +41,7 @@ def test_context_supplies_stable_ego_and_wave_related_knowledge(tmp_path: Path):
         ctx = CallContext(caller_id="host", namespace_id=str(uuid4()), credential_source_ids=None)
         try:
             await app.identity.create_namespace(ctx, "working-set", "namespace", mode="subject")
-            async with app.authority.write(
-                ctx, "source", operation_kind="material.admit", payload={}
-            ) as tx:
+            async with app.authority.write(ctx) as tx:
                 admitted = await app.material.admit_text_in(
                     tx,
                     ctx,
@@ -52,7 +50,6 @@ def test_context_supplies_stable_ego_and_wave_related_knowledge(tmp_path: Path):
                         filename="observation.txt",
                     ),
                 )
-                tx.result(admitted.material["id"])
             evidence = (EvidenceLink(observation_id=admitted.event["id"]),)
             identity = await app.cognition.adopt(
                 ctx,

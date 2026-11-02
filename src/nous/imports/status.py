@@ -37,9 +37,7 @@ async def vector_status(self: ImportService, ctx: CallContext) -> ImportVectorSt
         references = {reference.exact() for output in visible for reference in output.cognition}
         rows = (
             await view.connection.execute(
-                select(vectors.c.reference, vectors.c.space).where(
-                    vectors.c.reference.in_(references)
-                )
+                select(vectors.c.reference, vectors.c.space).where(vectors.c.namespace_id == ctx.namespace_id, vectors.c.reference.in_(references))
             )
         ).all()
         per_space: dict[str, set[str]] = {}

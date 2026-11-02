@@ -53,13 +53,10 @@ def test_memory_correction_withdrawal_and_rollback_keep_only_actual_support(
             before = await app.cognition.get(ctx, imported.outputs[0].cognition[0])
             support_refs = ()
             if actual_support:
-                async with app.authority.write(
-                    ctx, "new-statement", operation_kind="material.put", payload={}
-                ) as tx:
+                async with app.authority.write(ctx) as tx:
                     source_b = await app.material.admit_text_in(
                         tx, ctx, ImportDocument(text="The meeting was corrected to Thursday.")
                     )
-                    tx.result(source_b.material)
                 contact = await app.imports.contact(
                     ctx,
                     ContactMaterial(
@@ -152,13 +149,10 @@ def test_fact_correction_uses_real_support_instead_of_its_instruction_report(tmp
                     ),
                 ),
             )
-            async with app.authority.write(
-                ctx, "statement-b", operation_kind="material.put", payload={}
-            ) as tx:
+            async with app.authority.write(ctx) as tx:
                 source = await app.material.admit_text_in(
                     tx, ctx, ImportDocument(text="The day is Thursday.")
                 )
-                tx.result(source.material)
             support = await app.imports.contact(
                 ctx,
                 ContactMaterial(

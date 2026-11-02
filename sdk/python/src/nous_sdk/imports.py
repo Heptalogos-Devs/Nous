@@ -13,7 +13,7 @@ import anyio
 from pydantic import JsonValue
 
 from .contracts import ImportDocument
-from .contracts.imports import ImportFormat
+from .contracts.imports import FormationPurpose, ImportFormat
 from .contracts.text_import import TextImport, TextImportSubmission
 from .files import ManagedFiles, file_name
 from .operations import encoded
@@ -203,13 +203,13 @@ async def import_files(
     *,
     transfer_root: str | Path,
     input_format: ImportFormat | None = None,
-    form_memory: bool = False,
+    formation_purpose: FormationPurpose | None = None,
     completion: Literal["accepted", "formed"] = "accepted",
     origin: Mapping[str, str] | None = None,
     operation_id: str | None = None,
 ) -> TextImportSubmission:
-    if completion == "formed" and not form_memory:
-        raise ValueError("formed import completion requires form_memory=True")
+    if completion == "formed" and formation_purpose is None:
+        raise ValueError("formed import completion requires a formation purpose")
     operation = operation_id or str(uuid4())
     documents = await upload_import_inputs(
         client,
@@ -227,9 +227,9 @@ async def import_files(
         {
             "operation_id": operation,
             "inputs": [encoded(document) for document in inputs],
-            "form_memory": form_memory,
+            "formation_purpose": formation_purpose,
             "completion": completion,
-            "vectors": "metadata_allowed" if form_memory else "disabled",
+            "vectors": "metadata_allowed" if formation_purpose is not None else "disabled",
         }
     )
     return await client.submit_text_import(namespace_id,  command)
@@ -246,7 +246,7 @@ async def import_directory(
     pattern: str = "*",
     recursive: bool = True,
     input_format: ImportFormat | None = None,
-    form_memory: bool = False,
+    formation_purpose: FormationPurpose | None = None,
     completion: Literal["accepted", "formed"] = "accepted",
     origin: Mapping[str, str] | None = None,
     operation_id: str | None = None,
@@ -261,7 +261,7 @@ async def import_directory(
         files,
         transfer_root=transfer_root,
         input_format=input_format,
-        form_memory=form_memory,
+        formation_purpose=formation_purpose,
         completion=completion,
         origin=origin,
         operation_id=operation_id,
