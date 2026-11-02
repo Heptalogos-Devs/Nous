@@ -12,7 +12,9 @@ from typing import TYPE_CHECKING, cast
 
 import networkx as nx
 from networkx.classes import coreviews, reportviews
-from nous_sdk.contracts import BlobDocument, CallContext, DomainError
+from nous_sdk.contracts import BlobDocument
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from pydantic import JsonValue, TypeAdapter
 
 from nous.platform.concurrency import owned_thread

@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from nous_sdk.contracts import CallContext, CognitiveRef
+from nous_sdk.contracts import CognitiveRef
+from nous.platform.call_context import CallContext
 
 from nous.platform.persistence import WriteTx
 

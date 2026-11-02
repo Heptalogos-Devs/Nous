@@ -3,7 +3,7 @@
 from pathlib import Path
 from typing import Literal
 
-from nous_sdk.contracts.common import DomainError
+from nous.platform.errors import DomainError
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .settings import EmbeddingRoute, ModelRoute, ProviderOptions

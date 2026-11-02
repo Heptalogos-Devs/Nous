@@ -1,6 +1,8 @@
 """Resolve bundle selectors to actual scoped observation and cognition identities."""
 
-from nous_sdk.contracts import BundleRequest, CallContext, CognitiveRecord, DomainError
+from nous_sdk.contracts import BundleRequest, CognitiveRecord
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.bundles import (
     AllSelection,
     ChatSelection,

@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
-from typing import TYPE_CHECKING, Literal
+from collections.abc import Mapping
+from typing import TYPE_CHECKING
 
 from pydantic import JsonValue, TypeAdapter
 
@@ -16,7 +16,6 @@ from ..contracts import (
     RecordPurpose,
     RecordsPage,
     RecordsQuery,
-    TimeFilter,
 )
 from ..contracts.corrections import (
     ApplyCorrection,
@@ -36,14 +35,11 @@ from ..contracts.resources import (
     ResourceRecord,
 )
 from ..errors import NousError
-from ..operations import encoded, object_value, segment
+from ..operations import encoded, segment
 from ..source_scope import SourceReadScope
-from ..types import (
-    JsonObject,
-)
 
 if TYPE_CHECKING:
-    from ..contracts.lifecycle import MemoryChange, MemoryChanges
+    from ..contracts.lifecycle import MemoryChanges
 
 
 from .imports import ImportClient
@@ -298,7 +294,8 @@ class KnowledgeClient(ImportClient):
                 await self.concept_by_alias(namespace,  required_text(values, "alias"))
             )
         if action == "form_observation":
-            from ..contracts.imports import FormationPurpose
+            from ..contracts.common import FormationPurpose
+            from ..contracts.media import MediaStrategy
 
             return encoded(
                 await self.form_observation(
@@ -306,6 +303,9 @@ class KnowledgeClient(ImportClient):
                     required_text(values, "observation_id"),
                     formation_purpose=TypeAdapter(FormationPurpose).validate_python(
                         values.pop("formation_purpose", "memory")
+                    ),
+                    media_strategy=TypeAdapter(MediaStrategy).validate_python(
+                        values.pop("media_strategy", "description_only")
                     ),
                     background=TypeAdapter(str).validate_python(
                         values.pop("background", "")

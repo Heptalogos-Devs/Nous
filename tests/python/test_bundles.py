@@ -6,7 +6,8 @@ from pathlib import Path
 
 import httpx
 from nous_sdk import NousClient
-from nous_sdk.contracts import CallContext, ModelProvenance, SourceCommand
+from nous_sdk.contracts import ModelProvenance, SourceCommand
+from nous.platform.call_context import CallContext
 from sqlalchemy import select
 
 from nous.cognition.schema import vectors

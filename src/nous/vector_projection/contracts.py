@@ -2,7 +2,8 @@
 
 from typing import Literal
 
-from nous_sdk.contracts import CallContext, CognitiveRef, MediaEmbeddingInput, MediaReference
+from nous_sdk.contracts import CognitiveRef, MediaEmbeddingInput, MediaReference
+from nous.platform.call_context import CallContext
 from nous_sdk.contracts.common import Contract
 from nous_sdk.contracts.common import ModelProvenance
 

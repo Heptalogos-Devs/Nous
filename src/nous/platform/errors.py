@@ -5,6 +5,13 @@ from collections.abc import Mapping
 from pydantic import JsonValue, TypeAdapter
 
 
+class DomainError(Exception):
+    def __init__(self, code: str, message: str, **details: object) -> None:
+        super().__init__(message)
+        self.code = code
+        self.details = TypeAdapter(dict[str, JsonValue]).validate_python(details)
+
+
 class NousError(Exception):
     def __init__(
         self,

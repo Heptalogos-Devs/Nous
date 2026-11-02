@@ -6,13 +6,13 @@ from typing import TYPE_CHECKING
 
 from nous_sdk.contracts import (
     AdoptCognition,
-    CallContext,
     CognitiveRecord,
-    DomainError,
     EntityBody,
     EvidenceLink,
     SocialRelationBody,
 )
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.social import (
     ChangeSocialRelation,
     IdentityHypothesis,

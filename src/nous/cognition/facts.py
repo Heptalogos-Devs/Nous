@@ -7,11 +7,9 @@ from typing import TYPE_CHECKING
 
 from nous_sdk.contracts import (
     AdoptCognition,
-    CallContext,
     CognitiveRecord,
     CognitiveRef,
     CognitiveTimes,
-    DomainError,
     EntityBody,
     EvidenceLink,
     ImportDocument,
@@ -19,6 +17,8 @@ from nous_sdk.contracts import (
     TimePoint,
     TimeRange,
 )
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.cognitive_identity import CognitiveIdentity
 from nous_sdk.contracts.fact_body import (
     ChatFactScope,

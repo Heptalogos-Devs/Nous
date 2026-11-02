@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from nous_sdk.contracts import CallContext, DomainError, MediaReference, SourceRegion
+from nous_sdk.contracts import MediaReference, SourceRegion
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.identity import IdentityPurpose
 from sqlalchemy import select
 

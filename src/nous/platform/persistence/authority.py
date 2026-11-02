@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
 import sqlalchemy as sa
-from nous_sdk.contracts.common import CallContext
+from nous.platform.call_context import CallContext
 from pydantic import TypeAdapter
 from sqlalchemy import event
 from sqlalchemy.dialects.sqlite import insert

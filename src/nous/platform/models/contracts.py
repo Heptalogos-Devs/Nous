@@ -6,7 +6,8 @@ import math
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from nous_sdk.contracts import CallContext, DomainError
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.model_roles import (
     ModelContractRequest,
     ModelInvocationPreview,

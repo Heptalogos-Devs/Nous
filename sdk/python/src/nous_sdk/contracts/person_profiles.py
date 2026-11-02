@@ -5,7 +5,7 @@ from typing import Literal
 from pydantic import Field
 
 from .cognition import CognitiveRecord, CognitiveRef, EpistemicStance, EvidenceLink
-from .common import CallContext, Contract, Operation, TimeRange
+from .common import Contract, Operation, TimeRange
 
 
 class PersonProfilesQuery(Contract):
@@ -76,14 +76,6 @@ class RefreshPersonProfile(Operation):
 class PersonProfileRefreshSubmission(Contract):
     job_id: str
     reference: CognitiveRef
-
-
-class PersonProfileRefreshIntent(Contract):
-    context: CallContext
-    command: RefreshPersonProfile
-    attribute_indices: tuple[int, ...]
-    claim_refs: tuple[CognitiveRef, ...] = ()
-    description_selected: bool = False
 
 
 class PersonProfileEvidence(Contract):

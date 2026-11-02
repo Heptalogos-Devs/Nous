@@ -6,13 +6,13 @@ from uuid import uuid4
 
 from nous_sdk.contracts import (
     AdoptCognition,
-    CallContext,
     CognitiveRef,
     DomainKnowledgeBody,
     EgoFacetBody,
     EvidenceLink,
     ImportDocument,
 )
+from nous.platform.call_context import CallContext
 from nous_sdk.contracts.context import ContextPrepare, ContextSegment, ContextUsage
 from nous_sdk.contracts.targets import CognitiveTarget
 

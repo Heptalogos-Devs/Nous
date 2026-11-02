@@ -3,7 +3,8 @@
 from typing import Literal
 
 from fastapi import APIRouter, Request
-from nous_sdk.contracts import CognitiveRecord, DomainError, QueryRequest, QueryResult
+from nous_sdk.contracts import CognitiveRecord, QueryRequest, QueryResult
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.context import CognitiveTarget
 from nous_sdk.contracts.corrections import CorrectionResult
 from nous_sdk.contracts.public import CorrectionInput, ReadRequest, ReadView, RememberInput

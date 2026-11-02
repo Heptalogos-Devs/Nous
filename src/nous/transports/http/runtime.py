@@ -4,7 +4,7 @@ import asyncio
 from typing import Literal
 
 from fastapi import APIRouter, Request
-from nous_sdk.contracts import DomainError
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.runtime import (
     RuntimeComplete,
     RuntimeOpen,

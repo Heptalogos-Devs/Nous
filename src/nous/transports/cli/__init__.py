@@ -13,7 +13,7 @@ import httpx
 import typer
 import uvicorn
 from nous_sdk import NousError as ClientError
-from nous_sdk.contracts import DomainError
+from nous.platform.errors import DomainError
 from rich.console import Console
 
 from nous.platform.configuration import Settings
@@ -81,7 +81,8 @@ def init(ctx: typer.Context, instance: Path | None = None, name: str = "default"
     """Create a local instance, credential and initial Namespace."""
     from uuid import uuid4
 
-    from nous_sdk.contracts import CallContext, DomainError
+    from nous.platform.call_context import CallContext
+    from nous.platform.errors import DomainError
 
     from nous.application import Application
 

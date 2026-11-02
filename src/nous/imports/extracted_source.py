@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from nous_sdk.contracts import CallContext, MediaReference
+from nous_sdk.contracts import MediaReference
+from nous.platform.call_context import CallContext
 from nous_sdk.contracts.derivation import (
     CreateDerivedRegion,
     CreateRepresentation,

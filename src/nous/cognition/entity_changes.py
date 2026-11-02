@@ -7,16 +7,16 @@ from typing import TYPE_CHECKING
 
 from nous_sdk.contracts import (
     AdoptCognition,
-    CallContext,
     CognitiveRecord,
     CognitiveRef,
-    DomainError,
     EntityBody,
     EvidenceLink,
     MergeEntities,
     RevisionCause,
     SplitEntity,
 )
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.cognition import PersonAliasOverride, PersonSummaryOverride
 from sqlalchemy import select
 

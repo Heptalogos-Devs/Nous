@@ -4,12 +4,12 @@ from graphlib import CycleError, TopologicalSorter
 
 from nous_sdk.contracts import (
     CognitiveRef,
-    DomainError,
     EntityBody,
     MediaReference,
     MemoryBody,
     NamespaceBundle,
 )
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.derivation import ArtifactRepresentation
 from nous_sdk.contracts.fact_body import FactClaimBody, PersonFactScope
 

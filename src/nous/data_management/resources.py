@@ -15,12 +15,12 @@ from uuid import uuid4
 import httpx2
 from nous_sdk.contracts import (
     BlobDocument,
-    CallContext,
     CognitiveTimes,
-    DomainError,
     MediaReference,
     TimePoint,
 )
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.resources import (
     ChangeResource,
     ReadResource,

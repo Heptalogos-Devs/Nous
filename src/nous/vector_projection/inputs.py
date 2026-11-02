@@ -4,7 +4,9 @@ import math
 from hashlib import sha256
 from typing import TYPE_CHECKING
 
-from nous_sdk.contracts import CallContext, CognitiveRef, DomainError
+from nous_sdk.contracts import CognitiveRef
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.presentation import body_text
 from sqlalchemy import select
 

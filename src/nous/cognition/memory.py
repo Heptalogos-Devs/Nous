@@ -25,9 +25,7 @@ if TYPE_CHECKING:
     from .records import CognitiveRecords
 from nous_sdk.contracts import (
     AdoptCognition,
-    CallContext,
     CognitiveRecord,
-    DomainError,
     EvidenceLink,
     ImportDocument,
     MemoryBody,
@@ -37,6 +35,8 @@ from nous_sdk.contracts import (
     RevisionCause,
     TimePoint,
 )
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 
 
 class MemoryService:

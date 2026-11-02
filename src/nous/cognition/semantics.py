@@ -6,10 +6,8 @@ import math
 from collections.abc import Mapping
 
 from nous_sdk.contracts import (
-    CallContext,
     CognitiveBody,
     CognitiveRecord,
-    DomainError,
     EgoFacetBody,
     EntityBody,
     EpisodeBody,
@@ -19,6 +17,8 @@ from nous_sdk.contracts import (
     SchemaBody,
     SocialRelationBody,
 )
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from sqlalchemy import select
 
 from nous.platform.persistence import WriteTx

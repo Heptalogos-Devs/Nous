@@ -19,7 +19,7 @@ from pathlib import Path
 from threading import RLock
 from uuid import uuid4
 
-from nous_sdk.contracts import DomainError
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.identity import Namespace
 from nous_sdk.contracts.namespace_backups import (
     NAMESPACE_BACKUP_FORMAT,

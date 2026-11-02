@@ -3,7 +3,7 @@
 from typing import Literal
 
 from fastapi import APIRouter, Request
-from nous_sdk.contracts import CallContext
+from nous.platform.call_context import CallContext
 from pydantic import BaseModel
 
 from .security import application, authorize, context

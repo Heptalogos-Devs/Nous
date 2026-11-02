@@ -5,14 +5,14 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from nous_sdk.contracts import (
-    CallContext,
     CognitiveRecord,
-    DomainError,
     MediaRecord,
     QueryHit,
     QueryRequest,
     QueryResult,
 )
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.context import CognitiveTarget, ContextTarget, MediaTarget
 from nous_sdk.contracts.query_readout import RerankInfo
 from nous_sdk.contracts.resources import ResourceRecord

@@ -3,7 +3,7 @@
 import base64
 
 from fastapi import APIRouter, Request
-from nous_sdk.contracts.common import CallContext
+from nous.platform.call_context import CallContext
 from nous_sdk.contracts.namespace_backups import (
     NamespaceBackupChunk,
     NamespaceBackupInfo,

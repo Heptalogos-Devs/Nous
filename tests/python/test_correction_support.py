@@ -5,14 +5,14 @@ import asyncio
 import pytest
 from nous_sdk.contracts import (
     AdmitFiles,
-    CallContext,
     ContactMaterial,
-    DomainError,
     ImportDocument,
     MediaReference,
     SourceCommand,
     TimePoint,
 )
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.corrections import (
     ApplyCorrection,
     CorrectionEdit,

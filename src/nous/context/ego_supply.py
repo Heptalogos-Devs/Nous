@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from nous_sdk.contracts import (
-    CallContext,
     CognitiveRecord,
     CognitiveRef,
     ConcernBody,
@@ -18,6 +17,7 @@ from nous_sdk.contracts import (
     QueryRequest,
     SocialRelationBody,
 )
+from nous.platform.call_context import CallContext
 from nous_sdk.contracts.cognition import CognitiveKind
 from nous_sdk.contracts.context import ContextSegment, ContextUsage
 from nous_sdk.contracts.records import RecordsQuery

@@ -8,9 +8,7 @@ from uuid import uuid4
 
 from langchain_core.documents import Document
 from nous_sdk.contracts import (
-    CallContext,
     CatalogView,
-    DomainError,
     FreezeCatalog,
     ImportDocument,
     ImportRecordError,
@@ -18,6 +16,8 @@ from nous_sdk.contracts import (
     MediaReference,
     SourceRegion,
 )
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.imports import TextImportPreview, TextPreviewUnit, TextSplitOptions
 from pydantic import TypeAdapter
 from sqlalchemy import select

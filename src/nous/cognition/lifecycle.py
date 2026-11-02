@@ -8,7 +8,6 @@ from nous_sdk.contracts import (
     CognitiveBody,
     CognitiveRecord,
     ConceptBody,
-    DomainError,
     EntityBody,
     EpisodeBody,
     MemoryChange,
@@ -16,6 +15,7 @@ from nous_sdk.contracts import (
     RetentionSnapshot,
     RetentionState,
 )
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.fact_body import FactClaimBody
 
 HOUR_MS = 3600000

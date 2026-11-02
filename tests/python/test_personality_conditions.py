@@ -8,7 +8,6 @@ from nous_sdk import NousClient, NousError
 from nous_sdk.contracts import (
     AdmitFiles,
     AdoptCognition,
-    CallContext,
     DesireBody,
     DesiredCondition,
     DomainKnowledgeBody,
@@ -24,6 +23,7 @@ from nous_sdk.contracts import (
     TimePoint,
     TimeRange,
 )
+from nous.platform.call_context import CallContext
 from nous_sdk.contracts.context import ContextPrepare, ContextUsage
 from nous_sdk.contracts.facts import ChatFactScopeInput, FactChange, FactClaimInput
 from nous_sdk.contracts.motivation import AssessMotivation, MotivationAssessmentsQuery

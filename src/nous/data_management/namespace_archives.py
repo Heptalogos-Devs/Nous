@@ -5,11 +5,11 @@ from uuid import NAMESPACE_URL, uuid5
 import sqlalchemy as sa
 from nous_sdk.contracts import (
     BundleRequest,
-    CallContext,
-    DomainError,
     InstallBundle,
     NamespaceBundle,
 )
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.identity import ChangeNamespace, SubjectBinding
 from nous_sdk.contracts.namespace_archives import (
     NamespaceArchive,

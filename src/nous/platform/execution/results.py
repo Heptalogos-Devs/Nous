@@ -2,7 +2,7 @@
 
 import sqlalchemy as sa
 from dbos import WorkflowStatus
-from nous_sdk.contracts import DomainError
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.execution import ExecutionJob
 
 from nous.platform.persistence import metadata

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 import sqlalchemy as sa
 from dbos import DBOSClient, WorkflowStatus
-from nous_sdk.contracts import CallContext
+from nous.platform.call_context import CallContext
 from nous_sdk.contracts.execution import ExecutionJob
 from pydantic import BaseModel, ConfigDict, Field
 

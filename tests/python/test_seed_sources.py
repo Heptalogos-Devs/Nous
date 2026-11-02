@@ -6,7 +6,9 @@ from pathlib import Path
 import httpx
 import pytest
 from nous_sdk import NousClient
-from nous_sdk.contracts import CallContext, DomainError, ImportDocument
+from nous_sdk.contracts import ImportDocument
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.ego_model import InterpretSeed
 from nous_sdk.contracts.growth import GrowthAdoption, GrowthDraft
 from nous_sdk.contracts.maintenance import (

@@ -6,14 +6,14 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from nous_sdk.contracts import (
-    CallContext,
     CognitiveTimes,
-    DomainError,
     EvidenceLink,
     ImportUnit,
     MediaReference,
     TimePoint,
 )
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.derivation import StructuredRepresentation, TextRepresentation
 from nous_sdk.contracts.growth import GrowthSnapshot, GrowthSource
 

@@ -21,13 +21,11 @@ if TYPE_CHECKING:
 from nous_sdk.contracts import (
     AdoptCognition,
     AssociationBody,
-    CallContext,
     CognitiveBody,
     CognitiveRecord,
     CognitiveRef,
     CognitiveTimes,
     ConceptBody,
-    DomainError,
     EntityAttribute,
     EntityBody,
     EntityMention,
@@ -41,6 +39,8 @@ from nous_sdk.contracts import (
     ProposedSchema,
     SchemaBody,
 )
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.derivation import DerivationInput, DerivationStrategy, RepresentationRef
 from nous_sdk.contracts.formation import (
     GraphDraft,

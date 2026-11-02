@@ -4,7 +4,8 @@ from pathlib import Path
 
 import typer
 from nous_sdk import NousClient
-from nous_sdk.contracts import ContactMaterial, DomainError
+from nous_sdk.contracts import ContactMaterial
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.context import MediaTarget
 from nous_sdk.contracts.derivation import (
     CreateDerivedRegion,

@@ -6,15 +6,15 @@ import json
 from typing import TYPE_CHECKING
 
 from nous_sdk.contracts import (
-    CallContext,
     CognitiveRecord,
-    DomainError,
     EntityBody,
     LanguageConventionBody,
     MemoryBody,
     QueryRequest,
     SocialRelationBody,
 )
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.common import Contract, utc_now
 from nous_sdk.contracts.common import ModelProvenance
 from nous_sdk.contracts.records import RecordsQuery

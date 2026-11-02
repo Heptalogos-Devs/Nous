@@ -4,7 +4,7 @@ import sqlite3
 from contextlib import closing
 from pathlib import Path
 
-from nous_sdk.contracts import DomainError
+from nous.platform.errors import DomainError
 from pydantic import JsonValue, TypeAdapter
 
 from nous.platform.persistence import metadata

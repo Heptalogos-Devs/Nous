@@ -6,7 +6,7 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from jinja2 import TemplateError
-from nous_sdk.contracts import DomainError
+from nous.platform.errors import DomainError
 from starlette.exceptions import HTTPException
 
 from nous.bootstrap import application

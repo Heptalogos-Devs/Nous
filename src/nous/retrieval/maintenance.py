@@ -1,6 +1,7 @@
 """Admit one fixed index publication for the namespace changed by a transaction."""
 
-from nous_sdk.contracts import CallContext, DomainError
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 
 from nous.platform.execution import JobSpec
 from nous.platform.persistence import WriteTx

@@ -1,6 +1,7 @@
 """Authorized original and derived bytes for the common model and vector services."""
 
-from nous_sdk.contracts import CallContext, MediaEmbeddingInput, MediaReference, SourceRegion
+from nous_sdk.contracts import MediaEmbeddingInput, MediaReference, SourceRegion
+from nous.platform.call_context import CallContext
 from nous_sdk.contracts.derivation import (
     ArtifactRepresentation,
     StructuredRepresentation,

@@ -7,11 +7,9 @@ from collections.abc import AsyncIterator, Awaitable
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated, Literal
-from uuid import uuid4
 
 from nous_sdk import NousClient
-from nous_sdk.contracts.imports import FormationPurpose
-from nous_sdk.contracts import DomainError
+from nous_sdk.contracts.common import FormationPurpose
 from nous_sdk.contracts.context import ChangeWorkContext, WorkContextContent
 from nous_sdk.errors import NousError
 from nous_sdk.namespace import NamespaceClient
@@ -22,6 +20,8 @@ from mcp.server import MCPServer
 from mcp.server.mcpserver import Context
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import CallToolResult, TextContent, ToolAnnotations
+
+from nous.platform.errors import DomainError
 
 
 def result(value: object) -> CallToolResult:

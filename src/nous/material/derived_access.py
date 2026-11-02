@@ -2,7 +2,9 @@
 
 from dataclasses import dataclass
 
-from nous_sdk.contracts import CallContext, DomainError, MediaInfo, MediaReference
+from nous_sdk.contracts import MediaInfo, MediaReference
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.derivation import (
     ArtifactRepresentation,
     ChannelAccess,

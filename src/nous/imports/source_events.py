@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from nous_sdk.contracts import (
-    CallContext,
     ImportDocument,
     ImportUnit,
     MediaReference,
@@ -13,6 +12,7 @@ from nous_sdk.contracts import (
     TimePoint,
     TimeRange,
 )
+from nous.platform.call_context import CallContext
 from pydantic import TypeAdapter
 from sqlalchemy import select, update
 
@@ -51,7 +51,7 @@ async def processing_source(
         )
         if existing is not None:
             if existing["origin"] != command.origin:
-                from nous_sdk.contracts import DomainError
+                from nous.platform.errors import DomainError
 
                 raise DomainError(
                     "import_origin_conflict", "Processing run has different source origin"

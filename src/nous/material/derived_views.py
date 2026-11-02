@@ -4,14 +4,14 @@ from datetime import datetime
 from hashlib import sha256
 
 from nous_sdk.contracts import (
-    CallContext,
     CognitiveTimes,
-    DomainError,
     MediaRecord,
     MediaReference,
     SourceRegion,
     TimePoint,
 )
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.derivation import (
     ArtifactRepresentation,
     DerivedRegion,

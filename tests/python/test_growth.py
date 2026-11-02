@@ -4,7 +4,9 @@ import asyncio
 import json
 from pathlib import Path
 
-from nous_sdk.contracts import AdmitFiles, CallContext, DomainError, ImportDocument
+from nous_sdk.contracts import AdmitFiles, ImportDocument
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.growth import GrowthProposal
 from sqlalchemy import func, select
 

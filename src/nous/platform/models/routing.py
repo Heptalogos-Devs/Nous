@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, cast
 
-from nous_sdk.contracts import CallContext, DomainError, EmbeddingBatch, MediaEmbeddingInput
+from nous_sdk.contracts import EmbeddingBatch, MediaEmbeddingInput
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.model_roles import ModelCachePolicy
 from nous_sdk.contracts.prompt_compilation import PromptMessage
 from pydantic import TypeAdapter

@@ -6,15 +6,15 @@ from typing import TYPE_CHECKING
 
 from nous_sdk.contracts import (
     AdmitFiles,
-    CallContext,
     CatalogView,
-    DomainError,
     FreezeCatalog,
     ImportDocument,
     ImportResult,
     ProcessCatalog,
     UnitOutput,
 )
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from sqlalchemy import delete, select, update
 
 from nous.cognition.schema import revisions, vectors

@@ -3,7 +3,8 @@
 from collections import Counter
 from typing import TYPE_CHECKING
 
-from nous_sdk.contracts import CallContext, CognitiveKind
+from nous_sdk.contracts import CognitiveKind
+from nous.platform.call_context import CallContext
 from nous_sdk.contracts.diagnostics import NamespaceDiagnostics
 from nous_sdk.contracts.records import RecordsQuery
 from pydantic import JsonValue, TypeAdapter

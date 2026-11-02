@@ -1,6 +1,7 @@
 """Shared Namespace admission and enabled feature enforcement."""
 import sqlalchemy as sa
-from nous_sdk.contracts import CallContext, DomainError
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.identity import IdentityPurpose, Namespace
 from nous.platform.persistence.authority import ReadView, WriteTx
 from .schema import namespaces

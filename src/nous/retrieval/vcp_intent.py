@@ -9,10 +9,10 @@ import numpy as np
 from nous_sdk.contracts import (
     CognitiveRecord,
     CognitiveRef,
-    DomainError,
     EmbeddingBatch,
     QueryRequest,
 )
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.query_vcp import QueryConcept, QueryConceptResult
 from numpy.typing import NDArray
 from pydantic import JsonValue

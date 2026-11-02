@@ -10,13 +10,13 @@ from hashlib import sha256
 from typing import Protocol
 
 from nous_sdk.contracts import (
-    CallContext,
     CognitiveRecord,
-    DomainError,
     EpistemicStance,
     MediaRecord,
     QueryRequest,
 )
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.common import ModelProvenance
 from nous_sdk.contracts.context import (
     ContextConsumerPolicy,

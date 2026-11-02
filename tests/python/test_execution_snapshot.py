@@ -2,7 +2,7 @@ import asyncio
 from pathlib import Path
 from uuid import uuid4
 
-from nous_sdk.contracts import CallContext
+from nous.platform.call_context import CallContext
 
 from nous.application import Application
 from nous.platform.configuration import Settings

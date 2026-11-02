@@ -10,7 +10,8 @@ import httpx
 import pytest
 import sqlalchemy as sa
 from dbos import DBOS
-from nous_sdk.contracts.common import CallContext, DomainError
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 
 from nous.platform.execution import DurableExecution, JobSpec
 from nous.platform.persistence import Authority

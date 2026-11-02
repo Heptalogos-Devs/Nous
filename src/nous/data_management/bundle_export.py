@@ -8,14 +8,14 @@ from uuid import uuid4
 
 from nous_sdk.contracts import (
     BundleRequest,
-    CallContext,
     CognitiveRecord,
     CognitiveRef,
-    DomainError,
     MediaReference,
     NamespaceBundle,
     UnitOutput,
 )
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.identity import IdentityPurpose
 from pydantic import JsonValue, TypeAdapter
 from sqlalchemy import select

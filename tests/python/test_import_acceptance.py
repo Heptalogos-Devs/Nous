@@ -5,11 +5,11 @@ from uuid import uuid4
 
 from nous_sdk.contracts import (
     AdmitFiles,
-    CallContext,
     FreezeCatalog,
     ImportDocument,
     ProcessCatalog,
 )
+from nous.platform.call_context import CallContext
 from sqlalchemy import func, select
 
 from nous.application import Application

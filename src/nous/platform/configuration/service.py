@@ -14,7 +14,8 @@ from typing import Literal
 import anyio
 import tomlkit
 from filelock import AsyncFileLock
-from nous_sdk.contracts import CallContext, DomainError
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.configuration import ConfigurationCatalog, ConfigurationDefinition
 from pydantic import BaseModel, JsonValue, TypeAdapter
 

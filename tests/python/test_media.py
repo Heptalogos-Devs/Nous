@@ -12,7 +12,8 @@ from pathlib import Path
 
 import psutil
 import pytest
-from nous_sdk.contracts import CallContext, PixelRect, TimeSpan
+from nous_sdk.contracts import PixelRect, TimeSpan
+from nous.platform.call_context import CallContext
 from PIL import Image
 
 from nous.platform.content import ContentStore

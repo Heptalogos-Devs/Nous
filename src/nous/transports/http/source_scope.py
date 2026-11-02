@@ -5,7 +5,9 @@ import binascii
 from dataclasses import dataclass
 
 from fastapi import Request
-from nous_sdk.contracts import CallContext, DomainError, MediaReference
+from nous_sdk.contracts import MediaReference
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.context import CognitiveTarget, MediaTarget, WorkContext
 from nous_sdk.source_scope import (
     CognitionSource,

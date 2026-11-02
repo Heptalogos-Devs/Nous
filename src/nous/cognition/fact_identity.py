@@ -2,7 +2,8 @@
 
 import unicodedata
 
-from nous_sdk.contracts import DomainError, TimeRange
+from nous_sdk.contracts import TimeRange
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.fact_body import FactClaimSpec, FactScope
 from nous_sdk.contracts.facts import FactChange
 

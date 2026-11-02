@@ -93,7 +93,8 @@ class ImportService:
 
     async def read_unit_in(self, view, ctx, unit_id: str, *, catalog_id: str | None = None):
         from sqlalchemy import select
-        from nous_sdk.contracts import ImportUnit, MediaReference, DomainError
+        from nous_sdk.contracts import ImportUnit, MediaReference
+        from nous.platform.errors import DomainError
         from nous_sdk.contracts.derivation import TextRepresentation, StructuredRepresentation
         from nous.material.service import require_observation_in
         from nous.material.text import source_region_text

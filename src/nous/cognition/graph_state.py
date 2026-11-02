@@ -8,16 +8,16 @@ from typing import TYPE_CHECKING
 from nous_sdk.contracts import (
     AdoptCognition,
     AssociationBody,
-    CallContext,
     CognitiveRecord,
     CognitiveRef,
-    DomainError,
     EntityBody,
     EpistemicStance,
     EvidenceLink,
     RetentionChange,
     RevisionCause,
 )
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts import ImportDocument as ImportDocument
 from nous_sdk.contracts import TimePoint as TimePoint
 from nous_sdk.contracts.graph_management import (

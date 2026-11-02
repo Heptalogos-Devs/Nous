@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from nous_sdk.contracts import AdoptMedia, CallContext, CognitiveRecord, DomainError
+from nous_sdk.contracts import AdoptMedia, CognitiveRecord
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.derivation import RepresentationRef
 from nous_sdk.contracts.imports import FormObservation, ObservationFormation
 from pydantic import TypeAdapter

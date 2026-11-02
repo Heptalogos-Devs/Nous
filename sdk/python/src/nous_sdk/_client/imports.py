@@ -18,10 +18,10 @@ from ..contracts import (
     MediaReference,
     ProcessCatalog,
 )
+from ..contracts.common import FormationPurpose
 from ..contracts.dataset_imports import BackfillSourceTimes, ImportDataset
 from ..contracts.imports import (
     EmbeddingSyncResult,
-    FormationPurpose,
     FormObservation,
     ImportFormat,
     ImportUnit,
@@ -30,6 +30,7 @@ from ..contracts.imports import (
     TextSplitOptions,
     UnitAttempt,
 )
+from ..contracts.media import MediaStrategy
 from ..contracts.text_import import TextImport, TextImportResult, TextImportSubmission
 from ..contracts.vector_projection import ProjectionReceipt, ProjectVectors
 from ..operations import encoded, segment
@@ -371,12 +372,12 @@ class ImportClient(TuningClient):
         observation_id: str,
         *,
         formation_purpose: FormationPurpose = "memory",
+        media_strategy: MediaStrategy = "description_only",
         background: str = "",
         source: MediaReference | Mapping[str, JsonValue] | None = None,
         operation_id: str | None = None,
         llm_enabled: bool = True,
     ) -> ObservationFormation:
-        namespace = namespace_id
         media = (
             source
             if isinstance(source, MediaReference) or source is None
@@ -387,13 +388,14 @@ class ImportClient(TuningClient):
             observation_id=observation_id,
             source=media,
             formation_purpose=formation_purpose,
+            media_strategy=media_strategy,
             background=background,
             llm_enabled=llm_enabled,
         )
         return ObservationFormation.model_validate(
             await self.request(
                 "POST",
-                self.namespace_path(namespace, namespace_id) + "/observations/formation",
+                self.namespace_path(namespace_id) + "/observations/formation",
                 body=encoded(command),
             )
         )

@@ -9,12 +9,12 @@ from typing import TYPE_CHECKING
 from uuid import uuid4
 from datetime import UTC, datetime
 from nous_sdk.contracts import (
-    CallContext,
     CognitiveRecord,
-    DomainError,
     MediaRecord,
     QueryRequest,
 )
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.context import (
     CognitiveTarget,
     ContextCursor,

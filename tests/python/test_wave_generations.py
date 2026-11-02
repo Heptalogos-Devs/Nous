@@ -7,7 +7,8 @@ from uuid import uuid4
 
 import numpy as np
 from nous_native import IndexStore, NativeError
-from nous_sdk.contracts import CallContext, EmbeddingBatch, ImportDocument, QueryRequest
+from nous_sdk.contracts import EmbeddingBatch, ImportDocument, QueryRequest
+from nous.platform.call_context import CallContext
 
 from nous.cognition.records import CognitiveRecords
 from nous.cognition.schema import vectors
@@ -263,11 +264,11 @@ def test_query_context_retains_query_and_scoped_session_work(tmp_path: Path):
     async def scenario():
         from nous_sdk.contracts import (
             AdoptCognition,
-            DomainError,
             EntityBody,
             EvidenceLink,
             QueryContext,
         )
+        from nous.platform.errors import DomainError
         from nous_sdk.contracts.context import (
             ChangeContextSession,
             ChangeWorkContext,

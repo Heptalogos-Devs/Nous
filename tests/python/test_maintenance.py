@@ -4,7 +4,9 @@ import asyncio
 
 import pytest
 import sqlalchemy as sa
-from nous_sdk.contracts import AdmitFiles, CallContext, DomainError, ImportDocument, SourceCommand
+from nous_sdk.contracts import AdmitFiles, ImportDocument, SourceCommand
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.maintenance import (
     CreateMaintenanceSchedule,
     ReviewMaintenance,

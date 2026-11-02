@@ -10,12 +10,10 @@ from typing import TYPE_CHECKING
 
 from nous_sdk.contracts import (
     AdoptCognition,
-    CallContext,
     CognitiveRecord,
     CognitiveRef,
     CognitiveTimes,
     ConceptPartition,
-    DomainError,
     EntityBody,
     EvidenceLink,
     MemoryBody,
@@ -23,6 +21,8 @@ from nous_sdk.contracts import (
     RetentionChange,
     SplitConcept,
 )
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts import ConceptBody as ConceptBody
 from nous_sdk.contracts import JournalBody as JournalBody
 from nous_sdk.contracts import RetentionState as RetentionState

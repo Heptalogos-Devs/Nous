@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 import anyio
 import sqlalchemy as sa
-from nous_sdk.contracts import CallContext
+from nous.platform.call_context import CallContext
 from nous_sdk.contracts.namespace_policy import NamespaceQuota
 
 from nous.platform.errors import NousError

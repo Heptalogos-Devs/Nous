@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from nous_sdk.contracts import DomainError
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.query_conditions import QueryAtom, QueryBudget, QueryExpression
 
 

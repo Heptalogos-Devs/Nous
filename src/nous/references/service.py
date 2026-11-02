@@ -4,12 +4,12 @@ from typing import TYPE_CHECKING
 
 import sqlalchemy as sa
 from nous_sdk.contracts import (
-    CallContext,
     CognitiveRecord,
     CognitiveRef,
-    DomainError,
     MediaReference,
 )
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.context import CognitiveTarget, MediaTarget
 from nous_sdk.contracts.query_context import QueryContext
 from nous_sdk.contracts.references import (

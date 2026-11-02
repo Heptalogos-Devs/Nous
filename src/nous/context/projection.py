@@ -6,11 +6,9 @@ from typing import TYPE_CHECKING
 
 from nous_sdk.contracts import (
     AssociationBody,
-    CallContext,
     CognitiveRecord,
     ConcernBody,
     DesireBody,
-    DomainError,
     EntityBody,
     EpistemicStance,
     JournalBody,
@@ -18,6 +16,8 @@ from nous_sdk.contracts import (
     MemorySemanticsBody,
     NarrativeThreadBody,
 )
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.context import (
     CognitiveTarget,
     ContextProjection,

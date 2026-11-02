@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from nous_sdk.contracts import (
-    CallContext,
-    DomainError,
     SourceCommand,
 )
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from sqlalchemy import select, update
 
 from nous.cognition.records import CognitiveRecords

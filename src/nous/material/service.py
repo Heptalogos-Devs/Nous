@@ -3,11 +3,11 @@
 from typing import NotRequired, TypedDict
 
 from nous_sdk.contracts import (
-    CallContext,
-    DomainError,
     MediaReference,
     SourceRegion,
 )
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.common import ObservationKind
 from pydantic import JsonValue, TypeAdapter
 from sqlalchemy import JSON, Boolean, Column, Integer, String, Table, UniqueConstraint, select

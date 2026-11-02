@@ -9,12 +9,12 @@ from typing import Literal, NotRequired, TypedDict
 
 from nous_native import parse_nousql
 from nous_sdk.contracts import (
-    CallContext,
-    DomainError,
     QueryRequest,
     TimeFilter,
     TimeRange,
 )
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from pydantic import JsonValue
 
 from .expressions import source as expression_source

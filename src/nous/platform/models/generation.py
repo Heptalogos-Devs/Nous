@@ -8,7 +8,8 @@ from collections import OrderedDict, deque
 from dataclasses import dataclass
 from typing import TypeVar, cast
 
-from nous_sdk.contracts import CallContext, DomainError
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.common import utc_now
 from nous_sdk.contracts.media import MediaInfo
 from nous_sdk.contracts.common import ModelProvenance

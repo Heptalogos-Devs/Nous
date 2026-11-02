@@ -13,7 +13,8 @@ import anyio
 from pydantic import JsonValue
 
 from .contracts import ImportDocument
-from .contracts.imports import FormationPurpose, ImportFormat
+from .contracts.common import FormationPurpose
+from .contracts.imports import ImportFormat
 from .contracts.text_import import TextImport, TextImportSubmission
 from .files import ManagedFiles, file_name
 from .operations import encoded

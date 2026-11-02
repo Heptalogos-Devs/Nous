@@ -11,7 +11,8 @@ from dataclasses import dataclass
 from hashlib import sha256
 from typing import Literal
 
-from nous_sdk.contracts import DomainError, ImportRecord
+from nous_sdk.contracts import ImportRecord
+from nous.platform.errors import DomainError
 from pydantic import JsonValue, TypeAdapter, ValidationError
 
 from nous.platform.time import parse_source_time, parse_timepoint

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from nous_sdk.contracts import CallContext
+from nous.platform.call_context import CallContext
 from pydantic import JsonValue
 from sqlalchemy import select, update
 

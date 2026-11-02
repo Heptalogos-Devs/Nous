@@ -5,10 +5,10 @@ import os
 from collections.abc import Awaitable, Callable
 
 from nous_sdk.contracts import (
-    CallContext,
-    DomainError,
     MediaReference,
 )
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.model_measurement import ModelMeasurement
 from nous_sdk.contracts.prompt_compilation import CompiledPrompt, PromptMessage
 from pydantic import JsonValue, TypeAdapter

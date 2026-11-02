@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 from nous_sdk.contracts import (
-    DomainError,
     EpisodeBody,
     EpistemicStance,
     MemoryBody,
     SchemaBody,
     TimeRange,
 )
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.growth import GrowthProposal, GrowthProposalAdoption, GrowthSnapshot
 from nous_sdk.contracts.growth_bodies import (
     GrowthEvidenceRef,

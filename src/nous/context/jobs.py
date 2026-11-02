@@ -1,6 +1,6 @@
 """Resident maintenance reuses the existing DBOS execution owner."""
 
-from nous_sdk.contracts import CallContext
+from nous.platform.call_context import CallContext
 from nous.platform.execution import JobSpec
 from .lifecycle import ContextLifecycle, session_key
 

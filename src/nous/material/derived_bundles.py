@@ -1,7 +1,9 @@
 """Portable representation graphs retain exact identity and physical dependency closure."""
 
 
-from nous_sdk.contracts import CallContext, DomainError, MediaReference
+from nous_sdk.contracts import MediaReference
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.derivation import (
     ArtifactRepresentation,
     DerivedBundle,

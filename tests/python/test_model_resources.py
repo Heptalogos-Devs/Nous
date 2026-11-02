@@ -8,7 +8,8 @@ from threading import Thread
 from uuid import uuid4
 
 import pytest
-from nous_sdk.contracts import CallContext, DomainError
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.prompt_compilation import PromptMessage
 from pydantic import BaseModel
 

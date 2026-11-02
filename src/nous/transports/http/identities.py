@@ -1,6 +1,7 @@
 """Namespace metadata, lifecycle and host identity bindings."""
 from fastapi import APIRouter, Request
-from nous_sdk.contracts import CallContext, DomainError
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.identity import BindSubject, BoundSubject, ChangeNamespace, CreateNamespace, IdentityCapabilities, IdentityDirectoryQuery, IdentityPurpose, Namespace, NamespacePage, NamespacePurgeResult, PurgeNamespace, ReadSubjectBinding
 from nous_sdk.contracts.namespace_archives import NamespaceArchive, NamespaceRestoreResult, RestoreNamespace
 from nous.identity.credentials import Principal

@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from nous_sdk.contracts import CallContext, CognitiveRef, MediaReference
+from nous_sdk.contracts import CognitiveRef, MediaReference
+from nous.platform.call_context import CallContext
 from nous_sdk.contracts.vector_projection import (
     ProjectionReceipt,
     ProjectionResult,
@@ -138,7 +139,7 @@ class VectorProjectionService:
             ).scalar_one()
         request = Request.model_validate(raw)
         if request.purged:
-            from nous_sdk.contracts import DomainError
+            from nous.platform.errors import DomainError
 
             raise DomainError("source_purged", "Projection inputs were permanently erased")
         return request
@@ -153,7 +154,7 @@ class VectorProjectionService:
     ) -> tuple[Selected, ...]:
         profile = profile or await self.models.prepare_embedding(ctx)
         missing: list[Selected] = []
-        from nous_sdk.contracts import DomainError
+        from nous.platform.errors import DomainError
 
         async with self.authority.read(ctx) as view:
             for target in targets:

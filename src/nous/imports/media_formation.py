@@ -7,13 +7,13 @@ from typing import TYPE_CHECKING
 from nous_sdk.contracts import (
     AdoptMedia,
     BlobDocument,
-    CallContext,
     CognitiveRecord,
-    DomainError,
     EvidenceLink,
     MediaReference,
     TimePoint,
 )
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.derivation import (
     CreateRepresentation,
     DerivationInput,

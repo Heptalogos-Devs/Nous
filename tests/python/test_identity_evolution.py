@@ -5,7 +5,6 @@ import asyncio
 from nous_sdk.contracts import (
     AdoptCognition,
     AssociationBody,
-    CallContext,
     ConceptBody,
     ConceptPartition,
     EntityBody,
@@ -20,6 +19,7 @@ from nous_sdk.contracts import (
     SplitConcept,
     SplitEntity,
 )
+from nous.platform.call_context import CallContext
 from nous_sdk.contracts.cognition import PlatformIdentity
 from nous_sdk.contracts.fact_body import PersonFactScope
 from nous_sdk.contracts.facts import FactChange, FactClaimInput, FactQuery, PersonFactScopeInput

@@ -5,11 +5,11 @@ from __future__ import annotations
 from typing import Literal
 
 from nous_sdk.contracts import (
-    DomainError,
     EpistemicStance,
     ProposedAssociation,
     ProposedEntity,
 )
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.imports import ImportAssertions
 from pydantic import JsonValue, TypeAdapter
 

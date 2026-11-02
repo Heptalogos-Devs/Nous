@@ -4,7 +4,8 @@ import asyncio
 from pathlib import Path
 
 import httpx
-from nous_sdk import NousClient
+import pytest
+from nous_sdk import NousClient, NousError
 from nous_sdk.contracts import EvidenceLink
 from nous_sdk.contracts.graph_management import GraphChange
 
@@ -48,6 +49,9 @@ def test_graph_change_uses_original_source(tmp_path: Path):
                     GraphChange(action="update_edge_weight", reference=relation.reference, weight=0.5),
                 )
                 assert revised.records[0].reference.revision == relation.reference.revision + 1
+                with pytest.raises(NousError) as missing:
+                    await namespace.read("memory:00000000-0000-0000-0000-000000000000@1")
+                assert missing.value.status_code == 404
             finally:
                 await client.close()
 

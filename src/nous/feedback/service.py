@@ -9,12 +9,12 @@ from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from nous_sdk.contracts import (
-    CallContext,
     CognitiveRef,
-    DomainError,
     MemoryBody,
     TimePoint,
 )
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.common import utc_now
 from nous_sdk.contracts.corrections import ApplyCorrection, PlanCorrection, RollbackCorrection
 from nous_sdk.contracts.feedback import (

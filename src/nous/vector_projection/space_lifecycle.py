@@ -1,6 +1,6 @@
 """A deletion cutoff prevents old in-flight work from republishing removed derived data."""
 
-from nous_sdk.contracts import DomainError
+from nous.platform.errors import DomainError
 from sqlalchemy import select
 
 from nous.platform.persistence import ReadView, WriteTx

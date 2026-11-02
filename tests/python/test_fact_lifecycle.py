@@ -5,12 +5,12 @@ import asyncio
 import pytest
 from nous_sdk.contracts import (
     AdoptCognition,
-    CallContext,
-    DomainError,
     RevisionCause,
     SourceCommand,
     TimeRange,
 )
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.facts import ChatFactScopeInput, FactChange, FactClaimInput, FactQuery
 
 from nous.application import Application

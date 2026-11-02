@@ -7,16 +7,16 @@ from uuid import uuid4
 
 from nous_sdk.contracts import (
     AdoptCognition,
-    CallContext,
     CognitiveRecord,
     CognitiveRef,
-    DomainError,
     EvidenceLink,
     ImportDocument,
     MemoryBody,
     MemoryChange,
     RevisionCause,
 )
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.corrections import (
     ApplyCorrection,
     CorrectionAppliedGroup,

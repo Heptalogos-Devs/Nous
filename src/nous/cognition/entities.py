@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-from nous_sdk.contracts import CallContext, CognitiveRecord, EntityBody
+from nous_sdk.contracts import CognitiveRecord, EntityBody
+from nous.platform.call_context import CallContext
 from sqlalchemy import select, update
 from nous.platform.persistence import ReadView, WriteTx
 from .projection import evidence_in

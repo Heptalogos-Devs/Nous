@@ -6,10 +6,8 @@ from uuid import uuid4
 
 from httpx import HTTPError
 from nous_sdk.contracts import (
-    CallContext,
     CatalogView,
     CognitiveRecord,
-    DomainError,
     FormObservation,
     ImportDocument,
     ImportRecord,
@@ -19,6 +17,8 @@ from nous_sdk.contracts import (
     ProcessCatalog,
     UnitOutput,
 )
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.cognitive_identity import EvidenceLink
 from nous_sdk.contracts.derivation import DerivationInput, RepresentationRef
 from nous_sdk.contracts.imports import ImportUnitFailure

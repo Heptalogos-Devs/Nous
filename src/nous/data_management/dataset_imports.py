@@ -7,14 +7,14 @@ from typing import TYPE_CHECKING, Literal
 from nous_sdk.contracts import (
     BlobDocument,
     BundleRequest,
-    CallContext,
-    DomainError,
     FreezeCatalog,
     MediaInfo,
     MemoryBody,
     ProcessCatalog,
     RecordsQuery,
 )
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.bundles import MaterialSelection, PackageDescriptor
 from nous_sdk.contracts.dataset_imports import BackfillSourceTimes, ImportDataset
 from pydantic import JsonValue, TypeAdapter

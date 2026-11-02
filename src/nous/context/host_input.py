@@ -17,7 +17,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     RetryPromptPart,
 )
-from nous_sdk.contracts import DomainError
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.context import ContextProjection
 from nous.platform.persistence.authority import canonical_json
 

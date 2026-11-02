@@ -1,7 +1,8 @@
 """Exact cognitive lookup and lifecycle share their formal domain owner."""
 
 from fastapi import APIRouter, Request
-from nous_sdk.contracts import CognitiveRef, DomainError, MergeEntities, SplitEntity
+from nous_sdk.contracts import CognitiveRef, MergeEntities, SplitEntity
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.cognition import CognitiveKind
 from nous_sdk.contracts.lifecycle import MemoryChanges
 from nous_sdk.contracts.person_profiles import (

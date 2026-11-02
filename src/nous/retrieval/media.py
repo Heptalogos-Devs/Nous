@@ -7,9 +7,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from nous_sdk.contracts import (
-    CallContext,
     CognitiveTimes,
-    DomainError,
     MediaEmbeddingInput,
     MediaRecord,
     MediaReference,
@@ -17,6 +15,8 @@ from nous_sdk.contracts import (
     SourceRegion,
     TimePoint,
 )
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from sqlalchemy import select
 
 from nous.material.service import materials, observations, regions, source_permitted

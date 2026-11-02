@@ -6,12 +6,12 @@ from uuid import uuid4
 
 from nous_sdk.contracts import (
     AdoptCognition,
-    CallContext,
     EvidenceLink,
     ImportDocument,
     MemoryBody,
     QueryRequest,
 )
+from nous.platform.call_context import CallContext
 from nous_sdk.contracts.growth import GrowthProposal
 from nous_sdk.contracts.maintenance import MaintenanceRun, StartMaintenance
 

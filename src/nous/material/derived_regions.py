@@ -5,7 +5,9 @@ from dataclasses import dataclass
 from uuid import uuid4
 
 from jsonpointer import JsonPointerException, resolve_pointer
-from nous_sdk.contracts import CallContext, DomainError, MediaReference
+from nous_sdk.contracts import MediaReference
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.derivation import (
     ArtifactRepresentation,
     CreateDerivedRegion,

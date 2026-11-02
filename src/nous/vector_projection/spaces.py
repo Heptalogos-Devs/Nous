@@ -6,7 +6,9 @@ import json
 import math
 from typing import TYPE_CHECKING
 
-from nous_sdk.contracts import CallContext, CognitiveRef, DomainError
+from nous_sdk.contracts import CognitiveRef
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.common import utc_now
 from nous_sdk.contracts.records import RecordsQuery
 from nous_sdk.contracts.vector_projection import ProjectionReceipt, ProjectionResult

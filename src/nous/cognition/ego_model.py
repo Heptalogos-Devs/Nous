@@ -1,6 +1,7 @@
 """Current sourced Ego facets, narrative and domain knowledge."""
 
-from nous_sdk.contracts import CallContext, CognitiveRecord
+from nous_sdk.contracts import CognitiveRecord
+from nous.platform.call_context import CallContext
 from sqlalchemy import select
 
 from nous.identity.access import require_namespace_in

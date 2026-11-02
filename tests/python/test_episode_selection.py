@@ -4,7 +4,6 @@ import asyncio
 
 from nous_sdk.contracts import (
     AdoptCognition,
-    CallContext,
     EntityBody,
     EntityMention,
     EpisodeBody,
@@ -15,6 +14,7 @@ from nous_sdk.contracts import (
     MemoryChange,
     TimeRange,
 )
+from nous.platform.call_context import CallContext
 from nous_sdk.contracts.episodes import EpisodeQuery
 
 from nous.application import Application

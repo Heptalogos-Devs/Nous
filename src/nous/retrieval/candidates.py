@@ -5,11 +5,11 @@ from nous.cognition.entities import project_entity_in
 from typing import TYPE_CHECKING
 
 from nous_sdk.contracts import (
-    CallContext,
     CognitiveRecord,
-    DomainError,
     QueryRequest,
 )
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.media import MediaRecord
 from sqlalchemy import select
 

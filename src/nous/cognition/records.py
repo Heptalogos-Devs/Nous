@@ -14,12 +14,10 @@ from uuid import uuid4
 
 from nous_sdk.contracts import (
     AdoptCognition,
-    CallContext,
     CognitiveRecord,
     CognitiveRef,
     CognitiveTimes,
     ConceptBody,
-    DomainError,
     EvidenceLink,
     JournalBody,
     MediaRecord,
@@ -36,6 +34,8 @@ from nous_sdk.contracts import (
     RevisionCause,
     TimePoint,
 )
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts import EntityBody as EntityBody
 from nous_sdk.contracts.common import Contract
 from nous_sdk.contracts.fact_body import FactClaimBody

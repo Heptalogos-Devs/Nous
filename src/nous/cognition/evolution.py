@@ -14,16 +14,16 @@ if TYPE_CHECKING:
     from .records import CognitiveRecords
 from nous_sdk.contracts import (
     AdoptCognition,
-    CallContext,
     CognitiveRecord,
     ConceptBody,
-    DomainError,
     EpisodeBody,
     EvidenceLink,
     MergeConcepts,
     ResegmentEpisodes,
     SplitConcept,
 )
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 
 
 class EvolutionService:

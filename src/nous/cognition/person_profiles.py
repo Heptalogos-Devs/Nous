@@ -8,10 +8,8 @@ from typing import TYPE_CHECKING
 
 from nous_sdk.contracts import (
     AdoptCognition,
-    CallContext,
     CognitiveRecord,
     CognitiveRef,
-    DomainError,
     EntityAttribute,
     EntityBody,
     EvidenceLink,
@@ -20,6 +18,8 @@ from nous_sdk.contracts import (
     RevisionCause,
     TimePoint,
 )
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.cognition import (
     GeneratedPersonProfile,
     PersonAliasOverride,
@@ -34,7 +34,6 @@ from nous_sdk.contracts.person_profiles import (
     PersonProfileEvidence,
     PersonProfileEvidenceItem,
     PersonProfileModelInput,
-    PersonProfileRefreshIntent,
     PersonProfileRefreshSubmission,
     PersonProfilesQuery,
     PersonProfilesResult,
@@ -42,7 +41,7 @@ from nous_sdk.contracts.person_profiles import (
     RefreshPersonProfile,
 )
 from nous_sdk.contracts.records import RecordsQuery
-from nous_sdk.contracts.common import ModelProvenance
+from nous_sdk.contracts.common import Contract, ModelProvenance
 from pydantic import JsonValue, TypeAdapter
 from sqlalchemy import select
 
@@ -59,6 +58,14 @@ if TYPE_CHECKING:
     from .models import ModelServices
     from .records import CognitiveRecords
     from .memory import MemoryService
+
+
+class PersonProfileRefreshIntent(Contract):
+    context: CallContext
+    command: RefreshPersonProfile
+    attribute_indices: tuple[int, ...]
+    claim_refs: tuple[CognitiveRef, ...] = ()
+    description_selected: bool = False
 
 
 def grams(value: str) -> set[str]:

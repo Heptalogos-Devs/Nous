@@ -3,7 +3,8 @@
 from __future__ import annotations
 from hashlib import sha256
 from typing import TYPE_CHECKING
-from nous_sdk.contracts import CallContext, DomainError
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.context import ContextTarget
 from pydantic import JsonValue, TypeAdapter
 from sqlalchemy import select

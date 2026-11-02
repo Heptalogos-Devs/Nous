@@ -3,7 +3,8 @@
 from uuid import uuid4
 
 from fastapi import Request
-from nous_sdk.contracts import CallContext, TimePoint
+from nous_sdk.contracts import TimePoint
+from nous.platform.call_context import CallContext
 from nous_sdk.contracts.common import utc_now
 from nous_sdk.contracts.credentials import Capability
 from nous_sdk.contracts.identity import IdentityPurpose

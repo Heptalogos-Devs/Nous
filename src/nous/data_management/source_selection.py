@@ -6,12 +6,12 @@ from typing import TYPE_CHECKING
 
 from nous_sdk.contracts import (
     AssociationBody,
-    CallContext,
     CognitiveRecord,
     CognitiveRef,
-    DomainError,
     RecordsQuery,
 )
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 
 from nous.cognition.projection import evidence_in
 from nous.material.named_sources import named_source_observations_in

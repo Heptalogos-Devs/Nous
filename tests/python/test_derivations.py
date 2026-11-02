@@ -7,13 +7,13 @@ import pytest
 from nous_sdk.contracts import (
     AdoptCognition,
     BlobDocument,
-    CallContext,
-    DomainError,
     EvidenceLink,
     InstallBundle,
     MediaReference,
     MemoryBody,
 )
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.derivation import (
     CreateDerivedRegion,
     CreateRepresentation,

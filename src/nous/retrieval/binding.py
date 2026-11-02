@@ -10,10 +10,10 @@ from nous_sdk.contracts import (
     CognitiveRecord,
     CognitiveRef,
     ConceptBody,
-    DomainError,
     EntityBody,
     SchemaBody,
 )
+from nous.platform.errors import DomainError
 
 from nous.cognition.projection import media_references_in, references_in
 from nous.material.service import SourceRecord

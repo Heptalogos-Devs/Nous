@@ -5,8 +5,6 @@ import asyncio
 import pytest
 from nous_sdk.contracts import (
     AdoptCognition,
-    CallContext,
-    DomainError,
     EntityBody,
     EntityMention,
     EvidenceLink,
@@ -19,6 +17,8 @@ from nous_sdk.contracts import (
     TimeFilter,
     TimeRange,
 )
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 
 from nous.cognition.records import CognitiveRecords
 from nous.data_management.sources import SourceService

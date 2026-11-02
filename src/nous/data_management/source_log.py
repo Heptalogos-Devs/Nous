@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from nous_sdk.contracts import CallContext, DomainError, SourceResult
+from nous_sdk.contracts import SourceResult
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from pydantic import JsonValue
 from sqlalchemy import select
 

@@ -3,7 +3,8 @@
 from io import BytesIO
 from zipfile import BadZipFile, ZipFile
 
-from nous_sdk.contracts import DomainError, NamespaceBundle
+from nous_sdk.contracts import NamespaceBundle
+from nous.platform.errors import DomainError
 
 
 def decode(data: bytes) -> NamespaceBundle:

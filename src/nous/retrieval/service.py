@@ -5,7 +5,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from nous_native import IndexStore, Snapshot
-from nous_sdk.contracts import CallContext, DomainError
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 
 from nous.cognition.models import ModelServices
 from nous.cognition.records import CognitiveRecords

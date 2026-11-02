@@ -6,7 +6,6 @@ from pathlib import Path
 from nous_sdk.contracts import (
     AdmitFiles,
     BundleRequest,
-    CallContext,
     ContextCommand,
     ContextFeedback,
     ImportDocument,
@@ -14,6 +13,7 @@ from nous_sdk.contracts import (
     QueryRequest,
     SourceCommand,
 )
+from nous.platform.call_context import CallContext
 
 from nous.cognition.records import CognitiveRecords
 from nous.context.service import ContextService
@@ -166,7 +166,8 @@ def test_import_source_bundle_and_restart(tmp_path: Path):
 
 def test_purge_clears_history_receipts_and_blocks_late_adoption(tmp_path: Path):
     async def scenario():
-        from nous_sdk.contracts import DomainError, MemoryChange
+        from nous_sdk.contracts import MemoryChange
+        from nous.platform.errors import DomainError
         from sqlalchemy import select
 
         from nous.cognition.schema import revisions
@@ -278,7 +279,8 @@ def test_json_original_regions_addresses_attempts_and_artifact_purge(tmp_path: P
     async def scenario():
         import json
 
-        from nous_sdk.contracts import BlobDocument, DomainError
+        from nous_sdk.contracts import BlobDocument
+        from nous.platform.errors import DomainError
 
         from nous.material.service import MaterialService
         from nous.platform.content import ContentStore

@@ -16,12 +16,12 @@ import msgpack
 import networkx as nx
 import pyarrow.dataset as arrow_dataset
 from nous_sdk.contracts import (
-    DomainError,
     ImportDocument,
     ImportRecord,
     ProposedAssociation,
     TimeRange,
 )
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.imports import ImportAssertions, ImportReference
 from pydantic import ConfigDict, JsonValue, TypeAdapter, ValidationError
 

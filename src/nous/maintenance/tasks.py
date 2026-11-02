@@ -5,13 +5,13 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from nous_sdk.contracts import (
-    CallContext,
     CognitiveRecord,
-    DomainError,
     MediaRecord,
     QueryRequest,
     TimeFilter,
 )
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.maintenance import MaintenanceSubmission, StartMaintenance
 from nous_sdk.contracts.maintenance_tasks import (
     CreateJournal,

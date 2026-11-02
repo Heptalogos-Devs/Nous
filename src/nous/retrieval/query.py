@@ -6,14 +6,14 @@ from typing import TYPE_CHECKING, Literal
 import numpy as np
 from nous_native import CancellationToken, lexical_scores
 from nous_sdk.contracts import (
-    CallContext,
     CognitiveRecord,
-    DomainError,
     QueryCoverage,
     QueryHit,
     QueryRequest,
     QueryResult,
 )
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.query_conditions import QueryEffectiveMode, QueryExecution
 from nous_sdk.contracts.query_vcp import VcpResult
 from nous_sdk.contracts.resources import ResourceRecord

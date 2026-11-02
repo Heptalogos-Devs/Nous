@@ -5,7 +5,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
-from nous_sdk.contracts import CallContext, DomainError, QueryRequest
+from nous_sdk.contracts import QueryRequest
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.references import ResourceTarget
 from nous_sdk.contracts.resources import ReadResource, ResourceRecord
 

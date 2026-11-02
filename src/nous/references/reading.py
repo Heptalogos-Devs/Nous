@@ -5,7 +5,8 @@ from __future__ import annotations
 import base64
 from typing import TYPE_CHECKING
 
-from nous_sdk.contracts import CallContext, DomainError
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.common import Contract
 from nous_sdk.contracts.context import CognitiveTarget, MediaTarget
 from nous_sdk.contracts.public import ReadRequest, ReadView

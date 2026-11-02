@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Protocol, cast
 
 import numpy as np
-from nous_sdk.contracts import DomainError
+from nous.platform.errors import DomainError
 
 from nous.platform.concurrency import owned_thread
 

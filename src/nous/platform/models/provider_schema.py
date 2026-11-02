@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from nous_sdk.contracts import DomainError
+from nous.platform.errors import DomainError
 from pydantic import JsonValue, TypeAdapter
 from pydantic_ai import NativeOutput, ToolOutput
 from pydantic_ai._json_schema import JsonSchemaTransformerWithOutputOverride  # pyright: ignore[reportPrivateImportUsage]

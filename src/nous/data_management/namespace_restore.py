@@ -5,7 +5,8 @@ import json
 from uuid import NAMESPACE_URL, uuid5
 
 import sqlalchemy as sa
-from nous_sdk.contracts import CallContext, DomainError
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.execution import ExecutionSnapshot
 from nous_sdk.contracts.identity import Namespace, SubjectBinding
 from nous_sdk.contracts.namespace_backups import (

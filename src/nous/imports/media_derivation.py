@@ -4,12 +4,12 @@ from typing import TYPE_CHECKING
 
 from nous_sdk.contracts import (
     BlobDocument,
-    CallContext,
-    DomainError,
     MediaReference,
     SourceRegion,
     TimeSpan,
 )
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.derivation import (
     ArtifactRepresentation,
     CreateRepresentation,

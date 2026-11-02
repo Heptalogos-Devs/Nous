@@ -11,13 +11,13 @@ from nous_sdk.contracts import (
     CognitiveRef,
     CognitiveTimes,
     ConceptBody,
-    DomainError,
     EntityBody,
     EpisodeBody,
     JournalBody,
     MemoryBody,
     RetentionState,
 )
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.growth import GrowthAdoption, GrowthSource
 from pydantic import JsonValue, TypeAdapter, ValidationError
 

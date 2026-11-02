@@ -8,12 +8,12 @@ from uuid import uuid4
 
 from nous_sdk.contracts import (
     BlobDocument,
-    CallContext,
-    DomainError,
     ImportDocument,
     MediaInfo,
     MediaReference,
 )
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.common import ObservationKind
 from sqlalchemy import select
 

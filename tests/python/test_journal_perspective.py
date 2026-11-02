@@ -5,8 +5,6 @@ import asyncio
 import pytest
 from nous_sdk.contracts import (
     AdoptCognition,
-    CallContext,
-    DomainError,
     EpisodeBody,
     EpisodeMember,
     EpistemicStance,
@@ -16,6 +14,8 @@ from nous_sdk.contracts import (
     MemoryBody,
     TimeRange,
 )
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 
 from nous.cognition.records import CognitiveRecords
 from nous.identity.service import IdentityService

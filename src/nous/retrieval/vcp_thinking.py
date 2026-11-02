@@ -5,12 +5,12 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Literal
 
 from nous_sdk.contracts import (
-    CallContext,
     CognitiveRecord,
     CognitiveRef,
-    DomainError,
     QueryRequest,
 )
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.common import Contract
 from nous_sdk.contracts.query_vcp import (
     QueryThinking,

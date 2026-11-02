@@ -1,6 +1,8 @@
 """Creator documents use the shared typed proposal and exact revision adoption path."""
 
-from nous_sdk.contracts import CallContext, DomainError, FreezeCatalog
+from nous_sdk.contracts import FreezeCatalog
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.ego_model import InterpretSeed, SeedVersion
 from nous_sdk.contracts.maintenance import MaintenanceRun, MaintenanceSubmission, StartMaintenance
 from pydantic import JsonValue, TypeAdapter

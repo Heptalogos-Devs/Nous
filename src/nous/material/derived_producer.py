@@ -2,7 +2,7 @@
 
 import hashlib
 
-from nous_sdk.contracts import DomainError
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.common import ModelProvenance
 from nous_sdk.contracts.derivation import RepresentationPayload, StructuredRepresentation, TextRepresentation
 

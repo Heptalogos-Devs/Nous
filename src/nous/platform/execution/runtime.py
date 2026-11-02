@@ -25,7 +25,8 @@ from dbos import (
     WorkflowSerializationFormat,
     WorkflowStatus,
 )
-from nous_sdk.contracts.common import CallContext, DomainError
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.execution import ExecutionFailure, ExecutionJob, ExecutionSnapshot
 from opentelemetry.context import get_current
 from pydantic import JsonValue, TypeAdapter

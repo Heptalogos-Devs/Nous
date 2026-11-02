@@ -8,7 +8,9 @@ from io import BytesIO
 from typing import TYPE_CHECKING
 from zipfile import ZIP_DEFLATED, ZipFile
 
-from nous_sdk.contracts import BundleRequest, CallContext, DomainError, NamespaceBundle
+from nous_sdk.contracts import BundleRequest, NamespaceBundle
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from pydantic import JsonValue
 
 if TYPE_CHECKING:

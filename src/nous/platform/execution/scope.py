@@ -3,7 +3,8 @@
 from typing import Literal
 
 import sqlalchemy as sa
-from nous_sdk.contracts import CallContext, DomainError
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 
 from nous.platform.persistence import ReadView, WriteTx
 from nous.platform.persistence.schema import job_links

@@ -8,7 +8,8 @@ from nous_sdk.contracts import Contract, QueryRequest
 from nous_sdk.contracts.context import ContextTarget, ContextUsage, ContextCursor
 from nous_sdk.contracts.history import WorkingHistoryGroup
 
-from nous_sdk.contracts import CallContext, CognitiveRecord, CognitiveRef
+from nous_sdk.contracts import CognitiveRecord, CognitiveRef
+from nous.platform.call_context import CallContext
 from nous_sdk.contracts.context import CognitiveTarget, ContextSegment
 
 from nous.platform.persistence import ReadView, WriteTx

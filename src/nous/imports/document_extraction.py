@@ -4,7 +4,8 @@ from io import BytesIO
 from pathlib import Path
 
 from langchain_core.documents import Document
-from nous_sdk.contracts import DomainError, ImportRecord
+from nous_sdk.contracts import ImportRecord
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.imports import TextSplitOptions
 from pypdf import PdfReader
 from pypdf.errors import PdfReadError

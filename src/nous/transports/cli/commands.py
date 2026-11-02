@@ -6,11 +6,10 @@ import sys
 from os.path import commonpath
 from pathlib import Path
 from typing import Annotated, Literal
-from uuid import uuid4
 
 import typer
 from nous_sdk.contracts import ImportFormat, MediaReference, QueryRequest
-from nous_sdk.contracts.imports import FormationPurpose
+from nous_sdk.contracts.common import FormationPurpose
 from nous_sdk.contracts.context import ChangeWorkContext, WorkContextContent
 from nous_sdk.presentation import present, present_query
 

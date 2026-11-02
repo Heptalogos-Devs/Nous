@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from nous_sdk.contracts import CallContext, DomainError
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.formation import (
     GraphDraft,
     GraphResolutionDraft,

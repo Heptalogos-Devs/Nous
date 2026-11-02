@@ -7,14 +7,14 @@ from uuid import uuid4
 
 from nous_sdk.contracts import (
     AdoptMedia,
-    CallContext,
     CognitiveRecord,
-    DomainError,
     ImportUnit,
     MediaReference,
     ProcessCatalog,
     UnitOutput,
 )
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.derivation import RepresentationRef
 from nous_sdk.contracts.media import MediaStrategy
 from pydantic import TypeAdapter

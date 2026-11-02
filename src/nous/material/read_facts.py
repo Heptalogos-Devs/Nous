@@ -3,7 +3,8 @@
 from dataclasses import dataclass
 from typing import TypedDict
 
-from nous_sdk.contracts import CallContext, MediaReference
+from nous_sdk.contracts import MediaReference
+from nous.platform.call_context import CallContext
 from sqlalchemy import select
 
 from nous.platform.persistence import ReadView, WriteTx

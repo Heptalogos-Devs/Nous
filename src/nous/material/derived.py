@@ -5,7 +5,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, TypeVar
 from uuid import uuid4
 
-from nous_sdk.contracts import CallContext, DomainError
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.derivation import (
     ArtifactRepresentation,
     CreateRepresentation,

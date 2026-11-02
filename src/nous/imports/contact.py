@@ -2,29 +2,22 @@
 
 from __future__ import annotations
 
-import asyncio
 from hashlib import sha256
 from typing import TYPE_CHECKING
 
 from nous_sdk.contracts import (
-    AdoptCognition,
     BlobDocument,
-    CallContext,
-    CognitiveTimes,
     ContactMaterial,
     ContactReceipt,
-    DomainError,
     FormObservation,
-    MemoryBody,
 )
-from nous_sdk.contracts.derivation import StructuredRepresentation, TextRepresentation
 from pydantic import TypeAdapter
 from sqlalchemy import select, update
 
 from nous.identity.access import require_namespace_in
 from nous.material.service import MaterialRecord, materials, observations
-from nous.material.text import source_region_text
-from nous.platform.content import ContentObject
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous.platform.persistence.authority import canonical_json
 
 if TYPE_CHECKING:
@@ -46,15 +39,9 @@ async def contact(
         await require_namespace_in(view, ctx, "memory")
         for reference in command.related:
             await self.cognition.get_in(view, ctx, reference)
-        text: str | None = None
         source = command.source
         if source.kind in {"representation", "derived_region"}:
             info = await self.cognition.derivations.source_in(view, ctx, source)
-            selected = await self.cognition.derivations.selected_in(view, ctx, source)
-            if isinstance(selected.payload, TextRepresentation):
-                text = selected.payload.text
-            elif isinstance(selected.payload, StructuredRepresentation):
-                text = canonical_json(selected.payload.value)
             raw = await view.connection.scalar(
                 select(materials.c.record).where(
                     materials.c.id == info.material_ids[0],
@@ -65,26 +52,6 @@ async def contact(
         else:
             material, region, event_id = await self.materials.media_source_in(view, ctx, source)
             source = source.model_copy(update={"observation_id": event_id})
-            text = material["text"]
-            if text is None and (
-                material["media_type"].startswith("text/") or "json" in material["media_type"]
-            ):
-                if self.content_store is None:
-                    raise DomainError(
-                        "content_unavailable", "The original text bytes are unavailable"
-                    )
-                async with self.content_store.protect(
-                    ContentObject(
-                        material["content_hash"],
-                        material["byte_len"],
-                        material["media_type"],
-                    )
-                ) as path:
-                    text = (await asyncio.to_thread(path.read_bytes)).decode("utf-8-sig")
-            if text is not None and region is not None:
-                text = source_region_text(text, region)
-        if text is None and command.statement is not None:
-            text = command.statement
     async with self.authority.write(ctx) as tx:
         for reference in command.related:
             await self.cognition.get_in(tx, ctx, reference)
@@ -135,32 +102,12 @@ async def contact(
         if command.statement is not None:
             event["statement"] = command.statement
         await tx.connection.execute(
-            update(observations).where(observations.c.namespace_id == ctx.namespace_id, observations.c.id == event['id']).values(record=event)
-        )
-        refs = ()
-        if text:
-            # Encounters do not turn repeated reads of one original into independent evidence.
-            record = await self.cognition.adopt_in(
-                tx,
-                ctx,
-                AdoptCognition(
-                    body=MemoryBody(
-                        text=text,
-                        media=(source,),
-                        role="experiential",
-                        external_ids={"contact": command.external_event_id},
-                        contact_observation_id=event["id"],
-                    ),
-                    evidence=(),
-                    times=CognitiveTimes(
-                        event=command.event_time,
-                        observation=command.observed_at or ctx.clock,
-                        formation=ctx.clock,
-                        recorded=ctx.clock,
-                    ),
-                ),
+            update(observations)
+            .where(
+                observations.c.namespace_id == ctx.namespace_id, observations.c.id == event["id"]
             )
-            refs = (record.reference,)
+            .values(record=event)
+        )
         formation = None
         if command.form_long_term:
             formation = await self.submit_form_observation_in(
@@ -170,7 +117,6 @@ async def contact(
                     operation_id=identity + ":form",
                     observation_id=event["id"],
                     source=source,
-                    anchor=refs[0] if refs else None,
                     media_strategy=command.media_strategy,
                     background=command.statement or "",
                 ),
@@ -186,10 +132,7 @@ async def contact(
                     args=(
                         ctx.model_dump(mode="json"),
                         event["id"],
-                        [
-                            ref.model_dump(mode="json")
-                            for ref in dict.fromkeys((*refs, *command.related))
-                        ],
+                        [ref.model_dump(mode="json") for ref in command.related],
                     ),
                     scope=ctx.namespace_id,
                 )
@@ -201,14 +144,16 @@ async def contact(
             external_event_id=command.external_event_id,
             source=source,
             active_sources=(source,),
-            cognition=refs,
             formation=formation,
             commit_seq=tx.commit_seq,
         )
         event["submitted_contact"] = submitted
         event["contact_result"] = result.model_dump(mode="json")
         await tx.connection.execute(
-            update(observations).where(observations.c.namespace_id == ctx.namespace_id, observations.c.id == event['id'])
+            update(observations)
+            .where(
+                observations.c.namespace_id == ctx.namespace_id, observations.c.id == event["id"]
+            )
             .values(
                 record=event, caller_id=ctx.caller_id, external_event_id=command.external_event_id
             )

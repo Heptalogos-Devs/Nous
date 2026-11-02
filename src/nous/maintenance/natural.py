@@ -5,7 +5,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import sqlalchemy as sa
-from nous_sdk.contracts import CallContext, CognitiveRef
+from nous_sdk.contracts import CognitiveRef
+from nous.platform.call_context import CallContext
 from nous_sdk.contracts.growth import GrowthEntry, GrowthSnapshot
 from nous_sdk.contracts.maintenance import GrowthPolicy, MaintenanceRun, StartMaintenance
 

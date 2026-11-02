@@ -9,7 +9,9 @@ import json
 import math
 from collections.abc import Awaitable, Callable
 
-from nous_sdk.contracts import CallContext, DomainError, EmbeddingBatch, MediaEmbeddingInput
+from nous_sdk.contracts import EmbeddingBatch, MediaEmbeddingInput
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.model_roles import ModelCachePolicy
 from openai import AsyncOpenAI
 from pydantic import BaseModel, Field, JsonValue, TypeAdapter

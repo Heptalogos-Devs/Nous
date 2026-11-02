@@ -6,13 +6,13 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from nous_sdk.contracts import (
-    CallContext,
     CatalogView,
-    DomainError,
     ImportUnit,
     ProcessCatalog,
     UnitOutput,
 )
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.imports import UnitAttempt
 from pydantic import JsonValue
 from sqlalchemy import or_, select

@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from nous_sdk.contracts import CallContext, QueryRequest
+from nous_sdk.contracts import QueryRequest
+from nous.platform.call_context import CallContext
 from nous_sdk.contracts.targets import MediaTarget
 from pydantic import JsonValue
 

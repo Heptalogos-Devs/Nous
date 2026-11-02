@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from nous_sdk.contracts import CallContext, MediaInfo
+from nous_sdk.contracts import MediaInfo
+from nous.platform.call_context import CallContext
 from nous_sdk.contracts.query_conditions import QueryModality
 from pydantic import JsonValue
 from sqlalchemy import select

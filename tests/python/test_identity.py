@@ -16,12 +16,12 @@ import sqlalchemy as sa
 from nous_sdk import NousClient, NousError
 from nous_sdk.contracts import (
     AdmitFiles,
-    CallContext,
     ContextCommand,
-    DomainError,
     ImportDocument,
     QueryRequest,
 )
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.context import ContextPrepare, ContextUsage
 from nous_sdk.contracts.credentials import CreateCredential, RotateCredential
 from nous_sdk.contracts.identity import (

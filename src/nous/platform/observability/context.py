@@ -7,7 +7,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 
 import structlog
-from nous_sdk.contracts import CallContext
+from nous.platform.call_context import CallContext
 from opentelemetry import propagate, trace
 from opentelemetry.trace import Span, StatusCode
 

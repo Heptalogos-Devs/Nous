@@ -11,11 +11,11 @@ import pytest
 from nous_sdk import NousClient, NousError
 from nous_sdk.contracts import (
     AdmitFiles,
-    CallContext,
     ImportDocument,
     MediaReference,
     SourceCommand,
 )
+from nous.platform.call_context import CallContext
 from nous_sdk.contracts.context import ContextPrepare, ContextUsage
 from nous_sdk.contracts.social import RecoverSymbolResult, SymbolSelection
 from nous_sdk.transport import ClientOptions

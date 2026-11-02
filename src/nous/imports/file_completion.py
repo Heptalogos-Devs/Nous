@@ -6,12 +6,12 @@ from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from nous_sdk.contracts import (
-    CallContext,
     CatalogView,
     FileSuccess,
     ImportDocument,
     ProcessCatalog,
 )
+from nous.platform.call_context import CallContext
 from sqlalchemy import delete, select
 
 from .continuation import request_profiles_in, unit_candidates_in

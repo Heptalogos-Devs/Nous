@@ -5,14 +5,14 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Literal
 
 from nous_sdk.contracts import (
-    CallContext,
     CognitiveRecord,
     CognitiveRef,
     ConcernBody,
     DesireBody,
     DesiredCondition,
-    DomainError,
 )
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.common import TimePoint, TimeRange
 from nous_sdk.contracts.fact_body import FactClaimBody
 from nous_sdk.contracts.motivation import (

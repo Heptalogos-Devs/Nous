@@ -10,7 +10,9 @@ from hashlib import sha256
 from uuid import uuid4
 import sqlalchemy as sa
 from pydantic import JsonValue, TypeAdapter
-from nous_sdk.contracts import BlobDocument, CallContext, DomainError, MediaReference
+from nous_sdk.contracts import BlobDocument, MediaReference
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.context import (
     ChangeContextSession,
     ChangeResidents,

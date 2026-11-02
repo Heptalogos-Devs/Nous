@@ -7,7 +7,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
-from nous_sdk.contracts import AdmitFiles, CallContext, ImportDocument
+from nous_sdk.contracts import AdmitFiles, ImportDocument
+from nous.platform.call_context import CallContext
 from nous_sdk.contracts.model_routing import ModelRoutingPolicy
 from sqlalchemy import select
 
@@ -172,7 +173,7 @@ def test_later_batch_rejection_reprojects_the_complete_directory(
                 else ["first", "first", "second", "second"]
             )
             if rate_limit_retries:
-                from nous_sdk.contracts import DomainError
+                from nous.platform.errors import DomainError
                 from nous_sdk.contracts.vector_spaces import DeleteVectorSpace, RebuildVectors
 
                 namespace = ctx.model_copy(update={"subject_id": None})

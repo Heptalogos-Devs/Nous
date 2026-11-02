@@ -6,7 +6,7 @@ import math
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from nous_sdk.contracts import CallContext
+from nous.platform.call_context import CallContext
 from nous_sdk.contracts.targets import CognitiveTarget
 from pydantic import JsonValue, TypeAdapter
 from sqlalchemy import select

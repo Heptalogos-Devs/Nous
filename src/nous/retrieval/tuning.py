@@ -12,7 +12,9 @@ import anyio
 import optuna
 import sqlalchemy as sa
 from ir_measures import P, R, calc_aggregate, nDCG
-from nous_sdk.contracts import CallContext, CognitiveRef, Contract, DomainError
+from nous_sdk.contracts import CognitiveRef, Contract
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.context import CognitiveTarget, MediaTarget
 from nous_sdk.contracts.references import EvidenceTarget, ObservationTarget
 from nous_sdk.contracts.retrieval_policy import RetrievalPolicy

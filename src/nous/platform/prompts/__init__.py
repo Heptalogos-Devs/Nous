@@ -10,7 +10,8 @@ from importlib.resources.abc import Traversable
 import sqlalchemy as sa
 from jinja2 import StrictUndefined, meta
 from jinja2.sandbox import ImmutableSandboxedEnvironment
-from nous_sdk.contracts import CallContext, DomainError
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.prompt_compilation import CompiledPrompt, PromptMessage, TokenEstimate
 from pydantic import TypeAdapter
 

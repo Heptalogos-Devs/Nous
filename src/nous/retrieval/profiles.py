@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from typing import Literal
 
-from nous_sdk.contracts import CallContext, Contract, DomainError, QueryRequest
+from nous_sdk.contracts import Contract, QueryRequest
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from pydantic import Field, model_validator
 
 from nous.platform.configuration.service import ConfigurationService

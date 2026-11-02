@@ -3,7 +3,8 @@
 import secrets
 
 import sqlalchemy as sa
-from nous_sdk.contracts import CallContext, CognitiveRef
+from nous_sdk.contracts import CognitiveRef
+from nous.platform.call_context import CallContext
 from nous_sdk.contracts.common import ReferenceAddresses
 from nous_sdk.contracts.context import CognitiveTarget, MediaTarget
 from nous_sdk.contracts.references import (

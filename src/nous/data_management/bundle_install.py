@@ -9,9 +9,7 @@ from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from nous_sdk.contracts import (
-    CallContext,
     CognitiveRecord,
-    DomainError,
     FileSuccess,
     InstallBundle,
     MediaReference,
@@ -19,6 +17,8 @@ from nous_sdk.contracts import (
     SourceRegion,
     TimePoint,
 )
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.context import CognitiveTarget
 from nous_sdk.contracts.identity import IdentityPurpose
 from nous_sdk.contracts.references import ObjectTarget

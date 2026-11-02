@@ -4,7 +4,8 @@ from typing import TYPE_CHECKING
 from uuid import uuid4
 
 import sqlalchemy as sa
-from nous_sdk.contracts import CallContext, DomainError
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.growth import GrowthEntry, GrowthSnapshot
 from nous_sdk.contracts.maintenance import (
     MaintenanceCatalog,

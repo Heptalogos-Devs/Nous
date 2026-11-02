@@ -4,10 +4,10 @@
 from fastapi import APIRouter, Request
 from nous_sdk.contracts import (
     BlobDocument,
-    DomainError,
     TimePoint,
     UnitOutput,
 )
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.diagnostics import NamespaceDiagnostics
 from nous_sdk.contracts.lifecycle import MemoryChange
 from nous_sdk.contracts.references import (

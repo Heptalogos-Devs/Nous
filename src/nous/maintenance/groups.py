@@ -5,7 +5,8 @@ from __future__ import annotations
 from graphlib import CycleError, TopologicalSorter
 from typing import TYPE_CHECKING
 
-from nous_sdk.contracts import CallContext, DomainError
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.ego_model import SeedAdoption, SeedProposal
 from nous_sdk.contracts.growth import (
     GrowthAction,

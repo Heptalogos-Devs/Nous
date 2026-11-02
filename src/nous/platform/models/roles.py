@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 
-from nous_sdk.contracts import DomainError
+from nous.platform.errors import DomainError
 from pydantic import BaseModel, JsonValue
 from typing_extensions import TypeForm
 

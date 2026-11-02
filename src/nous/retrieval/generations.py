@@ -12,7 +12,8 @@ from typing import TYPE_CHECKING, NotRequired, TypedDict
 
 import numpy as np
 from nous_native import CancellationToken, IndexStore, Snapshot
-from nous_sdk.contracts import CallContext, QueryRequest
+from nous_sdk.contracts import QueryRequest
+from nous.platform.call_context import CallContext
 from numpy.typing import NDArray
 from pydantic import BaseModel
 

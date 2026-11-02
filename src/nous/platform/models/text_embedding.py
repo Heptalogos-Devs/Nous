@@ -6,7 +6,9 @@ import asyncio
 import math
 import time
 
-from nous_sdk.contracts import CallContext, DomainError, EmbeddingBatch
+from nous_sdk.contracts import EmbeddingBatch
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.model_roles import ModelCachePolicy
 from openai import AsyncOpenAI
 from pydantic import JsonValue, TypeAdapter

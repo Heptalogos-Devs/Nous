@@ -9,29 +9,27 @@ from typing import TYPE_CHECKING
 
 from nous_sdk.contracts import (
     AdoptCognition,
-    CallContext,
     CognitiveRecord,
     CognitiveRef,
-    DomainError,
     EpisodeBody,
     EpisodeMember,
     EvidenceLink,
     RevisionCause,
     TimeRange,
 )
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.episodes import (
     EpisodeQuery,
-    EpisodeRebuildIntent,
     EpisodeRebuildSubmission,
     EpisodeSegmentationDraft,
     EpisodeSegmentationInput,
     EpisodeSegmentationMember,
-    EpisodeSourceSnapshot,
     EpisodeView,
     ProcessEpisodeSources,
     RebuildEpisodes,
 )
-from nous_sdk.contracts.common import ModelProvenance
+from nous_sdk.contracts.common import Contract, ModelProvenance
 from pydantic import JsonValue, TypeAdapter
 from sqlalchemy import func, select
 
@@ -49,6 +47,19 @@ from .schema import revisions
 if TYPE_CHECKING:
     from .models import ModelServices
     from .records import CognitiveRecords
+
+
+class EpisodeSourceSnapshot(Contract):
+    source: str
+    members: tuple[CognitiveRef, ...]
+    originals: tuple[CognitiveRef, ...]
+    observations: tuple[str, ...]
+
+
+class EpisodeRebuildIntent(Contract):
+    context: CallContext
+    command: RebuildEpisodes
+    snapshots: tuple[EpisodeSourceSnapshot, ...]
 
 
 def groups(

@@ -5,7 +5,8 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING
 
-from nous_sdk.contracts import DomainError, EmbeddingBatch
+from nous_sdk.contracts import EmbeddingBatch
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.vector_projection import ProjectionResult
 from sqlalchemy import select, update
 from sqlalchemy.dialects.sqlite import insert

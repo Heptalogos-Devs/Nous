@@ -3,7 +3,7 @@
 from collections.abc import Callable
 
 from nous_native import CancellationToken, NativeError
-from nous_sdk.contracts import DomainError
+from nous.platform.errors import DomainError
 from pydantic import JsonValue, TypeAdapter
 
 from nous.platform.concurrency import owned_thread

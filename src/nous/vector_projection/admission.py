@@ -5,7 +5,8 @@ from __future__ import annotations
 from hashlib import sha256
 from weakref import WeakKeyDictionary
 
-from nous_sdk.contracts import CallContext, CognitiveRecord
+from nous_sdk.contracts import CognitiveRecord
+from nous.platform.call_context import CallContext
 from nous_sdk.contracts.vector_projection import ProjectionReceipt, VectorProjectionPolicy
 from sqlalchemy import select, update
 

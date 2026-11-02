@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from nous_sdk.contracts import CallContext, DomainError, UnitOutput
+from nous_sdk.contracts import UnitOutput
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.diagnostics import ImportVectorStatus
 from nous_sdk.contracts.imports import UnitAttempt
 from sqlalchemy import select

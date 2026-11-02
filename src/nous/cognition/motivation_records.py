@@ -7,13 +7,13 @@ from uuid import uuid4
 
 import sqlalchemy as sa
 from nous_sdk.contracts import (
-    CallContext,
     CognitiveRef,
     ConcernBody,
     DesireBody,
     DesiredCondition,
-    DomainError,
 )
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous_sdk.contracts.motivation import (
     AssessMotivation,
     ConditionAssessment,
