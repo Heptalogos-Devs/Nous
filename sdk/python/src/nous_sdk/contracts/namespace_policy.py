@@ -1,27 +1,15 @@
 """Native namespace admission and formation policy, independent of adapters."""
-
 from pydantic import Field, model_validator
-
 from .common import Contract
-
 
 class NamespaceQuota(Contract):
     max_concurrent_requests: int | None = Field(default=None, ge=1)
     max_storage_bytes: int | None = Field(default=None, ge=1)
 
-
-class NamespaceFeatures(Contract):
-    episodes: bool = True
-    person_profiles: bool = True
-    sparse_retrieval: bool = True
-    relation_vectors: bool = True
-    allow_metadata_only_write: bool = True
-
-
 class FormationPolicy(Contract):
     enabled: bool = True
     default_enabled: bool = False
-    profile: str = "native"
+    profile: str = 'native'
     entity_types: tuple[str, ...] = ()
     predicates: tuple[str, ...] = ()
     max_entities: int | None = Field(default=None, ge=1, le=256)
@@ -29,12 +17,12 @@ class FormationPolicy(Contract):
     max_chunk_chars: int = Field(default=100000, ge=128, le=100000)
     chunk_overlap_chars: int = Field(default=200, ge=0)
 
-    @model_validator(mode="after")
-    def valid_policy(self) -> "FormationPolicy":
-        if self.profile != "native":
-            raise ValueError("Unknown native formation profile")
-        if self.default_enabled and not self.enabled:
-            raise ValueError("Default formation requires formation enabled")
+    @model_validator(mode='after')
+    def valid_policy(self) -> 'FormationPolicy':
+        if self.profile != 'native':
+            raise ValueError('Unknown native formation profile')
+        if self.default_enabled and (not self.enabled):
+            raise ValueError('Default formation requires formation enabled')
         if self.chunk_overlap_chars >= self.max_chunk_chars:
-            raise ValueError("Formation overlap must be smaller than chunk size")
+            raise ValueError('Formation overlap must be smaller than chunk size')
         return self

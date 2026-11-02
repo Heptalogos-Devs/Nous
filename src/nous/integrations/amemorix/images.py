@@ -341,7 +341,7 @@ async def image_memory(
                 ctx,
                 "image-inline:" + digest_,
                 operation_kind="media.image.original",
-                scope=ctx.require_subject(),
+                scope=ctx.namespace_id,
                 payload={"hash": digest_, "media_type": mime},
             ) as tx:
                 if tx.replayed:

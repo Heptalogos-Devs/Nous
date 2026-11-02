@@ -60,7 +60,7 @@ async def prepare(self: VectorProjectionService, request: Request) -> Request:
         ctx,
         request.id + ":prepare",
         operation_kind="vectors.prepare",
-        scope=ctx.require_subject(),
+        scope=ctx.namespace_id,
         payload={"request_id": request.id},
     ) as tx:
         if tx.replayed:
@@ -119,7 +119,6 @@ async def prepare(self: VectorProjectionService, request: Request) -> Request:
                         contents.insert().values(
                             key=actual.key,
                             namespace_id=ctx.namespace_id,
-                            subject_id=ctx.require_subject(),
                             record=retained.model_dump(mode="json"),
                             commit_seq=tx.commit_seq,
                         )
@@ -186,7 +185,7 @@ async def save_batch(
         ctx,
         identity,
         operation_kind="vectors.content",
-        scope=ctx.require_subject(),
+        scope=ctx.namespace_id,
         payload={"keys": [item.key for item in items], "space": batch.space},
     ) as tx:
         if tx.replayed:
@@ -247,7 +246,6 @@ async def save_batch(
                     contents.insert().values(
                         key=item.key,
                         namespace_id=ctx.namespace_id,
-                        subject_id=ctx.require_subject(),
                         record=content.model_dump(mode="json"),
                         commit_seq=tx.commit_seq,
                     )
@@ -273,7 +271,7 @@ async def run(self: VectorProjectionService, identity: str) -> dict[str, object]
             request.context,
             attempt_id,
             operation_kind="vectors.route",
-            scope=request.context.require_subject(),
+            scope=request.context.namespace_id,
             payload={
                 "request_id": identity,
                 "profile": profile.model_dump(mode="json", exclude_unset=True),
@@ -292,7 +290,6 @@ async def run(self: VectorProjectionService, identity: str) -> dict[str, object]
                     requests.insert().values(
                         id=attempt.id,
                         namespace_id=request.context.namespace_id,
-                        subject_id=request.context.require_subject(),
                         record=attempt.model_dump(mode="json"),
                         commit_seq=tx.commit_seq,
                     )
@@ -389,7 +386,6 @@ async def run_route(self: VectorProjectionService, identity: str) -> dict[str, o
         owner = await self.read_request(dependency)
         await self.execution().wait(owner.context, owner.job_id)
     result = await self.adopt(request)
-    await self.invalidate()
     return result.model_dump(mode="json")
 
 
@@ -400,7 +396,7 @@ async def adopt(self: VectorProjectionService, request: Request) -> ProjectionRe
         ctx,
         request.id + ":adopt",
         operation_kind="vectors.adopt",
-        scope=ctx.require_subject(),
+        scope=ctx.namespace_id,
         payload={"request_id": request.id},
     ) as tx:
         if tx.replayed:
@@ -502,6 +498,9 @@ async def adopt(self: VectorProjectionService, request: Request) -> ProjectionRe
             adopted.append(target.target.exact())
             spaces.add(content.space)
             calls.add(content.call_id)
+        from nous.retrieval.maintenance import enqueue_index_in
+
+        await enqueue_index_in(tx, ctx)
         return tx.result(
             ProjectionResult(
                 request_id=request.id,

@@ -17,12 +17,12 @@ from .core import ClientCore
 class NamespaceBackupClient(ClientCore):
     async def create_namespace_backup(self, namespace_id: str) -> NamespaceBackupInfo:
         return NamespaceBackupInfo.model_validate(
-            await self.request("POST", f"/api/namespaces/{segment(namespace_id)}/backups")
+            await self.request("POST", f"/api/v1/namespaces/{segment(namespace_id)}/backups")
         )
 
     async def namespace_backup(self, backup_id: str) -> NamespaceBackupInfo:
         return NamespaceBackupInfo.model_validate(
-            await self.request("GET", f"/api/namespace-backups/{segment(backup_id)}")
+            await self.request("GET", f"/api/v1/namespace-backups/{segment(backup_id)}")
         )
 
     async def namespace_backups(
@@ -31,13 +31,13 @@ class NamespaceBackupClient(ClientCore):
         return NamespaceBackupsPage.model_validate(
             await self.request(
                 "GET",
-                f"/api/namespaces/{segment(namespace_id)}/backups",
+                f"/api/v1/namespaces/{segment(namespace_id)}/backups",
                 params={"limit": limit, "cursor": cursor},
             )
         )
 
     async def delete_namespace_backup(self, backup_id: str) -> None:
-        await self.request("DELETE", f"/api/namespace-backups/{segment(backup_id)}")
+        await self.request("DELETE", f"/api/v1/namespace-backups/{segment(backup_id)}")
 
     async def download_namespace_backup(
         self, backup_id: str, *, offset: int = 0, max_bytes: int = 262144
@@ -45,14 +45,14 @@ class NamespaceBackupClient(ClientCore):
         return NamespaceBackupChunk.model_validate(
             await self.request(
                 "GET",
-                f"/api/namespace-backups/{segment(backup_id)}/content",
+                f"/api/v1/namespace-backups/{segment(backup_id)}/content",
                 params={"offset": offset, "max_bytes": max_bytes},
             )
         )
 
     async def begin_namespace_backup_upload(self) -> NamespaceBackupUpload:
         return NamespaceBackupUpload.model_validate(
-            await self.request("POST", "/api/namespace-backup-uploads")
+            await self.request("POST", "/api/v1/namespace-backup-uploads")
         )
 
     async def upload_namespace_backup_chunk(
@@ -61,7 +61,7 @@ class NamespaceBackupClient(ClientCore):
         return NamespaceBackupUpload.model_validate(
             await self.request(
                 "PUT",
-                f"/api/namespace-backup-uploads/{segment(upload_id)}",
+                f"/api/v1/namespace-backup-uploads/{segment(upload_id)}",
                 body={"offset": offset, "data_base64": base64.b64encode(data).decode("ascii")},
             )
         )
@@ -72,13 +72,13 @@ class NamespaceBackupClient(ClientCore):
         return NamespaceBackupInfo.model_validate(
             await self.request(
                 "POST",
-                f"/api/namespace-backup-uploads/{segment(upload_id)}/complete",
+                f"/api/v1/namespace-backup-uploads/{segment(upload_id)}/complete",
                 body={"expected_sha256": expected_sha256},
             )
         )
 
     async def abort_namespace_backup_upload(self, upload_id: str) -> None:
-        await self.request("DELETE", f"/api/namespace-backup-uploads/{segment(upload_id)}")
+        await self.request("DELETE", f"/api/v1/namespace-backup-uploads/{segment(upload_id)}")
 
     async def restore_namespace_backup(
         self, namespace_id: str, command: RestoreNamespaceBackup
@@ -86,7 +86,7 @@ class NamespaceBackupClient(ClientCore):
         return NamespaceBackupRestored.model_validate(
             await self.request(
                 "POST",
-                f"/api/namespaces/{segment(namespace_id)}/restore-backup",
+                f"/api/v1/namespaces/{segment(namespace_id)}/restore-backup",
                 body=encoded(command),
             )
         )

@@ -72,8 +72,7 @@ class RequestObservation:
                 in {
                     "request_id",
                     "caller_id",
-                    "namespace_id",
-                    "subject_id",
+                    'namespace_id',
                     "operation_id",
                     "job_id",
                     "source_ids",

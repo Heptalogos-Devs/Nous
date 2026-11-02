@@ -44,7 +44,7 @@ async def processing_source(
         ctx,
         f"{command.operation_id}:{unit.id}:origin",
         operation_kind="imports.processing_origin",
-        scope=ctx.require_subject(),
+        scope=ctx.namespace_id,
         payload={"command": command.model_dump(mode="json"), "unit_id": unit.id},
     ) as tx:
         if tx.replayed:
@@ -57,7 +57,7 @@ async def processing_source(
                         (unit.material_id,),
                         operation_id=f"{command.operation_id}:{unit.id}:origin",
                         operation_kind="imports.processing_origin",
-                        scope=ctx.require_subject(),
+                        scope=ctx.namespace_id,
                     )
                 ).context
                 if ctx.source_groups()

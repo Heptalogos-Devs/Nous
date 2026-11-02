@@ -19,7 +19,9 @@ from nous.platform.concurrency import owned_thread
 from nous.platform.content import ContentObject
 
 if TYPE_CHECKING:
-    from nous.data_management.dataset_imports import DatasetImportService
+    from nous.material.service import MaterialService
+    from nous.platform.content import ContentStore
+    from nous.platform.persistence import Authority
 
 
 _GRAPHS: dict[tuple[str, str], object] = {
@@ -117,9 +119,16 @@ def to_graphml(raw: bytes) -> bytes:
     return stream.getvalue()
 
 
-async def convert_lpmm_graph(self: DatasetImportService, ctx: CallContext, material_id: str) -> str:
-    material = await self.app.material.read(ctx, material_id)
-    async with self.app.content.protect(
+async def convert_lpmm_graph(
+    ctx: CallContext,
+    material_id: str,
+    *,
+    authority: Authority,
+    materials: MaterialService,
+    content: ContentStore,
+) -> str:
+    material = await materials.read(ctx, material_id)
+    async with content.protect(
         ContentObject(material["content_hash"], material["byte_len"], material["media_type"])
     ) as path:
         try:
@@ -135,22 +144,22 @@ async def convert_lpmm_graph(self: DatasetImportService, ctx: CallContext, mater
             EOFError,
         ) as error:
             raise DomainError("lpmm_graph_invalid", str(error)) from error
-    lease = await self.app.content.publish_bytes(converted, "application/graphml+xml")
+    lease = await content.publish_bytes(converted, "application/graphml+xml")
     try:
         operation = (
             "lpmm-graphml:"
             + sha256((material_id + ":" + material["content_hash"]).encode()).hexdigest()
         )
-        async with self.app.authority.write(
+        async with authority.write(
             ctx,
             operation,
             operation_kind="imports.lpmm_graph",
-            scope=ctx.require_subject(),
+            scope=ctx.namespace_id,
             payload={"material_id": material_id},
         ) as tx:
             if tx.replayed:
                 identifier = str(tx.replay_result)
-                await self.app.material.read_in(tx, ctx, identifier)
+                await materials.read_in(tx, ctx, identifier)
                 return identifier
             document = BlobDocument(
                 filename="graph.graphml",
@@ -161,10 +170,10 @@ async def convert_lpmm_graph(self: DatasetImportService, ctx: CallContext, mater
                     "implementation": "networkx_lpmm_graphml",
                 },
             )
-            result = await self.app.material.put_blob_in(
+            result = await materials.put_blob_in(
                 tx, ctx, lease, document, required_source_ids=(material_id,)
             )
-            await self.app.material.observe_in(tx, ctx, result["id"], document)
+            await materials.observe_in(tx, ctx, result["id"], document)
             return tx.result(result["id"])
     finally:
-        await self.app.content.release(lease)
+        await content.release(lease)

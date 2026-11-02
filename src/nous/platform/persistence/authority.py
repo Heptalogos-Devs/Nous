@@ -31,6 +31,7 @@ if TYPE_CHECKING:
 
     from .namespace_limits import NamespaceLimits
 
+
 T = TypeVar("T")
 
 
@@ -60,7 +61,6 @@ def operation_key(ctx: CallContext, operation_kind: str, scope: str, operation_i
         ctx.caller_id,
         operation_kind,
         ctx.namespace_id,
-        ctx.subject_id,
         scope,
         operation_id,
     )
@@ -178,11 +178,17 @@ class Authority:
     their own authorization in this transaction.
     """
 
-    def __init__(self, path: str | Path, *, busy_timeout_ms: int = 5000):
+    def __init__(
+        self,
+        path: str | Path,
+        *,
+        busy_timeout_ms: int = 5000,
+        namespace_limits: NamespaceLimits | None = None,
+    ):
         self.path = Path(path).resolve()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.execution: DurableExecution | None = None
-        self.namespace_limits: NamespaceLimits | None = None
+        self.namespace_limits = namespace_limits
         self.initialized = False
         url = sa.URL.create("sqlite+aiosqlite", database=str(self.path))
         self.reader = create_async_engine(url)
@@ -213,21 +219,7 @@ class Authority:
             # SQLite changes journal mode outside the application transaction.
             await connection.run_sync(self._enable_wal)
             async with connection.begin():
-                from nous.identity.schema import migrate as migrate_identity
-                from nous.platform.configuration.service import migrate as migrate_configuration
-
                 await connection.run_sync(metadata.create_all, checkfirst=True)
-                await migrate_identity(connection)
-                await migrate_configuration(connection)
-                operation_columns = await connection.run_sync(
-                    lambda sync: {
-                        column["name"] for column in sa.inspect(sync).get_columns("nous_operations")
-                    }
-                )
-                if "payload_json" not in operation_columns:
-                    await connection.exec_driver_sql(
-                        "ALTER TABLE nous_operations ADD COLUMN payload_json TEXT"
-                    )
                 for table in metadata.sorted_tables:
                     for index in table.indexes:
                         await connection.run_sync(index.create, checkfirst=True)
@@ -322,7 +314,9 @@ class Authority:
                     if self.namespace_limits is not None:
                         quota = await self.namespace_limits.quota_in(ReadView(connection, 0), ctx)
                         if quota.max_storage_bytes is not None:
-                            usage = await self.namespace_limits.usage_in(ReadView(connection, 0), ctx)
+                            usage = await self.namespace_limits.usage_in(
+                                ReadView(connection, 0), ctx
+                            )
                             storage_before = int(str(usage["storage_bytes"]))
                     seq = await connection.scalar(
                         sa.update(clock)
@@ -356,7 +350,6 @@ class Authority:
                             operation_key=key,
                             caller_id=ctx.caller_id,
                             namespace_id=ctx.namespace_id,
-                            subject_id=ctx.subject_id,
                             scope=scope,
                             operation_id=operation_id,
                             operation_kind=operation_kind,

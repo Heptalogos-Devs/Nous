@@ -11,18 +11,17 @@ from nous_sdk import NousClient
 from nous_sdk.contracts.identity import (
     BindSubject,
     ChangeNamespace,
-    ChangeSubject,
     IdentityDirectoryQuery,
     IdentityPurpose,
     PurgeNamespace,
 )
-from nous_sdk.contracts.namespace_archives import MigrateSubject, NamespaceArchive, RestoreNamespace
+from nous_sdk.contracts.namespace_archives import NamespaceArchive, RestoreNamespace
 from nous_sdk.contracts.namespace_backups import RestoreNamespaceBackup
 
 from .common import invoke, read_command
 
 
-def register(namespace: typer.Typer, subject: typer.Typer) -> None:
+def register(namespace: typer.Typer) -> None:
     @namespace.command("purge")
     def purge_namespace(ctx: typer.Context, namespace_id: str, request: Path) -> None:
         command = read_command(request, PurgeNamespace)
@@ -126,22 +125,11 @@ def register(namespace: typer.Typer, subject: typer.Typer) -> None:
         )
         invoke(ctx, lambda api: api.restore_namespace_archive(namespace_id, command))
 
-    @subject.command("migrate")
-    def migrate_subject(
-        ctx: typer.Context,
-        namespace_id: str,
-        subject_id: str,
-        target_namespace_id: str,
-        operation_id: str,
-    ) -> None:
-        command = MigrateSubject(operation_id=operation_id, target_namespace_id=target_namespace_id)
-        invoke(ctx, lambda api: api.migrate_subject(namespace_id, subject_id, command))
-
     @namespace.command("get")
     def get_namespace(
         ctx: typer.Context, namespace_id: str, purpose: IdentityPurpose = "active"
     ) -> None:
-        invoke(ctx, lambda api: api.namespace(namespace_id, purpose=purpose))
+        invoke(ctx, lambda api: api.get_namespace(namespace_id, purpose=purpose))
 
     @namespace.command("page")
     def namespace_page(
@@ -168,42 +156,12 @@ def register(namespace: typer.Typer, subject: typer.Typer) -> None:
     ) -> None:
         invoke(ctx, lambda api: api.identity_capabilities(namespace_id, purpose=purpose))
 
-    @subject.command("page")
-    def subject_page(
-        ctx: typer.Context,
-        namespace_id: str,
-        limit: int = 100,
-        cursor: str | None = None,
-        purpose: IdentityPurpose = "active",
-    ) -> None:
-        invoke(
-            ctx,
-            lambda api: api.subject_page(
-                namespace_id, IdentityDirectoryQuery(limit=limit, cursor=cursor, purpose=purpose)
-            ),
-        )
-
-    @subject.command("change")
-    def change_subject(
-        ctx: typer.Context, namespace_id: str, subject_id: str, request: Path
-    ) -> None:
-        command = read_command(request, ChangeSubject)
-        invoke(ctx, lambda api: api.change_subject(namespace_id, subject_id, command))
-
-    @subject.command("capabilities")
-    def subject_capabilities(
-        ctx: typer.Context, namespace_id: str, subject_id: str, purpose: IdentityPurpose = "active"
-    ) -> None:
-        invoke(
-            ctx, lambda api: api.identity_capabilities(namespace_id, subject_id, purpose=purpose)
-        )
-
-    @subject.command("bind")
+    @namespace.command("bind-subject")
     def bind_subject(ctx: typer.Context, namespace_id: str, request: Path) -> None:
         command = read_command(request, BindSubject)
         invoke(ctx, lambda api: api.bind_subject(namespace_id, command))
 
-    @subject.command("binding")
+    @namespace.command("subject-binding")
     def subject_binding(
         ctx: typer.Context, namespace_id: str, external_id: str, purpose: IdentityPurpose = "active"
     ) -> None:

@@ -1,5 +1,9 @@
 //! Per-query authority restrictions, applied before candidate offering and graph traversal.
 use super::*;
+pub(super) struct AuthorityView {
+    pub(super) assets: MemoAssets,
+    pub(super) geometry_available: bool,
+}
 impl ServingGeneration {
     pub fn search_authorized(
         &self,
@@ -89,75 +93,59 @@ impl ServingGeneration {
         &self,
         allowed: Option<&BTreeSet<i64>>,
         allowed_tags: Option<&BTreeSet<i64>>,
-    ) -> Result<Option<MemoAssets>> {
+    ) -> Result<Option<AuthorityView>> {
         let full_candidates = allowed.is_none_or(|ids| ids.len() == self.mappings.candidates.len());
         let full_tags = allowed_tags.is_none_or(|ids| ids.len() == self.mappings.tags.len());
         if full_candidates && full_tags {
             return Ok(None);
         }
-        let mut prepared = self.prepared.clone();
-        if let Some(ids) = allowed {
-            prepared
-                .mappings
-                .candidates
-                .retain(|id, _| ids.contains(id));
-        }
-        let roots = prepared
-            .mappings
+        let mut input = self.assets.snapshot();
+        input
+            .candidates
+            .retain(|id, _| allowed.is_none_or(|ids| ids.contains(id)));
+        let roots = input
             .candidates
             .values()
-            .flat_map(|candidate| candidate.source_refs.iter().cloned())
-            .collect::<BTreeSet<_>>();
-        if prepared.snapshot.graph.is_none() {
-            prepared
-                .mappings
-                .roots
-                .retain(|_, root| roots.contains(root));
-            prepared.root_tags.retain(|root, _| roots.contains(root));
-        }
-        let file_ids = prepared
-            .mappings
+            .flat_map(|candidate| candidate.source_ids.iter().copied())
+            .collect::<std::collections::HashSet<_>>();
+        let files = input
             .candidates
             .values()
-            .map(|item| item.file_id)
-            .chain(prepared.mappings.roots.keys().copied())
+            .map(|candidate| candidate.file_id)
+            .chain(roots.iter().copied())
             .collect::<BTreeSet<_>>();
-        prepared
-            .mappings
-            .source_sets
-            .retain(|id, _| file_ids.contains(id));
-        let permitted_keys = prepared
-            .root_tags
-            .values()
-            .flatten()
-            .cloned()
-            .collect::<BTreeSet<_>>();
-        prepared.mappings.tags.retain(|id, key| {
-            (prepared.snapshot.graph.is_some() || permitted_keys.contains(key))
-                && allowed_tags.is_none_or(|ids| ids.contains(id))
-        });
-        let tag_keys = prepared
-            .mappings
-            .tags
-            .values()
-            .cloned()
-            .collect::<BTreeSet<_>>();
-        let tag_ids = prepared
-            .mappings
-            .tags
+        input.files.retain(|id, _| files.contains(id));
+        input
+            .tag_names
+            .retain(|id, _| allowed_tags.is_none_or(|ids| ids.contains(id)));
+        let tags = input
+            .tag_names
             .keys()
             .copied()
-            .collect::<BTreeSet<_>>();
-        prepared
-            .tag_definitions
-            .retain(|key, _| tag_keys.contains(key));
-        prepared.unit_tags.retain(|id, _| tag_ids.contains(id));
-        for tags in prepared.root_tags.values_mut() {
-            tags.retain(|key| tag_keys.contains(key));
+            .collect::<std::collections::HashSet<_>>();
+        input.tag_vectors.retain(|id, _| tags.contains(id));
+        for file in input.files.values_mut() {
+            file.tags.retain(|row| tags.contains(&row.tag_id));
         }
-        // Reuse the original geometry, transport, provenance and EPA builders on
-        // the selected evidence roots while retaining stable candidate/Tag IDs.
-        let (assets, _, _, _) = build_assets(&prepared)?;
-        Ok(Some(assets))
+        let source_scope_changed = input
+            .graph
+            .provenance
+            .values()
+            .flatten()
+            .any(|(root, _)| !roots.contains(root));
+        if !full_tags || source_scope_changed {
+            input.graph = Arc::new(
+                input
+                    .graph
+                    .authorized_view(&tags, &roots)
+                    .map_err(anyhow::Error::msg)?,
+            );
+            input.epa = None;
+        }
+        let assets = MemoAssets::try_new(input).map_err(anyhow::Error::msg)?;
+        Ok(Some(AuthorityView {
+            assets,
+            geometry_available: full_tags && !source_scope_changed,
+        }))
     }
 }

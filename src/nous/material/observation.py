@@ -75,7 +75,7 @@ async def accepted_source_in(
         select(observations.c.record).where(
             observations.c.id == observation_id,
             observations.c.namespace_id == ctx.namespace_id,
-            observations.c.subject_id == ctx.require_subject(),
+            
             observations.c.active.is_(True),
         )
     )

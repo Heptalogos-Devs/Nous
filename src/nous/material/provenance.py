@@ -38,7 +38,7 @@ async def provenance_in(
 ) -> MaterialProvenance:
     from nous_sdk.contracts.derivation import DerivedRegion
 
-    from nous.cognition.service import CognitionService
+    from nous.cognition.records import CognitiveRecords
 
     from .derived_access import representation_ref
     from .derived_availability import dependency_availability_in
@@ -50,7 +50,7 @@ async def provenance_in(
         from .derived import DerivedService
 
         derivations = DerivedService(self.authority, self)
-    cognition = CognitionService(self.authority, materials=self, derivations=derivations)
+    cognition = CognitiveRecords(self.authority, materials=self, derivations=derivations)
 
     async def facts(ref: MediaReference) -> tuple[MaterialRecord, SourceRegion | None, str]:
         selected = None
@@ -76,7 +76,7 @@ async def provenance_in(
         statement = select(observations.c.id).where(
             observations.c.material_id == identifier,
             observations.c.namespace_id == ctx.namespace_id,
-            observations.c.subject_id == ctx.require_subject(),
+            
             observations.c.active.is_(True),
         )
         if ref.observation_id:
@@ -100,7 +100,7 @@ async def provenance_in(
                     select(derived_regions.c.record).where(
                         derived_regions.c.id == ref.id,
                         derived_regions.c.namespace_id == ctx.namespace_id,
-                        derived_regions.c.subject_id == ctx.require_subject(),
+                        
                     )
                 )
                 selected_region = DerivedRegion.model_validate(raw)
@@ -127,7 +127,7 @@ async def provenance_in(
                                 observations.c.id.in_(pins),
                                 observations.c.material_id == material_id,
                                 observations.c.namespace_id == ctx.namespace_id,
-                                observations.c.subject_id == ctx.subject_id,
+                                
                                 observations.c.active.is_(True),
                             )
                         )
@@ -191,7 +191,7 @@ async def provenance_in(
                     select(observations.c.material_id).where(
                         observations.c.id == pin,
                         observations.c.namespace_id == ctx.namespace_id,
-                        observations.c.subject_id == ctx.subject_id,
+                        
                     )
                 )
             ).scalar_one_or_none()
@@ -216,7 +216,7 @@ async def provenance_in(
                 select(observations.c.material_id).where(
                     observations.c.id == pin,
                     observations.c.namespace_id == ctx.namespace_id,
-                    observations.c.subject_id == ctx.require_subject(),
+                    
                 )
             )
             if source_id is not None:

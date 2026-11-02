@@ -29,8 +29,8 @@ def _provider(resources: ModelConfiguration, role: str) -> dict[str, JsonValue] 
     assigned = resources.roles.get(role)
     if assigned is None:
         return None
-    route_id = assigned.routes[0]
-    model = resources.models[resources.routes[route_id].model]
+    route_id = assigned.preset
+    model = resources.catalog[resources.presets[route_id].model]
     return {"provider_id": model.provider, "model_id": route_id, "secret_ref": ""}
 
 
@@ -38,7 +38,7 @@ async def _read_in(
     app: Application, view: ReadView | WriteTx, ctx: CallContext
 ) -> dict[str, JsonValue]:
     await require_namespace_in(view, ctx, purpose="management")
-    scope = ctx.model_copy(update={"subject_id": None})
+    scope = ctx.model_copy(update={})
     values = {
         key: (await app.configuration.effective_in(view, scope, key))["value"] for key in _KEYS
     }
@@ -99,9 +99,9 @@ def _select_route(resources: ModelConfiguration, raw: object, role: str) -> str:
     capability = "embedding" if role == "embedding" else "text"
     candidates = [
         key
-        for key, route in resources.routes.items()
-        if resources.models[route.model].provider == provider_id
-        and capability in resources.models[route.model].capabilities
+        for key, route in resources.presets.items()
+        if resources.catalog[route.model].provider == provider_id
+        and capability in resources.catalog[route.model].capabilities
         and (not model_id or key == model_id or route.model == model_id)
     ]
     if len(candidates) != 1:
@@ -162,7 +162,7 @@ async def apply_namespace_config_in(
                     status=404,
                     context={"provider": name, "provider_id": str(ref.get("provider_id") or "")},
                 )
-    scope = ctx.model_copy(update={"subject_id": None})
+    scope = ctx.model_copy(update={})
     updates: dict[str, object] = {}
     if any(config.get(name) is not None for name in ("embedding", "llm")):
         trusted = ModelConfiguration.model_validate(
@@ -255,7 +255,7 @@ async def create_namespace_configured(
 ):
     from nous_sdk.contracts.identity import Namespace
 
-    target = ctx.model_copy(update={"namespace_id": namespace_id, "subject_id": None})
+    target = ctx.model_copy(update={"namespace_id": namespace_id})
     require_management_scope(target)
     async with app.authority.write(
         target,

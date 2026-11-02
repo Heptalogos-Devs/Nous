@@ -13,7 +13,7 @@ from sqlalchemy import select
 
 from nous.cognition.lifecycle import selectable
 from nous.cognition.schema import revisions, vectors
-from nous.identity.access import require_subject_in
+from nous.identity.access import require_namespace_in
 from nous.material.modalities import source_modalities_in
 from nous.material.named_sources import named_source_observations_in
 from nous.material.service import SourceRecord, observations
@@ -37,19 +37,13 @@ async def eligible(
     self: RetrievalService, ctx: CallContext, request: QueryRequest, plan: BoundPlan
 ) -> CandidateView:
     async with self.authority.read(ctx) as view:
-        await require_subject_in(view, ctx)
-        from nous_sdk.contracts.namespace_policy import NamespaceFeatures
-
-        from nous.platform.configuration.namespace_policy import policy_in
-
-        features = await policy_in(view, ctx, "namespace.features", NamespaceFeatures)
+        namespace = await require_namespace_in(view, ctx)
         if request.as_of_commit is not None and request.as_of_commit > view.commit_seq:
             raise DomainError(
                 "invalid_history", "Query history cutoff is outside committed history"
             )
         statement = select(revisions.c.record).where(
             revisions.c.namespace_id == ctx.namespace_id,
-            revisions.c.subject_id == ctx.subject_id,
         )
         if request.as_of_commit is not None:
             statement = statement.where(revisions.c.commit_seq <= request.as_of_commit)
@@ -108,7 +102,6 @@ async def eligible(
                 await view.connection.execute(
                     select(observations.c.id, observations.c.record).where(
                         observations.c.namespace_id == ctx.namespace_id,
-                        observations.c.subject_id == ctx.subject_id,
                     )
                 )
             ).mappings()
@@ -124,7 +117,7 @@ async def eligible(
             if isinstance(row, CognitiveRecord):
                 if (
                     row.reference.kind == "episode"
-                    and not features.episodes
+                    and "episodes" not in namespace.enabled_features
                     and not exact
                     and not request.history
                 ):

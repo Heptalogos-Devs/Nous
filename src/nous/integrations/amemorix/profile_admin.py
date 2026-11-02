@@ -281,7 +281,7 @@ async def selected_intent(
         ctx,
         command.operation_id + ":selection",
         operation_kind="amemorix.profile.select",
-        scope=ctx.require_subject(),
+        scope=ctx.namespace_id,
         payload=command,
     ) as tx:
         if tx.replayed:

@@ -34,13 +34,18 @@ from nous_sdk.contracts.targets import CognitiveTarget, MediaTarget
 from pydantic import JsonValue
 from sqlalchemy import select
 
-from nous.identity.access import require_subject_in
+from nous.identity.access import require_namespace_in
 from nous.material.service import observations
 from nous.platform.models.generation import MediaInput
 from nous.platform.persistence import ReadView, WriteTx
 
 if TYPE_CHECKING:
-    from nous.application import Application
+    from nous.cognition.records import CognitiveRecords
+    from nous.material.derived import DerivedService
+    from nous.material.service import MaterialService
+    from nous.platform.models import ModelService
+    from nous.platform.persistence import Authority
+    from nous.retrieval.service import RetrievalService
 
 
 class SymbolSnapshot(Contract):
@@ -50,9 +55,21 @@ class SymbolSnapshot(Contract):
 
 
 class SymbolsService:
-    def __init__(self, app: Application) -> None:
-        self.app = app
-        self.authority, self.cognition, self.models = app.authority, app.cognition, app.models
+    def __init__(
+        self,
+        authority: Authority,
+        cognition: CognitiveRecords,
+        models: ModelService,
+        material: MaterialService,
+        derivations: DerivedService,
+        retrieval: RetrievalService,
+    ) -> None:
+        self.authority = authority
+        self.cognition = cognition
+        self.models = models
+        self.material = material
+        self.derivations = derivations
+        self.retrieval = retrieval
 
     async def records_in(
         self, view: ReadView | WriteTx, ctx: CallContext, kinds: tuple[str, ...]
@@ -107,7 +124,7 @@ class SymbolsService:
         express: bool,
         ranks: dict[str, int] | None = None,
     ) -> SymbolSnapshot:
-        await require_subject_in(view, ctx, "social")
+        await require_namespace_in(view, ctx, capability="social")
         entities: list[SymbolCatalogEntry] = []
         for ref in dict.fromkeys(
             (
@@ -225,8 +242,8 @@ class SymbolsService:
             for root in record.source_roots
         }
         for carrier in media:
-            info = await self.app.material.provenance_in(
-                view, ctx, carrier.reference, derivations=self.app.derivations
+            info = await self.material.provenance_in(
+                view, ctx, carrier.reference, derivations=self.derivations
             )
             source_ids.update(info.material_ids)
             source_ids.update(info.roots)
@@ -234,7 +251,6 @@ class SymbolsService:
             await view.connection.scalars(
                 select(observations.c.material_id).where(
                     observations.c.namespace_id == ctx.namespace_id,
-                    observations.c.subject_id == ctx.subject_id,
                     observations.c.id.in_(source_ids),
                 )
             )
@@ -265,7 +281,7 @@ class SymbolsService:
     async def authorize_in(
         self, view: ReadView | WriteTx, ctx: CallContext, snapshot: SymbolSnapshot
     ) -> None:
-        await require_subject_in(view, ctx, "social")
+        await require_namespace_in(view, ctx, capability="social")
         from nous.cognition.schema import revisions
 
         for entry in (
@@ -286,7 +302,6 @@ class SymbolsService:
             head = await view.connection.scalar(
                 select(revisions.c.revision).where(
                     revisions.c.namespace_id == ctx.namespace_id,
-                    revisions.c.subject_id == ctx.subject_id,
                     revisions.c.id == record.reference.id,
                     revisions.c.head.is_(True),
                 )
@@ -298,8 +313,8 @@ class SymbolsService:
                     reference=record.reference.exact(),
                 )
         for carrier in snapshot.input.carriers:
-            await self.app.material.provenance_in(
-                view, ctx, carrier.reference, derivations=self.app.derivations
+            await self.material.provenance_in(
+                view, ctx, carrier.reference, derivations=self.derivations
             )
 
     @staticmethod
@@ -391,7 +406,7 @@ class SymbolsService:
         query = command.expression or command.intent
         if query:
             try:
-                retrieved = await self.app.retrieval.query(
+                retrieved = await self.retrieval.query(
                     ctx,
                     QueryRequest(
                         text=json.dumps(query, ensure_ascii=False),
@@ -412,7 +427,7 @@ class SymbolsService:
             ctx,
             identity,
             operation_kind="symbols.prepare",
-            scope=ctx.require_subject(),
+            scope=ctx.namespace_id,
             payload={"command": command, "mode": "express" if express else "understand"},
         ) as tx:
             if tx.replayed:
@@ -555,7 +570,7 @@ class SymbolsService:
             ctx,
             identity,
             operation_kind="symbols.prepare",
-            scope=ctx.require_subject(),
+            scope=ctx.namespace_id,
             payload={"command": command.selection, "mode": command.mode},
         )
         if receipt is None:

@@ -7,7 +7,7 @@ from uuid import NAMESPACE_URL, uuid5
 
 import sqlalchemy as sa
 from nous_sdk.contracts import CallContext, DomainError
-from nous_sdk.contracts.identity import Namespace, Subject, SubjectBinding
+from nous_sdk.contracts.identity import Namespace, SubjectBinding
 from nous_sdk.contracts.model_calls import ArchivedCall, CallOrigin, InvocationBinding
 from nous_sdk.contracts.namespace_backups import (
     NamespaceBackupRestored,
@@ -23,6 +23,8 @@ from nous.platform.models.history import imported_calls
 from nous.platform.models.invocation_transfer import restore_in as restore_invocations_in
 from nous.platform.models.source_fence import source_identities
 from nous.platform.persistence import Authority, metadata
+from nous.platform.execution import DurableExecution
+from nous_sdk.contracts.execution import ExecutionSnapshot
 from nous.platform.persistence.authority import canonical_json, operation_key
 from nous.platform.persistence.schema import clock
 from nous.references.allocation import allocate_target_in
@@ -31,17 +33,6 @@ from .namespace_state import quoted
 
 _OBJECT = TypeAdapter(dict[str, JsonValue])
 _TARGET = TypeAdapter(SemanticTarget)
-_SCHEDULER = {
-    "workflow_status",
-    "workflow_input",
-    "workflow_output",
-    "operation_outputs",
-    "workflow_events",
-    "workflow_events_history",
-    "notifications",
-    "streams",
-    "workflow_schedules",
-}
 _CHILDREN = {
     "context_feedback",
     "import_inputs",
@@ -81,9 +72,7 @@ _IDENTITIES = {
     "id",
     "assessment_id",
     "motivation_assessment_id",
-    "namespace_id",
-    "subject_id",
-    "consumer_subject_id",
+    'namespace_id',
     "task_id",
     "job_id",
     "ranking",
@@ -122,7 +111,6 @@ _IDENTITIES = {
     "content_key",
     "key",
     "operation_key",
-    "memory_subject_id",
     "schedule_id",
     "schedule_name",
     "scope",
@@ -178,7 +166,6 @@ def validate(state: NamespaceState) -> None:
             if "namespace_id" in table.c and name != "namespace_backup_uploads"
         }
         | _CHILDREN
-        | _SCHEDULER
         | {"namespaces"}
     )
     if set(state.tables) - allowed:
@@ -209,15 +196,15 @@ def validate(state: NamespaceState) -> None:
         raise DomainError(
             "namespace_backup_integrity", "Backup has no single consistent Namespace identity"
         )
-    owners = {str(row["id"]) for row in state.tables.get("subjects", ())}
+    owners = {state.namespace_id}
 
     def trusted_contexts(value: JsonValue) -> None:
         if isinstance(value, dict):
             if {"caller_id", "namespace_id", "credential_source_ids"}.issubset(value):
                 if (
                     value["namespace_id"] != state.namespace_id
-                    or value.get("subject_id") is not None
-                    and value["subject_id"] not in owners
+                    or value.get('namespace_id') is not None
+                    and value['namespace_id'] not in owners
                 ):
                     raise DomainError(
                         "namespace_backup_scope_forbidden",
@@ -232,7 +219,7 @@ def validate(state: NamespaceState) -> None:
 
     for rows in state.tables.values():
         for row in rows:
-            if row.get("subject_id") is not None and str(row["subject_id"]) not in owners:
+            if row.get('namespace_id') is not None and str(row['namespace_id']) not in owners:
                 raise DomainError(
                     "namespace_backup_scope_forbidden",
                     "Backup row belongs to an unretained Subject",
@@ -245,7 +232,7 @@ def validate(state: NamespaceState) -> None:
                 decoded = document(record)
                 if isinstance(decoded, dict) and "context" in decoded:
                     trusted_contexts(decoded["context"])
-    scopes = {"namespace:" + state.namespace_id, *("subject:" + subject for subject in owners)}
+    scopes = {"namespace:" + state.namespace_id}
     for name in ("nous_configuration", "nous_configuration_history"):
         if any(row["scope"] not in scopes for row in state.tables.get(name, ())):
             raise DomainError(
@@ -265,48 +252,13 @@ def validate(state: NamespaceState) -> None:
             raise DomainError(
                 "namespace_backup_integrity", "Backup has an unresolved owned row", table=child
             )
-    job_requests = {
-        "nous.imports.process": "import_requests",
-        "nous.imports.text": "import_requests",
-        "nous.imports.form_observation": "import_requests",
-        "nous.vectors.project": "vector_projection_requests",
-        "nous.context.prepare": "context_preparations",
-        "nous.context.maintain": "context_preparations",
-        "nous.maintenance.generate": "maintenance_runs",
-    }
-    cached_inputs = {
-        str(row["workflow_uuid"]): row.get("inputs")
-        for row in state.tables.get("workflow_input", ())
-    }
-    for row in state.tables.get("workflow_status", ()):
-        if row.get("serialization") not in {None, "portable_json"}:
-            raise DomainError(
-                "namespace_backup_serialization", "Restored workflows require portable JSON"
-            )
-        inputs = document(row.get("inputs") or cached_inputs.get(str(row["workflow_uuid"])))
-        values = inputs if isinstance(inputs, dict) else {}
-        arguments = values.get("positionalArgs", [])
-        if row.get("name") in job_requests:
-            expected = {
-                str(item["id"]) for item in state.tables.get(job_requests[str(row["name"])], ())
-            }
-            if (
-                not isinstance(arguments, list)
-                or not arguments
-                or not isinstance(arguments[0], str)
-                or arguments[0] not in expected
-            ):
-                raise DomainError(
-                    "namespace_backup_scope_forbidden",
-                    "Saved workflow names a request outside the Namespace snapshot",
-                    workflow_id=row["workflow_uuid"],
-                )
 
 
 async def restore(
     authority: Authority,
     identity_owner: IdentityService,
     content: ContentStore,
+    execution: DurableExecution,
     ctx: CallContext,
     command: RestoreNamespaceBackup,
     state: NamespaceState,
@@ -362,6 +314,8 @@ async def restore(
                     "import_manifest_heads",
                 } and isinstance(key := row.get("key"), str):
                     mapping.setdefault(key, identity(key))
+        for job in state.execution.jobs:
+            mapping.setdefault(job.workflow_id, identity(job.workflow_id))
         old_sequences = sorted(
             {
                 TypeAdapter(int).validate_python(row["commit_seq"])
@@ -447,18 +401,16 @@ async def restore(
             return value
 
         # Namespace identities are accepted by the lifecycle owner in this same transaction.
-        ns = Namespace.model_validate(remap(dict(original["namespaces"][0])))
-        restored_subjects = tuple(
-            Subject.model_validate(
-                remap({**dict(row), "capabilities": document(row["capabilities"])})
-            )
-            for row in original.get("subjects", ())
-        )
+        ns_row = dict(original['namespaces'][0])
+        ns_row['enabled_features'] = document(ns_row['enabled_features'])
+        ns = Namespace.model_validate(remap(ns_row))
+        if not command.preserve_ids:
+            ns = ns.model_copy(update={'slug':ns.slug+'-'+ctx.namespace_id[:8], 'subject_key':ctx.namespace_id if ns.subject_key is not None else None})
         restored_bindings = tuple(
             SubjectBinding.model_validate(remap(dict(row)))
             for row in original.get("subject_bindings", ())
         )
-        await identity_owner.restore_directory_in(tx, ns, restored_subjects, restored_bindings)
+        await identity_owner.restore_directory_in(tx, ns, restored_bindings)
 
         # Reallocate readable names only for a new identity. Exact installation restore retains them.
         if not command.preserve_ids:
@@ -469,15 +421,17 @@ async def restore(
         skip = (
             {
                 "namespaces",
-                "subjects",
                 "subject_bindings",
                 "nous_content_references",
                 "reference_addresses",
             }
             if not command.preserve_ids
-            else {"namespaces", "subjects", "subject_bindings", "nous_content_references"}
+            else {"namespaces", "subject_bindings", "nous_content_references"}
         )
         skip |= {
+            "nous_job_links",
+            "nous_job_results",
+            "nous_model_budget_allocations",
             "nous_model_calls",
             "nous_model_invocations",
             "nous_model_invocation_retirements",
@@ -488,7 +442,7 @@ async def restore(
                 id=mapping[str(raw["id"])],
                 origin=CallOrigin(
                     namespace_id=state.namespace_id,
-                    subject_id=str(raw["subject_id"]) if raw["subject_id"] is not None else None,
+                    
                     call_id=str(raw["id"]),
                 ),
                 purpose=str(raw["purpose"]),
@@ -505,7 +459,7 @@ async def restore(
                 error_code=str(raw["error_code"]) if raw["error_code"] else None,
                 source_ids=tuple(token(item) for item in sorted(source_identities(request))),
             )
-            if raw["subject_id"] is None:
+            if raw['namespace_id'] is None:
                 raise DomainError(
                     "namespace_backup_model_scope",
                     "Namespace model custody requires a retained Subject",
@@ -514,7 +468,7 @@ async def restore(
                 imported_calls.insert().values(
                     id=archived.id,
                     namespace_id=ctx.namespace_id,
-                    subject_id=mapping[str(raw["subject_id"])],
+                    
                     installation_id=command.operation_id,
                     archive_id=str(raw["id"]),
                     record=archived.model_dump(mode="json"),
@@ -523,7 +477,7 @@ async def restore(
         tables = sorted(
             original,
             key=lambda name: (
-                0 if name == "workflow_status" else 1 if name == "nous_operations" else 2,
+                0 if name == "nous_operations" else 1,
                 name,
             ),
         )
@@ -603,9 +557,7 @@ async def restore(
                     operation_ctx = ctx.model_copy(
                         update={
                             "caller_id": str(values["caller_id"]),
-                            "subject_id": str(values["subject_id"])
-                            if values.get("subject_id") is not None
-                            else None,
+                            
                         }
                     )
                     old_key = str(raw["operation_key"])
@@ -625,34 +577,6 @@ async def restore(
                                 }
                             ).encode()
                         ).hexdigest()
-                if name == "nous_job_links":
-                    values["operation_key"] = mapping.get(
-                        str(raw["operation_key"]), str(raw["operation_key"])
-                    )
-                    if not command.preserve_ids:
-                        values["caller_id"] = ctx.caller_id
-                if name == "workflow_status":
-                    values["request"] = None
-                    values["executor_id"] = None
-                    values["owner_xid"] = None
-                    if values.get("status") in {"PENDING", "ENQUEUED", "DELAYED"}:
-                        paused.append(str(values["workflow_uuid"]))
-                        attributes = _OBJECT.validate_python(
-                            document(values.get("attributes")) or {}
-                        )
-                        attributes["namespace_restore"] = {
-                            "backup_id": command.backup_id,
-                            "source_namespace_id": state.namespace_id,
-                            "original_status": values["status"],
-                            "copy": not command.preserve_ids,
-                            "requires_review": not command.preserve_ids,
-                        }
-                        values["attributes"] = canonical_json(attributes)
-                        values["status"] = "CANCELLED"
-                    if not command.preserve_ids:
-                        values["authenticated_user"] = ctx.caller_id
-                if name == "workflow_schedules":
-                    values["status"] = "PAUSED"
                 registered = metadata.tables.get(name)
                 if not command.preserve_ids and registered is not None:
                     primary = tuple(registered.primary_key.columns)
@@ -668,7 +592,6 @@ async def restore(
                     tuple(values[field] for field in names),
                 )
         frozen = 0
-        unresolved: tuple[str, ...] = ()
         bindings = tuple(
             InvocationBinding.model_validate(
                 {
@@ -683,40 +606,20 @@ async def restore(
             tx,
             ctx,
             bindings,
-            subject_mapping=mapping,
+            namespace_mapping=mapping,
             caller_mapping={
                 binding.caller_id: binding.caller_id if command.preserve_ids else ctx.caller_id
                 for binding in bindings
                 if binding.caller_id is not None
             },
             call_mapping=mapping,
-            preserve_opaque=command.preserve_ids,
-            source_namespace_id=state.namespace_id,
-        )
-        from nous.cognition.entity_profile_migration import migrate as migrate_entity_profiles
-        from nous.cognition.schema import revisions as cognitive_revisions
-
-        await tx.connection.run_sync(
-            lambda connection: migrate_entity_profiles(connection, cognitive_revisions)
         )
         frozen = report.frozen
-        unresolved = tuple(binding.key for binding in report.opaque)
-        if unresolved:
-            for workflow_id in paused:
-                attributes_row = await tx.connection.exec_driver_sql(
-                    "SELECT attributes FROM workflow_status WHERE workflow_uuid=?", (workflow_id,)
-                )
-                attributes = _OBJECT.validate_json(str(attributes_row.scalar_one()))
-                marker = _OBJECT.validate_python(attributes["namespace_restore"])
-                attributes["namespace_restore"] = {
-                    **marker,
-                    "requires_review": True,
-                    "unresolved_invocations": list(unresolved),
-                }
-                await tx.connection.exec_driver_sql(
-                    "UPDATE workflow_status SET attributes=? WHERE workflow_uuid=?",
-                    (canonical_json(attributes), workflow_id),
-                )
+        execution_data = remap(state.execution.model_dump(mode='json'))
+        if not command.preserve_ids:
+            for job in execution_data['jobs']:
+                job['caller_id'] = ctx.caller_id
+        paused = list(await execution.restore_namespace_in(tx, ctx, ExecutionSnapshot.model_validate(execution_data)))
         for raw in original.get("nous_content_references", ()):
             await content.attach_in(
                 tx, leases[str(raw["content_hash"])], token(str(raw["owner_ref"]))
@@ -728,9 +631,8 @@ async def restore(
             NamespaceBackupRestored(
                 namespace=ns,
                 mapping=mapping,
-                paused_jobs=tuple(paused),
+                resumed_jobs=tuple(paused),
                 authority_commit_seq=final_seq,
                 frozen_invocations=frozen,
-                unresolved_invocations=unresolved,
             )
         )

@@ -92,8 +92,7 @@ def bind_body(
                 )
             ):
                 raise DomainError(
-                    "growth_binding_invalid",
-                    "Bindings identify distinct typed reference fields",
+                    "growth_binding_invalid", "Bindings identify distinct typed reference fields"
                 )
             paths.add(binding.path)
             if path.resolve(body_value) is not None:
@@ -159,8 +158,7 @@ def bind_body(
         )
     if isinstance(body, ConceptBody) and body.state != "active":
         raise DomainError(
-            "growth_structural_action_required",
-            "Concept retirement uses the merge or split action",
+            "growth_structural_action_required", "Concept retirement uses the merge or split action"
         )
     if isinstance(body, EpisodeBody) and body.state != "active":
         raise DomainError(

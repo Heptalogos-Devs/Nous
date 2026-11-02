@@ -300,16 +300,16 @@ def test_maintain_requires_full_observation_coverage_and_reports_a_violation(tmp
                 period=TimeRange(start=0, end=100),
                 at=TimePoint(coordinate=100),
             )
-            incomplete = await app.cognition.assess_motivation(ctx, request)
+            incomplete = await app.motivation.assess_motivation(ctx, request)
             assert incomplete.satisfaction == "unknown"
             assert incomplete.gaps == (TimeRange(start=40, end=60),)
             middle = await fact("true", 40, 60)
-            complete = await app.cognition.assess_motivation(
+            complete = await app.motivation.assess_motivation(
                 ctx, request.model_copy(update={"evidence": (middle,)})
             )
             assert complete.satisfaction == "true" and complete.gaps == ()
             violation = await fact("false", 50, 51)
-            failed = await app.cognition.assess_motivation(
+            failed = await app.motivation.assess_motivation(
                 ctx, request.model_copy(update={"evidence": (middle, violation)})
             )
             assert failed.satisfaction == "false" and violation in failed.evidence
@@ -317,7 +317,7 @@ def test_maintain_requires_full_observation_coverage_and_reports_a_violation(tmp
             await app.facts.change(
                 ctx, FactChange(action="retract", reference=first, refresh_profile=False)
             )
-            retracted = await app.cognition.assess_motivation(
+            retracted = await app.motivation.assess_motivation(
                 ctx, request.model_copy(update={"evidence": (middle,)})
             )
             assert retracted.satisfaction == "unknown" and first not in retracted.evidence
@@ -338,7 +338,7 @@ def test_maintain_requires_full_observation_coverage_and_reports_a_violation(tmp
                     evidence=(EvidenceLink(reference=future),),
                 ),
             )
-            not_yet = await app.cognition.assess_motivation(
+            not_yet = await app.motivation.assess_motivation(
                 ctx,
                 AssessMotivation(
                     reference=target.reference,
@@ -363,7 +363,7 @@ def test_maintain_requires_full_observation_coverage_and_reports_a_violation(tmp
                     evidence=(EvidenceLink(reference=before), EvidenceLink(reference=after)),
                 ),
             )
-            changed = await app.cognition.assess_motivation(
+            changed = await app.motivation.assess_motivation(
                 ctx,
                 AssessMotivation(
                     reference=cessation.reference,
@@ -470,7 +470,7 @@ def test_maintain_requires_full_observation_coverage_and_reports_a_violation(tmp
                 copied_ctx = ctx.model_copy(
                     update={"namespace_id": "copy", "subject_id": restored.mapping["subject"]}
                 )
-                copied = await app.cognition.motivation_assessment(
+                copied = await app.motivation.motivation_assessment(
                     copied_ctx, restored.mapping[saved.assessment_id]
                 )
                 assert copied.assessment.reference.id == restored.mapping[cessation.reference.id]

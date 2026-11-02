@@ -27,7 +27,7 @@ class VectorSpace(Contract):
 
 class VectorSpaces(Contract):
     namespace_id: str
-    subject_id: str | None
+    
     authority_commit_seq: int
     spaces: tuple[VectorSpace, ...]
     eligible_references: int

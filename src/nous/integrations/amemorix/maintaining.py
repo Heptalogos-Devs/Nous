@@ -1,5 +1,7 @@
 """Lifecycle tool selections freeze inside one authoritative, replayable operation."""
 
+from nous_sdk.presentation import body_text
+
 import re
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
@@ -25,7 +27,6 @@ from nous.cognition.lifecycle import (
     snapshot,
     state_for,
 )
-from nous.cognition.projection import body_text
 
 from .helpers import json_object
 
@@ -96,7 +97,7 @@ async def maintain(
         ctx,
         command.operation_id,
         operation_kind="amemorix.maintain",
-        scope=ctx.require_subject(),
+        scope=ctx.namespace_id,
         payload=command,
     ) as tx:
         if tx.replayed:
@@ -252,7 +253,7 @@ async def v5_admin(
         ctx,
         operation_id,
         operation_kind="amemorix.maintain",
-        scope=ctx.require_subject(),
+        scope=ctx.namespace_id,
         payload=command,
     ) as tx:
         if tx.replayed:

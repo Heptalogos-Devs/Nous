@@ -29,7 +29,7 @@ async def require_job_in(
     )
     if purpose == "actor":
         statement = statement.where(job_links.c.caller_id == ctx.caller_id)
-    if ctx.subject_id is not None:
-        statement = statement.where(job_links.c.subject_id == ctx.subject_id)
+    if ctx.namespace_id is not None:
+        statement = statement.where(job_links.c.namespace_id == ctx.namespace_id)
     if await view.connection.scalar(statement) is None:
         raise DomainError("job_not_found", "Job does not exist in this namespace and subject scope")

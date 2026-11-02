@@ -65,7 +65,7 @@ class DerivedBundles(DerivedAvailability):
                 await view.connection.execute(
                     select(representations.c.record).where(
                         representations.c.namespace_id == ctx.namespace_id,
-                        representations.c.subject_id == ctx.require_subject(),
+                        
                     )
                 )
             ).scalars():
@@ -76,7 +76,7 @@ class DerivedBundles(DerivedAvailability):
                 await view.connection.execute(
                     select(derived_regions.c.record).where(
                         derived_regions.c.namespace_id == ctx.namespace_id,
-                        derived_regions.c.subject_id == ctx.require_subject(),
+                        
                     )
                 )
             ).scalars():
@@ -159,7 +159,7 @@ class DerivedBundles(DerivedAvailability):
                     update={
                         "id": identity(region.id),
                         "namespace_id": ctx.namespace_id,
-                        "subject_id": ctx.require_subject(),
+                        
                         "addresses": await allocate_in(
                             tx, ctx, reference(MediaReference(kind="derived_region", id=region.id))
                         ),
@@ -184,7 +184,7 @@ class DerivedBundles(DerivedAvailability):
                     derived_regions.insert().values(
                         id=updated.id,
                         namespace_id=ctx.namespace_id,
-                        subject_id=ctx.require_subject(),
+                        
                         record=updated.model_dump(mode="json"),
                         commit_seq=tx.commit_seq,
                     )
@@ -272,7 +272,7 @@ class DerivedBundles(DerivedAvailability):
                         "reference": representation_ref(target),
                         "addresses": await allocate_in(tx, ctx, target),
                         "namespace_id": ctx.namespace_id,
-                        "subject_id": ctx.require_subject(),
+                        
                         "inputs": inputs,
                         "payload": payload,
                         "producer": value.producer.model_copy(
@@ -301,7 +301,7 @@ class DerivedBundles(DerivedAvailability):
                         id=updated.reference.id,
                         revision=updated.reference.revision,
                         namespace_id=ctx.namespace_id,
-                        subject_id=ctx.require_subject(),
+                        
                         head=heads[value.reference.id] == value.reference.revision,
                         record=updated.model_dump(mode="json"),
                         commit_seq=tx.commit_seq,

@@ -26,8 +26,7 @@ from .revision_state import RevisionState
 from .schema import revisions
 
 if TYPE_CHECKING:
-    from .service import CognitionService
-
+    from .records import CognitiveRecords
 _HISTORY = {"evidence", "lineage", "supersedes", "canonical", "successors", "identity_lineage"}
 
 
@@ -65,8 +64,8 @@ def replace_current(
     return value
 
 
-async def migrate_current_in(
-    self: CognitionService,
+async def replace_references_in(
+    self: CognitiveRecords,
     tx: WriteTx,
     ctx: CallContext,
     replacements: dict[str, CognitiveRef],
@@ -80,9 +79,7 @@ async def migrate_current_in(
     rows = (
         await tx.connection.execute(
             select(revisions.c.record).where(
-                revisions.c.namespace_id == ctx.namespace_id,
-                revisions.c.subject_id == ctx.require_subject(),
-                revisions.c.head.is_(True),
+                revisions.c.namespace_id == ctx.namespace_id, revisions.c.head.is_(True)
             )
         )
     ).scalars()

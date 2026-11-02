@@ -17,18 +17,18 @@ operations = Table(
     Column("operation_key", String, primary_key=True),
     Column("caller_id", String, nullable=False),
     Column("namespace_id", String, nullable=False),
-    Column("subject_id", String),
+    
     Column("scope", String, nullable=False),
     Column("operation_id", String, nullable=False),
     Column("operation_kind", String, nullable=False),
     Column("payload_hash", String, nullable=False),
     Column("payload_json", Text),
-    Column("commit_seq", Integer, nullable=False, unique=True),
+    Column("commit_seq", Integer, nullable=False),
     Column("recorded_at", String, nullable=False),
     Column("result_json", Text, nullable=False),
     Column("jobs_json", Text, nullable=False),
     UniqueConstraint(
-        "caller_id", "operation_kind", "namespace_id", "subject_id", "scope", "operation_id"
+        "caller_id", "operation_kind", 'namespace_id', "scope", "operation_id"
     ),
 )
 
@@ -39,7 +39,7 @@ job_links = Table(
     Column("operation_key", String, nullable=False, index=True),
     Column("caller_id", String, nullable=False),
     Column("namespace_id", String, nullable=False),
-    Column("subject_id", String),
+    
     Column("scope", String, nullable=False),
     Column("owned_parent", String, index=True),
     Column("workflow_name", String, nullable=False),

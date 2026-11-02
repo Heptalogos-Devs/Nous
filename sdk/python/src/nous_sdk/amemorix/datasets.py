@@ -104,7 +104,7 @@ async def capture(adapter: AMemorixAdapter, action: str, arguments: JsonObject) 
         graph_originals = await upload_import_file_documents(
             adapter.client,
             adapter.namespace_id,
-            adapter.subject_id,
+            
             (graph_pickle,),
             transfer_root=managed.root,
             operation_id=operation + ":graph-original",
@@ -121,7 +121,7 @@ async def capture(adapter: AMemorixAdapter, action: str, arguments: JsonObject) 
     documents = await upload_import_file_documents(
         adapter.client,
         adapter.namespace_id,
-        adapter.subject_id,
+        
         files,
         transfer_root=managed.root,
         operation_id=operation,
@@ -184,7 +184,7 @@ async def receive(adapter: AMemorixAdapter, result: JsonObject) -> JsonObject:
             TypeAdapter(str).validate_python(task["artifact_material_id"]),
             target,
             namespace_id=adapter.namespace_id,
-            subject_id=adapter.subject_id,
+            
         )
     task = {**task, "artifact_paths": {"output_archive": str(target)}}
     return TypeAdapter(JsonObject).validate_python({**result, "task": task})

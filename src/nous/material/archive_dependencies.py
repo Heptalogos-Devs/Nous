@@ -6,7 +6,7 @@ from io import BytesIO
 from typing import Literal
 from zipfile import BadZipFile, ZipFile
 
-from nous_sdk.contracts import CallContext, CognitiveRecord, DomainError, SubjectBundle
+from nous_sdk.contracts import CallContext, CognitiveRecord, DomainError, NamespaceBundle
 from sqlalchemy import select
 
 from nous.platform.persistence import ReadView, WriteTx
@@ -30,7 +30,7 @@ def history_archive(data: bytes) -> VerifiedHistoryArchive | None:
             info = archive.getinfo("bundle.json")
             if info.file_size > 64 * 1024 * 1024:
                 return None
-            bundle = SubjectBundle.model_validate_json(archive.read(info))
+            bundle = NamespaceBundle.model_validate_json(archive.read(info))
         if bundle.content_level != "full":
             return None
         from nous.data_management.bundle_validation import validate_graph
@@ -60,7 +60,7 @@ async def history_dependencies_in(
     async def event(identity: str) -> Availability:
         row = (await view.connection.execute(select(observations).where(
             observations.c.id == identity, observations.c.namespace_id == ctx.namespace_id,
-            observations.c.subject_id == ctx.require_subject(),
+            
         ))).mappings().first()
         if row is None:
             return "missing"
@@ -79,7 +79,7 @@ async def history_dependencies_in(
             identifier, revision = identity.rsplit("@", 1)
             raw = await view.connection.scalar(select(revisions.c.record).where(
                 revisions.c.namespace_id == ctx.namespace_id,
-                revisions.c.subject_id == ctx.require_subject(), revisions.c.kind == kind,
+                 revisions.c.kind == kind,
                 revisions.c.id == identifier, revisions.c.revision == int(revision),
             ))
             if raw is None:
@@ -105,7 +105,7 @@ async def history_dependencies_in(
         events = (await view.connection.execute(select(observations).where(
             observations.c.material_id == material_id,
             observations.c.namespace_id == ctx.namespace_id,
-            observations.c.subject_id == ctx.require_subject(),
+            
         ))).mappings().all()
         retained = [row for row in events if not row["record"].get("purged") and row["id"] not in purged_observations]
         if not retained:

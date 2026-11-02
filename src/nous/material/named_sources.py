@@ -32,7 +32,7 @@ async def named_source_observations_in(
 
     # Query callers pass roots already authorized by the region-aware visibility owner.
     # This whitelist narrows metadata matching; it creates no additional SourceRead grant.
-    ctx.require_subject()
+    ctx.namespace_id
     rows = (
         await view.connection.execute(
             select(
@@ -44,7 +44,7 @@ async def named_source_observations_in(
             .join(materials, materials.c.id == observations.c.material_id)
             .where(
                 observations.c.namespace_id == ctx.namespace_id,
-                observations.c.subject_id == ctx.subject_id,
+                
                 materials.c.namespace_id == ctx.namespace_id,
             )
         )

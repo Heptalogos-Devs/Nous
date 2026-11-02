@@ -1,6 +1,8 @@
 根据操作者的修改意图，为目录中的现有认知提出具体修订。
 
-修改意图：{{ instruction }}
+修改意图：
+<!-- input -->
+{{ instruction }}
 
 可选择的认知及其精确修订：
 {{ targets | tojson }}

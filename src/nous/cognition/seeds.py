@@ -1,16 +1,13 @@
 """Creator documents use the shared typed proposal and exact revision adoption path."""
 
-from nous_sdk.contracts import (
-    CallContext,
-    DomainError,
-    FreezeCatalog,
-)
-from nous_sdk.contracts.ego_model import AdoptSeed, InterpretSeed, SeedDocument
+from nous_sdk.contracts import CallContext, DomainError, FreezeCatalog
+from nous_sdk.contracts.ego_model import InterpretSeed, SeedVersion
 from nous_sdk.contracts.maintenance import MaintenanceRun, MaintenanceSubmission, StartMaintenance
 from pydantic import JsonValue, TypeAdapter
 
-from nous.cognition.service import CognitionService
-from nous.identity.access import require_subject_in
+from nous.cognition.ego_model import EgoService
+from nous.cognition.records import CognitiveRecords
+from nous.identity.access import require_namespace_in
 from nous.imports.service import ImportService
 from nous.maintenance.service import MaintenanceService
 from nous.platform.persistence import Authority
@@ -20,16 +17,19 @@ class SeedService:
     def __init__(
         self,
         authority: Authority,
-        cognition: CognitionService,
+        cognition: CognitiveRecords,
         maintenance: MaintenanceService,
         imports: ImportService,
+        *,
+        ego: EgoService,
     ) -> None:
-        self.authority, self.cognition, self.maintenance = authority, cognition, maintenance
+        self.ego = ego
+        self.authority, self.cognition, self.maintenance = (authority, cognition, maintenance)
         self.imports = imports
 
     async def interpret(self, ctx: CallContext, command: InterpretSeed) -> MaintenanceSubmission:
         async with self.authority.read(ctx) as view:
-            await require_subject_in(view, ctx, "ego")
+            await require_namespace_in(view, ctx, "ego")
         existing = await self.maintenance.existing_seed(ctx, command.operation_id)
         if existing is not None:
             if (existing.command.instruction, existing.command.previous_seed_id) != (
@@ -40,37 +40,18 @@ class SeedService:
                     "seed_invocation_conflict",
                     "The existing seed interpretation has different input",
                 )
-            if existing.command.source_catalog_id is None:
-                proof = await self.authority.receipt(
-                    ctx,
-                    command.operation_id + ":documents",
-                    operation_kind="self.seed",
-                    scope=ctx.require_subject(),
-                    payload=AdoptSeed(
-                        operation_id=command.operation_id + ":documents",
-                        documents=tuple(
-                            SeedDocument(document=document) for document in command.documents
-                        ),
-                    ),
-                )
-                if proof is None:
-                    raise DomainError(
-                        "seed_input_proof_unavailable",
-                        "The saved interpretation requires its original source-admission proof",
-                    )
-            else:
-                await self.imports.freeze_catalog(
-                    ctx,
-                    FreezeCatalog(
-                        operation_id=command.operation_id + ":materials", inputs=command.documents
-                    ),
-                )
+            await self.imports.freeze_catalog(
+                ctx,
+                FreezeCatalog(
+                    operation_id=command.operation_id + ":materials", inputs=command.documents
+                ),
+            )
             return MaintenanceSubmission(run_id=existing.id, job_id=existing.job_id)
         previous_references = ()
         if command.previous_seed_id is not None:
             previous = await self.maintenance.read(ctx, command.previous_seed_id)
             if (
-                previous.command.role != "seed"
+                previous.command.kind != "seed"
                 or previous.review is None
                 or previous.review.decision != "adopt"
             ):
@@ -79,8 +60,7 @@ class SeedService:
                 )
             previous_references = previous.review.adopted
         frozen = FreezeCatalog(
-            operation_id=command.operation_id + ":materials",
-            inputs=command.documents,
+            operation_id=command.operation_id + ":materials", inputs=command.documents
         )
         catalog = await self.imports.freeze_catalog(ctx, frozen)
         if not catalog.units or catalog.errors:
@@ -96,7 +76,7 @@ class SeedService:
                         ctx,
                         operation_id=frozen.operation_id,
                         operation_kind="imports.freeze",
-                        scope=ctx.require_subject(),
+                        scope=ctx.namespace_id,
                     )
                 ).context
         return await self.maintenance.submit(
@@ -106,7 +86,7 @@ class SeedService:
                 instruction=command.instruction,
                 references=previous_references,
                 source_catalog_id=catalog.id,
-                role="seed",
+                kind="seed",
                 previous_seed_id=command.previous_seed_id,
                 limit=1000,
             ),
@@ -132,8 +112,47 @@ class SeedService:
             )
         return run
 
+    async def read(self, ctx: CallContext, seed_id: str) -> SeedVersion:
+        run = await self.maintenance.read(ctx, seed_id)
+        if run.command.kind != "seed" or run.command.source_catalog_id is None:
+            raise DomainError("seed_not_found", "The requested Seed source is unavailable")
+        from .growth_sources import from_units_in, read_in
+
+        async with self.authority.read(ctx) as view:
+            catalog = await self.imports.read_catalog_in(view, ctx, run.command.source_catalog_id)
+            sources = await read_in(
+                self.cognition,
+                view,
+                ctx,
+                await from_units_in(self.cognition, view, ctx, catalog.units),
+            )
+        return SeedVersion(
+            id=run.id,
+            previous_seed_id=run.command.previous_seed_id,
+            instruction=run.command.instruction,
+            created_at=run.created_at,
+            sources=sources,
+            adopted=run.review.adopted if run.review else (),
+            review=run.review.decision if run.review else None,
+        )
+
+    async def history(
+        self, ctx: CallContext, seed_id: str, *, limit: int = 32
+    ) -> tuple[SeedVersion, ...]:
+        if not 1 <= limit <= 128:
+            raise DomainError(
+                "seed_history_limit", "Seed history requires a limit between 1 and 128"
+            )
+        versions: list[SeedVersion] = []
+        current: str | None = seed_id
+        while current is not None and len(versions) < limit:
+            version = await self.read(ctx, current)
+            versions.append(version)
+            current = version.previous_seed_id
+        return tuple(versions)
+
     async def markdown(self, ctx: CallContext) -> str:
-        records = await self.cognition.ego_profile(ctx)
+        records = await self.ego.ego_profile(ctx)
         lines = ["# 当前人格", ""]
         for record in records:
             if record.body is None:

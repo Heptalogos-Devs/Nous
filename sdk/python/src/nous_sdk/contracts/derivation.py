@@ -165,7 +165,7 @@ class DerivedRepresentation(Contract):
     reference: RepresentationRef
     addresses: ReferenceAddresses | None = None
     namespace_id: str
-    subject_id: str
+    
     inputs: tuple[DerivationInput, ...]
     kind: RepresentationKind
     strategy: DerivationStrategy
@@ -254,7 +254,7 @@ class DerivedRegion(Contract):
     id: str
     addresses: ReferenceAddresses | None = None
     namespace_id: str
-    subject_id: str
+    
     representation: RepresentationRef
     selector: DerivedSelector | None
     parent_id: str | None = None

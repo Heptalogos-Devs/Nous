@@ -19,8 +19,8 @@ invocations = sa.Table(
     sa.Column("call_id", sa.String, nullable=False),
     sa.Column("commit_seq", sa.Integer, nullable=False),
     *(
-        sa.Column(name, sa.String)
-        for name in ("namespace_id", "subject_id", "caller_id", "role", "invocation_id")
+        sa.Column(name, sa.String, nullable=False)
+        for name in ("namespace_id", "caller_id", "role", "invocation_id")
     ),
 )
 
@@ -31,8 +31,8 @@ retirements = sa.Table(
     sa.Column("commit_seq", sa.Integer, nullable=False),
     sa.Column("recorded_at", sa.String, nullable=False),
     *(
-        sa.Column(name, sa.String)
-        for name in ("namespace_id", "subject_id", "caller_id", "role", "invocation_id", "reason")
+        sa.Column(name, sa.String, nullable=False)
+        for name in ("namespace_id", "caller_id", "role", "invocation_id", "reason")
     ),
 )
 
@@ -47,7 +47,6 @@ async def retire_in(
             commit_seq=tx.commit_seq,
             recorded_at=tx.recorded_at,
             namespace_id=ctx.namespace_id,
-            subject_id=ctx.require_subject(),
             caller_id=ctx.caller_id,
             role=role_id,
             invocation_id=identity,
@@ -61,9 +60,7 @@ def invocation_key(ctx: CallContext, role_id: str, identity: str) -> str:
     if not identity or len(identity) > 512:
         raise ValueError("Invocation identity requires 1–512 characters")
     return sha256(
-        canonical_json(
-            (ctx.caller_id, ctx.namespace_id, ctx.require_subject(), role_id, identity)
-        ).encode()
+        canonical_json((ctx.caller_id, ctx.namespace_id, role_id, identity)).encode()
     ).hexdigest()
 
 
@@ -109,7 +106,9 @@ async def attempt_in(
             if retired.reason in {"subject_migrated", "opaque_restored"}
             else "The invocation's input was permanently erased",
             invocation_id=identity,
-            status="frozen" if retired.reason in {"subject_migrated", "opaque_restored"} else "purged",
+            status="frozen"
+            if retired.reason in {"subject_migrated", "opaque_restored"}
+            else "purged",
         )
     row = (
         (
@@ -127,7 +126,6 @@ async def attempt_in(
                 .where(
                     invocations.c.key == invocation_key(ctx, role_id, identity),
                     calls.c.namespace_id == ctx.namespace_id,
-                    calls.c.subject_id == ctx.require_subject(),
                 )
             )
         )
@@ -145,7 +143,6 @@ async def attempt_in(
             .where(
                 invocations.c.key == invocation_key(ctx, role_id, identity),
                 imported_calls.c.namespace_id == ctx.namespace_id,
-                imported_calls.c.subject_id == ctx.require_subject(),
             )
         )
         if historical is None:
@@ -164,6 +161,17 @@ async def attempt_in(
             archived.request_hash,
             archived.request,
         )
+    from .history import require_visible
+    from .source_fence import source_identities
+
+    require_visible(
+        ctx,
+        tuple(
+            sorted(
+                source_identities(TypeAdapter(dict[str, JsonValue]).validate_python(row["request"]))
+            )
+        ),
+    )
     usage = TypeAdapter(dict[str, JsonValue] | None).validate_python(row["usage"])
     outcome = (
         ModelCallOutcome.model_validate(usage["outcome"])
@@ -211,7 +219,6 @@ async def bind_in(tx: WriteTx, ctx: CallContext, role_id: str, identity: str, ca
             call_id=call_id,
             commit_seq=tx.commit_seq,
             namespace_id=ctx.namespace_id,
-            subject_id=ctx.require_subject(),
             caller_id=ctx.caller_id,
             role=role_id,
             invocation_id=identity,

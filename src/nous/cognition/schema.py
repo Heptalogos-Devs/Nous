@@ -4,7 +4,6 @@ from sqlalchemy import JSON, Boolean, Column, Index, Integer, String, Table
 
 from nous.platform.persistence import metadata
 
-from .entity_profile_migration import register
 
 revisions = Table(
     "cognitive_revisions",
@@ -12,17 +11,14 @@ revisions = Table(
     Column("id", String, primary_key=True),
     Column("revision", Integer, primary_key=True),
     Column("namespace_id", String, nullable=False, index=True),
-    Column("subject_id", String, nullable=False, index=True),
     Column("kind", String, nullable=False, index=True),
     Column("head", Boolean, nullable=False),
     Column("record", JSON, nullable=False),
     Column("commit_seq", Integer, nullable=False),
 )
-
 Index(
     "ix_cognitive_directory_scope_order",
     revisions.c.namespace_id,
-    revisions.c.subject_id,
     revisions.c.commit_seq,
     revisions.c.id,
     revisions.c.revision,
@@ -30,12 +26,10 @@ Index(
 Index(
     "ix_cognitive_directory_scope_kind",
     revisions.c.namespace_id,
-    revisions.c.subject_id,
     revisions.c.kind,
     revisions.c.id,
     revisions.c.revision,
 )
-
 vectors = Table(
     "cognitive_vectors",
     metadata,
@@ -47,5 +41,3 @@ vectors = Table(
     Column("call_id", String),
     Column("commit_seq", Integer, nullable=False),
 )
-
-register(metadata, revisions)

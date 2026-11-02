@@ -21,7 +21,7 @@ from nous_sdk.contracts.derivation import StructuredRepresentation, TextRepresen
 from pydantic import TypeAdapter
 from sqlalchemy import select, update
 
-from nous.identity.access import require_subject_in
+from nous.identity.access import require_namespace_in
 from nous.material.service import MaterialRecord, materials, observations
 from nous.material.text import source_region_text
 from nous.platform.content import ContentObject
@@ -38,11 +38,11 @@ async def contact(
     # operation IDs may change; the reported encounter remains one event.
     identity = sha256(
         canonical_json(
-            (ctx.caller_id, ctx.namespace_id, ctx.require_subject(), command.external_event_id)
+            (ctx.caller_id, ctx.namespace_id, ctx.namespace_id, command.external_event_id)
         ).encode()
     ).hexdigest()
     async with self.authority.read(ctx) as view:
-        await require_subject_in(view, ctx, "memory")
+        await require_namespace_in(view, ctx, "memory")
         for reference in command.related:
             await self.cognition.get_in(view, ctx, reference)
         text: str | None = None
@@ -88,7 +88,7 @@ async def contact(
         ctx,
         identity,
         operation_kind="material.contact",
-        scope=ctx.require_subject(),
+        scope=ctx.namespace_id,
         payload=command.identity_payload(),
     ) as tx:
         for reference in command.related:
@@ -121,7 +121,6 @@ async def contact(
         event.update(
             {
                 "external_event_id": command.external_event_id,
-                "consumer_subject_id": ctx.require_subject(),
                 "caller_id": ctx.caller_id,
                 "contact_source": source.model_dump(mode="json"),
                 "participants": list(command.participants),
@@ -173,21 +172,28 @@ async def contact(
                     media_strategy=command.media_strategy,
                 ),
             )
-        if self.on_contact_in is not None:
-            await self.on_contact_in(
-                tx,
-                ctx,
-                event["id"],
-                tuple(
-                    {
-                        reference.exact(): reference for reference in (*refs, *command.related)
-                    }.values()
-                ),
+        from nous.platform.execution import JobSpec
+
+        if self.authority.execution is not None:
+            await tx.enqueue(
+                JobSpec(
+                    workflow_name="nous.maintenance.contact",
+                    queue_name="default",
+                    workflow_id="contact-growth:" + event["id"],
+                    args=(
+                        ctx.model_dump(mode="json"),
+                        event["id"],
+                        [
+                            ref.model_dump(mode="json")
+                            for ref in dict.fromkeys((*refs, *command.related))
+                        ],
+                    ),
+                )
             )
         return tx.result(
             ContactReceipt(
                 observation_id=event["id"],
-                consumer_subject_id=ctx.require_subject(),
+                namespace_id=ctx.namespace_id,
                 caller_id=ctx.caller_id,
                 external_event_id=command.external_event_id,
                 source=source,

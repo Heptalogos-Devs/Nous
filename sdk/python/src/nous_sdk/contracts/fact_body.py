@@ -22,6 +22,14 @@ FactSection = Literal[
 ]
 
 
+class NamespaceFactScope(Contract):
+    kind: Literal["namespace"] = "namespace"
+
+    @property
+    def identity(self) -> str:
+        return "namespace"
+
+
 class PersonFactScope(Contract):
     kind: Literal["person"] = "person"
     person: CognitiveRef
@@ -46,7 +54,9 @@ class ChatFactScope(Contract):
         return self.conversation_ref
 
 
-FactScope = Annotated[PersonFactScope | ChatFactScope, Field(discriminator="kind")]
+FactScope = Annotated[
+    NamespaceFactScope | PersonFactScope | ChatFactScope, Field(discriminator="kind")
+]
 
 
 class FactEvidence(Contract):

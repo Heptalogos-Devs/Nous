@@ -49,7 +49,7 @@ async def submit_process(self: ImportService, ctx: CallContext, command: Process
         ctx,
         command.operation_id,
         operation_kind="imports.submit",
-        scope=ctx.require_subject(),
+        scope=ctx.namespace_id,
         payload=command,
     ) as tx:
         if tx.replayed:
@@ -83,11 +83,7 @@ async def submit_process(self: ImportService, ctx: CallContext, command: Process
             update(requests).where(requests.c.id == request_id).values(record=request)
         )
         return tx.result(
-            {
-                "request_id": request_id,
-                "job_id": job.workflow_id,
-                "catalog_id": command.catalog_id,
-            }
+            {"request_id": request_id, "job_id": job.workflow_id, "catalog_id": command.catalog_id}
         )
 
 
@@ -130,26 +126,20 @@ async def process_catalog(
     catalog = await self.read_catalog(ctx, command.catalog_id)
     async with self.authority.read(ctx) as view:
         await validate_retry_in(view, ctx, command)
-        from nous_sdk.contracts.namespace_policy import NamespaceFeatures
-
-        from nous.platform.configuration.namespace_policy import policy_in
-
-        if not (
-            await policy_in(view, ctx, "namespace.features", NamespaceFeatures)
-        ).allow_metadata_only_write:
-            command = command.model_copy(update={"vectors": "required"})
         captured_profiles = await request_profiles_in(view, ctx, catalog.id)
     if not any(
-        profile == command
-        and row.get("job_id") == attempt_job_id
-        and CallContext.model_validate(row["context"]).caller_id == ctx.caller_id
-        for row, profile in captured_profiles
+        (
+            profile == command
+            and row.get("job_id") == attempt_job_id
+            and (CallContext.model_validate(row["context"]).caller_id == ctx.caller_id)
+            for row, profile in captured_profiles
+        )
     ):
         async with self.authority.write(
             ctx,
             command.operation_id + ":profile",
             operation_kind="imports.process.profile",
-            scope=ctx.require_subject(),
+            scope=ctx.namespace_id,
             payload={"command": command.model_dump(mode="json"), "job_id": attempt_job_id},
         ) as tx:
             if not tx.replayed:
@@ -386,20 +376,18 @@ async def process_unit(
                 source_record.assertions.model_dump(mode="json", exclude={"facts", "references"})
             )
             if source_record.assertions is not None
-            else (
-                await form(
-                    self.models,
-                    model_ctx,
-                    unit.text,
-                    model_source,
-                    authority=self.authority,
-                    invocation_id=f"import:{command.operation_id}:{unit.id}:form:{retry}"
-                    if command.force
-                    else None,
-                    cache_policy="invocation" if command.force else "shared",
-                )
+            else await form(
+                self.models,
+                model_ctx,
+                unit.text,
+                model_source,
+                configuration=self.configuration,
+                invocation_id=f"import:{command.operation_id}:{unit.id}:form:{retry}"
+                if command.force
+                else None,
+                cache_policy="invocation" if command.force else "shared",
             )
-            if command.llm_enabled and unit.requires_llm and not command.deferred_formation
+            if command.llm_enabled and unit.requires_llm and (not command.deferred_formation)
             else FormationProposal(memories=())
         )
         if effective_options.get("extract_time") is False:
@@ -415,7 +403,7 @@ async def process_unit(
             ctx,
             f"{command.operation_id}:{unit.id}:adopt",
             operation_kind="imports.adopt",
-            scope=ctx.require_subject(),
+            scope=ctx.namespace_id,
             payload={"command": command.model_dump(mode="json"), "unit_id": unit.id},
         ) as tx:
             if tx.replayed:
@@ -427,8 +415,7 @@ async def process_unit(
                 ).scalar_one()
                 if current_unit.get("purged"):
                     raise DomainError(
-                        "source_purged",
-                        "Import input was purged while formation was in progress",
+                        "source_purged", "Import input was purged while formation was in progress"
                     )
                 document = ImportDocument.model_validate(source["document"])
                 document = document.model_copy(
@@ -452,7 +439,7 @@ async def process_unit(
                 )
                 if self.projection is not None:
                     await self.projection.policy_in(tx, "disabled")
-                records = await self.cognition.adopt_text_formation_in(
+                records = await self.formation.adopt_text_formation_in(
                     tx,
                     ctx,
                     unit.text,
@@ -493,7 +480,7 @@ async def process_unit(
                     projection=await self.projection.admit_in(tx, ctx, tuple(refs))
                     if self.projection is not None
                     and command.vectors != "disabled"
-                    and not command.deferred_formation
+                    and (not command.deferred_formation)
                     else None,
                     formation=formation,
                     id=str(uuid4()),
@@ -517,7 +504,7 @@ async def process_unit(
     attempt.value = attempt.value.model_copy(
         update={"output_id": output.id, "producer_call_id": output.producer_call_id}
     )
-    if command.vectors != "disabled" and not command.deferred_formation:
+    if command.vectors != "disabled" and (not command.deferred_formation):
         await attempt.advance("embedding")
         try:
             await self.embed_output(

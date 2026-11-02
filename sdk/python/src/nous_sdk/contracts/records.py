@@ -12,7 +12,7 @@ RecordPurpose = Literal["current", "exact", "management"]
 
 
 class RecordsQuery(Contract):
-    subject_id: str | None = None
+    
     kinds: tuple[CognitiveKind, ...] = ()
     object_ids: tuple[str, ...] = ()
     text: str | None = Field(default=None, max_length=16384)

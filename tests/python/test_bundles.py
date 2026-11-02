@@ -3,6 +3,7 @@
 import asyncio
 from io import BytesIO
 from pathlib import Path
+from uuid import uuid4
 
 from nous_sdk.contracts import (
     AdmitFiles,
@@ -14,49 +15,34 @@ from nous_sdk.contracts import (
     EvidenceLink,
     ImportDocument,
     MediaInfo,
-    SubjectBundle,
+    NamespaceBundle,
 )
 from nous_sdk.contracts.bundles import BundleAssetOptions, PackageDescriptor
 from PIL import Image
 from sqlalchemy import select
 
+from nous.application import Application
 from nous.cognition.schema import vectors
-from nous.cognition.service import CognitionService
 from nous.data_management.archive_read import decode
-from nous.data_management.bundles import BundleService
 from nous.data_management.portable_read import load
-from nous.identity.service import IdentityService
-from nous.imports.service import ImportService
-from nous.material.service import MaterialService
-from nous.platform.content import ContentStore
-from nous.platform.persistence import Authority
-
-
-class LiteralModels:
-    async def form(self, *args, **kwargs):
-        raise AssertionError("Literal archive setup does not form with a model")
-
-    async def embed(self, *args, **kwargs):
-        raise AssertionError("Archive transfer does not replace adopted vector coordinates")
+from nous.platform.configuration import Settings
 
 
 def test_external_portable_and_native_vector_roundtrip(tmp_path: Path):
     async def scenario():
-        authority = Authority(tmp_path / "authority.sqlite")
-        content = ContentStore(authority, tmp_path / "content")
-        materials = MaterialService(authority, content)
-        cognition = CognitionService(authority, materials=materials)
-        imports = ImportService(authority, cognition, LiteralModels(), materials=materials)
-        from nous.platform.models.ledger import CallLedger
-        bundles = BundleService(authority, cognition,ledger=CallLedger(authority),content_store=content)
-        identity = IdentityService(authority)
-        await authority.initialize()
-        ctx = CallContext(
-            credential_source_ids=None, caller_id="owner", namespace_id="ns", subject_id="sender"
+        app = Application(Settings(instance=tmp_path))
+        authority, content, materials, cognition = (
+            app.authority,
+            app.content,
+            app.material,
+            app.cognition,
         )
+        imports, bundles, identity = app.imports, app.bundles, app.identity
+        await content.initialize()
+        await authority.initialize()
+        ctx = CallContext(credential_source_ids=None, caller_id="owner", namespace_id=str(uuid4()))
         try:
             await identity.create_namespace(ctx, "namespace", "namespace")
-            await identity.create_subject(ctx, "sender", "sender", subject_id="sender")
             result = await imports.admit_files(
                 ctx,
                 AdmitFiles(
@@ -114,8 +100,8 @@ def test_external_portable_and_native_vector_roundtrip(tmp_path: Path):
             )
             decoded = decode(native.data)
             assert len(decoded.vectors) == 1
-            receiver = ctx.model_copy(update={"subject_id": "receiver"})
-            await identity.create_subject(receiver, "receiver", "receiver", subject_id="receiver")
+            receiver = ctx.model_copy(update={"namespace_id": str(uuid4())})
+            await identity.create_namespace(receiver, "receiver", "receiver")
             installed = await bundles.install_zip(receiver, native.data, "native-install")
             copied_ref = "memory:" + installed["mapping"][memory.reference.id] + "@1"
             async with authority.read(receiver) as view:
@@ -143,11 +129,11 @@ def test_external_portable_and_native_vector_roundtrip(tmp_path: Path):
             assert checked.images["assets"][0]["content_hash"] == image_material["content_hash"]
             normalized = decode(portable.data)
             assert (
-                SubjectBundle.model_validate(normalized).cognition[0].body.text
+                NamespaceBundle.model_validate(normalized).cognition[0].body.text
                 == "Alice chooses coffee."
             )
-            target = ctx.model_copy(update={"subject_id": "external"})
-            await identity.create_subject(target, "external", "external", subject_id="external")
+            target = ctx.model_copy(update={"namespace_id": str(uuid4())})
+            await identity.create_namespace(target, "external", "external")
             adopted = await bundles.install_zip(target, portable.data, "portable-install")
             assert adopted["cognition_count"] == 2
             assert len(await bundles.list_installs(target)) == 1
@@ -162,7 +148,7 @@ def test_external_portable_and_native_vector_roundtrip(tmp_path: Path):
                 "state"
             ] == "uninstalled"
         finally:
-            await authority.close()
+            await app.close()
 
     asyncio.run(scenario())
 
@@ -171,22 +157,19 @@ def test_artifact_contact_inherits_inputs_and_withdrawal(tmp_path: Path):
     async def scenario():
         from nous_sdk.contracts import BlobDocument, MediaReference, SourceCommand
 
-        from nous.data_management.sources import SourceService
-
-        authority = Authority(tmp_path / "authority.sqlite")
-        store = ContentStore(authority, tmp_path / "content")
-        materials = MaterialService(authority, store)
-        cognition = CognitionService(authority, materials=materials)
-        imports = ImportService(authority, cognition, LiteralModels(), materials=materials)
-        sources = SourceService(authority, cognition, content_store=store)
-        identity = IdentityService(authority)
-        await authority.initialize()
-        ctx = CallContext(
-            credential_source_ids=None, caller_id="owner", namespace_id="ns", subject_id="subject"
+        app = Application(Settings(instance=tmp_path))
+        authority, store, materials, cognition = (
+            app.authority,
+            app.content,
+            app.material,
+            app.cognition,
         )
+        imports, sources, identity = app.imports, app.sources, app.identity
+        await store.initialize()
+        await authority.initialize()
+        ctx = CallContext(credential_source_ids=None, caller_id="owner", namespace_id=str(uuid4()))
         try:
             await identity.create_namespace(ctx, "namespace", "namespace")
-            await identity.create_subject(ctx, "subject", "subject", subject_id="subject")
             imported = await imports.admit_files(
                 ctx,
                 AdmitFiles(
@@ -267,6 +250,95 @@ def test_artifact_contact_inherits_inputs_and_withdrawal(tmp_path: Path):
             )
             assert (await cognition.get(scoped, memory.reference)).body.text == "Derived excerpt."
         finally:
-            await authority.close()
+            await app.close()
+
+    asyncio.run(scenario())
+
+
+def test_namespace_bundle_preserves_paid_call_custody(tmp_path: Path):
+    async def scenario():
+        from nous_sdk.contracts import DomainError, MemoryBody
+
+        app = Application(Settings(instance=tmp_path))
+        authority, materials, cognition = app.authority, app.material, app.cognition
+        ledger, bundles = app.models.ledger, app.bundles
+        await app.content.initialize()
+        await authority.initialize()
+        source = CallContext(
+            caller_id="author", namespace_id=str(uuid4()), credential_source_ids=None
+        )
+        receiver = source.model_copy(update={"namespace_id": str(uuid4()), "caller_id": "receiver"})
+        try:
+            identity = app.identity
+            await identity.create_namespace(source, "source", "create-source")
+            await identity.create_namespace(receiver, "receiver", "create-receiver")
+            async with authority.write(
+                source, "admit", operation_kind="material.admit", payload={}
+            ) as tx:
+                admitted = await materials.admit_text_in(
+                    tx, source, ImportDocument(text="Original evidence Ω.", filename="evidence.txt")
+                )
+                tx.result(admitted.material["id"])
+            request = {
+                "source_ids": [admitted.material["id"]],
+                "body": '{"input":"Ω\\noriginal","namespace_id":"source"}',
+            }
+            response = {
+                "raw_text": "Paid output Ω\n  exact spacing.",
+                "raw_json": {"provider": "retained", "opaque": "AAECAw=="},
+            }
+            call, _ = await ledger.reserve(
+                source, "formation", request, 1, invocation_id="retained-paid"
+            )
+            await ledger.finish(source, call, response, {"input_tokens": 7, "output_tokens": 3})
+            memory = await cognition.adopt(
+                source,
+                AdoptCognition(
+                    operation_id="adopt-paid",
+                    body=MemoryBody(text="Retained paid output."),
+                    evidence=(EvidenceLink(observation_id=admitted.event["id"]),),
+                    producer_call_id=call,
+                ),
+            )
+            exported = await bundles.export_zip(source)
+            original = decode(exported)
+            assert original.calls[0].request["body"] == request["body"]
+            assert original.calls[0].result == response
+            copied = await bundles.install_zip(receiver, exported, "copy")
+            copied_call = copied["mapping"][call]
+            async with authority.read(receiver) as view:
+                retained = (await ledger.export_in(view, receiver, (copied_call,)))[0]
+                assert retained.request == original.calls[0].request and retained.result == response
+                assert retained.origin.namespace_id == source.namespace_id
+                assert retained.source_ids == (copied["mapping"][admitted.material["id"]],)
+                bindings = await ledger.export_invocations_in(view, source)
+            async with authority.write(
+                receiver, "custody", operation_kind="model.custody", payload={}
+            ) as tx:
+                report = await ledger.restore_invocations_in(
+                    tx,
+                    receiver,
+                    bindings,
+                    namespace_mapping={source.namespace_id: receiver.namespace_id},
+                    caller_mapping={source.caller_id: receiver.caller_id},
+                    call_mapping={call: copied_call},
+                )
+                tx.result(report)
+            assert report.frozen == 1
+            try:
+                await ledger.reserve(
+                    receiver, "formation", request, 1, invocation_id="retained-paid"
+                )
+            except DomainError as error:
+                assert error.code == "model_invocation_unavailable"
+            else:
+                raise AssertionError("Transferred invocation must preserve its retired custody")
+            copied_memory = await cognition.get(
+                receiver,
+                memory.reference.model_copy(update={"id": copied["mapping"][memory.reference.id]}),
+            )
+            assert copied_memory.producer_call_id == copied_call
+        finally:
+            await app.close()
 
     asyncio.run(scenario())

@@ -36,7 +36,7 @@ async def dependency_availability_in(
                 select(derived_regions.c.record).where(
                     derived_regions.c.id == reference.id,
                     derived_regions.c.namespace_id == ctx.namespace_id,
-                    derived_regions.c.subject_id == ctx.require_subject(),
+                    
                 )
             )
             if raw_region is None:
@@ -52,7 +52,7 @@ async def dependency_availability_in(
                 representations.c.id == ref.id,
                 representations.c.revision == ref.revision,
                 representations.c.namespace_id == ctx.namespace_id,
-                representations.c.subject_id == ctx.require_subject(),
+                
             )
         )
         if raw is None:
@@ -105,7 +105,7 @@ async def dependency_availability_in(
                     await view.connection.execute(
                         select(observations.c.id).where(
                             observations.c.namespace_id == ctx.namespace_id,
-                            observations.c.subject_id == ctx.require_subject(),
+                            
                             observations.c.material_id == material_id,
                         )
                     )
@@ -177,7 +177,7 @@ async def dependency_availability_in(
                         revisions.c.revision == cognitive_reference.revision,
                         revisions.c.kind == cognitive_reference.kind,
                         revisions.c.namespace_id == ctx.namespace_id,
-                        revisions.c.subject_id == ctx.require_subject(),
+                        
                     )
                 )
                 if raw is None:
@@ -194,7 +194,7 @@ async def dependency_availability_in(
                         await view.connection.execute(
                             select(observations.c.id).where(
                                 observations.c.namespace_id == ctx.namespace_id,
-                                observations.c.subject_id == ctx.require_subject(),
+                                
                                 observations.c.id.in_(record.support_roots or record.source_roots),
                                 observations.c.active.is_(True),
                                 observations.c.id.not_in(
@@ -239,7 +239,7 @@ async def dependency_availability_in(
                 await view.connection.execute(
                     select(observations).where(
                         observations.c.namespace_id == ctx.namespace_id,
-                        observations.c.subject_id == ctx.require_subject(),
+                        
                         observations.c.id.in_((*roots, *required_pins)),
                     )
                 )

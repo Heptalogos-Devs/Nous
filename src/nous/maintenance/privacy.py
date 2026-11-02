@@ -8,6 +8,7 @@ def redact(record: MaintenanceRun) -> MaintenanceRun:
     return record.model_copy(
         update={
             "sources_available": False,
+            "status": "unavailable",
             "draft": None,
             "proposal": None,
             "edits": (),

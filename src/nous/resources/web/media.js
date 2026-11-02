@@ -70,7 +70,7 @@ function contentPath(reference) {
 }
 async function selectMedia(reference) {
   const generation = ++selectionGeneration;
-  const nextSource = await api("/api/sources/read", {
+  const nextSource = await api("/api/v1/sources/read", {
     method: "POST",
     body: { subject_id: state.subject, reference },
   });
@@ -84,7 +84,7 @@ async function selectMedia(reference) {
 }
 export async function loadMedia() {
   if (value("media-locator")) {
-    const resolution = await api("/api/references", {
+    const resolution = await api("/api/v1/references", {
       method: "POST",
       body: {
         subject_id: state.subject,
@@ -315,7 +315,7 @@ export function initializeMedia() {
       source: file.name,
       operation_id: op(),
     });
-    const result = await api(`/api/media/materials?${params}`, {
+    const result = await api(`/api/v1/media/materials?${params}`, {
       method: "POST",
       headers: { "Content-Type": file.type || "application/octet-stream" },
       body: file,

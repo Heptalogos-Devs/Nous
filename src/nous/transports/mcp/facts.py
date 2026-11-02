@@ -17,13 +17,13 @@ def register_facts(
     server: MCPServer,
     client: Callable[[], AbstractAsyncContextManager[NousClient]],
     namespace_id: str,
-    subject_id: str,
+    
 ) -> None:
     @server.tool()
     async def change_fact(command: FactChange) -> JsonObject:
         """Apply one source-backed claim assertion, classification, withdrawal or evidence update."""
         async with client() as api:
-            return (await api.change_fact(namespace_id, subject_id, command)).model_dump(
+            return (await api.change_fact(namespace_id,  command)).model_dump(
                 mode="json"
             )
 
@@ -33,14 +33,14 @@ def register_facts(
         async with client() as api:
             return [
                 record.model_dump(mode="json")
-                for record in await api.query_facts(namespace_id, subject_id, command)
+                for record in await api.query_facts(namespace_id,  command)
             ]
 
     @server.tool()
     async def read_fact(claim_id: str) -> JsonObject:
         """Read the canonical claim, evidence and retained transitions."""
         async with client() as api:
-            return (await api.fact(namespace_id, subject_id, claim_id)).model_dump(mode="json")
+            return (await api.fact(namespace_id,  claim_id)).model_dump(mode="json")
 
     @server.tool()
     async def memory_fact_admin(command: FactAdminInput) -> JsonObject:
@@ -53,5 +53,5 @@ def register_facts(
             values["operation_id"] = str(uuid4())
         async with client() as api:
             return await AMemorixAdapter(
-                api, namespace_id=namespace_id, subject_id=subject_id
+                api, namespace_id=namespace_id
             ).call("memory_fact_admin", values)

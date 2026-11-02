@@ -12,7 +12,7 @@ type ClaimIdentity = tuple[
 
 
 def claim_identity(claim: FactClaimSpec, validity: TimeRange | None) -> ClaimIdentity:
-    return identity(claim), (validity.domain, validity.start, validity.end) if validity else None
+    return (identity(claim), (validity.domain, validity.start, validity.end) if validity else None)
 
 
 def requested_validity(command: FactChange, previous: TimeRange | None) -> TimeRange | None:
@@ -49,7 +49,7 @@ def conflicts_with(
     if identity(left) == identity(right) or conflict_group(left) != conflict_group(right):
         return False
     for validity in (left_validity, right_validity):
-        if validity is not None and validity.start is not None and validity.start == validity.end:
+        if validity is not None and validity.start is not None and (validity.start == validity.end):
             return False
     if left_validity is None or right_validity is None:
         return True
@@ -58,10 +58,12 @@ def conflicts_with(
     return not (
         left_validity.end is not None
         and right_validity.start is not None
-        and left_validity.end <= right_validity.start
-        or right_validity.end is not None
-        and left_validity.start is not None
-        and right_validity.end <= left_validity.start
+        and (left_validity.end <= right_validity.start)
+        or (
+            right_validity.end is not None
+            and left_validity.start is not None
+            and (right_validity.end <= left_validity.start)
+        )
     )
 
 
@@ -70,7 +72,7 @@ def normalized(value: str) -> str:
 
 
 def scope_identity(scope: FactScope) -> tuple[str, str]:
-    return scope.kind, scope.identity
+    return (scope.kind, scope.identity)
 
 
 def identity(claim: FactClaimSpec) -> tuple[str, str, str, str, str]:

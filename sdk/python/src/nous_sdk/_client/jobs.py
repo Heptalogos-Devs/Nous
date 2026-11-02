@@ -23,7 +23,7 @@ class JobClient(MaterialClient):
         self,
         *,
         namespace_id: str | None = None,
-        subject_id: str | None = None,
+        
         limit: int = 50,
         scope: str | None = None,
         kind: str | None = None,
@@ -33,7 +33,7 @@ class JobClient(MaterialClient):
         return (
             await self.job_page(
                 namespace_id=namespace_id,
-                subject_id=subject_id,
+                
                 limit=limit,
                 scope=scope,
                 kind=kind,
@@ -46,7 +46,7 @@ class JobClient(MaterialClient):
         self,
         *,
         namespace_id: str | None = None,
-        subject_id: str | None = None,
+        
         limit: int = 50,
         cursor: str | None = None,
         scope: str | None = None,
@@ -57,10 +57,10 @@ class JobClient(MaterialClient):
         return JobPage.model_validate(
             await self.request(
                 "GET",
-                "/api/job-pages",
+                "/api/v1/job-pages",
                 params={
                     "namespace_id": namespace_id or self.namespace_id,
-                    "subject_id": subject_id or self.subject_id,
+                    
                     "limit": limit,
                     "cursor": cursor,
                     "scope": scope,
@@ -76,16 +76,16 @@ class JobClient(MaterialClient):
         job_id: str,
         *,
         namespace_id: str | None = None,
-        subject_id: str | None = None,
+        
         purpose: Literal["actor", "management"] = "actor",
     ) -> JobDetail:
         return JobDetail.model_validate(
             await self.request(
                 "GET",
-                f"/api/jobs/{segment(job_id)}",
+                f"/api/v1/jobs/{segment(job_id)}",
                 params={
                     "namespace_id": namespace_id or self.namespace_id,
-                    "subject_id": subject_id or self.subject_id,
+                    
                     "purpose": purpose,
                 },
             )
@@ -96,16 +96,16 @@ class JobClient(MaterialClient):
         job_id: str,
         *,
         namespace_id: str | None = None,
-        subject_id: str | None = None,
+        
         purpose: Literal["actor", "management"] = "actor",
     ) -> JsonObject:
         return object_value(
             await self.request(
                 "POST",
-                f"/api/jobs/{segment(job_id)}/cancel",
+                f"/api/v1/jobs/{segment(job_id)}/cancel",
                 params={
                     "namespace_id": namespace_id or self.namespace_id,
-                    "subject_id": subject_id or self.subject_id,
+                    
                     "purpose": purpose,
                 },
             )
@@ -116,7 +116,7 @@ class JobClient(MaterialClient):
         ids: Sequence[str],
         *,
         namespace_id: str | None = None,
-        subject_id: str | None = None,
+        
         timeout_ms: int = 45000,
         purpose: Literal["actor", "management"] = "actor",
     ) -> tuple[Job, ...]:
@@ -132,7 +132,7 @@ class JobClient(MaterialClient):
                         await self.job(
                             job_id,
                             namespace_id=namespace_id,
-                            subject_id=subject_id,
+                            
                             purpose=purpose,
                         )
                     ).job
@@ -148,14 +148,14 @@ class JobClient(MaterialClient):
         ids: Sequence[str],
         *,
         namespace_id: str | None = None,
-        subject_id: str | None = None,
+        
         timeout_ms: int = 45000,
         purpose: Literal["actor", "management"] = "actor",
     ) -> tuple[Job, ...]:
         jobs = await self.wait_jobs(
             ids,
             namespace_id=namespace_id,
-            subject_id=subject_id,
+            
             timeout_ms=timeout_ms,
             purpose=purpose,
         )

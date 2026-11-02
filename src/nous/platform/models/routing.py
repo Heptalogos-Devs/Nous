@@ -9,10 +9,13 @@ from nous_sdk.contracts import CallContext, DomainError, EmbeddingBatch, MediaEm
 from nous_sdk.contracts.common import Contract
 from nous_sdk.contracts.model_roles import ModelCachePolicy
 from nous_sdk.contracts.model_routing import ModelCallOutcome, ModelRouteAttempt, ModelRoutingPolicy
-from pydantic import BaseModel, JsonValue, TypeAdapter
+from nous_sdk.contracts.prompt_compilation import CompiledPrompt, PromptMessage
+from pydantic import JsonValue, TypeAdapter
 from sqlalchemy import select
+from typing_extensions import TypeForm
 
 from nous.platform.configuration import ModelRoute
+from nous.platform.configuration.models import ModelConfiguration
 from nous.platform.errors import NousError, Unavailable
 from nous.platform.persistence import OperationConflict, OperationResultPurged
 from nous.platform.persistence.authority import operation_key
@@ -22,7 +25,7 @@ from .contracts import PreparedRole
 from .embedding import embed_media as request_media
 from .embedding_profile import EmbeddingProfile
 from .generation import Generated, MediaInput, prepare_invocation
-from .invocations import InvocationAttempt, child
+from .invocations import child
 from .outcomes import may_continue
 from .retries import needs_provider_request, rate_limited
 from .roles import json_object
@@ -43,7 +46,7 @@ class GenerationRoute(Contract):
 class GenerationPlan(Contract):
     role: str
     purpose: str
-    prompt: dict[str, JsonValue]
+    prompt: CompiledPrompt
     routes: tuple[GenerationRoute, ...]
     policy: ModelRoutingPolicy
     source_ids: tuple[str, ...]
@@ -51,16 +54,26 @@ class GenerationPlan(Contract):
     variant: str | None = None
 
 
-async def saved_generation(self: ModelService, ctx: CallContext, role: str, intent: str) -> tuple[GenerationPlan, dict[str, JsonValue] | None] | None:
+async def saved_generation(
+    self: ModelService, ctx: CallContext, role: str, intent: str
+) -> tuple[GenerationPlan, dict[str, JsonValue] | None] | None:
     async with self.ledger.authority.read(ctx) as view:
-        raw = (await view.connection.execute(select(operations.c.result_json, operations.c.payload_json).where(
-            operations.c.operation_key == operation_key(ctx, "model.generation_plan", role, intent)))).first()
+        raw = (
+            await view.connection.execute(
+                select(operations.c.result_json, operations.c.payload_json).where(
+                    operations.c.operation_key
+                    == operation_key(ctx, "model.generation_plan", role, intent)
+                )
+            )
+        ).first()
     if raw is None:
         return None
     result = TypeAdapter(JsonValue).validate_json(raw.result_json)
     if isinstance(result, dict) and result.get("$nous_operation_result") == "purged":
         raise OperationResultPurged(intent)
-    return GenerationPlan.model_validate(result), TypeAdapter(dict[str, JsonValue]).validate_json(raw.payload_json) if raw.payload_json else None
+    return GenerationPlan.model_validate(result), TypeAdapter(dict[str, JsonValue]).validate_json(
+        raw.payload_json
+    ) if raw.payload_json else None
 
 
 def identity(ctx: CallContext, supplied: str | None, mechanism: str) -> str:
@@ -88,20 +101,23 @@ def has_sent_attempt(failures: list[dict[str, object]]) -> bool:
     return False
 
 
-async def generation_plan[T: BaseModel | str](
+async def generation_plan[T](
     self: ModelService,
     ctx: CallContext,
     role: str,
     variables: dict[str, object],
-    output: type[T],
+    output: TypeForm[T],
     source_ids: tuple[str, ...],
     media: tuple[MediaInput, ...],
     intent: str,
     cache_policy: ModelCachePolicy,
-    parent: InvocationAttempt | None,
     prepared: PreparedRole | None = None,
-) -> GenerationPlan | None:
+    context_messages: tuple[PromptMessage, ...] = (),
+    max_output_tokens: int | None = None,
+) -> GenerationPlan:
     payload: dict[str, object] = {
+        "max_output_tokens": max_output_tokens,
+        "context_messages": [message.model_dump(mode="json") for message in context_messages],
         "role": role,
         "variables": variables,
         "schema": TypeAdapter(output).json_schema(),
@@ -113,93 +129,35 @@ async def generation_plan[T: BaseModel | str](
             for item in media
         ],
     }
-    saved = await saved_generation(self, ctx, role, intent)
-    if saved is not None:
-        directory, original_payload = saved
-        original_schema = original_payload.get("schema") if original_payload else None
-        if original_schema is None:
-            original_schema = next((route.invocation.get("schema") for route in directory.routes if route.invocation is not None), None)
-        if original_schema is not None:
-            payload["schema"] = original_schema
-        old_variables = original_payload.get("variables") if original_payload else None
-        if isinstance(old_variables, dict) and "body_schema" in variables and "body_schema" in old_variables:
-            payload["variables"] = {**variables, "body_schema": old_variables["body_schema"]}
-    accepted = parent or await self.ledger.attempt(ctx, role, child(intent, 0))
-    if accepted is not None:
-        # Recover against the schema actually sent. Additive local contract
-        # changes do not authorize another paid call for the same semantic input.
-        payload["schema"] = accepted.request.get("schema", payload["schema"])
-        prompt = accepted.request.get("prompt")
-        old_variables = prompt.get("variables") if isinstance(prompt, dict) else None
-        if (
-            isinstance(old_variables, dict)
-            and "body_schema" in variables
-            and "body_schema" in old_variables
-        ):
-            payload["variables"] = {**variables, "body_schema": old_variables["body_schema"]}
     try:
-        if parent is not None:
-            saved = await self.ledger.authority.receipt(
-                ctx, intent, operation_kind="model.generation_plan", scope=role, payload=payload
-            )
-            if saved is not None:
-                return GenerationPlan.model_validate(saved.result)
-            # A physical parent already exists without a separate accepted route
-            # directory. Prove its input before returning it; do not create a new
-            # accepted plan which could replace that earlier private intent.
-            prepared = prepared or await self.prepare_role(
-                ctx, role, variables, output_type=output, require_configured=False
-            )
-            route = prepared.routes[0].route
-            if parent.request.get("video_content_format") == "video_url":
-                route = route.model_copy(update={"video_content_format": "video_url"})
-            expected = prepare_invocation(
-                prepared.definition.invocation_purpose or role,
-                route,
-                prepared.prompt,
-                output,
-                media,
-                source_ids,
-            )
-            prior_prompt, current_prompt = parent.request.get("prompt"), expected.get("prompt")
-            before = prior_prompt.get("variables") if isinstance(prior_prompt, dict) else None
-            after = current_prompt.get("variables") if isinstance(current_prompt, dict) else None
-            if before != after or any(
-                parent.request.get(key) != expected.get(key)
-                for key in ("schema", "media", "source_ids")
-            ):
-                raise DomainError(
-                    "model_invocation_conflict",
-                    "The retained parent has a different semantic input",
-                )
-            if ctx.source_groups():
-                raise DomainError(
-                    "model_invocation_scope_unavailable",
-                    "The retained call has no accepted source-scope proof for this restricted caller",
-                )
-            return None
         async with self.ledger.authority.write(
             ctx, intent, operation_kind="model.generation_plan", scope=role, payload=payload
         ) as tx:
             if tx.replayed:
                 return GenerationPlan.model_validate(tx.replay_result)
             prepared = prepared or await self.prepare_role(
-                ctx, role, variables, output_type=output, require_configured=False
+                ctx,
+                role,
+                variables,
+                output_type=output,
+                require_configured=False,
+                context_messages=context_messages,
+                max_output_tokens=max_output_tokens,
             )
             plan = GenerationPlan(
                 role=role,
                 contract_purpose=prepared.definition.purpose,
                 variant=prepared.definition.variant,
                 purpose=prepared.definition.invocation_purpose or role,
-                prompt=json_object(prepared.prompt),
-                policy=prepared.role.fallback,
+                prompt=prepared.prompt,
+                policy=prepared.role.failure_policy,
                 source_ids=source_ids,
                 routes=tuple(
                     GenerationRoute(
                         id=item.id,
                         index=item.index,
                         route=item.route,
-                        capabilities=item.model.capabilities,
+                        capabilities=item.model.input_modalities,
                         invocation=prepare_invocation(
                             prepared.definition.invocation_purpose or role,
                             item.route,
@@ -221,26 +179,23 @@ async def generation_plan[T: BaseModel | str](
         ) from error
 
 
-async def generate[T: BaseModel | str](
+async def generate[T](
     self: ModelService,
     ctx: CallContext,
     role_id: str,
     variables: dict[str, object],
-    output_type: type[T],
+    output_type: TypeForm[T],
     *,
     source_ids: tuple[str, ...] = (),
     invocation_id: str | None = None,
     cache_policy: ModelCachePolicy = "shared",
     media: tuple[MediaInput, ...] = (),
+    context_messages: tuple[PromptMessage, ...] = (),
+    max_output_tokens: int | None = None,
 ) -> Generated[T]:
     from . import credential
 
     intent = identity(ctx, invocation_id, "generation")
-    previous = await self.ledger.attempt(ctx, role_id, intent)
-    if previous is not None and previous.status != "succeeded":
-        # Unknown physical outcomes must reach their recovery contract before
-        # current configuration or prompt validation can obscure that state.
-        await self.ledger.recall(ctx, role_id, intent)
     plan = await generation_plan(
         self,
         ctx,
@@ -251,19 +206,19 @@ async def generate[T: BaseModel | str](
         media,
         intent,
         cache_policy,
-        previous,
+        context_messages=context_messages,
+        max_output_tokens=max_output_tokens,
     )
-    if previous is not None:
-        retained = await self.ledger.recall(ctx, role_id, intent)
-        assert retained is not None
-        return Generated(
-            TypeAdapter(output_type).validate_python(retained.output), retained.call_id
-        )
-    assert plan is not None
     failures: list[dict[str, object]] = []
     for item in plan.routes:
         attempt_id = child(intent, item.index)
         actual = await self.ledger.attempt(ctx, role_id, attempt_id)
+        if actual is not None and actual.status == "succeeded":
+            retained = await self.ledger.recall(ctx, role_id, attempt_id)
+            assert retained is not None
+            return Generated(
+                TypeAdapter(output_type).validate_python(retained.output), retained.call_id
+            )
         if actual is not None and actual.status != "succeeded":
             rate_retry = (
                 plan.policy.rate_limit_retries
@@ -271,7 +226,11 @@ async def generate[T: BaseModel | str](
                 and actual.outcome.kind == "rejected"
                 and actual.outcome.http_status == 429
             )
-            if may_continue(plan.policy, actual.outcome) and not rate_retry and (actual.outcome is None or actual.outcome.kind != "not_sent"):
+            if (
+                may_continue(plan.policy, actual.outcome)
+                and not rate_retry
+                and (actual.outcome is None or actual.outcome.kind != "not_sent")
+            ):
                 failures.append(
                     {
                         "route_id": item.id,
@@ -282,8 +241,40 @@ async def generate[T: BaseModel | str](
                     }
                 )
                 continue
-            if not rate_retry and not (actual.outcome is not None and actual.outcome.kind == "not_sent" and plan.policy.not_sent):
+            if not rate_retry and not (
+                actual.outcome is not None
+                and actual.outcome.kind == "not_sent"
+                and plan.policy.not_sent
+            ):
                 await self.ledger.recall(ctx, role_id, attempt_id)
+        current_resources = ModelConfiguration.model_validate(
+            (await self.configuration.effective(ctx, "models"))["value"]
+        )
+        current_role = current_resources.roles[role_id]
+        allowed = tuple(
+            current_resources.resolve(role_id, index, require_configured=False)[0]
+            for index in range(len(current_role.preset_ids()))
+        )
+        budget_route = next(
+            (
+                candidate
+                for candidate in allowed
+                if candidate.budget_resource == item.route.budget_resource
+            ),
+            None,
+        )
+        if budget_route is None:
+            raise DomainError(
+                "model_resource_unavailable",
+                "The accepted model resource is no longer enabled for this task",
+                role=role_id,
+            )
+        actual_route = item.route.model_copy(
+            update={
+                "max_calls_per_day": budget_route.max_calls_per_day,
+                "resource_request_budget": budget_route.resource_request_budget,
+            }
+        )
         try:
             key = (
                 credential(item.route, role_id)
@@ -310,14 +301,17 @@ async def generate[T: BaseModel | str](
                 )
 
             async def request(
-                identity: str | None, item: GenerationRoute = item, key: str = key
+                identity: str | None,
+                item: GenerationRoute = item,
+                key: str = key,
+                actual_route: ModelRoute = actual_route,
             ) -> tuple[T, str]:
                 return await self.generation.request(
                     ctx,
                     plan.purpose,
-                    item.route,
+                    actual_route,
                     key,
-                    dict(plan.prompt),
+                    plan.prompt,
                     output_type,
                     media,
                     source_ids=source_ids,
@@ -429,7 +423,9 @@ async def embed(
     profile: EmbeddingProfile | None = None,
     retry_authorization: str | None = None,
 ) -> EmbeddingBatch:
-    return await route_embedding(self, ctx, texts, None, source_ids, invocation_id, profile, retry_authorization)
+    return await route_embedding(
+        self, ctx, texts, None, source_ids, invocation_id, profile, retry_authorization
+    )
 
 
 async def embed_media(
@@ -442,7 +438,9 @@ async def embed_media(
     profile: EmbeddingProfile | None = None,
     retry_authorization: str | None = None,
 ) -> EmbeddingBatch:
-    return await route_embedding(self, ctx, None, inputs, source_ids, invocation_id, profile, retry_authorization)
+    return await route_embedding(
+        self, ctx, None, inputs, source_ids, invocation_id, profile, retry_authorization
+    )
 
 
 async def route_embedding(
@@ -480,7 +478,11 @@ async def route_embedding(
             key = (
                 credential(route, "embedding")
                 if await needs_provider_request(
-                    ctx, "embedding", physical_ids, accepted.fallback_policy, self.ledger,
+                    ctx,
+                    "embedding",
+                    physical_ids,
+                    accepted.fallback_policy,
+                    self.ledger,
                     authorization=retry_authorization,
                 )
                 else ""

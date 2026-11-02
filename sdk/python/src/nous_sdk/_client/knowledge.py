@@ -53,133 +53,133 @@ from .imports import ImportClient
 
 class KnowledgeClient(ImportClient):
     async def register_resource(
-        self, namespace_id: str, subject_id: str, command: RegisterResource
+        self, namespace_id: str,  command: RegisterResource
     ) -> ResourceRecord:
         return ResourceRecord.model_validate(
             await self.request(
                 "POST",
-                self.subject_path(namespace_id, subject_id) + "/resources",
+                self.namespace_path(namespace_id) + "/resources",
                 body=encoded(command),
             )
         )
 
     async def resources(
-        self, namespace_id: str, subject_id: str, *, cursor: str | None = None, limit: int = 100
+        self, namespace_id: str,  *, cursor: str | None = None, limit: int = 100
     ) -> ResourcePage:
         return ResourcePage.model_validate(
             await self.request(
                 "GET",
-                self.subject_path(namespace_id, subject_id) + "/resources",
+                self.namespace_path(namespace_id) + "/resources",
                 params={"cursor": cursor, "limit": limit},
             )
         )
 
     async def resource(
-        self, namespace_id: str, subject_id: str, resource_id: str, *, revision: int | None = None
+        self, namespace_id: str,  resource_id: str, *, revision: int | None = None
     ) -> ResourceRecord:
         return ResourceRecord.model_validate(
             await self.request(
                 "GET",
-                self.subject_path(namespace_id, subject_id) + "/resources/" + segment(resource_id),
+                self.namespace_path(namespace_id) + "/resources/" + segment(resource_id),
                 params={"revision": revision},
             )
         )
 
     async def read_resource(
-        self, namespace_id: str, subject_id: str, command: ReadResource
+        self, namespace_id: str,  command: ReadResource
     ) -> ResourceRecord:
         return ResourceRecord.model_validate(
             await self.request(
                 "POST",
-                self.subject_path(namespace_id, subject_id) + "/resources/read",
+                self.namespace_path(namespace_id) + "/resources/read",
                 body=encoded(command),
             )
         )
 
     async def change_resource(
-        self, namespace_id: str, subject_id: str, command: ChangeResource
+        self, namespace_id: str,  command: ChangeResource
     ) -> ResourceRecord:
         return ResourceRecord.model_validate(
             await self.request(
                 "POST",
-                self.subject_path(namespace_id, subject_id) + "/resources/change",
+                self.namespace_path(namespace_id) + "/resources/change",
                 body=encoded(command),
             )
         )
 
     async def plan_correction(
-        self, namespace_id: str, subject_id: str, command: PlanCorrection
+        self, namespace_id: str,  command: PlanCorrection
     ) -> CorrectionPlan:
         return CorrectionPlan.model_validate(
             await self.request(
                 "POST",
-                self.subject_path(namespace_id, subject_id) + "/corrections/plan",
+                self.namespace_path(namespace_id) + "/corrections/plan",
                 body=encoded(command),
             )
         )
 
     async def apply_correction(
-        self, namespace_id: str, subject_id: str, command: ApplyCorrection
+        self, namespace_id: str,  command: ApplyCorrection
     ) -> CorrectionResult:
         return CorrectionResult.model_validate(
             await self.request(
                 "POST",
-                self.subject_path(namespace_id, subject_id) + "/corrections/apply",
+                self.namespace_path(namespace_id) + "/corrections/apply",
                 body=encoded(command),
             )
         )
 
     async def rollback_correction(
-        self, namespace_id: str, subject_id: str, command: RollbackCorrection
+        self, namespace_id: str,  command: RollbackCorrection
     ) -> CorrectionResult:
         return CorrectionResult.model_validate(
             await self.request(
                 "POST",
-                self.subject_path(namespace_id, subject_id) + "/corrections/rollback",
+                self.namespace_path(namespace_id) + "/corrections/rollback",
                 body=encoded(command),
             )
         )
 
     async def correction_plan(
-        self, namespace_id: str, subject_id: str, plan_id: str
+        self, namespace_id: str,  plan_id: str
     ) -> CorrectionPlan:
         return CorrectionPlan.model_validate(
             await self.request(
                 "GET",
-                self.subject_path(namespace_id, subject_id) + "/corrections/" + segment(plan_id),
+                self.namespace_path(namespace_id) + "/corrections/" + segment(plan_id),
             )
         )
 
     async def correction_plans(
-        self, namespace_id: str, subject_id: str, query: CorrectionPlansQuery | None = None
+        self, namespace_id: str,  query: CorrectionPlansQuery | None = None
     ) -> CorrectionPlansPage:
         query = query or CorrectionPlansQuery()
         return CorrectionPlansPage.model_validate(
             await self.request(
                 "GET",
-                self.subject_path(namespace_id, subject_id) + "/corrections",
+                self.namespace_path(namespace_id) + "/corrections",
                 params={"cursor": query.cursor, "limit": query.limit},
             )
         )
 
     async def records(
-        self, namespace_id: str, subject_id: str, command: RecordsQuery
+        self, namespace_id: str,  command: RecordsQuery
     ) -> RecordsPage:
         return RecordsPage.model_validate(
             await self.request(
                 "POST",
-                self.subject_path(namespace_id, subject_id) + "/records/query",
+                self.namespace_path(namespace_id) + "/records/query",
                 body=encoded(command),
             )
         )
 
     async def read_records(
-        self, namespace_id: str, subject_id: str, command: ReadRecords
+        self, namespace_id: str,  command: ReadRecords
     ) -> tuple[CognitiveRecord, ...]:
         return TypeAdapter(tuple[CognitiveRecord, ...]).validate_python(
             await self.request(
                 "POST",
-                self.subject_path(namespace_id, subject_id) + "/records/read",
+                self.namespace_path(namespace_id) + "/records/read",
                 body=encoded(command),
             )
         )
@@ -187,7 +187,7 @@ class KnowledgeClient(ImportClient):
     async def record_detail(
         self,
         namespace_id: str,
-        subject_id: str,
+        
         reference: CognitiveRef,
         *,
         history_limit: int = 100,
@@ -196,7 +196,7 @@ class KnowledgeClient(ImportClient):
         return RecordDetail.model_validate(
             await self.request(
                 "POST",
-                self.subject_path(namespace_id, subject_id) + "/records/detail",
+                self.namespace_path(namespace_id) + "/records/detail",
                 body={
                     "reference": encoded(reference),
                     "history_limit": history_limit,
@@ -206,15 +206,15 @@ class KnowledgeClient(ImportClient):
         )
 
     async def reconcile_references(
-        self, namespace_id: str, *, subject_id: str | None = None, operation_id: str | None = None
+        self, namespace_id: str, *,  operation_id: str | None = None
     ) -> dict[str, int]:
         from uuid import uuid4
 
         return TypeAdapter(dict[str, int]).validate_python(
             await self.request(
                 "POST",
-                f"/api/namespaces/{segment(namespace_id)}/references/reconcile",
-                params={"subject_id": subject_id or self.subject_id},
+                f"/api/v1/namespaces/{segment(namespace_id)}/references/reconcile",
+                params={},
                 body={"operation_id": operation_id or str(uuid4())},
             )
         )
@@ -224,7 +224,7 @@ class KnowledgeClient(ImportClient):
     ) -> CognitiveRecord:
         return CognitiveRecord.model_validate(
             await self.request(
-                "GET", f"/api/cognition/{segment(object_id)}", params={"revision": revision}
+                "GET", f"/api/v1/cognition/{segment(object_id)}", params={"revision": revision}
             )
         )
 
@@ -233,17 +233,17 @@ class KnowledgeClient(ImportClient):
     ) -> tuple[CognitiveRecord, ...]:
         return TypeAdapter(tuple[CognitiveRecord, ...]).validate_python(
             await self.request(
-                "GET", f"/api/cognition/{segment(object_id)}/history", params={"limit": limit}
+                "GET", f"/api/v1/cognition/{segment(object_id)}/history", params={"limit": limit}
             )
         )
 
     async def concept_by_alias(
-        self, namespace_id: str, subject_id: str, alias: str
+        self, namespace_id: str,  alias: str
     ) -> CognitiveRecord:
         return CognitiveRecord.model_validate(
             await self.request(
                 "GET",
-                self.subject_path(namespace_id, subject_id) + "/concepts/resolve",
+                self.namespace_path(namespace_id) + "/concepts/resolve",
                 params={"alias": alias},
             )
         )
@@ -251,7 +251,7 @@ class KnowledgeClient(ImportClient):
     async def set_cognitive_deleted(
         self,
         namespace_id: str,
-        subject_id: str,
+        
         reference: CognitiveRef,
         deleted: bool,
         *,
@@ -262,7 +262,7 @@ class KnowledgeClient(ImportClient):
         return CognitiveRecord.model_validate(
             await self.request(
                 "POST",
-                self.subject_path(namespace_id, subject_id) + "/cognition/deleted",
+                self.namespace_path(namespace_id) + "/cognition/deleted",
                 body={
                     "operation_id": operation_id or str(uuid4()),
                     "reference": encoded(reference),
@@ -273,7 +273,7 @@ class KnowledgeClient(ImportClient):
 
     async def query(
         self,
-        subject_id: str,
+        
         text: str = "",
         *,
         namespace_id: str | None = None,
@@ -314,27 +314,27 @@ class KnowledgeClient(ImportClient):
         command = QueryRequest.model_validate(values)
         namespace = namespace_id or self.namespace_id
         if namespace is not None:
-            return await self.query_cognition(namespace, subject_id, command)
+            return await self.query_cognition(namespace, namespace_id, command)
         return QueryResult.model_validate(
             await self.request(
-                "POST", f"/api/subjects/{segment(subject_id)}/query", body=encoded(command)
+                "POST", f"/api/v1/query", body=encoded(command)
             )
         )
 
     async def memory(self, memory_id: str) -> CognitiveRecord:
         return CognitiveRecord.model_validate(
-            await self.request("GET", f"/api/memories/{segment(memory_id)}")
+            await self.request("GET", f"/api/v1/memories/{segment(memory_id)}")
         )
 
     async def query_manual(self) -> str:
-        value = await self.request("GET", "/api/query/manual")
+        value = await self.request("GET", "/api/v1/query/manual")
         if not isinstance(value, str):
             raise NousError({"code": "invalid_response", "message": "Query manual is not text"})
         return value
 
     async def source(
         self,
-        subject_id: str,
+        namespace_id: str,
         reference: ExactReference | str,
         *,
         observation_id: str | None = None,
@@ -342,9 +342,9 @@ class KnowledgeClient(ImportClient):
         return object_value(
             await self.request(
                 "POST",
-                "/api/sources/read",
+                "/api/v1/sources/read",
                 body={
-                    "subject_id": subject_id,
+                    
                     "reference": reference if isinstance(reference, str) else encoded(reference),
                     "observation_id": observation_id,
                 },
@@ -354,13 +354,13 @@ class KnowledgeClient(ImportClient):
     async def memory_source(self, memory_id: str, *, revision: int | None = None) -> JsonObject:
         return object_value(
             await self.request(
-                "GET", f"/api/memories/{segment(memory_id)}/source", params={"revision": revision}
+                "GET", f"/api/v1/memories/{segment(memory_id)}/source", params={"revision": revision}
             )
         )
 
     async def resolve_reference(
         self,
-        subject_id: str,
+        namespace_id: str,
         reference: ExactReference | str,
         *,
         as_of_commit: int | None = None,
@@ -368,9 +368,9 @@ class KnowledgeClient(ImportClient):
         return ReferenceResolution.model_validate(
             await self.request(
                 "POST",
-                "/api/references",
+                "/api/v1/references",
                 body={
-                    "subject_id": subject_id,
+                    
                     "reference": reference if isinstance(reference, str) else encoded(reference),
                     "as_of_commit": as_of_commit,
                 },
@@ -378,12 +378,12 @@ class KnowledgeClient(ImportClient):
         )
 
     async def change_memories(
-        self, namespace_id: str, subject_id: str, command: MemoryChanges
+        self, namespace_id: str,  command: MemoryChanges
     ) -> tuple[CognitiveRecord, ...]:
         return TypeAdapter(tuple[CognitiveRecord, ...]).validate_python(
             await self.request(
                 "POST",
-                self.subject_path(namespace_id, subject_id) + "/memories/batch",
+                self.namespace_path(namespace_id) + "/memories/batch",
                 body=encoded(command),
             )
         )
@@ -401,7 +401,7 @@ class KnowledgeClient(ImportClient):
         )
         if command.reference.id != memory_id:
             raise ValueError("Memory command targets a different object")
-        return await self.update_memory(current.namespace_id, current.subject_id, command)
+        return await self.update_memory(current.namespace_id,  command)
 
     async def cognition(self, request: Mapping[str, JsonValue]) -> JsonValue:
         from ..contracts import AdoptCognition, MergeConcepts, ResegmentEpisodes, SplitConcept
@@ -430,11 +430,11 @@ class KnowledgeClient(ImportClient):
             if action == "get":
                 return encoded(record)
             if action == "source":
-                return await self.source(record.subject_id, record.reference)
+                return await self.source(record.namespace_id, record.reference)
             return encoded(
                 await self.set_cognitive_deleted(
                     record.namespace_id,
-                    record.subject_id,
+                    
                     record.reference,
                     TypeAdapter(bool).validate_python(values.pop("deleted")),
                     operation_id=operation_identity(values),
@@ -447,32 +447,30 @@ class KnowledgeClient(ImportClient):
                     namespace_id=TypeAdapter(str | None).validate_python(
                         values.pop("namespace_id", self.namespace_id)
                     ),
-                    subject_id=TypeAdapter(str | None).validate_python(
-                        values.pop("subject_id", self.subject_id)
-                    ),
+                    
                 )
             )
-        if action == "revise" and not values.get("subject_id") and self.subject_id is None:
+        if action == "revise" and not values.get('namespace_id') and self.namespace_id is None:
             current = await self.cognitive_object(
                 TypeAdapter(str).validate_python(values.get("id"))
             )
-            values.update({"namespace_id": current.namespace_id, "subject_id": current.subject_id})
-        namespace, subject = await request_scope(self, values)
+            values.update({"namespace_id": current.namespace_id})
+        namespace = await request_scope(self, values)
         if action in {"create", "revise", "adopt"}:
             values["operation_id"] = operation_identity(values)
             return encoded(
                 await self.adopt_cognition(
-                    namespace, subject, AdoptCognition.model_validate(values)
+                    namespace,  AdoptCognition.model_validate(values)
                 )
             )
         if action == "concept_resolve":
             return encoded(
-                await self.concept_by_alias(namespace, subject, required_text(values, "alias"))
+                await self.concept_by_alias(namespace,  required_text(values, "alias"))
             )
         if action == "form":
             return encoded(
                 await self.form_memory(
-                    subject,
+                    namespace,
                     required_text(values, "observation_id"),
                     source=TypeAdapter(MediaReference | None).validate_python(
                         values.pop("source", None)
@@ -482,28 +480,28 @@ class KnowledgeClient(ImportClient):
             )
         if action == "query":
             return encoded(
-                await self.query_cognition(namespace, subject, QueryRequest.model_validate(values))
+                await self.query_cognition(namespace,  QueryRequest.model_validate(values))
             )
         values["operation_id"] = operation_identity(values)
         if action == "merge_concepts":
             return [
                 encoded(record)
                 for record in await self.merge_concepts(
-                    namespace, subject, MergeConcepts.model_validate(values)
+                    namespace,  MergeConcepts.model_validate(values)
                 )
             ]
         if action == "split_concept":
             return [
                 encoded(record)
                 for record in await self.split_concept(
-                    namespace, subject, SplitConcept.model_validate(values)
+                    namespace,  SplitConcept.model_validate(values)
                 )
             ]
         if action == "resegment_episodes":
             return [
                 encoded(record)
                 for record in await self.resegment_episodes(
-                    namespace, subject, ResegmentEpisodes.model_validate(values)
+                    namespace,  ResegmentEpisodes.model_validate(values)
                 )
             ]
         raise ValueError("Unknown cognition action")

@@ -43,7 +43,7 @@ async function openRun(id) {
   renderMaintenance();
   const identity = current.id;
   const detail = await api(
-    `/api/jobs/${encodeURIComponent(current.job_id)}?` +
+    `/api/v1/jobs/${encodeURIComponent(current.job_id)}?` +
       new URLSearchParams({ namespace_id: state.namespace, subject_id: state.subject }),
   );
   if (current?.id !== identity) return;

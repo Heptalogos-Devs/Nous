@@ -21,7 +21,6 @@ def register(cli: typer.Typer) -> None:
     async def command(
         api: NousClient,
         namespace_id: str,
-        subject_id: str,
         paths: list[Path],
         instruction: str,
         previous_seed_id: str | None,
@@ -37,7 +36,6 @@ def register(cli: typer.Typer) -> None:
                 uploaded = await api.upload_file(
                     namespace_id,
                     path,
-                    owner_subject_id=subject_id,
                     media_type=media_type,
                     operation_id=f"{identity}:upload:{index}",
                 )
@@ -85,7 +83,6 @@ def register(cli: typer.Typer) -> None:
     def interpret(
         ctx: typer.Context,
         namespace_id: str,
-        subject_id: str,
         paths: list[Path],
         instruction: str = "",
         previous_seed_id: str | None = None,
@@ -93,9 +90,9 @@ def register(cli: typer.Typer) -> None:
     ) -> None:
         async def run(api: NousClient) -> object:
             value = await command(
-                api, namespace_id, subject_id, paths, instruction, previous_seed_id, operation_id
+                api, namespace_id, paths, instruction, previous_seed_id, operation_id
             )
-            return await api.interpret_seed(namespace_id, subject_id, value)
+            return await api.interpret_seed(namespace_id, value)
 
         invoke(ctx, run)
 
@@ -103,7 +100,6 @@ def register(cli: typer.Typer) -> None:
     def import_seed(
         ctx: typer.Context,
         namespace_id: str,
-        subject_id: str,
         paths: list[Path],
         instruction: str = "",
         previous_seed_id: str | None = None,
@@ -111,20 +107,18 @@ def register(cli: typer.Typer) -> None:
     ) -> None:
         async def run(api: NousClient) -> object:
             value = await command(
-                api, namespace_id, subject_id, paths, instruction, previous_seed_id, operation_id
+                api, namespace_id, paths, instruction, previous_seed_id, operation_id
             )
-            return await api.import_seed(namespace_id, subject_id, value)
+            return await api.import_seed(namespace_id, value)
 
         invoke(ctx, run)
 
     @group.command("read")
-    def read(
-        ctx: typer.Context, namespace_id: str, subject_id: str, output: Path | None = None
-    ) -> None:
+    def read(ctx: typer.Context, namespace_id: str, output: Path | None = None) -> None:
         target = output.resolve() if output is not None else None
 
         async def run(api: NousClient) -> object:
-            text = await api.ego_markdown(namespace_id, subject_id)
+            text = await api.ego_markdown(namespace_id)
             if target is not None:
                 await asyncio.to_thread(target.write_text, text, encoding="utf-8")
                 return {"path": str(target)}

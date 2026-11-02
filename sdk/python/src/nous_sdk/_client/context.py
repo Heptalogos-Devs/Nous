@@ -27,23 +27,23 @@ class ContextClient(SourceClient):
     async def read_context_source(
         self,
         namespace_id: str,
-        subject_id: str,
+        
         command: ReadContextSource,
     ) -> ContextSourceResult:
         return ContextSourceResult.model_validate(
             await self.request(
                 "POST",
-                self.subject_path(namespace_id, subject_id) + "/contexts/source",
+                self.namespace_path(namespace_id) + "/contexts/source",
                 body=encoded(command),
             )
         )
 
     async def context_track(
-        self, namespace_id: str, subject_id: str, command: ContextTrack
+        self, namespace_id: str,  command: ContextTrack
     ) -> ContextTrackState:
         result = await self.request(
             "POST",
-            self.subject_path(namespace_id, subject_id) + "/contexts/track",
+            self.namespace_path(namespace_id) + "/contexts/track",
             body=encoded(command),
         )
         return ContextTrackState.model_validate(result)
@@ -53,7 +53,7 @@ class ContextClient(SourceClient):
         admission_id: str,
         *,
         namespace_id: str,
-        subject_id: str,
+        
         invocation_id: str,
         outcome: Literal["completed", "failed", "cancelled"],
         occurred_at: datetime,
@@ -64,7 +64,7 @@ class ContextClient(SourceClient):
 
         return await self.report_managed_context(
             namespace_id,
-            subject_id,
+            
             ContextReport(
                 operation_id=event_id("report", invocation_id, admission_id),
                 admission_id=admission_id,
@@ -80,7 +80,7 @@ class ContextClient(SourceClient):
         self,
         *,
         namespace_id: str | None = None,
-        subject_id: str,
+        
         session_id: str,
         consumer_id: str,
         instance_id: str,
@@ -92,7 +92,7 @@ class ContextClient(SourceClient):
         return ManagedBinding(
             self,
             namespace_id=namespace,
-            subject_id=subject_id,
+            
             session_id=session_id,
             consumer_id=consumer_id,
             instance_id=instance_id,
@@ -118,18 +118,17 @@ class ContextClient(SourceClient):
         if source_read is not None:
             scoped = self.with_source_read(SourceReadScope.model_validate(source_read))
             return await scoped.contexts({"action": request.get("action"), "request": values})
-        namespace, subject = await request_scope(self, values)
+        namespace = await request_scope(self, values)
         action = request.get("action")
         operation_id = operation_identity(values)
         if action == "track":
             return encoded(
-                await self.context_track(namespace, subject, ContextTrack.model_validate(values))
+                await self.context_track(namespace,  ContextTrack.model_validate(values))
             )
         if action == "source":
             return encoded(
                 await self.read_context_source(
-                    namespace,
-                    subject,
+                    namespace, 
                     ReadContextSource.model_validate({"operation_id": operation_id, **values}),
                 )
             )
@@ -141,21 +140,20 @@ class ContextClient(SourceClient):
             return {
                 "result": encoded(
                     await self.open_context_session(
-                        namespace,
-                        subject,
+                        namespace, 
                         OpenContextSession.model_validate({"operation_id": operation_id, **values}),
                     )
                 )
             }
         if action == "read_session":
             return encoded(
-                await self.context_session(namespace, subject, required_text(values, "id"))
+                await self.context_session(namespace,  required_text(values, "id"))
             )
         if action == "close_session":
             return {
                 "result": encoded(
                     await self.close_context_session(
-                        namespace, subject, required_text(values, "id"), operation_id
+                        namespace,  required_text(values, "id"), operation_id
                     )
                 )
             }
@@ -167,8 +165,7 @@ class ContextClient(SourceClient):
             return {
                 "result": encoded(
                     await self.change_context_session(
-                        namespace,
-                        subject,
+                        namespace, 
                         ChangeContextSession.model_validate(
                             {
                                 "operation_id": operation_id,
@@ -182,7 +179,7 @@ class ContextClient(SourceClient):
             }
         if action == "residents":
             session = await self.context_session(
-                namespace, subject, required_text(values, "session_id")
+                namespace,  required_text(values, "session_id")
             )
             include_evicted = TypeAdapter(bool).validate_python(
                 values.pop("include_evicted", False)
@@ -204,8 +201,7 @@ class ContextClient(SourceClient):
             return {
                 "result": encoded(
                     await self.change_context_residents(
-                        namespace,
-                        subject,
+                        namespace, 
                         ChangeResidents.model_validate(
                             {
                                 "operation_id": operation_id,
@@ -221,8 +217,7 @@ class ContextClient(SourceClient):
             return {
                 "result": encoded(
                     await self.change_work_context(
-                        namespace,
-                        subject,
+                        namespace, 
                         ChangeWorkContext.model_validate(
                             {"operation_id": operation_id, "action": "create", **values}
                         ),
@@ -230,20 +225,19 @@ class ContextClient(SourceClient):
                 )
             }
         if action == "read_work":
-            return encoded(await self.work_context(namespace, subject, required_text(values, "id")))
+            return encoded(await self.work_context(namespace,  required_text(values, "id")))
         if action == "list_work":
             return [
                 encoded(work)
                 for work in await self.work_contexts(
-                    namespace, subject, TypeAdapter(int).validate_python(values.pop("limit", 50))
+                    namespace,  TypeAdapter(int).validate_python(values.pop("limit", 50))
                 )
             ]
         if action == "work_history":
             return [
                 encoded(work)
                 for work in await self.work_context_history(
-                    namespace,
-                    subject,
+                    namespace, 
                     required_text(values, "id"),
                     TypeAdapter(int).validate_python(values.pop("limit", 50)),
                 )
@@ -254,8 +248,7 @@ class ContextClient(SourceClient):
             return {
                 "result": encoded(
                     await self.change_work_context(
-                        namespace,
-                        subject,
+                        namespace, 
                         ChangeWorkContext.model_validate(
                             {
                                 "operation_id": operation_id,
@@ -269,13 +262,12 @@ class ContextClient(SourceClient):
             }
         if action == "prepare":
             submitted = await self.submit_context_preparation(
-                namespace,
-                subject,
+                namespace, 
                 ContextPrepare.model_validate({"operation_id": operation_id, **values}),
             )
             completed = (
                 await self.wait_success(
-                    (submitted.job_id,), namespace_id=namespace, subject_id=subject
+                    (submitted.job_id,), namespace_id=namespace
                 )
             )[0]
             output = object_value(completed.output)
@@ -284,10 +276,10 @@ class ContextClient(SourceClient):
         if action in {"preparation", "cancel_preparation"}:
             identity = required_text(values, "id")
             result = (
-                await self.context_preparation(namespace, subject, identity)
+                await self.context_preparation(namespace,  identity)
                 if action == "preparation"
                 else await self.cancel_context_preparation(
-                    namespace, subject, identity, operation_id
+                    namespace,  identity, operation_id
                 )
             )
             return encoded(result)
@@ -295,8 +287,7 @@ class ContextClient(SourceClient):
             return {
                 "result": encoded(
                     await self.admit_managed_context(
-                        namespace,
-                        subject,
+                        namespace, 
                         ContextAdmissionCommand.model_validate(
                             {"operation_id": operation_id, **values}
                         ),
@@ -305,14 +296,13 @@ class ContextClient(SourceClient):
             }
         if action == "admission":
             return encoded(
-                await self.context_admission(namespace, subject, required_text(values, "id"))
+                await self.context_admission(namespace,  required_text(values, "id"))
             )
         if action == "report":
             return {
                 "result": encoded(
                     await self.report_managed_context(
-                        namespace,
-                        subject,
+                        namespace, 
                         ContextReport.model_validate({"operation_id": operation_id, **values}),
                     )
                 )

@@ -37,10 +37,20 @@ async def needs_provider_request(
             latest, latest_id, latest_index = actual, identity, index
         if latest is None:
             return True
-        manual = await ledger.attempt(ctx, role, manual_identity(base, authorization)) if authorization else None
+        manual = (
+            await ledger.attempt(ctx, role, manual_identity(base, authorization))
+            if authorization
+            else None
+        )
         if manual is not None:
             latest, latest_id = manual, manual_identity(base, authorization or "")
-        elif authorization and latest.status != "succeeded" and latest.outcome is not None and latest.outcome.kind == "rejected" and may_continue(policy, latest.outcome):
+        elif (
+            authorization
+            and latest.status != "succeeded"
+            and latest.outcome is not None
+            and latest.outcome.kind == "rejected"
+            and may_continue(policy, latest.outcome)
+        ):
             return True
         if latest.status == "succeeded":
             continue
@@ -66,7 +76,8 @@ async def rate_limited[T](
     policy: ModelRoutingPolicy,
     ledger: CallLedger,
     request: Callable[[str | None], Awaitable[T]],
-    *, authorization: str | None = None,
+    *,
+    authorization: str | None = None,
 ) -> T:
     if invocation_id is not None and authorization is not None:
         manual = manual_identity(invocation_id, authorization)
@@ -82,9 +93,18 @@ async def rate_limited[T](
                 break
             latest, latest_id = found, identity
         if latest is not None:
-            if latest.status == "succeeded" or latest.outcome is not None and latest.outcome.kind == "not_sent" and policy.not_sent:
+            if (
+                latest.status == "succeeded"
+                or latest.outcome is not None
+                and latest.outcome.kind == "not_sent"
+                and policy.not_sent
+            ):
                 return await request(latest_id)
-            if latest.outcome is not None and latest.outcome.kind == "rejected" and may_continue(policy, latest.outcome):
+            if (
+                latest.outcome is not None
+                and latest.outcome.kind == "rejected"
+                and may_continue(policy, latest.outcome)
+            ):
                 if latest.outcome.http_status == 429:
                     delay = latest.outcome.retry_after_seconds
                     delay = policy.rate_limit_wait_seconds if delay is None else delay
@@ -98,7 +118,11 @@ async def rate_limited[T](
     for index in range(policy.rate_limit_retries + 1):
         identity = invocation_id if index == 0 else f"{invocation_id}:rate-limit:{index}"
         prior = await ledger.attempt(ctx, role, identity)
-        if prior is None or prior.status == "succeeded" or (prior.outcome is not None and prior.outcome.kind == "not_sent" and policy.not_sent):
+        if (
+            prior is None
+            or prior.status == "succeeded"
+            or (prior.outcome is not None and prior.outcome.kind == "not_sent" and policy.not_sent)
+        ):
             try:
                 return await request(identity)
             except Unavailable:

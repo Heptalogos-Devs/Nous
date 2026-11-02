@@ -130,7 +130,7 @@ async def selection(
     elif mode == "relation":
         await collect("association", direct, query)
         if query and not restoring and not purging:
-            graph = await service.app.cognition.search_graph(
+            graph = await service.app.graphs.search_graph(
                 ctx, GraphSearchQuery(text=query, limit=1000)
             )
             for item in graph.matches:

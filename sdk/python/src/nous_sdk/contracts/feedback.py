@@ -46,7 +46,7 @@ class FeedbackDecision(Contract):
 class FeedbackTask(Contract):
     id: str
     namespace_id: str
-    subject_id: str
+    
     caller_id: str
     session_id: str
     query: str

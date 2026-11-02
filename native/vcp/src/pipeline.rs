@@ -105,6 +105,10 @@ pub struct GhostTagInput {
 #[derive(Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(default, rename_all = "camelCase")]
 pub struct PipelineConfig {
+    pub epa_enabled: bool,
+    pub gating_enabled: bool,
+    pub topology_enabled: bool,
+    pub fields_enabled: bool,
     pub base_tag_boost: f64,
     pub core_boost_factor: f64,
     pub local_alpha: f64,
@@ -138,6 +142,10 @@ pub struct PipelineConfig {
 impl Default for PipelineConfig {
     fn default() -> Self {
         Self {
+            epa_enabled: true,
+            gating_enabled: true,
+            topology_enabled: true,
+            fields_enabled: true,
             base_tag_boost: 0.6,
             core_boost_factor: 1.33,
             local_alpha: 0.15,

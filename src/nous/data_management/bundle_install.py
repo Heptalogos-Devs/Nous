@@ -16,8 +16,8 @@ from nous_sdk.contracts import (
     FileSuccess,
     InstallBundle,
     MediaReference,
+    NamespaceBundle,
     SourceRegion,
-    SubjectBundle,
     TimePoint,
     UnitOutput,
 )
@@ -30,7 +30,7 @@ from sqlalchemy import select
 
 from nous.cognition.projection import evidence_in, references_in
 from nous.cognition.schema import revisions, vectors
-from nous.identity.access import require_subject_in
+from nous.identity.access import require_namespace_in
 from nous.imports.schema import catalogs, inputs, outputs, successes, units
 from nous.material.service import MaterialRecord, materials, observations, regions
 from nous.platform.content import ContentLease, ContentObject
@@ -62,12 +62,12 @@ async def install(
         ctx,
         command.operation_id,
         operation_kind="bundle.install",
-        scope=ctx.require_subject(),
+        scope=ctx.namespace_id,
         payload=command,
     )
     if receipt is not None:
         return receipt.result
-    bundle = SubjectBundle.model_validate(command.bundle)
+    bundle = NamespaceBundle.model_validate(command.bundle)
     from .bundle_validation import validate_graph
 
     validate_graph(bundle)
@@ -102,10 +102,16 @@ async def install(
                 from nous.material.archive_dependencies import history_archive
 
                 verified = await asyncio.to_thread(history_archive, data)
-                if verified is not None and verified.sources == frozenset(material.get("required_source_ids", ())):
+                if verified is not None and verified.sources == frozenset(
+                    material.get("required_source_ids", ())
+                ):
                     historical_materials.add(row.id)
         return await self.install_prepared(
-            ctx, command, bundle, leases, purpose=purpose,
+            ctx,
+            command,
+            bundle,
+            leases,
+            purpose=purpose,
             historical_materials=frozenset(historical_materials),
         )
     finally:
@@ -118,15 +124,15 @@ async def install_prepared(
     self: BundleService,
     ctx: CallContext,
     command: InstallBundle,
-    original: SubjectBundle,
+    original: NamespaceBundle,
     leases: dict[str, ContentLease],
     *,
     purpose: IdentityPurpose = "active",
     historical_materials: frozenset[str] = frozenset(),
 ):
     bundle = original.model_dump(mode="json")
-    if bundle.get("format") != "nous.subject" or bundle.get("version") != 1:
-        raise DomainError("bundle_format", "Unsupported Nous subject bundle format")
+    if bundle.get("format") != "nous.namespace.bundle" or bundle.get("version") != 1:
+        raise DomainError("bundle_format", "Unsupported Nous namespace bundle format")
     records = [CognitiveRecord.model_validate(value) for value in bundle["cognition"]]
     obs = {row["id"]: row for row in bundle["observations"]}
     mats = {row["id"]: row for row in bundle["materials"]}
@@ -153,7 +159,7 @@ async def install_prepared(
                 "bundle_source_missing", "Cognition evidence has an unresolved observation"
             )
     for row in obs.values():
-        # SubjectBundle has validated the shared ObservationKind, including
+        # NamespaceBundle has validated the shared ObservationKind, including
         # immutable snapshots read from registered external resources.
         if row["material_id"] not in mats:
             raise DomainError(
@@ -172,30 +178,28 @@ async def install_prepared(
         ctx,
         command.operation_id,
         operation_kind="bundle.install",
-        scope=ctx.require_subject(),
+        scope=ctx.namespace_id,
         payload=command,
     ) as tx:
         if tx.replayed:
             return tx.replay_result
-        await require_subject_in(tx, ctx, "memory", purpose=purpose)
+        await require_namespace_in(tx, ctx, "memory", purpose=purpose)
         if command.archive_material_id:
             await self.cognition.materials.read_in(tx, ctx, command.archive_material_id)
         if command.mode == "restore":
             if original.content_level != "full":
                 raise DomainError(
-                    "bundle_restore_full_required", "Restore requires a full subject archive"
+                    "bundle_restore_full_required", "Restore requires a full namespace archive"
                 )
             for table in (revisions, catalogs, observations):
-                statement = select(table.c.id).where(
-                    table.c.namespace_id == ctx.namespace_id, table.c.subject_id == ctx.subject_id
-                )
+                statement = select(table.c.id).where(table.c.namespace_id == ctx.namespace_id)
                 if table is observations and command.archive_material_id:
                     statement = statement.where(
                         observations.c.material_id != command.archive_material_id
                     )
                 if await tx.connection.scalar(statement.limit(1)) is not None:
                     raise DomainError(
-                        "bundle_restore_nonempty", "Restore requires an empty receiving Subject"
+                        "bundle_restore_nonempty", "Restore requires an empty receiving Namespace"
                     )
         digest = sha256(
             json.dumps(
@@ -210,7 +214,6 @@ async def install_prepared(
                 await tx.connection.execute(
                     select(bundle_installs.c.record).where(
                         bundle_installs.c.namespace_id == ctx.namespace_id,
-                        bundle_installs.c.subject_id == ctx.subject_id,
                     )
                 )
             ).scalars()
@@ -276,7 +279,6 @@ async def install_prepared(
         identity_fields = {
             "id",
             "namespace_id",
-            "subject_id",
             "catalog_id",
             "input_source_id",
             "material_id",
@@ -329,8 +331,6 @@ async def install_prepared(
                 return [remap(item, field) for item in value]
             if field == "namespace_id":
                 return ctx.namespace_id
-            if field == "subject_id":
-                return ctx.subject_id
             if field in {"required_source_ids", "reference"} and isinstance(value, str):
                 if ":" not in value:
                     return mapping.get(value, value)
@@ -349,7 +349,7 @@ async def install_prepared(
                 return mapping.get(value, value) if isinstance(value, str) else value
             return value
 
-        remapped = SubjectBundle.model_validate(remap(bundle)).model_dump(mode="json")
+        remapped = NamespaceBundle.model_validate(remap(bundle)).model_dump(mode="json")
         for binding in original.bindings:
             target = binding.target
             identity = (
@@ -447,18 +447,12 @@ async def install_prepared(
                     id=adopted.reference.id,
                     revision=adopted.reference.revision,
                     namespace_id=ctx.namespace_id,
-                    subject_id=ctx.require_subject(),
                     kind=adopted.reference.kind,
                     head=heads[record.reference.id] == record.reference.revision,
                     record=adopted.model_dump(mode="json"),
                     commit_seq=tx.commit_seq,
                 )
             )
-        from nous.cognition.entity_profile_migration import migrate as migrate_entity_profiles
-
-        await tx.connection.run_sync(
-            lambda connection: migrate_entity_profiles(connection, revisions)
-        )
         vector_targets = {
             *keys,
             *(f"material:{identity}" for identity in mats),
@@ -533,7 +527,6 @@ async def install_prepared(
             "content_digest": digest,
             "archive_material_id": command.archive_material_id,
             "source_namespace_id": original.namespace_id,
-            "source_subject_id": original.subject_id,
             "installed_at": tx.recorded_at,
             "state": "active",
             "owned_observation_ids": [mapping[oid] for oid in obs],
@@ -546,7 +539,6 @@ async def install_prepared(
                     "provenance": archived.provenance,
                     "call_id": archived.call_id,
                     "source_namespace_id": original.namespace_id,
-                    "source_subject_id": original.subject_id,
                 }
                 for archived, row in zip(original.vectors, remapped["vectors"], strict=True)
             ],
@@ -558,7 +550,6 @@ async def install_prepared(
             bundle_installs.insert().values(
                 id=installation_id,
                 namespace_id=ctx.namespace_id,
-                subject_id=ctx.require_subject(),
                 record=result,
             )
         )

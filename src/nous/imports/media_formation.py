@@ -86,7 +86,7 @@ async def authorize_result(
                 (command.material_id,),
                 operation_id=command.operation_id + ":contact",
                 operation_kind="media.contact",
-                scope=ctx.require_subject(),
+                scope=ctx.namespace_id,
             )
         ).context
     observation_id = TypeAdapter(str).validate_python(result["observation_id"])
@@ -110,7 +110,7 @@ async def observe(
         ctx,
         command.operation_id + ":contact",
         operation_kind="media.contact",
-        scope=ctx.require_subject(),
+        scope=ctx.namespace_id,
         payload=command.identity_payload(),
     ) as tx:
         if tx.replayed:
@@ -123,7 +123,7 @@ async def observe(
                         (command.material_id,),
                         operation_id=command.operation_id + ":contact",
                         operation_kind="media.contact",
-                        scope=ctx.require_subject(),
+                        scope=ctx.namespace_id,
                     )
                 ).context
                 if command.observation_id is None and ctx.source_groups()
@@ -153,7 +153,7 @@ async def adopt(
         ctx,
         command.operation_id,
         operation_kind="media.adopt",
-        scope=ctx.require_subject(),
+        scope=ctx.namespace_id,
         payload=command.identity_payload(),
     )
     if completed is not None:
@@ -185,7 +185,7 @@ async def adopt(
                     ctx,
                     f"{command.operation_id}:region:{region.id}",
                     operation_kind="material.region",
-                    scope=ctx.require_subject(),
+                    scope=ctx.namespace_id,
                     payload=region,
                 ) as tx:
                     if not tx.replayed:
@@ -295,7 +295,7 @@ async def adopt(
             source,
             media,
             strategies[command.strategy],
-            authority=self.authority,
+            configuration=self.configuration,
             description_adopter=save_description,
             cached_description=description,
         )
@@ -334,7 +334,7 @@ async def adopt(
         ctx,
         command.operation_id,
         operation_kind="media.adopt",
-        scope=ctx.require_subject(),
+        scope=ctx.namespace_id,
         payload=command.identity_payload(),
     ) as tx:
         if tx.replayed:
@@ -431,7 +431,7 @@ async def adopt(
                 producer_call_id=proposal.producer_call_id,
             ),
         )
-        semantic = await self.cognition.adopt_semantic_proposal_in(tx, ctx, anchor, proposal, times)
+        semantic = await self.formation.adopt_semantic_proposal_in(tx, ctx, anchor, proposal, times)
         return tx.result(
             {
                 "observation_id": observation_id,

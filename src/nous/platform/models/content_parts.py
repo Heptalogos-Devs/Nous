@@ -6,8 +6,10 @@ from typing import TYPE_CHECKING
 
 import httpx2
 from nous_sdk.contracts import CallContext, DomainError
+from nous_sdk.contracts.prompt_compilation import CompiledPrompt
 from openai import AsyncOpenAI, omit
 from pydantic import BaseModel, JsonValue, TypeAdapter
+from typing_extensions import TypeForm
 
 from nous.platform.configuration import ModelRoute
 from nous.platform.errors import NousError, Unavailable
@@ -20,10 +22,8 @@ if TYPE_CHECKING:
     from .generation import MediaInput
 
 
-def content_parts(
-    prompt: dict[str, object], media: tuple[MediaInput, ...]
-) -> list[dict[str, JsonValue]]:
-    parts: list[dict[str, JsonValue]] = [{"type": "text", "text": str(prompt["rendered"])}]
+def content_parts(prompt: CompiledPrompt, media: tuple[MediaInput, ...]) -> list[JsonValue]:
+    parts: list[JsonValue] = []
     for item in media:
         if item.media_type.startswith("text/") or item.media_type == "application/json":
             parts.append({"type": "text", "text": item.data.decode("utf-8")})
@@ -46,35 +46,39 @@ def content_parts(
     return parts
 
 
-async def complete_video[T: BaseModel | str](
+async def complete_video[T](
     ctx: CallContext,
     call_id: str,
     route: ModelRoute,
     key: str,
-    prompt: dict[str, object],
-    output_type: type[T],
+    prompt: CompiledPrompt,
+    output_type: TypeForm[T],
     media: tuple[MediaInput, ...],
     ledger: CallLedger,
     client: httpx2.AsyncClient,
     *,
     role: str,
     invocation_id: str | None,
-    response_format_snapshot: JsonValue = None,
 ) -> tuple[T, str]:
+    binding_type: TypeForm[T] = output_type
     raw: JsonValue = None
     try:
         parts = content_parts(prompt, media)
+        messages: list[dict[str, JsonValue]] = [
+            {"role": item.role, "content": item.content} for item in prompt.messages
+        ]
+        messages.append({"role": "user", "content": parts})
         sdk = AsyncOpenAI(base_url=route.base_url, api_key=key, http_client=client, max_retries=0)
         if output_type is str:
             response = await sdk.chat.completions.with_raw_response.create(
                 model=route.model,
-                messages=[{"role": "user", "content": str(prompt["rendered"])}],
+                messages=[],
                 max_tokens=route.max_output_tokens,
                 temperature=route.temperature if route.temperature is not None else omit,
                 reasoning_effort=route.reasoning_effort
                 if route.reasoning_effort is not None
                 else omit,
-                extra_body={**route.extra_body, "messages": [{"role": "user", "content": parts}]},
+                extra_body={**route.extra_body, "messages": messages},
             )
             raw = TypeAdapter(JsonValue).validate_json(response.content)
             parsed_text = response.parse()
@@ -87,18 +91,17 @@ async def complete_video[T: BaseModel | str](
             result = TypeAdapter(output_type).validate_python(
                 parsed_text.choices[0].message.content
             )
-        elif issubclass(output_type, BaseModel):
+        elif isinstance(output_type, type) and issubclass(output_type, BaseModel):
             response_json = await sdk.chat.completions.with_raw_response.parse(
                 model=route.model,
-                messages=[{"role": "user", "content": str(prompt["rendered"])}],
+                messages=[],
                 response_format=output_type,
                 max_tokens=route.max_output_tokens,
                 temperature=route.temperature if route.temperature is not None else omit,
                 reasoning_effort=route.reasoning_effort
                 if route.reasoning_effort is not None
                 else omit,
-                extra_body={**route.extra_body, "messages": [{"role": "user", "content": parts}],
-                    **({"response_format": response_format_snapshot} if response_format_snapshot is not None else {})},
+                extra_body={**route.extra_body, "messages": messages},
             )
             raw = TypeAdapter(JsonValue).validate_json(response_json.content)
             parsed_json = response_json.parse()
@@ -116,7 +119,7 @@ async def complete_video[T: BaseModel | str](
                 "actual_output_mode": "text" if output_type is str else "json_schema",
             },
         )
-        return result, call_id
+        return TypeAdapter[T](binding_type).validate_python(result), call_id
     except asyncio.CancelledError:
         await asyncio.shield(
             ledger.finish(ctx, call_id, None, {"response": raw}, "CancelledUnknownOutcome")

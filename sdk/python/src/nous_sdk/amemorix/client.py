@@ -60,11 +60,11 @@ class AMemorixAdapter:
         client: NousClient,
         *,
         namespace_id: str,
-        subject_id: str,
+        
         wait_timeout_ms: int | None = None,
         transfer_root: str | Path | None = None,
     ) -> None:
-        self.client, self.namespace_id, self.subject_id = client, namespace_id, subject_id
+        self.client, self.namespace_id, self.namespace_id = client, namespace_id, namespace_id
         self.wait_timeout_ms = wait_timeout_ms
         self.transfer_root = ManagedFiles(transfer_root).root if transfer_root is not None else None
 
@@ -91,7 +91,7 @@ class AMemorixAdapter:
         return await upload_import_inputs(
             self.client,
             self.namespace_id,
-            self.subject_id,
+            
             files,
             transfer_root=self.managed_files.root,
             input_format=input_format,
@@ -116,11 +116,11 @@ class AMemorixAdapter:
             values["operation_id"] = str(uuid4())
         command = AMemorixRequest(
             namespace_id=self.namespace_id,
-            subject_id=self.subject_id,
+            
             operation=AMemorixOperation(tool=tool, arguments=values),
         )
         return object_value(
-            await self.client.request("POST", "/api/integrations/amemorix", body=encoded(command))
+            await self.client.request("POST", "/api/v1/integrations/amemorix", body=encoded(command))
         )
 
     async def search_memory(
@@ -271,7 +271,7 @@ class AMemorixAdapter:
 
             result = await self.client.read_context_source(
                 self.namespace_id,
-                self.subject_id,
+                
                 ReadContextSource(
                     operation_id=event_id(
                         "source", tool_call_id, admission.admission_id + parsed.reference.exact()

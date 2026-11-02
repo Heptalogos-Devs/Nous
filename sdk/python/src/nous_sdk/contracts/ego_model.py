@@ -6,6 +6,7 @@ from pydantic import Field
 
 from .cognition import CognitiveRef
 from .common import Contract, Operation
+from .growth import GrowthSource
 from .growth_bodies import (
     GrowthAssociation,
     GrowthConcern,
@@ -19,33 +20,6 @@ from .growth_bodies import (
     GrowthSocialRelation,
 )
 from .imports import ImportDocument
-from .personality import FacetCategory
-
-
-class SeedFacet(Contract):
-    facet: str = Field(min_length=1)
-    description: str = Field(min_length=1)
-    contexts: tuple[str, ...] = ()
-    exceptions: tuple[str, ...] = ()
-    target: CognitiveRef | None = None
-    category: FacetCategory = Field(default="other", exclude_if=lambda value: value == "other")
-
-
-class SeedDocument(Contract):
-    document: ImportDocument
-    facets: tuple[SeedFacet, ...] = ()
-    enter_memory: bool = True
-
-
-class AdoptSeed(Operation):
-    documents: tuple[SeedDocument, ...] = Field(min_length=1)
-
-
-class SeedResult(Contract):
-    observation_ids: tuple[str, ...]
-    memories: tuple[CognitiveRef, ...]
-    facets: tuple[CognitiveRef, ...]
-    commit_seq: int
 
 
 class InterpretSeed(Operation):
@@ -83,3 +57,13 @@ class SeedProposal(Contract):
     rationale: str = Field(min_length=1)
     actions: tuple[SeedAdoption, ...] = Field(default=(), max_length=100)
     questions: tuple[str, ...] = ()
+
+
+class SeedVersion(Contract):
+    id: str
+    previous_seed_id: str | None = None
+    instruction: str
+    created_at: str
+    sources: tuple[GrowthSource, ...]
+    adopted: tuple[CognitiveRef, ...] = ()
+    review: Literal["adopt", "reject"] | None = None

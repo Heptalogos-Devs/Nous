@@ -1,16 +1,21 @@
 """The application registers the contracts owned by its actual model consumers."""
 
 from nous_sdk.contracts.cognition import FormationDraft
-from nous_sdk.contracts.context import ContextSegment, ContextUsage, StewardProposal
+from nous_sdk.contracts.context import SelectionResult
 from nous_sdk.contracts.corrections import CorrectionDraft, CorrectionModelInput
 from nous_sdk.contracts.ego_model import SeedProposal
 from nous_sdk.contracts.episodes import EpisodeSegmentationDraft, EpisodeSegmentationInput
 from nous_sdk.contracts.feedback import FeedbackDecision, FeedbackInput
-from nous_sdk.contracts.growth import GrowthProposal
+from nous_sdk.contracts.maintenance_tasks import (
+    DreamDraft,
+    JournalDraft,
+    LearningPhrase,
+    ReflectionDraft,
+)
 from nous_sdk.contracts.motivation import MotivationInterpretation
 from nous_sdk.contracts.person_profiles import PersonProfileDraft, PersonProfileModelInput
 from nous_sdk.contracts.social import SymbolDecision, SymbolSemanticInput
-from pydantic import BaseModel, ConfigDict, Field, JsonValue
+from pydantic import BaseModel, ConfigDict, JsonValue
 
 from nous.imports.model_contracts import MediaFormationDraft
 from nous.platform.models.roles import RoleDefinition, RoleRegistry
@@ -36,30 +41,42 @@ class MediaFormationInput(FormationInput):
     saved_description: SavedDescription | None = None
 
 
-class StewardOption(RoleInput):
-    id: str
-    segment: ContextSegment
-
-
-class StewardBudget(RoleInput):
-    items: int = Field(ge=1)
-    text_bytes: int = Field(ge=1)
+class SelectionInput(RoleInput):
+    goal: str
+    background: str
+    question: str
+    passages: str
+    requirements: str = ""
 
 
 class StewardInput(RoleInput):
-    usage: ContextUsage
-    required: tuple[ContextSegment, ...]
-    optional: tuple[StewardOption, ...]
-    budget: StewardBudget
+    question: str
+    passages: str
 
 
-class MaintenanceInput(RoleInput):
+class SeedInput(RoleInput):
     maintenance_run_id: str
     instruction: str
     snapshot: dict[str, JsonValue]
-    body_schema: dict[str, JsonValue]
     previous_proposal: dict[str, JsonValue] | None = None
     validation_error: dict[str, JsonValue] | None = None
+
+
+class JournalInput(RoleInput):
+    instruction: str
+    style: str
+    materials: str
+    period: str = ""
+
+
+class ReflectionInput(RoleInput):
+    question: str
+    materials: str
+
+
+class DreamInput(RoleInput):
+    theme: str
+    materials: str
 
 
 class RerankDocument(RoleInput):
@@ -79,19 +96,6 @@ class MotivationInput(RoleInput):
     evidence: tuple[dict[str, JsonValue], ...]
 
 
-def append_description(prompt: dict[str, object], value: BaseModel) -> dict[str, object]:
-    parsed = MediaFormationInput.model_validate(value)
-    if parsed.saved_description is None:
-        return prompt
-    return {
-        **prompt,
-        "description_call_id": parsed.saved_description.producer_call_id,
-        "rendered": str(prompt["rendered"])
-        + "\n已保存的描述：\n"
-        + parsed.saved_description.description,
-    }
-
-
 def register(registry: RoleRegistry) -> None:
     for entry in (
         RoleDefinition("formation", "text", FormationInput, FormationDraft, default=True),
@@ -101,7 +105,6 @@ def register(registry: RoleRegistry) -> None:
             MediaFormationInput,
             MediaFormationDraft,
             invocation_purpose="media.formation",
-            transform_prompt=append_description,
         ),
         RoleDefinition(
             "description",
@@ -111,15 +114,25 @@ def register(registry: RoleRegistry) -> None:
             default=True,
             invocation_purpose="media.description",
         ),
-        RoleDefinition("steward", "selection", StewardInput, StewardProposal, default=True),
-        RoleDefinition("maintenance", "proposal", MaintenanceInput, GrowthProposal, default=True),
-        RoleDefinition("seed", "proposal", MaintenanceInput, SeedProposal, default=True),
+        RoleDefinition("steward", "selection", SelectionInput, SelectionResult, default=True),
+        RoleDefinition("context_compress", "text", StewardInput, str, default=True),
+        RoleDefinition("history_topics", "groups", StewardInput, list[list[int]], default=True),
+        RoleDefinition("work_summary", "text", StewardInput, str, default=True),
+        RoleDefinition("work_questions", "questions", StewardInput, list[str], default=True),
+        RoleDefinition("local_learning", "notes", StewardInput, list[LearningPhrase], default=True),
+        RoleDefinition("knowledge_update", "text", StewardInput, str, default=True),
+        RoleDefinition("seed", "proposal", SeedInput, SeedProposal, default=True),
+        RoleDefinition("journal", "entry", JournalInput, JournalDraft, default=True),
+        RoleDefinition("reflect", "local", ReflectionInput, ReflectionDraft, default=True),
+        RoleDefinition("dream", "hypotheses", DreamInput, DreamDraft, default=True),
         RoleDefinition(
             "correction", "proposal", CorrectionModelInput, CorrectionDraft, default=True
         ),
         RoleDefinition("rerank", "ranking", RerankInput, Ranking, default=True),
         RoleDefinition("feedback", "classification", FeedbackInput, FeedbackDecision, default=True),
-        RoleDefinition("symbols", "interpretation", SymbolSemanticInput, SymbolDecision, default=True),
+        RoleDefinition(
+            "symbols", "interpretation", SymbolSemanticInput, SymbolDecision, default=True
+        ),
         RoleDefinition(
             "motivation", "interpretation", MotivationInput, MotivationInterpretation, default=True
         ),

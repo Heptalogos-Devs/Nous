@@ -8,7 +8,6 @@ from uuid import uuid4
 
 import sqlalchemy as sa
 from nous_sdk.contracts import CallContext, DomainError
-from nous_sdk.contracts.identity import Namespace
 from nous_sdk.contracts.namespace_backups import (
     NamespaceBackupChunk,
     NamespaceBackupInfo,
@@ -24,6 +23,7 @@ from nous.identity.service import IdentityService, require_management_scope
 from nous.platform.concurrency import owned_thread
 from nous.platform.content import ContentLease, ContentStore
 from nous.platform.persistence import Authority, metadata
+from nous.platform.execution import DurableExecution
 
 from .namespace_backup_store import NamespaceBackupStore
 from .namespace_state import capture
@@ -39,9 +39,10 @@ uploads = sa.Table(
 
 class NamespaceBackupService:
     def __init__(
-        self, authority: Authority, identity: IdentityService, content: ContentStore, root: Path
+        self, authority: Authority, identity: IdentityService, content: ContentStore, root: Path, *, execution: DurableExecution
     ):
         self.authority, self.identity, self.content = authority, identity, content
+        self.execution = execution
         self.root = root
         self.store = NamespaceBackupStore(root / "archives", root / "uploads")
 
@@ -90,11 +91,6 @@ class NamespaceBackupService:
     @staticmethod
     def require_scope(ctx: CallContext, source_namespace_id: str | None = None) -> None:
         require_management_scope(ctx)
-        if ctx.subject_id is not None:
-            raise DomainError(
-                "namespace_backup_scope_forbidden",
-                "Namespace backup requires the complete namespace",
-            )
         if source_namespace_id is not None and ctx.namespace_id not in {
             "instance",
             source_namespace_id,
@@ -114,8 +110,15 @@ class NamespaceBackupService:
                 temporary_path = Path(temporary)
                 async with self.content.preserve_all():
                     database = await self.authority.backup(temporary_path / "authority.sqlite")
-                    state = await owned_thread(lambda: capture(database, ctx.namespace_id))
-                    namespace = Namespace.model_validate(state.tables["namespaces"][0])
+                    commit, tables, workflow_ids = await owned_thread(lambda: capture(database, ctx.namespace_id))
+                    snapshot_authority = Authority(database)
+                    try:
+                        async with snapshot_authority.read(ctx) as view:
+                            execution = await self.execution.export_namespace_in(view, ctx, workflow_ids=workflow_ids)
+                    finally:
+                        await snapshot_authority.close()
+                    state = NamespaceState(namespace_id=ctx.namespace_id, authority_commit_seq=commit, tables=tables, execution=execution)
+                    namespace = await self.identity.namespace(ctx, "management")
                     source = temporary_path / "namespace"
                     await owned_thread(lambda: self._stage(state, source))
                     version = max(
@@ -320,7 +323,7 @@ class NamespaceBackupService:
                             )
                         leases[digest] = lease
                 return await restore(
-                    self.authority, self.identity, self.content, ctx, command, state, leases
+                    self.authority, self.identity, self.content, self.execution, ctx, command, state, leases
                 )
             finally:
                 for lease in leases.values():

@@ -82,11 +82,22 @@ def _record(
             assertions = assertions_from_source(
                 fields, openie=kind == "lpmm_openie", identifier_scope=identifier_scope
             )
-            supplied_id = next((fields[key] for key in ("external_id", "idx", "hash") if fields.get(key) is not None), None)
+            supplied_id = next(
+                (
+                    fields[key]
+                    for key in ("external_id", "idx", "hash")
+                    if fields.get(key) is not None
+                ),
+                None,
+            )
             record = ImportRecord.model_validate(
                 {
-                    "external_id": str(supplied_id) if supplied_id is not None else stable_id(structured),
-                    "identifiers": {identifier_scope: str(supplied_id)} if identifier_scope and supplied_id is not None else {},
+                    "external_id": str(supplied_id)
+                    if supplied_id is not None
+                    else stable_id(structured),
+                    "identifiers": {identifier_scope: str(supplied_id)}
+                    if identifier_scope and supplied_id is not None
+                    else {},
                     "text": text,
                     "source": fields.get("source"),
                     "source_type": fields.get("source_type") or kind,
@@ -192,21 +203,37 @@ def parse_document(
     result = []
     for index, value in enumerate(records):
         pointer = f"{prefix}/{index}"
-        result.append(
-            _record(value, index, kind, pointer, identifier_scope=identifier_scope)
-        )
+        result.append(_record(value, index, kind, pointer, identifier_scope=identifier_scope))
     if isinstance(context, dict):
         from .structured_records import assertions_from_source
+
         for field in ("entities", "relations"):
             values = context.get(field) or []
             if not isinstance(values, list):
                 raise DomainError("invalid_import_json", "Global source assertions require arrays")
             for index, value in enumerate(values):
                 try:
-                    asserted = assertions_from_source({field: [value]}, identifier_scope=identifier_scope)
+                    asserted = assertions_from_source(
+                        {field: [value]}, identifier_scope=identifier_scope
+                    )
                     structured = {"format": "source_assertion", "payload": value}
-                    record = ImportRecord(external_id=stable_id(structured), text=json.dumps(value, ensure_ascii=False, sort_keys=True), source_type="source_assertion", structured=structured, assertions=asserted)
-                    result.append(ParsedRecord(index=len(result), record=record, pointer=f"/{field}/{index}"))
+                    record = ImportRecord(
+                        external_id=stable_id(structured),
+                        text=json.dumps(value, ensure_ascii=False, sort_keys=True),
+                        source_type="source_assertion",
+                        structured=structured,
+                        assertions=asserted,
+                    )
+                    result.append(
+                        ParsedRecord(index=len(result), record=record, pointer=f"/{field}/{index}")
+                    )
                 except (ValueError, ValidationError) as error:
-                    result.append(ParsedRecord(index=len(result), record=None, pointer=f"/{field}/{index}", error=str(error)))
+                    result.append(
+                        ParsedRecord(
+                            index=len(result),
+                            record=None,
+                            pointer=f"/{field}/{index}",
+                            error=str(error),
+                        )
+                    )
     return result

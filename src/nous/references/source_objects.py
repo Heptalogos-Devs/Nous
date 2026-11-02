@@ -21,9 +21,10 @@ from nous_sdk.contracts.source_objects import (
     ObservationRecord,
     ObservationReference,
 )
+from nous_sdk.contracts.targets import CognitiveTarget, ContextTarget
+from nous_sdk.presentation import body_text
 from sqlalchemy import select
 
-from nous.cognition.projection import body_text
 from nous.material.service import observations
 from nous.platform.persistence import ReadView, WriteTx
 
@@ -40,7 +41,6 @@ async def observation_records_in(
     result: list[ObservationRecord] = []
     statement = select(observations).where(
         observations.c.namespace_id == ctx.namespace_id,
-        observations.c.subject_id == ctx.subject_id,
         observations.c.active.is_(True),
     )
     if observation_id is not None:
@@ -75,11 +75,9 @@ async def observation_records_in(
             ObservationRecord(
                 reference=ObservationReference(id=row["id"]),
                 namespace_id=ctx.namespace_id,
-                subject_id=ctx.require_subject(),
                 source=reference,
                 event_kind=source["kind"],
                 external_event_id=source.get("external_event_id"),
-                consumer_subject_id=source.get("consumer_subject_id"),
                 caller_id=source.get("caller_id") or source.get("origin", {}).get("caller_id"),
                 participants=tuple(source.get("participants", ())),
                 audience=tuple(source.get("audience", ())),
@@ -108,7 +106,6 @@ def evidence_record(
     return EvidenceRelationRecord(
         reference=EvidenceReference(id=key),
         namespace_id=record.namespace_id,
-        subject_id=record.subject_id,
         target=record.reference,
         evidence=link,
         source=source,
@@ -240,3 +237,47 @@ async def read_source_object_in(
     result = evidence_record(record, index, source)
     await require_source_object_in(self, view, ctx, result)
     return result
+
+
+async def material_ids_in(
+    self: ReferenceDirectory,
+    view: ReadView | WriteTx,
+    ctx: CallContext,
+    targets: tuple[ContextTarget, ...],
+    *,
+    known_observation_ids: tuple[str, ...] = (),
+) -> tuple[str, ...]:
+    """Resolve custody dependencies of the current authorized projection only."""
+    roots = set(known_observation_ids)
+    material_ids: set[str] = set()
+    for target in dict.fromkeys(targets):
+        if isinstance(target, CognitiveTarget):
+            record = await self.cognition.get_in(
+                view, ctx, target.reference, check_visibility=False
+            )
+            roots.update(record.source_roots)
+        else:
+            material_ids.update(
+                (
+                    await self.materials.provenance_in(
+                        view, ctx, target.reference, derivations=self.derivations
+                    )
+                ).material_ids
+            )
+    if roots:
+        selected = (
+            await view.connection.execute(
+                select(observations.c.id, observations.c.material_id).where(
+                    observations.c.namespace_id == ctx.namespace_id,
+                    observations.c.id.in_(roots),
+                    observations.c.active.is_(True),
+                    observations.c.record["purged"].as_boolean().is_not(True),
+                )
+            )
+        ).all()
+        if {str(row.id) for row in selected} != roots:
+            raise DomainError(
+                "source_unavailable", "A selected context source is no longer available"
+            )
+        material_ids.update(str(row.material_id) for row in selected)
+    return tuple(sorted(material_ids))

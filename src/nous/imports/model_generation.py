@@ -11,9 +11,8 @@ from nous_sdk.contracts.namespace_policy import FormationPolicy
 
 from nous.cognition.formation_validation import validate_formation_policy
 from nous.cognition.models import ModelServices
-from nous.platform.configuration.namespace_policy import policy_in
+from nous.platform.configuration.service import ConfigurationService
 from nous.platform.models.generation import MediaInput
-from nous.platform.persistence import Authority
 from nous.platform.time import parse_timepoint
 
 from .model_contracts import Description, MediaFormationDraft
@@ -25,12 +24,11 @@ async def form(
     text: str,
     source: dict[str, object],
     *,
-    authority: Authority,
+    configuration: ConfigurationService,
     invocation_id: str | None = None,
     cache_policy: ModelCachePolicy = "shared",
 ) -> FormationProposal:
-    async with authority.read(ctx) as view:
-        policy = await policy_in(view, ctx, "formation", FormationPolicy)
+    policy = await configuration.policy(ctx, "formation", FormationPolicy)
     if not policy.enabled:
         raise DomainError("formation_disabled", "Namespace semantic formation is disabled")
     if len(text) > policy.max_chunk_chars:
@@ -60,12 +58,11 @@ async def interpret(
     media: tuple[MediaInput, ...],
     strategy: Literal["description_only", "direct_structured", "describe_then_structure"],
     *,
-    authority: Authority,
+    configuration: ConfigurationService,
     description_adopter: Callable[[Description], Awaitable[None]] | None = None,
     cached_description: Description | None = None,
 ) -> Description | FormationProposal:
-    async with authority.read(ctx) as view:
-        policy = await policy_in(view, ctx, "formation", FormationPolicy)
+    policy = await configuration.policy(ctx, "formation", FormationPolicy)
     if strategy != "description_only" and not policy.enabled:
         raise DomainError("formation_disabled", "Namespace semantic formation is disabled")
     source = {**source, "formation_policy": policy.model_dump(mode="json")}

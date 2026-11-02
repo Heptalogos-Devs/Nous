@@ -4,10 +4,10 @@ from hashlib import sha256
 from typing import TYPE_CHECKING
 
 from nous_sdk.contracts import CallContext, CognitiveRef, DomainError
+from nous_sdk.presentation import body_text
 from sqlalchemy import select
 
 from nous.cognition.lifecycle import selectable
-from nous.cognition.projection import body_text
 from nous.cognition.schema import revisions, vectors
 from nous.material.service import observations
 from nous.platform.persistence import ReadView, WriteTx
@@ -35,15 +35,6 @@ async def resolve_input(
     text = None
     media = None
     if isinstance(target, CognitiveRef):
-        if target.kind == "association":
-            from nous_sdk.contracts.namespace_policy import NamespaceFeatures
-
-            from nous.platform.configuration.namespace_policy import policy_in
-
-            if not (
-                await policy_in(view, ctx, "namespace.features", NamespaceFeatures)
-            ).relation_vectors:
-                return None
         record = await self.cognition.get_in(view, ctx, target)
         if not selectable(record, include_inactive=not head_only):
             return None
@@ -52,7 +43,6 @@ async def resolve_input(
                 revisions.c.id == target.id,
                 revisions.c.revision == target.revision,
                 revisions.c.namespace_id == ctx.namespace_id,
-                revisions.c.subject_id == ctx.require_subject(),
             )
         ):
             return None
@@ -68,7 +58,6 @@ async def resolve_input(
                         await view.connection.execute(
                             select(observations.c.material_id).where(
                                 observations.c.namespace_id == ctx.namespace_id,
-                                observations.c.subject_id == ctx.require_subject(),
                                 observations.c.id.in_(record.source_roots),
                             )
                         )
@@ -103,7 +92,7 @@ async def resolve_input(
         canonical_json(
             (
                 ctx.namespace_id,
-                ctx.require_subject(),
+                ctx.namespace_id,
                 resource,
                 text,
                 media.model_dump(mode="json") if media else None,
@@ -121,14 +110,22 @@ async def retained_content_in(
     target: Target,
     value: Input,
     profile: EmbeddingProfile,
-    *, repair: bool = False,
+    *,
+    repair: bool = False,
 ) -> Content | None:
     raw = await view.connection.scalar(select(contents.c.record).where(contents.c.key == value.key))
     if raw is not None:
         content = Content.model_validate(raw)
         await self.models.successful_embedding_in(view, ctx, content.call_id)
-        evidence = await self.models.reusable_embedding_in(view, ctx, content.call_id, profile,
-            text=value.text, media=value.media, source_ids=value.source_ids)
+        evidence = await self.models.reusable_embedding_in(
+            view,
+            ctx,
+            content.call_id,
+            profile,
+            text=value.text,
+            media=value.media,
+            source_ids=value.source_ids,
+        )
         if evidence is not None:
             if (content.space, content.model, content.dimensions, content.vector) == (
                 evidence.batch.space,
@@ -152,7 +149,6 @@ async def retained_content_in(
                     select(revisions.c.revision).where(
                         revisions.c.id == target.id,
                         revisions.c.namespace_id == ctx.namespace_id,
-                        revisions.c.subject_id == ctx.require_subject(),
                         revisions.c.revision < target.revision,
                     )
                 )
@@ -189,7 +185,9 @@ async def retained_content_in(
         ):
             if repair:
                 continue
-            raise DomainError("embedding_producer_conflict", "The adopted vector differs from its paid result")
+            raise DomainError(
+                "embedding_producer_conflict", "The adopted vector differs from its paid result"
+            )
         return Content(
             input=value,
             space=batch.space,
@@ -199,11 +197,19 @@ async def retained_content_in(
             call_id=str(row["call_id"]),
             call_source_ids=evidence.source_ids,
         )
-    evidence = await self.models.find_embedding_in(view, ctx, profile, text=value.text,
-        media=value.media, source_ids=value.source_ids)
+    evidence = await self.models.find_embedding_in(
+        view, ctx, profile, text=value.text, media=value.media, source_ids=value.source_ids
+    )
     if evidence is not None:
         batch = evidence.batch
         assert batch.call_ids[0] is not None
-        return Content(input=value, space=batch.space, model=batch.model, dimensions=batch.dimensions,
-            vector=batch.vectors[0], call_id=batch.call_ids[0], call_source_ids=evidence.source_ids)
+        return Content(
+            input=value,
+            space=batch.space,
+            model=batch.model,
+            dimensions=batch.dimensions,
+            vector=batch.vectors[0],
+            call_id=batch.call_ids[0],
+            call_source_ids=evidence.source_ids,
+        )
     return None

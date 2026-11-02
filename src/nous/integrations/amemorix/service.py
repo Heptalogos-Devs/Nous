@@ -26,7 +26,7 @@ from nous_sdk.contracts.context import CognitiveTarget
 from nous_sdk.contracts.records import RecordPurpose
 from pydantic import JsonValue, TypeAdapter
 
-from nous.identity.access import require_subject_in
+from nous.identity.access import require_namespace_in
 
 from .helpers import json_object
 
@@ -53,7 +53,7 @@ class AMemorixService:
             from .runtime import runtime_admin
             return await runtime_admin(self, ctx, operation.arguments)
         async with self.app.authority.read(ctx) as view:
-            await require_subject_in(view, ctx)
+            await require_namespace_in(view, ctx)
         tool, arguments = operation.tool, operation.arguments
         if tool == "enqueue_feedback_task":
             return await feedback.enqueue(self, ctx, arguments)

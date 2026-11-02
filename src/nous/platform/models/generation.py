@@ -10,14 +10,24 @@ from typing import TypeVar
 from nous_sdk.contracts import CallContext, DomainError
 from nous_sdk.contracts.model_roles import ModelCachePolicy
 from nous_sdk.contracts.model_routing import ModelRouteAttempt
+from nous_sdk.contracts.prompt_compilation import CompiledPrompt, TokenEstimate
 from openai import AsyncOpenAI
-from pydantic import BaseModel, JsonValue, TypeAdapter
+from pydantic import JsonValue, TypeAdapter
 from pydantic_ai import Agent, BinaryContent, capture_run_messages
 from pydantic_ai.capabilities import Instrumentation
-from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelResponse
+from pydantic_ai.messages import (
+    ModelMessagesTypeAdapter,
+    ModelRequest,
+    ModelResponse,
+    SystemPromptPart,
+    TextPart,
+    UserPromptPart,
+)
 from pydantic_ai.models.instrumented import InstrumentationSettings
-from pydantic_ai.models.openai import OpenAIChatModel, OpenAIChatModelSettings
+from pydantic_ai.models.openai import OpenAIChatModel, OpenAIChatModelSettings, OpenAIResponsesModel
 from pydantic_ai.providers.openai import OpenAIProvider
+from pydantic_ai.usage import UsageLimits
+from typing_extensions import TypeForm
 
 from nous.platform.configuration import ModelRoute
 from nous.platform.errors import NousError, Unavailable
@@ -26,14 +36,15 @@ from nous.platform.network.service import NetworkService
 from .completion import require_complete_text
 from .content_parts import complete_video
 from .ledger import CallLedger
+from .measurement import measure
 from .outcomes import outcome
-from .provider_schema import native_output, response_format
+from .provider_schema import output_contract, response_format
 
-T = TypeVar("T", bound=BaseModel | str)
+T = TypeVar("T")
 
 
 @dataclass(frozen=True)
-class Generated[T: BaseModel | str]:
+class Generated[T]:
     output: T
     call_id: str
 
@@ -57,8 +68,8 @@ def media_channel(media_type: str) -> str:
 def prepare_invocation(
     purpose: str,
     route: ModelRoute,
-    prompt: dict[str, object],
-    output_type: type[BaseModel] | type[str],
+    prompt: CompiledPrompt,
+    output_type: TypeForm[object],
     media: tuple[MediaInput, ...] = (),
     source_ids: tuple[str, ...] = (),
 ) -> dict[str, JsonValue]:
@@ -73,10 +84,64 @@ def prepare_invocation(
             role=purpose,
             reason="video_protocol_missing",
         )
+    options = TypeAdapter(dict[str, JsonValue]).validate_python(
+        {
+            "model": route.model,
+            "max_output_tokens": route.max_output_tokens,
+            "temperature": route.temperature,
+            "reasoning_effort": route.reasoning_effort,
+            "provider_options": route.extra_body,
+        }
+    )
+    prompt = prompt.model_copy(update={"model_options": options})
     backend = (
         "openai_sdk"
         if any(part.media_type.startswith("video/") for part in media)
         else "pydantic_ai"
+    )
+    output_format = response_format(
+        output_type, route.model, backend=backend, mode=route.structured_output_mode
+    )
+    measurement = measure(
+        {
+            "model": route.model,
+            "messages": [message.model_dump(mode="json") for message in prompt.messages],
+            "response_format": output_format,
+        },
+        None,
+        context_window=route.context_window,
+        output_reserve=route.max_output_tokens,
+        binary_media=tuple((part.media_type, part.data) for part in media),
+        tokenizer_name=route.tokenizer,
+        media_limits=route.media_limits,
+    )
+    if not measurement.complete:
+        raise DomainError(
+            "model_media_estimate_required",
+            "The selected model requires a media token estimate",
+            model=route.model,
+            media_items=measurement.media_items,
+        )
+    if measurement.input_tokens + measurement.output_reserve > route.context_window:
+        raise DomainError(
+            "model_context_budget",
+            "Required task input and output exceed the model context",
+            input_tokens=measurement.input_tokens,
+            output_tokens=measurement.output_reserve,
+            context_window=route.context_window,
+        )
+    media_tokens = sum(
+        int(item["tokens"]) for item in measurement.media_items if isinstance(item["tokens"], int)
+    )
+    prompt = prompt.model_copy(
+        update={
+            "token_estimate": TokenEstimate(
+                text_tokens=measurement.input_tokens - media_tokens,
+                media_tokens=media_tokens,
+                method=measurement.method,
+                estimated=measurement.estimated,
+            )
+        }
     )
     snapshot: dict[str, object] = {
         "purpose": purpose,
@@ -89,10 +154,10 @@ def prepare_invocation(
             "reasoning_effort": route.reasoning_effort,
             "extra_body": route.extra_body,
         },
-        "prompt": prompt,
+        "prompt": prompt.model_dump(mode="json"),
         "schema": TypeAdapter(output_type).json_schema(),
         "provider_schema_backend": backend,
-        "provider_response_format": response_format(output_type, route.model, backend=backend),
+        "provider_response_format": output_format,
         "output_mode": "text" if output_type is str else "json_schema",
         "media": [
             {
@@ -121,8 +186,8 @@ class Generation:
         purpose: str,
         route: ModelRoute,
         key: str,
-        prompt: dict[str, object],
-        output_type: type[T],
+        prompt: CompiledPrompt,
+        output_type: TypeForm[T],
         media: tuple[MediaInput, ...] = (),
         source_ids: tuple[str, ...] = (),
         budget_role: str | None = None,
@@ -134,23 +199,16 @@ class Generation:
         video = any(part.media_type.startswith("video/") for part in media)
         snapshot = prepare_invocation(purpose, route, prompt, output_type, media, source_ids)
         if request_snapshot is not None:
-            # The accepted route owns the schema and provider envelope; the
-            # current Python contract parses the retained output after evolution.
-            for field in ("schema", "provider_response_format", "provider_schema_backend"):
-                snapshot[field] = request_snapshot[field]
+            snapshot = dict(request_snapshot)
         if cache_policy != "shared":
             snapshot["cache_policy"] = cache_policy
-        if invocation_id is not None:
-            accepted = await self.ledger.attempt(ctx, budget_role or purpose, invocation_id)
-            if accepted is not None:
-                for field in ("schema", "provider_response_format", "provider_schema_backend"):
-                    if field in accepted.request:
-                        snapshot[field] = accepted.request[field]
         call_id, cached = await self.ledger.reserve(
             ctx,
             purpose,
             snapshot,
             route.max_calls_per_day,
+            budget_resource=route.budget_resource,
+            resource_maximum=route.resource_request_budget,
             budget_role=budget_role,
             invocation_id=invocation_id,
             cache_policy=cache_policy,
@@ -207,7 +265,6 @@ class Generation:
                     client,
                     role=budget_role or purpose,
                     invocation_id=invocation_id,
-                    response_format_snapshot=snapshot.get("provider_response_format"),
                 )
             provider = OpenAIProvider(
                 openai_client=AsyncOpenAI(
@@ -217,9 +274,12 @@ class Generation:
                     max_retries=0,
                 )
             )
-            agent = Agent(
-                OpenAIChatModel(route.model, provider=provider),
-                output_type=native_output(output_type),
+            agent = Agent[None, T](
+                OpenAIResponsesModel(route.model, provider=provider)
+                if route.protocol == "openai-responses"
+                else OpenAIChatModel(route.model, provider=provider),
+                output_type=output_contract(output_type, route.structured_output_mode),
+                deps_type=type(None),
                 retries=0,
                 capabilities=[
                     Instrumentation(
@@ -228,10 +288,23 @@ class Generation:
                             include_binary_content=False,
                             include_model_request_parameters=False,
                         )
-                    )
+                    ),
                 ],
             )
-            content: list[str | BinaryContent] = [str(prompt["rendered"])]
+            history: list[ModelRequest | ModelResponse] = []
+            for message in prompt.messages:
+                if message.role == "system":
+                    history.append(ModelRequest(parts=[SystemPromptPart(message.content)]))
+                elif message.role == "user":
+                    history.append(ModelRequest(parts=[UserPromptPart(message.content)]))
+                elif message.role == "assistant":
+                    history.append(ModelResponse(parts=[TextPart(message.content)]))
+                else:
+                    raise DomainError(
+                        "prompt_tool_identity",
+                        "Tool messages require their native tool call identity",
+                    )
+            content: list[str | BinaryContent] = []
             for part in media:
                 if part.media_type.startswith("text/") or part.media_type == "application/json":
                     content.append(part.data.decode("utf-8"))
@@ -252,14 +325,20 @@ class Generation:
                     if route.reasoning_effort is not None:
                         settings["openai_reasoning_effort"] = route.reasoning_effort
                     extra_body: dict[str, JsonValue] = dict(route.extra_body)
-                    if output_type is not str:
-                        extra_body["response_format"] = snapshot["provider_response_format"]
                     if extra_body:
                         settings["extra_body"] = extra_body
-                    result = await agent.run(content, model_settings=settings, retries=0)
+                    result = await agent.run(
+                        content or None,
+                        message_history=history,
+                        model_settings=settings,
+                        retries=0,
+                        usage_limits=UsageLimits(request_limit=1),
+                    )
                     usage = result.usage
                     usage_record.update(
                         {
+                            "requests": usage.requests,
+                            "cached_input_tokens": usage.cache_read_tokens,
                             "input_tokens": usage.input_tokens,
                             "output_tokens": usage.output_tokens,
                             "finish_reason": result.response.finish_reason,

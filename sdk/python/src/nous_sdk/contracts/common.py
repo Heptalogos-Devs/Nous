@@ -82,7 +82,7 @@ class CallContext(Contract):
 
     caller_id: str
     namespace_id: str
-    subject_id: str | None = None
+    
     request_id: str = Field(default_factory=lambda: str(uuid4()))
     locale: str = "en"
     clock: TimePoint = Field(default_factory=utc_now)
@@ -101,10 +101,6 @@ class CallContext(Contract):
     def for_source_group(self, group: tuple[str, ...]) -> CallContext:
         return self.model_copy(update={"allowed_source_ids": group, "source_constraints": ()})
 
-    def require_subject(self) -> str:
-        if self.subject_id is None:
-            raise DomainError("subject_required", "This operation requires a subject")
-        return self.subject_id
 
 
 class Operation(Contract):

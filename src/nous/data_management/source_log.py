@@ -8,7 +8,7 @@ from nous_sdk.contracts import CallContext, DomainError, SourceResult
 from pydantic import JsonValue
 from sqlalchemy import select
 
-from nous.identity.access import require_subject_in
+from nous.identity.access import require_namespace_in
 from nous.material.service import require_observation_in
 from nous.platform.persistence import ReadView, WriteTx
 
@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 async def authorize_result_in(
     self: SourceService, view: ReadView | WriteTx, ctx: CallContext, result: SourceResult
 ) -> None:
-    await require_subject_in(view, ctx)
+    await require_namespace_in(view, ctx)
     for observation_id in result.observation_ids:
         await require_observation_in(view, ctx, observation_id, active=False)
     roots = await self.cognition.source_roots_in(
@@ -47,10 +47,10 @@ async def get_operation(
             "source_operation_selector", "Select one source operation identity or commit sequence"
         )
     async with self.authority.read(ctx) as view:
-        await require_subject_in(view, ctx)
+        await require_namespace_in(view, ctx)
         statement = select(source_operations).where(
             source_operations.c.namespace_id == ctx.namespace_id,
-            source_operations.c.subject_id == ctx.subject_id,
+            
         )
         if source_operation_id is not None:
             statement = statement.where(source_operations.c.id == source_operation_id)
@@ -79,11 +79,11 @@ async def list_operations(
     if not 1 <= limit <= 1000:
         raise DomainError("invalid_limit", "Source operation limit must be between 1 and 1000")
     async with self.authority.read(ctx) as view:
-        await require_subject_in(view, ctx)
+        await require_namespace_in(view, ctx)
         sequence = source_operations.c.record["result"]["commit_seq"].as_integer()
         statement = select(source_operations).where(
             source_operations.c.namespace_id == ctx.namespace_id,
-            source_operations.c.subject_id == ctx.subject_id,
+            
         )
         if before_commit_seq is not None:
             statement = statement.where(sequence < before_commit_seq)

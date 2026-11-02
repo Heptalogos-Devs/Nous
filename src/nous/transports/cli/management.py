@@ -50,15 +50,18 @@ def _issue(ctx: typer.Context, path: str, payload: JsonValue, token_out: Path | 
 
 def register(cli: typer.Typer) -> None:
     @cli.command("model-output")
-    def model_output(ctx: typer.Context, namespace_id: str, subject_id: str, call_id: str, management: bool = False) -> None:
-        invoke(ctx, lambda api: api.retained_model_output(namespace_id, subject_id, call_id, management=management))
+    def model_output(
+        ctx: typer.Context, namespace_id: str, call_id: str, management: bool = False
+    ) -> None:
+        invoke(
+            ctx, lambda api: api.retained_model_output(namespace_id, call_id, management=management)
+        )
 
     @cli.command("model-contract")
     def model_contract(
         ctx: typer.Context,
         role: str,
         namespace_id: str,
-        subject_id: str | None = None,
         variant: str | None = None,
     ) -> None:
         """Read the role's real consumer schemas and active Prompt without calling a model."""
@@ -69,15 +72,12 @@ def register(cli: typer.Typer) -> None:
                 {
                     **command.model_dump(mode="json"),
                     "namespace_id": namespace_id,
-                    "subject_id": subject_id,
                 }
             ),
         )
 
     @cli.command("model-preview")
-    def model_preview(
-        ctx: typer.Context, request: Path, namespace_id: str, subject_id: str | None = None
-    ) -> None:
+    def model_preview(ctx: typer.Context, request: Path, namespace_id: str) -> None:
         """Read ModelPreviewRequest JSON and build the real invocation without a provider call."""
         command = read_command(request, ModelPreviewRequest)
         invoke(
@@ -86,7 +86,6 @@ def register(cli: typer.Typer) -> None:
                 {
                     **command.model_dump(mode="json"),
                     "namespace_id": namespace_id,
-                    "subject_id": subject_id,
                 }
             ),
         )
@@ -111,13 +110,12 @@ def register(cli: typer.Typer) -> None:
 
     @cli.command("status")
     def status(ctx: typer.Context) -> None:
-        invoke(ctx, lambda api: api.request("GET", "/api/status"))
+        invoke(ctx, lambda api: api.request("GET", "/api/v1/status"))
 
     @jobs.command("list")
     def list_jobs(
         ctx: typer.Context,
         namespace_id: str,
-        subject_id: str | None = None,
         limit: int = 50,
         kind: str | None = None,
         state: str | None = None,
@@ -128,7 +126,6 @@ def register(cli: typer.Typer) -> None:
             ctx,
             lambda api: api.jobs(
                 namespace_id=namespace_id,
-                subject_id=subject_id,
                 limit=limit,
                 kind=kind,
                 state=state,
@@ -141,7 +138,6 @@ def register(cli: typer.Typer) -> None:
     def job_page(
         ctx: typer.Context,
         namespace_id: str,
-        subject_id: str | None = None,
         limit: int = 50,
         kind: str | None = None,
         state: str | None = None,
@@ -154,7 +150,6 @@ def register(cli: typer.Typer) -> None:
             ctx,
             lambda api: api.job_page(
                 namespace_id=namespace_id,
-                subject_id=subject_id,
                 limit=limit,
                 kind=kind,
                 state=state,
@@ -169,14 +164,11 @@ def register(cli: typer.Typer) -> None:
         ctx: typer.Context,
         namespace_id: str,
         job_id: str,
-        subject_id: str | None = None,
         purpose: Literal["actor", "management"] = "actor",
     ) -> None:
         invoke(
             ctx,
-            lambda api: api.job(
-                job_id, namespace_id=namespace_id, subject_id=subject_id, purpose=purpose
-            ),
+            lambda api: api.job(job_id, namespace_id=namespace_id, purpose=purpose),
         )
 
     @jobs.command("cancel")
@@ -184,14 +176,11 @@ def register(cli: typer.Typer) -> None:
         ctx: typer.Context,
         namespace_id: str,
         job_id: str,
-        subject_id: str | None = None,
         purpose: Literal["actor", "management"] = "actor",
     ) -> None:
         invoke(
             ctx,
-            lambda api: api.cancel_job(
-                job_id, namespace_id=namespace_id, subject_id=subject_id, purpose=purpose
-            ),
+            lambda api: api.cancel_job(job_id, namespace_id=namespace_id, purpose=purpose),
         )
 
     @jobs.command("resume")
@@ -199,15 +188,14 @@ def register(cli: typer.Typer) -> None:
         ctx: typer.Context,
         namespace_id: str,
         job_id: str,
-        subject_id: str | None = None,
         purpose: Literal["actor", "management"] = "actor",
     ) -> None:
         invoke(
             ctx,
             lambda api: api.request(
                 "POST",
-                f"/api/jobs/{segment(job_id)}/resume",
-                params={"namespace_id": namespace_id, "subject_id": subject_id, "purpose": purpose},
+                f"/api/v1/jobs/{segment(job_id)}/resume",
+                params={"namespace_id": namespace_id, "purpose": purpose},
             ),
         )
 
@@ -216,7 +204,6 @@ def register(cli: typer.Typer) -> None:
         ctx: typer.Context,
         namespace_id: str,
         job_id: str,
-        subject_id: str | None = None,
         seconds: float = 120,
         purpose: Literal["actor", "management"] = "actor",
     ) -> None:
@@ -224,10 +211,9 @@ def register(cli: typer.Typer) -> None:
             ctx,
             lambda api: api.request(
                 "POST",
-                f"/api/jobs/{segment(job_id)}/wait",
+                f"/api/v1/jobs/{segment(job_id)}/wait",
                 params={
                     "namespace_id": namespace_id,
-                    "subject_id": subject_id,
                     "wait_seconds": seconds,
                     "purpose": purpose,
                 },
@@ -248,15 +234,13 @@ def register(cli: typer.Typer) -> None:
         )
 
     @config.command("get")
-    def get_config(
-        ctx: typer.Context, key: str, namespace_id: str = "instance", subject_id: str | None = None
-    ) -> None:
+    def get_config(ctx: typer.Context, key: str, namespace_id: str = "instance") -> None:
         invoke(
             ctx,
             lambda api: api.request(
                 "GET",
-                f"/api/configuration/{segment(key)}",
-                params={"namespace_id": namespace_id, "subject_id": subject_id},
+                f"/api/v1/configuration/{segment(key)}",
+                params={"namespace_id": namespace_id},
             ),
         )
 
@@ -265,7 +249,6 @@ def register(cli: typer.Typer) -> None:
         ctx: typer.Context,
         key: str,
         namespace_id: str = "instance",
-        subject_id: str | None = None,
         limit: int = 100,
     ) -> None:
         invoke(
@@ -275,7 +258,6 @@ def register(cli: typer.Typer) -> None:
                     "action": "history",
                     "key": key,
                     "namespace_id": namespace_id,
-                    "subject_id": subject_id,
                     "limit": limit,
                 }
             ),
@@ -287,7 +269,6 @@ def register(cli: typer.Typer) -> None:
         key: str,
         value: Path,
         namespace_id: str = "instance",
-        subject_id: str | None = None,
         scope: str = "instance",
         operation_id: str | None = None,
     ) -> None:
@@ -300,9 +281,9 @@ def register(cli: typer.Typer) -> None:
             ctx,
             lambda api: api.request(
                 "PUT",
-                f"/api/configuration/{segment(key)}",
+                f"/api/v1/configuration/{segment(key)}",
                 body=payload,
-                params={"namespace_id": namespace_id, "subject_id": subject_id},
+                params={"namespace_id": namespace_id},
             ),
         )
 
@@ -310,7 +291,9 @@ def register(cli: typer.Typer) -> None:
     def list_prompts(ctx: typer.Context, namespace_id: str = "instance") -> None:
         invoke(
             ctx,
-            lambda api: api.request("GET", "/api/prompts", params={"namespace_id": namespace_id}),
+            lambda api: api.request(
+                "GET", "/api/v1/prompts", params={"namespace_id": namespace_id}
+            ),
         )
 
     @prompts.command("get")
@@ -318,7 +301,9 @@ def register(cli: typer.Typer) -> None:
         invoke(
             ctx,
             lambda api: api.request(
-                "GET", f"/api/prompts/{segment(prompt_id)}", params={"namespace_id": namespace_id}
+                "GET",
+                f"/api/v1/prompts/{segment(prompt_id)}",
+                params={"namespace_id": namespace_id},
             ),
         )
 
@@ -328,7 +313,7 @@ def register(cli: typer.Typer) -> None:
             ctx,
             lambda api: api.request(
                 "GET",
-                f"/api/prompts/{segment(prompt_id)}/history",
+                f"/api/v1/prompts/{segment(prompt_id)}/history",
                 params={"namespace_id": namespace_id},
             ),
         )
@@ -342,7 +327,8 @@ def register(cli: typer.Typer) -> None:
             "operation_id": operation_id or str(uuid4()),
         }
         invoke(
-            ctx, lambda api: api.request("PUT", f"/api/prompts/{segment(prompt_id)}", body=payload)
+            ctx,
+            lambda api: api.request("PUT", f"/api/v1/prompts/{segment(prompt_id)}", body=payload),
         )
 
     @prompts.command("activate")
@@ -353,7 +339,7 @@ def register(cli: typer.Typer) -> None:
             ctx,
             lambda api: api.request(
                 "POST",
-                f"/api/prompts/{segment(prompt_id)}/activate",
+                f"/api/v1/prompts/{segment(prompt_id)}/activate",
                 body={"revision": revision, "operation_id": operation_id or str(uuid4())},
             ),
         )
@@ -364,7 +350,7 @@ def register(cli: typer.Typer) -> None:
             ctx,
             lambda api: api.request(
                 "POST",
-                f"/api/prompts/{segment(prompt_id)}/preview",
+                f"/api/v1/prompts/{segment(prompt_id)}/preview",
                 body={"variables": read_json(variables)},
             ),
         )
@@ -374,7 +360,7 @@ def register(cli: typer.Typer) -> None:
         invoke(
             ctx,
             lambda api: api.request(
-                "GET", "/api/credentials", params={"include_revoked": include_revoked}
+                "GET", "/api/v1/credentials", params={"include_revoked": include_revoked}
             ),
         )
 
@@ -382,21 +368,21 @@ def register(cli: typer.Typer) -> None:
     def create_credential(ctx: typer.Context, command: Path, token_out: Path | None = None) -> None:
         """Create from public CreateCredential JSON; optionally save its one-time token."""
         payload = read_command(command, CreateCredential)
-        _issue(ctx, "/api/credentials", encoded(payload), token_out)
+        _issue(ctx, "/api/v1/credentials", encoded(payload), token_out)
 
     @credentials.command("whoami")
     def whoami(ctx: typer.Context) -> None:
-        invoke(ctx, lambda api: api.request("GET", "/api/credentials/whoami"))
+        invoke(ctx, lambda api: api.request("GET", "/api/v1/credentials/whoami"))
 
     @credentials.command("read")
     def read_credential(ctx: typer.Context, credential_id: str) -> None:
-        invoke(ctx, lambda api: api.request("GET", f"/api/credentials/{segment(credential_id)}"))
+        invoke(ctx, lambda api: api.request("GET", f"/api/v1/credentials/{segment(credential_id)}"))
 
     @credentials.command("history")
     def history_credential(ctx: typer.Context, credential_id: str) -> None:
         invoke(
             ctx,
-            lambda api: api.request("GET", f"/api/credentials/{segment(credential_id)}/history"),
+            lambda api: api.request("GET", f"/api/v1/credentials/{segment(credential_id)}/history"),
         )
 
     @credentials.command("rotate")
@@ -406,7 +392,7 @@ def register(cli: typer.Typer) -> None:
         """Replace the token using RotateCredential JSON; save its new one-time value."""
         payload = read_command(command, RotateCredential)
         _issue(
-            ctx, f"/api/credentials/{segment(credential_id)}/rotate", encoded(payload), token_out
+            ctx, f"/api/v1/credentials/{segment(credential_id)}/rotate", encoded(payload), token_out
         )
 
     @credentials.command("revoke")
@@ -421,7 +407,7 @@ def register(cli: typer.Typer) -> None:
             ctx,
             lambda api: api.request(
                 "DELETE",
-                f"/api/credentials/{segment(credential_id)}",
+                f"/api/v1/credentials/{segment(credential_id)}",
                 params={
                     "operation_id": operation_id or str(uuid4()),
                     "expected_revision": expected_revision,
@@ -431,13 +417,13 @@ def register(cli: typer.Typer) -> None:
         )
 
     @cli.command("model-calls")
-    def model_calls(ctx: typer.Context, namespace_id: str, subject_id: str | None = None) -> None:
+    def model_calls(ctx: typer.Context, namespace_id: str) -> None:
         invoke(
             ctx,
             lambda api: api.request(
                 "GET",
-                "/api/model-calls",
-                params={"namespace_id": namespace_id, "subject_id": subject_id},
+                "/api/v1/model-calls",
+                params={"namespace_id": namespace_id},
             ),
         )
 
@@ -450,12 +436,12 @@ def register(cli: typer.Typer) -> None:
                 raise FileExistsError(output)
 
         async def run(api: NousClient) -> object:
-            result = await api.request("POST", "/api/backups")
+            result = await api.request("POST", "/api/v1/backups")
             if output is None:
                 return result
             if not isinstance(result, dict) or not isinstance(result.get("filename"), str):
                 raise ValueError("Backup response has no filename")
-            await download(api, f"/api/backups/{segment(str(result['filename']))}", output)
+            await download(api, f"/api/v1/backups/{segment(str(result['filename']))}", output)
             return {**result, "output": str(output)}
 
         invoke(ctx, run)

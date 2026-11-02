@@ -19,7 +19,7 @@ from pydantic import JsonValue
 
 from nous.material.service import SourceRecord
 
-from .assets import GraphAssets, RetrievalRecord, record_text
+from .assets import RetrievalRecord, record_text
 from .binding import BoundSelection
 from .planning import BoundPlan
 from .policy import ResolvedPolicy
@@ -38,9 +38,15 @@ class BoundVcp:
     terms: tuple[str, ...]
 
     def options(
-        self, policy: ResolvedPolicy, limit: int, diagnostics: str, core: tuple[CognitiveRef, ...]
+        self,
+        policy: ResolvedPolicy,
+        limit: int,
+        diagnostics: str,
+        core: tuple[CognitiveRef, ...],
+        *,
+        strict: bool = False,
     ) -> dict[str, JsonValue]:
-        result = policy.options(limit, diagnostics)
+        result = policy.options(limit, diagnostics, strict=strict)
         vcp = result["vcp"]
         if not isinstance(vcp, dict):
             raise ValueError("VCP policy must have its typed configuration object")
@@ -50,9 +56,8 @@ class BoundVcp:
         return result
 
     def graph_core(
-        self, graph: GraphAssets, request: QueryRequest, reasons: list[str]
+        self, available: set[str], request: QueryRequest, reasons: list[str]
     ) -> tuple[CognitiveRef, ...]:
-        available = {tag["key"] for tag in graph.tags}
         missing = tuple(ref for ref in self.core if ref.exact() not in available)
         if missing:
             if request.capabilities.exploration == "required":

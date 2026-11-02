@@ -34,7 +34,7 @@ async def purge_references_in(
             await tx.connection.execute(
                 select(observations.c.id, observations.c.record).where(
                     observations.c.namespace_id == ctx.namespace_id,
-                    observations.c.subject_id == ctx.subject_id,
+                    
                 )
             )
         ).all()
@@ -148,7 +148,7 @@ async def purge_references_in(
             await tx.connection.execute(
                 select(table.c.id, table.c.record).where(
                     table.c.namespace_id == ctx.namespace_id,
-                    table.c.subject_id == ctx.subject_id,
+                    
                 )
             )
         ).all()
@@ -181,7 +181,7 @@ async def purge_references_in(
             select(feedback.c.id, feedback.c.record)
             .join(contexts, contexts.c.id == feedback.c.context_id)
             .where(
-                contexts.c.namespace_id == ctx.namespace_id, contexts.c.subject_id == ctx.subject_id
+                contexts.c.namespace_id == ctx.namespace_id
             )
         )
     ).all()
@@ -198,7 +198,7 @@ async def purge_references_in(
         await tx.connection.execute(
             select(operations.c.operation_key, operations.c.result_json).where(
                 operations.c.namespace_id == ctx.namespace_id,
-                operations.c.scope == ctx.subject_id,
+                
                 operations.c.operation_kind.like("context.%"),
             )
         )

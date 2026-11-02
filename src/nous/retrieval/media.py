@@ -42,7 +42,6 @@ async def media_records_in(
             await view.connection.execute(
                 select(observations).where(
                     observations.c.namespace_id == ctx.namespace_id,
-                    observations.c.subject_id == ctx.subject_id,
                     observations.c.active.is_(True),
                 )
             )
@@ -154,7 +153,6 @@ async def media_records_in(
                     if material.get("addresses")
                     else None,
                     namespace_id=ctx.namespace_id,
-                    subject_id=ctx.require_subject(),
                     material_id=row["material_id"],
                     content_hash=material["content_hash"],
                     media_type=material["media_type"],

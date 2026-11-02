@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -45,7 +46,7 @@ def names(record: CognitiveRecord) -> tuple[str, ...]:
 
 
 def resolve_name(
-    catalog: list[RetrievalRecord],
+    catalog: Sequence[RetrievalRecord],
     selector: str,
     locator: str,
 ) -> CognitiveRecord:

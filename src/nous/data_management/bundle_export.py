@@ -12,7 +12,7 @@ from nous_sdk.contracts import (
     CognitiveRecord,
     DomainError,
     MediaReference,
-    SubjectBundle,
+    NamespaceBundle,
     UnitOutput,
 )
 from nous_sdk.contracts.identity import IdentityPurpose
@@ -21,7 +21,7 @@ from sqlalchemy import select
 
 from nous.cognition.projection import evidence_in, media_references_in, references_in
 from nous.cognition.schema import revisions, vectors
-from nous.identity.access import require_subject_in
+from nous.identity.access import require_namespace_in
 from nous.imports.schema import catalogs, inputs, outputs, successes, units
 from nous.material.service import MaterialRecord, materials, observations, regions, source_permitted
 from nous.platform.content import ContentObject
@@ -47,7 +47,7 @@ async def export_in(
     *,
     purpose: IdentityPurpose = "active",
 ):
-    await require_subject_in(view, ctx, purpose=purpose)
+    await require_namespace_in(view, ctx, purpose=purpose)
     all_records = {
         row.reference.exact(): row
         for row in [
@@ -56,7 +56,7 @@ async def export_in(
                 await view.connection.execute(
                     select(revisions.c.record).where(
                         revisions.c.namespace_id == ctx.namespace_id,
-                        revisions.c.subject_id == ctx.subject_id,
+                        
                     )
                 )
             ).scalars()
@@ -68,7 +68,7 @@ async def export_in(
             await view.connection.execute(
                 select(observations).where(
                     observations.c.namespace_id == ctx.namespace_id,
-                    observations.c.subject_id == ctx.subject_id,
+                    
                 )
             )
         ).mappings()
@@ -195,7 +195,7 @@ async def export_in(
             select(catalogs).where(
                 catalogs.c.id.in_(catalog_ids),
                 catalogs.c.namespace_id == ctx.namespace_id,
-                catalogs.c.subject_id == ctx.subject_id,
+                
             )
         )
     ).mappings():
@@ -225,7 +225,7 @@ async def export_in(
             await view.connection.execute(
                 select(successes).where(
                     successes.c.namespace_id == ctx.namespace_id,
-                    successes.c.subject_id == ctx.subject_id,
+                    
                 )
             )
         ).mappings()
@@ -233,13 +233,13 @@ async def export_in(
     ]
     result = TypeAdapter(dict[str, JsonValue]).validate_python(
         {
-            "format": "nous.subject",
+            "format": "nous.namespace.bundle",
             "package": command.package.model_dump(mode="json") if command.package else None,
             "content_level": command.content_level,
             "version": 1,
             "id": str(uuid4()),
             "namespace_id": ctx.namespace_id,
-            "subject_id": ctx.subject_id,
+            
             "authority_commit_seq": view.commit_seq,
             "cognition": [record.model_dump(mode="json") for record in records],
             "materials": mat,
@@ -308,7 +308,7 @@ async def export_in(
                 await view.connection.execute(
                     select(bundle_installs.c.record).where(
                         bundle_installs.c.namespace_id == ctx.namespace_id,
-                        bundle_installs.c.subject_id == ctx.subject_id,
+                        
                     )
                 )
             )
@@ -330,7 +330,7 @@ async def export_in(
                 for row in (await view.connection.execute(statement)).mappings()
             ]
         )
-    archived_vectors = SubjectBundle.model_validate(result).vectors
+    archived_vectors = NamespaceBundle.model_validate(result).vectors
     call_ids = {
         *[record.producer_call_id for record in records if record.producer_call_id],
         *[
@@ -382,7 +382,7 @@ async def export_in(
         )
     ]
     result["contents"] = contents
-    return SubjectBundle.model_validate(result).model_dump(mode="json")
+    return NamespaceBundle.model_validate(result).model_dump(mode="json")
 
 
 async def export_zip(
@@ -392,7 +392,7 @@ async def export_zip(
 
 
 async def inspect_zip(self: BundleService, ctx: CallContext, data: bytes):
-    ctx.require_subject()
+    ctx.namespace_id
     from .archive_read import decode
 
     bundle = await asyncio.to_thread(decode, data)

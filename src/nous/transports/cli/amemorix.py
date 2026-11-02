@@ -15,7 +15,6 @@ def register(cli: typer.Typer) -> None:
     def execute(
         ctx: typer.Context,
         namespace_id: str,
-        subject_id: str,
         request: Path,
         transfer_root: Path | None = None,
         timeout_ms: int | None = None,
@@ -24,9 +23,7 @@ def register(cli: typer.Typer) -> None:
         command = read_command(request, AMemorixOperation)
 
         async def run(api: NousClient):
-            adapter = AMemorixAdapter(
-                api, namespace_id=namespace_id, subject_id=subject_id, transfer_root=transfer_root
-            )
+            adapter = AMemorixAdapter(api, namespace_id=namespace_id, transfer_root=transfer_root)
             return await adapter.invoke(command.tool, command.arguments, timeout_ms=timeout_ms)
 
         invoke(ctx, run)

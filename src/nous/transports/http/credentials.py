@@ -14,7 +14,7 @@ from nous_sdk.contracts.credentials import (
 
 from .security import application, authenticate_request, authorize
 
-router = APIRouter(prefix="/api/credentials")
+router = APIRouter(prefix="/api/v1/credentials")
 
 
 @router.get("/whoami")

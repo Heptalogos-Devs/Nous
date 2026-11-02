@@ -15,7 +15,7 @@ from nous_sdk.contracts import (
     SourceCommand,
 )
 
-from nous.cognition.service import CognitionService
+from nous.cognition.records import CognitiveRecords
 from nous.context.service import ContextService
 from nous.data_management.bundles import BundleService
 from nous.data_management.sources import SourceService
@@ -41,7 +41,7 @@ def test_import_source_bundle_and_restart(tmp_path: Path):
     async def scenario():
         path = tmp_path / "authority.sqlite"
         authority = Authority(path)
-        cognition = CognitionService(authority)
+        cognition = CognitiveRecords(authority)
         imports = ImportService(authority, cognition, UnusedModels())
         retrieval = RetrievalService(
             authority,
@@ -142,7 +142,7 @@ def test_import_source_bundle_and_restart(tmp_path: Path):
             await retrieval.close()
             await authority.close()
         reopened = Authority(path)
-        cognition = CognitionService(reopened)
+        cognition = CognitiveRecords(reopened)
         retrieval = RetrievalService(reopened, cognition, UnusedModels(), tmp_path / "index",
             configuration=ConfigurationService(reopened, {**namespace_entries(), "retrieval": ConfigurationEntry(retrieval_defaults())}))
         await reopened.initialize()
@@ -168,7 +168,7 @@ def test_purge_clears_history_receipts_and_blocks_late_adoption(tmp_path: Path):
         authority = Authority(tmp_path / "authority.sqlite")
         content = ContentStore(authority, tmp_path / "content")
         materials = MaterialService(authority, content)
-        cognition = CognitionService(authority)
+        cognition = CognitiveRecords(authority)
         imports = ImportService(authority, cognition, UnusedModels(), materials=materials)
         retrieval = RetrievalService(
             authority,
@@ -296,7 +296,7 @@ def test_json_original_regions_addresses_attempts_and_artifact_purge(tmp_path: P
         authority = Authority(tmp_path / "authority.sqlite")
         content = ContentStore(authority, tmp_path / "content")
         materials = MaterialService(authority, content)
-        cognition = CognitionService(authority)
+        cognition = CognitiveRecords(authority)
         imports = ImportService(authority, cognition, UnusedModels(), materials=materials)
         retrieval = RetrievalService(
             authority,
@@ -485,186 +485,3 @@ def test_json_original_regions_addresses_attempts_and_artifact_purge(tmp_path: P
     asyncio.run(scenario())
 
 
-def test_ego_seed_observation_reuse_and_attribute_support(tmp_path: Path):
-    async def scenario():
-        from nous_sdk.contracts import (
-            AdoptCognition,
-            CognitiveTimes,
-            DomainError,
-            EntityAttribute,
-            EntityBody,
-            EpistemicStance,
-            EvidenceLink,
-        )
-        from nous_sdk.contracts.ego_model import AdoptSeed, SeedDocument, SeedFacet
-        from nous_sdk.contracts.imports import FormObservation, TextSplitOptions
-        from sqlalchemy import select, update
-
-        from nous.identity.service import subjects
-        from nous.material.service import MaterialService, observations
-        from nous.platform.content import ContentStore
-        from nous.platform.persistence.schema import operations
-
-        authority = Authority(tmp_path / "authority.sqlite")
-        content = ContentStore(authority, tmp_path / "content")
-        materials = MaterialService(authority, content)
-        cognition = CognitionService(authority, materials=materials)
-        imports = ImportService(authority, cognition, UnusedModels(), materials=materials)
-        sources = SourceService(authority, cognition, content_store=content)
-        identity = IdentityService(authority)
-        await authority.initialize()
-        ctx = CallContext(
-            credential_source_ids=None,
-            caller_id="owner",
-            namespace_id="namespace",
-            subject_id="subject",
-        )
-        try:
-            await identity.create_namespace(ctx, "People", "namespace-create")
-            await identity.create_subject(
-                ctx,
-                "Researcher",
-                "subject-create",
-                subject_id=ctx.subject_id,
-                capabilities=("memory", "ego", "social"),
-            )
-            seeded = await cognition.adopt_seed(
-                ctx,
-                AdoptSeed(
-                    operation_id="seed",
-                    documents=(
-                        SeedDocument(
-                            document=ImportDocument(text="我喜欢记录观察。", filename="soul.md"),
-                            facets=(SeedFacet(facet="preference", description="喜欢记录观察"),),
-                        ),
-                        SeedDocument(
-                            document=ImportDocument(
-                                text="我在资料不足时保留疑问。", filename="values.md"
-                            ),
-                            facets=(
-                                SeedFacet(facet="epistemics", description="资料不足时保留疑问"),
-                            ),
-                        ),
-                    ),
-                ),
-                imports=imports,
-            )
-            assert len(seeded.facets) == 2 and len(seeded.memories) == 2
-            assert len(await cognition.ego_profile(ctx)) == 2
-            # Existing subjects may have persisted the former capability name.
-            async with authority.writer.begin() as connection:
-                await connection.execute(
-                    update(subjects)
-                    .where(subjects.c.id == ctx.subject_id)
-                    .values(capabilities=["memory", "self", "social"])
-                )
-            assert len(await cognition.ego_profile(ctx)) == 2
-            assert (await identity.list_subjects(ctx))[0].capabilities == (
-                "memory",
-                "ego",
-                "social",
-            )
-            legacy = await identity.create_subject(
-                ctx, "Legacy", "legacy-subject", capabilities=("memory", "self")
-            )
-            async with authority.writer.begin() as connection:
-                import json
-
-                old_result = {**legacy.model_dump(mode="json"), "capabilities": ["memory", "self"]}
-                await connection.execute(
-                    update(operations)
-                    .where(operations.c.operation_id == "legacy-subject")
-                    .values(result_json=json.dumps(old_result))
-                )
-            replayed = await identity.create_subject(
-                ctx, "Legacy", "legacy-subject", capabilities=("memory", "self")
-            )
-            assert replayed == legacy and legacy.capabilities == ("memory", "ego")
-            assert (
-                await cognition.get(ctx, seeded.memories[0])
-            ).body.epistemic.classification == "reported"
-            preview = await imports.preview_text_import(
-                ctx,
-                ImportDocument(text="一行\n二行\n三行\n四行\n五行"),
-                TextSplitOptions(strategy_override="quote"),
-            )
-            assert len(preview.units) == 1 and not preview.units[0].requires_llm
-            async with authority.read(ctx) as view:
-                before = len((await view.connection.execute(select(observations.c.id))).all())
-            formed = await imports.form_observation(
-                ctx,
-                FormObservation(
-                    operation_id="form-existing",
-                    observation_id=seeded.observation_ids[0],
-                    llm_enabled=False,
-                ),
-            )
-            async with authority.read(ctx) as view:
-                after = len((await view.connection.execute(select(observations.c.id))).all())
-            assert before == after
-            assert (await cognition.get(ctx, formed.cognition[0])).source_roots == (
-                seeded.observation_ids[0],
-            )
-            evidence = tuple(EvidenceLink(observation_id=value) for value in seeded.observation_ids)
-            times = CognitiveTimes(formation=ctx.clock, recorded=ctx.clock)
-            async with authority.write(
-                ctx,
-                "person",
-                operation_kind="person.adopt",
-                scope=ctx.require_subject(),
-                payload={"observations": list(seeded.observation_ids)},
-            ) as tx:
-                entity = await cognition.adopt_in(
-                    tx,
-                    ctx,
-                    AdoptCognition(
-                        body=EntityBody(
-                            entity_type="person",
-                            label="李明",
-                            attributes=(
-                                EntityAttribute(
-                                    predicate="private_note",
-                                    value="仅第一份材料支持的资料",
-                                    epistemic=EpistemicStance(classification="reported"),
-                                    evidence=(evidence[0],),
-                                ),
-                                EntityAttribute(
-                                    predicate="public_note",
-                                    value="仍有第二份材料支持的资料",
-                                    epistemic=EpistemicStance(classification="reported"),
-                                    evidence=(evidence[1],),
-                                ),
-                            ),
-                        ),
-                        evidence=evidence,
-                        times=times,
-                    ),
-                )
-                tx.result(entity)
-            await sources.purge(
-                ctx,
-                SourceCommand(
-                    operation_id="purge-one",
-                    observation_ids=(seeded.observation_ids[0],),
-                    reason="remove first source",
-                ),
-            )
-            retained = await cognition.get(ctx, entity.reference)
-            assert retained.body.purged_attribute_count == 1
-            assert [item.predicate for item in retained.body.attributes] == ["public_note"]
-            try:
-                await authority.receipt(
-                    ctx,
-                    "person",
-                    operation_kind="person.adopt",
-                    scope=ctx.require_subject(),
-                    payload={"observations": list(seeded.observation_ids)},
-                )
-            except DomainError as error:
-                assert error.code == "operation_result_purged"
-            else:
-                raise AssertionError("A historical receipt cannot retain the removed attribute")
-        finally:
-            await authority.close()
-
-    asyncio.run(scenario())

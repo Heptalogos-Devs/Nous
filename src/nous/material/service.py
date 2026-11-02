@@ -24,7 +24,7 @@ materials = Table(
     "materials",
     metadata,
     Column("id", String, primary_key=True),
-    Column("namespace_id", String, nullable=False, index=True),
+    Column("namespace_id", String, primary_key=True, index=True),
     Column("content_hash", String, nullable=False, index=True),
     Column("record", JSON, nullable=False),
 )
@@ -33,7 +33,7 @@ observations = Table(
     metadata,
     Column("id", String, primary_key=True),
     Column("namespace_id", String, nullable=False),
-    Column("subject_id", String, nullable=False, index=True),
+    
     Column("material_id", String, nullable=False, index=True),
     Column("kind", String, nullable=False),
     Column("active", Boolean, nullable=False, default=True),
@@ -44,7 +44,7 @@ regions = Table(
     "source_regions",
     metadata,
     Column("id", String, primary_key=True),
-    Column("namespace_id", String, nullable=False),
+    Column("namespace_id", String, primary_key=True),
     Column("material_id", String, nullable=False, index=True),
     Column("record", JSON, nullable=False),
 )
@@ -76,7 +76,7 @@ class SourceRecord(TypedDict):
     trashed_at: NotRequired[str]
     id: str
     namespace_id: str
-    subject_id: str
+    
     material_id: str
     kind: ObservationKind
     origin: dict[str, str]
@@ -92,7 +92,6 @@ class SourceRecord(TypedDict):
     previous_observation_id: NotRequired[str]
     retry_parent_job_id: NotRequired[str]
     external_event_id: NotRequired[str]
-    consumer_subject_id: NotRequired[str]
     caller_id: NotRequired[str]
     contact_source: NotRequired[dict[str, JsonValue]]
     participants: NotRequired[list[str]]
@@ -126,7 +125,7 @@ async def require_observation_in(
                 select(observations).where(
                     observations.c.id == observation_id,
                     observations.c.namespace_id == ctx.namespace_id,
-                    observations.c.subject_id == ctx.subject_id,
+                    
                 )
             )
         )
@@ -196,7 +195,7 @@ class MaterialService:
                 await tx.connection.execute(
                     select(observations.c.id).where(
                         observations.c.namespace_id == ctx.namespace_id,
-                        observations.c.subject_id == ctx.subject_id,
+                        
                         observations.c.material_id == region.material_id,
                         observations.c.active.is_(True),
                     )
@@ -260,7 +259,7 @@ class MaterialService:
                 await view.connection.execute(
                     select(observations.c.id).where(
                         observations.c.namespace_id == ctx.namespace_id,
-                        observations.c.subject_id == ctx.subject_id,
+                        
                         observations.c.material_id == region.material_id,
                         observations.c.active.is_(True),
                     )

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from nous_sdk.presentation import body_text
+
 from typing import TYPE_CHECKING
 
 from nous_sdk.amemorix.contracts import (
@@ -17,7 +19,6 @@ from nous_sdk.contracts import (
 )
 from pydantic import JsonValue
 
-from nous.cognition.projection import body_text
 
 from .helpers import json_object, point
 

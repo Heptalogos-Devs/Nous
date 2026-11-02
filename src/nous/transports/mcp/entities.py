@@ -14,7 +14,7 @@ def register_entities(
     server: MCPServer,
     client: Callable[[], AbstractAsyncContextManager[NousClient]],
     namespace_id: str,
-    subject_id: str,
+    
 ) -> None:
     @server.tool()
     async def merge_entities(command: MergeEntities) -> list[JsonObject]:
@@ -22,7 +22,7 @@ def register_entities(
         async with client() as api:
             return [
                 record.model_dump(mode="json")
-                for record in await api.merge_entities(namespace_id, subject_id, command)
+                for record in await api.merge_entities(namespace_id,  command)
             ]
 
     @server.tool()
@@ -31,5 +31,5 @@ def register_entities(
         async with client() as api:
             return [
                 record.model_dump(mode="json")
-                for record in await api.split_entity(namespace_id, subject_id, command)
+                for record in await api.split_entity(namespace_id,  command)
             ]

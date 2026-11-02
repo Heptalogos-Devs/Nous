@@ -1,309 +1,82 @@
 # Nous Python SDK
 
-异步客户端使用正式 Python 领域合同，供 Agent、MaiBot 和普通 Python 程序调用。
+通过异步 Python 客户端保存资料与记忆、检索内容、读取来源和修订认识。SDK 支持 Python 3.11 及以上版本，可独立安装并连接本地或远程 Nous。
 
-服务与 SDK 应使用相互匹配的构建。
+## 安装与连接
 
-安装：
+在 Nous 仓库根目录安装客户端：
 
 ```sh
-uv add --editable /绝对路径/Nous-Wave/sdk/python
+python -m pip install ./sdk/python
 ```
+
+准备服务地址、服务授予的凭据文件和一个可读写的 Namespace。程序使用以下环境变量：
+
+| 变量 | 含义 |
+| --- | --- |
+| `NOUS_URL` | 服务地址，默认 `http://127.0.0.1:7441` |
+| `NOUS_CREDENTIAL_FILE` | 凭据文件的实际路径 |
+| `NOUS_NAMESPACE` | 已创建的 Namespace 名称或 ID |
+
+`await client.namespace(name)` 解析名称并返回绑定对象。精确 ID 可使用 `await client.namespace_by_id(id)`。后续操作复用这一绑定。
+
+## 保存文本并查询来源
+
+将下面的完整程序保存为 `read_notes.py`。它读取用户指定的 UTF-8 文件，将正文保存为明确记忆，再进行词项查询和来源读取；这条操作无需配置模型。
 
 ```python
-from nous_sdk import ClientOptions, NousClient
-from nous_sdk.contracts import AdmitFiles, ImportDocument, QueryRequest
+import asyncio
+import os
+import sys
+from pathlib import Path
 
-async with NousClient(
-    service_url,
-    credential_file=protected_credential_file,
-    options=ClientOptions(language="zh-CN"),
-) as client:
-    namespace = await client.create_namespace("研究")
-    subject = await client.create_subject(namespace.id, name="助手")
-    imported = await client.admit_documents(namespace.id, subject.id, AdmitFiles(
-        inputs=(ImportDocument(text=actual_text, filename="notes.md"),),
-        llm_enabled=False, vectors="disabled",
-    ))
-    result = await client.query_cognition(namespace.id, subject.id,
-        QueryRequest(text="当前任务", mode="lexical"))
+from nous_sdk import NousClient
+
+
+async def main() -> None:
+    if len(sys.argv) != 3:
+        raise SystemExit("用法: python read_notes.py <实际文本文件> <查询内容>")
+    path = Path(sys.argv[1]).expanduser().resolve(strict=True)
+    content = path.read_text(encoding="utf-8-sig")
+    credential = Path(os.environ["NOUS_CREDENTIAL_FILE"]).expanduser()
+    namespace = os.environ["NOUS_NAMESPACE"]
+    url = os.environ.get("NOUS_URL", "http://127.0.0.1:7441")
+
+    async with NousClient(url, credential_file=credential) as client:
+        ns = await client.namespace(namespace)
+        saved = await ns.remember(content)
+        print(saved.reference.exact())
+
+        result = await ns.query(sys.argv[2], profile="lexical", limit=5)
+        print(result.text)
+        items = result.view().items
+        if items:
+            detail = await ns.read(items[0].ref, sources=True)
+            print(detail.text)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
 ```
 
-Ego 的种子和自我画像通过 `adopt_seed` 与 `ego_profile` 操作访问。已有认知记录和跨系统引用中的 `self_facet` 类型标识保持稳定；Python 合同类型使用 `EgoFacetBody`。
+例如，在配置好上述环境变量后，读取仓库的真实 README：
 
-返回值为 Pydantic 合同或明确的 JSON 对象。`nous_sdk.contracts` 可以独立导入，不加载 HTTP 客户端。`NousError` 保留服务端错误码、消息与上下文。写入重试复用同一 `operation_id`；网络错误保留该身份供继续。客户端连接、凭据读取、Trace、语言、超时、代理和下载校验共用一个 transport。
-
-`ClientOptions.cognitive_clock=TimePoint(...)` 显式提供认知形成时钟；未设置时服务使用物理 UTC。Context 的 `usage.world_time` 仅描述用途中的世界坐标。作业调度、调用预算与实际用量使用物理时间。
-
-## 来源与地址
-
-```python
-from nous_sdk import SourceReadScope
-from nous_sdk.source_scope import CognitionSource, MediaSource, OriginalMedia
-
-whole = client.with_source_read(SourceReadScope(
-    subject_id=subject_id,
-    source_refs=(MediaSource(reference=OriginalMedia(material_id=material_id)),),
-))
-single = whole.with_source_read(SourceReadScope(
-    subject_id=subject_id,
-    source_refs=(CognitionSource(reference=exact_cognitive_ref),),
-))
+```sh
+python read_notes.py README.md Namespace
 ```
 
-范围可选择完整原件、精确区域、单个认知修订、Observation、工作上下文锚点或实际 conversation origin。认知与媒体 selector 均接受对应类型的 Proquint 地址，由服务端统一 ReferenceDirectory 解析。每个范围内选择器按 OR，多个范围与凭据授权按 AND 收窄；空范围返回空读取权限。单认知范围保持精确引用，读取容器原件仍需原件授权。
+查询结果提供 `q3:1` 一类带查询组的短引用，可直接传给 `ns.read()`、`ns.sources()` 或 `ns.correct()`。每次继续读取都按当前授权取得内容。完整结果保留类型化对象、评分和执行信息，`result.text` 与 `result.view()` 提供可读投影。
 
-`resolve_reference(subject_id,address,as_of_commit=...)` 返回 `ReferenceResolution`。对象短地址在指定知识截点选择修订，固定地址保留精确修订。`source(subject_id,reference)` 读取认知或媒体来源；`memory_source(memory_id,revision=...)` 读取记忆修订的真实来源。`cognitive_revision(namespace_id,subject_id,reference)` 返回准确修订。
+## 查询与修订
 
-## 文件与导入
+`ns.query()` 接受自然语言、NousQL 或完整的 `QueryRequest`。查询时尽量写清已经知道的人物、事项和时间；已有会话、工作、人物引用和附件可以通过可选的 `QueryContext` 提供。NousQL 的显式选择器适合精确指定对象、标签、关系和时间条件。
 
-`upload_file`、`upload_stream` 流式接纳原件；上传必须指定 `owner_subject_id`。`expected_content_hash` 可核验实际上传字节。`download_material`、`download_region` 和 `download_derived` 使用相同 scope 元数据、长度与散列验证，失败会清理未完成文件。
+`ns.correct(ref, content, reason=...)` 保存目标的正式修订；`ns.history(ref)` 读取其修订历史。`ns.read(ref, sources=True)` 同时展开来源，长内容通过返回的游标继续读取。
 
-```python
-from nous_sdk.contracts import FreezeCatalog, ProcessCatalog
+`ns.remember()` 和 `ns.correct()` 自动分配操作身份。宿主需要在网络中断后重试同一写入时，可显式传入同一个 `operation_id`。
 
-material = (await client.upload_file(namespace_id, local_file,
-    owner_subject_id=subject_id)).result
-catalog = await client.freeze_catalog(namespace_id, subject_id, FreezeCatalog(
-    inputs=(ImportDocument(material_id=material.id, format="json", filename="records.json"),),
-    strategy_override="factual",
-))
-submitted = await client.submit_catalog(namespace_id, subject_id,
-    ProcessCatalog(catalog_id=catalog.id, llm_enabled=True, vectors="metadata_allowed"))
-job = (await client.wait_success((submitted.job_id,),
-    namespace_id=namespace_id, subject_id=subject_id))[0]
-```
+## 生命周期与错误
 
-JSON 接受 `records`、`paragraphs`、`docs` 包络，JSONL 保留记录顺序。每条记录可带 `external_id,text,source,source_type,event_time,observed_at,origin,tags,metadata,structured`，服务端保留原件与精确区域。拆分支持 auto、factual、narrative、quote、chat_log；quote 逐字保存并跳过形成模型。时间语境通过显式 timezone、reference_time 与 chat_reference_time 传给导入 owner。
+使用 `async with NousClient(...)` 管理连接生命周期。`NousError` 保留服务端错误码、消息与必要上下文。查询空结果正常返回；后台任务、权限拒绝和版本冲突由各自的正式结果或错误表达。
 
-`admit_documents(...,AdmitFiles(...))` 完成文件资格去重、冻结与处理，返回 `ImportResult`。`dedupe_policy` 为 none、content_hash 或 manifest；force 重新处理，clear_manifest 清除当前资格并保留历史事实。全部跳过时 `catalog=None`，跳过身份在 `skipped_success_ids` 中。异步管理创建即使全部跳过也返回真实 finalization 作业。
-
-`import_files` / `import_directory` 先上传准确原件，再调用记录导入用例并返回真实 `TextImportSubmission`。文件可为路径，或 `{staged_path,filename,size}` / `{path,name,format,source,file_identity}`。SDK 不解析正文。本地扫描与文件路径限制在显式的 `transfer_root`；`ManagedFiles` 提供 raw/lpmm/maibot/converted aliases，拒绝路径或符号链接越界。原路径留在宿主。
-
-`import_catalog`、`import_unit_output` 返回冻结 Unit 与不可变 Output。单位尝试保留实际 job_id、阶段、失败与可选 vector_error；未执行单位保持 pending。`vectors="required"` 要求向量完成，`metadata_allowed` 保留成功的正文 Output 及独立向量失败，`disabled` 不请求向量。
-
-同一 Catalog 可以分批提交 `ProcessCatalog(unit_ids=...)`。默认继续会按实际来源、LLM 与有效形成选项复用已完成单元；已接纳正文但向量失败的单元只继续向量步骤。新请求会保留原 Output 和付费结果，不重新形成已经满足本次政策的单元。`import_attempts` 返回各次真实处理结果；旧 Output 的首次向量政策保持不变，后续完成情况由实际尝试和向量事实表达。
-
-```python
-# 继续剩余的冻结单元，不重新拆分或重做先前成功的单元。
-continued = await client.submit_catalog(namespace_id, subject_id, ProcessCatalog(
-    catalog_id=catalog.id, unit_ids=tuple(unit.id for unit in catalog.units[1:]),
-    vectors="required",
-))
-
-# 明确重新形成所选单元。新 operation 产生新的模型调用意图；
-# 同一 operation 重放保留该次实际付费结果。
-redone = await client.submit_catalog(namespace_id, subject_id, ProcessCatalog(
-    catalog_id=catalog.id, unit_ids=(catalog.units[0].id,), force=True,
-    vectors="required",
-))
-```
-
-每个文件的全部原始单元都达到本次处理政策后，系统从跨作业的真实成功尝试生成 `FileSuccess`。只修改部分单元的形成政策时，其余旧政策输出不会被算作新政策的整文件成功；需要整文件重做时选择全部单元并设置 `force=True`。`retry_parent_job_id` 必须指向同一 Catalog 的实际处理请求。HTTP/MCP 和 CLI `catalog process` 的 `ProcessCatalog` JSON 使用相同字段；不必改变全局 Prompt 来触发默认继续。
-
-`job`、`jobs`、`wait_jobs`、`wait_success`、`cancel_job` 使用正式 DBOS 状态。等待采用有上限的退避和调用超时。失败作业保留已提交的业务事实。
-
-## 查询与管理
-
-`query` / `query_cognition` 支持 lexical、dense、hybrid、vcp，认知与媒体 domains、混合 parts、精确引用、事件时间、来源过滤及历史截点。`query_manual()` 返回当前原生 NousQL 手册。
-
-`adopt_cognition`、`merge_concepts`、`split_concept`、`resegment_episodes` 使用共享合同；`update_memory` 接受正式 `MemoryChange` 生命周期命令。`adopt_seed` 保存显式配置文档及 EgoFacet 证据，`ego_profile` 读取当前正式 Ego 画像。
-
-Memory 与 Association 共用 `RetentionState`。`change_retention`、`change_retentions` 接受精确引用，执行强化、弱化、保护、冻结、遗忘、恢复、回收和清除；永久保留 permanent、固定 pinned 与限时保护分别保存。`retention_snapshot` 返回实际强度、锚点、状态和对象修订，`decay_retention` 按游标评价有界集合。状态修订沿用同一认知身份，语义关系的 weight 保持原值；失活对象退出普通图、查询与自动 Context。Memory 专用 `update_memory` 接口保持 Memory 类型约束。
-
-CLI 使用 `retention change/change-many/snapshot/decay`；HTTP Subject 下使用 `/retention/*`，MCP 使用对应 typed 操作。A-Memorix maintain_memory 与 V5 可直接使用 relation hash 或精确 association 引用，status 给出实际生命周期字段。Source 的冻结前提通过 `RetentionExpectation` 在 preview 与 writer 内核对；Native 以精确 CognitiveRef.revision 同时保护正文和状态，单位转换只在适配边界完成。
-
-来源管理使用 `source_directory`、`preview_sources`、`trash_sources`、`restore_sources`、`purge_sources` 及共享 `SourceCommand`；恢复保留实际 Observation 身份。Bundle 使用 `export_bundle` 与 `install_bundle` 合同，A-Memorix 提供 ZIP 文件操作。导出产物保留实际依赖闭包，读取与来源 purge 由材料 owner 共同约束。
-
-`configuration`、`prompts`、`model_contract`、`model_preview`、`model_call`、`backup` 接正式管理入口。`configuration_catalog()` 列出注册配置、默认值、Schema 与写入权限，`configuration_schema(key)` 读取单项定义；`configuration` 的 `list`、`schema`、`get`、`history`、`set`、`reset` 与 CLI `config`、MCP 使用同一操作。管理界面的“配置”页可编辑作用域覆盖、恢复继承值及取回历史值。`subject_diagnostics` 返回授权范围内的认知、向量、任务与实际 token 用量。不同凭据的 read/write/manage 能力由服务核验。
-
-模型角色的实际输入、输出模式、对应 Schema 和 Prompt 可在调用前读取。`model_contract(ModelContractRequest(role="formation"))` 返回登记的输入/输出 Schema、当前 Prompt 和可选 variant；形成的 `text` 与 `media` 使用各自真实输出类型。`description`、`steward`、`maintenance`、`query_rerank` 同样使用实际消费者的合同。description 的 output_mode=text、输出 Schema 为 string，实际模型直接返回正文；其它强类型角色使用 json_schema。自由描述及两段解释的第一步均采用文本输出，应用保存正文与真实 producer_call_id；第二步仍同时传入原媒体和已保存描述。调用账本保留实际字符串及 actual_output_mode。自定义 Prompt 保留原内容，可在管理入口按实际用途编辑。
-
-```python
-from nous_sdk.contracts import ModelContractRequest, ModelPreviewRequest
-
-contract = await api.model_contract(ModelContractRequest(role="formation"))
-preview = await api.model_preview(ModelPreviewRequest(
-    role="formation", variant="text",
-    input={"source_text": text, "source": {"source_type": "document"}},
-))
-```
-
-Preview 与实际调用共用输入校验、Prompt 渲染、参数及调用快照构造，返回真实目标 Schema、模型与媒体摘要。媒体使用 `media` 中已有的 `MediaReference`，按当前来源权限读取精确原件或选区。此操作不读取模型凭据、不预留额度、不请求提供方；未登记的角色合同返回明确错误。CLI 使用 `nous model-contract ROLE NAMESPACE_ID` 和 `nous model-preview REQUEST_JSON NAMESPACE_ID`，HTTP 为 `POST /api/models/contract`、`POST /api/models/preview`，MCP 同名工具使用同一合同。
-
-多路线预览的 `routes` 包含 route_id、route_index、capabilities、configured 及可用时的 invocation；顶层 invocation 可以为空。生成按接受时的路线目录执行，确定的未发送和已配置的拒绝结果可继续下一路线；未知发送结果保留恢复错误。成功输出按原 invocation 复用。
-
-`whoami`、`credentials`、`credential`、`credential_history`、`create_credential`、`rotate_credential` 和 `revoke_credential` 使用正式凭据 owner。轮换要求 expected_revision，旧 token 立即失效，明文只在创建或轮换当次返回。
-
-`job_page(namespace_id=...,subject_id=...,kind=...,state=...,limit=...,cursor=...)` 返回真实作业及 next_cursor。过滤先于分页，state 使用 DBOS 大写状态；续页保持首个快照的提交边界。
-
-`vector_spaces(ns, sub)` 读取当前 embedding 指纹、已存空间、有效覆盖、缺失数和向量 payload 字节数。`vector_spaces(ns)` 返回 Namespace 管理目录；空间可由多个 Subject 的媒体引用共享，`delete_vector_space(ns, DeleteVectorSpace(...))` 要求完整 Namespace 管理权限。删除移除派生向量与缓存，保留原文、认知和付费调用；旧在途任务按删除时的提交边界停止发布。
-
-`rebuild_vectors(ns, sub, RebuildVectors(mode="missing"或"all", limit=...))` 返回真实 `projection.request_id/job_id`。missing 补齐当前空间，all 原子重新采用当前有效对象的向量；已有付费结果按原输入和空间复用。`vector_projection_progress` 查询 DBOS 状态及已准备、已采用数量；`retry_vector_projection` 恢复原请求与已保存的物理批。显式恢复对确定拒绝只增加一次有界尝试，执行 Retry-After 和等待上限；原未知或无效结果列入冻结对象。`recover_vectors` 按目标上限恢复可继续的旧请求，再补齐缺失项；返回 `frozen` 和 `backfill.blocked_references`。
-
-`check_vector_spaces(..., CheckVectorSpaces())` 校验本地存储与配置。设置 `probe=True` 并提供实际 `sample_text` 或 `sample_reference` 时调用提供方，同一 operation 复用检查结果。`persistence_state` 返回已提交序列和 `transaction_commit` 模式；写入随事务持久提交。CLI `vectors`、HTTP Subject 的 `/vectors/*` 与 Namespace 的 `/vector-spaces`、MCP 对应 typed 操作使用这些合同。A-Memorix runtime 的 save、self_check、refresh_self_check、recover_embedding、rebuild_all_vectors、paragraph_backfill_once 与 set_auto_save 接到同一所有者；关闭 auto_save 返回 transaction_commit_required，当前值保持 True。
-
-`retained_model_output(ns, sub, call_id)` 读取原提供方正文、finish_reason、物理 status、已保存输出与当前登记合同的再解析结果。`raw_text` 保留原文，`raw_json` 是严格 JSON 解码，`parsed_output` 和 `validation_errors` 属于当前合同解析；采用继续走相应领域的提案审阅。读取只访问账本。CLI 使用 `model-output`，MCP 使用 `retained_model_output`。停用或回收的主体可由管理调用显式设置 management=True 读取。
-
-`derive_media(...,DeriveMedia(...))` 对实际源字节执行 crop、clip、audio_track 或 sample_frames，返回精确派生身份。`media_lineage`、`representation`、`representation_history` 与区域方法读取同一派生 owner。`download_derived` 读取已授权的精确内容；派生授权不扩大到父原件。`source_operation` 支持实际 log ID 或 commit_seq，`source_operations` 支持 before_commit_seq 分页。
-
-`identity`、`cognition`、`sources`、`contexts`、`bundles` 与 `media` 接受公开 operation envelope，消费同一正式 owner；来源读取通过绑定客户端或请求 source_read 继续收窄。
-
-## 每次模型调用的 Context
-
-```python
-from nous_sdk.contracts.context import ContextUsage
-
-binding = client.managed(
-    namespace_id=namespace_id, subject_id=subject_id,
-    session_id=actual_session_id, consumer_id="reply", instance_id=actual_worker_id,
-    source_read=trusted_source_scope,
-)
-await binding.resume()  # 重建同一串行 worker 后读取已接纳 track
-prepared = await binding.prepare(
-    usage=ContextUsage(purpose="reply", role=actual_role, audience=actual_audience, intent=actual_intent),
-    max_items=64, max_text_bytes=65536,
-    current_sources=actually_required_sources,
-)
-applied = binding.apply(clean_host_input, prepared, renderer, serialize_input)
-await binding.admit(applied, invocation_id=actual_invocation_id,
-    history_generation=actual_history_generation,
-    measurement=host_measure_complete_input(applied.input))
-# 在此调用真实模型。
-await binding.report(applied, invocation_id=actual_invocation_id,
-    outcome=actual_outcome, occurred_at=actual_completion_time,
-    uses=actually_observed_uses, output=actual_output_metadata)
-await binding.close()
-```
-
-prepare 提交真实持久任务并等待。renderer 接收独立副本并返回完整输入；serialize_input 编码该实际输入。`HostInputMeasurement` 包含完整输入 tokens、真实输出预留、窗口与测量来源，超窗会拒绝。SDK 管理 RESET/APPEND 游标，应用后输入变动会使接纳失败。同一 session/consumer/instance 的已接纳完整投影持久保存；`resume()` 在相同 SourceRead 下恢复。`context_track` 返回投影与未接纳 preparation IDs，撤回来源时返回空投影和 reset_reason。已确认旧 worker 停止时，`resume(cancel_pending=True)` 通过原取消操作接管遗留准备。`close()` 释放本 binding，保留会话与已接纳 track。省略来源选择时沿用当前凭据授权范围；显式空选择保持为空，凭据上限始终有效。
-
-`open_context_session` / `context_session` / `close_context_session` 管理真实宿主会话。`change_context_residents` 使用 `ChangeResidents.expected_revision` 修改居民；`change_work_context` 支持创建、编辑、暂停、恢复、结束、pin/unpin 与清理。工作指令和显式 current_sources 是必需项，预算不足会报错。
-
-`contexts` 配置限制 consumer 预算与来源类型。配置 `steward_role` 后使用统一模型资源、Prompt、预算与账本；Steward 只选择当前授权候选，综合保持独立归因。居民使用 DBOS schedule 维护，模型接触、实际使用和完成结果分别记录。
-
-A-Memorix `AMemorixAdapter` 保留六项工具、来源、导入、包与运行时管理入口。完整 MaiBot 补丁、模型窗口配置与真实发送边界见 [MaiBot 集成](../../integrations/maibot/README.md)。
-
-通过 Nous 调用已配置的模型角色时，先把 Context 片段加入该角色的真实输入，调用 `preview_context_model(ns, sub, ContextModelPreview(preparation_id=..., invocation_id=..., role=..., input=...))` 冻结完整提供方请求目录。`nous_sdk.managed.serialize_model_plan(plan)` 用于序列化该目录；Host 对完整目录测量并完成 Managed admit 后，调用 `invoke_context_model(ns, sub, ContextModelCall(..., admission_id=...))`。返回真实 call_id、输出与使用报告。服务核对片段确实进入渲染后的 Prompt、输入摘要、当前来源权限及接受时的模型参数。相同 invocation 重放复用原调用和报告，重建同一 binding 后用 `resume()` 恢复 track。CLI 对应 `context model-preview`、`context invoke-model`；MCP 使用同名 typed 操作。
-
-简单 `admit_context` 的 `selected_text_bytes` 和 `budget_estimate="utf8_bytes"` 描述所选正文的估算。Managed 的 `measurement` 由 Host 对实际完整请求填写；估算器应在 source 明确注明。准入记录 input_admission，完成报告再记录实际 model_contact。简单反馈和 Managed 的 uses 进入同一反馈事实目录。非空实际反馈描述由持久任务接纳为独立 Material 与 Contact，并保留相关认知引用；成长仍服从主体 growth 政策。
-
-原生反馈配置键 `feedback` 默认 disabled，启用后默认收集同一 session 接下来的 12 小时、最多 30 条真实 Contact。`enqueue_feedback` 接受当时提供的精确认知引用；`feedback_task`、`feedback_tasks` 查询保存的输入、判断与纠错结果。空反馈和单纯确认不触发纠错或强化；达到阈值的明确否定、纠正通过同一 CorrectionService 计划与原子采用，实际支持仅来自模型选中的接触消息。`rollback_feedback` 使用保存的纠错计划回滚，`retry_feedback` 沿原任务和原付费调用恢复失败执行。CLI `feedback` 与 MCP 同名操作、A-Memorix 的 `enqueue_feedback_task` / `memory_feedback_admin(get/list/rollback)` 消费同一原生所有者。
-
-## 事实主张
-
-`change_fact(namespace_id, subject_id, FactChange(...))` 写入正式 `fact_claim` 修订，支持 assert、update、classify、retract、restore 和 add_evidence；写入携带稳定 operation_id。`query_facts(..., FactQuery(...))` 默认选择 active 状态，`fact(..., reference)` 返回记录、历史、后继和冲突。人物或聊天范围、有效时间和证据使用 `nous_sdk.contracts.facts` 中的类型。当前实现已有真实 Fact 管理与包往返记录；通用查询的修订可见性正在统一，完成加载验证前请以事实管理接口和实际服务版本为准。
-
-## 认知整理提案
-
-`start_maintenance` 提交实际模型生成作业；用 `maintenance_run` 读取快照、提案与真实 producer_call_id。`review_maintenance(...,ReviewMaintenance(expected_revision=...,decision="adopt"或"reject"))` 明确审阅，采纳复用认知 owner 的正式变更规则。来源当前不可用时 `sources_available=False`，正文与提案不会返回。
-
-`create_maintenance_schedule`、`maintenance_schedules` 与 `stop_maintenance_schedule` 管理正式 DBOS 重复运行策略。工作台提供同一提案审阅与计划操作；每次计划生成待审提案，审阅决定单独保存。
-
-`freeze_import_catalog`、`process_import_units` 与 `admit_import_files` 也接受原有单 Mapping 请求：`{namespace_id,subject_id,inputs:[{name,format,input:{kind:"inline",content:...},source}],overrides:{strategy:...}}`。`input.kind="material"` 使用已上传的 material_id；文件文档的 `{document,file_identity}` 包络继续可用。Mapping 文件接纳返回 `FileImportSubmission`；`submit_admit_documents` 是对应 typed 异步入口。
-
-`import_text` 接受同一文档形状及 form_memory/completion，返回真实父作业。等待 `wait_success((submission.job_id,),...)` 后，`text_import_result` 读取对应结果。`accepted` 完成完整逐字记录接纳，并仅返回已排入队列的 formation_jobs；`formed` 要求 form_memory=True，父作业等待这些实际子作业成功。语义形成复用逐字 Memory 的精确修订，保留独立模型调用身份。每解析记录保持一个完整 Unit；输入总字节上限 4 MiB。
-
-## 查询结果与来源展开
-
-`query_cognition`、HTTP 的 Subject `/query`、MCP `query_cognition` 和 CLI `query` 使用同一 QueryRequest/QueryResult。可用请求文件完整指定查询；CLI 也提供 `--materialize`、`--rerank off|optional|required` 和 `--rerank-invocation-id`。
-
-`nous_sdk.presentation.query_text(result)` 输出短引用、正文、归因与不确定性，适合直接交给模型阅读。MCP 查询使用这种文本呈现，同时在 `structuredContent` 保留完整 `QueryResult`，便于程序读取诊断、向量调用来源和 Thinking 阶段；CLI 的 `--json` 同样保留完整结构。继续阅读可把结果中的精确引用传给 `source` 或 `memory_source`。
-
-```python
-from nous_sdk.contracts import QueryRequest
-
-result = await client.query_cognition(namespace_id, subject_id, QueryRequest(
-    text="项目操作者", materialize=True, rerank="optional",
-    rerank_invocation_id="operator-search-1",
-))
-print(result.expression)
-if result.sources:
-    for node in result.sources.nodes:
-        print(node.key, node.status, node.text)
-print(result.rerank)
-```
-
-expression 按实际顺序给出准确地址与正文摘录；source graph 按真实 evidence、观察和精确媒体区域展开，保留边的极性与角色。budget.source_depth/source_nodes/source_text_bytes 限制展开；complete=false 表示预算截断或部分来源当前不可读。`source(subject_id, cognitive_reference)` 的 graph 使用同一来源规则，媒体节点继续沿其精确 reference 读取。
-
-rerank 默认为 off。启用时，模型角色 `query_rerank` 使用 text-generation 路线、purpose=rerank 和 Prompt `query-rerank`，提交有界正文候选并保存实际调用。optional 缺少可用模型角色、凭据或 Prompt 时保留基础顺序，结果附 skipped 原因；实际提供方失败返回带 call_id、invocation_id 和 role 的错误。required 传播缺能力与调用失败。显式 `$sort` 优先，required 重排与其冲突；未评分候选保留基础相对顺序。hits.score 保留检索分，rerank_score 为实际模型分数。重用 invocation 身份与相同候选请求会复用已保存结果；未知付费结果需新身份才能再次请求。
-
-检索算法配置使用共享 `configuration` 的 `retrieval` 键，按 instance、namespace、subject 继承。`RetrievalPolicy` 包含融合权重、RRF 常量，以及实际 VCP pipeline、spike routing、readout 和诊断参数；初始值来自 native 的 Serde 默认定义。先读取有效对象再修改，保留完整强类型结构：
-
-```python
-from nous_sdk.contracts import RetrievalPolicy
-
-effective = await api.configuration({"key": "retrieval"})
-policy = RetrievalPolicy.model_validate(effective["value"])
-await api.configuration({
-    "action": "set", "key": "retrieval", "scope": "subject",
-    "value": policy.model_copy(update={"dense_weight": 0.8}).model_dump(mode="json"),
-})
-changes = await api.configuration({"action": "history", "key": "retrieval"})
-```
-
-查询在开始时冻结同一份有效策略，组合分支共用它。诊断中的 `plan.policy` 给出 namespace、subject、配置来源和实际策略；`plan.native` 保留原生计算诊断，组合查询在 `plan.branches` 中呈现各分支。`$diagnostics(none|summary|full)` 控制详细程度，`budget.diagnostics_bytes` 限制每次查询的原生诊断输出，超限会明确标记 truncated。VCP 的 BM25 lane 使用同一授权快照的真实词法命中，`bm25K` 限制候选提供量，`readout.lexicalWeight` 决定词法分量的融合权重。
-
-VCP 请求通过 `vcp` 表达本次意图。`core` 接已有认知的精确 `CognitiveRef`，在当前授权及历史截点下绑定图节点；`concepts` 接本次查询文字，使用正式 embedding 角色批量生成同空间向量，结果保留各自真实 call_id。`@entity`、`@tag` 同时限定候选并提供精确 core；`#主题` 与 `#("较长的主题")` 在 VCP 中提供临时查询概念。`thinking=True` 或 `$explore` 请求实际方法路线。新线索只参与本次计算，来源范围继续约束已有认知的读取。
-
-```python
-from nous_sdk.contracts.query_conditions import QueryCapabilities
-from nous_sdk.contracts.query_vcp import VcpIntent, QueryConcept
-
-request = QueryRequest(
-    text="还有哪些相关的发布经验？", mode="vcp",
-    vcp=VcpIntent(core=(actual_reference,),
-                  concepts=(QueryConcept(text="回滚与恢复", is_core=True),), thinking=True),
-    capabilities=QueryCapabilities(exploration="optional"),
-)
-result = await client.query_cognition(namespace_id, subject_id, request)
-print(result.vcp)
-```
-
-`budget.vcp_concepts` 和 `vcp_text_bytes` 限制本次线索数量与正文。`result.vcp.concepts` 返回实际向量空间与 producer，`result.vcp.thinking` 返回阶段、正式对象引用、父选择和真实传播路线；组合结果按 `vcp.branches` 保留各分支。诊断关闭仍保留这些请求结果。没有可用路线时，exploration=required 返回 `thinking_unavailable`，optional 返回 unavailable 与实际降级原因。CLI 的 `query --request`、HTTP 和 MCP 使用同一个 QueryRequest。
-
-机器查询使用 `expression` 的 atom/any/all 树，每个 atom.source 是同一 NousQL 语法。`filters.sources` 按正式命名来源解析器选择完整标签；也可设置 source_ids、source_types、origin（field/value 对）、tags、cognitive_roles、formation_modes 和 epistemic_classes。`budget.candidates`、branches、depth 约束候选与组合树；来源和重排分别使用 source_* 与 rerank_* 预算。
-
-```python
-from nous_sdk.contracts.query_conditions import QueryAny, QueryAtom, QueryFilters, QueryBudget, QueryCapabilities
-
-request = QueryRequest(
-    expression=QueryAny(children=(QueryAtom(source="项目"), QueryAtom(source="操作者"))),
-    filters=QueryFilters(tags=("project",)),
-    budget=QueryBudget(candidates=256, branches=16, depth=6),
-    capabilities=QueryCapabilities(semantic="optional", exploration="optional", require_complete_vectors=False),
-    mode="hybrid",
-)
-result = await client.query_cognition(namespace_id, subject_id, request)
-print(result.execution)
-```
-
-semantic/exploration 的 required 要求实际计算通道可用；require_complete_vectors 默认 False，独立控制是否要求完整向量覆盖。Hybrid 向量覆盖不完整时真实降为词项检索，execution 返回 effective_mode、missing_vectors、candidate_limited、degraded 和 reasons；组合不同通道时 effective_mode 为 mixed。`$diagnostics(none)` 只关闭详细计划，execution 仍保留。authority 支持 subject_cognition、evidence、interpretation 的实际分类；external_current_authority 与 resource_descriptor 缺少资源 owner 时返回 capability_unavailable。current=none 为默认；prefer 保留本地结果并报告 external_freshness_unchecked，required 要求外部时效 owner。modalities 支持 text/image/audio/video/document/binary，按真实原件模态及同一来源根过滤；图片的派生描述仍保留图片来源模态。
-
-A-Memorix 图谱搜索使用 `adapter.memory_graph_admin(action="search", query="项目", limit=50)`；`invoke("memory_graph_admin", {"action":"search","query":"项目"})` 供原 MaiBot RPC 直接调用。结果为实际实体与关系，匹配优先级依次为精确、前缀、子串；每项 reference 经 `CognitiveRef.model_validate(item["reference"])` 读取为强类型后，交给 `client.source(subject_id, reference)` 展开来源。读取受当前 SourceReadScope 与认知可见性约束。
-
-`client.graph_snapshot(namespace_id, subject_id)` 读取正式图谱目录。`client.manage_graph(namespace_id, subject_id, GraphChange(action="create_node", name="项目", reason="调用者提交的图谱登记"))` 创建有来源的 Entity；其余 action 支持改名、软删除、创建关系、修改权重及删除关系，返回实际报告 Material、Import 观察与认知修订。更改现有身份可传 exact `reference`，旧修订会返回 revision_conflict。`weight` 与 `epistemic.confidence` 分开保存，未知权重保留 None。
-
-`client.configuration({"action":"get","key":"network","namespace_id":namespace_id,"subject_id":subject_id})` 读取应用出站网络有效策略与 origin；`action="history"` 读取同一 scope 继承范围的正式配置历史（limit 1..1000）。network 控制应用 Provider 的代理、环境信任、CA/TLS、分阶段超时和连接池；策略更新在下一次调用边界生效，已运行调用的租约结束后关闭旧池。外部 SDK 自身的 Transport 保持独立。`retrieval` 使用同一配置 get/set/reset/history 入口，默认值来自正式 Native schema。
-
-人物目录、画像证据和别名可通过 `adapter.memory_profile_admin(action="list"|"query"|"evidence"|"get_aliases", ...)` 查看，原 `get_person_profile` 复用相同人物与证据读取。person_id 接受实际 MaiBot correspondence 或 Native Entity 身份；person_keyword/keyword 接受实际主名与别名，选择歧义会明确失败。普通读取不付费。显式 `force_refresh=True` 会提交并等待该 Person 的真实模型摘要任务，需配置 `person_profile` 模型角色；自动结果保留人工覆盖。画像证据的 evidence_key 是准确 Entity 修订及属性 JSON pointer，reference 和每条 evidence 保留真实来源，可继续使用公开来源读取。
-
-人物管理使用同一 Entity 修订：`memory_profile_admin(action="set_aliases", person_id=..., aliases=[...])`、`delete_aliases`、`set_override`（`override_text`）与 `delete_override`。空别名列表是显式覆盖，删除覆盖后显示自动别名。`correct_evidence` 接受 `evidence()` 返回的确切 `hash`/`evidence_key` 与 `evidence_type="entity_attribute"`；`refresh=False` 只提交纠正，默认再刷新单人物。管理输入与实际调用者保留为来源。SDK 在传输前为写入及强制刷新建立 operation_id，重试应复用该值。
-
-Native 客户端 `change_person_profile(ns, sub, PersonProfileChange(...))` 返回实际修订及输入来源；`refresh_person_profile(ns, sub, RefreshPersonProfile(...))` 返回真实 job_id，通过 `wait_success(job_id)` 等待。两者的 HTTP 路径是 subject 下 `/person-profiles/change` 与 `/person-profiles/refresh`。CLI `nous profile ns sub --request request.json` 和 MCP `memory_profile_admin(command=...)` 消费同一个 `ProfileAdminInput`。
-
-Context 的 `ContextReport.output` 保存真实模型、provider、response_id、status、输出 item IDs 与 tool call IDs；未知字段保留 None。每次实际 wire 调用各自 admit/report，相同准备可用于真实 provider 参数回退，来源与预算每次重新校验。`contexts(action="track",...)`、CLI `context track` 与 MCP 通用 contexts 接口读取同一正式 track。
-
-模型工具读取已接纳来源可使用 `adapter.memory_source(exact_reference, admission=ContextAdmissionRef(...), tool_call_id=actual_tool_call_id)`，或 `read_context_source(ns, sub, ReadContextSource(...))`。该操作核对已保存的实际模型输出与目标，同时受原准备范围和当前 SourceRead 限制。读取成功后复用正式 feedback owner 记录 referenced use；同一实际工具调用重放复用 use receipt。返回的来源正文按当前授权重新读取，operation receipt 仅保留身份与 commit_seq。HTTP 是 subject 下 `/contexts/source`，CLI 为 `context source`，MCP 通用 contexts 使用 action=source。
-
-`understand_symbol(ns, sub, SymbolSelection(...))` 理解已收到的符号；`expression_candidates` 为当前交际目的返回表达候选。`expression`/`carriers` 是待理解的文字和真实媒体引用，`messages` 是相关 Memory 的精确修订，`message_sources` 接受原件、源区域或已有派生内容；人物与范围使用 `speaker`、`targets`、`audience`、`groups`、`contexts`，`at` 指定解释时点。图片、音频、视频和文档先经正式 Material 接纳，原件引用使用返回的 material_id；派生内容继续使用返回的精确 MediaReference。
-
-`semantic="off"` 为默认的免费精确匹配；`optional` 在缺少模型时保留免费候选及降级原因，`required` 要求实际模型能力。启用语义使用 `symbols` 角色（purpose=symbols，Prompt=social-symbols），默认复用 formation 路线；现有配置可显式增加该角色。`invocation_id` 为稳定调用身份，相同请求重放复用保存结果。真实 Provider 失败与未知结果遵循共同模型错误和账本规则。
-
-返回的 `matches` 包含匹配依据、分数、解释把握、用法和精确来源；`local_interpretation` 是当次的内容描述、含义、情绪/意图、替代解释与未知之处。`unknown` 表示没有匹配到已保存的惯例，仍可同时返回局部解释。候选或媒体达到上限会返回 `degradations`。结果不登记长期惯例，也不发送消息。Context 的 `usage.symbols` 消费相同请求，`symbols_mode="understand"` 为默认，`express` 用于表达候选；局部解释保留来源和 producer_call_id。
-
-CLI 使用 `nous social understand ns sub request.json` / `nous social expressions ns sub request.json`；HTTP 为 subject 下 `/social/symbols/understand` 和 `/social/symbols/express`；MCP 的 `understand_symbol` / `expression_candidates` 使用同一个 SymbolSelection。
-
-`recover_symbol_result(ns, sub, RecoverSymbolResult(selection=原请求, call_id=原调用ID, mode="understand"))` 从已保存的完整输出只读重解析，再核对原请求、调用绑定和当前来源；不请求模型、不改变原付费记录。`producer_call_status` 保留原 succeeded/failed，`reparsed` 单独标记重解析。文本序列允许提供方返回单项或列表，单项保留原文，不拆分。局部解释的 `attribution=source_expression` 表示原帖/素材表达，`specified_speaker` 表示请求明确提供的发言者，`speaker` 保留相应精确引用。`dependencies` 保存实际模型输入引用，Context 继续按当前来源检查。CLI `social recover`、HTTP `/social/symbols/recover`、MCP `recover_symbol_result` 使用同一个 RecoverSymbolResult。
-
-符号理解会把真实 `CallContext.locale` 冻结到模型输入和 Prompt。SDK 使用 `ClientOptions(language="zh-CN")` 设置 Accept-Language；解释与使用建议遵循该语言，原表达、标题和引用文字保留原文。相同 invocation_id 读取原冻结请求；更换语言需要新的调用身份。
+服务端凭据决定可访问的 Namespace、读写能力与资料范围。SDK 合同可以从 `nous_sdk.contracts` 独立导入。

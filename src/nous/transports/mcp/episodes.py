@@ -18,7 +18,7 @@ def register_episodes(
     server: MCPServer,
     client: Callable[[], AbstractAsyncContextManager[NousClient]],
     namespace_id: str,
-    subject_id: str,
+    
 ) -> None:
     @server.tool()
     async def query_episodes(command: EpisodeQuery) -> list[JsonObject]:
@@ -26,7 +26,7 @@ def register_episodes(
         async with client() as api:
             return [
                 view.model_dump(mode="json")
-                for view in await api.query_episodes(namespace_id, subject_id, command)
+                for view in await api.query_episodes(namespace_id,  command)
             ]
 
     @server.tool()
@@ -35,7 +35,7 @@ def register_episodes(
         async with client() as api:
             return (
                 await api.episode(
-                    namespace_id, subject_id, reference, paragraph_limit=paragraph_limit
+                    namespace_id,  reference, paragraph_limit=paragraph_limit
                 )
             ).model_dump(mode="json")
 
@@ -46,7 +46,7 @@ def register_episodes(
             return [
                 record.model_dump(mode="json")
                 for record in await api.episode_history(
-                    namespace_id, subject_id, episode_id, limit=limit
+                    namespace_id,  episode_id, limit=limit
                 )
             ]
 
@@ -54,7 +54,7 @@ def register_episodes(
     async def rebuild_episodes(command: RebuildEpisodes) -> JsonObject:
         """Admit a durable complete-source rebuild; model generation is explicit."""
         async with client() as api:
-            return (await api.rebuild_episodes(namespace_id, subject_id, command)).model_dump(
+            return (await api.rebuild_episodes(namespace_id,  command)).model_dump(
                 mode="json"
             )
 
@@ -66,5 +66,5 @@ def register_episodes(
             values["operation_id"] = str(uuid4())
         async with client() as api:
             return await AMemorixAdapter(
-                api, namespace_id=namespace_id, subject_id=subject_id
+                api, namespace_id=namespace_id
             ).call("memory_episode_admin", values)

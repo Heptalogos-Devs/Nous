@@ -19,7 +19,7 @@ async function loadKey() {
   const key = keys.value;
   if (!key) return;
   const requested = ++generation;
-  const value = await api(`/api/configuration/${encodeURIComponent(key)}?${params()}`);
+  const value = await api(`/api/v1/configuration/${encodeURIComponent(key)}?${params()}`);
   if (requested !== generation) return;
   editor.value = JSON.stringify(value.value, null, 2);
   const registered = catalog.find((item) => item.key === key);
@@ -50,7 +50,7 @@ async function loadKey() {
 }
 
 export async function loadConfiguration() {
-  const value = await api(`/api/configuration?${params()}`);
+  const value = await api(`/api/v1/configuration?${params()}`);
   catalog = value.items;
   const selected = keys.value;
   keys.replaceChildren(
@@ -65,7 +65,7 @@ export async function loadConfiguration() {
 }
 
 async function save(value) {
-  await api(`/api/configuration/${encodeURIComponent(keys.value)}?${params()}`, {
+  await api(`/api/v1/configuration/${encodeURIComponent(keys.value)}?${params()}`, {
     method: "PUT",
     body: { operation_id: op(), scope: scope.value, value },
   });
@@ -77,7 +77,7 @@ async function loadHistory() {
   const key = keys.value,
     requested = generation;
   const value = await api(
-    `/api/configuration/${encodeURIComponent(key)}/history?${params()}&limit=20`,
+    `/api/v1/configuration/${encodeURIComponent(key)}/history?${params()}&limit=20`,
   );
   if (requested !== generation || key !== keys.value) return;
   history.replaceChildren(

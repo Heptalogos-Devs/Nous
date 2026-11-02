@@ -20,7 +20,7 @@ from pydantic import JsonValue, TypeAdapter
 from sqlalchemy import delete, select, update
 
 from nous.cognition.schema import revisions, vectors
-from nous.identity.access import require_subject_in
+from nous.identity.access import require_namespace_in
 from nous.material.service import require_observation_in
 from nous.platform.content import ContentLease
 from nous.platform.execution import JobSpec
@@ -48,7 +48,7 @@ def manifest_key(
     )
     return sha256(
         json.dumps(
-            [ctx.namespace_id, ctx.subject_id, document.origin, policy, key]
+            [ctx.namespace_id, ctx.namespace_id, document.origin, policy, key]
             + ([{"times": temporal}] if temporal else [])
             + (
                 [{"deferred_formation": True, "llm_enabled": llm_enabled}]
@@ -89,9 +89,7 @@ async def eligible_file_in(
     fact = (
         await view.connection.execute(
             select(successes.c.record).where(
-                successes.c.id == success_id,
-                successes.c.namespace_id == ctx.namespace_id,
-                successes.c.subject_id == ctx.subject_id,
+                successes.c.id == success_id, successes.c.namespace_id == ctx.namespace_id
             )
         )
     ).scalar_one_or_none()
@@ -113,7 +111,7 @@ async def eligible_file_in(
         output = UnitOutput.model_validate(value)
         if deferred_formation and output.formation is None:
             return None
-        if not deferred_formation and llm_enabled and output.producer_call_id is None:
+        if not deferred_formation and llm_enabled and (output.producer_call_id is None):
             original_unit = await view.connection.scalar(
                 select(units.c.record).where(units.c.id == output.unit_id)
             )
@@ -161,11 +159,7 @@ async def accept_admit(
     operation_id = command.operation_id if enqueue else f"{command.operation_id}:accept"
     operation_kind = "imports.files.submit" if enqueue else "imports.files.accept"
     receipt = await self.authority.receipt(
-        ctx,
-        operation_id,
-        operation_kind=operation_kind,
-        scope=ctx.require_subject(),
-        payload=command,
+        ctx, operation_id, operation_kind=operation_kind, scope=ctx.namespace_id, payload=command
     )
     if receipt is not None:
         return TypeAdapter(dict[str, JsonValue]).validate_python(receipt.result)
@@ -187,19 +181,12 @@ async def accept_admit(
             ctx,
             operation_id,
             operation_kind=operation_kind,
-            scope=ctx.require_subject(),
+            scope=ctx.namespace_id,
             payload=command,
         ) as tx:
             if tx.replayed:
                 return TypeAdapter(dict[str, JsonValue]).validate_python(tx.replay_result)
-            await require_subject_in(tx, ctx, "memory")
-            from nous_sdk.contracts.namespace_policy import NamespaceFeatures
-
-            from nous.platform.configuration.namespace_policy import policy_in
-
-            features = await policy_in(tx, ctx, "namespace.features", NamespaceFeatures)
-            if not features.allow_metadata_only_write:
-                command = command.model_copy(update={"vectors": "required"})
+            await require_namespace_in(tx, ctx, "memory")
             if command.clear_manifest:
                 origins = [document.origin for document in command.inputs]
                 all_heads = (
@@ -207,10 +194,7 @@ async def accept_admit(
                         await tx.connection.execute(
                             select(manifest.c.key, successes.c.record)
                             .join(successes, successes.c.id == manifest.c.success_id)
-                            .where(
-                                successes.c.namespace_id == ctx.namespace_id,
-                                successes.c.subject_id == ctx.subject_id,
-                            )
+                            .where(successes.c.namespace_id == ctx.namespace_id)
                         )
                     )
                     .mappings()
@@ -305,7 +289,7 @@ async def accept_admit(
                 "input_operation": {
                     "operation_id": operation_id,
                     "operation_kind": operation_kind,
-                    "scope": ctx.require_subject(),
+                    "scope": ctx.namespace_id,
                 },
                 "context": effective.model_dump(mode="json"),
                 "command": work_command.model_dump(mode="json"),
@@ -342,8 +326,8 @@ async def accept_admit(
                 if (
                     parent_context.caller_id,
                     parent_context.namespace_id,
-                    parent_context.subject_id,
-                ) != (ctx.caller_id, ctx.namespace_id, ctx.subject_id):
+                    parent_context.namespace_id,
+                ) != (ctx.caller_id, ctx.namespace_id, ctx.namespace_id):
                     raise DomainError(
                         "import_request_not_found",
                         "Text import parent is outside this caller scope",
@@ -390,7 +374,7 @@ async def finish_admit(self: ImportService, ctx: CallContext, request_id: str) -
         ctx,
         command.operation_id,
         operation_kind="imports.manifest",
-        scope=ctx.require_subject(),
+        scope=ctx.namespace_id,
         payload=command,
     )
     if receipt is not None:
@@ -415,7 +399,7 @@ async def finish_admit(self: ImportService, ctx: CallContext, request_id: str) -
         ctx,
         command.operation_id,
         operation_kind="imports.manifest",
-        scope=ctx.require_subject(),
+        scope=ctx.namespace_id,
         payload=command,
     ) as tx:
         if tx.replayed:
@@ -439,7 +423,7 @@ async def admit_files(self: ImportService, ctx: CallContext, command: AdmitFiles
         ctx,
         command.operation_id,
         operation_kind="imports.manifest",
-        scope=ctx.require_subject(),
+        scope=ctx.namespace_id,
         payload=command,
     )
     if receipt is not None:

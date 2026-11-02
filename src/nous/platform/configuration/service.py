@@ -1,14 +1,21 @@
 """Whole-key overrides, scoped inheritance and immutable change history."""
 
+import os
+import tempfile
+import tomllib
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Literal
+from uuid import uuid4
 
+import anyio
 import sqlalchemy as sa
-from nous_sdk.contracts import CallContext
+import tomlkit
+from filelock import AsyncFileLock
+from nous_sdk.contracts import CallContext, DomainError
 from nous_sdk.contracts.configuration import ConfigurationCatalog, ConfigurationDefinition
 from pydantic import BaseModel, JsonValue, TypeAdapter
-from sqlalchemy.ext.asyncio import AsyncConnection
 
 from nous.platform.errors import NousError
 from nous.platform.persistence import Authority, ReadView, WriteTx, metadata
@@ -36,11 +43,7 @@ history = sa.Table(
 class ConfigurationEntry:
     default: BaseModel
     instance_management: bool = False
-    scopes: tuple[Literal["instance", "namespace", "subject"], ...] = (
-        "instance",
-        "namespace",
-        "subject",
-    )
+    scopes: tuple[Literal["instance", "namespace"], ...] = ("instance", "namespace")
     validator: Callable[[BaseModel], None] | None = None
     schema: Callable[[], dict[str, JsonValue]] | None = None
 
@@ -51,14 +54,25 @@ class ConfigurationEntry:
         return parsed
 
 
-class ConfigurationService:
-    def __init__(self, authority: Authority, entries: dict[str, ConfigurationEntry]) -> None:
-        self.authority = authority
+class ConfigurationValues:
+    def __init__(self, entries: dict[str, ConfigurationEntry]) -> None:
         self._entries = dict(entries)
         self._defaults = {
             key: entry.parse(entry.default).model_dump(mode="json")
             for key, entry in self._entries.items()
         }
+
+    @staticmethod
+    def merge(base: dict[str, JsonValue], override: dict[str, JsonValue]) -> dict[str, JsonValue]:
+        result = dict(base)
+        for key, value in override.items():
+            previous = result.get(key)
+            result[key] = (
+                ConfigurationValues.merge(previous, value)
+                if isinstance(previous, dict) and isinstance(value, dict)
+                else value
+            )
+        return result
 
     def entry(self, key: str) -> ConfigurationEntry:
         try:
@@ -71,45 +85,9 @@ class ConfigurationService:
                 context={"key": key},
             ) from error
 
-    def describe(self, key: str) -> ConfigurationDefinition:
-        entry = self.entry(key)
-        return ConfigurationDefinition(
-            key=key,
-            value_schema=entry.schema()
-            if entry.schema
-            else type(entry.default).model_json_schema(),
-            default_value=self._defaults[key],
-            write_access="instance_manage" if entry.instance_management else "manage",
-            scopes=entry.scopes,
-        )
-
-    def catalog(self) -> ConfigurationCatalog:
-        return ConfigurationCatalog(
-            items=tuple(self.describe(key) for key in sorted(self._entries))
-        )
-
     def scopes(self, ctx: CallContext) -> tuple[str, ...]:
         scopes = ("instance", f"namespace:{ctx.namespace_id}")
-        return (*scopes, f"subject:{ctx.subject_id}") if ctx.subject_id else scopes
-
-    async def effective(self, ctx: CallContext, key: str) -> dict[str, object]:
-        entry = self.entry(key)
-        scopes = tuple(
-            scope for scope in self.scopes(ctx) if scope.split(":", 1)[0] in entry.scopes
-        )
-        return await self._effective(key, scopes, ctx)
-
-    async def effective_instance(self, key: str) -> dict[str, object]:
-        entry = self.entry(key)
-        if entry.scopes != ("instance",):
-            raise ValueError("Instance resource resolution requires an instance-only definition")
-        return await self._effective(key, ("instance",), None)
-
-    async def _effective(
-        self, key: str, scopes: tuple[str, ...], ctx: CallContext | None
-    ) -> dict[str, object]:
-        async with self.authority.read(ctx) as view:
-            return await self.effective_in(view, ctx, key, scopes=scopes)
+        return scopes
 
     async def effective_in(
         self,
@@ -142,9 +120,316 @@ class ConfigurationService:
                 .first()
             )
             if row:
-                value, origin, commit_seq = row["value"], scope, int(row["commit_seq"])
+                value, origin, commit_seq = (
+                    self.merge(
+                        TypeAdapter(dict[str, JsonValue]).validate_python(value),
+                        TypeAdapter(dict[str, JsonValue]).validate_python(row["value"]),
+                    ),
+                    scope,
+                    int(row["commit_seq"]),
+                )
         resolved = entry.parse(value).model_dump(mode="json")
         return {"key": key, "value": resolved, "origin": origin, "commit_seq": commit_seq}
+
+    async def policy_in[P: BaseModel](
+        self, view: ReadView | WriteTx, ctx: CallContext, key: str, model: type[P]
+    ) -> P:
+        value = await self.effective_in(view, ctx, key)
+        return model.model_validate(value["value"])
+
+
+class ConfigurationService:
+    def __init__(
+        self, authority: Authority, values: ConfigurationValues, *, instance: Path
+    ) -> None:
+        self.authority = authority
+        self.instance = instance.resolve()
+        self.lock_path = self.instance / "run" / "configuration.lock"
+        self.lock_path.parent.mkdir(parents=True, exist_ok=True)
+        self.values = values
+        self._entries = values._entries
+        self._defaults = values._defaults
+
+    @staticmethod
+    def toml_value(value: JsonValue) -> JsonValue:
+        if isinstance(value, dict):
+            return {
+                key: ConfigurationService.toml_value(item)
+                for key, item in value.items()
+                if item is not None
+            }
+        if isinstance(value, list):
+            return [ConfigurationService.toml_value(item) for item in value]
+        return value
+
+    def path(self, ctx: CallContext, scope: Literal["instance", "namespace"]) -> Path:
+        return (
+            self.instance / "config.toml"
+            if scope == "instance"
+            else self.instance / "namespaces" / ctx.namespace_id / "config.toml"
+        )
+
+    def parse_document(self, content: str) -> dict[str, JsonValue]:
+        raw = TypeAdapter(dict[str, JsonValue]).validate_python(tomllib.loads(content))
+        result: dict[str, JsonValue] = {}
+
+        def visit(value: dict[str, JsonValue], prefix: str = "") -> None:
+            for name, item in value.items():
+                key = prefix + name
+                if key in self._entries:
+                    result[key] = item
+                elif isinstance(item, dict) and any(
+                    candidate.startswith(key + ".") for candidate in self._entries
+                ):
+                    visit(item, key + ".")
+                else:
+                    raise DomainError(
+                        "configuration_key_not_found",
+                        "Configuration key is not registered",
+                        key=key,
+                    )
+
+        visit(raw)
+        return result
+
+    def read_file(self, path: Path) -> dict[str, JsonValue]:
+        try:
+            return self.parse_document(path.read_text(encoding="utf-8"))
+        except FileNotFoundError as error:
+            raise DomainError(
+                "configuration_file_not_found", "Configuration file does not exist", path=str(path)
+            ) from error
+        except (ValueError, TypeError) as error:
+            raise DomainError("configuration_invalid", str(error), path=str(path)) from error
+
+    @staticmethod
+    def replace_file(path: Path, content: str) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        descriptor, name = tempfile.mkstemp(prefix=".config-", suffix=".toml", dir=path.parent)
+        temporary = Path(name)
+        try:
+            with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as stream:
+                stream.write(content)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary, path)
+        finally:
+            temporary.unlink(missing_ok=True)
+
+    def update_file(self, path: Path, key: str, value: JsonValue) -> None:
+        document = (
+            tomlkit.parse(path.read_text(encoding="utf-8")) if path.exists() else tomlkit.document()
+        )
+        if value is None:
+            if key in document:
+                del document[key]
+        else:
+            document[key] = self.toml_value(value)
+        self.replace_file(path, tomlkit.dumps(document))
+
+    async def initialize(self) -> None:
+        ctx = CallContext(
+            caller_id="configuration", namespace_id="instance", credential_source_ids=None
+        )
+        path = self.path(ctx, "instance")
+        async with AsyncFileLock(str(self.lock_path)):
+            if not path.exists():
+                async with self.authority.read() as view:
+                    existing = await view.connection.scalar(
+                        sa.select(configuration.c.key)
+                        .where(configuration.c.scope == "instance")
+                        .limit(1)
+                    )
+                if existing is not None:
+                    raise DomainError(
+                        "configuration_file_required",
+                        "Write the current instance configuration to config.toml before starting",
+                        path=str(path),
+                    )
+                document = tomlkit.document()
+                for key, entry in self._entries.items():
+                    if "instance" in entry.scopes:
+                        document[key] = self.toml_value(self._defaults[key])
+                await anyio.to_thread.run_sync(self.replace_file, path, tomlkit.dumps(document))
+        await self.reload(ctx, "instance")
+        directory = self.instance / "namespaces"
+        if directory.is_dir():
+            for file in sorted(directory.glob("*/config.toml")):
+                scoped = ctx.model_copy(update={"namespace_id": file.parent.name})
+                await self.reload(scoped, "namespace")
+
+    async def load(
+        self, ctx: CallContext, scope: Literal["instance", "namespace"] = "instance"
+    ) -> dict[str, JsonValue]:
+        return await anyio.to_thread.run_sync(self.read_file, self.path(ctx, scope))
+
+    async def validate(
+        self,
+        ctx: CallContext,
+        values: dict[str, JsonValue],
+        scope: Literal["instance", "namespace"] = "instance",
+    ) -> dict[str, JsonValue]:
+        checked: dict[str, JsonValue] = {}
+        inherited_scopes = () if scope == "instance" else ("instance",)
+        async with self.authority.read(ctx) as view:
+            for key, value in values.items():
+                entry = self.entry(key)
+                if scope not in entry.scopes:
+                    raise DomainError(
+                        "configuration_scope_invalid",
+                        "Configuration does not support this scope",
+                        key=key,
+                        scope=scope,
+                    )
+                base = (await self.effective_in(view, ctx, key, scopes=inherited_scopes))["value"]
+                merged = ConfigurationValues.merge(
+                    TypeAdapter(dict[str, JsonValue]).validate_python(base),
+                    TypeAdapter(dict[str, JsonValue]).validate_python(value),
+                )
+                checked[key] = entry.parse(merged).model_dump(mode="json")
+        return checked
+
+    async def _publish_document_in(
+        self,
+        tx: WriteTx,
+        ctx: CallContext,
+        values: dict[str, JsonValue],
+        scope: Literal["instance", "namespace"],
+    ) -> list[str]:
+        target = "instance" if scope == "instance" else "namespace:" + ctx.namespace_id
+        current = {
+            str(row.key): row.value
+            for row in (
+                await tx.connection.execute(
+                    sa.select(configuration.c.key, configuration.c.value).where(
+                        configuration.c.scope == target
+                    )
+                )
+            ).all()
+        }
+        changed = []
+        for key in sorted(set(values) | set(current)):
+            if values.get(key) != current.get(key):
+                await self._publish_in(tx, ctx, key, values.get(key), scope)
+                changed.append(key)
+        return changed
+
+    async def reload(
+        self,
+        ctx: CallContext,
+        scope: Literal["instance", "namespace"] = "instance",
+        operation_id: str | None = None,
+    ) -> dict[str, object]:
+        target = "instance" if scope == "instance" else "namespace:" + ctx.namespace_id
+        async with self.authority.write(
+            ctx,
+            operation_id or str(uuid4()),
+            operation_kind="configuration.reload",
+            scope=target,
+            payload={"scope": target},
+        ) as tx:
+            if tx.replayed:
+                return TypeAdapter(dict[str, object]).validate_python(tx.replay_result)
+            async with AsyncFileLock(str(self.lock_path)):
+                values = await self.load(ctx, scope)
+                await self.validate(ctx, values, scope)
+                changed = await self._publish_document_in(tx, ctx, values, scope)
+                return tx.result(
+                    {
+                        "scope": target,
+                        "path": str(self.path(ctx, scope)),
+                        "commit_seq": tx.commit_seq,
+                        "changed": changed,
+                    }
+                )
+
+    async def replace(
+        self,
+        ctx: CallContext,
+        content: str,
+        operation_id: str,
+        scope: Literal["instance", "namespace"] = "instance",
+    ) -> dict[str, object]:
+        values = self.parse_document(content)
+        target = "instance" if scope == "instance" else "namespace:" + ctx.namespace_id
+        async with self.authority.write(
+            ctx,
+            operation_id,
+            operation_kind="configuration.replace",
+            scope=target,
+            payload={"content": content},
+        ) as tx:
+            if tx.replayed:
+                return TypeAdapter(dict[str, object]).validate_python(tx.replay_result)
+            async with AsyncFileLock(str(self.lock_path)):
+                await self.validate(ctx, values, scope)
+                await anyio.to_thread.run_sync(self.replace_file, self.path(ctx, scope), content)
+                changed = await self._publish_document_in(tx, ctx, values, scope)
+                return tx.result(
+                    {
+                        "scope": target,
+                        "path": str(self.path(ctx, scope)),
+                        "commit_seq": tx.commit_seq,
+                        "changed": changed,
+                    }
+                )
+
+    async def export(
+        self, ctx: CallContext, scope: Literal["instance", "namespace"] = "instance"
+    ) -> str:
+        return await anyio.to_thread.run_sync(self.path(ctx, scope).read_text, "utf-8")
+
+    def entry(self, key: str) -> ConfigurationEntry:
+        return self.values.entry(key)
+
+    def describe(self, key: str) -> ConfigurationDefinition:
+        entry = self.entry(key)
+        return ConfigurationDefinition(
+            key=key,
+            value_schema=entry.schema()
+            if entry.schema
+            else type(entry.default).model_json_schema(),
+            default_value=self._defaults[key],
+            write_access="instance_manage" if entry.instance_management else "manage",
+            scopes=entry.scopes,
+        )
+
+    def catalog(self) -> ConfigurationCatalog:
+        return ConfigurationCatalog(
+            items=tuple(self.describe(key) for key in sorted(self._entries))
+        )
+
+    def scopes(self, ctx: CallContext) -> tuple[str, ...]:
+        return self.values.scopes(ctx)
+
+    async def effective(self, ctx: CallContext, key: str) -> dict[str, object]:
+        entry = self.entry(key)
+        scopes = tuple(
+            scope for scope in self.scopes(ctx) if scope.split(":", 1)[0] in entry.scopes
+        )
+        return await self._effective(key, scopes, ctx)
+
+    async def effective_instance(self, key: str) -> dict[str, object]:
+        entry = self.entry(key)
+        if entry.scopes != ("instance",):
+            raise ValueError("Instance resource resolution requires an instance-only definition")
+        return await self._effective(key, ("instance",), None)
+
+    async def _effective(
+        self, key: str, scopes: tuple[str, ...], ctx: CallContext | None
+    ) -> dict[str, object]:
+        async with self.authority.read(ctx) as view:
+            return await self.effective_in(view, ctx, key, scopes=scopes)
+
+    async def effective_in(
+        self,
+        view: ReadView | WriteTx,
+        ctx: CallContext | None,
+        key: str,
+        *,
+        scopes: tuple[str, ...] | None = None,
+    ) -> dict[str, object]:
+        return await self.values.effective_in(view, ctx, key, scopes=scopes)
 
     async def history(self, ctx: CallContext, key: str, limit: int = 100) -> dict[str, object]:
         self.entry(key)
@@ -167,7 +452,7 @@ class ConfigurationService:
         key: str,
         value: object,
         operation_id: str,
-        scope: Literal["instance", "namespace", "subject"] = "instance",
+        scope: Literal["instance", "namespace"] = "instance",
     ) -> dict[str, object]:
         entry = self.entry(key)
         if scope not in entry.scopes:
@@ -176,14 +461,14 @@ class ConfigurationService:
                 "Configuration does not support the selected scope",
                 context={"key": key, "scope": scope, "allowed_scopes": list(entry.scopes)},
             )
-        if scope == "subject" and ctx.subject_id is None:
-            raise ValueError("Subject scope requires a subject")
-        target = (
-            "instance"
-            if scope == "instance"
-            else f"{scope}:{ctx.namespace_id if scope == 'namespace' else ctx.subject_id}"
+        target = "instance" if scope == "instance" else f"{scope}:{ctx.namespace_id}"
+        parsed = (
+            None
+            if value is None
+            else TypeAdapter(dict[str, JsonValue]).validate_python(
+                self.toml_value(TypeAdapter(dict[str, JsonValue]).validate_python(value))
+            )
         )
-        parsed = None if value is None else entry.parse(value).model_dump(mode="json")
         async with self.authority.write(
             ctx,
             operation_id,
@@ -202,7 +487,37 @@ class ConfigurationService:
         ctx: CallContext,
         key: str,
         value: object,
-        scope: Literal["instance", "namespace", "subject"] = "namespace",
+        scope: Literal["instance", "namespace"] = "namespace",
+    ) -> dict[str, object]:
+        raw = None if value is None else TypeAdapter(dict[str, JsonValue]).validate_python(value)
+        entry = self.entry(key)
+        if scope not in entry.scopes:
+            raise DomainError(
+                "configuration_scope_invalid",
+                "Configuration does not support this scope",
+                key=key,
+                scope=scope,
+            )
+        inherited = await self.effective_in(
+            tx, ctx, key, scopes=() if scope == "instance" else ("instance",)
+        )
+        if raw is not None:
+            entry.parse(
+                ConfigurationValues.merge(
+                    TypeAdapter(dict[str, JsonValue]).validate_python(inherited["value"]), raw
+                )
+            )
+        async with AsyncFileLock(str(self.lock_path)):
+            await anyio.to_thread.run_sync(self.update_file, self.path(ctx, scope), key, raw)
+            return await self._publish_in(tx, ctx, key, raw, scope)
+
+    async def _publish_in(
+        self,
+        tx: WriteTx,
+        ctx: CallContext,
+        key: str,
+        value: object,
+        scope: Literal["instance", "namespace"] = "namespace",
     ) -> dict[str, object]:
         if tx.authority is not self.authority or tx.replayed:
             raise ValueError("Configuration changes require the owning live transaction")
@@ -213,23 +528,32 @@ class ConfigurationService:
                 "Configuration does not support the selected scope",
                 context={"key": key, "scope": scope},
             )
-        if scope == "subject" and ctx.subject_id is None:
-            raise ValueError("Subject scope requires a subject")
-        target = (
-            "instance"
-            if scope == "instance"
-            else f"{scope}:{ctx.namespace_id if scope == 'namespace' else ctx.subject_id}"
+        target = "instance" if scope == "instance" else f"{scope}:{ctx.namespace_id}"
+        parsed = (
+            None
+            if value is None
+            else TypeAdapter(dict[str, JsonValue]).validate_python(
+                self.toml_value(TypeAdapter(dict[str, JsonValue]).validate_python(value))
+            )
         )
-        parsed = None if value is None else entry.parse(value).model_dump(mode="json")
         if (
             key == "namespace.quota"
             and parsed is not None
-            and parsed.get("max_storage_bytes") is not None
-            and tx.storage_baseline is None
-            and self.authority.namespace_limits is not None
+            and (parsed.get("max_storage_bytes") is not None)
+            and (tx.storage_baseline is None)
+            and (self.authority.namespace_limits is not None)
         ):
             usage = await self.authority.namespace_limits.usage_in(tx, ctx)
             tx.storage_baseline = int(str(usage["storage_bytes"]))
+        if parsed is not None:
+            inherited = await self.effective_in(
+                tx, ctx, key, scopes=() if scope == "instance" else ("instance",)
+            )
+            entry.parse(
+                ConfigurationValues.merge(
+                    TypeAdapter(dict[str, JsonValue]).validate_python(inherited["value"]), parsed
+                )
+            )
         applied_scopes = self.scopes(ctx)
         target_scopes = applied_scopes[: applied_scopes.index(target) + 1]
         previous = await self.effective_in(tx, ctx, key, scopes=target_scopes)
@@ -261,14 +585,10 @@ class ConfigurationService:
         ctx: CallContext,
         key: str,
         commit_seq: int | None = None,
-        scope: Literal["instance", "namespace", "subject"] = "subject",
+        scope: Literal["instance", "namespace"] = "namespace",
     ) -> dict[str, object]:
         """Publish a retained configuration value as a new revision at the chosen scope."""
-        target = (
-            "instance"
-            if scope == "instance"
-            else f"{scope}:{ctx.namespace_id if scope == 'namespace' else ctx.require_subject()}"
-        )
+        target = "instance" if scope == "instance" else f"{scope}:{ctx.namespace_id}"
         statement = sa.select(history).where(history.c.key == key, history.c.scope == target)
         if commit_seq is not None:
             statement = statement.where(history.c.commit_seq == commit_seq)
@@ -285,84 +605,15 @@ class ConfigurationService:
             )
         if commit_seq is not None:
             value = row["value"]
-        elif row["previous_value"] is not None:
-            value = row["previous_value"]
         else:
-            # Existing history predates previous-value capture. Resolve each
-            # configured scope at the retained cutoff using its own history.
-            value = self._defaults[key]
-            for candidate in self.scopes(ctx)[: self.scopes(ctx).index(target) + 1]:
-                older = (
-                    await tx.connection.execute(
-                        sa.select(history.c.value)
-                        .where(
-                            history.c.key == key,
-                            history.c.scope == candidate,
-                            history.c.commit_seq < int(row["commit_seq"]),
-                        )
-                        .order_by(history.c.commit_seq.desc())
-                        .limit(1)
-                    )
-                ).first()
-                if older is not None and older[0] is not None:
-                    value = older[0]
+            value = row["previous_value"]
         return await self.set_in(tx, ctx, key, value, scope)
 
+    async def policy_in[P: BaseModel](
+        self, view: ReadView | WriteTx, ctx: CallContext, key: str, model: type[P]
+    ) -> P:
+        return await self.values.policy_in(view, ctx, key, model)
 
-async def migrate(connection: AsyncConnection) -> None:
-    """Existing history held one key per commit; native atomic changes can hold several."""
-    primary = await connection.run_sync(
-        lambda sync: sa.inspect(sync).get_pk_constraint(history.name)["constrained_columns"]
-    )
-    if set(primary) != {"commit_seq", "scope", "key"}:
-        await connection.exec_driver_sql(
-            "ALTER TABLE nous_configuration_history RENAME TO nous_configuration_history_previous"
-        )
-        await connection.run_sync(history.create)
-        await connection.exec_driver_sql(
-            "INSERT INTO nous_configuration_history (commit_seq,scope,key,value) SELECT commit_seq,scope,key,value FROM nous_configuration_history_previous"
-        )
-        await connection.exec_driver_sql("DROP TABLE nous_configuration_history_previous")
-    columns = await connection.run_sync(
-        lambda sync: {column["name"] for column in sa.inspect(sync).get_columns(history.name)}
-    )
-    if "previous_value" not in columns:
-        await connection.exec_driver_sql(
-            "ALTER TABLE nous_configuration_history ADD COLUMN previous_value JSON"
-        )
-    from nous_sdk.contracts.namespace_policy import FormationPolicy
-
-    legacy = (
-        (
-            await connection.execute(
-                sa.select(configuration).where(configuration.c.key == "integrations.amemorix")
-            )
-        )
-        .mappings()
-        .all()
-    )
-    for row in legacy:
-        old = row["value"]
-        if "form_memory" not in old:
-            continue
-        existing = await connection.scalar(
-            sa.select(configuration.c.key).where(
-                configuration.c.scope == row["scope"], configuration.c.key == "formation"
-            )
-        )
-        if existing is None:
-            await connection.execute(
-                configuration.insert().values(
-                    scope=row["scope"],
-                    key="formation",
-                    value=FormationPolicy(default_enabled=bool(old["form_memory"])).model_dump(
-                        mode="json"
-                    ),
-                    commit_seq=row["commit_seq"],
-                )
-            )
-        await connection.execute(
-            configuration.update()
-            .where(configuration.c.scope == row["scope"], configuration.c.key == row["key"])
-            .values(value={key: value for key, value in old.items() if key != "form_memory"})
-        )
+    async def policy[P: BaseModel](self, ctx: CallContext, key: str, model: type[P]) -> P:
+        async with self.authority.read(ctx) as view:
+            return await self.values.policy_in(view, ctx, key, model)

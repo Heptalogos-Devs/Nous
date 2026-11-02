@@ -195,7 +195,7 @@ async def export_bindings_in(
         await view.connection.execute(
             sa.select(imported.c.address, imported.c.target).where(
                 imported.c.namespace_id == ctx.namespace_id,
-                imported.c.subject_id == ctx.subject_id,
+                
                 imported.c.target.in_(encoded),
             )
         )
@@ -216,7 +216,7 @@ async def import_bindings_in(
             insert(imported)
             .values(
                 namespace_id=ctx.namespace_id,
-                subject_id=ctx.require_subject(),
+                
                 bundle_id=bundle_id,
                 address=binding.address,
                 target=canonical_json(binding.target),

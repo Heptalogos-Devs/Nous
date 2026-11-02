@@ -5,7 +5,6 @@ from contextlib import closing
 from pathlib import Path
 
 from nous_sdk.contracts import DomainError
-from nous_sdk.contracts.namespace_backups import NamespaceState
 from pydantic import JsonValue, TypeAdapter
 
 type RawRow = dict[str, str | int | float | None]
@@ -17,7 +16,7 @@ def quoted(name: str) -> str:
     return '"' + name.replace('"', '""') + '"'
 
 
-def capture(database: Path, namespace_id: str) -> NamespaceState:
+def capture(database: Path, namespace_id: str) -> tuple[int, dict[str, tuple[RawRow, ...]], tuple[str, ...]]:
     with closing(sqlite3.connect(f"{database.as_uri()}?mode=ro", uri=True)) as connection:
         connection.row_factory = sqlite3.Row
         tables = {
@@ -28,7 +27,7 @@ def capture(database: Path, namespace_id: str) -> NamespaceState:
         }
         rows: dict[str, list[RawRow]] = {}
         for table, columns in tables.items():
-            if "namespace_id" in columns:
+            if "namespace_id" in columns and table not in {"nous_job_results", "nous_model_budget_allocations"}:
                 rows[table] = [
                     _ROW.validate_python(dict(row))
                     for row in connection.execute(
@@ -83,8 +82,7 @@ def capture(database: Path, namespace_id: str) -> NamespaceState:
             )
         child("nous_model_invocation_retirements", "key", "nous_model_invocations", "key")
         rows.pop("namespace_backup_uploads", None)
-        subject_ids = {row["id"] for row in rows.get("subjects", [])}
-        scopes = {f"namespace:{namespace_id}", *(f"subject:{subject}" for subject in subject_ids)}
+        scopes = {f"namespace:{namespace_id}"}
         for table in ("nous_configuration", "nous_configuration_history"):
             rows[table] = [
                 _ROW.validate_python(dict(row))
@@ -119,82 +117,8 @@ def capture(database: Path, namespace_id: str) -> NamespaceState:
             if row["reference"] in references
         ]
 
-        workflow_ids = {row["workflow_id"] for row in rows.get("nous_job_links", [])}
-        if "workflow_status" in tables:
-            all_statuses = [
-                _ROW.validate_python(dict(row))
-                for row in connection.execute("SELECT * FROM workflow_status")
-            ]
-            while True:
-                owned = {
-                    row["workflow_uuid"]
-                    for row in all_statuses
-                    if row.get("parent_workflow_id") in workflow_ids
-                }
-                if owned.issubset(workflow_ids):
-                    break
-                workflow_ids.update(owned)
-            rows["workflow_status"] = [
-                row for row in all_statuses if row["workflow_uuid"] in workflow_ids
-            ]
-            for status in rows["workflow_status"]:
-                status["request"] = None
-            for table, column in (
-                ("workflow_input", "workflow_uuid"),
-                ("workflow_output", "workflow_uuid"),
-                ("operation_outputs", "workflow_uuid"),
-                ("workflow_events", "workflow_uuid"),
-                ("workflow_events_history", "workflow_uuid"),
-                ("notifications", "destination_uuid"),
-                ("streams", "workflow_uuid"),
-            ):
-                if table in tables:
-                    rows[table] = [
-                        _ROW.validate_python(dict(row))
-                        for row in connection.execute(f"SELECT * FROM {quoted(table)}")
-                        if row[column] in workflow_ids
-                    ]
-            for table in rows:
-                if table in {
-                    "workflow_status",
-                    "workflow_input",
-                    "workflow_output",
-                    "operation_outputs",
-                    "workflow_events",
-                    "workflow_events_history",
-                    "notifications",
-                    "streams",
-                }:
-                    for row in rows[table]:
-                        if row.get("serialization") not in {None, "portable_json"}:
-                            raise DomainError(
-                                "namespace_backup_serialization",
-                                "Namespace workflows require portable JSON serialization",
-                            )
-            schedule_names = {
-                row["schedule_name"] for row in rows["workflow_status"] if row.get("schedule_name")
-            }
-            rows["workflow_schedules"] = []
-            for row in connection.execute("SELECT * FROM workflow_schedules"):
-                value = _OBJECT.validate_json(str(row["context"]))
-                arguments_raw = value.get("args", [])
-                arguments = arguments_raw if isinstance(arguments_raw, list) else []
-                if (
-                    row["schedule_name"] in schedule_names
-                    or value.get("namespace_id") == namespace_id
-                    or value.get("request_id")
-                    in {row["id"] for row in rows.get("context_preparations", [])}
-                    or value.get("schedule_id")
-                    in {row["id"] for row in rows.get("maintenance_schedules", [])}
-                    or any(
-                        isinstance(item, dict) and item.get("namespace_id") == namespace_id
-                        for item in arguments
-                    )
-                ):
-                    rows["workflow_schedules"].append(_ROW.validate_python(dict(row)))
+        workflow_ids = tuple(str(row['workflow_id']) for row in rows.pop('nous_job_links', []))
         commit = connection.execute(
             "SELECT commit_seq FROM nous_commit_clock WHERE singleton=1"
         ).fetchone()[0]
-        return NamespaceState.model_validate(
-            {"namespace_id": namespace_id, "authority_commit_seq": commit, "tables": rows}
-        )
+        return int(commit), {name: tuple(values) for name, values in rows.items()}, workflow_ids

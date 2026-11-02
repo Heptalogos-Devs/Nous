@@ -26,12 +26,12 @@ bindings = Table(
     metadata,
     Column("id", Integer, primary_key=True, autoincrement=True),
     Column("namespace_id", String, nullable=False),
-    Column("subject_id", String, nullable=False),
+    
     Column("caller_id", String, nullable=False),
     Column("query_tool_id", String, nullable=False),
     Column("session_id", String, nullable=False),
     Column("task_id", String, nullable=False),
-    UniqueConstraint("namespace_id", "subject_id", "caller_id", "query_tool_id", "session_id"),
+    UniqueConstraint('namespace_id', "caller_id", "query_tool_id", "session_id"),
 )
 
 
@@ -90,7 +90,7 @@ async def enqueue(
                 (
                     ctx.caller_id,
                     ctx.namespace_id,
-                    ctx.subject_id,
+                    ctx.namespace_id,
                     command.query_tool_id,
                     command.session_id,
                 )
@@ -111,7 +111,7 @@ async def enqueue(
         ctx,
         identity + ":bind",
         operation_kind="amemorix.feedback.bind",
-        scope=ctx.require_subject(),
+        scope=ctx.namespace_id,
         payload={
             "query_tool_id": command.query_tool_id,
             "session_id": command.session_id,
@@ -124,7 +124,7 @@ async def enqueue(
             result = await tx.connection.execute(
                 bindings.insert().values(
                     namespace_id=ctx.namespace_id,
-                    subject_id=ctx.subject_id,
+                    
                     caller_id=ctx.caller_id,
                     query_tool_id=command.query_tool_id,
                     session_id=command.session_id,
@@ -154,7 +154,7 @@ async def admin(
     command = AdminInput.model_validate(arguments)
     async with self.app.authority.read(ctx) as view:
         statement = select(bindings).where(
-            bindings.c.namespace_id == ctx.namespace_id, bindings.c.subject_id == ctx.subject_id
+            bindings.c.namespace_id == ctx.namespace_id
         )
         if command.task_id is not None:
             statement = statement.where(bindings.c.id == command.task_id)

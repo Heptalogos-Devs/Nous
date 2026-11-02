@@ -16,7 +16,12 @@ from nous_sdk.contracts.growth import (
     GrowthProposalAdoption,
     GrowthSnapshot,
 )
-from nous_sdk.contracts.growth_bodies import GrowthAttribute, GrowthMediaRef, GrowthRef
+from nous_sdk.contracts.growth_bodies import (
+    GrowthAttribute,
+    GrowthEvidenceRef,
+    GrowthMediaRef,
+    GrowthRef,
+)
 from pydantic import BaseModel, JsonValue, TypeAdapter
 
 _OBJECT = TypeAdapter(dict[str, JsonValue])
@@ -34,6 +39,9 @@ def normalize_growth(proposal: GrowthProposal | SeedProposal) -> GrowthDraft:
         def transform(
             value: object, path: str = "", refs: list[GrowthBinding] = bindings
         ) -> JsonValue:
+            if isinstance(value, GrowthEvidenceRef):
+                refs.append(GrowthBinding(path=path, key=value.key, kind="evidence"))
+                return None
             if isinstance(value, GrowthMediaRef):
                 refs.append(GrowthBinding(path=path, key=value.key, kind="media"))
                 return None
@@ -44,10 +52,12 @@ def normalize_growth(proposal: GrowthProposal | SeedProposal) -> GrowthDraft:
                 result = value.model_dump(mode="json", exclude={"evidence"})
                 result["evidence"] = [None for _ in value.evidence]
                 refs.extend(
-                    GrowthBinding(
-                        path=f"{path}/evidence/{index}", key=reference.key, kind="evidence"
+                    (
+                        GrowthBinding(
+                            path=f"{path}/evidence/{index}", key=reference.key, kind="evidence"
+                        )
+                        for index, reference in enumerate(value.evidence)
                     )
-                    for index, reference in enumerate(value.evidence)
                 )
                 return _OBJECT.validate_python(result)
             if isinstance(value, BaseModel):
@@ -64,9 +74,7 @@ def normalize_growth(proposal: GrowthProposal | SeedProposal) -> GrowthDraft:
 
         body = _OBJECT.validate_python(transform(action.body))
         if action.body.kind == "journal":
-            body["knowledge_cutoff"] = (
-                0  # Replaced by the owner's frozen watermark, never the model.
-            )
+            body["knowledge_cutoff"] = 0
         elif action.body.kind == "association":
             body["basis_class"] = "cognitive_derivation"
         elif action.body.kind == "memory_semantics":
@@ -154,13 +162,6 @@ def growth_model_catalog(snapshot: GrowthSnapshot) -> dict[str, JsonValue]:
             }
         )
     return {
-        "watermark": snapshot.watermark,
-        "capabilities": list(snapshot.capabilities),
-        **(
-            {"features": snapshot.features.model_dump(mode="json")}
-            if snapshot.features is not None
-            else {}
-        ),
         "entries": entries,
         **(
             {

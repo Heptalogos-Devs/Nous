@@ -34,7 +34,7 @@ async def on_contact_in(
     pending = (
         await tx.connection.execute(
             sa.select(runs.c.record)
-            .where(runs.c.namespace_id == ctx.namespace_id, runs.c.subject_id == ctx.subject_id)
+            .where(runs.c.namespace_id == ctx.namespace_id)
             .order_by(runs.c.commit_seq.desc())
             .limit(20)
         )
@@ -46,7 +46,7 @@ async def on_contact_in(
             and run.draft is None
             and run.review is None
             and run.command.references
-            and run.command.role == "maintenance"
+            and run.command.kind == "growth"
             and run.command.auto_adopt == (policy.mode == "automatic")
         ):
             merged = tuple(
@@ -83,29 +83,8 @@ async def on_contact_in(
 async def snapshot_in(
     self: MaintenanceService, tx: WriteTx, ctx: CallContext, command: StartMaintenance
 ) -> GrowthSnapshot:
-    if not command.references and command.source_catalog_id is None:
-        return await self.cognition.growth_snapshot_in(tx, ctx, command.kinds, command.limit)
-    current = await self.cognition.growth_snapshot_in(
-        tx,
-        ctx,
-        (
-            "self_facet",
-            "narrative_thread",
-            "domain_knowledge",
-            "entity",
-            "social_relation",
-            "language_convention",
-            "desire",
-            "concern",
-            "schema",
-        ),
-        command.limit,
-    )
+    current = await self.growth.growth_snapshot_in(tx, ctx, (), 1)
     records = {ref.exact(): await self.cognition.get_in(tx, ctx, ref) for ref in command.references}
-    for entry in current.entries:
-        if len(records) >= command.limit:
-            break
-        records.setdefault(entry.record.reference.exact(), entry.record)
     entries = tuple(
         GrowthEntry(key=f"c{i}", record=record) for i, record in enumerate(records.values())
     )
@@ -118,7 +97,6 @@ async def snapshot_in(
                 sa.select(observations.c.material_id).where(
                     observations.c.id.in_(roots),
                     observations.c.namespace_id == ctx.namespace_id,
-                    observations.c.subject_id == ctx.subject_id,
                 )
             )
         ).scalars()
@@ -143,11 +121,28 @@ async def snapshot_in(
                     sa.select(observations.c.material_id).where(
                         observations.c.id.in_(roots),
                         observations.c.namespace_id == ctx.namespace_id,
-                        observations.c.subject_id == ctx.subject_id,
                     )
                 )
             ).scalars()
         )
+    if command.material_sources:
+        from nous.cognition.growth_sources import from_references_in
+
+        material_sources = (
+            *material_sources,
+            *await from_references_in(
+                self.cognition, tx, ctx, command.material_sources, start=len(material_sources)
+            ),
+        )
+        for source in material_sources:
+            material_ids = (
+                *material_ids,
+                *(
+                    await self.cognition.materials.provenance_in(
+                        tx, ctx, source.source, derivations=self.cognition.derivations
+                    )
+                ).material_ids,
+            )
     return GrowthSnapshot(
         watermark=tx.commit_seq,
         entries=entries,

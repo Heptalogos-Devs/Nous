@@ -6,6 +6,9 @@ from .common import Contract
 
 
 class RerankInfo(Contract):
+    algorithm: Literal["off", "compute", "cross_encoder", "llm"] = "off"
+    before: tuple[str, ...] = ()
+    after: tuple[str, ...] = ()
     mode: Literal["off", "optional", "required"]
     status: Literal["skipped", "completed"]
     call_id: str | None = None

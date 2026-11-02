@@ -98,7 +98,7 @@ class BundleMaterial(Contract):
 class BundleObservation(Contract):
     id: str
     namespace_id: str
-    subject_id: str
+
     material_id: str
     kind: ObservationKind
     active: bool
@@ -109,7 +109,7 @@ class BundleObservation(Contract):
 class BundleCatalog(Contract):
     id: str
     namespace_id: str
-    subject_id: str
+
     record: dict[str, JsonValue]
 
 
@@ -129,7 +129,7 @@ class BundleUnit(Contract):
 class BundleFileSuccess(Contract):
     id: str
     namespace_id: str
-    subject_id: str
+
     input_source_id: str
     record: dict[str, JsonValue]
 
@@ -153,14 +153,14 @@ class BundleVector(Contract):
         return self
 
 
-class SubjectBundle(Contract):
+class NamespaceBundle(Contract):
     package: PackageDescriptor | None = None
     content_level: Literal["full", "knowledge"] = "full"
-    format: Literal["nous.subject"] = "nous.subject"
+    format: Literal["nous.namespace.bundle"] = "nous.namespace.bundle"
     version: Literal[1] = 1
     id: str
     namespace_id: str
-    subject_id: str
+
     authority_commit_seq: int
     cognition: tuple[CognitiveRecord, ...]
     materials: tuple[BundleMaterial, ...]
@@ -176,3 +176,28 @@ class SubjectBundle(Contract):
     derivations: DerivedBundle = Field(default_factory=DerivedBundle)
     vectors: tuple[BundleVector, ...] = ()
     calls: tuple[ArchivedCall, ...] = ()
+
+    @model_validator(mode="after")
+    def single_namespace(self) -> NamespaceBundle:
+        for record in (
+            *self.cognition,
+            *self.materials,
+            *self.observations,
+            *self.catalogs,
+            *self.file_successes,
+        ):
+            if record.namespace_id != self.namespace_id:
+                raise ValueError(
+                    "A namespace bundle must contain records from its declared namespace"
+                )
+        for row in (
+            *self.materials,
+            *self.observations,
+            *self.catalogs,
+            *self.inputs,
+            *self.units,
+            *self.file_successes,
+        ):
+            if "namespace_id" in row.record and row.record["namespace_id"] != self.namespace_id:
+                raise ValueError("Archived record ownership differs from the bundle namespace")
+        return self

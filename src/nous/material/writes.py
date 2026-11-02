@@ -17,7 +17,7 @@ from nous_sdk.contracts import (
 from nous_sdk.contracts.common import ObservationKind
 from sqlalchemy import select
 
-from nous.identity.access import require_subject_in
+from nous.identity.access import require_namespace_in
 from nous.platform.content import ContentLease
 from nous.platform.persistence import ReadView, WriteTx
 from nous.references import allocate_in
@@ -150,7 +150,7 @@ async def observe_in(
 ) -> SourceRecord:
     from .service import materials, observations
 
-    await require_subject_in(tx, ctx)
+    await require_namespace_in(tx, ctx)
     material = (
         await tx.connection.execute(
             select(materials.c.record).where(
@@ -182,7 +182,7 @@ async def observe_in(
     value: SourceRecord = {
         "id": str(uuid4()),
         "namespace_id": ctx.namespace_id,
-        "subject_id": ctx.require_subject(),
+        
         "material_id": material_id,
         "kind": kind,
         "origin": document.origin,
@@ -201,7 +201,7 @@ async def observe_in(
         observations.insert().values(
             id=value["id"],
             namespace_id=ctx.namespace_id,
-            subject_id=ctx.require_subject(),
+            
             material_id=material_id,
             kind=kind,
             active=True,
@@ -221,7 +221,7 @@ async def require_observation_exists_in(
         select(observations.c.id).where(
             observations.c.id == observation_id,
             observations.c.namespace_id == ctx.namespace_id,
-            observations.c.subject_id == ctx.require_subject(),
+            
             observations.c.active.is_(True),
         )
     )

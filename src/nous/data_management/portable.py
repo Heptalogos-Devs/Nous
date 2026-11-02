@@ -20,7 +20,7 @@ from nous_sdk.contracts import (
     EntityBody,
     EpisodeBody,
     MemoryBody,
-    SubjectBundle,
+    NamespaceBundle,
 )
 from pydantic import JsonValue, TypeAdapter
 
@@ -52,7 +52,7 @@ def canonical(value: object) -> bytes:
 
 
 def project(
-    bundle: SubjectBundle,
+    bundle: NamespaceBundle,
 ) -> tuple[dict[str, JsonValue], dict[str, JsonValue], dict[str, int]]:
     heads: dict[str, CognitiveRecord] = {}
     for record in bundle.cognition:
@@ -296,7 +296,7 @@ def docs_from_knowledge(knowledge: dict[str, JsonValue]) -> list[dict[str, JsonV
     return TypeAdapter(list[dict[str, JsonValue]]).validate_python(knowledge["docs"])
 
 
-def write_portable(bundle: SubjectBundle, command: BundleRequest) -> bytes:
+def write_portable(bundle: NamespaceBundle, command: BundleRequest) -> bytes:
     knowledge, state, counts = project(bundle)
     from .portable_images import project_images
     from .portable_read import image_semantics

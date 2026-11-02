@@ -145,7 +145,7 @@ class AMemorixOperation(Contract):
 
 class AMemorixRequest(Contract):
     namespace_id: str
-    subject_id: str
+    
     operation: AMemorixOperation
 
 

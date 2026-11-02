@@ -141,13 +141,8 @@ pub fn decode_epa_basis(raw: String, dimension: usize) -> Option<EpaBasis> {
     })
 }
 
-pub(super) fn analyze_epa_with_mode(
-    connection: &MemoAssets,
-    query: &[f32],
-    dimension: usize,
-    mode: &str,
-) -> EpaOutput {
-    let empty = || EpaOutput {
+pub(super) fn unavailable_epa() -> EpaOutput {
+    EpaOutput {
         logic_depth: 0.0,
         entropy: 1.0,
         resonance: 0.0,
@@ -160,12 +155,20 @@ pub(super) fn analyze_epa_with_mode(
         in_domain_gate: 0.0,
         baseline_coverage: 0.0,
         background_ratio: 0.0,
-    };
+    }
+}
+
+pub(super) fn analyze_epa_with_mode(
+    connection: &MemoAssets,
+    query: &[f32],
+    dimension: usize,
+    mode: &str,
+) -> EpaOutput {
     let Some(basis) = connection.epa.as_ref() else {
-        return empty();
+        return unavailable_epa();
     };
     if basis.dimension != dimension {
-        return empty();
+        return unavailable_epa();
     }
     let mean = &basis.mean;
     let bases = &basis.bases;

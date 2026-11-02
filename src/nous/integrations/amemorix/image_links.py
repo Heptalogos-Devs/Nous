@@ -23,7 +23,7 @@ async def change_link(
         ctx,
         command.operation_id,
         operation_kind="cognition.source_link",
-        scope=ctx.require_subject(),
+        scope=ctx.namespace_id,
         payload=command,
     ) as tx:
         if tx.replayed:

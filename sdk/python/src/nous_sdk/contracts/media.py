@@ -151,7 +151,7 @@ class MediaRecord(Contract):
     reference: MediaReference
     addresses: ReferenceAddresses | None = None
     namespace_id: str
-    subject_id: str
+    
     material_id: str
     content_hash: str
     media_type: str

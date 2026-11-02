@@ -10,7 +10,7 @@ from nous_sdk.contracts.imports import UnitAttempt
 from sqlalchemy import select
 
 from nous.cognition.schema import vectors
-from nous.identity.access import require_subject_in
+from nous.identity.access import require_namespace_in
 
 from .schema import outputs, requests
 
@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 
 async def vector_status(self: ImportService, ctx: CallContext) -> ImportVectorStatus:
     async with self.authority.read(ctx) as view:
-        await require_subject_in(view, ctx)
+        await require_namespace_in(view, ctx)
         values = (await view.connection.execute(select(outputs.c.record))).scalars()
         visible: list[UnitOutput] = []
         for value in values:

@@ -34,7 +34,7 @@ class ContactMaterial(Operation):
 
 class ContactReceipt(Contract):
     observation_id: str
-    consumer_subject_id: str
+    namespace_id: str
     caller_id: str
     external_event_id: str
     source: MediaReference

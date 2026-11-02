@@ -46,34 +46,34 @@ from .tuning import TuningClient
 
 class ImportClient(TuningClient):
     async def import_dataset(
-        self, namespace_id: str, subject_id: str, command: ImportDataset
+        self, namespace_id: str,  command: ImportDataset
     ) -> JsonObject:
         return TypeAdapter(JsonObject).validate_python(
             await self.request(
                 "POST",
-                self.subject_path(namespace_id, subject_id) + "/datasets/import",
+                self.namespace_path(namespace_id) + "/datasets/import",
                 body=encoded(command),
             )
         )
 
     async def backfill_source_times(
-        self, namespace_id: str, subject_id: str, command: BackfillSourceTimes
+        self, namespace_id: str,  command: BackfillSourceTimes
     ) -> JsonObject:
         return TypeAdapter(JsonObject).validate_python(
             await self.request(
                 "POST",
-                self.subject_path(namespace_id, subject_id) + "/datasets/source-times",
+                self.namespace_path(namespace_id) + "/datasets/source-times",
                 body=encoded(command),
             )
         )
 
     async def project_vectors(
-        self, namespace_id: str, subject_id: str, command: ProjectVectors
+        self, namespace_id: str,  command: ProjectVectors
     ) -> ProjectionReceipt:
         return ProjectionReceipt.model_validate(
             await self.request(
                 "POST",
-                self.subject_path(namespace_id, subject_id) + "/embeddings/jobs",
+                self.namespace_path(namespace_id) + "/embeddings/jobs",
                 body=encoded(command),
             )
         )
@@ -81,21 +81,21 @@ class ImportClient(TuningClient):
     async def process_import_units(
         self,
         namespace_id: str | Mapping[str, JsonValue],
-        subject_id: str | None = None,
+        
         request: ProcessCatalog | Mapping[str, JsonValue] | None = None,
         *,
         operation_id: str | None = None,
     ) -> ImportSubmission:
         if isinstance(namespace_id, Mapping):
-            if subject_id is not None or request is not None:
+            if request is not None:
                 raise ValueError("A Mapping import request carries its own scope")
             values = dict(namespace_id)
             if "llm_enabled" not in values:
                 raise ValueError("Unit processing requires an explicit llm_enabled policy")
             validate_flags(values)
-            namespace_id, subject_id = await request_scope(self, values)
+            namespace_id = await request_scope(self, values)
             request = values
-        if subject_id is None or request is None:
+        if namespace_id is None or request is None:
             raise ValueError("Unit processing requires scope and a frozen catalog command")
         if isinstance(request, ProcessCatalog):
             command = request
@@ -123,14 +123,14 @@ class ImportClient(TuningClient):
             command = ProcessCatalog.model_validate(values)
         return await self.submit_catalog(
             namespace_id,
-            subject_id,
+            
             command.model_copy(update={"operation_id": operation_id}) if operation_id else command,
         )
 
     async def freeze_import_catalog(
         self,
         namespace_id: str | Mapping[str, JsonValue],
-        subject_id: str | None = None,
+        
         inputs: Sequence[ImportDocument] | None = None,
         *,
         operation_id: str | None = None,
@@ -139,14 +139,14 @@ class ImportClient(TuningClient):
     ) -> CatalogView:
         values: JsonObject
         if isinstance(namespace_id, Mapping):
-            if subject_id is not None or inputs is not None:
+            if inputs is not None:
                 raise ValueError("A Mapping import request carries its own scope")
             values = dict(namespace_id)
-            namespace_id, subject_id = await request_scope(self, values)
+            namespace_id = await request_scope(self, values)
             split_options(values)
             normalize_inputs(values)
         else:
-            if subject_id is None or inputs is None:
+            if namespace_id is None or inputs is None:
                 raise ValueError("Catalog freezing requires scope and exact documents")
             values = {
                 "inputs": [encoded(item) for item in inputs],
@@ -155,13 +155,13 @@ class ImportClient(TuningClient):
             }
         values["operation_id"] = operation_id or values.get("operation_id") or str(uuid4())
         return await self.freeze_catalog(
-            namespace_id, subject_id, FreezeCatalog.model_validate(values)
+            namespace_id,  FreezeCatalog.model_validate(values)
         )
 
     async def import_files(
         self,
         namespace_id: str,
-        subject_id: str,
+        
         files: Sequence[str | Path | Mapping[str, JsonValue]],
         *,
         transfer_root: str | Path,
@@ -176,7 +176,7 @@ class ImportClient(TuningClient):
         return await import_files(
             self,
             namespace_id,
-            subject_id,
+            
             files,
             transfer_root=transfer_root,
             input_format=input_format,
@@ -189,7 +189,7 @@ class ImportClient(TuningClient):
     async def import_directory(
         self,
         namespace_id: str,
-        subject_id: str,
+        
         *,
         transfer_root: str | Path,
         alias: str = "raw",
@@ -207,7 +207,7 @@ class ImportClient(TuningClient):
         return await import_directory(
             self,
             namespace_id,
-            subject_id,
+            
             transfer_root=transfer_root,
             alias=alias,
             relative_path=relative_path,
@@ -221,12 +221,12 @@ class ImportClient(TuningClient):
         )
 
     async def submit_admit_documents(
-        self, namespace_id: str, subject_id: str, command: AdmitFiles
+        self, namespace_id: str,  command: AdmitFiles
     ) -> FileImportSubmission:
         return FileImportSubmission.model_validate(
             await self.request(
                 "POST",
-                self.subject_path(namespace_id, subject_id) + "/imports/file-jobs",
+                self.namespace_path(namespace_id) + "/imports/file-jobs",
                 body=encoded(command),
             )
         )
@@ -243,7 +243,7 @@ class ImportClient(TuningClient):
     async def admit_import_files(
         self,
         namespace_id: str,
-        subject_id: str,
+        
         request: Mapping[str, JsonValue],
         *,
         operation_id: str | None = None,
@@ -252,7 +252,7 @@ class ImportClient(TuningClient):
     async def admit_import_files(
         self,
         namespace_id: str | Mapping[str, JsonValue],
-        subject_id: str | None = None,
+        
         request: Mapping[str, JsonValue] | None = None,
         *,
         operation_id: str | None = None,
@@ -261,14 +261,14 @@ class ImportClient(TuningClient):
 
         mapping_request = isinstance(namespace_id, Mapping)
         if isinstance(namespace_id, Mapping):
-            if subject_id is not None or request is not None:
+            if request is not None:
                 raise ValueError("A Mapping import request carries its own scope")
             values = dict(namespace_id)
             if "llm_enabled" not in values:
                 raise ValueError("File admission requires an explicit llm_enabled policy")
-            namespace_id, subject_id = await request_scope(self, values)
+            namespace_id = await request_scope(self, values)
         else:
-            if subject_id is None or request is None:
+            if namespace_id is None or request is None:
                 raise ValueError("File admission requires scope and documents")
             values = dict(request)
         validate_flags(values)
@@ -277,27 +277,27 @@ class ImportClient(TuningClient):
         values["operation_id"] = operation_id or values.get("operation_id") or str(uuid4())
         command = AdmitFiles.model_validate(values)
         if mapping_request:
-            return await self.submit_admit_documents(namespace_id, subject_id, command)
-        return await self.admit_documents(namespace_id, subject_id, command)
+            return await self.submit_admit_documents(namespace_id,  command)
+        return await self.admit_documents(namespace_id,  command)
 
     async def submit_text_import(
-        self, namespace_id: str, subject_id: str, command: TextImport
+        self, namespace_id: str,  command: TextImport
     ) -> TextImportSubmission:
         return TextImportSubmission.model_validate(
             await self.request(
                 "POST",
-                self.subject_path(namespace_id, subject_id) + "/imports/text",
+                self.namespace_path(namespace_id) + "/imports/text",
                 body=encoded(command),
             )
         )
 
     async def text_import_result(
-        self, namespace_id: str, subject_id: str, request_id: str
+        self, namespace_id: str,  request_id: str
     ) -> TextImportResult:
         return TextImportResult.model_validate(
             await self.request(
                 "GET",
-                self.subject_path(namespace_id, subject_id)
+                self.namespace_path(namespace_id)
                 + f"/imports/text/{segment(request_id)}",
             )
         )
@@ -307,15 +307,15 @@ class ImportClient(TuningClient):
     ) -> TextImportSubmission:
         values = dict(request)
         validate_flags(values)
-        namespace, subject = await request_scope(self, values)
+        namespace = await request_scope(self, values)
         normalize_inputs(values)
         values["operation_id"] = operation_id or values.get("operation_id") or str(uuid4())
-        return await self.submit_text_import(namespace, subject, TextImport.model_validate(values))
+        return await self.submit_text_import(namespace,  TextImport.model_validate(values))
 
     async def preview_text_import(
         self,
         namespace_id: str,
-        subject_id: str,
+        
         document: ImportDocument | Mapping[str, JsonValue],
         *,
         overrides: TextSplitOptions | Mapping[str, JsonValue] | None = None,
@@ -334,7 +334,7 @@ class ImportClient(TuningClient):
         return TextImportPreview.model_validate(
             await self.request(
                 "POST",
-                self.subject_path(namespace_id, subject_id) + "/imports/preview",
+                self.namespace_path(namespace_id) + "/imports/preview",
                 body={
                     "document": encoded(selected),
                     "overrides": encoded(options) if options is not None else None,
@@ -343,9 +343,9 @@ class ImportClient(TuningClient):
         )
 
     async def retry_import_inputs(
-        self, namespace_id: str, subject_id: str, catalog_id: str, unit_ids: Sequence[str]
+        self, namespace_id: str,  catalog_id: str, unit_ids: Sequence[str]
     ) -> tuple[ImportUnit, ...]:
-        catalog = await self.import_catalog(namespace_id, subject_id, catalog_id)
+        catalog = await self.import_catalog(namespace_id,  catalog_id)
         available = {unit.id: unit for unit in catalog.units}
         if len(set(unit_ids)) != len(unit_ids) or any(
             identity not in available for identity in unit_ids
@@ -354,26 +354,26 @@ class ImportClient(TuningClient):
         return tuple(available[identity] for identity in unit_ids)
 
     async def import_attempts(
-        self, namespace_id: str, subject_id: str, catalog_id: str
+        self, namespace_id: str,  catalog_id: str
     ) -> tuple[UnitAttempt, ...]:
         return TypeAdapter(tuple[UnitAttempt, ...]).validate_python(
             await self.request(
                 "GET",
-                self.subject_path(namespace_id, subject_id)
+                self.namespace_path(namespace_id)
                 + f"/imports/catalogs/{segment(catalog_id)}/attempts",
             )
         )
 
     async def form_memory(
         self,
-        subject_id: str,
+        namespace_id: str,
         observation_id: str,
         *,
         source: MediaReference | Mapping[str, JsonValue] | None = None,
         operation_id: str | None = None,
         llm_enabled: bool = True,
     ) -> ObservationFormation:
-        namespace = self.namespace_id or (await self.subject(subject_id)).namespace_id
+        namespace = namespace_id
         media = (
             source
             if isinstance(source, MediaReference) or source is None
@@ -388,19 +388,19 @@ class ImportClient(TuningClient):
         return ObservationFormation.model_validate(
             await self.request(
                 "POST",
-                self.subject_path(namespace, subject_id) + "/memories/form",
+                self.namespace_path(namespace, namespace_id) + "/memories/form",
                 body=encoded(command),
             )
         )
 
     async def embedding_sync(
-        self, subject_id: str, *, limit: int = 5000, operation_id: str | None = None
+        self, namespace_id: str, *, limit: int = 5000, operation_id: str | None = None
     ) -> EmbeddingSyncResult:
-        namespace = self.namespace_id or (await self.subject(subject_id)).namespace_id
+        namespace = namespace_id
         return EmbeddingSyncResult.model_validate(
             await self.request(
                 "POST",
-                self.subject_path(namespace, subject_id) + "/embeddings/sync",
+                self.namespace_path(namespace, namespace_id) + "/embeddings/sync",
                 body={"operation_id": operation_id or str(uuid4()), "limit": limit},
             )
         )

@@ -8,7 +8,6 @@ from .cognition import CognitiveRecord, CognitiveRef, EvidenceLink
 from .common import CognitiveTimes, Contract
 from .growth_bodies import GrowthBody
 from .media import MediaReference
-from .namespace_policy import NamespaceFeatures
 
 
 class GrowthEntry(Contract):
@@ -31,7 +30,6 @@ class GrowthSnapshot(Contract):
     material_ids: tuple[str, ...]
     capabilities: tuple[str, ...] = ()
     sources: tuple[GrowthSource, ...] = ()
-    features: NamespaceFeatures | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class GrowthBinding(Contract):
@@ -94,14 +92,27 @@ class GrowthRetentionChange(Contract):
     action: Literal["retention"] = "retention"
     key: str = Field(min_length=1)
     target_key: str
-    transition: Literal["reinforce", "weaken", "protect", "unprotect", "pin", "unpin", "freeze", "forget", "restore", "remember_forever", "allow_decay"]
+    transition: Literal[
+        "reinforce",
+        "weaken",
+        "protect",
+        "unprotect",
+        "pin",
+        "unpin",
+        "freeze",
+        "forget",
+        "restore",
+        "remember_forever",
+        "allow_decay",
+    ]
     strength: float = Field(default=1, ge=0, allow_inf_nan=False)
     hours: float | None = Field(default=None, ge=0, le=1000000, allow_inf_nan=False)
     reason: str = Field(min_length=1)
 
 
 GrowthAction = Annotated[
-    GrowthAdoption | GrowthMerge | GrowthSplit | GrowthMemoryChange | GrowthRetentionChange, Field(discriminator="action")
+    GrowthAdoption | GrowthMerge | GrowthSplit | GrowthMemoryChange | GrowthRetentionChange,
+    Field(discriminator="action"),
 ]
 
 

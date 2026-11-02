@@ -18,7 +18,7 @@ from nous.platform.persistence import OperationConflict
 
 from .security import application, authorize, context
 
-router = APIRouter(prefix="/api")
+router = APIRouter(prefix="/api/v1")
 
 
 @router.post("/stop")
@@ -36,24 +36,24 @@ async def model_contract(
     request: Request,
     command: ModelContractRequest,
     namespace_id: str,
-    subject_id: str | None = None,
+    
 ):
-    ctx = await context(request, namespace_id, subject_id, capability="read")
+    ctx = await context(request, namespace_id,  capability="read")
     return await application(request).models.model_contract(ctx, command)
 
 
 @router.post("/models/preview")
 async def model_preview(
-    request: Request, command: ModelPreviewRequest, namespace_id: str, subject_id: str | None = None
+    request: Request, command: ModelPreviewRequest, namespace_id: str
 ):
-    ctx = await context(request, namespace_id, subject_id, capability="read")
+    ctx = await context(request, namespace_id,  capability="read")
     return await application(request).models.model_preview(ctx, command)
 
 
 @router.get("/models/calls/{call_id}/output")
-async def retained_model_output(request: Request, call_id: str, namespace_id: str, subject_id: str, management: bool = False):
+async def retained_model_output(request: Request, call_id: str, namespace_id: str,  management: bool = False):
     purpose = "management" if management else "active"
-    ctx = await context(request, namespace_id, subject_id, capability="manage" if management else "read", identity_purpose=purpose)
+    ctx = await context(request, namespace_id,  capability="manage" if management else "read", identity_purpose=purpose)
     return await application(request).models.retained_output(ctx, call_id, purpose=purpose)
 
 
@@ -123,7 +123,7 @@ async def restore_backup(request: Request, instance_name: str) -> dict[str, obje
 
 class ConfigChange(BaseModel):
     value: JsonValue
-    scope: Literal["instance", "namespace", "subject"] = "instance"
+    scope: Literal["instance", "namespace"] = "instance"
     operation_id: str = Field(default_factory=lambda: str(uuid4()))
 
 
@@ -198,26 +198,26 @@ async def status(request: Request):
 
 @router.get("/configuration")
 async def configuration_catalog(
-    request: Request, namespace_id: str = "instance", subject_id: str | None = None
+    request: Request, namespace_id: str = "instance"
 ):
-    await context(request, namespace_id, subject_id, capability="read")
+    await context(request, namespace_id,  capability="read")
     return application(request).configuration.catalog()
 
 
 @router.get("/configuration/{key}/schema")
 async def configuration_schema(
-    request: Request, key: str, namespace_id: str = "instance", subject_id: str | None = None
+    request: Request, key: str, namespace_id: str = "instance"
 ):
-    await context(request, namespace_id, subject_id, capability="read")
+    await context(request, namespace_id,  capability="read")
     return application(request).configuration.describe(key)
 
 
 @router.get("/configuration/{key}")
 async def configuration(
-    request: Request, key: str, namespace_id: str = "instance", subject_id: str | None = None
+    request: Request, key: str, namespace_id: str = "instance"
 ):
     return await application(request).configuration.effective(
-        await context(request, namespace_id, subject_id, capability="read"), key
+        await context(request, namespace_id,  capability="read"), key
     )
 
 
@@ -226,11 +226,11 @@ async def configuration_history(
     request: Request,
     key: str,
     namespace_id: str = "instance",
-    subject_id: str | None = None,
+    
     limit: int = 100,
 ):
     return await application(request).configuration.history(
-        await context(request, namespace_id, subject_id, capability="read"), key, limit
+        await context(request, namespace_id,  capability="read"), key, limit
     )
 
 
@@ -240,14 +240,14 @@ async def configure(
     key: str,
     command: ConfigChange,
     namespace_id: str = "instance",
-    subject_id: str | None = None,
+    
 ):
     principal = await authorize(request, capability="manage")
     service = application(request).configuration
     if command.scope == "instance" or service.entry(key).instance_management:
         principal.require_instance_management()
     return await service.set(
-        await context(request, namespace_id, subject_id, capability="manage"),
+        await context(request, namespace_id,  capability="manage"),
         key,
         command.value,
         command.operation_id,
@@ -276,9 +276,9 @@ async def save_prompt(
 
 
 @router.get("/model-calls")
-async def model_calls(request: Request, namespace_id: str, subject_id: str | None = None):
+async def model_calls(request: Request, namespace_id: str):
     return await application(request).models.ledger.list(
-        await context(request, namespace_id, subject_id, capability="read")
+        await context(request, namespace_id,  capability="read")
     )
 
 
@@ -287,7 +287,7 @@ async def job(
     request: Request,
     job_id: str,
     namespace_id: str,
-    subject_id: str | None = None,
+    
     purpose: Literal["actor", "management"] = "actor",
 ):
     app = application(request)
@@ -295,7 +295,7 @@ async def job(
         await context(
             request,
             namespace_id,
-            subject_id,
+            
             capability="manage" if purpose == "management" else "read",
         ),
         job_id,
@@ -310,7 +310,7 @@ async def job_action(
     job_id: str,
     action: Literal["cancel", "resume", "wait"],
     namespace_id: str,
-    subject_id: str | None = None,
+    
     wait_seconds: float = 120,
     purpose: Literal["actor", "management"] = "actor",
 ):
@@ -318,7 +318,7 @@ async def job_action(
     ctx = await context(
         request,
         namespace_id,
-        subject_id,
+        
         capability="manage"
         if purpose == "management"
         else ("read" if action == "wait" else "write"),

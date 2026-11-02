@@ -60,6 +60,6 @@ class ReferenceBinding(Contract):
 
 class ReferenceResolution(Contract):
     namespace_id: str
-    subject_id: str
+    
     reference: ResolvedTarget
     addresses: ReferenceAddresses | None = None

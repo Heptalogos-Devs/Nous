@@ -22,10 +22,10 @@ from nous.platform.instance import initialize
 from nous.platform.localization import Localizer
 from nous.platform.paths import default_instance_path
 
-from .amemorix import register as register_amemorix
+from .client_state import ClientState, load, save
+from .commands import register as register_commands
 from .common import Options, emit, options
-from .contexts import register as register_contexts
-from .data import register as register_data
+from .configuration import register as register_configuration
 from .ego import register as register_ego
 from .entities import register as register_entities
 from .feedback import register as register_feedback
@@ -45,39 +45,83 @@ _current: ContextVar[Options | None] = ContextVar("cli_options", default=None)
 def configure(
     ctx: typer.Context,
     instance: Annotated[Path | None, typer.Option(envvar="NOUS_INSTANCE")] = None,
-    url: Annotated[str, typer.Option(envvar="NOUS_URL")] = "http://127.0.0.1:7441",
+    url: Annotated[str | None, typer.Option(envvar="NOUS_URL")] = None,
     credential_file: Annotated[Path | None, typer.Option(envvar="NOUS_CREDENTIAL_FILE")] = None,
+    namespace: Annotated[str | None, typer.Option(envvar="NOUS_NAMESPACE")] = None,
     locale: Annotated[str | None, typer.Option(envvar="NOUS_LOCALE")] = None,
     json_mode: Annotated[
-        bool, typer.Option("--json", help="Write exactly one JSON object.")
+        bool, typer.Option("--json", help="Write the compact result as JSON.")
     ] = False,
-    source_scope: Annotated[
-        Path | None, typer.Option(help="JSON array of SDK SourceReadScope selectors.")
-    ] = None,
+    raw: Annotated[bool, typer.Option(help="Include the complete SDK result.")] = False,
+    fields: Annotated[str | None, typer.Option(help="Comma separated result fields.")] = None,
 ) -> None:
+    state, path = load()
     selected = Options(
-        instance if instance is not None else default_instance_path(),
-        url,
-        credential_file,
-        Localizer(locale).locale,
-        json_mode,
-        source_scope,
+        instance=instance or state.instance or default_instance_path(),
+        url=url or state.url,
+        credential_file=credential_file or state.credential_file,
+        namespace=namespace or state.namespace,
+        locale=Localizer(locale).locale,
+        json_mode=json_mode,
+        raw=raw,
+        fields=tuple(field.strip() for field in (fields or "").split(",") if field.strip()),
+        client_file=path,
+        client_state=state,
     )
     ctx.obj = selected
     _current.set(selected)
     if ctx.invoked_subcommand is None:
-        if json_mode:
-            raise ValueError("A command is required; use --help to see available commands")
         typer.echo(ctx.get_help())
         raise typer.Exit()
 
 
 @cli.command()
-def init(ctx: typer.Context, instance: Path | None = None) -> None:
-    """Initialize directories and the protected instance credential."""
-    selected = instance or options(ctx).instance
-    path = initialize(selected)
-    emit(ctx, {"instance": str(selected.resolve()), "credential_file": str(path.resolve())})
+def init(ctx: typer.Context, instance: Path | None = None, name: str = "default") -> None:
+    """Create a local instance, credential and initial Namespace."""
+    from uuid import uuid4
+
+    from nous_sdk.contracts import CallContext
+
+    from nous.application import Application
+
+    selected = options(ctx)
+    location = instance or selected.instance
+    credential = initialize(location)
+
+    async def create():
+        app = Application(Settings(instance=location))
+        await app.authority.initialize()
+        try:
+            namespace_id = str(uuid4())
+            context = CallContext(
+                caller_id="nous.init", namespace_id=namespace_id, credential_source_ids=None
+            )
+            domain = await app.identity.create_namespace(
+                context, name, "init:" + name, namespace_id
+            )
+            state = selected.client_state or ClientState()
+            assert selected.client_file is not None
+            save(
+                selected.client_file,
+                state.model_copy(
+                    update={
+                        "url": selected.url,
+                        "instance": location.resolve(),
+                        "credential_file": credential.resolve(),
+                        "namespace": domain.id,
+                    }
+                ),
+            )
+            return {
+                "instance": str(location.resolve()),
+                "credential_file": str(credential.resolve()),
+                "namespace": domain.slug,
+                "next": "nous serve",
+            }
+        finally:
+            await app.close()
+
+    emit(ctx, asyncio.run(create()))
 
 
 @cli.command()
@@ -86,11 +130,6 @@ def serve(
     instance: Path | None = None,
     host: str = "127.0.0.1",
     port: int = 7441,
-    rpc: Annotated[
-        bool | None, typer.Option("--rpc/--no-rpc", help="Enable the A-Memorix gRPC listener.")
-    ] = None,
-    rpc_host: str | None = None,
-    rpc_port: int | None = None,
 ) -> None:
     """Run the foreground HTTP host and its durable workers."""
     from nous.platform.observability import configure_logging
@@ -99,14 +138,6 @@ def serve(
     if options(ctx).json_mode:
         raise ValueError("Foreground service logs are a stream; omit --json when serving")
     settings = Settings(instance=instance or options(ctx).instance, host=host, port=port)
-    overrides = {
-        key: value
-        for key, value in (("enabled", rpc), ("host", rpc_host), ("port", rpc_port))
-        if value is not None
-    }
-    if overrides:
-        rpc_settings = type(settings.rpc).model_validate({**settings.rpc.model_dump(), **overrides})
-        settings = settings.model_copy(update={"rpc": rpc_settings})
     configure_logging(settings.log_level)
     app = create_app(settings)
     server = uvicorn.Server(
@@ -121,24 +152,19 @@ def serve(
 
 
 @cli.command()
-def mcp(
-    ctx: typer.Context,
-    namespace_id: Annotated[str, typer.Option(envvar="NOUS_NAMESPACE_ID")],
-    subject_id: Annotated[str, typer.Option(envvar="NOUS_SUBJECT_ID")],
-    instance: Path | None = None,
-    url: str | None = None,
-    credential_file: Path | None = None,
-) -> None:
-    """Bind MCP stdio to an authorized namespace and subject."""
+def mcp(ctx: typer.Context, read_only: bool = False) -> None:
+    """Expose the selected Namespace as ordinary MCP tools over stdio."""
     from nous.transports.mcp import run
 
     selected = options(ctx)
+    if selected.namespace is None:
+        raise ValueError("Choose a Namespace with 'nous use NAME' or --namespace NAME")
     run(
-        instance or selected.instance,
-        url or selected.url,
-        namespace_id,
-        subject_id,
-        credential_file or selected.credential_file,
+        selected.instance,
+        selected.url,
+        selected.namespace,
+        selected.credential_file,
+        read_only=read_only,
     )
 
 
@@ -150,22 +176,26 @@ def restore(ctx: typer.Context, archive: Path, instance: Path) -> None:
     emit(ctx, asyncio.run(BackupService.restore(archive, instance)))
 
 
-register_data(cli)
-register_management(cli)
-register_maintenance(cli)
-register_contexts(cli)
-register_ego(cli)
-register_social(cli)
-register_entities(cli)
-register_feedback(cli)
-register_vectors(cli)
-register_retention(cli)
-register_service(cli)
-register_tuning(cli)
-register_amemorix(cli)
+register_commands(cli)
+register_configuration(cli)
+admin = typer.Typer(help="Configure resources and manage cognitive data.", no_args_is_help=True)
+cli.add_typer(admin, name="admin")
+register_management(admin)
+register_maintenance(admin)
+register_ego(admin)
+register_social(admin)
+register_entities(admin)
+register_feedback(admin)
+register_vectors(admin)
+register_retention(admin)
+register_service(admin)
+register_tuning(admin)
 
 
 def main() -> None:
+    from nous.platform.observability import configure_logging
+
+    configure_logging("WARNING")
     for stream in (sys.stdout, sys.stderr):
         if isinstance(stream, TextIOWrapper):
             stream.reconfigure(encoding="utf-8")
@@ -236,4 +266,17 @@ def main() -> None:
             Console(stderr=True).print(str(error), markup=False)
             if details:
                 Console(stderr=True).print(json.dumps(details, ensure_ascii=False), markup=False)
-        raise SystemExit(130 if code == "Cancelled" else 1) from None
+        status = (
+            130
+            if code == "Cancelled"
+            else 3
+            if any(term in code.lower() for term in ("forbidden", "unauthorized", "credential"))
+            else 4
+            if "not_found" in code.lower() or "notfound" in code.lower()
+            else 6
+            if "conflict" in code.lower()
+            else 2
+            if isinstance(error, (ValueError, typer.TyperException))
+            else 5
+        )
+        raise SystemExit(status) from None

@@ -49,7 +49,7 @@ async def import_admin(
                 documents = await upload_import_file_documents(
                     adapter.client,
                     adapter.namespace_id,
-                    adapter.subject_id,
+                    
                     files,
                     transfer_root=adapter.managed_files.root,
                     operation_id=operation,
@@ -75,7 +75,7 @@ async def import_admin(
             documents = await upload_import_file_documents(
                 adapter.client,
                 adapter.namespace_id,
-                adapter.subject_id,
+                
                 files,
                 transfer_root=adapter.managed_files.root,
                 operation_id=operation,

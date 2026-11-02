@@ -34,7 +34,7 @@ async def observed_spaces_in(
         ),
     ):
         query = (
-            select(func.min(table.c.id), table.c.subject_id)
+            select(func.min(table.c.id), table.c.namespace_id)
             .where(
                 table.c.namespace_id == ctx.namespace_id,
                 status == "succeeded",
@@ -44,16 +44,16 @@ async def observed_spaces_in(
                 request["dimensions"].as_integer() == route.dimensions,
                 request["normalization"].as_string() == route.normalization,
             )
-            .group_by(table.c.subject_id, request["extra_body"], output["space"])
+            .group_by(table.c.namespace_id, request["extra_body"], output["space"])
         )
-        if ctx.subject_id is not None:
-            query = query.where(table.c.subject_id == ctx.subject_id)
-        for call_id, subject_id in (await view.connection.execute(query)).all():
-            if not subject_id:
+        if ctx.namespace_id is not None:
+            query = query.where(table.c.namespace_id == ctx.namespace_id)
+        for call_id, namespace_id in (await view.connection.execute(query)).all():
+            if not namespace_id:
                 continue
             try:
                 paid = await self.ledger.successful_in(
-                    view, ctx.model_copy(update={"subject_id": str(subject_id)}), str(call_id)
+                    view, ctx.model_copy(update={}), str(call_id)
                 )
             except DomainError as error:
                 if error.code in {"model_call_forbidden", "model_call_unavailable"}:

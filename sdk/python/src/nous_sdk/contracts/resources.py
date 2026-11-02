@@ -68,7 +68,7 @@ class ResourceSnapshot(Contract):
 class ResourceRecord(Contract):
     reference: ResourceReference
     namespace_id: str
-    subject_id: str
+    
     name: str
     description: str
     address: str

@@ -35,7 +35,6 @@ async def anchor_in(
                     select(revisions.c.record)
                     .where(
                         revisions.c.namespace_id == ctx.namespace_id,
-                        revisions.c.subject_id == ctx.subject_id,
                         revisions.c.kind == "memory",
                         revisions.c.head.is_(True),
                         exists(

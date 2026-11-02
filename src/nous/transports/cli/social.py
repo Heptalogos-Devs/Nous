@@ -19,45 +19,41 @@ def register(cli: typer.Typer) -> None:
     cli.add_typer(group, name="social")
 
     @group.command("recover")
-    def recover(ctx: typer.Context, namespace_id: str, subject_id: str, request: Path) -> None:
+    def recover(ctx: typer.Context, namespace_id: str, request: Path) -> None:
         command = read_command(request, RecoverSymbolResult)
-        invoke(ctx, lambda api: api.recover_symbol_result(namespace_id, subject_id, command))
+        invoke(ctx, lambda api: api.recover_symbol_result(namespace_id, command))
 
     @cli.command("motivation-history")
-    def motivation_history(
-        ctx: typer.Context, namespace_id: str, subject_id: str, request: Path
-    ) -> None:
+    def motivation_history(ctx: typer.Context, namespace_id: str, request: Path) -> None:
         """Page saved assessments; request may filter an exact Desire/Concern revision."""
         command = read_command(request, MotivationAssessmentsQuery)
-        invoke(ctx, lambda api: api.motivation_assessments(namespace_id, subject_id, command))
+        invoke(ctx, lambda api: api.motivation_assessments(namespace_id, command))
 
     @cli.command("motivation-assessment")
-    def motivation_assessment(
-        ctx: typer.Context, namespace_id: str, subject_id: str, assessment_id: str
-    ) -> None:
-        invoke(ctx, lambda api: api.motivation_assessment(namespace_id, subject_id, assessment_id))
+    def motivation_assessment(ctx: typer.Context, namespace_id: str, assessment_id: str) -> None:
+        invoke(ctx, lambda api: api.motivation_assessment(namespace_id, assessment_id))
 
     @group.command("hypothesize-identity")
-    def hypothesis(ctx: typer.Context, namespace_id: str, subject_id: str, request: Path) -> None:
+    def hypothesis(ctx: typer.Context, namespace_id: str, request: Path) -> None:
         command = read_command(request, IdentityHypothesis)
-        invoke(ctx, lambda api: api.propose_identity(namespace_id, subject_id, command))
+        invoke(ctx, lambda api: api.propose_identity(namespace_id, command))
 
     @group.command("unlink-identity")
-    def unlink(ctx: typer.Context, namespace_id: str, subject_id: str, request: Path) -> None:
+    def unlink(ctx: typer.Context, namespace_id: str, request: Path) -> None:
         command = read_command(request, UnlinkIdentity)
-        invoke(ctx, lambda api: api.unlink_identity(namespace_id, subject_id, command))
+        invoke(ctx, lambda api: api.unlink_identity(namespace_id, command))
 
     @group.command("understand")
-    def understand(ctx: typer.Context, namespace_id: str, subject_id: str, request: Path) -> None:
+    def understand(ctx: typer.Context, namespace_id: str, request: Path) -> None:
         command = read_command(request, SymbolSelection)
-        invoke(ctx, lambda api: api.understand_symbol(namespace_id, subject_id, command))
+        invoke(ctx, lambda api: api.understand_symbol(namespace_id, command))
 
     @group.command("expressions")
-    def expressions(ctx: typer.Context, namespace_id: str, subject_id: str, request: Path) -> None:
+    def expressions(ctx: typer.Context, namespace_id: str, request: Path) -> None:
         command = read_command(request, SymbolSelection)
-        invoke(ctx, lambda api: api.expression_candidates(namespace_id, subject_id, command))
+        invoke(ctx, lambda api: api.expression_candidates(namespace_id, command))
 
     @cli.command("assess-motivation")
-    def motivation(ctx: typer.Context, namespace_id: str, subject_id: str, request: Path) -> None:
+    def motivation(ctx: typer.Context, namespace_id: str, request: Path) -> None:
         command = read_command(request, AssessMotivation)
-        invoke(ctx, lambda api: api.assess_motivation(namespace_id, subject_id, command))
+        invoke(ctx, lambda api: api.assess_motivation(namespace_id, command))

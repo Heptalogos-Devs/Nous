@@ -5,9 +5,10 @@ from typing import Literal
 from pydantic import Field, JsonValue
 
 from .cognition import CognitiveKind, CognitiveRef
-from .common import Contract, Operation
+from .common import Contract, Operation, TimeRange
 from .growth import GrowthDraft, GrowthSource
-from .namespace_policy import NamespaceFeatures
+from .media import MediaReference
+from .retrieval import QueryRequest
 
 
 class MaintenanceOptions(Contract):
@@ -16,9 +17,14 @@ class MaintenanceOptions(Contract):
     limit: int = Field(default=500, ge=1, le=1000)
     references: tuple[CognitiveRef, ...] = ()
     auto_adopt: bool = False
-    role: Literal["maintenance", "seed"] = "maintenance"
+    kind: Literal["growth", "seed", "journal", "reflect", "dream"] = "growth"
+    query: QueryRequest | None = None
+    period: TimeRange | None = None
+    style: Literal["diary", "work_review"] = "diary"
+    revisits: tuple[CognitiveRef, ...] = ()
     previous_seed_id: str | None = None
     source_catalog_id: str | None = None
+    material_sources: tuple[MediaReference, ...] = ()
 
 
 class StartMaintenance(MaintenanceOptions, Operation):
@@ -41,7 +47,6 @@ class MaintenanceCatalog(Contract):
     material_ids: tuple[str, ...]
     observation_ids: tuple[str, ...]
     sources: tuple[GrowthSource, ...] = ()
-    features: NamespaceFeatures | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class ReviewMaintenance(Operation):
@@ -103,9 +108,12 @@ class MaintenanceEdit(Contract):
 
 
 class MaintenanceRun(Contract):
+    status: Literal["queued", "waiting", "proposed", "adopted", "rejected", "unavailable"] = (
+        "queued"
+    )
     id: str
     namespace_id: str
-    subject_id: str
+
     created_by: str
     created_at: str
     job_id: str
@@ -119,6 +127,7 @@ class MaintenanceRun(Contract):
     review_history: tuple[MaintenanceReview, ...] = ()
     purged_at: str | None = None
     sources_available: bool = True
+    waiting_reason: dict[str, JsonValue] | None = None
     questions: tuple[str, ...] = ()
     groups: tuple[MaintenanceGroup, ...] = ()
     proposal: MaintenanceProposal | None = None
@@ -140,7 +149,7 @@ class CreateMaintenanceSchedule(Operation):
 class MaintenanceSchedule(Contract):
     id: str
     namespace_id: str
-    subject_id: str
+
     created_by: str
     created_at: str
     name: str

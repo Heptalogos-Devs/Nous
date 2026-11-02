@@ -9,7 +9,7 @@ from io import BytesIO
 from typing import TYPE_CHECKING
 from zipfile import ZIP_DEFLATED, ZipFile
 
-from nous_sdk.contracts import BundleRequest, CallContext, DomainError, SubjectBundle
+from nous_sdk.contracts import BundleRequest, CallContext, DomainError, NamespaceBundle
 from pydantic import JsonValue
 
 from nous.platform.content import ContentObject
@@ -25,7 +25,7 @@ class BundleArchive:
     summary: dict[str, JsonValue]
 
 
-def summary(bundle: SubjectBundle) -> dict[str, JsonValue]:
+def summary(bundle: NamespaceBundle) -> dict[str, JsonValue]:
     return {
         "format": bundle.format,
         "version": bundle.version,
@@ -48,7 +48,7 @@ async def export_archive(
     self: BundleService, ctx: CallContext, command: BundleRequest | None = None
 ) -> BundleArchive:
     command = command or BundleRequest()
-    bundle = SubjectBundle.model_validate(await self.export(ctx, command))
+    bundle = NamespaceBundle.model_validate(await self.export(ctx, command))
     if command.format == "amemorix":
         from .portable import write_portable
 

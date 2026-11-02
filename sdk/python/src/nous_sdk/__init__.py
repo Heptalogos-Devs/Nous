@@ -20,6 +20,7 @@ __all__ = [
     "ManagedBinding",
     "ManagedFiles",
     "NousClient",
+    "NamespaceClient",
     "NousError",
     "PreparedContext",
     "SourceReadScope",
@@ -27,6 +28,9 @@ __all__ = [
 
 
 def __getattr__(name: str) -> object:
+    if name == "NamespaceClient":
+        from .namespace import NamespaceClient
+        return NamespaceClient
     if name == "NousClient":
         from .client import NousClient
 

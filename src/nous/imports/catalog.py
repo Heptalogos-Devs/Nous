@@ -23,7 +23,7 @@ from nous_sdk.contracts.imports import TextImportPreview, TextPreviewUnit, TextS
 from pydantic import TypeAdapter
 from sqlalchemy import select
 
-from nous.identity.access import require_subject_in
+from nous.identity.access import require_namespace_in
 from nous.material.service import MaterialRecord, require_observation_in
 from nous.platform.concurrency import owned_thread
 from nous.platform.content import ContentLease, ContentObject
@@ -75,7 +75,7 @@ async def replay_frozen(
                 ctx,
                 operation_id=command.operation_id,
                 operation_kind="imports.freeze",
-                scope=ctx.require_subject(),
+                scope=ctx.namespace_id,
             )
         ).context
         if ctx.source_groups()
@@ -207,7 +207,7 @@ async def freeze_catalog(
         ctx,
         command.operation_id,
         operation_kind="imports.freeze",
-        scope=ctx.require_subject(),
+        scope=ctx.namespace_id,
         payload=command,
     )
     if receipt is not None:
@@ -250,7 +250,7 @@ async def freeze_catalog_prepared(
         ctx,
         command.operation_id,
         operation_kind="imports.freeze",
-        scope=ctx.require_subject(),
+        scope=ctx.namespace_id,
         payload=command,
     ) as tx:
         if tx.replayed:
@@ -270,14 +270,12 @@ async def freeze_catalog_in(
     prepared: list[PreparedInput],
     split: list[list[list[Document]]],
 ) -> FrozenCatalog:
-    await require_subject_in(tx, ctx, "memory")
+    await require_namespace_in(tx, ctx, "memory")
     from nous_sdk.contracts.namespace_policy import FormationPolicy
-
-    from nous.platform.configuration.namespace_policy import policy_in
 
     from .document_extraction import chunks_for
 
-    policy = await policy_in(tx, ctx, "formation", FormationPolicy)
+    policy = await self.configuration.policy_in(tx, ctx, "formation", FormationPolicy)
     chunk_size = min(command.chunk_size, policy.max_chunk_chars)
     overlap = (
         command.chunk_overlap
@@ -455,13 +453,12 @@ async def freeze_catalog_in(
         ),
         id=catalog_id,
         namespace_id=ctx.namespace_id,
-        subject_id=ctx.require_subject(),
         units=tuple(frozen),
         input_source_ids=tuple(source_ids),
         original_unit_count=len(frozen),
         original_record_count=sum(len(item.records) for item in prepared),
         errors=tuple(errors),
-        formation_catalog=await self.cognition.formation_catalog_in(
+        formation_catalog=await self.formation.formation_catalog_in(
             tx, effective, "\n".join(unit.text for unit in frozen)
         ),
     )
@@ -469,7 +466,6 @@ async def freeze_catalog_in(
         catalogs.insert().values(
             id=catalog_id,
             namespace_id=ctx.namespace_id,
-            subject_id=ctx.require_subject(),
             record=result.model_dump(mode="json"),
         )
     )
@@ -484,7 +480,6 @@ async def read_catalog_in(
             select(catalogs.c.record).where(
                 catalogs.c.id == catalog_id,
                 catalogs.c.namespace_id == ctx.namespace_id,
-                catalogs.c.subject_id == ctx.subject_id,
             )
         )
     ).scalar_one_or_none()
@@ -516,7 +511,7 @@ async def read_catalog_in(
 
 async def read_catalog(self: ImportService, ctx: CallContext, catalog_id: str) -> CatalogView:
     async with self.authority.read(ctx) as view:
-        await require_subject_in(view, ctx)
+        await require_namespace_in(view, ctx)
         return await self.read_catalog_in(view, ctx, catalog_id)
 
 

@@ -13,5 +13,5 @@ class RevisionState:
     purged: bool = False
 
     def __post_init__(self) -> None:
-        if self.purged and not self.deleted:
+        if self.purged and (not self.deleted):
             raise ValueError("A purged revision must be deleted")

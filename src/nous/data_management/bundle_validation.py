@@ -2,14 +2,14 @@
 
 from graphlib import CycleError, TopologicalSorter
 
-from nous_sdk.contracts import DomainError, EntityBody, MediaReference, MemoryBody, SubjectBundle
+from nous_sdk.contracts import DomainError, EntityBody, MediaReference, MemoryBody, NamespaceBundle
 from nous_sdk.contracts.derivation import ArtifactRepresentation
 from nous_sdk.contracts.fact_body import FactClaimBody, PersonFactScope
 
 from nous.cognition.projection import evidence_in, media_references_in, references_in
 
 
-def validate_graph(bundle: SubjectBundle) -> None:
+def validate_graph(bundle: NamespaceBundle) -> None:
     from nous.cognition.fact_identity import conflict_group, identity
 
     exacts = {record.reference.exact(): record for record in bundle.cognition}

@@ -29,15 +29,14 @@ class OperationIdentity(BaseModel):
 
 async def subject_context(
     request: Request,
-    subject_id: str,
+    namespace_id: str,
     capability: Capability | None = None,
     *,
     identity_purpose: IdentityPurpose = "active",
 ) -> CallContext:
     await authorize(request, capability=capability)
-    namespace_id = await application(request).identity.namespace_for_subject(subject_id)
     return await context(
-        request, namespace_id, subject_id, capability=capability, identity_purpose=identity_purpose
+        request, namespace_id,  capability=capability, identity_purpose=identity_purpose
     )
 
 
@@ -46,14 +45,14 @@ async def cognitive_context(request: Request, object_id: str) -> CallContext:
     async with application(request).authority.read() as view:
         row = (
             await view.connection.execute(
-                select(revisions.c.namespace_id, revisions.c.subject_id)
+                select(revisions.c.namespace_id)
                 .where(revisions.c.id == object_id)
                 .limit(1)
             )
         ).first()
     if row is None:
         raise DomainError("cognition_not_found", "Cognitive object is unavailable")
-    return await context(request, str(row.namespace_id), str(row.subject_id), capability="read")
+    return await context(request, str(row.namespace_id),  capability="read")
 
 
 async def material_context(request: Request, material_id: str) -> CallContext:
@@ -61,7 +60,7 @@ async def material_context(request: Request, material_id: str) -> CallContext:
     async with application(request).authority.read() as view:
         rows = (
             await view.connection.execute(
-                select(observations.c.namespace_id, observations.c.subject_id).where(
+                select(observations.c.namespace_id).where(
                     observations.c.material_id == material_id, observations.c.active.is_(True)
                 )
             )
@@ -69,7 +68,7 @@ async def material_context(request: Request, material_id: str) -> CallContext:
     for row in rows:
         try:
             ctx = await context(
-                request, str(row.namespace_id), str(row.subject_id), capability="read"
+                request, str(row.namespace_id),  capability="read"
             )
             await application(request).material.read(ctx, material_id)
             return ctx

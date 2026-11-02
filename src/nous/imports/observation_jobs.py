@@ -31,7 +31,6 @@ async def observation_jobs(
             await view.connection.execute(
                 select(requests.c.record).where(
                     requests.c.record["context"]["namespace_id"].as_string() == ctx.namespace_id,
-                    requests.c.record["context"]["subject_id"].as_string() == ctx.subject_id,
                     requests.c.record["kind"].as_string() == "observation_form",
                     requests.c.record["command"]["observation_id"].as_string().in_(observation_ids),
                 )
@@ -99,7 +98,7 @@ async def submit_form_observation(
         ctx,
         command.operation_id,
         operation_kind="imports.form.submit",
-        scope=ctx.require_subject(),
+        scope=ctx.namespace_id,
         payload=command.identity_payload(),
     ) as tx:
         if tx.replayed:

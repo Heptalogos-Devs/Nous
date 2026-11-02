@@ -12,7 +12,7 @@ Capability = Literal["read", "write", "manage"]
 class CreateCredential(Operation):
     name: str = Field(min_length=1, max_length=120)
     namespace_ids: tuple[str, ...] | None = None
-    subject_ids: tuple[str, ...] | None = None
+    
     source_ids: tuple[str, ...] | None = None
     capabilities: tuple[Capability, ...] = ("read",)
     reason: str = Field(default="", max_length=4096)
@@ -28,7 +28,7 @@ class PrincipalRecord(Contract):
     caller_id: str
     credential_id: str | None = None
     namespace_ids: tuple[str, ...] | None = None
-    subject_ids: tuple[str, ...] | None = None
+    
     source_ids: tuple[str, ...] | None = None
     capabilities: tuple[Capability, ...]
 
@@ -38,7 +38,7 @@ class CredentialRecord(Contract):
     caller_id: str
     name: str
     namespace_ids: tuple[str, ...] | None = None
-    subject_ids: tuple[str, ...] | None = None
+    
     source_ids: tuple[str, ...] | None = None
     capabilities: tuple[Capability, ...]
     created_by: str

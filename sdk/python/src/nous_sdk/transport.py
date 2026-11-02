@@ -181,7 +181,7 @@ class Transport:
         try:
             async with self.http.stream(
                 "POST",
-                "/api/media/materials",
+                "/api/v1/media/materials",
                 params={key: value for key, value in params.items() if value is not None},
                 content=content,
                 headers=headers,
@@ -203,7 +203,7 @@ class Transport:
         source_read: tuple[SourceReadScope, ...] = (),
         *,
         namespace_id: str,
-        subject_id: str,
+        
         region_id: str | None = None,
         reference: MediaReference | None = None,
     ) -> Download:
@@ -217,7 +217,7 @@ class Transport:
             resource = f"media/{reference.kind}/{quote(reference.id, safe='')}"
         async with self.http.stream(
             "GET",
-            f"/api/namespaces/{quote(namespace_id, safe='')}/subjects/{quote(subject_id, safe='')}/{resource}/content",
+            f"/api/v1/namespaces/{quote(namespace_id, safe='')}/subjects/{quote(namespace_id, safe='')}/{resource}/content",
             headers=headers,
         ) as response:
             if not response.is_success:

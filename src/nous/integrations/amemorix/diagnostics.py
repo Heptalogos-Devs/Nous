@@ -6,7 +6,7 @@ from nous_sdk.contracts import CallContext, DomainError
 from nous_sdk.contracts.namespace_policy import NamespaceFeatures
 from pydantic import JsonValue
 
-from nous.identity.access import require_subject_in
+from nous.identity.access import require_namespace_in
 from nous.platform.configuration.namespace_policy import policy_in
 
 from .helpers import json_object
@@ -29,7 +29,7 @@ async def diagnostics(service: AMemorixService, ctx: CallContext) -> dict[str, J
     integration = await service.policy(ctx)
     retrieval_configuration = await app.configuration.effective(ctx, "retrieval")
     async with app.authority.read(ctx) as view:
-        subject = await require_subject_in(view, ctx)
+        subject = await require_namespace_in(view, ctx)
         features = await policy_in(view, ctx, "namespace.features", NamespaceFeatures)
     roles = observed.models.get("roles")
     embedding = roles.get("embedding") if isinstance(roles, dict) else None
@@ -74,7 +74,7 @@ async def diagnostics(service: AMemorixService, ctx: CallContext) -> dict[str, J
         "relation_vectors_enabled": features.relation_vectors,
         "vector_pools": {"layout": "model_spaces", "spaces": len(stored), "current_space": primary.space_id if primary else None},
         "vector_pools_ready": bool(stored), "vector_pools_effective_mode": "model_spaces",
-        "memory_enabled": "memory" in subject["capabilities"], "runtime_ready": True,
+        "memory_enabled": "memory" in subject.enabled_features, "runtime_ready": True,
         "retrieval_ready": features.sparse_retrieval or bool(stored),
         "available_channels": channels,
         "unavailable_channels": [name for name in ("sparse", "vector_read", "embedding") if name not in channels],

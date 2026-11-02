@@ -16,7 +16,7 @@ from nous_sdk.contracts.text_import import (
 from pydantic import JsonValue, TypeAdapter
 from sqlalchemy import select, update
 
-from nous.identity.access import require_subject_in
+from nous.identity.access import require_namespace_in
 from nous.platform.execution import JobSpec
 from nous.platform.persistence import ReadView, WriteTx
 
@@ -54,10 +54,10 @@ async def request_in(
     if value is None or value.get("kind") != "text_import":
         raise DomainError("import_request_not_found", "Text import request is unavailable")
     saved = CallContext.model_validate(value["context"])
-    if (saved.caller_id, saved.namespace_id, saved.subject_id) != (
+    if (saved.caller_id, saved.namespace_id, saved.namespace_id) != (
         ctx.caller_id,
         ctx.namespace_id,
-        ctx.subject_id,
+        ctx.namespace_id,
     ):
         raise DomainError("import_request_not_found", "Text import request is unavailable")
     if value.get("purged"):
@@ -72,14 +72,14 @@ async def submit_text_import(
         ctx,
         command.operation_id,
         operation_kind="imports.text.submit",
-        scope=ctx.require_subject(),
+        scope=ctx.namespace_id,
         payload=command,
     ) as tx:
         if tx.replayed:
             saved = TextImportSubmission.model_validate(tx.replay_result)
             await request_in(tx, ctx, saved.request_id)
             return saved
-        await require_subject_in(tx, ctx, "memory")
+        await require_namespace_in(tx, ctx, "memory")
         total_bytes = 0
         for item in command.inputs:
             if item.material_id is not None:
@@ -218,7 +218,7 @@ async def run_text_import(self: ImportService, request_id: str) -> dict[str, Jso
         ctx,
         request_id + ":complete",
         operation_kind="imports.text.complete",
-        scope=ctx.require_subject(),
+        scope=ctx.namespace_id,
         payload={"request_id": request_id},
     ) as tx:
         if not tx.replayed:

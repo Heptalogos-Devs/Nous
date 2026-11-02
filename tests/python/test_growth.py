@@ -10,7 +10,7 @@ from sqlalchemy import func, select
 
 from nous.cognition.growth_proposal import growth_model_catalog, normalize_growth
 from nous.cognition.schema import revisions
-from nous.cognition.service import CognitionService
+from nous.cognition.records import CognitiveRecords
 from nous.identity.service import IdentityService
 from nous.imports.service import ImportService
 from nous.platform.persistence import Authority
@@ -27,7 +27,7 @@ class LiteralModels:
 def test_pure_growth_and_actual_adoption(tmp_path: Path):
     async def scenario():
         authority = Authority(tmp_path / "authority.sqlite")
-        cognition = CognitionService(authority)
+        cognition = CognitiveRecords(authority)
         imports = ImportService(authority, cognition, LiteralModels())
         identity = IdentityService(authority)
         await authority.initialize()

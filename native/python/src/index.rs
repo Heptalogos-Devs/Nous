@@ -123,12 +123,13 @@ impl IndexStore {
         })
     }
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature=(*,references,texts,assets_json="{}",cancel=None,vectors=None,tag_vectors=None,tag_indptr=None,tag_indices=None,graph_indptr=None,graph_indices=None,graph_weights=None,graph_polarities=None,source_references=None,candidate_source_indptr=None,candidate_source_indices=None,graph_source_indptr=None,graph_source_indices=None))]
+    #[pyo3(signature=(*,references,texts,base_generation=None,assets_json="{}",cancel=None,vectors=None,tag_vectors=None,tag_indptr=None,tag_indices=None,graph_indptr=None,graph_indices=None,graph_weights=None,graph_polarities=None,source_references=None,candidate_source_indptr=None,candidate_source_indices=None,graph_source_indptr=None,graph_source_indices=None))]
     fn build(
         &self,
         py: Python<'_>,
         references: Vec<String>,
         texts: Vec<String>,
+        base_generation: Option<String>,
         assets_json: &str,
         cancel: Option<PyRef<'_, CancellationToken>>,
         vectors: Option<PyReadonlyArray2<'_, f32>>,
@@ -233,7 +234,11 @@ impl IndexStore {
             });
         let state = self.state.clone();
         let inner = py
-            .detach(|| state.pool.install(|| build(&state, data, &token)))
+            .detach(|| {
+                state
+                    .pool
+                    .install(|| build(&state, data, &token, base_generation.as_deref()))
+            })
             .map_err(native_error)?;
         Ok(Snapshot {
             inner: Arc::new(inner),

@@ -2,31 +2,48 @@
 
 from __future__ import annotations
 
+from nous_sdk.contracts import DomainError
 from openai.lib._parsing import type_to_response_format_param
-from pydantic import BaseModel, JsonValue, TypeAdapter
-from pydantic_ai import NativeOutput
+from pydantic import JsonValue, TypeAdapter
+from pydantic_ai import NativeOutput, ToolOutput
 from pydantic_ai._json_schema import JsonSchemaTransformerWithOutputOverride  # pyright: ignore[reportPrivateImportUsage]
 from pydantic_ai._output import OutputSchema  # pyright: ignore[reportPrivateImportUsage]
 from pydantic_ai.models import _customize_output_object  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.providers.openai import OpenAIProvider
+from typing_extensions import TypeForm
 
 
-def native_output[T: BaseModel | str](output_type: type[T]) -> type[str] | NativeOutput[T]:
-    return str if output_type is str else NativeOutput(output_type)
+def output_contract[T](
+    output_type: TypeForm[T], mode: str = "native"
+) -> TypeForm[T] | NativeOutput[T] | ToolOutput[T]:
+    if output_type is str:
+        return output_type
+    if mode == "tool":
+        return ToolOutput(output_type)
+    if mode == "native":
+        return NativeOutput(output_type)
+    raise DomainError(
+        "model_output_capability", "This task requires native structured output or tools"
+    )
 
 
 def response_format(
-    output_type: type[BaseModel] | type[str], model_name: str, *, backend: str
+    output_type: TypeForm[object], model_name: str, *, backend: str, mode: str = "native"
 ) -> dict[str, JsonValue] | None:
-    if output_type is str:
+    if output_type is str or mode == "tool":
         return None
     if backend == "openai_sdk":
+        if not isinstance(output_type, type):
+            raise DomainError(
+                "model_output_capability",
+                "Native video structured output requires an object contract",
+            )
         return TypeAdapter(dict[str, JsonValue]).validate_python(
             type_to_response_format_param(output_type)
         )
     if backend != "pydantic_ai":
         raise ValueError("Unknown generation schema backend")
-    output = OutputSchema[BaseModel | str].build(NativeOutput(output_type)).object_def
+    output = OutputSchema[object].build(NativeOutput(output_type)).object_def
     if output is None:
         raise ValueError("Native structured generation requires an output object")
     profile = OpenAIProvider.model_profile(model_name) or {}
@@ -54,7 +71,7 @@ def response_format(
 
 
 def response_formats(
-    output_type: type[BaseModel] | type[str], model_name: str
+    output_type: TypeForm[object], model_name: str
 ) -> dict[str, dict[str, JsonValue] | None]:
     return {
         backend: response_format(output_type, model_name, backend=backend)

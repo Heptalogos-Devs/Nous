@@ -26,8 +26,10 @@ from pydantic import BaseModel, Field
 from nous.platform.persistence import ReadView
 
 from .assets import RetrievalRecord, record_text
+from .cross_encoder import score_pairs
 from .filters import authority
 from .media import source_material_ids_in
+from .profiles import WavePolicy
 from .source_expansion import prefix
 
 if TYPE_CHECKING:
@@ -154,7 +156,10 @@ async def finalize(
     explicit_sort: bool = False,
     current_selection: bool = False,
 ) -> QueryResult:
-    if request.rerank != "off":
+    algorithm = request.reranker or ("llm" if request.rerank != "off" else "compute")
+    strict = request.capability_policy == "strict" or request.rerank == "required"
+    before = tuple(hit.object.reference.exact() for hit in result.hits)
+    if algorithm == "llm":
         await _revalidate(self, ctx, result, current_selection=current_selection)
     info = RerankInfo(
         mode=request.rerank,
@@ -163,9 +168,9 @@ async def finalize(
         reason="disabled",
     )
     hits = result.hits
-    if request.rerank != "off":
+    if algorithm == "llm":
         if explicit_sort:
-            if request.rerank == "required":
+            if strict:
                 raise DomainError(
                     "rerank_sort_conflict",
                     "Explicit result sorting conflicts with required model reranking",
@@ -187,7 +192,7 @@ async def finalize(
                 if remaining == 0:
                     break
             if not documents:
-                if request.rerank == "required":
+                if strict:
                     raise DomainError(
                         "rerank_text_required",
                         "Required text-generation reranking has no readable text candidates",
@@ -244,7 +249,13 @@ async def finalize(
                         retained_base_order=len(hits) - len(scores),
                     )
                 except DomainError as error:
-                    if request.rerank != "optional" or error.code != "model_unavailable":
+                    if strict or error.code not in {
+                        "model_unavailable",
+                        "model_not_configured",
+                        "capability_unavailable",
+                        "configuration_missing",
+                        "model_contract_unavailable",
+                    }:
                         raise
                     info = RerankInfo(
                         mode=request.rerank,
@@ -253,6 +264,53 @@ async def finalize(
                         retained_base_order=len(hits),
                         reason=str(error),
                     )
+    if algorithm == "compute":
+        info = info.model_copy(
+            update={"status": "completed", "reason": None, "scored_documents": len(hits)}
+        )
+    elif algorithm == "cross_encoder" and hits:
+        remaining = request.budget.rerank_total_bytes
+        cross_documents: list[str] = []
+        indices: list[int] = []
+        for index, hit in enumerate(hits[: request.budget.rerank_documents]):
+            text = prefix(
+                record_text(hit.object), min(request.budget.rerank_document_bytes, remaining)
+            )
+            if text.strip():
+                cross_documents.append(text)
+                indices.append(index)
+                remaining -= len(text.encode("utf-8"))
+            if remaining == 0:
+                break
+        try:
+            effective = await self.configuration.effective(ctx, "wave")
+            policy = WavePolicy.model_validate(effective["value"])
+            profile = policy.profiles[request.wave_profile or policy.default_profile]
+            values = await score_pairs(profile.cross_encoder_model, request.text, cross_documents)
+            scores = dict(zip(indices, values, strict=True))
+            order = sorted(scores, key=lambda index: (-scores[index], index))
+            hits = tuple(
+                hits[index].model_copy(update={"rerank_score": scores[index]}) for index in order
+            ) + tuple(hit for index, hit in enumerate(hits) if index not in scores)
+            info = info.model_copy(
+                update={
+                    "status": "completed",
+                    "reason": None,
+                    "scored_documents": len(scores),
+                    "retained_base_order": len(hits) - len(scores),
+                }
+            )
+        except DomainError as error:
+            if strict or error.code != "reranker_unavailable":
+                raise
+            info = info.model_copy(update={"reason": error.code})
+    info = info.model_copy(
+        update={
+            "algorithm": algorithm,
+            "before": before,
+            "after": tuple(hit.object.reference.exact() for hit in hits),
+        }
+    )
     await _revalidate(self, ctx, result, current_selection=current_selection)
     remaining = request.budget.source_text_bytes
     lines: list[str] = []

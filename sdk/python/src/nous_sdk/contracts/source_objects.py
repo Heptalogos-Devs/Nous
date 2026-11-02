@@ -30,11 +30,10 @@ class EvidenceReference(Contract):
 class ObservationRecord(Contract):
     reference: ObservationReference
     namespace_id: str
-    subject_id: str
+    
     source: MediaReference
     event_kind: str
     external_event_id: str | None = None
-    consumer_subject_id: str | None = None
     caller_id: str | None = None
     participants: tuple[str, ...] = ()
     audience: tuple[str, ...] = ()
@@ -50,7 +49,7 @@ class ObservationRecord(Contract):
 class EvidenceRelationRecord(Contract):
     reference: EvidenceReference
     namespace_id: str
-    subject_id: str
+    
     target: CognitiveRef
     evidence: EvidenceLink
     source: MediaReference | None = None

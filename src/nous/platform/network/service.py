@@ -66,7 +66,7 @@ class NetworkService:
         effective = await self.configuration.effective(ctx, "network")
         policy = NetworkPolicy.model_validate(effective["value"])
         fingerprint = policy.model_dump_json()
-        scope = (ctx.caller_id, ctx.namespace_id, ctx.subject_id)
+        scope = (ctx.caller_id, ctx.namespace_id, ctx.namespace_id)
         key = (*scope, fingerprint, timeout_seconds)
         async with self._condition:
             if self._closing:

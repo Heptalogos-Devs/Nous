@@ -218,8 +218,14 @@ class EpisodeBody(Contract):
     successors: tuple[CognitiveRef, ...] = ()
 
 
+class JournalParagraphSource(Contract):
+    paragraph: int = Field(ge=0)
+    evidence: tuple[EvidenceLink, ...] = Field(min_length=1)
+
+
 class JournalBody(Contract):
     kind: Literal["journal"] = "journal"
+    paragraph_sources: tuple[JournalParagraphSource, ...] = ()
     title: str
     narrative: str
     period: TimeRange
@@ -395,7 +401,7 @@ class CognitiveRecord(Contract):
     reference: CognitiveRef
     addresses: ReferenceAddresses | None = None
     namespace_id: str
-    subject_id: str
+
     body: CognitiveBody | None
     evidence: tuple[EvidenceLink, ...]
     source_roots: tuple[str, ...]

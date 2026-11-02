@@ -33,8 +33,7 @@ from .fact_identity import normalized
 from .lifecycle import selectable
 
 if TYPE_CHECKING:
-    from .service import CognitionService
-
+    from .records import CognitiveRecords
 State = Literal["true", "false", "unknown"]
 
 
@@ -42,7 +41,7 @@ def coverage(
     period: TimeRange, intervals: list[TimeRange]
 ) -> tuple[tuple[TimeRange, ...], tuple[TimeRange, ...]]:
     if period.start is None or period.end is None:
-        return (), (period,)
+        return ((), (period,))
     spans: list[tuple[int, int]] = []
     for interval in intervals:
         if interval.domain != period.domain:
@@ -65,13 +64,14 @@ def coverage(
         cursor = max(cursor, end)
     if cursor < period.end:
         gaps.append(TimeRange(domain=period.domain, start=cursor, end=period.end))
-    return tuple(
-        TimeRange(domain=period.domain, start=start, end=end) for start, end in merged
-    ), tuple(gaps)
+    return (
+        tuple((TimeRange(domain=period.domain, start=start, end=end) for start, end in merged)),
+        tuple(gaps),
+    )
 
 
 async def assess_motivation(
-    self: CognitionService, ctx: CallContext, command: AssessMotivation | CognitiveRef
+    self: CognitiveRecords, ctx: CallContext, command: AssessMotivation | CognitiveRef
 ) -> MotivationAssessment:
     request = (
         command if isinstance(command, AssessMotivation) else AssessMotivation(reference=command)
@@ -89,9 +89,9 @@ async def assess_motivation(
         if not isinstance(record.body, (DesireBody, ConcernBody)):
             raise DomainError("motivation_required", "Assessment requires Desire or Concern")
         body = record.body
-        from nous.identity.access import require_subject_in
+        from nous.identity.access import require_namespace_in
 
-        subject = await require_subject_in(view, ctx, "motivation")
+        subject = await require_namespace_in(view, ctx, "motivation")
         selected: dict[str, CognitiveRecord] = {}
         for ref in {
             ref.exact(): ref for ref in (*references(body.condition), *request.evidence)
@@ -112,9 +112,9 @@ async def assess_motivation(
         dict[str, MotivationJudgment], MotivationSemanticStatus, dict[str, JsonValue] | None
     ]:
         if request.semantic == "off":
-            return {}, "off", None
+            return ({}, "off", None)
         if not evidence:
-            return {}, "not_needed", None
+            return ({}, "not_needed", None)
         if self.models is None:
             if request.semantic == "required":
                 raise DomainError(
@@ -148,7 +148,7 @@ async def assess_motivation(
                 {
                     "desire": body.description,
                     "predicate": condition.predicate or "",
-                    "subject_name": str(subject["name"]),
+                    "subject_name": str(subject.display_name),
                     "evidence": [
                         {
                             "key": key,
@@ -160,19 +160,17 @@ async def assess_motivation(
                 },
                 MotivationInterpretation,
                 source_ids=source_ids,
-                invocation_id=(
-                    "motivation:"
-                    + request.operation_id
-                    + ":"
-                    + sha256(canonical_json(condition).encode()).hexdigest()
-                )
+                invocation_id="motivation:"
+                + request.operation_id
+                + ":"
+                + sha256(canonical_json(condition).encode()).hexdigest()
                 if request.save
                 else None,
             )
         except (DomainError, NousError) as error:
             if request.semantic == "required":
                 raise
-            return {}, "unavailable", {"code": error.code, "message": str(error)}
+            return ({}, "unavailable", {"code": error.code, "message": str(error)})
         returned = generated.output.judgments
         if {item.key for item in returned} != set(catalog) or len(returned) != len(catalog):
             error = DomainError(
@@ -181,10 +179,8 @@ async def assess_motivation(
             )
             if request.semantic == "required":
                 raise error
-            return {}, "unavailable", {"code": error.code, "message": str(error)}
+            return ({}, "unavailable", {"code": error.code, "message": str(error)})
         judgments: dict[str, MotivationJudgment] = {}
-        # Network work is outside the snapshot transaction. A completed model call
-        # never preserves an earlier source grant or a superseded evidence revision.
         async with self.authority.read(ctx) as current:
             await self.get_in(current, ctx, request.reference)
             for item in returned:
@@ -202,7 +198,7 @@ async def assess_motivation(
                     reason=item.reason,
                     producer_call_id=generated.call_id,
                 )
-        return judgments, "ready", None
+        return (judgments, "ready", None)
 
     def applicable(evidence: CognitiveRecord, period: TimeRange) -> bool:
         validity = evidence.times.validity
@@ -279,7 +275,6 @@ async def assess_motivation(
                     {ref.exact(): ref for child in children for ref in child.evidence}.values()
                 ),
             )
-
         values: dict[str, MotivationJudgment] = {}
         pending: list[CognitiveRecord] = []
         candidates = [
@@ -344,7 +339,7 @@ async def assess_motivation(
                 intervals.append(span)
                 (positive if value == "true" else negative).append(span)
         covered, gaps = coverage(period, intervals)
-        has_true, has_false = bool(positive), bool(negative)
+        has_true, has_false = (bool(positive), bool(negative))
         transition = None
         if condition.mode == "achieve":
             state = "true" if has_true else "false" if not gaps and has_false else "unknown"
@@ -359,10 +354,12 @@ async def assess_motivation(
                 for after in events
                 if before[1] == "true"
                 and after[1] == "false"
-                and before[0] < after[0]
-                and not any(
-                    span.contains(TimePoint(domain=period.domain, coordinate=after[0]))
-                    for span in positive
+                and (before[0] < after[0])
+                and (
+                    not any(
+                        span.contains(TimePoint(domain=period.domain, coordinate=after[0]))
+                        for span in positive
+                    )
                 )
             ]
             if changes:
@@ -373,7 +370,7 @@ async def assess_motivation(
                         for span in positive
                         if span.end is not None
                         and span.start is not None
-                        and span.start <= before[0] < span.end <= after[0]
+                        and (span.start <= before[0] < span.end <= after[0])
                     ),
                     default=before[0] + 1,
                 )
@@ -382,17 +379,15 @@ async def assess_motivation(
                 "true"
                 if changes
                 else "false"
-                if not gaps and has_true and not has_false
+                if not gaps and has_true and (not has_false)
                 else "unknown"
             )
         reason = (
             "Observed evidence supports the condition result"
             if state != "unknown"
-            else (
-                "Observed evidence has temporal gaps"
-                if used
-                else "No applicable evidence in the requested interval"
-            )
+            else "Observed evidence has temporal gaps"
+            if used
+            else "No applicable evidence in the requested interval"
         )
         return ConditionAssessment(
             predicate=condition.predicate,
@@ -419,7 +414,6 @@ async def assess_motivation(
             *(reference for child in assessment.children for reference in judged_references(child)),
         )
 
-    # Recheck deterministic evidence too when any semantic branch yielded control.
     async with self.authority.read(ctx) as current:
         await self.get_in(current, ctx, request.reference)
         for reference in dict.fromkeys(judged_references(result)):

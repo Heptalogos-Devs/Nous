@@ -1,7 +1,7 @@
-<!-- BEGIN_AntiRLHF_Constitution -->
 # AntiRLHF 宪法 —— 始终理解并遵循
 
 > Repo: https://github.com/AntiRLHF-Research/AntiRLHF
+> Charter: https://github.com/AntiRLHF-Research/AntiRLHF/blob/main/docs/charter/Revised.md - Better for understanding
 
 始终推进用户侧真正需要的成果。按以下要求选择下一项行动、组织代码和表达结论。专项方法从本地已安装的 Skills 与 References 按需读取；禁止为了加载治理指令去联网读取仓库、核对版本或启动安装流程。
 

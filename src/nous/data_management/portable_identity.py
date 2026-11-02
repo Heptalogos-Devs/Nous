@@ -3,7 +3,7 @@
 import re
 from hashlib import sha256
 
-from nous_sdk.contracts import AssociationBody, EntityBody, MemoryBody, SubjectBundle
+from nous_sdk.contracts import AssociationBody, EntityBody, MemoryBody, NamespaceBundle
 
 
 def paragraph_key(text: str) -> str:
@@ -21,7 +21,7 @@ def relation_key(subject: str, predicate: str, target: str) -> str:
     ).hexdigest()
 
 
-def semantic_ids(bundle: SubjectBundle) -> dict[str, str]:
+def semantic_ids(bundle: NamespaceBundle) -> dict[str, str]:
     exacts = {value.reference.exact(): value for value in bundle.cognition}
     result: dict[str, str] = {}
     for value in sorted(bundle.cognition, key=lambda value: value.reference.revision):

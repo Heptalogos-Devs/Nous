@@ -130,6 +130,8 @@ async def _embed_media(
             "embedding",
             snapshot,
             route.max_calls_per_day,
+            budget_resource=route.budget_resource,
+            resource_maximum=route.resource_request_budget,
             invocation_id=identity,
             routing=routing,
             cache_policy=cache_policy,

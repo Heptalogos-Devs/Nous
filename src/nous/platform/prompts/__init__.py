@@ -1,6 +1,8 @@
 """Versioned Jinja templates with immutable call snapshots."""
 
 import hashlib
+import json
+import math
 import re
 from importlib.resources import files
 from importlib.resources.abc import Traversable
@@ -8,7 +10,8 @@ from importlib.resources.abc import Traversable
 import sqlalchemy as sa
 from jinja2 import StrictUndefined, meta
 from jinja2.sandbox import ImmutableSandboxedEnvironment
-from nous_sdk.contracts import CallContext
+from nous_sdk.contracts import CallContext, DomainError
+from nous_sdk.contracts.prompt_compilation import CompiledPrompt, PromptMessage, TokenEstimate
 from pydantic import TypeAdapter
 
 from nous.platform.persistence import Authority, metadata
@@ -189,18 +192,39 @@ class PromptService:
 
     async def render(
         self, ctx: CallContext, variables: dict[str, object], prompt_id: str = "formation"
-    ) -> dict[str, object]:
-        record = await self.get(ctx, prompt_id)
-        return self.preview(record, variables)
+    ) -> CompiledPrompt:
+        return self.preview(await self.get(ctx, prompt_id), variables)
 
-    def preview(self, record: dict[str, object], variables: dict[str, object]) -> dict[str, object]:
-        rendered = self.environment.from_string(str(record["template"])).render(variables)
-        return {
-            **self.describe(record),
-            "variables": variables,
-            "rendered": rendered,
-            "hash": hashlib.sha256(rendered.encode()).hexdigest(),
-            "variable_names": sorted(
-                meta.find_undeclared_variables(self.environment.parse(str(record["template"])))
+    def preview(self, record: dict[str, object], variables: dict[str, object]) -> CompiledPrompt:
+        template = str(record["template"])
+        system, marker, user = template.partition("<!-- input -->")
+        if not marker:
+            if meta.find_undeclared_variables(self.environment.parse(template)):
+                raise DomainError(
+                    "prompt_sections_required",
+                    "Put dynamic task input after <!-- input --> in the prompt template",
+                    template_id=str(record["id"]),
+                )
+            user = json.dumps(variables, ensure_ascii=False, sort_keys=True)
+        stable = system.strip()
+        dynamic = self.environment.from_string(user).render(variables).strip() if marker else user
+        messages = tuple(
+            message
+            for message in (
+                PromptMessage(role="system", content=stable),
+                PromptMessage(role="user", content=dynamic),
+            )
+            if message.content
+        )
+        return CompiledPrompt(
+            messages=messages,
+            template_id=str(record["id"]),
+            template_revision=int(str(record["revision"]))
+            if record["revision"] is not None
+            else None,
+            stable_prefix_fingerprint=hashlib.sha256(stable.encode()).hexdigest(),
+            token_estimate=TokenEstimate(
+                text_tokens=math.ceil(sum(len(m.content.encode("utf-8")) for m in messages) / 3),
+                method="utf8_bytes_div_3",
             ),
-        }
+        )

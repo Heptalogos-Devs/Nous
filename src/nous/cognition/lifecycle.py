@@ -150,8 +150,8 @@ def transition(
     if action == "decay":
         if (
             state.activation == "active"
-            and not state.protected(now)
-            and current <= FREEZE_THRESHOLD
+            and (not state.protected(now))
+            and (current <= FREEZE_THRESHOLD)
         ):
             result.update(activation="decayed", inactive_since_unix_ms=now)
         return RetentionState.model_validate(result)

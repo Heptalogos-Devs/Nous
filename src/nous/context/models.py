@@ -9,7 +9,7 @@ contexts = Table(
     metadata,
     Column("id", String, primary_key=True),
     Column("namespace_id", String, nullable=False),
-    Column("subject_id", String, nullable=False),
+    
     Column("record", JSON, nullable=False),
 )
 feedback = Table(
@@ -24,7 +24,7 @@ preparations = Table(
     metadata,
     Column("id", String, primary_key=True),
     Column("namespace_id", String, nullable=False),
-    Column("subject_id", String, nullable=False),
+    
     Column("track_id", String, nullable=False),
     Column("record", JSON, nullable=False),
 )
@@ -33,7 +33,7 @@ tracks = Table(
     metadata,
     Column("id", String, primary_key=True),
     Column("namespace_id", String, nullable=False),
-    Column("subject_id", String, nullable=False),
+    
     Column("record", JSON, nullable=False),
 )
 sessions = Table(
@@ -41,7 +41,7 @@ sessions = Table(
     metadata,
     Column("id", String, primary_key=True),
     Column("namespace_id", String, nullable=False),
-    Column("subject_id", String, nullable=False),
+    
     Column("record", JSON, nullable=False),
 )
 reports = Table(
@@ -49,7 +49,7 @@ reports = Table(
     metadata,
     Column("id", String, primary_key=True),
     Column("namespace_id", String, nullable=False),
-    Column("subject_id", String, nullable=False),
+    
     Column("admission_id", String, nullable=False),
     Column("record", JSON, nullable=False),
 )

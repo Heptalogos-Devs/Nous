@@ -13,7 +13,7 @@ from nous_sdk.contracts import (
     MemoryBody,
 )
 
-from nous.cognition.service import CognitionService
+from nous.cognition.records import CognitiveRecords
 from nous.identity.service import IdentityService
 from nous.material.service import MaterialService
 from nous.platform.persistence import Authority
@@ -86,7 +86,7 @@ def test_reconcile_recovers_old_names_only_within_visible_sources(tmp_path: Path
         authority = Authority(tmp_path / "authority.sqlite")
         identity = IdentityService(authority)
         materials = MaterialService(authority)
-        cognition = CognitionService(authority, materials=materials)
+        cognition = CognitiveRecords(authority, materials=materials)
         directory = ReferenceDirectory(authority, cognition, materials)
         await authority.initialize()
         ctx = CallContext(

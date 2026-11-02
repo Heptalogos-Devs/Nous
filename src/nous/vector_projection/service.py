@@ -2,30 +2,24 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
-from hashlib import sha256
-from weakref import WeakKeyDictionary
-
-from nous_sdk.contracts import CallContext, CognitiveRecord, CognitiveRef, MediaReference
+from nous_sdk.contracts import CallContext, CognitiveRef, MediaReference
 from nous_sdk.contracts.vector_projection import (
     ProjectionReceipt,
     ProjectionResult,
     ProjectVectors,
-    VectorProjectionPolicy,
 )
 from sqlalchemy import delete, select, update
 
 from nous.cognition.models import ModelServices
-from nous.cognition.service import CognitionService
+from nous.cognition.records import CognitiveRecords
 from nous.material.derived import DerivedService
 from nous.material.service import MaterialService
 from nous.platform.configuration.service import ConfigurationService
-from nous.platform.execution import JobSpec
 from nous.platform.models.embedding_profile import EmbeddingProfile
 from nous.platform.persistence import Authority, WriteTx
-from nous.platform.persistence.authority import canonical_json
 
 from . import worker
+from .admission import ProjectionAdmission
 from .contracts import Content, Request, Target, VectorPolicy
 from .inputs import resolve_input, retained_content_in
 from .schema import claims, contents, requests, subscriptions
@@ -45,7 +39,6 @@ class VectorProjectionService:
                 await view.connection.execute(
                     select(requests.c.record).where(
                         requests.c.namespace_id == ctx.namespace_id,
-                        requests.c.subject_id == ctx.subject_id,
                     )
                 )
             ).scalars()
@@ -66,62 +59,21 @@ class VectorProjectionService:
     def __init__(
         self,
         authority: Authority,
-        cognition: CognitionService,
+        cognition: CognitiveRecords,
         models: ModelServices,
         configuration: ConfigurationService,
         *,
         materials: MaterialService,
         derivations: DerivedService,
-        invalidate: Callable[[], Awaitable[None]],
+        admission: ProjectionAdmission,
     ) -> None:
         self.authority, self.cognition, self.models = authority, cognition, models
         self.configuration, self.materials = configuration, materials
-        self.derivations, self.invalidate = derivations, invalidate
-        self._policies: WeakKeyDictionary[WriteTx, VectorPolicy] = WeakKeyDictionary()
-
-    def execution(self):
-        if self.authority.execution is None:
-            raise RuntimeError("Vector projections require the durable execution owner")
-        return self.authority.execution
+        self.derivations = derivations
+        self.admission = admission
 
     async def policy_in(self, tx: WriteTx, policy: VectorPolicy) -> None:
-        """Explicit import policy belongs to its adoption transaction, before adopt_in."""
-        # Only an internal per-transaction decision; persisted requests carry the
-        # actual targets/context. It is not mutable execution state or a cache.
-        self._policies[tx] = policy
-
-    async def changed_in(self, tx: WriteTx, ctx: CallContext, record: CognitiveRecord) -> None:
-        from nous.cognition.lifecycle import selectable
-
-        if (
-            record.namespace_id != ctx.namespace_id
-            or record.subject_id != ctx.require_subject()
-            or record.commit_seq != tx.commit_seq
-        ):
-            raise ValueError(
-                "Automatic projection requires the actual newly written scoped revision"
-            )
-        if not selectable(record):
-            return
-        if record.reference.kind == "association":
-            from nous_sdk.contracts.namespace_policy import NamespaceFeatures
-
-            from nous.platform.configuration.namespace_policy import policy_in
-
-            if not (
-                await policy_in(tx, ctx, "namespace.features", NamespaceFeatures)
-            ).relation_vectors:
-                return
-        policy = self._policies.get(tx)
-        if policy == "disabled":
-            return
-        if policy is None:
-            effective = await self.configuration.effective(ctx, "vector_projection")
-            if VectorProjectionPolicy.model_validate(effective["value"]).mode == "disabled":
-                self._policies[tx] = "disabled"
-                return
-            self._policies[tx] = "metadata_allowed"
-        await self.admit_in(tx, ctx, (record.reference,), head_only=True)
+        await self.admission.policy_in(tx, policy)
 
     async def admit_in(
         self,
@@ -133,57 +85,19 @@ class VectorProjectionService:
         replace_existing: bool = False,
         profile: EmbeddingProfile | None = None,
     ) -> ProjectionReceipt:
-        if tx.authority is not self.authority or tx.replayed:
-            raise ValueError("Projection admission requires the actual authority write")
-        identity = sha256(
-            canonical_json(
-                (
-                    tx.operation_key,
-                    ctx.model_dump(mode="json"),
-                    head_only,
-                )
-            ).encode()
-        ).hexdigest()
-        raw = await tx.connection.scalar(select(requests.c.record).where(requests.c.id == identity))
-        if raw is not None:
-            request = Request.model_validate(raw)
-            unique = {target.exact(): target for target in (*request.targets, *targets)}
-            request = request.model_copy(update={"targets": tuple(unique.values())})
-            await tx.connection.execute(
-                update(requests)
-                .where(requests.c.id == identity)
-                .values(record=request.model_dump(mode="json"))
-            )
-        else:
-            profile = profile or await self.models.prepare_embedding(ctx)
-            job = await tx.enqueue(
-                JobSpec(
-                    workflow_name="nous.vectors.project",
-                    queue_name="embedding",
-                    args=(identity,),
-                    workflow_id=f"vectors:{identity}",
-                )
-            )
-            request = Request(
-                id=identity,
-                context=ctx,
-                targets=tuple({target.exact(): target for target in targets}.values()),
-                profile=profile,
-                head_only=head_only,
-                job_id=job.workflow_id,
-                replace_existing=replace_existing,
-                admitted_commit=tx.commit_seq,
-            )
-            await tx.connection.execute(
-                requests.insert().values(
-                    id=identity,
-                    namespace_id=ctx.namespace_id,
-                    subject_id=ctx.require_subject(),
-                    record=request.model_dump(mode="json"),
-                    commit_seq=tx.commit_seq,
-                )
-            )
-        return ProjectionReceipt(request_id=request.id, job_id=request.job_id)
+        return await self.admission.admit_in(
+            tx,
+            ctx,
+            targets,
+            head_only=head_only,
+            replace_existing=replace_existing,
+            profile=profile,
+        )
+
+    def execution(self):
+        if self.authority.execution is None:
+            raise RuntimeError("Vector projections require the durable execution owner")
+        return self.authority.execution
 
     async def project(
         self,
@@ -208,19 +122,19 @@ class VectorProjectionService:
         *,
         replace_existing: bool = False,
     ) -> ProjectionReceipt:
-        from nous.identity.access import require_subject_in
+        from nous.identity.access import require_namespace_in
 
         async with self.authority.write(
             ctx,
             command.operation_id,
             operation_kind="vectors.submit",
-            scope=ctx.require_subject(),
+            scope=ctx.namespace_id,
             payload=command,
         ) as tx:
             if tx.replayed:
                 receipt = ProjectionReceipt.model_validate(tx.replay_result)
             else:
-                await require_subject_in(tx, ctx)
+                await require_namespace_in(tx, ctx)
                 receipt = await self.admit_in(
                     tx, ctx, command.targets, replace_existing=replace_existing
                 )

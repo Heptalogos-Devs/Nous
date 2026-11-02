@@ -42,7 +42,7 @@ const titles = {
   credentials: "web-credentials",
 };
 async function subjects() {
-  const rows = await api(`/api/namespaces/${encodeURIComponent(state.namespace)}/subjects`);
+  const rows = await api(`/api/v1/namespaces/${encodeURIComponent(state.namespace)}/subjects`);
   const select = $("subject");
   select.replaceChildren(
     ...rows.map((row) => {
@@ -56,7 +56,7 @@ async function subjects() {
   localStorage.setItem("nous.subject", state.subject);
 }
 async function namespaces() {
-  const rows = await api("/api/namespaces");
+  const rows = await api("/api/v1/namespaces");
   const select = $("namespace");
   select.replaceChildren(
     ...rows.map((row) => {
@@ -121,7 +121,7 @@ form("connect-form", async () => {
   $("login-error").textContent = "";
   state.token = $("token").value.trim();
   try {
-    const value = await api("/api/status");
+    const value = await api("/api/v1/status");
     if (value.status === "running") message($("instance-status"), "web-service-running");
     else $("instance-status").textContent = value.status;
     await namespaces();
@@ -177,8 +177,8 @@ form("entity-form", async () => {
   const kind = $("entity-kind").value;
   const path =
     kind === "namespace"
-      ? "/api/namespaces"
-      : `/api/namespaces/${encodeURIComponent(state.namespace)}/subjects`;
+      ? "/api/v1/namespaces"
+      : `/api/v1/namespaces/${encodeURIComponent(state.namespace)}/subjects`;
   if (kind === "subject" && !state.namespace) throw new Error(t("web-select-namespace"));
   const value = await api(path, {
     method: "POST",

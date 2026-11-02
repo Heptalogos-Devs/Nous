@@ -33,7 +33,7 @@ async def adopt_observation(
         ctx,
         command.operation_id,
         operation_kind="cognition.form_observation",
-        scope=ctx.require_subject(),
+        scope=ctx.namespace_id,
         payload=command.identity_payload(),
     )
     if receipt is not None:
@@ -100,7 +100,7 @@ async def adopt_observation(
                 text = source_region_text(text, region)
         if not text:
             raise DomainError("formation_source_empty", "The accepted source contains no text")
-        catalog = await self.cognition.formation_catalog_in(view, ctx, text)
+        catalog = await self.formation.formation_catalog_in(view, ctx, text)
         if anchor is None:
             anchor = await anchor_in(self, view, ctx, command, region_id=region_id, text=text)
         elif not isinstance(anchor.body, MemoryBody) or anchor.body.text != text:
@@ -127,7 +127,7 @@ async def adopt_observation(
                 ctx.model_copy(update={"request_id": command.operation_id + f":form:{attempt}"}),
                 text,
                 source,
-                authority=self.authority,
+                configuration=self.configuration,
             )
             if command.llm_enabled
             else FormationProposal(memories=())
@@ -155,7 +155,7 @@ async def adopt_observation(
         ctx,
         command.operation_id,
         operation_kind="cognition.form_observation",
-        scope=ctx.require_subject(),
+        scope=ctx.namespace_id,
         payload=command.identity_payload(),
     ) as tx:
         if tx.replayed:
@@ -178,12 +178,12 @@ async def adopt_observation(
             current_anchor = await self.cognition.get_in(tx, ctx, anchor.reference)
             records = (
                 current_anchor,
-                *await self.cognition.adopt_semantic_proposal_in(
+                *await self.formation.adopt_semantic_proposal_in(
                     tx, ctx, current_anchor, proposal, times, catalog
                 ),
             )
         else:
-            records = await self.cognition.adopt_text_formation_in(
+            records = await self.formation.adopt_text_formation_in(
                 tx,
                 ctx,
                 text,
@@ -226,7 +226,7 @@ async def form_observation(
         ctx,
         command.operation_id + ":complete",
         operation_kind="cognition.form_observation.complete",
-        scope=ctx.require_subject(),
+        scope=ctx.namespace_id,
         payload=command.identity_payload(),
     )
     if receipt is not None:
@@ -282,7 +282,7 @@ async def form_observation(
         ctx,
         command.operation_id + ":complete",
         operation_kind="cognition.form_observation.complete",
-        scope=ctx.require_subject(),
+        scope=ctx.namespace_id,
         payload=command.identity_payload(),
     ) as tx:
         if tx.replayed:

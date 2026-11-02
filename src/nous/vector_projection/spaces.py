@@ -4,12 +4,10 @@ from __future__ import annotations
 
 import json
 import math
-from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
 from nous_sdk.contracts import CallContext, CognitiveRef, DomainError
 from nous_sdk.contracts.common import utc_now
-from nous_sdk.contracts.namespace_policy import NamespaceFeatures
 from nous_sdk.contracts.records import RecordsQuery
 from nous_sdk.contracts.vector_projection import ProjectionReceipt, ProjectionResult
 from nous_sdk.contracts.vector_spaces import (
@@ -27,17 +25,16 @@ from nous_sdk.contracts.vector_spaces import (
     VectorSpaceDeleted,
     VectorSpaces,
 )
+from nous_sdk.presentation import body_text
 from pydantic import JsonValue, TypeAdapter
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.dialects.sqlite import insert
 
 from nous.cognition.lifecycle import selectable
-from nous.cognition.projection import body_text
 from nous.cognition.schema import revisions, vectors
-from nous.identity.access import require_namespace_in, require_subject_in
+from nous.identity.access import require_namespace_in
 from nous.material.derived_schema import derived_regions, representations
 from nous.material.service import materials, observations, regions
-from nous.platform.configuration.namespace_policy import policy_in
 from nous.platform.execution import JobSpec
 from nous.platform.persistence import ReadView, WriteTx
 from nous.platform.persistence.schema import operations
@@ -48,7 +45,7 @@ from .inputs import resolve_input
 from .schema import claims, contents, requests, space_retirements, subscriptions
 
 if TYPE_CHECKING:
-    from nous.cognition.service import CognitionService
+    from nous.cognition.records import CognitiveRecords
     from nous.platform.configuration.service import ConfigurationService
     from nous.platform.models import ModelService
     from nous.platform.persistence import Authority
@@ -69,14 +66,13 @@ class VectorSpaceService:
     def __init__(
         self,
         authority: Authority,
-        cognition: CognitionService,
+        cognition: CognitiveRecords,
         models: ModelService,
         configuration: ConfigurationService,
         projection: VectorProjectionService,
-        invalidate: Callable[[], Awaitable[None]],
     ) -> None:
         self.authority, self.cognition, self.models = authority, cognition, models
-        self.configuration, self.projection, self.invalidate = configuration, projection, invalidate
+        self.configuration, self.projection = configuration, projection
 
     async def eligible_in(
         self,
@@ -86,8 +82,7 @@ class VectorSpaceService:
         include_media: bool = False,
         kinds: tuple[str, ...] = (),
     ) -> tuple[Target, ...]:
-        await require_subject_in(view, ctx)
-        features = await policy_in(view, ctx, "namespace.features", NamespaceFeatures)
+        await require_namespace_in(view, ctx)
         command = RecordsQuery(limit=1000)
         targets: list[Target] = []
         while True:
@@ -97,10 +92,6 @@ class VectorSpaceService:
                     continue
                 reference = entry.record.reference
                 if kinds and reference.kind not in kinds:
-                    continue
-                if reference.kind == "association" and not features.relation_vectors:
-                    continue
-                if reference.kind == "episode" and not features.episodes:
                     continue
                 targets.append(reference)
             if page.next_cursor is None:
@@ -121,7 +112,7 @@ class VectorSpaceService:
 
     async def references_in(self, view: ReadView | WriteTx, ctx: CallContext) -> set[str]:
         if ctx.source_groups():
-            if ctx.subject_id is None:
+            if ctx.namespace_id is None:
                 raise DomainError(
                     "vector_scope_forbidden",
                     "Namespace vector management requires complete source scope",
@@ -130,8 +121,8 @@ class VectorSpaceService:
         statement = select(revisions.c.id, revisions.c.kind, revisions.c.revision).where(
             revisions.c.namespace_id == ctx.namespace_id
         )
-        if ctx.subject_id is not None:
-            statement = statement.where(revisions.c.subject_id == ctx.subject_id)
+        if ctx.namespace_id is not None:
+            statement = statement.where(revisions.c.namespace_id == ctx.namespace_id)
         selected = {
             f"{row.kind}:{row.id}@{row.revision}"
             for row in (await view.connection.execute(statement)).all()
@@ -139,10 +130,10 @@ class VectorSpaceService:
         originals = select(observations.c.material_id).where(
             observations.c.namespace_id == ctx.namespace_id
         )
-        if ctx.subject_id is not None:
-            originals = originals.where(observations.c.subject_id == ctx.subject_id)
+        if ctx.namespace_id is not None:
+            originals = originals.where(observations.c.namespace_id == ctx.namespace_id)
         original_ids = set((await view.connection.scalars(originals)).all())
-        if ctx.subject_id is None:
+        if ctx.namespace_id is None:
             original_ids.update(
                 (
                     await view.connection.scalars(
@@ -167,8 +158,8 @@ class VectorSpaceService:
             (derived_regions, "derived-region"),
         ):
             query = select(table).where(table.c.namespace_id == ctx.namespace_id)
-            if ctx.subject_id is not None:
-                query = query.where(table.c.subject_id == ctx.subject_id)
+            if ctx.namespace_id is not None:
+                query = query.where(table.c.namespace_id == ctx.namespace_id)
             for row in (await view.connection.execute(query)).mappings():
                 identity = (
                     f"{row['id']}@{row['revision']}" if table is representations else str(row["id"])
@@ -196,7 +187,7 @@ class VectorSpaceService:
                 if profile
                 else {}
             )
-            if ctx.subject_id is not None:
+            if ctx.namespace_id is not None:
                 eligible = {
                     ref.exact()
                     for ref in await self.eligible_in(view, ctx, include_media=include_media)
@@ -259,9 +250,9 @@ class VectorSpaceService:
                         invalid_vectors=sum(not row[4] for row in values),
                         payload_bytes=sum(row[3] for row in values),
                         missing_references=len(eligible - {row[0] for row in values if row[4]})
-                        if ctx.subject_id
+                        if ctx.namespace_id
                         else None,
-                        can_delete=ctx.subject_id is None
+                        can_delete=ctx.namespace_id is None
                         and not ctx.source_groups()
                         and bool(values),
                         deleted_at_commit=deleted.get(identity),
@@ -269,7 +260,6 @@ class VectorSpaceService:
                 )
             return VectorSpaces(
                 namespace_id=ctx.namespace_id,
-                subject_id=ctx.subject_id,
                 authority_commit_seq=view.commit_seq,
                 spaces=tuple(inventory),
                 eligible_references=len(eligible),
@@ -278,14 +268,14 @@ class VectorSpaceService:
                     eligible.issubset({row[0] for row in grouped.get(space, []) if row[4]})
                     for space in configured_ids
                 )
-                if configured and ctx.subject_id
+                if configured and ctx.namespace_id
                 else None,
                 configured=configured,
                 include_media=include_media,
             )
 
     async def delete(self, ctx: CallContext, command: DeleteVectorSpace) -> VectorSpaceDeleted:
-        if ctx.subject_id is not None or ctx.source_groups():
+        if ctx.namespace_id is not None or ctx.source_groups():
             raise DomainError(
                 "vector_scope_forbidden",
                 "Deleting shared vector storage requires complete Namespace management",
@@ -344,6 +334,9 @@ class VectorSpaceService:
                     set_={"commit_seq": tx.commit_seq, "reason": command.reason},
                 )
             )
+            from nous.retrieval.maintenance import enqueue_index_in
+
+            await enqueue_index_in(tx, ctx)
             result = tx.result(
                 VectorSpaceDeleted(
                     space_id=command.space_id,
@@ -352,7 +345,6 @@ class VectorSpaceService:
                     commit_seq=tx.commit_seq,
                 )
             )
-        await self.invalidate()
         return result
 
     async def rebuild(self, ctx: CallContext, command: RebuildVectors) -> VectorRebuild:
@@ -381,7 +373,7 @@ class VectorSpaceService:
             ctx,
             command.operation_id,
             operation_kind="vectors.rebuild",
-            scope=ctx.require_subject(),
+            scope=ctx.namespace_id,
             payload=command,
         ) as tx:
             if tx.replayed:
@@ -450,7 +442,7 @@ class VectorSpaceService:
 
     async def recover(self, ctx: CallContext, command: RecoverVectors) -> VectorRecovery:
         async with self.authority.read(ctx) as view:
-            await require_subject_in(view, ctx)
+            await require_namespace_in(view, ctx)
             stored = [
                 Request.model_validate(raw)
                 for raw in (
@@ -458,7 +450,6 @@ class VectorSpaceService:
                         select(requests.c.record)
                         .where(
                             requests.c.namespace_id == ctx.namespace_id,
-                            requests.c.subject_id == ctx.subject_id,
                             requests.c.record["context"]["caller_id"].as_string() == ctx.caller_id,
                         )
                         .order_by(requests.c.commit_seq.desc())
@@ -500,7 +491,6 @@ class VectorSpaceService:
                         .select_from(operations)
                         .where(
                             operations.c.namespace_id == ctx.namespace_id,
-                            operations.c.subject_id == ctx.subject_id,
                             operations.c.operation_kind == "vectors.retry",
                             func.json_extract(operations.c.result_json, "$.request_id")
                             == request.id,
@@ -556,12 +546,11 @@ class VectorSpaceService:
 
     async def progress(self, ctx: CallContext, request_id: str) -> VectorProjectionProgress:
         async with self.authority.read(ctx) as view:
-            await require_subject_in(view, ctx)
+            await require_namespace_in(view, ctx)
             raw = await view.connection.scalar(
                 select(requests.c.record).where(
                     requests.c.id == request_id,
                     requests.c.namespace_id == ctx.namespace_id,
-                    requests.c.subject_id == ctx.subject_id,
                 )
             )
             if raw is None:
@@ -573,7 +562,6 @@ class VectorSpaceService:
                     await view.connection.scalars(
                         select(requests.c.record).where(
                             requests.c.namespace_id == ctx.namespace_id,
-                            requests.c.subject_id == ctx.subject_id,
                             requests.c.record["job_id"].as_string() == request.job_id,
                         )
                     )
@@ -613,12 +601,12 @@ class VectorSpaceService:
 
     async def retry(self, ctx: CallContext, command: RetryVectorProjection) -> ProjectionReceipt:
         async with self.authority.read(ctx) as view:
-            await require_subject_in(view, ctx)
+            await require_namespace_in(view, ctx)
         saved = await self.authority.receipt(
             ctx,
             command.operation_id,
             operation_kind="vectors.retry",
-            scope=ctx.require_subject(),
+            scope=ctx.namespace_id,
             payload=command,
         )
         if saved is not None:
@@ -632,7 +620,7 @@ class VectorSpaceService:
             ctx,
             command.operation_id,
             operation_kind="vectors.retry",
-            scope=ctx.require_subject(),
+            scope=ctx.namespace_id,
             payload=command,
         ) as tx:
             if tx.replayed:
@@ -641,7 +629,6 @@ class VectorSpaceService:
                 await tx.connection.execute(
                     select(requests.c.id, requests.c.record).where(
                         requests.c.namespace_id == ctx.namespace_id,
-                        requests.c.subject_id == ctx.subject_id,
                         requests.c.record["job_id"].as_string() == original.job_id,
                     )
                 )
@@ -699,10 +686,10 @@ class VectorSpaceService:
         configured = bool(profile and profile.route.model and profile.route.base_url)
         async with self.authority.read(ctx) as view:
             await require_namespace_in(view, ctx)
-            if ctx.subject_id is not None:
-                await require_subject_in(view, ctx)
-            if ctx.subject_id is not None:
-                await require_subject_in(view, ctx)
+            if ctx.namespace_id is not None:
+                await require_namespace_in(view, ctx)
+            if ctx.namespace_id is not None:
+                await require_namespace_in(view, ctx)
             owned = await self.references_in(view, ctx)
             rows = (
                 (
@@ -724,15 +711,13 @@ class VectorSpaceService:
             text = command.sample_text
             sources: tuple[str, ...] = ()
             if command.sample_reference is not None:
-                from nous.cognition.projection import body_text
-
                 record = await self.cognition.get_in(view, ctx, command.sample_reference)
                 text, sources = body_text(record.body), record.source_roots
         saved = await self.authority.receipt(
             ctx,
             command.operation_id,
             operation_kind="vectors.check",
-            scope=ctx.subject_id or ctx.namespace_id,
+            scope=ctx.namespace_id or ctx.namespace_id,
             payload=command,
         )
         if saved is not None:
@@ -777,7 +762,7 @@ class VectorSpaceService:
             ctx,
             command.operation_id,
             operation_kind="vectors.check",
-            scope=ctx.subject_id or ctx.namespace_id,
+            scope=ctx.namespace_id or ctx.namespace_id,
             payload=command,
         ) as tx:
             if tx.replayed:
@@ -811,7 +796,6 @@ class VectorSpaceService:
                         select(requests.c.record)
                         .where(
                             requests.c.namespace_id == ctx.namespace_id,
-                            requests.c.subject_id == ctx.subject_id,
                             requests.c.record["context"]["caller_id"].as_string() == ctx.caller_id,
                         )
                         .order_by(requests.c.commit_seq.desc())
@@ -859,12 +843,11 @@ class VectorSpaceService:
 
     async def last_check(self, ctx: CallContext) -> VectorSpaceCheck | None:
         async with self.authority.read(ctx) as view:
-            await require_subject_in(view, ctx)
+            await require_namespace_in(view, ctx)
             raw = await view.connection.scalar(
                 select(operations.c.result_json)
                 .where(
                     operations.c.namespace_id == ctx.namespace_id,
-                    operations.c.subject_id == ctx.subject_id,
                     operations.c.caller_id == ctx.caller_id,
                     operations.c.operation_kind == "vectors.check",
                 )

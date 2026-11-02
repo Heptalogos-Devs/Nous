@@ -6,8 +6,9 @@ from typing import TYPE_CHECKING
 
 from nous_sdk.contracts import CallContext, DomainError
 from nous_sdk.contracts.ego_model import SeedProposal
-from nous_sdk.contracts.growth import GrowthDraft, GrowthProposal, GrowthSnapshot
+from nous_sdk.contracts.growth import GrowthDraft, GrowthSnapshot
 from nous_sdk.contracts.maintenance import CaptureMaintenanceOutput, MaintenanceRun
+from nous_sdk.contracts.maintenance_tasks import DreamDraft, JournalDraft, ReflectionDraft
 
 from nous.cognition.growth_proposal import growth_model_catalog
 from nous.platform.errors import NousError
@@ -23,14 +24,25 @@ async def generate_validated(
     run: MaintenanceRun,
     snapshot: GrowthSnapshot,
 ) -> tuple[GrowthDraft, str]:
-    variables: dict[str, object] = {
-        "maintenance_run_id": run.id,
-        "instruction": run.command.instruction,
-        "snapshot": growth_model_catalog(snapshot),
-        "body_schema": (
-            SeedProposal if run.command.role == "seed" else GrowthProposal
-        ).model_json_schema(),
-    }
+    from .inputs import materials, range_text
+
+    if run.command.kind == "journal":
+        variables: dict[str, object] = {
+            "instruction": run.command.instruction,
+            "style": "主体日记" if run.command.style == "diary" else "资料学习或工作回顾",
+            "materials": materials(snapshot),
+            "period": range_text(run.command.period),
+        }
+    elif run.command.kind in {"reflect", "growth"}:
+        variables = {"question": run.command.instruction, "materials": materials(snapshot)}
+    elif run.command.kind == "dream":
+        variables = {"theme": run.command.instruction, "materials": materials(snapshot)}
+    else:
+        variables = {
+            "maintenance_run_id": run.id,
+            "instruction": run.command.instruction,
+            "snapshot": growth_model_catalog(snapshot),
+        }
     source_ids = tuple(
         dict.fromkeys(
             (
@@ -45,7 +57,14 @@ async def generate_validated(
             )
         )
     )
-    output_type = SeedProposal if run.command.role == "seed" else GrowthProposal
+    output_type = {
+        "seed": SeedProposal,
+        "growth": ReflectionDraft,
+        "journal": JournalDraft,
+        "reflect": ReflectionDraft,
+        "dream": DreamDraft,
+    }[run.command.kind]
+    role = "reflect" if run.command.kind == "growth" else run.command.kind
     media: list[MediaInput] = []
     for source in snapshot.sources:
         if source.requires_media:
@@ -58,7 +77,7 @@ async def generate_validated(
     try:
         generated = await self.models.generate(
             ctx,
-            run.command.role,
+            role,
             variables,
             output_type,
             source_ids=source_ids,
@@ -67,7 +86,7 @@ async def generate_validated(
         )
         call_id = generated.call_id
     except (DomainError, NousError) as error:
-        attempt = await self.models.ledger.attempt(ctx, run.command.role, "maintenance:" + run.id)
+        attempt = await self.models.ledger.attempt(ctx, role, "maintenance:" + run.id)
         details = error.details if isinstance(error, DomainError) else error.context
         failed_call = details.get("call_id")
         call_id = attempt.call_id if attempt is not None else failed_call

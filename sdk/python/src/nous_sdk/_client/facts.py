@@ -10,12 +10,12 @@ from .core import ClientCore
 
 class FactClient(ClientCore):
     async def change_fact(
-        self, namespace_id: str, subject_id: str, command: FactChange
+        self, namespace_id: str,  command: FactChange
     ) -> FactChangeResult:
         return FactChangeResult.model_validate(
             await self.request(
                 "POST",
-                self.subject_path(namespace_id, subject_id) + "/facts/change",
+                self.namespace_path(namespace_id) + "/facts/change",
                 body=command.model_dump(
                     mode="json", include=command.model_fields_set | {"operation_id"}
                 ),
@@ -23,23 +23,23 @@ class FactClient(ClientCore):
         )
 
     async def query_facts(
-        self, namespace_id: str, subject_id: str, command: FactQuery
+        self, namespace_id: str,  command: FactQuery
     ) -> tuple[CognitiveRecord, ...]:
         return TypeAdapter(tuple[CognitiveRecord, ...]).validate_python(
             await self.request(
                 "POST",
-                self.subject_path(namespace_id, subject_id) + "/facts/query",
+                self.namespace_path(namespace_id) + "/facts/query",
                 body=encoded(command),
             )
         )
 
     async def fact(
-        self, namespace_id: str, subject_id: str, reference: CognitiveRef | str
+        self, namespace_id: str,  reference: CognitiveRef | str
     ) -> FactView:
         return FactView.model_validate(
             await self.request(
                 "POST",
-                self.subject_path(namespace_id, subject_id) + "/facts/get",
+                self.namespace_path(namespace_id) + "/facts/get",
                 body=encoded(FactRead(reference=reference)),
             )
         )

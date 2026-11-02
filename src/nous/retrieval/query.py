@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import json
-from hashlib import sha256
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 import numpy as np
-from nous_native import CancellationToken, IndexStore, NativeError
+from nous_native import CancellationToken, lexical_scores
 from nous_sdk.contracts import (
     CallContext,
     CognitiveRecord,
@@ -21,12 +20,15 @@ from nous_sdk.contracts.resources import ResourceRecord
 from numpy.typing import NDArray
 from pydantic import JsonValue
 
-from .assets import GraphAssets, record_domain, record_text
+from .assets import record_domain, record_text
 from .filters import authority
-from .native import failure, run_native
+from .generations import published_all
+from .native import run_native
 from .planning import BoundPlan, bind, current_selection
 from .policy import ResolvedPolicy, native_diagnostics
 from .policy import resolve as resolve_policy
+from .profiles import compile_profile
+from .query_context import resolve_context
 from .readout import visible_hits
 from .resource_selection import prepare_sources
 from .vcp_intent import concept_vectors, resolve_intent
@@ -38,10 +40,20 @@ if TYPE_CHECKING:
 
 
 async def query(self: RetrievalService, ctx: CallContext, request: QueryRequest) -> QueryResult:
+    request, context_plan = await resolve_context(self, ctx, request)
     bound, plan = bind(ctx, request)
+    bound, profile_plan = await compile_profile(self.configuration, ctx, bound)
+    if plan["sort"] is not None and (
+        bound.rerank == "required" or bound.reranker in {"llm", "cross_encoder"}
+    ):
+        raise DomainError(
+            "rerank_sort_conflict", "Explicit time sorting conflicts with relevance reranking"
+        )
+    plan["wave"] = profile_plan
+    plan["query_context"] = context_plan
     policy = await resolve_policy(self.configuration, ctx)
     if bound.profile is not None:
-        policy = ResolvedPolicy(bound.profile, "request", ctx.namespace_id, ctx.require_subject())
+        policy = ResolvedPolicy(bound.profile, "request", ctx.namespace_id)
     result = await execute(self, ctx, bound, plan, 0, QueryWork.from_budget(bound.budget), policy)
     if plan["diagnostics"] != "none":
         result = result.model_copy(update={"plan": {**result.plan, "policy": policy.diagnostics()}})
@@ -71,20 +83,7 @@ async def execute(
 ) -> QueryResult:
     if depth >= bound.budget.depth:
         raise DomainError("query_budget_exceeded", "Query composition exceeds depth budget")
-    from nous_sdk.contracts.namespace_policy import NamespaceFeatures
-
-    features = NamespaceFeatures.model_validate(
-        (await self.configuration.effective(ctx, "namespace.features"))["value"]
-    )
-    if not features.sparse_retrieval:
-        policy = ResolvedPolicy(
-            policy.value.model_copy(update={"lexical_weight": 0.0}),
-            policy.origin,
-            policy.namespace_id,
-            policy.subject_id,
-        )
-        if bound.mode == "hybrid":
-            bound = bound.model_copy(update={"mode": "dense"})
+    lexical_enabled = bound.mode in {"lexical", "hybrid", "vcp"} and policy.value.lexical_weight > 0
     if depth and plan["root_controls"]:
         raise DomainError(
             "invalid_query",
@@ -285,13 +284,14 @@ async def execute(
         )
     work.branch()
     view = await self.eligible(ctx, bound, plan)
+    index_generations = await published_all(self, ctx)
     selection = self.selectors(view.records, view.catalog, plan, view.sources)
     records, direct = selection.records, selection.direct
-    if not features.sparse_retrieval and bound.mode == "lexical" and bound.text and not direct:
+    if not lexical_enabled and bound.mode == "lexical" and bound.text and not direct:
         raise DomainError(
-            "namespace_feature_disabled",
-            "Namespace sparse retrieval is disabled",
-            feature="sparse_retrieval",
+            "capability_unavailable",
+            "The Wave lexical channel is disabled",
+            stage="lexical",
         )
     intent = resolve_intent(bound, plan, selection, view.catalog, view.sources, policy, work)
     if bound.mode == "vcp" and intent.thinking:
@@ -325,6 +325,7 @@ async def execute(
         direct = not (bound.mode == "vcp" and intent.thinking)
     missing = 0
     requested_mode = bound.mode
+    effective_mode = bound.mode
     reasons: list[str] = []
     if bound.current == "prefer" and any(
         isinstance(record, ResourceRecord)
@@ -337,14 +338,18 @@ async def execute(
             raise DomainError("capability_unavailable", "$explore requires VCP mode")
         reasons.append("exploration_requires_vcp")
     query_vector: NDArray[np.float32] | None = None
-    dense: NDArray[np.float32] | None = None
-    graph: GraphAssets | None = None
     space: str | None = None
     native_info: dict[str, JsonValue] = {}
     vcp_result: VcpResult | None = None
     ghost_vectors: NDArray[np.float32] | None = None
     core_references = intent.core
-    if bound.mode != "lexical" and not direct and records:
+    matching_vectors: set[str] = set()
+    has_query_input = bool(
+        bound.text.strip()
+        or bound.media
+        or any(not isinstance(part, str) or part.strip() for part in bound.parts)
+    )
+    if bound.mode != "lexical" and not direct and records and has_query_input:
         try:
             batch = await self.query_embedding(
                 ctx,
@@ -353,20 +358,15 @@ async def execute(
                 concepts=tuple(concept.text for concept in intent.concepts),
             )
         except DomainError as error:
-            if (
-                not features.sparse_retrieval
-                or bound.capabilities.semantic != "optional"
-                or error.code
-                not in {
-                    "model_unavailable",
-                    "model_not_configured",
-                    "embedding_unavailable",
-                    "capability_unavailable",
-                    "configuration_missing",
-                }
-            ):
+            if bound.capabilities.semantic != "optional" or error.code not in {
+                "model_unavailable",
+                "model_not_configured",
+                "embedding_unavailable",
+                "capability_unavailable",
+                "configuration_missing",
+            }:
                 raise
-            bound = bound.model_copy(update={"mode": "lexical"})
+            effective_mode = "lexical" if lexical_enabled else bound.mode
             reasons.append(error.code)
             batch = None
     else:
@@ -385,10 +385,13 @@ async def execute(
             row.reference: row
             for row in view.vectors
             if row.space == space
-            and (features.relation_vectors or not row.reference.startswith("association:"))
             and row.model == batch.model
             and row.dimensions == batch.dimensions
+            and len(row.vector) == batch.dimensions
+            and np.isfinite(row.vector).all()
+            and any(row.vector)
         }
+        matching_vectors = set(by_ref)
         eligible = [record for record in records if record.reference.exact() in by_ref]
         missing = len(records) - len(eligible)
         if missing and bound.capabilities.require_complete_vectors:
@@ -398,57 +401,34 @@ async def execute(
                 missing=missing,
                 space=space,
             )
-        if not eligible and bound.capabilities.semantic == "required" and bound.mode != "hybrid":
+        if not eligible and bound.capabilities.semantic == "required":
             raise DomainError(
                 "capability_unavailable",
                 "No selected candidate has a vector in the query model space",
                 space=space,
             )
-        if missing and bound.mode == "hybrid" and features.sparse_retrieval:
-            reasons.append("missing_vectors_lexical_fallback")
-            bound = bound.model_copy(update={"mode": "lexical"})
-            eligible = records
-        elif missing:
-            reasons.append("missing_vectors_omitted")
-            if not eligible and features.sparse_retrieval:
-                bound = bound.model_copy(update={"mode": "lexical"})
-                eligible = records
-                reasons.append("semantic_unavailable_lexical_fallback")
-        records = eligible
-        dense = (
-            np.ascontiguousarray(
-                [by_ref[record.reference.exact()].vector for record in records], dtype=np.float32
-            )
-            if bound.mode != "lexical"
-            else None
-        )
+        if missing:
+            reasons.append("partial_semantic_coverage")
+        if bound.mode != "hybrid":
+            records = eligible
         query_vector = np.ascontiguousarray(batch.vectors[0], dtype=np.float32)
         if bound.mode == "vcp":
-            graph = self.graph(
-                view.catalog,
-                records,
-                by_ref,
-                batch.dimensions,
-                view.active_roots,
-                core_references=intent.core,
-                include_inactive=bound.include_inactive,
-            )
-            if not graph.tags:
+            semantic_generation = index_generations.get(space)
+            available = set(semantic_generation.graph_keys) if semantic_generation else set()
+            available.intersection_update(record.reference.exact() for record in view.catalog)
+            if not available:
                 if bound.capabilities.exploration == "required":
                     raise DomainError(
                         "vcp_assets_unavailable",
-                        "VCP requires live, authorized graph node vectors in the query model space",
+                        "VCP requires a published authorized graph generation",
                     )
                 reasons.append("vcp_assets_unavailable")
-                bound = bound.model_copy(
-                    update={"mode": "hybrid" if features.sparse_retrieval else "dense"}
-                )
-                graph = None
+                effective_mode = "hybrid" if lexical_enabled else "dense"
             else:
-                core_references = intent.graph_core(graph, bound, reasons)
+                core_references = intent.graph_core(available, bound, reasons)
                 ghost_vectors, concept_results = concept_vectors(intent, batch)
                 vcp_result = VcpResult(core=core_references, concepts=concept_results)
-    if intent.thinking and (bound.mode != "vcp" or not records):
+    if intent.thinking and (effective_mode != "vcp" or not records):
         vcp_result = VcpResult(
             core=core_references,
             thinking=await resolve_thinking(
@@ -465,116 +445,306 @@ async def execute(
             ),
         )
     if records and (bound.text or bound.mode != "lexical") and not direct:
-        refs, texts = (
-            [record.reference.exact() for record in records],
-            [record_text(record) for record in records],
-        )
-        identity = [
-            refs,
-            texts,
-            space,
-            dense.tolist() if dense is not None else None,
-            [
-                graph.tags,
-                graph.vectors.tolist(),
-                graph.member_indptr.tolist(),
-                graph.member_indices.tolist(),
-                graph.edge_indptr.tolist(),
-                graph.edge_indices.tolist(),
-                graph.edge_weights.tolist(),
-                graph.edge_polarities.tolist(),
-                graph.source_references,
-                graph.candidate_source_indptr.tolist(),
-                graph.candidate_source_indices.tolist(),
-                graph.graph_source_indptr.tolist(),
-                graph.graph_source_indices.tolist(),
-            ]
-            if graph
-            else None,
-        ]
-        key = sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
-        async with self.lock:
-            snapshot = self.snapshots.get(key)
-            if snapshot is None:
-                try:
-                    store = IndexStore(str(self.index_path / key))
-                except NativeError as error:
-                    raise failure(error, "open") from error
-                token = CancellationToken()
-                try:
-                    snapshot = await run_native(
-                        "build",
-                        token,
-                        store.build,
-                        cancel=token,
-                        references=refs,
-                        texts=texts,
-                        assets_json=json.dumps(
-                            {"space": space, "tags": graph.tags}
-                            if graph
-                            else {"space": space}
-                            if space
-                            else {}
-                        ),
-                        vectors=dense,
-                        tag_vectors=graph.vectors if graph else None,
-                        tag_indptr=graph.member_indptr if graph else None,
-                        tag_indices=graph.member_indices if graph else None,
-                        graph_indptr=graph.edge_indptr if graph else None,
-                        graph_indices=graph.edge_indices if graph else None,
-                        graph_weights=graph.edge_weights if graph else None,
-                        graph_polarities=graph.edge_polarities if graph else None,
-                        source_references=graph.source_references if graph else None,
-                        candidate_source_indptr=graph.candidate_source_indptr if graph else None,
-                        candidate_source_indices=graph.candidate_source_indices if graph else None,
-                        graph_source_indptr=graph.graph_source_indptr if graph else None,
-                        graph_source_indices=graph.graph_source_indices if graph else None,
+        selected_records = {record.reference.exact(): record for record in records}
+        channel_hits: dict[str, list[tuple[str, float]]] = {}
+        watermarks: list[int] = []
+        generations: list[str] = []
+        stages: list[JsonValue] = []
+        channels: list[Literal["lexical", "dense", "vcp"]] = []
+        if effective_mode in {"lexical", "hybrid"} and lexical_enabled:
+            channels.append("lexical")
+        if query_vector is not None and effective_mode != "lexical":
+            channels.append(
+                "vcp" if effective_mode == "vcp" and vcp_result is not None else "dense"
+            )
+        for channel in channels:
+            asset = index_generations.get(None if channel == "lexical" else space)
+            if asset is None:
+                if channel != "lexical" and bound.capabilities.semantic == "required":
+                    raise DomainError(
+                        "index_not_ready",
+                        "No published semantic generation is available",
+                        space=space,
                     )
-                except BaseException:
-                    await run_native("close_failed_build", None, store.close)
-                    raise
-                self.stores[key], self.snapshots[key] = store, snapshot
+                reasons.append(channel + "_index_not_ready")
+                stages.append({"stage": channel, "status": "unavailable", "candidates": 0})
+                continue
+            snapshot = asset.snapshot
+            refs = snapshot.references
+            allowed = np.ascontiguousarray(
+                [
+                    index
+                    for index, ref in enumerate(refs)
+                    if ref in selected_records and (channel == "lexical" or ref in matching_vectors)
+                ],
+                dtype=np.uint64,
+            )
+            allowed_graph = (
+                np.ascontiguousarray(
+                    [
+                        index
+                        for index, ref in enumerate(asset.graph_keys)
+                        if ref in matching_vectors
+                        and ref in {record.reference.exact() for record in view.catalog}
+                    ],
+                    dtype=np.uint64,
+                )
+                if channel == "vcp"
+                else None
+            )
             token = CancellationToken()
             result = await run_native(
                 "query",
                 token,
                 snapshot.query,
                 cancel=token,
-                mode=bound.mode,
+                mode=channel,
                 text=bound.text,
-                vectors=query_vector,
-                allowed_rows=np.arange(len(records), dtype=np.uint64),
-                allowed_graph_nodes=np.arange(len(graph.tags), dtype=np.uint64) if graph else None,
+                vectors=query_vector if channel != "lexical" else None,
+                allowed_rows=allowed,
+                allowed_graph_nodes=allowed_graph,
                 options_json=json.dumps(
                     intent.options(
-                        policy, bound.budget.candidates, plan["diagnostics"], core_references
+                        policy,
+                        bound.budget.candidates,
+                        plan["diagnostics"],
+                        core_references,
+                        strict=bound.capability_policy == "strict",
                     )
-                    if bound.mode == "vcp"
+                    if channel == "vcp"
                     else policy.options(bound.budget.candidates, plan["diagnostics"])
                 ),
-                ghost_vectors=ghost_vectors,
+                ghost_vectors=ghost_vectors if channel == "vcp" else None,
             )
-        native_info = native_diagnostics(
-            result.diagnostics_json, plan["diagnostics"], bound.budget.diagnostics_bytes
-        )
-        if graph and plan["diagnostics"] != "none":
-            native_info["graph_projection"] = graph.diagnostics
-        if vcp_result is not None and intent.thinking:
-            thinking = json.loads(result.diagnostics_json)["vcp"]["thinking"]
-            vcp_result = vcp_result.model_copy(
-                update={
-                    "thinking": await resolve_thinking(
-                        self, ctx, thinking, view.catalog, records, bound, reasons
-                    )
+            if channel == "vcp":
+                availability = (
+                    json.loads(result.diagnostics_json)
+                    .get("vcp", {})
+                    .get("scoped_stage_availability", {})
+                )
+                reasons.extend(
+                    stage + "_unavailable_in_scope"
+                    for stage, status in availability.items()
+                    if status == "unavailable_in_scope"
+                )
+            channel_hits[channel] = [
+                (refs[int(index)], float(score))
+                for index, score in zip(result.row_ids, result.scores, strict=True)
+            ]
+            watermarks.append(asset.watermark)
+            generations.append(result.generation)
+            stages.append(
+                {
+                    "stage": channel,
+                    "status": "completed",
+                    "candidates": len(result.row_ids),
+                    "indexed_through": asset.watermark,
+                    "generation": result.generation,
                 }
             )
-        ranked = [
-            (records[int(index)], float(score))
-            for index, score in zip(result.row_ids, result.scores, strict=True)
-        ]
-        generation = result.generation
+            native_info[channel] = native_diagnostics(
+                result.diagnostics_json, plan["diagnostics"], bound.budget.diagnostics_bytes
+            )
+            if channel == "vcp" and vcp_result is not None and intent.thinking:
+                thinking = json.loads(result.diagnostics_json)["vcp"]["thinking"]
+                vcp_result = vcp_result.model_copy(
+                    update={
+                        "thinking": await resolve_thinking(
+                            self, ctx, thinking, view.catalog, records, bound, reasons
+                        )
+                    }
+                )
+        context = (
+            bound.context
+            if bound.context is not None and not isinstance(bound.context, str)
+            else None
+        )
+        if context is not None:
+            cue_refs = set(
+                (
+                    *context.anchors,
+                    *context.entities,
+                    *(reference.exact() for reference in context.attachments),
+                )
+            )
+            cues = [
+                row
+                for row in view.vectors
+                if row.reference in cue_refs
+                and len(row.vector) == row.dimensions
+                and np.isfinite(row.vector).all()
+                and any(row.vector)
+            ]
+            if effective_mode != "lexical":
+                per_cue = max(1, bound.budget.candidates // max(1, len(cues)))
+                for cue_index, cue in enumerate(cues):
+                    asset = index_generations.get(cue.space)
+                    if asset is None:
+                        continue
+                    refs = asset.snapshot.references
+                    available = {
+                        row.reference
+                        for row in view.vectors
+                        if row.space == cue.space
+                        and row.model == cue.model
+                        and row.dimensions == cue.dimensions
+                    }
+                    allowed = np.ascontiguousarray(
+                        [
+                            index
+                            for index, ref in enumerate(refs)
+                            if ref in selected_records and ref in available
+                        ],
+                        dtype=np.uint64,
+                    )
+                    mode = (
+                        "vcp"
+                        if not has_query_input
+                        and effective_mode == "vcp"
+                        and "vcp" in asset.snapshot.capabilities
+                        else "dense"
+                    )
+                    token = CancellationToken()
+                    cue_result = await run_native(
+                        "context_cue",
+                        token,
+                        asset.snapshot.query,
+                        cancel=token,
+                        mode=mode,
+                        text="",
+                        vectors=np.ascontiguousarray(cue.vector, dtype=np.float32),
+                        allowed_rows=allowed,
+                        allowed_graph_nodes=np.ascontiguousarray(
+                            [
+                                index
+                                for index, ref in enumerate(asset.graph_keys)
+                                if ref in {record.reference.exact() for record in view.catalog}
+                            ],
+                            dtype=np.uint64,
+                        )
+                        if mode == "vcp"
+                        else None,
+                        options_json=json.dumps(
+                            intent.options(
+                                policy,
+                                per_cue,
+                                plan["diagnostics"],
+                                core_references,
+                                strict=bound.capability_policy == "strict",
+                            )
+                            if mode == "vcp"
+                            else policy.options(per_cue, plan["diagnostics"])
+                        ),
+                    )
+                    channel_hits[f"context:{cue_index}"] = [
+                        (refs[int(index)], float(score))
+                        for index, score in zip(cue_result.row_ids, cue_result.scores, strict=True)
+                    ]
+                    watermarks.append(asset.watermark)
+                    generations.append(cue_result.generation)
+                    stages.append(
+                        {
+                            "stage": "context_dense" if mode == "dense" else "context_vcp",
+                            "source": cue.reference,
+                            "generation": cue_result.generation,
+                            "indexed_through": asset.watermark,
+                            "candidates": len(cue_result.row_ids),
+                        }
+                    )
+            if effective_mode in {"lexical", "hybrid"} and lexical_enabled:
+                terms = [
+                    value
+                    for value in (*context.entities, context.goal)
+                    if value and ":" not in value
+                ]
+                asset = index_generations.get(None)
+                if asset is not None and terms:
+                    refs = asset.snapshot.references
+                    allowed = np.ascontiguousarray(
+                        [index for index, ref in enumerate(refs) if ref in selected_records],
+                        dtype=np.uint64,
+                    )
+                    token = CancellationToken()
+                    cue_result = await run_native(
+                        "context_lexical",
+                        token,
+                        asset.snapshot.query,
+                        cancel=token,
+                        mode="lexical",
+                        text=" ".join(terms),
+                        allowed_rows=allowed,
+                        options_json=json.dumps(
+                            policy.options(bound.budget.candidates, plan["diagnostics"])
+                        ),
+                    )
+                    channel_hits["context_lexical"] = [
+                        (refs[int(index)], float(score))
+                        for index, score in zip(cue_result.row_ids, cue_result.scores, strict=True)
+                    ]
+                    watermarks.append(asset.watermark)
+                    generations.append(cue_result.generation)
+                    stages.append(
+                        {
+                            "stage": "context_lexical",
+                            "generation": cue_result.generation,
+                            "indexed_through": asset.watermark,
+                            "candidates": len(cue_result.row_ids),
+                        }
+                    )
+        indexed_through = min(watermarks, default=0)
+        lexical_refs = set()
+        lexical_asset = index_generations.get(None)
+        if lexical_asset is not None:
+            lexical_refs = set(lexical_asset.snapshot.references)
+        delta = [record for record in records if record.reference.exact() not in lexical_refs]
+        if delta and effective_mode in {"lexical", "hybrid"} and lexical_enabled:
+            if len(delta) > bound.budget.candidates:
+                reasons.append("index_backlog_exceeds_delta_budget")
+            delta = delta[: bound.budget.candidates]
+            delta_scores = await run_native(
+                "lexical_delta",
+                None,
+                lexical_scores,
+                bound.text,
+                [record_text(record) for record in delta],
+            )
+            scored = [
+                (record.reference.exact(), float(score))
+                for record, score in zip(delta, delta_scores, strict=True)
+                if score is not None
+            ]
+            scored = sorted(
+                (item for item in scored if item[1] > 0), key=lambda item: (-item[1], item[0])
+            )
+            channel_hits.setdefault("lexical", []).extend(scored)
+            stages.append(
+                {"stage": "lexical_delta", "status": "completed", "candidates": len(scored)}
+            )
+        if bound.min_commit_seq is not None and indexed_through < bound.min_commit_seq:
+            raise DomainError(
+                "index_watermark_unavailable",
+                "Published indexes have not reached the requested watermark",
+                indexed_through=indexed_through,
+                required=bound.min_commit_seq,
+            )
+        scores: dict[str, float] = {}
+        if len(channel_hits) == 1:
+            scores.update(next(iter(channel_hits.values())))
+        else:
+            for channel, hits_for_channel in channel_hits.items():
+                weight = (
+                    policy.value.lexical_weight
+                    if channel == "lexical"
+                    else policy.value.dense_weight
+                )
+                for rank, (ref, _) in enumerate(hits_for_channel, 1):
+                    scores[ref] = scores.get(ref, 0.0) + weight / (policy.value.rrf_k + rank)
+        ranked = [(selected_records[ref], score) for ref, score in scores.items()]
+        generation = ",".join(dict.fromkeys(generations)) or "pending"
+        native_info["stages"] = stages
     else:
         ranked, generation = [(record, 1.0) for record in records], "authority"
+        indexed_through = view.commit_seq
     ranked = self.order(ranked, plan)
     ranked = ranked[: bound.budget.candidates]
     hits = await visible_hits(
@@ -582,6 +752,7 @@ async def execute(
     )
     complete = (
         missing == 0
+        and indexed_through >= max((record.commit_seq for record in records), default=0)
         and (bound.min_commit_seq is None or view.commit_seq >= bound.min_commit_seq)
         and plan.get("resource_refresh_complete", True)
     )
@@ -596,14 +767,14 @@ async def execute(
         vcp=vcp_result,
         hits=tuple(hits),
         coverage=QueryCoverage(
-            indexed_through=view.commit_seq if not missing else 0,
+            indexed_through=indexed_through,
             authority_commit_seq=view.commit_seq,
             complete=complete,
             generation=generation,
         ),
         execution=QueryExecution(
             requested_mode=requested_mode,
-            effective_mode=bound.mode,
+            effective_mode=effective_mode,
             candidate_budget=bound.budget.candidates,
             candidates_returned=len(ranked),
             eligible_objects=len(records),

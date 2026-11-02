@@ -60,7 +60,7 @@ def _scope_subset(child: tuple[str, ...] | None, parent: tuple[str, ...] | None)
 class Principal:
     caller_id: str
     namespace_ids: tuple[str, ...] | None = None
-    subject_ids: tuple[str, ...] | None = None
+    
     source_ids: tuple[str, ...] | None = None
     capabilities: frozenset[Capability] = frozenset()
     credential_id: str | None = None
@@ -77,17 +77,13 @@ class Principal:
                 "namespace_scope_forbidden", "Credential does not grant this namespace"
             )
 
-    def require_scope(self, namespace_id: str, subject_id: str | None = None) -> None:
+    def require_scope(self, namespace_id: str) -> None:
         self.require_namespace_scope(namespace_id)
-        if self.subject_ids is not None and (
-            subject_id is None or subject_id not in self.subject_ids
-        ):
-            raise DomainError("subject_scope_forbidden", "Credential requires a permitted subject")
 
     def require_instance_management(self) -> None:
         self.require("manage")
         if any(
-            scope is not None for scope in (self.namespace_ids, self.subject_ids, self.source_ids)
+            scope is not None for scope in (self.namespace_ids, self.source_ids)
         ):
             raise DomainError(
                 "instance_scope_forbidden",
@@ -105,7 +101,6 @@ class Principal:
     def permits_record(self, record: CredentialRecord) -> bool:
         return (
             _scope_subset(record.namespace_ids, self.namespace_ids)
-            and _scope_subset(record.subject_ids, self.subject_ids)
             and _scope_subset(record.source_ids, self.source_ids)
         )
 
@@ -147,7 +142,6 @@ class CredentialsService:
         return Principal(
             record.caller_id,
             record.namespace_ids,
-            record.subject_ids,
             record.source_ids,
             frozenset(record.capabilities),
             record.id,
@@ -167,7 +161,7 @@ class CredentialsService:
             caller_id=actor.caller_id,
             credential_id=actor.credential_id,
             namespace_ids=actor.namespace_ids,
-            subject_ids=actor.subject_ids,
+            
             source_ids=actor.source_ids,
             capabilities=tuple(sorted(actor.capabilities)),
         )
@@ -259,7 +253,7 @@ class CredentialsService:
                 "Credential capabilities exceed the issuer's authority",
             )
         scopes: dict[str, tuple[str, ...] | None] = {}
-        for field in ("namespace_ids", "subject_ids", "source_ids"):
+        for field in ("namespace_ids", "source_ids"):
             requested = (
                 getattr(command, field)
                 if field in command.model_fields_set
@@ -305,7 +299,7 @@ class CredentialsService:
                 caller_id=f"api-key:{credential_id}",
                 name=command.name,
                 namespace_ids=scopes["namespace_ids"],
-                subject_ids=scopes["subject_ids"],
+                
                 source_ids=scopes["source_ids"],
                 capabilities=tuple(sorted(set(command.capabilities))),
                 created_by=actor.caller_id,

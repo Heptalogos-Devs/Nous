@@ -83,7 +83,7 @@ class RPCContext:
         if subject:
             bound = await self.app.identity.memory_subject(ctx)
             self.actor.require_scope(namespace_id, bound.id)
-            ctx = ctx.model_copy(update={"subject_id": bound.id})
+            ctx = ctx.model_copy(update={})
         return ctx
 
     def operation_id(self, request: JsonObject, method: str) -> str:

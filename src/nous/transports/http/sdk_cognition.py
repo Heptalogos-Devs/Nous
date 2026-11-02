@@ -22,28 +22,28 @@ from .security import application, context
 router = APIRouter()
 
 
-@router.post("/namespaces/{namespace_id}/subjects/{subject_id}/person-profiles/query")
+@router.post('/namespaces/{namespace_id}/person-profiles/query')
 async def person_profiles(
-    request: Request, namespace_id: str, subject_id: str, command: PersonProfilesQuery
+    request: Request, namespace_id: str,  command: PersonProfilesQuery
 ) -> PersonProfilesResult:
     return await application(request).person_profiles.query(
-        await context(request, namespace_id, subject_id, capability="read"), command
+        await context(request, namespace_id,  capability="read"), command
     )
 
 
-@router.post("/namespaces/{namespace_id}/subjects/{subject_id}/entities/merge")
+@router.post('/namespaces/{namespace_id}/entities/merge')
 async def merge_entities(
-    request: Request, namespace_id: str, subject_id: str, command: MergeEntities
+    request: Request, namespace_id: str,  command: MergeEntities
 ):
-    return await application(request).cognition.merge_entities(
-        await context(request, namespace_id, subject_id, capability="manage"), command
+    return await application(request).entities.merge_entities(
+        await context(request, namespace_id,  capability="manage"), command
     )
 
 
-@router.post("/namespaces/{namespace_id}/subjects/{subject_id}/entities/split")
-async def split_entity(request: Request, namespace_id: str, subject_id: str, command: SplitEntity):
-    return await application(request).cognition.split_entity(
-        await context(request, namespace_id, subject_id, capability="manage"), command
+@router.post('/namespaces/{namespace_id}/entities/split')
+async def split_entity(request: Request, namespace_id: str,  command: SplitEntity):
+    return await application(request).entities.split_entity(
+        await context(request, namespace_id,  capability="manage"), command
     )
 
 
@@ -54,43 +54,43 @@ class RecordDetailRequest(BaseModel):
     purpose: RecordPurpose = "exact"
 
 
-@router.post("/namespaces/{namespace_id}/subjects/{subject_id}/records/query")
+@router.post('/namespaces/{namespace_id}/records/query')
 async def records_query(
-    request: Request, namespace_id: str, subject_id: str, command: RecordsQuery
+    request: Request, namespace_id: str,  command: RecordsQuery
 ):
     return await application(request).cognition.records(
         await context(
             request,
             namespace_id,
-            subject_id,
+            
             capability="manage" if command.purpose == "management" else "read",
         ),
         command,
     )
 
 
-@router.post("/namespaces/{namespace_id}/subjects/{subject_id}/records/read")
-async def records_read(request: Request, namespace_id: str, subject_id: str, command: ReadRecords):
+@router.post('/namespaces/{namespace_id}/records/read')
+async def records_read(request: Request, namespace_id: str,  command: ReadRecords):
     return await application(request).cognition.read_records(
         await context(
             request,
             namespace_id,
-            subject_id,
+            
             capability="manage" if command.purpose == "management" else "read",
         ),
         command,
     )
 
 
-@router.post("/namespaces/{namespace_id}/subjects/{subject_id}/records/detail")
+@router.post('/namespaces/{namespace_id}/records/detail')
 async def record_detail(
-    request: Request, namespace_id: str, subject_id: str, command: RecordDetailRequest
+    request: Request, namespace_id: str,  command: RecordDetailRequest
 ):
     return await application(request).cognition.record_detail(
         await context(
             request,
             namespace_id,
-            subject_id,
+            
             capability="manage" if command.purpose == "management" else "read",
         ),
         command.reference,
@@ -99,28 +99,28 @@ async def record_detail(
     )
 
 
-@router.post("/namespaces/{namespace_id}/subjects/{subject_id}/person-profiles/change")
+@router.post('/namespaces/{namespace_id}/person-profiles/change')
 async def change_person_profile(
     request: Request,
     namespace_id: str,
-    subject_id: str,
+    
     command: PersonProfileChange,
 ):
     return await application(request).person_profiles.change(
-        await context(request, namespace_id, subject_id, capability="write"),
+        await context(request, namespace_id,  capability="write"),
         command,
     )
 
 
-@router.post("/namespaces/{namespace_id}/subjects/{subject_id}/person-profiles/refresh")
+@router.post('/namespaces/{namespace_id}/person-profiles/refresh')
 async def refresh_person_profile(
     request: Request,
     namespace_id: str,
-    subject_id: str,
+    
     command: RefreshPersonProfile,
 ):
     return await application(request).person_profiles.submit_refresh(
-        await context(request, namespace_id, subject_id, capability="write"),
+        await context(request, namespace_id,  capability="write"),
         command,
     )
 
@@ -156,29 +156,29 @@ async def cognitive_history(request: Request, object_id: str, limit: int = 100):
     )
 
 
-@router.get("/namespaces/{namespace_id}/subjects/{subject_id}/concepts/resolve")
-async def concept_alias(request: Request, namespace_id: str, subject_id: str, alias: str):
+@router.get('/namespaces/{namespace_id}/concepts/resolve')
+async def concept_alias(request: Request, namespace_id: str,  alias: str):
     return await application(request).cognition.concept_by_alias(
-        await context(request, namespace_id, subject_id, capability="read"), alias
+        await context(request, namespace_id,  capability="read"), alias
     )
 
 
-@router.post("/namespaces/{namespace_id}/subjects/{subject_id}/cognition/deleted")
+@router.post('/namespaces/{namespace_id}/cognition/deleted')
 async def set_cognitive_deleted(
-    request: Request, namespace_id: str, subject_id: str, command: CognitiveDeletion
+    request: Request, namespace_id: str,  command: CognitiveDeletion
 ):
     return await application(request).cognition.set_deleted(
-        await context(request, namespace_id, subject_id),
+        await context(request, namespace_id),
         command.reference,
         command.deleted,
         command.operation_id,
     )
 
 
-@router.post("/namespaces/{namespace_id}/subjects/{subject_id}/memories/batch")
+@router.post('/namespaces/{namespace_id}/memories/batch')
 async def change_memories(
-    request: Request, namespace_id: str, subject_id: str, command: MemoryChanges
+    request: Request, namespace_id: str,  command: MemoryChanges
 ):
-    return await application(request).cognition.change_memories(
-        await context(request, namespace_id, subject_id), command
+    return await application(request).memories.change_memories(
+        await context(request, namespace_id), command
     )

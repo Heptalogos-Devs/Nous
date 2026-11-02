@@ -183,7 +183,7 @@ async def execute(method: str, values: JsonObject, rpc: RPCContext) -> JsonObjec
             reasons.append("llm_unavailable")
         vectors_ready = False
         if value.memory_subject_id and value.enabled and not value.deleted:
-            scoped = ctx.model_copy(update={"subject_id": value.memory_subject_id})
+            scoped = ctx.model_copy(update={})
             inventory = await rpc.app.retrieval.status(scoped)
             vectors_ready = inventory.configured_space_complete is True
         elif value.memory_subject_id is None:

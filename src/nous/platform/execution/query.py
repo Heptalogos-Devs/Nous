@@ -7,12 +7,14 @@ from dataclasses import dataclass
 import sqlalchemy as sa
 from dbos import DBOSClient, WorkflowStatus
 from nous_sdk.contracts import CallContext
+from nous_sdk.contracts.execution import ExecutionJob
 from pydantic import BaseModel, ConfigDict, Field
 
 from nous.platform.persistence import Authority
 from nous.platform.persistence.authority import canonical_json
 from nous.platform.persistence.schema import job_links, operations
 
+from .results import job_results, retained_status
 from .scope import JobPurpose, require_job_purpose
 
 _STATES = frozenset(
@@ -76,7 +78,7 @@ async def query_jobs(
             (
                 ctx.caller_id,
                 ctx.namespace_id,
-                ctx.subject_id,
+                ctx.namespace_id,
                 scope,
                 kind,
                 state,
@@ -107,8 +109,8 @@ async def query_jobs(
     )
     if purpose == "actor":
         query = query.where(job_links.c.caller_id == ctx.caller_id)
-    if ctx.subject_id is not None:
-        query = query.where(job_links.c.subject_id == ctx.subject_id)
+    if ctx.namespace_id is not None:
+        query = query.where(job_links.c.namespace_id == ctx.namespace_id)
     if scope is not None:
         query = query.where(job_links.c.scope == scope)
     if kind is not None:
@@ -153,6 +155,20 @@ async def query_jobs(
                 load_output=False,
             )
             by_id = {item.workflow_id: item for item in matches}
+            archived = (
+                await view.connection.execute(
+                    sa.select(job_results.c.record).where(
+                        job_results.c.workflow_id.in_(ids),
+                        job_results.c.namespace_id == ctx.namespace_id,
+                    )
+                )
+            ).scalars()
+            for raw in archived:
+                saved = ExecutionJob.model_validate(raw)
+                if (kind is None or saved.workflow_name == kind) and (
+                    state is None or saved.state == state
+                ):
+                    by_id[saved.workflow_id] = retained_status(saved)
             for row in rows:
                 item = by_id.get(str(row.workflow_id))
                 if item is not None:

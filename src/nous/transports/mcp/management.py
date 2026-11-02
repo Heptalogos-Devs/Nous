@@ -18,14 +18,13 @@ from nous_sdk.contracts.feedback import (
 from nous_sdk.contracts.identity import (
     BindSubject,
     ChangeNamespace,
-    ChangeSubject,
     IdentityDirectoryQuery,
     IdentityPurpose,
     PurgeNamespace,
 )
 from nous_sdk.contracts.management import SourceSelection
 from nous_sdk.contracts.model_roles import ModelContractRequest, ModelPreviewRequest
-from nous_sdk.contracts.namespace_archives import MigrateSubject, RestoreNamespace
+from nous_sdk.contracts.namespace_archives import RestoreNamespace
 from nous_sdk.contracts.namespace_backups import RestoreNamespaceBackup
 from nous_sdk.contracts.records import ReadRecords, RecordPurpose, RecordsQuery
 from nous_sdk.contracts.resources import ChangeResource, ReadResource, RegisterResource
@@ -49,43 +48,43 @@ def register_management(
     server: MCPServer,
     client: Callable[[], AbstractAsyncContextManager[NousClient]],
     namespace_id: str,
-    subject_id: str,
+    
 ) -> None:
     @server.tool()
     async def decay_retention(command: DecayRetention) -> JsonObject:
         """Evaluate a cursor-paged Memory/Association selection with the common decay rules."""
         async with client() as api:
-            return (await api.decay_retention(namespace_id, subject_id, command)).model_dump(mode="json")
+            return (await api.decay_retention(namespace_id,  command)).model_dump(mode="json")
 
     @server.tool()
     async def change_retention(command: RetentionChange) -> JsonObject:
         """Apply the shared retention rules to an exact Memory or Association revision."""
         async with client() as api:
-            return (await api.change_retention(namespace_id, subject_id, command)).model_dump(mode="json")
+            return (await api.change_retention(namespace_id,  command)).model_dump(mode="json")
 
     @server.tool()
     async def change_retentions(command: RetentionChanges) -> JsonObject:
         """Change a frozen lifecycle selection atomically."""
         async with client() as api:
-            return {"records": [record.model_dump(mode="json") for record in await api.change_retentions(namespace_id, subject_id, command)]}
+            return {"records": [record.model_dump(mode="json") for record in await api.change_retentions(namespace_id,  command)]}
 
     @server.tool()
     async def retention_snapshot(reference: CognitiveRef) -> JsonObject:
         """Read the actual retention state and authoritative object revision."""
         async with client() as api:
-            return (await api.retention_snapshot(namespace_id, subject_id, reference)).model_dump(mode="json")
+            return (await api.retention_snapshot(namespace_id,  reference)).model_dump(mode="json")
 
     @server.tool()
     async def retained_model_output(call_id: str, management: bool = False) -> JsonObject:
         """Read exact retained provider text and independently reparse its current contract without another model call."""
         async with client() as api:
-            return (await api.retained_model_output(namespace_id, subject_id, call_id, management=management)).model_dump(mode="json")
+            return (await api.retained_model_output(namespace_id,  call_id, management=management)).model_dump(mode="json")
 
     @server.tool()
     async def recover_vectors(command: RecoverVectors) -> JsonObject:
         """Resume original failed projections and backfill current missing vectors, preserving unknown outcomes."""
         async with client() as api:
-            return (await api.recover_vectors(namespace_id, subject_id, command)).model_dump(
+            return (await api.recover_vectors(namespace_id,  command)).model_dump(
                 mode="json"
             )
 
@@ -98,7 +97,7 @@ def register_management(
             return (
                 await api.vector_spaces(
                     namespace_id,
-                    None if namespace_scope else subject_id,
+                    
                     include_media=include_media,
                 )
             ).model_dump(mode="json")
@@ -113,7 +112,7 @@ def register_management(
     async def rebuild_vectors(command: RebuildVectors) -> JsonObject:
         """Rebuild current model-space projections through the durable embedding queue."""
         async with client() as api:
-            return (await api.rebuild_vectors(namespace_id, subject_id, command)).model_dump(
+            return (await api.rebuild_vectors(namespace_id,  command)).model_dump(
                 mode="json"
             )
 
@@ -122,7 +121,7 @@ def register_management(
         """Read live DBOS state and prepared/adopted vector counts."""
         async with client() as api:
             return (
-                await api.vector_projection_progress(namespace_id, subject_id, request_id)
+                await api.vector_projection_progress(namespace_id,  request_id)
             ).model_dump(mode="json")
 
     @server.tool()
@@ -130,14 +129,14 @@ def register_management(
         """Resume the original projection plan and reuse its retained physical model results."""
         async with client() as api:
             return (
-                await api.retry_vector_projection(namespace_id, subject_id, command)
+                await api.retry_vector_projection(namespace_id,  command)
             ).model_dump(mode="json")
 
     @server.tool()
     async def check_vector_spaces(command: CheckVectorSpaces) -> JsonObject:
         """Check storage/configuration; provider probing requires actual input and probe=true."""
         async with client() as api:
-            return (await api.check_vector_spaces(namespace_id, subject_id, command)).model_dump(
+            return (await api.check_vector_spaces(namespace_id,  command)).model_dump(
                 mode="json"
             )
 
@@ -149,7 +148,7 @@ def register_management(
         async with client() as api:
             return (
                 await api.preview_sources(
-                    namespace_id, subject_id, selection=selection, action=action
+                    namespace_id,  selection=selection, action=action
                 )
             ).model_dump(mode="json")
 
@@ -160,18 +159,18 @@ def register_management(
         """Change an authorized range through canonical lifecycle and operation records."""
         async with client() as api:
             if action == "trash":
-                result = await api.trash_sources(namespace_id, subject_id, command)
+                result = await api.trash_sources(namespace_id,  command)
             elif action == "restore":
-                result = await api.restore_sources(namespace_id, subject_id, command)
+                result = await api.restore_sources(namespace_id,  command)
             else:
-                result = await api.purge_sources(namespace_id, subject_id, command)
+                result = await api.purge_sources(namespace_id,  command)
             return result.model_dump(mode="json")
 
     @server.tool()
     async def retry_feedback(command: RetryFeedback) -> JsonObject:
         """Resume a failed feedback task with its frozen input and paid invocation."""
         async with client() as api:
-            return (await api.retry_feedback(namespace_id, subject_id, command)).model_dump(
+            return (await api.retry_feedback(namespace_id,  command)).model_dump(
                 mode="json"
             )
 
@@ -179,7 +178,7 @@ def register_management(
     async def preview_context_model(command: ContextModelPreview) -> JsonObject:
         """Freeze the complete native provider request directory for host admission."""
         async with client() as api:
-            return (await api.preview_context_model(namespace_id, subject_id, command)).model_dump(
+            return (await api.preview_context_model(namespace_id,  command)).model_dump(
                 mode="json"
             )
 
@@ -187,7 +186,7 @@ def register_management(
     async def invoke_context_model(command: ContextModelCall) -> JsonObject:
         """Invoke the admitted request through the paid ledger and retain its actual report."""
         async with client() as api:
-            return (await api.invoke_context_model(namespace_id, subject_id, command)).model_dump(
+            return (await api.invoke_context_model(namespace_id,  command)).model_dump(
                 mode="json"
             )
 
@@ -198,14 +197,14 @@ def register_management(
 
         async with client() as api:
             return await AMemorixAdapter(
-                api, namespace_id=namespace_id, subject_id=subject_id
+                api, namespace_id=namespace_id
             ).memory_tuning_admin(action=action, **(arguments or {}))
 
     @server.tool()
     async def create_retrieval_tuning(command: CreateTuning) -> JsonObject:
         """Run bounded parameter trials using supplied queries and relevance judgments."""
         async with client() as api:
-            return (await api.create_tuning(namespace_id, subject_id, command)).model_dump(
+            return (await api.create_tuning(namespace_id,  command)).model_dump(
                 mode="json"
             )
 
@@ -214,14 +213,14 @@ def register_management(
         """Page this caller's tuning tasks and their actual durable job states."""
         async with client() as api:
             return (
-                await api.tuning_tasks(namespace_id, subject_id, limit=limit, cursor=cursor)
+                await api.tuning_tasks(namespace_id,  limit=limit, cursor=cursor)
             ).model_dump(mode="json")
 
     @server.tool()
     async def retrieval_tuning_task(task_id: str) -> JsonObject:
         """Read the selected profile, development results and independent holdout results."""
         async with client() as api:
-            return (await api.tuning_task(namespace_id, subject_id, task_id)).model_dump(
+            return (await api.tuning_task(namespace_id,  task_id)).model_dump(
                 mode="json"
             )
 
@@ -232,14 +231,14 @@ def register_management(
         """Read each measured candidate and its individual query rankings."""
         async with client() as api:
             return (
-                await api.tuning_rounds(namespace_id, subject_id, task_id, limit=limit, after=after)
+                await api.tuning_rounds(namespace_id,  task_id, limit=limit, after=after)
             ).model_dump(mode="json")
 
     @server.tool()
     async def cancel_retrieval_tuning(task_id: str) -> JsonObject:
         """Cancel the durable tuning job and retain completed measurements."""
         async with client() as api:
-            return (await api.cancel_tuning(namespace_id, subject_id, task_id)).model_dump(
+            return (await api.cancel_tuning(namespace_id,  task_id)).model_dump(
                 mode="json"
             )
 
@@ -247,25 +246,25 @@ def register_management(
     async def retrieval_profile() -> JsonObject:
         """Read the effective retrieval profile and its configuration revision."""
         async with client() as api:
-            return await api.retrieval_profile(namespace_id, subject_id)
+            return await api.retrieval_profile(namespace_id)
 
     @server.tool()
     async def apply_retrieval_profile(command: ApplyRetrievalProfile) -> JsonObject:
         """Publish a chosen profile or a completed tuning winner as a new Subject configuration."""
         async with client() as api:
-            return await api.apply_retrieval_profile(namespace_id, subject_id, command)
+            return await api.apply_retrieval_profile(namespace_id,  command)
 
     @server.tool()
     async def rollback_retrieval_profile(command: RollbackRetrievalProfile) -> JsonObject:
         """Publish the preceding effective profile or a selected retained revision."""
         async with client() as api:
-            return await api.rollback_retrieval_profile(namespace_id, subject_id, command)
+            return await api.rollback_retrieval_profile(namespace_id,  command)
 
     @server.tool()
     async def enqueue_feedback(command: EnqueueFeedback) -> JsonObject:
         """Schedule feedback evaluation from subsequent real contacts in this session."""
         async with client() as api:
-            return (await api.enqueue_feedback(namespace_id, subject_id, command)).model_dump(
+            return (await api.enqueue_feedback(namespace_id,  command)).model_dump(
                 mode="json"
             )
 
@@ -273,7 +272,7 @@ def register_management(
     async def feedback_task(task_id: str) -> JsonObject:
         """Read a saved feedback decision and its correction result."""
         async with client() as api:
-            return (await api.feedback_task(namespace_id, subject_id, task_id)).model_dump(
+            return (await api.feedback_task(namespace_id,  task_id)).model_dump(
                 mode="json"
             )
 
@@ -281,7 +280,7 @@ def register_management(
     async def feedback_tasks(command: FeedbackQuery) -> JsonObject:
         """Page native feedback tasks."""
         async with client() as api:
-            return (await api.feedback_tasks(namespace_id, subject_id, command)).model_dump(
+            return (await api.feedback_tasks(namespace_id,  command)).model_dump(
                 mode="json"
             )
 
@@ -289,7 +288,7 @@ def register_management(
     async def rollback_feedback(command: RollbackFeedback) -> JsonObject:
         """Roll back the applied correction through its saved native plan."""
         async with client() as api:
-            return (await api.rollback_feedback(namespace_id, subject_id, command)).model_dump(
+            return (await api.rollback_feedback(namespace_id,  command)).model_dump(
                 mode="json"
             )
 
@@ -297,7 +296,7 @@ def register_management(
     async def submit_source_trash(command: SourceCommand) -> JsonObject:
         """Retire selected source observations in a durable job; returns its job_id."""
         async with client() as api:
-            return {"job_id": await api.submit_source_trash(namespace_id, subject_id, command)}
+            return {"job_id": await api.submit_source_trash(namespace_id,  command)}
 
     @server.tool()
     async def purge_namespace(command: PurgeNamespace) -> JsonObject:
@@ -403,13 +402,6 @@ def register_management(
                 mode="json"
             )
 
-    @server.tool()
-    async def migrate_subject(command: MigrateSubject) -> JsonObject:
-        """Create a receiving Subject from this Subject's retained revisions and original sources."""
-        async with client() as api:
-            return (await api.migrate_subject(namespace_id, subject_id, command)).model_dump(
-                mode="json"
-            )
 
     @server.tool()
     async def namespace_directory(command: IdentityDirectoryQuery) -> JsonObject:
@@ -417,23 +409,13 @@ def register_management(
         async with client() as api:
             return (await api.namespace_page(command)).model_dump(mode="json")
 
-    @server.tool()
-    async def subject_directory(command: IdentityDirectoryQuery) -> JsonObject:
-        """Page permitted Subjects in this namespace using a stable identity cursor."""
-        async with client() as api:
-            return (await api.subject_page(namespace_id, command)).model_dump(mode="json")
 
     @server.tool()
     async def namespace_record(purpose: IdentityPurpose = "active") -> JsonObject:
         """Read this Namespace; management purpose requires manage authority."""
         async with client() as api:
-            return (await api.namespace(namespace_id, purpose=purpose)).model_dump(mode="json")
+            return (await api.get_namespace(namespace_id, purpose=purpose)).model_dump(mode="json")
 
-    @server.tool()
-    async def subject_record(purpose: IdentityPurpose = "active") -> JsonObject:
-        """Read this Subject and its configured domains, retaining inactive data for management."""
-        async with client() as api:
-            return (await api.subject(subject_id, purpose=purpose)).model_dump(mode="json")
 
     @server.tool()
     async def change_namespace(command: ChangeNamespace) -> JsonObject:
@@ -441,20 +423,13 @@ def register_management(
         async with client() as api:
             return (await api.change_namespace(namespace_id, command)).model_dump(mode="json")
 
-    @server.tool()
-    async def change_subject(command: ChangeSubject) -> JsonObject:
-        """Manage this Subject's lifecycle or enabled domain set without changing its identity/data."""
-        async with client() as api:
-            return (await api.change_subject(namespace_id, subject_id, command)).model_dump(
-                mode="json"
-            )
 
     @server.tool()
     async def identity_capabilities(purpose: IdentityPurpose = "active") -> JsonObject:
         """Distinguish supported, configured and currently enabled Subject domains."""
         async with client() as api:
             return (
-                await api.identity_capabilities(namespace_id, subject_id, purpose=purpose)
+                await api.identity_capabilities(namespace_id,  purpose=purpose)
             ).model_dump(mode="json")
 
     @server.tool()
@@ -473,16 +448,16 @@ def register_management(
 
     from .episodes import register_episodes
 
-    register_episodes(server, client, namespace_id, subject_id)
+    register_episodes(server, client, namespace_id)
     from .facts import register_facts
 
-    register_facts(server, client, namespace_id, subject_id)
+    register_facts(server, client, namespace_id)
 
     @server.tool()
     async def register_resource(command: RegisterResource) -> JsonObject:
         """Register an operator-selected file root or HTTP document; management permission required."""
         async with client() as api:
-            return (await api.register_resource(namespace_id, subject_id, command)).model_dump(
+            return (await api.register_resource(namespace_id,  command)).model_dump(
                 mode="json"
             )
 
@@ -491,14 +466,14 @@ def register_management(
         """List accessible external resources and their latest saved source versions."""
         async with client() as api:
             return (
-                await api.resources(namespace_id, subject_id, cursor=cursor, limit=limit)
+                await api.resources(namespace_id,  cursor=cursor, limit=limit)
             ).model_dump(mode="json")
 
     @server.tool()
     async def read_resource(command: ReadResource) -> JsonObject:
         """Read a saved snapshot or explicitly check its current external version."""
         async with client() as api:
-            return (await api.read_resource(namespace_id, subject_id, command)).model_dump(
+            return (await api.read_resource(namespace_id,  command)).model_dump(
                 mode="json"
             )
 
@@ -506,19 +481,19 @@ def register_management(
     async def change_resource(command: ChangeResource) -> JsonObject:
         """Change resource metadata or enablement at its expected revision; management required."""
         async with client() as api:
-            return (await api.change_resource(namespace_id, subject_id, command)).model_dump(
+            return (await api.change_resource(namespace_id,  command)).model_dump(
                 mode="json"
             )
 
     from .ego_social import register_ego_social
 
-    register_ego_social(server, client, namespace_id, subject_id)
+    register_ego_social(server, client, namespace_id)
 
     @server.tool()
     async def plan_correction(command: PlanCorrection) -> JsonObject:
         """Prepare a source-backed correction preview for the bound subject; requires management."""
         async with client() as api:
-            return (await api.plan_correction(namespace_id, subject_id, command)).model_dump(
+            return (await api.plan_correction(namespace_id,  command)).model_dump(
                 mode="json"
             )
 
@@ -526,7 +501,7 @@ def register_management(
     async def apply_correction(command: ApplyCorrection) -> JsonObject:
         """Apply a saved plan atomically if all targets still match their proposed revisions."""
         async with client() as api:
-            return (await api.apply_correction(namespace_id, subject_id, command)).model_dump(
+            return (await api.apply_correction(namespace_id,  command)).model_dump(
                 mode="json"
             )
 
@@ -534,7 +509,7 @@ def register_management(
     async def rollback_correction(command: RollbackCorrection) -> JsonObject:
         """Restore this plan's changes as new revisions and report later conflicting changes."""
         async with client() as api:
-            return (await api.rollback_correction(namespace_id, subject_id, command)).model_dump(
+            return (await api.rollback_correction(namespace_id,  command)).model_dump(
                 mode="json"
             )
 
@@ -542,7 +517,7 @@ def register_management(
     async def correction_plan(plan_id: str) -> JsonObject:
         """Read the saved correction preview, its adopted revisions and rollback results."""
         async with client() as api:
-            return (await api.correction_plan(namespace_id, subject_id, plan_id)).model_dump(
+            return (await api.correction_plan(namespace_id,  plan_id)).model_dump(
                 mode="json"
             )
 
@@ -553,10 +528,10 @@ def register_management(
         management purpose requires a management credential. Reuse the same
         filters with next_cursor to continue; history selects past revisions.
         """
-        if command.subject_id not in (None, subject_id):
+        if command.namespace_id not in (None, namespace_id):
             raise ValueError("This MCP connection is bound to its configured subject")
         async with client() as api:
-            return (await api.records(namespace_id, subject_id, command)).model_dump(mode="json")
+            return (await api.records(namespace_id,  command)).model_dump(mode="json")
 
     @server.tool()
     async def read_records(command: ReadRecords) -> list[JsonObject]:
@@ -564,7 +539,7 @@ def register_management(
         async with client() as api:
             return [
                 record.model_dump(mode="json")
-                for record in await api.read_records(namespace_id, subject_id, command)
+                for record in await api.read_records(namespace_id,  command)
             ]
 
     @server.tool()
@@ -576,7 +551,7 @@ def register_management(
             return (
                 await api.record_detail(
                     namespace_id,
-                    subject_id,
+                    
                     reference,
                     history_limit=history_limit,
                     purpose=purpose,
@@ -587,7 +562,7 @@ def register_management(
     async def project_vectors(command: ProjectVectors) -> JsonObject:
         """Admit exact targets to the durable embedding queue; inspect or wait for the returned job."""
         async with client() as api:
-            return (await api.project_vectors(namespace_id, subject_id, command)).model_dump(
+            return (await api.project_vectors(namespace_id,  command)).model_dump(
                 mode="json"
             )
 
@@ -600,7 +575,7 @@ def register_management(
                     {
                         **command.model_dump(mode="json"),
                         "namespace_id": namespace_id,
-                        "subject_id": subject_id,
+                        
                     }
                 )
             ).model_dump(mode="json")
@@ -614,20 +589,20 @@ def register_management(
                     {
                         **command.model_dump(mode="json"),
                         "namespace_id": namespace_id,
-                        "subject_id": subject_id,
+                        
                     }
                 )
             ).model_dump(mode="json")
 
     def scoped(action: str, command: JsonObject) -> JsonObject:
-        for name, value in (("namespace_id", namespace_id), ("subject_id", subject_id)):
+        for name, value in (("namespace_id", namespace_id), ('namespace_id', namespace_id)):
             if command.get(name) not in (None, value):
                 raise ValueError(
                     "This MCP connection is bound to its configured namespace and subject"
                 )
         return {
             "action": action,
-            "request": {**command, "namespace_id": namespace_id, "subject_id": subject_id},
+            "request": {**command, "namespace_id": namespace_id},
         }
 
     @server.tool()
@@ -677,7 +652,7 @@ def register_management(
                 if not isinstance(identity, str):
                     raise ValueError("Cognitive read requires id")
                 record = await api.cognitive_object(identity)
-                if record.namespace_id != namespace_id or record.subject_id != subject_id:
+                if record.namespace_id != namespace_id or record.namespace_id != namespace_id:
                     raise ValueError("Cognition is unavailable in the bound subject")
             return await api.cognition(request)
 
@@ -698,7 +673,7 @@ def register_management(
                 # the SDK's globally addressed immutable metadata.
                 from nous_sdk.contracts import MediaReference
 
-                await api.source(subject_id, MediaReference(kind="material", id=material))
+                await api.source(namespace_id, MediaReference(kind="material", id=material))
             return await api.media(scoped(action, command))
 
     @server.tool()
@@ -728,7 +703,7 @@ def register_management(
                     **command,
                     "action": action,
                     "namespace_id": namespace_id,
-                    "subject_id": subject_id,
+                    
                 }
             )
 
@@ -781,13 +756,13 @@ def register_management(
     async def read_graph(command: GraphReadQuery) -> JsonObject:
         """Read a canonical graph or a selected Entity/edge neighborhood and its source records."""
         async with client() as api:
-            return (await api.read_graph(namespace_id, subject_id, command)).model_dump(mode="json")
+            return (await api.read_graph(namespace_id,  command)).model_dump(mode="json")
 
     @server.tool()
     async def search_graph(command: GraphSearchQuery) -> JsonObject:
         """Search authorized native Entity and Association records with exact references."""
         async with client() as api:
-            return (await api.search_graph(namespace_id, subject_id, command)).model_dump(
+            return (await api.search_graph(namespace_id,  command)).model_dump(
                 mode="json"
             )
 
@@ -795,7 +770,7 @@ def register_management(
     async def person_profiles(command: PersonProfilesQuery) -> JsonObject:
         """Read native Person profiles and source-backed confirmed or uncertain evidence."""
         async with client() as api:
-            return (await api.person_profiles(namespace_id, subject_id, command)).model_dump(
+            return (await api.person_profiles(namespace_id,  command)).model_dump(
                 mode="json"
             )
 
@@ -803,7 +778,7 @@ def register_management(
     async def subject_diagnostics() -> JsonObject:
         """Read actual inventories, effective model space and readiness in the bound subject."""
         async with client() as api:
-            return (await api.subject_diagnostics(subject_id)).model_dump(mode="json")
+            return (await api.subject_diagnostics(namespace_id)).model_dump(mode="json")
 
     @server.tool()
     async def backup_instance() -> JsonObject:

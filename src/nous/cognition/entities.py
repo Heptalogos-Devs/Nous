@@ -23,7 +23,6 @@ async def supported_in(
             value = await tx.connection.scalar(
                 select(revisions.c.record).where(
                     revisions.c.namespace_id == record.namespace_id,
-                    revisions.c.subject_id == record.subject_id,
                     revisions.c.id == link.reference.id,
                     revisions.c.revision == link.reference.revision,
                 )
@@ -62,18 +61,20 @@ async def redact_attributes_in(tx: WriteTx, record: CognitiveRecord, unpurged: s
     controls = record.body.profile_controls
     aliases = controls.aliases
     summary = controls.summary
-    if aliases is not None and not await supported_in(tx, record, aliases.evidence, unpurged):
+    if aliases is not None and (not await supported_in(tx, record, aliases.evidence, unpurged)):
         aliases = None
-    if summary is not None and not await supported_in(tx, record, summary.evidence, unpurged):
+    if summary is not None and (not await supported_in(tx, record, summary.evidence, unpurged)):
         summary = None
     controls = controls.model_copy(update={"aliases": aliases, "summary": summary})
     generated = record.body.generated_profile
-    if generated is not None and not all(
-        [
-            await supported_in(tx, record, (link,), unpurged)
-            for link in generated.evidence
-            if link.polarity == "support"
-        ]
+    if generated is not None and (
+        not all(
+            [
+                await supported_in(tx, record, (link,), unpurged)
+                for link in generated.evidence
+                if link.polarity == "support"
+            ]
+        )
     ):
         generated = None
     base_live = await supported_in(tx, record, record.evidence, unpurged)
@@ -82,10 +83,10 @@ async def redact_attributes_in(tx: WriteTx, record: CognitiveRecord, unpurged: s
     if (
         len(kept) == len(record.body.attributes)
         and tuple(identities) == record.body.platform_identities
-        and controls == record.body.profile_controls
-        and generated == record.body.generated_profile
-        and description == record.body.description
-        and base_aliases == record.body.aliases
+        and (controls == record.body.profile_controls)
+        and (generated == record.body.generated_profile)
+        and (description == record.body.description)
+        and (base_aliases == record.body.aliases)
     ):
         return False
     body = record.body.model_copy(

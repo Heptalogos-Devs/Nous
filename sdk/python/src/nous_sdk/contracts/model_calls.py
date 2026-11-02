@@ -11,7 +11,7 @@ from .common import Contract
 
 class CallOrigin(Contract):
     namespace_id: str
-    subject_id: str | None
+
     call_id: str
 
 
@@ -31,11 +31,10 @@ class ArchivedCall(Contract):
 
 class InvocationBinding(Contract):
     key: str
-    namespace_id: str | None = None
-    subject_id: str | None = None
-    caller_id: str | None = None
-    role: str | None = None
-    invocation_id: str | None = None
+    namespace_id: str
+    caller_id: str
+    role: str
+    invocation_id: str
     call_id: str | None = None
     retired: bool = False
     reason: str | None = None
@@ -45,7 +44,6 @@ class InvocationBinding(Contract):
 class InvocationRestore(Contract):
     restored: int = 0
     frozen: int = 0
-    opaque: tuple[InvocationBinding, ...] = ()
 
 
 class RetainedModelOutput(Contract):

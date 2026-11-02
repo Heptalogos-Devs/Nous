@@ -32,7 +32,7 @@ async def graph_admin(
             "items": [],
             "error": "query must not be empty",
         }
-    result = await self.app.cognition.search_graph(
+    result = await self.app.graphs.search_graph(
         ctx, GraphSearchQuery(text=command.query, limit=command.limit)
     )
     items: list[dict[str, JsonValue]] = []

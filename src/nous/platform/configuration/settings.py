@@ -1,13 +1,13 @@
 """Typed instance configuration; secrets remain references."""
 
+import hashlib
+import json
 from pathlib import Path
 from typing import Annotated, Literal
 
-from nous_sdk.contracts.media_policy import MediaPolicy
 from pydantic import AfterValidator, BaseModel, Field, JsonValue
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from nous.platform.network.policy import NetworkPolicy
 from nous.platform.paths import default_instance_path
 
 ReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh"]
@@ -41,6 +41,29 @@ ProviderOptions = Annotated[dict[str, JsonValue], AfterValidator(provider_option
 
 
 class ModelRoute(BaseModel):
+    tokenizer: str | None = None
+    resource_request_budget: int = Field(default=50, ge=0)
+
+    @property
+    def budget_resource(self) -> str:
+        return hashlib.sha256(
+            json.dumps(
+                [
+                    self.base_url,
+                    self.model,
+                    self.credential_env,
+                    str(self.credential_file) if self.credential_file else None,
+                ],
+                separators=(",", ":"),
+            ).encode()
+        ).hexdigest()
+
+    protocol: Literal["openai-chat", "openai-responses"] = "openai-chat"
+    input_modalities: tuple[str, ...] = ("text",)
+    tools: bool = False
+    media_limits: dict[str, int] = Field(default_factory=dict)
+    context_window: int = Field(default=32768, gt=0)
+    structured_output_mode: Literal["native", "tool", "text"] = "native"
     base_url: str = "https://api.openai.com/v1"
     model: str = ""
     credential_file: Path | None = None
@@ -75,10 +98,6 @@ class Settings(BaseSettings):
     host: str = "127.0.0.1"
     port: int = Field(default=7441, ge=1, le=65535)
     locale: str = "zh-CN"
-    model: ModelRoute = Field(default_factory=ModelRoute)
-    embedding: EmbeddingRoute = Field(default_factory=EmbeddingRoute)
-    network: NetworkPolicy = Field(default_factory=NetworkPolicy)
-    media: MediaPolicy = Field(default_factory=MediaPolicy)
     rpc: RPCSettings = Field(default_factory=RPCSettings)
     log_level: str = "INFO"
 

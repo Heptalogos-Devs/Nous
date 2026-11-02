@@ -36,9 +36,9 @@ class ImportVectorStatus(Contract):
     configured_space_complete: bool | None = None
 
 
-class SubjectDiagnostics(Contract):
+class NamespaceDiagnostics(Contract):
     namespace_id: str
-    subject_id: str
+    
     authority_commit_seq: int
     cognition: dict[CognitiveKind, int]
     tasks: dict[str, int]

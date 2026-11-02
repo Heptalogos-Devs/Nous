@@ -86,7 +86,7 @@ class DerivedAccess:
         value = await view.connection.scalar(
             select(representations.c.record).where(
                 representations.c.namespace_id == ctx.namespace_id,
-                representations.c.subject_id == ctx.require_subject(),
+                
                 representations.c.id == reference.id,
                 representations.c.revision == reference.revision,
             )
@@ -130,7 +130,7 @@ class DerivedAccess:
         value = await view.connection.scalar(
             select(derived_regions.c.record).where(
                 derived_regions.c.namespace_id == ctx.namespace_id,
-                derived_regions.c.subject_id == ctx.require_subject(),
+                
                 derived_regions.c.id == region_id,
             )
         )

@@ -7,6 +7,7 @@ from pydantic import AwareDatetime, Field, JsonValue, field_validator, model_val
 
 from .common import Contract, Operation
 from .identity import Namespace
+from .execution import ExecutionSnapshot
 
 NAMESPACE_BACKUP_FORMAT = "nous-namespace-backup"
 NAMESPACE_BACKUP_FORMAT_VERSION = 1
@@ -94,10 +95,9 @@ class RestoreNamespaceBackup(Operation):
 class NamespaceBackupRestored(Contract):
     namespace: Namespace
     mapping: dict[str, str]
-    paused_jobs: tuple[str, ...] = ()
+    resumed_jobs: tuple[str, ...] = ()
     authority_commit_seq: int
     frozen_invocations: int = 0
-    unresolved_invocations: tuple[str, ...] = ()
 
 
 class NamespaceState(Contract):
@@ -106,3 +106,4 @@ class NamespaceState(Contract):
     namespace_id: str
     authority_commit_seq: int
     tables: dict[str, tuple[dict[str, JsonValue], ...]]
+    execution: ExecutionSnapshot

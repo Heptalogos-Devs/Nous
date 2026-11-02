@@ -67,7 +67,7 @@ class MotivationAssessment(ConditionAssessment):
 class SavedMotivationAssessment(Contract):
     id: str
     namespace_id: str
-    subject_id: str
+    
     caller_id: str
     recorded_at: str
     commit_seq: int

@@ -56,7 +56,7 @@ async function restoreInstance() {
   const file = $("restore-file").files[0];
   if (!file) throw new Error(t("web-backup-select"));
   const params = new URLSearchParams({ instance_name: $("restore-name").value });
-  const value = await api(`/api/backups/restore?${params}`, {
+  const value = await api(`/api/v1/backups/restore?${params}`, {
     method: "POST",
     headers: { "Content-Type": "application/zip" },
     body: file,

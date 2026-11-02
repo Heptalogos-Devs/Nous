@@ -83,7 +83,6 @@ async def request_profiles_in(
         await view.connection.execute(
             select(requests.c.record).where(
                 requests.c.record["context"]["namespace_id"].as_string() == ctx.namespace_id,
-                requests.c.record["context"]["subject_id"].as_string() == ctx.require_subject(),
                 or_(
                     requests.c.record["command"]["catalog_id"].as_string() == catalog_id,
                     requests.c.record["catalog_id"].as_string() == catalog_id,

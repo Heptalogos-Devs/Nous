@@ -121,31 +121,47 @@ async def capture_retained(
             "The proposal requires its retained authorized source catalog",
         )
     retained = await self.models.retained_output(ctx, command.call_id)
-    async with self.authority.read(ctx) as view:
-        call = (await self.models.ledger.export_in(view, ctx, (command.call_id,)))[0]
-    prompt = call.request.get("prompt")
-    variables = prompt.get("variables") if isinstance(prompt, dict) else None
-    if (
-        retained.role != current.command.role
-        or not isinstance(variables, dict)
-        or variables.get("maintenance_run_id") != current.id
+    expected_role = "reflect" if current.command.kind == "growth" else current.command.kind
+    if retained.role != expected_role or not await self.models.ledger.owns_invocation_call(
+        ctx, expected_role, "maintenance:" + current.id, command.call_id
     ):
         raise DomainError(
             "maintenance_call_mismatch",
-            "The retained call does not belong to this proposal request",
+            "The retained call does not belong to this proposal invocation",
         )
-    document = document_from_output(
-        retained.raw_json if retained.raw_json is not None else retained.saved_output,
-        raw_text=retained.raw_text,
-        call_id=command.call_id,
-        complete=retained.complete,
-        errors=retained.validation_errors,
-    )
+    if current.command.kind in {"growth", "journal", "reflect", "dream"}:
+        from pydantic import ValidationError
+
+        from .task_proposals import document as task_document
+
+        async with self.authority.read(ctx) as view:
+            snapshot = await self.snapshot_in(view, ctx, current.catalog)
+        try:
+            document = task_document(
+                current,
+                snapshot,
+                retained.raw_json if retained.raw_json is not None else retained.saved_output,
+                command.call_id,
+            )
+        except (ValidationError, DomainError) as error:
+            document = MaintenanceProposal(
+                complete=False,
+                source_call_id=command.call_id,
+                validation_errors=({"code": "task_output_invalid", "message": str(error)},),
+            )
+    else:
+        document = document_from_output(
+            retained.raw_json if retained.raw_json is not None else retained.saved_output,
+            raw_text=retained.raw_text,
+            call_id=command.call_id,
+            complete=retained.complete,
+            errors=retained.validation_errors,
+        )
     async with self.authority.write(
         ctx,
         command.operation_id,
         operation_kind="maintenance.capture_retained",
-        scope=ctx.require_subject(),
+        scope=ctx.namespace_id,
         payload={"run_id": run_id, "command": command},
     ) as tx:
         if not tx.replayed:
@@ -158,11 +174,13 @@ async def capture_retained(
                 )
             snapshot = await self.snapshot_in(tx, ctx, record.catalog)
             groups = await compile_proposal(
-                self, tx, ctx, document, snapshot, role=record.command.role, previous=record.groups
+                self, tx, ctx, document, snapshot, role=record.command.kind, previous=record.groups
             )
             updated = record.model_copy(
                 update={
                     "proposal": document,
+                    "status": "proposed",
+                    "waiting_reason": None,
                     "draft": compiled_draft(document, groups),
                     "groups": groups,
                     "producer_call_id": command.call_id,
@@ -194,7 +212,7 @@ async def edit_proposal(
         ctx,
         command.operation_id,
         operation_kind="maintenance.edit",
-        scope=ctx.require_subject(),
+        scope=ctx.namespace_id,
         payload={"run_id": run_id, "command": command},
     ) as tx:
         if not tx.replayed:
@@ -223,7 +241,7 @@ async def edit_proposal(
                 }
             )
             groups = await compile_proposal(
-                self, tx, ctx, document, snapshot, role=record.command.role, previous=record.groups
+                self, tx, ctx, document, snapshot, role=record.command.kind, previous=record.groups
             )
             edit = MaintenanceEdit(
                 caller_id=ctx.caller_id,
@@ -235,6 +253,8 @@ async def edit_proposal(
             updated = record.model_copy(
                 update={
                     "proposal": document,
+                    "status": "proposed",
+                    "waiting_reason": None,
                     "draft": compiled_draft(document, groups),
                     "groups": groups,
                     "edits": (*record.edits, edit),

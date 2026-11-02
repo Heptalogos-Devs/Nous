@@ -30,7 +30,7 @@ async def form_media_observation(
         ctx,
         command.operation_id,
         operation_kind="cognition.form_observation",
-        scope=ctx.require_subject(),
+        scope=ctx.namespace_id,
         payload=command.identity_payload(),
     )
     if receipt is not None:
@@ -59,7 +59,7 @@ async def form_media_observation(
         ctx,
         command.operation_id,
         operation_kind="cognition.form_observation",
-        scope=ctx.require_subject(),
+        scope=ctx.namespace_id,
         payload=command.identity_payload(),
     ) as tx:
         if tx.replayed:

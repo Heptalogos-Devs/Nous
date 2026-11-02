@@ -19,7 +19,7 @@ import { closeModelContract, showModelContract } from "./model-contracts.js";
 let lastJobs, lastCalls, lastPrompt;
 export async function loadJobs() {
   const params = new URLSearchParams({ namespace_id: state.namespace, subject_id: state.subject });
-  const jobs = await api(`/api/jobs?${params}`);
+  const jobs = await api(`/api/v1/jobs?${params}`);
   lastJobs = jobs;
   renderJobs(jobs);
 }
@@ -34,7 +34,7 @@ function renderJobs(jobs) {
             for (const action of ["cancel", "resume"])
               actions.append(
                 button(action === "cancel" ? t("web-cancel") : t("web-resume"), async () => {
-                  await api(`/api/jobs/${job.workflow_id}/${action}?${params}`, { method: "POST" });
+                  await api(`/api/v1/jobs/${job.workflow_id}/${action}?${params}`, { method: "POST" });
                   await loadJobs();
                 }),
               );
@@ -58,7 +58,7 @@ function field(label, value, onchange, type = "text") {
 }
 export async function loadModels() {
   const value = await api(
-    `/api/configuration/models?namespace_id=${encodeURIComponent(state.namespace)}&subject_id=${encodeURIComponent(state.subject)}`,
+    `/api/v1/configuration/models?namespace_id=${encodeURIComponent(state.namespace)}&subject_id=${encodeURIComponent(state.subject)}`,
   );
   state.config = value.value;
   message($("models-origin"), "web-models-origin", { origin: value.origin });
@@ -69,7 +69,7 @@ export async function loadModels() {
   $("models-json").value = JSON.stringify(state.config, null, 2);
   renderModels();
   lastCalls = await api(
-    `/api/model-calls?namespace_id=${encodeURIComponent(state.namespace)}&subject_id=${encodeURIComponent(state.subject)}`,
+    `/api/v1/model-calls?namespace_id=${encodeURIComponent(state.namespace)}&subject_id=${encodeURIComponent(state.subject)}`,
   );
   renderCalls(lastCalls);
 }
@@ -153,7 +153,7 @@ function renderCalls(calls) {
 async function saveModels() {
   state.config = JSON.parse($("models-json").value);
   await api(
-    `/api/configuration/models?namespace_id=${encodeURIComponent(state.namespace)}&subject_id=${encodeURIComponent(state.subject)}`,
+    `/api/v1/configuration/models?namespace_id=${encodeURIComponent(state.namespace)}&subject_id=${encodeURIComponent(state.subject)}`,
     {
       method: "PUT",
       body: { operation_id: op(), scope: $("models-scope").value, value: state.config },
@@ -166,9 +166,9 @@ export async function loadPrompt() {
   const id = encodeURIComponent($("prompt-id").value);
   const params = new URLSearchParams({ namespace_id: state.namespace || "instance" });
   const [value, history, catalog] = await Promise.all([
-    api(`/api/prompts/${id}?${params}`),
-    api(`/api/prompts/${id}/history?${params}`),
-    api(`/api/prompts?${params}`),
+    api(`/api/v1/prompts/${id}?${params}`),
+    api(`/api/v1/prompts/${id}/history?${params}`),
+    api(`/api/v1/prompts?${params}`),
   ]);
   lastPrompt = { value, history, catalog };
   renderPrompt(value, history, catalog);
@@ -210,7 +210,7 @@ function renderPrompt(value, history, catalog) {
     const cell = $("prompt-history").querySelectorAll("tbody tr")[index].lastElementChild;
     cell.append(
       button(t("web-activate-revision"), async () => {
-        await api(`/api/prompts/${id}/activate?${params}`, {
+        await api(`/api/v1/prompts/${id}/activate?${params}`, {
           method: "POST",
           body: { revision: item.revision, operation_id: op() },
         });
@@ -225,7 +225,7 @@ async function previewPrompt() {
   if (!variables || Array.isArray(variables) || typeof variables !== "object")
     throw new Error(t("web-variables-object"));
   const value = await api(
-    `/api/prompts/${encodeURIComponent($("prompt-id").value)}/preview?namespace_id=${encodeURIComponent(state.namespace || "instance")}`,
+    `/api/v1/prompts/${encodeURIComponent($("prompt-id").value)}/preview?namespace_id=${encodeURIComponent(state.namespace || "instance")}`,
     {
       method: "POST",
       body: { variables, template: $("prompt-template").value },
@@ -235,14 +235,14 @@ async function previewPrompt() {
 }
 async function savePrompt() {
   await api(
-    `/api/prompts/${encodeURIComponent($("prompt-id").value)}?namespace_id=${encodeURIComponent(state.namespace)}`,
+    `/api/v1/prompts/${encodeURIComponent($("prompt-id").value)}?namespace_id=${encodeURIComponent(state.namespace)}`,
     { method: "PUT", body: { operation_id: op(), template: $("prompt-template").value } },
   );
   notify("web-prompt-saved");
   await loadPrompt();
 }
 async function createBackup() {
-  const value = await api("/api/backups", { method: "POST" });
+  const value = await api("/api/v1/backups", { method: "POST" });
   const panel = $("backup-result");
   panel.replaceChildren(
     message(el("p"), "web-backup-created", {
@@ -250,7 +250,7 @@ async function createBackup() {
       commit: value.commit_seq,
     }),
     button(t("web-download-backup"), () =>
-      download(`/api/backups/${encodeURIComponent(value.filename)}`, value.filename),
+      download(`/api/v1/backups/${encodeURIComponent(value.filename)}`, value.filename),
     ),
   );
 }

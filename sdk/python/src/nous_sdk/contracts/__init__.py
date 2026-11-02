@@ -163,7 +163,6 @@ from .context import ContextPreparationJob as ContextPreparationJob
 from .context import ContextResident as ContextResident
 from .context import ContextResidentAdmission as ContextResidentAdmission
 from .context import ContextsPolicy as ContextsPolicy
-from .context import StewardProposal as StewardProposal
 from .context import WorkContext as WorkContext
 from .context import WorkContextContent as WorkContextContent
 from .credentials import Capability as Capability
@@ -172,11 +171,7 @@ from .credentials import CredentialRecord as CredentialRecord
 from .credentials import IssuedCredential as IssuedCredential
 from .dataset_imports import BackfillSourceTimes as BackfillSourceTimes
 from .dataset_imports import ImportDataset as ImportDataset
-from .diagnostics import SubjectDiagnostics as SubjectDiagnostics
-from .ego_model import AdoptSeed as AdoptSeed
-from .ego_model import SeedDocument as SeedDocument
-from .ego_model import SeedFacet as SeedFacet
-from .ego_model import SeedResult as SeedResult
+from .diagnostics import NamespaceDiagnostics as NamespaceDiagnostics
 from .entities import EntityPartition as EntityPartition
 from .entities import MergeEntities as MergeEntities
 from .entities import SplitEntity as SplitEntity
@@ -201,18 +196,14 @@ from .growth import GrowthSplit as GrowthSplit
 from .identity import BindSubject as BindSubject
 from .identity import BoundSubject as BoundSubject
 from .identity import ChangeNamespace as ChangeNamespace
-from .identity import ChangeSubject as ChangeSubject
 from .identity import CreateNamespace as CreateNamespace
-from .identity import CreateSubject as CreateSubject
 from .identity import IdentityCapabilities as IdentityCapabilities
 from .identity import IdentityDirectoryQuery as IdentityDirectoryQuery
 from .identity import IdentityPurpose as IdentityPurpose
 from .identity import Namespace as Namespace
 from .identity import NamespacePage as NamespacePage
 from .identity import ReadSubjectBinding as ReadSubjectBinding
-from .identity import Subject as Subject
 from .identity import SubjectBinding as SubjectBinding
-from .identity import SubjectPage as SubjectPage
 from .imports import (
     AdmitFiles as AdmitFiles,
 )
@@ -269,12 +260,17 @@ from .maintenance import MaintenanceSubmission as MaintenanceSubmission
 from .maintenance import ReviewMaintenance as ReviewMaintenance
 from .maintenance import SnapshotReference as SnapshotReference
 from .maintenance import StartMaintenance as StartMaintenance
+from .maintenance_tasks import CreateJournal as CreateJournal
+from .maintenance_tasks import DreamRequest as DreamRequest
+from .maintenance_tasks import ReflectRequest as ReflectRequest
+from .maintenance_tasks import SummarizeWork as SummarizeWork
 from .management import (
     BundleRequest as BundleRequest,
 )
 from .management import (
     InstallBundle as InstallBundle,
 )
+from .management import NamespaceBundle as NamespaceBundle
 from .management import (
     SourceCommand as SourceCommand,
 )
@@ -285,7 +281,6 @@ from .management import (
     SourceResult as SourceResult,
 )
 from .management import SourceSelection as SourceSelection
-from .management import SubjectBundle as SubjectBundle
 from .media import (
     AdoptMedia as AdoptMedia,
 )
@@ -314,14 +309,10 @@ from .model_roles import ModelContractRequest as ModelContractRequest
 from .model_roles import ModelInvocationPreview as ModelInvocationPreview
 from .model_roles import ModelPreviewRequest as ModelPreviewRequest
 from .model_roles import ModelRoleContract as ModelRoleContract
-from .namespace_archives import ArchivedSubject as ArchivedSubject
-from .namespace_archives import MigrateSubject as MigrateSubject
 from .namespace_archives import NamespaceArchive as NamespaceArchive
 from .namespace_archives import NamespaceRestoreResult as NamespaceRestoreResult
 from .namespace_archives import RestoreNamespace as RestoreNamespace
-from .namespace_archives import SubjectMigrationResult as SubjectMigrationResult
 from .namespace_policy import FormationPolicy as FormationPolicy
-from .namespace_policy import NamespaceFeatures as NamespaceFeatures
 from .namespace_policy import NamespaceQuota as NamespaceQuota
 from .person_profiles import PersonProfileEvidenceItem as PersonProfileEvidenceItem
 from .person_profiles import PersonProfilesQuery as PersonProfilesQuery
@@ -360,6 +351,7 @@ from .query_conditions import (
 from .query_conditions import (
     QueryModality as QueryModality,
 )
+from .query_context import QueryContext as QueryContext
 from .query_readout import RerankInfo as RerankInfo
 from .records import (
     ReadRecords as ReadRecords,

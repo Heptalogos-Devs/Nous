@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping
-from typing import TYPE_CHECKING
 
 from nous_sdk.contracts import (
     CallContext,
@@ -24,19 +23,15 @@ from sqlalchemy import select
 
 from nous.platform.persistence import WriteTx
 
-from .projection import references_in
 from .schema import revisions
-
-if TYPE_CHECKING:
-    from .service import CognitionService
 
 
 async def validate_domain_in(
-    self: CognitionService,
     tx: WriteTx,
     ctx: CallContext,
     body: CognitiveBody,
     object_id: str,
+    related: Mapping[str, CognitiveBody | None],
     retiring_entities: frozenset[str] = frozenset(),
 ) -> None:
     if isinstance(body, EntityBody) and body.state == "active" and body.platform_identities:
@@ -49,7 +44,6 @@ async def validate_domain_in(
             await tx.connection.execute(
                 select(revisions.c.record).where(
                     revisions.c.namespace_id == ctx.namespace_id,
-                    revisions.c.subject_id == ctx.subject_id,
                     revisions.c.kind == "entity",
                     revisions.c.head.is_(True),
                     revisions.c.id != object_id,
@@ -60,9 +54,9 @@ async def validate_domain_in(
             record = CognitiveRecord.model_validate(value)
             if (
                 isinstance(record.body, EntityBody)
-                and not record.deleted
-                and record.body.state == "active"
-                and record.reference.id not in retiring_entities
+                and (not record.deleted)
+                and (record.body.state == "active")
+                and (record.reference.id not in retiring_entities)
                 and own.intersection(
                     (identity.platform, identity.account_id)
                     for identity in record.body.platform_identities
@@ -72,10 +66,6 @@ async def validate_domain_in(
                     "identity_conflict",
                     "A platform account already belongs to another person in this subject",
                 )
-    related = {
-        reference.exact(): (await self.get_in(tx, ctx, reference)).body
-        for reference in references_in(body)
-    }
     validate_body(body, object_id, related)
 
 
@@ -98,7 +88,7 @@ def validate_body(
         raise DomainError(
             "journal_lineage_required", "Journal lineage must identify prior Journal revisions"
         )
-    if isinstance(body, SchemaBody) and not body.support:
+    if isinstance(body, SchemaBody) and (not body.support):
         raise DomainError("support_required", "Schema requires supporting cognition")
     if isinstance(body, EpisodeBody):
         ordinals = [member.ordinal for member in body.members]

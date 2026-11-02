@@ -35,9 +35,11 @@ from nous_sdk.contracts.corrections import (
 from nous_sdk.contracts.fact_body import FactClaimBody, FactClaimSpec, FactEvidence
 from nous_sdk.contracts.facts import FactChange
 from nous_sdk.contracts.records import ReadRecords
+from nous_sdk.contracts.public import CorrectionInput
 from sqlalchemy import JSON, Column, Integer, String, Table, select
 
-from nous.identity.access import require_subject_in
+from nous.cognition.memory import MemoryService
+from nous.identity.access import require_namespace_in
 from nous.material.service import observations
 from nous.platform.persistence import Authority, ReadView, WriteTx, metadata
 
@@ -50,15 +52,12 @@ if TYPE_CHECKING:
     from nous.platform.models import ModelService
 
     from .facts import FactService
-    from .service import CognitionService
-
-
+    from .records import CognitiveRecords
 plans = Table(
     "cognitive_corrections",
     metadata,
     Column("id", String, primary_key=True),
     Column("namespace_id", String, nullable=False, index=True),
-    Column("subject_id", String, nullable=False, index=True),
     Column("commit_seq", Integer, nullable=False),
     Column("record", JSON, nullable=False),
 )
@@ -68,16 +67,30 @@ class CorrectionService:
     def __init__(
         self,
         authority: Authority,
-        cognition: CognitionService,
+        cognition: CognitiveRecords,
         facts: FactService,
         models: ModelService,
+        *,
+        memories: MemoryService,
     ) -> None:
+        self.memories = memories
         self.authority, self.cognition, self.facts, self.models = (
             authority,
             cognition,
             facts,
             models,
         )
+
+    async def correct(self, ctx: CallContext, reference: CognitiveRef, command: CorrectionInput) -> CorrectionResult:
+        async with self.authority.read(ctx) as view:
+            current = await self.cognition.get_in(view, ctx, reference)
+        if isinstance(current.body, MemoryBody):
+            from nous_sdk.contracts.corrections import CorrectionEdit
+            edits = (CorrectionEdit(reference=reference,body=current.body.model_copy(update={'text':command.content}),reason=command.reason),)
+        else:
+            edits = ()
+        plan = await self.plan(ctx, PlanCorrection(operation_id=command.operation_id, instruction=command.content if not edits else command.reason, targets=(reference,), edits=edits, source=command.source))
+        return await self.apply(ctx, ApplyCorrection(operation_id=command.operation_id+':apply',plan_id=plan.id))
 
     async def _context_in(
         self, view: ReadView | WriteTx, ctx: CallContext, plan: CorrectionPlan
@@ -90,19 +103,17 @@ class CorrectionService:
                 ctx,
                 operation_id=plan.operation_id + ":accept",
                 operation_kind="correction.plan",
-                scope=ctx.require_subject(),
+                scope=ctx.namespace_id,
             )
         ).context
 
     async def _stored_in(
         self, view: ReadView | WriteTx, ctx: CallContext, plan_id: str
     ) -> CorrectionPlan:
-        await require_subject_in(view, ctx)
+        await require_namespace_in(view, ctx)
         raw = await view.connection.scalar(
             select(plans.c.record).where(
-                plans.c.id == plan_id,
-                plans.c.namespace_id == ctx.namespace_id,
-                plans.c.subject_id == ctx.subject_id,
+                plans.c.id == plan_id, plans.c.namespace_id == ctx.namespace_id
             )
         )
         if raw is None:
@@ -157,10 +168,8 @@ class CorrectionService:
 
     async def list(self, ctx: CallContext, query: CorrectionPlansQuery) -> CorrectionPlansPage:
         async with self.authority.read(ctx) as view:
-            await require_subject_in(view, ctx)
-            statement = select(plans.c.record).where(
-                plans.c.namespace_id == ctx.namespace_id, plans.c.subject_id == ctx.subject_id
-            )
+            await require_namespace_in(view, ctx)
+            statement = select(plans.c.record).where(plans.c.namespace_id == ctx.namespace_id)
             if query.cursor is not None:
                 statement = statement.where(plans.c.id > query.cursor)
             values = tuple(
@@ -194,7 +203,7 @@ class CorrectionService:
         return plan
 
     async def plan(self, ctx: CallContext, command: PlanCorrection) -> CorrectionPlan:
-        if not command.instruction.strip() and not command.edits:
+        if not command.instruction.strip() and (not command.edits):
             raise DomainError(
                 "correction_intent_required", "Supply a correction intent or explicit edits"
             )
@@ -203,7 +212,7 @@ class CorrectionService:
             filename="correction-intent.json",
             media_type="application/json",
             source_type="administrative_change",
-            source="correction",
+            source=command.source or "correction",
             origin={"caller_id": ctx.caller_id},
         )
         store = self.cognition.materials.content_store
@@ -217,7 +226,7 @@ class CorrectionService:
                 ctx,
                 command.operation_id + ":accept",
                 operation_kind="correction.plan",
-                scope=ctx.require_subject(),
+                scope=ctx.namespace_id,
                 payload=command,
             ) as tx:
                 if tx.replayed:
@@ -237,6 +246,8 @@ class CorrectionService:
                             ctx,
                             ReadRecords(references=tuple(edit.reference for edit in command.edits)),
                         )
+                    elif command.targets:
+                        selected = await self.cognition.read_records_in(tx, ctx, ReadRecords(references=command.targets))
                     else:
                         selected = tuple(
                             item.record
@@ -260,21 +271,26 @@ class CorrectionService:
                         id=str(uuid4()),
                         operation_id=command.operation_id,
                         namespace_id=ctx.namespace_id,
-                        subject_id=ctx.require_subject(),
                         created_by=ctx.caller_id,
                         created_at=tx.recorded_at,
                         instruction=command.instruction,
                         targets=tuple(
-                            CorrectionModelTarget(key=f"c{index}", record=record)
-                            for index, record in enumerate(selected)
+                            (
+                                CorrectionModelTarget(key=f"c{index}", record=record)
+                                for index, record in enumerate(selected)
+                            )
                         ),
                         evidence=tuple(
-                            CorrectionModelTarget(key=f"e{index}", record=record)
-                            for index, record in enumerate(supports)
+                            (
+                                CorrectionModelTarget(key=f"e{index}", record=record)
+                                for index, record in enumerate(supports)
+                            )
                         ),
                         changes=tuple(
-                            CorrectionChange(before=record, body=edit.body, reason=edit.reason)
-                            for record, edit in zip(selected, command.edits, strict=True)
+                            (
+                                CorrectionChange(before=record, body=edit.body, reason=edit.reason)
+                                for record, edit in zip(selected, command.edits, strict=True)
+                            )
                         )
                         if command.edits
                         else (),
@@ -296,7 +312,6 @@ class CorrectionService:
                         plans.insert().values(
                             id=plan.id,
                             namespace_id=plan.namespace_id,
-                            subject_id=plan.subject_id,
                             commit_seq=tx.commit_seq,
                             record=plan.model_dump(mode="json"),
                         )
@@ -355,7 +370,7 @@ class CorrectionService:
             ctx,
             command.operation_id + ":proposal",
             operation_kind="correction.proposal",
-            scope=ctx.require_subject(),
+            scope=ctx.namespace_id,
             payload={"plan_id": plan.id, "call_id": generated.call_id},
         ) as tx:
             current = await self._stored_in(tx, ctx, plan.id)
@@ -383,7 +398,6 @@ class CorrectionService:
         raw = await view.connection.scalar(
             select(revisions.c.record).where(
                 revisions.c.namespace_id == ctx.namespace_id,
-                revisions.c.subject_id == ctx.subject_id,
                 revisions.c.id == reference.id,
                 revisions.c.head.is_(True),
             )
@@ -438,7 +452,7 @@ class CorrectionService:
                 for record in (result, *changed)
             )
         elif isinstance(change.body, MemoryBody):
-            result = await self.cognition.change_memory_in(
+            result = await self.memories.change_memory_in(
                 tx,
                 ctx,
                 MemoryChange(
@@ -494,7 +508,7 @@ class CorrectionService:
             ctx,
             command.operation_id,
             operation_kind="correction.apply",
-            scope=ctx.require_subject(),
+            scope=ctx.namespace_id,
             payload=command,
         ) as tx:
             plan = await self._stored_in(tx, ctx, command.plan_id)
@@ -573,8 +587,6 @@ class CorrectionService:
                 ),
             )
             tx.result(result)
-        if self.cognition.invalidate:
-            await self.cognition.invalidate()
         return result
 
     async def rollback(self, ctx: CallContext, command: RollbackCorrection) -> CorrectionResult:
@@ -582,7 +594,7 @@ class CorrectionService:
             ctx,
             command.operation_id,
             operation_kind="correction.rollback",
-            scope=ctx.require_subject(),
+            scope=ctx.namespace_id,
             payload=command,
         ) as tx:
             plan = await self._stored_in(tx, ctx, command.plan_id)
@@ -621,7 +633,7 @@ class CorrectionService:
                     remaining.append(group)
                     continue
                 for snapshot in group.changes:
-                    current, before = snapshot.after, snapshot.before
+                    current, before = (snapshot.after, snapshot.before)
                     if isinstance(current.body, FactClaimBody):
                         restored.append(
                             await self.facts.restore_correction_in(
@@ -679,8 +691,6 @@ class CorrectionService:
                 ),
             )
             tx.result(result)
-        if self.cognition.invalidate:
-            await self.cognition.invalidate()
         return result
 
     async def purge_materials_in(self, tx: WriteTx, material_ids: tuple[str, ...]) -> None:
@@ -713,9 +723,7 @@ class CorrectionService:
         removed = {reference.id for reference in references}
         for raw in (
             await tx.connection.execute(
-                select(plans.c.record).where(
-                    plans.c.namespace_id == ctx.namespace_id, plans.c.subject_id == ctx.subject_id
-                )
+                select(plans.c.record).where(plans.c.namespace_id == ctx.namespace_id)
             )
         ).scalars():
             plan = CorrectionPlan.model_validate(raw)

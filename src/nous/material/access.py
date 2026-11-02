@@ -8,7 +8,7 @@ from nous_sdk.contracts import CallContext, CognitiveRef, DomainError, MediaRefe
 from nous_sdk.contracts.identity import IdentityPurpose
 from sqlalchemy import select
 
-from nous.identity.access import require_subject_in
+from nous.identity.access import require_namespace_in
 from nous.platform.persistence import ReadView, WriteTx
 
 if TYPE_CHECKING:
@@ -22,13 +22,13 @@ async def require_dependencies_in(
     required: tuple[str, ...],
     seen: frozenset[str] = frozenset(),
 ) -> None:
-    from nous.cognition.service import CognitionService
+    from nous.cognition.records import CognitiveRecords
     from nous.material.derived import DerivedService
     from nous.references.service import ReferenceDirectory
 
     from .service import materials, observations, regions, require_observation_in
 
-    cognition = CognitionService(
+    cognition = CognitiveRecords(
         service.authority, materials=service, derivations=DerivedService(service.authority, service)
     )
     directory = ReferenceDirectory(service.authority, cognition, service)
@@ -68,7 +68,7 @@ async def require_dependencies_in(
             select(observations.c.id).where(
                 observations.c.id == locator,
                 observations.c.namespace_id == ctx.namespace_id,
-                observations.c.subject_id == ctx.subject_id,
+                
             )
         )
         if observation is not None:
@@ -96,7 +96,7 @@ async def read_material_in(
         source_permitted,
     )
 
-    await require_subject_in(view, ctx, purpose=purpose)
+    await require_namespace_in(view, ctx, purpose=purpose)
     if material_id in seen:
         raise DomainError("source_cycle", "An artifact cannot depend on itself")
     value = await view.connection.scalar(
@@ -111,7 +111,7 @@ async def read_material_in(
             await view.connection.execute(
                 select(observations.c.id).where(
                     observations.c.material_id == material_id,
-                    observations.c.subject_id == ctx.subject_id,
+                    
                     observations.c.namespace_id == ctx.namespace_id,
                     observations.c.active.is_(True),
                 )
@@ -226,7 +226,7 @@ async def media_source_in(
             await view.connection.execute(
                 select(observations.c.id).where(
                     observations.c.namespace_id == ctx.namespace_id,
-                    observations.c.subject_id == ctx.subject_id,
+                    
                     observations.c.material_id == material["id"],
                     observations.c.active.is_(True),
                 )

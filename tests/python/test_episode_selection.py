@@ -57,7 +57,7 @@ def test_person_and_tracks_survive_member_revision_without_touching_time_boundar
                     ),
                 )
                 tx.result(person)
-            revised = await app.cognition.change_memory(
+            revised = await app.memories.change_memory(
                 ctx,
                 MemoryChange(
                     reference=memory.reference,

@@ -38,23 +38,21 @@ async def authorize(request: Request, *, capability: Capability | None = None) -
 async def context(
     request: Request,
     namespace_id: str,
-    subject_id: str | None = None,
     *,
     capability: Capability | None = None,
     identity_purpose: IdentityPurpose = "active",
 ) -> CallContext:
     principal = await authorize(request, capability=capability)
-    principal.require_scope(namespace_id, subject_id)
+    principal.require_scope(namespace_id)
     if identity_purpose == "management":
         principal.require("manage")
     clock = request.headers.get("x-nous-cognitive-clock")
     if clock is not None and len(clock.encode()) > 4096:
         raise ValueError("Cognitive clock header exceeds its size limit")
-    source_scope = await resolve_scope(request, namespace_id, subject_id)
+    source_scope = await resolve_scope(request, namespace_id)
     ctx = CallContext(
         caller_id=principal.caller_id,
         namespace_id=namespace_id,
-        subject_id=subject_id,
         request_id=current_request_id() or request.headers.get("x-nous-trace-id", str(uuid4())),
         locale=request.headers.get("Accept-Language", "zh-CN"),
         clock=TimePoint.model_validate_json(clock) if clock is not None else utc_now(),
@@ -67,15 +65,15 @@ async def context(
     if admission is not None and namespace_id != "instance":
         stack, admitted = admission
         if namespace_id not in admitted:
-            await stack.enter_async_context(application(request).namespace_limits.request(ctx))
+            await stack.enter_async_context(
+                application(request).namespace_limits.request(
+                    ctx, authority=application(request).authority
+                )
+            )
             admitted.add(namespace_id)
-    if subject_id is not None or namespace_id != "instance":
-        from nous.identity.access import require_namespace_in, require_subject_in
+    if namespace_id != "instance" and identity_purpose == "active":
+        from nous.identity.access import require_namespace_in
 
-        if identity_purpose == "active":
-            async with application(request).authority.read(ctx) as view:
-                if subject_id is not None:
-                    await require_subject_in(view, ctx)
-                else:
-                    await require_namespace_in(view, ctx)
+        async with application(request).authority.read(ctx) as view:
+            await require_namespace_in(view, ctx)
     return ctx

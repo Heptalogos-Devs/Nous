@@ -25,7 +25,7 @@ async def bundle_admin(
         receipt = await adapter.client.upload_file(
             adapter.namespace_id,
             local,
-            owner_subject_id=adapter.subject_id,
+            
             media_type="application/vnd.nous-wave.bundle+zip",
             source=local.name,
         )
@@ -47,7 +47,7 @@ async def bundle_admin(
             material_id,
             destination,
             namespace_id=adapter.namespace_id,
-            subject_id=adapter.subject_id,
+            
         )
         expected = result.get("size")
         if expected is not None and downloaded.byte_len != expected:

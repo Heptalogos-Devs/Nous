@@ -40,6 +40,26 @@ pub(super) fn gate_tags(
     core_tag_ids: &[i64],
     config: &PipelineConfig,
 ) -> (Vec<GatedTag>, f64, f64) {
+    if !config.gating_enabled || !config.epa_enabled {
+        let cores: HashSet<i64> = core_tag_ids.iter().copied().collect();
+        let mut seen = HashSet::new();
+        let tags = levels
+            .iter()
+            .flatten()
+            .filter(|tag| tag.id > 0 && seen.insert(tag.id))
+            .map(|tag| GatedTag {
+                id: tag.id,
+                name: tag.name.clone(),
+                weight: positive(tag.contribution),
+                is_core: cores.contains(&tag.id),
+            })
+            .collect();
+        return (
+            tags,
+            config.base_tag_boost.clamp(0.0, 1.0),
+            config.core_boost_factor,
+        );
+    }
     let activation_min = range_value(&config.activation_multiplier, 0, 0.5);
     let activation_max = range_value(&config.activation_multiplier, 1, 1.5);
     let activation_multiplier =

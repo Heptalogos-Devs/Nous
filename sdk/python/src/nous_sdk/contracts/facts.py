@@ -15,6 +15,7 @@ from .fact_body import (
     FactSection,
     FactStability,
     FactStatus,
+    NamespaceFactScope,
 )
 
 
@@ -28,7 +29,9 @@ class ChatFactScopeInput(Contract):
     conversation_ref: str = Field(min_length=1)
 
 
-FactScopeInput = Annotated[PersonFactScopeInput | ChatFactScopeInput, Field(discriminator="kind")]
+FactScopeInput = Annotated[
+    NamespaceFactScope | PersonFactScopeInput | ChatFactScopeInput, Field(discriminator="kind")
+]
 
 
 class FactClaimInput(FactClaimValue):
@@ -53,7 +56,7 @@ class FactChange(Operation):
     claim: FactClaimInput | None = None
     patch: FactClaimPatch | None = None
     expected_scope: FactScopeInput | None = None
-    expected_scope_kind: Literal["person", "chat"] | None = None
+    expected_scope_kind: Literal["namespace", "person", "chat"] | None = None
     evidence: tuple[FactEvidence, ...] = ()
     supersedes: tuple[CognitiveRef, ...] = ()
     validity: TimeRange | None = None

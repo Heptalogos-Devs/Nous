@@ -49,7 +49,6 @@ from .contracts.context import (
     OpenContextSession,
     WorkContext,
 )
-from .contracts.ego_model import AdoptSeed, SeedResult
 from .contracts.feedback import (
     EnqueueFeedback,
     FeedbackPage,
@@ -103,39 +102,39 @@ def segment(value: str) -> str:
 
 
 class TypedOperations:
-    async def decay_retention(self, namespace_id: str, subject_id: str, command: DecayRetention) -> RetentionDecayResult:
-        return RetentionDecayResult.model_validate(await self.request("POST", self.subject_path(namespace_id, subject_id) + "/retention/decay", body=encoded(command)))
+    async def decay_retention(self, namespace_id: str,  command: DecayRetention) -> RetentionDecayResult:
+        return RetentionDecayResult.model_validate(await self.request("POST", self.namespace_path(namespace_id) + "/retention/decay", body=encoded(command)))
 
-    async def change_retention(self, namespace_id: str, subject_id: str, command: RetentionChange) -> CognitiveRecord:
-        return CognitiveRecord.model_validate(await self.request("POST", self.subject_path(namespace_id, subject_id) + "/retention/change", body=encoded(command)))
+    async def change_retention(self, namespace_id: str,  command: RetentionChange) -> CognitiveRecord:
+        return CognitiveRecord.model_validate(await self.request("POST", self.namespace_path(namespace_id) + "/retention/change", body=encoded(command)))
 
-    async def change_retentions(self, namespace_id: str, subject_id: str, command: RetentionChanges) -> tuple[CognitiveRecord, ...]:
-        return TypeAdapter(tuple[CognitiveRecord,...]).validate_python(await self.request("POST", self.subject_path(namespace_id, subject_id) + "/retention/change-many", body=encoded(command)))
+    async def change_retentions(self, namespace_id: str,  command: RetentionChanges) -> tuple[CognitiveRecord, ...]:
+        return TypeAdapter(tuple[CognitiveRecord,...]).validate_python(await self.request("POST", self.namespace_path(namespace_id) + "/retention/change-many", body=encoded(command)))
 
-    async def retention_snapshot(self, namespace_id: str, subject_id: str, reference: CognitiveRef) -> RetentionSnapshot:
-        return RetentionSnapshot.model_validate(await self.request("POST", self.subject_path(namespace_id, subject_id) + "/retention/snapshot", body=encoded(reference)))
+    async def retention_snapshot(self, namespace_id: str,  reference: CognitiveRef) -> RetentionSnapshot:
+        return RetentionSnapshot.model_validate(await self.request("POST", self.namespace_path(namespace_id) + "/retention/snapshot", body=encoded(reference)))
 
-    async def retained_model_output(self, namespace_id: str, subject_id: str, call_id: str, *, management: bool = False) -> RetainedModelOutput:
-        return RetainedModelOutput.model_validate(await self.request("GET", f"/api/models/calls/{segment(call_id)}/output", params={"namespace_id": namespace_id, "subject_id": subject_id, "management": management}))
+    async def retained_model_output(self, namespace_id: str,  call_id: str, *, management: bool = False) -> RetainedModelOutput:
+        return RetainedModelOutput.model_validate(await self.request("GET", f"/api/v1/models/calls/{segment(call_id)}/output", params={"namespace_id": namespace_id,  "management": management}))
 
     async def recover_vectors(
-        self, namespace_id: str, subject_id: str, command: RecoverVectors
+        self, namespace_id: str,  command: RecoverVectors
     ) -> VectorRecovery:
         return VectorRecovery.model_validate(
             await self.request(
                 "POST",
-                self.subject_path(namespace_id, subject_id) + "/vectors/recover",
+                self.namespace_path(namespace_id) + "/vectors/recover",
                 body=encoded(command),
             )
         )
 
     async def vector_spaces(
-        self, namespace_id: str, subject_id: str | None = None, *, include_media: bool = False
+        self, namespace_id: str,  *, include_media: bool = False
     ) -> VectorSpaces:
         path = (
-            self.subject_path(namespace_id, subject_id)
-            if subject_id
-            else f"/api/namespaces/{segment(namespace_id)}"
+            self.namespace_path(namespace_id)
+            if namespace_id
+            else f"/api/v1/namespaces/{segment(namespace_id)}"
         )
         return VectorSpaces.model_validate(
             await self.request(
@@ -149,152 +148,142 @@ class TypedOperations:
         return VectorSpaceDeleted.model_validate(
             await self.request(
                 "POST",
-                f"/api/namespaces/{segment(namespace_id)}/vector-spaces/delete",
+                f"/api/v1/namespaces/{segment(namespace_id)}/vector-spaces/delete",
                 body=encoded(command),
             )
         )
 
     async def rebuild_vectors(
-        self, namespace_id: str, subject_id: str, command: RebuildVectors
+        self, namespace_id: str,  command: RebuildVectors
     ) -> VectorRebuild:
         return VectorRebuild.model_validate(
             await self.request(
                 "POST",
-                self.subject_path(namespace_id, subject_id) + "/vectors/rebuild",
+                self.namespace_path(namespace_id) + "/vectors/rebuild",
                 body=encoded(command),
             )
         )
 
     async def check_vector_spaces(
-        self, namespace_id: str, subject_id: str, command: CheckVectorSpaces
+        self, namespace_id: str,  command: CheckVectorSpaces
     ) -> VectorSpaceCheck:
         return VectorSpaceCheck.model_validate(
             await self.request(
                 "POST",
-                self.subject_path(namespace_id, subject_id) + "/vectors/check",
+                self.namespace_path(namespace_id) + "/vectors/check",
                 body=encoded(command),
             )
         )
 
     async def vector_projection_progress(
-        self, namespace_id: str, subject_id: str, request_id: str
+        self, namespace_id: str,  request_id: str
     ) -> VectorProjectionProgress:
         return VectorProjectionProgress.model_validate(
             await self.request(
                 "GET",
-                self.subject_path(namespace_id, subject_id)
+                self.namespace_path(namespace_id)
                 + f"/vectors/projections/{segment(request_id)}",
             )
         )
 
     async def retry_vector_projection(
-        self, namespace_id: str, subject_id: str, command: RetryVectorProjection
+        self, namespace_id: str,  command: RetryVectorProjection
     ) -> ProjectionReceipt:
         return ProjectionReceipt.model_validate(
             await self.request(
                 "POST",
-                self.subject_path(namespace_id, subject_id) + "/vectors/retry",
+                self.namespace_path(namespace_id) + "/vectors/retry",
                 body=encoded(command),
             )
         )
 
     async def persistence_state(
-        self, namespace_id: str, subject_id: str | None = None
+        self, namespace_id: str
     ) -> PersistenceState:
         path = (
-            self.subject_path(namespace_id, subject_id) + "/vectors/persistence"
-            if subject_id
-            else f"/api/namespaces/{segment(namespace_id)}/persistence"
+            self.namespace_path(namespace_id) + "/vectors/persistence"
+            if namespace_id
+            else f"/api/v1/namespaces/{segment(namespace_id)}/persistence"
         )
         return PersistenceState.model_validate(await self.request("GET", path))
 
     async def retry_feedback(
-        self, namespace_id: str, subject_id: str, command: RetryFeedback
+        self, namespace_id: str,  command: RetryFeedback
     ) -> FeedbackTask:
         return FeedbackTask.model_validate(
             await self.request(
                 "POST",
-                self.subject_path(namespace_id, subject_id) + "/feedback/retry",
+                self.namespace_path(namespace_id) + "/feedback/retry",
                 body=encoded(command),
             )
         )
 
     async def preview_context_model(
-        self, namespace_id: str, subject_id: str, command: ContextModelPreview
+        self, namespace_id: str,  command: ContextModelPreview
     ) -> ContextModelPlan:
         return ContextModelPlan.model_validate(
             await self.request(
                 "POST",
-                self.subject_path(namespace_id, subject_id) + "/contexts/model-preview",
+                self.namespace_path(namespace_id) + "/contexts/model-preview",
                 body=encoded(command),
             )
         )
 
     async def invoke_context_model(
-        self, namespace_id: str, subject_id: str, command: ContextModelCall
+        self, namespace_id: str,  command: ContextModelCall
     ) -> ContextModelResult:
         return ContextModelResult.model_validate(
             await self.request(
                 "POST",
-                self.subject_path(namespace_id, subject_id) + "/contexts/model-invocations",
+                self.namespace_path(namespace_id) + "/contexts/model-invocations",
                 body=encoded(command),
             )
         )
 
     async def enqueue_feedback(
-        self, namespace_id: str, subject_id: str, command: EnqueueFeedback
+        self, namespace_id: str,  command: EnqueueFeedback
     ) -> FeedbackTask:
         return FeedbackTask.model_validate(
             await self.request(
                 "POST",
-                self.subject_path(namespace_id, subject_id) + "/feedback",
+                self.namespace_path(namespace_id) + "/feedback",
                 body=encoded(command),
             )
         )
 
-    async def feedback_task(self, namespace_id: str, subject_id: str, task_id: str) -> FeedbackTask:
+    async def feedback_task(self, namespace_id: str,  task_id: str) -> FeedbackTask:
         return FeedbackTask.model_validate(
             await self.request(
-                "GET", self.subject_path(namespace_id, subject_id) + f"/feedback/{segment(task_id)}"
+                "GET", self.namespace_path(namespace_id) + f"/feedback/{segment(task_id)}"
             )
         )
 
     async def feedback_tasks(
-        self, namespace_id: str, subject_id: str, command: FeedbackQuery | None = None
+        self, namespace_id: str,  command: FeedbackQuery | None = None
     ) -> FeedbackPage:
         return FeedbackPage.model_validate(
             await self.request(
                 "POST",
-                self.subject_path(namespace_id, subject_id) + "/feedback/query",
+                self.namespace_path(namespace_id) + "/feedback/query",
                 body=encoded(command or FeedbackQuery()),
             )
         )
 
     async def rollback_feedback(
-        self, namespace_id: str, subject_id: str, command: RollbackFeedback
+        self, namespace_id: str,  command: RollbackFeedback
     ) -> FeedbackTask:
         return FeedbackTask.model_validate(
             await self.request(
                 "POST",
-                self.subject_path(namespace_id, subject_id) + "/feedback/rollback",
+                self.namespace_path(namespace_id) + "/feedback/rollback",
                 body=encoded(command),
             )
         )
 
-    async def adopt_seed(
-        self, namespace_id: str, subject_id: str, command: AdoptSeed
-    ) -> SeedResult:
-        return SeedResult.model_validate(
-            await self.request(
-                "POST",
-                self.subject_path(namespace_id, subject_id) + "/ego/seed",
-                body=encoded(command),
-            )
-        )
 
-    async def ego_profile(self, namespace_id: str, subject_id: str) -> tuple[CognitiveRecord, ...]:
+    async def ego_profile(self, namespace_id: str) -> tuple[CognitiveRecord, ...]:
         return TypeAdapter(tuple[CognitiveRecord, ...]).validate_python(
-            await self.request("GET", self.subject_path(namespace_id, subject_id) + "/ego/profile")
+            await self.request("GET", self.namespace_path(namespace_id) + "/ego/profile")
         )
 
     async def request(
@@ -309,139 +298,139 @@ class TypedOperations:
         raise NotImplementedError
 
     @staticmethod
-    def subject_path(namespace_id: str, subject_id: str) -> str:
-        return f"/api/namespaces/{segment(namespace_id)}/subjects/{segment(subject_id)}"
+    def namespace_path(namespace_id: str) -> str:
+        return f"/api/v1/namespaces/{segment(namespace_id)}"
 
     async def freeze_catalog(
-        self, namespace_id: str, subject_id: str, command: FreezeCatalog
+        self, namespace_id: str,  command: FreezeCatalog
     ) -> CatalogView:
         return CatalogView.model_validate(
             await self.request(
                 "POST",
-                self.subject_path(namespace_id, subject_id) + "/imports/catalogs",
+                self.namespace_path(namespace_id) + "/imports/catalogs",
                 body=encoded(command),
             )
         )
 
     async def import_catalog(
-        self, namespace_id: str, subject_id: str, catalog_id: str
+        self, namespace_id: str,  catalog_id: str
     ) -> CatalogView:
         return CatalogView.model_validate(
             await self.request(
                 "GET",
-                self.subject_path(namespace_id, subject_id)
+                self.namespace_path(namespace_id)
                 + f"/imports/catalogs/{segment(catalog_id)}",
             )
         )
 
     async def submit_catalog(
-        self, namespace_id: str, subject_id: str, command: ProcessCatalog
+        self, namespace_id: str,  command: ProcessCatalog
     ) -> ImportSubmission:
         return ImportSubmission.model_validate(
             await self.request(
                 "POST",
-                self.subject_path(namespace_id, subject_id) + "/imports/process",
+                self.namespace_path(namespace_id) + "/imports/process",
                 body=encoded(command),
             )
         )
 
     async def admit_documents(
-        self, namespace_id: str, subject_id: str, command: AdmitFiles
+        self, namespace_id: str,  command: AdmitFiles
     ) -> ImportResult:
         return ImportResult.model_validate(
             await self.request(
                 "POST",
-                self.subject_path(namespace_id, subject_id) + "/imports/files",
+                self.namespace_path(namespace_id) + "/imports/files",
                 body=encoded(command),
             )
         )
 
     async def import_unit_output(
-        self, namespace_id: str, subject_id: str, output_id: str
+        self, namespace_id: str,  output_id: str
     ) -> UnitOutput:
         return UnitOutput.model_validate(
             await self.request(
                 "GET",
-                self.subject_path(namespace_id, subject_id)
+                self.namespace_path(namespace_id)
                 + f"/imports/outputs/{segment(output_id)}",
             )
         )
 
     async def query_cognition(
-        self, namespace_id: str, subject_id: str, command: QueryRequest
+        self, namespace_id: str,  command: QueryRequest
     ) -> QueryResult:
         return QueryResult.model_validate(
             await self.request(
                 "POST",
-                self.subject_path(namespace_id, subject_id) + "/query",
+                self.namespace_path(namespace_id) + "/query",
                 body=encoded(command),
             )
         )
 
     async def adopt_cognition(
-        self, namespace_id: str, subject_id: str, command: AdoptCognition
+        self, namespace_id: str,  command: AdoptCognition
     ) -> CognitiveRecord:
         return CognitiveRecord.model_validate(
             await self.request(
                 "POST",
-                self.subject_path(namespace_id, subject_id) + "/cognition",
+                self.namespace_path(namespace_id) + "/cognition",
                 body=encoded(command),
             )
         )
 
     async def cognitive_revision(
-        self, namespace_id: str, subject_id: str, reference: CognitiveRef
+        self, namespace_id: str,  reference: CognitiveRef
     ) -> CognitiveRecord:
         return CognitiveRecord.model_validate(
             await self.request(
                 "POST",
-                self.subject_path(namespace_id, subject_id) + "/cognition/read",
+                self.namespace_path(namespace_id) + "/cognition/read",
                 body=encoded(reference),
             )
         )
 
     async def merge_concepts(
-        self, namespace_id: str, subject_id: str, command: MergeConcepts
+        self, namespace_id: str,  command: MergeConcepts
     ) -> tuple[CognitiveRecord, ...]:
         return TypeAdapter(tuple[CognitiveRecord, ...]).validate_python(
             await self.request(
                 "POST",
-                self.subject_path(namespace_id, subject_id) + "/concepts/merge",
+                self.namespace_path(namespace_id) + "/concepts/merge",
                 body=encoded(command),
             )
         )
 
     async def split_concept(
-        self, namespace_id: str, subject_id: str, command: SplitConcept
+        self, namespace_id: str,  command: SplitConcept
     ) -> tuple[CognitiveRecord, ...]:
         return TypeAdapter(tuple[CognitiveRecord, ...]).validate_python(
             await self.request(
                 "POST",
-                self.subject_path(namespace_id, subject_id) + "/concepts/split",
+                self.namespace_path(namespace_id) + "/concepts/split",
                 body=encoded(command),
             )
         )
 
     async def resegment_episodes(
-        self, namespace_id: str, subject_id: str, command: ResegmentEpisodes
+        self, namespace_id: str,  command: ResegmentEpisodes
     ) -> tuple[CognitiveRecord, ...]:
         return TypeAdapter(tuple[CognitiveRecord, ...]).validate_python(
             await self.request(
                 "POST",
-                self.subject_path(namespace_id, subject_id) + "/episodes/resegment",
+                self.namespace_path(namespace_id) + "/episodes/resegment",
                 body=encoded(command),
             )
         )
 
-    async def source_directory(self, namespace_id: str, subject_id: str) -> tuple[Source, ...]:
+    async def source_directory(self, namespace_id: str) -> tuple[Source, ...]:
         return TypeAdapter(tuple[Source, ...]).validate_python(
-            await self.request("GET", self.subject_path(namespace_id, subject_id) + "/sources")
+            await self.request("GET", self.namespace_path(namespace_id) + "/sources")
         )
 
     async def preview_sources(
         self,
         namespace_id: str,
-        subject_id: str,
+        
         sources: tuple[str, ...] = (),
         *,
         selection: SourceSelection | None = None,
@@ -450,308 +439,308 @@ class TypedOperations:
         return SourcePreview.model_validate(
             await self.request(
                 "POST",
-                self.subject_path(namespace_id, subject_id) + "/sources/preview",
+                self.namespace_path(namespace_id) + "/sources/preview",
                 body=encoded(selection or SourceSelection(observation_ids=sources)),
                 params={"action": action},
             )
         )
 
     async def trash_sources(
-        self, namespace_id: str, subject_id: str, command: SourceCommand
+        self, namespace_id: str,  command: SourceCommand
     ) -> SourceResult:
         return SourceResult.model_validate(
             await self.request(
                 "POST",
-                self.subject_path(namespace_id, subject_id) + "/sources/trash",
+                self.namespace_path(namespace_id) + "/sources/trash",
                 body=encoded(command),
             )
         )
 
     async def submit_source_trash(
-        self, namespace_id: str, subject_id: str, command: SourceCommand
+        self, namespace_id: str,  command: SourceCommand
     ) -> str:
         result = object_value(
             await self.request(
                 "POST",
-                self.subject_path(namespace_id, subject_id) + "/sources/trash/jobs",
+                self.namespace_path(namespace_id) + "/sources/trash/jobs",
                 body=encoded(command),
             )
         )
         return TypeAdapter(str).validate_python(result["job_id"])
 
     async def restore_sources(
-        self, namespace_id: str, subject_id: str, command: SourceCommand
+        self, namespace_id: str,  command: SourceCommand
     ) -> SourceResult:
         return SourceResult.model_validate(
             await self.request(
                 "POST",
-                self.subject_path(namespace_id, subject_id) + "/sources/restore",
+                self.namespace_path(namespace_id) + "/sources/restore",
                 body=encoded(command),
             )
         )
 
     async def purge_sources(
-        self, namespace_id: str, subject_id: str, command: SourceCommand
+        self, namespace_id: str,  command: SourceCommand
     ) -> SourceResult:
         return SourceResult.model_validate(
             await self.request(
                 "POST",
-                self.subject_path(namespace_id, subject_id) + "/sources/purge",
+                self.namespace_path(namespace_id) + "/sources/purge",
                 body=encoded(command),
             )
         )
 
     async def export_bundle(
-        self, namespace_id: str, subject_id: str, command: BundleRequest | None = None
+        self, namespace_id: str,  command: BundleRequest | None = None
     ) -> JsonObject:
         return object_value(
             await self.request(
                 "POST",
-                self.subject_path(namespace_id, subject_id) + "/bundles/export",
+                self.namespace_path(namespace_id) + "/bundles/export",
                 body=encoded(command or BundleRequest()),
             )
         )
 
     async def install_bundle(
-        self, namespace_id: str, subject_id: str, command: InstallBundle
+        self, namespace_id: str,  command: InstallBundle
     ) -> JsonObject:
         return object_value(
             await self.request(
                 "POST",
-                self.subject_path(namespace_id, subject_id) + "/bundles/install",
+                self.namespace_path(namespace_id) + "/bundles/install",
                 body=encoded(command),
             )
         )
 
     async def admit_context(
-        self, namespace_id: str, subject_id: str, command: ContextCommand
+        self, namespace_id: str,  command: ContextCommand
     ) -> ContextRecord:
         return ContextRecord.model_validate(
             await self.request(
                 "POST",
-                self.subject_path(namespace_id, subject_id) + "/contexts",
+                self.namespace_path(namespace_id) + "/contexts",
                 body=encoded(command),
             )
         )
 
     async def read_context(
-        self, namespace_id: str, subject_id: str, context_id: str
+        self, namespace_id: str,  context_id: str
     ) -> ContextRecord:
         return ContextRecord.model_validate(
             await self.request(
                 "GET",
-                self.subject_path(namespace_id, subject_id) + f"/contexts/{segment(context_id)}",
+                self.namespace_path(namespace_id) + f"/contexts/{segment(context_id)}",
             )
         )
 
     async def context_feedback(
-        self, namespace_id: str, subject_id: str, command: ContextFeedback
+        self, namespace_id: str,  command: ContextFeedback
     ) -> JsonObject:
         return object_value(
             await self.request(
                 "POST",
-                self.subject_path(namespace_id, subject_id) + "/contexts/feedback",
+                self.namespace_path(namespace_id) + "/contexts/feedback",
                 body=encoded(command),
             )
         )
 
     async def prepare_context(
-        self, namespace_id: str, subject_id: str, command: ContextPrepare
+        self, namespace_id: str,  command: ContextPrepare
     ) -> ContextPreparation:
         return ContextPreparation.model_validate(
             await self.request(
                 "POST",
-                self.subject_path(namespace_id, subject_id) + "/contexts/preparations",
+                self.namespace_path(namespace_id) + "/contexts/preparations",
                 body=encoded(command),
             )
         )
 
     async def context_preparation(
-        self, namespace_id: str, subject_id: str, preparation_id: str
+        self, namespace_id: str,  preparation_id: str
     ) -> ContextPreparation:
         return ContextPreparation.model_validate(
             await self.request(
                 "GET",
-                self.subject_path(namespace_id, subject_id)
+                self.namespace_path(namespace_id)
                 + f"/contexts/preparations/{segment(preparation_id)}",
             )
         )
 
     async def cancel_context_preparation(
-        self, namespace_id: str, subject_id: str, preparation_id: str, operation_id: str
+        self, namespace_id: str,  preparation_id: str, operation_id: str
     ) -> ContextPreparation:
         return ContextPreparation.model_validate(
             await self.request(
                 "POST",
-                self.subject_path(namespace_id, subject_id)
+                self.namespace_path(namespace_id)
                 + f"/contexts/preparations/{segment(preparation_id)}/cancel",
                 body={"operation_id": operation_id},
             )
         )
 
     async def admit_managed_context(
-        self, namespace_id: str, subject_id: str, command: ContextAdmissionCommand
+        self, namespace_id: str,  command: ContextAdmissionCommand
     ) -> ContextAdmission:
         return ContextAdmission.model_validate(
             await self.request(
                 "POST",
-                self.subject_path(namespace_id, subject_id) + "/contexts/admissions",
+                self.namespace_path(namespace_id) + "/contexts/admissions",
                 body=encoded(command),
             )
         )
 
     async def report_managed_context(
-        self, namespace_id: str, subject_id: str, command: ContextReport
+        self, namespace_id: str,  command: ContextReport
     ) -> ContextReportResult:
         return ContextReportResult.model_validate(
             await self.request(
                 "POST",
-                self.subject_path(namespace_id, subject_id) + "/contexts/reports",
+                self.namespace_path(namespace_id) + "/contexts/reports",
                 body=encoded(command),
             )
         )
 
     async def open_context_session(
-        self, namespace_id: str, subject_id: str, command: OpenContextSession
+        self, namespace_id: str,  command: OpenContextSession
     ) -> ContextSession:
         return ContextSession.model_validate(
             await self.request(
                 "POST",
-                self.subject_path(namespace_id, subject_id) + "/contexts/sessions",
+                self.namespace_path(namespace_id) + "/contexts/sessions",
                 body=encoded(command),
             )
         )
 
     async def close_context_session(
-        self, namespace_id: str, subject_id: str, session_id: str, operation_id: str
+        self, namespace_id: str,  session_id: str, operation_id: str
     ) -> ContextSession:
         return ContextSession.model_validate(
             await self.request(
                 "POST",
-                self.subject_path(namespace_id, subject_id)
+                self.namespace_path(namespace_id)
                 + f"/contexts/sessions/{segment(session_id)}/close",
                 body={"operation_id": operation_id},
             )
         )
 
     async def submit_context_preparation(
-        self, namespace_id: str, subject_id: str, command: ContextPrepare
+        self, namespace_id: str,  command: ContextPrepare
     ) -> ContextPreparationJob:
         return ContextPreparationJob.model_validate(
             await self.request(
                 "POST",
-                self.subject_path(namespace_id, subject_id) + "/contexts/preparation-jobs",
+                self.namespace_path(namespace_id) + "/contexts/preparation-jobs",
                 body=encoded(command),
             )
         )
 
     async def context_session(
-        self, namespace_id: str, subject_id: str, session_id: str
+        self, namespace_id: str,  session_id: str
     ) -> ContextSession:
         return ContextSession.model_validate(
             await self.request(
                 "GET",
-                self.subject_path(namespace_id, subject_id)
+                self.namespace_path(namespace_id)
                 + f"/contexts/sessions/{segment(session_id)}",
             )
         )
 
     async def change_context_residents(
-        self, namespace_id: str, subject_id: str, command: ChangeResidents
+        self, namespace_id: str,  command: ChangeResidents
     ) -> ContextSession:
         return ContextSession.model_validate(
             await self.request(
                 "POST",
-                self.subject_path(namespace_id, subject_id) + "/contexts/residents",
+                self.namespace_path(namespace_id) + "/contexts/residents",
                 body=encoded(command),
             )
         )
 
     async def change_work_context(
-        self, namespace_id: str, subject_id: str, command: ChangeWorkContext
+        self, namespace_id: str,  command: ChangeWorkContext
     ) -> WorkContext:
         return WorkContext.model_validate(
             await self.request(
                 "POST",
-                self.subject_path(namespace_id, subject_id) + "/contexts/work",
+                self.namespace_path(namespace_id) + "/contexts/work",
                 body=encoded(command),
             )
         )
 
     async def work_context(
-        self, namespace_id: str, subject_id: str, work_context_id: str
+        self, namespace_id: str,  work_context_id: str
     ) -> WorkContext:
         return WorkContext.model_validate(
             await self.request(
                 "GET",
-                self.subject_path(namespace_id, subject_id)
+                self.namespace_path(namespace_id)
                 + f"/contexts/work/{segment(work_context_id)}",
             )
         )
 
     async def change_context_session(
-        self, namespace_id: str, subject_id: str, command: ChangeContextSession
+        self, namespace_id: str,  command: ChangeContextSession
     ) -> ContextSession:
         return ContextSession.model_validate(
             await self.request(
                 "POST",
-                self.subject_path(namespace_id, subject_id) + "/contexts/sessions/change",
+                self.namespace_path(namespace_id) + "/contexts/sessions/change",
                 body=encoded(command),
             )
         )
 
     async def work_contexts(
-        self, namespace_id: str, subject_id: str, limit: int = 50
+        self, namespace_id: str,  limit: int = 50
     ) -> tuple[WorkContext, ...]:
         return TypeAdapter(tuple[WorkContext, ...]).validate_python(
             await self.request(
                 "GET",
-                self.subject_path(namespace_id, subject_id) + "/contexts/work",
+                self.namespace_path(namespace_id) + "/contexts/work",
                 params={"limit": limit},
             )
         )
 
     async def work_context_history(
-        self, namespace_id: str, subject_id: str, work_context_id: str, limit: int = 50
+        self, namespace_id: str,  work_context_id: str, limit: int = 50
     ) -> tuple[WorkContext, ...]:
         return TypeAdapter(tuple[WorkContext, ...]).validate_python(
             await self.request(
                 "GET",
-                self.subject_path(namespace_id, subject_id)
+                self.namespace_path(namespace_id)
                 + f"/contexts/work/{segment(work_context_id)}/history",
                 params={"limit": limit},
             )
         )
 
     async def context_admission(
-        self, namespace_id: str, subject_id: str, admission_id: str
+        self, namespace_id: str,  admission_id: str
     ) -> ContextAdmission:
         return ContextAdmission.model_validate(
             await self.request(
                 "GET",
-                self.subject_path(namespace_id, subject_id)
+                self.namespace_path(namespace_id)
                 + f"/contexts/admissions/{segment(admission_id)}",
             )
         )
 
     async def update_memory(
-        self, namespace_id: str, subject_id: str, command: MemoryChange
+        self, namespace_id: str,  command: MemoryChange
     ) -> CognitiveRecord:
         return CognitiveRecord.model_validate(
             await self.request(
                 "POST",
-                self.subject_path(namespace_id, subject_id) + "/memories/change",
+                self.namespace_path(namespace_id) + "/memories/change",
                 body=encoded(command),
             )
         )
 
     async def adopt_media(
-        self, namespace_id: str, subject_id: str, command: AdoptMedia
+        self, namespace_id: str,  command: AdoptMedia
     ) -> JsonObject:
         return object_value(
             await self.request(
                 "POST",
-                self.subject_path(namespace_id, subject_id) + "/media/adopt",
+                self.namespace_path(namespace_id) + "/media/adopt",
                 body=encoded(command),
             )
         )

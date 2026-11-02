@@ -16,7 +16,7 @@ def source_identities(request: Mapping[str, object]) -> set[str]:
     if isinstance(direct, list):
         sources.update(item for item in direct if isinstance(item, str))
     prompt = value.get("prompt")
-    variables = prompt.get("variables") if isinstance(prompt, dict) else None
+    variables = prompt.get("input_bindings") if isinstance(prompt, dict) else None
     source = variables.get("source") if isinstance(variables, dict) else None
     if isinstance(source, dict):
         for key in ("material_id", "observation_id"):
@@ -60,7 +60,6 @@ async def erased_sources_in(
         await view.connection.execute(
             select(observations.c.record).where(
                 observations.c.namespace_id == ctx.namespace_id,
-                observations.c.subject_id == ctx.subject_id,
                 observations.c.id.in_(identities),
             )
         )

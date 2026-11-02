@@ -77,10 +77,10 @@ def test_later_batch_rejection_reprojects_the_complete_directory(
             await app.identity.create_subject(ctx, "Subject", "subject", subject_id="subject")
             effective = await app.configuration.effective(ctx, "models")
             resources = ModelConfiguration.model_validate(effective["value"])
-            resources.models["second"] = resources.models["embedding"].model_copy(
+            resources.catalog["second"] = resources.catalog["embedding"].model_copy(
                 update={"name": "second"}
             )
-            resources.routes["second"] = resources.routes["embedding"].model_copy(
+            resources.presets["second"] = resources.presets["embedding"].model_copy(
                 update={"model": "second"}
             )
             resources.roles["embedding"] = resources.roles["embedding"].model_copy(

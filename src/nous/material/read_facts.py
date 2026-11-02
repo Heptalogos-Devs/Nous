@@ -44,7 +44,7 @@ async def source_facts_in(view: ReadView | WriteTx, ctx: CallContext) -> SourceR
         "material.source_facts",
         ctx.caller_id,
         ctx.namespace_id,
-        ctx.require_subject(),
+        ctx.namespace_id,
         ctx.source_groups(),
     )
     saved = view.facts.get(key)
@@ -72,7 +72,7 @@ async def source_facts_in(view: ReadView | WriteTx, ctx: CallContext) -> SourceR
                     observations.c.record["contact_source"].label("contact_source"),
                 ).where(
                     observations.c.namespace_id == ctx.namespace_id,
-                    observations.c.subject_id == ctx.require_subject(),
+                    
                 )
             )
         ).all()

@@ -20,7 +20,7 @@ from nous_sdk.contracts import (
     TimeRange,
 )
 
-from nous.cognition.service import CognitionService
+from nous.cognition.records import CognitiveRecords
 from nous.data_management.sources import SourceService
 from nous.identity.service import IdentityService
 from nous.platform.persistence import Authority
@@ -29,7 +29,7 @@ from nous.platform.persistence import Authority
 def test_directory_snapshot_batch_states_and_source_authority(tmp_path):
     async def scenario():
         authority = Authority(tmp_path / "authority.sqlite")
-        cognition = CognitionService(authority)
+        cognition = CognitiveRecords(authority)
         identity = IdentityService(authority)
         sources = SourceService(authority, cognition)
         await authority.initialize()

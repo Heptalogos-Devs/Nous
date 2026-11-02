@@ -145,7 +145,7 @@ def test_merge_split_migrates_graph_and_fact_scopes_without_rewriting_history(tm
                     ),
                 )
             ).record
-            concepts = await app.cognition.merge_concepts(
+            concepts = await app.evolution.merge_concepts(
                 ctx,
                 MergeConcepts(
                     target=one.reference, sources=(two.reference,), reason="Same organization"
@@ -157,7 +157,7 @@ def test_merge_split_migrates_graph_and_fact_scopes_without_rewriting_history(tm
             )
             assert current_relation.body.from_ref == merged_concept.reference
             assert (await app.cognition.get(ctx, relation.reference)).body.from_ref == two.reference
-            merged = await app.cognition.merge_entities(
+            merged = await app.entities.merge_entities(
                 ctx,
                 MergeEntities(
                     target=alice.reference, sources=(alias.reference,), reason="Same person"
@@ -165,7 +165,7 @@ def test_merge_split_migrates_graph_and_fact_scopes_without_rewriting_history(tm
             )
             merged_person = merged[0]
             assert (
-                await app.cognition.resolve_identity(ctx, "host", "alicia")
+                await app.social.resolve_identity(ctx, "host", "alicia")
             ).reference == merged_person.reference
             claims = await app.facts.query(
                 ctx,
@@ -187,7 +187,7 @@ def test_merge_split_migrates_graph_and_fact_scopes_without_rewriting_history(tm
                 record for record in merged if record.reference.id == relation.reference.id
             )
             assert current_relation.body.to_ref == merged_person.reference
-            split = await app.cognition.split_entity(
+            split = await app.entities.split_entity(
                 ctx,
                 SplitEntity(
                     source=merged_person.reference,
@@ -213,7 +213,7 @@ def test_merge_split_migrates_graph_and_fact_scopes_without_rewriting_history(tm
             for person in people:
                 account = person.body.platform_identities[0]
                 assert (
-                    await app.cognition.resolve_identity(ctx, account.platform, account.account_id)
+                    await app.social.resolve_identity(ctx, account.platform, account.account_id)
                 ).reference == person.reference
             for person in people:
                 current = await app.facts.query(
@@ -223,7 +223,7 @@ def test_merge_split_migrates_graph_and_fact_scopes_without_rewriting_history(tm
             current_relation = next(
                 record for record in split if record.reference.id == relation.reference.id
             )
-            divided = await app.cognition.split_concept(
+            divided = await app.evolution.split_concept(
                 ctx,
                 SplitConcept(
                     source=merged_concept.reference,

@@ -19,7 +19,7 @@ from nous_sdk.contracts.maintenance import (
 )
 from pydantic import JsonValue
 
-from nous.identity.access import require_subject_in
+from nous.identity.access import require_namespace_in
 from nous.platform.persistence import ReadView, WriteTx
 from nous.platform.persistence.authority import canonical_json
 
@@ -48,7 +48,6 @@ async def schedule_in(
         sa.select(schedules.c.record).where(
             schedules.c.id == identity,
             schedules.c.namespace_id == ctx.namespace_id,
-            schedules.c.subject_id == ctx.require_subject(),
         )
     )
     if raw is None:
@@ -70,18 +69,17 @@ async def create_schedule(
         ctx,
         command.operation_id,
         operation_kind="maintenance.schedule.create",
-        scope=ctx.require_subject(),
+        scope=ctx.namespace_id,
         payload=command,
     ) as tx:
         if tx.replayed:
             identity = str(tx.replay_result)
         else:
-            await require_subject_in(tx, ctx)
+            await require_namespace_in(tx, ctx)
             identity = "maintenance:" + str(uuid4())
             record = MaintenanceSchedule(
                 id=identity,
                 namespace_id=ctx.namespace_id,
-                subject_id=ctx.require_subject(),
                 created_by=ctx.caller_id,
                 created_at=tx.recorded_at,
                 name=command.name,
@@ -93,7 +91,6 @@ async def create_schedule(
                 schedules.insert().values(
                     id=identity,
                     namespace_id=ctx.namespace_id,
-                    subject_id=ctx.subject_id,
                     context=ctx.model_dump(mode="json"),
                     record=record.model_dump(mode="json"),
                 )
@@ -109,13 +106,12 @@ async def list_schedules(
     self: MaintenanceService, ctx: CallContext
 ) -> tuple[MaintenanceSchedule, ...]:
     async with self.authority.read(ctx) as view:
-        await require_subject_in(view, ctx)
+        await require_namespace_in(view, ctx)
         rows = (
             await view.connection.execute(
                 sa.select(schedules.c.record)
                 .where(
                     schedules.c.namespace_id == ctx.namespace_id,
-                    schedules.c.subject_id == ctx.subject_id,
                 )
                 .order_by(schedules.c.id)
             )
@@ -133,7 +129,7 @@ async def stop_schedule(
         ctx,
         operation_id,
         operation_kind="maintenance.schedule.stop",
-        scope=ctx.require_subject(),
+        scope=ctx.namespace_id,
         payload={"schedule_id": identity},
     ) as tx:
         if not tx.replayed:
@@ -197,7 +193,7 @@ async def run_tick(self: MaintenanceService, scheduled_at: str, context: JsonVal
         ctx,
         operation_id,
         operation_kind="maintenance.tick",
-        scope=ctx.require_subject(),
+        scope=ctx.namespace_id,
         payload={"schedule_id": identity, "scheduled_at": scheduled_at},
     ) as tx:
         if tx.replayed:
@@ -231,7 +227,6 @@ async def run_tick(self: MaintenanceService, scheduled_at: str, context: JsonVal
                 sa.select(runs.c.record)
                 .where(
                     runs.c.namespace_id == ctx.namespace_id,
-                    runs.c.subject_id == ctx.require_subject(),
                     runs.c.record["command"]["operation_id"].as_string().startswith(identity + ":"),
                     runs.c.record["created_by"].as_string() == ctx.caller_id,
                 )

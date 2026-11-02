@@ -73,7 +73,7 @@ async def graph_action(
             ReadGraph,
             {key: value for key, value in arguments.items() if key in ReadGraph.model_fields},
         )
-        snapshot = await self.app.cognition.graph_snapshot(ctx)
+        snapshot = await self.app.graphs.graph_snapshot(ctx)
         if action == "get_graph":
             return graph_view(snapshot, limits.limit)
         node = (
@@ -91,7 +91,7 @@ async def graph_action(
             evidence_node_limit=limits.evidence_node_limit,
         )
     command = change(arguments)
-    result = await self.app.cognition.manage_graph(ctx, command)
+    result = await self.app.graphs.manage_graph(ctx, command)
     entities = [row for row in result.records if isinstance(row.body, EntityBody)]
     associations = [row for row in result.records if isinstance(row.body, AssociationBody)]
     response = json_object(

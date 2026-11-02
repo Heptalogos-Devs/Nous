@@ -11,7 +11,6 @@ catalogs = Table(
     metadata,
     Column("id", String, primary_key=True),
     Column("namespace_id", String, nullable=False),
-    Column("subject_id", String, nullable=False),
     Column("record", JSON, nullable=False),
 )
 
@@ -46,7 +45,6 @@ successes = Table(
     metadata,
     Column("id", String, primary_key=True),
     Column("namespace_id", String, nullable=False),
-    Column("subject_id", String, nullable=False),
     Column("input_source_id", String, nullable=False),
     Column("record", JSON, nullable=False),
 )

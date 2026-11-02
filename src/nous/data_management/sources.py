@@ -1,7 +1,6 @@
 """Source lifecycle acts on support roots; historical cognition is retained."""
 
 import json
-from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from hashlib import sha256
 from itertools import batched
@@ -14,8 +13,8 @@ from nous_sdk.contracts import (
     CognitiveRef,
     DomainError,
     MemoryBody,
-    MemoryChange,
     RecordsQuery,
+    RetentionChange,
     SourceCommand,
     SourcePreview,
     SourceResult,
@@ -26,9 +25,10 @@ from sqlalchemy import select, update
 
 from nous.cognition.lifecycle import selectable
 from nous.cognition.lifecycle import snapshot as retention_snapshot
+from nous.cognition.records import CognitiveRecords
 from nous.cognition.schema import revisions, vectors
-from nous.cognition.service import CognitionService
-from nous.identity.access import require_subject_in
+from nous.data_management.lifecycle import DataLifecycleService
+from nous.identity.access import require_namespace_in
 from nous.material.service import materials, observations, require_observation_in, source_permitted
 from nous.platform.content import ContentStore
 from nous.platform.persistence import Authority, ReadView, WriteTx
@@ -47,32 +47,21 @@ class SourceService:
     def __init__(
         self,
         authority: Authority,
-        cognition: CognitionService,
-        purge_in: Callable[[WriteTx, tuple[str, ...]], Awaitable[None]] | None = None,
+        cognition: CognitiveRecords,
         content_store: ContentStore | None = None,
-        invalidate: Callable[[], Awaitable[None]] | None = None,
-        purge_context_in: Callable[
-            [WriteTx, CallContext, tuple[CognitiveRef, ...]], Awaitable[None]
-        ]
-        | None = None,
+        *,
+        lifecycle: DataLifecycleService,
     ) -> None:
-        self.authority, self.cognition = authority, cognition
-        self.purge_in = purge_in
+        self.authority, self.cognition = (authority, cognition)
         self.content_store = content_store
-        self.invalidate = invalidate
-        self.purge_context_in = purge_context_in
+        self.lifecycle = lifecycle
 
     async def purge_namespace_in(self, tx: WriteTx, ctx: CallContext) -> tuple[str, ...]:
         """Retire all supporting originals inside an admitted Namespace removal."""
         from nous.identity.access import require_namespace_in
 
         namespace = await require_namespace_in(tx, ctx, purpose="management")
-        if (
-            ctx.subject_id is not None
-            or ctx.source_groups()
-            or not namespace.deleted
-            or not namespace.purging
-        ):
+        if ctx.source_groups() or namespace.state != "trashed" or (not namespace.purging):
             raise DomainError(
                 "namespace_purge_scope_forbidden",
                 "Original removal requires the admitted complete Namespace",
@@ -95,8 +84,7 @@ class SourceService:
                 .where(observations.c.id == row["id"])
                 .values(active=False, record={**row["record"], "purged": True})
             )
-        if self.purge_in:
-            await self.purge_in(tx, material_ids)
+        await self.lifecycle.purge_model_inputs_in(tx, material_ids)
         detached: list[str] = []
         if self.content_store:
             for identifier in material_ids:
@@ -108,13 +96,10 @@ class SourceService:
             return await self.list_in(view, ctx)
 
     async def list_in(self, view: ReadView | WriteTx, ctx: CallContext):
-        await require_subject_in(view, ctx)
+        await require_namespace_in(view, ctx)
         rows = (
             await view.connection.execute(
-                select(observations).where(
-                    observations.c.namespace_id == ctx.namespace_id,
-                    observations.c.subject_id == ctx.subject_id,
-                )
+                select(observations).where(observations.c.namespace_id == ctx.namespace_id)
             )
         ).mappings()
         return [
@@ -135,7 +120,7 @@ class SourceService:
         retention_expectations: tuple[RetentionExpectation, ...] = (),
         action: Literal["trash", "restore", "purge"] = "trash",
     ) -> SourcePreview:
-        await require_subject_in(view, ctx)
+        await require_namespace_in(view, ctx)
         await self.cognition.require_retention_preconditions_in(view, ctx, retention_expectations)
         observation_ids, objects = await self.resolve_selection_in(
             view, ctx, observation_ids, references, source_names, records
@@ -157,9 +142,7 @@ class SourceService:
         rows = (
             await view.connection.execute(
                 select(revisions.c.record).where(
-                    revisions.c.namespace_id == ctx.namespace_id,
-                    revisions.c.subject_id == ctx.subject_id,
-                    revisions.c.head.is_(True),
+                    revisions.c.namespace_id == ctx.namespace_id, revisions.c.head.is_(True)
                 )
             )
         ).scalars()
@@ -168,7 +151,7 @@ class SourceService:
             if (
                 record.reference.id not in direct
                 and record.reference.id not in purge_plan
-                and not selected.intersection(record.source_roots)
+                and (not selected.intersection(record.source_roots))
             ):
                 continue
             if not await self.cognition.visible_in(view, ctx, record, purpose="management"):
@@ -252,20 +235,21 @@ class SourceService:
             ctx,
             command.operation_id,
             operation_kind=f"sources.{kind}",
-            scope=ctx.require_subject(),
+            scope=ctx.namespace_id,
             payload=command.operation_payload(),
         ) as tx:
-            await require_subject_in(tx, ctx)
+            await require_namespace_in(tx, ctx)
             if tx.replayed:
                 result = SourceResult.model_validate(tx.replay_result)
                 await self.authorize_result_in(tx, ctx, result)
             else:
                 result, detached = await self.change_in(tx, ctx, command, kind)
+                from nous.retrieval.maintenance import enqueue_index_in
+
+                await enqueue_index_in(tx, ctx)
                 tx.result(result)
         if detached and self.content_store:
             await self.content_store.purge(ctx, detached)
-        if self.invalidate:
-            await self.invalidate()
         return result
 
     async def change_in(
@@ -325,7 +309,6 @@ class SourceService:
                 .values(active=kind == "restore", record=value)
             )
             if kind == "purge":
-                # Shared bytes remain while any surviving source still needs them.
                 peers = (
                     (
                         await tx.connection.execute(
@@ -352,23 +335,21 @@ class SourceService:
                     )
                     if self.content_store:
                         detached.extend(await self.content_store.detach_in(tx, row["material_id"]))
-                    if self.purge_in:
-                        await self.purge_in(tx, (row["material_id"],))
+                    await self.lifecycle.purge_model_inputs_in(tx, (row["material_id"],))
             if kind in {"trash", "purge"}:
-                # Derived assets are removed for retired objects; raw revisions remain historical.
                 for reference in preview.retiring:
                     await tx.connection.execute(
                         vectors.delete().where(vectors.c.reference == reference.exact())
                     )
         if kind == "purge":
-            if self.purge_in:
-                await self.purge_in(tx, ())
+            await self.lifecycle.purge_model_inputs_in(tx, ())
             retired = await self.cognition.retire_unsupported_in(tx, ctx)
             detached.extend(await purge_artifacts_in(self, tx, ctx))
             retired += await self.cognition.retire_unsupported_in(tx, ctx)
             await self._purge_import_payloads_in(tx, ctx)
-            if self.purge_context_in:
-                await self.purge_context_in(tx, ctx, tuple(dict.fromkeys(retired)))
+            await self.lifecycle.purge_cognitive_references_in(
+                tx, ctx, tuple(dict.fromkeys(retired))
+            )
         if kind != "trash":
             changed_objects = await self.change_objects_in(
                 tx, ctx, preview.references, kind, command
@@ -392,10 +373,10 @@ class SourceService:
             references=tuple(changed_objects),
             affected=preview.affected,
             retired=tuple(
-                ref for key, ref in before_available.items() if key not in after_available
+                (ref for key, ref in before_available.items() if key not in after_available)
             ),
             restored=tuple(
-                ref for key, ref in after_available.items() if key not in before_available
+                (ref for key, ref in after_available.items() if key not in before_available)
             ),
             commit_seq=tx.commit_seq,
         )
@@ -403,7 +384,6 @@ class SourceService:
             source_operations.insert().values(
                 id=source_operation_id,
                 namespace_id=ctx.namespace_id,
-                subject_id=ctx.require_subject(),
                 record={
                     "caller_id": ctx.caller_id,
                     "requested_by": command.requested_by,
@@ -413,7 +393,7 @@ class SourceService:
                 },
             )
         )
-        return result, detached
+        return (result, detached)
 
     async def change_objects_in(
         self,
@@ -459,10 +439,10 @@ class SourceService:
             elif previous.deleted == (kind == "trash"):
                 changed = previous
             elif isinstance(previous.body, MemoryBody):
-                changed = await self.cognition.change_memory_in(
+                changed = await self.cognition.change_retention_in(
                     tx,
                     ctx,
-                    MemoryChange(
+                    RetentionChange(
                         reference=reference,
                         action="trash" if kind == "trash" else "restore",
                         reason=command.reason,
@@ -483,8 +463,7 @@ class SourceService:
             (
                 await tx.connection.execute(
                     select(observations.c.material_id, observations.c.record).where(
-                        observations.c.namespace_id == ctx.namespace_id,
-                        observations.c.subject_id == ctx.subject_id,
+                        observations.c.namespace_id == ctx.namespace_id
                     )
                 )
             )
@@ -499,10 +478,7 @@ class SourceService:
         owned = (
             (
                 await tx.connection.execute(
-                    select(catalogs).where(
-                        catalogs.c.namespace_id == ctx.namespace_id,
-                        catalogs.c.subject_id == ctx.subject_id,
-                    )
+                    select(catalogs).where(catalogs.c.namespace_id == ctx.namespace_id)
                 )
             )
             .mappings()
@@ -568,7 +544,7 @@ class SourceService:
             context = row["record"].get("context", {})
             if (
                 context.get("namespace_id") == ctx.namespace_id
-                and context.get("subject_id") == ctx.subject_id
+                and context.get("namespace_id") == ctx.namespace_id
                 and set(row["record"].get("material_ids", ())).intersection(purged_materials)
             ):
                 await tx.connection.execute(
@@ -576,8 +552,7 @@ class SourceService:
                     .where(requests.c.id == row["id"])
                     .values(record={**row["record"], "command": None, "purged": True})
                 )
-        if self.purge_in:
-            await self.purge_in(tx, tuple(sorted(purged_materials)))
+        await self.lifecycle.purge_model_inputs_in(tx, tuple(sorted(purged_materials)))
 
         def affected_receipt(value: JsonValue) -> bool:
             if isinstance(value, list):
@@ -595,8 +570,12 @@ class SourceService:
                 if (
                     isinstance(source_roots, list)
                     and source_roots
-                    and not any(
-                        root in live_observations for root in source_roots if isinstance(root, str)
+                    and (
+                        not any(
+                            root in live_observations
+                            for root in source_roots
+                            if isinstance(root, str)
+                        )
                     )
                 ):
                     return True
@@ -625,7 +604,7 @@ class SourceService:
             ctx,
             command.operation_id + ":submit",
             operation_kind="sources.submit_trash",
-            scope=ctx.require_subject(),
+            scope=ctx.namespace_id,
             payload=command.operation_payload(),
         ) as tx:
             if tx.replayed:
@@ -649,7 +628,7 @@ class SourceService:
             return tx.result(job.workflow_id)
 
     async def run_trash(self, context: JsonValue, payload: JsonValue) -> dict[str, JsonValue]:
-        ctx, command = CallContext.model_validate(context), SourceCommand.model_validate(payload)
+        ctx, command = (CallContext.model_validate(context), SourceCommand.model_validate(payload))
         result = await self.trash(ctx, command)
         ids = [ref.id for ref in result.retired if ref.kind == "memory"]
         return TypeAdapter(dict[str, JsonValue]).validate_python(

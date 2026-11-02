@@ -38,7 +38,6 @@ def adopt_images(
     events: list[BundleObservation],
     materials: list[BundleMaterial],
     namespace: str,
-    subject: str,
     now: TimePoint,
     recorded: str,
 ) -> DerivedBundle:
@@ -144,7 +143,6 @@ def adopt_images(
                         id=identity(f"image-description:{key}:{index}"), revision=1
                     ),
                     namespace_id=namespace,
-                    subject_id=subject,
                     inputs=(
                         DerivationInput(
                             ordinal=0,

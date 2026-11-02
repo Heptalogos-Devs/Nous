@@ -96,7 +96,6 @@ async def embedding_sync(
                 select(revisions.c.record)
                 .where(
                     revisions.c.namespace_id == ctx.namespace_id,
-                    revisions.c.subject_id == ctx.require_subject(),
                     revisions.c.head.is_(True),
                 )
                 .order_by(revisions.c.commit_seq, revisions.c.id)

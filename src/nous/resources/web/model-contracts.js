@@ -38,7 +38,7 @@ export async function showModelContract(role, editPrompt) {
       throw new Error(t("web-connection-changed"));
     return api(`${path}?${params}`, { method, body });
   }
-  let contract = await request("/api/models/contract", { role });
+  let contract = await request("/api/v1/models/contract", { role });
   const dialog = el("dialog", "model-contract");
   activeDialog = dialog;
   dialog.addEventListener("close", () => {
@@ -96,7 +96,7 @@ export async function showModelContract(role, editPrompt) {
   const preview = message(
     button("", async () => {
       const requested = editGeneration;
-      const value = await request("/api/models/preview", {
+      const value = await request("/api/v1/models/preview", {
         role,
         variant: variants.value,
         input: JSON.parse(input.value),
@@ -118,7 +118,7 @@ export async function showModelContract(role, editPrompt) {
     invalidatePreview();
     setDisabled(preview, true);
     try {
-      const next = await request("/api/models/contract", { role, variant: variants.value });
+      const next = await request("/api/v1/models/contract", { role, variant: variants.value });
       if (requested !== variantGeneration) return;
       contract = next;
       renderContract();
@@ -135,11 +135,11 @@ export async function showModelContract(role, editPrompt) {
     button("", async () => {
       const submitted = template.value;
       await request(
-        `/api/prompts/${encodeURIComponent(contract.prompt_id)}`,
+        `/api/v1/prompts/${encodeURIComponent(contract.prompt_id)}`,
         { operation_id: op(), template: submitted },
         "PUT",
       );
-      contract = await request("/api/models/contract", { role, variant: variants.value });
+      contract = await request("/api/v1/models/contract", { role, variant: variants.value });
       if (template.value === submitted) template.value = contract.prompt.template;
       renderContract();
       updateDraft();

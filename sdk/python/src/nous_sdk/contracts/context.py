@@ -9,6 +9,8 @@ from pydantic import Field, JsonValue, model_validator
 
 from .cognition import CognitiveRecord, CognitiveRef, EpistemicStance
 from .common import Contract, Operation, TimePoint
+from .history import HistorySummary, WorkingHistoryGroup
+from .media import MediaReference
 from .model_roles import InvocationSnapshot
 from .retrieval import QueryRequest
 from .social import SymbolSelection
@@ -60,6 +62,13 @@ class ContextCursor(Contract):
 
 
 class ContextPrepare(Operation):
+    trigger: Literal["ordinary", "task_change", "tool_result", "conflict", "resume", "budget"] = (
+        "ordinary"
+    )
+    present_sources: tuple[ContextTarget, ...] = ()
+    working_sources: tuple[ContextTarget, ...] = ()
+    working_groups: tuple[WorkingHistoryGroup, ...] = ()
+    include_optional: bool = True
     session_id: str = Field(min_length=1)
     consumer_id: str = Field(min_length=1)
     instance_id: str = Field(min_length=1)
@@ -100,7 +109,7 @@ class EpistemicView(Contract):
 class ContextProjection(Contract):
     id: str
     namespace_id: str
-    subject_id: str
+
     session_id: str
     consumer_id: str
     instance_id: str
@@ -113,6 +122,7 @@ class ContextProjection(Contract):
     recorded_at: str
     commit_seq: int
     steward_call_id: str | None = None
+    steward_decision: StewardDecision | None = None
     degradations: tuple[str, ...] = ()
 
 
@@ -138,17 +148,21 @@ class ContextPreparation(Contract):
 class HostInputMeasurement(Contract):
     input_tokens: int = Field(ge=0)
     reserved_output_tokens: int = Field(ge=0)
-    context_window_tokens: int = Field(gt=0)
+    context_window_tokens: int | None = Field(default=None, gt=0)
     source: str = Field(min_length=1, max_length=256)
 
     @model_validator(mode="after")
     def within_window(self) -> HostInputMeasurement:
-        if self.input_tokens + self.reserved_output_tokens > self.context_window_tokens:
+        if (
+            self.context_window_tokens is not None
+            and self.input_tokens + self.reserved_output_tokens > self.context_window_tokens
+        ):
             raise ValueError("the complete input and reserved output exceed the context window")
         return self
 
 
 class ContextAdmissionCommand(Operation):
+    host_sources: tuple[ContextTarget, ...] = ()
     preparation_id: str
     invocation_id: str = Field(min_length=1)
     applied_segment_ids: tuple[str, ...]
@@ -161,7 +175,7 @@ class ContextAdmission(Contract):
     id: str
     projection_id: str
     namespace_id: str
-    subject_id: str
+
     session_id: str
     consumer_id: str
     instance_id: str
@@ -185,6 +199,17 @@ class ContextUse(Contract):
 
 
 class ContextInvocationOutput(Contract):
+    raw_source: MediaReference | None = None
+    content: JsonValue = None
+    reasoning: JsonValue = None
+    usage: dict[str, JsonValue] | None = None
+
+    @model_validator(mode="after")
+    def retained_content(self):
+        if self.content is None and self.native_model_call_id is None and self.raw_source is None:
+            raise ValueError("Retain the complete model output or its native model-call reference")
+        return self
+
     model: str | None = None
     provider: str | None = None
     response_id: str | None = None
@@ -279,7 +304,7 @@ class OpenContextSession(Operation):
 class ContextSession(Contract):
     id: str
     namespace_id: str
-    subject_id: str
+
     closed: bool
     recorded_at: str
     closed_at: str | None = None
@@ -349,7 +374,7 @@ class WorkContext(Contract):
     purged: bool = False
     id: str
     namespace_id: str
-    subject_id: str
+
     state: Literal["open", "suspended", "ended"] = "open"
     revision: int = Field(ge=1)
     content: WorkContextContent
@@ -384,6 +409,9 @@ class ContextConsumerPolicy(Contract):
     allowed_kinds: tuple[str, ...] = ()
     allow_media: bool = True
     steward_role: str | None = None
+    steward_max_tool_calls: int = Field(default=3, ge=0, le=16)
+    steward_max_model_requests: int = Field(default=4, ge=1, le=16)
+    steward_timeout_seconds: float = Field(default=30, gt=0, le=300)
 
 
 class ContextsPolicy(Contract):
@@ -399,17 +427,25 @@ class ContextsPolicy(Contract):
     resident_idle_seconds: int = Field(default=86400, ge=60)
 
 
-class StewardProposal(Contract):
-    selected_ids: tuple[str, ...] = Field(default=(), max_length=64)
-    summary: str | None = Field(default=None, max_length=8192)
+class StewardDecision(Contract):
+    selection_note: str | None = None
+    group_summaries: tuple[HistorySummary, ...] = ()
+    evict: tuple[ContextTarget, ...] = ()
+    promote: tuple[ContextTarget, ...] = ()
+    work_summary: str | None = None
+    unresolved: tuple[str, ...] = ()
+    sources: tuple[ContextTarget, ...] = ()
+    producer_call_id: str | None = None
+    producer_call_ids: tuple[str, ...] = ()
 
-    @model_validator(mode="after")
-    def selections(self) -> StewardProposal:
-        if len(set(self.selected_ids)) != len(self.selected_ids):
-            raise ValueError("Steward selections must be distinct")
-        if self.summary and not self.selected_ids:
-            raise ValueError("Steward interpretation requires selected sources")
-        return self
+
+class SelectionResult(Contract):
+    paragraphs: list[int] = Field(
+        default_factory=list, max_length=64, description="本批相关段落的编号，从1开始"
+    )
+    note: str | None = Field(
+        default=None, max_length=512, description="关键歧义或缺少必要信息时的简短线索；其它情况留空"
+    )
 
 
 class ContextPreparationJob(Contract):

@@ -9,7 +9,6 @@ requests = Table(
     metadata,
     Column("id", String, primary_key=True),
     Column("namespace_id", String, nullable=False, index=True),
-    Column("subject_id", String, nullable=False),
     Column("record", JSON, nullable=False),
     Column("commit_seq", Integer, nullable=False),
 )
@@ -19,7 +18,6 @@ contents = Table(
     metadata,
     Column("key", String, primary_key=True),
     Column("namespace_id", String, nullable=False, index=True),
-    Column("subject_id", String, nullable=False),
     Column("record", JSON, nullable=False),
     Column("commit_seq", Integer, nullable=False),
 )
@@ -40,7 +38,8 @@ subscriptions = Table(
 )
 
 space_retirements = Table(
-    "vector_space_retirements", metadata,
+    "vector_space_retirements",
+    metadata,
     Column("namespace_id", String, primary_key=True),
     Column("space_id", String, primary_key=True),
     Column("commit_seq", Integer, nullable=False),

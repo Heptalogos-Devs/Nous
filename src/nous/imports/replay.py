@@ -19,10 +19,10 @@ async def input_context_in(
     from pydantic import TypeAdapter
 
     captured = CallContext.model_validate(row["context"])
-    if (captured.caller_id, captured.namespace_id, captured.subject_id) != (
+    if (captured.caller_id, captured.namespace_id, captured.namespace_id) != (
         ctx.caller_id,
         ctx.namespace_id,
-        ctx.subject_id,
+        ctx.namespace_id,
     ):
         raise DomainError(
             "import_request_not_found", "Import request belongs to another caller scope"
@@ -97,10 +97,10 @@ async def read_admit_result(self: ImportService, ctx: CallContext, request_id: s
         if row is None or row.get("kind") != "files":
             raise DomainError("import_request_not_found", "Import request is unavailable")
         captured = CallContext.model_validate(row["context"])
-        if (captured.caller_id, captured.namespace_id, captured.subject_id) != (
+        if (captured.caller_id, captured.namespace_id, captured.namespace_id) != (
             ctx.caller_id,
             ctx.namespace_id,
-            ctx.subject_id,
+            ctx.namespace_id,
         ):
             raise DomainError(
                 "import_request_not_found", "Import request belongs to another caller scope"
@@ -113,7 +113,7 @@ async def read_admit_result(self: ImportService, ctx: CallContext, request_id: s
         ctx,
         command.operation_id,
         operation_kind="imports.manifest",
-        scope=ctx.require_subject(),
+        scope=ctx.namespace_id,
         payload=command,
     )
     if receipt is None:
@@ -129,7 +129,6 @@ async def read_admit_result(self: ImportService, ctx: CallContext, request_id: s
                     select(successes.c.record).where(
                         successes.c.id == success_id,
                         successes.c.namespace_id == ctx.namespace_id,
-                        successes.c.subject_id == ctx.subject_id,
                     )
                 )
                 if fact is None:

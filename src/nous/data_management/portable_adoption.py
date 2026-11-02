@@ -23,7 +23,7 @@ from nous_sdk.contracts import (
     EpistemicStance,
     EvidenceLink,
     MemoryBody,
-    SubjectBundle,
+    NamespaceBundle,
     TimePoint,
     TimeRange,
 )
@@ -53,7 +53,7 @@ def timestamp(value: JsonValue) -> TimePoint | None:
     return TimePoint(coordinate=round(value * 1000))
 
 
-def normalize(loaded: PortableArchive, data: bytes) -> SubjectBundle:
+def normalize(loaded: PortableArchive, data: bytes) -> NamespaceBundle:
     """The actual archive and image bytes are retained; no task or file-success is invented."""
     manifest = loaded.manifest
     digest = sha256(data).hexdigest()
@@ -61,7 +61,7 @@ def normalize(loaded: PortableArchive, data: bytes) -> SubjectBundle:
     def identity(key: str) -> str:
         return str(uuid5(NAMESPACE_URL, f"nous:portable:{digest}:{key}"))
 
-    namespace_id, subject_id = identity("namespace"), identity("subject")
+    namespace_id = identity("namespace")
     created = manifest.get("created_at")
     if not isinstance(created, str):
         raise DomainError("bundle_time", "Portable archive must retain its actual creation time")
@@ -105,7 +105,6 @@ def normalize(loaded: PortableArchive, data: bytes) -> SubjectBundle:
             {
                 "id": observation_id,
                 "namespace_id": namespace_id,
-                "subject_id": subject_id,
                 "material_id": material_id,
                 "kind": "import",
                 "origin": {"package_id": package.id},
@@ -121,7 +120,6 @@ def normalize(loaded: PortableArchive, data: bytes) -> SubjectBundle:
             BundleObservation(
                 id=observation_id,
                 namespace_id=namespace_id,
-                subject_id=subject_id,
                 material_id=material_id,
                 kind="import",
                 active=True,
@@ -165,7 +163,6 @@ def normalize(loaded: PortableArchive, data: bytes) -> SubjectBundle:
             CognitiveRecord(
                 reference=ref,
                 namespace_id=namespace_id,
-                subject_id=subject_id,
                 body=body,
                 evidence=links,
                 source_roots=roots,
@@ -425,7 +422,6 @@ def normalize(loaded: PortableArchive, data: bytes) -> SubjectBundle:
         observations,
         materials,
         namespace_id,
-        subject_id,
         now,
         created,
     )
@@ -447,12 +443,11 @@ def normalize(loaded: PortableArchive, data: bytes) -> SubjectBundle:
                 "material:" + identity("material:" + str(occurrence["occurrence_id"]))
             )
     vector_assets = import_vectors(loaded, vector_targets, image_targets)
-    return SubjectBundle(
+    return NamespaceBundle(
         package=package,
         content_level="full" if loaded.manifest["content_level"] == "full" else "knowledge",
         id=identity("bundle"),
         namespace_id=namespace_id,
-        subject_id=subject_id,
         authority_commit_seq=0,
         cognition=tuple(records),
         materials=tuple(materials),

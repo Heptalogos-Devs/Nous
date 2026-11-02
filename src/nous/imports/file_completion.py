@@ -40,7 +40,7 @@ async def complete_files(
         ctx,
         command.operation_id + ":complete",
         operation_kind="imports.complete",
-        scope=ctx.require_subject(),
+        scope=ctx.namespace_id,
         payload=command,
     ) as tx:
         if tx.replayed:
@@ -92,7 +92,6 @@ async def complete_files(
                 await tx.connection.execute(
                     select(successes.c.record).where(
                         successes.c.namespace_id == ctx.namespace_id,
-                        successes.c.subject_id == ctx.require_subject(),
                         successes.c.input_source_id == source_id,
                     )
                 )
@@ -120,7 +119,6 @@ async def complete_files(
                     successes.insert().values(
                         id=fact.id,
                         namespace_id=ctx.namespace_id,
-                        subject_id=ctx.require_subject(),
                         input_source_id=source_id,
                         record=fact.model_dump(mode="json"),
                     )

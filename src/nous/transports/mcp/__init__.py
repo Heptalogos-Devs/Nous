@@ -1,361 +1,216 @@
-"""Namespace-bound MCP tools consume the same public service contracts."""
+"""Small, Namespace-bound MCP operations over the public SDK."""
+
+from __future__ import annotations
 
 import json
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncIterator, Awaitable
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import uuid4
 
 from nous_sdk import NousClient
-from nous_sdk.amemorix import AMemorixAdapter
-from nous_sdk.amemorix.contracts import ProfileAdminInput
-from nous_sdk.contracts import (
-    AdmitFiles,
-    AdoptCognition,
-    ContactMaterial,
-    DomainError,
-    QueryRequest,
-)
-from nous_sdk.contracts.context import (
-    ContextAdmissionCommand,
-    ContextPrepare,
-    ContextReport,
-)
-from nous_sdk.contracts.dataset_imports import BackfillSourceTimes, ImportDataset
-from nous_sdk.errors import NousError as ClientError
-from nous_sdk.presentation import query_text
-from nous_sdk.types import JsonObject
-from pydantic import JsonValue, TypeAdapter
+from nous_sdk.contracts import DomainError
+from nous_sdk.contracts.context import ChangeWorkContext, WorkContextContent
+from nous_sdk.errors import NousError
+from nous_sdk.namespace import NamespaceClient
+from nous_sdk.presentation import present
+from pydantic import Field, JsonValue, TypeAdapter
 
 from mcp.server import MCPServer
-from mcp.server.mcpserver.exceptions import ResourceError, ToolError
-from mcp.types import CallToolResult, TextContent
-from nous.platform.errors import NousError
-from nous.platform.observability import configure_logging
+from mcp.server.mcpserver import Context
+from mcp.server.mcpserver.exceptions import ToolError
+from mcp.types import CallToolResult, TextContent, ToolAnnotations
 
-from .entities import register_entities
-from .maintenance import register_maintenance
-from .management import register_management
+
+def result(value: object) -> CallToolResult:
+    data = TypeAdapter(dict[str, JsonValue]).validate_python(present(value))
+    text = data.get("text")
+    if not isinstance(text, str):
+        text = json.dumps(data, ensure_ascii=False, indent=2)
+    return CallToolResult(content=[TextContent(type="text", text=text)], structured_content=data)
+
+
+async def complete(operation: Awaitable[object]) -> CallToolResult:
+    try:
+        return result(await operation)
+    except (NousError, DomainError, ValueError) as error:
+        raise ToolError(str(error)) from error
+
+
+def create_server(
+    instance: Path,
+    url: str,
+    namespace: str,
+    credential_file: Path | None = None,
+    *,
+    read_only: bool = False,
+) -> MCPServer:
+    @asynccontextmanager
+    async def lifespan(server: MCPServer) -> AsyncIterator[NamespaceClient]:
+        async with NousClient(
+            url, credential_file=credential_file or instance / "credentials" / "admin.token"
+        ) as root:
+            yield await root.namespace(namespace)
+
+    server = MCPServer(
+        "Nous",
+        instructions="Search with nous_query, then read returned references with nous_read. Sources and earlier revisions remain available. Work references retain a continuing goal and its reading anchors.",
+        lifespan=lifespan,
+    )
+    read = ToolAnnotations(read_only_hint=True, destructive_hint=False)
+    write = ToolAnnotations(read_only_hint=False, destructive_hint=False)
+
+    def bound(ctx: Context[NamespaceClient, object]) -> NamespaceClient:
+        return ctx.request_context.lifespan_context
+
+    @server.tool(annotations=read)
+    async def nous_query(
+        ctx: Context[NamespaceClient, object],
+        query: str,
+        context: str | None = None,
+        limit: Annotated[int, Field(ge=1, le=50)] = 8,
+        profile: str | None = None,
+    ) -> CallToolResult:
+        """Find relevant text using natural language or NousQL. Optional context is an existing work/session reference. Returns reusable result references."""
+        return await complete(
+            bound(ctx).query(query, context=context, limit=limit, profile=profile)
+        )
+
+    @server.tool(annotations=read)
+    async def nous_read(
+        ctx: Context[NamespaceClient, object],
+        ref: str,
+        sources: bool = False,
+        cursor: str | None = None,
+        offset: Annotated[int, Field(ge=0)] = 0,
+        max_chars: Annotated[int, Field(ge=1, le=64000)] = 12000,
+    ) -> CallToolResult:
+        """Read a result reference, object, original material, work, job or maintenance run. Set sources to inspect its provenance; use next_cursor for the next page."""
+        return await complete(
+            bound(ctx).read(ref, sources=sources, cursor=cursor, offset=offset, max_chars=max_chars)
+        )
+
+    @server.tool(annotations=read)
+    async def nous_history(
+        ctx: Context[NamespaceClient, object], ref: str, limit: Annotated[int, Field(ge=1, le=100)] = 20
+    ) -> CallToolResult:
+        """Read retained revisions of a cognitive object."""
+        values = await bound(ctx).history(ref, limit=limit)
+        return result({"items": [present(value) for value in values]})
+
+    @server.tool(annotations=read)
+    async def nous_status(ctx: Context[NamespaceClient, object], ref: str | None = None) -> CallToolResult:
+        """Inspect a job reference or the current Namespace and recent background work."""
+        scope = bound(ctx)
+        if ref:
+            return await complete(scope.jobs.get(ref))
+        return result(
+            {
+                "namespace": scope.identity.slug,
+                "state": scope.identity.state,
+                "jobs": await scope.jobs.list(limit=10),
+            }
+        )
+
+    if not read_only:
+
+        @server.tool(annotations=write)
+        async def nous_remember(
+            ctx: Context[NamespaceClient, object],
+            content: str,
+            source: str | None = None,
+            tags: list[str] | None = None,
+            pin: bool = False,
+        ) -> CallToolResult:
+            """Save explicit content as a memory with its original source, optional tags and retention pin."""
+            return await complete(
+                bound(ctx).remember(content, source=source, tags=tuple(tags or ()), pin=pin)
+            )
+
+        @server.tool(annotations=write)
+        async def nous_correct(
+            ctx: Context[NamespaceClient, object], ref: str, content: str, reason: str = "", source: str | None = None
+        ) -> CallToolResult:
+            """Correct the selected memory, retaining its earlier revision and provenance."""
+            return await complete(bound(ctx).correct(ref, content, reason=reason, source=source))
+
+        @server.tool(annotations=write)
+        async def nous_ingest(
+            ctx: Context[NamespaceClient, object], content: str, source: str | None = None, form_memory: bool = False
+        ) -> CallToolResult:
+            """Capture a document's original text and start background processing. Set form_memory only when semantic formation is wanted. Returns a job reference."""
+            job = await bound(ctx).ingest(content, source=source, form_memory=form_memory)
+            return result({"ref": job.ref, "status": "queued"})
+
+        @server.tool(annotations=write)
+        async def nous_work_open(
+            ctx: Context[NamespaceClient, object], goal: str, background: str = "", anchors: list[str] | None = None
+        ) -> CallToolResult:
+            """Start continuing work with a goal, known background and exact reading references."""
+            from nous_sdk.contracts.targets import CognitiveTarget, MediaTarget
+
+            scope = bound(ctx)
+            targets = []
+            for ref in anchors or ():
+                value = await scope.client.resolve_reference(scope.namespace_id, ref)
+                if isinstance(value.reference, (CognitiveTarget, MediaTarget)):
+                    targets.append(value.reference)
+            return await complete(
+                scope.client.change_work_context(
+                    scope.namespace_id,
+                    ChangeWorkContext(
+                        operation_id=str(uuid4()),
+                        action="create",
+                        content=WorkContextContent(
+                            purpose=goal, context_text=background, anchors=tuple(targets)
+                        ),
+                    ),
+                )
+            )
+
+        @server.tool(annotations=write)
+        async def nous_work_update(
+            ctx: Context[NamespaceClient, object],
+            ref: str,
+            background: str | None = None,
+            questions: list[str] | None = None,
+            action: Literal["edit", "pause", "resume", "end"] = "edit",
+        ) -> CallToolResult:
+            """Update work progress and unresolved questions, or pause, resume or finish the work."""
+            scope = bound(ctx)
+            current = await scope.client.work_context(scope.namespace_id, ref.removeprefix("work:"))
+            updates = {}
+            if background is not None:
+                updates["context_text"] = background
+            if questions is not None:
+                updates["unresolved_questions"] = tuple(questions)
+            return await complete(
+                scope.client.change_work_context(
+                    scope.namespace_id,
+                    ChangeWorkContext(
+                        operation_id=str(uuid4()),
+                        work_context_id=current.id,
+                        expected_revision=current.revision,
+                        action=action,
+                        content=current.content.model_copy(update=updates)
+                        if action == "edit"
+                        else None,
+                    ),
+                )
+            )
+
+    return server
 
 
 def run(
     instance: Path,
     url: str,
     namespace_id: str,
-    subject_id: str,
     credential_file: Path | None = None,
+    *,
+    read_only: bool = False,
 ) -> None:
-    mcp = MCPServer("Nous")
-    configure_logging("INFO")
-    token_path = credential_file or instance / "credentials/admin.token"
-
-    @asynccontextmanager
-    async def client() -> AsyncGenerator[NousClient]:
-        try:
-            async with NousClient(
-                url, credential_file=token_path, namespace_id=namespace_id, subject_id=subject_id
-            ) as api:
-                yield api
-        except (ClientError, DomainError, NousError) as error:
-            details = error.details if isinstance(error, DomainError) else error.context
-            raise ToolError(
-                json.dumps(
-                    {
-                        "error": {
-                            "code": error.code,
-                            "message": str(error),
-                            "context": details,
-                            "trace_id": error.trace_id if isinstance(error, ClientError) else None,
-                        }
-                    },
-                    ensure_ascii=False,
-                )
-            ) from error
-
-    async def call(tool: str, arguments: dict[str, JsonValue]) -> JsonObject:
-        async with client() as api:
-            adapter = AMemorixAdapter(api, namespace_id=namespace_id, subject_id=subject_id)
-            return await adapter.call(tool, arguments)
-
-    @mcp.tool()
-    async def enqueue_feedback_task(
-        query_tool_id: str,
-        session_id: str,
-        query_timestamp: float | str | None = None,
-        structured_content: dict[str, JsonValue] | None = None,
-    ) -> JsonObject:
-        """Schedule feedback from subsequent real messages for this supplied query."""
-        return await call(
-            "enqueue_feedback_task",
-            {
-                "query_tool_id": query_tool_id,
-                "session_id": session_id,
-                "query_timestamp": query_timestamp,
-                "structured_content": structured_content,
-            },
-        )
-
-    @mcp.tool()
-    async def memory_feedback_admin(
-        action: Literal["get", "list", "rollback"],
-        task_id: int | None = None,
-        limit: int = 50,
-        status: str | None = None,
-        reason: str = "Rollback feedback correction",
-    ) -> JsonObject:
-        """Inspect feedback tasks or roll back their native correction."""
-        return await call(
-            "memory_feedback_admin",
-            {
-                "action": action,
-                "task_id": task_id,
-                "limit": limit,
-                "status": status,
-                "reason": reason,
-            },
-        )
-
-    @mcp.tool()
-    async def search_memory(
-        query: str,
-        limit: int = 10,
-        mode: Literal["search", "time", "hybrid", "episode", "aggregate"] = "search",
-        chat_id: str = "",
-        person_id: str = "",
-    ) -> JsonObject:
-        """Search the configured subject's memories and exact provenance."""
-        return await call(
-            "search_memory",
-            {
-                "query": query,
-                "limit": limit,
-                "mode": mode,
-                "chat_id": chat_id,
-                "person_id": person_id,
-            },
-        )
-
-    @mcp.tool()
-    async def ingest_text(
-        external_id: str,
-        text: str,
-        source_type: str,
-        chat_id: str = "",
-        person_ids: tuple[str, ...] = (),
-    ) -> JsonObject:
-        """Adopt actual text with stable external identity and source attribution."""
-        return await call(
-            "ingest_text",
-            {
-                "external_id": external_id,
-                "text": text,
-                "source_type": source_type,
-                "chat_id": chat_id,
-                "person_ids": list(person_ids),
-            },
-        )
-
-    @mcp.tool()
-    async def ingest_summary(
-        external_id: str, text: str, chat_id: str, participants: tuple[str, ...] = ()
-    ) -> JsonObject:
-        """Adopt a reported conversation summary with its actual participants."""
-        return await call(
-            "ingest_summary",
-            {
-                "external_id": external_id,
-                "text": text,
-                "chat_id": chat_id,
-                "participants": list(participants),
-            },
-        )
-
-    @mcp.tool()
-    async def get_person_profile(person_id: str, chat_id: str = "", limit: int = 10) -> JsonObject:
-        """Read the configured subject's supported knowledge about a person."""
-        return await call(
-            "get_person_profile", {"person_id": person_id, "chat_id": chat_id, "limit": limit}
-        )
-
-    @mcp.tool()
-    async def memory_profile_admin(command: ProfileAdminInput) -> JsonObject:
-        """Read profiles or explicitly change aliases, profile text and exact evidence."""
-        values = command.model_dump(mode="json")
-        if not values.get("operation_id"):
-            values["operation_id"] = str(uuid4())
-        return await call("memory_profile_admin", values)
-
-    @mcp.tool()
-    async def maintain_memory(
-        action: Literal[
-            "reinforce", "weaken", "protect", "restore", "freeze", "forget", "recycle_bin"
-        ],
-        target: str = "",
-        hours: float | None = None,
-        reason: str = "",
-    ) -> JsonObject:
-        """Apply a memory lifecycle change or read the recycle bin."""
-        from uuid import uuid4
-
-        return await call(
-            "maintain_memory",
-            {
-                "action": action,
-                "target": target,
-                "hours": hours,
-                "reason": reason,
-                "operation_id": str(uuid4()),
-            },
-        )
-
-    @mcp.tool()
-    async def memory_stats() -> JsonObject:
-        """Read actual cognitive and source counts."""
-        return await call("memory_stats", {})
-
-    @mcp.tool()
-    async def memory_graph_admin(
-        query: str = "",
-        limit: int = 50,
-        action: Literal[
-            "search",
-            "get_graph",
-            "node_detail",
-            "edge_detail",
-            "create_node",
-            "rename_node",
-            "delete_node",
-            "create_edge",
-            "update_edge_weight",
-            "delete_edge",
-        ] = "search",
-        arguments: dict[str, JsonValue] | None = None,
-    ) -> JsonObject:
-        """Read graph/search/details or apply source-backed create, rename, weight and delete actions."""
-        return await call(
-            "memory_graph_admin",
-            {**(arguments or {}), "action": action, "query": query, "limit": limit},
-        )
-
-    @mcp.tool()
-    async def memory_source(target: str) -> JsonObject:
-        """Expand a precise cognitive reference's permitted provenance."""
-        async with client() as api:
-            return await AMemorixAdapter(
-                api, namespace_id=namespace_id, subject_id=subject_id
-            ).memory_source(target)
-
-    @mcp.tool(structured_output=False)
-    async def query_cognition(command: QueryRequest) -> CallToolResult:
-        """Query cognition and media. Read exact references in text; structured content holds the full result."""
-        async with client() as api:
-            result = await api.query_cognition(namespace_id, subject_id, command)
-            return CallToolResult(
-                content=[TextContent(type="text", text=query_text(result))],
-                structured_content=result.model_dump(mode="json"),
-            )
-
-    @mcp.tool()
-    async def service_status() -> JsonObject:
-        """Read the running instance status."""
-        async with client() as api:
-            return TypeAdapter(JsonObject).validate_python(await api.request("GET", "/api/status"))
-
-    @mcp.tool()
-    async def resolve_reference(reference: str, as_of_commit: int | None = None) -> JsonObject:
-        """Resolve a readable or canonical reference within the configured subject."""
-        async with client() as api:
-            return (
-                await api.resolve_reference(subject_id, reference, as_of_commit=as_of_commit)
-            ).model_dump(mode="json")
-
-    @mcp.tool()
-    async def image_memory(
-        action: str, arguments: dict[str, JsonValue] | None = None
-    ) -> JsonObject:
-        """Read, describe, search or maintain uploaded images and their actual occurrences."""
-        async with client() as api:
-            return await AMemorixAdapter(
-                api, namespace_id=namespace_id, subject_id=subject_id
-            ).invoke("image_memory", {"action": action, **(arguments or {})})
-
-    @mcp.tool()
-    async def contact_material(command: ContactMaterial) -> JsonObject:
-        """Record an actual subject encounter with an exact source and external event identity."""
-        async with client() as api:
-            return (await api.contact(namespace_id, subject_id, command)).model_dump(mode="json")
-
-    @mcp.tool()
-    async def admit_documents(command: AdmitFiles) -> JsonObject:
-        """Preserve real documents and form cognition under the supplied completion policy."""
-        async with client() as api:
-            return (await api.admit_documents(namespace_id, subject_id, command)).model_dump(
-                mode="json"
-            )
-
-    @mcp.tool()
-    async def import_dataset(command: ImportDataset) -> JsonObject:
-        """Import captured source datasets and optionally export a portable subject bundle."""
-        async with client() as api:
-            return await api.import_dataset(namespace_id, subject_id, command)
-
-    @mcp.tool()
-    async def backfill_source_times(command: BackfillSourceTimes) -> JsonObject:
-        """Recover missing source times from explicit fields, with an optional preview."""
-        async with client() as api:
-            return await api.backfill_source_times(namespace_id, subject_id, command)
-
-    @mcp.tool()
-    async def adopt_cognition(command: AdoptCognition) -> JsonObject:
-        """Adopt structured cognition supported by exact, already observed evidence."""
-        async with client() as api:
-            return (await api.adopt_cognition(namespace_id, subject_id, command)).model_dump(
-                mode="json"
-            )
-
-    @mcp.tool()
-    async def prepare_context(command: ContextPrepare) -> JsonObject:
-        """Prepare scoped cognition for one host model invocation; this does not admit its use."""
-        async with client() as api:
-            return (await api.prepare_context(namespace_id, subject_id, command)).model_dump(
-                mode="json"
-            )
-
-    @mcp.tool()
-    async def admit_context(command: ContextAdmissionCommand) -> JsonObject:
-        """Record the host's applied segments, rendered digest and complete input measurement."""
-        async with client() as api:
-            return (await api.admit_managed_context(namespace_id, subject_id, command)).model_dump(
-                mode="json"
-            )
-
-    @mcp.tool()
-    async def report_context(command: ContextReport) -> JsonObject:
-        """Report an admitted invocation's actual outcome and meaningful cognition uses."""
-        async with client() as api:
-            return (await api.report_managed_context(namespace_id, subject_id, command)).model_dump(
-                mode="json"
-            )
-
-    @mcp.tool()
-    async def read_job(job_id: str) -> JsonObject:
-        """Read a durable import or context preparation job in the bound subject."""
-        async with client() as api:
-            return (
-                await api.job(job_id, namespace_id=namespace_id, subject_id=subject_id)
-            ).model_dump(mode="json")
-
-    @mcp.resource("nous://query/manual")
-    async def query_manual() -> str:
-        """The running service's NousQL syntax and retrieval domains."""
-        try:
-            async with client() as api:
-                return await api.query_manual()
-        except ToolError as error:
-            raise ResourceError(str(error)) from error
-
-    register_management(mcp, client, namespace_id, subject_id)
-    register_maintenance(mcp, client, namespace_id, subject_id)
-    register_entities(mcp, client, namespace_id, subject_id)
-    mcp.run(transport="stdio")
+    create_server(instance, url, namespace_id, credential_file, read_only=read_only).run(
+        transport="stdio"
+    )

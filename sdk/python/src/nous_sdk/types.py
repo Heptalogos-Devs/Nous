@@ -17,7 +17,6 @@ from .contracts import (
 from .contracts.bundles import BundlePlacement
 from .contracts.common import ObservationKind, ReferenceAddresses
 from .contracts.identity import Namespace as Namespace
-from .contracts.identity import Subject as Subject
 from .contracts.imports import ImportFormat
 
 JsonObject = dict[str, JsonValue]
@@ -55,7 +54,7 @@ class Source(Contract):
     trashed_at: str | None = None
     id: str
     namespace_id: str
-    subject_id: str
+    
     material_id: str
     kind: ObservationKind
     origin: dict[str, str]
@@ -72,7 +71,6 @@ class Source(Contract):
     retry_parent_job_id: str | None = None
     validity: TimeRange | None = None
     external_event_id: str | None = None
-    consumer_subject_id: str | None = None
     caller_id: str | None = None
     contact_source: MediaReference | None = None
     participants: tuple[str, ...] = ()

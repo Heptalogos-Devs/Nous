@@ -167,6 +167,7 @@ pub(super) fn build(
     state: &StoreState,
     data: BuildData,
     token: &CancellationToken,
+    base_generation: Option<&str>,
 ) -> Result<Frozen> {
     token.check()?;
     let _active = state
@@ -189,7 +190,40 @@ pub(super) fn build(
                 state.path.display()
             )
         })?;
-    let frozen = assemble(staging.path(), generation.clone(), data, true, Some(token))?;
+    let previous = if let Some(base) = base_generation {
+        validate_generation(base)?;
+        ensure!(
+            data.vectors.is_none(),
+            "incremental lexical publication requires a lexical generation"
+        );
+        let source = state.path.join(base);
+        let previous: BuildData =
+            rmp_serde::from_read(std::fs::File::open(source.join("snapshot.msgpack"))?)?;
+        ensure!(
+            previous.vectors.is_none(),
+            "incremental lexical base must be a lexical generation"
+        );
+        let destination = staging.path().join("lexical");
+        std::fs::create_dir(&destination)?;
+        for entry in std::fs::read_dir(source.join("lexical"))? {
+            token.check()?;
+            let entry = entry?;
+            if entry.file_type()?.is_file() {
+                std::fs::copy(entry.path(), destination.join(entry.file_name()))?;
+            }
+        }
+        Some(previous)
+    } else {
+        None
+    };
+    let frozen = assemble(
+        staging.path(),
+        generation.clone(),
+        data,
+        true,
+        Some(token),
+        previous.as_ref(),
+    )?;
     token.check()?;
     let bytes = rmp_serde::to_vec_named(&frozen.data)?;
     let mut file = std::fs::File::create(staging.path().join("snapshot.msgpack"))
@@ -214,7 +248,7 @@ pub(super) fn build(
 pub(super) fn load(path: &Path, generation: String) -> Result<Frozen> {
     let data = rmp_serde::from_read(std::fs::File::open(path.join("snapshot.msgpack"))?)?;
     validate(&data)?;
-    assemble(path, generation, data, false, None)
+    assemble(path, generation, data, false, None, None)
 }
 fn assemble(
     path: &Path,
@@ -222,28 +256,59 @@ fn assemble(
     data: BuildData,
     create: bool,
     cancel: Option<&CancellationToken>,
+    previous: Option<&BuildData>,
 ) -> Result<Frozen> {
     let check = || cancel.map_or(Ok(()), CancellationToken::check);
     check()?;
     let lexical =
         RetrievalIndex::open(path.join("lexical")).context("open native lexical generation")?;
     if create {
-        let documents = data
+        let watermark = lexical.coverage()?.through_commit_seq + 1;
+        let old: BTreeMap<&str, &str> = previous
+            .map(|data| {
+                data.references
+                    .iter()
+                    .zip(&data.texts)
+                    .map(|(id, text)| (id.as_str(), text.as_str()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let current: BTreeSet<&str> = data.references.iter().map(String::as_str).collect();
+        let mut changes = data
             .references
             .iter()
             .zip(&data.texts)
+            .filter(|(id, text)| old.get(id.as_str()) != Some(&text.as_str()))
             .map(|(id, text)| IndexDocument {
                 id: id.clone(),
                 namespace_id: "snapshot".into(),
                 subject_id: "snapshot".into(),
-                commit_seq: 1,
+                commit_seq: watermark,
                 text: text.clone(),
                 deleted: false,
             })
             .collect::<Vec<_>>();
-        lexical
-            .rebuild(&documents, 1)
-            .context("build native lexical generation")?;
+        changes.extend(
+            old.keys()
+                .filter(|id| !current.contains(**id))
+                .map(|id| IndexDocument {
+                    id: (*id).to_string(),
+                    namespace_id: "snapshot".into(),
+                    subject_id: "snapshot".into(),
+                    commit_seq: watermark,
+                    text: String::new(),
+                    deleted: true,
+                }),
+        );
+        if previous.is_some() {
+            lexical
+                .apply(&changes, watermark)
+                .context("apply lexical generation delta")?;
+        } else {
+            lexical
+                .rebuild(&changes, watermark)
+                .context("build native lexical generation")?;
+        }
     }
     lexical.close().context("close native lexical writer")?;
     check()?;

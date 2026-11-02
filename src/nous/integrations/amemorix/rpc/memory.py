@@ -194,7 +194,7 @@ async def execute(method: str, values: JsonObject, rpc: RPCContext) -> JsonObjec
         payload = {key: values[key] for key in ("memory_id", "external_id", "reason") if key in values}
         async with rpc.app.authority.write(
             ctx, operation, operation_kind="amemorix.rpc.delete_memory",
-            scope=ctx.require_subject(), payload=payload,
+            scope=ctx.namespace_id, payload=payload,
         ) as tx:
             if tx.replayed:
                 changed = await rpc.app.cognition.replay_records_in(
@@ -202,7 +202,7 @@ async def execute(method: str, values: JsonObject, rpc: RPCContext) -> JsonObjec
                 )
             else:
                 record = await selected_memory(service, ctx, values)
-                changed = tx.result(await rpc.app.cognition.change_memories_in(
+                changed = tx.result(await rpc.app.memories.change_memories_in(
                     tx, ctx, MemoryChanges(
                         operation_id=operation, references=(record.reference,), action="trash",
                         reason=text_field(values, "reason"),

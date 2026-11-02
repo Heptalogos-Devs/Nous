@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-import json
+import math
 from dataclasses import dataclass
-from hashlib import sha256
 from typing import TYPE_CHECKING
 
 from nous_sdk.contracts import CallContext, DomainError
@@ -17,7 +16,9 @@ from nous_sdk.contracts.model_roles import (
     ModelRoleContract,
     ModelRoutePreview,
 )
-from pydantic import BaseModel, TypeAdapter
+from nous_sdk.contracts.prompt_compilation import CompiledPrompt, PromptMessage, TokenEstimate
+from pydantic import TypeAdapter
+from typing_extensions import TypeForm
 
 from nous.platform.configuration import ModelRoute
 from nous.platform.configuration.models import ModelConfiguration, ModelResource, RoleResource
@@ -35,7 +36,7 @@ class PreparedRole:
     routes: tuple[PreparedRoute, ...]
     role: RoleResource
     definition: RoleDefinition
-    prompt: dict[str, object]
+    prompt: CompiledPrompt
 
 
 @dataclass(frozen=True)
@@ -52,10 +53,12 @@ async def prepare_role(
     role_id: str,
     variables: dict[str, object],
     *,
-    output_type: type[BaseModel] | type[str] | None = None,
+    output_type: TypeForm[object] | None = None,
     variant: str | None = None,
     require_configured: bool = True,
     draft_template: str | None = None,
+    context_messages: tuple[PromptMessage, ...] = (),
+    max_output_tokens: int | None = None,
 ) -> PreparedRole:
     resources = ModelConfiguration.model_validate(
         (await self.configuration.effective(ctx, "models"))["value"]
@@ -67,11 +70,21 @@ async def prepare_role(
         PreparedRoute(
             route_id,
             index,
-            resources.resolve(role_id, index, require_configured=require_configured)[0],
-            resources.models[resources.routes[route_id].model],
+            resources.resolve(role_id, index, require_configured=require_configured)[0].model_copy(
+                update={
+                    "max_output_tokens": min(
+                        max_output_tokens, resources.presets[route_id].max_output_tokens
+                    )
+                }
+            )
+            if max_output_tokens is not None
+            else resources.resolve(role_id, index, require_configured=require_configured)[0],
+            resources.catalog[resources.presets[route_id].model],
         )
-        for index, route_id in enumerate(role.routes)
+        for index, route_id in enumerate(role.preset_ids())
     )
+    if max_output_tokens is not None and max_output_tokens < 1:
+        raise DomainError("model_output_budget", "The task output allocation must be positive")
     definition = self.roles.resolve(role.purpose, variant, output_type, role.output_mode)
     parsed, variables = definition.variables(variables)
     prompt = (
@@ -82,13 +95,38 @@ async def prepare_role(
             variables,
         )
     )
-    if not prompt["variable_names"]:
-        prompt["rendered"] = (
-            str(prompt["rendered"]) + "\nInput:\n" + json.dumps(variables, ensure_ascii=False)
-        )
-    if definition.transform_prompt:
-        prompt = definition.transform_prompt(prompt, parsed)
-    prompt["hash"] = sha256(str(prompt["rendered"]).encode()).hexdigest()
+    messages = (
+        tuple(message for message in prompt.messages if message.role == "system")
+        + context_messages
+        + tuple(message for message in prompt.messages if message.role != "system")
+    )
+    prompt = prompt.model_copy(
+        update={
+            "messages": messages,
+            "token_estimate": TokenEstimate(
+                text_tokens=math.ceil(
+                    sum(len(message.content.encode("utf-8")) for message in messages) / 3
+                ),
+                method="utf8_bytes_div_3",
+            ),
+        }
+    )
+    bindings = {}
+    source = variables.get("source")
+    if isinstance(source, dict):
+        bindings["source"] = {
+            key: value
+            for key, value in source.items()
+            if key in {"material_id", "observation_id", "source_material_ids"}
+        }
+    prompt = prompt.model_copy(
+        update={
+            "input_bindings": json_object(bindings),
+            "output_schema": None
+            if definition.output_type is str
+            else json_object(TypeAdapter(definition.output_type).json_schema()),
+        }
+    )
     return PreparedRole(routes, role, definition, prompt)
 
 
@@ -116,7 +154,7 @@ async def model_contract(
             reason="prompt_missing",
         ) from error
     return ModelRoleContract(
-        routing_policy=role.fallback,
+        routing_policy=role.failure_policy,
         role=request.role,
         purpose=role.purpose,
         variant=definition.variant,
@@ -144,6 +182,8 @@ async def model_preview(
         variant=request.variant,
         require_configured=False,
         draft_template=request.draft_template,
+        context_messages=request.context_messages,
+        max_output_tokens=request.max_output_tokens,
     )
     media: list[MediaInput] = []
     if request.media and self.preview_media_resolver is None:
@@ -170,7 +210,7 @@ async def model_preview(
                     route_id=item.id,
                     route_index=item.index,
                     invocation=None,
-                    capabilities=item.model.capabilities,
+                    capabilities=item.model.input_modalities,
                     configured=False,
                     unavailable=json_object(
                         {"code": error.code, "message": str(error), "details": error.details}
@@ -183,13 +223,13 @@ async def model_preview(
                     route_id=item.id,
                     route_index=item.index,
                     invocation=InvocationSnapshot.model_validate(invocation),
-                    capabilities=item.model.capabilities,
+                    capabilities=item.model.input_modalities,
                     configured=bool(item.route.model and item.route.base_url),
                 )
             )
     definition = prepared.definition
     contract = ModelRoleContract(
-        routing_policy=prepared.role.fallback,
+        routing_policy=prepared.role.failure_policy,
         role=request.role,
         purpose=prepared.role.purpose,
         variant=definition.variant,
@@ -201,12 +241,12 @@ async def model_preview(
             definition.output_type, prepared.routes[0].route.model
         ),
         prompt_id=prepared.role.prompt_id,
-        prompt=ModelPrompt.model_validate(prepared.prompt),
+        prompt=ModelPrompt.model_validate(await self.prompts.get(ctx, prepared.role.prompt_id)),
     )
     return ModelInvocationPreview(
         contract=contract,
         invocation=routes[0].invocation,
         routes=tuple(routes),
-        capabilities=prepared.routes[0].model.capabilities,
+        capabilities=prepared.routes[0].model.input_modalities,
         configured=routes[0].configured,
     )

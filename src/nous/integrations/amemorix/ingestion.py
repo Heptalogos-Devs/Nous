@@ -48,7 +48,7 @@ async def ingest(
     operation = command.operation_id or str(
         uuid5(
             NAMESPACE_URL,
-            f"nous:amemorix:{ctx.namespace_id}:{ctx.subject_id}:{command.source_type}:{command.external_id}",
+            f"nous:amemorix:{ctx.namespace_id}:{ctx.namespace_id}:{command.source_type}:{command.external_id}",
         )
     )
     payload = command.model_dump(
@@ -75,7 +75,7 @@ async def ingest(
         ctx,
         operation + ":facade",
         operation_kind="amemorix.ingest",
-        scope=ctx.require_subject(),
+        scope=ctx.namespace_id,
         payload=payload,
     )
     if replay is not None:
@@ -150,7 +150,7 @@ async def ingest(
         ctx,
         operation + ":plan",
         operation_kind="amemorix.ingest.plan",
-        scope=ctx.require_subject(),
+        scope=ctx.namespace_id,
         payload=payload,
     ) as tx:
         if tx.replayed:
@@ -226,7 +226,7 @@ async def ingest(
         ctx,
         operation + ":facade",
         operation_kind="amemorix.ingest",
-        scope=ctx.require_subject(),
+        scope=ctx.namespace_id,
         payload=payload,
     ) as tx:
         if tx.replayed:
@@ -353,7 +353,7 @@ async def adopt_host_graph(
                 id=current.reference.id
                 if current
                 else str(
-                    uuid5(NAMESPACE_URL, f"{ctx.namespace_id}:{ctx.subject_id}:entity:{name}")
+                    uuid5(NAMESPACE_URL, f"{ctx.namespace_id}:{ctx.namespace_id}:entity:{name}")
                 ),
                 expected_revision=current.reference.revision if current else 0,
                 body=body,

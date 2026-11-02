@@ -35,7 +35,7 @@ from nous_sdk.contracts.resources import (
 from pydantic import JsonValue
 from sqlalchemy import JSON, Boolean, Column, Integer, String, Table, select
 
-from nous.identity.access import require_subject_in
+from nous.identity.access import require_namespace_in
 from nous.platform.concurrency import owned_thread
 from nous.platform.persistence import Authority, ReadView, WriteTx, metadata
 
@@ -50,7 +50,7 @@ resources = Table(
     Column("id", String, primary_key=True),
     Column("revision", Integer, primary_key=True),
     Column("namespace_id", String, nullable=False, index=True),
-    Column("subject_id", String, nullable=False, index=True),
+    
     Column("head", Boolean, nullable=False, index=True),
     Column("location", JSON, nullable=False),
     Column("max_bytes", Integer, nullable=False),
@@ -96,11 +96,11 @@ class ResourceService:
         resource_id: str,
         revision: int | None = None,
     ):
-        await require_subject_in(view, ctx)
+        await require_namespace_in(view, ctx)
         statement = select(resources).where(
             resources.c.id == resource_id,
             resources.c.namespace_id == ctx.namespace_id,
-            resources.c.subject_id == ctx.subject_id,
+            
         )
         statement = (
             statement.where(resources.c.head.is_(True))
@@ -199,10 +199,10 @@ class ResourceService:
         if not 1 <= limit <= 1000:
             raise DomainError("invalid_limit", "Resource page size must be between 1 and 1000")
         async with self.authority.read(ctx) as view:
-            await require_subject_in(view, ctx)
+            await require_namespace_in(view, ctx)
             statement = select(resources.c.record).where(
                 resources.c.namespace_id == ctx.namespace_id,
-                resources.c.subject_id == ctx.subject_id,
+                
                 resources.c.head.is_(True),
             )
             if cursor is not None:
@@ -235,7 +235,7 @@ class ResourceService:
         history: bool = False,
     ) -> list[ResourceRecord]:
         statement = select(resources.c.record).where(
-            resources.c.namespace_id == ctx.namespace_id, resources.c.subject_id == ctx.subject_id
+            resources.c.namespace_id == ctx.namespace_id
         )
         if as_of_commit is None and not history:
             statement = statement.where(resources.c.head.is_(True))
@@ -295,7 +295,7 @@ class ResourceService:
                 id=reference.id,
                 revision=reference.revision,
                 namespace_id=record.namespace_id,
-                subject_id=record.subject_id,
+                
                 head=True,
                 location=location.model_dump(mode="json"),
                 max_bytes=max_bytes,
@@ -315,10 +315,10 @@ class ResourceService:
             ctx,
             command.operation_id,
             operation_kind="resource.register",
-            scope=ctx.require_subject(),
+            scope=ctx.namespace_id,
             payload=command,
         ) as tx:
-            await require_subject_in(tx, ctx)
+            await require_namespace_in(tx, ctx)
             if tx.replayed:
                 return await self._visible_in(
                     tx, ctx, ResourceRecord.model_validate(tx.replay_result)
@@ -329,7 +329,7 @@ class ResourceService:
             record = ResourceRecord(
                 reference=ResourceReference(id=str(uuid4()), revision=1),
                 namespace_id=ctx.namespace_id,
-                subject_id=ctx.require_subject(),
+                
                 name=command.name,
                 description=command.description,
                 address=command.location.address,
@@ -346,7 +346,7 @@ class ResourceService:
                     id=record.reference.id,
                     revision=1,
                     namespace_id=ctx.namespace_id,
-                    subject_id=ctx.subject_id,
+                    
                     head=True,
                     location=command.location.model_dump(mode="json"),
                     max_bytes=command.max_bytes,
@@ -367,7 +367,7 @@ class ResourceService:
             ctx,
             command.operation_id,
             operation_kind="resource.change",
-            scope=ctx.require_subject(),
+            scope=ctx.namespace_id,
             payload=command,
         ) as tx:
             if tx.replayed:
@@ -580,7 +580,7 @@ class ResourceService:
             ctx,
             command.operation_id,
             operation_kind="resource.read",
-            scope=ctx.require_subject(),
+            scope=ctx.namespace_id,
             payload=command,
         )
         if receipt:
@@ -637,7 +637,7 @@ class ResourceService:
                 ctx,
                 command.operation_id,
                 operation_kind="resource.read",
-                scope=ctx.require_subject(),
+                scope=ctx.namespace_id,
                 payload=command,
             ) as tx:
                 if tx.replayed:

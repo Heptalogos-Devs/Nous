@@ -2,16 +2,15 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
-from nous_sdk.contracts import CallContext, CognitiveRef
-
+from nous.cognition.formation import FormationService
 from nous.cognition.models import ModelServices
-from nous.cognition.service import CognitionService
+from nous.cognition.records import CognitiveRecords
 from nous.material.service import MaterialService
+from nous.platform.configuration.service import ConfigurationService
 from nous.platform.content import ContentStore
-from nous.platform.persistence import Authority, WriteTx
+from nous.platform.persistence import Authority
 
 from . import (
     admission,
@@ -75,18 +74,22 @@ class ImportService:
     def __init__(
         self,
         authority: Authority,
-        cognition: CognitionService,
+        cognition: CognitiveRecords,
         models: ModelServices,
         content_store: ContentStore | None = None,
         materials: MaterialService | None = None,
+        *,
+        projection: VectorProjectionService | None = None,
+        media_imports: MediaImportService | None = None,
+        formation: FormationService,
+        configuration: ConfigurationService,
     ) -> None:
+        self.configuration = configuration
+        self.formation = formation
         self.authority = authority
         self.cognition = cognition
         self.models = models
         self.materials = materials or MaterialService(authority, content_store)
         self.content_store = self.materials.content_store
-        self.projection: VectorProjectionService | None = None
-        self.media_imports: MediaImportService | None = None
-        self.on_contact_in: (
-            Callable[[WriteTx, CallContext, str, tuple[CognitiveRef, ...]], Awaitable[None]] | None
-        ) = None
+        self.projection = projection
+        self.media_imports = media_imports

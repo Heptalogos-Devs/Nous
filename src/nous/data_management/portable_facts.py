@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from hashlib import sha256
 
-from nous_sdk.contracts import CognitiveRecord, EntityBody, SubjectBundle
+from nous_sdk.contracts import CognitiveRecord, EntityBody, NamespaceBundle
 from nous_sdk.contracts.fact_body import FactClaimBody, PersonFactScope
 from pydantic import JsonValue, TypeAdapter
 
@@ -12,7 +12,7 @@ from nous.cognition.fact_identity import normalized
 from nous.cognition.projection import evidence_in
 
 
-def external_scope(body: FactClaimBody, bundle: SubjectBundle) -> str:
+def external_scope(body: FactClaimBody, bundle: NamespaceBundle) -> str:
     if not isinstance(body.scope, PersonFactScope):
         return body.scope.conversation_ref
     person = next((row for row in bundle.cognition if row.reference == body.scope.person), None)
@@ -25,7 +25,7 @@ def external_scope(body: FactClaimBody, bundle: SubjectBundle) -> str:
     return body.scope.person.id
 
 
-def claim_key(body: FactClaimBody, bundle: SubjectBundle) -> str:
+def claim_key(body: FactClaimBody, bundle: NamespaceBundle) -> str:
     from .portable import canonical
 
     return sha256(
@@ -42,7 +42,7 @@ def claim_key(body: FactClaimBody, bundle: SubjectBundle) -> str:
 
 
 def project_facts(
-    bundle: SubjectBundle,
+    bundle: NamespaceBundle,
     tables: dict[str, list[dict[str, JsonValue]]],
     selected: dict[str, CognitiveRecord],
 ) -> None:

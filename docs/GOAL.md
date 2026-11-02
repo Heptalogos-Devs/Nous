@@ -1,6 +1,6 @@
 # Nous 开发目标与计划
 
-建设可独立安装、配置和管理的长期认知服务：支持普通智能体的记忆与知识工作，也作为人工主体的认知与人格中心。完整产品需求由[项目宪纲](https://github.com/Heptalogos-Devs/Architecture-Vault/blob/main/项目宪纲.md)定义。本计划统一开发范围、有效技术决定和当前工作；[重构进展](python-native-plan/progress-report.md)记录本次重构的实际成果与证据。
+建设可独立安装、配置和管理的长期认知服务：支持普通智能体的记忆与知识工作，也作为人工主体的认知与人格中心。完整产品需求由[项目宪纲](https://github.com/Heptalogos-Devs/Architecture-Vault/blob/main/项目宪纲.md)定义。本文件规定产品范围、架构要求和交付目标。
 
 Heptalogos 以 MaiBot 为产品基础，负责主体的世界、生活、时间、注意、选择、行动与外部效果，正式依赖 Nous 的认知接口。Nous 自己保持独立部署和通用应用价值；两者共享逻辑主体身份，各自拥有正式状态和生命周期。
 
@@ -16,22 +16,30 @@ Heptalogos 以 MaiBot 为产品基础，负责主体的世界、生活、时间�
 
 ## 架构与实现
 
+一份 Namespace 拥有独立认知状态；`mode`、`subject_key`、`enabled_features` 表达主体能力与跨产品身份。领域操作拥有业务语义，共同记录能力拥有认知身份、修订、证据、时间、生命周期和读取。组合根构造明确依赖并管理资源生命周期。
+
 Python 主应用拥有认知规则、SQLite 权威数据和事务、来源授权、模型与网络、配置、Prompt、作业及产品入口；同进程 Rust native 负责 VCP、Tantivy/Jieba、USearch 和 NousQL 纯语法。PyO3/maturin 使用批量数组和 Rust 拥有的快照，计算释放 GIL 并在线程执行；native 不访问业务数据库、Provider 或凭据。权威对象及其消费者通过清晰的领域 owner 共享规则，派生索引可以重建。
 
 采用标准 CPython 3.14、uv workspace、Basedpyright strict、Ruff；SDK 保持 Python 3.11+，native 提供 `.pyi` 和 `py.typed`。SQLAlchemy Core、aiosqlite 和 DBOS 共享 SQLite 文件，业务结果和后续入队在同一事务提交。模型生成与 Provider 协议采用 Pydantic AI、官方 SDK 和成熟实现；Jinja2、FastAPI、Typer/Rich 与官方 MCP SDK 分别承担模板和入口机制。项目负责领域语义、实际调用及费用、授权与完整用户路径。各项设计见 [Python/native 架构](python-native-plan/README.md)。
 
-在当前 Python 模块中完善实际能力，优先使用成熟依赖；旧实现仅供研究，可按实际需要吸收算法思路或必要的纯计算。A-Memorix 的专有公共合同由边界适配器提供，领域与数据库保持 Nous 自己的模型。公开客户端和真实持久数据按实际边界处理，保留来源和历史。
+原件和大字节保存于内容存储，权威状态与元数据保存于 SQLite。Wave 维护可重建的固定索引代际，各检索通道产生候选并融合。自然语言按原文查询，可选 QueryContext 提供真实情境，NousQL 解析显式查询语法。
+
+可编辑 TOML 是业务配置的正式来源。模型执行统一绑定 Provider、Model、Preset、Role，编译有角色的消息并执行目的明确的局部任务。任务恢复复用保存的输入、结果和业务待办。
+
+优先采用成熟依赖，保留 Nous 的领域模型与完整原生操作。A-Memorix 的公共协议由仅依赖正式 SDK 的独立 `adapters/amemorix` 发行包提供。保留真实资料、来源、历史及模型结果。
 
 ## 实施依赖
 
-以完整用户链组织工作：初始化实例和主体 → 接纳真实资料与来源 → 形成并采纳认知 → 实际 embedding 和索引 → 查询、展开来源 → 重启后继续。Catalog、Unit、Output、文件成功、模型调用与任务保持各自真实身份和完成条件。
+以完整用户链组织工作：初始化实例和 Namespace → 接纳真实资料与来源 → 形成并采纳认知 → 实际 embedding 和索引 → 查询、展开来源 → 重启后继续。Catalog、Unit、Output、文件成功、模型调用与任务保持各自真实身份和完成条件。
 
-在已走通的基础路径上，完成统一修订状态与模型路由，再补齐 A-Memorix 管理动作、完整查询和认知领域，以及宿主每次调用的上下文和长期维护。各功能同时接通实际 SDK、CLI、HTTP、MCP、MaiBot 或管理界面消费者。继续完善产品管理和对应平台的构建、安装与运行。根据实际独立故障、关键业务行为与真实使用选择验证；已有成功的付费调用在恢复时复用。
+先统一原生职责、Namespace 和真实数据，再贯通模型与媒体、Wave、长期领域、主动上下文和后台成长。SDK、HTTP、CLI、MCP 随完整操作接通；独立 A-Memorix 适配器通过正式 SDK 提供上游协议，随后进行真实使用、小规模公开测评和安装交付。
 
-## 当前工作
+## 交付要求
 
-正式开发基线为 `main`。Python 应用已恢复启动、资源关闭和真实模型调用，统一认知修订、来源与实际向量空间；CLI、HTTP、MCP、SDK 和 A-Memorix 公共工具消费同一原生权威。旧 Rust 应用已移除，保留独立的 Native 计算工作区。Windows 发行包已在独立目录完成安装和多入口读取。
+交付可独立安装、配置和持续使用的 Nous 源码、安装产物、用户指南及完整 SDK 示例。使用者能够接纳和查询真实文字与媒体，读取来源、修订认识、恢复任务，并在连续模型及工具调用中自动取得人格、活跃记忆与当前工作。
 
-首轮使用原著文档、真实开发事件、MemeCap 原图及 LongMemEval 原题运行认知与检索。实际结果、模型输出问题和修正见[重构进展](python-native-plan/progress-report.md)；检索来源重复读取已按实测修复。当前完成真实旧图中同名实体的精确外部身份匹配、VCP 操作和对应发行更新，随后进入以现有 MaiBot Fork 为基础的 Heptalogos 开发。
+独立 A-Memorix 适配器连接本地或远程 Nous，提供实际工具、管理、导入导出及 RPC。SDK 单独安装即可支撑这一外部消费者。
 
-日常开发与启动见[项目 README](../README.md)，安装、服务管理与恢复见[安装说明](python-native-install.md)。开发缓存和实例使用 `temp/`；旧实例独立保留。
+使用真实资料及上游公开数据进行小规模测评，保留实际输入、配置、结果、耗时、用量和具体问题。修正阻断使用和导致错误结果的问题，保留原始资料与模型结果。
+
+Heptalogos 本轮只交付 Host API、主体绑定和模型调用接缝的交接资料；主体内核另行开发。

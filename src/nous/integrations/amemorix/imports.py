@@ -108,7 +108,7 @@ async def _submission(
                 .where(
                     job_links.c.workflow_id == job_id,
                     job_links.c.namespace_id == ctx.namespace_id,
-                    job_links.c.subject_id == ctx.subject_id,
+                    
                 )
             )
         ).scalar_one_or_none()
@@ -452,7 +452,7 @@ async def import_admin(
             ctx,
             command.operation_id,
             operation_kind="amemorix.dataset",
-            scope=ctx.require_subject(),
+            scope=ctx.namespace_id,
             payload=command,
         ) as tx:
             if tx.replayed:

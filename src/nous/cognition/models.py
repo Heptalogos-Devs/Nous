@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Protocol
 
-from pydantic import BaseModel
+from nous_sdk.contracts.prompt_compilation import PromptMessage
+from typing_extensions import TypeForm
 
 if TYPE_CHECKING:
     from nous.platform.models.embedding_profile import (
@@ -14,7 +15,6 @@ if TYPE_CHECKING:
     )
     from nous.platform.models.generation import Generated, MediaInput
     from nous.platform.persistence import ReadView, WriteTx
-
 from nous_sdk.contracts import CallContext, EmbeddingBatch, MediaEmbeddingInput
 from nous_sdk.contracts.model_roles import ModelCachePolicy
 
@@ -35,18 +35,21 @@ class ModelServices(Protocol):
         source_ids: tuple[str, ...],
     ) -> EmbeddingEvidence | None: ...
 
-    async def generate[T: BaseModel | str](
+    async def generate[T](
         self,
         ctx: CallContext,
         role_id: str,
         variables: dict[str, object],
-        output_type: type[T],
+        output_type: TypeForm[T],
         *,
         source_ids: tuple[str, ...] = (),
         invocation_id: str | None = None,
         cache_policy: ModelCachePolicy = "shared",
         media: tuple[MediaInput, ...] = (),
+        context_messages: tuple[PromptMessage, ...] = (),
+        max_output_tokens: int | None = None,
     ) -> Generated[T]: ...
+
     async def embed(
         self,
         ctx: CallContext,
@@ -57,13 +60,13 @@ class ModelServices(Protocol):
         profile: EmbeddingProfile | None = None,
         retry_authorization: str | None = None,
     ) -> EmbeddingBatch: ...
+
     async def prepare_embedding(self, ctx: CallContext) -> EmbeddingProfile: ...
+
     async def successful_embedding_in(
-        self,
-        view: ReadView | WriteTx,
-        ctx: CallContext,
-        call_id: str,
+        self, view: ReadView | WriteTx, ctx: CallContext, call_id: str
     ) -> EmbeddingBatch: ...
+
     async def reusable_embedding_in(
         self,
         view: ReadView | WriteTx,
@@ -75,6 +78,7 @@ class ModelServices(Protocol):
         media: MediaEmbeddingInput | None,
         source_ids: tuple[str, ...],
     ) -> EmbeddingEvidence | None: ...
+
     async def embed_media(
         self,
         ctx: CallContext,

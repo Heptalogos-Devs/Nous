@@ -18,7 +18,7 @@ def register(cli: typer.Typer) -> None:
     @group.command("register")
     def register_resource(ctx: typer.Context, namespace: str, subject: str, request: Path) -> None:
         command = read_command(request, RegisterResource)
-        invoke(ctx, lambda api: api.register_resource(namespace, subject, command))
+        invoke(ctx, lambda api: api.register_resource(namespace, command))
 
     @group.command("list")
     def list_resources(
@@ -28,7 +28,7 @@ def register(cli: typer.Typer) -> None:
         cursor: str | None = None,
         limit: int = 100,
     ) -> None:
-        invoke(ctx, lambda api: api.resources(namespace, subject, cursor=cursor, limit=limit))
+        invoke(ctx, lambda api: api.resources(namespace, cursor=cursor, limit=limit))
 
     @group.command("get")
     def get_resource(
@@ -38,7 +38,7 @@ def register(cli: typer.Typer) -> None:
         resource_id: str,
         revision: int | None = None,
     ) -> None:
-        invoke(ctx, lambda api: api.resource(namespace, subject, resource_id, revision=revision))
+        invoke(ctx, lambda api: api.resource(namespace, resource_id, revision=revision))
 
     @group.command("read")
     def read_resource(
@@ -51,11 +51,11 @@ def register(cli: typer.Typer) -> None:
         invoke(
             ctx,
             lambda api: api.read_resource(
-                namespace, subject, ReadResource(resource_id=resource_id, current=current)
+                namespace, ReadResource(resource_id=resource_id, current=current)
             ),
         )
 
     @group.command("change")
     def change_resource(ctx: typer.Context, namespace: str, subject: str, request: Path) -> None:
         command = read_command(request, ChangeResource)
-        invoke(ctx, lambda api: api.change_resource(namespace, subject, command))
+        invoke(ctx, lambda api: api.change_resource(namespace, command))

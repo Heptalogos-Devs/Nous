@@ -64,7 +64,7 @@ async def bundle_admin(
                 ctx,
                 operation_id,
                 operation_kind="bundle.export.material",
-                scope=ctx.require_subject(),
+                scope=ctx.namespace_id,
                 payload=command,
             )
             if receipt is not None:
@@ -108,7 +108,7 @@ async def bundle_admin(
                 ctx,
                 operation_id,
                 operation_kind="bundle.export.material",
-                scope=ctx.require_subject(),
+                scope=ctx.namespace_id,
                 payload=command,
             ) as tx:
                 if tx.replayed:
@@ -160,7 +160,7 @@ async def bundle_admin(
                     .join(observations, observations.c.material_id == materials.c.id)
                     .where(
                         materials.c.namespace_id == ctx.namespace_id,
-                        observations.c.subject_id == ctx.subject_id,
+                        
                         observations.c.active.is_(True),
                     )
                 )

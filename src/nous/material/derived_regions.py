@@ -145,7 +145,7 @@ class DerivedRegions(DerivedAccess):
             saved = DerivedRegion.model_validate(existing)
             if (
                 saved.namespace_id != ctx.namespace_id
-                or saved.subject_id != ctx.subject_id
+                or saved.namespace_id != ctx.namespace_id
                 or saved.representation != command.representation
                 or saved.selector != command.selector
                 or saved.parent_id != command.parent_id
@@ -162,7 +162,7 @@ class DerivedRegions(DerivedAccess):
                 tx, ctx, MediaReference(kind="derived_region", id=region_id)
             ),
             namespace_id=ctx.namespace_id,
-            subject_id=ctx.require_subject(),
+            
             representation=command.representation,
             selector=command.selector,
             parent_id=command.parent_id,
@@ -173,7 +173,7 @@ class DerivedRegions(DerivedAccess):
             derived_regions.insert().values(
                 id=value.id,
                 namespace_id=ctx.namespace_id,
-                subject_id=ctx.require_subject(),
+                
                 record=value.model_dump(mode="json"),
                 commit_seq=tx.commit_seq,
             )
@@ -187,7 +187,7 @@ class DerivedRegions(DerivedAccess):
             ctx,
             command.operation_id,
             operation_kind="media.derived_region",
-            scope=ctx.require_subject(),
+            scope=ctx.namespace_id,
             payload=command,
         ) as tx:
             if tx.replayed:

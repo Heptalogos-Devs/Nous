@@ -52,7 +52,7 @@ async def image_memory(
             adapter.namespace_id,
             chunks(),
             byte_len=len(image_bytes),
-            owner_subject_id=adapter.subject_id,
+            
             media_type=media_type,
             source=f"amemorix-image:{legacy}",
             expected_content_hash=digest,

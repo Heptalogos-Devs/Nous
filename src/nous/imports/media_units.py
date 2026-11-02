@@ -68,7 +68,7 @@ async def process_media_unit(
         ctx,
         f"{command.operation_id}:{unit.id}:adopt",
         operation_kind="imports.adopt",
-        scope=ctx.require_subject(),
+        scope=ctx.namespace_id,
         payload={"command": command.model_dump(mode="json"), "unit_id": unit.id},
     ) as tx:
         if tx.replayed:

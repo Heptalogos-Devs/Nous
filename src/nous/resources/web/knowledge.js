@@ -199,7 +199,7 @@ async function showDetail(item) {
       if (node.text) row.append(el("p", "body-snippet", node.text));
       if (node.status === "unavailable") row.append(el("p", "muted", t("web-source-unreadable")));
       else if (node.target?.kind === "media") row.append(button(t("web-source"), async () => {
-        const value = await api("/api/sources/read", { method: "POST", body: {
+        const value = await api("/api/v1/sources/read", { method: "POST", body: {
           subject_id: state.subject, reference: node.target.reference,
         }});
         row.append(jsonView(value));
@@ -210,7 +210,7 @@ async function showDetail(item) {
   };
   if (lastQuery?.sources) displaySources(lastQuery.sources);
   else sources.append(button(t("web-expand-sources"), async () => {
-    const value = await api("/api/sources/read", {method: "POST", body: {
+    const value = await api("/api/v1/sources/read", {method: "POST", body: {
       subject_id: state.subject, reference: exact(item.reference),
     }});
     if (value.graph) displaySources(value.graph);
@@ -332,7 +332,7 @@ async function importFiles() {
         source: file.name,
         operation_id: op(),
       });
-      const upload = await api(`/api/media/materials?${params}`, {
+      const upload = await api(`/api/v1/media/materials?${params}`, {
         method: "POST",
         headers: { "Content-Type": file.type || "application/octet-stream" },
         body: file,
@@ -354,7 +354,7 @@ async function importFiles() {
 async function parseRef(value) {
   const match = value.trim().match(/^([^:]+):(.+)@(\d+)$/);
   if (match) return { kind: match[1], id: match[2], revision: Number(match[3]) };
-  const resolved = await api("/api/references", {
+  const resolved = await api("/api/v1/references", {
     method: "POST",
     body: { subject_id: state.subject, reference: value.trim() },
   });

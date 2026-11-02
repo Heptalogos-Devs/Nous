@@ -21,14 +21,14 @@ class BundleClient(ManagementClient):
             return await self.with_source_read(SourceReadScope.model_validate(source_read)).bundles(
                 {"action": request.get("action"), "request": values}
             )
-        namespace, subject = await request_scope(self, values)
+        namespace = await request_scope(self, values)
         action = request.get("action")
         if not isinstance(action, str):
             raise ValueError("Bundle action must be text")
         if action == "install" and "bundle" in values:
             values["operation_id"] = operation_identity(values)
             return await self.install_bundle(
-                namespace, subject, InstallBundle.model_validate(values)
+                namespace,  InstallBundle.model_validate(values)
             )
         if action == "preview":
             action = "export"
@@ -39,11 +39,11 @@ class BundleClient(ManagementClient):
             values["installation_id"] = values.pop("id")
         operation = AMemorixRequest(
             namespace_id=namespace,
-            subject_id=subject,
+            
             operation=AMemorixOperation(
                 tool="memory_bundle_admin", arguments={"action": action, **values}
             ),
         )
         return object_value(
-            await self.request("POST", "/api/integrations/amemorix", body=encoded(operation))
+            await self.request("POST", "/api/v1/integrations/amemorix", body=encoded(operation))
         )

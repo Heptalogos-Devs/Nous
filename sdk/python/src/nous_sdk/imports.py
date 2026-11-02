@@ -63,7 +63,7 @@ def _local_input(
 async def upload_import_inputs(
     client: "MaterialClient",
     namespace_id: str,
-    subject_id: str,
+    
     files: Sequence[str | Path | Mapping[str, JsonValue]],
     *,
     transfer_root: str | Path,
@@ -120,7 +120,7 @@ async def upload_import_inputs(
             receipt = await client.upload_file(
                 namespace_id,
                 captured,
-                owner_subject_id=subject_id,
+                
                 media_type={
                     "text": "text/plain",
                     "markdown": "text/markdown",
@@ -137,7 +137,7 @@ async def upload_import_inputs(
                 operation_id=str(
                     uuid5(
                         NAMESPACE_URL,
-                        f"nous-wave:import-upload:{namespace_id}:{subject_id}:{operation_id}:{index}",
+                        f"nous-wave:import-upload:{namespace_id}:{namespace_id}:{operation_id}:{index}",
                     )
                 )
                 if operation_id is not None
@@ -163,7 +163,7 @@ async def upload_import_inputs(
 async def upload_import_file_documents(
     client: "MaterialClient",
     namespace_id: str,
-    subject_id: str,
+    
     files: Sequence[str | Path | Mapping[str, JsonValue]],
     *,
     transfer_root: str | Path,
@@ -183,7 +183,7 @@ async def upload_import_file_documents(
     documents = await upload_import_inputs(
         client,
         namespace_id,
-        subject_id,
+        
         files,
         transfer_root=transfer_root,
         input_format=input_format,
@@ -198,7 +198,7 @@ async def upload_import_file_documents(
 async def import_files(
     client: "ImportClient",
     namespace_id: str,
-    subject_id: str,
+    
     files: Sequence[str | Path | Mapping[str, JsonValue]],
     *,
     transfer_root: str | Path,
@@ -214,7 +214,7 @@ async def import_files(
     documents = await upload_import_inputs(
         client,
         namespace_id,
-        subject_id,
+        
         files,
         transfer_root=transfer_root,
         input_format=input_format,
@@ -232,13 +232,13 @@ async def import_files(
             "vectors": "metadata_allowed" if form_memory else "disabled",
         }
     )
-    return await client.submit_text_import(namespace_id, subject_id, command)
+    return await client.submit_text_import(namespace_id,  command)
 
 
 async def import_directory(
     client: "ImportClient",
     namespace_id: str,
-    subject_id: str,
+    
     *,
     transfer_root: str | Path,
     alias: str = "raw",
@@ -257,7 +257,7 @@ async def import_directory(
     return await import_files(
         client,
         namespace_id,
-        subject_id,
+        
         files,
         transfer_root=transfer_root,
         input_format=input_format,

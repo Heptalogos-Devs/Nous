@@ -4,6 +4,7 @@ use super::*;
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct PipelineDiagnostics {
+    pub(super) stages: std::collections::BTreeMap<String, String>,
     pub(super) backend: String,
     pub(super) runtime_ownership: String,
     pub(super) epa_ms: f64,

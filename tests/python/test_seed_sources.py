@@ -73,7 +73,7 @@ def test_interpretation_admits_sources_without_memory_and_adoption_uses_material
             async with app.authority.write(
                 ctx, "adopt-selected", operation_kind="growth.review", payload=draft
             ) as tx:
-                adopted = (await app.cognition.apply_growth_in(tx, ctx, draft, snapshot)).records
+                adopted = (await app.growth.apply_growth_in(tx, ctx, draft, snapshot)).records
                 tx.result(adopted)
             assert adopted[0].body.epistemic.classification == "reported"
             assert adopted[0].source_roots == (snapshot.sources[0].evidence[0].observation_id,)

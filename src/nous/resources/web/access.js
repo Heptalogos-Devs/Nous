@@ -22,8 +22,8 @@ function scopeText(record) {
 
 export async function loadCredentials() {
   const [records, principal] = await Promise.all([
-    api("/api/credentials"),
-    api("/api/credentials/whoami"),
+    api("/api/v1/credentials"),
+    api("/api/v1/credentials/whoami"),
   ]);
   const rows = records.map((record) => [
     record.name,
@@ -69,7 +69,7 @@ function actions(record, principal) {
       button(t("web-rotate"), async () => {
         const reason = window.prompt(t("web-rotate-prompt", { name: record.name }), "");
         if (reason === null) return;
-        const value = await api(`/api/credentials/${encodeURIComponent(record.id)}/rotate`, {
+        const value = await api(`/api/v1/credentials/${encodeURIComponent(record.id)}/rotate`, {
           method: "POST",
           body: { operation_id: op(), expected_revision: record.revision, reason },
         });
@@ -86,7 +86,7 @@ function actions(record, principal) {
         async () => {
           if (!window.confirm(t("web-revoke-confirm", { name: record.name }))) return;
           await api(
-            `/api/credentials/${encodeURIComponent(record.id)}?operation_id=${op()}&expected_revision=${record.revision}`,
+            `/api/v1/credentials/${encodeURIComponent(record.id)}?operation_id=${op()}&expected_revision=${record.revision}`,
             {
               method: "DELETE",
             },
@@ -107,7 +107,7 @@ function actions(record, principal) {
 }
 
 async function history(record) {
-  const events = await api(`/api/credentials/${encodeURIComponent(record.id)}/history`);
+  const events = await api(`/api/v1/credentials/${encodeURIComponent(record.id)}/history`);
   const dialog = el("dialog");
   dialog.addEventListener("close", () => dialog.remove());
   dialog.append(
@@ -152,7 +152,7 @@ async function createCredential() {
     .map((value) => value.trim())
     .filter(Boolean);
   if (sources.length) command.source_ids = sources;
-  const value = await api("/api/credentials", { method: "POST", body: command });
+  const value = await api("/api/v1/credentials", { method: "POST", body: command });
   showIssued(value);
   $("credential-name").value = "";
   notify("web-credential-created");

@@ -8,6 +8,7 @@ from pydantic import Field
 
 from .cognition import EpistemicStance, MemoryInterpretation
 from .common import Contract, TimeRange
+from .facts import FactClaimInput
 from .personality import FacetCategory, SocialDimension
 
 
@@ -93,8 +94,19 @@ class GrowthEpisode(Contract):
     boundary_explanation: str
 
 
+class GrowthEvidenceRef(Contract):
+    key: str
+
+
+class GrowthJournalParagraphSource(Contract):
+    paragraph: int = Field(ge=0)
+    evidence: tuple[GrowthEvidenceRef, ...] = Field(min_length=1)
+
+
 class GrowthJournal(Contract):
     kind: Literal["journal"]
+    paragraph_sources: tuple[GrowthJournalParagraphSource, ...] = ()
+    lineage: tuple[GrowthRef, ...] = ()
     title: str
     narrative: str
     period: TimeRange
@@ -230,6 +242,12 @@ class GrowthConcern(Contract):
     importance: float = Field(ge=0, le=1)
 
 
+class GrowthFact(Contract):
+    kind: Literal["fact_claim"]
+    claim: FactClaimInput
+    origin: GrowthRef
+
+
 GrowthBody = Annotated[
     GrowthMemory
     | GrowthMemorySemantics
@@ -245,6 +263,7 @@ GrowthBody = Annotated[
     | GrowthSocialRelation
     | GrowthLanguageConvention
     | GrowthDesire
-    | GrowthConcern,
+    | GrowthConcern
+    | GrowthFact,
     Field(discriminator="kind"),
 ]

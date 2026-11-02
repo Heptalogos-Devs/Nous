@@ -9,6 +9,7 @@ from pydantic import ConfigDict, Field, JsonValue, model_validator
 from .common import Contract
 from .media import MediaReference
 from .model_routing import ModelRouteAttempt, ModelRoutingPolicy
+from .prompt_compilation import CompiledPrompt, PromptMessage
 
 ModelCachePolicy = Literal["shared", "invocation"]
 
@@ -23,6 +24,8 @@ class ModelPreviewRequest(ModelContractRequest):
     media: tuple[MediaReference, ...] = ()
     source_ids: tuple[str, ...] = ()
     draft_template: str | None = None
+    context_messages: tuple[PromptMessage, ...] = ()
+    max_output_tokens: int | None = Field(default=None, ge=1)
 
 
 class ModelRoleContract(Contract):
@@ -87,7 +90,7 @@ class InvocationSnapshot(Contract):
     model: str
     base_url: str
     parameters: InvocationParameters
-    prompt: ModelPrompt
+    prompt: CompiledPrompt
     output_schema: dict[str, JsonValue] = Field(alias="schema")
     output_mode: Literal["text", "json_schema"]
     provider_schema_backend: Literal["pydantic_ai", "openai_sdk"]

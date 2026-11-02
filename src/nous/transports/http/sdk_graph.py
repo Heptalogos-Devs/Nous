@@ -15,35 +15,35 @@ from .security import application, context
 router = APIRouter()
 
 
-@router.post("/namespaces/{namespace_id}/subjects/{subject_id}/graph/query")
+@router.post('/namespaces/{namespace_id}/graph/query')
 async def read(
-    request: Request, namespace_id: str, subject_id: str, command: GraphReadQuery
+    request: Request, namespace_id: str,  command: GraphReadQuery
 ) -> GraphSnapshot:
-    return await application(request).cognition.read_graph(
-        await context(request, namespace_id, subject_id, capability="read"), command
+    return await application(request).graphs.read_graph(
+        await context(request, namespace_id,  capability="read"), command
     )
 
 
-@router.post("/namespaces/{namespace_id}/subjects/{subject_id}/graph/search")
+@router.post('/namespaces/{namespace_id}/graph/search')
 async def search(
-    request: Request, namespace_id: str, subject_id: str, command: GraphSearchQuery
+    request: Request, namespace_id: str,  command: GraphSearchQuery
 ) -> GraphSearchResult:
-    return await application(request).cognition.search_graph(
-        await context(request, namespace_id, subject_id, capability="read"), command
+    return await application(request).graphs.search_graph(
+        await context(request, namespace_id,  capability="read"), command
     )
 
 
-@router.get("/namespaces/{namespace_id}/subjects/{subject_id}/graph")
-async def snapshot(request: Request, namespace_id: str, subject_id: str) -> GraphSnapshot:
-    return await application(request).cognition.graph_snapshot(
-        await context(request, namespace_id, subject_id, capability="read")
+@router.get('/namespaces/{namespace_id}/graph')
+async def snapshot(request: Request, namespace_id: str) -> GraphSnapshot:
+    return await application(request).graphs.graph_snapshot(
+        await context(request, namespace_id,  capability="read")
     )
 
 
-@router.post("/namespaces/{namespace_id}/subjects/{subject_id}/graph")
+@router.post('/namespaces/{namespace_id}/graph')
 async def change(
-    request: Request, namespace_id: str, subject_id: str, command: GraphChange
+    request: Request, namespace_id: str,  command: GraphChange
 ) -> GraphChangeResult:
-    return await application(request).cognition.manage_graph(
-        await context(request, namespace_id, subject_id), command
+    return await application(request).graphs.manage_graph(
+        await context(request, namespace_id), command
     )

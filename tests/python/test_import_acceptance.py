@@ -14,7 +14,7 @@ from nous_sdk.contracts import (
 from sqlalchemy import func, select
 
 from nous.cognition.schema import revisions
-from nous.cognition.service import CognitionService
+from nous.cognition.records import CognitiveRecords
 from nous.identity.service import IdentityService
 from nous.imports.schema import outputs, requests, successes
 from nous.imports.service import ImportService
@@ -35,7 +35,7 @@ class NoModels:
 def test_literal_and_child_queue_are_atomic(tmp_path: Path, registered: bool):
     async def scenario():
         authority = Authority(tmp_path / "authority.sqlite")
-        cognition = CognitionService(authority)
+        cognition = CognitiveRecords(authority)
         imports = ImportService(authority, cognition, NoModels())
         execution = DurableExecution(
             authority, queues=(QueueSpec("default", 1), QueueSpec("formation", 1))
@@ -122,7 +122,7 @@ def test_literal_and_child_queue_are_atomic(tmp_path: Path, registered: bool):
 def test_processing_origin_preserves_predecessor_with_deferred_text_formation(tmp_path):
     async def scenario():
         authority = Authority(tmp_path / "authority.sqlite")
-        cognition = CognitionService(authority)
+        cognition = CognitiveRecords(authority)
         imports = ImportService(authority, cognition, NoModels())
         execution = DurableExecution(authority, queues=(QueueSpec("formation", 1),))
         execution.register(

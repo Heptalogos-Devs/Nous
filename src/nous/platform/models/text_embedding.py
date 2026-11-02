@@ -45,6 +45,8 @@ async def embed_one(
         "embedding",
         request,
         route.max_calls_per_day,
+        budget_resource=route.budget_resource,
+        resource_maximum=route.resource_request_budget,
         invocation_id=invocation_id,
         routing=routing,
         cache_policy=cache_policy,

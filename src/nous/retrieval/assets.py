@@ -9,10 +9,10 @@ from nous_sdk.contracts import (
 from nous_sdk.contracts.resources import ResourceRecord
 from nous_sdk.contracts.retrieval import QueryObject
 from nous_sdk.contracts.source_objects import EvidenceRelationRecord, ObservationRecord
+from nous_sdk.presentation import body_text
 from numpy.typing import NDArray
 from pydantic import BaseModel, JsonValue, TypeAdapter
 
-from nous.cognition.projection import body_text
 from nous.material.service import SourceRecord
 
 

@@ -43,6 +43,10 @@ class VcpSpikeRouting(NativeParameters):
 
 
 class VcpPipeline(NativeParameters):
+    epa_enabled: bool = True
+    gating_enabled: bool = True
+    topology_enabled: bool = True
+    fields_enabled: bool = True
     activation_multiplier: tuple[FiniteFloat, FiniteFloat]
     base_tag_boost: FiniteFloat
     core_boost_factor: FiniteFloat

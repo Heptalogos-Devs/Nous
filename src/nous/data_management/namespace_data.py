@@ -37,11 +37,6 @@ class NamespaceDataService:
         self, ctx: CallContext, command: PurgeNamespace
     ) -> NamespacePurgeResult:
         require_management_scope(ctx)
-        if ctx.subject_id is not None:
-            raise DomainError(
-                "namespace_purge_scope_forbidden",
-                "Namespace permanent removal requires the complete Namespace",
-            )
         async with self.identity.namespace_lock(ctx.namespace_id):
             receipt = await self.authority.receipt(
                 ctx,
@@ -60,16 +55,13 @@ class NamespaceDataService:
             await owned_thread(self.backups.store.initialize)
             with tempfile.TemporaryDirectory(prefix="purge-", dir=self.backups.root) as temporary:
                 database = await self.authority.backup(Path(temporary) / "authority.sqlite")
-                state = await owned_thread(lambda: capture(database, ctx.namespace_id))
-            schedules = tuple(
-                str(row["schedule_name"]) for row in state.tables.get("workflow_schedules", ())
-            )
-            await self.execution.purge_namespace_jobs(ctx, schedules)
+                _, tables, _ = await owned_thread(lambda: capture(database, ctx.namespace_id))
+            await self.execution.purge_namespace_jobs(ctx)
             await self.backups.purge_namespace_custody(ctx)
             hashes = tuple(
                 dict.fromkeys(
                     str(row["content_hash"])
-                    for row in state.tables.get("nous_content_references", ())
+                    for row in tables.get("nous_content_references", ())
                 )
             )
             async with self.authority.write(
@@ -83,16 +75,15 @@ class NamespaceDataService:
                     result = NamespacePurgeResult.model_validate(tx.replay_result)
                 else:
                     current = await require_namespace_in(tx, ctx, purpose="management")
-                    if not current.deleted or not current.purging:
+                    if current.state != 'trashed' or not current.purging:
                         raise DomainError(
                             "namespace_not_trashed", "Namespace permanent removal is not admitted"
                         )
                     await self.sources.purge_namespace_in(tx, ctx)
                     deleted = 0
-                    for name, rows in state.tables.items():
+                    for name, rows in tables.items():
                         if name not in metadata.tables or name in {
                             "namespaces",
-                            "subjects",
                             "subject_bindings",
                             "identity_retirements",
                             "nous_model_calls",
@@ -129,9 +120,8 @@ class NamespaceDataService:
                         )
                     )
                     deleted += (
-                        len(state.tables.get("namespaces", ()))
-                        + len(state.tables.get("subjects", ()))
-                        + len(state.tables.get("subject_bindings", ()))
+                        len(tables.get("namespaces", ()))
+                        + len(tables.get("subject_bindings", ()))
                     )
                     await self.identity.retire_namespace_in(tx, ctx)
                     result = tx.result(

@@ -18,18 +18,21 @@ from nous_sdk.contracts.maintenance import (
 from pydantic import JsonValue, TypeAdapter
 
 from nous.cognition import growth_sources
+from nous.cognition.growth import GrowthService
 from nous.cognition.lifecycle import selectable
 from nous.cognition.projection import media_references_in
-from nous.cognition.service import CognitionService
-from nous.identity.access import require_subject_in
+from nous.cognition.records import CognitiveRecords
+from nous.identity.access import require_namespace_in
 from nous.material.service import observations
 from nous.platform.configuration.service import ConfigurationService
+from nous.platform.errors import NousError
 from nous.platform.execution import DurableExecution, JobSpec
 from nous.platform.models import ModelService
 from nous.platform.observability import operation_span
 from nous.platform.persistence import Authority, OperationConflict, ReadView, WriteTx
+from nous.retrieval.service import RetrievalService
 
-from . import natural, proposals, scheduling
+from . import natural, proposals, scheduling, tasks
 from .generation import generate_validated
 from .privacy import receipt_contains_content, redact
 
@@ -39,6 +42,10 @@ from .schema import runs
 
 
 class MaintenanceService:
+    journal_create = tasks.journal_create
+    reflect = tasks.reflect
+    dream = tasks.dream
+    summarize_work = tasks.summarize_work
     capture_retained = proposals.capture_retained
     edit_proposal = proposals.edit_proposal
     working_snapshot_in = proposals.working_snapshot_in
@@ -52,13 +59,17 @@ class MaintenanceService:
     def __init__(
         self,
         authority: Authority,
-        cognition: CognitionService,
+        cognition: CognitiveRecords,
         models: ModelService,
         execution: DurableExecution,
         *,
         configuration: ConfigurationService | None = None,
         imports: ImportService | None = None,
+        growth: GrowthService,
+        retrieval: RetrievalService,
     ) -> None:
+        self.retrieval = retrieval
+        self.growth = growth
         self.authority = authority
         self.cognition = cognition
         self.models = models
@@ -66,14 +77,30 @@ class MaintenanceService:
         self.configuration = configuration
         self.imports = imports
 
+    async def capture_contact(
+        self, context: dict[str, object], observation_id: str, references: list[dict[str, object]]
+    ) -> None:
+        from nous_sdk.contracts import CognitiveRef
+
+        ctx = CallContext.model_validate(context)
+        refs = tuple(CognitiveRef.model_validate(value) for value in references)
+        async with self.authority.write(
+            ctx,
+            "contact-growth:" + observation_id,
+            operation_kind="maintenance.contact",
+            scope=ctx.namespace_id,
+            payload={"observation_id": observation_id, "references": refs},
+        ) as tx:
+            if not tx.replayed:
+                await self.on_contact_in(tx, ctx, observation_id, refs)
+                tx.result({"accepted": True})
+
     async def run_in(
         self, view: ReadView | WriteTx, ctx: CallContext, run_id: str
     ) -> MaintenanceRun:
         raw = await view.connection.scalar(
             sa.select(runs.c.record).where(
-                runs.c.id == run_id,
-                runs.c.namespace_id == ctx.namespace_id,
-                runs.c.subject_id == ctx.require_subject(),
+                runs.c.id == run_id, runs.c.namespace_id == ctx.namespace_id
             )
         )
         if raw is None:
@@ -83,12 +110,9 @@ class MaintenanceService:
         return MaintenanceRun.model_validate(raw)
 
     async def snapshot_in(
-        self,
-        view: ReadView | WriteTx,
-        ctx: CallContext,
-        catalog: MaintenanceCatalog,
+        self, view: ReadView | WriteTx, ctx: CallContext, catalog: MaintenanceCatalog
     ) -> GrowthSnapshot:
-        subject = await require_subject_in(view, ctx)
+        subject = await require_namespace_in(view, ctx)
         entries = tuple(
             [
                 GrowthEntry(
@@ -106,9 +130,8 @@ class MaintenanceService:
             watermark=catalog.watermark,
             entries=entries,
             material_ids=catalog.material_ids,
-            capabilities=TypeAdapter(tuple[str, ...]).validate_python(subject["capabilities"]),
+            capabilities=TypeAdapter(tuple[str, ...]).validate_python(subject.enabled_features),
             sources=material_sources,
-            features=catalog.features,
         )
         from nous.cognition.growth_sources import evidence_in
 
@@ -118,8 +141,8 @@ class MaintenanceService:
     async def _project_in(
         self, view: ReadView | WriteTx, ctx: CallContext, record: MaintenanceRun
     ) -> MaintenanceRun:
-        available = record.purged_at is None and not (
-            record.catalog is None and ctx.source_groups()
+        available = record.purged_at is None and (
+            not (record.catalog is None and ctx.source_groups())
         )
         if available and record.catalog is not None:
             try:
@@ -141,10 +164,9 @@ class MaintenanceService:
             raw = await view.connection.scalar(
                 sa.select(runs.c.record).where(
                     runs.c.namespace_id == ctx.namespace_id,
-                    runs.c.subject_id == ctx.require_subject(),
                     runs.c.record["created_by"].as_string() == ctx.caller_id,
                     runs.c.record["command"]["operation_id"].as_string() == operation_id,
-                    runs.c.record["command"]["role"].as_string() == "seed",
+                    runs.c.record["command"]["kind"].as_string() == "seed",
                 )
             )
             return MaintenanceRun.model_validate(raw) if raw is not None else None
@@ -156,10 +178,7 @@ class MaintenanceService:
             rows = (
                 await view.connection.execute(
                     sa.select(runs.c.record)
-                    .where(
-                        runs.c.namespace_id == ctx.namespace_id,
-                        runs.c.subject_id == ctx.require_subject(),
-                    )
+                    .where(runs.c.namespace_id == ctx.namespace_id)
                     .order_by(runs.c.commit_seq.desc())
                     .limit(limit)
                 )
@@ -176,7 +195,7 @@ class MaintenanceService:
             ctx,
             command.operation_id,
             operation_kind="maintenance.submit",
-            scope=ctx.require_subject(),
+            scope=ctx.namespace_id,
             payload=command,
         ) as tx:
             if tx.replayed:
@@ -190,7 +209,7 @@ class MaintenanceService:
             ctx,
             operation_id,
             operation_kind="maintenance.retry",
-            scope=ctx.require_subject(),
+            scope=ctx.namespace_id,
             payload={"run_id": run_id},
         ) as tx:
             if tx.replayed:
@@ -198,18 +217,24 @@ class MaintenanceService:
             current = await self.run_in(tx, ctx, run_id)
             state = await self.execution.status(ctx, current.job_id)
             failed_groups = any(group.status == "failed" for group in current.groups)
-            if not failed_groups and state.status not in {
-                "ERROR",
-                "CANCELLED",
-                "MAX_RECOVERY_ATTEMPTS_EXCEEDED",
-            }:
+            if (
+                not failed_groups
+                and current.status != "waiting"
+                and state.status
+                not in {
+                    "ERROR",
+                    "CANCELLED",
+                    "MAX_RECOVERY_ATTEMPTS_EXCEEDED",
+                }
+            ):
                 raise DomainError(
                     "maintenance_retry_state", "Only failed or cancelled generation can continue"
                 )
             if (
                 current.review is not None
                 and (current.review.decision != "adopt" or not failed_groups)
-            ) or current.purged_at is not None:
+                or current.purged_at is not None
+            ):
                 raise DomainError(
                     "maintenance_retry_unavailable", "This proposal is finalized or erased"
                 )
@@ -225,12 +250,14 @@ class MaintenanceService:
                     ctx,
                     current.proposal,
                     snapshot,
-                    role=current.command.role,
+                    role=current.command.kind,
                     previous=current.groups,
                 )
             updated = current.model_copy(
                 update={
                     "job_id": job.workflow_id,
+                    "status": "queued",
+                    "waiting_reason": None,
                     "groups": tuple(groups),
                     "review": None,
                     "review_history": (
@@ -250,13 +277,12 @@ class MaintenanceService:
     async def submit_in(
         self, tx: WriteTx, ctx: CallContext, command: StartMaintenance
     ) -> MaintenanceSubmission:
-        await require_subject_in(tx, ctx)
+        await require_namespace_in(tx, ctx)
         identity = str(uuid4())
         job = await tx.enqueue(JobSpec("nous.maintenance.generate", "default", args=(identity,)))
         record = MaintenanceRun(
             id=identity,
             namespace_id=ctx.namespace_id,
-            subject_id=ctx.require_subject(),
             created_by=ctx.caller_id,
             created_at=tx.recorded_at,
             job_id=job.workflow_id,
@@ -266,7 +292,6 @@ class MaintenanceService:
             runs.insert().values(
                 id=identity,
                 namespace_id=ctx.namespace_id,
-                subject_id=ctx.subject_id,
                 commit_seq=tx.commit_seq,
                 context=ctx.model_dump(mode="json"),
                 record=record.model_dump(mode="json"),
@@ -280,22 +305,28 @@ class MaintenanceService:
         if raw is None:
             raise DomainError("maintenance_run_not_found", "Maintenance request is unavailable")
         ctx = CallContext.model_validate(raw)
+        initial = await self.read(ctx, run_id)
+        prepared = (
+            await tasks.prepare_scope(self, ctx, initial.command)
+            if initial.catalog is None
+            else initial.command
+        )
         async with self.authority.write(
             ctx,
             run_id + ":catalog",
             operation_kind="maintenance.snapshot",
-            scope=ctx.require_subject(),
+            scope=ctx.namespace_id,
             payload={"run_id": run_id},
         ) as tx:
             if not tx.replayed:
                 record = await self.run_in(tx, ctx, run_id)
-                snapshot = await natural.snapshot_in(self, tx, ctx, record.command)
-                from nous_sdk.contracts.namespace_policy import NamespaceFeatures
-
-                from nous.platform.configuration.namespace_policy import policy_in
+                if record.command != initial.command and record.catalog is None:
+                    raise OperationConflict(
+                        "Maintenance inputs changed before the batch was frozen"
+                    )
+                snapshot = await natural.snapshot_in(self, tx, ctx, prepared)
 
                 catalog = MaintenanceCatalog(
-                    features=await policy_in(tx, ctx, "namespace.features", NamespaceFeatures),
                     watermark=snapshot.watermark,
                     entries=tuple(
                         SnapshotReference(key=entry.key, reference=entry.record.reference)
@@ -347,7 +378,42 @@ class MaintenanceService:
             invocation_id=run_id,
         ):
             if snapshot.entries or snapshot.sources:
-                draft, call_id = await generate_validated(self, ctx, record, snapshot)
+                try:
+                    draft, call_id = await generate_validated(self, ctx, record, snapshot)
+                except (DomainError, NousError) as error:
+                    if error.code not in {
+                        "model_unavailable",
+                        "model_not_configured",
+                        "configuration_missing",
+                        "capability_unavailable",
+                        "model_budget_exceeded",
+                        "model_invocation_unavailable",
+                    }:
+                        raise
+                    async with self.authority.write(
+                        ctx,
+                        run_id + ":waiting:" + str(record.revision),
+                        operation_kind="maintenance.waiting",
+                        scope=ctx.namespace_id,
+                        payload={"run_id": run_id, "code": error.code},
+                    ) as tx:
+                        if not tx.replayed:
+                            current = await self.run_in(tx, ctx, run_id)
+                            current = current.model_copy(
+                                update={
+                                    "waiting_reason": {"code": error.code, "message": str(error)},
+                                    "status": "waiting",
+                                    "revision": current.revision + 1,
+                                }
+                            )
+                            await tx.connection.execute(
+                                runs.update()
+                                .where(runs.c.id == run_id)
+                                .values(record=current.model_dump(mode="json"))
+                            )
+                            tx.result({"run_id": run_id, "waiting_reason": error.code})
+                    return {"run_id": run_id, "status": "waiting", "waiting_reason": error.code}
+
             else:
                 draft = GrowthDraft(
                     summary="No supported cognition is available.",
@@ -359,7 +425,7 @@ class MaintenanceService:
             ctx,
             run_id + ":proposal",
             operation_kind="maintenance.propose",
-            scope=ctx.require_subject(),
+            scope=ctx.namespace_id,
             payload={"run_id": run_id},
         ) as tx:
             if not tx.replayed:
@@ -372,6 +438,8 @@ class MaintenanceService:
                     update={
                         "draft": draft,
                         "producer_call_id": call_id,
+                        "status": "proposed",
+                        "waiting_reason": None,
                         "revision": current.revision + 1,
                     }
                 )
@@ -381,7 +449,6 @@ class MaintenanceService:
                     .values(record=updated.model_dump(mode="json"))
                 )
                 tx.result({"run_id": run_id})
-        # DBOS retains references only; source-derived text belongs to this owner.
         await self.adopt_automatic(ctx, await self.read(ctx, run_id))
         return {"run_id": run_id}
 
@@ -389,7 +456,7 @@ class MaintenanceService:
         if (
             record.command.auto_adopt
             and record.review is None
-            and record.draft is not None
+            and (record.draft is not None)
             and (record.proposal is None or record.proposal.complete)
         ):
             await self.review(
@@ -426,7 +493,7 @@ class MaintenanceService:
                 ctx,
                 record.id + ":group:" + group.key + ":revision:" + str(record.revision),
                 operation_kind="maintenance.apply_group",
-                scope=ctx.require_subject(),
+                scope=ctx.namespace_id,
                 payload={"run_id": record.id, "group": group.key},
             ) as tx:
                 if tx.replayed:
@@ -451,7 +518,7 @@ class MaintenanceService:
                     async with tx.connection.begin_nested():
                         snapshot = await self.snapshot_in(tx, ctx, current.catalog)
                         snapshot = await self.working_snapshot_in(tx, ctx, snapshot, current.groups)
-                        application = await self.cognition.apply_growth_in(
+                        application = await self.growth.apply_growth_in(
                             tx,
                             ctx,
                             group.draft,
@@ -476,8 +543,10 @@ class MaintenanceService:
                             "status": "adopted",
                             "adopted": tuple(item.reference for item in application.records),
                             "bindings": tuple(
-                                SnapshotReference(key=key, reference=reference)
-                                for key, reference in application.bindings.items()
+                                (
+                                    SnapshotReference(key=key, reference=reference)
+                                    for key, reference in application.bindings.items()
+                                )
                             ),
                         }
                     )
@@ -512,7 +581,7 @@ class MaintenanceService:
             ctx,
             command.operation_id,
             operation_kind="maintenance.review",
-            scope=ctx.require_subject(),
+            scope=ctx.namespace_id,
             payload={"run_id": run_id, "command": command},
         ) as tx:
             if not tx.replayed:
@@ -539,7 +608,7 @@ class MaintenanceService:
                     )
                 elif command.decision == "adopt":
                     snapshot = await self.snapshot_in(tx, ctx, record.catalog)
-                    application = await self.cognition.apply_growth_in(
+                    application = await self.growth.apply_growth_in(
                         tx, ctx, record.draft, snapshot, producer_call_id=record.producer_call_id
                     )
                     adopted = application.records
@@ -554,6 +623,12 @@ class MaintenanceService:
                 updated = record.model_copy(
                     update={
                         "review": review,
+                        "status": "rejected"
+                        if command.decision == "reject"
+                        else "adopted"
+                        if not record.groups
+                        or all(group.status == "adopted" for group in record.groups)
+                        else "proposed",
                         "review_history": (
                             *record.review_history,
                             *((record.review,) if record.review else ()),
@@ -571,11 +646,11 @@ class MaintenanceService:
 
     async def purge_materials_in(self, tx: WriteTx, material_ids: tuple[str, ...]) -> None:
         """Erase proposals touched by purged contacts even when the original survives."""
-        if tx.ctx.subject_id is None:
+        if tx.ctx.namespace_id is None:
             from nous.identity.access import require_namespace_in
 
             namespace = await require_namespace_in(tx, tx.ctx, purpose="management")
-            if tx.ctx.source_groups() or not namespace.deleted or not namespace.purging:
+            if tx.ctx.source_groups() or namespace.state != "trashed" or (not namespace.purging):
                 raise DomainError(
                     "namespace_purge_scope_forbidden",
                     "Proposal removal requires the admitted complete Namespace",
@@ -603,8 +678,7 @@ class MaintenanceService:
             for row in (
                 await tx.connection.execute(
                     sa.select(observations.c.id, observations.c.record).where(
-                        observations.c.namespace_id == tx.ctx.namespace_id,
-                        observations.c.subject_id == tx.ctx.require_subject(),
+                        observations.c.namespace_id == tx.ctx.namespace_id
                     )
                 )
             ).mappings()
@@ -612,10 +686,7 @@ class MaintenanceService:
         }
         rows = (
             await tx.connection.execute(
-                sa.select(runs.c.record).where(
-                    runs.c.namespace_id == tx.ctx.namespace_id,
-                    runs.c.subject_id == tx.ctx.require_subject(),
-                )
+                sa.select(runs.c.record).where(runs.c.namespace_id == tx.ctx.namespace_id)
             )
         ).scalars()
         unavailable: dict[str, bool] = {}
@@ -661,17 +732,11 @@ class MaintenanceService:
                 await self.models.ledger.purge_invocations_in(
                     tx,
                     creator,
-                    record.command.role,
-                    (
-                        "maintenance:" + record.id,
-                        "maintenance:" + record.id + ":correction:1",
-                    ),
+                    record.command.kind,
+                    ("maintenance:" + record.id, "maintenance:" + record.id + ":correction:1"),
                 )
                 updated = redact(record).model_copy(
-                    update={
-                        "purged_at": tx.recorded_at,
-                        "revision": record.revision + 1,
-                    }
+                    update={"purged_at": tx.recorded_at, "revision": record.revision + 1}
                 )
                 await tx.connection.execute(
                     runs.update()

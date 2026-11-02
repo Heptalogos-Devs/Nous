@@ -46,7 +46,7 @@ def correlation(
     fields = {
         "caller_id": ctx.caller_id,
         "namespace_id": ctx.namespace_id,
-        "subject_id": ctx.subject_id,
+        
         "request_id": request_id() or ctx.request_id,
         "operation_id": operation_id,
         "job_id": job_id,

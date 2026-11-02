@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from nous_sdk.presentation import body_text
+
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from uuid import uuid4
@@ -9,10 +11,7 @@ from uuid import uuid4
 from nous_sdk.contracts import (
     CallContext,
     CognitiveRef,
-    ContactMaterial,
     DomainError,
-    ImportDocument,
-    MediaReference,
     MemoryBody,
     TimePoint,
 )
@@ -34,8 +33,7 @@ from nous_sdk.contracts.records import RecordsQuery
 from pydantic import JsonValue
 from sqlalchemy import func, select, update
 
-from nous.cognition.projection import body_text
-from nous.identity.access import require_subject_in
+from nous.identity.access import require_namespace_in
 from nous.material.service import observations
 from nous.platform.errors import NousError
 from nous.platform.execution import JobSpec
@@ -44,113 +42,44 @@ from nous.platform.persistence import ReadView, WriteTx
 from .schema import tasks
 
 if TYPE_CHECKING:
-    from nous.application import Application
+    from nous.cognition.corrections import CorrectionService
+    from nous.cognition.records import CognitiveRecords
+    from nous.platform.configuration.service import ConfigurationService
+    from nous.platform.execution import DurableExecution
+    from nous.platform.models import ModelService
+    from nous.platform.persistence import Authority
 
 
 class FeedbackService:
-    def __init__(self, app: Application) -> None:
-        self.app = app
-        self.authority = app.authority
-
-    async def capture_context_event(
-        self, context: dict[str, object], event_id: str
-    ) -> dict[str, object]:
-        from nous_sdk.contracts.targets import CognitiveTarget, ContextTarget
-        from pydantic import TypeAdapter
-
-        from nous.context.models import contexts, feedback
-
-        ctx = CallContext.model_validate(context).model_copy(update={"clock": utc_now()})
-        async with self.authority.read(ctx) as view:
-            event = await view.connection.scalar(
-                select(feedback.c.record)
-                .join(contexts, contexts.c.id == feedback.c.context_id)
-                .where(
-                    feedback.c.id == event_id,
-                    contexts.c.namespace_id == ctx.namespace_id,
-                    contexts.c.subject_id == ctx.subject_id,
-                )
-            )
-            if event is None or event.get("caller_id") != ctx.caller_id:
-                raise DomainError("feedback_not_found", "Context feedback is unavailable")
-            description = str(event.get("description", "")).strip()
-            if (
-                not description
-                or not event.get("subject_view")
-                or event.get("kind") == "model_contact"
-            ):
-                return {"skipped": True}
-            target = TypeAdapter(ContextTarget).validate_python(event["target"])
-            await self.app.contexts.require_targets_in(view, ctx, (target,))
-        document = ImportDocument(
-            text=description,
-            filename="feedback.txt",
-            source_type="context_feedback",
-            origin={
-                "conversation_ref": str(event.get("session_id") or event["context_id"]),
-                "caller_id": ctx.caller_id,
-            },
-        )
-        lease = await self.app.content.publish_bytes(
-            description.encode("utf-8"), document.media_type
-        )
-        operation_id = "feedback-contact:" + event_id
-        try:
-            async with self.authority.write(
-                ctx,
-                operation_id,
-                operation_kind="feedback.contact_input",
-                scope=ctx.require_subject(),
-                payload={"event_id": event_id},
-            ) as tx:
-                await self.app.contexts.require_targets_in(tx, ctx, (target,))
-                if tx.replayed:
-                    restored = await self.app.material.restore_input_in(
-                        tx,
-                        ctx,
-                        operation_id=operation_id,
-                        operation_kind="feedback.contact_input",
-                        scope=ctx.require_subject(),
-                    )
-                    effective = restored.context
-                    source = MediaReference.model_validate(tx.replay_result)
-                else:
-                    admission = await self.app.material.admit_text_in(tx, ctx, document, lease)
-                    effective = admission.context
-                    source = MediaReference(
-                        kind="material",
-                        id=admission.material["id"],
-                        observation_id=admission.event["id"],
-                    )
-                    tx.result(source)
-            receipt = await self.app.imports.contact(
-                effective,
-                ContactMaterial(
-                    operation_id=operation_id + ":contact",
-                    source=source,
-                    external_event_id=operation_id,
-                    origin=document.origin,
-                    related=(target.reference,) if isinstance(target, CognitiveTarget) else (),
-                ),
-            )
-            return receipt.model_dump(mode="json")
-        finally:
-            await self.app.content.release(lease)
+    def __init__(
+        self,
+        authority: Authority,
+        cognition: CognitiveRecords,
+        configuration: ConfigurationService,
+        execution: DurableExecution,
+        models: ModelService,
+        corrections: CorrectionService,
+    ) -> None:
+        self.authority = authority
+        self.cognition = cognition
+        self.configuration = configuration
+        self.execution = execution
+        self.models = models
+        self.corrections = corrections
 
     async def policy(self, ctx: CallContext) -> FeedbackPolicy:
         return FeedbackPolicy.model_validate(
-            (await self.app.configuration.effective(ctx, "feedback"))["value"]
+            (await self.configuration.effective(ctx, "feedback"))["value"]
         )
 
     async def get_in(
         self, view: ReadView | WriteTx, ctx: CallContext, task_id: str
     ) -> FeedbackTask:
-        await require_subject_in(view, ctx)
+        await require_namespace_in(view, ctx)
         raw = await view.connection.scalar(
             select(tasks.c.record).where(
                 tasks.c.id == task_id,
                 tasks.c.namespace_id == ctx.namespace_id,
-                tasks.c.subject_id == ctx.require_subject(),
             )
         )
         if raw is None:
@@ -158,7 +87,7 @@ class FeedbackService:
         task = FeedbackTask.model_validate(raw)
         if task.state != "unavailable":
             for ref in (*task.references, *task.supports):
-                await self.app.cognition.get_in(view, ctx, ref)
+                await self.cognition.get_in(view, ctx, ref)
         return task
 
     async def get(self, ctx: CallContext, task_id: str) -> FeedbackTask:
@@ -167,10 +96,9 @@ class FeedbackService:
 
     async def list(self, ctx: CallContext, query: FeedbackQuery) -> FeedbackPage:
         async with self.authority.read(ctx) as view:
-            await require_subject_in(view, ctx)
+            await require_namespace_in(view, ctx)
             statement = select(tasks.c.id).where(
                 tasks.c.namespace_id == ctx.namespace_id,
-                tasks.c.subject_id == ctx.require_subject(),
             )
             if query.cursor:
                 statement = statement.where(tasks.c.id > query.cursor)
@@ -202,19 +130,18 @@ class FeedbackService:
             ctx,
             command.operation_id,
             operation_kind="feedback.enqueue",
-            scope=ctx.require_subject(),
+            scope=ctx.namespace_id,
             payload=command,
         ) as tx:
             if tx.replayed:
                 return await self.get_in(tx, ctx, str(tx.replay_result))
-            await require_subject_in(tx, ctx)
+            await require_namespace_in(tx, ctx)
             for reference in command.references:
-                await self.app.cognition.get_in(tx, ctx, reference)
+                await self.cognition.get_in(tx, ctx, reference)
             due = when.coordinate + round(policy.window_hours * 3600000)
             task = FeedbackTask(
                 id=str(uuid4()),
                 namespace_id=ctx.namespace_id,
-                subject_id=ctx.require_subject(),
                 caller_id=ctx.caller_id,
                 session_id=command.session_id,
                 query=command.query,
@@ -228,7 +155,7 @@ class FeedbackService:
                 updated_at=tx.recorded_at,
             )
             if policy.enabled:
-                job = await self.app.execution.enqueue_in(
+                job = await self.execution.enqueue_in(
                     tx,
                     JobSpec(
                         "nous.feedback.evaluate",
@@ -243,7 +170,6 @@ class FeedbackService:
                 tasks.insert().values(
                     id=task.id,
                     namespace_id=ctx.namespace_id,
-                    subject_id=ctx.subject_id,
                     record=task.model_dump(mode="json"),
                 )
             )
@@ -257,7 +183,7 @@ class FeedbackService:
             ctx,
             f"feedback:{task_id}:{phase}",
             operation_kind="feedback.update",
-            scope=ctx.require_subject(),
+            scope=ctx.namespace_id,
             payload={"task_id": task_id, "phase": phase, **changes},
         ) as tx:
             task = await self.get_in(tx, ctx, task_id)
@@ -281,7 +207,7 @@ class FeedbackService:
             return task
         async with self.authority.read(ctx) as view:
             current = (
-                await self.app.cognition.records_in(
+                await self.cognition.records_in(
                     view,
                     ctx,
                     RecordsQuery(object_ids=tuple(ref.id for ref in task.references), limit=100),
@@ -306,7 +232,6 @@ class FeedbackService:
                         select(observations.c.id)
                         .where(
                             observations.c.namespace_id == ctx.namespace_id,
-                            observations.c.subject_id == ctx.subject_id,
                             observations.c.kind == "contact",
                             observations.c.active.is_(True),
                             observations.c.record["origin"]["conversation_ref"].as_string()
@@ -324,7 +249,7 @@ class FeedbackService:
             )
             evidence = (
                 (
-                    await self.app.cognition.records_in(
+                    await self.cognition.records_in(
                         view,
                         ctx,
                         RecordsQuery(kinds=("memory",), source_ids=tuple(events), limit=1000),
@@ -372,15 +297,15 @@ class FeedbackService:
 
     async def retry(self, ctx: CallContext, command: RetryFeedback) -> FeedbackTask:
         async with self.authority.write(ctx, command.operation_id, operation_kind="feedback.retry",
-            scope=ctx.require_subject(), payload=command) as tx:
+            scope=ctx.namespace_id, payload=command) as tx:
             task = await self.get_in(tx, ctx, command.task_id)
             if tx.replayed:
                 return task
             if task.state != "failed":
                 raise DomainError("feedback_not_failed", "Only failed feedback evaluation can be resumed")
-            if not FeedbackPolicy.model_validate((await self.app.configuration.effective_in(tx, ctx, "feedback"))["value"]).enabled:
+            if not FeedbackPolicy.model_validate((await self.configuration.effective_in(tx, ctx, "feedback"))["value"]).enabled:
                 raise DomainError("feedback_disabled", "Feedback correction is disabled")
-            job = await self.app.execution.enqueue_in(tx, JobSpec("nous.feedback.evaluate", "default",
+            job = await self.execution.enqueue_in(tx, JobSpec("nous.feedback.evaluate", "default",
                 args=(ctx.model_dump(mode="json"), task.id)))
             updated = task.model_copy(update={"state": "pending", "error": None,
                 "job_id": job.workflow_id, "commit_seq": tx.commit_seq})
@@ -401,7 +326,7 @@ class FeedbackService:
             return task.model_dump(mode="json")
         assert task.input is not None
         if task.decision is None:
-            generated = await self.app.models.generate(
+            generated = await self.models.generate(
                 ctx,
                 "feedback",
                 task.input.model_dump(mode="json"),
@@ -450,7 +375,7 @@ class FeedbackService:
             for target in task.input.targets
             if target.key in decision.target_keys
         )
-        plan = await self.app.corrections.plan(
+        plan = await self.corrections.plan(
             ctx,
             PlanCorrection(
                 operation_id="feedback:" + task.id + ":plan",
@@ -469,7 +394,7 @@ class FeedbackService:
                     ctx, task_id, "review-plan", state="review", correction_plan_id=plan.id
                 )
             ).model_dump(mode="json")
-        result = await self.app.corrections.apply(
+        result = await self.corrections.apply(
             ctx, ApplyCorrection(operation_id="feedback:" + task.id + ":apply", plan_id=plan.id)
         )
         return (
@@ -489,7 +414,7 @@ class FeedbackService:
             raise DomainError(
                 "feedback_not_applied", "This feedback task has no correction to roll back"
             )
-        result = await self.app.corrections.rollback(
+        result = await self.corrections.rollback(
             ctx,
             RollbackCorrection(
                 operation_id=command.operation_id,
@@ -515,7 +440,7 @@ class FeedbackService:
         rows = (
             await tx.connection.execute(
                 select(tasks.c.id, tasks.c.record).where(
-                    tasks.c.namespace_id == ctx.namespace_id, tasks.c.subject_id == ctx.subject_id
+                    tasks.c.namespace_id == ctx.namespace_id
                 )
             )
         ).all()

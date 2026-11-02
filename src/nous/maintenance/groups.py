@@ -297,7 +297,7 @@ async def compile_actions(
                     view, ctx, snapshot, tuple(groups.values())
                 )
                 try:
-                    await self.cognition.validate_growth_in(
+                    await self.growth.validate_growth_in(
                         view, ctx, group.draft.model_copy(update={"actions": combined}), effective
                     )
                 except DomainError as error:

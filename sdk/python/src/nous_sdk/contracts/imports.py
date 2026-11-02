@@ -160,7 +160,7 @@ class CatalogView(Contract):
     split_options: TextSplitOptions | None = None
     id: str
     namespace_id: str
-    subject_id: str
+    
     units: tuple[ImportUnit, ...]
     input_source_ids: tuple[str, ...]
     original_unit_count: int

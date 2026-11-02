@@ -15,13 +15,14 @@ from nous_sdk.contracts import (
     EntityBody,
     LanguageConventionBody,
     NarrativeThreadBody,
+    QueryRequest,
     SocialRelationBody,
 )
 from nous_sdk.contracts.cognition import CognitiveKind
 from nous_sdk.contracts.context import ContextSegment, ContextUsage
 from nous_sdk.contracts.records import RecordsQuery
 
-from nous.identity.access import require_subject_in
+from nous.identity.access import require_namespace_in
 from nous.platform.persistence import ReadView, WriteTx
 
 if TYPE_CHECKING:
@@ -31,13 +32,13 @@ if TYPE_CHECKING:
 async def segments_in(
     self: ManagedContexts, view: ReadView | WriteTx, ctx: CallContext, usage: ContextUsage
 ) -> tuple[ContextSegment, ...]:
-    subject = await require_subject_in(view, ctx)
+    subject = await require_namespace_in(view, ctx)
     # A worker/reviewer does not acquire the subject's personality merely by
     # reading its namespace. Explicit sources remain available in compilation.
     if usage.view != "subject":
         return ()
     kinds: list[CognitiveKind] = []
-    capabilities = set(subject["capabilities"])
+    capabilities = set(subject.enabled_features)
     if "ego" in capabilities:
         kinds.extend(("self_facet", "domain_knowledge", "narrative_thread"))
     if "social" in capabilities:
@@ -55,7 +56,16 @@ async def segments_in(
             if isinstance(record.body, EntityBody) and record.body.entity_type == "group":
                 groups.append(record.reference)
     situations = {value.casefold() for value in usage.situations}
-    intent = usage.intent.casefold()
+    related: set[str] = set()
+    if usage.intent.strip():
+        selected = await self.retrieval.query(
+            ctx,
+            QueryRequest(
+                text=usage.intent, kinds=tuple(kinds), limit=64, capability_policy="best_effort"
+            ),
+        )
+        related = {hit.object.reference.exact() for hit in selected.hits}
+
     records: list[CognitiveRecord] = []
     cursor = None
     while True:
@@ -133,9 +143,9 @@ async def segments_in(
                 and body.relationship is None
             )
         elif isinstance(body, DomainKnowledgeBody):
-            selected = bool(intent and body.domain.casefold() in intent)
+            selected = record.reference.exact() in related
         elif isinstance(body, NarrativeThreadBody):
-            selected = usage.view == "subject" and bool(intent and body.title.casefold() in intent)
+            selected = record.reference.exact() in related
         elif isinstance(body, SocialRelationBody):
             selected = bool(listeners.intersection((body.from_entity.id, body.to_entity.id)))
             if body.groups:
@@ -144,8 +154,7 @@ async def segments_in(
             from nous_sdk.contracts.social import SymbolSelection
 
             selected = (
-                self.symbols is not None
-                and usage.symbols is None
+                usage.symbols is None
                 and self.symbols.scoped(
                     body,
                     SymbolSelection(
@@ -161,13 +170,7 @@ async def segments_in(
                 or bool(situations.intersection(value.casefold() for value in body.contexts))
             )
         elif isinstance(body, (DesireBody, ConcernBody)):
-            selected = bool(
-                intent
-                and (
-                    body.description.casefold() in intent
-                    or (body.condition.predicate and body.condition.predicate.casefold() in intent)
-                )
-            )
+            selected = record.reference.exact() in related
         if selected:
             segment = await self.record_segment_in(view, ctx, record)
             result.append(
@@ -176,7 +179,7 @@ async def segments_in(
                         "required": required,
                         "provenance": {
                             **segment.provenance,
-                            "supply": "current_personality",
+                            "supply": "stable_ego" if required else "task_related_cognition",
                             "audience": usage.audience,
                         },
                     }

@@ -85,7 +85,7 @@ export async function api(path, options = {}) {
 }
 export function subjectPath(suffix = "") {
   if (!state.namespace || !state.subject) throw new Error(t("web-select-scope"));
-  return `/api/namespaces/${encodeURIComponent(state.namespace)}/subjects/${encodeURIComponent(state.subject)}${suffix}`;
+  return `/api/v1/namespaces/${encodeURIComponent(state.namespace)}/subjects/${encodeURIComponent(state.subject)}${suffix}`;
 }
 export function op() {
   return crypto.randomUUID();

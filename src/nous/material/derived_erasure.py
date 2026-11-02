@@ -89,7 +89,7 @@ async def purge_materials_in(
                     representations.update()
                     .where(
                         representations.c.namespace_id == record.namespace_id,
-                        representations.c.subject_id == record.subject_id,
+                        
                         representations.c.id == record.reference.id,
                         representations.c.revision == record.reference.revision,
                     )

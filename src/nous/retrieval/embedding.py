@@ -30,6 +30,36 @@ async def query_embedding(
     concepts: tuple[str, ...] = (),
 ) -> EmbeddingBatch:
     parts = request.parts or (request.text, *request.media)
+    media_parts = tuple(part for part in parts if isinstance(part, MediaReference))
+    if (
+        len(media_parts) == 1
+        and not concepts
+        and not any(isinstance(part, str) and part.strip() for part in parts)
+    ):
+        # A saved media cue already has a producer and semantic space. Reuse it
+        # without invoking a new model, including when providers are disabled.
+        reference = media_parts[0]
+        async with self.authority.read(ctx) as view:
+            await source_material_ids_in(view, ctx, reference, self.materials, self.derivations)
+            saved = (
+                (
+                    await view.connection.execute(
+                        select(vectors)
+                        .where(vectors.c.reference == reference.exact())
+                        .order_by(vectors.c.commit_seq.desc(), vectors.c.space)
+                    )
+                )
+                .mappings()
+                .first()
+            )
+            if saved is not None:
+                return EmbeddingBatch(
+                    model=saved["model"],
+                    space=saved["space"],
+                    dimensions=saved["dimensions"],
+                    vectors=(tuple(saved["vector"]),),
+                    call_ids=(saved["call_id"],),
+                )
     if not any(isinstance(part, MediaReference) for part in parts):
         return await self.models.embed(
             ctx.model_copy(update={"request_id": f"{ctx.request_id}:query"}),

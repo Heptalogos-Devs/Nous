@@ -17,6 +17,8 @@ from nous.platform.errors import NousError
 from .schema import metadata
 
 if TYPE_CHECKING:
+    from nous.platform.configuration.service import ConfigurationValues
+
     from .authority import Authority, ReadView, WriteTx
 
 
@@ -30,20 +32,19 @@ USER_TABLES = frozenset(
         "source_regions",
         "cognitive_revisions",
         "external_resources",
-        "subjects",
         "subject_bindings",
     }
 )
 
 
 class NamespaceLimits:
-    def __init__(self, authority: Authority) -> None:
-        self.authority = authority
+    def __init__(self, values: ConfigurationValues) -> None:
+        self.values = values
         self._requests: dict[str, anyio.CapacityLimiter] = {}
 
     @asynccontextmanager
-    async def request(self, ctx: CallContext) -> AsyncGenerator[None]:
-        async with self.authority.read(ctx) as view:
+    async def request(self, ctx: CallContext, *, authority: Authority) -> AsyncGenerator[None]:
+        async with authority.read(ctx) as view:
             quota = await self.quota_in(view, ctx)
         limiter = self._requests.setdefault(ctx.namespace_id, anyio.CapacityLimiter(inf))
         limiter.total_tokens = quota.max_concurrent_requests or inf
@@ -66,9 +67,7 @@ class NamespaceLimits:
             limiter.release_on_behalf_of(borrower)
 
     async def quota_in(self, view: ReadView | WriteTx, ctx: CallContext) -> NamespaceQuota:
-        from nous.platform.configuration.namespace_policy import policy_in
-
-        return await policy_in(view, ctx, "namespace.quota", NamespaceQuota)
+        return await self.values.policy_in(view, ctx, "namespace.quota", NamespaceQuota)
 
     async def usage_in(self, view: ReadView | WriteTx, ctx: CallContext) -> dict[str, object]:
         totals: dict[str, int] = {}

@@ -10,6 +10,7 @@ member_keys、support_keys、counterexample_keys、from_key、to_key 只能引�
 不得引用只写在描述、标签或记忆摘要中的文字。如果关系端点尚未定义，先在实体或概念中定义它；没有必要的关系可以不提出。
 target_key 只能是 formation_catalog 中对应类型的现有 key；新对象填 null。不要生成 UUID、修订号或其他未提供的标识。
 保留原材料语言；中文材料的摘要、标签、实体名称和说明使用中文，原有专名保持原样。
+<!-- input -->
 {% if source.get('formation_correction') %}
 请修正上次提案后重新输出完整 JSON。校验错误：{{ source.formation_correction.message }}
 可用短键：{{ source.formation_correction.get('available_keys', []) }}

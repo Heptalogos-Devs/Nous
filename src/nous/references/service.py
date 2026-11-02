@@ -11,6 +11,7 @@ from nous_sdk.contracts import (
     MediaReference,
 )
 from nous_sdk.contracts.context import CognitiveTarget, MediaTarget
+from nous_sdk.contracts.query_context import QueryContext
 from nous_sdk.contracts.references import (
     EvidenceTarget,
     ObjectTarget,
@@ -23,15 +24,14 @@ from nous_sdk.contracts.references import (
 from nous_sdk.contracts.source_objects import EvidenceReference, ObservationReference
 from pydantic import JsonValue, TypeAdapter
 
+from nous.cognition.records import CognitiveRecords
 from nous.cognition.schema import revisions
-from nous.cognition.service import CognitionService
-from nous.identity.schema import subjects
 from nous.material.service import MaterialService, materials, regions
 from nous.platform.persistence import Authority, ReadView, WriteTx
 
 from . import source_objects
 from .allocation import addresses_in, recover_in, validate_address
-from .schema import addresses, imported
+from .schema import addresses, imported, query_groups
 
 if TYPE_CHECKING:
     from nous.data_management.resources import ResourceService
@@ -66,11 +66,56 @@ class ReferenceDirectory:
     evidence_records_in = source_objects.evidence_records_in
     read_source_object_in = source_objects.read_source_object_in
     require_source_object_in = source_objects.require_source_object_in
+    material_ids_in = source_objects.material_ids_in
+
+    async def query_context_in(self, view: ReadView | WriteTx, ctx: CallContext, locator: str):
+
+        from nous.context.lifecycle import session_record_in, work_record_in
+
+        goal = ""
+        unresolved: tuple[str, ...] = ()
+        targets: list[SemanticTarget] = []
+        work_id = None
+        if locator.startswith("session:"):
+            session = await session_record_in(view, ctx, locator.removeprefix("session:"))
+            if session.closed:
+                raise DomainError("query_context_inactive", "The query session is closed")
+            targets.extend(item.target for item in session.residents if item.state != "evicted")
+            work_id = session.active_work_context_id
+        elif locator.startswith("work:"):
+            work_id = locator.removeprefix("work:")
+        else:
+            targets.append((await self.resolve_in(view, ctx, locator)).reference)
+        if work_id is not None:
+            work = await work_record_in(view, ctx, work_id)
+            if work.purged or work.state != "open":
+                raise DomainError("query_context_inactive", "The query work context is inactive")
+            goal = work.content.purpose
+            unresolved = work.content.unresolved_questions
+            targets.extend(work.content.anchors)
+        anchors: list[str] = []
+        entities: list[str] = []
+        attachments: list[MediaReference] = []
+        for target in targets:
+            resolved = await self.resolve_target_in(view, ctx, target, None)
+            if isinstance(resolved, MediaTarget):
+                attachments.append(resolved.reference)
+            else:
+                anchors.append(resolved.reference.exact())
+                if isinstance(resolved, CognitiveTarget) and resolved.reference.kind == "entity":
+                    entities.append(resolved.reference.exact())
+        return QueryContext(
+            goal=goal,
+            anchors=tuple(dict.fromkeys(anchors)),
+            entities=tuple(dict.fromkeys(entities)),
+            attachments=tuple(dict.fromkeys(attachments)),
+            unresolved=unresolved,
+        )
 
     def __init__(
         self,
         authority: Authority,
-        cognition: CognitionService,
+        cognition: CognitiveRecords,
         materials: MaterialService,
         *,
         resources: ResourceService | None = None,
@@ -79,7 +124,7 @@ class ReferenceDirectory:
         self.derivations = cognition.derivations
         self.resources = resources
 
-    async def _resolve_target(
+    async def resolve_target_in(
         self,
         view: ReadView | WriteTx,
         ctx: CallContext,
@@ -90,7 +135,6 @@ class ReferenceDirectory:
         if isinstance(target, ObjectTarget):
             statement = sa.select(revisions.c.record).where(
                 revisions.c.namespace_id == ctx.namespace_id,
-                revisions.c.subject_id == ctx.subject_id,
                 revisions.c.id == target.identity.id,
                 revisions.c.kind == target.identity.kind,
             )
@@ -140,13 +184,11 @@ class ReferenceDirectory:
                     "reference_not_found", "Source object is outside recorded-time history"
                 )
         elif target.reference.kind == "material":
-            await self.materials.read_in(view, ctx, target.reference.id)
+            await self.materials.media_source_in(view, ctx, target.reference)
         elif target.reference.kind == "source_region":
             await self.materials.read_region_in(view, ctx, target.reference.id)
         else:
-            from nous.material.derived import DerivedService
-
-            await DerivedService(self.authority, self.materials).authorize_in(
+            await self.derivations.authorize_in(
                 view, ctx, target.reference
             )
         return target
@@ -163,6 +205,15 @@ class ReferenceDirectory:
             raise DomainError(
                 "invalid_history", "Reference history cutoff is outside committed history"
             )
+        group_ref, separator, item = locator.partition(':')
+        if separator and group_ref.startswith('q') and group_ref[1:].isdigit() and item.isdigit():
+            targets = await view.connection.scalar(sa.select(query_groups.c.targets).where(query_groups.c.namespace_id==ctx.namespace_id,query_groups.c.group_ref==group_ref))
+            position=int(item)-1
+            if targets is None or position<0 or position>=len(targets):
+                raise DomainError('reference_not_found','Query result reference does not exist in this Namespace')
+            target=_TARGET.validate_python(targets[position])
+            resolved=await self.resolve_target_in(view,ctx,target,as_of_commit,as_of_time)
+            return ReferenceResolution(namespace_id=ctx.namespace_id,reference=resolved)
         if ":" in locator:
             kind, identity = locator.split(":", 1)
             if kind == "resource":
@@ -173,10 +224,9 @@ class ReferenceDirectory:
                     )
                 record = await self.resources.resolve_in(view, ctx, locator, as_of_commit)
                 target = ResourceTarget(reference=record.reference)
-                await self._resolve_target(view, ctx, target, as_of_commit, as_of_time)
+                await self.resolve_target_in(view, ctx, target, as_of_commit, as_of_time)
                 return ReferenceResolution(
                     namespace_id=ctx.namespace_id,
-                    subject_id=ctx.require_subject(),
                     reference=target,
                 )
             if kind in {"observation", "evidence"}:
@@ -191,10 +241,9 @@ class ReferenceDirectory:
                     )
                 else:
                     target = EvidenceTarget(reference=EvidenceReference(id=identity))
-                await self._resolve_target(view, ctx, target, as_of_commit, as_of_time)
+                await self.resolve_target_in(view, ctx, target, as_of_commit, as_of_time)
                 return ReferenceResolution(
                     namespace_id=ctx.namespace_id,
-                    subject_id=ctx.require_subject(),
                     reference=target,
                 )
             if kind in {
@@ -208,12 +257,11 @@ class ReferenceDirectory:
                 reference = MediaReference.model_validate(
                     {"kind": kind.replace("-", "_"), "id": identity}
                 )
-                resolved = await self._resolve_target(
+                resolved = await self.resolve_target_in(
                     view, ctx, MediaTarget(reference=reference), as_of_commit, as_of_time
                 )
                 return ReferenceResolution(
                     namespace_id=ctx.namespace_id,
-                    subject_id=ctx.require_subject(),
                     reference=resolved,
                     addresses=await addresses_in(view, ctx, reference),
                 )
@@ -222,12 +270,11 @@ class ReferenceDirectory:
                 cognitive = CognitiveRef.model_validate(
                     {"kind": kind, "id": object_id, "revision": int(revision)}
                 )
-                resolved = await self._resolve_target(
+                resolved = await self.resolve_target_in(
                     view, ctx, CognitiveTarget(reference=cognitive), as_of_commit, as_of_time
                 )
                 return ReferenceResolution(
                     namespace_id=ctx.namespace_id,
-                    subject_id=ctx.require_subject(),
                     reference=resolved,
                     addresses=await addresses_in(view, ctx, cognitive),
                 )
@@ -236,7 +283,6 @@ class ReferenceDirectory:
             object_id = locator
         statement = sa.select(revisions.c.record).where(
             revisions.c.namespace_id == ctx.namespace_id,
-            revisions.c.subject_id == ctx.subject_id,
             revisions.c.id == object_id,
         )
         if separator:
@@ -246,12 +292,11 @@ class ReferenceDirectory:
         value = await _head_in(view, statement, as_of_time)
         if value is not None:
             cognitive = CognitiveRecord.model_validate(value).reference
-            resolved = await self._resolve_target(
+            resolved = await self.resolve_target_in(
                 view, ctx, CognitiveTarget(reference=cognitive), as_of_commit, as_of_time
             )
             return ReferenceResolution(
                 namespace_id=ctx.namespace_id,
-                subject_id=ctx.require_subject(),
                 reference=resolved,
                 addresses=await addresses_in(view, ctx, cognitive),
             )
@@ -263,7 +308,6 @@ class ReferenceDirectory:
         )
         inherited = sa.select(imported.c.target).where(
             imported.c.namespace_id == ctx.namespace_id,
-            imported.c.subject_id == ctx.subject_id,
             imported.c.address == locator,
         )
         if as_of_commit is not None:
@@ -274,7 +318,7 @@ class ReferenceDirectory:
         matches: dict[str, ResolvedTarget] = {}
         for value in encoded:
             try:
-                target = await self._resolve_target(
+                target = await self.resolve_target_in(
                     view, ctx, _TARGET.validate_json(str(value)), as_of_commit, as_of_time
                 )
                 matches[target.reference.exact()] = target
@@ -299,7 +343,6 @@ class ReferenceDirectory:
         resolved = next(iter(matches.values()))
         return ReferenceResolution(
             namespace_id=ctx.namespace_id,
-            subject_id=ctx.require_subject(),
             reference=resolved,
             addresses=await addresses_in(view, ctx, resolved.reference)
             if isinstance(resolved, (CognitiveTarget, MediaTarget))
@@ -316,37 +359,46 @@ class ReferenceDirectory:
         async with self.authority.read(ctx) as view:
             return await self.resolve_in(view, ctx, locator, as_of_commit, as_of_time)
 
+    async def retain_query(self, ctx: CallContext, result):
+        from uuid import uuid4
+
+        from nous_sdk.contracts.resources import ResourceRecord
+        from nous_sdk.contracts.retrieval import QueryResult
+        from nous_sdk.contracts.source_objects import ObservationRecord
+        targets=[]
+        for hit in result.hits:
+            record=hit.object
+            if isinstance(record,CognitiveRecord): target=CognitiveTarget(reference=record.reference)
+            elif isinstance(record,ResourceRecord):target=ResourceTarget(reference=record.reference)
+            elif isinstance(record,ObservationRecord):target=ObservationTarget(reference=record.reference)
+            elif isinstance(record.reference,MediaReference):target=MediaTarget(reference=record.reference)
+            else:target=EvidenceTarget(reference=record.reference)
+            targets.append(target.model_dump(mode='json'))
+        async with self.authority.write(ctx,str(uuid4()),operation_kind='query.references',scope=ctx.namespace_id,payload={'targets':targets}) as tx:
+            group_ref='q'+str(tx.commit_seq)
+            await tx.connection.execute(query_groups.insert().values(namespace_id=ctx.namespace_id,group_ref=group_ref,caller_id=ctx.caller_id,targets=targets,commit_seq=tx.commit_seq))
+            refs=tuple(group_ref+':'+str(index+1) for index in range(len(targets)))
+            tx.result({'refs':refs})
+        return QueryResult.model_validate({**result.model_dump(), 'result_refs':refs})
+
     async def reconcile(self, ctx: CallContext, operation_id: str) -> dict[str, int]:
         """Repair missing address metadata on visible identities without revising content."""
         async with self.authority.write(
             ctx,
             operation_id,
             operation_kind="references.reconcile",
-            scope=ctx.subject_id or ctx.namespace_id,
-            payload={"namespace_id": ctx.namespace_id, "subject_id": ctx.subject_id},
+            scope=ctx.namespace_id or ctx.namespace_id,
+            payload={"namespace_id": ctx.namespace_id},
         ) as tx:
             if tx.replayed:
                 return TypeAdapter(dict[str, int]).validate_python(tx.replay_result)
-            subject_ids = (
-                [ctx.subject_id]
-                if ctx.subject_id is not None
-                else list(
-                    (
-                        await tx.connection.execute(
-                            sa.select(subjects.c.id).where(
-                                subjects.c.namespace_id == ctx.namespace_id
-                            )
-                        )
-                    ).scalars()
-                )
-            )
-            scopes = [ctx.model_copy(update={"subject_id": str(sid)}) for sid in subject_ids]
+            scopes = [ctx]
             statement = sa.select(revisions).where(revisions.c.namespace_id == ctx.namespace_id)
-            if ctx.subject_id is not None:
-                statement = statement.where(revisions.c.subject_id == ctx.subject_id)
+            if ctx.namespace_id is not None:
+                statement = statement.where(revisions.c.namespace_id == ctx.namespace_id)
             counts = {"cognition": 0, "materials": 0, "regions": 0, "commit_seq": tx.commit_seq}
             for row in (await tx.connection.execute(statement)).mappings():
-                selected = ctx.model_copy(update={"subject_id": str(row["subject_id"])})
+                selected = ctx.model_copy(update={})
                 record = CognitiveRecord.model_validate(row["record"])
                 try:
                     await self.cognition.get_in(tx, selected, record.reference)

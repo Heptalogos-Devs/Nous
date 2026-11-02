@@ -22,11 +22,11 @@ from nous.platform.persistence import ReadView, WriteTx
 from nous.platform.persistence.authority import canonical_json
 
 if TYPE_CHECKING:
-    from .service import CognitionService
+    from .records import CognitiveRecords
 
 
 async def evidence_in(
-    self: CognitionService, view: ReadView | WriteTx, ctx: CallContext, snapshot: GrowthSnapshot
+    self: CognitiveRecords, view: ReadView | WriteTx, ctx: CallContext, snapshot: GrowthSnapshot
 ) -> dict[str, tuple[EvidenceLink, ...]]:
     keys = {entry.key for entry in snapshot.entries}
     result: dict[str, tuple[EvidenceLink, ...]] = {}
@@ -47,7 +47,7 @@ async def evidence_in(
 
 
 async def from_units_in(
-    self: CognitionService,
+    self: CognitiveRecords,
     view: ReadView | WriteTx,
     ctx: CallContext,
     units: tuple[ImportUnit, ...],
@@ -91,8 +91,46 @@ async def from_units_in(
     return tuple(values)
 
 
+async def from_references_in(
+    self: CognitiveRecords,
+    view: ReadView | WriteTx,
+    ctx: CallContext,
+    references: tuple[MediaReference, ...],
+    *,
+    start: int = 0,
+) -> tuple[GrowthSource, ...]:
+    values: list[GrowthSource] = []
+    for index, reference in enumerate(references, start):
+        provenance = await self.materials.provenance_in(
+            view, ctx, reference, derivations=self.derivations
+        )
+        event_id = reference.observation_id or (
+            provenance.roots[0] if len(provenance.roots) == 1 else None
+        )
+        observation = recorded = None
+        if event_id is not None:
+            event = await require_observation_in(view, ctx, event_id)
+            observation = TimePoint.model_validate(event["record"]["observed_at"])
+            recorded = TimePoint(
+                coordinate=int(
+                    datetime.fromisoformat(event["record"]["recorded_at"]).timestamp() * 1000
+                )
+            )
+        values.append(
+            GrowthSource(
+                key=f"s{index}",
+                source=reference,
+                evidence=tuple(EvidenceLink(observation_id=root) for root in provenance.roots),
+                times=CognitiveTimes(
+                    observation=observation, formation=ctx.clock, recorded=recorded or ctx.clock
+                ),
+            )
+        )
+    return tuple(values)
+
+
 async def read_in(
-    self: CognitionService,
+    self: CognitiveRecords,
     view: ReadView | WriteTx,
     ctx: CallContext,
     sources: tuple[GrowthSource, ...],

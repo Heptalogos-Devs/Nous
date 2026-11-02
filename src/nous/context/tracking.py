@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 
 def track_identity(ctx: CallContext, command: ContextTrack | ContextPrepare) -> str:
     return sha256(
-        f"{ctx.caller_id}\0{ctx.namespace_id}\0{ctx.require_subject()}\0{command.session_id}\0{command.consumer_id}\0{command.instance_id}".encode()
+        f"{ctx.caller_id}\0{ctx.namespace_id}\0{command.session_id}\0{command.consumer_id}\0{command.instance_id}".encode()
     ).hexdigest()
 
 
@@ -35,7 +35,7 @@ async def read_track(
             select(tracks.c.record).where(
                 tracks.c.id == track_identity(ctx, command),
                 tracks.c.namespace_id == ctx.namespace_id,
-                tracks.c.subject_id == ctx.require_subject(),
+                
             )
         )
         projection = ContextProjection.model_validate(raw) if raw is not None else None
@@ -59,7 +59,7 @@ async def read_track(
                 select(preparations.c.record).where(
                     preparations.c.track_id == track_identity(ctx, command),
                     preparations.c.namespace_id == ctx.namespace_id,
-                    preparations.c.subject_id == ctx.subject_id,
+                    
                 )
             )
         ).scalars()

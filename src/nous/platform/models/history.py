@@ -18,11 +18,10 @@ imported_calls = sa.Table(
     metadata,
     sa.Column("id", sa.String, primary_key=True),
     sa.Column("namespace_id", sa.String, nullable=False),
-    sa.Column("subject_id", sa.String, nullable=False),
     sa.Column("installation_id", sa.String, nullable=False),
     sa.Column("archive_id", sa.String, nullable=False),
     sa.Column("record", sa.JSON, nullable=False),
-    sa.UniqueConstraint("namespace_id", "subject_id", "installation_id", "archive_id"),
+    sa.UniqueConstraint("namespace_id", "installation_id", "archive_id"),
 )
 
 
@@ -38,7 +37,6 @@ def provider_record(row: RowMapping) -> ArchivedCall:
         id=str(row["id"]),
         origin=CallOrigin(
             namespace_id=str(row["namespace_id"]),
-            subject_id=str(row["subject_id"]) if row["subject_id"] is not None else None,
             call_id=str(row["id"]),
         ),
         purpose=str(row["purpose"]),
@@ -67,7 +65,6 @@ async def export_in(
                     sa.select(provider_calls).where(
                         provider_calls.c.id == identifier,
                         provider_calls.c.namespace_id == ctx.namespace_id,
-                        provider_calls.c.subject_id == ctx.subject_id,
                     )
                 )
             )
@@ -81,13 +78,12 @@ async def export_in(
                 sa.select(imported_calls.c.record).where(
                     imported_calls.c.id == identifier,
                     imported_calls.c.namespace_id == ctx.namespace_id,
-                    imported_calls.c.subject_id == ctx.subject_id,
                 )
             )
             if historical is None:
                 raise DomainError(
                     "model_call_unavailable",
-                    "The referenced model call is not retained in this subject",
+                    "The referenced model call is not retained in this namespace",
                     call_id=identifier,
                 )
             archived = ArchivedCall.model_validate(historical)
@@ -103,11 +99,10 @@ async def import_in(
     mapping: Mapping[str, str],
     installation_id: str,
 ) -> dict[str, str]:
-    if (ctx.namespace_id, ctx.subject_id) != (tx.ctx.namespace_id, tx.ctx.subject_id):
+    if ctx.namespace_id != tx.ctx.namespace_id:
         raise DomainError(
             "model_call_forbidden", "Imported calls require the receiving transaction"
         )
-    subject = ctx.require_subject()
     identities: dict[str, str] = {}
     for record in records:
         if record.id in identities:
@@ -131,7 +126,6 @@ async def import_in(
             imported_calls.insert().values(
                 id=identifier,
                 namespace_id=ctx.namespace_id,
-                subject_id=subject,
                 installation_id=installation_id,
                 archive_id=record.id,
                 record=value.model_dump(mode="json"),
@@ -146,7 +140,6 @@ async def list_in(view: ReadView, ctx: CallContext) -> list[dict[str, object]]:
         await view.connection.execute(
             sa.select(imported_calls.c.record).where(
                 imported_calls.c.namespace_id == ctx.namespace_id,
-                imported_calls.c.subject_id == ctx.subject_id,
             )
         )
     ).scalars()
@@ -154,7 +147,6 @@ async def list_in(view: ReadView, ctx: CallContext) -> list[dict[str, object]]:
         {
             **ArchivedCall.model_validate(value).model_dump(mode="json"),
             "namespace_id": ctx.namespace_id,
-            "subject_id": ctx.subject_id,
             "record_type": "imported",
         }
         for value in records
@@ -171,7 +163,7 @@ async def purge_in(
     if source_ids is None:
         predicate.extend(
             (
-                imported_calls.c.subject_id == tx.ctx.require_subject(),
+                imported_calls.c.namespace_id == tx.ctx.namespace_id,
                 imported_calls.c.id.in_(call_ids),
             )
         )

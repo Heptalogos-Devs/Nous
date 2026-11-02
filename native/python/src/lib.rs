@@ -9,6 +9,8 @@ pub fn native_error(error: impl std::fmt::Display) -> PyErr {
     let message = format!("{error:#}");
     let code = if message.starts_with("CANCELLED") {
         "cancelled"
+    } else if message.contains("CAPABILITY_MISSING") {
+        "capability_unavailable"
     } else {
         "native_error"
     };
@@ -82,6 +84,15 @@ fn nousql_manual() -> &'static str {
     nousql_syntax::MANUAL
 }
 #[pyfunction]
+fn lexical_scores(py: Python<'_>, query: String, texts: Vec<String>) -> Vec<Option<f32>> {
+    py.detach(|| {
+        texts
+            .iter()
+            .map(|text| nous_retrieval::match_score(&query, text))
+            .collect()
+    })
+}
+#[pyfunction]
 fn schemas_json() -> String {
     index::schemas().to_string()
 }
@@ -98,5 +109,6 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(parse_nousql, m)?)?;
     m.add_function(wrap_pyfunction!(nousql_manual, m)?)?;
     m.add_function(wrap_pyfunction!(schemas_json, m)?)?;
+    m.add_function(wrap_pyfunction!(lexical_scores, m)?)?;
     Ok(())
 }

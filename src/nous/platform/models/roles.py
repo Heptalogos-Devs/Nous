@@ -1,10 +1,10 @@
 """Consumer-owned contracts are registered by application composition."""
 
-from collections.abc import Callable
 from dataclasses import dataclass
 
 from nous_sdk.contracts import DomainError
 from pydantic import BaseModel, JsonValue
+from typing_extensions import TypeForm
 
 from nous.platform.configuration.models import ModelConfiguration
 
@@ -14,10 +14,9 @@ class RoleDefinition:
     purpose: str
     variant: str
     input_type: type[BaseModel]
-    output_type: type[BaseModel] | type[str]
+    output_type: TypeForm[object]
     default: bool = False
     invocation_purpose: str | None = None
-    transform_prompt: Callable[[dict[str, object], BaseModel], dict[str, object]] | None = None
 
     def variables(self, variables: dict[str, object]) -> tuple[BaseModel, dict[str, object]]:
         parsed = self.input_type.model_validate(variables)
@@ -66,7 +65,7 @@ class RoleRegistry:
         self,
         purpose: str,
         variant: str | None = None,
-        output_type: type[BaseModel] | type[str] | None = None,
+        output_type: TypeForm[object] | None = None,
         output_mode: str | None = None,
     ) -> RoleDefinition:
         candidates = [
@@ -74,7 +73,7 @@ class RoleRegistry:
             for value in self.definitions.values()
             if value.purpose == purpose
             and (variant is None or value.variant == variant)
-            and (output_type is None or value.output_type is output_type)
+            and (output_type is None or value.output_type == output_type)
         ]
         if variant is None and output_type is None:
             candidates = [value for value in candidates if value.default]

@@ -9,6 +9,6 @@ def connect_from_environment() -> AMemorixAdapter:
     return AMemorixAdapter(
         client,
         namespace_id=os.environ["NOUS_NAMESPACE_ID"],
-        subject_id=os.environ["NOUS_SUBJECT_ID"],
+        
         transfer_root=os.environ.get("NOUS_TRANSFER_ROOT"),
     )

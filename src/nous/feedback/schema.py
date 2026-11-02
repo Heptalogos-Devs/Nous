@@ -7,6 +7,6 @@ tasks = Table(
     metadata,
     Column("id", String, primary_key=True),
     Column("namespace_id", String, nullable=False, index=True),
-    Column("subject_id", String, nullable=False, index=True),
+    
     Column("record", JSON, nullable=False),
 )

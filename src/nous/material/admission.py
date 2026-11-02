@@ -31,7 +31,7 @@ input_admissions = Table(
     Column("new_material", Boolean, nullable=False),
     Column("source_references", JSON, nullable=False),
     Column("namespace_id", String, nullable=False),
-    Column("subject_id", String, nullable=False),
+    
     Column("caller_id", String, nullable=False),
     Column("operation_key", String, nullable=False, index=True),
     Column("commit_seq", Integer, nullable=False),
@@ -114,10 +114,10 @@ def _context_for_input(
 
 
 def _require_transaction(tx: WriteTx, ctx: CallContext) -> None:
-    if (ctx.caller_id, ctx.namespace_id, ctx.subject_id, ctx.credential_source_ids) != (
+    if (ctx.caller_id, ctx.namespace_id, ctx.namespace_id, ctx.credential_source_ids) != (
         tx.ctx.caller_id,
         tx.ctx.namespace_id,
-        tx.ctx.subject_id,
+        tx.ctx.namespace_id,
         tx.ctx.credential_source_ids,
     ):
         raise DomainError(
@@ -176,7 +176,7 @@ async def _record_admission(
                 reference.model_dump(mode="json") for reference in source_references
             ],
             namespace_id=ctx.namespace_id,
-            subject_id=ctx.require_subject(),
+            
             caller_id=ctx.caller_id,
             operation_key=tx.operation_key,
             commit_seq=tx.commit_seq,
@@ -248,7 +248,7 @@ async def restore_input_in(
         )
     statement = select(input_admissions).where(
         input_admissions.c.namespace_id == ctx.namespace_id,
-        input_admissions.c.subject_id == ctx.require_subject(),
+        
         input_admissions.c.caller_id == ctx.caller_id,
         input_admissions.c.operation_key == key,
     )
@@ -284,7 +284,7 @@ async def restore_input_in(
                 observations.c.id == fact["observation_id"],
                 observations.c.material_id == fact["material_id"],
                 observations.c.namespace_id == ctx.namespace_id,
-                observations.c.subject_id == ctx.require_subject(),
+                
                 observations.c.commit_seq == receipt_seq,
                 observations.c.active.is_(True),
             )
@@ -302,7 +302,7 @@ async def restore_input_in(
             or material["id"] != fact["material_id"]
             or material["namespace_id"] != ctx.namespace_id
             or event["namespace_id"] != ctx.namespace_id
-            or event["subject_id"] != ctx.subject_id
+            or event['namespace_id'] != ctx.namespace_id
         ):
             raise DomainError(
                 "input_admission_unavailable",

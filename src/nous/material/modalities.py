@@ -53,7 +53,7 @@ async def source_modalities_in(
             .join(materials, materials.c.id == observations.c.material_id)
             .where(
                 observations.c.namespace_id == ctx.namespace_id,
-                observations.c.subject_id == ctx.require_subject(),
+                
                 materials.c.namespace_id == ctx.namespace_id,
                 observations.c.id.in_(authorized_observation_ids),
             )

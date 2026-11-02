@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import base64
 
-from nous_sdk.contracts import DomainError, SubjectBundle
+from nous_sdk.contracts import DomainError, NamespaceBundle
 from nous_sdk.contracts.derivation import TextRepresentation
 from pydantic import JsonValue, TypeAdapter
 
@@ -14,7 +14,7 @@ _OBJECT = TypeAdapter(dict[str, JsonValue])
 
 
 def project_images(
-    bundle: SubjectBundle, portable_ids: set[str]
+    bundle: NamespaceBundle, portable_ids: set[str]
 ) -> tuple[dict[str, JsonValue] | None, dict[str, bytes]]:
     from .portable_identity import semantic_ids
 

@@ -105,7 +105,7 @@ async def derive(
         ctx,
         command.operation_id,
         operation_kind="media.derive",
-        scope=ctx.require_subject(),
+        scope=ctx.namespace_id,
         payload=command,
     )
     if receipt is not None:
@@ -142,7 +142,7 @@ async def derive(
             ctx,
             command.operation_id,
             operation_kind="media.derive",
-            scope=ctx.require_subject(),
+            scope=ctx.namespace_id,
             payload=command,
         ) as tx:
             if tx.replayed:

@@ -16,6 +16,8 @@ class CorrectionEdit(Contract):
 
 
 class PlanCorrection(Operation):
+    targets: tuple[CognitiveRef, ...] = Field(default=(), max_length=100)
+    source: str | None = None
     instruction: str = Field(default="", max_length=16000)
     selection: RecordsQuery = Field(default_factory=lambda: RecordsQuery(limit=50))
     edits: tuple[CorrectionEdit, ...] = Field(default=(), max_length=100)
@@ -95,7 +97,7 @@ class CorrectionPlan(Contract):
     id: str
     operation_id: str
     namespace_id: str
-    subject_id: str
+    
     created_by: str
     created_at: str
     instruction: str

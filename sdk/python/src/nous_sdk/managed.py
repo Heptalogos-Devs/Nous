@@ -81,14 +81,14 @@ class ManagedBinding:
         client: ContextClient,
         *,
         namespace_id: str | None,
-        subject_id: str,
+        
         session_id: str,
         consumer_id: str,
         instance_id: str,
         source_read: SourceReadScope | Mapping[str, JsonValue] | None = None,
     ) -> None:
         self.client = client.with_source_read(source_read) if source_read is not None else client
-        self.namespace_id, self.subject_id = namespace_id, subject_id
+        self.namespace_id = namespace_id
         self.session_id, self.consumer_id, self.instance_id = session_id, consumer_id, instance_id
         self._cursor: ContextCursor | None = None
         self._projection: ContextProjection | None = None
@@ -113,10 +113,9 @@ class ManagedBinding:
         if self._pending is not None or self._preparing:
             raise RuntimeError("Cannot resume over a pending context preparation")
         if self.namespace_id is None:
-            self.namespace_id = (await self.client.subject(self.subject_id)).namespace_id
+            raise ValueError("Bind a Namespace before opening managed context")
         state = await self.client.context_track(
             self._namespace(),
-            self.subject_id,
             ContextTrack(
                 session_id=self.session_id,
                 consumer_id=self.consumer_id,
@@ -130,7 +129,6 @@ class ManagedBinding:
         for preparation_id in state.pending_preparation_ids:
             await self.client.cancel_context_preparation(
                 self._namespace(),
-                self.subject_id,
                 preparation_id,
                 event_id("cancel", self.instance_id, preparation_id),
             )
@@ -158,7 +156,7 @@ class ManagedBinding:
         self._preparing = True
         try:
             if self.namespace_id is None:
-                self.namespace_id = (await self.client.subject(self.subject_id)).namespace_id
+                raise ValueError("Bind a Namespace before opening managed context")
             await self._cancel_pending()
             parsed_usage = (
                 usage if isinstance(usage, ContextUsage) else ContextUsage.model_validate(usage)
@@ -177,13 +175,13 @@ class ManagedBinding:
             )
             with anyio.fail_after(timeout_ms / 1000):
                 submitted = await self.client.submit_context_preparation(
-                    self._namespace(), self.subject_id, command
+                    self._namespace(), command
                 )
                 self._preparing_job_id = submitted.job_id
                 jobs = await self.client.wait_success(
                     (submitted.job_id,),
                     namespace_id=self._namespace(),
-                    subject_id=self.subject_id,
+                    
                     timeout_ms=timeout_ms,
                 )
                 output = jobs[0].output
@@ -192,7 +190,7 @@ class ManagedBinding:
                 ):
                     raise ValueError("Context job did not return its preparation identity")
                 result = await self.client.context_preparation(
-                    self._namespace(), self.subject_id, preparation_id
+                    self._namespace(), preparation_id
                 )
                 self._preparing_job_id = None
             self._preparation_id = result.id
@@ -205,7 +203,7 @@ class ManagedBinding:
                     await self.client.cancel_job(
                         self._preparing_job_id,
                         namespace_id=self._namespace(),
-                        subject_id=self.subject_id,
+                        
                     )
                     self._preparing_job_id = None
             raise
@@ -226,13 +224,11 @@ class ManagedBinding:
         projection = response.projection
         if (
             projection.namespace_id,
-            projection.subject_id,
             projection.session_id,
             projection.consumer_id,
             projection.instance_id,
         ) != (
             self._namespace(),
-            self.subject_id,
             self.session_id,
             self.consumer_id,
             self.instance_id,
@@ -300,7 +296,7 @@ class ManagedBinding:
             measurement=measurement,
         )
         receipt = await self.client.admit_managed_context(
-            self._namespace(), self.subject_id, command
+            self._namespace(), command
         )
         state.admissions[invocation_id] = receipt.id
         self._preparation_id = None
@@ -323,7 +319,7 @@ class ManagedBinding:
         return await self.client.report_context(
             admission_id,
             namespace_id=self._namespace(),
-            subject_id=self.subject_id,
+            
             invocation_id=invocation_id,
             outcome=outcome,
             occurred_at=occurred_at,
@@ -344,7 +340,6 @@ class ManagedBinding:
         with anyio.fail_after(self.client.transport.options.cleanup_timeout_seconds, shield=True):
             await self.client.cancel_context_preparation(
                 self._namespace(),
-                self.subject_id,
                 identity,
                 event_id("cancel", self.instance_id, identity),
             )

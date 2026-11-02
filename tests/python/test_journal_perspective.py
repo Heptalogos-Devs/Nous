@@ -17,7 +17,7 @@ from nous_sdk.contracts import (
     TimeRange,
 )
 
-from nous.cognition.service import CognitionService
+from nous.cognition.records import CognitiveRecords
 from nous.identity.service import IdentityService
 from nous.platform.persistence import Authority
 
@@ -25,7 +25,7 @@ from nous.platform.persistence import Authority
 def test_cutoff_covers_evidence_and_allows_prior_journal_lineage(tmp_path):
     async def scenario():
         authority = Authority(tmp_path / "authority.sqlite")
-        cognition = CognitionService(authority)
+        cognition = CognitiveRecords(authority)
         identity = IdentityService(authority)
         await authority.initialize()
         ctx = CallContext(

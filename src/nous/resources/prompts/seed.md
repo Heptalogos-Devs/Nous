@@ -14,8 +14,9 @@ from_entity、to_entity、audience、groups 只引用 entity 类型的本地 key
 实体目录只包括本次提案实际通过from_entity、to_entity、audience、groups等结构化字段引用的人物和群体。先提出人物自身的具体认识，再为这些实际引用补齐实体声明；新实体在使用它的关系或用法之前出现。每个新对象的key只声明一次，所有本地引用指向这份输出实际声明的对象。
 不熟悉的领域保持未知，不把人格种子当作已完成的真实实践。歧义放入 questions。
 明确的长期目标保存为 desire，condition使用predicate表达具体期望，mode=achieve、state=unknown、evidence=[]，没有时间要求时hold=null；兴趣和目标按各自语义分别保存。
-只提出 snapshot.capabilities 已启用领域的变更；基础记忆与实体可用 memory，self_facet/domain_knowledge 需要 ego，关系和用法需要 social，愿望和关切需要 motivation。
-instruction: {{ instruction }}
+instruction:
+<!-- input -->
+{{ instruction }}
 run: {{ maintenance_run_id }}
 snapshot: {{ snapshot }}
 {% if previous_proposal is defined %}previous_proposal: {{ previous_proposal }}{% endif %}

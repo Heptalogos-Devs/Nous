@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from hashlib import sha256
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
@@ -20,6 +19,7 @@ from sqlalchemy import select, update
 
 from nous.platform.persistence import WriteTx
 
+from .lifecycle import session_key
 from .models import preparations, sessions
 
 if TYPE_CHECKING:
@@ -37,14 +37,12 @@ async def open_session(
 ):
 
     identity = session_id or str(uuid4())
-    key = sha256(
-        f"{ctx.caller_id}\0{ctx.namespace_id}\0{ctx.require_subject()}\0{identity}".encode()
-    ).hexdigest()
+    key = session_key(ctx, identity)
     async with self.authority.write(
         ctx,
         operation_id,
         operation_kind="context.open_session",
-        scope=ctx.require_subject(),
+        scope=ctx.namespace_id,
         payload={
             "session_id": session_id,
             "parent_session_id": parent_session_id,
@@ -69,7 +67,6 @@ async def open_session(
         result = ContextSession(
             id=identity,
             namespace_id=ctx.namespace_id,
-            subject_id=ctx.require_subject(),
             closed=False,
             recorded_at=tx.recorded_at,
             commit_seq=tx.commit_seq,
@@ -80,7 +77,6 @@ async def open_session(
             sessions.insert().values(
                 id=key,
                 namespace_id=ctx.namespace_id,
-                subject_id=ctx.subject_id,
                 record=result.model_dump(mode="json"),
             )
         )
@@ -92,14 +88,12 @@ async def close_session(
 ):
     from nous_sdk.contracts.context import ContextSession
 
-    key = sha256(
-        f"{ctx.caller_id}\0{ctx.namespace_id}\0{ctx.require_subject()}\0{session_id}".encode()
-    ).hexdigest()
+    key = session_key(ctx, session_id)
     async with self.authority.write(
         ctx,
         operation_id,
         operation_kind="context.close_session",
-        scope=ctx.require_subject(),
+        scope=ctx.namespace_id,
         payload={"session_id": session_id},
     ) as tx:
         if tx.replayed:
@@ -131,7 +125,6 @@ async def cancel_pending_in(
         await tx.connection.execute(
             select(preparations.c.id, preparations.c.record).where(
                 preparations.c.namespace_id == ctx.namespace_id,
-                preparations.c.subject_id == ctx.subject_id,
             )
         )
     ).all()
@@ -169,7 +162,7 @@ async def change_session(
         ctx,
         command.operation_id,
         operation_kind="context.change_session",
-        scope=ctx.require_subject(),
+        scope=ctx.namespace_id,
         payload=command,
     ) as tx:
         if tx.replayed:

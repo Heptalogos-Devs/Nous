@@ -1,2 +1,2 @@
 from .models import ModelServices as ModelServices
-from .service import CognitionService as CognitionService
+from .records import CognitiveRecords as CognitiveRecords

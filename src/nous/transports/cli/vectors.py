@@ -17,20 +17,19 @@ def register(cli: typer.Typer) -> None:
     cli.add_typer(group, name="vectors")
 
     @group.command("recover")
-    def recover(ctx: typer.Context, namespace_id: str, subject_id: str, command: Path) -> None:
+    def recover(ctx: typer.Context, namespace_id: str, command: Path) -> None:
         value = read_command(command, RecoverVectors)
-        invoke(ctx, lambda api: api.recover_vectors(namespace_id, subject_id, value))
+        invoke(ctx, lambda api: api.recover_vectors(namespace_id, value))
 
     @group.command("spaces")
     def spaces(
         ctx: typer.Context,
         namespace_id: str,
-        subject_id: str | None = None,
         include_media: bool = False,
     ) -> None:
         invoke(
             ctx,
-            lambda api: api.vector_spaces(namespace_id, subject_id, include_media=include_media),
+            lambda api: api.vector_spaces(namespace_id, include_media=include_media),
         )
 
     @group.command("delete-space")
@@ -39,26 +38,24 @@ def register(cli: typer.Typer) -> None:
         invoke(ctx, lambda api: api.delete_vector_space(namespace_id, value))
 
     @group.command("rebuild")
-    def rebuild(ctx: typer.Context, namespace_id: str, subject_id: str, command: Path) -> None:
+    def rebuild(ctx: typer.Context, namespace_id: str, command: Path) -> None:
         value = read_command(command, RebuildVectors)
-        invoke(ctx, lambda api: api.rebuild_vectors(namespace_id, subject_id, value))
+        invoke(ctx, lambda api: api.rebuild_vectors(namespace_id, value))
 
     @group.command("check")
-    def check(ctx: typer.Context, namespace_id: str, subject_id: str, command: Path) -> None:
+    def check(ctx: typer.Context, namespace_id: str, command: Path) -> None:
         value = read_command(command, CheckVectorSpaces)
-        invoke(ctx, lambda api: api.check_vector_spaces(namespace_id, subject_id, value))
+        invoke(ctx, lambda api: api.check_vector_spaces(namespace_id, value))
 
     @group.command("progress")
-    def progress(ctx: typer.Context, namespace_id: str, subject_id: str, request_id: str) -> None:
-        invoke(
-            ctx, lambda api: api.vector_projection_progress(namespace_id, subject_id, request_id)
-        )
+    def progress(ctx: typer.Context, namespace_id: str, request_id: str) -> None:
+        invoke(ctx, lambda api: api.vector_projection_progress(namespace_id, request_id))
 
     @group.command("retry")
-    def retry(ctx: typer.Context, namespace_id: str, subject_id: str, command: Path) -> None:
+    def retry(ctx: typer.Context, namespace_id: str, command: Path) -> None:
         value = read_command(command, RetryVectorProjection)
-        invoke(ctx, lambda api: api.retry_vector_projection(namespace_id, subject_id, value))
+        invoke(ctx, lambda api: api.retry_vector_projection(namespace_id, value))
 
     @group.command("persistence")
-    def persistence(ctx: typer.Context, namespace_id: str, subject_id: str | None = None) -> None:
-        invoke(ctx, lambda api: api.persistence_state(namespace_id, subject_id))
+    def persistence(ctx: typer.Context, namespace_id: str) -> None:
+        invoke(ctx, lambda api: api.persistence_state(namespace_id))

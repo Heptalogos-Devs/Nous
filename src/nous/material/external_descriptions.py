@@ -28,7 +28,7 @@ from nous_sdk.contracts.derivation import (
 from nous_sdk.contracts.lifecycle import MemoryChange
 from pydantic import Field, JsonValue, TypeAdapter
 
-from nous.identity.access import require_subject_in
+from nous.identity.access import require_namespace_in
 from nous.platform.concurrency import owned_thread
 from nous.platform.content import ContentObject
 from nous.platform.persistence import ReadView, WriteTx, metadata
@@ -46,7 +46,7 @@ descriptions = sa.Table(
     metadata,
     sa.Column("id", sa.String, primary_key=True),
     sa.Column("namespace_id", sa.String, nullable=False, index=True),
-    sa.Column("subject_id", sa.String, nullable=False),
+    
     sa.Column("material_id", sa.String, nullable=False),
     sa.Column("observation_id", sa.String, nullable=False),
     sa.Column("record", sa.JSON, nullable=False),
@@ -77,7 +77,7 @@ async def load_in(
         sa.select(descriptions.c.record).where(
             descriptions.c.id == identifier,
             descriptions.c.namespace_id == ctx.namespace_id,
-            descriptions.c.subject_id == ctx.subject_id,
+            
         )
     )
     if raw is None:
@@ -121,10 +121,10 @@ async def record_external(
         ctx,
         operation,
         operation_kind="media.description.source",
-        scope=ctx.require_subject(),
+        scope=ctx.namespace_id,
         payload=payload,
     ) as tx:
-        await require_subject_in(tx, ctx, "memory")
+        await require_namespace_in(tx, ctx, "memory")
         if tx.replayed:
             previous = ExternalDescription.model_validate(tx.replay_result)
             return await load_in(self, tx, ctx, previous.id)
@@ -152,7 +152,7 @@ async def record_external(
             descriptions.insert().values(
                 id=value.id,
                 namespace_id=ctx.namespace_id,
-                subject_id=ctx.require_subject(),
+                
                 material_id=report.material["id"],
                 observation_id=report.event["id"],
                 record=value.model_dump(mode="json"),
@@ -173,7 +173,7 @@ async def matching_external(
             await view.connection.execute(
                 sa.select(descriptions.c.record).where(
                     descriptions.c.namespace_id == ctx.namespace_id,
-                    descriptions.c.subject_id == ctx.subject_id,
+                    
                 )
             )
         ).scalars()
@@ -217,7 +217,7 @@ async def pending_external_count(self: DescriptionDeliveryService, ctx: CallCont
             await view.connection.execute(
                 sa.select(descriptions.c.record).where(
                     descriptions.c.namespace_id == ctx.namespace_id,
-                    descriptions.c.subject_id == ctx.subject_id,
+                    
                 )
             )
         ).scalars()
@@ -254,7 +254,7 @@ async def adopt_external(
         ctx,
         operation,
         operation_kind="media.description.bind",
-        scope=ctx.require_subject(),
+        scope=ctx.namespace_id,
         payload=payload,
     ) as tx:
         if tx.replayed:
@@ -359,7 +359,7 @@ async def adopt_external(
                     "image_observation_required",
                     "Superseded Memory must describe the same actual contact",
                 )
-            memory = await self.cognition.change_memory_in(
+            memory = await self.memories.change_memory_in(
                 tx,
                 ctx,
                 MemoryChange(reference=supersedes, action="revise", body=body),

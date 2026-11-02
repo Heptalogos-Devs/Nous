@@ -20,7 +20,7 @@ from sqlalchemy import select
 
 from nous.application import Application
 from nous.context.models import contexts
-from nous.identity.access import require_subject_in
+from nous.identity.access import require_namespace_in
 from nous.material.service import SourceRecord, observations, regions
 
 _SCOPES = TypeAdapter(tuple[SourceReadScope, ...])
@@ -66,7 +66,7 @@ def union_selectors(alternatives: list[list[set[str]]]) -> list[set[str]]:
 async def resolve_scope(
     request: Request,
     namespace_id: str,
-    subject_id: str | None,
+    
 ) -> ResolvedSourceScope:
     header = request.headers.get("x-nous-source-read")
     if header is None:
@@ -80,8 +80,8 @@ async def resolve_scope(
         raise DomainError("source_scope_invalid", "Invalid source-read metadata") from error
     if not scopes or len(scopes) > 32:
         raise DomainError("source_scope_invalid", "Source-read metadata requires 1 to 32 scopes")
-    selected_subject = subject_id or scopes[0].subject_id
-    if any(scope.subject_id != selected_subject for scope in scopes):
+    selected_subject = namespace_id or scopes[0].namespace_id
+    if any(scope.namespace_id != selected_subject for scope in scopes):
         raise DomainError(
             "source_scope_forbidden", "Source-read scope belongs to a different subject"
         )
@@ -89,17 +89,17 @@ async def resolve_scope(
     unrestricted = CallContext(
         caller_id="instance-admin",
         namespace_id=namespace_id,
-        subject_id=selected_subject,
+        
         credential_source_ids=None,
     )
     clauses: list[set[str]] = []
     async with app.authority.read(unrestricted) as view:
-        await require_subject_in(view, unrestricted)
+        await require_namespace_in(view, unrestricted)
         source_rows = (
             await view.connection.execute(
                 select(observations.c.id, observations.c.active, observations.c.record).where(
                     observations.c.namespace_id == namespace_id,
-                    observations.c.subject_id == selected_subject,
+                    
                 )
             )
         ).all()
@@ -206,7 +206,7 @@ async def resolve_scope(
                         select(contexts.c.record).where(
                             contexts.c.id == ref.id,
                             contexts.c.namespace_id == namespace_id,
-                            contexts.c.subject_id == selected_subject,
+                            
                         )
                     )
                     if value is None:

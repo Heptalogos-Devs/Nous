@@ -16,21 +16,21 @@ def register(cli: typer.Typer) -> None:
     def plan(ctx: typer.Context, namespace: str, subject: str, request: Path) -> None:
         """Prepare edits from a PlanCorrection JSON file, including natural language intent."""
         command = read_command(request, PlanCorrection)
-        invoke(ctx, lambda api: api.plan_correction(namespace, subject, command))
+        invoke(ctx, lambda api: api.plan_correction(namespace, command))
 
     @group.command("get")
     def get(ctx: typer.Context, namespace: str, subject: str, plan_id: str) -> None:
-        invoke(ctx, lambda api: api.correction_plan(namespace, subject, plan_id))
+        invoke(ctx, lambda api: api.correction_plan(namespace, plan_id))
 
     @group.command("list")
     def list_plans(ctx: typer.Context, namespace: str, subject: str) -> None:
-        invoke(ctx, lambda api: api.correction_plans(namespace, subject))
+        invoke(ctx, lambda api: api.correction_plans(namespace))
 
     @group.command("apply")
     def apply(ctx: typer.Context, namespace: str, subject: str, plan_id: str) -> None:
         invoke(
             ctx,
-            lambda api: api.apply_correction(namespace, subject, ApplyCorrection(plan_id=plan_id)),
+            lambda api: api.apply_correction(namespace, ApplyCorrection(plan_id=plan_id)),
         )
 
     @group.command("rollback")
@@ -44,6 +44,6 @@ def register(cli: typer.Typer) -> None:
         invoke(
             ctx,
             lambda api: api.rollback_correction(
-                namespace, subject, RollbackCorrection(plan_id=plan_id, reason=reason)
+                namespace, RollbackCorrection(plan_id=plan_id, reason=reason)
             ),
         )

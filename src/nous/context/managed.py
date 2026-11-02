@@ -1,34 +1,31 @@
 """Compose compilation, admission, session state and source purge behavior."""
-
 from __future__ import annotations
-
 from typing import TYPE_CHECKING
-
-from nous.cognition.service import CognitionService
+from nous.cognition.records import CognitiveRecords
+from nous.cognition.motivation_records import MotivationService
 from nous.material.derived import DerivedService
 from nous.material.service import MaterialService
 from nous.platform.models import ModelService
 from nous.platform.persistence import Authority
 from nous.retrieval.service import RetrievalService
-
 from . import admission, compilation, model_call, purge, session_state, source_tools, tracking
 from .jobs import DurableContexts
-
 if TYPE_CHECKING:
+    from nous.references.reading import ReadingService
     from nous.feedback.service import FeedbackService
     from nous.symbols.service import SymbolsService
 
-
 class ManagedContexts(DurableContexts):
     authority: Authority
-    cognition: CognitionService
-    retrieval: RetrievalService | None
-    materials: MaterialService | None
-    models: ModelService | None
-    derivations: DerivedService | None
-    feedback_owner: FeedbackService | None
-    symbols: SymbolsService | None
-
+    cognition: CognitiveRecords
+    reading: ReadingService
+    motivation: MotivationService
+    retrieval: RetrievalService
+    materials: MaterialService
+    models: ModelService
+    derivations: DerivedService
+    feedback_owner: FeedbackService
+    symbols: SymbolsService
     read_preparation_in = compilation.read_preparation_in
     read_track = tracking.read_track
     require_targets_in = compilation.require_targets_in

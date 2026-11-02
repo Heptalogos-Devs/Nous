@@ -41,7 +41,7 @@ class AttemptRecorder:
             self.ctx,
             str(uuid4()),
             operation_kind="imports.unit_attempt",
-            scope=self.ctx.require_subject(),
+            scope=self.ctx.namespace_id,
             payload=self.value,
         ) as tx:
             row = await tx.connection.scalar(
@@ -74,7 +74,7 @@ async def record_attempt(
         ctx,
         attempt_id + ":start",
         operation_kind="imports.unit_attempt",
-        scope=ctx.require_subject(),
+        scope=ctx.namespace_id,
         payload={"unit_id": unit.id, "operation_id": operation_id, "job_id": job_id},
     ) as tx:
         value = UnitAttempt(
@@ -144,7 +144,6 @@ async def attempts_in(
     statement = select(requests.c.record).where(
         requests.c.record["kind"].as_string() == "unit_attempt",
         requests.c.record["context"]["namespace_id"].as_string() == ctx.namespace_id,
-        requests.c.record["context"]["subject_id"].as_string() == ctx.require_subject(),
         requests.c.record["attempt"]["catalog_id"].as_string() == catalog_id,
     )
     if unit_ids is not None:

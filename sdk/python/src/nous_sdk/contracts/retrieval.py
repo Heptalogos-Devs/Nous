@@ -13,6 +13,7 @@ from .query_conditions import (
     QueryExpression,
     QueryFilters,
 )
+from .query_context import QueryContext
 from .query_readout import RerankInfo
 from .query_vcp import VcpIntent, VcpResult
 from .resources import ResourceRecord
@@ -31,6 +32,10 @@ class TimeFilter(Contract):
 
 
 class QueryRequest(Contract):
+    context: QueryContext | str | None = None
+    wave_profile: str | None = None
+    capability_policy: Literal["strict", "best_effort"] | None = None
+    reranker: Literal["compute", "cross_encoder", "llm", "off"] | None = None
     profile: RetrievalPolicy | None = None
     vcp: VcpIntent = Field(default_factory=VcpIntent)
     text: str = ""
@@ -77,6 +82,16 @@ class QueryCoverage(Contract):
 
 
 class QueryResult(Contract):
+    result_refs: tuple[str, ...] = ()
+
+    @property
+    def text(self) -> str:
+        return self.view().text
+
+    def view(self):
+        from nous_sdk.presentation import present_query
+        return present_query(self)
+
     vcp: VcpResult | None = None
     hits: tuple[QueryHit, ...]
     coverage: QueryCoverage

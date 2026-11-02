@@ -11,9 +11,9 @@ from nous_sdk.contracts.derivation import (
     RepresentationRef,
 )
 from pydantic import TypeAdapter
-from sqlalchemy import select
+from sqlalchemy import select,func
 
-from nous.identity.access import require_subject_in
+from nous.identity.access import require_namespace_in
 from nous.platform.models.ledger import CallLedger
 from nous.platform.persistence import Authority, ReadView, WriteTx
 from nous.references import allocate_in
@@ -32,6 +32,20 @@ class DerivedService(DerivedBundles):
         self.authority, self.materials = authority, materials
         self.ledger = CallLedger(authority)
 
+    async def for_material_in(self,view: ReadView | WriteTx,ctx: CallContext,material_id: str) -> tuple[DerivedRepresentation,...]:
+        await self.materials.read_in(view,ctx,material_id)
+        ids=func.json_each(representations.c.record,'$.material_ids').table_valued('value')
+        rows=(await view.connection.execute(select(representations.c.record).where(representations.c.namespace_id==ctx.namespace_id,representations.c.head.is_(True),select(ids.c.value).where(ids.c.value==material_id).exists()).order_by(representations.c.commit_seq,representations.c.id))).scalars()
+        result=[]
+        for raw in rows:
+            value=DerivedRepresentation.model_validate(raw)
+            result.append(await self.read_in(view,ctx,value.reference))
+        return tuple(result)
+
+    async def for_material(self,ctx: CallContext,material_id: str) -> tuple[DerivedRepresentation,...]:
+        async with self.authority.read(ctx) as view:
+            return await self.for_material_in(view,ctx,material_id)
+
     async def producer_for_call_in(
         self, view: ReadView | WriteTx, ctx: CallContext, call_id: str
     ) -> DerivationProducer:
@@ -40,12 +54,12 @@ class DerivedService(DerivedBundles):
     async def adopt_in(
         self, tx: WriteTx, ctx: CallContext, command: CreateRepresentation
     ) -> DerivedRepresentation:
-        await require_subject_in(tx, ctx)
+        await require_namespace_in(tx, ctx)
         object_id = command.id or str(uuid4())
         head = await tx.connection.scalar(
             select(representations.c.record).where(
                 representations.c.namespace_id == ctx.namespace_id,
-                representations.c.subject_id == ctx.require_subject(),
+                
                 representations.c.id == object_id,
                 representations.c.head.is_(True),
             )
@@ -160,7 +174,7 @@ class DerivedService(DerivedBundles):
             reference=reference,
             addresses=await allocate_in(tx, ctx, reference.media()),
             namespace_id=ctx.namespace_id,
-            subject_id=ctx.require_subject(),
+            
             inputs=inputs,
             kind=command.kind,
             strategy=command.strategy,
@@ -183,7 +197,7 @@ class DerivedService(DerivedBundles):
             .where(
                 representations.c.id == object_id,
                 representations.c.namespace_id == ctx.namespace_id,
-                representations.c.subject_id == ctx.subject_id,
+                
             )
             .values(head=False)
         )
@@ -192,7 +206,7 @@ class DerivedService(DerivedBundles):
                 id=reference.id,
                 revision=reference.revision,
                 namespace_id=ctx.namespace_id,
-                subject_id=ctx.require_subject(),
+                
                 head=True,
                 record=value.model_dump(mode="json"),
                 commit_seq=tx.commit_seq,
@@ -205,7 +219,7 @@ class DerivedService(DerivedBundles):
             ctx,
             command.operation_id,
             operation_kind="media.represent",
-            scope=ctx.require_subject(),
+            scope=ctx.namespace_id,
             payload=command,
         ) as tx:
             if tx.replayed:
@@ -223,7 +237,7 @@ class DerivedService(DerivedBundles):
                     .where(
                         representations.c.id == representation_id,
                         representations.c.namespace_id == ctx.namespace_id,
-                        representations.c.subject_id == ctx.require_subject(),
+                        
                     )
                     .order_by(representations.c.revision)
                 )

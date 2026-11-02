@@ -5,7 +5,7 @@ from nous_sdk.amemorix.contracts import AMemorixRequest
 
 from .security import application, context
 
-router = APIRouter(prefix="/api/integrations")
+router = APIRouter(prefix="/api/v1/integrations")
 
 
 @router.post("/amemorix")
@@ -25,7 +25,7 @@ async def amemorix(request: Request, command: AMemorixRequest):
             else "read"
         )
         return await application(request).amemorix.execute(
-            await context(request, command.namespace_id, command.subject_id, capability=capability),
+            await context(request, command.namespace_id,  capability=capability),
             command.operation,
         )
     if command.operation.tool == "image_memory" and command.operation.arguments.get("action") in {
@@ -39,7 +39,7 @@ async def amemorix(request: Request, command: AMemorixRequest):
         "process_jobs",
     }:
         return await application(request).amemorix.execute(
-            await context(request, command.namespace_id, command.subject_id, capability="manage"),
+            await context(request, command.namespace_id,  capability="manage"),
             command.operation,
         )
     if command.operation.tool in {
@@ -51,7 +51,7 @@ async def amemorix(request: Request, command: AMemorixRequest):
         and command.operation.arguments.get("action") == "rollback"
     ):
         return await application(request).amemorix.execute(
-            await context(request, command.namespace_id, command.subject_id, capability="manage"),
+            await context(request, command.namespace_id,  capability="manage"),
             command.operation,
         )
     read_tools = {"search_memory", "get_person_profile", "memory_source", "memory_stats"}
@@ -117,6 +117,6 @@ async def amemorix(request: Request, command: AMemorixRequest):
     } and command.operation.arguments.get("force_refresh"):
         capability = "write"
     return await application(request).amemorix.execute(
-        await context(request, command.namespace_id, command.subject_id, capability=capability),
+        await context(request, command.namespace_id,  capability=capability),
         command.operation,
     )

@@ -13,11 +13,11 @@ def register(cli: typer.Typer) -> None:
     cli.add_typer(group, name="entities")
 
     @group.command("merge")
-    def merge(ctx: typer.Context, namespace_id: str, subject_id: str, command: Path) -> None:
+    def merge(ctx: typer.Context, namespace_id: str, command: Path) -> None:
         value = read_command(command, MergeEntities)
-        invoke(ctx, lambda api: api.merge_entities(namespace_id, subject_id, value))
+        invoke(ctx, lambda api: api.merge_entities(namespace_id, value))
 
     @group.command("split")
-    def split(ctx: typer.Context, namespace_id: str, subject_id: str, command: Path) -> None:
+    def split(ctx: typer.Context, namespace_id: str, command: Path) -> None:
         value = read_command(command, SplitEntity)
-        invoke(ctx, lambda api: api.split_entity(namespace_id, subject_id, value))
+        invoke(ctx, lambda api: api.split_entity(namespace_id, value))

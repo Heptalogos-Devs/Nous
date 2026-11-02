@@ -9,7 +9,6 @@ runs = sa.Table(
     metadata,
     sa.Column("id", sa.String, primary_key=True),
     sa.Column("namespace_id", sa.String, nullable=False, index=True),
-    sa.Column("subject_id", sa.String, nullable=False, index=True),
     sa.Column("commit_seq", sa.Integer, nullable=False),
     sa.Column("context", sa.JSON, nullable=False),
     sa.Column("record", sa.JSON, nullable=False),
@@ -20,7 +19,6 @@ schedules = sa.Table(
     metadata,
     sa.Column("id", sa.String, primary_key=True),
     sa.Column("namespace_id", sa.String, nullable=False, index=True),
-    sa.Column("subject_id", sa.String, nullable=False, index=True),
     sa.Column("context", sa.JSON, nullable=False),
     sa.Column("record", sa.JSON, nullable=False),
 )
