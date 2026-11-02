@@ -1,9 +1,3 @@
-"""Adapted from crates/nous-domain/src/references/proquint.rs.
-
-Copyright 2026 Aravine Zhu. Licensed under Apache-2.0; the license text is
-distributed in nous/resources/licenses/Nous-LICENSE-APACHE.
-"""
-
 CONSONANTS = "bdfghjklmnprstvz"
 VOWELS = "aiou"
 
