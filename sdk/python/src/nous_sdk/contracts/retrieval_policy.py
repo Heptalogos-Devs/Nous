@@ -55,9 +55,6 @@ class VcpPipeline(NativeParameters):
     dynamic_boost_range: tuple[FiniteFloat, FiniteFloat]
     epa_gate_mode: Literal["absolute", "relativeLinear", "relativeSqrt", "backgroundRelative"]
     field_max_iterations: int = Field(ge=0)
-    lang_confidence_enabled: bool
-    lang_penalty_cross_domain: FiniteFloat
-    lang_penalty_unknown: FiniteFloat
     layer_decay: FiniteFloat
     local_alpha: FiniteFloat
     local_mass_ratio: FiniteFloat

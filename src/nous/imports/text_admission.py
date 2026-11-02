@@ -5,8 +5,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from nous_sdk.contracts import AdmitFiles
-from nous.platform.call_context import CallContext
-from nous.platform.errors import DomainError
 from nous_sdk.contracts.imports import ObservationFormation, ObservationFormSubmission
 from nous_sdk.contracts.text_import import (
     TextImport,
@@ -18,6 +16,8 @@ from pydantic import JsonValue, TypeAdapter
 from sqlalchemy import select, update
 
 from nous.identity.access import require_namespace_in
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous.platform.execution import JobSpec
 from nous.platform.persistence import ReadView, WriteTx
 
@@ -72,6 +72,7 @@ async def submit_text_import(
     self: ImportService, ctx: CallContext, command: TextImport
 ) -> TextImportSubmission:
     from hashlib import sha256
+
     from nous.platform.persistence.authority import canonical_json
 
     request_id = (
@@ -116,10 +117,10 @@ async def submit_text_import(
                     documents.append(
                         item.model_copy(update={"text": None, "material_id": material["id"]})
                     )
+                    total_bytes += material["byte_len"]
                 else:
                     material = await self.materials.read_in(tx, ctx, item.material_id)
                     documents.append(item)
-                total_bytes += material["byte_len"]
             if total_bytes > 4 * 1024 * 1024:
                 raise DomainError("import_size_limit", "Combined text import inputs exceed 4 MiB")
             captured_command = command.model_copy(update={"inputs": tuple(documents)})

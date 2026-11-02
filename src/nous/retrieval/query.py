@@ -12,13 +12,14 @@ from nous_sdk.contracts import (
     QueryRequest,
     QueryResult,
 )
-from nous.platform.call_context import CallContext
-from nous.platform.errors import DomainError
 from nous_sdk.contracts.query_conditions import QueryEffectiveMode, QueryExecution
 from nous_sdk.contracts.query_vcp import VcpResult
 from nous_sdk.contracts.resources import ResourceRecord
 from numpy.typing import NDArray
 from pydantic import JsonValue
+
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 
 from .assets import record_domain, record_text
 from .filters import authority
@@ -523,9 +524,9 @@ async def execute(
                     .get("scoped_stage_availability", {})
                 )
                 reasons.extend(
-                    stage + "_unavailable_in_scope"
+                    stage + "_" + status
                     for stage, status in availability.items()
-                    if status == "unavailable_in_scope"
+                    if status in {"unavailable", "unavailable_in_scope"}
                 )
             channel_hits[channel] = [
                 (refs[int(index)], float(score))
@@ -652,11 +653,9 @@ async def execute(
                         }
                     )
             if effective_mode in {"lexical", "hybrid"} and lexical_enabled:
-                terms = [
-                    value
-                    for value in (*context.entities, context.goal)
-                    if value and ":" not in value
-                ]
+                terms = [value for value in context.entities if value and ":" not in value]
+                if context.goal:
+                    terms.append(context.goal)
                 asset = index_generations.get(None)
                 if asset is not None and terms:
                     refs = asset.snapshot.references

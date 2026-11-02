@@ -9,7 +9,7 @@ from uuid import uuid4
 import typer
 from nous_sdk import NousClient
 from nous_sdk.contracts import ImportDocument
-from nous_sdk.contracts.ego_model import InterpretSeed
+from nous_sdk.contracts.ego_model import InterpretSeed, SaveSeed
 
 from .common import invoke
 
@@ -78,6 +78,79 @@ def register(cli: typer.Typer) -> None:
             instruction=instruction,
             previous_seed_id=previous_seed_id,
         )
+
+    @group.command("save")
+    def save(
+        ctx: typer.Context,
+        namespace_id: str,
+        paths: list[Path],
+        instruction: str = "",
+        seed_id: str | None = None,
+        expected_version: int = 0,
+    ) -> None:
+        """Save complete creator documents as an immutable version without model calls."""
+
+        async def run(api: NousClient) -> object:
+            documents = []
+            for path in paths:
+                media_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+                if media_type.startswith("text/") or path.suffix.casefold() in {
+                    ".md",
+                    ".json",
+                    ".yaml",
+                    ".toml",
+                }:
+                    documents.append(
+                        ImportDocument(
+                            text=await asyncio.to_thread(path.read_text, encoding="utf-8-sig"),
+                            filename=path.name,
+                            source=str(path.resolve()),
+                            source_type="self_seed",
+                            media_type=media_type,
+                        )
+                    )
+                else:
+                    uploaded = await api.upload_file(namespace_id, path, media_type=media_type)
+                    documents.append(
+                        ImportDocument(
+                            material_id=uploaded.result.id,
+                            filename=path.name,
+                            source=str(path.resolve()),
+                            source_type="self_seed",
+                            media_type=media_type,
+                        )
+                    )
+            namespace = await api.namespace_by_id(namespace_id)
+            return await namespace.seeds.save(
+                SaveSeed(
+                    documents=tuple(documents),
+                    instruction=instruction,
+                    seed_id=seed_id,
+                    expected_version=expected_version,
+                )
+            )
+
+        invoke(ctx, run)
+
+    @group.command("version")
+    def version(
+        ctx: typer.Context, namespace_id: str, seed_id: str, version: int | None = None
+    ) -> None:
+        """Read a saved version and its exact source references."""
+
+        async def run(api: NousClient) -> object:
+            namespace = await api.namespace_by_id(namespace_id)
+            return await namespace.seeds.read(seed_id, version=version)
+
+        invoke(ctx, run)
+
+    @group.command("history")
+    def history(ctx: typer.Context, namespace_id: str, seed_id: str, limit: int = 32) -> None:
+        async def run(api: NousClient) -> object:
+            namespace = await api.namespace_by_id(namespace_id)
+            return await namespace.seeds.history(seed_id, limit=limit)
+
+        invoke(ctx, run)
 
     @group.command("interpret")
     def interpret(

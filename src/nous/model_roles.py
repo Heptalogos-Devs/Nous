@@ -36,6 +36,7 @@ class RoleInput(BaseModel):
 class FormationInput(RoleInput):
     source_text: str
     background: str = ""
+    previous_memories: str = ""
 
 
 class SelectionInput(RoleInput):

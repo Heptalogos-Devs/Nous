@@ -15,8 +15,6 @@ from nous_sdk.contracts import (
     MemoryChange,
     RevisionCause,
 )
-from nous.platform.call_context import CallContext
-from nous.platform.errors import DomainError
 from nous_sdk.contracts.corrections import (
     ApplyCorrection,
     CorrectionAppliedGroup,
@@ -34,13 +32,15 @@ from nous_sdk.contracts.corrections import (
 )
 from nous_sdk.contracts.fact_body import FactClaimBody, FactClaimSpec, FactEvidence
 from nous_sdk.contracts.facts import FactChange
-from nous_sdk.contracts.records import ReadRecords
 from nous_sdk.contracts.public import CorrectionInput
+from nous_sdk.contracts.records import ReadRecords
 from sqlalchemy import JSON, Column, Integer, String, Table, select
 
 from nous.cognition.memory import MemoryService
 from nous.identity.access import require_namespace_in
 from nous.material.service import observations
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous.platform.persistence import Authority, ReadView, WriteTx, metadata
 
 from .fact_identity import identity
@@ -81,16 +81,36 @@ class CorrectionService:
             models,
         )
 
-    async def correct(self, ctx: CallContext, reference: CognitiveRef, command: CorrectionInput) -> CorrectionResult:
+    async def correct(
+        self, ctx: CallContext, reference: CognitiveRef, command: CorrectionInput
+    ) -> CorrectionResult:
         async with self.authority.read(ctx) as view:
             current = await self.cognition.get_in(view, ctx, reference)
         if isinstance(current.body, MemoryBody):
             from nous_sdk.contracts.corrections import CorrectionEdit
-            edits = (CorrectionEdit(reference=reference,body=current.body.model_copy(update={'text':command.content}),reason=command.reason),)
+
+            edits = (
+                CorrectionEdit(
+                    reference=reference,
+                    body=current.body.model_copy(update={"text": command.content}),
+                    reason=command.reason,
+                ),
+            )
         else:
             edits = ()
-        plan = await self.plan(ctx, PlanCorrection(operation_id=command.operation_id, instruction=command.content if not edits else command.reason, targets=(reference,), edits=edits, source=command.source))
-        return await self.apply(ctx, ApplyCorrection(operation_id=command.operation_id+':apply',plan_id=plan.id))
+        plan = await self.plan(
+            ctx,
+            PlanCorrection(
+                operation_id=command.operation_id,
+                instruction=command.content if not edits else command.reason,
+                targets=(reference,),
+                edits=edits,
+                source=command.source,
+            ),
+        )
+        return await self.apply(
+            ctx, ApplyCorrection(operation_id=command.operation_id + ":apply", plan_id=plan.id)
+        )
 
     async def _context_in(
         self, view: ReadView | WriteTx, ctx: CallContext, plan: CorrectionPlan
@@ -221,23 +241,86 @@ class CorrectionService:
         )
         try:
             async with self.authority.write(ctx) as tx:
-                supports = await self.cognition.read_records_in(tx, ctx, ReadRecords(references=command.supports)) if command.supports else ()
+                supports = (
+                    await self.cognition.read_records_in(
+                        tx, ctx, ReadRecords(references=command.supports)
+                    )
+                    if command.supports
+                    else ()
+                )
                 if command.edits:
-                    selected = await self.cognition.read_records_in(tx, ctx, ReadRecords(references=tuple((edit.reference for edit in command.edits))))
+                    selected = await self.cognition.read_records_in(
+                        tx,
+                        ctx,
+                        ReadRecords(references=tuple((edit.reference for edit in command.edits))),
+                    )
                 elif command.targets:
-                    selected = await self.cognition.read_records_in(tx, ctx, ReadRecords(references=command.targets))
+                    selected = await self.cognition.read_records_in(
+                        tx, ctx, ReadRecords(references=command.targets)
+                    )
                 else:
-                    selected = tuple((item.record for item in (await self.cognition.records_in(tx, ctx, command.selection)).items))
+                    selected = tuple(
+                        (
+                            item.record
+                            for item in (
+                                await self.cognition.records_in(tx, ctx, command.selection)
+                            ).items
+                        )
+                    )
                 if any((record.body is None or record.deleted for record in selected)):
-                    raise DomainError('correction_target_unavailable', 'Restore targets before correcting their content')
+                    raise DomainError(
+                        "correction_target_unavailable",
+                        "Restore targets before correcting their content",
+                    )
                 if len({record.reference.id for record in selected}) != len(selected):
-                    raise DomainError('correction_selection', 'Select each cognitive identity once')
+                    raise DomainError("correction_selection", "Select each cognitive identity once")
                 admission = await self.cognition.materials.admit_text_in(tx, ctx, document, lease)
-                plan = CorrectionPlan(id=str(uuid4()), operation_id=command.operation_id, namespace_id=ctx.namespace_id, created_by=ctx.caller_id, created_at=tx.recorded_at, instruction=command.instruction, targets=tuple((CorrectionModelTarget(key=f'c{index}', record=record) for index, record in enumerate(selected))), evidence=tuple((CorrectionModelTarget(key=f'e{index}', record=record) for index, record in enumerate(supports))), changes=tuple((CorrectionChange(before=record, body=edit.body, reason=edit.reason) for record, edit in zip(selected, command.edits, strict=True))) if command.edits else (), state='ready' if command.edits or not selected else 'generating', source_material_id=admission.material['id'], source_observation_id=admission.event['id'], commit_seq=tx.commit_seq, questions=('Choose the cognitive objects to correct.',) if not selected else ())
+                plan = CorrectionPlan(
+                    id=str(uuid4()),
+                    operation_id=command.operation_id,
+                    namespace_id=ctx.namespace_id,
+                    created_by=ctx.caller_id,
+                    created_at=tx.recorded_at,
+                    instruction=command.instruction,
+                    targets=tuple(
+                        (
+                            CorrectionModelTarget(key=f"c{index}", record=record)
+                            for index, record in enumerate(selected)
+                        )
+                    ),
+                    evidence=tuple(
+                        (
+                            CorrectionModelTarget(key=f"e{index}", record=record)
+                            for index, record in enumerate(supports)
+                        )
+                    ),
+                    changes=tuple(
+                        (
+                            CorrectionChange(before=record, body=edit.body, reason=edit.reason)
+                            for record, edit in zip(selected, command.edits, strict=True)
+                        )
+                    )
+                    if command.edits
+                    else (),
+                    state="ready" if command.edits or not selected else "generating",
+                    source_material_id=admission.material["id"],
+                    source_observation_id=admission.event["id"],
+                    commit_seq=tx.commit_seq,
+                    questions=("Choose the cognitive objects to correct.",) if not selected else (),
+                )
                 for change in plan.changes:
                     if change.body.kind != change.before.reference.kind:
-                        raise DomainError('cognitive_kind_immutable', 'Correction must preserve cognitive kind')
-                await tx.connection.execute(plans.insert().values(id=plan.id, namespace_id=plan.namespace_id, commit_seq=tx.commit_seq, record=plan.model_dump(mode='json')))
+                        raise DomainError(
+                            "cognitive_kind_immutable", "Correction must preserve cognitive kind"
+                        )
+                await tx.connection.execute(
+                    plans.insert().values(
+                        id=plan.id,
+                        namespace_id=plan.namespace_id,
+                        commit_seq=tx.commit_seq,
+                        record=plan.model_dump(mode="json"),
+                    )
+                )
         finally:
             if store and lease:
                 await store.release(lease)
@@ -289,9 +372,20 @@ class CorrectionService:
         async with self.authority.write(ctx) as tx:
             current = await self._stored_in(tx, ctx, plan.id)
             await self._require_in(tx, ctx, current)
-            if current.state != 'generating':
+            if current.state != "generating":
                 return current
-            return await self._save_in(tx, current.model_copy(update={'state': 'ready', 'changes': tuple(changes), 'explanation': generated.output.explanation, 'questions': generated.output.questions, 'producer': generated.producer}))
+            return await self._save_in(
+                tx,
+                current.model_copy(
+                    update={
+                        "state": "ready",
+                        "changes": tuple(changes),
+                        "explanation": generated.output.explanation,
+                        "questions": generated.output.questions,
+                        "producer": generated.producer,
+                    }
+                ),
+            )
 
     async def _head_in(
         self, view: ReadView | WriteTx, ctx: CallContext, reference: CognitiveRef
@@ -430,7 +524,12 @@ class CorrectionService:
                         )
                     )
             if conflicts:
-                return CorrectionResult(plan_id=plan.id, action='apply', conflicts=tuple(conflicts), commit_seq=tx.commit_seq)
+                return CorrectionResult(
+                    plan_id=plan.id,
+                    action="apply",
+                    conflicts=tuple(conflicts),
+                    commit_seq=tx.commit_seq,
+                )
             report = EvidenceLink(
                 observation_id=plan.source_observation_id,
                 role="correction.apply",
@@ -570,7 +669,10 @@ class CorrectionService:
         roots = set(
             (
                 await tx.connection.execute(
-                    select(observations.c.id).where(observations.c.namespace_id == tx.ctx.namespace_id, observations.c.material_id.in_(material_ids))
+                    select(observations.c.id).where(
+                        observations.c.namespace_id == tx.ctx.namespace_id,
+                        observations.c.material_id.in_(material_ids),
+                    )
                 )
             ).scalars()
         )

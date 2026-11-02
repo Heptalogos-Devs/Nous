@@ -1,9 +1,7 @@
-"""Single-purpose language tasks over original import and media content."""
+"""Language tasks for forming cognition from original sources."""
 
 from __future__ import annotations
 
-from nous.platform.call_context import CallContext
-from nous.platform.errors import DomainError
 from nous_sdk.contracts.formation import (
     GraphDraft,
     GraphResolutionDraft,
@@ -14,7 +12,9 @@ from nous_sdk.contracts.model_roles import ModelCachePolicy
 from nous_sdk.contracts.namespace_policy import FormationPolicy
 
 from nous.cognition.models import ModelServices
+from nous.platform.call_context import CallContext
 from nous.platform.configuration.service import ConfigurationService
+from nous.platform.errors import DomainError
 from nous.platform.models.generation import MediaInput, ModelResult
 
 
@@ -38,6 +38,8 @@ async def form_notes(
     *,
     configuration: ConfigurationService,
     background: str = "",
+    previous_memories: str = "",
+    sources_labelled: bool = False,
     source_ids: tuple[str, ...] = (),
     cache_policy: ModelCachePolicy = "none",
     media: tuple[MediaInput, ...] = (),
@@ -46,7 +48,11 @@ async def form_notes(
     return await models.generate(
         ctx,
         "formation",
-        {"source_text": text, "background": background},
+        {
+            "source_text": text if sources_labelled else "[s1]\n" + text,
+            "background": background,
+            "previous_memories": previous_memories,
+        },
         NotesDraft,
         source_ids=source_ids,
         cache_policy=cache_policy,

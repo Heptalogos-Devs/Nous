@@ -23,15 +23,13 @@ PACKAGES = ("nous-server", "nous-sdk", "nous-native")
 def data_directory() -> Path:
     if sys.platform == "win32":
         parent = Path(os.environ.get("LOCALAPPDATA", str(Path.home() / "AppData" / "Local")))
-        current, previous = parent / "Nous", parent / "NousWave"
+        current = parent / "Nous"
     elif sys.platform == "darwin":
         parent = Path.home() / "Library" / "Application Support"
-        current, previous = parent / "Nous", parent / "NousWave"
+        current = parent / "Nous"
     else:
         parent = Path(os.environ.get("XDG_DATA_HOME", str(Path.home() / ".local" / "share")))
-        current, previous = parent / "nous", parent / "nous-wave"
-    if not current.exists() and (previous / "instance").is_dir():
-        return previous
+        current = parent / "nous"
     return current
 
 
@@ -123,24 +121,6 @@ def main() -> None:
             "sys.exit(0 if valid else 'Nous requires standard CPython 3.14 with the GIL')",
         ]
     )
-    old_distributions = subprocess.run(
-        [
-            str(python),
-            "-I",
-            "-c",
-            "from importlib.metadata import distributions; "
-            "names={d.metadata['Name'].lower().replace('_','-') for d in distributions()}; "
-            "print(', '.join(sorted(names & {'nous-wave-server','nous-wave','nous-wave-native'})))",
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout.strip()
-    if old_distributions:
-        parser.error(
-            "The selected environment contains the previous distribution; "
-            "choose a new --venv to preserve it and its installed files"
-        )
     requirements = [str(versions[name][version][0]) for name in PACKAGES]
     options = ["--only-binary=:all:", "--find-links", str(directory)]
     if args.offline:

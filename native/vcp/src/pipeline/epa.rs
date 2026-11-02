@@ -111,6 +111,9 @@ pub fn decode_epa_basis(raw: String, dimension: usize) -> Option<EpaBasis> {
         .iter()
         .filter_map(|encoded| decode_f32_base64(encoded, dimension))
         .collect();
+    if bases.is_empty() {
+        return None;
+    }
     let semantic_count = cache.k_sem.max(1).min(bases.len());
     let baseline_coverage = cache
         .coverage
@@ -289,5 +292,18 @@ pub(super) fn analyze_epa_with_mode(
         in_domain_gate,
         baseline_coverage,
         background_ratio,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::decode_epa_basis;
+    use base64::Engine;
+
+    #[test]
+    fn empty_publication_has_no_epa_basis() {
+        let mean = base64::engine::general_purpose::STANDARD.encode([0_u8; 8]);
+        let raw = serde_json::json!({"basis": [], "mean": mean}).to_string();
+        assert!(decode_epa_basis(raw, 2).is_none());
     }
 }

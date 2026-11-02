@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
 import unicodedata
 from dataclasses import dataclass
+from hashlib import sha256
 from typing import TYPE_CHECKING
+from uuid import uuid4
+from weakref import WeakValueDictionary
 
-from sqlalchemy import select, tuple_
+from sqlalchemy import select, tuple_, update
 
 from nous.cognition.entities import project_entity_in
 from nous.cognition.facts import FactService
@@ -14,9 +19,16 @@ from nous.platform.configuration.service import ConfigurationService
 from nous.platform.persistence import ReadView, WriteTx
 
 from .lifecycle import selectable
-from .schema import revisions
+from .schema import formation_scopes, revisions
 
 if TYPE_CHECKING:
+    from nous_sdk.contracts.events import FormationScope, PendingFormation
+
+    from nous.platform.content import ContentStore
+    from nous.platform.models import ModelService
+    from nous.retrieval.service import RetrievalService
+
+    from .memory import MemoryService
     from .records import CognitiveRecords
 from nous_sdk.contracts import (
     AdoptCognition,
@@ -39,8 +51,6 @@ from nous_sdk.contracts import (
     ProposedSchema,
     SchemaBody,
 )
-from nous.platform.call_context import CallContext
-from nous.platform.errors import DomainError
 from nous_sdk.contracts.derivation import DerivationInput, DerivationStrategy, RepresentationRef
 from nous_sdk.contracts.formation import (
     GraphDraft,
@@ -50,6 +60,8 @@ from nous_sdk.contracts.formation import (
 )
 from nous_sdk.contracts.imports import ImportFact, ImportReference
 
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 from nous.platform.time import parse_timepoint
 
 if TYPE_CHECKING:
@@ -68,11 +80,492 @@ class GraphResolutionPlan:
 
 class FormationService:
     def __init__(
-        self, records: CognitiveRecords, *, facts: FactService, configuration: ConfigurationService
+        self,
+        records: CognitiveRecords,
+        *,
+        facts: FactService,
+        configuration: ConfigurationService,
+        memories: MemoryService,
+        models: ModelService,
+        retrieval: RetrievalService,
+        content: ContentStore,
     ):
         self.configuration = configuration
         self.facts = facts
         self.records = records
+        self.memories = memories
+        self.models = models
+        self.retrieval = retrieval
+        self.content = content
+        self._scope_locks: WeakValueDictionary[str, asyncio.Lock] = WeakValueDictionary()
+
+    async def register_in(
+        self,
+        tx: WriteTx,
+        ctx: CallContext,
+        scope: FormationScope,
+        new_refs: tuple[MediaReference, ...],
+        closed_through: int,
+        background_refs: tuple[MediaReference, ...] = (),
+        flush: bool = False,
+    ) -> PendingFormation | None:
+        """Register complete encounter groups without copying their source content."""
+        from nous_sdk.contracts.events import PendingFormation
+        from nous_sdk.contracts.namespace_policy import FormationPolicy
+
+        from nous.platform.execution import JobSpec
+        from nous.platform.persistence.authority import canonical_json
+
+        policy = await self.configuration.policy(ctx, "formation", FormationPolicy)
+        if not policy.enabled:
+            return None
+        if scope.namespace_id != ctx.namespace_id:
+            raise DomainError(
+                "formation_scope_invalid", "Formation scope belongs to another namespace"
+            )
+        if any(ref.observation_id is None for ref in (*new_refs, *background_refs)):
+            raise DomainError(
+                "formation_source_invalid", "Formation requires exact observation sources"
+            )
+        scope_data = scope.model_dump(mode="json")
+        scope_id = sha256(canonical_json(scope_data).encode()).hexdigest()
+        row = await tx.connection.scalar(
+            select(formation_scopes.c.record).where(formation_scopes.c.scope_id == scope_id)
+        )
+        value = (
+            dict(row)
+            if row
+            else {
+                "scope": scope_data,
+                "context": ctx.model_dump(mode="json"),
+                "groups": [],
+                "inflight": [],
+                "job_id": None,
+                "active_job": None,
+            "active_context": None,
+                "covered_through": 0,
+            }
+        )
+        groups = list(value["groups"])
+        known = {
+            canonical_json(ref) for group in (*groups, *value["inflight"]) for ref in group["refs"]
+        }
+        incoming = []
+        for ref in new_refs:
+            payload = ref.model_dump(mode="json")
+            key = canonical_json(payload)
+            if key not in known:
+                incoming.append(payload)
+                known.add(key)
+        if incoming:
+            if not groups:
+                value["context"] = ctx.model_dump(mode="json")
+            groups.append(
+                {
+                    "refs": incoming,
+                    "background_refs": [ref.model_dump(mode="json") for ref in background_refs],
+                    "closed_through": closed_through,
+                }
+            )
+        value["groups"] = groups
+        job_id = value["job_id"]
+        if groups and (job_id is None or flush):
+            job_id = "formation:" + str(uuid4())
+            await tx.enqueue(
+                JobSpec(
+                    workflow_name="nous.formation.contacts",
+                    queue_name="formation",
+                    workflow_id=job_id,
+                    args=(scope_id, job_id),
+                    scope=ctx.namespace_id,
+                    delay_seconds=0 if flush else policy.coalesce_seconds,
+                )
+            )
+            value["job_id"] = job_id
+        if row:
+            await tx.connection.execute(
+                update(formation_scopes)
+                .where(formation_scopes.c.scope_id == scope_id)
+                .values(record=value, commit_seq=tx.commit_seq)
+            )
+        else:
+            await tx.connection.execute(
+                formation_scopes.insert().values(
+                    scope_id=scope_id,
+                    namespace_id=ctx.namespace_id,
+                    record=value,
+                    commit_seq=tx.commit_seq,
+                )
+            )
+        selected_job = job_id or value["active_job"]
+        if selected_job is None:
+            return None
+        return PendingFormation(
+            scope_id=scope_id, job_id=selected_job, closed_through=closed_through
+        )
+
+    async def _contact_source(self, ctx: CallContext, ref: MediaReference) -> tuple[str, dict]:
+        from nous_sdk.contracts.derivation import StructuredRepresentation, TextRepresentation
+
+        from nous.material.text import source_region_text
+        from nous.platform.content import ContentObject
+        from nous.platform.persistence.authority import canonical_json
+
+        assert ref.observation_id is not None
+        async with self.records.authority.read(ctx) as view:
+            selected = await self.records.materials.accepted_source_in(
+                view, ctx, ref.observation_id, ref
+            )
+            if ref.kind in {"representation", "derived_region"}:
+                payload = (await self.records.derivations.selected_in(view, ctx, ref)).payload
+                text = (
+                    payload.text
+                    if isinstance(payload, TextRepresentation)
+                    else canonical_json(payload.value)
+                    if isinstance(payload, StructuredRepresentation)
+                    else None
+                )
+            else:
+                material, region, _ = await self.records.materials.media_source_in(view, ctx, ref)
+                text = material.get("text")
+                if text is None and (
+                    material["media_type"].startswith("text/") or "json" in material["media_type"]
+                ):
+                    async with self.content.protect(
+                        ContentObject(
+                            material["content_hash"], material["byte_len"], material["media_type"]
+                        )
+                    ) as path:
+                        text = (await asyncio.to_thread(path.read_bytes)).decode("utf-8-sig")
+                if text is not None and region:
+                    text = source_region_text(text, region)
+        if text is None or not text.strip():
+            raise DomainError("formation_source_empty", "The contact has no textual source")
+        return text, dict(selected.event)
+
+    @staticmethod
+    def _contact_label(key: str, text: str, event: dict) -> str:
+        context = event.get("context") or {}
+        author = context.get("author") or {}
+        name = author.get("name") or author.get("account_id")
+        occurred = context.get("occurred_at") or event.get("event_time")
+        observed = context.get("observed_at")
+        conversation = context.get("conversation") or {}
+        details = []
+        if name:
+            details.append("作者: " + str(name))
+        observer = context.get("observer") or {}
+        observer_name = observer.get("name") or observer.get("account_id")
+        if observer_name:
+            details.append("观察者: " + str(observer_name))
+        for field, label in (("participants", "参与者"), ("audience", "听众")):
+            names = [
+                actor.get("name") or actor.get("account_id") for actor in context.get(field, ())
+            ]
+            if any(names):
+                details.append(label + ": " + ", ".join(str(value) for value in names if value))
+        if conversation.get("name"):
+            details.append("会话: " + str(conversation["name"]))
+        if occurred:
+            details.append("发生时间: " + json.dumps(occurred, ensure_ascii=False))
+        if observed:
+            details.append("接触时间: " + json.dumps(observed, ensure_ascii=False))
+        header = "[" + key + "]" + (" (" + "; ".join(details) + ")" if details else "")
+        return header + "\n" + text
+
+    async def _prepare_contact_batch(self, ctx, scope, groups):
+        from nous_sdk.contracts import QueryRequest
+        from nous_sdk.contracts.namespace_policy import FormationPolicy
+
+        from nous.context.lifecycle import work_record_in
+        from nous.platform.configuration.models import ModelConfiguration
+
+        policy = await self.configuration.policy(ctx, "formation", FormationPolicy)
+        resources = ModelConfiguration.model_validate(
+            (await self.configuration.effective(ctx, "models"))["value"]
+        )
+        route, _ = resources.resolve("formation", require_configured=False)
+        output_budget = min(policy.text_output_tokens, max(1, route.context_window // 4))
+        accepted = []
+        accepted_groups = 0
+        background: dict[str, tuple[MediaReference, str, dict]] = {}
+        chosen = None
+        for group in groups:
+            batch = []
+            for raw in group["refs"]:
+                ref = MediaReference.model_validate(raw)
+                text, event = await self._contact_source(ctx, ref)
+                batch.append((ref, text, event))
+            trial = [*accepted, *batch]
+            trial_background = dict(background)
+            for raw in group["background_refs"]:
+                ref = MediaReference.model_validate(raw)
+                if ref.model_dump_json() not in trial_background:
+                    text, event = await self._contact_source(ctx, ref)
+                    trial_background[ref.model_dump_json()] = (ref, text, event)
+            source_text = "\n\n".join(
+                self._contact_label(f"s{index}", text, event)
+                for index, (_, text, event) in enumerate(trial, 1)
+            )
+            context_text = "\n\n".join(
+                self._contact_label(f"b{index}", text, event)
+                for index, (_, text, event) in enumerate(trial_background.values(), 1)
+            )
+            statements = tuple(
+                dict.fromkeys(
+                    event["background"] for _, _, event in trial if event.get("background")
+                )
+            )
+            if statements:
+                context_text += "\n" + "\n".join(statements)
+            if scope.work_id:
+                async with self.records.authority.read(ctx) as view:
+                    work = await work_record_in(view, ctx, scope.work_id)
+                context_text += "\n当前工作：" + "\n".join(
+                    (
+                        work.content.purpose,
+                        work.content.context_text,
+                        *work.content.unresolved_questions,
+                    )
+                )
+            query_text = " ".join(text for _, text, _ in trial)[:4096]
+            found = await self.retrieval.query(
+                ctx,
+                QueryRequest(
+                    text=query_text,
+                    mode="lexical",
+                    kinds=("memory",),
+                    limit=8,
+                    reranker="off",
+                    capability_policy="best_effort",
+                ),
+            )
+            candidates = [
+                hit.object
+                for hit in found.hits
+                if isinstance(hit.object, CognitiveRecord)
+                and isinstance(hit.object.body, MemoryBody)
+            ]
+            candidate_text = "\n".join(
+                f"[m{index}] {record.body.text}" for index, record in enumerate(candidates, 1)
+            )
+            refs = tuple(ref for ref, _, _ in (*trial, *trial_background.values()))
+            try:
+                prepared = await self.models.prepare_generation(
+                    ctx,
+                    "formation",
+                    {
+                        "source_text": source_text,
+                        "background": context_text,
+                        "previous_memories": candidate_text,
+                    },
+                    NotesDraft,
+                    source_ids=tuple(ref.exact() for ref in refs),
+                    max_output_tokens=output_budget,
+                )
+            except DomainError as error:
+                if error.code != "model_context_budget" or chosen is None:
+                    raise
+                break
+            estimate = prepared.prompt.token_estimate
+            if estimate.text_tokens + (estimate.media_tokens or 0) > policy.text_input_tokens:
+                if chosen is None:
+                    raise DomainError(
+                        "formation_group_too_large",
+                        "A complete interaction exceeds the formation text budget",
+                    )
+                break
+            accepted = trial
+            accepted_groups += 1
+            background = trial_background
+            chosen = (trial, trial_background, candidates, prepared)
+        if chosen is None:
+            raise DomainError("formation_source_empty", "No closed interaction was supplied")
+        return accepted_groups, *chosen
+
+    async def run_contacts(self, scope_id: str, job_id: str):
+        """Freeze a window, form against current candidates, and advance only its sources."""
+        from nous_sdk.contracts.common import utc_now
+        from nous_sdk.contracts.events import FormationScope
+
+        lock = self._scope_locks.get(scope_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._scope_locks[scope_id] = lock
+        async with lock:
+            async with self.records.authority.read() as view:
+                raw = await view.connection.scalar(
+                    select(formation_scopes.c.record).where(formation_scopes.c.scope_id == scope_id)
+                )
+            if raw is None:
+                return {"scope_id": scope_id, "covered": 0}
+            ctx = CallContext.model_validate(
+                raw.get("active_context") if raw.get("active_job") == job_id else raw["context"]
+            )
+            scope = FormationScope.model_validate(raw["scope"])
+            async with self.records.authority.write(ctx) as tx:
+                value = dict(
+                    await tx.connection.scalar(
+                        select(formation_scopes.c.record).where(
+                            formation_scopes.c.scope_id == scope_id
+                        )
+                    )
+                )
+                if value["active_job"] not in {None, job_id}:
+                    raise DomainError(
+                        "formation_previous_pending", "Earlier formation must finish first"
+                    )
+                if value["active_job"] is None:
+                    if value["job_id"] != job_id:
+                        return {"scope_id": scope_id, "covered": 0}
+                    value.update(
+                        active_job=job_id, active_context=value["context"],
+                        inflight=value["groups"], groups=[], job_id=None
+                    )
+                    await tx.connection.execute(
+                        update(formation_scopes)
+                        .where(formation_scopes.c.scope_id == scope_id)
+                        .values(record=value, commit_seq=tx.commit_seq)
+                    )
+            formed = []
+            while value["inflight"]:
+                (
+                    count,
+                    sources,
+                    background,
+                    candidates,
+                    prepared,
+                ) = await self._prepare_contact_batch(ctx, scope, value["inflight"])
+                result = await self.models.execute_generation(ctx, prepared)
+                refs = {
+                    f"s{index}": (ref, event) for index, (ref, _, event) in enumerate(sources, 1)
+                }
+                previous = {
+                    f"m{index}": record.reference for index, record in enumerate(candidates, 1)
+                }
+                used_previous = set()
+                async with self.records.authority.write(ctx) as tx:
+                    current = dict(
+                        await tx.connection.scalar(
+                            select(formation_scopes.c.record).where(
+                                formation_scopes.c.scope_id == scope_id
+                            )
+                        )
+                    )
+                    if (
+                        current["active_job"] != job_id
+                        or current["inflight"][:count] != value["inflight"][:count]
+                    ):
+                        raise DomainError(
+                            "formation_scope_changed", "Frozen formation sources changed"
+                        )
+                    all_sources = [ref for ref, _, _ in sources]
+                    all_sources.extend(ref for ref, _, _ in background.values())
+                    for ref in all_sources:
+                        assert ref.observation_id is not None
+                        await self.records.materials.accepted_source_in(
+                            tx, ctx, ref.observation_id, ref
+                        )
+                    await self.records.derivations.adopt_model_result_in(
+                        tx,
+                        ctx,
+                        result,
+                        inputs=tuple(
+                            DerivationInput(ordinal=i, source=ref)
+                            for i, ref in enumerate(all_sources)
+                        ),
+                        schema_id="nous.memory-notes/1",
+                        strategy="direct_structured",
+                    )
+                    for note in result.output.notes:
+                        if any(key not in refs for key in note.source_keys):
+                            raise DomainError(
+                                "formation_source_invalid", "The note names an unavailable source"
+                            )
+                        if note.relation == "new":
+                            if note.previous_key is not None:
+                                raise DomainError(
+                                    "formation_previous_invalid",
+                                    "A new note cannot name a previous memory",
+                                )
+                            prior = None
+                        else:
+                            if (
+                                note.previous_key not in previous
+                                or note.previous_key in used_previous
+                            ):
+                                raise DomainError(
+                                    "formation_previous_invalid",
+                                    "The note names an unavailable or repeated memory",
+                                )
+                            prior = previous[note.previous_key]
+                            used_previous.add(note.previous_key)
+                        cited = [refs[key] for key in dict.fromkeys(note.source_keys)]
+                        now = utc_now()
+                        event_time = (
+                            parse_timepoint(note.time_expression) if note.time_expression else None
+                        )
+                        if event_time is None and len(cited) == 1 and cited[0][1].get("event_time"):
+                            from nous_sdk.contracts import TimePoint
+
+                            event_time = TimePoint.model_validate(cited[0][1]["event_time"])
+                        observed = None
+                        observed_raw = (
+                            (cited[0][1].get("context") or {}).get("observed_at")
+                            if len(cited) == 1
+                            else None
+                        )
+                        if observed_raw:
+                            from nous_sdk.contracts import TimePoint
+
+                            observed = TimePoint.model_validate(observed_raw)
+                        times = CognitiveTimes(
+                            event=event_time, observation=observed, formation=now, recorded=now
+                        )
+                        evidence = tuple(
+                            EvidenceLink(
+                                observation_id=ref.observation_id,
+                                region_id=ref.id if ref.kind == "source_region" else None,
+                            )
+                            for ref, _ in cited
+                        )
+                        body = MemoryBody(
+                            text=note.text, tags=note.topics, media=tuple(ref for ref, _ in cited)
+                        )
+                        adopted = await self.memories.adopt_formation_in(
+                            tx,
+                            ctx,
+                            body=body,
+                            evidence=evidence,
+                            times=times,
+                            producer=result.producer,
+                            relation=note.relation,
+                            previous=prior,
+                        )
+                        formed.extend(
+                            record.reference.exact()
+                            for record in adopted
+                            if record.reference.kind == "memory"
+                        )
+                    covered = current["inflight"][:count]
+                    current["inflight"] = current["inflight"][count:]
+                    current["covered_through"] = max(
+                        current["covered_through"], *(group["closed_through"] for group in covered)
+                    )
+                    if not current["inflight"]:
+                        current["active_job"] = None
+                        current["active_context"] = None
+                    await tx.connection.execute(
+                        update(formation_scopes)
+                        .where(formation_scopes.c.scope_id == scope_id)
+                        .values(record=current, commit_seq=tx.commit_seq)
+                    )
+                    value = current
+            return {
+                "scope_id": scope_id,
+                "covered_through": value["covered_through"],
+                "cognition": formed,
+            }
 
     async def formation_catalog_in(
         self,
@@ -194,6 +687,10 @@ class FormationService:
         for note in result.output.notes:
             if not note.text.strip():
                 continue
+            if set(note.source_keys) != {"s1"} or note.relation != "new" or note.previous_key:
+                raise DomainError(
+                    "formation_source_invalid", "The note refers to an unavailable source or memory"
+                )
             event_time = (
                 parse_timepoint(note.time_expression)
                 if extract_time and note.time_expression
@@ -216,16 +713,15 @@ class FormationService:
                 metadata=source_record.metadata if source_record else {},
                 structured=source_record.structured if source_record else None,
             )
-            records.append(
-                await self.records.adopt_in(
+            records.extend(
+                await self.memories.adopt_formation_in(
                     tx,
                     ctx,
-                    AdoptCognition(
-                        body=body,
-                        evidence=evidence,
-                        times=note_times,
-                        producer=result.producer,
-                    ),
+                    body=body,
+                    evidence=evidence,
+                    times=note_times,
+                    producer=result.producer,
+                    relation="new",
                 )
             )
         return tuple(records), representation.reference
@@ -531,9 +1027,7 @@ class FormationService:
                     (*media, MediaReference.model_validate(event["record"]["contact_source"]))
                 )
             )
-        references: dict[str, CognitiveRef] = {
-            entry.key: entry.reference for entry in catalog
-        }
+        references: dict[str, CognitiveRef] = {entry.key: entry.reference for entry in catalog}
         output: list[CognitiveRecord] = []
         manual_memories: list[CognitiveRecord] = []
         for proposal in draft.memories:
@@ -579,7 +1073,9 @@ class FormationService:
             if item.target_key is not None:
                 previous = await self.records.get_in(tx, ctx, references[item.target_key])
                 if not isinstance(previous.body, EntityBody):
-                    raise DomainError("formation_entity_target", "Manual entity target is not an Entity")
+                    raise DomainError(
+                        "formation_entity_target", "Manual entity target is not an Entity"
+                    )
             attributes = tuple(
                 EntityAttribute(
                     predicate=attribute.predicate,
@@ -602,8 +1098,10 @@ class FormationService:
                         "attributes": (*previous.body.attributes, *attributes),
                         "mentions": tuple(
                             dict.fromkeys(
-                                (*previous.body.mentions,
-                                *(EntityMention(reference=ref) for ref in media))
+                                (
+                                    *previous.body.mentions,
+                                    *(EntityMention(reference=ref) for ref in media),
+                                )
                             )
                         ),
                     }
@@ -626,7 +1124,10 @@ class FormationService:
                     id=previous.reference.id if previous else None,
                     expected_revision=previous.reference.revision if previous else 0,
                     body=body,
-                    evidence=(*evidence, *((EvidenceLink(reference=previous.reference),) if previous else ())),
+                    evidence=(
+                        *evidence,
+                        *((EvidenceLink(reference=previous.reference),) if previous else ()),
+                    ),
                     times=times,
                 ),
             )
@@ -645,7 +1146,9 @@ class FormationService:
             for key, item in nodes.items()
         }
         if any(values.difference(references).difference(nodes) for values in dependencies.values()):
-            raise DomainError("formation_key_unknown", "Manual proposal refers to an unavailable key")
+            raise DomainError(
+                "formation_key_unknown", "Manual proposal refers to an unavailable key"
+            )
         try:
             ordered = tuple(
                 TopologicalSorter(
@@ -653,7 +1156,9 @@ class FormationService:
                 ).static_order()
             )
         except CycleError as error:
-            raise DomainError("formation_cycle", "Manual concept and schema references are cyclic") from error
+            raise DomainError(
+                "formation_cycle", "Manual concept and schema references are cyclic"
+            ) from error
         for key in ordered:
             item = nodes[key]
             previous = (
@@ -665,10 +1170,14 @@ class FormationService:
                 if previous is not None and not isinstance(previous.body, ConceptBody):
                     raise DomainError("formation_concept_target", "Manual target is not a Concept")
                 prior = previous.body if previous is not None else None
-                members = tuple(dict.fromkeys(
-                    (*(prior.members if isinstance(prior, ConceptBody) else ()),
-                    *(references[value] for value in item.member_keys))
-                ))
+                members = tuple(
+                    dict.fromkeys(
+                        (
+                            *(prior.members if isinstance(prior, ConceptBody) else ()),
+                            *(references[value] for value in item.member_keys),
+                        )
+                    )
+                )
                 body: CognitiveBody = ConceptBody(
                     label=item.label,
                     description=item.description,
@@ -696,7 +1205,10 @@ class FormationService:
                     id=previous.reference.id if previous else None,
                     expected_revision=previous.reference.revision if previous else 0,
                     body=body,
-                    evidence=(*evidence, *((EvidenceLink(reference=previous.reference),) if previous else ())),
+                    evidence=(
+                        *evidence,
+                        *((EvidenceLink(reference=previous.reference),) if previous else ()),
+                    ),
                     times=times,
                 ),
             )
@@ -705,7 +1217,9 @@ class FormationService:
 
         for item in draft.associations:
             if item.from_key not in references or item.to_key not in references:
-                raise DomainError("formation_key_unknown", "Manual relation has an unavailable endpoint")
+                raise DomainError(
+                    "formation_key_unknown", "Manual relation has an unavailable endpoint"
+                )
             relation = AssociationBody(
                 external_ids=item.external_ids,
                 from_ref=references[item.from_key],

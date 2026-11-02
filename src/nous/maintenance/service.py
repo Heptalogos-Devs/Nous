@@ -50,7 +50,6 @@ class MaintenanceService:
     summarize_work = tasks.summarize_work
     edit_proposal = proposals.edit_proposal
     working_snapshot_in = proposals.working_snapshot_in
-    on_contact_in = natural.on_contact_in
     create_schedule = scheduling.create_schedule
     list_schedules = scheduling.list_schedules
     stop_schedule = scheduling.stop_schedule
@@ -77,16 +76,6 @@ class MaintenanceService:
         self.execution = execution
         self.configuration = configuration
         self.imports = imports
-
-    async def capture_contact(
-        self, context: dict[str, object], observation_id: str, references: list[dict[str, object]]
-    ) -> None:
-        from nous_sdk.contracts import CognitiveRef
-
-        ctx = CallContext.model_validate(context)
-        refs = tuple(CognitiveRef.model_validate(value) for value in references)
-        async with self.authority.write(ctx) as tx:
-            await self.on_contact_in(tx, ctx, observation_id, refs)
 
     async def run_in(
         self, view: ReadView | WriteTx, ctx: CallContext, run_id: str

@@ -4,9 +4,7 @@ from typing import Annotated, Literal
 
 from pydantic import Field
 
-from .cognition import CognitiveRef
 from .common import Contract, Operation
-from .growth import GrowthSource
 from .growth_bodies import (
     GrowthAssociation,
     GrowthConcern,
@@ -20,6 +18,7 @@ from .growth_bodies import (
     GrowthSocialRelation,
 )
 from .imports import ImportDocument
+from .media import MediaReference
 
 
 class InterpretSeed(Operation):
@@ -59,11 +58,19 @@ class SeedProposal(Contract):
     questions: tuple[str, ...] = ()
 
 
+class SaveSeed(Contract):
+    documents: tuple[ImportDocument | MediaReference, ...] = Field(min_length=1, max_length=100)
+    instruction: str = Field(default="", max_length=16000)
+    seed_id: str | None = None
+    expected_version: int = Field(default=0, ge=0)
+
+
 class SeedVersion(Contract):
-    id: str
-    previous_seed_id: str | None = None
+    seed_id: str
+    version: int = Field(ge=1)
+    namespace_id: str
     instruction: str
+    sources: tuple[MediaReference, ...]
+    created_by: str
     created_at: str
-    sources: tuple[GrowthSource, ...]
-    adopted: tuple[CognitiveRef, ...] = ()
-    review: Literal["adopt", "reject"] | None = None
+    commit_seq: int

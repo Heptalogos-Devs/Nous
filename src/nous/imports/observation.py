@@ -5,11 +5,11 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING
 
-from nous.platform.call_context import CallContext
-from nous.platform.errors import DomainError
 from nous_sdk.contracts.imports import FormObservation, ObservationFormation
 
 from nous.material.observation import cognitive_times
+from nous.platform.call_context import CallContext
+from nous.platform.errors import DomainError
 
 if TYPE_CHECKING:
     from .service import ImportService
@@ -17,6 +17,7 @@ if TYPE_CHECKING:
 
 async def formation_result_in(self, view, ctx: CallContext, command: FormObservation):
     from sqlalchemy import select
+
     from .observation_jobs import formation_request_id
     from .schema import requests
 
@@ -46,6 +47,7 @@ async def save_formation_in(
 ):
     from sqlalchemy import select
     from sqlalchemy.dialects.sqlite import insert
+
     from .observation_jobs import formation_request_id
     from .schema import requests
 
@@ -65,37 +67,22 @@ async def save_formation_in(
         .values(id=identity, record=value)
         .on_conflict_do_update(index_elements=[requests.c.id], set_={"record": value})
     )
-    if previous is None or previous.get("adoption_result") is None:
-        from nous.material.service import require_observation_in
-        from nous.platform.execution import JobSpec
-
-        event = await require_observation_in(tx, ctx, command.observation_id)
-        if event["kind"] == "contact" and result.cognition:
-            await tx.enqueue(
-                JobSpec(
-                    "nous.maintenance.contact",
-                    "default",
-                    args=(
-                        ctx.model_dump(mode="json"),
-                        command.observation_id,
-                        [reference.model_dump(mode="json") for reference in result.cognition],
-                    ),
-                    workflow_id="contact-formation:" + identity,
-                    scope=ctx.namespace_id,
-                )
-            )
     return result
 
 
 async def adopt_observation(
     self: ImportService, ctx: CallContext, command: FormObservation
 ) -> ObservationFormation:
-    from nous.material.observation import cognitive_times
+    from nous_sdk.contracts import EvidenceLink
+    from nous_sdk.contracts.derivation import (
+        DerivationInput,
+        StructuredRepresentation,
+        TextRepresentation,
+    )
+
     from nous.material.text import source_region_text
     from nous.platform.content import ContentObject
     from nous.platform.persistence.authority import canonical_json
-    from nous_sdk.contracts import EvidenceLink, MediaReference
-    from nous_sdk.contracts.derivation import DerivationInput, StructuredRepresentation, TextRepresentation
 
     async with self.authority.read(ctx) as view:
         selected = await self.materials.accepted_source_in(
@@ -140,7 +127,6 @@ async def adopt_observation(
         )
 
     event = selected.event
-    times = cognitive_times(event, ctx.clock, inferred_event=material.get("event_time"))
     source_inputs = (DerivationInput(ordinal=0, source=reference),)
     source_ids = (reference.exact(),)
     evidence = (EvidenceLink(observation_id=command.observation_id, region_id=region_id),)
@@ -149,7 +135,7 @@ async def adopt_observation(
     graph_plan = None
     graph_resolution = None
     if command.llm_enabled:
-        from .model_generation import extract_graph, form_notes, resolve_graph
+        from nous.cognition.formation_models import extract_graph, form_notes, resolve_graph
 
         if command.formation_purpose in {"memory", "memory_and_graph"}:
             notes_result = await form_notes(
@@ -157,6 +143,7 @@ async def adopt_observation(
                 ctx,
                 text,
                 configuration=self.configuration,
+                background=command.background,
                 source_ids=source_ids,
             )
         if command.formation_purpose in {"graph", "memory_and_graph"}:
@@ -165,6 +152,7 @@ async def adopt_observation(
                 ctx,
                 text,
                 configuration=self.configuration,
+                background=command.background,
                 source_ids=source_ids,
             )
             graph_plan = self.formation.graph_resolution_plan(
@@ -178,6 +166,9 @@ async def adopt_observation(
     records = []
     representations = []
     async with self.authority.write(ctx) as tx:
+        from nous_sdk.contracts.common import utc_now
+
+        times = cognitive_times(event, utc_now(), inferred_event=material.get("event_time"))
         if notes_result is not None:
             adopted, representation = await self.formation.adopt_notes_result_in(
                 tx,
@@ -233,10 +224,10 @@ async def form_observation(
     self: ImportService, ctx: CallContext, command: FormObservation
 ) -> ObservationFormation:
     from httpx import HTTPError
+    from nous_sdk.contracts.derivation import ArtifactRepresentation
     from openai import APIError
 
     from .attempts import failure
-    from nous_sdk.contracts.derivation import ArtifactRepresentation
 
     async with self.authority.read(ctx) as view:
         saved = await formation_result_in(self, view, ctx, command)

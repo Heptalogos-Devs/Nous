@@ -1,9 +1,12 @@
 """The persisted host runtime owns history, source keys and actual sending plans."""
 
 from typing import Literal
+
 from pydantic import Field, JsonValue
+
 from .common import Contract
-from .context import ContextProjection, ContextUsage, ContextTarget
+from .context import ContextProjection, ContextTarget, ContextUsage
+from .events import ContactEvent
 from .media import MediaReference
 from .model_measurement import ModelMeasurement
 from .retrieval import QueryRequest
@@ -11,13 +14,9 @@ from .retrieval import QueryRequest
 HostFormat = Literal["openai-chat", "pydantic-ai"]
 
 
-class HostEvent(Contract):
+class HostEvent(ContactEvent):
     event_id: str = Field(min_length=1)
     role: Literal["system", "user", "assistant", "tool"]
-    payload: JsonValue
-    text: str = ""
-    tool_call_id: str | None = None
-    response_id: str | None = None
 
 
 class RuntimeOpen(Contract):

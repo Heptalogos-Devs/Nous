@@ -12,9 +12,6 @@ def data_directory() -> Path:
     current = user_data_path("Nous" if desktop_name else "nous", appauthor=False)
     if sys.platform == "win32" and os.environ.get("LOCALAPPDATA"):
         current = Path(os.environ["LOCALAPPDATA"]) / "Nous"
-    previous = current.with_name("NousWave" if desktop_name else "nous-wave")
-    if not current.exists() and (previous / "instance").is_dir():
-        current = previous
     return current.expanduser().resolve()
 
 

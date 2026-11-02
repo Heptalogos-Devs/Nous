@@ -179,7 +179,7 @@ def present(value: object) -> dict[str, JsonValue]:
     raw = (
         value.model_dump(mode="json")
         if isinstance(value, BaseModel)
-        else TypeAdapter(JsonValue).validate_python(value)
+        else TypeAdapter(JsonValue).validate_python(TypeAdapter(object).dump_python(value, mode="json"))
     )
     if isinstance(raw, dict):
         return raw

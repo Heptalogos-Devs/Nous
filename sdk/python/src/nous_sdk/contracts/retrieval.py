@@ -33,6 +33,8 @@ class TimeFilter(Contract):
 
 class QueryRequest(Contract):
     context: QueryContext | str | None = None
+    background: str = Field(default="", max_length=8192)
+    references: tuple[str, ...] = Field(default=(), max_length=64)
     wave_profile: str | None = None
     capability_policy: Literal["strict", "best_effort"] | None = None
     reranker: Literal["compute", "cross_encoder", "llm", "off"] | None = None

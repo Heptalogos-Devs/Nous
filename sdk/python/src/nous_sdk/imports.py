@@ -15,6 +15,7 @@ from pydantic import JsonValue
 from .contracts import ImportDocument
 from .contracts.common import FormationPurpose
 from .contracts.imports import ImportFormat
+from .contracts.media import MediaStrategy
 from .contracts.text_import import TextImport, TextImportSubmission
 from .files import ManagedFiles, file_name
 from .operations import encoded
@@ -205,6 +206,7 @@ async def import_files(
     transfer_root: str | Path,
     input_format: ImportFormat | None = None,
     formation_purpose: FormationPurpose | None = None,
+    media_strategy: MediaStrategy = "direct_structured",
     completion: Literal["accepted", "formed"] = "accepted",
     origin: Mapping[str, str] | None = None,
     operation_id: str | None = None,
@@ -222,7 +224,10 @@ async def import_files(
         operation_id=operation,
     )
     inputs = tuple(
-        document.model_copy(update={"origin": dict(origin or {})}) for document in documents
+        document.model_copy(
+            update={"origin": dict(origin or {}), "media_strategy": media_strategy}
+        )
+        for document in documents
     )
     command = TextImport.model_validate(
         {
@@ -248,6 +253,7 @@ async def import_directory(
     recursive: bool = True,
     input_format: ImportFormat | None = None,
     formation_purpose: FormationPurpose | None = None,
+    media_strategy: MediaStrategy = "direct_structured",
     completion: Literal["accepted", "formed"] = "accepted",
     origin: Mapping[str, str] | None = None,
     operation_id: str | None = None,
@@ -263,6 +269,7 @@ async def import_directory(
         transfer_root=transfer_root,
         input_format=input_format,
         formation_purpose=formation_purpose,
+        media_strategy=media_strategy,
         completion=completion,
         origin=origin,
         operation_id=operation_id,

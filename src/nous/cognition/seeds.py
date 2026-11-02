@@ -1,18 +1,31 @@
 """Creator documents use the shared typed proposal and exact revision adoption path."""
 
 from nous_sdk.contracts import FreezeCatalog
-from nous.platform.call_context import CallContext
-from nous.platform.errors import DomainError
-from nous_sdk.contracts.ego_model import InterpretSeed, SeedVersion
+from nous_sdk.contracts.ego_model import InterpretSeed, SaveSeed, SeedVersion
 from nous_sdk.contracts.maintenance import MaintenanceRun, MaintenanceSubmission, StartMaintenance
 from pydantic import JsonValue, TypeAdapter
+from sqlalchemy import JSON, Column, Integer, String, Table
 
 from nous.cognition.ego_model import EgoService
 from nous.cognition.records import CognitiveRecords
 from nous.identity.access import require_namespace_in
 from nous.imports.service import ImportService
 from nous.maintenance.service import MaintenanceService
-from nous.platform.persistence import Authority
+from nous.material.service import MaterialService
+from nous.platform.call_context import CallContext
+from nous.platform.content import ContentLease, ContentStore
+from nous.platform.errors import DomainError
+from nous.platform.persistence import Authority, ReadView, WriteTx, metadata
+
+seed_versions = Table(
+    "seed_versions",
+    metadata,
+    Column("namespace_id", String, primary_key=True),
+    Column("seed_id", String, primary_key=True),
+    Column("version", Integer, primary_key=True),
+    Column("record", JSON, nullable=False),
+    Column("commit_seq", Integer, nullable=False),
+)
 
 
 class SeedService:
@@ -24,8 +37,11 @@ class SeedService:
         imports: ImportService,
         *,
         ego: EgoService,
+        materials: MaterialService,
+        content: ContentStore,
     ) -> None:
         self.ego = ego
+        self.materials, self.content = materials, content
         self.authority, self.cognition, self.maintenance = (authority, cognition, maintenance)
         self.imports = imports
 
@@ -116,44 +132,133 @@ class SeedService:
             )
         return run
 
-    async def read(self, ctx: CallContext, seed_id: str) -> SeedVersion:
-        run = await self.maintenance.read(ctx, seed_id)
-        if run.command.kind != "seed" or run.command.source_catalog_id is None:
-            raise DomainError("seed_not_found", "The requested Seed source is unavailable")
-        from .growth_sources import from_units_in, read_in
+    async def save(self, ctx: CallContext, command: SaveSeed) -> SeedVersion:
+        """Retain a complete creator-document version before any interpretation."""
+        from uuid import uuid4
 
-        async with self.authority.read(ctx) as view:
-            catalog = await self.imports.read_catalog_in(view, ctx, run.command.source_catalog_id)
-            sources = await read_in(
-                self.cognition,
-                view,
-                ctx,
-                await from_units_in(self.cognition, view, ctx, catalog.units),
-            )
-        return SeedVersion(
-            id=run.id,
-            previous_seed_id=run.command.previous_seed_id,
-            instruction=run.command.instruction,
-            created_at=run.created_at,
-            sources=sources,
-            adopted=run.review.adopted if run.review else (),
-            review=run.review.decision if run.review else None,
+        from nous_sdk.contracts.media import MediaReference
+        from sqlalchemy import func, select
+
+        leases: list[ContentLease | None] = []
+        try:
+            for document in command.documents:
+                leases.append(
+                    await self.content.publish_bytes(
+                        document.inline_text().encode("utf-8"), document.media_type
+                    )
+                    if not isinstance(document, MediaReference) and document.material_id is None
+                    else None
+                )
+            async with self.authority.write(ctx) as tx:
+                await require_namespace_in(tx, ctx, "ego")
+                seed_id = command.seed_id or str(uuid4())
+                version = (
+                    await tx.connection.scalar(
+                        select(func.max(seed_versions.c.version)).where(
+                            seed_versions.c.namespace_id == ctx.namespace_id,
+                            seed_versions.c.seed_id == seed_id,
+                        )
+                    )
+                    or 0
+                )
+                if version != command.expected_version:
+                    raise DomainError(
+                        "seed_version_conflict", "Seed changed since the selected version"
+                    )
+                if version:
+                    await self.read_in(tx, ctx, seed_id, version)
+                sources: list[MediaReference] = []
+                for document, lease in zip(command.documents, leases, strict=True):
+                    if isinstance(document, MediaReference):
+                        sources.append(
+                            (await self.materials.provenance_in(tx, ctx, document)).reference
+                        )
+                        continue
+                    if document.material_id is None:
+                        admitted = await self.materials.admit_text_in(tx, ctx, document, lease)
+                    else:
+                        admitted = await self.materials.admit_observation_in(
+                            tx, ctx, document.material_id, document
+                        )
+                    sources.append(
+                        MediaReference(
+                            kind="material",
+                            id=admitted.material["id"],
+                            observation_id=admitted.event["id"],
+                        )
+                    )
+                result = SeedVersion(
+                    seed_id=seed_id,
+                    version=version + 1,
+                    namespace_id=ctx.namespace_id,
+                    instruction=command.instruction,
+                    sources=tuple(sources),
+                    created_by=ctx.caller_id,
+                    created_at=tx.recorded_at,
+                    commit_seq=tx.commit_seq,
+                )
+                await tx.connection.execute(
+                    seed_versions.insert().values(
+                        namespace_id=ctx.namespace_id,
+                        seed_id=seed_id,
+                        version=result.version,
+                        record=result.model_dump(mode="json"),
+                        commit_seq=tx.commit_seq,
+                    )
+                )
+                return result
+        finally:
+            for lease in leases:
+                if lease is not None:
+                    await self.content.release(lease)
+
+    async def read_in(
+        self, view: ReadView | WriteTx, ctx: CallContext, seed_id: str, version: int | None = None
+    ) -> SeedVersion:
+        from sqlalchemy import select
+
+        await require_namespace_in(view, ctx, "ego")
+        statement = select(seed_versions.c.record).where(
+            seed_versions.c.namespace_id == ctx.namespace_id,
+            seed_versions.c.seed_id == seed_id,
         )
+        if version is not None:
+            statement = statement.where(seed_versions.c.version == version)
+        value = await view.connection.scalar(
+            statement.order_by(seed_versions.c.version.desc()).limit(1)
+        )
+        if value is None:
+            raise DomainError("seed_not_found", "Seed version is unavailable")
+        result = SeedVersion.model_validate(value)
+        for source in result.sources:
+            await self.materials.provenance_in(view, ctx, source)
+        return result
+
+    async def read(self, ctx: CallContext, seed_id: str, version: int | None = None) -> SeedVersion:
+        async with self.authority.read(ctx) as view:
+            return await self.read_in(view, ctx, seed_id, version)
 
     async def history(
         self, ctx: CallContext, seed_id: str, *, limit: int = 32
     ) -> tuple[SeedVersion, ...]:
+        from sqlalchemy import select
+
         if not 1 <= limit <= 128:
-            raise DomainError(
-                "seed_history_limit", "Seed history requires a limit between 1 and 128"
-            )
-        versions: list[SeedVersion] = []
-        current: str | None = seed_id
-        while current is not None and len(versions) < limit:
-            version = await self.read(ctx, current)
-            versions.append(version)
-            current = version.previous_seed_id
-        return tuple(versions)
+            raise DomainError("seed_history_limit", "Seed history limit must be between 1 and 128")
+        async with self.authority.read(ctx) as view:
+            await self.read_in(view, ctx, seed_id)
+            versions = (
+                await view.connection.scalars(
+                    select(seed_versions.c.version)
+                    .where(
+                        seed_versions.c.namespace_id == ctx.namespace_id,
+                        seed_versions.c.seed_id == seed_id,
+                    )
+                    .order_by(seed_versions.c.version.desc())
+                    .limit(limit)
+                )
+            ).all()
+            return tuple([await self.read_in(view, ctx, seed_id, version) for version in versions])
 
     async def markdown(self, ctx: CallContext) -> str:
         records = await self.ego.ego_profile(ctx)

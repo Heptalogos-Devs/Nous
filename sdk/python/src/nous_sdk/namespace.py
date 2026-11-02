@@ -27,7 +27,7 @@ from .contracts.management import (
     InstallBundle,
     NamespaceBundle,
 )
-from .contracts.media import MediaReference
+from .contracts.media import MediaReference, PixelRect, SourceRegion, TimeSpan
 from .contracts.public import CorrectionInput, ReadRequest, ReadView, RememberInput
 from .contracts.query_context import QueryContext
 from .contracts.text_import import TextImport, TextImportResult, TextImportSubmission
@@ -77,6 +77,8 @@ class NamespaceClient:
         self.memories=MemoryResource(self)
         self.jobs=JobResource(self)
         self.bundles: BundleResource = BundleResource(self)
+        from .seeds import SeedResource
+        self.seeds = SeedResource(self)
         from .settings import SettingsResource
         self.settings=SettingsResource(client,self.namespace_id)
         from .runtime import RuntimeResource
@@ -85,8 +87,15 @@ class NamespaceClient:
     async def request(self, method: str, path: str, *, body: JsonValue = None, params: Mapping[str, QueryParam] | None = None) -> JsonValue:
         return await self.transport.request(method,path,body=body,params=params,source_read=self._source_read)
 
-    async def query(self, query: str | QueryRequest, *, context: QueryContext | str | None=None, media: tuple[MediaReference,...]=(), profile: str | None=None, limit: int=8, strict: bool=False) -> QueryResult:
-        command=query if isinstance(query,QueryRequest) else QueryRequest(text=query,context=context,media=media,wave_profile=profile,limit=limit,capability_policy='strict' if strict else None)
+    async def query(self, query: str | QueryRequest, *, context: QueryContext | str | None=None, background: str = "", references: tuple[str, ...] = (), media: tuple[MediaReference | str,...]=(), profile: str | None=None, limit: int=8, strict: bool=False) -> QueryResult:
+        media_references = tuple(
+            [await self.materials.resolve(value) if isinstance(value, str) else value for value in media]
+        )
+        command = (
+            query.model_copy(update={"media": (*query.media, *media_references), "background": background or query.background, "references": (*query.references, *references)})
+            if isinstance(query, QueryRequest)
+            else QueryRequest(text=query,context=context,background=background,references=references,media=media_references,mode='hybrid' if media_references else 'lexical',wave_profile=profile,limit=limit,capability_policy='strict' if strict else None)
+        )
         namespace=self.namespace_id
         return QueryResult.model_validate(await self.request('POST',f'/api/knowledge/namespaces/{segment(namespace)}/query',body=encoded(command),params={'view':'raw'}))
 
@@ -215,6 +224,28 @@ class MemoryResource:
 
 class MaterialResource:
     def __init__(self, namespace: NamespaceClient):self.namespace=namespace
+    async def resolve(self, ref: str) -> MediaReference:
+        from .contracts.targets import MediaTarget
+
+        locator = ref if ':' in ref else 'material:' + ref
+        target = (await self.namespace.resolve_reference(locator)).reference
+        if not isinstance(target, MediaTarget):
+            raise ValueError('Reference does not select a material or media region')
+        return target.reference
+    async def select(
+        self,
+        ref: str,
+        *,
+        time_span: TimeSpan | None = None,
+        pixel_rect: PixelRect | None = None,
+    ) -> SourceRegion:
+        reference = await self.resolve(ref)
+        if reference.kind != 'material':
+            raise ValueError('Select a region from an original material')
+        region = SourceRegion(
+            id=str(uuid4()), material_id=reference.id, time_span=time_span, pixel_rect=pixel_rect
+        )
+        return await self.namespace.client.create_source_region(self.namespace.namespace_id, region)
     async def get(self, ref: str):
         from .types import Material
         selected=ref if ':' in ref else 'material:'+ref
@@ -235,9 +266,22 @@ class MaterialResource:
             f"/api/knowledge/namespaces/{segment(self.namespace.namespace_id)}/observations",
             body=body,
         )
-    async def download(self, ref: str, destination: str | Path):
-        material=await self.get(ref)
-        return await self.namespace.client.download_material(material.id,destination,namespace_id=self.namespace.namespace_id)
+    async def download(self, ref: str | MediaReference, destination: str | Path):
+        from .source_scope import SourceReadScope
+
+        reference = await self.resolve(ref) if isinstance(ref, str) else ref
+        client = self.namespace.client
+        if reference.observation_id is not None:
+            client = client.with_source_read(
+                SourceReadScope(observation_ids=(reference.observation_id,))
+            )
+        if reference.kind == 'material':
+            return await client.download_material(
+                reference.id, destination, namespace_id=self.namespace.namespace_id
+            )
+        if reference.kind == 'source_region':
+            return await client.download_region(self.namespace.namespace_id, reference.id, destination)
+        return await client.download_derived(self.namespace.namespace_id, reference, destination)
 
 
 class BundleResource:

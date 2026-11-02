@@ -9,9 +9,9 @@ from typing import TYPE_CHECKING
 
 import anyio
 import sqlalchemy as sa
-from nous.platform.call_context import CallContext
 from nous_sdk.contracts.namespace_policy import NamespaceQuota
 
+from nous.platform.call_context import CallContext
 from nous.platform.errors import NousError
 
 from .schema import metadata
@@ -31,6 +31,7 @@ USER_TABLES = frozenset(
         "observations",
         "source_regions",
         "cognitive_revisions",
+        "seed_versions",
         "external_resources",
         "subject_bindings",
     }

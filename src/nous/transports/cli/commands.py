@@ -11,7 +11,10 @@ import typer
 from nous_sdk.contracts import ImportFormat, MediaReference, QueryRequest
 from nous_sdk.contracts.common import FormationPurpose
 from nous_sdk.contracts.context import ChangeWorkContext, WorkContextContent
+from nous_sdk.contracts.media import MediaStrategy, PixelRect, TimeSpan
 from nous_sdk.presentation import present, present_query
+
+from nous.transports.ingestion import import_result, job_result
 
 from .client_state import ClientState, save
 from .common import invoke, invoke_bound, options
@@ -80,6 +83,8 @@ def register(cli: typer.Typer) -> None:
         ctx: typer.Context,
         query: Annotated[str, typer.Argument()] = "",
         context: str | None = None,
+        background: str = "",
+        reference: Annotated[list[str] | None, typer.Option("--ref")] = None,
         profile: str | None = None,
         limit: Annotated[int, typer.Option(min=1, max=1000)] = 8,
         strict: bool = False,
@@ -88,6 +93,7 @@ def register(cli: typer.Typer) -> None:
         audio: Annotated[list[Path] | None, typer.Option()] = None,
         video: Annotated[list[Path] | None, typer.Option()] = None,
         file: Annotated[list[Path] | None, typer.Option()] = None,
+        media_ref: Annotated[list[str] | None, typer.Option("--media", help="Use a saved material or region reference.")] = None,
     ) -> None:
         """Find natural language or NousQL matches; continue with 'nous read REF'."""
 
@@ -121,11 +127,15 @@ def register(cli: typer.Typer) -> None:
                 QueryRequest(
                     text=query,
                     context=selected_context,
+                    background=background,
+                    references=tuple(reference or ()),
                     media=tuple(media),
+                    mode="hybrid" if media or media_ref else "lexical",
                     wave_profile=profile,
                     limit=limit,
                     capability_policy="strict" if strict else None,
-                )
+                ),
+                media=tuple(media_ref or ()),
             )
             if trace and not options(ctx).raw:
                 return {**present_query(result).model_dump(mode="json"), "trace": result.plan}
@@ -141,14 +151,41 @@ def register(cli: typer.Typer) -> None:
         cursor: str | None = None,
         offset: int = 0,
         limit: Annotated[int, typer.Option(min=1, max=1000000)] = 12000,
+        output: Path | None = None,
+        start_ms: int | None = None,
+        end_ms: int | None = None,
+        crop: tuple[int, int, int, int] | None = None,
     ) -> None:
         """Read a result, object, material, work or job reference."""
-        invoke_bound(
-            ctx,
-            lambda namespace: namespace.read(
-                ref, sources=sources, cursor=cursor, offset=offset, max_chars=limit
-            ),
-        )
+        async def run(namespace):
+            selected_ref = ref
+            if start_ms is not None or end_ms is not None or crop is not None:
+                if (start_ms is None) != (end_ms is None):
+                    raise ValueError('Provide both --start-ms and --end-ms')
+                selected = await namespace.materials.select(
+                    ref,
+                    time_span=TimeSpan(start_ms=start_ms, end_ms=end_ms)
+                    if start_ms is not None and end_ms is not None else None,
+                    pixel_rect=PixelRect(x=crop[0], y=crop[1], width=crop[2], height=crop[3])
+                    if crop is not None else None,
+                )
+                selected_ref = (
+                    selected.addresses.exact if selected.addresses else 'source-region:' + selected.id
+                )
+            value = await namespace.read(
+                selected_ref, sources=sources, cursor=cursor, offset=offset, max_chars=limit
+            )
+            if output is None:
+                return value
+            downloaded = await namespace.materials.download(selected_ref, output)
+            return {
+                **(value.model_dump(mode="json") if options(ctx).raw else present(value)),
+                "path": str(downloaded.output),
+                "media_type": downloaded.media_type,
+                "bytes": downloaded.byte_len,
+            }
+
+        invoke_bound(ctx, run)
 
     @cli.command("correct")
     def correct(
@@ -178,11 +215,12 @@ def register(cli: typer.Typer) -> None:
         ctx: typer.Context,
         paths: Annotated[list[Path], typer.Argument(exists=True, dir_okay=False)],
         purpose: FormationPurpose = "memory",
-        no_formation: bool = False,
+        capture_only: Annotated[bool, typer.Option("--capture-only", is_flag=True, help="Save originals without model formation.")] = False,
+        media_strategy: MediaStrategy = "direct_structured",
         wait: Annotated[bool, typer.Option("--wait/--no-wait")] = True,
         format: ImportFormat | None = None,
     ) -> None:
-        """Capture originals and form memory notes, graph links, or both."""
+        """Capture originals and form memory notes, graph links, or both. Use 'nous jobs JOB' after --no-wait."""
 
         async def run(namespace):
             submission = await namespace.client.import_files(
@@ -190,34 +228,11 @@ def register(cli: typer.Typer) -> None:
                 paths,
                 transfer_root=Path(commonpath([str(path.resolve().parent) for path in paths])),
                 input_format=format,
-                formation_purpose=None if no_formation else purpose,
-                completion="formed" if not no_formation and wait else "accepted",
+                formation_purpose=None if capture_only else purpose,
+                media_strategy=media_strategy,
+                completion="formed" if not capture_only and wait else "accepted",
             )
-            if not wait:
-                return {"ref": "job:" + submission.job_id, "status": "queued"}
-            await namespace.client.wait_success(
-                (submission.job_id,), namespace_id=namespace.namespace_id
-            )
-            result = await namespace.client.text_import_result(
-                namespace.namespace_id, submission.request_id
-            )
-            return (
-                result
-                if options(ctx).raw
-                else {
-                    "ref": "job:" + submission.job_id,
-                    "status": "completed",
-                    "materials": [
-                        {"ref": "material:" + unit.material_id}
-                        for unit in result.admission.catalog.units
-                    ],
-                    "items": [
-                        {"ref": reference.exact(), "kind": reference.kind}
-                        for output in result.admission.outputs
-                        for reference in output.cognition
-                    ],
-                }
-            )
+            return await import_result(namespace, submission, wait=wait, raw=options(ctx).raw)
 
         invoke_bound(ctx, run)
 
@@ -352,9 +367,13 @@ def register(cli: typer.Typer) -> None:
     @jobs.callback()
     def job_list(ctx: typer.Context, ref: Annotated[str | None, typer.Argument()] = None):
         if ctx.invoked_subcommand is None:
-            invoke_bound(
-                ctx, lambda namespace: namespace.jobs.get(ref) if ref else namespace.jobs.list()
-            )
+            async def run(namespace):
+                if ref is None:
+                    return await namespace.jobs.list()
+                job = await namespace.jobs.get(ref)
+                return await job_result(namespace, job, raw=options(ctx).raw)
+
+            invoke_bound(ctx, run)
 
     @jobs.command("cancel")
     def cancel_job(ctx: typer.Context, ref: str):

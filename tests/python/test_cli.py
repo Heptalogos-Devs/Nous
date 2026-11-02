@@ -198,7 +198,7 @@ def test_cli_namespace_workflow_and_mcp_reads(tmp_path):
 
             selected = invoke("use", "default")
             namespace_id = selected["ref"].removeprefix("namespace:")
-            imported = invoke("import", str(document), "--no-formation")
+            imported = invoke("import", str(document), "--capture-only")
             assert imported["status"] == "completed" and imported["materials"]
 
             found = invoke("query", "NATIVE-CLI-ALPHA-73")
@@ -251,6 +251,8 @@ def test_cli_namespace_workflow_and_mcp_reads(tmp_path):
                         assert initialized.server_info.name == "Nous"
                         tools = {tool.name for tool in (await session.list_tools()).tools}
                         assert {"nous_query", "nous_read", "nous_correct", "nous_work_open"} <= tools
+                        summary = await session.call_tool("nous_status", {})
+                        assert not summary.is_error and summary.structured_content["namespace"] == "default"
                         result = await session.call_tool(
                             "nous_query", {"query": "NATIVE-CLI-ALPHA-73"}
                         )
@@ -260,6 +262,25 @@ def test_cli_namespace_workflow_and_mcp_reads(tmp_path):
                         detail = await session.call_tool("nous_read", {"ref": reference})
                         assert not detail.is_error
                         assert "NATIVE-CLI-ALPHA-73" in detail.structured_content["text"]
+                        captured = await session.call_tool(
+                            "nous_ingest", {"content": "The original remains readable after capture."}
+                        )
+                        assert not captured.is_error
+                        captured_ref = captured.structured_content["materials"][0]["ref"]
+                        assert captured_ref.startswith("art:")
+                        captured_read = await session.call_tool("nous_read", {"ref": captured_ref})
+                        assert "original remains readable" in captured_read.structured_content["text"]
+                        queued = await session.call_tool(
+                            "nous_ingest", {"content": "A queued original is available later.", "wait": False}
+                        )
+                        for _ in range(120):
+                            status = await session.call_tool(
+                                "nous_status", {"ref": queued.structured_content["ref"]}
+                            )
+                            if status.structured_content.get("status") == "completed":
+                                break
+                            await asyncio.sleep(0.1)
+                        assert status.structured_content["materials"][0]["ref"].startswith("art:")
                         followup = await session.call_tool(
                             "nous_work_open",
                             {
@@ -272,6 +293,14 @@ def test_cli_namespace_workflow_and_mcp_reads(tmp_path):
                         assert followup.structured_content["ref"].startswith("work:")
 
             asyncio.run(mcp_protocol())
+
+            queued = invoke("import", str(document), "--capture-only", "--no-wait")
+            for _ in range(15):
+                finished = invoke("jobs", queued["ref"])
+                if finished.get("status") == "completed":
+                    break
+                time.sleep(0.2)
+            assert finished["materials"][0]["ref"].startswith("art:")
 
             archive = tmp_path / "knowledge.json"
             invoke("bundle", "export", str(archive))

@@ -10,7 +10,10 @@ from .common import Contract
 class MemoryNote(Contract):
     text: str = Field(min_length=1)
     topics: tuple[str, ...] = ()
+    source_keys: tuple[str, ...] = Field(min_length=1)
     time_expression: str | None = None
+    previous_key: str | None = None
+    relation: Literal["new", "same", "supplement", "changed", "conflict"]
 
 
 class NotesDraft(Contract):

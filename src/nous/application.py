@@ -130,9 +130,6 @@ class Application:
         self.growth = GrowthService(
             self.cognition, evolution=self.evolution, memories=self.memories
         )
-        self.formation = FormationService(
-            self.cognition, facts=self.facts, configuration=self.configuration
-        )
         self.entities = EntityService(self.cognition, facts=self.facts)
         self.graphs = GraphService(self.cognition, memories=self.memories)
         self.social = SocialService(self.cognition)
@@ -164,17 +161,6 @@ class Application:
         from nous.maintenance import MaintenanceService
         from nous.retrieval.service import RetrievalService
 
-        self.media_imports = MediaImportService(
-            self.authority,
-            self.material,
-            self.cognition,
-            self.models,
-            self.content,
-            self.media,
-            self.derivations,
-            formation=self.formation,
-            configuration=self.configuration,
-        )
         from nous.vector_projection.service import VectorProjectionService
 
         self.vector_projection = VectorProjectionService(
@@ -185,17 +171,6 @@ class Application:
             materials=self.material,
             derivations=self.derivations,
             admission=self.projection_admission,
-        )
-        self.imports = ImportService(
-            self.authority,
-            self.cognition,
-            self.models,
-            materials=self.material,
-            content_store=self.content,
-            projection=self.vector_projection,
-            media_imports=self.media_imports,
-            formation=self.formation,
-            configuration=self.configuration,
         )
         from nous.data_management.dataset_imports import DatasetImportService
         self.retrieval = RetrievalService(
@@ -208,6 +183,33 @@ class Application:
             derivations=self.derivations,
             resources=self.resources,
             projection=self.vector_projection,
+        )
+        self.formation = FormationService(
+            self.cognition, facts=self.facts, configuration=self.configuration,
+            memories=self.memories, models=self.models, retrieval=self.retrieval,
+            content=self.content,
+        )
+        self.media_imports = MediaImportService(
+            self.authority,
+            self.material,
+            self.cognition,
+            self.models,
+            self.content,
+            self.media,
+            self.derivations,
+            formation=self.formation,
+            configuration=self.configuration,
+        )
+        self.imports = ImportService(
+            self.authority,
+            self.cognition,
+            self.models,
+            materials=self.material,
+            content_store=self.content,
+            projection=self.vector_projection,
+            media_imports=self.media_imports,
+            formation=self.formation,
+            configuration=self.configuration,
         )
         from nous.references.reading import ReadingService
 
@@ -224,7 +226,8 @@ class Application:
         from nous.cognition.seeds import SeedService
 
         self.seeds = SeedService(
-            self.authority, self.cognition, self.maintenance, self.imports, ego=self.ego
+            self.authority, self.cognition, self.maintenance, self.imports, ego=self.ego,
+            materials=self.material, content=self.content
         )
         from nous.retrieval.tuning import RetrievalTuningService
 
@@ -355,9 +358,7 @@ class Application:
             "nous.cognition.purge_dependents", self.lifecycle.run_cognitive_purge, preemptible=True
         )
         self.execution.register("nous.retrieval.index", self.rebuild_index, preemptible=True)
-        self.execution.register(
-            "nous.maintenance.contact", self.maintenance.capture_contact, preemptible=True
-        )
+        self.execution.register("nous.formation.contacts", self.formation.run_contacts, preemptible=True)
         self.execution.register("nous.imports.process", self.imports.run_process, preemptible=True)
         self.execution.register("nous.imports.dataset", self.datasets.run, preemptible=True)
         self.execution.register(

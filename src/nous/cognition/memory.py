@@ -2,22 +2,22 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
 from datetime import datetime
-from nous_sdk.contracts import CognitiveRef, RecordsQuery, RetentionChanges, RetentionExpectation
-from nous_sdk.contracts.retention import DecayRetention, RetentionDecayResult
-from .lifecycle import snapshot, state_for, transition
+from typing import TYPE_CHECKING, Literal
 
+from nous_sdk.contracts import CognitiveRef, RecordsQuery, RetentionChanges, RetentionExpectation
+from nous_sdk.contracts.common import utc_now
 from nous_sdk.contracts.lifecycle import MemoryChanges
 from nous_sdk.contracts.public import RememberInput
-from nous_sdk.contracts.common import utc_now
+from nous_sdk.contracts.retention import DecayRetention, RetentionDecayResult
 from sqlalchemy import select
 
 from nous.identity.access import require_namespace_in
-from nous.platform.persistence import Authority, ReadView, WriteTx
-from nous.platform.content import ContentStore
 from nous.material.service import MaterialService
+from nous.platform.content import ContentStore
+from nous.platform.persistence import Authority, ReadView, WriteTx
 
+from .lifecycle import snapshot, state_for, transition
 from .revision_state import RevisionState
 from .schema import revisions, vectors
 
@@ -25,16 +25,20 @@ if TYPE_CHECKING:
     from .records import CognitiveRecords
 from nous_sdk.contracts import (
     AdoptCognition,
+    AssociationBody,
     CognitiveRecord,
+    CognitiveTimes,
     EvidenceLink,
     ImportDocument,
     MemoryBody,
     MemoryChange,
+    ModelProvenance,
     RetentionChange,
     RetentionState,
     RevisionCause,
     TimePoint,
 )
+
 from nous.platform.call_context import CallContext
 from nous.platform.errors import DomainError
 
@@ -52,6 +56,131 @@ class MemoryService:
         self.records = records
         self.materials = materials
         self.content = content
+
+    async def adopt_formation_in(
+        self,
+        tx: WriteTx,
+        ctx: CallContext,
+        *,
+        body: MemoryBody,
+        evidence: tuple[EvidenceLink, ...],
+        times: CognitiveTimes,
+        producer: ModelProvenance,
+        relation: Literal["new", "same", "supplement", "changed", "conflict"],
+        previous: CognitiveRef | None = None,
+    ) -> tuple[CognitiveRecord, ...]:
+        """Adopt one sourced semantic proposal against its frozen current candidate."""
+        if (relation == "new") != (previous is None):
+            raise DomainError(
+                "formation_previous_invalid", "The relation and previous memory do not match"
+            )
+        existing = await self.records.get_in(tx, ctx, previous) if previous else None
+        if existing is not None:
+            if not isinstance(existing.body, MemoryBody) or existing.deleted:
+                raise DomainError("memory_unavailable", "The previous memory is unavailable")
+            head = await tx.connection.scalar(
+                select(revisions.c.revision).where(
+                    revisions.c.namespace_id == ctx.namespace_id,
+                    revisions.c.id == previous.id,
+                    revisions.c.head.is_(True),
+                )
+            )
+            if head != previous.revision:
+                raise DomainError(
+                    "revision_conflict", "The previous memory changed during formation"
+                )
+
+        if relation == "same":
+            assert existing is not None and previous is not None
+            known = {link.model_dump_json() for link in existing.evidence}
+            additions = tuple(link for link in evidence if link.model_dump_json() not in known)
+            if not additions:
+                return (existing,)
+            revised = await self.records.adopt_in(
+                tx,
+                ctx,
+                AdoptCognition(
+                    id=previous.id,
+                    expected_revision=previous.revision,
+                    body=existing.body,
+                    evidence=(
+                        *existing.evidence,
+                        *additions,
+                        EvidenceLink(
+                            reference=previous, polarity="boundary", role="previous content"
+                        ),
+                    ),
+                    times=times.model_copy(
+                        update={
+                            "event": existing.times.event,
+                            "observation": existing.times.observation,
+                        }
+                    ),
+                    producer=producer,
+                ),
+                state=RevisionState(
+                    lifecycle=existing.lifecycle,
+                    cause=RevisionCause(
+                        action="formation.same",
+                        actor=ctx.caller_id,
+                        reason="Additional source support",
+                        parent=previous,
+                    ),
+                ),
+            )
+            return (revised,)
+
+        if relation in {"supplement", "changed"}:
+            assert existing is not None and previous is not None
+            updated = existing.body.model_copy(
+                update={
+                    "text": body.text,
+                    "tags": body.tags,
+                    "media": body.media,
+                    "contact_observation_id": body.contact_observation_id,
+                }
+            )
+            revised = await self.change_memory_in(
+                tx,
+                ctx,
+                MemoryChange(
+                    reference=previous,
+                    action="revise",
+                    body=updated,
+                    reason="Contextual formation: " + relation,
+                ),
+                revision_evidence=evidence,
+                producer=producer,
+                formation_times=times,
+            )
+            return (revised,)
+
+        created = await self.records.adopt_in(
+            tx, ctx, AdoptCognition(body=body, evidence=evidence, times=times, producer=producer)
+        )
+        if relation != "conflict":
+            return (created,)
+        assert previous is not None
+        association = await self.records.adopt_in(
+            tx,
+            ctx,
+            AdoptCognition(
+                body=AssociationBody(
+                    from_ref=created.reference,
+                    to_ref=previous,
+                    relation="conflicts_with",
+                    polarity="negative",
+                    basis_class="cognitive_derivation",
+                ),
+                evidence=(
+                    EvidenceLink(reference=created.reference),
+                    EvidenceLink(reference=previous),
+                ),
+                times=times,
+                producer=producer,
+            ),
+        )
+        return created, association
 
     async def remember(self, ctx: CallContext, command: RememberInput) -> CognitiveRecord:
         document = ImportDocument(
@@ -102,6 +231,8 @@ class MemoryService:
         command: MemoryChange,
         *,
         revision_evidence: tuple[EvidenceLink, ...] = (),
+        producer: ModelProvenance | None = None,
+        formation_times: CognitiveTimes | None = None,
     ) -> CognitiveRecord:
         if command.reference.kind != "memory":
             raise DomainError("memory_required", "Memory operations require a Memory reference")
@@ -185,6 +316,8 @@ class MemoryService:
                 else None
             )
             times = times.model_copy(update={"formation": ctx.clock, "observation": observed_at})
+        if formation_times is not None:
+            times = formation_times
         edit_evidence = revision_evidence
         if not content_changed:
             edit_evidence = (
@@ -222,6 +355,7 @@ class MemoryService:
                     ),
                 ),
                 times=times,
+                producer=producer,
             ),
             state=state,
         )
@@ -323,7 +457,9 @@ class MemoryService:
                     revision_evidence = (
                         EvidenceLink(observation_id=admission.event["id"], role="memory_revision"),
                     )
-                result = await self.change_memory_in(tx, effective, command, revision_evidence=revision_evidence)
+                result = await self.change_memory_in(
+                    tx, effective, command, revision_evidence=revision_evidence
+                )
         finally:
             if lease and store:
                 await store.release(lease)
@@ -362,7 +498,12 @@ class MemoryService:
             result = await self.decay_retention_in(
                 tx, ctx, DecayRetention(kinds=("memory",), limit=limit)
             )
-            return {'scanned': result.scanned, 'changed': [ref.exact() for ref in result.changed], 'complete': result.complete, 'next_cursor': result.next_cursor}
+            return {
+                "scanned": result.scanned,
+                "changed": [ref.exact() for ref in result.changed],
+                "complete": result.complete,
+                "next_cursor": result.next_cursor,
+            }
 
     async def change_memories_in(
         self, tx: WriteTx, ctx: CallContext, command: MemoryChanges

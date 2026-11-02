@@ -27,7 +27,7 @@ from nous.platform.content import ContentObject
 from nous.platform.persistence import ReadView, WriteTx
 
 from .media_input import selected_input
-from .model_generation import describe, extract_graph, form_notes, resolve_graph
+from nous.cognition.formation_models import describe, extract_graph, form_notes, resolve_graph
 
 if TYPE_CHECKING:
     from .media import MediaImportService
@@ -307,9 +307,11 @@ async def adopt(
                 await self.derivations.source_in(tx, ctx, reference)
             else:
                 await self.materials.media_source_in(tx, ctx, reference)
+        from nous_sdk.contracts.common import utc_now
+
         times = cognitive_times(
             observation,
-            ctx.clock,
+            utc_now(),
             inferred_event=document_event(material),
         )
         records: list[CognitiveRecord] = []

@@ -77,17 +77,6 @@ pub(super) fn gate_tags(
     let core_max = range_value(&config.core_boost_range, 1, 1.4);
     let dynamic_core_boost = core_min + core_metric * (core_max - core_min);
     let core_ids: HashSet<i64> = core_tag_ids.iter().copied().collect();
-    let world = epa
-        .dominant_axes
-        .first()
-        .map(|axis| axis.label.as_str())
-        .unwrap_or("Unknown");
-    let world_lower = world.to_ascii_lowercase();
-    let social_world = ["politics", "society", "history", "economics", "culture"]
-        .iter()
-        .any(|token| world_lower.contains(token));
-    let technical_world = world != "Unknown" && technical_name(world, false);
-
     let mut seen = HashSet::new();
     let mut gated = Vec::new();
     for (level, tags) in levels.iter().enumerate() {
@@ -105,23 +94,8 @@ pub(super) fn gate_tags(
             } else {
                 1.0
             };
-            let mut language_gain = 1.0;
-            if config.lang_confidence_enabled && technical_name(&tag.name, true) && !technical_world
-            {
-                let penalty = if world == "Unknown" {
-                    config.lang_penalty_unknown
-                } else {
-                    config.lang_penalty_cross_domain
-                }
-                .clamp(0.0, 1.0);
-                language_gain = if social_world {
-                    penalty.sqrt()
-                } else {
-                    penalty
-                };
-            }
             let layer_gain = config.layer_decay.clamp(0.0, 1.0).powi(level as i32);
-            let weight = positive(tag.contribution) * layer_gain * language_gain * core_gain;
+            let weight = positive(tag.contribution) * layer_gain * core_gain;
             if weight > 0.0 {
                 gated.push(GatedTag {
                     id: tag.id,

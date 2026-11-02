@@ -308,7 +308,7 @@ async def process_unit(
             and not command.deferred_formation
         )
         if has_model_input:
-            from .model_generation import extract_graph, form_notes, resolve_graph
+            from nous.cognition.formation_models import extract_graph, form_notes, resolve_graph
 
             model_ctx = ctx.model_copy(
                 update={"request_id": f"{command.operation_id}:{unit.id}:form"}
@@ -378,9 +378,11 @@ async def process_unit(
                     tx, ctx, accepted_event["id"], region_id=unit.source_region_id
                 )
             )["record"]
+            from nous_sdk.contracts.common import utc_now
+
             times = cognitive_times(
                 event,
-                ctx.clock,
+                utc_now(),
                 inferred_event=source_record.event_time or document.event_time,
             )
             records: list[CognitiveRecord] = []

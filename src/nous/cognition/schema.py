@@ -42,3 +42,12 @@ vectors = Table(
     Column("producer", JSON, nullable=False),
     Column("commit_seq", Integer, nullable=False),
 )
+
+formation_scopes = Table(
+    "formation_scopes",
+    metadata,
+    Column("scope_id", String, primary_key=True),
+    Column("namespace_id", String, nullable=False, index=True),
+    Column("record", JSON, nullable=False),
+    Column("commit_seq", Integer, nullable=False),
+)

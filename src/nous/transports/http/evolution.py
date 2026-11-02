@@ -9,7 +9,7 @@ from nous_sdk.contracts import (
     SourceRegion,
     SplitConcept,
 )
-from nous_sdk.contracts.ego_model import InterpretSeed
+from nous_sdk.contracts.ego_model import InterpretSeed, SaveSeed, SeedVersion
 from nous_sdk.contracts.motivation import (
     AssessMotivation,
     MotivationAssessmentsPage,
@@ -20,6 +20,25 @@ from nous_sdk.contracts.motivation import (
 from .security import application, context
 
 router = APIRouter(prefix="/api/knowledge/namespaces/{namespace_id}")
+
+
+@router.post("/ego/seeds")
+async def save_seed(request: Request, namespace_id: str, command: SaveSeed) -> SeedVersion:
+    return await application(request).seeds.save(await context(request, namespace_id), command)
+
+
+@router.get("/ego/seeds/{seed_id}")
+async def seed(request: Request, namespace_id: str, seed_id: str, version: int | None = None) -> SeedVersion:
+    return await application(request).seeds.read(
+        await context(request, namespace_id, capability="read"), seed_id, version
+    )
+
+
+@router.get("/ego/seeds/{seed_id}/history")
+async def seed_history(request: Request, namespace_id: str, seed_id: str, limit: int = 32) -> tuple[SeedVersion, ...]:
+    return await application(request).seeds.history(
+        await context(request, namespace_id, capability="read"), seed_id, limit=limit
+    )
 
 
 @router.post("/ego/seed/interpret")
