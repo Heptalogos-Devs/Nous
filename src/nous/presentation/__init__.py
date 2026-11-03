@@ -118,7 +118,8 @@ def _translation(language: str) -> gettext.NullTranslations:
 
 
 def translate(message: str, language: str = "zh-CN") -> str:
-    return _translation(select_language(language)).gettext(message)
+    selected = select_language(language)
+    return _translation(selected).gettext(message) if message else ""
 
 
 def error_message(error: NousError, language: str = "zh-CN") -> str:

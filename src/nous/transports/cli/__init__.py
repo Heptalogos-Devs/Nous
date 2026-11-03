@@ -13,7 +13,6 @@ from typing import Annotated, Literal, cast
 import click
 import typer
 from rich.console import Console
-from rich.table import Table
 
 from nous.configuration import ConfigSnapshot, Configuration
 from nous.configuration.service import Object
@@ -203,18 +202,23 @@ def config_list(
         emit(ctx, {"fields": fields})
         return
     language = language_for(options(ctx))
-    table = Table(title=translate("Configuration fields", language))
-    for heading in ("Path", "Default", "Scopes", "Apply / Impact", "Description"):
-        table.add_column(translate(heading, language))
+    console = Console()
     for field in fields:
-        table.add_row(
-            str(field["path"]),
-            json.dumps(field.get("default"), ensure_ascii=False),
-            ", ".join(cast(list[str], field["scopes"])),
-            translate(str(field["apply_mode"]), language) + " / " + str(field["impact"]),
-            translate(str(field["description"]), language),
+        console.print(str(field["path"]), style="bold", markup=False)
+        console.print(
+            f"  {translate('Default', language)}: "
+            f"{json.dumps(field.get('default'), ensure_ascii=False)}  "
+            f"{translate('Scopes', language)}: {', '.join(cast(list[str], field['scopes']))}",
+            markup=False,
         )
-    Console().print(table)
+        console.print(
+            f"  {translate('Apply / Impact', language)}: "
+            f"{translate(str(field['apply_mode']), language)} / {field['impact']}",
+            markup=False,
+        )
+        description = translate(str(field["description"]), language)
+        if description:
+            console.print(f"  {description}", markup=False)
 
 
 @config_cli.command("show")
