@@ -55,6 +55,7 @@ include = ["src/nous", "pyproject.toml", "README.md"]
 [tool.basedpyright]
 include = ["src"]
 exclude = ["legacy", "temp", ".venv", "dist"]
+ignore = ["legacy", "temp"]
 pythonVersion = "3.14"
 typeCheckingMode = "strict"
 reportExplicitAny = "error"

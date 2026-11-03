@@ -31,7 +31,13 @@ from nous.runtime.execution import ExecutionManager, OperationContext
 from .audiovisual import AudioVisual
 from .configuration import MediaConfig
 from .contracts import PreparedBatch, PreparedMedia
-from .documents import inspect_image, inspect_pdf, prepare_images, prepare_pdf_pages
+from .documents import (
+    inspect_image,
+    inspect_pdf,
+    prepare_images,
+    prepare_pdf_pages,
+    validate_image_selection,
+)
 
 if TYPE_CHECKING:
     from nous.configuration import ConfigSnapshot
@@ -326,6 +332,7 @@ class MediaPreparer:
         info: dict[str, JsonValue],
         requirements: Sequence[str],
     ) -> PreparedMedia:
+        validate_image_selection(selection, cast(int, info["frames"]))
         mime = str(info["media_type"])
         if (
             info["frames"] == 1

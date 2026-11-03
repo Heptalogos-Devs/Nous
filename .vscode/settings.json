@@ -11,7 +11,11 @@
       "source.organizeImports.ruff": "explicit"
     }
   },
+  "ruff.configuration": "${workspaceFolder}/pyproject.toml",
+  "rust-analyzer.files.excludeDirs": ["legacy"],
+  "rust-analyzer.linkedProjects": [],
   "files.watcherExclude": {
+    "**/legacy/**": true,
     "**/temp/**": true,
     "**/.venv/**": true,
     "**/target/**": true

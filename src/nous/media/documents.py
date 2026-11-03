@@ -64,19 +64,53 @@ def inspect_image(path: Path) -> dict[str, JsonValue]:
         }
 
 
+def validate_image_selection(selection: SourceSelection, frames: int) -> None:
+    """Validate coordinates before choosing direct bytes or normalized image frames."""
+    unsupported = [
+        field
+        for field, present in (
+            ("pages", bool(selection.pages)),
+            ("start_line", selection.start_line is not None),
+            ("end_line", selection.end_line is not None),
+        )
+        if present
+    ]
+    if unsupported:
+        raise NousError(
+            "media.invalid_selection",
+            "Image selections do not support document pages or text lines",
+            details={"fields": unsupported},
+        )
+    if selection.frame is not None and not 0 <= selection.frame < frames:
+        raise NousError(
+            "media.invalid_selection",
+            "Selected image frame is outside the image",
+            details={"frame": selection.frame, "frames": frames},
+        )
+    if frames == 1 and (selection.start_ms is not None or selection.end_ms is not None):
+        raise NousError(
+            "media.invalid_selection",
+            "A static image does not have a selectable time interval",
+        )
+
+
 def prepare_images(
     path: Path, selection: SourceSelection, max_side: int, interval_ms: int
 ) -> tuple[ImageData, ...]:
     """Sample animations by frame durations and return oriented, cropped image bytes."""
     with Image.open(path) as image:
         frames = getattr(image, "n_frames", 1)
+        validate_image_selection(selection, frames)
         chosen: list[tuple[int, int, int]] = []
         position, next_sample = 0, selection.start_ms or 0
         for index in range(frames):
             image.seek(index)
             duration = int(image.info.get("duration", 100)) if frames > 1 else 0
             if selection.frame is not None:
-                if index == selection.frame:
+                intersects_time = position + max(duration, 1) > (selection.start_ms or 0) and (
+                    selection.end_ms is None or position < selection.end_ms
+                )
+                if index == selection.frame and intersects_time:
                     chosen.append((index, position, duration))
             elif frames == 1 or (
                 position + max(duration, 1) > next_sample
@@ -100,7 +134,18 @@ def prepare_images(
             normalized = oriented.convert("RGBA" if "A" in oriented.getbands() else "RGB")
             output = io.BytesIO()
             normalized.save(output, "PNG")
-            selected = selection.model_copy(update={"frame": index}) if frames > 1 else selection
+            selected = selection
+            if frames > 1:
+                updates: dict[str, object] = {"frame": index}
+                if selection.start_ms is not None or selection.end_ms is not None:
+                    updates["start_ms"] = max(position, selection.start_ms or 0)
+                    updates["end_ms"] = min(
+                        position + max(duration, 1),
+                        selection.end_ms
+                        if selection.end_ms is not None
+                        else position + max(duration, 1),
+                    )
+                selected = selection.model_copy(update=updates)
             outputs.append(
                 ImageData(
                     output.getvalue(),

@@ -90,36 +90,13 @@ packages = ["src/nous"]
 [tool.hatch.build.targets.sdist]
 include = ["src/nous", "pyproject.toml", "README.md", "docs/python-native-install.md", "scripts/install-python.py"]
 
+# 退役存档：不作为当前类型检查或 lint 目标。
 [tool.basedpyright]
-include = ["src", "sdk/python/src", "native/python/python"]
-exclude = ["temp", ".venv", "native/target", "dist"]
-venvPath = "."
-venv = ".venv"
-extraPaths = ["sdk/python/src", "native/python/python"]
-pythonVersion = "3.14"
-typeCheckingMode = "strict"
-reportExplicitAny = "error"
-reportMissingTypeStubs = "warning"
-executionEnvironments = [
-  { root = "sdk/python/src", pythonVersion = "3.11" },
-  { root = "src", pythonVersion = "3.14" },
-  { root = "native/python/python", pythonVersion = "3.14" },
-]
+include = []
+ignore = ["**"]
 
 [tool.ruff]
-target-version = "py314"
-line-length = 100
-extend-exclude = ["temp", ".venv", "native/target", "dist"]
-
-[tool.ruff.lint]
-select = ["E4", "E7", "E9", "F", "I", "B", "UP", "ASYNC"]
-
-[tool.ruff.lint.per-file-ignores]
-"*.pyi" = ["E701"]
-
-[tool.ruff.per-file-target-version]
-"sdk/python/**/*.py" = "py311"
+extend-exclude = ["**"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests/python"]
-addopts = "-ra"
+testpaths = []
