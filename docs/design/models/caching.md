@@ -1,29 +1,27 @@
-# 模板、前缀与结果缓存
-
-## 三类缓存分别维护
-
-Jinja bytecode cache 复用模板编译，归 PromptCompiler。Provider 前缀缓存复用模型处理，归模型协议与请求组织。应用结果缓存复用完成的实际任务结果，归该结果的使用 owner。
-
-缓存都不是正式认知权威。已采用正文和生成出处随业务保存，不因 cache 淘汰而丢失。
+# 模板、模型前缀与处理结果复用
 
 ## 模板缓存
 
-采用 Jinja 自带缓存和 FileSystemBytecodeCache，位置由 cache 逻辑根提供。模板、include 或编译配置变化产生新的编译结果。容量来自配置，不实现第二套模板 hash/文件监听系统。
+Jinja Environment 与 bytecode cache 复用编译结果。PromptResource 的版本覆盖 manifest 和 literal include/extends 的实际内容。模板缓存 key 包含资源版本与相关编译设置；手工改模板后下一次准备取得新版本。
 
-## 前缀布局
+## 模型前缀缓存
 
-优先将稳定的任务说明、必要例子、工具和输出合同保持稳定，把本次问题及变化材料放在后续合适角色中。无需为了缓存改变真实历史的消息顺序或混合角色。
+稳定 system/任务说明与工具/Schema 顺序保持稳定，当前问题、来源与动态内容放到后续位置。不要把随机 UUID、当前时间、trace ID 或全部配置快照插入稳定提示词前缀。
 
-cache breakpoint、cache key、TTL 等 Provider 细节留在适配层。不同模型支持的最小长度和失效规则可能不同，不在业务中硬编码一种模型的门槛。请求中的随机 ID、当前时间和调试标志只有任务确实需要时才进入文本，避免无意义地改变前缀。
+缓存能否命中由所用网关和模型协议决定。SDK 已支持的缓存设置通过协议配置使用，不为某家模型写单独“缓存管理器”。usage 未报告 cache hit 时保持未知，不把延迟较小解释成命中。
 
-运行记录保存实际 cached-input/write tokens（如提供方返回）及用量。应用 Session 连续只提供组织条件，实际命中由 Provider 报告。
+## 确定性媒体复用
 
-## 结果复用
+相同 Artifact、精确选区、转换参数与工具版本，可复用已有转换结果，例如 PDF 页图或音轨。key 覆盖真实输入和转换规格；某个文件名或同一 task ID 不足以作为复用依据。
 
-复用 key 至少包含真实任务、输入内容/精确修订、模板/输出合同、实际模型及影响结果的参数。存储在同一允许访问的范围内。权限或来源失效时先按当前正式来源检查。
+ResultStore 已保存输入和 producer，复用查询在媒体 owner 中完成，不再复制一个可修改的“派生历史”表。
 
-已完成的媒体描述等可以复用。Dream、用户明确“重新生成”或需要新采样的任务允许绕过结果缓存。读取缓存不伪造一次新的模型生成或新的独立证据。
+## 模型产物复用
 
-首轮模型交付首先实现模板缓存和实际 Provider 缓存参数/用量；通用任务结果缓存不先普遍开启。各正式消费者需要复用时接入已有产物身份，不另造一层覆盖全部结果的持久镜像。
+默认显式执行一个新生成命令就进行一次新语言任务。已成功描述可以由 `--description-result` 明确复用，程序核对它的实际原件、范围和覆盖。复用不改变原 producer，也不再计一次模型调用。
 
-依据：[Jinja API](https://jinja.palletsprojects.com/en/stable/api/)、[OpenAI prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching)、[Claude prompt caching](https://platform.claude.com/docs/en/build-with-claude/prompt-caching)。
+本轮不实现全局生成结果 memoization、相似问题复用或自动 Dream 重用。部分成功后的继续以已返回 ResultRef 显式完成。
+
+## 记录生命周期
+
+正式输入、输出和被采用的请求快照不随 Jinja/HTTP/Trace 缓存清理。缓存只是加速或临时诊断，删除缓存后仍可按地址读取产品结果。

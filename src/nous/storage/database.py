@@ -19,8 +19,8 @@ from sqlalchemy.engine import URL
 from sqlalchemy.exc import OperationalError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_engine
 
-from nous.observability import get_meter, get_tracer
-from nous.runtime.errors import NousError
+from nous.common.errors import NousError
+from nous.observability.instrumentation import get_meter, get_tracer
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +42,7 @@ time_domain_definitions = sa.Table(
     sa.Column("tick_denominator", sa.String),
     sa.Column("epoch", sa.String),
 )
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 @contextmanager
@@ -196,6 +196,7 @@ class Database:
         *,
         create: bool = False,
         database_id: str | None = None,
+        additional_metadata: tuple[sa.MetaData, ...] = (),
     ) -> AsyncGenerator[Database]:
         path = await asyncio.to_thread(path.resolve)
         await asyncio.to_thread(_setup_file, path, create=create)
@@ -214,6 +215,8 @@ class Database:
                 if create:
                     async with engine.begin() as connection:
                         await connection.run_sync(metadata.create_all)
+                        for schema in additional_metadata:
+                            await connection.run_sync(schema.create_all)
                         await connection.execute(
                             instance_metadata.insert().values(
                                 instance_id=instance_id,
@@ -244,6 +247,7 @@ class Database:
 
     @asynccontextmanager
     async def write(self) -> AsyncGenerator[WriteTx]:
+        """Serialize this instance's writers; SQLite arbitrates independent connections."""
         with (
             get_tracer(__name__).start_as_current_span("database.write"),
             _observe_transaction("write"),
@@ -266,7 +270,14 @@ class Database:
                         "storage.instance_mismatch", "Database does not belong to this instance"
                     )
                 if row.schema_version != SCHEMA_VERSION:
-                    raise NousError("storage.invalid_format", "Unsupported database schema")
+                    raise NousError(
+                        "storage.invalid_format",
+                        "This database schema is incompatible; initialize a new instance in a new directory.",
+                        details={
+                            "schema_version": row.schema_version,
+                            "supported_schema_version": SCHEMA_VERSION,
+                        },
+                    )
                 if self._database_id is not None and row.database_id != self._database_id:
                     raise NousError(
                         "storage.binding_conflict",

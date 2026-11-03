@@ -2,10 +2,10 @@
 
 from typing import Annotated, Literal
 
-from pydantic import Field, JsonValue
+from pydantic import Field, JsonValue, model_validator
 
+from nous.common.values import ResourceId
 from nous.configuration.metadata import ConfigModel, setting
-from nous.runtime.values import ResourceId
 
 Capability = Literal[
     "text", "image", "audio", "video", "stream", "structured_output", "tools", "embedding"
@@ -14,42 +14,91 @@ Capability = Literal[
 
 class EnvironmentCredential(ConfigModel):
     kind: Literal["env"]
-    name: str = Field(min_length=1)
+    name: str = Field(min_length=1, description="Environment variable containing the credential.")
 
 
 class FileCredential(ConfigModel):
     kind: Literal["file"]
-    path: str = Field(min_length=1)
+    path: str = Field(
+        min_length=1, description="Credential file, relative to the instance directory."
+    )
 
 
 CredentialReference = Annotated[EnvironmentCredential | FileCredential, Field(discriminator="kind")]
 
 
-class ProviderConfig(ConfigModel):
-    protocol: str = Field(min_length=1)
-    endpoint: str = Field(pattern=r"^https?://[^\s]+$")
-    credential_ref: ResourceId | None = None
-    network: NetworkOverride = Field(default_factory=lambda: NetworkOverride())
-
-
 class NetworkOverride(ConfigModel):
-    proxy_url: str | None = None
-    trust_env: bool | None = None
-    ca_file: str | None = None
-    connect_timeout_seconds: float | None = Field(default=None, gt=0)
-    read_timeout_seconds: float | None = Field(default=None, gt=0)
-    write_timeout_seconds: float | None = Field(default=None, gt=0)
-    pool_timeout_seconds: float | None = Field(default=None, gt=0)
-    max_connections: int | None = Field(default=None, ge=1)
+    proxy_url: str | None = setting(
+        None, apply="restart", description="Override the instance HTTP proxy."
+    )
+    trust_env: bool | None = setting(
+        None, apply="restart", description="Override transport environment use."
+    )
+    ca_file: str | None = setting(
+        None, apply="restart", description="Override the trusted CA bundle."
+    )
+    connect_timeout_seconds: float | None = setting(
+        None, gt=0, description="Override connection timeout in seconds."
+    )
+    read_timeout_seconds: float | None = setting(
+        None, gt=0, description="Override read timeout in seconds."
+    )
+    write_timeout_seconds: float | None = setting(
+        None, gt=0, description="Override write timeout in seconds."
+    )
+    pool_timeout_seconds: float | None = setting(
+        None, gt=0, description="Override connection-pool timeout in seconds."
+    )
+    max_connections: int | None = setting(
+        None, ge=1, apply="restart", description="Override the connection pool ceiling."
+    )
+
+
+class ProviderConfig(ConfigModel):
+    protocol: Annotated[
+        str,
+        setting(
+            min_length=1, apply="restart", description="Explicit protocol used by this connection."
+        ),
+    ]
+    endpoint: Annotated[
+        str,
+        setting(
+            pattern=r"^https?://[^\s]+$", apply="restart", description="Protocol API base URL."
+        ),
+    ]
+    credential_ref: ResourceId | None = setting(
+        None, apply="restart", description="Configured credential reference."
+    )
+    network: NetworkOverride = Field(
+        default_factory=NetworkOverride, description="Optional per-provider network overrides."
+    )
 
 
 class ModelConfig(ConfigModel):
-    provider: ResourceId
-    model_name: str = Field(min_length=1)
-    capabilities: list[Capability] = Field(default_factory=list)
-    context_window: int | None = Field(default=None, ge=1)
-    max_output_tokens: int | None = Field(default=None, ge=1)
-    deployment_revision: str | None = None
+    provider: ResourceId = Field(description="Configured provider connection ID.")
+    model_name: str = Field(min_length=1, description="Model name sent to the configured gateway.")
+    capabilities: list[Capability] = Field(
+        default_factory=list, description="Explicitly confirmed model capabilities."
+    )
+    context_window: int | None = Field(
+        default=None, ge=1, description="Optional model context limit in tokens."
+    )
+    max_output_tokens: int | None = Field(
+        default=None, ge=1, description="Optional model output limit in tokens."
+    )
+    deployment_revision: str | None = Field(
+        default=None, description="Operator-declared model deployment revision."
+    )
+    input_formats: list[str] = Field(
+        default_factory=lambda: ["text/plain"], description="Accepted MIME formats."
+    )
+    output_modes: list[Literal["text", "native", "tool"]] = Field(
+        default_factory=lambda: ["text"], description="Confirmed generation output modes."
+    )
+    compatibility: dict[str, JsonValue] = Field(
+        default_factory=dict, description="Explicit SDK protocol profile overrides."
+    )
 
 
 class PresetConfig(ConfigModel):
@@ -62,11 +111,21 @@ class PresetConfig(ConfigModel):
 
 
 class Budget(ConfigModel):
-    max_attempts: int | None = Field(default=None, ge=1)
-    timeout_seconds: float | None = Field(default=None, gt=0)
-    max_input_tokens: int | None = Field(default=None, ge=1)
-    max_output_tokens: int | None = Field(default=None, ge=1)
-    max_cost: float | None = Field(default=None, ge=0)
+    max_attempts: int | None = Field(default=None, ge=1, description="Per-stage attempt limit.")
+    timeout_seconds: float | None = Field(
+        default=None, gt=0, description="Stage timeout in seconds."
+    )
+    max_input_tokens: int | None = Field(default=None, ge=1, description="Input token limit.")
+    max_output_tokens: int | None = Field(default=None, ge=1, description="Output token limit.")
+    max_cost: float | None = Field(
+        default=None, ge=0, description="Monetary limits are disabled; this value must be null."
+    )
+
+    @model_validator(mode="after")
+    def cost_limits_disabled(self) -> Budget:
+        if self.max_cost is not None:
+            raise ValueError("Monetary model limits are not enabled; max_cost must be null")
+        return self
 
 
 class Fallback(ConfigModel):
@@ -76,13 +135,21 @@ class Fallback(ConfigModel):
 
 class TaskAssignment(ConfigModel):
     model: ResourceId
-    prompt: str = Field(min_length=1)
+    prompt: str | None = Field(default=None, min_length=1)
+    operation: Literal["generation", "transcription"] = "generation"
+    output_mode: Literal["text", "native", "tool"] = "text"
     preset: ResourceId | None = None
     fallback: list[Fallback] = Field(default_factory=list)
     budget: Budget = Field(default_factory=Budget)
     media_strategy: (
         Literal["description_only", "direct_structured", "describe_then_structure"] | None
     ) = None
+
+    @model_validator(mode="after")
+    def generation_prompt_required(self) -> TaskAssignment:
+        if self.operation == "generation" and self.prompt is None:
+            raise ValueError("Generation tasks require a prompt resource")
+        return self
 
 
 class ModelExecutionConfig(ConfigModel):

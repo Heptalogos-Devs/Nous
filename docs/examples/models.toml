@@ -1,53 +1,68 @@
-# 将选用部分合入实例 nous.toml；本文件不是自动加载的第二份配置权威。
-# 连接和模型名是示例。配置不会隐式探测或产生费用。
-[network]
-trust_env = false
-connect_timeout_seconds = 10
-read_timeout_seconds = 120
-write_timeout_seconds = 30
-pool_timeout_seconds = 10
-max_connections = 20
+# 合并到开发实例的 nous.toml。先按实际 Docker 映射和 /v1/models 结果替换占位值。
+# 本文件不包含 instance 节，不能替代 init 生成的完整实例配置。
 
-[credentials.gateway]
-kind = "env"
-name = "NOUS_GATEWAY_TOKEN"
+[credentials.gateway-key]
+kind = "file"
+path = "credentials/gateway.key"
 
 [providers.gateway]
 protocol = "openai-chat-completions"
-endpoint = "http://127.0.0.1:3000/v1"
-credential_ref = "gateway"
+endpoint = "http://127.0.0.1:3000/v1" # 仅示例，必须改为实际可达映射。
+credential_ref = "gateway-key"
 
-[models.text-main]
+[models.text]
 provider = "gateway"
-model_name = "replace-with-configured-text-model"
-context_window = 32768
-max_output_tokens = 4096
+model_name = "REPLACE_WITH_ACTUAL_TEXT_MODEL"
 capabilities = ["text", "stream", "structured_output"]
+input_formats = ["text/plain"]
+output_modes = ["text", "native"]
 
-[presets.normal]
-temperature = 0.2
+[models.vision]
+provider = "gateway"
+model_name = "REPLACE_WITH_ACTUAL_VISION_MODEL"
+capabilities = ["text", "image", "structured_output"]
+input_formats = ["text/plain", "image/png", "image/jpeg"]
+output_modes = ["text", "native"]
 
-[tasks.text-summary]
-model = "text-main"
-preset = "normal"
-prompt = "text-summary"
-fallback = []
+[models.text-embedding]
+provider = "gateway"
+model_name = "REPLACE_WITH_ACTUAL_EMBEDDING_MODEL"
+capabilities = ["embedding"]
+input_formats = ["text/plain"]
 
-[tasks.text-summary.budget]
-max_input_tokens = 8192
-max_output_tokens = 1024
-max_attempts = 1
+[presets.reading]
+max_output_tokens = 4096
 
 [model_execution]
-max_attempts = 2
-timeout_seconds = 120
-max_input_tokens = 16384
-max_output_tokens = 2048
-structured_retries = 0
+max_output_tokens = 4096
+# 金额上限不设置。模型或网关未提供价格，不阻断真实调用。
 
-[prompt]
-cache_entries = 128
-bytecode_cache = true
+[tasks.summarize]
+model = "text"
+preset = "reading"
+prompt = "summarize"
+output_mode = "text"
 
-# Embedding 使用前另行明确配置 space_id、模型部署、维度和编码规则。
-# 不在示例中选定真实 embedding 模型或默认维度。
+[tasks.describe-media]
+model = "vision"
+preset = "reading"
+prompt = "describe-media"
+output_mode = "text"
+
+[tasks.extract-information]
+model = "vision"
+preset = "reading"
+prompt = "extract-information"
+output_mode = "native"
+
+[tasks.select-passages]
+model = "text"
+prompt = "select-passages"
+output_mode = "native"
+
+[media.analysis]
+description_task = "describe-media"
+extraction_task = "extract-information"
+
+# 音频转写资源由真实模型目录和端点支持情况补充。
+# Embedding 空间也在 probe 返回实际维度后填写，不预设一个猜测维度。

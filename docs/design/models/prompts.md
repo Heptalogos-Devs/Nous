@@ -1,55 +1,58 @@
-# Prompt 资源与 Jinja 编译
+# Prompt 资源与确定编译
 
-## 目标
+## 资源责任
 
-Prompt 是可阅读、可编辑、可预览的正式资源。任务以专一语言工作组织，输入提供真实材料，输出仅包含程序需要的结果。身份、事务、配置生效、资源调度与正式数据采用留在程序中。
+PromptCatalog 列出、读取、编辑和选择模板；PromptCompiler 在纯输入上编译角色消息；任务 owner 定义任务的自然语言目标与小输出合同。两者不连模型、不查数据库、不在模板中进行媒体解析或检索。
 
-PromptCatalog 管理资源；PromptCompiler 渲染确定的消息；各领域维护自己的任务说明、输入与输出合同。两者不承担模型网络请求。
+模板是普通 Markdown/Jinja。包内资源使用 importlib.resources 与 Jinja loader；实例覆盖放 config/prompts/<id>/。Namespace 尚未成为本轮产品前置，不为模板覆盖单独创建认知域。
 
-## 资源形状
+## 文件结构
 
-每个 Prompt 资源具有稳定名称、有序消息模板、所服务任务、实际版本摘要及说明。常见资源为同目录的 `system.md.j2` 和 `user.md.j2`；需要多消息时用显式清单声明顺序与 role，不依据文件系统遍历顺序猜测。
+一个资源目录包含 `prompt.toml`、明确列出的消息模板及被引用的 include 文件。例如：
 
-包内模板只读，通过 importlib.resources 加载。操作者覆盖放入实例 config 根的 `prompts/`，Namespace 覆盖由同一资源解析规则处理。精确采用版本由实际模板内容及依赖的 include 共同确定。
-
-任务输入类型与输出类型由任务 owner 用 Pydantic 定义，模板资源引用这个合同。不得手写三份相同字段分别给本地验证、Provider Schema 和结果解析。编辑普通模板不能无声改变程序接受的输出字段。
-
-## 编译
-
-```text
-PromptCatalog.get(task, scope) -> PromptResource
-PromptCompiler.compile(resource, typed_input, output_contract) -> CompiledPrompt
-PromptCatalog.preview(...) -> CompiledPromptView
+```toml
+contract_id = "media-description"
+[[messages]]
+role = "system"
+template = "system.md.j2"
+[[messages]]
+role = "user"
+template = "user.md.j2"
+append_sources = true
 ```
 
-CompiledPrompt 包含有序的角色消息、媒体 parts、实际使用的模板版本和 schema 信息。编译只消费传入的纯值，不查询数据库、不调用模型、不过程式选择检索结果。
+messages 的数组顺序就是实际消息顺序。role 使用成熟库可保留的 system/user/assistant/tool 等含义；system/developer 的协议差异由依赖处理并在预览中展示实际采用的角色。无法保留的组合在准备阶段报出，不能压平为一个 user 字符串。
 
-使用 Jinja Environment、StrictUndefined、内建 loader 和 FileSystemBytecodeCache。必需变量缺失直接报出变量及模板位置；真正可选的变量在输入合同中显式定义。模板只由可信操作者编辑，不把用户上传正文当作可执行 Jinja 再次渲染。
+`append_sources=true` 是一个固定媒体/资料槽：在当前消息的模板文本之后，按输入顺序展开已经准备的来源标题、文字和媒体 parts。它不查询新来源、不选择材料。初版不增加通用模板编排 DSL。
 
-模板输入的资料作为文本值插入一次。局部来源键如 J1:P2 由程序分配并绑定精确来源，原始正文中出现模板符号也保持正文。少量纯格式 filter 可以注册；网络、文件读取和业务动作不做成模板 filter。
+## 一次编译使用一份资源快照
 
-## 消息角色与内容
+get/compile 一次读取 manifest 与模板依赖的实际内容，形成资源版本；使用 DictLoader/已冻结 loader 渲染这份内容。literal include/extends 形成依赖集合；本轮拒绝动态文件名 include，避免执行时无声加载版本之外的模板。
 
-任务指令使用适合提供方协议的 system/developer 位置；当前材料和问题使用 user；真实历史保持 assistant/tool 的配对与协议 ID。role 映射归 adapter，无法保持语义的协议组合应在准备阶段明确报出，不压平为一个 user 字符串。
+版本由实际模板内容、manifest 和任务输入/输出合同版本共同确定。修改 include 也会改变版本。已准备请求继续使用原编译结果，不读回磁盘再次渲染。fallback 更换模型只调整协议适配与可用参数，任务正文/来源不因此切到新版本。
 
-Markdown 标题组织任务、材料、必要例子和输出说明。system 说明稳定标准；user 给本次内容、局部引用和目标。不要在模型输入里灌入完整业务 DTO、UUID、事务版本或所有配置限制。
+使用 Jinja Environment、StrictUndefined 和内置 bytecode cache。Markdown 默认不进行 HTML 转义；资料只作为值插入一次，不当作新 Jinja 程序再次解析。模板由本机可信操作者编辑，无需建设在线模板沙箱平台。
 
-媒体以独立、有顺序的 parts 进入请求，不把图片、视频等仅替换成不可访问的路径字符串。必要描述与原媒体能够共同进入后续任务。
+## 内容结构
 
-## 典型任务的粒度
+system：任务目标、适用标准、短例子和输出含义。user：当前问题、真正的资料与局部来源键。任务限定来自需要，不灌入所有配置、预算和内部对象。
 
-Steward 输入问题与已排序候选，返回段落键；程序取回原文。journalize 组织主题连贯的文章；程序负责正文保存与引用。视觉描述只描述实际内容；后续结构化任务读取描述及必要媒体。
+编译值返回有序的消息、媒体位置、模板版本、Schema、局部来源映射与估计输入信息。二进制媒体由成熟库的内容类型携带；用户预览显示类型、尺寸、选区和地址，不打印 base64。
 
-模型无效输出应先检查任务是否过载、材料是否完整、模型是否支持所需能力。程序做类型及引用检查，不把每次失败都扩张成新的推理阶段。
+## 预览与执行
 
-## 预览、历史与缓存
+`prompt preview` 使用正式编译器，完成模板与输入合同检查，不执行模型请求。需要确定性媒体准备时可以执行，并在结果中说明；不会因此自动运行音频转写或媒体描述。
 
-预览显示实际有序消息、媒体位置、输出模式和估计输入量。执行使用同一份编译结果，不二次渲染。付费调用的采用者保存必要模板版本和生成出处；无需为每个文件编辑创建永久数据库历史系统。
+`model run --show-request` 先准备与该次运行完全相同的请求，在 stderr 展示，然后执行该进程内 PreparedGeneration，不二次构造消息。这个选项明确表示“运行并展示请求”；纯预览只用 prompt preview。单独在另一命令中 preview 后再 run，会重新准备当时的输入；各自版本明确，不提供跨命令隐含冻结承诺。
 
-模板缓存、模型前缀缓存和结果缓存分别见[缓存专题](caching.md)。模板明确修改后产生新版本；已准备请求保持原编译内容。
+`prompt validate` 检查 manifest、合同引用、模板语法和变量名称；没有实际输入时不宣称数据依赖分支都已成功渲染。实际 preview/run 使用真实输入完成 StrictUndefined 检查。
 
-## 完成条件
+`prompt show/edit/validate` 是产品管理操作。edit 通过系统选定编辑器编辑实例副本，返回后校验并报告；无编辑器环境可用 `--from-dir` 导入整份资源。未配置模型也可使用。
 
-模板可列出、读取、编辑、校验和预览；缺少变量在联网前失败；预览与实际请求对应；中文 Markdown、工具历史和媒体顺序保留；用户正文中的 Jinja 符号不被二次执行。
+## 结果与回看
 
-依据：[Jinja API](https://jinja.palletsprojects.com/en/stable/api/)、[OpenAI Prompt engineering](https://developers.openai.com/api/docs/guides/prompt-engineering)、[Reasoning best practices](https://developers.openai.com/api/docs/guides/reasoning-best-practices)。
+ResultStore 保存已经采用请求的语义快照及来源。SDK 对请求的实际 wire 编码由依赖完成；预览和记录反映提交给该依赖的相同角色、内容、模式和参数。需要排查协议时再展开实际传输诊断，不把诊断数据当作第二份请求权威。
+
+正式模板及其输入、输出合同位于[模型资源目录](../../../src/nous/models/resources/)，实例可按需覆盖其中的模板。
+
+依据：[Jinja API](https://jinja.palletsprojects.com/en/stable/api/)、[Pydantic AI messages](https://pydantic.dev/docs/ai/api/pydantic-ai/messages/)。

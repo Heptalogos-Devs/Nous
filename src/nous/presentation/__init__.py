@@ -7,9 +7,9 @@ from functools import lru_cache
 from importlib.resources import files
 from typing import cast
 
-from nous.runtime.errors import NousError
-from nous.temporal import Instant, Interval, Unknown
-from nous.temporal import format_time as _format_time
+from nous.common.errors import NousError
+from nous.temporal.values import Instant, Interval, Unknown
+from nous.temporal.values import format_time as _format_time
 
 _LABELS = {
     "state": "State",

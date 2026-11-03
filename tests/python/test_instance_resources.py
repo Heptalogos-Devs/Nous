@@ -10,9 +10,9 @@ from pathlib import Path
 
 import pytest
 
+from nous.common.errors import NousError
 from nous.configuration import Configuration
 from nous.runtime.bootstrap import initialize_instance, open_instance
-from nous.runtime.errors import NousError
 from nous.storage.database import Database
 
 

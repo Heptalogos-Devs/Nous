@@ -12,11 +12,10 @@ from dataclasses import dataclass
 from typing import TypeVar, cast
 from uuid import uuid4
 
+from nous.common.errors import NousError
 from nous.configuration import ConfigSnapshot
 from nous.configuration.definitions import ExecutionConfig
-from nous.observability import get_meter, operation
-
-from .errors import NousError
+from nous.observability.instrumentation import get_meter, operation
 
 T = TypeVar("T")
 
@@ -35,6 +34,8 @@ _current: contextvars.ContextVar[OperationContext | None] = contextvars.ContextV
 
 
 class ExecutionManager:
+    """Own operation admission, inherited context and the workers needed to close safely."""
+
     def __init__(self, settings: ExecutionConfig, snapshot: Callable[[], ConfigSnapshot]) -> None:
         self._semaphore = asyncio.Semaphore(int(settings.max_in_flight))
         self._workers = ThreadPoolExecutor(
@@ -49,10 +50,16 @@ class ExecutionManager:
     def in_flight(self) -> int:
         return len(self._tasks)
 
+    @property
+    def snapshot(self) -> ConfigSnapshot:
+        current = _current.get()
+        return current.settings if current is not None else self._snapshot()
+
     @asynccontextmanager
     async def operation(
         self, name: str, settings: ConfigSnapshot | None = None, *, deadline: float | None = None
     ) -> AsyncGenerator[OperationContext]:
+        """Acquire once at the root; nested stages share its snapshot and cannot extend its deadline."""
         if not self._accepting:
             raise NousError("operation.unavailable", "The runtime is stopping.", operation=name)
         parent = _current.get()
@@ -129,6 +136,7 @@ class ExecutionManager:
         return task
 
     async def blocking(self, action: Callable[..., T], *args: object, **kwargs: object) -> T:
+        """Keep a worker owned after caller cancellation until the actual work finishes."""
         if not self._accepting:
             raise NousError("operation.unavailable", "The runtime is stopping.")
         context = contextvars.copy_context()
@@ -138,7 +146,7 @@ class ExecutionManager:
         self._blocking.add(cast(asyncio.Future[object], future))
 
         def completed(done: asyncio.Future[T]) -> None:
-            self._blocking.discard(done)
+            self._blocking.discard(cast(asyncio.Future[object], done))
             if not done.cancelled():
                 done.exception()  # Consume failures even after the waiter was cancelled.
 
@@ -146,6 +154,7 @@ class ExecutionManager:
         return await asyncio.shield(future)
 
     async def aclose(self, grace_seconds: float = 30) -> None:
+        """Stop admission, cancel overdue operations and await remaining blocking work."""
         self._accepting = False
         tasks = self._tasks - {asyncio.current_task()}
         if tasks:

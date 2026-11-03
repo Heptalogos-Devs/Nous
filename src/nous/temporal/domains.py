@@ -10,10 +10,11 @@ import sqlalchemy as sa
 from pydantic import BaseModel, ConfigDict, field_serializer, model_validator
 from sqlalchemy.engine import RowMapping
 
-from nous.runtime.errors import NousError
-from nous.runtime.values import ResourceId
+from nous.common.errors import NousError
+from nous.common.values import ResourceId
 from nous.storage.database import Database, WriteTx, time_domain_definitions
 
+from .coordinates import validate_coordinates
 from .values import Clock
 
 
@@ -28,18 +29,7 @@ class TimeDomainDefinition(BaseModel):
 
     @model_validator(mode="after")
     def validate_coordinates(self) -> TimeDomainDefinition:
-        if self.kind == "linear" and (self.tick_seconds is None or self.tick_seconds <= 0):
-            raise ValueError("linear domains require positive tick_seconds")
-        if self.kind == "opaque" and self.tick_seconds is not None:
-            raise ValueError("opaque domains do not define tick_seconds")
-        if self.kind == "utc" and (
-            self.domain_id != "utc"
-            or self.tick_seconds != Fraction(1, 1_000_000)
-            or self.epoch != "Unix epoch"
-        ):
-            raise ValueError("utc uses the fixed Unix epoch and microsecond coordinates")
-        if self.domain_id == "utc" and self.kind != "utc":
-            raise ValueError("the utc domain is built in and immutable")
+        validate_coordinates(self.domain_id, self.kind, self.tick_seconds, self.epoch)
         return self
 
     @field_serializer("tick_seconds")

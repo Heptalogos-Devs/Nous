@@ -1,31 +1,36 @@
 """The local runtime's user-visible path and its persistent contracts."""
 
 import asyncio
+import io
 import json
 import os
 import subprocess
 import sys
 import threading
 from fractions import Fraction
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+import numpy as np
 import pytest
 
+from nous.application.configuration import open_configuration_operations
+from nous.common.errors import NousError
+from nous.content.contracts import OutputContent, ResultInput
+from nous.models.embeddings import resolved_space
 from nous.runtime.bootstrap import initialize_instance, open_instance
-from nous.runtime.errors import NousError
 from nous.runtime.instance import InstanceLock
-from nous.temporal import (
+from nous.temporal.domains import TimeDomainDefinition, register_domain
+from nous.temporal.values import (
     Instant,
     Interval,
     Known,
-    TimeDomainDefinition,
     TimePoint,
     Unbounded,
     UnknownBoundary,
     compare_points,
     match_range,
     parse_explicit_time,
-    register_domain,
 )
 
 
@@ -121,35 +126,6 @@ def test_runtime_snapshots_transactions_and_time_domain_bindings(tmp_path: Path)
                 await runtime.configuration.update({"time.domains.mars.tick_seconds": "1/2"})
             assert failure.value.code == "configuration.binding_conflict"
 
-            with pytest.raises(NousError) as unavailable:
-                await runtime.configuration.update(
-                    {
-                        "providers.gateway": {
-                            "protocol": "openai-chat-completions",
-                            "endpoint": "http://127.0.0.1:3000/v1",
-                        },
-                        "models.embedder": {
-                            "provider": "gateway",
-                            "model_name": "example-embedding",
-                            "capabilities": ["embedding"],
-                        },
-                        "embedding.spaces.example": {
-                            "model": "embedder",
-                            "deployment_revision": "one",
-                            "dimensions": 384,
-                            "modalities": ["text"],
-                            "normalization": "l2",
-                            "encoding": {
-                                "document_instruction": "",
-                                "query_instruction": "",
-                                "preprocessing_revision": "one",
-                                "input_combination": "text",
-                            },
-                        },
-                    }
-                )
-            assert unavailable.value.code == "configuration.binding_check_unavailable"
-
             with pytest.raises(RuntimeError):
                 async with runtime.database.write() as tx:
                     await register_domain(
@@ -169,8 +145,233 @@ def test_runtime_snapshots_transactions_and_time_domain_bindings(tmp_path: Path)
             assert reopened.configuration.snapshot.values.execution.max_in_flight == 3
             assert reopened.configuration.snapshot.values.logging.level == "ERROR"
             assert (await reopened.time.domains())["mars"].tick_seconds == Fraction(1, 1000)
+            result = await reopened.configuration.update(
+                {
+                    "providers.gateway": {
+                        "protocol": "openai-chat-completions",
+                        "endpoint": "http://127.0.0.1:3000/v1",
+                    },
+                    "models.embedder": {
+                        "provider": "gateway",
+                        "model_name": "example-embedding",
+                        "capabilities": ["embedding"],
+                    },
+                    "embedding.spaces.example": {
+                        "model": "embedder",
+                        "deployment_revision": "one",
+                        "dimensions": 384,
+                        "modalities": ["text"],
+                        "normalization": "l2",
+                        "encoding": {
+                            "document_instruction": "",
+                            "query_instruction": "",
+                            "preprocessing_revision": "one",
+                            "input_combination": "text",
+                        },
+                    },
+                }
+            )
+            assert result["state"] == "saved_pending_restart"
+        async with open_instance(instance) as reopened:
+            result = await reopened.configuration.update(
+                {"embedding.spaces.example.dimensions": 256}
+            )
+            assert result["state"] == "applied"
+            definition = resolved_space(reopened.configuration.snapshot, "example")
+            source = await reopened.artifacts.ingest("A document for the embedding space.")
+            buffer = io.BytesIO()
+            np.save(buffer, np.full((1, 256), 1 / 16, dtype=np.float32), allow_pickle=False)
+            prepared = await reopened.results.prepare_outputs(
+                {
+                    "vectors": OutputContent(
+                        data=buffer.getvalue(),
+                        media_type="application/x-npy",
+                        display_name="vectors.npy",
+                    )
+                }
+            )
+            async with reopened.database.write() as tx:
+                await reopened.embedding_spaces.bind_in(tx, definition)
+                adopted = await reopened.results.adopt_in(
+                    tx,
+                    operation="embedding",
+                    producer={"model": "example-embedding"},
+                    inputs=(ResultInput(artifact=source.ref, key="S1"),),
+                    prepared_outputs=prepared,
+                )
+                await reopened.embedding_spaces.attach_in(
+                    tx,
+                    definition=definition,
+                    result_id=adopted.ref.id,
+                    artifact_id=adopted.outputs[0].artifact.id,
+                    purpose="document",
+                    input_count=1,
+                )
+            for patch in (
+                {"embedding.spaces.example.dimensions": 128},
+                {"models.embedder.model_name": "another-deployment"},
+            ):
+                with pytest.raises(NousError) as conflict:
+                    await reopened.configuration.update(patch)
+                assert conflict.value.code == "configuration.binding_conflict"
+            assert (await reopened.results.get(adopted.ref)).inputs[0].artifact == source.ref
 
     asyncio.run(scenario())
+
+
+def test_model_cli_fallback_and_structured_output(tmp_path: Path) -> None:
+    received_headers: list[dict[str, str]] = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self) -> None:
+            received_headers.append(dict(self.headers))
+            request = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            content = '["red", "blue"]' if "response_format" in request else "A saved answer."
+            body = json.dumps(
+                {
+                    "id": "response-1",
+                    "object": "chat.completion",
+                    "created": 1700000000,
+                    "model": "test-model",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "message": {"role": "assistant", "content": content},
+                            "finish_reason": "stop",
+                        }
+                    ],
+                    "usage": {"prompt_tokens": 12, "completion_tokens": 4, "total_tokens": 16},
+                }
+            ).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, format: str, *args: object) -> None:
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    instance = tmp_path / "fallback"
+
+    async def setup() -> None:
+        await initialize_instance(instance, environment={})
+        async with open_configuration_operations(instance, environment={}) as config:
+            await config.update(
+                {
+                    "providers.dead": {
+                        "protocol": "openai-chat-completions",
+                        "endpoint": "http://127.0.0.1:9/v1",
+                        "network": {"connect_timeout_seconds": 1},
+                    },
+                    "providers.local": {
+                        "protocol": "openai-chat-completions",
+                        "endpoint": f"http://127.0.0.1:{server.server_port}/v1",
+                    },
+                    "models.first": {
+                        "provider": "dead",
+                        "model_name": "test-model",
+                        "capabilities": ["text"],
+                    },
+                    "models.second": {
+                        "provider": "local",
+                        "model_name": "test-model",
+                        "capabilities": ["text", "structured_output"],
+                        "output_modes": ["text", "native"],
+                    },
+                    "tasks.summary": {
+                        "model": "first",
+                        "prompt": "summarize",
+                        "fallback": [{"model": "second"}],
+                    },
+                    "tasks.custom": {
+                        "model": "second",
+                        "prompt": "custom-reading",
+                        "output_mode": "native",
+                    },
+                }
+            )
+
+    try:
+        asyncio.run(setup())
+        command = [
+            sys.executable,
+            "-c",
+            "from nous.transports.cli import main; main()",
+            "--instance",
+            str(instance),
+            "--json",
+        ]
+        generated = subprocess.run(
+            [
+                *command,
+                "tools",
+                "model",
+                "run",
+                "--task",
+                "summary",
+                "--text",
+                "Source text.",
+                "--show-request",
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=45,
+            check=True,
+        )
+        result = json.loads(generated.stdout)["results"][0]
+        assert result["parameters"]["attempts"] == 2
+        assert '"prompt_id": "summarize"' in generated.stderr
+        assert result["producer"]["model_id"] == "second"
+        assert result["outputs"][0]["text"] == "A saved answer."
+        assert len(received_headers) == 1
+        assert not any(name.lower() == "authorization" for name in received_headers[0])
+        reopened = subprocess.run(
+            [*command, "tools", "result", "read", result["ref"]["address"], "--sources"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=45,
+            check=True,
+        )
+        restored = json.loads(reopened.stdout)
+        assert restored["outputs"][0]["text"] == "A saved answer."
+        assert restored["inputs"][0]["artifact"]["address"].startswith("art:")
+
+        schema = tmp_path / "array-schema.json"
+        schema.write_text(
+            json.dumps({"type": "array", "items": {"type": "string"}}), encoding="utf-8"
+        )
+        structured = subprocess.run(
+            [
+                *command,
+                "tools",
+                "model",
+                "run",
+                "--task",
+                "custom",
+                "--schema",
+                str(schema),
+                "--text",
+                "Two colors.",
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=45,
+            check=True,
+        )
+        output = json.loads(structured.stdout)["results"][0]["outputs"][0]
+        assert output["media_type"] == "application/json"
+        assert json.loads(output["text"]) == ["red", "blue"]
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
 
 
 def test_temporal_precision_unknown_boundaries_and_dst() -> None:

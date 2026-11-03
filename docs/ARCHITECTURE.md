@@ -1,76 +1,71 @@
-# Nous 运行基础架构
+# Nous 模型、媒体与内容架构
 
-## 产品目标与本次范围
+## 当前产品目标
 
-Nous 提供独立的资料、笔记、长期记忆、查询及认知使用能力。当前先建设这些能力共同需要的运行基础，保持以后接入 Note、Journal、Episode、Wave、Steward、Ego、Social、Motivation 和 Dream 的明确位置。本次不开发其他主体产品。
+在已有运行基础上，交付能真正处理资料的工具能力：接纳内容、准备模型输入、执行语言与媒体任务、保存结果、展开来源并继续读取。此时的内容记录具有材料处理语义；Note、Journal、Episode、Ego 等认知对象的形成规则后续接入。
 
-用户已经确定：设计先于旧实现；专题文档持续更新；基础服务统一封装；CLI、HTTP、MCP 和 SDK 共享领域操作；配置先具备完整能力再分层暴露；日志从启动前的 stderr 延续到正式观测；时间支持多轴及非现实时间域。
+保持 CPython 3.14、uv、SQLAlchemy Core/SQLite、asyncio、Pydantic 配置、logging 与 OpenTelemetry。已有独立服务可按合同复用；新能力不通过恢复 legacy 整个运行栈接入。
 
-本包选择 Python 3.14 作为当前应用基线，使用标准 asyncio；保留 Rust Native 承担后续数值和索引计算的位置。Python 3.14 是当前项目延续的版本线，不将它表述为 Python 官方 LTS。实现时将支持该版本的稳定依赖锁入 `uv.lock`，不依赖预发布功能。
-
-## 模块与依赖
+## 所有权与调用方向
 
 ```text
-CLI / HTTP / MCP / SDK
+CLI（nous tools / config / runtime）
         ↓
-完整应用操作、各认知领域
-        ↓
-配置快照、时间值、错误、执行上下文
-        ↓
-按需使用：模型 / 内容 / 数据库 / 持久工作 / 网络
+ConfigurationOperations / GenerationOperations / MediaAnalysis / EmbeddingOperations
+        ↓                   ↓                   ↓
+ArtifactStore / ResultStore   PromptCatalog + PromptCompiler   MediaPreparer
+        ↓                   ↓                   ↓
+ContentStore + Database      ModelExecutor / EmbeddingExecutor  Pillow / PDFium / FFmpeg
+                            ↓
+                      ModelConnections → Network + Credentials → 成熟 SDK → 统一网关
 
-bootstrap：构造以上资源并管理启停
-logging / OpenTelemetry API：各模块独立埋点
-观测装配：配置日志处理器、SDK、导出与最终关闭
+Bootstrap 显式构造资源；Execution 提供操作期限、取消和关闭。
+logging / OpenTelemetry API 提供基础埋点，不反向依赖以上业务。
 ```
 
-基础模块通过显式构造参数取得依赖。纯值模型不打开数据库、创建客户端或启动任务。组合根持有运行资源，领域不通过全局 `app` 查找能力，也不在启动后互相补字段。
+表中名称表示完整责任；不要求每个名字单独成为类、文件或发行包。语言任务模板归任务 owner，协议映射归依赖，语义采用归后续领域。
 
-推荐职责位置为 `src/nous/runtime/`、`src/nous/configuration/`、`src/nous/observability/`、`src/nous/storage/`、`src/nous/models/`、`src/nous/network/`、`src/nous/presentation/`。这些是目标职责位置；已有独立能力可迁入合适位置复用，不要求为了目录整齐拆出只转发的类或文件。
-
-## 数据与状态所有者
-
-| 信息 | 唯一负责者 |
+| 信息或行为 | 负责者 |
 |---|---|
-| 实例选择、路径解析、写入进程占有 | Instance / Paths |
-| 启动资源、退出顺序、运行可用状态 | Bootstrap / Lifecycle |
-| 配置定义、来源合并、期望值与有效快照 | Configuration |
-| 内容、正式修订、证据及后续认知 | 对应领域；基础层仅提供存取与事务 |
-| 数据连接、事务资源、实例基础表 | Database / Transaction |
-| 文件字节、临时内容与正式内容引用 | ContentStore |
-| 语言任务实际请求与结果 | ModelExecutor；业务采用归调用领域 |
-| Prompt 模板及确定的渲染结果 | PromptCatalog / Compiler；任务内容归相应领域 |
-| 持久任务的调度与恢复 | DBOS；任务含义与结果归对应业务 |
-| 日志、Span 和指标的输出策略 | Observability 装配 |
+| 配置定义、解析、有效快照、文件保存 | Configuration |
+| 一次配置变更的实例/时间/向量绑定及采用 | 应用层 ConfigurationOperations，调用实际 owner |
+| 不可变字节、流式读写、物理去重 | ContentStore |
+| 输入资料与派生文件的可读身份 | ArtifactStore |
+| 一次已成功采用处理的结果、实际输入、生成出处 | ResultStore；失败与部分完成由调用用例返回 |
+| 图片/PDF/音视频解码、选区与转换 | MediaPreparer 及模态内聚实现 |
+| 三种媒体解释策略和阶段衔接 | MediaAnalysis |
+| 模板选择、角色顺序和确定渲染 | PromptCatalog / PromptCompiler |
+| 确定模型请求、网络尝试和响应 | ModelExecutor；不访问业务数据库 |
+| 向量空间及实际向量 | Embedding owner |
 
-首轮只有实例元数据和时间域定义需要基础数据库表。不要预建所有认知对象的通用 JSON 表，也不要预建覆盖全部命令的永久回执系统。
+## 正式数据保持少而明确
 
-## 跨模块调用规则
+Artifact 是一份不可变文件或文字内容的产品引用。ProcessingResult 记录一次成功处理的输入、输出、参数与 producer，可以由确定性转换或模型调用产生。CAS 摘要仅表示字节；同样字节的两次接纳可拥有不同来源记录。
 
-一个完整业务操作拥有事务和最终结果。参与者使用同一 `WriteTx`，不各自提交。模型、网络、长计算在短写事务外执行。共享数据库能力提供连接和事务，不解释 Journal、关系或认知修订。
+完整操作由应用层开始，一个短事务提交所需结果和内容引用。模型请求、媒体解码和字节发布在事务外完成。结果采用不经过事件总线层层触发；后续索引和认知工作按实际需要增加。
 
-基础模块直接使用 `logging.getLogger(__name__)` 和必要的 OpenTelemetry API。开启 Trace、安装导出器是组合根的责任；业务运行不依赖遥测后端在线。
+## 入口与操作
 
-进程内执行使用 asyncio 的任务、超时和取消；后台持久工作采用 DBOS。无论前台、SDK Host 或以后定时触发，均调用同一业务操作。
+`nous tools` 是长期保留的产品入口。CLI 只解析输入、调用完整操作和呈现。未来 HTTP/MCP/SDK 复用同一应用操作，不要求把内部方法一一公开为工具。
 
-## 配置与资源的关系
+`model run`、`media analyze`、`embedding run` 可以自动接纳本地输入并返回正式结果。用户无需手动执行 prepare、publish、attach、编译、模型提交等内部步骤。高级用户可先接纳资料再按短引用继续操作。
 
-配置结构由各负责模块声明，统一注册到 Configuration。构造资源时显式传入已经解析的设置。某个操作需要固定参数时，入口取得不可变配置快照，并把对应设置传给实际消费者。
+## 同轮修正
 
-参数修改、生效时机、数据库或向量空间绑定分别由配置变更合同表达。模型不可用不阻断确定性的配置、状态和资料读取。基础配置不依赖数据库才能解析。
+配置修改的路径、时间和 Embedding 绑定检查从 CLI 和 bootstrap 内联回调集中到应用用例。构造依赖后形成可用对象，不向已经发布的 Configuration 回填服务。
 
-## 向认知系统的接入位置
+基础错误、纯标识和观测 API 放到独立的下层模块。Storage/Execution 不因调用 `get_tracer()` 而导入含 Configuration、OTel SDK 和 exporter 的整个观测装配。正式日志和 SDK 生命周期仍归 bootstrap。
 
-Note 和 Journal 将复用内容、时间、修订事务与模型任务。Wave 将读取正式内容和可重建索引。Steward 将使用已经排序的候选及精确段落引用执行可选选段。人格文档、经验模式和关系数据各自保留领域责任。
+时间域的纯语义校验共用一个定义，尤其 opaque 域没有 tick_seconds。schema/表由具体 owner 提供，组合根在显式初始化时收集；数据库模块不逐个导入所有认知和媒体服务。
 
-本包不裁定这些认知对象的最终表结构，不把讨论中未明确采纳的概念合并当作施工前提。基础能力不需要知道上述所有对象的枚举。
+## 供应商中立
 
-## 重构与验证
+生产逻辑根据明确 protocol、能力与任务配置工作。New API 的 Docker、后台管理端点和令牌获取只属于 [开发接入](development/local-gateway.md)。本轮实现 OpenAI-compatible Chat Completions、Embeddings 和按实际需要的 Transcriptions；协议编码复用 Pydantic AI 与官方 SDK。禁用 SDK 的叠加自动重试，由一个执行入口管理。
 
-复用现有能力按阅读、接入、修补与后续维护总成本判断。旧结构阻碍合同就改定义及消费者；没有真实兼容义务的内部旧路径随替换删除。
+模型名作为原样字符串传递。模型目录的条目不自动证明媒体或结构化能力。通用转换有明确记录，未支持的组合返回准确缺项，不能把文件路径、说明文字或空向量伪装成媒体/向量输入。
 
-验证围绕真实基础操作：实例启停、配置解析和修改、数据库读写、取消、日志关联、时间语义及后续真实模型调用。复用库的通用实现，不为证明 SQLite 断电安全或库的字段行为扩展本次工作。
+## 生命周期与范围
 
-## 后续依赖
+本轮采用同步等待的前台产品操作，可流式返回；没有后台恢复承诺。先停止接纳、结束操作与媒体子进程，再关闭模型连接、存储、观测和实例锁。
 
-当前按 [运行基础计划](plans/runtime-foundation.md)施工。完成后分别进入 [内容与持久工作](plans/storage-and-jobs.md)和[模型运行](plans/model-runtime.md)。各计划明确实际交付边界，后续设计可以修改当前结构，不用过渡包装固化错误接口。
+DBOS 继续保留后续接入方向，本轮不创建占位队列或永久通用调用回执。成功结果按产品生命周期保存；临时 trace、失败诊断与实验脚本各自清理。

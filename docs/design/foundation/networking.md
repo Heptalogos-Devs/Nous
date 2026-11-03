@@ -1,31 +1,29 @@
-# 网络客户端与连接策略
+# 网络客户端、协议连接与生命周期
 
-## 选择与所有权
+## 所有权
 
-采用 HTTPX 与所选 Provider SDK 实际要求的成熟客户端。Network owner 负责连接配置、客户端生命周期和池复用；Provider adapter 负责协议字段和响应解释。
+Network 根据纯配置创建和复用与当前 SDK 配套的 HTTP 客户端（`httpx2.AsyncClient`），管理代理、证书、超时和连接池。ModelConnections 组合成熟协议客户端及对应网络资源。业务模块不直接 new 第二套 SDK 或读隐藏环境。
 
-本模块依赖已经解析的网络设置和生命周期，不在构造时读取全局环境。Trace 使用标准 API，可选埋点不影响请求完成。
+首轮一个兼容 Provider 连接在运行时内复用，各个模型和生成/Embedding/Transcription API 使用同一连接资源。无需为不同上游厂商创建连接类。实际 provider-specific 协议映射由第三方 SDK 或网关承担。
 
-## 资源和配置
+## 连接创建
 
-同一兼容连接配置复用客户端；代理、证书或连接池配置不同的资源使用对应客户端。禁止为每次生成建立并关闭一套 HTTP 客户端，也不把所有服务强行放到一个永远无法独立关闭的全局客户端。
+endpoint 明确为协议 base URL，例如实际网关的 `/v1` 根，不填 `/chat/completions` 完整路径。使用 `OpenAIProvider(openai_client=AsyncOpenAI(...))` 等成熟注入方式，把正式 HTTPX client 与 `max_retries=0` 交给 SDK。
 
-配置包括代理、CA、trust_env、连接/read/pool 超时、连接上限。TLS 校验默认开启。使用者已经通过配置指定的代理和证书传给 SDK，不让底层再独立读取另一套隐含代理设置。
+传输由唯一 owner 关闭。多个模型借用同一协议连接，不逐模型调用 SDK.close 误关闭共享 HTTPX；运行时结束后先停止使用者，再关闭协议/网络资源一次。配置中需要重建客户端的参数按重启采用。
 
-Provider 的 endpoint 和协议方言属于连接资源。通用模型可以连接 OpenAI-compatible 网关，也可以使用已支持的原生协议；网关名称不进入 Journal、配置字段语义或领域模型。
+network.trust_env 默认为 false。实例或 Provider 选定的代理、CA、池容量与超时实际传给客户端。供应商环境变量不形成旁路。OTLP exporter 自己的网络继续由观测装配管理。
 
-## 期限和重试
+## 请求与期限
 
-实际网络期限取调用剩余总期限与网络分项期限。取消必须到达网络等待并关闭未消费响应。流式响应由异步上下文管理器拥有，调用结束或取消后关闭。
+模型 POST 的本地重试只有 ModelExecutor 负责。SDK 和 HTTP transport 的自动重试关闭；网关内部重试由网关承担，Nous 记录自己提交的 attempts，不声称知道网关隐藏的实际上游调用数。
 
-基础 HTTP transport 默认不做隐藏多次模型 POST 重试。生成重试由 ModelExecutor 统一决定。非模型的安全读取可由其具体操作选择重试，仍受同一总期限限制。
+HTTP 分项 timeout 与操作剩余期限共同约束等待；流式读取保留关闭句柄。收到取消时关闭未消费响应，取消不启动 fallback。非模型文件接纳本轮先支持本地文件/字节，远程 URL 下载不因模型能力建设自动扩张。
 
-## 错误与观测
+## 依赖和错误
 
-连接、TLS、超时、限流与协议错误保留可用状态及 provider request_id。响应正文只在确有需要时保存安全摘要，凭据不进入日志。HTTPX/SDK 原生 instrumentor 能满足关联时直接采用。
+客户端完成网络 I/O，应用在 I/O 前后各使用自己的短事务。网络错误保持状态码、可用 request_id、连接与限流原因。错误描述中保留可用服务信息，普通输出不打印授权头。
 
-遥测 exporter 自己的传输由观测装配管理，避免与业务网络相互依赖。
+基础模块使用 logging 与轻量 OTel API。SDK 提供的埋点可以接入当前 provider，但不调用全局 auto-instrument-all 或另建遥测控制中心。
 
-## 完成条件
-
-真实连接复用、代理与超时生效、取消流关闭、客户端正确释放；同一失败不被多层各自重试。依据：[HTTPX Clients](https://www.python-httpx.org/advanced/clients/)、[Async Support](https://www.python-httpx.org/async/)。
+依据：[HTTPX Async](https://www.python-httpx.org/async/)、[Pydantic AI OpenAI-compatible](https://pydantic.dev/docs/ai/models/openai/)。

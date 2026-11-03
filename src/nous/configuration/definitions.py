@@ -1,6 +1,5 @@
 """Authoritative configuration definitions and cross-resource constraints."""
 
-from fractions import Fraction
 from pathlib import PurePath
 from typing import Annotated, Literal, Self
 from uuid import UUID
@@ -8,6 +7,9 @@ from zoneinfo import ZoneInfo
 
 from pydantic import Field, field_validator, model_validator
 
+from nous.common.values import ResourceId
+from nous.content.configuration import ContentConfig
+from nous.media.configuration import MediaConfig
 from nous.models.configuration import (
     CredentialReference,
     EmbeddingConfig,
@@ -18,7 +20,7 @@ from nous.models.configuration import (
     ProviderConfig,
     TaskAssignment,
 )
-from nous.runtime.values import ResourceId
+from nous.temporal.coordinates import validate_coordinates
 
 from .metadata import ConfigModel, setting
 
@@ -258,19 +260,6 @@ class TimeDomainConfig(ConfigModel):
     )
     name: str = setting("", level="standard", description="Human-readable domain name.")
 
-    @model_validator(mode="after")
-    def valid_scale(self) -> Self:
-        if self.kind in {"linear", "utc"} and self.tick_seconds is None:
-            raise ValueError("linear/utc time domains require tick_seconds")
-        if self.tick_seconds is not None:
-            try:
-                value = Fraction(self.tick_seconds)
-                if value <= 0:
-                    raise ValueError("tick_seconds must be positive")
-            except (ValueError, ZeroDivisionError) as error:
-                raise ValueError("tick_seconds must be a positive rational string") from error
-        return self
-
 
 class TimeConfig(ConfigModel):
     domains: dict[ResourceId, TimeDomainConfig] = Field(
@@ -280,6 +269,14 @@ class TimeConfig(ConfigModel):
             )
         }
     )
+
+    @model_validator(mode="after")
+    def valid_domains(self) -> Self:
+        if "utc" not in self.domains:
+            raise ValueError("the built-in utc domain is required")
+        for domain_id, domain in self.domains.items():
+            validate_coordinates(domain_id, domain.kind, domain.tick_seconds, domain.epoch)
+        return self
 
 
 class NetworkConfig(ConfigModel):
@@ -316,6 +313,8 @@ class NousConfig(ConfigModel):
     metrics: MetricsConfig = Field(default_factory=MetricsConfig)
     localization: LocalizationConfig = Field(default_factory=LocalizationConfig)
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
+    content: ContentConfig = Field(default_factory=ContentConfig)
+    media: MediaConfig = Field(default_factory=MediaConfig)
     time: TimeConfig = Field(default_factory=TimeConfig)
     network: NetworkConfig = Field(default_factory=NetworkConfig)
     credentials: dict[ResourceId, CredentialReference] = Field(default_factory=dict)
@@ -356,14 +355,4 @@ class NousConfig(ConfigModel):
                 raise ValueError(
                     f"embedding.spaces.{key}: text encoding requires only text modality"
                 )
-        utc = self.time.domains.get("utc")
-        if (
-            utc is None
-            or utc.kind != "utc"
-            or Fraction(utc.tick_seconds or "0") != Fraction(1, 1000000)
-            or utc.epoch != "Unix epoch"
-        ):
-            raise ValueError("time.domains.utc has the fixed Unix epoch microsecond definition")
-        if any(key != "utc" and item.kind == "utc" for key, item in self.time.domains.items()):
-            raise ValueError("Only the built-in utc ID may use kind=utc")
         return self

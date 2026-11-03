@@ -1,96 +1,59 @@
-# 配置字段目录与初始默认值
+# 配置字段目录与初始值
 
-## 字段描述合同
+## 定义来源
 
-运行目录从模块的 Pydantic 字段导出。每项 `FieldDefinition` 包含 `path`、JSON Schema 类型、`required`、`nullable`、默认值或默认计算规则、`description`、`unit`、取值约束、允许 scopes、exposure、apply_mode、impact、secret 标志和可选示例。
+类型、默认、范围、description、unit、scope、exposure、apply_mode、impact 和只读/秘密元信息由负责模块的纯 Pydantic 定义提供。目录和帮助从同一定义导出，不维护第二份手写运行时表。
 
-动态资源使用 `models.<resource-id>` 等路径模板，并为具体资源实例展开查询。联合对象使用 discriminator。角色资源之间的交叉引用由相应配置 owner 校验，Configuration 汇总结果。
+本文件记录当前基础默认。模型/媒体新增字段及改变说明见 [模型与媒体字段](configuration-model-media.md)。这些初始值服务正常起步，可以按实际使用更新。
 
-以下默认值是本次设计选择，用于开工，不是测量所得最优值。后续根据实际使用更新字段定义与本表。时间单位包含在字段名和目录中；内部统一换算为对应值类型。
+## 实例、执行与观测
 
-## 运行、日志与执行
-
-| 字段 | 类型、缺省与范围 | 呈现 / 效果 |
+| 字段 | 类型 / 默认 | 生效与含义 |
 |---|---|---|
-| instance.id | init 生成的 UUID；必需、只读 | internal / new_binding |
-| instance.name | string；默认 `default` | standard / next_operation |
-| instance.layout | platform\|portable；init 决定 | advanced / new_binding |
-| paths.*_dir | 路径；缺失按布局计算 | advanced / restart；data/content/index 需重定位 |
-| runtime.shutdown_grace_seconds | number，30，>=0 | advanced / next_operation |
-| execution.max_in_flight | integer，16，>=1 | advanced / restart |
-| execution.max_blocking_workers | integer，4，>=1 | advanced / restart |
-| execution.default_timeout_seconds | nullable number，null，>0 时为默认期限 | advanced / next_operation |
-| logging.level | DEBUG\|INFO\|WARNING\|ERROR，INFO | standard / live |
-| logging.file_enabled | boolean，true | advanced / restart |
-| logging.max_file_bytes | integer，10485760，>=1024 | advanced / restart |
-| logging.backup_count | integer，5，>=1 | advanced / restart |
-| tracing.enabled | boolean，true | advanced / restart |
-| tracing.sample_ratio | number，1.0，0..1 | advanced / restart |
-| tracing.export | none\|stderr\|otlp，none | advanced / restart |
-| tracing.otlp_endpoint | nullable URL，null；otlp 时必需 | advanced / restart |
-| tracing.export_timeout_seconds | number，5，>0 | developer / restart |
-| metrics.enabled | boolean，true | advanced / restart |
-| metrics.export | none\|otlp，none | advanced / restart |
-| metrics.interval_seconds | number，60，>0 | developer / restart |
-| metrics.otlp_endpoint | nullable URL，null；otlp 时必需 | advanced / restart |
-| metrics.export_timeout_seconds | number，5，>0 | developer / restart |
-| localization.language | zh-CN\|en，zh-CN | standard / next_operation |
-| localization.timezone | IANA zone，UTC | standard / next_operation |
-
-同一实例入口的 `--language` 或显示时区仅影响本次呈现，不改变持久时间。采样与导出关闭时，普通日志仍工作。
+| instance.id / layout | init 生成 ID 与选定布局 | 只读身份，new_binding |
+| instance.name | string=default | next_operation |
+| paths.data/content/index_dir | nullable path，按布局解析 | new_binding，需重定位 |
+| 其他 paths.*_dir | nullable path，按布局解析 | restart |
+| runtime.shutdown_grace_seconds | number=30，>=0 | next_operation |
+| execution.max_in_flight | int=16，>=1 | restart |
+| execution.max_blocking_workers | int=4，>=1 | restart |
+| execution.default_timeout_seconds | nullable number=null，非空>0 | next_operation，根操作总期限 |
+| logging.level | DEBUG/INFO/WARNING/ERROR=INFO | live |
+| logging.file_enabled | bool=true | restart |
+| logging.max_file_bytes / backup_count | int=10485760 / 5 | restart |
+| tracing.enabled / sample_ratio | true / 1.0 | restart；ratio 0..1 |
+| tracing.export / otlp_endpoint | none / null | restart；otlp 必须指定 URL |
+| tracing.export_timeout_seconds | number=5，>0 | restart |
+| metrics.enabled / export | true / none | restart |
+| metrics.interval_seconds / export_timeout_seconds | 60 / 5 | restart |
+| metrics.otlp_endpoint | nullable URL=null | restart |
+| localization.language / timezone | zh-CN / UTC | next_operation，呈现专用 |
 
 ## 数据库与时间
 
-| 字段 | 合同 | 呈现 / 效果 |
-|---|---|---|
-| database.filename | 相对 data 根文件名，`nous.sqlite3` | advanced / new_binding |
-| database.busy_timeout_ms | integer，5000，>=0 | advanced / restart |
-| database.synchronous | FULL\|NORMAL，FULL | developer / restart，disruptive |
-| database.foreign_keys | 固定 true，只读目录项 | internal |
-| database.journal_mode | 固定 WAL，本地文件模式 | internal |
-| time.domains.<id>.kind | utc\|linear\|opaque | advanced / new_binding |
-| time.domains.<id>.tick_seconds | 正有理数字符串，如 `"1/1000"`；linear 时必需 | advanced / new_binding |
-| time.domains.<id>.epoch | 可选可读说明；不可据此自动换算 | advanced / new_binding |
-| time.domains.<id>.name | 可读名称 | standard / next_operation |
+| 字段 | 定义 |
+|---|---|
+| database.filename | data 根相对文件名，默认 nous.sqlite3；new_binding |
+| database.busy_timeout_ms | int=5000，>=0；restart |
+| database.synchronous | FULL/NORMAL，默认 FULL；restart，disruptive |
+| database.foreign_keys / journal_mode | 固定 true / WAL；只读语义 |
+| time.domains.<id>.kind | utc/linear/opaque；已登记后解释固定 |
+| time.domains.<id>.tick_seconds | linear 为正有理数字符串；opaque 必须为空 |
+| time.domains.<id>.epoch | 可读起点声明，改变坐标意义需新 ID |
+| time.domains.<id>.name | 显示名，可变 |
 
-内置 `utc` 域使用 Unix epoch 微秒：每 tick 为 1/1,000,000 秒。应用耗时使用 `monotonic_ns`，不注册成可以持久比较的认知域。`tick_seconds` 描述坐标尺度，不是世界与现实的运行速率。
+utc 固定为 Unix epoch 微秒。模型/媒体的局部时段另有 Selection 值，不强行注册为真实世界时钟。
 
-## 网络、凭据和模型
+## 网络与模型
 
-以下纯字段首轮可解析；实际资源在模型计划中接入。
+network 的 proxy_url/ca_file 默认 null、trust_env=false、max_connections=20，均 restart；connect/read/write/pool timeout 默认 10/120/30/10 秒，可在下一操作读取。Provider 连接覆盖同类字段，协议/endpoint/credential_ref 改动为 restart。
 
-| 字段 | 默认与约束 | 效果 |
-|---|---|---|
-| network.proxy_url | nullable URL，null | restart |
-| network.trust_env | boolean，false；使用正式配置明确代理与证书 | restart |
-| network.ca_file | nullable path，null；默认系统/库信任库 | restart |
-| network.connect_timeout_seconds | number，10，>0 | next_operation |
-| network.read_timeout_seconds | number，120，>0 | next_operation |
-| network.write_timeout_seconds | number，30，>0 | next_operation |
-| network.pool_timeout_seconds | number，10，>0 | next_operation |
-| network.max_connections | integer，20，>=1 | restart |
-| credentials.<name> | env/file 可判别引用，见 credentials 专题 | next_operation |
-| providers.<id> | protocol、endpoint、credential_ref；无默认真实服务 | next_operation |
-| models.<id> | provider、实际模型名、能力声明；无默认付费模型 | next_operation；向量绑定另见空间合同 |
-| presets.<id> | 生成参数、能力兼容的扩展参数 | next_operation |
-| tasks.<id> | model、preset、prompt、fallback、budget | next_operation |
-| model_execution.max_attempts | integer，2，>=1，实例上限 | next_operation |
-| model_execution.timeout_seconds | number，120，>0 | next_operation |
-| model_execution.max_input_tokens | integer，16384，>=1，实例上限 | next_operation |
-| model_execution.max_output_tokens | integer，2048，>=1，实例上限 | next_operation |
-| model_execution.structured_retries | integer，0，>=0 | next_operation |
-| prompt.cache_entries | integer，128，>=0 | restart |
-| prompt.bytecode_cache | boolean，true | restart |
-| embedding.spaces.<id> | 显式空间描述，无默认值 | new_binding |
+credentials 支持 env/file；providers、models、presets、tasks 无默认付费服务。具体必需字段由 [模型资源](../models/resources.md) 定义。task media_strategy 为三种现行策略，缺省不隐式处理媒体。
 
-任务可以选择更低的预算。模型窗口和协议实际限制继续参与判断。输入估计、提供方实际用量和费用估计分别返回，不把字符数冒充真实 token 用量。
+model_execution.max_attempts=2、timeout_seconds=120、max_input_tokens=16384、max_output_tokens=2048、structured_retries=0，属于每个语义阶段的技术限制，可在明确作用域内选择更低值；实例参数可按实际资料提高。max_cost 默认 null，本轮不建设费用执行体系。
 
-媒体策略是任务配置的枚举：`description_only / direct_structured / describe_then_structure`；未启用媒体任务时没有隐式媒体调用。具体解析器参数在媒体专题建设时补入其 owner，基础配置只承载已确定字段。
-
-## 固定常量与可调参数
-
-协议版本、坐标解释、精确 ID 规则、SQLite 外键启用等确定性语义不是调优开关。它们可以在只读目录中解释。排序权重、预算、缓存容量、时限、路径和可选能力的启停从正式配置读取。
+prompt.cache_entries=128、prompt.bytecode_cache=true，restart。embedding.spaces 无默认空间，用户先 probe 后明确维度与编码，再按 owner 合同采用。
 
 ## 字段维护
 
-新增业务参数时在负责模块声明并接入真实读取点。目录、帮助和管理接口从同一模型生成；用户配置示例只展示常用部分。不要为了让配置看起来完整而预建未决定算法或认知对象的数百字段。
+资源映射、数组、联合类型均提供完整字段说明。新增字段接入真实消费者；保持普通、进阶与内部呈现层级，不把未实现功能写成已可用。标准常量不要伪装成任意可调参数。

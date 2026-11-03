@@ -1,14 +1,11 @@
 """Layered resolution, immutable operation snapshots and atomic TOML updates."""
 
-import asyncio
-import inspect
 import json
 import os
 import tempfile
 import types
-from collections.abc import Awaitable, Callable, Iterator, Mapping, MutableMapping
+from collections.abc import Iterator, Mapping, MutableMapping
 from dataclasses import dataclass
-from fractions import Fraction
 from pathlib import Path
 from types import MappingProxyType
 from typing import Annotated, Union, cast, get_args, get_origin
@@ -19,16 +16,12 @@ from pydantic_settings import BaseSettings, EnvSettingsSource, SettingsConfigDic
 from pydantic_settings.sources.utils import parse_env_vars
 from typing_extensions import TypeForm
 
-from nous.runtime.errors import NousError
+from nous.common.errors import NousError
 
 from .definitions import NousConfig
 
 type Object = dict[str, object]
 type Layer = tuple[str, str, Object]
-type BindingCheck = Callable[
-    [ConfigSnapshot, ConfigSnapshot, tuple[str, ...]], Awaitable[None] | None
-]
-type SnapshotCallback = Callable[[ConfigSnapshot], Awaitable[None] | None]
 
 
 def object_map(value: object) -> Object:
@@ -174,6 +167,20 @@ def normalize_patch(patch: Mapping[str, object]) -> Object:
     return result
 
 
+@dataclass(frozen=True)
+class ConfigurationChange:
+    scope: str
+    target: Path
+    saved: Object
+    previously_saved: Object
+    candidate: ConfigSnapshot
+    changed: tuple[str, ...]
+    paths: tuple[str, ...]
+    patch: Object
+    removals: tuple[str, ...]
+    reload: bool
+
+
 class Configuration:
     def __init__(
         self,
@@ -182,21 +189,14 @@ class Configuration:
         environment: Mapping[str, str] | None = None,
         overrides: Mapping[str, object] | None = None,
         running: bool = False,
-        binding_check: BindingCheck | None = None,
-        binding_apply: SnapshotCallback | None = None,
-        live_apply: SnapshotCallback | None = None,
     ) -> None:
         self.config_file = Path(config_file)
         self.environment = dict(os.environ if environment is None else environment)
         self.overrides = normalize_patch(overrides or {})
         self.running = running
-        self.binding_check = binding_check
-        self.binding_apply = binding_apply
-        self.live_apply = live_apply
         self.pending_restart = False
         self._activation_failure: Object | None = None
         self._version = 1
-        self._lock = asyncio.Lock()
         self._namespace_saved: dict[Path, Object] = {}
         self._namespace_active: dict[Path, Object] = {}
         self._schema: Object = NousConfig.model_json_schema()
@@ -226,7 +226,7 @@ class Configuration:
             "activation_failure": mutable(self._activation_failure),
         }
 
-    def _failure_details(
+    def failure_details(
         self, target: Path, *, phase: str, file_saved: bool, write_performed: bool, recovery: str
     ) -> dict[str, JsonValue]:
         return {
@@ -669,8 +669,10 @@ class Configuration:
                 "shape": "passed",
                 "references": "passed",
                 "bindings": "not_run",
-                "model_execution": "not_implemented",
-                "embedding_binding": "unavailable"
+                "model_execution": "configured"
+                if candidate.typed_values().tasks
+                else "unconfigured",
+                "embedding_binding": "not_run"
                 if candidate.typed_values().embedding.spaces
                 else "unconfigured",
                 "embedding_remote_deployment": "not_verified"
@@ -679,109 +681,17 @@ class Configuration:
             },
         }
 
-    async def update(
-        self,
-        patch: Mapping[str, object],
-        scope: str = "instance",
-        expected_version: int | None = None,
-        *,
-        namespace_file: Path | str | None = None,
-    ) -> Object:
-        return await self._change(
-            normalize_patch(patch), (), scope, expected_version, namespace_file
-        )
-
-    async def unset(
-        self,
-        path: str,
-        scope: str = "instance",
-        expected_version: int | None = None,
-        *,
-        namespace_file: Path | str | None = None,
-    ) -> Object:
-        self._field(path)
-        return await self._change({}, (path,), scope, expected_version, namespace_file)
-
-    async def remove_resource(self, path: str, expected_version: int | None = None) -> Object:
-        if path.count(".") != 1 or path.split(".")[0] not in {
-            "providers",
-            "models",
-            "presets",
-            "tasks",
-            "credentials",
-        }:
-            raise NousError("configuration.resource_invalid", "Use a resource collection and ID")
-        return await self._change({}, (path,), "instance", expected_version, None)
-
-    async def reload(
-        self,
-        expected_version: int | None = None,
-        *,
-        scope: str = "instance",
-        namespace_file: Path | str | None = None,
-    ) -> Object:
-        return await self._change({}, (), scope, expected_version, namespace_file, reload=True)
-
-    async def _call(self, callback: Callable[..., Awaitable[None] | None], *args: object) -> None:
-        value = callback(*args)
-        if inspect.isawaitable(value):
-            await value
-
-    async def _change(
+    def prepare_change(
         self,
         patch: Object,
         removals: tuple[str, ...],
         scope: str,
         expected_version: int | None,
         namespace_file: Path | str | None,
-        reload: bool = False,
-    ) -> Object:
-        async with self._lock:
-            try:
-                return await self._change_locked(
-                    patch, removals, scope, expected_version, namespace_file, reload
-                )
-            except NousError as error:
-                if "file_saved" not in error.details:
-                    recovery = (
-                        "Correct the saved file and call reload again; the effective configuration is unchanged."
-                        if reload
-                        else "Correct the reported input or binding problem and retry; this operation did not save the file."
-                    )
-                    error.details.update(
-                        self._failure_details(
-                            self.config_file if scope == "instance" else Path(namespace_file or ""),
-                            phase="validation",
-                            file_saved=reload and error.code != "configuration.file_not_found",
-                            write_performed=False,
-                            recovery=recovery,
-                        )
-                    )
-                raise
-            except OSError as error:
-                target = self.config_file if scope == "instance" else Path(namespace_file or "")
-                raise NousError(
-                    "configuration.read_failed",
-                    "The configuration file could not be read; the effective configuration is unchanged.",
-                    details=self._failure_details(
-                        target,
-                        phase="read",
-                        file_saved=False,
-                        write_performed=False,
-                        recovery="Correct filesystem access and retry the operation.",
-                    ),
-                    cause=error,
-                ) from error
-
-    async def _change_locked(
-        self,
-        patch: Object,
-        removals: tuple[str, ...],
-        scope: str,
-        expected_version: int | None,
-        namespace_file: Path | str | None,
-        reload: bool = False,
-    ) -> Object:
+        *,
+        reload: bool,
+    ) -> ConfigurationChange:
+        """Resolve a candidate and its changed paths without modifying the file or snapshot."""
         if expected_version is not None and expected_version != self._version:
             raise NousError(
                 "configuration.version_conflict",
@@ -796,7 +706,7 @@ class Configuration:
         target = (
             self.config_file
             if scope == "instance"
-            else await asyncio.to_thread(Path(namespace_file).resolve)
+            else Path(namespace_file).resolve()
             if namespace_file
             else None
         )
@@ -806,154 +716,70 @@ class Configuration:
                 "Only instance and explicit namespace files can be saved",
             )
         before = self._read(target) if target.exists() else {}
-        previously_saved = (
-            self._saved if scope == "instance" else self._namespace_saved.get(target, before)
-        )
+        previous = self._saved if scope == "instance" else self._namespace_saved.get(target, before)
         saved = merge(before, patch)
         for path in removals:
             delete_path(saved, path)
         self._validate_layer(saved)
-        if scope == "instance":
-            proposed = merge(merge(merge(self._defaults, saved), self._environment), self.overrides)
-            proposed_utc = object_map(get_path(proposed, "time.domains.utc"))
-            # UTC has a built-in persistent coordinate identity, including before DB access.
-            try:
-                changed_utc = (
-                    proposed_utc.get("kind") != "utc"
-                    or Fraction(str(proposed_utc.get("tick_seconds"))) != Fraction(1, 1000000)
-                    or proposed_utc.get("epoch") != "Unix epoch"
-                )
-            except ValueError, ZeroDivisionError:
-                changed_utc = False  # The ordinary model validator reports malformed scale input.
-            if changed_utc:
-                raise NousError(
-                    "configuration.binding_conflict",
-                    "A registered time domain cannot change its coordinate definition; use a new domain ID",
-                    details={"domain_id": "utc"},
-                )
         candidate = (
             self._resolve(saved)
             if scope == "instance"
             else self._resolve(self._saved, layers=(("namespace", str(target), saved),))
         )
-        old_desired = (
+        old = (
             self._resolve(self._saved)
             if scope == "instance"
-            else self._resolve(self._saved, layers=(("namespace", str(target), previously_saved),))
+            else self._resolve(self._saved, layers=(("namespace", str(target), previous),))
         )
-        old_flat = dict(leaves(old_desired.to_dict()))
-        new_flat = dict(leaves(candidate.to_dict()))
         missing = object()
+        old_flat, new_flat = dict(leaves(old.to_dict())), dict(leaves(candidate.to_dict()))
         changed = sorted(
             path
             for path in old_flat.keys() | new_flat.keys()
             if old_flat.get(path, missing) != new_flat.get(path, missing)
         )
-        saved_flat = dict(leaves(previously_saved))
-        new_saved_flat = dict(leaves(saved))
-        saved_changed = sorted(
-            path
-            for path in saved_flat.keys() | new_saved_flat.keys()
-            if saved_flat.get(path, missing) != new_saved_flat.get(path, missing)
+        saved_flat, new_saved = dict(leaves(previous)), dict(leaves(saved))
+        paths = sorted(
+            set(changed)
+            | {
+                path
+                for path in saved_flat.keys() | new_saved.keys()
+                if saved_flat.get(path, missing) != new_saved.get(path, missing)
+            }
         )
-        paths = sorted(set(changed) | set(saved_changed))
-        embedding_paths = [
-            path
-            for path in paths
-            if path == "embedding.spaces" or path.startswith("embedding.spaces.")
-        ]
-        # This release can parse space definitions but has no persisted-space owner.
-        # Every management entry point must reject adopting a changed space identity.
-        prior_settings = old_desired.typed_values()
-        next_settings = candidate.typed_values()
-        space_models = {
-            space.model
-            for space in (
-                *prior_settings.embedding.spaces.values(),
-                *next_settings.embedding.spaces.values(),
-            )
-        }
-        embedding_paths.extend(
-            path
-            for path in paths
-            if any(
-                path == f"models.{model}.{field}"
-                for model in space_models
-                for field in ("provider", "model_name", "deployment_revision")
-            )
-        )
-        if embedding_paths:
-            raise NousError(
-                "configuration.binding_check_unavailable",
-                "Embedding space binding management is not available in this version.",
-                details={"paths": embedding_paths},
-            )
         for path in paths:
-            _, meta = self._field(path)
-            if meta.get("readonly"):
+            if self._field(path)[1].get("readonly"):
                 raise NousError(
-                    "configuration.readonly", f"{path} is read-only", details={"path": path}
+                    "configuration.readonly",
+                    f"{path} is read-only",
+                    details={"path": path},
                 )
-        binding_paths = [
-            path for path in paths if self._field(path)[1]["apply_mode"] == "new_binding"
-        ]
-        if binding_paths:
-            if self.binding_check is None:
-                raise NousError(
-                    "configuration.binding_check_unavailable",
-                    "Persistent bindings could not be checked",
-                    details={"paths": binding_paths},
-                )
-            try:
-                await self._call(self.binding_check, self._snapshot, candidate, tuple(paths))
-            except Exception as error:
-                details = self._failure_details(
-                    target,
-                    phase="binding_check",
-                    file_saved=reload,
-                    write_performed=False,
-                    recovery="Correct the saved file and reload again."
-                    if reload
-                    else "Correct the binding conflict or unavailable dependency and retry; this operation did not save the file.",
-                )
-                if isinstance(error, NousError):
-                    error.details.update(details)
-                    raise
-                raise NousError(
-                    "configuration.binding_check_unavailable",
-                    "Persistent bindings could not be checked.",
-                    details=details,
-                    cause=error,
-                ) from error
-        pending = self.pending_restart or any(
-            self._field(path)[1]["apply_mode"] == "restart" for path in changed
+        return ConfigurationChange(
+            scope,
+            target,
+            saved,
+            previous,
+            candidate,
+            tuple(changed),
+            tuple(paths),
+            patch,
+            removals,
+            reload,
         )
-        if self.running and not pending:
-            if (
-                any(path.startswith("time.domains.") for path in changed)
-                and self.binding_apply is None
-            ):
-                raise NousError(
-                    "configuration.binding_check_unavailable",
-                    "Time domain binding application is unavailable.",
-                )
-            if (
-                any(self._field(path)[1]["apply_mode"] == "live" for path in changed)
-                and self.live_apply is None
-            ):
-                raise NousError(
-                    "configuration.live_apply_unavailable",
-                    "Live logging configuration application is unavailable.",
-                )
-        if not reload:
+
+    def change_modes(self, change: ConfigurationChange) -> set[str]:
+        return {str(self._field(path)[1]["apply_mode"]) for path in change.changed}
+
+    def save_change(self, change: ConfigurationChange) -> ConfigSnapshot:
+        if not change.reload:
             try:
-                self._write(target, saved, patch, removals)
+                self._write(change.target, change.saved, change.patch, change.removals)
             except Exception as error:
                 raise NousError(
                     "configuration.save_failed",
                     "The configuration file was not saved; the effective configuration is unchanged.",
-                    details=self._failure_details(
-                        target,
+                    details=self.failure_details(
+                        change.target,
                         phase="save",
                         file_saved=False,
                         write_performed=False,
@@ -961,102 +787,62 @@ class Configuration:
                     ),
                     cause=error,
                 ) from error
-        if scope == "instance":
-            self._saved = saved
-            self._version += 1
-            candidate = ConfigSnapshot(
-                candidate.values,
-                self._version,
-                candidate.sources,
-                "effective" if self.running else "prospective",
-            )
-            if self.running and not pending:
-                binding_application = "not_run"
-                live_application = "not_run"
-                phase = "binding_apply"
-                try:
-                    if self.binding_apply is not None and any(
-                        path.startswith("time.domains.") for path in changed
-                    ):
-                        await self._call(self.binding_apply, candidate)
-                        binding_application = "applied"
-                    phase = "live_apply"
-                    if self.live_apply is not None and any(
-                        self._field(path)[1]["apply_mode"] == "live" for path in changed
-                    ):
-                        await self._call(self.live_apply, candidate)
-                        live_application = "applied"
-                except BaseException as error:
-                    self.pending_restart = True
-                    recovery = "Correct the saved settings or failed dependency, then stop and reopen the instance; startup rechecks bindings and applies the complete saved configuration."
-                    failure = self._failure_details(
-                        target,
-                        phase=phase,
-                        file_saved=True,
-                        write_performed=not reload,
-                        recovery=recovery,
-                    )
-                    failure["paths"] = cast(JsonValue, paths)
-                    failure["binding_application"] = (
-                        "unconfirmed" if phase == "binding_apply" else binding_application
-                    )
-                    failure["live_application"] = (
-                        "failed" if phase == "live_apply" else live_application
-                    )
-                    failure["cause_code"] = (
-                        error.code if isinstance(error, NousError) else type(error).__name__
-                    )
-                    if isinstance(error, NousError):
-                        failure["cause_details"] = error.details
-                    self._activation_failure = dict(failure)
-                    if not isinstance(error, Exception):
-                        error.add_note(json.dumps(failure, ensure_ascii=False))
-                        raise
-                    raise NousError(
-                        "configuration.apply_failed",
-                        "Configuration was saved but could not be applied; the previous effective snapshot remains active and restart is required.",
-                        details=failure,
-                        cause=error,
-                    ) from error
+        if change.scope == "instance":
+            self._saved = change.saved
+        else:
+            self._namespace_active.setdefault(change.target, change.previously_saved)
+            self._namespace_saved[change.target] = change.saved
+        self._version += 1
+        return ConfigSnapshot(
+            change.candidate.values,
+            self._version,
+            change.candidate.sources,
+            "effective" if self.running else "prospective",
+        )
+
+    def publish_change(
+        self, change: ConfigurationChange, candidate: ConfigSnapshot, *, pending: bool
+    ) -> None:
+        if change.scope == "instance":
+            if not self.running or not pending:
                 self._snapshot = candidate
                 self._activation_failure = None
-            elif not self.running:
-                self._snapshot = candidate
-            self.pending_restart = bool(self.running and pending)
         else:
-            if target not in self._namespace_active:
-                self._namespace_active[target] = previously_saved
-            self._namespace_saved[target] = saved
-            self._version += 1
             if not self.running or not pending:
-                self._namespace_active[target] = saved
-            if not self.running or not pending:
+                self._namespace_active[change.target] = change.saved
                 self._snapshot = ConfigSnapshot(
                     self._snapshot.values,
                     self._version,
                     self._snapshot.sources,
                     self._snapshot.state,
                 )
-        state = (
-            "saved_pending_restart"
-            if self.running and pending
+        self.pending_restart = bool(self.running and pending)
+
+    def mark_apply_failure(self, failure: Object) -> None:
+        self.pending_restart = True
+        self._activation_failure = dict(failure)
+
+    def change_result(self, change: ConfigurationChange) -> Object:
+        return {
+            "state": "saved_pending_restart"
+            if self.pending_restart
             else "applied"
             if self.running
-            else "saved"
-        )
-        return {
-            "state": state,
-            "file": str(target),
-            "paths": paths,
+            else "saved",
+            "file": str(change.target),
+            "paths": list(change.paths),
             "version": self._version,
             "effective_version": self._snapshot.version,
             "file_saved": True,
-            "write_performed": not reload,
+            "write_performed": not change.reload,
             "recovery": "Restart the instance to apply the complete saved configuration."
             if self.pending_restart
             else None,
             "activation_failure": mutable(self._activation_failure),
-            "changes": [self.explain(path, scope, namespace_file=target) for path in paths],
+            "changes": [
+                self.explain(path, change.scope, namespace_file=change.target)
+                for path in change.paths
+            ],
             "pending_restart": self.pending_restart,
         }
 

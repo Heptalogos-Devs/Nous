@@ -11,9 +11,8 @@ from typing import Literal, Self
 from filelock import FileLock, Timeout
 from platformdirs import PlatformDirs
 
+from nous.common.errors import NousError
 from nous.configuration import Configuration
-
-from .errors import NousError
 
 
 @dataclass(frozen=True)

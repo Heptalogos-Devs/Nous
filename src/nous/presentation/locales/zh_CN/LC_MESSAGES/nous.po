@@ -201,9 +201,6 @@ msgstr "有效值"
 msgid "Effective version"
 msgstr "有效版本"
 
-msgid "Embedding space binding management is not available in this version."
-msgstr "当前版本尚未提供 Embedding 空间绑定管理。"
-
 msgid "Enable local trace recording."
 msgstr "启用本地 Trace 记录。"
 

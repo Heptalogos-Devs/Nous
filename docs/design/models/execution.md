@@ -1,51 +1,64 @@
-# 统一模型请求与结果
+# 模型请求与响应执行
 
-## 执行责任
+## 完整责任
 
-ModelExecutor 完成生成请求，统一使用所选 Provider 协议实现、客户端、预算、取消和观测。它不建立认知对象，不决定记忆是否成立，不从模型输出取任意系统操作去执行。
+ModelExecutor 负责已确定请求的网络执行、解析、有限尝试、流、用量与错误。GenerationOperations 组织输入 Artifact、模板准备、ModelExecutor 调用及成功结果采用。ModelExecutor 不依赖 CAS、Database、MediaAnalysis 或 CLI。
 
-采用 Pydantic AI 的原生模型与消息能力。文本直接请求可以用 direct API；需要结构化结果时使用其已有输出支持及 Pydantic 校验。按固定任务调用，不引入自主工具循环、规划 Agent 或图编排层。
+## 应用操作的输入边界
 
-## 核心操作
+`GenerationOperations.run(GenerationRequest, context)` 接收 task、按序 inputs（本地文件/InlineText/ArtifactSelection）、question、instructions 及可选自定义 Schema。它完成接纳、确定性的输入准备和请求执行保存。CLI 只调用这项操作，不自己串联 CAS、模板和数据库。
+
+MediaAnalysis 已经准备好一个批次时，调用同一 owner 的内部 `run_prepared(task, ReadingInput, source_map, context)`，复用后半段执行与采用。run 和 run_prepared 收敛到同一核心实现；前者提供有实际作用的接纳/准备，后者避免重复解码。两者都不调用 MediaAnalysis。
+
+直接 model run 只做确定性准备；需要额外转写/描述的输入由 media analyze 显式组织。媒体准备不反向调用 GenerationOperations，因此依赖无环。
+
+## 协议采用
+
+本轮使用 Pydantic AI 的 direct/model API 和它的消息/Schema 适配能力。结构化输出使用该库的 native/tool 输出支持和 Pydantic/标准 JSON Schema 校验。不使用带自主工具执行、planning、反思循环的 Agent Harness；输出工具仅承担结构化结果封装。
+
+## 接口与值
 
 ```text
-prepare(task, input, scope, config_snapshot) -> PreparedGeneration
-execute(prepared, operation_context) -> GenerationResult
-stream(prepared, operation_context) -> async result stream
+prepare(task, prepared_input, snapshot, context) -> PreparedGeneration
+execute(prepared, context) -> GenerationResult
+stream(prepared, context) -> async context manager of GenerationStream
+transcribe(prepared_audio_request, context) -> TranscriptionResult
 ```
 
-PreparedGeneration 是进程内不可变值，包含 task、选定模型/预设、CompiledPrompt、输出合同、有效参数、能力匹配和预算。它不创建新的持久准备/接纳/托管状态系统。
+PreparedGeneration 是进程内值：选定连接/模型、编译消息、输出合同、参数、技术上限和同快照的候选路线。它没有另一个持久 prepared/admitted/reported 生命周期。准备可解析凭据但不发模型请求。
 
-准备完成后，执行只使用该值。操作过程中修改配置不改变当前请求。fallback 需要另一模型时，针对下一候选重新做兼容性和预算准备，并形成对应 attempt；不把旧 Provider 请求体直接交给另一协议。
+GenerationResult 包括输出、原生响应必要部分、结束原因、实际/请求模型身份、用量、request_id、生成时刻、attempts、模板/Schema 版本和精确输入对应。未知字段保持未知。底层响应拒绝、截断或协议错误须保留实际原因。
 
-## 正式结果
+TranscriptionResult 是同一模型执行能力的另一种标准端点结果，使用官方客户端 multipart 上传，不强行套成 Chat 消息；来源、期限、用量和网络仍共用现有能力。
 
-GenerationResult 返回实际输出、模型/Provider 身份、生成时间、任务和模板/schema 版本、实际输入引用、提供方 request_id、用量、结束原因及 attempts。未返回的 token/价格字段标为未知。
+## 任务专一与输出
 
-提供结构化解析失败时保留原始输出的受控读取位置和错误说明，供当前调试；不自动将失败文本作为正式认知。成功结果由调用领域采用，生成出处随被采用内容保存。临时 trace/call diagnostics 可以淘汰。
+模型得到明确材料与局部键。UUID、事务版本、配置选择和保存动作不由模型推理。Pydantic 任务使用同一类型生成 Schema 与校验返回；自定义 Schema 由 jsonschema 校验。结构化解析失败不采用为成功结果。
 
-## 原生消息与媒体
+若默认一次请求就能完成，不追加确认模型。可配置的结构修复初始为 0；明确启用时每次修复计入该阶段 attempts。普通输出可以是长 Markdown，不强制改成巨大的控制 JSON。
 
-沿用成熟库对 system、user、assistant、tool、reasoning 和 media parts 的模型。业务 TaskInput 只提供用途与内容，Protocol wire 由 Provider adapter 解释。
+## 操作与阶段
 
-三种媒体策略由上游任务安排：description_only、direct_structured、describe_then_structure。第二种和第三种的结构化调用读取实际任务需要的媒体；第三种同时可读已有描述。每次请求有各自生成出处，不把两次调用伪装成一个 producer。
+顶层 GenerationOperations 或 MediaAnalysis 取得 Execution 根操作名额与配置快照。内部模型阶段继承同一上下文，不重新取得全局名额。普通参数不能为子操作延长父 deadline。
 
-Embedding 有独立 executor 与空间合同，复用网络和预算，不把文本生成输出伪装为向量。
+每个语义阶段有自己的模型尝试计数；描述与结构化是两项计划内阶段，分别可使用既定任务分配。总用量由应用累计，详见 [额度](budgets.md)。禁止 SDK 再做未计数的自动重试。
 
-## 流式行为
+## 流式结果
 
-尚未向调用者交付任何输出时可按 fallback 策略尝试下一候选。已经交付流内容后失败，返回部分结果与明确中断，不能静默接入另一模型继续拼成一条成功消息。
+CLI 文本流可以逐段交付。尚无任何用户可见内容时，可按 [fallback](fallback.md) 尝试下一候选；交付第一个 delta 后冻结该次输出来源，后续失败返回中断及已有部分，不把另一个模型的内容拼成一次成功结果。
 
-流由调用者持有异步上下文，取消或离开必须关闭响应。工具调用结果与调用 ID 的完整交接由实际宿主负责；本次基础生成不自行执行模型返回的工具动作。
+只有收到最终响应且完成程序校验/保存后才发出 completed 事件和成功结果引用。结构化 CLI 默认完整返回；内部即使采用流也在完整解析之后交付正式对象。
 
-## 预算与失败
+响应流使用异步上下文管理。退出、取消和异常都关闭网络资源；CancelledError 保留取消语义。取消前已经提交的独立阶段结果保持可读。
 
-所有真实请求共享[预算](budgets.md)，尝试顺序遵循[fallback](fallback.md)。底层 SDK 的自动重试显式关闭或统一纳入同一计数，禁止叠加。
+## 配置与输出采用
 
-模板错误、能力不足、输入超限在联网前返回。Provider 调用失败保留真实状态。模型任务不能因为失败自动扩大预算、换成更昂贵模型或降低来源要求。
+运行中的配置变更不影响当前请求。fallback 使用根操作冻结的输入和模板，只为新候选重新检查实际协议与参数。未经请求的参数降级不隐藏。
 
-## 完成条件
+请求前后都不持有写事务。生成完成后，应用发布字节并用 ResultStore 的短事务采用。保存失败不得重新调用模型来补偿数据库；当前已取得结果可用于重新采用或保留本次诊断。
 
-通过真实网关完成文字生成、一个小结构化结果和流式取消；实际模型身份与用量可以查看；任务不写入未经调用方采用的认知；缺模型时基础实例仍可使用。付费调用需配置与授权，未运行项按实际报告。
+## 使用说明
 
-依据：[Pydantic AI Direct](https://ai.pydantic.dev/direct/)、[Output](https://ai.pydantic.dev/output/)。
+本轮实际服务是用户授权的本地网关。真实调用不需要再申请费用批准。能力缺失先检查可用网关模型与成熟 SDK，无法满足的具体输入保留可读来源并报告缺项；不声称凭模型目录名已经具备该能力。
+
+依据：[Pydantic AI Direct](https://pydantic.dev/docs/ai/core-concepts/direct/)、[Output](https://pydantic.dev/docs/ai/core-concepts/output/)。

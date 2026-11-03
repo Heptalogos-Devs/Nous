@@ -1,31 +1,48 @@
-# 内容字节、正文与临时产物
+# CAS 字节存储与内容引用
 
-## 责任和施工位置
+## 责任与输入
 
-本专题在运行基础之后实施。ContentStore 负责文本与二进制字节的保存、读取、流式传输和物理回收。材料的作者、Observation、Journal 的版本意义归后续领域，内容服务不推断它们。
+ContentStore 保存不可变字节、流式读取、去重和物理回收。采用 SHA-256 内容寻址、本地文件系统、现有 Database/WriteTx 和进程内执行。它不推断 MIME、作者、Observation 或认知版本；[Artifact 与结果](content-records.md)负责可见记录。
 
-首个后端使用本地文件系统与成熟文件读写能力；未来远程对象存储接入同一完整内容操作，不提前实现无人使用的多后端选择框架。
+输入使用文件流、字节迭代器或已存在 BlobRef。文本明确编码为 UTF-8；原始文件不做换行、Unicode、图片方向或格式的隐式重写。需要转换就产生新字节并保存输入关系。
 
-## 内容与身份
+## 公开能力
 
-字节以 SHA-256 内容摘要去重，摘要用于字节身份；正式 Journal 或材料的对象身份由相应领域分配。相同字节可以被多个正式对象引用，不能因此把不同经历合成一个事件。
+```text
+prepare(stream, *, cancel) -> PreparedContent
+publish(prepared) -> PublishedContent
+attach_in(tx, owner_ref, slot, published) -> BlobRef
+detach_in(tx, owner_ref, slot) -> None
+open(blob_ref, range=None) -> async context manager of stream
+read_text(blob_ref, max_bytes) -> str
+```
 
-文件存储使用 content 根下由 digest 推导的路径。记录长度和 digest；MIME、语言与作者属于具体表示的描述，不能仅从内容 hash 推出。文本以 UTF-8 保存并保留原文，规范化仅在明确派生操作中进行。
+BlobRef 含 digest、byte_length。物理路径由 content 根与摘要推导，调用者不拼路径。PreparedContent/PublishedContent 由当前操作上下文持有；取消时清理本次尚未发布的临时文件。
 
-## 完整操作
+## 跨磁盘的发布
 
-`prepare(stream) -> PreparedContent` 在 temp 根流式接纳，得到摘要、长度和准备好的字节。它不占数据库写事务。
+配置允许 temp 与 content 位于不同磁盘。先在普通 temp 根完成计算后，若无法同文件系统重命名，则流式复制到 **content 根内部的 staging 文件**，复制完成后再在该文件系统内发布到摘要位置。部分复制文件不进入正式摘要目录。
 
-`publish(prepared) -> BlobRef` 将字节放入内容寻址位置，已有相同内容则复用。之后领域在短事务中建立正式引用。若事务失败，留下的是可回收孤立字节，而非一个指向尚未写入文件的成功业务对象。
+同摘要并发发布在 CAS owner 内按摘要串行，或直接采用已具备的原子 no-clobber 文件操作。只有完整字节才能出现在正式位置；相同长度且完整的既有目标可复用。遇到既有内容长度冲突报告错误，不能静默覆盖。进程只有一个实例写入者，首版无需跨主机发布协议。
 
-`open(blob_ref, range?)` 返回流和实际字节范围；`read_text` 是受上限的便利操作。`attach(tx, owner_ref, blob_ref)` 和 `detach(tx, owner_ref)` 维护正式内容引用。owner_ref 是精确所属对象及修订，内容服务不读取所有领域私有表。
+发布在 SQL 事务外进行。之后短事务保存正式内容引用；事务失败留下可回收的孤立字节，不能留下指向未完成文件的成功业务记录。
 
-执行中的 prepared 内容由本次操作持有，回收不处理正在准备的文件。第一版采用进程内持有和显式清理；无需永久租约服务。正式引用解除后由内容 owner 执行受限回收，不在每次读时全盘扫描。
+## 引用记录只有一份权威
 
-## 失败与取消
+ContentStore 管理 blob 目录元数据及 owner/slot → blob 的正式关联。Artifact 的正文通过这一关联读取，不再保存第二份可独立修改的 blob 映射。owner_ref 仅由真实记录 owner 提交；本轮只接入 Artifact/ProcessingResult 需要的引用，不建设通用对象状态平台。
 
-接纳取消清理本次临时文件，保留已成功采用的其他内容。发布失败不提交正式引用。读取缺失明确返回存储错误；不重建一份可能不同的原文冒充原件。
+ResultStore 在同一事务中提交结果、输出 Artifact 及内容 attach。ContentStore 不读取每个领域私有表来猜引用，也不在读取时全盘扫描。
 
-## 验证与后续
+## 回收与取消
 
-真实文本、二进制流、重复字节、事务采用失败、重启读取和取消后临时文件清理覆盖主要路径。Journal 段落索引以后绑定正文的精确修订；本层不抢先设计 Markdown 语义对象。
+本轮不运行周期性自动 GC。明确回收只在实例维护的独占时段进行：停止新接纳并等待实际文件工作结束，再核对正式引用并清理孤立内容。尚未采用的临时内容由操作直接清理；成功引用的内容不会因请求结束或 Trace 淘汰而丢失。
+
+阻塞文件工作由现有 Execution 管理实际 future；async 等待被取消时，不提前关闭该线程持有的源文件或删除其目标文件。prepare/publish/attach 之间的持有关系留在一次操作内，不建立永久租约服务。
+
+## 读取和交付
+
+二进制下载和本地导出按流完成，范围采用明确字节区间；文本便利读取有配置上限，超过时返回可继续读取的位置或提示使用导出，不能无标记截断。
+
+ModelExecutor 不认识 CAS 路径。应用/媒体准备在字节预算内读取媒体，向成熟 SDK 提供 BinaryContent 等真实数据；外部模型无法读取本机 `file://` 或 `content/...`。
+
+实例重启后按同一 BlobRef 读取；缓存失效只影响性能。Windows、Linux、macOS 的中文路径、空格和跨卷 staging 都由同一实现处理。

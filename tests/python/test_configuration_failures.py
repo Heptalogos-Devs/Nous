@@ -11,8 +11,8 @@ from unittest.mock import patch
 import pytest
 
 import nous.temporal.domains as time_domains
+from nous.common.errors import NousError
 from nous.runtime.bootstrap import initialize_instance, open_instance
-from nous.runtime.errors import NousError
 
 
 def test_configuration_failure_recovery(tmp_path: Path) -> None:

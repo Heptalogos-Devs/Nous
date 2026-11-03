@@ -13,8 +13,8 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from nous.runtime.errors import NousError
-from nous.runtime.values import ResourceId
+from nous.common.errors import NousError
+from nous.common.values import ResourceId
 
 
 class _Value(BaseModel):

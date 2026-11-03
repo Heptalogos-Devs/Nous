@@ -1,49 +1,25 @@
-# 首轮本地管理入口
+# 本地管理与工具入口
 
-## 范围
+## 已有管理命令
 
-首轮提供本地 CLI 和相同的进程内应用操作，服务于实例、配置、诊断与时间。完整 HTTP、MCP、远程 SDK 和后台服务部署在后续专题接入。
+init、instance show、config list/show/explain/set/unset/remove-resource/validate/schema、runtime check、time parse 保留首轮语义。命令消费共同应用操作，输出可读文字或 JSON，日志写 stderr。
 
-CLI 采用 Typer / Rich。命令只解析输入和格式化结果，业务进入相应 owner。配置、数据库和模型模块不反向依赖 CLI。
+本地配置目录通过 --instance / NOUS_INSTANCE / 平台默认位置选择。离线 show --effective 表示 prospective 值，不能报告另一个进程的内存快照。实例被占用时按已有锁规则处理，不启动第二个写入者。
 
-## 规范命令
+## 配置修改接入
 
-```sh
-nous --instance ./temp/nous-dev init --layout portable
-nous --instance ./temp/nous-dev instance show
-nous --instance ./temp/nous-dev config list --level advanced
-nous --instance ./temp/nous-dev config show --effective
-nous --instance ./temp/nous-dev config explain logging.level
-nous --instance ./temp/nous-dev config set logging.level DEBUG
-nous --instance ./temp/nous-dev config unset logging.level
-nous --instance ./temp/nous-dev config validate
-nous --instance ./temp/nous-dev config schema --output ./temp/nous-config-schema.json
-nous --instance ./temp/nous-dev runtime check
-nous --instance ./temp/nous-dev time parse "2026-11-03" --timezone Asia/Shanghai
-```
+set/unset/remove-resource/reload 使用 [共同配置用例](../foundation/configuration-integration.md)。CLI 负责选择离线资源上下文和解析参数，不持有时间域/Embedding/路径绑定规则。运行内管理使用同一实现。
 
-`--instance` 指配置目录；不写时按实例专题解析。`--json` 交付完整类型化结果；正文默认可读，日志写 stderr。数组和对象可以通过合法 JSON 值文件输入，普通字段不要求手写完整请求对象。
+字段目录从纯定义导出，standard/advanced/developer/internal 分层展现。普通输出包括类型、默认、可空性、范围、作用域、生效与危险影响，不隐藏 Embedding 的数据绑定含义。
 
-## 离线与运行中的实例
+## 新增正式工具
 
-首轮本地修改取得实例锁。已经被另一个运行时持有时返回 instance.in_use，提示使用相应在线管理入口（若该版本已经提供）或停止后管理；不能偷偷打开第二个写入服务。
+本轮新增 [nous tools](tools-cli.md)，用于模型、Prompt、媒体、CAS 及结果。实例管理和内容工具共用 Runtime/Execution，不另建一个“实验运行时”。工具配置与产品配置相同。
 
-离线 `config show --effective` 表示当前文件和本命令来源计算的“下次启动有效值”，在结果中明确 `state=prospective`。它不冒充另一个进程内当前生效的快照。`config show --saved` 可以只读已保存值。
+runtime check 只检查真实已组装资源与能力，不隐式发起模型请求。模型 probe/run 是用户明确操作；本轮本地开发调用已授权，具体操作无须再次费用确认。
 
-离线保存返回 saved；当前进程内 Application 的 Configuration.update 可以真正发布新快照，按变更专题返回 applied 或 saved_pending_restart。后续 HTTP/MCP 使用这个同一操作。
+## 用户呈现
 
-## 用户可见内容
+未知或未配置的能力准确显示。实际 Key 不打印；连接资源名和 endpoint 可以用于本地排查。具体路径、领域名和模型名保持原文，本地化只影响操作说明、状态和错误呈现。
 
-instance show 展示名称、布局、各逻辑路径与实际位置、是否被占用及必要配置问题。runtime check 真正创建并关闭本次运行资源，返回数据库可读性、配置绑定检查、观测模式和能力可用性。
-
-config list 默认展示 standard；advanced/developer/internal 由显式展开。字段说明含类型、默认值、允许 null、范围、作用域、生效方式和危险影响。风险字段的后果不因隐藏高级级别而消失。
-
-time parse 展示原输入、域、精度、点或范围以及不确定性。程序不以当前时间补齐未知事件时间。
-
-## 不做的入口
-
-首轮不提供几十个内部生命周期工具，也不为每个配置字段创建独立命令。模型 probe 与 Prompt 管理在模型计划中增加，不用空实现提前出现在帮助里。
-
-## 完成条件
-
-初始化 → 配置解释与修改 → 实际打开数据库 → 查看运行诊断 → 关闭 → 再次打开的操作链可用。当前范围的中文/英文帮助一致，JSON 与 stderr 分离；所有值来自真实操作结果。
+CURRENT 只记录能力与当前工作，不作为讨论原文同步目录。

@@ -1,7 +1,7 @@
 """Construct and close exactly the resources used by a local instance."""
 
 import logging
-from collections.abc import AsyncGenerator, Mapping, Sequence
+from collections.abc import AsyncGenerator, Mapping
 from contextlib import AsyncExitStack, ExitStack, asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -9,13 +9,28 @@ from uuid import uuid4
 
 import tomlkit
 
-from nous.configuration import ConfigSnapshot, Configuration
-from nous.observability import LoggingSession, Observability, operation
+from nous.application.configuration import ConfigurationOperations
+from nous.application.embedding import EmbeddingOperations
+from nous.common.errors import NousError
+from nous.configuration import Configuration
+from nous.content.store import ArtifactStore, ResultStore
+from nous.media.analysis import MediaAnalysis
+from nous.media.preparation import MediaPreparer
+from nous.models.embedding_store import EmbeddingSpaceRegistry
+from nous.models.embedding_store import metadata as content_metadata
+from nous.models.embeddings import EmbeddingExecutor
+from nous.models.executor import ModelExecutor
+from nous.models.operations import GenerationOperations
+from nous.models.prompts import PromptCatalog, PromptCompiler
+from nous.network import ModelConnections
+from nous.observability.assembly import LoggingSession, Observability
+from nous.observability.instrumentation import operation
+from nous.storage.content import ContentStore
+from nous.storage.content_schema import metadata as blob_metadata
 from nous.storage.database import Database
-from nous.temporal import TimeService, bind_domains, check_domains
+from nous.temporal.domains import TimeService, bind_domains, check_domains
 
 from .bindings import InstanceBinding, prepare_resource_directories
-from .errors import NousError
 from .execution import ExecutionManager
 from .instance import InstanceDescriptor, InstanceLocator, InstanceLock
 from .paths import ResolvedPaths
@@ -43,11 +58,21 @@ async def _resources() -> AsyncGenerator[AsyncExitStack]:
 class Runtime:
     paths: ResolvedPaths
     descriptor: InstanceDescriptor
-    configuration: Configuration
+    configuration: ConfigurationOperations
     database: Database
     execution: ExecutionManager
     time: TimeService
     observability: Observability
+    artifacts: ArtifactStore
+    results: ResultStore
+    connections: ModelConnections
+    prompts: PromptCatalog
+    models: ModelExecutor
+    generation: GenerationOperations
+    media: MediaAnalysis
+    embeddings: EmbeddingExecutor
+    embedding_spaces: EmbeddingSpaceRegistry
+    embedding: EmbeddingOperations
     state: str = "starting"
 
     def status(self) -> dict[str, object]:
@@ -64,13 +89,13 @@ class Runtime:
                 "database": "ready",
                 "execution": "ready",
                 "time": "ready",
-                "models": "unavailable" if configured_models else "unconfigured",
-                "network": "disabled",
-                "content": "unavailable",
+                "models": "configured" if configured_models else "unconfigured",
+                "network": "ready",
+                "content": "ready",
                 "durable_execution": "unavailable",
             },
             "in_flight": self.execution.in_flight,
-            "model_execution": "not_implemented",
+            "model_execution": "configured" if configured_models else "unconfigured",
             "paths": self.paths.to_dict(),
         }
 
@@ -82,6 +107,7 @@ async def initialize_instance(
     name: str = "default",
     environment: Mapping[str, str] | None = None,
 ) -> InstanceDescriptor:
+    """Create formal resources explicitly, or verify an existing instance without replacing them."""
     selected = InstanceLocator.resolve(locator, environment)
     if layout not in {"portable", "platform"}:
         raise NousError(
@@ -138,6 +164,7 @@ async def initialize_instance(
                 descriptor.instance_id,
                 create=not existing,
                 database_id=str(binding.database_id),
+                additional_metadata=(blob_metadata, content_metadata) if not existing else (),
             ) as database:
                 await bind_domains(database, settings.time.domains)
                 await database.check()
@@ -154,6 +181,7 @@ async def open_instance(
     environment: Mapping[str, str] | None = None,
     overrides: Mapping[str, object] | None = None,
 ) -> AsyncGenerator[Runtime]:
+    """Acquire and verify instance resources, then release them in reverse ownership order."""
     startup_id = str(uuid4())
     logs = LoggingSession(startup_id)
     runtime: Runtime | None = None
@@ -182,6 +210,8 @@ async def open_instance(
         stack.callback(observability.close)
         storage = await stack.enter_async_context(AsyncExitStack())
         execution = ExecutionManager(settings.execution, lambda: configuration.snapshot)
+        connections = ModelConnections(selected.directory, settings, configuration.environment)
+        stack.push_async_callback(connections.aclose)
 
         async def close_execution() -> None:
             with operation("runtime.shutdown"):
@@ -200,49 +230,67 @@ async def open_instance(
                         database_id=str(binding.database_id),
                     )
                 )
+                embedding_spaces = EmbeddingSpaceRegistry(database)
+                await check_domains(database, settings.time.domains)
+                await embedding_spaces.check_snapshot(configuration.snapshot)
                 await bind_domains(database, settings.time.domains)
-
-                async def binding_check(
-                    old: ConfigSnapshot, candidate: ConfigSnapshot, changed: Sequence[str]
-                ) -> None:
-                    before = old.typed_values()
-                    after = candidate.typed_values()
-                    changed_paths = set(changed)
-                    fixed = {
-                        "instance.id",
-                        "instance.layout",
-                        "paths.data_dir",
-                        "paths.content_dir",
-                        "paths.index_dir",
-                        "database.filename",
-                    }
-                    if changed_paths & fixed:
-                        raise NousError(
-                            "configuration.relocation_required",
-                            "Existing instance paths and identity require an explicit relocation operation.",
-                            details={"fields": sorted(changed_paths & fixed)},
-                        )
-                    if before.time.domains != after.time.domains:
-                        await check_domains(database, after.time.domains)
-
-                async def binding_apply(candidate: ConfigSnapshot) -> None:
-                    await bind_domains(database, candidate.typed_values().time.domains)
-
-                def live_apply(snapshot: ConfigSnapshot) -> None:
-                    logs.set_level(snapshot.typed_values().logging.level)
-
-                configuration.binding_check = binding_check
-                configuration.binding_apply = binding_apply
-                configuration.live_apply = live_apply
-                runtime = Runtime(
-                    paths,
-                    descriptor,
-                    configuration,
+                configuration_operations = ConfigurationOperations(
+                    configuration, selected, binding, paths, database=database, logs=logs
+                )
+                content = ContentStore(
+                    paths.content,
+                    paths.temp,
+                    execution,
+                    io_chunk_bytes=settings.content.io_chunk_bytes,
+                )
+                artifacts = ArtifactStore(
+                    database,
+                    content,
+                    descriptor.instance_id,
+                    text_read_max_bytes=lambda: (
+                        execution.snapshot.typed_values().content.text_read_max_bytes
+                    ),
+                )
+                results = ResultStore(database, artifacts)
+                prompts = PromptCatalog(selected.directory)
+                compiler = PromptCompiler(
+                    prompts,
+                    paths.cache,
+                    cache_entries=settings.prompt.cache_entries,
+                    bytecode_cache=settings.prompt.bytecode_cache,
+                )
+                models = ModelExecutor(connections, compiler)
+                preparer = MediaPreparer(artifacts, results, execution, models)
+                generation = GenerationOperations(models, results, execution, preparer)
+                media = MediaAnalysis(artifacts, preparer, generation, results, execution)
+                embeddings = EmbeddingExecutor(connections)
+                embedding = EmbeddingOperations(
                     database,
                     execution,
-                    TimeService(database),
-                    observability,
-                    "ready",
+                    artifacts,
+                    results,
+                    embedding_spaces,
+                    embeddings,
+                )
+                runtime = Runtime(
+                    paths=paths,
+                    descriptor=descriptor,
+                    configuration=configuration_operations,
+                    database=database,
+                    execution=execution,
+                    time=TimeService(database),
+                    observability=observability,
+                    artifacts=artifacts,
+                    results=results,
+                    connections=connections,
+                    prompts=prompts,
+                    models=models,
+                    generation=generation,
+                    media=media,
+                    embeddings=embeddings,
+                    embedding_spaces=embedding_spaces,
+                    embedding=embedding,
+                    state="ready",
                 )
             logger.info("runtime.ready")
             yield runtime

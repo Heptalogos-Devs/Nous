@@ -7,9 +7,9 @@ from typing import Literal
 
 from platformdirs import PlatformDirs
 
+from nous.common.errors import NousError
 from nous.configuration.definitions import PathsConfig
 
-from .errors import NousError
 from .instance import InstanceDescriptor, InstanceLocator
 
 PathKind = Literal[

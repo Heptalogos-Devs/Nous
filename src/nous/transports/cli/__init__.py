@@ -3,7 +3,7 @@
 import asyncio
 import json
 import sys
-from collections.abc import Mapping
+from collections.abc import Awaitable, Mapping
 from contextvars import ContextVar
 from dataclasses import asdict, dataclass, is_dataclass
 from io import TextIOWrapper
@@ -12,19 +12,17 @@ from typing import Annotated, Literal, cast
 
 import click
 import typer
+from pydantic import JsonValue, TypeAdapter, ValidationError
 from rich.console import Console
 
-from nous.configuration import ConfigSnapshot, Configuration
+from nous.common.errors import NousError
+from nous.configuration import Configuration
 from nous.configuration.service import Object
 from nous.presentation import error_message, format_status, render_error, select_language, translate
-from nous.runtime.errors import NousError
 from nous.runtime.instance import (
-    InstanceDescriptor,
     InstanceLocator,
-    InstanceLock,
     inspect_instance,
 )
-from nous.runtime.paths import ResolvedPaths
 
 cli = typer.Typer(help="Nous 本地实例管理 / Local instance management", no_args_is_help=True)
 config_cli = typer.Typer(help="读取、解释和修改配置 / Configuration", no_args_is_help=True)
@@ -76,6 +74,47 @@ def options(ctx: typer.Context) -> Options:
     return cast(Options, ctx.obj)
 
 
+def run_async[T](action: Awaitable[T]) -> T:
+    """Translate cancellation and deadlines after application resources have unwound."""
+    details: dict[str, JsonValue] = {}
+
+    async def invoke() -> T:
+        try:
+            return await action
+        except (asyncio.CancelledError, TimeoutError) as error:
+            current_error: BaseException | None = error
+            visited: set[int] = set()
+            while current_error is not None and id(current_error) not in visited:
+                visited.add(id(current_error))
+                for note in getattr(current_error, "__notes__", ()):
+                    try:
+                        saved = TypeAdapter(dict[str, JsonValue]).validate_json(note)
+                    except ValidationError, ValueError:
+                        continue
+                    previous = details.get("completed_result_refs", [])
+                    current = saved.pop("completed_result_refs", [])
+                    if isinstance(previous, list) and isinstance(current, list):
+                        details["completed_result_refs"] = list(
+                            dict.fromkeys(
+                                str(reference)
+                                for reference in [*previous, *current]
+                                if isinstance(reference, str)
+                            )
+                        )
+                    details.update(saved)
+                current_error = current_error.__cause__ or current_error.__context__
+            raise
+
+    try:
+        return asyncio.run(invoke())
+    except (asyncio.CancelledError, KeyboardInterrupt) as error:
+        raise NousError("operation.cancelled", "Operation cancelled", details=details) from error
+    except TimeoutError as error:
+        raise NousError(
+            "operation.timeout", "Operation exceeded its deadline.", details=details
+        ) from error
+
+
 def language_for(selected: Options | None) -> str:
     configured: str | None = None
     if selected is not None and selected.language is None:
@@ -106,54 +145,9 @@ async def offline_change(
     operation: Literal["update", "unset", "remove_resource"],
     argument: Mapping[str, object] | str,
 ) -> Object:
-    """Ordinary edits need the instance lock and remain possible with an unreadable DB."""
-    from nous.runtime.bindings import InstanceBinding
-    from nous.storage.database import Database
-    from nous.temporal import check_domains
+    from nous.application.configuration import open_configuration_operations
 
-    selected = options(ctx).locator
-    with InstanceLock(selected.directory):
-        service = Configuration(selected.config_file)
-        settings = service.snapshot.typed_values()
-        descriptor = InstanceDescriptor(
-            settings.instance.id, settings.instance.name, settings.instance.layout
-        )
-        paths = ResolvedPaths.resolve(selected, descriptor, settings.paths)
-        binding = InstanceBinding.read(selected)
-        binding.check_locations(selected, descriptor, paths, settings.database.filename)
-
-        async def binding_check(
-            old: ConfigSnapshot, candidate: ConfigSnapshot, changed: tuple[str, ...]
-        ) -> None:
-            desired = candidate.typed_values()
-            candidate_descriptor = InstanceDescriptor(
-                desired.instance.id, desired.instance.name, desired.instance.layout
-            )
-            candidate_paths = ResolvedPaths.resolve(selected, candidate_descriptor, desired.paths)
-            binding.check_locations(
-                selected, candidate_descriptor, candidate_paths, desired.database.filename
-            )
-            if any(path.startswith("time.domains.") for path in changed):
-                try:
-                    with InstanceLock(paths.data, data=True):
-                        binding.check_resources(paths)
-                        async with Database.open(
-                            paths.resolve_owned("data", settings.database.filename),
-                            settings.database,
-                            descriptor.instance_id,
-                            database_id=str(binding.database_id),
-                        ) as database:
-                            await check_domains(database, candidate.typed_values().time.domains)
-                except NousError:
-                    raise
-                except Exception as error:
-                    raise NousError(
-                        "configuration.binding_check_unavailable",
-                        "The database could not be opened to check time domain bindings.",
-                        cause=error,
-                    ) from error
-
-        service.binding_check = binding_check
+    async with open_configuration_operations(options(ctx).locator) as service:
         if operation == "update":
             assert isinstance(argument, Mapping)
             return await service.update(argument)
@@ -172,7 +166,7 @@ def initialize(
     """创建实例及基础数据库 / Initialize instance and database."""
     from nous.runtime.bootstrap import initialize_instance
 
-    descriptor = asyncio.run(initialize_instance(options(ctx).locator, layout=layout, name=name))
+    descriptor = run_async(initialize_instance(options(ctx).locator, layout=layout, name=name))
     emit(
         ctx,
         {
@@ -272,19 +266,19 @@ def config_set(
             parsed = json.loads(value)
         except ValueError:
             parsed = value
-    emit(ctx, asyncio.run(offline_change(ctx, "update", {path: parsed})))
+    emit(ctx, run_async(offline_change(ctx, "update", {path: parsed})))
 
 
 @config_cli.command("unset")
 def config_unset(ctx: typer.Context, path: str) -> None:
     """删除本层覆盖并恢复继承 / Restore inheritance."""
-    emit(ctx, asyncio.run(offline_change(ctx, "unset", path)))
+    emit(ctx, run_async(offline_change(ctx, "unset", path)))
 
 
 @config_cli.command("remove-resource")
 def config_remove_resource(ctx: typer.Context, path: str) -> None:
     """检查引用后删除资源 / Remove an unreferenced resource."""
-    emit(ctx, asyncio.run(offline_change(ctx, "remove_resource", path)))
+    emit(ctx, run_async(offline_change(ctx, "remove_resource", path)))
 
 
 @config_cli.command("validate")
@@ -311,7 +305,7 @@ def config_schema(
 @runtime_cli.command("check")
 def runtime_check(ctx: typer.Context) -> None:
     """实际打开并关闭运行资源 / Open, inspect and close runtime resources."""
-    from nous.observability import operation
+    from nous.observability.instrumentation import operation
     from nous.runtime.bootstrap import open_instance
 
     async def run() -> Object:
@@ -323,7 +317,7 @@ def runtime_check(ctx: typer.Context) -> None:
                 settings = runtime.configuration.snapshot.typed_values()
                 result["bindings"] = {
                     "time": "checked",
-                    "embedding": "unavailable" if settings.embedding.spaces else "unconfigured",
+                    "embedding": "checked" if settings.embedding.spaces else "unconfigured",
                 }
                 result["observability"] = {
                     "trace_export": runtime.configuration.snapshot.typed_values().tracing.export,
@@ -332,7 +326,7 @@ def runtime_check(ctx: typer.Context) -> None:
         result["state"] = runtime.state
         return result
 
-    emit(ctx, asyncio.run(run()))
+    emit(ctx, run_async(run()))
 
 
 @time_cli.command("parse")
@@ -344,7 +338,7 @@ def time_parse(
     fold: Annotated[int | None, typer.Option(help="DST 重复时刻 / DST fold: 0 or 1")] = None,
 ) -> None:
     """保留原文、精度和不确定性 / Preserve precision and uncertainty."""
-    from nous.temporal import parse_explicit_time
+    from nous.temporal.values import parse_explicit_time
 
     service = configuration(ctx)
     if domain not in service.snapshot.typed_values().time.domains:
@@ -360,6 +354,11 @@ def time_parse(
             "value": parsed.model_dump(mode="json"),
         },
     )
+
+
+from .tools import tools_cli  # noqa: E402
+
+cli.add_typer(tools_cli, name="tools")
 
 
 def main() -> None:
@@ -383,10 +382,13 @@ def main() -> None:
             else NousError(
                 "operation.cancelled"
                 if isinstance(error, (typer.Abort, KeyboardInterrupt))
+                else "operation.timeout"
+                if isinstance(error, TimeoutError)
                 else "input.invalid"
                 if isinstance(error, (ValueError, click.ClickException))
                 else "operation.failed",
-                str(error),
+                str(error)
+                or ("Operation exceeded its deadline." if isinstance(error, TimeoutError) else ""),
             )
         )
         result = failure.to_dict()

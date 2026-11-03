@@ -17,7 +17,7 @@ NousQL 是整个 Nous 的查询语言，由 Wave 执行检索。Ego 持有主体
 
 ## 当前状态
 
-当前本地 CLI 提供实例、配置、运行诊断和多轴时间操作。运行基础不要求配置模型或遥测服务；内容、持久工作、模型执行、Wave、认知对象以及 HTTP/MCP/远程 SDK 将按后续计划接入当前运行时。实际施工范围见[当前工作](docs/CURRENT.md)和[架构](docs/ARCHITECTURE.md)。
+当前本地 CLI 提供实例、配置、运行诊断、多轴时间，以及模型、Prompt、内容和媒体工具。原件与派生结果保存在本地，可按短地址读取来源；配置兼容网关后可执行文字、结构化和媒体任务及文本 Embedding。实例初始化与内容读取不要求配置模型或遥测服务。实际能力和后续工作见[当前工作](docs/CURRENT.md)和[架构](docs/ARCHITECTURE.md)。
 
 此前的服务、SDK、Native 实现与测试保存在 [legacy](legacy/README.md)，供后续研究和迁移。
 
@@ -31,13 +31,26 @@ Linux 和 macOS 使用 `source scripts/dev-env.sh`。随后安装依赖，初始
 
 ```sh
 uv sync --locked --no-dev
-uv run --no-dev nous --instance ./temp/nous-dev init --layout portable
-uv run --no-dev nous --instance ./temp/nous-dev config list --level advanced
-uv run --no-dev nous --instance ./temp/nous-dev config set logging.level DEBUG
-uv run --no-dev nous --instance ./temp/nous-dev runtime check
+uv run --no-dev nous --instance ./temp/nous-local init --layout portable
+uv run --no-dev nous --instance ./temp/nous-local config list --level advanced
+uv run --no-dev nous --instance ./temp/nous-local runtime check
+uv run --no-dev nous --instance ./temp/nous-local tools prompt list
+uv run --no-dev nous --instance ./temp/nous-local tools content add ./notes.md
 ```
 
 开发和测试时使用 `uv sync --locked` 安装开发依赖。
+
+按[模型配置示例](docs/examples/models.toml)在实例 `nous.toml` 中填写网关、凭据引用、模型与任务后，可以发现模型、处理资料并读取结果：
+
+```sh
+uv run --no-dev nous --instance ./temp/nous-local tools model discover gateway
+uv run --no-dev nous --instance ./temp/nous-local tools model run --task summarize --input ./notes.md
+uv run --no-dev nous --instance ./temp/nous-local tools media analyze ./photo.png --strategy describe_then_structure
+uv run --no-dev nous --instance ./temp/nous-local tools result read 'res:替换为返回的地址' --sources
+uv run --no-dev nous --instance ./temp/nous-local tools embedding probe text-embedding --input ./notes.md
+```
+
+将示例地址替换为实际返回的短地址；Embedding 空间按 probe 结果配置后使用 `tools embedding run --space <空间名> --purpose document --input ./notes.md`。音视频处理需要可从 PATH 找到的 FFmpeg 和 ffprobe，也可以通过 `media.ffmpeg_path`、`media.ffprobe_path` 指定可执行文件。详细命令和选项见[工具命令](docs/design/interfaces/tools-cli.md)、[本地网关](docs/development/local-gateway.md)与[实际使用通路](docs/development/model-media-walkthrough.md)。
 
 ## 产品范围
 

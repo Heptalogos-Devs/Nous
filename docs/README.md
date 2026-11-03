@@ -1,52 +1,33 @@
 # Nous 设计与开发文档
 
-Nous 当前建设独立认知服务的运行基础。开发以本目录中的当前设计和对应实施计划为依据。
+项目内 design 文档定义当前产品和工程合同；代码按当前设计实现。新的真实需求暴露结构问题时，修改负责专题与实现所有者，迁移调用方。旧代码形状和测试没有内部兼容特权。
 
-## 阅读路径
+## 阅读入口
 
-先阅读 [整体架构](ARCHITECTURE.md)，再读取所执行计划及其列出的专题。当前施工位置见 [当前工作](CURRENT.md)。实现中新出现的普通细节由实现者决定；涉及对象语义、所有权、数据归属或公开操作的实质变化，先提出具体修改，再更新负责文档。
+[整体架构](ARCHITECTURE.md)说明所有权和依赖；[当前工作](CURRENT.md)记录能力和当前目标。[模型与媒体实施计划](plans/model-runtime.md)是当前施工入口。
 
-`design/` 保存当前合同；`plans/` 规定本次实际施工；`sources/` 保留讨论原文；`legacy/` 是退役资料；`agent/` 是面向使用 Nous 的 Agent 的指南。原文中的提案和旧决定不覆盖当前设计。
+专题按独立责任组织。配置、内容、模型、Prompt、媒体转换、媒体解释和命令呈现分别维护。文档较短也保留独立主题；同一规则只在负责专题定义，其余位置引用。
 
-## 基础专题
+## 文档职责
 
-| 专题 | 文档 | 本次定位 |
-|---|---|---|
-| 实例 | [instance](design/foundation/instance.md) | 首轮实施 |
-| 逻辑与物理路径 | [paths](design/foundation/paths.md) | 首轮实施 |
-| 启动装配 | [bootstrap](design/foundation/bootstrap.md) | 首轮实施 |
-| 生命周期 | [lifecycle](design/foundation/lifecycle.md) | 首轮实施 |
-| 配置机制 | [configuration](design/foundation/configuration.md) | 首轮实施 |
-| 字段与初始目录 | [configuration-fields](design/foundation/configuration-fields.md) | 首轮实施 |
-| 配置变更 | [configuration-changes](design/foundation/configuration-changes.md) | 首轮实施 |
-| 错误 | [errors](design/foundation/errors.md) | 首轮实施 |
-| 日志 | [logging](design/foundation/logging.md) | 首轮实施 |
-| Trace | [tracing](design/foundation/tracing.md) | 首轮实施 |
-| 指标 | [metrics](design/foundation/metrics.md) | 首轮实施 |
-| 时间 | [time](design/foundation/time.md) | 首轮实施 |
-| 进程内执行 | [execution](design/foundation/execution.md) | 首轮实施 |
-| 数据库 | [database](design/foundation/database.md) | 首轮实施 |
-| 事务 | [transactions](design/foundation/transactions.md) | 首轮实现事务边界；持久入队在后续接入 |
-| 本地化 | [localization](design/foundation/localization.md) | 首轮实施 |
-| 内容存储 | [content-storage](design/foundation/content-storage.md) | 内容与持久工作交付 |
-| 持久工作 | [durable-work](design/foundation/durable-work.md) | 内容与持久工作交付 |
-| 凭据 | [credentials](design/foundation/credentials.md) | 模型交付的前置 |
-| 网络 | [networking](design/foundation/networking.md) | 模型交付的前置 |
+- `design/foundation/`：实例、配置、执行、存储、网络、时间及观测。
+- `design/models/`：资源、请求、Prompt、输出、缓存、额度和向量空间。
+- `design/media/`：输入范围、各模态准备、解释策略与派生结果。
+- `design/interfaces/`：正式入口及其呈现。
+- `plans/`：当前完整能力的实施依赖、迁移与交付。
+- `development/`：本地开发环境接入和实际使用通路。
+- `research/`：决定所采用的外部依据与取舍。
+- `sources/`：原样讨论，保留意图、提案与纠正；不逐段直接视为已批准合同。
+- `legacy/`：退役资料，只作有目的的研究参考。
 
-## 模型专题
+更新决定时原地修正文档，不在现行正文积累旧方案。`CURRENT.md` 不列讨论归档清单。与当前任务无关的文档不为格式统一而重写。
 
-[模型资源](design/models/resources.md)、[Prompt](design/models/prompts.md)、[模型执行](design/models/execution.md)、[预算](design/models/budgets.md)、[fallback](design/models/fallback.md)、[缓存](design/models/caching.md)、[向量空间](design/models/embeddings.md)分别维护自己的规则。
+## 本轮专题导航
 
-模型相关字段先由纯配置定义提供，使首轮能校验、编辑和解释完整配置；真实 Provider、Prompt 执行和 Embedding 调用按模型计划接入。未接通的执行能力必须在状态中如实显示。
+入口与依赖：[模型计划](plans/model-runtime.md)、[配置接入](design/foundation/configuration-integration.md)、[工具 CLI](design/interfaces/tools-cli.md)。
 
-## 实施与使用
+内容与模型：[CAS](design/foundation/content-storage.md)、[内容记录与结果](design/foundation/content-records.md)、[网络](design/foundation/networking.md)、[凭据](design/foundation/credentials.md)、[资源](design/models/resources.md)、[Prompt](design/models/prompts.md)、[任务合同](design/models/task-contracts.md)、[执行](design/models/execution.md)、[Embedding](design/models/embeddings.md)。
 
-[本地管理入口](design/interfaces/local-management.md)规定首轮 CLI 的可执行操作。[运行基础](plans/runtime-foundation.md)、[内容与持久工作](plans/storage-and-jobs.md)、[模型运行](plans/model-runtime.md)分别授权一项完整交付。
+媒体：[准备与选择](design/media/preparation.md)、[图片](design/media/images.md)、[文档](design/media/documents.md)、[音频](design/media/audio.md)、[视频](design/media/video.md)、[解释与派生](design/media/analysis.md)。
 
-[实例配置示例](examples/nous.toml)、[模型配置示例](examples/models.toml)用于说明正式配置形状。示例中的本地网关地址和模型名由操作者替换，不作为默认可用服务。
-
-## 文档维护
-
-一条规则只有一个定义位置，其他专题链接引用。规则、接口或默认值改变时，同时修改其实际消费者和相应使用例子。原文保留在 `sources/`，已失效说明从当前设计退出。`CURRENT.md` 只更新当前目标、有效决定和未完成能力。
-
-专题短小可以保留。随着细节增长，在原职责内补全，不因当前篇幅小而合并不同主题。文档拆分不要求代码按文件一一拆分。
+实际使用：[本地网关](development/local-gateway.md)、[通路验证](development/model-media-walkthrough.md)。

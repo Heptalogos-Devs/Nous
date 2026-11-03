@@ -6,7 +6,8 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
-from .errors import NousError
+from nous.common.errors import NousError
+
 from .instance import InstanceDescriptor, InstanceLocator
 from .paths import ResolvedPaths
 
