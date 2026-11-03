@@ -16,4 +16,6 @@
 
 `render_error(error, locale)`、`format_status(result, locale)` 是纯呈现操作。CLI 的 `--json` 返回原类型化合同，仍可带可读 message。模块不要在内部异常中直接拼接多语言大段说明。
 
+译文保存在 `nous.presentation` 的 gettext 目录中，运行时通过包资源加载。修改 `.po` 后执行 `pybabel compile -D nous -d src/nous/presentation/locales` 更新随包分发的 `.mo`。
+
 完成条件：同一错误的 code 在两种语言下相同；并发选择语言不串线；中文路径和用户文本保持原样。来源：[gettext](https://docs.python.org/3.14/library/gettext.html)。

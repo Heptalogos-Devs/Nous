@@ -1,322 +1,243 @@
-"""The CLI uses real HTTP, strict JSON and protected one-time credential files."""
+"""The local runtime's user-visible path and its persistent contracts."""
 
 import asyncio
 import json
 import os
-import socket
 import subprocess
 import sys
-import time
+import threading
+from fractions import Fraction
 from pathlib import Path
 
-import httpx
-from mcp import ClientSession, StdioServerParameters
-from mcp.client.stdio import stdio_client
+import pytest
+
+from nous.runtime.bootstrap import initialize_instance, open_instance
+from nous.runtime.errors import NousError
+from nous.runtime.instance import InstanceLock
+from nous.temporal import (
+    Instant,
+    Interval,
+    Known,
+    TimeDomainDefinition,
+    TimePoint,
+    Unbounded,
+    UnknownBoundary,
+    compare_points,
+    match_range,
+    parse_explicit_time,
+    register_domain,
+)
 
 
-def test_installed_default_instance_is_independent_of_cwd_and_keeps_overrides(tmp_path):
-    command = [sys.executable, "-I", "-c", "from nous.transports.cli import main; main()"]
-    environment = os.environ.copy()
-    environment["NOUS_CLIENT_CONFIG"] = str(tmp_path / "client.toml")
-    for name in ("NOUS_INSTANCE", "NOUS_CREDENTIAL_FILE"):
-        environment.pop(name, None)
-    environment.update(
-        LOCALAPPDATA=str(tmp_path / "data"),
-        XDG_DATA_HOME=str(tmp_path / "data"),
-        HOME=str(tmp_path / "home"),
-    )
-    first, second = tmp_path / "first", tmp_path / "second"
-    first.mkdir()
-    second.mkdir()
+def test_local_cli_initialization_configuration_and_runtime(tmp_path: Path) -> None:
+    instance = tmp_path / "独立 instance"
+    cwd = tmp_path / "another working directory"
+    cwd.mkdir()
+    environment = {key: value for key, value in os.environ.items() if not key.startswith("NOUS__")}
+    command = [sys.executable, "-c", "from nous.transports.cli import main; main()"]
 
-    def invoke_at(directory, *arguments, env=environment):
+    def invoke(*args: str, env: dict[str, str] | None = None, success: bool = True):
         result = subprocess.run(
-            [*command, "--json", *arguments],
-            cwd=directory,
-            env=env,
-            check=True,
+            [*command, "--instance", str(instance), "--json", *args],
+            cwd=cwd,
+            env=env or environment,
             capture_output=True,
             encoding="utf-8",
-            timeout=40,
+            timeout=45,
+            check=False,
         )
+        assert (result.returncode == 0) == success, (result.stdout, result.stderr)
         return json.loads(result.stdout)
 
-    initialized = invoke_at(first, "init")
-    expected = Path(initialized["instance"])
-    assert expected.is_absolute() and expected.name == "instance"
-    assert expected.is_relative_to(tmp_path)
-    credential = Path(initialized["credential_file"]).read_bytes()
-    assert invoke_at(second, "init") == initialized
-    assert Path(initialized["credential_file"]).read_bytes() == credential
-    configured = subprocess.run(
-        [
-            sys.executable,
-            "-I",
-            "-c",
-            "from nous.platform.configuration import Settings; print(Settings().instance)",
-        ],
-        cwd=second,
-        env=environment,
-        check=True,
-        capture_output=True,
-        encoding="utf-8",
-        timeout=20,
-    )
-    assert Path(configured.stdout.strip()) == expected
-    env_instance, flag_instance = tmp_path / "environment", tmp_path / "explicit"
-    overridden = {**environment, "NOUS_INSTANCE": str(env_instance)}
-    assert Path(invoke_at(first, "init", env=overridden)["instance"]) == env_instance
-    assert (
-        Path(
-            invoke_at(second, "--instance", str(flag_instance), "init", env=overridden)["instance"]
-        )
-        == flag_instance
-    )
-    assert (
-        Path(
-            invoke_at(second, "init", "--instance", str(flag_instance), env=overridden)["instance"]
-        )
-        == flag_instance
-    )
-    assert Path(initialized["credential_file"]).read_bytes() == credential
+    initialized = invoke("init", "--layout", "portable")
+    identity = initialized["instance"]["instance_id"]
+    assert (instance / "nous.toml").is_file()
+    assert (instance / "data" / "nous.sqlite3").is_file()
+    assert invoke("init")["instance"]["instance_id"] == identity
 
-    # An existing installation keeps its previous data location without moving it.
-    legacy_env = {
-        **environment,
-        "LOCALAPPDATA": str(tmp_path / "legacy-data"),
-        "XDG_DATA_HOME": str(tmp_path / "legacy-data"),
-        "HOME": str(tmp_path / "legacy-home"),
-    }
-    parent = (
-        tmp_path / "legacy-home/Library/Application Support"
-        if sys.platform == "darwin"
-        else tmp_path / "legacy-data"
-    )
-    legacy = (
-        parent / ("NousWave" if sys.platform in {"win32", "darwin"} else "nous-wave") / "instance"
-    )
-    previous = invoke_at(first, "init", "--instance", str(legacy), env=legacy_env)
-    assert invoke_at(second, "init", env=legacy_env) == previous
+    fields = invoke("config", "list", "--level", "advanced")["fields"]
+    assert {"logging.level", "execution.max_in_flight"} <= {field["path"] for field in fields}
+    assert invoke("config", "set", "logging.level", "DEBUG")["state"] == "saved"
+    invoke("config", "set", "execution.max_in_flight", "7")
+    invoke("config", "set", "paths.cache_dir", "relative-cache")
+    override = {**environment, "NOUS__LOGGING__LEVEL": "WARNING"}
+    explained = invoke("config", "explain", "logging.level", env=override)
+    assert explained["saved_value"] == "DEBUG"
+    assert explained["effective_value"] == "WARNING"
+    assert explained["source"]["layer"] == "environment"
 
-    with socket.socket() as available:
-        available.bind(("127.0.0.1", 0))
-        port = available.getsockname()[1]
-    url = f"http://127.0.0.1:{port}"
-    with (tmp_path / "default-host.log").open("w", encoding="utf-8") as log:
-        host = subprocess.Popen(
-            [*command, "serve", "--port", str(port)],
-            cwd=first,
-            env=environment,
-            stdout=log,
-            stderr=log,
-        )
-        headers = {"Authorization": "Bearer " + credential.decode().strip()}
-        try:
-            deadline = time.monotonic() + 40
-            while True:
-                try:
-                    response = httpx.get(url + "/api/manage/status", headers=headers, timeout=1)
-                    if response.is_success:
-                        break
-                except httpx.HTTPError:
-                    pass
-                assert host.poll() is None and time.monotonic() < deadline
-                time.sleep(0.1)
-            assert Path(response.json()["instance"]) == expected
-            assert Path(invoke_at(second, "--url", url, "status")["instance"]) == expected
-            assert (expected / "data/authority.sqlite").is_file()
-            assert not (first / "temp/instances/default").exists()
-            assert not (second / "temp/instances/default").exists()
-        finally:
-            if host.poll() is None:
-                try:
-                    httpx.post(url + "/api/manage/stop", headers=headers, timeout=5)
-                    host.wait(timeout=25)
-                except httpx.HTTPError, subprocess.TimeoutExpired:
-                    host.terminate()
-                    host.wait(timeout=10)
+    invoke("config", "set", "network.proxy_url", "--null")
+    assert invoke("config", "explain", "network.proxy_url")["source"]["layer"] == "instance"
+    invoke("config", "unset", "network.proxy_url")
+    assert invoke("config", "explain", "network.proxy_url")["source"]["layer"] == "default"
+
+    status = invoke("runtime", "check")
+    assert status["state"] == "stopped"
+    assert status["database"]["instance_id"] == identity
+    assert status["database"]["foreign_keys"] is True
+    assert status["bindings"]["time"] == "checked"
+    assert status["bindings"]["embedding"] == "unconfigured"
+    assert invoke("config", "show", "--effective")["values"]["execution"]["max_in_flight"] == 7
+    parsed = invoke("time", "parse", "2026-11-03", "--timezone", "Asia/Shanghai")["value"]
+    assert parsed["meaning"] == "uncertain_instant" and parsed["precision"] == "day"
+    logs = (instance / "logs" / "nous.jsonl").read_text(encoding="utf-8").splitlines()
+    assert any(json.loads(line).get("trace_id") for line in logs)
+
+    with InstanceLock(instance):
+        locked = invoke("config", "set", "logging.level", "INFO", success=False)
+    assert locked["error"]["code"] == "instance.in_use"
+    moved = invoke("config", "set", "paths.data_dir", "elsewhere", success=False)
+    assert moved["error"]["code"] == "configuration.relocation_required"
+    error_en = invoke("--language", "en", "config", "explain", "missing.path", success=False)
+    error_zh = invoke("--language", "zh-CN", "config", "explain", "missing.path", success=False)
+    assert error_en["error"]["code"] == error_zh["error"]["code"]
+    assert error_en["error"]["message"] != error_zh["error"]["message"]
+
+    moved_instance = tmp_path / "移动后的 portable instance"
+    instance.rename(moved_instance)
+    instance = moved_instance
+    shown = invoke("instance", "show")
+    assert Path(shown["paths"]["cache"]) == moved_instance / "relative-cache"
+    assert invoke("runtime", "check")["database"]["instance_id"] == identity
 
 
-def test_cli_namespace_workflow_and_mcp_reads(tmp_path):
-    command = [sys.executable, "-c", "from nous.transports.cli import main; main()"]
-    instance = tmp_path / "instance"
-    environment = {**os.environ, "NOUS_CLIENT_CONFIG": str(tmp_path / "client.toml")}
-    with socket.socket() as available:
-        available.bind(("127.0.0.1", 0))
-        port = available.getsockname()[1]
-    url = f"http://127.0.0.1:{port}"
-    connection = ["--instance", str(instance), "--url", url, "--json"]
+def test_runtime_snapshots_transactions_and_time_domain_bindings(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        instance = tmp_path / "instance"
+        await initialize_instance(instance)
+        async with open_instance(instance) as runtime:
+            old = runtime.configuration.snapshot
+            result = await runtime.configuration.update({"execution.default_timeout_seconds": 2})
+            assert result["state"] == "applied"
+            assert old.values.execution.default_timeout_seconds is None
+            assert runtime.configuration.snapshot.values.execution.default_timeout_seconds == 2
 
-    def invoke(*arguments, credential=None, success=True):
-        options = connection.copy()
-        if credential is not None:
-            options += ["--credential-file", str(credential)]
-        response = subprocess.run(
-            [*command, *options, *arguments],
-            env=environment,
-            capture_output=True,
-            encoding="utf-8",
-            timeout=60,
-        )
-        assert (response.returncode == 0) == success, (response.stdout, response.stderr)
-        return json.loads(response.stdout)
+            mars = {"kind": "linear", "name": "Mars", "tick_seconds": "1/1000", "epoch": "sol 0"}
+            assert (await runtime.configuration.update({"time.domains.mars": mars}))[
+                "state"
+            ] == "applied"
+            assert (await runtime.time.domains())["mars"].tick_seconds == Fraction(1, 1000)
+            with pytest.raises(NousError) as failure:
+                await runtime.configuration.update({"time.domains.mars.tick_seconds": "1/2"})
+            assert failure.value.code == "configuration.binding_conflict"
 
-    initialized = invoke("init")
-    assert initialized["namespace"] == "default"
-    document = tmp_path / "field-notes.txt"
-    document.write_text(
-        "NATIVE-CLI-ALPHA-73 records how import and retrieval share one namespace.",
-        encoding="utf-8",
-    )
-    log = tmp_path / "host.log"
-    with log.open("w", encoding="utf-8") as diagnostics:
-        host = subprocess.Popen(
-            [*command, "--instance", str(instance), "--url", url, "serve", "--port", str(port)],
-            env=environment,
-            stdout=diagnostics,
-            stderr=diagnostics,
-        )
-        headers = {
-            "Authorization": "Bearer "
-            + (instance / "credentials" / "admin.token").read_text(encoding="utf-8").strip()
-        }
-        try:
-            deadline = time.monotonic() + 40
-            while True:
-                try:
-                    response = httpx.get(
-                        url + "/api/manage/status", headers=headers, timeout=1
-                    )
-                    if response.is_success:
-                        break
-                except httpx.HTTPError:
-                    pass
-                assert host.poll() is None and time.monotonic() < deadline, log.read_text(
-                    encoding="utf-8"
-                )
-                time.sleep(0.1)
-
-            selected = invoke("use", "default")
-            namespace_id = selected["ref"].removeprefix("namespace:")
-            imported = invoke("import", str(document), "--capture-only")
-            assert imported["status"] == "completed" and imported["materials"]
-
-            found = invoke("query", "NATIVE-CLI-ALPHA-73")
-            short_ref = found["items"][0]["ref"]
-            assert short_ref and len(short_ref) <= 24 and "@" not in short_ref
-            read = invoke("read", short_ref)
-            assert "NATIVE-CLI-ALPHA-73" in read["text"]
-
-            memory = invoke(
-                "remember", "The service keeps each write in one atomic transaction."
-            )
-            corrected = invoke(
-                "correct",
-                memory["ref"],
-                "The service commits each accepted write atomically.",
-                "--reason",
-                "Use the current transaction contract.",
-            )
-            assert corrected["text"] == "Correction saved."
-            work = invoke(
-                "work",
-                "start",
-                "Review the transaction contract",
-                "--text",
-                "Confirm the updated wording in the next implementation pass.",
-                "--anchor",
-                memory["ref"],
-            )
-            assert work["ref"].startswith("work:")
-
-            async def mcp_protocol():
-                parameters = StdioServerParameters(
-                    command=command[0],
-                    env=environment,
-                    args=[
-                        *command[1:],
-                        *connection,
-                        "--namespace",
-                        namespace_id,
-                        "mcp",
-                    ],
-                )
-                async with stdio_client(
-                    parameters, errlog=sys.stderr
-                ) as (reader, writer):
-                    async with ClientSession(
-                        reader, writer, read_timeout_seconds=30
-                    ) as session:
-                        initialized = await session.initialize()
-                        assert initialized.server_info.name == "Nous"
-                        tools = {tool.name for tool in (await session.list_tools()).tools}
-                        assert {"nous_query", "nous_read", "nous_correct", "nous_work_open"} <= tools
-                        summary = await session.call_tool("nous_status", {})
-                        assert not summary.is_error and summary.structured_content["namespace"] == "default"
-                        result = await session.call_tool(
-                            "nous_query", {"query": "NATIVE-CLI-ALPHA-73"}
-                        )
-                        assert not result.is_error
-                        reference = result.structured_content["items"][0]["ref"]
-                        assert len(reference) <= 24 and "@" not in reference
-                        detail = await session.call_tool("nous_read", {"ref": reference})
-                        assert not detail.is_error
-                        assert "NATIVE-CLI-ALPHA-73" in detail.structured_content["text"]
-                        captured = await session.call_tool(
-                            "nous_ingest", {"content": "The original remains readable after capture."}
-                        )
-                        assert not captured.is_error
-                        captured_ref = captured.structured_content["materials"][0]["ref"]
-                        assert captured_ref.startswith("art:")
-                        captured_read = await session.call_tool("nous_read", {"ref": captured_ref})
-                        assert "original remains readable" in captured_read.structured_content["text"]
-                        queued = await session.call_tool(
-                            "nous_ingest", {"content": "A queued original is available later.", "wait": False}
-                        )
-                        for _ in range(120):
-                            status = await session.call_tool(
-                                "nous_status", {"ref": queued.structured_content["ref"]}
-                            )
-                            if status.structured_content.get("status") == "completed":
-                                break
-                            await asyncio.sleep(0.1)
-                        assert status.structured_content["materials"][0]["ref"].startswith("art:")
-                        followup = await session.call_tool(
-                            "nous_work_open",
-                            {
-                                "goal": "Recheck imported notes",
-                                "background": "The note came from the CLI import.",
-                                "anchors": [reference],
+            with pytest.raises(NousError) as unavailable:
+                await runtime.configuration.update(
+                    {
+                        "providers.gateway": {
+                            "protocol": "openai-chat-completions",
+                            "endpoint": "http://127.0.0.1:3000/v1",
+                        },
+                        "models.embedder": {
+                            "provider": "gateway",
+                            "model_name": "example-embedding",
+                            "capabilities": ["embedding"],
+                        },
+                        "embedding.spaces.example": {
+                            "model": "embedder",
+                            "deployment_revision": "one",
+                            "dimensions": 384,
+                            "modalities": ["text"],
+                            "normalization": "l2",
+                            "encoding": {
+                                "document_instruction": "",
+                                "query_instruction": "",
+                                "preprocessing_revision": "one",
+                                "input_combination": "text",
                             },
-                        )
-                        assert not followup.is_error
-                        assert followup.structured_content["ref"].startswith("work:")
+                        },
+                    }
+                )
+            assert unavailable.value.code == "configuration.binding_check_unavailable"
 
-            asyncio.run(mcp_protocol())
+            with pytest.raises(RuntimeError):
+                async with runtime.database.write() as tx:
+                    await register_domain(
+                        TimeDomainDefinition(domain_id="rolled-back", kind="opaque", name="temp"),
+                        tx,
+                    )
+                    raise RuntimeError("abort the business operation")
+            assert "rolled-back" not in await runtime.time.domains()
 
-            queued = invoke("import", str(document), "--capture-only", "--no-wait")
-            for _ in range(15):
-                finished = invoke("jobs", queued["ref"])
-                if finished.get("status") == "completed":
-                    break
-                time.sleep(0.2)
-            assert finished["materials"][0]["ref"].startswith("art:")
+            before_restart = runtime.configuration.snapshot
+            result = await runtime.configuration.update(
+                {"execution.max_in_flight": 3, "logging.level": "ERROR"}
+            )
+            assert result["state"] == "saved_pending_restart"
+            assert runtime.configuration.snapshot is before_restart
+        async with open_instance(instance) as reopened:
+            assert reopened.configuration.snapshot.values.execution.max_in_flight == 3
+            assert reopened.configuration.snapshot.values.logging.level == "ERROR"
+            assert (await reopened.time.domains())["mars"].tick_seconds == Fraction(1, 1000)
 
-            archive = tmp_path / "knowledge.json"
-            invoke("bundle", "export", str(archive))
-            invoke("namespace", "create", "bundle-target")
-            invoke("use", "bundle-target")
-            invoke("bundle", "install", str(archive))
-            imported_memory = invoke("read", memory["ref"], "--sources")
-            assert imported_memory["text"] == "The service keeps each write in one atomic transaction."
-            revised_ref = next(item["ref"] for item in corrected["items"] if item["kind"] == "memory")
-            revised = invoke("read", revised_ref)
-            assert revised["text"] == "The service commits each accepted write atomically."
+    asyncio.run(scenario())
+
+
+def test_temporal_precision_unknown_boundaries_and_dst() -> None:
+    day = parse_explicit_time("2026-11-03", timezone="Asia/Shanghai")
+    assert isinstance(day, Interval) and isinstance(day.start, Known)
+    beginning = day.start.at.ticks
+    hour = Interval(
+        start=Known(at=TimePoint(domain_id="utc", ticks=beginning)),
+        end=Known(at=TimePoint(domain_id="utc", ticks=beginning + 3_600_000_000)),
+        meaning="duration",
+    )
+    assert match_range(day, hour) == "unknown"
+    assert match_range(day, day) == "matches"
+    open_query = Interval(start=Unbounded(), end=Unbounded(), meaning="duration")
+    uncertain = Interval(start=UnknownBoundary(), end=UnknownBoundary(), meaning="duration")
+    assert match_range(uncertain, open_query) == "matches"
+    assert match_range(Instant(at=TimePoint(domain_id="utc", ticks=beginning)), hour) == "matches"
+    with pytest.raises(NousError) as mismatch:
+        compare_points(TimePoint(domain_id="mars", ticks=0), TimePoint(domain_id="utc", ticks=0))
+    assert mismatch.value.code == "time.domain_mismatch"
+    with pytest.raises(NousError) as nonexistent:
+        parse_explicit_time("2026-03-08T02:30:00", timezone="America/New_York")
+    assert nonexistent.value.code == "time.nonexistent_local_time"
+    with pytest.raises(NousError) as ambiguous:
+        parse_explicit_time("2026-11-01T01:30:00", timezone="America/New_York")
+    assert ambiguous.value.code == "time.ambiguous_local_time"
+    early = parse_explicit_time("2026-11-01T01:30:00", timezone="America/New_York", fold=0)
+    late = parse_explicit_time("2026-11-01T01:30:00", timezone="America/New_York", fold=1)
+    assert isinstance(early, Instant) and isinstance(late, Instant)
+    assert late.at.ticks - early.at.ticks == 3_600_000_000
+
+
+def test_shutdown_waits_for_cancelled_blocking_worker(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        instance = tmp_path / "instance"
+        await initialize_instance(instance)
+        ready = asyncio.get_running_loop().create_future()
+        stop = asyncio.Event()
+        started = threading.Event()
+        release = threading.Event()
+
+        async def host() -> None:
+            async with open_instance(instance) as runtime:
+                ready.set_result(runtime)
+                await stop.wait()
+
+        def work() -> None:
+            started.set()
+            if not release.wait(5):
+                raise TimeoutError("worker was not released")
+
+        host_task = asyncio.create_task(host())
+        runtime = await ready
+        waiter = asyncio.create_task(runtime.execution.blocking(work))
+        try:
+            assert await asyncio.to_thread(started.wait, 2)
+            waiter.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await waiter
+            stop.set()
+            await asyncio.sleep(0.05)
+            assert not host_task.done()
+            assert (await runtime.database.check()).foreign_keys
         finally:
-            if host.poll() is None:
-                try:
-                    httpx.post(url + "/api/manage/stop", headers=headers, timeout=5)
-                    host.wait(timeout=25)
-                except (httpx.HTTPError, subprocess.TimeoutExpired):
-                    host.terminate()
-                    host.wait(timeout=10)
+            release.set()
+            stop.set()
+            await asyncio.wait_for(host_task, 5)
+        assert runtime.state == "stopped"
+
+    asyncio.run(scenario())

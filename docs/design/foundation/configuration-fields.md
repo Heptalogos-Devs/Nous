@@ -49,7 +49,7 @@
 | database.foreign_keys | 固定 true，只读目录项 | internal |
 | database.journal_mode | 固定 WAL，本地文件模式 | internal |
 | time.domains.<id>.kind | utc\|linear\|opaque | advanced / new_binding |
-| time.domains.<id>.tick_seconds | 正有理数；linear 时必需 | advanced / new_binding |
+| time.domains.<id>.tick_seconds | 正有理数字符串，如 `"1/1000"`；linear 时必需 | advanced / new_binding |
 | time.domains.<id>.epoch | 可选可读说明；不可据此自动换算 | advanced / new_binding |
 | time.domains.<id>.name | 可读名称 | standard / next_operation |
 

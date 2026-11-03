@@ -28,12 +28,8 @@ htmlcov/
 build/
 dist/
 
-# Rust and native extensions
+# Rust
 target/
-/native/python/python/nous_native/_core*.so
-/native/python/python/nous_native/_core*.pyd
-/native/python/python/nous_native/_core*.dll
-/native/python/python/nous_native/_core*.pdb
 
 # Node.js dependencies and caches
 node_modules/

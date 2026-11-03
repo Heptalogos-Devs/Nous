@@ -1,0 +1,737 @@
+# Chinese (Simplified, China) translations for Nous.
+# Copyright (C) 2026 ORGANIZATION
+# This file is distributed under the same license as the Nous project.
+# FIRST AUTHOR <EMAIL@ADDRESS>, 2026.
+#
+#, fuzzy
+msgid ""
+msgstr ""
+"Project-Id-Version: Nous 0.1.0\n"
+"Report-Msgid-Bugs-To: EMAIL@ADDRESS\n"
+"POT-Creation-Date: 2026-11-03 13:40+0900\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language: zh_CN\n"
+"Language-Team: zh_CN <LL@li.org>\n"
+"Plural-Forms: nplurals=1; plural=0;\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=utf-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Generated-By: Babel 2.18.0\n"
+
+msgid "A boolean is not a time coordinate"
+msgstr "布尔值不能用作时间坐标。"
+
+msgid "A current point in this time domain is required"
+msgstr "需要提供此时间域中的当前时间点。"
+
+msgid "A nested operation must use its parent's configuration snapshot."
+msgstr "嵌套操作必须使用父操作的配置快照。"
+
+msgid "A non-UTC domain requires an integer coordinate"
+msgstr "非 UTC 时间域需要整数坐标。"
+
+msgid "A resource directory already contains files."
+msgstr "资源目录已包含文件。"
+
+msgid "A resource directory does not belong to this instance."
+msgstr "资源目录不属于此实例。"
+
+msgid "A time zone is required for a calendar date"
+msgstr "解析日期时需要指定时区。"
+
+msgid "A time zone or UTC offset is required"
+msgstr "请提供时区或 UTC 偏移量。"
+
+msgid "Activation failure"
+msgstr "生效失败"
+
+msgid "An initialized resource directory or identity marker is missing."
+msgstr "已初始化的资源目录或身份标记缺失。"
+
+msgid "Another operation is initializing this instance."
+msgstr "另一个操作正在初始化此实例。"
+
+msgid "Apply / Impact"
+msgstr "生效方式 / 影响"
+
+msgid "Binding application"
+msgstr "持久绑定生效"
+
+msgid "Cache"
+msgstr "缓存"
+
+msgid "Cannot open instance database"
+msgstr "无法打开实例数据库。"
+
+msgid "Capabilities"
+msgstr "能力"
+
+msgid "Cause code"
+msgstr "原因代码"
+
+msgid "Cause details"
+msgstr "原因详情"
+
+msgid "Changes"
+msgstr "修改"
+
+msgid "Checks"
+msgstr "检查"
+
+msgid "Choose either --saved or --effective"
+msgstr "请选择 --saved 或 --effective。"
+
+msgid "Configuration"
+msgstr "配置"
+
+msgid "Configuration fields"
+msgstr "配置字段"
+
+msgid "Configuration file"
+msgstr "配置文件"
+
+msgid "Configuration operation failed"
+msgstr "配置操作失败"
+
+msgid "Configuration snapshots are immutable"
+msgstr "配置快照不可修改。"
+
+msgid "Configuration version"
+msgstr "配置版本"
+
+msgid "Configuration version changed"
+msgstr "配置版本已改变。"
+
+msgid ""
+"Configuration was saved but could not be applied; the previous effective "
+"snapshot remains active and restart is required."
+msgstr "配置已保存但生效失败；运行时继续使用原有效配置，需要重启。"
+
+msgid "Content"
+msgstr "内容"
+
+msgid "Coordinate interpretation; registered IDs cannot change kind."
+msgstr "时间坐标的解释方式；已登记的域 ID 不能改变类型。"
+
+msgid "Coordinate origin description."
+msgstr "时间坐标原点的说明。"
+
+msgid "Correct filesystem access and retry the operation."
+msgstr "修正文件系统访问权限后重试此操作。"
+
+msgid "Correct filesystem access and retry the same update."
+msgstr "修正文件系统访问权限后重试同一次修改。"
+
+msgid ""
+"Correct the binding conflict or unavailable dependency and retry; this "
+"operation did not save the file."
+msgstr "解决绑定冲突或依赖不可用问题后重试；本次操作未保存文件。"
+
+msgid ""
+"Correct the reported input or binding problem and retry; this operation "
+"did not save the file."
+msgstr "修正报告的输入或绑定问题后重试；本次操作未保存文件。"
+
+msgid ""
+"Correct the saved file and call reload again; the effective configuration"
+" is unchanged."
+msgstr "修正已保存的文件后再次调用 reload；当前有效配置保持原值。"
+
+msgid "Correct the saved file and reload again."
+msgstr "修正已保存的文件后再次调用 reload。"
+
+msgid ""
+"Correct the saved settings or failed dependency, then stop and reopen the"
+" instance; startup rechecks bindings and applies the complete saved "
+"configuration."
+msgstr "修正已保存的配置或发生故障的依赖，然后停止并重新打开实例；启动时会重新检查绑定并应用完整配置。"
+
+msgid "Data"
+msgstr "数据"
+
+msgid "Database"
+msgstr "数据库"
+
+msgid "Database ID"
+msgstr "数据库 ID"
+
+msgid "Database already exists"
+msgstr "数据库已存在。"
+
+msgid "Database file relative to the data root."
+msgstr "相对于数据根目录的数据库文件名。"
+
+msgid "Database identity conflicts with the initialized instance resources."
+msgstr "数据库身份与已初始化的实例资源发生冲突。"
+
+msgid "Database is not in WAL mode"
+msgstr "数据库未使用 WAL 模式。"
+
+msgid "Default"
+msgstr "默认值"
+
+msgid "Definition"
+msgstr "定义"
+
+msgid "Description"
+msgstr "说明"
+
+msgid "Desired value"
+msgstr "期望值"
+
+msgid "Details"
+msgstr "详情"
+
+msgid "Diagnostic"
+msgstr "诊断"
+
+msgid "Directories"
+msgstr "目录"
+
+msgid "Disposable cache directory."
+msgstr "可淘汰的缓存目录。"
+
+msgid "Durable execution"
+msgstr "持久执行"
+
+msgid "Effective value"
+msgstr "有效值"
+
+msgid "Effective version"
+msgstr "有效版本"
+
+msgid "Embedding space binding management is not available in this version."
+msgstr "当前版本尚未提供 Embedding 空间绑定管理。"
+
+msgid "Enable local trace recording."
+msgstr "启用本地 Trace 记录。"
+
+msgid "Enable operation metrics."
+msgstr "启用操作指标。"
+
+msgid "Execution"
+msgstr "执行"
+
+msgid ""
+"Existing instance paths and identity require an explicit relocation "
+"operation."
+msgstr "现有实例的路径和身份修改需要显式重定位。"
+
+msgid "Existing instance paths require explicit relocation."
+msgstr "现有实例的路径修改需要显式重定位。"
+
+msgid "Explain value sources and application."
+msgstr "解释值的来源和生效状态。"
+
+msgid "Explicit OTLP HTTP endpoint."
+msgstr "显式 OTLP HTTP 端点。"
+
+msgid "Explicit time"
+msgstr "显式时间"
+
+msgid "Export configuration JSON Schema."
+msgstr "导出配置 JSON Schema。"
+
+msgid "Exports"
+msgstr "导出"
+
+msgid "Field"
+msgstr "字段"
+
+msgid "Fields"
+msgstr "字段"
+
+msgid "File"
+msgstr "文件"
+
+msgid "File saved"
+msgstr "文件已保存"
+
+msgid "File write performed"
+msgstr "已执行文件写入"
+
+msgid "Foreign keys"
+msgstr "外键"
+
+msgid "Formal content root; changes require explicit relocation."
+msgstr "正式内容根目录；修改需要显式重定位。"
+
+msgid "Formal database root; existing data requires explicit relocation."
+msgstr "正式数据库根目录；已有数据需要显式重定位。"
+
+msgid "Grace period for shutdown in seconds."
+msgstr "关闭时允许在途操作完成的宽限时间，单位为秒。"
+
+msgid "Human-readable domain name."
+msgstr "可读的时间域名称。"
+
+msgid "IANA display timezone."
+msgstr "显示时间使用的 IANA 时区。"
+
+msgid "In use"
+msgstr "正在占用"
+
+msgid "Index"
+msgstr "索引"
+
+msgid "Index root; changes require explicit relocation."
+msgstr "索引根目录；修改需要显式重定位。"
+
+msgid "Initialize instance and database."
+msgstr "创建实例及基础数据库。"
+
+msgid "Initialized"
+msgstr "已初始化"
+
+msgid "Input"
+msgstr "输入"
+
+msgid "Inspect instance"
+msgstr "查看实例"
+
+msgid "Instance"
+msgstr "实例"
+
+msgid "Instance ID"
+msgstr "实例 ID"
+
+msgid "Instance configuration directory"
+msgstr "实例配置目录"
+
+msgid "Instance directory layout."
+msgstr "实例目录布局。"
+
+msgid "Instance display name."
+msgstr "实例显示名称。"
+
+msgid "Instance identity and layout are determined by initialization."
+msgstr "实例身份和布局由初始化操作确定。"
+
+msgid "Instance identity conflicts with its initialized resources."
+msgstr "实例身份与已初始化的资源发生冲突。"
+
+msgid "Instance layout must be portable or platform."
+msgstr "实例布局必须为 portable 或 platform。"
+
+msgid "Instance lock and runtime directory."
+msgstr "实例运行目录。"
+
+msgid "Instance name"
+msgstr "实例名称"
+
+msgid "Instance operation failed"
+msgstr "实例操作失败"
+
+msgid "Instance resource metadata already exists."
+msgstr "实例资源元信息已存在。"
+
+msgid "Instance resource metadata is invalid."
+msgstr "实例资源元信息无效。"
+
+msgid "Instance resource metadata is missing; initialization is incomplete."
+msgstr "实例资源元信息缺失，初始化尚未完成。"
+
+msgid "Invalid ISO time"
+msgstr "ISO 时间无效。"
+
+msgid "Invalid calendar date"
+msgstr "日期无效。"
+
+msgid "Invalid database settings"
+msgstr "数据库设置无效。"
+
+msgid "Invalid input"
+msgstr "输入无效"
+
+msgid "Journal mode"
+msgstr "日志模式"
+
+msgid "Language must be zh-CN or en"
+msgstr "显示语言必须为 zh-CN 或 en。"
+
+msgid "Language: zh-CN or en"
+msgstr "显示语言：zh-CN 或 en"
+
+msgid "Layer"
+msgstr "配置层"
+
+msgid "Layout"
+msgstr "布局"
+
+msgid "Layout: portable or platform"
+msgstr "布局：portable 或 platform"
+
+msgid "List configuration fields."
+msgstr "列出配置字段。"
+
+msgid "Live application"
+msgstr "即时配置生效"
+
+msgid "Local instance management"
+msgstr "本地实例管理"
+
+msgid "Local time does not exist in this time zone"
+msgstr "该时区中不存在此本地时间。"
+
+msgid "Local time is ambiguous; specify an offset or fold"
+msgstr "此本地时间有歧义，请指定偏移量或 fold。"
+
+msgid "Location"
+msgstr "位置"
+
+msgid "Log directory."
+msgstr "日志目录。"
+
+msgid "Logs"
+msgstr "日志"
+
+msgid "Maximum blocking worker threads."
+msgstr "阻塞工作线程数上限。"
+
+msgid "Maximum concurrent operations."
+msgstr "并发操作数上限。"
+
+msgid "Maximum log file size in bytes."
+msgstr "单个日志文件的大小上限，单位为字节。"
+
+msgid "Message"
+msgstr "说明"
+
+msgid "Metric export interval in seconds."
+msgstr "指标导出间隔，单位为秒。"
+
+msgid "Metric export timeout in seconds."
+msgstr "指标导出超时，单位为秒。"
+
+msgid "Metrics export"
+msgstr "指标导出"
+
+msgid "Metrics export destination."
+msgstr "指标导出目标。"
+
+msgid "Minimum emitted log severity."
+msgstr "输出日志的最低级别。"
+
+msgid "Model execution"
+msgstr "模型执行"
+
+msgid "Models"
+msgstr "模型"
+
+msgid "Name"
+msgstr "名称"
+
+msgid "Network"
+msgstr "网络"
+
+msgid "No"
+msgstr "否"
+
+msgid "Number of rotated log files."
+msgstr "保留的轮转日志文件数。"
+
+msgid "Observability"
+msgstr "运行观测"
+
+msgid "Only instance and explicit namespace files can be saved"
+msgstr "只能保存实例配置或明确指定的 Namespace 配置文件。"
+
+msgid "Open, inspect and close runtime resources."
+msgstr "打开、检查并关闭运行资源。"
+
+msgid "Operation"
+msgstr "操作"
+
+msgid "Operation failed"
+msgstr "操作失败"
+
+msgid "Operation temporary directory."
+msgstr "操作临时目录。"
+
+msgid "Operations in flight"
+msgstr "在途操作"
+
+msgid "Optional operation deadline in seconds."
+msgstr "可选的操作总期限，单位为秒。"
+
+msgid "Overridden"
+msgstr "已被覆盖"
+
+msgid "Path"
+msgstr "字段路径"
+
+msgid "Persistent bindings"
+msgstr "持久绑定"
+
+msgid "Persistent bindings could not be checked"
+msgstr "无法检查持久绑定。"
+
+msgid "Phase"
+msgstr "发生阶段"
+
+msgid "Points from different time domains cannot be compared"
+msgstr "无法比较不同时间域中的时间点。"
+
+msgid "Positive rational seconds per tick, e.g. 1/1000."
+msgstr "每刻度的秒数，使用正有理数，例如 1/1000。"
+
+msgid "Presentation language."
+msgstr "用户呈现语言。"
+
+msgid "Preserve precision and uncertainty."
+msgstr "保留精度和不确定性。"
+
+msgid "Provide a value, --null, or --value-file"
+msgstr "请提供字段值、--null 或 --value-file。"
+
+msgid "Recovery"
+msgstr "恢复操作"
+
+msgid "References"
+msgstr "引用"
+
+msgid "Remove an unreferenced resource."
+msgstr "删除未被引用的资源。"
+
+msgid "Resource identity metadata is invalid."
+msgstr "资源身份元信息无效。"
+
+msgid "Restart required"
+msgstr "需要重启"
+
+msgid "Restart the instance to apply the complete saved configuration."
+msgstr "重启实例以应用完整的已保存配置。"
+
+msgid "Restore inheritance."
+msgstr "恢复继承值。"
+
+msgid "Runtime"
+msgstr "运行时"
+
+msgid "Runtime diagnostics"
+msgstr "运行诊断"
+
+msgid "SQLite busy timeout in milliseconds."
+msgstr "SQLite 等待锁的超时，单位为毫秒。"
+
+msgid "SQLite database hard links are unsupported."
+msgstr "SQLite 数据库不支持通过文件硬链接打开。"
+
+msgid "SQLite durability policy."
+msgstr "SQLite 持久性策略。"
+
+msgid "SQLite foreign key enforcement is required."
+msgstr "SQLite 必须启用外键约束。"
+
+msgid "SQLite uses write-ahead logging."
+msgstr "SQLite 使用预写日志。"
+
+msgid "Save a configuration value."
+msgstr "保存配置字段值。"
+
+msgid "Saved value"
+msgstr "保存值"
+
+msgid "Saved version"
+msgstr "保存版本"
+
+msgid "Schema version"
+msgstr "结构版本"
+
+msgid "Scopes"
+msgstr "作用域"
+
+msgid "Show paths and ownership."
+msgstr "显示路径和占有状态。"
+
+msgid "Show saved or prospective values."
+msgstr "显示保存值或下次启动值。"
+
+msgid "Source"
+msgstr "来源"
+
+msgid "Stable instance UUID."
+msgstr "稳定的实例 UUID。"
+
+msgid "State"
+msgstr "状态"
+
+msgid "Storage operation failed"
+msgstr "存储操作失败"
+
+msgid "Structure"
+msgstr "结构"
+
+msgid "Temporary files"
+msgstr "临时文件"
+
+msgid ""
+"The configuration file was not saved; the effective configuration is "
+"unchanged."
+msgstr "配置文件未保存，当前有效配置保持原值。"
+
+msgid "The database could not be opened to check time domain bindings."
+msgstr "无法打开数据库以检查时间域绑定。"
+
+msgid "The instance directory contains files and has no valid nous.toml."
+msgstr "实例目录包含文件，且没有有效的 nous.toml。"
+
+msgid "The instance is already in use."
+msgstr "实例已被另一个操作占用。"
+
+msgid "The instance resource directory does not exist."
+msgstr "实例资源目录不存在。"
+
+msgid "The relative path escapes its storage directory."
+msgstr "相对路径超出了对应的存储目录。"
+
+msgid "The runtime is stopping."
+msgstr "运行时正在停止。"
+
+msgid "Time"
+msgstr "时间"
+
+msgid "Time domain"
+msgstr "时间域"
+
+msgid "Time operation failed"
+msgstr "时间操作失败"
+
+msgid "Time zone"
+msgstr "时区"
+
+msgid "Trace export"
+msgstr "Trace 导出"
+
+msgid "Trace export destination."
+msgstr "Trace 导出目标。"
+
+msgid "Trace export timeout in seconds."
+msgstr "Trace 导出超时，单位为秒。"
+
+msgid "Trace sampling ratio."
+msgstr "Trace 采样比例。"
+
+msgid "Typed JSON output"
+msgstr "输出类型化 JSON"
+
+msgid "Unknown time zone"
+msgstr "未知时区。"
+
+msgid "Use a resource collection and ID"
+msgstr "请使用资源集合和资源 ID。"
+
+msgid "User export directory."
+msgstr "用户导出目录。"
+
+msgid "Valid"
+msgstr "有效"
+
+msgid "Validate syntax, fields and references."
+msgstr "校验语法、字段和资源引用。"
+
+msgid "Value"
+msgstr "值"
+
+msgid "Values"
+msgstr "配置值"
+
+msgid "Version"
+msgstr "版本"
+
+msgid "Write rotating instance log files."
+msgstr "写入自动轮转的实例日志文件。"
+
+msgid "Yes"
+msgstr "是"
+
+msgid "applied"
+msgstr "已生效"
+
+msgid "binding_apply"
+msgstr "登记时间域"
+
+msgid "binding_check"
+msgstr "核对持久绑定"
+
+msgid "checked"
+msgstr "已检查"
+
+msgid "disabled"
+msgstr "已禁用"
+
+msgid "effective"
+msgstr "当前有效"
+
+msgid "failed"
+msgstr "失败"
+
+msgid "initialized"
+msgstr "已初始化"
+
+msgid "live"
+msgstr "立即生效"
+
+msgid "live_apply"
+msgstr "应用日志级别"
+
+msgid "new_binding"
+msgstr "需要绑定检查"
+
+msgid "next_operation"
+msgstr "下次操作生效"
+
+msgid "not_applicable"
+msgstr "不适用"
+
+msgid "not_implemented"
+msgstr "尚未实现"
+
+msgid "not_run"
+msgstr "未执行"
+
+msgid "not_verified"
+msgstr "尚未核验"
+
+msgid "passed"
+msgstr "通过"
+
+msgid "prospective"
+msgstr "下次启动值"
+
+msgid "ready"
+msgstr "就绪"
+
+msgid "restart"
+msgstr "重启后生效"
+
+msgid "save"
+msgstr "保存配置"
+
+msgid "saved"
+msgstr "已保存"
+
+msgid "saved_pending_restart"
+msgstr "已保存，重启后生效"
+
+msgid "starting"
+msgstr "正在启动"
+
+msgid "stopped"
+msgstr "已停止"
+
+msgid "stopping"
+msgstr "正在停止"
+
+msgid "unavailable"
+msgstr "不可用"
+
+msgid "unconfigured"
+msgstr "未配置"
+
+msgid "unconfirmed"
+msgstr "尚未确认"
+
+msgid "validation"
+msgstr "校验配置"

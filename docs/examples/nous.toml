@@ -56,7 +56,4 @@ timezone = "UTC"
 kind = "linear"
 name = "实验时间"
 epoch = "本次实验起点"
-
-[time.domains.simulation.tick_seconds]
-numerator = 1
-denominator = 1000
+tick_seconds = "1/1000"

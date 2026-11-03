@@ -1,5 +1,5 @@
 {
-  "name": "nous-wave-development",
+  "name": "nous-development",
   "private": true,
   "scripts": {
     "format": "npm exec --yes -- prettier --write .",

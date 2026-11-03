@@ -22,9 +22,13 @@ Embedding 是持久检索资产的基础配置。首次选型需要明确输入�
 
 ## 首次配置
 
-操作者为新空间提供明确模型、维度及上述编码约定。`embedding inspect-config` 展示会影响已有资产的字段。`embedding probe` 只有在明确发起时联网，确认实际返回维度、数值形状和用量。
+操作者为新空间声明明确模型、维度及上述编码约定。本轮使用 `config explain embedding.spaces` 查看字段、保存值与来源，使用 `config validate` 检查纯配置形状；缺少绑定 owner 时普通修改仍按配置变更合同拒绝。
+
+后续模型计划接入 `embedding inspect-config` 和 `embedding probe`，当前 CLI 尚未提供这两个命令。前者展示影响已有资产的空间描述；后者只在明确发起时联网，确认实际返回维度、数值形状和用量。
 
 probe 只能检查它实际观察到的内容。Provider 模型别名可能被更换；要保持可复现空间，使用固定模型版本或操作者明确维护的 deployment_revision。相同长度的向量不足以识别语义空间。
+
+首轮只解析本地声明，没有模型请求、空间登记或远端部署核实。即使 `model_name`、deployment_revision 和维度在文件中都未变化，网关背后的同名别名仍可能指向另一部署，本地配置检查会报告 `embedding_remote_deployment=not_verified`。本轮配置修改统一拒绝空间描述及其引用模型身份的变动；后续 Embedding owner 接入真实部署、空间登记与资产检查后再开放对应管理操作。
 
 没有维度时，不在后台猜值并发布正式空间。可以先显式 probe，再将结果作为已确认配置保存。配置本身不触发付费探测。
 

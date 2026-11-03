@@ -8,7 +8,7 @@
 
 ## 连接与事务模式
 
-使用 SQLAlchemy `create_async_engine`，在 Python 3.14 上选择 `connect_args={"autocommit": False}` 的非 legacy 事务模式。不要同时叠加另一组手动 BEGIN event hook。库连接参数和受支持行为按锁定版本的官方 SQLite dialect 文档实现。
+使用 SQLAlchemy `create_async_engine`，在 Python 3.14 上选择 `connect_args={"autocommit": False}` 的非 legacy 事务模式。连接工厂在事务开始前设置各连接的 PRAGMA，然后切换至非 legacy 模式。不要同时叠加另一组手动 BEGIN event hook。库连接参数和受支持行为按锁定版本的官方 SQLite dialect 文档实现。
 
 数据库初始化时，在独立的无事务设置连接上开启 WAL；每个连接确保外键启用及相同 busy_timeout。PRAGMA 的设置必须在它要求的事务外完成，不能在已自动 BEGIN 后假定生效。SQLite synchronous 默认 FULL；对 NORMAL 的选择是明确高级修改。
 
@@ -18,7 +18,7 @@
 
 ## 基础表
 
-`instance_metadata` 保存 instance_id 和当前 schema 格式。`time_domain_definitions` 保存 domain_id、kind、tick_seconds 的分子分母、epoch 描述及显示信息。其结构按时间专题实现。
+`instance_metadata` 保存 instance_id、独立的 database_id 和当前 schema 格式。正常实例打开把配置目录绑定的 database_id 传给数据库核验；相同 instance_id 的另一个独立数据库会被拒绝。`time_domain_definitions` 保存 domain_id、kind、tick_seconds 的分子分母、epoch 描述及显示信息。其结构按时间专题实现。
 
 首轮不建立自动模型调用账本、命令回执、认知对象、队列占位表或索引代际。DBOS 引入时由它创建和维护自己的表。
 
@@ -27,7 +27,7 @@
 ## 公开内部能力
 
 ```text
-Database.open(paths, settings) -> async context manager
+Database.open(path, settings, instance_id, *, create=False, database_id=None) -> async context manager
 Database.read() -> async read transaction
 Database.write() -> async WriteTx
 Database.check() -> DatabaseStatus

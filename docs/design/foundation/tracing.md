@@ -6,7 +6,7 @@
 
 首轮提供配置后的 SDK、操作关联、控制台调试导出和可选 OTLP 导出。默认不要求外部遥测平台。默认本地日志保存操作开始/结果/耗时及 trace_id；export=none 时不承诺保存完整 Span 树。
 
-SDK provider 在同一应用进程中由入口安装一次，不在每个请求或每次打开数据库时重设全局 provider。首轮 Runtime 的生命周期覆盖该应用进程，关闭后重开实例通过新的 CLI/服务进程完成；集成验证需要多次初始化 SDK 时使用隔离进程，不篡改 OpenTelemetry 私有全局状态。
+SDK provider 由 Runtime 持有，并通过当前执行上下文提供给埋点。关闭 Runtime 会刷新并关闭其 provider；同一进程之后可以重新打开实例并构造新的 provider，不修改 OpenTelemetry 的私有全局状态。Span 之间继续使用标准 OpenTelemetry context 关联。
 
 ## Span 边界
 

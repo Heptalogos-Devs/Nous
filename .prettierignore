@@ -1,4 +1,5 @@
 temp/
+legacy/
 target/
 .git/
 .codegraph/

@@ -71,11 +71,15 @@ reload() -> ConfigChangeResult
 
 配置值对消费者不可变。`frozen=True` 只限制属性赋值，不能单独保证嵌套 dict/list 不变；实现采用不可变集合或封装后的只读结构。公开序列化返回新副本。一次完整操作保留同一快照，不在每个 helper 中重新解析环境与文件。
 
+当前 Python 入口为 `nous.configuration.Configuration(config_file, ...)`。`snapshot` 是属性，`snapshot.values` 提供递归只读的属性与映射访问，数组为 tuple；`to_dict()` 返回独立可变副本，`typed_values()` 返回独立的 `NousConfig` 强类型副本。`update`、`unset`、`reload` 是异步操作；持久绑定检查和采用回调由持有资源的应用注入。`version` 表示已接受的期望配置代，`snapshot.version` 表示有效代；带 `expected_version` 的修改对照前者。`status()` 给出两者、等待重启状态及尚未恢复的采用失败。保存成功后的采用失败会保留旧有效快照并转为整项等待重启，具体结果见[修改与绑定](configuration-changes.md)。
+
 `explain` 返回有效值、保存值、来源层及定位、生效状态和被覆盖信息。Secret 只返回引用和可用状态，不返回实际值。
 
 ## Namespace 与任务配置
 
 首轮完成所有范围的纯合并、校验及文件读写接口。NamespaceLocator 由调用者提供；配置服务不据一个配置文件创建认知域。首轮 CLI 只提供 instance 范围管理，后续 Namespace 管理按同一接口接入。
+
+进程内调用使用 `resolve(namespace_file=..., task_overrides=..., overrides=...)` 依次叠加 Namespace、任务和调用设置。Namespace 保存使用 `update(patch, scope="namespace", namespace_file=...)`；`unset` 和 `reload` 接受同样的目标。运行中的 Namespace 文件在首次取得时建立有效值，之后通过明确修改或 reload 发布，外部文件编辑不会自动进入下一次操作。实例存在待重启修改时，Namespace 新保存值也等待重启。
 
 任务定义注册所需设置和允许的调用覆盖。Journal、Steward 等任务在自身实现时加入，无须先把全部未决认知参数写进当前目录。
 

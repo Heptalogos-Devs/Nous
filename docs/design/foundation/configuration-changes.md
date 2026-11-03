@@ -24,7 +24,20 @@ Configuration 读当前文件与有效版本，在锁内对补丁合并、校验
 
 ## 首轮的快照发布规则
 
-当补丁全为 live / next_operation 时，候选整体校验后保存文件、发布新的不可变快照，再执行少量明确的 live 设置。文件保存失败时不发布。
+当补丁全为 live / next_operation 时，候选整体校验并完成只读绑定检查，再原子保存文件、登记时间域绑定、应用日志级别；这些操作成功后发布新的不可变快照。日志级别由日志 owner 保证单步失败时恢复原级别。登记使用数据库事务；一次操作开始后继续使用原快照。
+
+配置服务分别公开已接受期望配置的 `version` 和有效快照的 `snapshot.version`；结果使用 `version`、`effective_version` 明确两者。`expected_version` 对照期望代。等待重启时两者可以不同。`status()` 和 `explain` 展示当前等待状态及尚未恢复的采用失败。
+
+| 失败位置 | 文件和有效状态 | 返回及恢复 |
+|---|---|---|
+| 校验或只读绑定检查 | update 没有保存文件；有效快照与版本保持。reload 保留操作者已写入的外部文件 | 原错误附 `file_saved`、`write_performed=false`、有效/期望版本及恢复操作；修改输入、文件或依赖后重试 |
+| 临时文件写入、flush/fsync 或原子替换 | 原文件、期望代和有效快照均保持；清理本次临时文件 | `configuration.save_failed`，`file_saved=false`；修正文件系统访问后重试同一修改 |
+| 保存成功后的时间域登记 | 文件已经保存，期望代推进，有效快照与有效版本保持，整项等待重启 | `configuration.apply_failed`，`phase=binding_apply`、`binding_application=unconfirmed`；修正配置或数据库问题后关闭并重开，由启动读取正式域表重新核对 |
+| 保存成功后的日志级别应用 | 文件已经保存；日志级别和有效快照保持原值，整项等待重启；此前成功登记的时间域已经提交 | `configuration.apply_failed`，`phase=live_apply`，分别报告绑定与日志应用状态；修正日志依赖或保存设置后关闭并重开 |
+
+采用失败的结构化详情包含 `state=saved_pending_restart`、`file_saved=true`、`write_performed`、两种版本、失败阶段、原因 code 和 `recovery`。CLI 对保存或采用失败返回退出码 4。取消保留取消语义，并把同样的持久/有效状态留在 `status()` 中。后续修改全部只保存，直到重启整体采用；不继续尝试局部发布，也不把失败结果写成 applied。
+
+数据库提交期间出现取消或驱动错误时，调用方可能没有收到已提交的成功回执，因此登记结果使用 unconfirmed，重启以正式表为准。成功登记后发生日志失败时，结果明确 `binding_application=applied`；已登记域的坐标定义继续受同 ID 绑定规则保护。这里不删除已提交定义，也不恢复文件备份。
 
 当补丁包含 restart 字段时，整项修改保存为期望配置，当前快照保持不变，返回等待重启。已有等待重启修改期间，后续修改也保存为期望配置并等待重启，避免任意拼接两代资源设置。重启成功后清除等待状态。
 
@@ -41,6 +54,8 @@ Embedding 的模型、维度、预处理、查询/文档输入规则与归一化
 实例 ID、正式数据根与数据库位置按实例合同处理。修改当前路径时既有数据不应被无声遗落，返回重定位要求。首次 init 之前可自由配置。
 
 配置解析只校验形状；涉及绑定的采用在数据库可用后调用对应 owner 的检查。缺少需要的绑定 owner 或存储不可读时，结果明确为无法检查，不能假定未使用。首轮没有 Embedding 写入，空间的运行绑定由后续 Embedding owner 建设；不得提前允许向量资产写入绕过该合同。
+
+当前共享修改操作拒绝 `embedding.spaces` 根、空间增删及所有空间字段变动，并拒绝这些空间引用的模型 `provider`、`model_name`、`deployment_revision` 变动，统一返回 `configuration.binding_check_unavailable`。维度、模态、归一化、预处理和 query/document 输入约定均位于空间定义内。与空间无关的模型和模型的普通字段仍可编辑。纯文件读取与形状校验继续可用，校验结果分别标记 Embedding 绑定 unavailable、远端部署 not_verified。
 
 ## 权限与凭据
 

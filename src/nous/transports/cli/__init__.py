@@ -1,294 +1,418 @@
-"""CLI composition over the SDK and instance lifecycle owners."""
+"""Local instance management through the shared application operations."""
 
 import asyncio
 import json
-import re
 import sys
+from collections.abc import Mapping
 from contextvars import ContextVar
+from dataclasses import asdict, dataclass, is_dataclass
 from io import TextIOWrapper
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal, cast
 
-import httpx
+import click
 import typer
-import uvicorn
-from nous_sdk import NousError as ClientError
-from nous.platform.errors import DomainError
 from rich.console import Console
+from rich.table import Table
 
-from nous.platform.configuration import Settings
-from nous.platform.errors import NousError
-from nous.platform.instance import initialize
-from nous.platform.localization import Localizer
-from nous.platform.paths import default_instance_path
+from nous.configuration import ConfigSnapshot, Configuration
+from nous.configuration.service import Object
+from nous.presentation import error_message, format_status, render_error, select_language, translate
+from nous.runtime.errors import NousError
+from nous.runtime.instance import (
+    InstanceDescriptor,
+    InstanceLocator,
+    InstanceLock,
+    inspect_instance,
+)
+from nous.runtime.paths import ResolvedPaths
 
-from .client_state import ClientState, load, save
-from .bundles import register as register_bundles
-from .commands import register as register_commands
-from .common import Options, emit, options
-from .configuration import register as register_configuration
-from .ego import register as register_ego
-from .entities import register as register_entities
-from .feedback import register as register_feedback
-from .maintenance import register as register_maintenance
-from .management import register as register_management
-from .retention import register as register_retention
-from .service import register as register_service
-from .social import register as register_social
-from .tuning import register as register_tuning
-from .vectors import register as register_vectors
+cli = typer.Typer(help="Nous 本地实例管理 / Local instance management", no_args_is_help=True)
+config_cli = typer.Typer(help="读取、解释和修改配置 / Configuration", no_args_is_help=True)
+instance_cli = typer.Typer(help="查看实例 / Inspect instance", no_args_is_help=True)
+runtime_cli = typer.Typer(help="运行诊断 / Runtime diagnostics", no_args_is_help=True)
+time_cli = typer.Typer(help="解析显式时间 / Explicit time", no_args_is_help=True)
+for command, name in (
+    (config_cli, "config"),
+    (instance_cli, "instance"),
+    (runtime_cli, "runtime"),
+    (time_cli, "time"),
+):
+    cli.add_typer(command, name=name)
 
-cli = typer.Typer(help="Nous cognitive service", no_args_is_help=False, invoke_without_command=True)
-_current: ContextVar[Options | None] = ContextVar("cli_options", default=None)
+
+@dataclass(frozen=True)
+class Options:
+    locator: InstanceLocator
+    json_mode: bool = False
+    language: str | None = None
+    debug: bool = False
+
+
+_current: ContextVar[Options | None] = ContextVar("local_cli_options", default=None)
 
 
 @cli.callback()
 def configure(
     ctx: typer.Context,
-    instance: Annotated[Path | None, typer.Option(envvar="NOUS_INSTANCE")] = None,
-    url: Annotated[str | None, typer.Option(envvar="NOUS_URL")] = None,
-    credential_file: Annotated[Path | None, typer.Option(envvar="NOUS_CREDENTIAL_FILE")] = None,
-    namespace: Annotated[str | None, typer.Option(envvar="NOUS_NAMESPACE")] = None,
-    locale: Annotated[str | None, typer.Option(envvar="NOUS_LOCALE")] = None,
+    instance: Annotated[
+        Path | None,
+        typer.Option(
+            help="实例配置目录 / Instance configuration directory", envvar="NOUS_INSTANCE"
+        ),
+    ] = None,
     json_mode: Annotated[
-        bool, typer.Option("--json", help="Write the compact result as JSON.")
+        bool, typer.Option("--json", help="输出类型化 JSON / Typed JSON output")
     ] = False,
-    raw: Annotated[bool, typer.Option(help="Include the complete SDK result.")] = False,
-    fields: Annotated[str | None, typer.Option(help="Comma separated result fields.")] = None,
+    language: Annotated[str | None, typer.Option(help="显示语言 / Language: zh-CN or en")] = None,
+    debug: Annotated[bool, typer.Option(help="显示错误堆栈 / Show error traceback")] = False,
 ) -> None:
-    state, path = load()
-    selected = Options(
-        instance=instance or state.instance or default_instance_path(),
-        url=url or state.url,
-        credential_file=credential_file or state.credential_file,
-        namespace=namespace or state.namespace,
-        locale=Localizer(locale).locale,
-        json_mode=json_mode,
-        raw=raw,
-        fields=tuple(field.strip() for field in (fields or "").split(",") if field.strip()),
-        client_file=path,
-        client_state=state,
-    )
-    ctx.obj = selected
-    _current.set(selected)
-    if ctx.invoked_subcommand is None:
-        typer.echo(ctx.get_help())
-        raise typer.Exit()
+    if language not in {None, "zh-CN", "en"}:
+        raise NousError("configuration.invalid_language", "Language must be zh-CN or en")
+    ctx.obj = Options(InstanceLocator.resolve(instance), json_mode, language, debug)
+    _current.set(ctx.obj)
 
 
-@cli.command()
-def init(ctx: typer.Context, instance: Path | None = None, name: str = "default") -> None:
-    """Create a local instance, credential and initial Namespace."""
-    from uuid import uuid4
+def options(ctx: typer.Context) -> Options:
+    return cast(Options, ctx.obj)
 
-    from nous.platform.call_context import CallContext
-    from nous.platform.errors import DomainError
 
-    from nous.application import Application
-
-    selected = options(ctx)
-    location = instance or selected.instance
-    credential = initialize(location)
-
-    async def create():
-        app = Application(Settings(instance=location))
-        await app.authority.initialize()
+def language_for(selected: Options | None) -> str:
+    configured: str | None = None
+    if selected is not None and selected.language is None:
         try:
-            try:
-                domain = await app.identity.resolve(name)
-                if domain.slug != name:
-                    domain = None
-            except DomainError as error:
-                if error.code != "namespace_not_found":
-                    raise
-                domain = None
-            if domain is None:
-                namespace_id = str(uuid4())
-                context = CallContext(
-                    caller_id="nous.init", namespace_id=namespace_id, credential_source_ids=None
-                )
-                domain = await app.identity.create_namespace(
-                    context, name, "init:" + name, namespace_id
-                )
-            state = selected.client_state or ClientState()
-            assert selected.client_file is not None
-            save(
-                selected.client_file,
-                state.model_copy(
-                    update={
-                        "url": selected.url,
-                        "instance": location.resolve(),
-                        "credential_file": credential.resolve(),
-                        "namespace": domain.id,
-                    }
-                ),
+            configured = (
+                Configuration(selected.locator.config_file)
+                .snapshot.typed_values()
+                .localization.language
             )
-            return {
-                "instance": str(location.resolve()),
-                "credential_file": str(credential.resolve()),
-                "namespace": domain.slug,
-                "next": "nous serve",
-            }
-        finally:
-            await app.close()
-
-    emit(ctx, asyncio.run(create()))
+        except NousError, OSError:
+            pass
+    return select_language(selected.language if selected else None, configured)
 
 
-@cli.command()
-def serve(
-    ctx: typer.Context,
-    instance: Path | None = None,
-    host: str = "127.0.0.1",
-    port: int = 7441,
-) -> None:
-    """Run the foreground HTTP host and its durable workers."""
-    from nous.platform.observability import configure_logging
-    from nous.transports.http import create_app
-
+def emit(ctx: typer.Context, value: Mapping[str, object]) -> None:
     if options(ctx).json_mode:
-        raise ValueError("Foreground service logs are a stream; omit --json when serving")
-    settings = Settings(instance=instance or options(ctx).instance, host=host, port=port)
-    configure_logging(settings.log_level)
-    app = create_app(settings)
-    server = uvicorn.Server(
-        uvicorn.Config(app, host=host, port=port, log_config=None, reset_contextvars=True)
+        typer.echo(json.dumps(value, ensure_ascii=False, separators=(",", ":")))
+    else:
+        typer.echo(format_status(value, language_for(options(ctx))))
+
+
+def configuration(ctx: typer.Context) -> Configuration:
+    return Configuration(options(ctx).locator.config_file)
+
+
+async def offline_change(
+    ctx: typer.Context,
+    operation: Literal["update", "unset", "remove_resource"],
+    argument: Mapping[str, object] | str,
+) -> Object:
+    """Ordinary edits need the instance lock and remain possible with an unreadable DB."""
+    from nous.runtime.bindings import InstanceBinding
+    from nous.storage.database import Database
+    from nous.temporal import check_domains
+
+    selected = options(ctx).locator
+    with InstanceLock(selected.directory):
+        service = Configuration(selected.config_file)
+        settings = service.snapshot.typed_values()
+        descriptor = InstanceDescriptor(
+            settings.instance.id, settings.instance.name, settings.instance.layout
+        )
+        paths = ResolvedPaths.resolve(selected, descriptor, settings.paths)
+        binding = InstanceBinding.read(selected)
+        binding.check_locations(selected, descriptor, paths, settings.database.filename)
+
+        async def binding_check(
+            old: ConfigSnapshot, candidate: ConfigSnapshot, changed: tuple[str, ...]
+        ) -> None:
+            desired = candidate.typed_values()
+            candidate_descriptor = InstanceDescriptor(
+                desired.instance.id, desired.instance.name, desired.instance.layout
+            )
+            candidate_paths = ResolvedPaths.resolve(selected, candidate_descriptor, desired.paths)
+            binding.check_locations(
+                selected, candidate_descriptor, candidate_paths, desired.database.filename
+            )
+            if any(path.startswith("time.domains.") for path in changed):
+                try:
+                    with InstanceLock(paths.data, data=True):
+                        binding.check_resources(paths)
+                        async with Database.open(
+                            paths.resolve_owned("data", settings.database.filename),
+                            settings.database,
+                            descriptor.instance_id,
+                            database_id=str(binding.database_id),
+                        ) as database:
+                            await check_domains(database, candidate.typed_values().time.domains)
+                except NousError:
+                    raise
+                except Exception as error:
+                    raise NousError(
+                        "configuration.binding_check_unavailable",
+                        "The database could not be opened to check time domain bindings.",
+                        cause=error,
+                    ) from error
+
+        service.binding_check = binding_check
+        if operation == "update":
+            assert isinstance(argument, Mapping)
+            return await service.update(argument)
+        assert isinstance(argument, str)
+        if operation == "unset":
+            return await service.unset(argument)
+        return await service.remove_resource(argument)
+
+
+@cli.command("init")
+def initialize(
+    ctx: typer.Context,
+    layout: Annotated[str, typer.Option(help="布局 / Layout: portable or platform")] = "portable",
+    name: Annotated[str, typer.Option(help="实例名称 / Instance name")] = "default",
+) -> None:
+    """创建实例及基础数据库 / Initialize instance and database."""
+    from nous.runtime.bootstrap import initialize_instance
+
+    descriptor = asyncio.run(initialize_instance(options(ctx).locator, layout=layout, name=name))
+    emit(
+        ctx,
+        {
+            "state": "initialized",
+            "instance": asdict(descriptor),
+            "config_file": str(options(ctx).locator.config_file),
+        },
     )
 
-    def request_shutdown() -> None:
-        server.should_exit = True
 
-    app.state.request_shutdown = request_shutdown
-    server.run()
+@instance_cli.command("show")
+def instance_show(ctx: typer.Context) -> None:
+    """显示路径和占有状态 / Show paths and ownership."""
+    emit(ctx, inspect_instance(options(ctx).locator))
 
 
-@cli.command()
-def mcp(ctx: typer.Context, read_only: bool = False) -> None:
-    """Expose the selected Namespace as ordinary MCP tools over stdio."""
-    from nous.transports.mcp import run
+@config_cli.command("list")
+def config_list(
+    ctx: typer.Context,
+    level: Annotated[
+        str, typer.Option(help="standard / advanced / developer / internal")
+    ] = "standard",
+) -> None:
+    """列出类型、默认、作用域与生效方式 / List configuration fields."""
+    fields = configuration(ctx).catalog(level)
+    if options(ctx).json_mode:
+        emit(ctx, {"fields": fields})
+        return
+    language = language_for(options(ctx))
+    table = Table(title=translate("Configuration fields", language))
+    for heading in ("Path", "Default", "Scopes", "Apply / Impact", "Description"):
+        table.add_column(translate(heading, language))
+    for field in fields:
+        table.add_row(
+            str(field["path"]),
+            json.dumps(field.get("default"), ensure_ascii=False),
+            ", ".join(cast(list[str], field["scopes"])),
+            translate(str(field["apply_mode"]), language) + " / " + str(field["impact"]),
+            translate(str(field["description"]), language),
+        )
+    Console().print(table)
 
-    selected = options(ctx)
-    if selected.namespace is None:
-        raise ValueError("Choose a Namespace with 'nous use NAME' or --namespace NAME")
-    run(
-        selected.instance,
-        selected.url,
-        selected.namespace,
-        selected.credential_file,
-        read_only=read_only,
+
+@config_cli.command("show")
+def config_show(
+    ctx: typer.Context,
+    effective: Annotated[bool, typer.Option(help="下次启动有效值 / Prospective values")] = False,
+    saved: Annotated[bool, typer.Option(help="文件保存值 / Saved file values")] = False,
+) -> None:
+    """显示保存值或下次启动值 / Show saved or prospective values."""
+    if saved and effective:
+        raise NousError("configuration.invalid_option", "Choose either --saved or --effective")
+    service = configuration(ctx)
+    emit(
+        ctx,
+        {
+            "state": "saved" if saved else "prospective",
+            "file": str(service.config_file),
+            "values": service.saved() if saved else service.snapshot.to_dict(),
+            "version": service.snapshot.version,
+        },
     )
 
 
-@cli.command()
-def restore(ctx: typer.Context, archive: Path, instance: Path) -> None:
-    """Restore an archive into a new instance directory."""
-    from nous.platform.persistence import BackupService
-
-    emit(ctx, asyncio.run(BackupService.restore(archive, instance)))
+@config_cli.command("explain")
+def config_explain(ctx: typer.Context, path: str) -> None:
+    """解释来源、覆盖和生效状态 / Explain value sources and application."""
+    emit(ctx, configuration(ctx).explain(path))
 
 
-register_commands(cli)
-register_bundles(cli)
-register_configuration(cli)
-admin = typer.Typer(help="Configure resources and manage cognitive data.", no_args_is_help=True)
-cli.add_typer(admin, name="admin")
-register_management(admin)
-register_maintenance(admin)
-register_ego(admin)
-register_social(admin)
-register_entities(admin)
-register_feedback(admin)
-register_vectors(admin)
-register_retention(admin)
-register_service(admin)
-register_tuning(admin)
+@config_cli.command("set")
+def config_set(
+    ctx: typer.Context,
+    path: str,
+    value: Annotated[str | None, typer.Argument()] = None,
+    null: Annotated[
+        bool, typer.Option("--null", help="显式清空 nullable 字段 / Explicit null")
+    ] = False,
+    value_file: Annotated[Path | None, typer.Option(help="JSON 值文件 / JSON value file")] = None,
+) -> None:
+    """保存字段值 / Save a configuration value."""
+    if sum((value is not None, null, value_file is not None)) != 1:
+        raise NousError("configuration.value_required", "Provide a value, --null, or --value-file")
+    parsed: object
+    if value_file is not None:
+        parsed = json.loads(value_file.read_text(encoding="utf-8"))
+    elif null:
+        parsed = None
+    else:
+        assert value is not None
+        try:
+            parsed = json.loads(value)
+        except ValueError:
+            parsed = value
+    emit(ctx, asyncio.run(offline_change(ctx, "update", {path: parsed})))
+
+
+@config_cli.command("unset")
+def config_unset(ctx: typer.Context, path: str) -> None:
+    """删除本层覆盖并恢复继承 / Restore inheritance."""
+    emit(ctx, asyncio.run(offline_change(ctx, "unset", path)))
+
+
+@config_cli.command("remove-resource")
+def config_remove_resource(ctx: typer.Context, path: str) -> None:
+    """检查引用后删除资源 / Remove an unreferenced resource."""
+    emit(ctx, asyncio.run(offline_change(ctx, "remove_resource", path)))
+
+
+@config_cli.command("validate")
+def config_validate(ctx: typer.Context) -> None:
+    """校验语法、字段及资源引用 / Validate syntax, fields and references."""
+    emit(ctx, configuration(ctx).validate())
+
+
+@config_cli.command("schema")
+def config_schema(
+    ctx: typer.Context,
+    output: Annotated[Path | None, typer.Option(help="保存 JSON Schema / Save JSON Schema")] = None,
+) -> None:
+    """导出正式字段 Schema / Export configuration JSON Schema."""
+    schema = Configuration.schema()
+    if output is None:
+        emit(ctx, schema)
+    else:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(json.dumps(schema, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        emit(ctx, {"file": str(output), "state": "saved"})
+
+
+@runtime_cli.command("check")
+def runtime_check(ctx: typer.Context) -> None:
+    """实际打开并关闭运行资源 / Open, inspect and close runtime resources."""
+    from nous.observability import operation
+    from nous.runtime.bootstrap import open_instance
+
+    async def run() -> Object:
+        async with open_instance(options(ctx).locator) as runtime:
+            with operation("runtime.check"):
+                database = await runtime.database.check()
+                result = runtime.status()
+                result["database"] = asdict(database) if is_dataclass(database) else database
+                settings = runtime.configuration.snapshot.typed_values()
+                result["bindings"] = {
+                    "time": "checked",
+                    "embedding": "unavailable" if settings.embedding.spaces else "unconfigured",
+                }
+                result["observability"] = {
+                    "trace_export": runtime.configuration.snapshot.typed_values().tracing.export,
+                    "metrics_export": runtime.configuration.snapshot.typed_values().metrics.export,
+                }
+        result["state"] = runtime.state
+        return result
+
+    emit(ctx, asyncio.run(run()))
+
+
+@time_cli.command("parse")
+def time_parse(
+    ctx: typer.Context,
+    value: str,
+    domain: Annotated[str, typer.Option(help="时间域 ID / Time domain ID")] = "utc",
+    timezone: Annotated[str | None, typer.Option(help="IANA 时区 / IANA timezone")] = None,
+    fold: Annotated[int | None, typer.Option(help="DST 重复时刻 / DST fold: 0 or 1")] = None,
+) -> None:
+    """保留原文、精度和不确定性 / Preserve precision and uncertainty."""
+    from nous.temporal import parse_explicit_time
+
+    service = configuration(ctx)
+    if domain not in service.snapshot.typed_values().time.domains:
+        raise NousError("time.domain_unknown", f"Unknown time domain: {domain}")
+    zone = timezone or service.snapshot.typed_values().localization.timezone
+    parsed = parse_explicit_time(value, domain=domain, timezone=zone, fold=fold)
+    emit(
+        ctx,
+        {
+            "input": value,
+            "domain": domain,
+            "timezone": zone,
+            "value": parsed.model_dump(mode="json"),
+        },
+    )
 
 
 def main() -> None:
-    from nous.platform.observability import configure_logging
-
-    configure_logging("WARNING")
+    _current.set(None)
     for stream in (sys.stdout, sys.stderr):
         if isinstance(stream, TextIOWrapper):
             stream.reconfigure(encoding="utf-8")
     try:
         cli(standalone_mode=False)
     except (
-        ClientError,
-        DomainError,
         NousError,
         ValueError,
         OSError,
-        TimeoutError,
-        typer.TyperException,
-        httpx.HTTPError,
+        click.ClickException,
         typer.Abort,
         KeyboardInterrupt,
     ) as error:
+        failure = (
+            error
+            if isinstance(error, NousError)
+            else NousError(
+                "operation.cancelled"
+                if isinstance(error, (typer.Abort, KeyboardInterrupt))
+                else "input.invalid"
+                if isinstance(error, (ValueError, click.ClickException))
+                else "operation.failed",
+                str(error),
+            )
+        )
+        result = failure.to_dict()
         selected = _current.get()
-        locale = Localizer(selected.locale if selected else None)
-        code = (
-            "Cancelled"
-            if isinstance(error, (typer.Abort, KeyboardInterrupt))
-            else (
-                error.code
-                if isinstance(error, (ClientError, DomainError, NousError))
-                else "InvalidArgument"
-                if isinstance(error, (ValueError, typer.TyperException))
-                else "Unavailable"
-            )
-        )
-        details = (
-            error.context
-            if isinstance(error, (ClientError, NousError))
-            else error.details
-            if isinstance(error, DomainError)
-            else {}
-        )
+        if selected and selected.debug:
+            Console(stderr=True).print_exception(show_locals=False)
+        language = language_for(selected)
+        result["message"] = error_message(failure, language)
         if (selected and selected.json_mode) or (selected is None and "--json" in sys.argv):
-            sys.stdout.write(
-                json.dumps(
-                    {
-                        "error": {
-                            "code": code,
-                            "message": str(error),
-                            "context": details,
-                            "trace_id": error.trace_id if isinstance(error, ClientError) else None,
-                        }
-                    },
-                    ensure_ascii=False,
-                )
-                + "\n"
-            )
+            typer.echo(json.dumps({"error": result}, ensure_ascii=False))
         else:
-            key = "error-" + re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "-", code.replace("_", "-")).lower()
-            category = (
-                "error-forbidden"
-                if "forbidden" in code.lower()
-                else "error-unauthorized"
-                if "credential" in code.lower()
-                or (isinstance(error, ClientError) and error.status_code == 401)
-                else "error-dependency-unavailable"
-                if isinstance(error, (NousError, OSError, TimeoutError, httpx.HTTPError))
-                else "error-invalid-argument"
-            )
-            Console(stderr=True).print(
-                locale.text(key if locale.has(key) else category), style="red", markup=False
-            )
-            Console(stderr=True).print(str(error), markup=False)
-            if details:
-                Console(stderr=True).print(json.dumps(details, ensure_ascii=False), markup=False)
+            Console(stderr=True).print(render_error(failure, language), markup=False)
+        code = failure.code
         status = (
             130
-            if code == "Cancelled"
-            else 3
-            if any(term in code.lower() for term in ("forbidden", "unauthorized", "credential"))
+            if code == "operation.cancelled"
             else 4
-            if "not_found" in code.lower() or "notfound" in code.lower()
-            else 6
-            if "conflict" in code.lower()
+            if code
+            in {
+                "configuration.save_failed",
+                "configuration.apply_failed",
+                "configuration.read_failed",
+            }
+            else 3
+            if any(
+                word in code
+                for word in ("unavailable", "not_found", "in_use", "unreadable", "not_initialized")
+            )
             else 2
-            if isinstance(error, (ValueError, typer.TyperException))
-            else 5
+            if code.startswith(("configuration.", "input.", "time."))
+            else 4
         )
         raise SystemExit(status) from None
