@@ -135,9 +135,9 @@ def _connection_factory(settings: DatabaseSettings) -> type[sqlite3.Connection]:
     public autocommit attribute lets us enable foreign keys outside a transaction
     without combining driver transaction control with manual BEGIN hooks.
     """
-    timeout = int(settings.busy_timeout_ms)
+    busy_timeout_ms = int(settings.busy_timeout_ms)
     synchronous = str(settings.synchronous).upper()
-    if timeout < 0 or synchronous not in {"FULL", "NORMAL"}:
+    if busy_timeout_ms < 0 or synchronous not in {"FULL", "NORMAL"}:
         raise NousError("configuration.invalid_value", "Invalid database settings")
 
     class ConfiguredConnection(sqlite3.Connection):
@@ -167,7 +167,7 @@ def _connection_factory(settings: DatabaseSettings) -> type[sqlite3.Connection]:
             )
             try:
                 self.execute("PRAGMA foreign_keys=ON")
-                self.execute(f"PRAGMA busy_timeout={timeout}")
+                self.execute(f"PRAGMA busy_timeout={busy_timeout_ms}")
                 self.execute(f"PRAGMA synchronous={synchronous}")
                 if self.execute("PRAGMA foreign_keys").fetchone() != (1,):
                     raise sqlite3.OperationalError("foreign keys could not be enabled")
