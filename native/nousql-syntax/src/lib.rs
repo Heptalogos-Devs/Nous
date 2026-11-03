@@ -1,7 +1,8 @@
 //! Pure NousQL grammar. Binding, clocks and planning belong to Python.
 mod parser;
 pub use parser::parse;
-pub const MANUAL: &str = include_str!("manual.md");
+// 这个路径要注意，文档位置变动后会导致无法编译
+pub const MANUAL: &str = include_str!("../../../docs/agent/NOUSQL.md");
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
