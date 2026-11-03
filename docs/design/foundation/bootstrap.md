@@ -1,41 +1,25 @@
-# 启动装配与启动配置
+# 实例装配与可用能力
 
-## 唯一装配位置
+## 唯一组合根
 
-`bootstrap.open_instance(...)` 是打开本地运行时的唯一入口，返回异步上下文管理的 `Runtime`。CLI、以后 HTTP Host 和其他第一方入口复用它。导入模块不产生连接、工作线程、模型调用或服务监听。
+initialize_instance/open_instance 继续是正式初始化和打开入口。启动前 stderr、路径/锁/资源身份、正式日志、数据库、时间/向量绑定核对及有效配置发布沿用现行顺序。普通打开不创建替代数据库或绕过已登记位置。
 
-启动文件使用实例 `nous.toml`。启动所需字段是同一配置定义中的子集，不再建立第二份具有不同默认值的 Bootstrap 配置。
+组合根显式收集 content、embedding、wave 各 owner 的纯表定义，仅在明确初始化时建表。使用 SQLAlchemy 共同 MetaData 或在组合根汇集为一份可解析外键的 MetaData；同一表只定义一次。内容表不能依赖导入 models.embedding_store 才注册，bootstrap 不再从模型模块借出 content_metadata。纯 schema registry 可以共享，不需要给每张表新建 DI/Repository 层。没有兼容义务的开发格式直接重建授权实例；不自动给未知旧库补表并声称兼容。
 
-## 启动过程
+## 显式依赖
 
-先用标准 logging 的 stderr handler 报告启动。确定 InstanceLocator 后，读取启动字段，解析路径并取得配置目录锁。读取已初始化的实例资源绑定，核验候选路径，再取得实际 data 根的数据锁并检查三个资源标记；这些步骤完成后才打开 SQLite。此阶段语法错误、权限错误和资源冲突仍能直接显示。普通打开不创建正式资源根或补写身份标记。
+构造内容与共享 Clock，构造模板/任务目录和模型执行能力；确定性 MediaPreparer 只取内容、执行和配置。GenerationOperations 与 TranscriptionOperations 组织语言阶段，MediaAnalysis 消费它们。ConfigurationOperations 从实际绑定 owner 取得核对能力，不回填已发布服务。
 
-纯配置目录由各模块提供的 Pydantic 定义构成，不加载运行服务。解析、合并并校验文件和环境后得到候选配置。已解析的日志目录可用时配置正式日志；配置 OpenTelemetry SDK 后才开始正式 Span，前面的日志用同一个 `startup_id` 关联。
+WaveOperations 取得内容、向量、配置、时间、执行、快照存储及 NativeEngine。实际创建 NativeEngine/打开快照可以延迟到首次 Wave 操作；模块导入不启动线程池、不打开数据库或联网。
 
-随后建立执行资源、打开基础数据库并检查实例身份、独立数据库 UUID 和已绑定时间域。绑定检查通过后发布有效配置快照。准备已启用的网络、内容、模型和后台执行资源；首轮尚未实现的模块不伪装为 ready。
+## 可选能力
 
-注册业务操作和持久任务发生在开始接纳调用前。全部必需资源完成后状态为 `ready`。缺少可选模型只在能力状态中显示 `unconfigured`。
+缺模型配置时内容读取、纯 Prompt 操作、已存快照的 lexical 和诊断仍可用。Native 扩展不可用时只报告 wave.unavailable；不得在生产中切到一套 Python VCP 备用实现。配置目录的静态 Native schema 不依赖扩展已成功加载。
 
-## 双阶段配置解决依赖
+status 列出真实 ready/configured/unconfigured/unavailable，不隐式构建索引、探测模型或修复资源。完整 Runtime 向入口提供能力，领域构造只接收自己需要的 owner。
 
-配置的解析、类型、默认值和来源规则完全不依赖数据库。数据库打开所需路径和连接参数来自启动候选值。数据库建立后只做需要持久记录支持的绑定检查，或在后续领域确有需要时加载其数据库配置来源。
+## 关闭
 
-本包的实例与 Namespace 可编辑设置先采用 TOML。数据库不复制这些设置作为第二份权威。时间域、Embedding 空间等已绑定身份的记录由自己的 owner 保存，作用是防止已有数据被重新解释。
+先停止新操作，结束已接纳工作、媒体子进程与 Native 实际 worker；再关闭 Native 索引/池、模型连接、内容和数据库；最后观测与日志、实例锁。AsyncExitStack 管理已取得资源，清理失败不覆盖最初原因。
 
-## 资源返回
-
-`Runtime` 向已组装入口提供明确能力，例如 `configuration`、`database`、`execution`、`time`。它是组合根的资源容器，领域不得接受整个 Runtime 再自行查找任意服务。领域构造只传自己需要的依赖。
-
-`Runtime.status()` 返回启动状态、实际就绪能力、配置版本和必要诊断；不触发模型探测、索引重建或隐式修复。
-
-## 失败与关闭
-
-每取得一个资源即注册其关闭动作。采用 `AsyncExitStack`，后续启动失败自动逆序清理。日志和观测后关闭。错误保留最初失败原因，清理错误作为关联信息，不覆盖原异常。
-
-文件日志或遥测导出失败时保持 stderr 可见。必需存储不可用时不宣称启动成功；可选 OTLP 后端不可用不妨碍本地运行。
-
-## 第一轮可执行路径
-
-`nous init` 初始化配置与基础数据库。`nous runtime check` 实际打开运行时、执行一次数据库读取、形成状态结果，然后正常关闭；它是确定性的维护操作，不是模拟服务。后续 `serve` 在相同 Runtime 上挂载传输入口。
-
-完成条件：无模型和无遥测后端时路径可用；无效配置在联网前失败；数据库打开失败仍有日志；中途失败释放已取得的资源。来源：[contextlib](https://docs.python.org/3.14/library/contextlib.html)。
+Native 原生 handle 的销毁和 index file/mmap 关闭保持同一所有者；不能在 coroutine 已取消而 Rust 仍运行时提前 close。

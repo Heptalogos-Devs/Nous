@@ -13,7 +13,23 @@ import pytest
 
 import nous.temporal.domains as time_domains
 from nous.common.errors import NousError
+from nous.configuration import Configuration
 from nous.runtime.bootstrap import initialize_instance, open_instance
+
+
+def test_environment_resolves_generated_property_spelling_and_array_values(tmp_path: Path) -> None:
+    instance = tmp_path / "generated-environment"
+    asyncio.run(initialize_instance(instance, environment={}))
+    variable = "NOUS__WAVE__NATIVE__QUERY__PIPELINE__ACTIVATIONMULTIPLIER"
+    configuration = Configuration(instance / "nous.toml", environment={variable: "[1.0,1.25]"})
+    pipeline = configuration.snapshot.typed_values().wave.native.query["pipeline"]
+    assert isinstance(pipeline, dict)
+    assert pipeline["activationMultiplier"] == [1.0, 1.25]
+    assert "activationmultiplier" not in pipeline
+    assert configuration.explain("wave.native.query.pipeline.activationMultiplier")["source"] == {
+        "layer": "environment",
+        "location": variable,
+    }
 
 
 def test_configuration_failure_recovery(tmp_path: Path) -> None:

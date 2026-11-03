@@ -5,21 +5,21 @@ from __future__ import annotations
 import json
 import math
 from pathlib import Path
-from typing import Annotated, Literal, cast
+from typing import Annotated, Literal
 
 import click
 import typer
 from pydantic import JsonValue, TypeAdapter
 
 from nous.common.errors import NousError
-from nous.configuration import ConfigSnapshot, Configuration, FrozenValues
+from nous.configuration import Configuration
 from nous.content.contracts import ProcessingResult, SourceSelection
-from nous.models.contracts import PreparedSource, ReadingInput
-from nous.models.operations import PreparedRun
-from nous.models.prompts import PromptCatalog, PromptCompiler
+from nous.models.executor import PreparedGeneration
+from nous.models.prompts import PromptCatalog
 from nous.runtime.bootstrap import Runtime, open_instance
 
 from . import emit, options, run_async
+from .wave import wave_cli
 
 tools_cli = typer.Typer(help="模型、Prompt、媒体与内容工具", no_args_is_help=True)
 model_cli = typer.Typer(help="模型资源与生成", no_args_is_help=True)
@@ -35,6 +35,7 @@ for group, name in (
     (media_cli, "media"),
     (result_cli, "result"),
     (embedding_cli, "embedding"),
+    (wave_cli, "wave"),
 ):
     tools_cli.add_typer(group, name=name)
 
@@ -84,29 +85,7 @@ def _selection(pages: str | None, start: float | None, end: float | None) -> Sou
 async def _result(
     runtime: Runtime, address: str, *, sources: bool = True, details: bool = False
 ) -> dict[str, object]:
-    result = await runtime.results.get(address)
-    value = result.model_dump(mode="json")
-    if not sources:
-        value.pop("inputs", None)
-    if not details:
-        value.pop("request", None)
-    rendered: list[dict[str, object]] = []
-    for output in result.outputs:
-        artifact = await runtime.artifacts.get(output.artifact)
-        blob = await runtime.artifacts.blob(output.artifact)
-        item: dict[str, object] = {
-            "name": output.name,
-            "artifact": artifact.ref.address,
-            "media_type": artifact.media_type,
-            "byte_length": blob.byte_length,
-        }
-        if output.name != "response" and (
-            artifact.media_type.startswith("text/") or artifact.media_type == "application/json"
-        ):
-            item["text"] = await runtime.artifacts.read_text(output.artifact)
-        rendered.append(item)
-    value["outputs"] = rendered
-    return value
+    return await runtime.results.read_view(address, sources=sources, details=details)
 
 
 @model_cli.command("list")
@@ -139,30 +118,7 @@ def model_probe(
 ) -> None:
     async def run() -> dict[str, object]:
         async with open_instance(options(ctx).locator) as runtime:
-            snapshot = runtime.configuration.snapshot
-            values = snapshot.to_dict()
-            if model not in snapshot.typed_values().models:
-                raise NousError(
-                    "model.unknown", "The model is not configured", details={"model": model}
-                )
-            tasks = cast(dict[str, object], values["tasks"])
-            tasks["probe-internal"] = {
-                "model": model,
-                "prompt": "describe-media",
-                "output_mode": "text",
-            }
-            from nous.configuration.definitions import NousConfig
-
-            validated = NousConfig.model_validate(values).model_dump(mode="json")
-            probe = ConfigSnapshot(
-                FrozenValues(validated), snapshot.version, snapshot.sources, snapshot.state
-            )
-            outcome = await runtime.generation.run_input(
-                "probe-internal",
-                [input] if input else [],
-                probe,
-                texts=() if input else ("Describe the visible or supplied content briefly.",),
-            )
+            outcome = await runtime.generation.probe(model, input, runtime.configuration.snapshot)
             return {
                 "model": model,
                 "checked": "supplied_input" if input else "text",
@@ -198,9 +154,8 @@ def model_run(
     async def run() -> dict[str, object]:
         async with open_instance(options(ctx).locator) as runtime:
 
-            def show(prepared: PreparedRun) -> None:
-                for batch in prepared.batches:
-                    typer.echo(json.dumps(batch.prepared.to_dict(), ensure_ascii=False), err=True)
+            def show(prepared: PreparedGeneration) -> None:
+                typer.echo(json.dumps(prepared.to_dict(), ensure_ascii=False), err=True)
 
             def delta(value: str) -> None:
                 nonlocal delivered
@@ -312,44 +267,22 @@ def prompt_preview(
     question: Annotated[str, typer.Option()] = "",
     instructions: Annotated[str, typer.Option()] = "",
     schema: Annotated[Path | None, typer.Option("--schema")] = None,
+    task: Annotated[str | None, typer.Option("--task")] = None,
 ) -> None:
     async def run() -> dict[str, object]:
         async with open_instance(options(ctx).locator) as runtime:
-            async with runtime.execution.operation("prompt.preview") as context:
-                sources: list[PreparedSource] = []
-                for index, item in enumerate(input or (), 1):
-                    original = (
-                        await runtime.artifacts.get(item)
-                        if item.startswith("art:")
-                        else await runtime.artifacts.ingest(Path(item))
-                    )
-                    prepared = await runtime.media.preparer.prepare(
-                        original,
-                        requirements=(
-                            "image/png",
-                            "image/jpeg",
-                            "image/webp",
-                            "audio/wav",
-                            "application/pdf",
-                        ),
-                        settings=context.settings.typed_values().media,
-                        snapshot=context.settings,
-                        context=context,
-                    )
-                    for batch in prepared.batches:
-                        for source in batch.sources:
-                            from dataclasses import replace
-
-                            sources.append(replace(source, key=f"S{index}" + source.key[2:]))
-                for index, value in enumerate(text or (), len(input or ()) + 1):
-                    sources.append(PreparedSource(f"S{index}", f"text-{index}", text=value))
-                compiled = PromptCompiler(runtime.prompts).compile(
+            return dict(
+                await runtime.generation.preview(
                     prompt,
-                    ReadingInput(question, instructions, tuple(sources)),
+                    [_source(item) for item in input or ()],
+                    runtime.configuration.snapshot,
+                    texts=text or (),
+                    question=question,
+                    instructions=instructions,
                     schema=_schema(schema),
+                    task=task,
                 )
-                rendered: dict[str, object] = dict(compiled.to_dict())
-                return rendered
+            )
 
     emit(ctx, run_async(run()))
 

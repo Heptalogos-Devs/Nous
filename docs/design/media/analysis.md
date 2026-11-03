@@ -1,41 +1,33 @@
-# 媒体解释与派生操作
+# 媒体语言阶段与部分成果
 
-## 一次完整操作
+## 完整操作
 
-`MediaAnalysis.analyze(input, strategy, options, context) -> AnalysisResult` 接纳原件或解析已有 ArtifactRef，选择实际范围，准备媒体，调用语言阶段，提交结果并交付可读内容。
+MediaAnalysis 接收实际输入、策略、问题和选区，建立一次 Execution 根操作。它固定配置与所有需要的任务/模板，取得确定性 MediaPlan，然后按批次组织语言阶段并采用结果。
 
-它依赖 ArtifactStore、MediaPreparer、GenerationOperations 和 ResultStore。它不拿走 Database 引擎，也不创建 Provider 客户端。GenerationOperations 是通用的“准备明确语言任务—执行—采用结果”用例；普通 model run 也使用它。
+构造依赖是内容 owner、确定性 MediaPreparer、GenerationOperations、TranscriptionOperations 和 Execution。每个 owner 只取得实际需要的依赖。确定性准备器无模型依赖；MediaAnalysis 不创建 Provider 客户端。
 
 ## 三种策略
 
-**description_only**：准备实际输入 → 执行 describe-media → 保存描述 Artifact 和结果。
+- description_only：确定性表示 → 描述任务 → 采用描述。
+- direct_structured：确定性表示 → 指定结构化任务 → 采用结果。
+- describe_then_structure：描述阶段成功即采用；后续阶段同时取得其需要的原媒体表示与已保存描述，采用最终结果。
 
-**direct_structured**：准备实际输入 → 执行 extract-information 或用户明确合同 → 保存已校验结构化结果。
+任务本身不支持音频且已明确配置转写时，由 MediaAnalysis 在对应批次先调用转写阶段。普通 generation/preview 不通过这个策略自动触发额外调用。原生音频、转写文字与媒体描述的表示身份分别记录。
 
-**describe_then_structure**：准备实际输入 → 执行并提交描述 → 将同一准备输入与已保存描述一起交给结构化任务 → 保存最终结果，并关联描述结果。
+## 不同模型的输入能力
 
-已有描述通过 `--description-result res:…` 显式提供。程序检查原件、选区、实际表示与覆盖是否匹配当前请求；匹配后复用。用于图像/PDF/视频的第二阶段仍带实际可用媒体表示；需要转写的音频则明确使用实际转写及来源，不能拿某个“描述”字符串替代缺失能力。
+按阶段选择实际表示。描述阶段可以用原生 PDF，结构化阶段可以用同页图和文本；它们都绑定同一原件和页范围。没有必要把全部阶段和全部备用模型格式取交集。无法保持请求内容时明确报告该阶段能力不足，不能悄悄只发描述。
 
-## 批次和结果集合
+两阶段共享配置和模板快照、根 deadline、实际覆盖；各自的模型尝试额度由任务定义。成功转写、描述和结构化都有独立 producer 与输入 part 映射。
 
-原件过大时按准备专题分批。每批各自完成策略并返回 ProcessingResult，顶层 AnalysisResult 含原件、范围、按顺序的 batch results、已完成描述及 overall outcome。
+## 复用与缓存
 
-默认交付有页/时段标识的结果集合，不在技术上限之外偷偷拼接全部媒体为一个请求。用户需要再做跨批综合时，可把已保存文本结果交给普通 summarize 任务；这不是完成每个批次的强制第二套审查。
+`description_result` 必须匹配请求的原件/选区、描述任务/合同、实际表示与必要参数。允许当前最终阶段采用另一种确定性表示，只要来源和覆盖等价；核对由共同来源能力完成，不能仅比较整个 DTO 是否字面相同。
 
-## 部分完成
+确定性转换可以自动 exact 复用；语言结果仅显式复用。重用既有描述后不再次触发描述模型。
 
-成功阶段立刻采用。后续失败或取消，保持已提交结果，并在错误信息/JSON 中返回 `completed_result_refs`、失败阶段和未完成范围；CLI 返回非零。下一次可以显式读取/复用已经成功的描述或转换结果。
+## 逐批提交
 
-没有持久 running 记录、自动恢复承诺或重复业务队列。原件保存成功而解释失败时，原件地址继续有效。数据库采用失败在保存边界解决，不自动重跑模型。
+一次只物化有界批次。每个成功阶段通过统一 ResultStore 采用，向上累计完成 refs。失败返回已完成 refs、failed_stage 和 unfinished_coverage，保留根取消语义。原件已接纳也返回其地址。
 
-## 原文选段与预实验
-
-同一 GenerationOperations 可以运行 summarize、extract-information、select-passages。这用于观察当前 Prompt/模型/来源结构的实际效果。select-passages 的输出由程序回取原文并保留精确段落映射。
-
-本轮不存在“自动把摘要作为 Journal”或“把提取项写成 Memory”的隐式行为。后续认知领域消费这些已经完整的基础能力，再定义其形成与采用机制。
-
-## 返回结构
-
-默认展示用户请求、实际覆盖、正文、短结果地址、可展开原件/描述位置和必要的实际模型。结构化模式提供同一信息的类型化结果。
-
-内部转换参数、所有 attempts、Schema 和完整请求通过 result read 的详情展开，不一开始把全部技术字段填进模型工具正文。
+结果读回通过 ResultStore 的公开 view/provenance；CLI 不查询私有关系表。数据库失败不重做模型请求。本轮没有后台恢复承诺；后续 DBOS 将使用明确的批次业务键复用已采用结果。

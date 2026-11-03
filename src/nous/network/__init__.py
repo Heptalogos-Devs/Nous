@@ -11,11 +11,6 @@ from nous.common.errors import NousError
 from nous.configuration import ConfigSnapshot, NousConfig
 from nous.configuration.definitions import NetworkConfig
 from nous.credentials import Credentials
-from nous.models.configuration import ProviderConfig
-
-
-def _network(settings: NetworkConfig, provider: ProviderConfig) -> NetworkConfig:
-    return settings.model_copy(update=provider.network.model_dump(exclude_none=True))
 
 
 def _timeout(settings: NetworkConfig) -> httpx2.Timeout:
@@ -63,7 +58,7 @@ class ModelConnections:
                 "The configured model protocol is not supported.",
                 details={"provider": provider_id, "protocol": provider.protocol},
             )
-        network = _network(self._settings.network, provider)
+        network = self._settings.provider_network(provider_id)
         verify: ssl.SSLContext | bool = True
         if network.ca_file:
             ca_file = Path(network.ca_file).expanduser()
@@ -114,7 +109,7 @@ class ModelConnections:
                 "The model provider is not configured.",
                 details={"provider": provider_id},
             )
-        return _timeout(_network(settings.network, provider))
+        return _timeout(settings.provider_network(provider_id))
 
     async def aclose(self) -> None:
         """Attempt every client closure before propagating the first shutdown failure."""

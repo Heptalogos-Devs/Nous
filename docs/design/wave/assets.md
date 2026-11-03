@@ -1,0 +1,77 @@
+# Wave 集合、概念与冻结资产
+
+## 集合输入
+
+集合清单是操作者明确提供的检索数据，不是新的认知权威。JSON 使用以下对象：
+
+```text
+CollectionManifest:
+  name, space?
+  documents[]: {key, input, derived_from?, evidence_group?, times?}
+  concepts[]: {key, label, description, aliases?}
+  source_sequences[]: {document, concepts[], ordered}
+  candidates[]: {key, content, document, concepts?, curve?, metadata?}
+  associations[]: {key, source, target, relation, directed,
+                   strength, confidence, polarity, evidence[]}
+```
+
+input 为 file/text/artifact 之一；file 相对清单所在目录。content 指向一个 document 及精确 selector。concepts 顺序保留重复出现：例如 A→B→A；unordered 只提供共现，不能排序后假造方向。curve 为候选正文上的有序 Concept 键，可缺省；单来源且覆盖整文时可沿 source_sequence，否则不自动将全部根来源拼成候选曲线。
+
+文本可按全文、行或字节选区读取。PDF 候选通过媒体准备提取选定页的文字，候选保存实际文本 Artifact 和原 PDF 页选区，来源根仍归原 PDF。图片和音视频需先通过媒体解释或转写得到文本 Artifact，再将文本纳入集合。
+
+documents.derived_from 是外部清单明确声明的派生关系，引用已列出的 document。它与已存 ResultStore 来源一起构成当前集合的血缘，保存声明来源，不伪装成 Nous 当年执行过的生成。循环或不存在的引用失败。
+
+## 来源与事实单位
+
+原件身份、源事实单位和候选分别保存。终端文稿拥有一个来源根；显式 evidence_group 可把确知属于同一事实来源的多份接纳合并为一个独立支持组。未声明时不凭 digest 合并不同观察。所有派生文本沿 derived_from / ResultStore 血缘取得根集合。
+
+**只有终端原始来源的 source_sequences 进入事实图构建。** 派生候选的 curve 可供读出，不能作为一份额外独立事实重建共现边。两个根产生的总结保留两个根；模型响应、预处理结果和查询上下文不成为第三个支持根。
+
+unordered 来源对每个不同 Concept 对形成同质量双向共现，贡献仍属于原根；它不提供方向/序列路径。原上游的 position/window 衰减仅用于 ordered=true。候选 memberships 与 ordered curve 分开：前者可支持概念匹配和直接锚，后者才支撑依赖序位的曲线奖励。没有 curve 时该分量标记不可用，不按 key 排序补造。候选 concepts 缺省为 curve 中的唯一概念；整文候选可继承其 source_sequence 的成员集合，局部候选需明确提供或只用自己已有曲线。
+
+source_sequences 缺省不会触发自动抽取：lexical/dense 可用；需要 VCP 时明确报告无相应概念/事实能力。不得用候选全部两两相连或统一 dummy Tag 伪造可用 VCP。
+
+## 三种局部身份
+
+`curve_document_id` 标识候选曲线所属文稿，`sequence_id` 标识一份原始来源上的出现序列，`evidence_root_id` 标识独立支持组。三者分别映射到局部整数。共享一个 evidence_group 的两个来源序列不能串接成一条新时间顺序；它们的贡献在独立性计算时归同组。Thinking 去重同一文稿的规则使用 curve_document，排除自证使用全部 evidence_root，不能互换。
+
+## 概念向量
+
+每个 Concept 的实际编码文本固定为 label、description、aliases 的明确拼接模板，并将模板版本纳入构建配置。默认 `label + "
+" + description`，非空 aliases 另起一行，重复 label 可按确定规则去重。调用 Embedding owner 的 document 用途，所有向量位于同一正式空间。
+
+原始 label/aliases 供字面焦点识别；完整描述用于语义向量。算法不可把描述截成第一个词，名称变动不能重解释旧快照。查询临时 cue 使用相同描述编码约定，并具有 query/document 编码用途记录。
+
+## 数值冻结输入
+
+```text
+FrozenAssets:
+  identity: {snapshot_id, space_signature, build_config_signature}
+  candidates: refs, documents, text, vectors[N,D]
+  concepts: keys, labels, aliases, vectors[M,D]
+  source_sequences: sequence_ids, root_groups, indptr, concept_rows, positions, ordered_flags
+  candidate_memberships: indptr, concept_rows
+  candidate_curves: indptr, concept_rows, positions, ordered_flags
+  candidate_roots: indptr, source_rows
+  association_edges: from_rows, to_rows, type_ids, direction, strength, confidence, polarity
+  association_roots: indptr, source_rows
+  source_metadata / candidate_metadata
+```
+
+数组按行位置对齐，metadata 只含小型描述；向量与大图不使用 JSON。Python 维护精确引用到行号的可重开映射，Native 使用局部整数行号。VCP 内部正 ID 从 row+1 映射，不能丢掉外部第 0 行。
+
+vectors 为 C-contiguous float32，稀疏指针与索引为 uint64，权重/累计数值按算法使用 float64。所有维度、范围、重复索引策略和有限值在一次边界校验后形成不变量，热循环不逐次重复全资产检查。
+
+## 公开引用和形状
+
+`WaveSnapshotRef = instance_id + snapshot_id + address(wav:Proquint)`；`WaveCandidateRef = WaveSnapshotRef + candidate_key`。候选的内容引用仍是 ArtifactRef 与 selector，不给每个候选重建一套文件身份。
+
+清单所有 key 在各自集合内唯一，引用必须存在；association.strength/confidence 为有限的 0..1，polarity 为 positive/negative，evidence 非空。ordered occurrence 保留重复出现与实际序位；同一根的重复出现可以影响其数值质量，但始终只有一个独立支持身份。实现若将 occurrence 压成集合，必须保留无序标记并不运行依赖序位的曲线分量。
+
+Context 的默认权重和 Native 索引配置在各负责专题中定义；此处不保存重复默认值。
+
+## 元数据与时间
+
+times 复用现行 TemporalValue 与时间域定义，只在调用者确实提供的轴上存在。Artifact 的实际 received/formed/recorded 来自内容 owner；清单可提供事件发生/适用等外部声明并标记来源。selector、独立 evidence group 与语义时间不混成一个字符串。
+
+候选类型 metadata 可以是 article、note、journal、schema 等展示值，Native 不据此枚举全部未来认知类型。返回内容仍由原 owner 解析。

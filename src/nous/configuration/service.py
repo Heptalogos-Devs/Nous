@@ -389,6 +389,36 @@ class Configuration:
         except ValidationError as error:
             raise NousError("configuration.invalid", str(error)) from error
 
+    def _environment_path(self, path: str) -> str:
+        """Restore declared property spelling after case-insensitive environment parsing."""
+        parts: list[str] = []
+        node = self._schema
+        for part in path.split("."):
+            node = self._deref(node)
+            variants = cast(list[Object], node.get("oneOf", node.get("anyOf", [])))
+            candidates = [node, *(self._deref(variant) for variant in variants)]
+            names = {
+                name
+                for candidate in candidates
+                for name in object_map(candidate.get("properties", {}))
+                if name.casefold() == part.casefold()
+            }
+            if part in names:
+                canonical = part
+            elif len(names) == 1:
+                canonical = next(iter(names))
+            elif names:
+                raise NousError(
+                    "configuration.environment_ambiguous",
+                    "Environment field matches multiple declared properties",
+                    details={"path": path, "properties": sorted(names)},
+                )
+            else:
+                canonical = part
+            parts.append(canonical)
+            node, _ = self._field(".".join(parts))
+        return ".".join(parts)
+
     def _environment_values(self) -> Object:
         source = EnvSettingsSource(
             EnvironmentSettings,
@@ -407,22 +437,34 @@ class Configuration:
         for name in self.environment:
             if name.upper().startswith("NOUS__"):
                 path = name[6:].lower().replace("__", ".")
-                self._field(path)
+                self._environment_path(path)
+        normalized: Object = {}
         for path, value in list(leaves(values)):
+            path = self._environment_path(path)
             node, _ = self._field(path)
-            types = {
+            types: set[str] = set()
+            for raw_type in [
                 node.get("type"),
                 *(choice.get("type") for choice in cast(list[Object], node.get("anyOf", []))),
-            }
-            if isinstance(value, str) and types.intersection({"integer", "number", "boolean"}):
+            ]:
+                if isinstance(raw_type, str):
+                    types.add(raw_type)
+                elif isinstance(raw_type, list):
+                    types.update(
+                        item for item in cast(list[object], raw_type) if isinstance(item, str)
+                    )
+            if isinstance(value, str) and types.intersection(
+                {"integer", "number", "boolean", "array", "object"}
+            ):
                 try:
-                    set_path(values, path, json.loads(value))
+                    value = json.loads(value)
                 except ValueError as error:
                     raise NousError(
                         "configuration.environment_invalid",
                         f"Invalid typed environment value for {path}",
                     ) from error
-        return values
+            set_path(normalized, path, value)
+        return normalized
 
     def _validate(self, values: Mapping[str, object]) -> Object:
         try:
@@ -444,8 +486,8 @@ class Configuration:
             for name in self.environment
             if name.upper().startswith("NOUS__")
             and (
-                path == name[6:].lower().replace("__", ".")
-                or path.startswith(name[6:].lower().replace("__", ".") + ".")
+                path.casefold() == name[6:].casefold().replace("__", ".")
+                or path.casefold().startswith(name[6:].casefold().replace("__", ".") + ".")
             )
         ]
         return max(matches, key=len) if matches else "NOUS__"

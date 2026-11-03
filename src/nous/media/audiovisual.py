@@ -5,12 +5,16 @@ from __future__ import annotations
 import asyncio
 import json
 import shutil
+import tempfile
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import cast
 
 from pydantic import JsonValue
 
 from nous.common.errors import NousError
+from nous.runtime.execution import ExecutionManager
 
 from .configuration import MediaConfig
 
@@ -18,7 +22,8 @@ from .configuration import MediaConfig
 class AudioVisual:
     """Own FFmpeg children until exit, including cleanup during cancellation."""
 
-    def __init__(self, settings: MediaConfig) -> None:
+    def __init__(self, settings: MediaConfig, execution: ExecutionManager) -> None:
+        self.execution = execution
         self.ffmpeg = self._resolve(settings.ffmpeg_path, "ffmpeg")
         self.ffprobe = self._resolve(settings.ffprobe_path, "ffprobe")
         self._version: str | None = None
@@ -125,24 +130,45 @@ class AudioVisual:
         origin = frames[0][1]
         return tuple((index, time - origin) for index, time in frames)
 
-    async def frame(self, path: Path, index: int, max_side: int) -> bytes:
-        # Select by the decoded frame index from ffprobe; timestamps are never guessed from FPS.
-        return await self.process(
-            self.ffmpeg,
-            "-v",
-            "error",
-            "-i",
-            str(path),
-            "-vf",
-            f"select=eq(n\\,{index}),scale=w='min({max_side},iw)':h='min({max_side},ih)':force_original_aspect_ratio=decrease",
-            "-frames:v",
-            "1",
-            "-f",
-            "image2pipe",
-            "-vcodec",
-            "png",
-            "pipe:1",
+    @asynccontextmanager
+    async def frames(
+        self, path: Path, indices: tuple[int, ...], max_side: int, temporary: Path
+    ) -> AsyncGenerator[dict[int, Path]]:
+        """Decode selected frames in one FFmpeg traversal; keep only bounded reads in memory."""
+        if not indices:
+            yield {}
+            return
+        await self.execution.blocking(temporary.mkdir, parents=True, exist_ok=True)
+        directory = await self.execution.blocking(
+            tempfile.TemporaryDirectory, prefix="frames-", dir=temporary
         )
+        try:
+            output = Path(directory.name)
+            selected = "+".join(f"eq(n\\,{index})" for index in indices)
+            await self.process(
+                self.ffmpeg,
+                "-v",
+                "error",
+                "-i",
+                str(path),
+                "-vf",
+                f"select={selected},scale=w='min({max_side},iw)':h='min({max_side},ih)':force_original_aspect_ratio=decrease",
+                "-fps_mode",
+                "passthrough",
+                "-frames:v",
+                str(len(indices)),
+                str(output / "%06d.png"),
+            )
+            files = {
+                index: output / f"{ordinal:06d}.png" for ordinal, index in enumerate(indices, 1)
+            }
+            if any(not file.is_file() for file in files.values()):
+                raise NousError(
+                    "media.missing_frame", "FFmpeg did not produce every selected frame"
+                )
+            yield files
+        finally:
+            await self.execution.blocking(directory.cleanup)
 
     async def audio(self, path: Path, start_ms: int, end_ms: int) -> bytes:
         return await self.process(

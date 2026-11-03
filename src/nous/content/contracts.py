@@ -32,6 +32,8 @@ class SourceSelection(ContentValue):
     end_ms: int | None = Field(default=None, gt=0)
     start_line: int | None = Field(default=None, ge=1)
     end_line: int | None = Field(default=None, ge=1)
+    start_byte: int | None = Field(default=None, ge=0)
+    end_byte: int | None = Field(default=None, ge=0)
     frame: int | None = Field(default=None, ge=0)
     crop: tuple[int, int, int, int] | None = None
 
@@ -43,6 +45,12 @@ class SourceSelection(ContentValue):
             raise ValueError("The end time must follow the start time")
         if self.end_line is not None and self.end_line < (self.start_line or 1):
             raise ValueError("The end line must follow the start line")
+        if self.end_byte is not None and self.end_byte < (self.start_byte or 0):
+            raise ValueError("The end byte must follow the start byte")
+        if (self.start_byte is not None or self.end_byte is not None) and (
+            self.start_line is not None or self.end_line is not None
+        ):
+            raise ValueError("A selection uses either byte or line coordinates")
         if self.crop is not None:
             left, top, right, bottom = self.crop
             if min(left, top) < 0 or right <= left or bottom <= top:
@@ -61,11 +69,48 @@ class Artifact(ContentValue):
     producer_result_ref: ResultRef | None = None
 
 
-class ResultInput(ContentValue):
+class ContentSelection(ContentValue):
+    """Coordinates refer to this artifact's own immutable body."""
+
     artifact: ArtifactRef
-    key: str
     selection: SourceSelection = Field(default_factory=SourceSelection)
+
+
+class OriginSlice(ContentValue):
+    origin: ContentSelection
+    transform_ref: ResultRef | None = None
+
+
+class InputPart(ContentValue):
+    content: ContentSelection
     representation: str = "original"
+    origins: tuple[OriginSlice, ...] = ()
+
+
+class InputGroup(ContentValue):
+    """One local source key, with every independently addressable representation."""
+
+    key: str
+    name: str
+    parts: tuple[InputPart, ...] = Field(min_length=1)
+
+
+class InputSpec(ContentValue):
+    kind: Literal["file", "text", "artifact"]
+    path: str | None = None
+    text: str | None = None
+    artifact: ArtifactRef | str | None = None
+    selection: SourceSelection = Field(default_factory=SourceSelection)
+    display_name: str | None = None
+
+    @model_validator(mode="after")
+    def matching_payload(self) -> InputSpec:
+        payload = {"file": self.path, "text": self.text, "artifact": self.artifact}
+        if payload[self.kind] is None or any(
+            value is not None for key, value in payload.items() if key != self.kind
+        ):
+            raise ValueError("An input must contain exactly its declared payload")
+        return self
 
 
 class OutputContent(ContentValue):
@@ -82,7 +127,7 @@ class ResultOutput(ContentValue):
 class ProcessingResult(ContentValue):
     ref: ResultRef
     operation: str
-    inputs: tuple[ResultInput, ...]
+    inputs: tuple[InputGroup, ...]
     outputs: tuple[ResultOutput, ...]
     producer: dict[str, JsonValue]
     request: dict[str, JsonValue]

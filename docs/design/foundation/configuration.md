@@ -18,6 +18,8 @@ Configuration 提供字段定义、类型校验、分层解析、来源解释、
 
 NOUS_INSTANCE 只定位配置目录。环境值使用 NOUS__SECTION__FIELD，来源记录精确键。动态资源使用小写 ASCII slug；真实模型名保留原样。不得让 Provider SDK 独立读取另一套网关/代理设置绕过 Configuration。
 
+环境字段不区分大小写，按正式 Schema 恢复属性名；Rust 导出的 camelCase 字段与 Python 字段使用同一解析路径。数组、对象及标量按对应 Schema 解析 JSON，解析后的快照只保存正式属性名。
+
 对象按字段递归合并，数组整项替换，资源 map 按 ID 覆盖。未知字段返回错误；协议扩展仅在明确的受控参数区由 adapter/library 解释。删除资源先由对应 owner 核对任务、fallback 和已用资产引用。
 
 ## 缺失与清空

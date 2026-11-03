@@ -42,7 +42,7 @@ time_domain_definitions = sa.Table(
     sa.Column("tick_denominator", sa.String),
     sa.Column("epoch", sa.String),
 )
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 @contextmanager

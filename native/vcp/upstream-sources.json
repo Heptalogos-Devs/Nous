@@ -1,0 +1,23 @@
+{
+  "repository": "https://github.com/lioensky/VCPToolBox",
+  "commit": "d5c019ebbac1f317c2938d655d2ce916e41b9164",
+  "license": "CC-BY-NC-SA-4.0",
+  "sha256": {
+    "rust-vexus-lite/src/memo_geometry.rs": "4395901874292f800f1c9d1a18dfe0c3725f57ba2d6732645e12b02358f1d694",
+    "rust-vexus-lite/src/memo_artifact_builder.rs": "32b64316a22fa23fd8b9f724a0e72efc8de453b91201ff0ff4e0bdd248132c26",
+    "rust-vexus-lite/src/memo_pipeline.rs": "30e6aa57d29642a736b57fb431224d0aae6b6b7a4171ad84b46e5c2ed75d55b7",
+    "rust-vexus-lite/src/memo_sensing.rs": "19d6801e6dc4f1e598b4cdd381b6fade1bb3bfe8d68a32256b2aeca95de7906f",
+    "rust-vexus-lite/src/memo_projection.rs": "717da062fd83c2ae9385fa9573c12a0501b38d33334a4d273cf89f7f6a1f92b7",
+    "rust-vexus-lite/src/memo_thinking.rs": "bc5571ac318ebd00d84c28fc32ff48020e10ae1d79e808efd8404162ac7c3136",
+    "rust-vexus-lite/src/rivermemo_topology_v3.rs": "ab1e29be1a7e6e61e5a52412ca94cfc60b01644540b20e81f5644bbeae1cecd4",
+    "rust-vexus-lite/src/rivermemo_wormhole.rs": "78d0099dd81afaf8c5e9c7d293a4236ce53acfc134d2d85257dba3a3abee581d",
+    "Plugin/RAGDiaryPlugin/ContextVectorManager.js": "1b3faad7b3c0bf95aebd069972a8b88ad378c99f48a2e277a0007f314243afa2",
+    "ResultDeduplicator.js": "f409f8606d5eed26e0aba27b84f9aba01fc4cecfa3b014a90ed9112f8bd22391"
+  },
+  "dtsc": {
+    "repository": "https://github.com/Heptalogos-Devs/Nous-Wave",
+    "commit": "412b062082afb75ccfae4c3f69fc606d3e3cc862",
+    "license": "Apache-2.0",
+    "source": "crates/retrieval/src/reference/dtsc"
+  }
+}

@@ -33,10 +33,7 @@ inputs = sa.Table(
     metadata,
     sa.Column("result_id", sa.String, sa.ForeignKey("processing_results.id"), primary_key=True),
     sa.Column("ordinal", sa.Integer, primary_key=True),
-    sa.Column("artifact_id", sa.String, sa.ForeignKey("content_artifacts.id"), nullable=False),
-    sa.Column("key", sa.String, nullable=False),
-    sa.Column("selection", sa.JSON, nullable=False),
-    sa.Column("representation", sa.String, nullable=False),
+    sa.Column("group", sa.JSON, nullable=False),
 )
 outputs = sa.Table(
     "processing_outputs",

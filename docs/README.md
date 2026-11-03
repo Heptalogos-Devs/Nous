@@ -1,33 +1,21 @@
 # Nous 设计与开发文档
 
-项目内 design 文档定义当前产品和工程合同；代码按当前设计实现。新的真实需求暴露结构问题时，修改负责专题与实现所有者，迁移调用方。旧代码形状和测试没有内部兼容特权。
+`design/` 定义当前合同，`plans/` 安排已授权工作，`sources/` 保存原样讨论。当前施工入口为 [结构收敛与 Wave Native](plans/wave-native.md)。
 
-## 阅读入口
+## 全局入口
 
-[整体架构](ARCHITECTURE.md)说明所有权和依赖；[当前工作](CURRENT.md)记录能力和当前目标。[模型与媒体实施计划](plans/model-runtime.md)是当前施工入口。
+[架构](ARCHITECTURE.md)定义所有权、数据和依赖方向；[当前工作](CURRENT.md)区分已有能力与正在建设的能力。源码位置由 `src/nous/INDEX.md` 维护。开发发现结构不足时直接修改定义者与所有实际消费者。
 
-专题按独立责任组织。配置、内容、模型、Prompt、媒体转换、媒体解释和命令呈现分别维护。文档较短也保留独立主题；同一规则只在负责专题定义，其余位置引用。
+## 专题导航
 
-## 文档职责
+基础收敛：[应用边界](design/foundation/application-boundaries.md)、[来源与内容记录](design/foundation/content-records.md)、[配置接入](design/foundation/configuration-integration.md)、[执行与生命周期](design/foundation/execution.md)、[内容存储](design/foundation/content-storage.md)。未在本轮替换的路径、数据库、事务、时间和日志专题继续使用各自现行合同。
 
-- `design/foundation/`：实例、配置、执行、存储、网络、时间及观测。
-- `design/models/`：资源、请求、Prompt、输出、缓存、额度和向量空间。
-- `design/media/`：输入范围、各模态准备、解释策略与派生结果。
-- `design/interfaces/`：正式入口及其呈现。
-- `plans/`：当前完整能力的实施依赖、迁移与交付。
-- `development/`：本地开发环境接入和实际使用通路。
-- `research/`：决定所采用的外部依据与取舍。
-- `sources/`：原样讨论，保留意图、提案与纠正；不逐段直接视为已批准合同。
-- `legacy/`：退役资料，只作有目的的研究参考。
+模型和媒体：[任务与执行](design/models/execution.md)、[任务合同](design/models/task-contracts.md)、[Prompt](design/models/prompts.md)、[输入量与尝试](design/models/budgets.md)、[备用路线](design/models/fallback.md)、[Embedding](design/models/embeddings.md)、[确定性准备](design/media/preparation.md)、[解释阶段](design/media/analysis.md)、[PDF](design/media/documents.md)、[音视频](design/media/video.md)。
 
-更新决定时原地修正文档，不在现行正文积累旧方案。`CURRENT.md` 不列讨论归档清单。与当前任务无关的文档不为格式统一而重写。
+Wave：[能力与边界](design/wave/overview.md)、[资产与集合](design/wave/assets.md)、[公共值](design/wave/contracts.md)、[上下文查询](design/wave/query-context.md)、[VCP 计算](design/wave/vcp.md)、[Nous 扩展](design/wave/nous-extensions.md)、[分数与排名](design/wave/ranking.md)、[Native 接口](design/wave/native.md)、[快照与发布](design/wave/persistence.md)、[配置](design/wave/configuration.md)、[产品入口](design/interfaces/wave-cli.md)。
 
-## 本轮专题导航
+实施与依据：[主计划](plans/wave-native.md)、[实际操作](development/wave-walkthrough.md)、[审查发现](research/structure-review-fdb39e4.md)、[VCP 采用对照](research/vcp-adoption.md)。
 
-入口与依赖：[模型计划](plans/model-runtime.md)、[配置接入](design/foundation/configuration-integration.md)、[工具 CLI](design/interfaces/tools-cli.md)。
+## 更新规则
 
-内容与模型：[CAS](design/foundation/content-storage.md)、[内容记录与结果](design/foundation/content-records.md)、[网络](design/foundation/networking.md)、[凭据](design/foundation/credentials.md)、[资源](design/models/resources.md)、[Prompt](design/models/prompts.md)、[任务合同](design/models/task-contracts.md)、[执行](design/models/execution.md)、[Embedding](design/models/embeddings.md)。
-
-媒体：[准备与选择](design/media/preparation.md)、[图片](design/media/images.md)、[文档](design/media/documents.md)、[音频](design/media/audio.md)、[视频](design/media/video.md)、[解释与派生](design/media/analysis.md)。
-
-实际使用：[本地网关](development/local-gateway.md)、[通路验证](development/model-media-walkthrough.md)。
+一项规则只在其负责专题定义。决定改变时替换原文并迁移关联例子；不在正文保留失效方案的兼容说明。CURRENT 不列讨论归档清单。研究提出的新规则与源码已经具有的能力分别写明；正式 Spec 中已选方案就是本次施工合同。

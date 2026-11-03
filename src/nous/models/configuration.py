@@ -2,7 +2,13 @@
 
 from typing import Annotated, Literal
 
-from pydantic import Field, JsonValue, model_validator
+from pydantic import (
+    Field,
+    JsonValue,
+    SerializerFunctionWrapHandler,
+    model_serializer,
+    model_validator,
+)
 
 from nous.common.values import ResourceId
 from nous.configuration.metadata import ConfigModel, setting
@@ -13,15 +19,31 @@ Capability = Literal[
 
 
 class EnvironmentCredential(ConfigModel):
-    kind: Literal["env"]
-    name: str = Field(min_length=1, description="Environment variable containing the credential.")
+    kind: Annotated[
+        Literal["env"], setting(apply="restart", description="Environment credential source.")
+    ]
+    name: Annotated[
+        str,
+        setting(
+            min_length=1,
+            apply="restart",
+            description="Environment variable containing the credential.",
+        ),
+    ]
 
 
 class FileCredential(ConfigModel):
-    kind: Literal["file"]
-    path: str = Field(
-        min_length=1, description="Credential file, relative to the instance directory."
-    )
+    kind: Annotated[
+        Literal["file"], setting(apply="restart", description="File credential source.")
+    ]
+    path: Annotated[
+        str,
+        setting(
+            min_length=1,
+            apply="restart",
+            description="Credential file, relative to the instance directory.",
+        ),
+    ]
 
 
 CredentialReference = Annotated[EnvironmentCredential | FileCredential, Field(discriminator="kind")]
@@ -52,6 +74,18 @@ class NetworkOverride(ConfigModel):
     max_connections: int | None = setting(
         None, ge=1, apply="restart", description="Override the connection pool ceiling."
     )
+
+    @model_validator(mode="after")
+    def explicit_null(self) -> NetworkOverride:
+        for name in self.model_fields_set - {"proxy_url", "ca_file"}:
+            if getattr(self, name) is None:
+                raise ValueError(f"{name} cannot be null; omit it to inherit")
+        return self
+
+    @model_serializer(mode="wrap")
+    def serialize_overrides(self, handler: SerializerFunctionWrapHandler) -> dict[str, JsonValue]:
+        values = handler(self)
+        return {name: values[name] for name in self.model_fields_set}
 
 
 class ProviderConfig(ConfigModel):
@@ -211,6 +245,10 @@ class EmbeddingSpace(ConfigModel):
 
 
 class EmbeddingConfig(ConfigModel):
+    max_batch_size: int = setting(
+        64, ge=1, description="Maximum inputs submitted in one embedding gateway request."
+    )
+
     spaces: dict[ResourceId, EmbeddingSpace] = setting(
         {},
         apply="new_binding",

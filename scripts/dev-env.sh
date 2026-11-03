@@ -4,7 +4,10 @@ NOUS_REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 export NOUS_REPO_ROOT
 export UV_CACHE_DIR="$NOUS_REPO_ROOT/temp/cache/uv"
 export UV_PROJECT_ENVIRONMENT="$NOUS_REPO_ROOT/temp/venvs/nous"
+export UV_NO_EDITABLE=1
 export UV_PYTHON_INSTALL_DIR="$NOUS_REPO_ROOT/temp/tools/python"
+export CARGO_HOME="$NOUS_REPO_ROOT/temp/tools/cargo-home"
+export CARGO_TARGET_DIR="$NOUS_REPO_ROOT/temp/build/native"
 export PIP_CACHE_DIR="$NOUS_REPO_ROOT/temp/cache/pip"
 export RUFF_CACHE_DIR="$NOUS_REPO_ROOT/temp/cache/ruff"
 export PYTHONPYCACHEPREFIX="$NOUS_REPO_ROOT/temp/cache/pycache"
@@ -14,7 +17,7 @@ export TMPDIR="$TEMP"
 export npm_config_cache="$NOUS_REPO_ROOT/temp/cache/npm"
 export XDG_CACHE_HOME="$NOUS_REPO_ROOT/temp/cache/xdg"
 mkdir -p "$UV_CACHE_DIR" "$PYTHONPYCACHEPREFIX" \
-    "$UV_PYTHON_INSTALL_DIR" "$PIP_CACHE_DIR" "$RUFF_CACHE_DIR" \
+    "$UV_PYTHON_INSTALL_DIR" "$PIP_CACHE_DIR" "$RUFF_CACHE_DIR" "$CARGO_HOME" "$CARGO_TARGET_DIR" \
     "$TEMP" "$npm_config_cache" "$XDG_CACHE_HOME"
 
 export PATH="$UV_PROJECT_ENVIRONMENT/bin:$PATH"

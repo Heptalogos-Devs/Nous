@@ -1,59 +1,65 @@
-# 内容对象、处理结果与来源
+# 内容、输入表示与来源记录
 
-## 产品对象
+## 正式对象
 
-本轮只建立两种面向使用者的不可变记录。
+Artifact 表示一次正式接纳或生成的不可变内容，拥有稳定身份、短地址、MIME、名称及可用时间。BlobRef 仅表示字节摘要和长度。同样字节的不同接纳可以属于不同事件；推导同一份材料的多个版本也不会增加独立证据。
 
-**Artifact** 是一份已接纳的文字或文件。保存内部 ID、可读地址、媒体类型、显示名、原始来源说明、接纳/创建时间；可选 producer_result_ref 从正式结果输出关系解析，正文通过 CAS 内容引用获取。
+ProcessingResult 保存成功处理的 operation、producer、精确输入、有名输出、参数、coverage、formed_at、recorded_at。失败或中断由用例返回部分结果，不先建通用 running/receipt 总表。
 
-**ProcessingResult** 是一次已成功完成处理的结果。处理可以是本地转换、模型生成、转写或向量生成。保存操作/任务、实际输入及选区、输出 Artifact、参数、完成时间、producer，以及必要的中间结果引用。
+`recorded_at` 与实际接纳/生成时间使用组合根提供的 Clock.utc_now。认知事件的其它轴以后由实际领域提供，不用接纳时刻补造接触或发生。
 
-同样字节共享物理 Blob，不合并不同接纳来源。没有新的内容变更时 Artifact 可复用；将本地文件再次作为新来源显式接纳时可创建新 Artifact。初版不把资料的路径当唯一身份。
+## 精确位置属于被指向的正文
 
-这些对象提供输入和结果的完整操作，后续材料、观察与认知领域可以引用它们；当前不预建 Note/Journal/Memory 全家族表。
+```text
+SourceSelection:
+  pages: tuple[int]
+  start_line/end_line: int?    # 1 基、含端点
+  start_byte/end_byte: int?    # 半开；与行选区互斥
+  start_ms/end_ms: int?        # 半开
+  frame: int?
+  crop: (left,top,right,bottom)?
 
-## 地址与精确读取
+ContentSelection:
+  artifact: ArtifactRef
+  selection: SourceSelection  # 空选区表示 Whole
 
-内部 ID 使用 UUID。产品地址使用 `art:` 和 `res:` 前缀，加随机分配的三组 CVCVC Proquint，数据库唯一约束处理碰撞。复用 legacy 中独立、正确的编码方法或成熟 Proquint 实现；不从 UUID 截断生成地址。
+OriginSlice:
+  origin: ContentSelection
+  transform_ref: ResultRef?     # 精确指出产生当前表示的处理
 
-本轮地址在实例内解释，结果同时携带 instance_id。未来认知域命名空间在正式接入时迁移合同，本轮不为尚未创建的 Namespace 伪造默认认知身份。
+InputPart:
+  content: ContentSelection     # 这次实际读取/发送的字节或文字位置
+  representation: original | text | image | audio | transcript | ...
+  origins: tuple[OriginSlice]   # 原件位置，允许多个
 
-地址绑定不可变目标。一次请求中的 `S1`、`S1:P2` 仅为模型输入局部键；ResultStore 保存其精确 Artifact/选区映射，不能拿临时序号作长期地址。字节 digest 留在机器详情，正常输出展示名称、正文、短地址和必要来源。
+InputGroup:
+  key: str                     # 模型局部键，如 S1:P3
+  name: str
+  parts: ordered tuple[InputPart]
+```
 
-## 数据关系
+SourceSelection 按模态验证可用坐标，模型、媒体、Embedding 与 Wave 共用 ContentSelection。一个组可以同时提供页文字与页图，每个 part 各自有正式 Artifact。局部 key 指组，不把两个不同正文强塞到一个 artifact 字段。
 
-需要正式保存的关系是：结果输入（按顺序）→ 输入 Artifact/选区；结果输出（按名称和顺序）→ 输出 Artifact；输出 Artifact → 生产该内容的结果；结果 → 它实际消费的描述或转换结果。
+PDF 第 3 页的 PNG，其 `content` 是该 PNG 的 Whole；`origins` 指原 PDF 的 PdfPages(3)。音频 60–120 秒的 WAV，其 content 是分段文件 Whole/0–60 秒；原始时段只出现在 origins。文本片段按原 Artifact 行范围引用；选段回取这些行，不重新生成文字。
 
-结果的输出关系是唯一写入位置，Artifact 的 producer 是它的反向读取视图；中间描述结果地址也从实际输入的生产关系取得。每条关系只保留一个维护位置，其他入口查询该关系。source map、coverage、producer 是明确的值合同，可以序列化保存；不建一张任意 JSON 状态总表，也不另建可独立修改的第二份关系图。
+## 来源关系
 
-`ArtifactStore.ingest(input)` 完成 CAS 接纳和短事务登记。ResultStore 先在事务外 `prepare_outputs` 发布需要的字节，得到纯的准备结果；`adopt_in(tx, producer, inputs, prepared_outputs, ...)` 在调用者的 WriteTx 中登记结果、输出身份和引用，不自行 commit。普通生成的 `adopt` 完整操作可以组合这两个步骤并拥有自己的短事务。
+结果记录两类用途：实际消费的有序 InputGroup；只用于解释派生血缘的 origins/处理关系。原件作为来源存在一次，实际使用整份原件时可以同时承担输入角色，但不再插入无类型的重复 `S1` 行。
 
-Embedding 等跨 owner 采用使用 `prepare_outputs → Database.write → SpaceRegistry.bind_in + ResultStore.adopt_in + 向量关联`，所有正式变化一次提交。禁止在外层 WriteTx 内调用另开事务的 adopt。仅在完成提交后才返回成功引用。
+`ResultStore.provenance(refs)` 批量读取有向无环的来源关系，按请求 Artifact ID 返回终端来源身份集合；Wave 消费这个公开能力，不遍历 content 的私有表。相同终端来源去重，派生深度和使用次数不扩大独立支持。没有外部来源的主动创作，其原始 Artifact 是一个明确的来源；查询上下文和算法计算不能被当成新的事实支持。
 
-可以先分配结果/输出内部 ID，在同一事务按外键依赖顺序插入结果头、输出记录及关系，无需额外持久准备状态。
+外部声明“这两个 Artifact 是同一真实来源”由输入清单/正式领域明确表达，不能仅凭 digest 推断。
 
-数据库基础只提供连接与事务。Artifact、Result、Embedding 的表定义分别由负责模块维护，初始化组合明确收集这些 metadata。开发中的不兼容 schema 直接迁移受影响代码或按授权重建指定开发实例，无内部升级版本链。
+## 存储与采用
 
-## 请求、输出与生成出处
+CAS `owner/slot → BlobRef` 是正文唯一映射。Artifact 表不复制另一份可更新 digest。输入表按 ordinal 保存完整 InputGroup JSON，内含 key、part 顺序、实际 content、origins 和 representation；origin artifact/result 的存在和实例归属在采用中检查。输出 Artifact 由同一结果所有者建立。
 
-需要保留的模型结果包含实际请求的语义快照：有序角色、文本、媒体 Artifact/选区引用、已编译模板版本、输出 Schema、选定资源和有效生成参数。媒体二进制复用 CAS，不在每条结果中保存 base64 副本。秘密头、凭据不进入快照。
+`prepare_outputs` 发布字节；`adopt_in(tx)` 提交结果、输入关系、输出 Artifact 与 CAS 引用。上层使用同一个 WriteTx；读取完整结果和来源尽量批量完成，避免逐节点 SQL。
 
-producer 区分 deterministic（工具与版本、转换参数）和 model（协议、请求模型名、服务报告模型名、声明部署版本、请求 ID、用量、结束原因、attempts）。未返回的值保持未知。网关的隐藏上游路由只能按它实际暴露的信息保存。
+发布成功而 SQL 失败的字节可以被之后显式清理。没有启用 GC 时不要建设租约平台；今后 GC 需避开正在发布/采用的内容。
 
-结果正文可以是 Markdown、JSON、转写文本或向量文件。结构化结果经过程序校验后保存，原始响应的必要部分可以作为对应输出 Artifact 保留。Trace 用于排查，正式结果不依赖 Trace 长期存活。
+## 对外使用
 
-## 阶段成功与失败
+ArtifactStore 提供 accept(InputSpec)、ingest、get、read_selection、read_text、export、borrow_local。read_selection 返回精确 UTF-8 全文、行或字节片段；其它模态坐标经确定性媒体准备取得实际表示；任意字节导出由 CAS/export 负责。ResultStore 提供采用、get、read_view、provenance。CLI 不自行恢复组/来源、串接多层私有字段或按输出位置猜测 text/image。输出通过名称取得，不能依赖 `outputs[-1]`。
 
-ProcessingResult 仅表示已提交的成功阶段，不承担排队、running、重试或恢复状态。三种媒体策略由 MediaAnalysis 在内存中组织，返回 completed_result_refs 和最终结果。
-
-描述成功后先保存它。第二阶段失败，错误返回此前已完成的结果地址；该描述仍可读、可在下一次显式使用。失败的 JSON 不被当作成功结构化结果；必要诊断位于本次受控诊断输出。
-
-Ctrl+C 后保留此前已经提交的输入和阶段结果，停止新的模型尝试与采用。进程突然停止可能留下未引用 Blob，由显式回收处理；本轮不承诺自动恢复未完成操作，不借此引入调用回执平台。
-
-## 时间
-
-原件 received_at 是真实 UTC 接纳时间；派生 formed_at 是实际生成/转换完成时间，recorded_at 是提交时刻。源媒体 PTS、PDF 页码、文本行位是内容内位置，不写成 occurred 或 observed。外部事件时间未知时保持未知。
-
-## 对外读取
-
-`content read art:…` 展示内容；`result read res:… --sources` 展示结果与实际输入。二进制通过 export 取得。调用者读同一地址不触发新解析、模型调用或补建认知。
+开发实例使用当前 schema 重新初始化；没有旧输入表的兼容读写路径。

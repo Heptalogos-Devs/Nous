@@ -1,6 +1,7 @@
 """The local runtime's user-visible path and its persistent contracts."""
 
 import asyncio
+import hashlib
 import io
 import json
 import os
@@ -16,7 +17,7 @@ import pytest
 
 from nous.application.configuration import open_configuration_operations
 from nous.common.errors import NousError
-from nous.content.contracts import OutputContent, ResultInput
+from nous.content.contracts import ContentSelection, InputGroup, InputPart, OutputContent
 from nous.models.embeddings import resolved_space
 from nous.runtime.bootstrap import initialize_instance, open_instance
 from nous.runtime.instance import InstanceLock
@@ -196,7 +197,13 @@ def test_runtime_snapshots_transactions_and_time_domain_bindings(tmp_path: Path)
                     tx,
                     operation="embedding",
                     producer={"model": "example-embedding"},
-                    inputs=(ResultInput(artifact=source.ref, key="S1"),),
+                    inputs=(
+                        InputGroup(
+                            key="S1",
+                            name="source",
+                            parts=(InputPart(content=ContentSelection(artifact=source.ref)),),
+                        ),
+                    ),
                     prepared_outputs=prepared,
                 )
                 await reopened.embedding_spaces.attach_in(
@@ -205,7 +212,9 @@ def test_runtime_snapshots_transactions_and_time_domain_bindings(tmp_path: Path)
                     result_id=adopted.ref.id,
                     artifact_id=adopted.outputs[0].artifact.id,
                     purpose="document",
-                    input_count=1,
+                    input_digests=[
+                        hashlib.sha256(b"A document for the embedding space.").hexdigest()
+                    ],
                 )
             for patch in (
                 {"embedding.spaces.example.dimensions": 128},
@@ -214,7 +223,9 @@ def test_runtime_snapshots_transactions_and_time_domain_bindings(tmp_path: Path)
                 with pytest.raises(NousError) as conflict:
                     await reopened.configuration.update(patch)
                 assert conflict.value.code == "configuration.binding_conflict"
-            assert (await reopened.results.get(adopted.ref)).inputs[0].artifact == source.ref
+            assert (await reopened.results.get(adopted.ref)).inputs[0].parts[
+                0
+            ].content.artifact == source.ref
 
     asyncio.run(scenario())
 
@@ -340,7 +351,9 @@ def test_model_cli_fallback_and_structured_output(tmp_path: Path) -> None:
         )
         restored = json.loads(reopened.stdout)
         assert restored["outputs"][0]["text"] == "A saved answer."
-        assert restored["inputs"][0]["artifact"]["address"].startswith("art:")
+        assert restored["inputs"][0]["parts"][0]["content"]["artifact"]["address"].startswith(
+            "art:"
+        )
 
         schema = tmp_path / "array-schema.json"
         schema.write_text(
@@ -429,15 +442,16 @@ def test_shutdown_waits_for_cancelled_blocking_worker(tmp_path: Path) -> None:
         try:
             assert await asyncio.to_thread(started.wait, 2)
             waiter.cancel()
-            with pytest.raises(asyncio.CancelledError):
-                await waiter
             stop.set()
             await asyncio.sleep(0.05)
+            assert not waiter.done()
             assert not host_task.done()
             assert (await runtime.database.check()).foreign_keys
         finally:
             release.set()
             stop.set()
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(waiter, 5)
             await asyncio.wait_for(host_task, 5)
         assert runtime.state == "stopped"
 

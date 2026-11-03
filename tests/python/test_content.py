@@ -14,7 +14,13 @@ import pytest
 from PIL import Image
 
 from nous.common.errors import NousError
-from nous.content.contracts import OutputContent, ResultInput, SourceSelection
+from nous.content.contracts import (
+    ContentSelection,
+    InputGroup,
+    InputPart,
+    OutputContent,
+    SourceSelection,
+)
 from nous.media.documents import prepare_pdf_pages
 from nous.runtime.bootstrap import initialize_instance, open_instance
 
@@ -36,7 +42,13 @@ def test_content_result_survives_independent_writer_and_reopen(tmp_path: Path) -
                 runtime.results.adopt(
                     operation="convert",
                     producer={"kind": "deterministic", "tool": "integration"},
-                    inputs=(ResultInput(artifact=original.ref, key="S1"),),
+                    inputs=(
+                        InputGroup(
+                            key="S1",
+                            name="original",
+                            parts=(InputPart(content=ContentSelection(artifact=original.ref)),),
+                        ),
+                    ),
                     outputs={"output": OutputContent(data="派生结果\n".encode())},
                 )
             )
@@ -56,9 +68,15 @@ def test_content_result_survives_independent_writer_and_reopen(tmp_path: Path) -
             saved = await runtime.results.get(result.ref)
             assert await runtime.artifacts.read_text(saved.outputs[0].artifact) == "派生结果\n"
             assert (
-                await runtime.artifacts.read_text(saved.inputs[0].artifact)
+                await runtime.artifacts.read_text(saved.inputs[0].parts[0].content.artifact)
                 == "原文\n\nwith exact text\n"
             )
+            roots = await runtime.results.provenance((saved.outputs[0].artifact,))
+            assert roots[saved.outputs[0].artifact.id] == (original.ref,)
+            exact = ContentSelection(
+                artifact=original.ref, selection=SourceSelection(start_line=3, end_line=3)
+            )
+            assert await runtime.artifacts.read_selection(exact) == "with exact text\n"
 
     asyncio.run(scenario())
 
@@ -128,8 +146,9 @@ def test_pdf_preparation_reuses_pages_and_rejects_foreign_coordinates(tmp_path: 
             for item in prepared:
                 number = item.selection.pages[0]
                 by_page.setdefault(number, set()).update(item.completed_result_refs)
-                assert item.batches[0].sources[0].selection.pages == (number,)
-                with Image.open(io.BytesIO(item.batches[0].sources[0].media[0].data)) as image:
+                batch = await runtime.media.preparer.materialize(item.batches[0])
+                assert batch.inputs[0].parts[0].origins[0].origin.selection.pages == (number,)
+                with Image.open(io.BytesIO(batch.sources[0].media[0].data)) as image:
                     assert image.width == (90, 120, 150)[number - 1] * 2
             assert len(by_page) == 3 and all(len(refs) == 1 for refs in by_page.values())
         async with open_instance(instance, environment={}) as runtime:
@@ -210,6 +229,21 @@ def test_audio_video_reject_coordinates_they_do_not_apply(tmp_path: Path) -> Non
                     assert invalid.value.code == "media.invalid_selection"
                     assert invalid.value.details["completed_result_refs"] == []
 
+            selected = SourceSelection(start_ms=250, end_ms=750)
+            planned_audio = await runtime.media.preparer.prepare(
+                audio.ref, selected, settings=settings
+            )
+            audio_batch = await runtime.media.preparer.materialize(planned_audio.batches[0])
+            audio_part = audio_batch.inputs[0].parts[0]
+            assert audio_part.content.selection == SourceSelection()
+            assert audio_part.origins[0].origin.selection == selected
+            with wave.open(io.BytesIO(audio_batch.sources[0].media[0].data)) as segment:
+                assert len(segment.readframes(16000)) == 8000 * 2
+            planned_video = await runtime.media.preparer.prepare(video.ref, settings=settings)
+            video_batch = await runtime.media.preparer.materialize(planned_video.batches[0])
+            assert video_batch.sources[0].media[0].data.startswith(b"\x89PNG")
+            assert video_batch.inputs[0].parts[0].origins[0].origin.selection.frame == 0
+
     asyncio.run(scenario())
 
 
@@ -228,7 +262,13 @@ def test_result_and_output_references_share_callers_transaction(tmp_path: Path) 
                         tx,
                         operation="convert",
                         producer={"kind": "deterministic"},
-                        inputs=(ResultInput(artifact=original.ref, key="S1"),),
+                        inputs=(
+                            InputGroup(
+                                key="S1",
+                                name="original",
+                                parts=(InputPart(content=ContentSelection(artifact=original.ref)),),
+                            ),
+                        ),
                         prepared_outputs=prepared,
                     )
                     raise RuntimeError("outer owner failed")
@@ -243,7 +283,13 @@ def test_result_and_output_references_share_callers_transaction(tmp_path: Path) 
                     tx,
                     operation="convert",
                     producer={"kind": "deterministic"},
-                    inputs=(ResultInput(artifact=original.ref, key="S1"),),
+                    inputs=(
+                        InputGroup(
+                            key="S1",
+                            name="original",
+                            parts=(InputPart(content=ContentSelection(artifact=original.ref)),),
+                        ),
+                    ),
                     prepared_outputs=prepared,
                 )
             assert await runtime.artifacts.read_text(adopted.outputs[0].artifact) == "derived"
@@ -284,18 +330,22 @@ def test_image_preparation_validates_selection_before_direct_or_normalized_input
 
             selected = SourceSelection(frame=0)
             direct = await runtime.media.preparer.prepare(image.ref, selected, settings=settings)
-            source = direct.batches[0].sources[0]
-            assert source.artifact == image.ref and source.media[0].data == original_bytes
-            assert direct.selection == source.selection == selected
+            source = (await runtime.media.preparer.materialize(direct.batches[0])).sources[0]
+            assert source.group is not None
+            assert (
+                source.group.parts[0].content.artifact == image.ref
+                and source.media[0].data == original_bytes
+            )
+            assert direct.selection == source.group.parts[0].content.selection == selected
 
             crop = SourceSelection(frame=0, crop=(0, 0, 8, 6))
             cropped = await runtime.media.preparer.prepare(image.ref, crop, settings=settings)
-            source = cropped.batches[0].sources[0]
+            source = (await runtime.media.preparer.materialize(cropped.batches[0])).sources[0]
             with Image.open(io.BytesIO(source.media[0].data)) as prepared_image:
                 assert prepared_image.size == (8, 6)
             conversion = await runtime.results.get(cropped.completed_result_refs[0])
-            assert conversion.inputs[0].artifact == image.ref
-            assert conversion.inputs[0].selection == crop
+            assert conversion.inputs[0].parts[0].content.artifact == image.ref
+            assert conversion.inputs[0].parts[0].content.selection == crop
 
             encoded = io.BytesIO()
             Image.new("RGB", (16, 12), "red").save(
@@ -320,10 +370,11 @@ def test_image_preparation_validates_selection_before_direct_or_normalized_input
             frame = await runtime.media.preparer.prepare(
                 animation.ref, SourceSelection(frame=1), settings=settings
             )
-            source = frame.batches[0].sources[0]
+            source = (await runtime.media.preparer.materialize(frame.batches[0])).sources[0]
             with Image.open(io.BytesIO(source.media[0].data)) as prepared_image:
                 assert prepared_image.convert("RGB").getpixel((0, 0)) == (0, 0, 255)
-            assert source.selection == SourceSelection(frame=1)
+            assert source.group is not None
+            assert source.group.parts[0].origins[0].origin.selection == SourceSelection(frame=1)
             interval = await runtime.media.preparer.prepare(
                 animation.ref, SourceSelection(start_ms=100, end_ms=300), settings=settings
             )
@@ -334,9 +385,9 @@ def test_image_preparation_validates_selection_before_direct_or_normalized_input
             )
             actual = SourceSelection(frame=1, start_ms=100, end_ms=150)
             assert intersection.selection == overlapping
-            assert intersection.batches[0].sources[0].selection == actual
+            assert intersection.batches[0].inputs[0].parts[0].origins[0].origin.selection == actual
             conversion = await runtime.results.get(intersection.completed_result_refs[0])
-            assert conversion.inputs[0].selection == actual
+            assert conversion.inputs[0].parts[0].content.selection == actual
             for disjoint in (
                 SourceSelection(frame=1, start_ms=0, end_ms=100),
                 SourceSelection(frame=0, start_ms=100, end_ms=200),

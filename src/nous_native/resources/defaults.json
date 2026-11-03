@@ -1,0 +1,277 @@
+{
+  "build": {
+    "artifact": {
+      "orderedCooccurrence": {
+        "distanceDecay": 0.0,
+        "forwardGain": 1.0,
+        "maxReverseGain": 0.7,
+        "minReverseGain": 0.25,
+        "provenanceDistanceDecay": 0.08,
+        "provenanceReverseGain": 0.35,
+        "reverseAnchorBoost": false,
+        "reverseAnchorMax": 1.5,
+        "reverseGain": 0.42,
+        "reverseInversionGuard": 0.95,
+        "semanticGainEnabled": false,
+        "semanticGainLowSimFallback": 0.1,
+        "semanticGainPeak": 0.65,
+        "semanticGainSigma": 0.25
+      },
+      "v9": {
+        "associationReserveMass": 0.05,
+        "evidenceCompression": 1.0,
+        "hubPenaltyCeiling": 1.8,
+        "hubPenaltyExponent": 0.3,
+        "hubPenaltyFloor": 0.55,
+        "hubSmoothingRatio": 0.1,
+        "outboundMass": 0.95,
+        "tensionThreshold": 1.0,
+        "wormholeGain": 1.35
+      }
+    },
+    "geometry": {
+      "global": {
+        "candidateMode": "star",
+        "candidatePool": 512,
+        "epsilon": 0.1,
+        "kMax": 32,
+        "kSem": 8,
+        "kneeDelta": 0.0,
+        "minGain": 0.02,
+        "minSupport": 3.0,
+        "priorMode": "support",
+        "residualExponent": 0.35,
+        "starMix": 0.8,
+        "starNeighbors": 48,
+        "supportExponent": 0.65
+      },
+      "local": {
+        "anchorGain": {
+          "base": 0.75,
+          "gamma": 1.0,
+          "max": 2.0,
+          "min": 0.5,
+          "scale": 1.25
+        },
+        "maxBasis": 4,
+        "maxNeighbors": 48,
+        "minGain": 0.015,
+        "minNeighbors": 3,
+        "positionDecay": 0.15,
+        "semanticGate": {
+          "enabled": true,
+          "floor": 0.35,
+          "hardFloor": -1.0,
+          "peak": 0.65,
+          "sigma": 0.25
+        }
+      }
+    }
+  },
+  "context": {
+    "context_mix": 0.2,
+    "decay": 0.75,
+    "default_role_weight": 1.0,
+    "role_weights": {
+      "assistant": 0.5,
+      "ego": 0.25,
+      "source": 1.0,
+      "user": 1.0,
+      "work": 1.0
+    },
+    "segment_threshold": 0.7,
+    "window": 10
+  },
+  "dtsc": {
+    "auxiliary": {
+      "directFloorCap": 0.018,
+      "enabled": false,
+      "floorExponent": 1.5,
+      "identityAnchor": {
+        "enabled": false,
+        "floorCap": 0.018,
+        "floorExponent": 1.25,
+        "minPotential": 0.8,
+        "minSpecificity": 0.55,
+        "minStrength": 0.55,
+        "minTagChunkClosure": 0.35
+      },
+      "maxAuxBonus": 0.018,
+      "minClassEvidence": 0.1,
+      "minClosureScore": 0.55,
+      "minFusedScore": 0.12,
+      "structuralFloorCap": 0.012,
+      "thematicFloorCap": 0.006
+    },
+    "curve": {
+      "candidatePositionDecay": 0.035,
+      "minClosureSimilarity": 0.2,
+      "minGeoSamples": 3,
+      "strongContactThreshold": 0.16,
+      "weakContactThreshold": 0.06
+    },
+    "field": {
+      "fallbackToKnnOnLowTrust": true,
+      "fieldEnergyMassRatio": 0.95,
+      "fieldKernelExponent": 2.0,
+      "fieldSimilarityThreshold": 0.5,
+      "maxFieldNeighbors": 4,
+      "maxFieldNodes": 48,
+      "minFieldEntropy": 0.12,
+      "minFieldTags": 3,
+      "publicHubFloor": 0.35
+    },
+    "reward": {
+      "alpha": 0.35,
+      "directBonusCap": 0.18,
+      "directConfidenceFloor": 0.35,
+      "directSemanticMinContacts": 2,
+      "directSemanticMinPotential": 0.16,
+      "directSemanticSaturation": 0.35,
+      "geoRewardFloor": 0.015,
+      "geoRewardSaturation": 0.25,
+      "structuralBonusCap": 0.1,
+      "structuralContinuityMin": 0.08,
+      "thematicBonusCap": 0.035,
+      "thematicMaxIsolatedRatio": 0.65,
+      "thematicMinPotential": 0.08
+    },
+    "sparse": {
+      "sparseAssociationEnabled": true,
+      "sparseAssociationMaxRelief": 0.55,
+      "sparseAssociationMinClosure": 0.2,
+      "sparseAssociationMinConductance": 0.015,
+      "sparseAssociationMinContacts": 3,
+      "sparseAssociationMinPotential": 0.08,
+      "sparseAssociationMinSimilarity": 0.48,
+      "sparseAssociationPairSaturation": 3
+    },
+    "trust": {
+      "minGeoCoverageRatio": 0.2,
+      "minGeoScoreSpread": 0.03,
+      "minMaxGeoScore": 0.01,
+      "minStrongEvidence": 1.0
+    }
+  },
+  "pipeline": {
+    "activationMultiplier": [
+      0.5,
+      1.5
+    ],
+    "baseTagBoost": 0.6,
+    "coreBoostFactor": 1.33,
+    "coreBoostRange": [
+      1.2,
+      1.4
+    ],
+    "deduplicationThreshold": 0.88,
+    "dynamicBoostRange": [
+      0.3,
+      2.0
+    ],
+    "epaEnabled": true,
+    "epaGateMode": "backgroundRelative",
+    "fieldMaxIterations": 80,
+    "fieldsEnabled": true,
+    "gatingEnabled": true,
+    "langConfidenceEnabled": true,
+    "langPenaltyCrossDomain": 0.2,
+    "langPenaltyUnknown": 0.05,
+    "layerDecay": 0.7,
+    "localAlpha": 0.15,
+    "localMassRatio": 0.8,
+    "localTolerance": 1e-9,
+    "maxEmergentNodes": 50,
+    "maxFieldProjectionNodes": 256,
+    "maxFusionTags": 128,
+    "maxLevels": 3,
+    "minEnergyRatio": 0.1,
+    "minLayerExplainedEnergy": 0.03,
+    "normalTagThreshold": 0.015,
+    "pyramidTopK": 10,
+    "seedContributionFloor": 0.05,
+    "seedContributionRatio": 0.1,
+    "spikeRouting": {
+      "baseDecay": 0.25,
+      "baseMomentum": 2.0,
+      "dynamicWormholeMaxTargets": 4096,
+      "dynamicWormholeSlots": 2,
+      "dynamicWormholeThreshold": 0.2,
+      "dynamicWormholes": true,
+      "firGamma": 0.6,
+      "firingThreshold": 0.1,
+      "maxNeighborsPerNode": 20,
+      "maxOutputEdges": 0,
+      "maxOutputNodes": 0,
+      "maxPropagationStates": 2000,
+      "maxSafeHops": 4,
+      "maxTransitionRecords": 0,
+      "minimumInjectedCurrent": 0.01,
+      "returnFlowFactor": 0.15,
+      "tensionThreshold": 1.0,
+      "wormholeDecay": 0.7
+    },
+    "techTagThreshold": 0.08,
+    "topologyEnabled": true,
+    "transferAlpha": 0.55,
+    "transferMassRatio": 0.9,
+    "transferTolerance": 1e-9
+  },
+  "query": {
+    "candidate_budget": 100,
+    "rrf_k": 60.0,
+    "thinking_min_closure": 0.2,
+    "top_k": 10
+  },
+  "readout": {
+    "anchorActivationFloor": 0.05,
+    "anchorActivationZ": 2.0,
+    "anchorBonusCap": 0.1,
+    "anchorFrontierAbsFloor": 0.1,
+    "anchorFrontierContrast": 2.0,
+    "anchorK": 50,
+    "anchorSaturation": 0.2,
+    "bm25K": 50,
+    "closureFloor": 0.0,
+    "collapsedThreshold": 0.12,
+    "conditionalBandwidth": 0.04,
+    "conditionalClosureBandwidth": 0.1,
+    "conditionalDirectBandwidth": 0.12,
+    "denoisedK": 100,
+    "directionFloor": 0.05,
+    "fallbackReliabilityCap": 0.5,
+    "innovationConfidenceZ": 1.0,
+    "innovationScale": 0.5,
+    "kappaEdge": 0.5,
+    "kappaRatio": 0.3,
+    "lexicalWeight": 0.6,
+    "localFieldK": 100,
+    "localWeight": 0.6,
+    "maxUnionCandidates": 300,
+    "maximumRiverEdges": 96,
+    "minimumEffectivePeers": 2.5,
+    "minimumPeers": 3,
+    "minimumRiverEdgeFlow": 0.015,
+    "nodeOnlyReliabilityCap": 0.2,
+    "omegaEpsilon": 0.02,
+    "omegaGamma": 1.0,
+    "pureLocalWeight": 0.2,
+    "pureQueryWeight": 0.7,
+    "pureTransferWeight": 0.1,
+    "queryK": 100,
+    "rarityFloor": 0.15,
+    "relativeDistanceTemperature": 0.35,
+    "reliabilitySeedSaturation": 2.0,
+    "reverseDirectionCredit": 0.25,
+    "semanticAnchorDiscount": 0.7,
+    "semanticAnchorThreshold": 0.88,
+    "semanticNodeThreshold": 0.48,
+    "sparseThreshold": 0.45,
+    "specificityFloor": 0.35,
+    "structRoleMinOmega": 0.12,
+    "topologyBonusCap": 0.08,
+    "topologyPathSaturation": 0.15,
+    "transferFieldK": 100,
+    "transferWeight": 0.4
+  }
+}

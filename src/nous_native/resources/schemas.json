@@ -1,0 +1,1664 @@
+{
+  "build": {
+    "$defs": {
+      "AnchorGain": {
+        "additionalProperties": false,
+        "properties": {
+          "base": {
+            "default": 0.75,
+            "format": "double",
+            "maximum": 4.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "gamma": {
+            "default": 1.0,
+            "format": "double",
+            "maximum": 8.0,
+            "minimum": 0.1,
+            "type": "number"
+          },
+          "max": {
+            "default": 2.0,
+            "format": "double",
+            "maximum": 8.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "min": {
+            "default": 0.5,
+            "format": "double",
+            "maximum": 4.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "scale": {
+            "default": 1.25,
+            "format": "double",
+            "maximum": 4.0,
+            "minimum": 0.0,
+            "type": "number"
+          }
+        },
+        "type": "object"
+      },
+      "ArtifactConfig": {
+        "additionalProperties": false,
+        "properties": {
+          "orderedCooccurrence": {
+            "$ref": "#/$defs/OrderedCooccurrence",
+            "default": {
+              "distanceDecay": 0.0,
+              "forwardGain": 1.0,
+              "maxReverseGain": 0.7,
+              "minReverseGain": 0.25,
+              "provenanceDistanceDecay": 0.08,
+              "provenanceReverseGain": 0.35,
+              "reverseAnchorBoost": false,
+              "reverseAnchorMax": 1.5,
+              "reverseGain": 0.42,
+              "reverseInversionGuard": 0.95,
+              "semanticGainEnabled": false,
+              "semanticGainLowSimFallback": 0.1,
+              "semanticGainPeak": 0.65,
+              "semanticGainSigma": 0.25
+            }
+          },
+          "v9": {
+            "$ref": "#/$defs/Transport",
+            "default": {
+              "associationReserveMass": 0.05,
+              "evidenceCompression": 1.0,
+              "hubPenaltyCeiling": 1.8,
+              "hubPenaltyExponent": 0.3,
+              "hubPenaltyFloor": 0.55,
+              "hubSmoothingRatio": 0.1,
+              "outboundMass": 0.95,
+              "tensionThreshold": 1.0,
+              "wormholeGain": 1.35
+            }
+          }
+        },
+        "type": "object"
+      },
+      "GeometryConfig": {
+        "additionalProperties": false,
+        "properties": {
+          "global": {
+            "$ref": "#/$defs/GeometryGlobal",
+            "default": {
+              "candidateMode": "star",
+              "candidatePool": 512,
+              "epsilon": 0.1,
+              "kMax": 32,
+              "kSem": 8,
+              "kneeDelta": 0.0,
+              "minGain": 0.02,
+              "minSupport": 3.0,
+              "priorMode": "support",
+              "residualExponent": 0.35,
+              "starMix": 0.8,
+              "starNeighbors": 48,
+              "supportExponent": 0.65
+            }
+          },
+          "local": {
+            "$ref": "#/$defs/GeometryLocal",
+            "default": {
+              "anchorGain": {
+                "base": 0.75,
+                "gamma": 1.0,
+                "max": 2.0,
+                "min": 0.5,
+                "scale": 1.25
+              },
+              "maxBasis": 4,
+              "maxNeighbors": 48,
+              "minGain": 0.015,
+              "minNeighbors": 3,
+              "positionDecay": 0.15,
+              "semanticGate": {
+                "enabled": true,
+                "floor": 0.35,
+                "hardFloor": -1.0,
+                "peak": 0.65,
+                "sigma": 0.25
+              }
+            }
+          }
+        },
+        "type": "object"
+      },
+      "GeometryGlobal": {
+        "additionalProperties": false,
+        "properties": {
+          "candidateMode": {
+            "default": "star",
+            "type": "string"
+          },
+          "candidatePool": {
+            "default": 512,
+            "format": "uint",
+            "maximum": 4096.0,
+            "minimum": 1.0,
+            "type": "integer"
+          },
+          "epsilon": {
+            "default": 0.1,
+            "format": "double",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "kMax": {
+            "default": 32,
+            "format": "uint",
+            "maximum": 128.0,
+            "minimum": 1.0,
+            "type": "integer"
+          },
+          "kSem": {
+            "default": 8,
+            "format": "uint",
+            "maximum": 128.0,
+            "minimum": 1.0,
+            "type": "integer"
+          },
+          "kneeDelta": {
+            "default": 0.0,
+            "format": "double",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "minGain": {
+            "default": 0.02,
+            "format": "double",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "minSupport": {
+            "default": 3.0,
+            "format": "double",
+            "maximum": 1000000000000.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "priorMode": {
+            "default": "support",
+            "type": "string"
+          },
+          "residualExponent": {
+            "default": 0.35,
+            "format": "double",
+            "maximum": 4.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "starMix": {
+            "default": 0.8,
+            "format": "double",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "starNeighbors": {
+            "default": 48,
+            "format": "uint",
+            "maximum": 256.0,
+            "minimum": 1.0,
+            "type": "integer"
+          },
+          "supportExponent": {
+            "default": 0.65,
+            "format": "double",
+            "maximum": 4.0,
+            "minimum": 0.0,
+            "type": "number"
+          }
+        },
+        "type": "object"
+      },
+      "GeometryLocal": {
+        "additionalProperties": false,
+        "properties": {
+          "anchorGain": {
+            "$ref": "#/$defs/AnchorGain",
+            "default": {
+              "base": 0.75,
+              "gamma": 1.0,
+              "max": 2.0,
+              "min": 0.5,
+              "scale": 1.25
+            }
+          },
+          "maxBasis": {
+            "default": 4,
+            "format": "uint",
+            "maximum": 32.0,
+            "minimum": 1.0,
+            "type": "integer"
+          },
+          "maxNeighbors": {
+            "default": 48,
+            "format": "uint",
+            "maximum": 256.0,
+            "minimum": 1.0,
+            "type": "integer"
+          },
+          "minGain": {
+            "default": 0.015,
+            "format": "double",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "minNeighbors": {
+            "default": 3,
+            "format": "uint",
+            "maximum": 256.0,
+            "minimum": 1.0,
+            "type": "integer"
+          },
+          "positionDecay": {
+            "default": 0.15,
+            "format": "double",
+            "maximum": 4.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "semanticGate": {
+            "$ref": "#/$defs/SemanticGate",
+            "default": {
+              "enabled": true,
+              "floor": 0.35,
+              "hardFloor": -1.0,
+              "peak": 0.65,
+              "sigma": 0.25
+            }
+          }
+        },
+        "type": "object"
+      },
+      "OrderedCooccurrence": {
+        "additionalProperties": false,
+        "properties": {
+          "distanceDecay": {
+            "default": 0.0,
+            "format": "double",
+            "maximum": 10.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "forwardGain": {
+            "default": 1.0,
+            "format": "double",
+            "maximum": 4.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxReverseGain": {
+            "default": 0.7,
+            "format": "double",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "minReverseGain": {
+            "default": 0.25,
+            "format": "double",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "provenanceDistanceDecay": {
+            "default": 0.08,
+            "format": "double",
+            "maximum": 10.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "provenanceReverseGain": {
+            "default": 0.35,
+            "format": "double",
+            "maximum": 4.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "reverseAnchorBoost": {
+            "default": false,
+            "type": "boolean"
+          },
+          "reverseAnchorMax": {
+            "default": 1.5,
+            "format": "double",
+            "maximum": 8.0,
+            "minimum": 1.0,
+            "type": "number"
+          },
+          "reverseGain": {
+            "default": 0.42,
+            "format": "double",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "reverseInversionGuard": {
+            "default": 0.95,
+            "format": "double",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "semanticGainEnabled": {
+            "default": false,
+            "type": "boolean"
+          },
+          "semanticGainLowSimFallback": {
+            "default": 0.1,
+            "format": "double",
+            "maximum": 1.0,
+            "minimum": -1.0,
+            "type": "number"
+          },
+          "semanticGainPeak": {
+            "default": 0.65,
+            "format": "double",
+            "maximum": 1.0,
+            "minimum": -1.0,
+            "type": "number"
+          },
+          "semanticGainSigma": {
+            "default": 0.25,
+            "format": "double",
+            "maximum": 2.0,
+            "minimum": 0.001,
+            "type": "number"
+          }
+        },
+        "type": "object"
+      },
+      "SemanticGate": {
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "default": true,
+            "type": "boolean"
+          },
+          "floor": {
+            "default": 0.35,
+            "format": "double",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "hardFloor": {
+            "default": -1.0,
+            "format": "double",
+            "maximum": 1.0,
+            "minimum": -1.0,
+            "type": "number"
+          },
+          "peak": {
+            "default": 0.65,
+            "format": "double",
+            "maximum": 1.0,
+            "minimum": -1.0,
+            "type": "number"
+          },
+          "sigma": {
+            "default": 0.25,
+            "format": "double",
+            "maximum": 2.0,
+            "minimum": 0.02,
+            "type": "number"
+          }
+        },
+        "type": "object"
+      },
+      "Transport": {
+        "additionalProperties": false,
+        "properties": {
+          "associationReserveMass": {
+            "default": 0.05,
+            "format": "double",
+            "maximum": 0.999999,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "evidenceCompression": {
+            "default": 1.0,
+            "format": "double",
+            "maximum": 100.0,
+            "minimum": 0.01,
+            "type": "number"
+          },
+          "hubPenaltyCeiling": {
+            "default": 1.8,
+            "format": "double",
+            "maximum": 4.0,
+            "minimum": 1.0,
+            "type": "number"
+          },
+          "hubPenaltyExponent": {
+            "default": 0.3,
+            "format": "double",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "hubPenaltyFloor": {
+            "default": 0.55,
+            "format": "double",
+            "maximum": 1.0,
+            "minimum": 0.05,
+            "type": "number"
+          },
+          "hubSmoothingRatio": {
+            "default": 0.1,
+            "format": "double",
+            "maximum": 2.0,
+            "minimum": 0.01,
+            "type": "number"
+          },
+          "outboundMass": {
+            "default": 0.95,
+            "format": "double",
+            "maximum": 0.999999,
+            "minimum": 0.01,
+            "type": "number"
+          },
+          "tensionThreshold": {
+            "default": 1.0,
+            "format": "double",
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "wormholeGain": {
+            "default": 1.35,
+            "format": "double",
+            "maximum": 10.0,
+            "minimum": 1.0,
+            "type": "number"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "artifact": {
+        "$ref": "#/$defs/ArtifactConfig",
+        "default": {
+          "orderedCooccurrence": {
+            "distanceDecay": 0.0,
+            "forwardGain": 1.0,
+            "maxReverseGain": 0.7,
+            "minReverseGain": 0.25,
+            "provenanceDistanceDecay": 0.08,
+            "provenanceReverseGain": 0.35,
+            "reverseAnchorBoost": false,
+            "reverseAnchorMax": 1.5,
+            "reverseGain": 0.42,
+            "reverseInversionGuard": 0.95,
+            "semanticGainEnabled": false,
+            "semanticGainLowSimFallback": 0.1,
+            "semanticGainPeak": 0.65,
+            "semanticGainSigma": 0.25
+          },
+          "v9": {
+            "associationReserveMass": 0.05,
+            "evidenceCompression": 1.0,
+            "hubPenaltyCeiling": 1.8,
+            "hubPenaltyExponent": 0.3,
+            "hubPenaltyFloor": 0.55,
+            "hubSmoothingRatio": 0.1,
+            "outboundMass": 0.95,
+            "tensionThreshold": 1.0,
+            "wormholeGain": 1.35
+          }
+        }
+      },
+      "geometry": {
+        "$ref": "#/$defs/GeometryConfig",
+        "default": {
+          "global": {
+            "candidateMode": "star",
+            "candidatePool": 512,
+            "epsilon": 0.1,
+            "kMax": 32,
+            "kSem": 8,
+            "kneeDelta": 0.0,
+            "minGain": 0.02,
+            "minSupport": 3.0,
+            "priorMode": "support",
+            "residualExponent": 0.35,
+            "starMix": 0.8,
+            "starNeighbors": 48,
+            "supportExponent": 0.65
+          },
+          "local": {
+            "anchorGain": {
+              "base": 0.75,
+              "gamma": 1.0,
+              "max": 2.0,
+              "min": 0.5,
+              "scale": 1.25
+            },
+            "maxBasis": 4,
+            "maxNeighbors": 48,
+            "minGain": 0.015,
+            "minNeighbors": 3,
+            "positionDecay": 0.15,
+            "semanticGate": {
+              "enabled": true,
+              "floor": 0.35,
+              "hardFloor": -1.0,
+              "peak": 0.65,
+              "sigma": 0.25
+            }
+          }
+        }
+      }
+    },
+    "title": "BuildConfig",
+    "type": "object"
+  },
+  "context": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "context_mix": {
+        "default": 0.2,
+        "format": "double",
+        "maximum": 1.0,
+        "minimum": 0.0,
+        "type": "number"
+      },
+      "decay": {
+        "default": 0.75,
+        "format": "double",
+        "maximum": 1.0,
+        "minimum": 0.0,
+        "type": "number"
+      },
+      "default_role_weight": {
+        "default": 1.0,
+        "format": "double",
+        "minimum": 0.0,
+        "type": "number"
+      },
+      "role_weights": {
+        "additionalProperties": {
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "default": {
+          "assistant": 0.5,
+          "ego": 0.25,
+          "source": 1.0,
+          "user": 1.0,
+          "work": 1.0
+        },
+        "type": "object"
+      },
+      "segment_threshold": {
+        "default": 0.7,
+        "format": "double",
+        "maximum": 1.0,
+        "minimum": -1.0,
+        "type": "number"
+      },
+      "window": {
+        "default": 10,
+        "format": "uint",
+        "maximum": 10000,
+        "minimum": 1,
+        "type": "integer"
+      }
+    },
+    "title": "ContextControls",
+    "type": "object"
+  },
+  "dtsc": {
+    "$defs": {
+      "ReferenceDtscAuxConfig": {
+        "properties": {
+          "directFloorCap": {
+            "default": 0.018,
+            "format": "double",
+            "type": "number"
+          },
+          "enabled": {
+            "default": false,
+            "type": "boolean"
+          },
+          "floorExponent": {
+            "default": 1.5,
+            "format": "double",
+            "type": "number"
+          },
+          "identityAnchor": {
+            "$ref": "#/$defs/ReferenceDtscIdentityConfig",
+            "default": {
+              "enabled": false,
+              "floorCap": 0.018,
+              "floorExponent": 1.25,
+              "minPotential": 0.8,
+              "minSpecificity": 0.55,
+              "minStrength": 0.55,
+              "minTagChunkClosure": 0.35
+            }
+          },
+          "maxAuxBonus": {
+            "default": 0.018,
+            "format": "double",
+            "type": "number"
+          },
+          "minClassEvidence": {
+            "default": 0.1,
+            "format": "double",
+            "type": "number"
+          },
+          "minClosureScore": {
+            "default": 0.55,
+            "format": "double",
+            "type": "number"
+          },
+          "minFusedScore": {
+            "default": 0.12,
+            "format": "double",
+            "type": "number"
+          },
+          "structuralFloorCap": {
+            "default": 0.012,
+            "format": "double",
+            "type": "number"
+          },
+          "thematicFloorCap": {
+            "default": 0.006,
+            "format": "double",
+            "type": "number"
+          }
+        },
+        "type": "object"
+      },
+      "ReferenceDtscCurveConfig": {
+        "properties": {
+          "candidatePositionDecay": {
+            "default": 0.035,
+            "format": "double",
+            "type": "number"
+          },
+          "minClosureSimilarity": {
+            "default": 0.2,
+            "format": "double",
+            "type": "number"
+          },
+          "minGeoSamples": {
+            "default": 3,
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "strongContactThreshold": {
+            "default": 0.16,
+            "format": "double",
+            "type": "number"
+          },
+          "weakContactThreshold": {
+            "default": 0.06,
+            "format": "double",
+            "type": "number"
+          }
+        },
+        "type": "object"
+      },
+      "ReferenceDtscFieldConfig": {
+        "properties": {
+          "fallbackToKnnOnLowTrust": {
+            "default": true,
+            "type": "boolean"
+          },
+          "fieldEnergyMassRatio": {
+            "default": 0.95,
+            "format": "double",
+            "type": "number"
+          },
+          "fieldKernelExponent": {
+            "default": 2.0,
+            "format": "double",
+            "type": "number"
+          },
+          "fieldSimilarityThreshold": {
+            "default": 0.5,
+            "format": "double",
+            "type": "number"
+          },
+          "maxFieldNeighbors": {
+            "default": 4,
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "maxFieldNodes": {
+            "default": 48,
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "minFieldEntropy": {
+            "default": 0.12,
+            "format": "double",
+            "type": "number"
+          },
+          "minFieldTags": {
+            "default": 3,
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "publicHubFloor": {
+            "default": 0.35,
+            "format": "double",
+            "type": "number"
+          }
+        },
+        "type": "object"
+      },
+      "ReferenceDtscIdentityConfig": {
+        "properties": {
+          "enabled": {
+            "default": false,
+            "type": "boolean"
+          },
+          "floorCap": {
+            "default": 0.018,
+            "format": "double",
+            "type": "number"
+          },
+          "floorExponent": {
+            "default": 1.25,
+            "format": "double",
+            "type": "number"
+          },
+          "minPotential": {
+            "default": 0.8,
+            "format": "double",
+            "type": "number"
+          },
+          "minSpecificity": {
+            "default": 0.55,
+            "format": "double",
+            "type": "number"
+          },
+          "minStrength": {
+            "default": 0.55,
+            "format": "double",
+            "type": "number"
+          },
+          "minTagChunkClosure": {
+            "default": 0.35,
+            "format": "double",
+            "type": "number"
+          }
+        },
+        "type": "object"
+      },
+      "ReferenceDtscRewardConfig": {
+        "properties": {
+          "alpha": {
+            "default": 0.35,
+            "format": "double",
+            "type": "number"
+          },
+          "directBonusCap": {
+            "default": 0.18,
+            "format": "double",
+            "type": "number"
+          },
+          "directConfidenceFloor": {
+            "default": 0.35,
+            "format": "double",
+            "type": "number"
+          },
+          "directSemanticMinContacts": {
+            "default": 2,
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "directSemanticMinPotential": {
+            "default": 0.16,
+            "format": "double",
+            "type": "number"
+          },
+          "directSemanticSaturation": {
+            "default": 0.35,
+            "format": "double",
+            "type": "number"
+          },
+          "geoRewardFloor": {
+            "default": 0.015,
+            "format": "double",
+            "type": "number"
+          },
+          "geoRewardSaturation": {
+            "default": 0.25,
+            "format": "double",
+            "type": "number"
+          },
+          "structuralBonusCap": {
+            "default": 0.1,
+            "format": "double",
+            "type": "number"
+          },
+          "structuralContinuityMin": {
+            "default": 0.08,
+            "format": "double",
+            "type": "number"
+          },
+          "thematicBonusCap": {
+            "default": 0.035,
+            "format": "double",
+            "type": "number"
+          },
+          "thematicMaxIsolatedRatio": {
+            "default": 0.65,
+            "format": "double",
+            "type": "number"
+          },
+          "thematicMinPotential": {
+            "default": 0.08,
+            "format": "double",
+            "type": "number"
+          }
+        },
+        "type": "object"
+      },
+      "ReferenceDtscSparseConfig": {
+        "properties": {
+          "sparseAssociationEnabled": {
+            "default": true,
+            "type": "boolean"
+          },
+          "sparseAssociationMaxRelief": {
+            "default": 0.55,
+            "format": "double",
+            "type": "number"
+          },
+          "sparseAssociationMinClosure": {
+            "default": 0.2,
+            "format": "double",
+            "type": "number"
+          },
+          "sparseAssociationMinConductance": {
+            "default": 0.015,
+            "format": "double",
+            "type": "number"
+          },
+          "sparseAssociationMinContacts": {
+            "default": 3,
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "sparseAssociationMinPotential": {
+            "default": 0.08,
+            "format": "double",
+            "type": "number"
+          },
+          "sparseAssociationMinSimilarity": {
+            "default": 0.48,
+            "format": "double",
+            "type": "number"
+          },
+          "sparseAssociationPairSaturation": {
+            "default": 3,
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "ReferenceDtscTrustConfig": {
+        "properties": {
+          "minGeoCoverageRatio": {
+            "default": 0.2,
+            "format": "double",
+            "type": "number"
+          },
+          "minGeoScoreSpread": {
+            "default": 0.03,
+            "format": "double",
+            "type": "number"
+          },
+          "minMaxGeoScore": {
+            "default": 0.01,
+            "format": "double",
+            "type": "number"
+          },
+          "minStrongEvidence": {
+            "default": 1.0,
+            "format": "double",
+            "type": "number"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "properties": {
+      "auxiliary": {
+        "$ref": "#/$defs/ReferenceDtscAuxConfig",
+        "default": {
+          "directFloorCap": 0.018,
+          "enabled": false,
+          "floorExponent": 1.5,
+          "identityAnchor": {
+            "enabled": false,
+            "floorCap": 0.018,
+            "floorExponent": 1.25,
+            "minPotential": 0.8,
+            "minSpecificity": 0.55,
+            "minStrength": 0.55,
+            "minTagChunkClosure": 0.35
+          },
+          "maxAuxBonus": 0.018,
+          "minClassEvidence": 0.1,
+          "minClosureScore": 0.55,
+          "minFusedScore": 0.12,
+          "structuralFloorCap": 0.012,
+          "thematicFloorCap": 0.006
+        }
+      },
+      "curve": {
+        "$ref": "#/$defs/ReferenceDtscCurveConfig",
+        "default": {
+          "candidatePositionDecay": 0.035,
+          "minClosureSimilarity": 0.2,
+          "minGeoSamples": 3,
+          "strongContactThreshold": 0.16,
+          "weakContactThreshold": 0.06
+        }
+      },
+      "field": {
+        "$ref": "#/$defs/ReferenceDtscFieldConfig",
+        "default": {
+          "fallbackToKnnOnLowTrust": true,
+          "fieldEnergyMassRatio": 0.95,
+          "fieldKernelExponent": 2.0,
+          "fieldSimilarityThreshold": 0.5,
+          "maxFieldNeighbors": 4,
+          "maxFieldNodes": 48,
+          "minFieldEntropy": 0.12,
+          "minFieldTags": 3,
+          "publicHubFloor": 0.35
+        }
+      },
+      "reward": {
+        "$ref": "#/$defs/ReferenceDtscRewardConfig",
+        "default": {
+          "alpha": 0.35,
+          "directBonusCap": 0.18,
+          "directConfidenceFloor": 0.35,
+          "directSemanticMinContacts": 2,
+          "directSemanticMinPotential": 0.16,
+          "directSemanticSaturation": 0.35,
+          "geoRewardFloor": 0.015,
+          "geoRewardSaturation": 0.25,
+          "structuralBonusCap": 0.1,
+          "structuralContinuityMin": 0.08,
+          "thematicBonusCap": 0.035,
+          "thematicMaxIsolatedRatio": 0.65,
+          "thematicMinPotential": 0.08
+        }
+      },
+      "sparse": {
+        "$ref": "#/$defs/ReferenceDtscSparseConfig",
+        "default": {
+          "sparseAssociationEnabled": true,
+          "sparseAssociationMaxRelief": 0.55,
+          "sparseAssociationMinClosure": 0.2,
+          "sparseAssociationMinConductance": 0.015,
+          "sparseAssociationMinContacts": 3,
+          "sparseAssociationMinPotential": 0.08,
+          "sparseAssociationMinSimilarity": 0.48,
+          "sparseAssociationPairSaturation": 3
+        }
+      },
+      "trust": {
+        "$ref": "#/$defs/ReferenceDtscTrustConfig",
+        "default": {
+          "minGeoCoverageRatio": 0.2,
+          "minGeoScoreSpread": 0.03,
+          "minMaxGeoScore": 0.01,
+          "minStrongEvidence": 1.0
+        }
+      }
+    },
+    "title": "ReferenceDtscConfig",
+    "type": "object"
+  },
+  "pipeline": {
+    "$defs": {
+      "SenseConfig": {
+        "properties": {
+          "baseDecay": {
+            "default": 0.25,
+            "format": "double",
+            "type": "number"
+          },
+          "baseMomentum": {
+            "default": 2.0,
+            "format": "double",
+            "type": "number"
+          },
+          "dynamicWormholeMaxTargets": {
+            "default": 4096,
+            "description": "Request-wide unique target budget. Zero disables local vector work.",
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "dynamicWormholeSlots": {
+            "default": 2,
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "dynamicWormholeThreshold": {
+            "default": 0.2,
+            "format": "double",
+            "type": "number"
+          },
+          "dynamicWormholes": {
+            "default": true,
+            "description": "Only the pipeline supplies residual context; standalone sensing stays legacy.",
+            "type": "boolean"
+          },
+          "firGamma": {
+            "default": 0.6,
+            "format": "double",
+            "type": "number"
+          },
+          "firingThreshold": {
+            "default": 0.1,
+            "format": "double",
+            "type": "number"
+          },
+          "maxNeighborsPerNode": {
+            "default": 20,
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "maxOutputEdges": {
+            "default": 0,
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "maxOutputNodes": {
+            "default": 0,
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "maxPropagationStates": {
+            "default": 2000,
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "maxSafeHops": {
+            "default": 4,
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "maxTransitionRecords": {
+            "default": 0,
+            "description": "0 disables route recording. Recording never changes propagation.",
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "minimumInjectedCurrent": {
+            "default": 0.01,
+            "format": "double",
+            "type": "number"
+          },
+          "returnFlowFactor": {
+            "default": 0.15,
+            "format": "double",
+            "type": "number"
+          },
+          "tensionThreshold": {
+            "default": 1.0,
+            "format": "double",
+            "type": "number"
+          },
+          "wormholeDecay": {
+            "default": 0.7,
+            "format": "double",
+            "type": "number"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "properties": {
+      "activationMultiplier": {
+        "default": [
+          0.5,
+          1.5
+        ],
+        "items": {
+          "format": "double",
+          "type": "number"
+        },
+        "type": "array"
+      },
+      "baseTagBoost": {
+        "default": 0.6,
+        "format": "double",
+        "type": "number"
+      },
+      "coreBoostFactor": {
+        "default": 1.33,
+        "format": "double",
+        "type": "number"
+      },
+      "coreBoostRange": {
+        "default": [
+          1.2,
+          1.4
+        ],
+        "items": {
+          "format": "double",
+          "type": "number"
+        },
+        "type": "array"
+      },
+      "deduplicationThreshold": {
+        "default": 0.88,
+        "format": "double",
+        "type": "number"
+      },
+      "dynamicBoostRange": {
+        "default": [
+          0.3,
+          2.0
+        ],
+        "items": {
+          "format": "double",
+          "type": "number"
+        },
+        "type": "array"
+      },
+      "epaEnabled": {
+        "default": true,
+        "type": "boolean"
+      },
+      "epaGateMode": {
+        "default": "backgroundRelative",
+        "type": "string"
+      },
+      "fieldMaxIterations": {
+        "default": 80,
+        "format": "uint",
+        "minimum": 0,
+        "type": "integer"
+      },
+      "fieldsEnabled": {
+        "default": true,
+        "type": "boolean"
+      },
+      "gatingEnabled": {
+        "default": true,
+        "type": "boolean"
+      },
+      "langConfidenceEnabled": {
+        "default": true,
+        "type": "boolean"
+      },
+      "langPenaltyCrossDomain": {
+        "default": 0.2,
+        "format": "double",
+        "type": "number"
+      },
+      "langPenaltyUnknown": {
+        "default": 0.05,
+        "format": "double",
+        "type": "number"
+      },
+      "layerDecay": {
+        "default": 0.7,
+        "format": "double",
+        "type": "number"
+      },
+      "localAlpha": {
+        "default": 0.15,
+        "format": "double",
+        "type": "number"
+      },
+      "localMassRatio": {
+        "default": 0.8,
+        "format": "double",
+        "type": "number"
+      },
+      "localTolerance": {
+        "default": 1e-9,
+        "format": "double",
+        "type": "number"
+      },
+      "maxEmergentNodes": {
+        "default": 50,
+        "format": "uint",
+        "minimum": 0,
+        "type": "integer"
+      },
+      "maxFieldProjectionNodes": {
+        "default": 256,
+        "format": "uint",
+        "minimum": 0,
+        "type": "integer"
+      },
+      "maxFusionTags": {
+        "default": 128,
+        "format": "uint",
+        "minimum": 0,
+        "type": "integer"
+      },
+      "maxLevels": {
+        "default": 3,
+        "format": "uint",
+        "minimum": 0,
+        "type": "integer"
+      },
+      "minEnergyRatio": {
+        "default": 0.1,
+        "format": "double",
+        "type": "number"
+      },
+      "minLayerExplainedEnergy": {
+        "default": 0.03,
+        "format": "double",
+        "type": "number"
+      },
+      "normalTagThreshold": {
+        "default": 0.015,
+        "format": "double",
+        "type": "number"
+      },
+      "pyramidTopK": {
+        "default": 10,
+        "format": "uint",
+        "minimum": 0,
+        "type": "integer"
+      },
+      "seedContributionFloor": {
+        "default": 0.05,
+        "format": "double",
+        "type": "number"
+      },
+      "seedContributionRatio": {
+        "default": 0.1,
+        "format": "double",
+        "type": "number"
+      },
+      "spikeRouting": {
+        "$ref": "#/$defs/SenseConfig",
+        "default": {
+          "baseDecay": 0.25,
+          "baseMomentum": 2.0,
+          "dynamicWormholeMaxTargets": 4096,
+          "dynamicWormholeSlots": 2,
+          "dynamicWormholeThreshold": 0.2,
+          "dynamicWormholes": true,
+          "firGamma": 0.6,
+          "firingThreshold": 0.1,
+          "maxNeighborsPerNode": 20,
+          "maxOutputEdges": 0,
+          "maxOutputNodes": 0,
+          "maxPropagationStates": 2000,
+          "maxSafeHops": 4,
+          "maxTransitionRecords": 0,
+          "minimumInjectedCurrent": 0.01,
+          "returnFlowFactor": 0.15,
+          "tensionThreshold": 1.0,
+          "wormholeDecay": 0.7
+        }
+      },
+      "techTagThreshold": {
+        "default": 0.08,
+        "format": "double",
+        "type": "number"
+      },
+      "topologyEnabled": {
+        "default": true,
+        "type": "boolean"
+      },
+      "transferAlpha": {
+        "default": 0.55,
+        "format": "double",
+        "type": "number"
+      },
+      "transferMassRatio": {
+        "default": 0.9,
+        "format": "double",
+        "type": "number"
+      },
+      "transferTolerance": {
+        "default": 1e-9,
+        "format": "double",
+        "type": "number"
+      }
+    },
+    "title": "PipelineConfig",
+    "type": "object"
+  },
+  "query": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "candidate_budget": {
+        "default": 100,
+        "format": "uint",
+        "maximum": 100000,
+        "minimum": 1,
+        "type": "integer"
+      },
+      "rrf_k": {
+        "default": 60.0,
+        "exclusiveMinimum": 0.0,
+        "format": "double",
+        "type": "number"
+      },
+      "thinking_min_closure": {
+        "default": 0.2,
+        "format": "double",
+        "maximum": 1.0,
+        "minimum": 0.0,
+        "type": "number"
+      },
+      "top_k": {
+        "default": 10,
+        "format": "uint",
+        "maximum": 10000,
+        "minimum": 1,
+        "type": "integer"
+      }
+    },
+    "title": "QueryControls",
+    "type": "object"
+  },
+  "readout": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "properties": {
+      "anchorActivationFloor": {
+        "default": 0.05,
+        "format": "double",
+        "type": "number"
+      },
+      "anchorActivationZ": {
+        "default": 2.0,
+        "format": "double",
+        "type": "number"
+      },
+      "anchorBonusCap": {
+        "default": 0.1,
+        "format": "double",
+        "type": "number"
+      },
+      "anchorFrontierAbsFloor": {
+        "default": 0.1,
+        "format": "double",
+        "type": "number"
+      },
+      "anchorFrontierContrast": {
+        "default": 2.0,
+        "format": "double",
+        "type": "number"
+      },
+      "anchorK": {
+        "default": 50,
+        "format": "uint",
+        "minimum": 0,
+        "type": "integer"
+      },
+      "anchorSaturation": {
+        "default": 0.2,
+        "format": "double",
+        "type": "number"
+      },
+      "bm25K": {
+        "default": 50,
+        "format": "uint",
+        "minimum": 0,
+        "type": "integer"
+      },
+      "closureFloor": {
+        "default": 0.0,
+        "format": "double",
+        "type": "number"
+      },
+      "collapsedThreshold": {
+        "default": 0.12,
+        "format": "double",
+        "type": "number"
+      },
+      "conditionalBandwidth": {
+        "default": 0.04,
+        "format": "double",
+        "type": "number"
+      },
+      "conditionalClosureBandwidth": {
+        "default": 0.1,
+        "format": "double",
+        "type": "number"
+      },
+      "conditionalDirectBandwidth": {
+        "default": 0.12,
+        "format": "double",
+        "type": "number"
+      },
+      "denoisedK": {
+        "default": 100,
+        "format": "uint",
+        "minimum": 0,
+        "type": "integer"
+      },
+      "directionFloor": {
+        "default": 0.05,
+        "format": "double",
+        "type": "number"
+      },
+      "fallbackReliabilityCap": {
+        "default": 0.5,
+        "format": "double",
+        "type": "number"
+      },
+      "innovationConfidenceZ": {
+        "default": 1.0,
+        "format": "double",
+        "type": "number"
+      },
+      "innovationScale": {
+        "default": 0.5,
+        "format": "double",
+        "type": "number"
+      },
+      "kappaEdge": {
+        "default": 0.5,
+        "format": "double",
+        "type": "number"
+      },
+      "kappaRatio": {
+        "default": 0.3,
+        "format": "double",
+        "type": "number"
+      },
+      "lexicalWeight": {
+        "default": 0.6,
+        "description": "Sparse share of the base score when authorized lexical hits are present.",
+        "format": "double",
+        "type": "number"
+      },
+      "localFieldK": {
+        "default": 100,
+        "format": "uint",
+        "minimum": 0,
+        "type": "integer"
+      },
+      "localWeight": {
+        "default": 0.6,
+        "format": "double",
+        "type": "number"
+      },
+      "maxUnionCandidates": {
+        "default": 300,
+        "format": "uint",
+        "minimum": 0,
+        "type": "integer"
+      },
+      "maximumRiverEdges": {
+        "default": 96,
+        "format": "uint",
+        "minimum": 0,
+        "type": "integer"
+      },
+      "minimumEffectivePeers": {
+        "default": 2.5,
+        "format": "double",
+        "type": "number"
+      },
+      "minimumPeers": {
+        "default": 3,
+        "format": "uint",
+        "minimum": 0,
+        "type": "integer"
+      },
+      "minimumRiverEdgeFlow": {
+        "default": 0.015,
+        "format": "double",
+        "type": "number"
+      },
+      "nodeOnlyReliabilityCap": {
+        "default": 0.2,
+        "format": "double",
+        "type": "number"
+      },
+      "omegaEpsilon": {
+        "default": 0.02,
+        "format": "double",
+        "type": "number"
+      },
+      "omegaGamma": {
+        "default": 1.0,
+        "format": "double",
+        "type": "number"
+      },
+      "pureLocalWeight": {
+        "default": 0.2,
+        "format": "double",
+        "type": "number"
+      },
+      "pureQueryWeight": {
+        "default": 0.7,
+        "format": "double",
+        "type": "number"
+      },
+      "pureTransferWeight": {
+        "default": 0.1,
+        "format": "double",
+        "type": "number"
+      },
+      "queryK": {
+        "default": 100,
+        "format": "uint",
+        "minimum": 0,
+        "type": "integer"
+      },
+      "rarityFloor": {
+        "default": 0.15,
+        "format": "double",
+        "type": "number"
+      },
+      "relativeDistanceTemperature": {
+        "default": 0.35,
+        "format": "double",
+        "type": "number"
+      },
+      "reliabilitySeedSaturation": {
+        "default": 2.0,
+        "format": "double",
+        "type": "number"
+      },
+      "reverseDirectionCredit": {
+        "default": 0.25,
+        "format": "double",
+        "type": "number"
+      },
+      "semanticAnchorDiscount": {
+        "default": 0.7,
+        "format": "double",
+        "type": "number"
+      },
+      "semanticAnchorThreshold": {
+        "default": 0.88,
+        "format": "double",
+        "type": "number"
+      },
+      "semanticNodeThreshold": {
+        "default": 0.48,
+        "format": "double",
+        "type": "number"
+      },
+      "sparseThreshold": {
+        "default": 0.45,
+        "format": "double",
+        "type": "number"
+      },
+      "specificityFloor": {
+        "default": 0.35,
+        "format": "double",
+        "type": "number"
+      },
+      "structRoleMinOmega": {
+        "default": 0.12,
+        "format": "double",
+        "type": "number"
+      },
+      "topologyBonusCap": {
+        "default": 0.08,
+        "format": "double",
+        "type": "number"
+      },
+      "topologyPathSaturation": {
+        "default": 0.15,
+        "format": "double",
+        "type": "number"
+      },
+      "transferFieldK": {
+        "default": 100,
+        "format": "uint",
+        "minimum": 0,
+        "type": "integer"
+      },
+      "transferWeight": {
+        "default": 0.4,
+        "format": "double",
+        "type": "number"
+      }
+    },
+    "title": "NativeConfig",
+    "type": "object"
+  }
+}

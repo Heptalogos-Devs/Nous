@@ -29,6 +29,9 @@ from nous.storage.content import ContentStore
 from nous.storage.content_schema import metadata as blob_metadata
 from nous.storage.database import Database
 from nous.temporal.domains import TimeService, bind_domains, check_domains
+from nous.temporal.values import Clock
+from nous.wave.operations import WaveOperations
+from nous.wave.schema import metadata as wave_metadata
 
 from .bindings import InstanceBinding, prepare_resource_directories
 from .execution import ExecutionManager
@@ -73,6 +76,7 @@ class Runtime:
     embeddings: EmbeddingExecutor
     embedding_spaces: EmbeddingSpaceRegistry
     embedding: EmbeddingOperations
+    wave: WaveOperations
     state: str = "starting"
 
     def status(self) -> dict[str, object]:
@@ -164,7 +168,9 @@ async def initialize_instance(
                 descriptor.instance_id,
                 create=not existing,
                 database_id=str(binding.database_id),
-                additional_metadata=(blob_metadata, content_metadata) if not existing else (),
+                additional_metadata=(blob_metadata, content_metadata, wave_metadata)
+                if not existing
+                else (),
             ) as database:
                 await bind_domains(database, settings.time.domains)
                 await database.check()
@@ -212,12 +218,15 @@ async def open_instance(
         execution = ExecutionManager(settings.execution, lambda: configuration.snapshot)
         connections = ModelConnections(selected.directory, settings, configuration.environment)
         stack.push_async_callback(connections.aclose)
+        wave: WaveOperations | None = None
 
         async def close_execution() -> None:
             with operation("runtime.shutdown"):
                 await execution.aclose(
                     configuration.snapshot.typed_values().runtime.shutdown_grace_seconds
                 )
+                if wave is not None:
+                    wave.close()
 
         stack.push_async_callback(close_execution)
         try:
@@ -243,10 +252,12 @@ async def open_instance(
                     execution,
                     io_chunk_bytes=settings.content.io_chunk_bytes,
                 )
+                clock = Clock()
                 artifacts = ArtifactStore(
                     database,
                     content,
                     descriptor.instance_id,
+                    clock=clock,
                     text_read_max_bytes=lambda: (
                         execution.snapshot.typed_values().content.text_read_max_bytes
                     ),
@@ -260,7 +271,7 @@ async def open_instance(
                     bytecode_cache=settings.prompt.bytecode_cache,
                 )
                 models = ModelExecutor(connections, compiler)
-                preparer = MediaPreparer(artifacts, results, execution, models)
+                preparer = MediaPreparer(artifacts, results, execution)
                 generation = GenerationOperations(models, results, execution, preparer)
                 media = MediaAnalysis(artifacts, preparer, generation, results, execution)
                 embeddings = EmbeddingExecutor(connections)
@@ -272,13 +283,25 @@ async def open_instance(
                     embedding_spaces,
                     embeddings,
                 )
+                time_service = TimeService(database, clock)
+                wave = WaveOperations(
+                    database,
+                    execution,
+                    paths,
+                    descriptor.instance_id,
+                    time_service,
+                    artifacts,
+                    results,
+                    embedding,
+                    preparer,
+                )
                 runtime = Runtime(
                     paths=paths,
                     descriptor=descriptor,
                     configuration=configuration_operations,
                     database=database,
                     execution=execution,
-                    time=TimeService(database),
+                    time=time_service,
                     observability=observability,
                     artifacts=artifacts,
                     results=results,
@@ -290,6 +313,7 @@ async def open_instance(
                     embeddings=embeddings,
                     embedding_spaces=embedding_spaces,
                     embedding=embedding,
+                    wave=wave,
                     state="ready",
                 )
             logger.info("runtime.ready")

@@ -1,51 +1,33 @@
-# 配置变更的共同应用操作
+# 配置采用与资源所有权
 
-## 目标与现有接缝
+## 共同操作
 
-首轮 Configuration 已提供定义、分层合并、保存和快照。当前 CLI 的 `offline_change` 与 bootstrap 分别组织路径/时间绑定，并在构造后回填 callback。本轮把这项完整操作收回应用层；CLI 和运行中的管理入口共用它。
+Configuration 维护定义、来源、快照和 TOML；ConfigurationOperations 负责一次修改的路径/时间/向量/Wave 绑定及生效。CLI 和在线调用都使用这一操作。底层纯定义不打开数据库或加载 Native。
 
-本专题保留 [配置机制](configuration.md) 与 [配置变更](configuration-changes.md) 的作用域、原子文件替换、期望/有效代和失败语义。本轮用以下明确 owner 接入取代临时的 Embedding 全拒绝与可变回调。
+在 configuration 内按实际修改原因分离目录/来源解析、快照、文件保存；保留清楚公共能力。不要把一个巨大 self 分散到若干 mixin。应用用例构造时接收绑定能力，删除已被替换的 callback 回填或消费者判断。
 
-## 职责与接口
+## 保存与发布
 
-Configuration 内部保留纯的 definition/catalog、source resolver、snapshot 和 TOML store。按修改原因拆分已有大文件，避免让所有拆分文件共享整个 `self`。公共读取、解释和变更结果不重造多套 DTO。
+继续使用候选 → 只读绑定核对 → 原子保存 → 明确可立即采用的状态 → 发布快照。含 restart 的整项修改等待重启；保存后采用失败保留旧有效值并返回具体阶段、期望/有效版本和恢复办法。离线普通字段无需打开不可用数据库。
 
-应用层提供 `ConfigurationOperations`，具有 `update`、`unset`、`remove_resource`、`reload` 和 `explain/status`。它接收实例绑定、时间域 owner、Embedding 空间 owner、配置存储与快照、日志级别应用能力。依赖在构造时明确提供。
+时间域登记与 Embedding 空间绑定遵循各自 owner。新向量空间可配置，首次向量采用才绑定。Wave 构建参数改变只影响新快照；查询参数影响下次查询，不能原地改变已经发布快照的含义。
 
-离线 `open_configuration_operations(locator)` 只取得需要的实例锁和文件能力；普通字段在数据库不可读时仍能保存。确需时间/Embedding 绑定时才打开受实例资源身份核验的数据库。在线入口借用已打开资源，不重新拿实例锁、不再打开另一个 Runtime。
+## 连接与凭据
 
-这两个资源取得方式提供同一操作实现。不要分别写 offline-update 和 runtime-update 两套判断。所需 owner 暂不可用时，只拒绝受其绑定影响的修改。
+Provider endpoint/protocol/credential_ref、代理、CA、连接池以及被该连接使用的 Credential.kind/name/path 采用 restart。实例打开时解析的环境和凭据引用具有明确生命周期。逐请求时限、模型选取、任务预设与查询参数可在下一操作生效。
 
-## 无环启动
+给 credentials 容器及所有联合分支附正确元信息，避免只标引用字段却让实际凭据位置变更立即发布。新增 Provider/凭据一并修改时，默认值的差异也按完整资源合同计算生效模式。
 
-先使用纯 resolver 得到候选配置，解析路径和日志，再打开数据库。数据库提供给 TimeDomainRegistry 与 EmbeddingSpaceRegistry。完成资源绑定核对后，构造 ConfigurationOperations，发布 Runtime。纯 resolver 不持有数据库；TimeDomainRegistry/EmbeddingSpaceRegistry 不依赖 ConfigurationOperations。
+## 缺失与显式 null
 
-配置的基本字段由各 owner 的纯定义提供。纯错误和 ResourceId 移到不加载 runtime/observability 的下层；包 `__init__` 不通过重导出引发反向导入。时间域配置与持久域共用 kind/scale/epoch 语义校验。
+Provider 网络覆盖中，缺失表示继承实例设置；显式 null 表示清空允许为空的字段，例如取消该 Provider 的实例代理。不能用 `exclude_none=True` 合并两者。
 
-## 一次修改的顺序
+由 source resolver 在构造有效 ProviderSettings 前保留“本层是否声明”的信息。对资源初始化的默认 null 不视为显式清空；本层 null_fields 仍是明确输入。将结果解析成完整、可独立消费的网络配置，Network 不再自行做第二轮来源合并。
 
-候选构造与形状校验 → 按变化确定要询问的 owner → 只读绑定核对 → 原子保存期望文件 → 需要且可立即采用的绑定提交 → 日志等明确 live 修改 → 发布新快照。
+## 快照与模板
 
-文件写入与 SQL 不伪装为同一事务。沿用已完成的失败合同：保存前失败不写文件；保存后采用失败保留旧快照，报告已保存并等待重启。在线修改含 restart 字段时整项等待重启，不拼接多代资源。
+一次操作固定 ConfigSnapshot；同时捕获本次可能需要的 Prompt 资源及其 literal 依赖版本。多阶段操作后半段使用已捕获模板；磁盘编辑影响下一根操作。Native build/query 分别固定其 build/query 配置。预览与执行不得另读配置形成双轨。
 
-配置变更同时涉及时间与 Embedding 时，分别调用对应 owner 的纯校验和已用绑定检查。时间域按现行合同在配置采用时登记；Embedding 新空间在首次正式向量采用时登记，配置保存本身不提前将它标成已使用。需要一起提交的数据库采用共用调用者的 WriteTx，各参与者不自行 commit。文件仍由 Configuration 持有并报告实际状态。
+## 字段目录与维护
 
-## Embedding 绑定接入
-
-空间 owner 解析候选中的空间、模型与连接身份。没有使用过的新空间允许正常创建和修改；首次保存正式向量时在同一事务登记完整空间合同并写入向量关联。已使用 ID 的模型部署、维度、模态、编码、归一化变化被拒绝；新空间使用新 ID。
-
-普通模型显示信息、未被向量空间使用的文本模型配置可以正常修改。相关模型条目、空间条目的增删，以及环境/手改文件带来的变化均通过同一 owner 核对。Configuration 不再硬编码 `embedding.spaces.*` 与 `models.*.model_name` 的专有规则。
-
-配置只是本地声明；网关别名背后的实际部署不由本地文件证明。空间中的 deployment_revision 是操作者维护的版本断言，运行结果保留服务实际报告的模型标识。绑定细节见 [Embedding](../models/embeddings.md)。
-
-## 网络资源采用
-
-连接创建参数（代理、CA、trust_env、连接池）及 Provider endpoint/protocol/credential_ref 采用 restart。逐请求网络超时、模型选取、input_formats/output_modes/compatibility、任务参数、Prompt 内容和用途在下一操作生效；模型准备从本次快照构造相应 Profile，复用既有兼容连接。这样当前进程无需建设通用客户端热替换框架。CLI 每次重新打开实例时自然采用保存配置。
-
-任务内保持同一配置快照；两阶段媒体处理不会在中间突然采用新参数或换模板。不同阶段可用不同的明确任务分配，均从根快照解析。
-
-## 同步迁移
-
-迁移 bootstrap 和 CLI 的内联编排、现有测试中的直接 callback 回填、相关帮助和设计说明；删除被取代路径。配置路径、类型、描述、单位、默认、nullable、作用域和生效方式仍由正式定义导出。
-
-迁移只处理受本轮能力影响的职责。已有实例锁、路径绑定和正确的保存失败合同继续复用。
+动态模型/媒体/Wave 字段也必须导出类型、描述、缺失、nullable、范围、单位、scope 和生效方式。已选成熟 SDK 的协议配置继续复用，名称只描述协议能力。清除接纳却无消费者的字段：media_strategy 由 MediaAnalysis 的共同选项解析真正使用；无明确 task 默认时 CLI 要求策略，不能默默忽略配置。

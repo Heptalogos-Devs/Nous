@@ -11,18 +11,11 @@ from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, cast
 
 import jsonschema
-from openai import APIConnectionError, APIStatusError, APITimeoutError
+from openai import APIConnectionError, APIStatusError
 from pydantic import JsonValue, TypeAdapter, ValidationError
 from pydantic_ai.direct import model_request, model_request_stream
 from pydantic_ai.exceptions import (
     ModelAPIError,
-    ModelConnectionError,
-    ModelHTTPError,
-    ModelQuotaExceededError,
-    ModelRateLimitError,
-    ModelRequestTimeout,
-    ModelServerError,
-    ModelUnavailableError,
     UnexpectedModelBehavior,
 )
 from pydantic_ai.messages import (
@@ -50,8 +43,9 @@ from nous.common.errors import NousError
 from nous.configuration import ConfigSnapshot
 from nous.models.configuration import ModelConfig, PresetConfig, TaskAssignment
 
-from .contracts import OUTPUT_TYPES, GenerationResult, ReadingInput
-from .prompts import CompiledPrompt, PromptCompiler
+from .contracts import GenerationResult, ReadingInput
+from .policy import model_error, retry_delay, retryable, stage_deadline
+from .prompts import CompiledPrompt, PromptCompiler, PromptResource
 
 if TYPE_CHECKING:
     from nous.network import ModelConnections
@@ -78,10 +72,20 @@ class ModelRegistry:
             ModelRoute(
                 choice.model,
                 settings.models[choice.model],
-                settings.presets[choice.preset] if choice.preset else PresetConfig(),
+                settings.presets[cast(str, choice.preset or assignment.preset)]
+                if (choice.preset or assignment.preset)
+                else PresetConfig(),
             )
             for choice in [assignment, *assignment.fallback]
         )
+
+
+@dataclass(frozen=True)
+class FrozenTask:
+    task: str
+    assignment: TaskAssignment
+    routes: tuple[ModelRoute, ...]
+    resource: PromptResource | None
 
 
 @dataclass(frozen=True)
@@ -98,6 +102,8 @@ class PreparedGeneration:
     max_output_tokens: int
     structured_retries: int
     estimated_input_tokens: int
+    stage_refs: tuple[str, ...] = ()
+    ineligible_routes: dict[str, JsonValue] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, JsonValue]:
         return {
@@ -111,6 +117,7 @@ class PreparedGeneration:
             "estimated_input_tokens": self.estimated_input_tokens,
             "input_token_count_kind": "estimated",
             "config_version": self.snapshot.version,
+            "ineligible_routes": self.ineligible_routes,
         }
 
 
@@ -125,85 +132,6 @@ class GenerationStream:
         return self.deltas
 
 
-def retryable(error: BaseException) -> bool:
-    if isinstance(error, ModelQuotaExceededError):
-        return False
-    if isinstance(
-        error,
-        (
-            APIConnectionError,
-            APITimeoutError,
-            ModelConnectionError,
-            ModelRequestTimeout,
-            ModelRateLimitError,
-            ModelUnavailableError,
-            ModelServerError,
-        ),
-    ):
-        return True
-    if isinstance(error, (APIStatusError, ModelHTTPError)):
-        return error.status_code in {408, 409, 429} or error.status_code >= 500
-    return False
-
-
-def model_error(error: BaseException, attempts: int) -> NousError:
-    if isinstance(error, NousError):
-        return error
-    status = error.status_code if isinstance(error, (APIStatusError, ModelHTTPError)) else None
-    service_error: dict[str, JsonValue] = {}
-    if isinstance(error, (APIStatusError, ModelHTTPError)):
-        body: object = error.body
-        if isinstance(body, str):
-            try:
-                body = cast(object, json.loads(body))
-            except ValueError:
-                service_error["message"] = body
-        if isinstance(body, dict):
-            values = cast(dict[str, object], body)
-            nested = values.get("error")
-            if isinstance(nested, dict):
-                values = cast(dict[str, object], nested)
-            for field in ("message", "type", "code"):
-                value = values.get(field)
-                if isinstance(value, (str, int)):
-                    service_error[field] = value
-    elif isinstance(error, ModelAPIError):
-        service_error["message"] = error.message
-    return NousError(
-        "model.request_failed",
-        "The model request failed",
-        details={
-            "error_type": type(error).__name__,
-            "status_code": status,
-            "attempts": attempts,
-            "request_id": getattr(error, "request_id", None),
-            "provider_error": service_error,
-        },
-        retryable=retryable(error),
-        cause=error,
-    )
-
-
-async def retry_delay(error: BaseException) -> None:
-    delay = 0.25
-    if isinstance(error, ModelAPIError) and error.retry_after is not None:
-        delay = max(0, error.retry_after)
-    elif isinstance(error, APIStatusError):
-        header = error.response.headers.get("retry-after")
-        if header:
-            try:
-                delay = max(0, float(header))
-            except ValueError:
-                pass
-    await asyncio.sleep(delay)
-
-
-def stage_deadline(seconds: float, context: OperationContext | None) -> float:
-    """Include attempts and retry waits in one deadline, bounded by the root operation."""
-    deadline = asyncio.get_running_loop().time() + seconds
-    return min(deadline, context.deadline) if context and context.deadline is not None else deadline
-
-
 class ModelExecutor:
     """Own model-stage execution; the caller owns operation lifetime and result adoption."""
 
@@ -212,30 +140,34 @@ class ModelExecutor:
         self.compiler = compiler
         self.registry = ModelRegistry()
 
+    def freeze(self, task: str, snapshot: ConfigSnapshot) -> FrozenTask:
+        assignment, routes = self.registry.resolve(task, snapshot)
+        resource = self.compiler.catalog.get(assignment.prompt) if assignment.prompt else None
+        return FrozenTask(task, assignment, routes, resource)
+
     def prepare(
         self,
-        task: str,
+        task: str | FrozenTask,
         reading: ReadingInput,
         snapshot: ConfigSnapshot,
         *,
         schema: dict[str, JsonValue] | None = None,
     ) -> PreparedGeneration:
         """Compile once and check every fallback's ability to preserve the requested input."""
-        assignment, routes = self.registry.resolve(task, snapshot)
-        if assignment.operation != "generation" or assignment.prompt is None:
+        frozen = self.freeze(task, snapshot) if isinstance(task, str) else task
+        assignment, routes = frozen.assignment, frozen.routes
+        if assignment.operation != "generation" or frozen.resource is None:
             raise NousError(
                 "model.operation_mismatch", "This task requires the transcription endpoint"
             )
         if schema is not None:
             self._validate_schema(schema)
-        compiled = self.compiler.compile(assignment.prompt, reading, schema=schema)
+        compiled = self.compiler.compile(frozen.resource, reading, schema=schema)
         structured = compiled.schema is not None
         if structured != (assignment.output_mode != "text"):
             raise NousError(
                 "model.output_mode_mismatch", "Task output mode does not match its prompt contract"
             )
-        for route in routes:
-            self._check_route(route, assignment, compiled, snapshot)
         limits = snapshot.typed_values().model_execution
         budget = assignment.budget
         output_limit = min(
@@ -243,8 +175,8 @@ class ModelExecutor:
             for v in [
                 limits.max_output_tokens,
                 budget.max_output_tokens,
-                *[r.model.max_output_tokens for r in routes],
-                *[r.preset.max_output_tokens for r in routes],
+                routes[0].model.max_output_tokens,
+                routes[0].preset.max_output_tokens,
             ]
             if v is not None
         )
@@ -260,26 +192,57 @@ class ModelExecutor:
         input_limit = min(
             limits.max_input_tokens, budget.max_input_tokens or limits.max_input_tokens
         )
-        context_limit = min(
-            (r.model.context_window for r in routes if r.model.context_window is not None),
-            default=None,
-        )
-        if estimate > input_limit or (
-            context_limit is not None and estimate + output_limit > context_limit
-        ):
+        eligible: list[ModelRoute] = []
+        ineligible: dict[str, JsonValue] = {}
+        for route in routes:
+            try:
+                self._check_route(route, assignment, compiled, snapshot)
+                route_output = min(
+                    value
+                    for value in (
+                        limits.max_output_tokens,
+                        budget.max_output_tokens,
+                        route.model.max_output_tokens,
+                        route.preset.max_output_tokens,
+                    )
+                    if value is not None
+                )
+                if estimate > input_limit or (
+                    route.model.context_window is not None
+                    and estimate + route_output > route.model.context_window
+                ):
+                    raise NousError(
+                        "model.input_limit",
+                        "Prepared input exceeds this route's context allowance",
+                        details={
+                            "estimated_input_tokens": estimate,
+                            "max_output_tokens": route_output,
+                            "context_window": route.model.context_window,
+                            "limit": input_limit,
+                        },
+                    )
+                eligible.append(route)
+            except NousError as error:
+                ineligible[route.model_id] = error.to_dict()
+        if not eligible:
             raise NousError(
-                "model.input_limit",
-                "Prepared input exceeds the configured context allowance",
-                details={
-                    "estimated_input_tokens": estimate,
-                    "max_output_tokens": output_limit,
-                    "limit": input_limit,
-                    "context_window": context_limit,
-                    "count_kind": "estimated",
-                },
+                "model.no_eligible_route",
+                "No configured route can process the complete prepared input",
+                details={"routes": ineligible},
             )
+        routes = tuple(eligible)
+        output_limit = min(
+            value
+            for value in (
+                limits.max_output_tokens,
+                budget.max_output_tokens,
+                routes[0].model.max_output_tokens,
+                routes[0].preset.max_output_tokens,
+            )
+            if value is not None
+        )
         return PreparedGeneration(
-            task,
+            frozen.task,
             assignment,
             compiled,
             routes,
@@ -290,13 +253,13 @@ class ModelExecutor:
                 for v in [
                     limits.timeout_seconds,
                     budget.timeout_seconds,
-                    *[r.preset.timeout_seconds for r in routes],
                 ]
                 if v is not None
             ),
             output_limit,
             limits.structured_retries,
             estimate,
+            ineligible_routes=ineligible,
         )
 
     @staticmethod
@@ -424,8 +387,28 @@ class ModelExecutor:
         )
 
     def _settings(self, prepared: PreparedGeneration, route: ModelRoute) -> OpenAIChatModelSettings:
+        self._check_route(route, prepared.assignment, prepared.compiled, prepared.snapshot)
+        output_limit = min(
+            value
+            for value in (
+                prepared.snapshot.typed_values().model_execution.max_output_tokens,
+                prepared.assignment.budget.max_output_tokens,
+                route.model.max_output_tokens,
+                route.preset.max_output_tokens,
+            )
+            if value is not None
+        )
+        if (
+            route.model.context_window is not None
+            and prepared.estimated_input_tokens + output_limit > route.model.context_window
+        ):
+            raise NousError(
+                "model.input_limit",
+                "Prepared input exceeds this route's context allowance",
+                details={"model_id": route.model_id, "context_window": route.model.context_window},
+            )
         settings = OpenAIChatModelSettings(
-            max_tokens=prepared.max_output_tokens,
+            max_tokens=output_limit,
             max_retries=0,
             timeout=self.connections.timeout(route.model.provider, prepared.snapshot),
         )
@@ -461,6 +444,24 @@ class ModelExecutor:
                 )
             ],
         )
+
+    def _request_settings(
+        self, prepared: PreparedGeneration, route: ModelRoute
+    ) -> dict[str, JsonValue]:
+        """Persist the effective SDK parameters without serializing connection resources."""
+        settings = dict(self._settings(prepared, route))
+        settings.pop("timeout", None)
+        timeout = self.connections.timeout(route.model.provider, prepared.snapshot)
+        return {
+            **TypeAdapter(dict[str, JsonValue]).validate_python(settings),
+            "attempt_timeout_seconds": route.preset.timeout_seconds,
+            "transport_timeout_seconds": {
+                "connect": timeout.connect,
+                "read": timeout.read,
+                "write": timeout.write,
+                "pool": timeout.pool,
+            },
+        }
 
     def _result(
         self,
@@ -502,29 +503,9 @@ class ModelExecutor:
                     jsonschema.Draft202012Validator(prepared.compiled.schema).validate,
                 )
                 validate(parsed)
-                contract = OUTPUT_TYPES[prepared.compiled.resource.manifest.contract_id]
-                output = (
-                    contract.model_validate(parsed).model_dump(mode="json")
-                    if contract
-                    else TypeAdapter(JsonValue).validate_python(parsed)
+                output = prepared.compiled.validate_output(
+                    TypeAdapter(JsonValue).validate_python(parsed), prepared.compiled.reading
                 )
-                known_keys = {source.key for source in prepared.compiled.reading.sources}
-                referenced: set[str]
-                if prepared.compiled.resource.manifest.contract_id == "information-extraction":
-                    structured = cast(dict[str, JsonValue], output)
-                    referenced = {
-                        str(key)
-                        for item in cast(list[dict[str, JsonValue]], structured["items"])
-                        for key in cast(list[str], item["source_keys"])
-                    }
-                elif prepared.compiled.resource.manifest.contract_id == "passage-selection":
-                    structured = cast(dict[str, JsonValue], output)
-                    referenced = set(cast(list[str], structured["keys"]))
-                    structured["keys"] = list(dict.fromkeys(cast(list[str], structured["keys"])))
-                else:
-                    referenced = set()
-                if referenced - known_keys:
-                    raise ValueError(f"Unknown source keys: {sorted(referenced - known_keys)}")
             except (ValueError, ValidationError, jsonschema.ValidationError) as error:
                 raise NousError(
                     "model.output_invalid",
@@ -554,7 +535,7 @@ class ModelExecutor:
                 **prepared.to_dict(),
                 "model_id": route.model_id,
                 "requested_model_name": route.model.model_name,
-                "parameters": route.preset.model_dump(mode="json"),
+                "parameters": self._request_settings(prepared, route),
             },
             attempts,
             response.finish_reason,
@@ -569,20 +550,23 @@ class ModelExecutor:
     ) -> GenerationResult:
         """Share one attempt count across transport retry, fallback and output repair."""
         repairs = 0
+        route_index = 0
         messages: list[ModelMessage] = list(prepared.compiled.messages)
         total_usage = RequestUsage()
         earlier_responses: list[JsonValue] = []
+        repair_feedbacks: list[JsonValue] = []
         async with asyncio.timeout_at(stage_deadline(prepared.timeout_seconds, context)):
             for attempt in range(1, prepared.max_attempts + 1):
-                route = prepared.routes[min(attempt - 1, len(prepared.routes) - 1)]
+                route = prepared.routes[min(route_index, len(prepared.routes) - 1)]
                 response: ModelResponse | None = None
                 try:
-                    response = await model_request(
-                        self._model(route),
-                        messages,
-                        model_settings=self._settings(prepared, route),
-                        model_request_parameters=self._parameters(prepared),
-                    )
+                    async with asyncio.timeout(route.preset.timeout_seconds):
+                        response = await model_request(
+                            self._model(route),
+                            messages,
+                            model_settings=self._settings(prepared, route),
+                            model_request_parameters=self._parameters(prepared),
+                        )
                     total_usage.incr(response.usage)
                     result = self._result(prepared, route, response, attempt)
                     return replace(
@@ -591,12 +575,17 @@ class ModelExecutor:
                             total_usage.__dict__
                         ),
                         response={**result.response, "earlier_responses": earlier_responses},
-                        request={**result.request, "structured_repairs": repairs},
+                        request={
+                            **result.request,
+                            "structured_repairs": repairs,
+                            "repair_feedbacks": repair_feedbacks,
+                        },
                     )
                 # Cancellation propagates to the operation owner and never enters retry handling.
                 except (
                     APIConnectionError,
                     APIStatusError,
+                    TimeoutError,
                     ModelAPIError,
                     UnexpectedModelBehavior,
                     NousError,
@@ -609,6 +598,8 @@ class ModelExecutor:
                     if attempt >= prepared.max_attempts or not (retryable(error) or repair):
                         raise model_error(error, attempt) from error
                     repairs += int(repair)
+                    if not repair:
+                        route_index += 1
                     if repair and response is not None and isinstance(error, NousError):
                         earlier_responses.append(
                             TypeAdapter(JsonValue).validate_python(
@@ -620,6 +611,7 @@ class ModelExecutor:
                             "Return a corrected output satisfying the same task schema. "
                             + str(error.details.get("problem", "Invalid output"))
                         )
+                        repair_feedbacks.append({"feedback": feedback, "after_attempt": attempt})
                         calls = [part for part in response.parts if isinstance(part, ToolCallPart)]
                         if calls:
                             messages.append(
@@ -691,12 +683,15 @@ class ModelExecutor:
                         f"Model {route.model_id} does not declare streaming",
                     )
                 try:
-                    async with model_request_stream(
-                        self._model(route),
-                        list(prepared.compiled.messages),
-                        model_settings=self._settings(prepared, route),
-                        model_request_parameters=self._parameters(prepared),
-                    ) as response:
+                    async with (
+                        asyncio.timeout(route.preset.timeout_seconds),
+                        model_request_stream(
+                            self._model(route),
+                            list(prepared.compiled.messages),
+                            model_settings=self._settings(prepared, route),
+                            model_request_parameters=self._parameters(prepared),
+                        ) as response,
+                    ):
                         async for event in response:
                             delta = (
                                 event.part.content
@@ -721,6 +716,7 @@ class ModelExecutor:
                 except (
                     APIConnectionError,
                     APIStatusError,
+                    TimeoutError,
                     ModelAPIError,
                     UnexpectedModelBehavior,
                 ) as error:
@@ -736,12 +732,12 @@ class ModelExecutor:
                 timeout=self.connections.timeout(provider, snapshot)
             )
             return [item.id async for item in page]
-        except (APIConnectionError, APIStatusError) as error:
+        except (APIConnectionError, APIStatusError, TimeoutError) as error:
             raise model_error(error, 1) from error
 
     async def transcribe(
         self,
-        task: str,
+        task: str | FrozenTask,
         audio: bytes,
         filename: str,
         snapshot: ConfigSnapshot,
@@ -751,15 +747,14 @@ class ModelExecutor:
         context: OperationContext | None = None,
     ) -> GenerationResult:
         """Upload audio through the shared connection under the same stage limits as chat."""
-        assignment, routes = self.registry.resolve(task, snapshot)
+        frozen = self.freeze(task, snapshot) if isinstance(task, str) else task
+        assignment, routes = frozen.assignment, frozen.routes
         if assignment.operation != "transcription":
             raise NousError(
                 "model.operation_mismatch", "Transcription requires a transcription task"
             )
-        if assignment.prompt:
-            compiled = self.compiler.compile(
-                assignment.prompt, ReadingInput(instructions=hint or "")
-            )
+        if frozen.resource is not None:
+            compiled = self.compiler.compile(frozen.resource, ReadingInput(instructions=hint or ""))
             if len(compiled.preview) != 1:
                 raise NousError(
                     "model.transcription_prompt", "Transcription accepts exactly one hint message"
@@ -779,15 +774,16 @@ class ModelExecutor:
                 try:
                     from openai import omit
 
-                    response = await self.connections.client(
-                        route.model.provider
-                    ).audio.transcriptions.create(
-                        file=(filename, audio),
-                        model=route.model.model_name,
-                        language=language if language else omit,
-                        prompt=hint if hint else omit,
-                        timeout=self.connections.timeout(route.model.provider, snapshot),
-                    )
+                    async with asyncio.timeout(route.preset.timeout_seconds):
+                        response = await self.connections.client(
+                            route.model.provider
+                        ).audio.transcriptions.create(
+                            file=(filename, audio),
+                            model=route.model.model_name,
+                            language=language if language else omit,
+                            prompt=hint if hint else omit,
+                            timeout=self.connections.timeout(route.model.provider, snapshot),
+                        )
                     raw = response.model_dump(mode="json")
                     return GenerationResult(
                         response.text,
@@ -802,7 +798,7 @@ class ModelExecutor:
                         },
                         TypeAdapter(dict[str, JsonValue]).validate_python(raw.get("usage") or {}),
                         {
-                            "task": task,
+                            "task": frozen.task,
                             "filename": filename,
                             "bytes": len(audio),
                             "language": language,
@@ -811,7 +807,7 @@ class ModelExecutor:
                         attempt,
                         response=TypeAdapter(dict[str, JsonValue]).validate_python(raw),
                     )
-                except (APIConnectionError, APIStatusError) as error:
+                except (APIConnectionError, APIStatusError, TimeoutError) as error:
                     if attempt >= maximum or not retryable(error):
                         raise model_error(error, attempt) from error
                     await retry_delay(error)

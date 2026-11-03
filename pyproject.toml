@@ -1,11 +1,13 @@
 [build-system]
-requires = ["hatchling>=1.27"]
-build-backend = "hatchling.build"
+requires = ["maturin>=1.9,<2"]
+build-backend = "maturin"
 
 [project]
 name = "nous-server"
 version = "0.1.0"
 description = "Nous cognitive service"
+license = "CC-BY-NC-SA-4.0 AND Apache-2.0"
+license-files = ["LICENSE", "src/nous_native/licenses/*"]
 requires-python = ">=3.14,<3.15"
 dependencies = [
   "aiosqlite>=0.21,<1",
@@ -46,13 +48,26 @@ dev = [
   "pytest>=8,<10",
 ]
 
-[tool.hatch.build.targets.wheel]
-packages = ["src/nous"]
+[tool.maturin]
+manifest-path = "native/python/Cargo.toml"
+python-source = "src"
+python-packages = ["nous", "nous_native"]
+module-name = "nous_native._core"
+bindings = "pyo3"
+locked = true
+use-base-python = true
 
-[tool.hatch.build.targets.sdist]
-include = ["src/nous", "pyproject.toml", "README.md"]
+[tool.uv]
+cache-keys = [
+  { file = "pyproject.toml" }, { file = "native/Cargo.toml" },
+  { file = "native/Cargo.lock" }, { file = "native/**/Cargo.toml" },
+  { file = "native/**/*.rs" }, { file = "src/**/*.py" },
+  { file = "src/**/*.pyi" }, { file = "src/**/py.typed" },
+  { file = "src/**/licenses/*" }, { file = "src/nous/resources/**/*" },
+]
 
 [tool.basedpyright]
+extraPaths = ["src"]
 include = ["src"]
 exclude = ["legacy", "temp", ".venv", "dist"]
 ignore = ["legacy", "temp"]

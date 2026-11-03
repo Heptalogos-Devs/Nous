@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from fractions import Fraction
 from typing import Literal, cast
 
@@ -15,7 +15,7 @@ from nous.common.values import ResourceId
 from nous.storage.database import Database, WriteTx, time_domain_definitions
 
 from .coordinates import validate_coordinates
-from .values import Clock
+from .values import Clock, CognitiveTimes, Instant, Interval, Known, TemporalValue, TimePoint
 
 
 class TimeDomainDefinition(BaseModel):
@@ -124,6 +124,42 @@ class TimeService:
                 (await tx.connection.execute(sa.select(time_domain_definitions))).mappings().all()
             )
         return {item.domain_id: item for item in map(_from_row, rows)}
+
+    async def validate(
+        self, values: Iterable[CognitiveTimes | TemporalValue | TimePoint | None]
+    ) -> None:
+        """Validate every explicit coordinate against this instance's registered domains."""
+        referenced: set[str] = set()
+
+        def collect(value: CognitiveTimes | TemporalValue | TimePoint | None) -> None:
+            if isinstance(value, TimePoint):
+                referenced.add(value.domain_id)
+            elif isinstance(value, CognitiveTimes):
+                for temporal in (
+                    value.occurred,
+                    value.observed,
+                    value.formed,
+                    value.valid,
+                    value.recorded,
+                ):
+                    collect(temporal)
+            elif isinstance(value, Instant):
+                collect(value.at)
+            elif isinstance(value, Interval):
+                for boundary in (value.start, value.end):
+                    if isinstance(boundary, Known):
+                        collect(boundary.at)
+
+        for value in values:
+            collect(value)
+        if referenced:
+            unknown = referenced - (await self.domains()).keys()
+            if unknown:
+                raise NousError(
+                    "time.domain_unknown",
+                    "Time coordinates refer to unregistered domains",
+                    details={"domains": sorted(unknown)},
+                )
 
 
 async def register_domain(definition: TimeDomainDefinition, tx: WriteTx) -> TimeDomainDefinition:

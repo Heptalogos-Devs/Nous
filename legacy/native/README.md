@@ -1,22 +1,7 @@
-# Nous native computation
+# Retired Native research
 
-This independent Cargo workspace builds `nous_native`, a CPython extension. It owns immutable lexical/vector/VCP generations and the NousQL grammar. Python owns authorization, references, temporal evaluation, model calls and persistence of application state.
+The current VCP, retrieval indexes and Python binding live in ../../native.
+Their superseded runtime copies and build workspace have been removed.
 
-The application exports authorized Concept, Entity and Association data into the graph generation. Query-owned core references and transient concept cues are mapped to this snapshot; graph routes returned by Thinking are mapped back to formal references by Python. The working-tree integration and its actual run are described in the [progress report](../docs/python-native-plan/progress-report.md).
-
-```bash
-CARGO_TARGET_DIR=/workspace/temp/build/native uv run maturin develop --manifest-path native/python/Cargo.toml
-uv run pytest native/python/tests
-```
-
-`IndexStore(path, options_json)` creates a bounded Rayon pool (`threads`, default 2). Build adopts C-contiguous float32 candidate and Tag matrices into Rust-owned memory. Query takes a float32 query vector and uint64 allowed candidate rows; an explicit empty allowed set returns no hits. The returned rows refer to the original `references` order. `Snapshot.capabilities` reports available lexical, dense, hybrid and VCP calculations. Lexical indexing works without vectors.
-
-`assets_json` contains `space`, `tags` (ordered objects with `key` and `label`), `geometry_config` and `artifact_config`. Candidate-to-Tag membership is uint64 CSR: `tag_indptr[candidates+1]`, `tag_indices[memberships]`. Directed graph input uses the same Tag row order: `graph_indptr[tags+1]`, uint64 `graph_indices[edges]`, float64 nonnegative `graph_weights[edges]`, optional int8 `graph_polarities[edges]` (+1 or -1). Empty or omitted graph input produces no graph edges. Edge directions remain unchanged. Negative links are retained in the generation and diagnostics; the preserved VCP activation transport consumes positive links. Geometry and EPA construction retain f64 reductions.
-
-For independent evidence, pass opaque material IDs in `source_references`, candidate-to-root uint64 CSR in `candidate_source_indptr/indices`, and edge-to-root CSR in `graph_source_indptr/indices`. The edge CSR follows graph entry order. Candidates sharing one original material keep their individual retrieval curves while that material counts once as independent evidence. Explicit source mode requires complete candidate-root rows for VCP. Without explicit source input, each opaque candidate reference is the snapshot's standalone evidence root; graph evidence remains empty unless supplied.
-
-Query options contain `limit`, fusion weights and `rrf_k`, and a typed `vcp` object. VCP accepts `pipeline`, `readout`, `candidate_limit`, `include_trace`, `include_fields`, `thinking` and `thinking_min_closure`. Request-owned `core_keys` identify authorized graph nodes by exact canonical key; the serving owner resolves them to numeric IDs before gating, sensing and fusion. Transient query concept names and `is_core` live in `vcp.ghost_tags`; their actual float32 vectors use the separate `ghost_vectors` matrix. Neither cue kind creates graph facts. `schemas_json()` derives schemas and configuration defaults from the Rust types. `_core.pyi` defines the complete Python boundary. Requested candidate traces are returned in `diagnostics_json.candidate_traces`; Thinking plans map generation-local candidate and route IDs back to canonical keys.
-
-Each build stages its indexes and binary snapshot metadata beneath the managed directory and atomically publishes one generation. Readers own immutable assets and continue using their original generation while another builds. `open_snapshot(generation)` validates native index identities and restores the same row mapping. `close()` prevents new operations and waits for active native calls. Python should cancel its native token when a task is cancelled and await the owned thread before closing the store. Computation releases the GIL and checks cancellation at pipeline, Pyramid level, sensing hop, field iteration and readout scoring boundaries.
-
-`vcp/` preserves the original AGS/EPA, graph transport, sensing, projection, fusion, RiverMemo readout, grounded thinking and numerical baseline. `retrieval/` retains Tantivy/Jieba and USearch, plus immutable generation publication and restrictions before Top-K. `nousql-syntax/` contains only the existing grammar, syntax AST, canonicalization and manual. Retained source and license records are beside each adopted component.
+nousql-syntax retains the earlier grammar and canonicalization research. It is
+not part of the running application or the current Native workspace.

@@ -1,0 +1,14 @@
+[
+  {
+    "key": "work-focus",
+    "role": "work",
+    "sequence": 1,
+    "text": "正在整理长期运行服务的资源释放和提交职责。"
+  },
+  {
+    "key": "last-question",
+    "role": "user",
+    "sequence": 2,
+    "text": "任务取消后似乎还有线程在用文件，随后保存也失败了。"
+  }
+]

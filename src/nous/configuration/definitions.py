@@ -21,6 +21,7 @@ from nous.models.configuration import (
     TaskAssignment,
 )
 from nous.temporal.coordinates import validate_coordinates
+from nous.wave.configuration import WaveConfig
 
 from .metadata import ConfigModel, setting
 
@@ -325,6 +326,7 @@ class NousConfig(ConfigModel):
     model_execution: ModelExecutionConfig = Field(default_factory=ModelExecutionConfig)
     prompt: PromptConfig = Field(default_factory=PromptConfig)
     embedding: EmbeddingConfig = Field(default_factory=EmbeddingConfig)
+    wave: WaveConfig = Field(default_factory=WaveConfig)
 
     @model_validator(mode="after")
     def references_exist(self) -> Self:
@@ -356,3 +358,18 @@ class NousConfig(ConfigModel):
                     f"embedding.spaces.{key}: text encoding requires only text modality"
                 )
         return self
+
+    def provider_network(self, provider_id: str) -> NetworkConfig:
+        """Resolve a provider's sparse overrides without losing explicit nullable values."""
+        provider = self.providers.get(provider_id)
+        if provider is None:
+            from nous.common.errors import NousError
+
+            raise NousError(
+                "model.provider_unknown",
+                "The model provider is not configured.",
+                details={"provider": provider_id},
+            )
+        return NetworkConfig.model_validate(
+            {**self.network.model_dump(), **provider.network.model_dump()}
+        )

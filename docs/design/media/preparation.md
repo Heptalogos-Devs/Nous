@@ -1,43 +1,41 @@
-# 媒体接纳、选区与输入准备
+# 确定性媒体准备与有界批次
 
-## 本轮范围
+## 所有权
 
-支持 UTF-8 文本/Markdown、PNG/JPEG/WebP/GIF、PDF、WAV/MP3 和常见 MP4/WebM。其他格式由解析器真实能力明确报告，Office、网页抓取和通用 OCR 平台不作为本轮前置。
+MediaPreparer 接收正式内容引用、模态选区、实际需求和配置，负责探测、解码、分段、采样、转换与确定性缓存。它不依赖 ModelExecutor、GenerationOperations、远端网络或完整 Runtime。
 
-输入先接纳为原件 Artifact，再由模态 owner 解析。磁盘原文件随后被删除或修改，不改变已经接纳的原件。文件扩展名提供线索，实际 MIME、尺寸、时长、页数从成熟解析器结果取得。
+音频转写和媒体描述由 MediaAnalysis/GenerationOperations.transcribe 明确组织。没有对应能力时，准备返回所需表示或缺项，不在内部偷偷发起模型请求。
 
-## 两类操作
+## 输入与输出
 
-`inspect` 只取得确定性元数据，不调用模型，不将媒体“看懂”。
+```text
+inspect(artifact, settings) -> MediaInfo
+prepare(artifact, selection, requirements, settings, options) -> PreparedMedia
+materialize(PreparedBatch) -> PreparedBatch
+```
 
-`prepare(artifact, selection, requirements, settings, context)` 产生 `PreparedMedia`：真实文本/媒体 parts、对应 Artifact、局部键、实际选区、处理方式与 coverage。它负责转换，语言解释由 [MediaAnalysis](analysis.md) 组织。
+PreparedMedia 包含不可变原件 refs、请求选区、分批边界、表示要求、转换参数和 coverage；不持有整份长文的所有 BinaryContent。确定性转换逐批发布到 CAS；PreparedBatch 仅保留实际 InputGroup/parts 和紧凑元信息。materialize 在发送前读取一个批次，调用者完成发送后释放其消息和字节。
 
-准备能力消费 CAS 内容，不接受整个 Runtime。不会从模型名猜输出格式；输入 requirements 来自任务与解析后的协议能力。
+已确定的 batch 数或索引可以保存在内存；页数/帧数很大时使用紧凑边界或迭代器，不先解码完整输入。默认顺序消费；确有吞吐需要时有界预取，不建立新的任务调度器。
 
-## 选区合同
+## 模态坐标
 
-对外页码从 1 开始，`--pages 2-4` 包含第 2、3、4 页。内部与库的 0 基索引在入口边界转换一次，保存的 Selection 明确页码约定。
+保留最新输入校验：文字仅行/字节，PDF 页码，图片帧/裁框、动画可含时段，音视频时段。当前视频不提供任意帧号/裁框操作；不适用字段明确失败。页码对外 1 基含端点，时段毫秒左闭右开。
 
-音视频时间以相对原媒体起点的毫秒表示，区间左闭右开；记录请求区间和实际取回范围。图片框以明确方向/尺寸下的像素坐标表示。文本范围以固定 Artifact 的行/字节偏移表示，不能跨另一个正文重解释。
+实际 part 的 selector 属于实际 Artifact；原件选区通过 origins 表达。旋转、裁剪、缩放、抽帧和转写均保留变换来源。媒体时间不填进认知发生轴。
 
-文本支持行范围，PDF 支持页码，静态图与动画支持帧号和像素裁剪，动画还支持时间范围；音频与视频支持时间范围。当前视频不支持按帧号或像素裁剪选区。不适用于该模态的坐标在准备时返回 `media.invalid_selection`，不得静默忽略。
+## 能力与表示
 
-媒体坐标不是认知的 occurred/observed 时间；received/formed/recorded 按实际操作使用 UTC。旋转、缩放、裁片、抽帧产生新 Artifact，并保留到原件的坐标变换或原选区。
+根据明确 MIME/模态支持选择确定性表示。原生 PDF 可直接使用；超出一次字节上限时按页组成可发送文档或使用明确视觉页表示，不因模型声明 PDF 就强制整份读入失败。视觉页图与页文字是同组不同 part。
 
-## 范围与分批
+同一阶段 fallback 路线分别核对表示；两阶段可以分别使用不同但来源一致的确定性表示。缺少能力不能由交集为空后走默认 PNG 绕过。额外转写为明确语言阶段，preview 和普通 generation 准备不执行它。
 
-没有指定选区时，任务请求整份输入。技术上限决定批次大小，不决定偷偷丢弃尾部。按页、连续音频段、采样帧组分批，每个输出注明实际输入范围；顶层结果集合包含全部已完成批次和未完成范围。
+## 缓存与工作生命周期
 
-对于视频抽帧，coverage 标记为 sampled，并列出采样实际时刻；处理了整个时间范围的采样，不宣称逐帧观察了其中所有事件。出现声音而没有处理音轨时明确标出；默认要求所选输入中实际存在的音轨得到处理，用户可以显式 `--without-audio` 排除。
+转换缓存键由原件身份、精确选区、算法/库版本和参数决定。检查缓存发生在重工作之前。保留 PDF 当前已提交页复用与同原件并发合并；可复用相同键的轻量协调能力覆盖图片/帧转换，不建设通用分布式缓存服务。
 
-## 请求物化
+解析通过既有 Execution.blocking；PDFium 的进程锁在实际 worker 中持有。FFmpeg 由模态 owner 管理，取消后终止并 wait。CAS 路径通过 borrow_local 作用域提供，期间不得提前回收。
 
-本机 CAS 路径不会成为远端可访问地址。需要发给模型的二进制由应用在技术上限内读取，交给 SDK 的 BinaryContent/标准文件上传；Base64 转换留给 SDK。
+## 覆盖与部分结果
 
-默认不为发送媒体架设临时 HTTP 文件服务器，也不创建公开下载 URL。库与网关支持原生媒体输入时采用它；否则走通用、来源明确的准备方式。
-
-## 并发与关闭
-
-确定性解析使用现有 Execution 的阻塞工作能力。FFmpeg/ffprobe 通过 `create_subprocess_exec` 与参数数组启动，不用 shell 拼接路径。取消后终止子进程并 wait 回收，再清理临时文件。
-
-媒体处理持有文件/库句柄直到真实线程或子进程结束。各模态专属并发约束在其 owner 内处理，不反向修改全局执行器。
+分批上限控制一次处理量，默认请求整份时全部批次都必须可达。采样明确标为 sampled，列出实际帧时刻，音轨排除仅来自显式选择。成功转换和语言阶段的正式结果在之后失败时仍返回引用；unfinished coverage 表达真正未完成的范围。

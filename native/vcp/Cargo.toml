@@ -1,0 +1,22 @@
+[package]
+name = "nous-vcp"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+description = "Owned VCP numerical kernels and the explicit Nous DTSC research mode"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+serde = { workspace = true, features = ["rc"] }
+serde_json.workspace = true
+schemars.workspace = true
+nalgebra.workspace = true
+rayon.workspace = true
+sha2.workspace = true
+base64 = "0.21"
+
+[lints]
+workspace = true

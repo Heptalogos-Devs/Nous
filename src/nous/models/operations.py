@@ -1,4 +1,4 @@
-"""One generation use case shared by model tools and media analysis."""
+"""Complete generation, template preview and model probes over shared content plans."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import json
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from pydantic import JsonValue
 
@@ -15,35 +15,45 @@ from nous.common.errors import NousError
 from nous.content.contracts import (
     Artifact,
     ArtifactRef,
+    ContentSelection,
+    InputGroup,
+    InputPart,
+    InputSpec,
+    OriginSlice,
     OutputContent,
     ProcessingResult,
-    ResultInput,
     SourceSelection,
 )
 from nous.content.store import ResultStore
+from nous.media.contracts import PreparedSource
+from nous.models.configuration import PresetConfig, TaskAssignment
 from nous.runtime.execution import ExecutionManager, OperationContext
 
-from .contracts import GenerationResult, PreparedSource, ReadingInput
+from .contracts import GenerationResult, ReadingInput
+from .executor import FrozenTask, ModelRoute, PreparedGeneration
+from .tasks import TASKS
 
 if TYPE_CHECKING:
     from nous.configuration import ConfigSnapshot
+    from nous.media.contracts import PreparedBatch
     from nous.media.preparation import MediaPreparer
 
-    from .executor import ModelExecutor, PreparedGeneration
+    from .executor import ModelExecutor
 
-
-@dataclass(frozen=True)
-class PreparedGenerationBatch:
-    prepared: PreparedGeneration
-    inputs: tuple[ResultInput, ...]
-    coverage: dict[str, JsonValue]
+InputValue = InputSpec | Path | Artifact | ArtifactRef | str
 
 
 @dataclass(frozen=True)
 class PreparedRun:
     artifacts: tuple[Artifact, ...]
-    batches: tuple[PreparedGenerationBatch, ...]
+    batches: tuple[PreparedBatch, ...]
     coverage: dict[str, JsonValue]
+    frozen: FrozenTask
+    question: str = ""
+    instructions: str = ""
+    schema: dict[str, JsonValue] | None = None
+    preparations: tuple[str, ...] = ()
+    transcription: FrozenTask | None = None
 
 
 @dataclass(frozen=True)
@@ -51,23 +61,70 @@ class GenerationOutcome:
     artifacts: tuple[Artifact, ...]
     results: tuple[ProcessingResult, ...]
     coverage: dict[str, JsonValue]
+    preparations: tuple[str, ...] = ()
 
 
 class GenerationOperations:
+    """Own admission, language stages and adoption; prepare only the active bounded request."""
+
     def __init__(
         self,
         executor: ModelExecutor,
         results: ResultStore,
         execution: ExecutionManager,
-        preparer: MediaPreparer | None = None,
+        preparer: MediaPreparer,
     ) -> None:
-        self.executor, self.results, self.execution = executor, results, execution
-        self.preparer = preparer
+        self.executor, self.results, self.execution, self.preparer = (
+            executor,
+            results,
+            execution,
+            preparer,
+        )
+
+    def freeze_transcription(self, snapshot: ConfigSnapshot) -> FrozenTask | None:
+        task = snapshot.typed_values().media.audio.transcription_task
+        return self.executor.freeze(task, snapshot) if task else None
+
+    async def _accept(
+        self, inputs: InputValue | Sequence[InputValue], texts: Sequence[str]
+    ) -> list[tuple[Artifact, SourceSelection]]:
+        values = (
+            [inputs]
+            if isinstance(inputs, (InputSpec, Path, Artifact, ArtifactRef, str))
+            else inputs
+        )
+        originals: list[tuple[Artifact, SourceSelection]] = []
+        for value in values:
+            if isinstance(value, Artifact):
+                originals.append((value, SourceSelection()))
+            else:
+                spec = (
+                    value
+                    if isinstance(value, InputSpec)
+                    else (
+                        InputSpec(kind="file", path=str(value))
+                        if isinstance(value, Path)
+                        else InputSpec(kind="artifact", artifact=value)
+                    )
+                )
+                originals.append((await self.results.artifacts.accept(spec), spec.selection))
+        for ordinal, text in enumerate(texts, 1):
+            originals.append(
+                (
+                    await self.results.artifacts.accept(
+                        InputSpec(kind="text", text=text, display_name=f"text-{ordinal}.txt")
+                    ),
+                    SourceSelection(),
+                )
+            )
+        if not originals:
+            raise NousError("model.input_required", "Provide an input artifact, file or text")
+        return originals
 
     async def prepare_input(
         self,
-        task: str,
-        input: Path | Artifact | ArtifactRef | str | Sequence[Path | Artifact | ArtifactRef | str],
+        task: str | FrozenTask,
+        input: InputValue | Sequence[InputValue],
         snapshot: ConfigSnapshot,
         *,
         selection: SourceSelection | None = None,
@@ -78,114 +135,149 @@ class GenerationOperations:
         without_audio: bool = False,
         texts: Sequence[str] = (),
     ) -> PreparedRun:
-        async with self.execution.operation("model.prepare_input", snapshot) as context:
-            if self.preparer is None:
-                raise NousError("model.preparation_unavailable", "Media preparer is not attached")
-            originals: list[Artifact] = []
-            inputs = [input] if isinstance(input, (Path, Artifact, ArtifactRef, str)) else input
-            for source in inputs:
-                if isinstance(source, Path):
-                    originals.append(await self.results.artifacts.ingest(source))
-                elif isinstance(source, Artifact):
-                    originals.append(source)
-                else:
-                    originals.append(await self.results.artifacts.get(source))
-            for ordinal, text in enumerate(texts, 1):
-                originals.append(
-                    await self.results.artifacts.ingest(text, display_name=f"text-{ordinal}.txt")
-                )
-            if not originals:
-                raise NousError("model.input_required", "Provide an input artifact, file or text")
-            config = snapshot.typed_values()
-            assignment, routes = self.executor.registry.resolve(task, snapshot)
-            if assignment.operation != "generation":
-                raise NousError(
-                    "model.operation_mismatch", "Use the transcription operation for this task"
-                )
-            requirements = tuple(
-                mime
-                for mime in routes[0].model.input_formats
-                if all(mime in route.model.input_formats for route in routes)
-            )
-            batches: list[PreparedGenerationBatch] = []
-            pending_sources: list[PreparedSource] = []
-            pending_inputs: list[ResultInput] = []
-            pending_coverage: list[JsonValue] = []
-            byte_length = 0
+        async with self.execution.operation("model.prepare_input", snapshot):
+            frozen = self.executor.freeze(task, snapshot) if isinstance(task, str) else task
+            transcription = self.freeze_transcription(snapshot)
+            originals = await self._accept(input, texts)
+            batches: list[PreparedBatch] = []
             summaries: list[JsonValue] = []
-
-            def flush() -> None:
-                if pending_sources:
-                    batches.append(
-                        PreparedGenerationBatch(
-                            self.executor.prepare(
-                                task,
-                                ReadingInput(question, instructions, tuple(pending_sources)),
-                                snapshot,
-                                schema=schema,
-                            ),
-                            tuple(pending_inputs),
-                            {"inputs": list(pending_coverage)},
-                        )
-                    )
-                    pending_sources.clear()
-                    pending_inputs.clear()
-                    pending_coverage.clear()
-
-            for index, artifact in enumerate(originals, 1):
-                prepared = await self.preparer.prepare(
+            preparations: list[str] = []
+            for index, (artifact, input_selection) in enumerate(originals, 1):
+                planned = await self.preparer.prepare(
                     artifact,
-                    selection,
-                    requirements=requirements,
-                    settings=config.media,
-                    snapshot=snapshot,
-                    context=context,
+                    selection or input_selection,
+                    requirements=frozen.routes[0].model.input_formats,
+                    settings=snapshot.typed_values().media,
                     document_mode=document_mode,
                     without_audio=without_audio,
                 )
                 summaries.append(
-                    {"artifact": artifact.ref.model_dump(mode="json"), **prepared.coverage}
+                    {"artifact": artifact.ref.model_dump(mode="json"), **planned.coverage}
                 )
-                for batch in prepared.batches:
-                    sources = [
-                        replace(source, key=f"S{index}" + source.key[2:])
+                preparations.extend(planned.completed_result_refs)
+                for batch in planned.batches:
+                    groups = tuple(
+                        group.model_copy(update={"key": f"S{index}" + group.key[2:]})
+                        for group in batch.inputs
+                    )
+                    sources = tuple(
+                        replace(
+                            source,
+                            key=f"S{index}" + source.key[2:],
+                            group=source.group.model_copy(
+                                update={"key": f"S{index}" + source.key[2:]}
+                            )
+                            if source.group
+                            else None,
+                        )
                         for source in batch.sources
-                    ]
-                    source_inputs = [
-                        source.model_copy(update={"key": f"S{index}" + source.key[2:]})
-                        for source in batch.inputs
-                    ]
-                    size = sum(
-                        len((source.text or "").encode("utf-8"))
-                        + sum(len(part.data) for part in source.media)
-                        for source in sources
                     )
-                    # Preparation owners enforce per-document/page/frame limits. Preserve their
-                    # batches, combining distinct single-batch inputs when byte allowance permits.
-                    if pending_sources and (
-                        byte_length + size > config.media.max_inline_bytes
-                        or len(prepared.batches) > 1
-                    ):
-                        flush()
-                        byte_length = 0
-                    pending_sources.extend(sources)
-                    pending_inputs.extend(source_inputs)
-                    pending_coverage.append(
-                        {"artifact": artifact.ref.model_dump(mode="json"), **batch.coverage}
-                    )
-                    byte_length += size
-                    if len(prepared.batches) > 1:
-                        flush()
-                        byte_length = 0
-            flush()
+                    batches.append(replace(batch, sources=sources, inputs=groups))
             return PreparedRun(
-                tuple(originals), tuple(batches), {"inputs": summaries, "batches": len(batches)}
+                tuple(artifact for artifact, _ in originals),
+                tuple(batches),
+                {"inputs": summaries, "batches": len(batches)},
+                frozen,
+                question,
+                instructions,
+                schema,
+                tuple(dict.fromkeys(preparations)),
+                transcription,
             )
+
+    async def transcribe(
+        self,
+        source: PreparedSource,
+        part: InputPart,
+        snapshot: ConfigSnapshot,
+        context: OperationContext,
+        frozen: FrozenTask | None = None,
+    ) -> ProcessingResult:
+        """Adopt exactly one successful endpoint response, with segment-local body coordinates."""
+        task = snapshot.typed_values().media.audio.transcription_task
+        if task is None:
+            raise NousError(
+                "media.audio_capability_missing",
+                "Audio requires native input or a configured transcription task",
+            )
+        artifact = await self.results.artifacts.get(part.content.artifact)
+        generated = await self.executor.transcribe(
+            frozen or task,
+            await self.results.artifacts.read_bytes(artifact.ref),
+            artifact.display_name,
+            snapshot,
+            context=context,
+        )
+        if not isinstance(generated.output, str):
+            raise NousError("media.invalid_transcript", "Transcription returned a non-text result")
+        return await self.results.adopt(
+            operation=task,
+            producer=generated.producer,
+            inputs=(InputGroup(key=source.key, name=source.name, parts=(part,)),),
+            outputs={
+                "transcript": OutputContent(
+                    data=generated.output.encode(),
+                    media_type="text/plain",
+                    display_name="transcript.txt",
+                )
+            },
+            request=generated.request,
+            parameters={"usage": generated.usage, "attempts": generated.attempts},
+            coverage={
+                "mode": "transcript",
+                "origins": [origin.model_dump(mode="json") for origin in part.origins],
+            },
+        )
+
+    async def language_sources(
+        self,
+        reading: ReadingInput,
+        frozen: FrozenTask,
+        snapshot: ConfigSnapshot,
+        context: OperationContext,
+        completed: list[str],
+        transcription: FrozenTask | None = None,
+    ) -> ReadingInput:
+        """Resolve language-dependent representations after deterministic preparation has finished."""
+        transcription = transcription or self.freeze_transcription(snapshot)
+        sources: list[PreparedSource] = []
+        accepted = frozen.routes[0].model.input_formats
+        for source in reading.sources:
+            if source.group is None or not any(
+                media.media_type.startswith("audio/") and media.media_type not in accepted
+                for media in source.media
+            ):
+                sources.append(source)
+                continue
+            parts: list[InputPart] = []
+            texts = [source.text] if source.text else []
+            media = [
+                medium for medium in source.media if not medium.media_type.startswith("audio/")
+            ]
+            for part in source.group.parts:
+                artifact = await self.results.artifacts.get(part.content.artifact)
+                if not artifact.media_type.startswith("audio/") or artifact.media_type in accepted:
+                    parts.append(part)
+                    continue
+                result = await self.transcribe(source, part, snapshot, context, transcription)
+                completed.append(result.ref.address)
+                output = next(output for output in result.outputs if output.name == "transcript")
+                texts.append(await self.results.artifacts.read_text(output.artifact))
+                parts.append(
+                    InputPart(
+                        content=ContentSelection(artifact=output.artifact),
+                        representation="transcript",
+                        origins=(OriginSlice(origin=part.content, transform_ref=result.ref),),
+                    )
+                )
+            group = source.group.model_copy(update={"parts": tuple(parts)})
+            sources.append(replace(source, text="\n".join(texts), media=tuple(media), group=group))
+        return replace(reading, sources=tuple(sources))
 
     async def run_input(
         self,
-        task: str,
-        input: Path | Artifact | ArtifactRef | str | Sequence[Path | Artifact | ArtifactRef | str],
+        task: str | FrozenTask,
+        input: InputValue | Sequence[InputValue],
         snapshot: ConfigSnapshot,
         *,
         selection: SourceSelection | None = None,
@@ -195,11 +287,12 @@ class GenerationOperations:
         document_mode: str = "auto",
         without_audio: bool = False,
         on_delta: Callable[[str], None] | None = None,
-        on_prepared: Callable[[PreparedRun], None] | None = None,
+        on_prepared: Callable[[PreparedGeneration], None] | None = None,
         on_completed: Callable[[ProcessingResult], None] | None = None,
         texts: Sequence[str] = (),
     ) -> GenerationOutcome:
         results: list[ProcessingResult] = []
+        completed: list[str] = []
         async with self.execution.operation("model.run", snapshot) as context:
             prepared = await self.prepare_input(
                 task,
@@ -213,69 +306,88 @@ class GenerationOperations:
                 without_audio=without_audio,
                 texts=texts,
             )
-            if on_prepared is not None:
-                on_prepared(prepared)
+            completed.extend(prepared.preparations)
             try:
-                for batch in prepared.batches:
+                for plan in prepared.batches:
+                    batch = await self.preparer.materialize(plan)
+                    reading = await self.language_sources(
+                        ReadingInput(question, instructions, batch.sources),
+                        prepared.frozen,
+                        snapshot,
+                        context,
+                        completed,
+                        prepared.transcription,
+                    )
+                    request = replace(
+                        self.executor.prepare(prepared.frozen, reading, snapshot, schema=schema),
+                        stage_refs=tuple(completed),
+                    )
+                    if on_prepared:
+                        on_prepared(request)
                     result = await self.run_prepared(
-                        batch.prepared,
-                        inputs=batch.inputs,
-                        coverage=batch.coverage,
-                        context=context,
-                        on_delta=on_delta,
+                        request, coverage=batch.coverage, context=context, on_delta=on_delta
                     )
                     results.append(result)
-                    if on_completed is not None:
+                    completed.append(result.ref.address)
+                    if on_completed:
                         on_completed(result)
-            except NousError as exc:
-                exc.details.update(
-                    {
-                        "artifacts": [artifact.ref.address for artifact in prepared.artifacts],
-                        "completed_result_refs": [result.ref.address for result in results],
-                        "unfinished_coverage": [
-                            batch.coverage for batch in prepared.batches[len(results) :]
-                        ],
-                    }
-                )
+            except (NousError, asyncio.CancelledError, TimeoutError) as exc:
+                details: dict[str, JsonValue] = {
+                    "artifacts": [artifact.ref.address for artifact in prepared.artifacts],
+                    "completed_result_refs": list[JsonValue](completed),
+                    "unfinished_coverage": [
+                        batch.coverage for batch in prepared.batches[len(results) :]
+                    ],
+                }
+                if isinstance(exc, NousError):
+                    exc.details.update(details)
+                else:
+                    exc.add_note(json.dumps(details))
                 raise
-            except (asyncio.CancelledError, TimeoutError) as exc:
-                exc.add_note(
-                    json.dumps(
-                        {
-                            "artifacts": [artifact.ref.address for artifact in prepared.artifacts],
-                            "completed_result_refs": [result.ref.address for result in results],
-                            "unfinished_coverage": [
-                                batch.coverage for batch in prepared.batches[len(results) :]
-                            ],
-                        }
-                    )
-                )
-                raise
-            return GenerationOutcome(prepared.artifacts, tuple(results), prepared.coverage)
+            return GenerationOutcome(
+                prepared.artifacts, tuple(results), prepared.coverage, tuple(completed)
+            )
 
     async def run(
         self,
-        task: str,
+        task: str | FrozenTask,
         reading: ReadingInput,
         snapshot: ConfigSnapshot,
         *,
-        inputs: Sequence[ResultInput] | None = None,
+        inputs: Sequence[InputGroup] | None = None,
         coverage: Mapping[str, object] | None = None,
         context: OperationContext | None = None,
         schema: dict[str, JsonValue] | None = None,
+        transcription: FrozenTask | None = None,
     ) -> ProcessingResult:
-        return await self.run_prepared(
-            self.executor.prepare(task, reading, snapshot, schema=schema),
-            inputs=inputs,
-            coverage=coverage,
-            context=context,
-        )
+        async with self.execution.operation("model.generate", snapshot) as active:
+            frozen = self.executor.freeze(task, snapshot) if isinstance(task, str) else task
+            completed: list[str] = []
+            try:
+                reading = await self.language_sources(
+                    reading, frozen, snapshot, context or active, completed, transcription
+                )
+                # Actual language representations determine adoption, including newly created transcripts.
+                return await self.run_prepared(
+                    replace(
+                        self.executor.prepare(frozen, reading, snapshot, schema=schema),
+                        stage_refs=tuple(completed),
+                    ),
+                    inputs=tuple(source.group for source in reading.sources if source.group)
+                    if completed
+                    else inputs,
+                    coverage=coverage,
+                    context=context or active,
+                )
+            except NousError as exc:
+                exc.details["completed_result_refs"] = [str(ref) for ref in completed]
+                raise
 
     async def run_prepared(
         self,
         prepared: PreparedGeneration,
         *,
-        inputs: Sequence[ResultInput] | None = None,
+        inputs: Sequence[InputGroup] | None = None,
         coverage: Mapping[str, object] | None = None,
         context: OperationContext | None = None,
         on_delta: Callable[[str], None] | None = None,
@@ -292,100 +404,127 @@ class GenerationOperations:
                             "model.incomplete_stream", "The stream returned no completed result"
                         )
                     generated = stream.result
-            # Adoption is outside model attempts; persistence failure never resubmits generation.
             return await self._adopt(prepared, generated, inputs, coverage)
 
     async def _adopt(
         self,
         prepared: PreparedGeneration,
         generated: GenerationResult,
-        inputs: Sequence[ResultInput] | None,
+        inputs: Sequence[InputGroup] | None,
         coverage: Mapping[str, object] | None,
     ) -> ProcessingResult:
         reading = prepared.compiled.reading
-        content = generated.output
-        if prepared.compiled.schema is None:
-            if not isinstance(content, str):
-                raise NousError("model.invalid_output", "Text generation returned a non-text value")
-            output = OutputContent(data=content.encode("utf-8"))
-        else:
-            output = OutputContent(
-                data=json.dumps(content, ensure_ascii=False, indent=2).encode("utf-8"),
-                media_type="application/json",
-                display_name="result.json",
-            )
-        outputs = {"output": output}
-        if prepared.compiled.resource.manifest.contract_id == "passage-selection":
-            if not isinstance(content, dict) or not isinstance(content.get("keys"), list):
-                raise NousError("model.invalid_output", "Passage selection did not return keys")
-            source_map = {source.key: source for source in reading.sources}
-            excerpts: list[dict[str, JsonValue]] = []
-            keys = content["keys"]
-            if not isinstance(keys, list):
-                raise NousError("model.invalid_output", "Passage selection keys are invalid")
-            for key in keys:
-                if not isinstance(key, str) or key not in source_map:
-                    raise NousError(
-                        "model.invalid_source",
-                        "Selected passage key is unknown",
-                        details={"key": key},
-                    )
-                source = source_map[key]
-                if source.text is None or source.artifact is None or source.selection is None:
-                    raise NousError(
-                        "model.invalid_source", "Selected source has no exact text range"
-                    )
-                original = await self.results.artifacts.read_text(source.artifact)
-                lines = original.splitlines(keepends=True)
-                selection = source.selection
-                if selection.start_line is None or selection.end_line is None:
-                    raise NousError(
-                        "model.invalid_source", "Selected source has no original line coordinates"
-                    )
-                exact_text = "".join(lines[selection.start_line - 1 : selection.end_line])
-                excerpts.append(
-                    {
-                        "key": key,
-                        "text": exact_text,
-                        "artifact": source.artifact.model_dump(mode="json"),
-                        "selection": selection.model_dump(mode="json"),
-                    }
-                )
-            outputs["passages"] = OutputContent(
-                data=json.dumps(excerpts, ensure_ascii=False, indent=2).encode("utf-8"),
-                media_type="application/json",
-                display_name="passages.json",
-            )
+        definition = TASKS[prepared.compiled.resource.manifest.contract_id]
+        outputs = await definition.outputs(
+            generated.output,
+            reading,
+            self.results.artifacts,
+            structured=prepared.compiled.schema is not None,
+        )
         if generated.response:
             outputs["response"] = OutputContent(
-                data=json.dumps(generated.response, ensure_ascii=False, indent=2).encode("utf-8"),
+                data=json.dumps(generated.response, ensure_ascii=False, indent=2).encode(),
                 media_type="application/json",
                 display_name="response.json",
             )
-        actual_inputs = (
-            tuple(inputs)
-            if inputs is not None
-            else tuple(
-                ResultInput(
-                    artifact=source.artifact,
-                    key=source.key,
-                    selection=source.selection or SourceSelection(),
-                    representation=str(source.metadata.get("representation", "original")),
-                )
-                for source in reading.sources
-                if source.artifact is not None
-            )
-        )
         return await self.results.adopt(
             operation=prepared.task,
             producer=generated.producer,
-            inputs=actual_inputs,
+            inputs=tuple(inputs)
+            if inputs is not None
+            else tuple(source.group for source in reading.sources if source.group),
             outputs=outputs,
             request=generated.request,
             parameters={
                 "attempts": generated.attempts,
                 "usage": generated.usage,
                 "finish_reason": generated.finish_reason,
+                "stage_result_refs": list(prepared.stage_refs),
             },
             coverage=coverage,
+        )
+
+    async def preview(
+        self,
+        prompt: str,
+        input: Sequence[InputValue],
+        snapshot: ConfigSnapshot,
+        *,
+        texts: Sequence[str] = (),
+        question: str = "",
+        instructions: str = "",
+        schema: dict[str, JsonValue] | None = None,
+        task: str | None = None,
+    ) -> dict[str, JsonValue]:
+        async with self.execution.operation("prompt.preview", snapshot):
+            resource = self.executor.compiler.catalog.get(prompt)
+            frozen = self.executor.freeze(task, snapshot) if task else None
+            if frozen is not None and (
+                frozen.resource is None or frozen.resource.id != resource.id
+            ):
+                raise NousError(
+                    "model.prompt_conflict",
+                    "Prompt preview must use the selected task's prompt resource",
+                )
+            originals = await self._accept(input, texts) if input or texts else []
+            previews: list[JsonValue] = []
+            for index, (artifact, input_selection) in enumerate(originals, 1):
+                planned = await self.preparer.prepare(
+                    artifact,
+                    input_selection,
+                    requirements=frozen.routes[0].model.input_formats if frozen else (),
+                    settings=snapshot.typed_values().media,
+                )
+                for plan in planned.batches:
+                    batch = await self.preparer.materialize(plan)
+                    sources = tuple(
+                        replace(
+                            source,
+                            key=f"S{index}" + source.key[2:],
+                            group=source.group.model_copy(
+                                update={"key": f"S{index}" + source.key[2:]}
+                            )
+                            if source.group
+                            else None,
+                        )
+                        for source in batch.sources
+                    )
+                    reading = ReadingInput(question, instructions, sources)
+                    compiled = (
+                        self.executor.prepare(frozen, reading, snapshot, schema=schema).compiled
+                        if frozen
+                        else self.executor.compiler.compile(resource, reading, schema=schema)
+                    )
+                    previews.append(compiled.to_dict())
+            if not previews:
+                previews.append(
+                    self.executor.compiler.compile(
+                        resource, ReadingInput(question, instructions), schema=schema
+                    ).to_dict()
+                )
+            if len(previews) == 1:
+                return dict(cast(dict[str, JsonValue], previews[0]))
+            return {"batches": previews, "representation": "task" if task else "template"}
+
+    async def probe(
+        self, model: str, input: Path | None, snapshot: ConfigSnapshot
+    ) -> GenerationOutcome:
+        settings = snapshot.typed_values()
+        selected = settings.models.get(model)
+        if selected is None:
+            raise NousError(
+                "model.unknown", "The model is not configured", details={"model": model}
+            )
+        assignment = TaskAssignment(model=model, prompt="describe-media")
+        frozen = FrozenTask(
+            "model.probe",
+            assignment,
+            (ModelRoute(model, selected, PresetConfig()),),
+            self.executor.compiler.catalog.get("describe-media"),
+        )
+        return await self.run_input(
+            frozen,
+            [input] if input else [],
+            snapshot,
+            texts=() if input else ("Describe the supplied content briefly.",),
         )

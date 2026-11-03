@@ -107,17 +107,7 @@ class ContentStore:
             raise
 
     async def _file_work[T](self, action: Callable[..., T], *args: object) -> T:
-        # Cancellation waits for this file operation before its owning context closes handles.
-        worker = asyncio.create_task(self.execution.blocking(action, *args))
-        try:
-            return await asyncio.shield(worker)
-        except asyncio.CancelledError as cancelled:
-            try:
-                await worker
-            except Exception as error:
-                code = error.code if isinstance(error, NousError) else type(error).__name__
-                cancelled.add_note(f"File work failed while cancellation was completing: {code}")
-            raise
+        return await self.execution.blocking(action, *args)
 
     def _publish(self, prepared: PreparedContent) -> PublishedContent:
         """Make complete bytes visible at their digest path and consume temporary files."""
@@ -168,14 +158,8 @@ class ContentStore:
         started = False
         try:
             async with self._publish_lock:
-                # Keep the publication lock until the real worker has relinquished the files.
-                worker = asyncio.create_task(self.execution.blocking(self._publish, prepared))
                 started = True
-                try:
-                    return await asyncio.shield(worker)
-                except asyncio.CancelledError:
-                    await worker
-                    raise
+                return await self.execution.blocking(self._publish, prepared)
         finally:
             if not started:
                 await self.execution.blocking(prepared.path.unlink, missing_ok=True)
@@ -237,6 +221,18 @@ class ContentStore:
         if row is None:
             raise NousError("content.missing", "No content is attached to this record")
         return BlobRef.model_validate(dict(row))
+
+    @asynccontextmanager
+    async def borrow_local(self, blob: BlobRef) -> AsyncGenerator[Path]:
+        """Borrow verified immutable local bytes for a decoder within its operation lifetime."""
+        path = self.path_for(blob)
+
+        def check() -> None:
+            if not path.is_file() or path.stat().st_size != blob.byte_length:
+                raise NousError("content.missing", "Stored content is missing or incomplete")
+
+        await self.execution.blocking(check)
+        yield path
 
     @asynccontextmanager
     async def open(

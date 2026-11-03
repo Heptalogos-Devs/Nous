@@ -1,51 +1,41 @@
-# CAS 字节存储与内容引用
+# CAS 字节与本地借用
 
-## 责任与输入
+## 字节所有权
 
-ContentStore 保存不可变字节、流式读取、去重和物理回收。采用 SHA-256 内容寻址、本地文件系统、现有 Database/WriteTx 和进程内执行。它不推断 MIME、作者、Observation 或认知版本；[Artifact 与结果](content-records.md)负责可见记录。
-
-输入使用文件流、字节迭代器或已存在 BlobRef。文本明确编码为 UTF-8；原始文件不做换行、Unicode、图片方向或格式的隐式重写。需要转换就产生新字节并保存输入关系。
-
-## 公开能力
+ContentStore 维护不可变字节、流式读写、物理去重和 owner/slot 引用。SHA-256 是字节身份，不表示认知或来源独立性。采用现有目录和跨卷发布实现，路径通过 ResolvedPaths 提供。
 
 ```text
-prepare(stream, *, cancel) -> PreparedContent
+prepare(stream) -> PreparedContent
 publish(prepared) -> PublishedContent
 attach_in(tx, owner_ref, slot, published) -> BlobRef
-detach_in(tx, owner_ref, slot) -> None
-open(blob_ref, range=None) -> async context manager of stream
+detach_in(tx, owner_ref, slot)
+resolve_in(tx, owner_ref, slot) -> BlobRef
+open(blob_ref, range?) -> async context manager[reader]
 read_text(blob_ref, max_bytes) -> str
 export(blob_ref, destination) -> Path
+borrow_local(blob_ref) -> async context manager[LocalContent]
 ```
 
-BlobRef 含 digest、byte_length。物理路径由 content 根与摘要推导，调用者不拼路径。PreparedContent/PublishedContent 由当前操作上下文持有；取消时清理本次尚未发布的临时文件。
+`LocalContent` 暴露只读本地 Path 与 BlobRef，供 PDFium、Pillow、FFmpeg、NumPy/mmap 使用；它只在作用域内有效。ContentStore 负责目录定位、缺失/长度检查和借用生命周期。调用方不通过 `artifacts.content.path_for` 获取永久路径，也不自行推导 digest 目录。
 
-## 跨磁盘的发布
+## 发布与事务
 
-配置允许 temp 与 content 位于不同磁盘。先在普通 temp 根完成计算后，若无法同文件系统重命名，则流式复制到 **content 根内部的 staging 文件**，复制完成后再在该文件系统内发布到摘要位置。部分复制文件不进入正式摘要目录。
+流式接纳在 temp 根计算摘要。目标存在时检查实际字节；不存在时使用 content 文件系统内完成态发布。跨卷时复制到 content/staging，再在同卷完成发布。临时文件属于操作，失败后清理。
 
-同摘要并发发布在 CAS owner 内按摘要串行，或直接采用已具备的原子 no-clobber 文件操作。只有完整字节才能出现在正式位置；相同长度且完整的既有目标可复用。遇到既有内容长度冲突报告错误，不能静默覆盖。进程只有一个实例写入者，首版无需跨主机发布协议。
+字节完成后才在短事务中 attach。模型、解码、复制和索引构建不占写事务。已有不可变字节可以复用，数据库回滚不把半份业务结果宣称成功。
 
-发布在 SQL 事务外进行。之后短事务保存正式内容引用；事务失败留下可回收的孤立字节，不能留下指向未完成文件的成功业务记录。
+## 阻塞与取消
 
-## 引用记录只有一份权威
+文件、Native 与导出调用共享 Execution 的 blocking 生命周期。需要在外层释放句柄前等待 worker 结束的调用使用 `wait_on_cancel`；需要返回资源的创建动作优先在同一个 worker 上下文完成取得/使用/关闭，避免取消时丢失刚返回的 fd/path。
 
-ContentStore 管理 blob 目录元数据及 owner/slot → blob 的正式关联。Artifact 的正文通过这一关联读取，不再保存第二份可独立修改的 blob 映射。owner_ref 仅由真实记录 owner 提交；本轮只接入 Artifact/ProcessingResult 需要的引用，不建设通用对象状态平台。
+CAS 的临时句柄取得必须在第一次可取消 await 之前登记清理：可在事件循环上同步完成短暂的 mkstemp/句柄登记，再把重读写交给 worker；也可把完整资源作用域放进同一个 worker。不要把一个刚创建的 fd 作为会因等待取消而丢失的 worker 返回值。
 
-ResultStore 在同一事务中提交结果、输出 Artifact 及内容 attach。ContentStore 不读取每个领域私有表来猜引用，也不在读取时全盘扫描。
+将现有 `_file_work` 与 publish 的局部 shield 机制收敛到这一公共行为。CAS 仍然决定哪个文件需要清理，Execution 只负责 worker 何时真正结束。初始临时文件创建、写入、flush、发布和取消之间保持同一资源所有者。
 
-## 回收与取消
+## 读取与导出
 
-本轮不运行周期性自动 GC。明确回收只在实例维护的独占时段进行：停止新接纳并等待实际文件工作结束，再核对正式引用并清理孤立内容。尚未采用的临时内容由操作直接清理；成功引用的内容不会因请求结束或 Trace 淘汰而丢失。
+文本读取受配置上限，超限提供导出或范围读取，不能无标记截断。二进制使用流或 borrow_local，不先加载全部数据才分批。
 
-阻塞文件工作由现有 Execution 管理实际 future；async 等待被取消时，不提前关闭该线程持有的源文件或删除其目标文件。prepare/publish/attach 之间的持有关系留在一次操作内，不建立永久租约服务。
+保留 fdb39e4 的导出行为：仅创建新目标，交付前核对实际长度和 digest；失败清理本次文件，取消等待实际文件操作收尾。普通读取不为每个小操作重做全盘摘要，缺失或长度错误明确返回。
 
-## 读取和交付
-
-二进制下载和本地导出按流完成，范围采用明确字节区间；文本便利读取有配置上限，超过时返回可继续读取的位置或提示使用导出，不能无标记截断。
-
-本地导出仅创建新的目标文件，不覆盖既有文件。复制并关闭输出后，对实际交付文件核对 BlobRef 的 byte_length 与 SHA-256；截断、同长度损坏和复制期间的字节变化均返回 `content.corrupt`，并清理本次创建的失败导出。async 等待取消时继续持有实际文件工作，直到线程完成关闭/验证/清理后才传播取消；失败清理的异常附在原错误上。
-
-ModelExecutor 不认识 CAS 路径。应用/媒体准备在字节预算内读取媒体，向成熟 SDK 提供 BinaryContent 等真实数据；外部模型无法读取本机 `file://` 或 `content/...`。
-
-实例重启后按同一 BlobRef 读取；缓存失效只影响性能。Windows、Linux、macOS 的中文路径、空格和跨卷 staging 都由同一实现处理。
+不增加远端多后端框架、后台 GC 或 CAS 版本兼容。将来对象存储有真实需要时由相同 owner 扩展完整操作。

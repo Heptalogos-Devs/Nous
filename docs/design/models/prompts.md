@@ -1,58 +1,31 @@
-# Prompt 资源与确定编译
+# Prompt 资源、快照与共同预览
 
-## 资源责任
+## 资源
 
-PromptCatalog 列出、读取、编辑和选择模板；PromptCompiler 在纯输入上编译角色消息；任务 owner 定义任务的自然语言目标与小输出合同。两者不连模型、不查数据库、不在模板中进行媒体解析或检索。
+PromptCatalog 管理包内只读与实例可编辑的 Markdown/Jinja 资源。manifest 明确 contract_id、有序 message role/template 和 source 槽；模板只渲染纯值，不查数据库、不准备媒体、不发模型请求。
 
-模板是普通 Markdown/Jinja。包内资源使用 importlib.resources 与 Jinja loader；实例覆盖放 config/prompts/<id>/。Namespace 尚未成为本轮产品前置，不为模板覆盖单独创建认知域。
+TaskDefinition 管理输入输出类型及引用规则。system/user/assistant 是本轮模板直接支持的角色；工具历史由 SDK 原生消息值保留。若新增 developer/tool 模板资源必须连同真实协议 ID 和返回配对完整接入，不能文档写支持而编译器丢弃。没有需要时保持准确的当前角色集合。
 
-## 文件结构
+## 冻结范围
 
-一个资源目录包含 `prompt.toml`、明确列出的消息模板及被引用的 include 文件。例如：
+根操作开始时捕获其所有计划内任务资源，内容、manifest、literal include/extends 和输入输出合同共同确定版本。Jinja 使用 DictLoader 冻结本次实际内容、StrictUndefined、已配置编译缓存和 bytecode cache。后续阶段与 fallback 使用同一份已捕获资源。
 
-```toml
-contract_id = "media-description"
-[[messages]]
-role = "system"
-template = "system.md.j2"
-[[messages]]
-role = "user"
-template = "user.md.j2"
-append_sources = true
-```
+输入正文只作为值插入一次，原文中的模板符号原样保留。动态文件名 include 本轮不支持。模板修改影响下一根操作；不建立每次编辑的永久版本数据库。
 
-messages 的数组顺序就是实际消息顺序。role 使用成熟库可保留的 system/user/assistant/tool 等含义；system/developer 的协议差异由依赖处理并在预览中展示实际采用的角色。无法保留的组合在准备阶段报出，不能压平为一个 user 字符串。
+## 共同编译
 
-`append_sources=true` 是一个固定媒体/资料槽：在当前消息的模板文本之后，按输入顺序展开已经准备的来源标题、文字和媒体 parts。它不查询新来源、不选择材料。初版不增加通用模板编排 DSL。
+同一 Compiler 供 preview、run、media 和后续认知任务使用。不要在 CLI 另建默认缓存参数的 Compiler。任务语义编译与协议适配分开：前者形成有序文本/媒体引用组，后者由成熟 SDK 提交实际媒体。
 
-## 一次编译使用一份资源快照
+InputGroup 的文本和多个媒体 part 保持明确顺序；预览显示名称、类型、来源选区和已知尺寸，不打印 base64 或大矩阵。`append_sources` 是固定槽，没有过程式 DSL。
 
-get/compile 一次读取 manifest 与模板依赖的实际内容，形成资源版本；使用 DictLoader/已冻结 loader 渲染这份内容。literal include/extends 形成依赖集合；本轮拒绝动态文件名 include，避免执行时无声加载版本之外的模板。
+## 预览
 
-版本由实际模板内容、manifest 和任务输入/输出合同版本共同确定。修改 include 也会改变版本。已准备请求继续使用原编译结果，不读回磁盘再次渲染。fallback 更换模型只调整协议适配与可用参数，任务正文/来源不因此切到新版本。
+纯模板 preview 可以接收准备好的文字和确定性媒体；其结果明确为模板预览，未选择实际模型时不宣称窗口/协议已检查。task preview 使用同一任务解析与表示选择，返回各批次分别的准备信息，不把所有批次拼成一个不可能实际发送的超大请求。
 
-使用 Jinja Environment、StrictUndefined 和内置 bytecode cache。Markdown 默认不进行 HTML 转义；资料只作为值插入一次，不当作新 Jinja 程序再次解析。模板由本机可信操作者编辑，无需建设在线模板沙箱平台。
+`model run --show-request` 展示即将执行的 PreparedGeneration 后直接执行同一对象；没有审批停顿。preview 不发转写/描述。缺少必需语言表示时明确指出由 media analyze 或正式 transcription 操作产生，或者用户显式提交已有结果。
 
-## 内容结构
+## 编辑
 
-system：任务目标、适用标准、短例子和输出含义。user：当前问题、真正的资料与局部来源键。任务限定来自需要，不灌入所有配置、预算和内部对象。
+导入目录与普通编辑共享资源加载及校验。先直接读取传入目录的 manifest 与 literal 依赖并校验，再写入实例覆盖。已发布请求持有旧内容，不依赖磁盘资源在执行中不变。
 
-编译值返回有序的消息、媒体位置、模板版本、Schema、局部来源映射与估计输入信息。二进制媒体由成熟库的内容类型携带；用户预览显示类型、尺寸、选区和地址，不打印 base64。
-
-## 预览与执行
-
-`prompt preview` 使用正式编译器，完成模板与输入合同检查，不执行模型请求。需要确定性媒体准备时可以执行，并在结果中说明；不会因此自动运行音频转写或媒体描述。
-
-`model run --show-request` 先准备与该次运行完全相同的请求，在 stderr 展示，然后执行该进程内 PreparedGeneration，不二次构造消息。这个选项明确表示“运行并展示请求”；纯预览只用 prompt preview。单独在另一命令中 preview 后再 run，会重新准备当时的输入；各自版本明确，不提供跨命令隐含冻结承诺。
-
-`prompt validate` 检查 manifest、合同引用、模板语法和变量名称；没有实际输入时不宣称数据依赖分支都已成功渲染。实际 preview/run 使用真实输入完成 StrictUndefined 检查。
-
-`prompt show/edit/validate` 是产品管理操作。edit 通过系统选定编辑器编辑实例副本，返回后校验并报告；无编辑器环境可用 `--from-dir` 导入整份资源。未配置模型也可使用。
-
-## 结果与回看
-
-ResultStore 保存已经采用请求的语义快照及来源。SDK 对请求的实际 wire 编码由依赖完成；预览和记录反映提交给该依赖的相同角色、内容、模式和参数。需要排查协议时再展开实际传输诊断，不把诊断数据当作第二份请求权威。
-
-正式模板及其输入、输出合同位于[模型资源目录](../../../src/nous/models/resources/)，实例可按需覆盖其中的模板。
-
-依据：[Jinja API](https://jinja.palletsprojects.com/en/stable/api/)、[Pydantic AI messages](https://pydantic.dev/docs/ai/api/pydantic-ai/messages/)。
+包内模板、实例覆盖和 schema 参数形成单一实际请求说明。采用结果保存实际模板版本；缓存只是性能资产。

@@ -36,7 +36,7 @@ class PageData:
 
 @dataclass(frozen=True)
 class ImageData:
-    data: bytes
+    path: Path
     media_type: str
     selection: SourceSelection
     metadata: dict[str, JsonValue]
@@ -95,7 +95,7 @@ def validate_image_selection(selection: SourceSelection, frames: int) -> None:
 
 
 def prepare_images(
-    path: Path, selection: SourceSelection, max_side: int, interval_ms: int
+    path: Path, selection: SourceSelection, max_side: int, interval_ms: int, output_directory: Path
 ) -> tuple[ImageData, ...]:
     """Sample animations by frame durations and return oriented, cropped image bytes."""
     with Image.open(path) as image:
@@ -132,7 +132,7 @@ def prepare_images(
                 oriented = oriented.crop(selection.crop)
             oriented.thumbnail((max_side, max_side), Image.Resampling.LANCZOS)
             normalized = oriented.convert("RGBA" if "A" in oriented.getbands() else "RGB")
-            output = io.BytesIO()
+            output = output_directory / f"frame-{index}.png"
             normalized.save(output, "PNG")
             selected = selection
             if frames > 1:
@@ -148,7 +148,7 @@ def prepare_images(
                 selected = selection.model_copy(update=updates)
             outputs.append(
                 ImageData(
-                    output.getvalue(),
+                    output,
                     "image/png",
                     selected,
                     {

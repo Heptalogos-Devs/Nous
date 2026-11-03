@@ -6,9 +6,12 @@ import hashlib
 import json
 import tomllib
 from collections import OrderedDict
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from importlib.resources import files
+from importlib.resources.abc import Traversable
 from pathlib import Path, PurePosixPath
+from types import MappingProxyType
 from typing import Literal, cast
 
 from jinja2 import (
@@ -32,20 +35,21 @@ from pydantic_ai.messages import (
 
 from nous.common.errors import NousError
 
-from .contracts import OUTPUT_TYPES, ReadingInput
+from .contracts import ReadingInput
+from .tasks import TASKS
 
 
 class MessageTemplate(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", frozen=True)
     role: Literal["system", "user", "assistant"]
     template: str
     append_sources: bool = False
 
 
 class PromptManifest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", frozen=True)
     contract_id: str
-    messages: list[MessageTemplate]
+    messages: tuple[MessageTemplate, ...]
 
 
 @dataclass(frozen=True)
@@ -54,7 +58,7 @@ class PromptResource:
 
     id: str
     manifest: PromptManifest
-    templates: dict[str, str]
+    templates: Mapping[str, str]
     manifest_text: str
     version: str
     origin: str
@@ -77,6 +81,7 @@ class CompiledPrompt:
     preview: tuple[dict[str, JsonValue], ...]
     reading: ReadingInput
     schema: dict[str, JsonValue] | None
+    validate_output: Callable[[JsonValue, ReadingInput], JsonValue]
 
     def to_dict(self) -> dict[str, JsonValue]:
         return {
@@ -84,6 +89,11 @@ class CompiledPrompt:
             "contract_id": self.resource.manifest.contract_id,
             "template_version": self.resource.version,
             "messages": list(self.preview),
+            "source_groups": [
+                source.group.model_dump(mode="json")
+                for source in self.reading.sources
+                if source.group is not None
+            ],
             "schema": self.schema,
             "schema_version": hashlib.sha256(
                 json.dumps(self.schema, sort_keys=True).encode()
@@ -133,10 +143,14 @@ class PromptCatalog:
     def get(self, prompt_id: str) -> PromptResource:
         """Read each dependency once and include the task contract in the resource version."""
         root, origin = self._root(prompt_id)
+        return self._load(prompt_id, root, origin)
+
+    def _load(self, prompt_id: str, root: Traversable, origin: str) -> PromptResource:
+        """Capture one resource directly from its declared directory."""
         try:
             manifest_text = root.joinpath("prompt.toml").read_text(encoding="utf-8")
             manifest = PromptManifest.model_validate(tomllib.loads(manifest_text))
-            if manifest.contract_id not in OUTPUT_TYPES:
+            if manifest.contract_id not in TASKS:
                 raise NousError(
                     "prompt.unknown_contract", f"Unknown task contract: {manifest.contract_id}"
                 )
@@ -171,7 +185,7 @@ class PromptCatalog:
             for message in manifest.messages:
                 if message.append_sources and message.role != "user":
                     raise NousError("prompt.invalid_source_slot", "Sources require a user message")
-            output = OUTPUT_TYPES[manifest.contract_id]
+            output = TASKS[manifest.contract_id].output_type
             contract = {
                 "input": "ReadingInput-v1",
                 "output": output.model_json_schema() if output else {"type": "string"},
@@ -181,7 +195,9 @@ class PromptCatalog:
                     [manifest_text, templates, contract], sort_keys=True, ensure_ascii=False
                 ).encode()
             ).hexdigest()
-            return PromptResource(prompt_id, manifest, templates, manifest_text, digest, origin)
+            return PromptResource(
+                prompt_id, manifest, MappingProxyType(templates), manifest_text, digest, origin
+            )
         except NousError:
             raise
         except (OSError, ValueError, ValidationError, TemplateError) as error:
@@ -203,9 +219,7 @@ class PromptCatalog:
             raise NousError("prompt.invalid_id", "Prompt ID must be a single directory name")
         # Validate in its current directory before publishing the instance resource.
         source = source.resolve()
-        candidate_catalog = PromptCatalog(source.parent)
-        candidate_catalog.directory = source.parent
-        candidate = candidate_catalog.get(source.name)
+        candidate = self._load(prompt_id, source, "import")
         target = self.directory / prompt_id
         target.mkdir(parents=True, exist_ok=True)
         (target / "prompt.toml").write_text(candidate.manifest_text, encoding="utf-8")
@@ -273,11 +287,15 @@ class PromptCompiler:
         return environment
 
     def compile(
-        self, prompt_id: str, reading: ReadingInput, *, schema: dict[str, JsonValue] | None = None
+        self,
+        prompt_id: str | PromptResource,
+        reading: ReadingInput,
+        *,
+        schema: dict[str, JsonValue] | None = None,
     ) -> CompiledPrompt:
         """Render source values once; the prepared request keeps these messages for execution."""
-        resource = self.catalog.get(prompt_id)
-        output = OUTPUT_TYPES[resource.manifest.contract_id]
+        resource = self.catalog.get(prompt_id) if isinstance(prompt_id, str) else prompt_id
+        output = TASKS[resource.manifest.contract_id].output_type
         if schema is not None and resource.manifest.contract_id != "custom-reading":
             raise NousError(
                 "model.schema_conflict", "Custom schema requires the custom-reading contract"
@@ -329,4 +347,11 @@ class PromptCompiler:
         keys = [source.key for source in reading.sources]
         if len(set(keys)) != len(keys):
             raise NousError("model.duplicate_source", "Source keys must be unique in one request")
-        return CompiledPrompt(resource, tuple(messages), tuple(preview), reading, schema)
+        return CompiledPrompt(
+            resource,
+            tuple(messages),
+            tuple(preview),
+            reading,
+            schema,
+            TASKS[resource.manifest.contract_id].validate,
+        )

@@ -18,7 +18,7 @@ from nous.configuration.metadata import ConfigModel
 
 from .configuration import EncodingConfig
 from .contracts import EmbeddingResult
-from .executor import model_error, retry_delay, retryable, stage_deadline
+from .policy import model_error, retry_delay, retryable, stage_deadline
 
 if TYPE_CHECKING:
     from nous.network import ModelConnections

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Sequence
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
@@ -14,17 +15,20 @@ from nous.common.errors import NousError
 from nous.content.contracts import (
     Artifact,
     ArtifactRef,
+    ContentSelection,
+    InputGroup,
+    InputPart,
+    InputSpec,
     MediaStrategy,
     ProcessingResult,
-    ResultInput,
     SourceSelection,
 )
 from nous.content.store import ArtifactStore, ResultStore
-from nous.models.contracts import PreparedSource, ReadingInput
+from nous.models.contracts import ReadingInput
 from nous.models.operations import GenerationOperations
 from nous.runtime.execution import ExecutionManager
 
-from .contracts import AnalysisResult, PreparedBatch
+from .contracts import AnalysisResult, PreparedBatch, PreparedSource
 from .preparation import MediaPreparer
 
 if TYPE_CHECKING:
@@ -67,7 +71,30 @@ class MediaAnalysis:
             raise NousError(
                 "media.description_mismatch", "Result is not a matching media description"
             )
-        if description.inputs != batch.inputs or description.coverage != batch.coverage:
+        expected = {group.key: group for group in batch.inputs}
+        matching = len(expected) == len(description.inputs)
+        for actual in description.inputs:
+            source = expected.get(actual.key)
+            if (
+                source is None
+                or source.name != actual.name
+                or len(source.parts) != len(actual.parts)
+            ):
+                matching = False
+                break
+            for wanted, used in zip(source.parts, actual.parts, strict=True):
+                same = wanted == used
+                transcript = (
+                    wanted.representation == "audio"
+                    and used.representation == "transcript"
+                    and any(
+                        origin.origin == wanted.content and origin.transform_ref is not None
+                        for origin in used.origins
+                    )
+                )
+                if not (same or transcript):
+                    matching = False
+        if not matching or description.coverage != batch.coverage:
             raise NousError(
                 "media.description_mismatch",
                 "Description sources, selection or coverage differ from this batch",
@@ -76,7 +103,7 @@ class MediaAnalysis:
 
     async def analyze(
         self,
-        input: Path | Artifact | ArtifactRef | str,
+        input: InputSpec | Path | Artifact | ArtifactRef | str,
         strategy: MediaStrategy,
         snapshot: ConfigSnapshot,
         *,
@@ -99,31 +126,45 @@ class MediaAnalysis:
         original: Artifact | None = None
         try:
             async with self.execution.operation("media.analyze", snapshot) as context:
-                if isinstance(input, Path):
+                if isinstance(input, InputSpec):
+                    original = await self.artifacts.accept(input)
+                    selection = selection or input.selection
+                elif isinstance(input, Path):
                     original = await self.artifacts.ingest(input)
                 elif isinstance(input, Artifact):
                     original = input
                 else:
                     original = await self.artifacts.get(input)
                 settings = snapshot.typed_values().media
+                if description_result and strategy == "direct_structured":
+                    raise NousError(
+                        "media.description_mismatch",
+                        "Direct structured analysis does not accept a description result",
+                    )
                 description_task = description_task or settings.analysis.description_task
                 extraction_task = task or settings.analysis.extraction_task
                 language_task = (
                     description_task if strategy == "description_only" else extraction_task
                 )
                 requirements = self._requirements(language_task, snapshot)
+                frozen_description = (
+                    self.generation.executor.freeze(description_task, snapshot)
+                    if strategy != "direct_structured"
+                    else None
+                )
+                frozen_extraction = (
+                    self.generation.executor.freeze(extraction_task, snapshot)
+                    if strategy != "description_only"
+                    else None
+                )
+                frozen_transcription = self.generation.freeze_transcription(snapshot)
                 if strategy == "describe_then_structure":
-                    first_requirements = self._requirements(description_task, snapshot)
-                    requirements = tuple(
-                        mime for mime in requirements if mime in first_requirements
-                    )
+                    requirements = self._requirements(description_task, snapshot)
                 prepared = await self.preparer.prepare(
                     original,
                     selection,
                     requirements=requirements,
                     settings=settings,
-                    snapshot=snapshot,
-                    context=context,
                     document_mode=document_mode,
                     without_audio=without_audio,
                 )
@@ -139,26 +180,55 @@ class MediaAnalysis:
                         "media.description_mismatch",
                         "Provide one description result for each prepared batch",
                     )
-                for ordinal, batch in enumerate(prepared.batches):
-                    reading = ReadingInput(question, instructions, batch.sources)
+                for ordinal, plan in enumerate(prepared.batches):
+                    batch = await self.preparer.materialize(plan)
                     description: ProcessingResult | None = None
+                    if reusable:
+                        description = await self._reuse_description(
+                            reusable[ordinal], batch, description_task
+                        )
+                        batch = replace(
+                            batch,
+                            inputs=description.inputs,
+                            sources=tuple(
+                                PreparedSource(group.key, group.name, group=group)
+                                for group in description.inputs
+                            ),
+                        )
+                        batch = await self.preparer.materialize(batch)
+                    reading = ReadingInput(question, instructions, batch.sources)
+                    first_task = frozen_description or frozen_extraction
+                    assert first_task is not None
+                    stage = "transcription"
+                    reading = await self.generation.language_sources(
+                        reading, first_task, snapshot, context, completed, frozen_transcription
+                    )
+                    batch = replace(
+                        batch,
+                        sources=reading.sources,
+                        inputs=tuple(
+                            source.group for source in reading.sources if source.group is not None
+                        ),
+                    )
                     if strategy in {"description_only", "describe_then_structure"}:
                         stage = "description"
-                        description = (
-                            await self._reuse_description(
-                                reusable[ordinal], batch, description_task
-                            )
-                            if reusable
-                            else await self.generation.run(
-                                description_task,
-                                reading,
-                                snapshot,
-                                inputs=batch.inputs,
-                                coverage=batch.coverage,
-                                context=context,
-                            )
+                        description = description or await self.generation.run(
+                            frozen_description or description_task,
+                            reading,
+                            snapshot,
+                            inputs=batch.inputs,
+                            coverage=batch.coverage,
+                            context=context,
+                            transcription=frozen_transcription,
                         )
                         descriptions.append(description)
+                        completed.extend(
+                            str(ref)
+                            for ref in cast(
+                                list[JsonValue], description.parameters.get("stage_result_refs", [])
+                            )
+                            if isinstance(ref, str)
+                        )
                         completed.append(description.ref.address)
                         if strategy == "description_only":
                             final.append(description)
@@ -177,27 +247,49 @@ class MediaAnalysis:
                                     "DESCRIPTION",
                                     "Previously completed media description",
                                     text=text,
-                                    artifact=output.artifact,
+                                    group=InputGroup(
+                                        key="DESCRIPTION",
+                                        name="Previously completed media description",
+                                        parts=(
+                                            InputPart(
+                                                content=ContentSelection(artifact=output.artifact),
+                                                representation="description",
+                                            ),
+                                        ),
+                                    ),
                                     metadata={"representation": "description"},
                                 )
                             )
                             inputs.append(
-                                ResultInput(
-                                    artifact=output.artifact,
+                                InputGroup(
                                     key="DESCRIPTION",
-                                    representation="description",
+                                    name="Previously completed media description",
+                                    parts=(
+                                        InputPart(
+                                            content=ContentSelection(artifact=output.artifact),
+                                            representation="description",
+                                        ),
+                                    ),
                                 )
                             )
                         result = await self.generation.run(
-                            extraction_task,
+                            frozen_extraction or extraction_task,
                             ReadingInput(question, instructions, tuple(sources)),
                             snapshot,
                             inputs=inputs,
                             coverage=batch.coverage,
                             context=context,
                             schema=schema,
+                            transcription=frozen_transcription,
                         )
                         final.append(result)
+                        completed.extend(
+                            str(ref)
+                            for ref in cast(
+                                list[JsonValue], result.parameters.get("stage_result_refs", [])
+                            )
+                            if isinstance(ref, str)
+                        )
                         completed.append(result.ref.address)
                     pending.pop(0)
                 return AnalysisResult(
@@ -206,7 +298,11 @@ class MediaAnalysis:
                     tuple(final),
                     tuple(descriptions),
                     prepared.coverage,
-                    preparations=prepared.completed_result_refs,
+                    preparations=tuple(
+                        ref
+                        for ref in completed
+                        if ref not in {result.ref.address for result in (*descriptions, *final)}
+                    ),
                 )
         except (asyncio.CancelledError, TimeoutError) as exc:
             exc.add_note(

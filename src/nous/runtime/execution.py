@@ -142,7 +142,13 @@ class ExecutionManager:
         task.add_done_callback(completed)
         return task
 
-    async def blocking(self, action: Callable[..., T], *args: object, **kwargs: object) -> T:
+    async def blocking(
+        self,
+        action: Callable[..., T],
+        *args: object,
+        on_cancel: Callable[[], None] | None = None,
+        **kwargs: object,
+    ) -> T:
         """Keep a worker owned after caller cancellation until the actual work finishes."""
         if not self._accepting and self._owner not in _current.get():
             raise NousError("operation.unavailable", "The runtime is stopping.")
@@ -158,7 +164,26 @@ class ExecutionManager:
                 done.exception()  # Consume failures even after the waiter was cancelled.
 
         future.add_done_callback(completed)
-        return await asyncio.shield(future)
+        try:
+            return await asyncio.shield(future)
+        except asyncio.CancelledError as cancelled:
+            if on_cancel is not None:
+                try:
+                    on_cancel()
+                except Exception as error:
+                    cancelled.add_note(f"Cancellation callback failed: {type(error).__name__}")
+            # Resources held by the caller remain valid until the actual worker relinquishes them.
+            while not future.done():
+                try:
+                    await asyncio.shield(future)
+                except asyncio.CancelledError:
+                    continue
+                except Exception:
+                    break
+            if not future.cancelled() and (failure := future.exception()) is not None:
+                code = failure.code if isinstance(failure, NousError) else type(failure).__name__
+                cancelled.add_note(f"Blocking work failed during cancellation: {code}")
+            raise cancelled
 
     async def aclose(self, grace_seconds: float = 30) -> None:
         """Stop admission, cancel overdue operations and await remaining blocking work."""

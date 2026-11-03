@@ -18,7 +18,7 @@
 
 ## 执行与事务
 
-- 业务操作进入 `ExecutionManager.operation`。内部阶段继承当前快照和期限；阻塞工作使用 `ExecutionManager.blocking`，后台任务使用其 `spawn`。嵌套操作不得重复获取全局并发名额。
+- 业务操作进入 `ExecutionManager.operation`。内部阶段继承当前快照和期限；阻塞工作使用 `ExecutionManager.blocking`，可中止的 Native 工作传入 `on_cancel` 并等待实际退出；后台任务使用 `spawn`。嵌套操作不得重复获取全局并发名额。
 - SQLite 使用 `Database.read` / `write` 及调用方的事务。耗时解析、网络请求和字节发布放在写事务之外；已有事务内不再调用另开事务的操作。
 - 一次正式采用在同一短事务中提交相关结果和引用。跨 owner 协作使用接收现有 `WriteTx` 的 `*_in` 方法，不通过逐个提交再补偿来拼接原子性。
 
@@ -30,15 +30,22 @@
 
 ## Prompt、模型与媒体
 
-- Prompt 选择与编译使用 `PromptCatalog` / `PromptCompiler`；生成操作与请求执行使用 `GenerationOperations` / `ModelExecutor`；媒体准备与解释使用 `MediaPreparer` / `MediaAnalysis`。
+- Prompt 选择与编译使用 `PromptCatalog` / `PromptCompiler`；静态 `TaskDefinition` 负责任务输出与来源语义；生成、转写、预览和探测经 `GenerationOperations`，协议执行经 `ModelExecutor`。媒体准备与解释使用 `MediaPreparer` / `MediaAnalysis`。
 - 网关连接和凭据由 `ModelConnections`、`Credentials` 管理。协议编码、媒体解析和转换采用现有依赖，不重复实现客户端、重试或解析器。
 - 根据明确协议、能力和任务配置选择行为，模型名原样传递，不按模型名或厂商添加业务分支。New API 的部署和管理属于开发接入，不进入产品逻辑。
-- 媒体准备负责解码、选择和转换；媒体解释负责策略与阶段衔接，复用共同生成操作。不要让 CLI、模型客户端或后续认知领域各写一套准备逻辑。
+- 媒体准备负责确定性解码、选择、转换及无字节引用计划，消费前只物化一个有界批次；媒体解释负责转写、描述与结构化的策略和阶段衔接，复用共同生成操作。不要让 CLI、模型客户端或后续认知领域各写一套准备逻辑。
 - 模型执行不访问业务数据库；结果采用由应用操作完成。模型已返回成功而保存失败时，处理采用失败，不重新请求模型。
+- 文本向量通过 `EmbeddingOperations.ensure/read` 批量获取和复用；依空间、用途和精确输入读取正式向量行，不绕过 owner 自建模型客户端或向量缓存。
+
+## Wave 与 Native
+
+- 集合、概念、精确选区和来源由 `WaveOperations` 与内容 owner 负责；PDF 检索复用 `MediaPreparer`，Rust 只接收冻结数组及可重建资产，不访问业务数据库或内容目录。
+- 构建发布不可变快照；查询、Thinking 和原文读取消费该快照。原始来源序列、候选曲线文稿和独立证据根是不同身份，派生材料不能重复贡献独立事实。
+- Native 算法参数和默认值由 Rust 导出，`WaveConfig` 接入共同配置。使用实例级 Native 计算池及取消令牌，不在 Python 实现备用检索算法。
 
 ## 时间、错误与观测
 
-- 时间使用 `temporal` 的域、时钟和值类型，保留未知值、精度和坐标域。媒体页码、帧号和相对时段不能当成现实时间。
+- 时间使用 `temporal` 的域、时钟和值类型，坐标域通过 `TimeService.validate` 校验注册，保留未知值、精度和坐标域。媒体页码、帧号和相对时段不能当成现实时间。
 - 错误使用 `NousError`，由入口负责呈现。不要用空结果、默认数据或成功状态掩盖实际失败。
 - 基础埋点使用标准 logging 和 `observability.instrumentation`；SDK 装配留在 `observability.assembly`。基础模块不因埋点反向依赖完整 SDK、exporter 或业务装配。
 - 日志、错误和正式结果不得包含凭据。

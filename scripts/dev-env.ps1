@@ -5,6 +5,7 @@ $nousEnvPaths = @{
     TEMP = 'runtime'; TMP = 'runtime'; TMPDIR = 'runtime'
     UV_CACHE_DIR = 'cache/uv'; PIP_CACHE_DIR = 'cache/pip'
     UV_PROJECT_ENVIRONMENT = 'venvs/nous'; UV_PYTHON_INSTALL_DIR = 'tools/python'
+    CARGO_HOME = 'tools/cargo-home'; CARGO_TARGET_DIR = 'build/native'
     npm_config_cache = 'cache/npm'; XDG_CACHE_HOME = 'cache/xdg'
     RUFF_CACHE_DIR = 'cache/ruff'; PYTHONPYCACHEPREFIX = 'cache/python-bytecode'
 }
@@ -13,6 +14,7 @@ foreach ($nousEntry in $nousEnvPaths.GetEnumerator()) {
     New-Item -ItemType Directory -Force -Path $nousPath | Out-Null
     [Environment]::SetEnvironmentVariable($nousEntry.Key, $nousPath, 'Process')
 }
+[Environment]::SetEnvironmentVariable('UV_NO_EDITABLE', '1', 'Process')
 $nousPythonScripts = Join-Path $env:UV_PROJECT_ENVIRONMENT 'Scripts'
 if (($env:PATH -split [IO.Path]::PathSeparator) -notcontains $nousPythonScripts) {
     $env:PATH = $nousPythonScripts + [IO.Path]::PathSeparator + $env:PATH

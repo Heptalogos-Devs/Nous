@@ -1,0 +1,210 @@
+{
+  "name": "resource-and-evidence",
+  "documents": [
+    {
+      "key": "cancellation",
+      "input": {
+        "file": "texts/cancellation.md"
+      }
+    },
+    {
+      "key": "transactions",
+      "input": {
+        "file": "texts/transactions.md"
+      }
+    },
+    {
+      "key": "evidence",
+      "input": {
+        "file": "texts/evidence.md"
+      }
+    },
+    {
+      "key": "summary",
+      "input": {
+        "file": "texts/summary.md"
+      },
+      "derived_from": [
+        "cancellation",
+        "transactions"
+      ]
+    },
+    {
+      "key": "repetition",
+      "input": {
+        "file": "texts/repetition.md"
+      }
+    }
+  ],
+  "concepts": [
+    {
+      "key": "cancellation",
+      "label": "取消等待",
+      "description": "调用者停止等待一项异步操作；实际线程或外部计算可能仍然运行。",
+      "aliases": [
+        "任务取消"
+      ]
+    },
+    {
+      "key": "resource-ownership",
+      "label": "资源所有权",
+      "description": "决定由谁持有、使用和释放文件、连接、计算资产以及它们真实生命周期的职责。"
+    },
+    {
+      "key": "transaction",
+      "label": "数据库事务",
+      "description": "把完整业务操作的正式数据变化一起提交或回滚的短期边界。"
+    },
+    {
+      "key": "provenance",
+      "label": "来源追踪",
+      "description": "保留资料的原始来源、派生处理和精确引用；区分重复派生与独立证据。"
+    },
+    {
+      "key": "counterevidence",
+      "label": "反证",
+      "description": "与已有判断冲突且具有自身来源的材料，需要独立呈现其内容及依据。"
+    },
+    {
+      "key": "repeat-as-evidence",
+      "label": "重复派生视为独立证据",
+      "description": "一种将同源材料多次总结分别计为独立支持的主张；示例保留它用于与来源独立性原则对照。"
+    }
+  ],
+  "source_sequences": [
+    {
+      "document": "cancellation",
+      "concepts": [
+        "cancellation",
+        "resource-ownership",
+        "transaction"
+      ],
+      "ordered": true
+    },
+    {
+      "document": "transactions",
+      "concepts": [
+        "transaction",
+        "resource-ownership"
+      ],
+      "ordered": true
+    },
+    {
+      "document": "evidence",
+      "concepts": [
+        "provenance",
+        "counterevidence"
+      ],
+      "ordered": true
+    },
+    {
+      "document": "repetition",
+      "concepts": [
+        "repeat-as-evidence"
+      ],
+      "ordered": true
+    }
+  ],
+  "candidates": [
+    {
+      "key": "cancellation",
+      "content": {
+        "document": "cancellation",
+        "selector": {
+          "kind": "whole"
+        }
+      },
+      "document": "cancellation",
+      "curve": [
+        "cancellation",
+        "resource-ownership",
+        "transaction"
+      ]
+    },
+    {
+      "key": "transactions",
+      "content": {
+        "document": "transactions",
+        "selector": {
+          "kind": "whole"
+        }
+      },
+      "document": "transactions",
+      "curve": [
+        "transaction",
+        "resource-ownership"
+      ]
+    },
+    {
+      "key": "evidence",
+      "content": {
+        "document": "evidence",
+        "selector": {
+          "kind": "whole"
+        }
+      },
+      "document": "evidence",
+      "curve": [
+        "provenance",
+        "counterevidence"
+      ]
+    },
+    {
+      "key": "summary",
+      "content": {
+        "document": "summary",
+        "selector": {
+          "kind": "whole"
+        }
+      },
+      "document": "summary",
+      "curve": [
+        "resource-ownership",
+        "transaction"
+      ]
+    },
+    {
+      "key": "repetition",
+      "content": {
+        "document": "repetition",
+        "selector": {
+          "kind": "whole"
+        }
+      },
+      "document": "repetition",
+      "curve": [
+        "repeat-as-evidence"
+      ]
+    }
+  ],
+  "associations": [
+    {
+      "key": "ownership-to-provenance",
+      "source": "resource-ownership",
+      "target": "provenance",
+      "relation": "related",
+      "directed": false,
+      "strength": 0.4,
+      "confidence": 0.7,
+      "polarity": "positive",
+      "evidence": [
+        "transactions",
+        "evidence"
+      ]
+    },
+    {
+      "key": "provenance-counter-repeat",
+      "source": "provenance",
+      "target": "repeat-as-evidence",
+      "relation": "contradiction",
+      "directed": false,
+      "strength": 1.0,
+      "confidence": 1.0,
+      "polarity": "negative",
+      "evidence": [
+        "evidence",
+        "repetition"
+      ]
+    }
+  ]
+}

@@ -5,22 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from pydantic import BaseModel, ConfigDict, JsonValue
-from pydantic_ai.messages import BinaryContent
+from pydantic import JsonValue
 
 if TYPE_CHECKING:
-    from nous.content.contracts import ArtifactRef, SourceSelection
-
-
-@dataclass(frozen=True)
-class PreparedSource:
-    key: str
-    name: str
-    text: str | None = None
-    media: tuple[BinaryContent, ...] = ()
-    artifact: ArtifactRef | None = None
-    selection: SourceSelection | None = None
-    metadata: dict[str, JsonValue] = field(default_factory=dict)
+    from nous.media.contracts import PreparedSource
 
 
 @dataclass(frozen=True)
@@ -28,33 +16,6 @@ class ReadingInput:
     question: str = ""
     instructions: str = ""
     sources: tuple[PreparedSource, ...] = ()
-
-
-class InformationItem(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    text: str
-    source_keys: list[str]
-
-
-class ExtractedInformation(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    title: str
-    items: list[InformationItem]
-
-
-class PassageSelection(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    keys: list[str]
-
-
-OUTPUT_TYPES: dict[str, type[BaseModel] | None] = {
-    "reading-summary": None,
-    "media-description": None,
-    "information-extraction": ExtractedInformation,
-    "passage-selection": PassageSelection,
-    "custom-reading": None,
-    "transcription": None,
-}
 
 
 @dataclass(frozen=True)
