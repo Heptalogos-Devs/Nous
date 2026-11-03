@@ -1,0 +1,53 @@
+# 将选用部分合入实例 nous.toml；本文件不是自动加载的第二份配置权威。
+# 连接和模型名是示例。配置不会隐式探测或产生费用。
+[network]
+trust_env = false
+connect_timeout_seconds = 10
+read_timeout_seconds = 120
+write_timeout_seconds = 30
+pool_timeout_seconds = 10
+max_connections = 20
+
+[credentials.gateway]
+kind = "env"
+name = "NOUS_GATEWAY_TOKEN"
+
+[providers.gateway]
+protocol = "openai-chat-completions"
+endpoint = "http://127.0.0.1:3000/v1"
+credential_ref = "gateway"
+
+[models.text-main]
+provider = "gateway"
+model_name = "replace-with-configured-text-model"
+context_window = 32768
+max_output_tokens = 4096
+capabilities = ["text", "stream", "structured_output"]
+
+[presets.normal]
+temperature = 0.2
+
+[tasks.text-summary]
+model = "text-main"
+preset = "normal"
+prompt = "text-summary"
+fallback = []
+
+[tasks.text-summary.budget]
+max_input_tokens = 8192
+max_output_tokens = 1024
+max_attempts = 1
+
+[model_execution]
+max_attempts = 2
+timeout_seconds = 120
+max_input_tokens = 16384
+max_output_tokens = 2048
+structured_retries = 0
+
+[prompt]
+cache_entries = 128
+bytecode_cache = true
+
+# Embedding 使用前另行明确配置 space_id、模型部署、维度和编码规则。
+# 不在示例中选定真实 embedding 模型或默认维度。

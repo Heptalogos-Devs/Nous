@@ -1,0 +1,62 @@
+# Portable 实例示例。instance.id 由 nous init 写入；此处仅展示形状。
+[instance]
+id = "019a4210-0000-7000-8000-000000000001"
+name = "nous-dev"
+layout = "portable"
+
+[paths]
+data_dir = "data"
+content_dir = "content"
+index_dir = "index"
+cache_dir = "cache"
+logs_dir = "logs"
+temp_dir = "temp"
+runtime_dir = "runtime"
+exports_dir = "exports"
+
+[config]
+null_fields = []
+
+[runtime]
+shutdown_grace_seconds = 30
+
+[execution]
+max_in_flight = 16
+max_blocking_workers = 4
+# default_timeout_seconds 缺失表示采用默认 null。
+
+[logging]
+level = "INFO"
+file_enabled = true
+max_file_bytes = 10485760
+backup_count = 5
+
+[tracing]
+enabled = true
+sample_ratio = 1.0
+export = "none"
+export_timeout_seconds = 5
+
+[metrics]
+enabled = true
+export = "none"
+interval_seconds = 60
+
+[database]
+filename = "nous.sqlite3"
+busy_timeout_ms = 5000
+synchronous = "FULL"
+
+[localization]
+language = "zh-CN"
+timezone = "UTC"
+
+# UTC 为内置域，无需在文件重复声明。
+[time.domains.simulation]
+kind = "linear"
+name = "实验时间"
+epoch = "本次实验起点"
+
+[time.domains.simulation.tick_seconds]
+numerator = 1
+denominator = 1000
