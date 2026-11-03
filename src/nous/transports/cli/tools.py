@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 from typing import Annotated, Literal, cast
 
@@ -68,6 +69,11 @@ def _pages(value: str | None) -> tuple[int, ...]:
 
 
 def _selection(pages: str | None, start: float | None, end: float | None) -> SourceSelection:
+    if any(
+        value is not None and (not math.isfinite(value) or not math.isfinite(value * 1000))
+        for value in (start, end)
+    ):
+        raise NousError("media.invalid_selection", "Media times must be finite")
     return SourceSelection(
         pages=_pages(pages),
         start_ms=round(start * 1000) if start is not None else None,

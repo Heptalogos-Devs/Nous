@@ -15,6 +15,7 @@ attach_in(tx, owner_ref, slot, published) -> BlobRef
 detach_in(tx, owner_ref, slot) -> None
 open(blob_ref, range=None) -> async context manager of stream
 read_text(blob_ref, max_bytes) -> str
+export(blob_ref, destination) -> Path
 ```
 
 BlobRef 含 digest、byte_length。物理路径由 content 根与摘要推导，调用者不拼路径。PreparedContent/PublishedContent 由当前操作上下文持有；取消时清理本次尚未发布的临时文件。
@@ -42,6 +43,8 @@ ResultStore 在同一事务中提交结果、输出 Artifact 及内容 attach。
 ## 读取和交付
 
 二进制下载和本地导出按流完成，范围采用明确字节区间；文本便利读取有配置上限，超过时返回可继续读取的位置或提示使用导出，不能无标记截断。
+
+本地导出仅创建新的目标文件，不覆盖既有文件。复制并关闭输出后，对实际交付文件核对 BlobRef 的 byte_length 与 SHA-256；截断、同长度损坏和复制期间的字节变化均返回 `content.corrupt`，并清理本次创建的失败导出。async 等待取消时继续持有实际文件工作，直到线程完成关闭/验证/清理后才传播取消；失败清理的异常附在原错误上。
 
 ModelExecutor 不认识 CAS 路径。应用/媒体准备在字节预算内读取媒体，向成熟 SDK 提供 BinaryContent 等真实数据；外部模型无法读取本机 `file://` 或 `content/...`。
 

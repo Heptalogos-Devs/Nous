@@ -171,13 +171,16 @@ def prepare_images(
 def inspect_pdf(path: Path) -> dict[str, JsonValue]:
     import pypdfium2 as pdfium
 
-    with _PDF_LOCK, pdfium.PdfDocument(path) as document:
-        return {
-            "kind": "pdf",
-            "pages": len(document),
-            "tool": "PDFium",
-            "version": str(pdfium.PYPDFIUM_INFO),
-        }
+    try:
+        with _PDF_LOCK, pdfium.PdfDocument(path) as document:
+            return {
+                "kind": "pdf",
+                "pages": len(document),
+                "tool": "PDFium",
+                "version": str(pdfium.PYPDFIUM_INFO),
+            }
+    except pdfium.PdfiumError as exc:
+        raise NousError("media.invalid_pdf", "PDF document cannot be opened or read") from exc
 
 
 def prepare_pdf_pages(
@@ -186,27 +189,30 @@ def prepare_pdf_pages(
     """Read one-based pages, closing native handles before returning text and image bytes."""
     import pypdfium2 as pdfium
 
-    with _PDF_LOCK, pdfium.PdfDocument(path) as document:
-        outputs: list[PageData] = []
-        for number in pages:
-            if not 1 <= number <= len(document):
-                raise NousError(
-                    "media.invalid_selection",
-                    "PDF page selection is outside the document",
-                    details={"page": number, "pages": len(document)},
-                )
-            with closing(document[number - 1]) as page:
-                with closing(page.get_textpage()) as textpage:
-                    text = textpage.get_text_range()
-                image: bytes | None = None
-                if visual:
-                    with closing(cast(_Renderable, page).render(scale=dpi / 72)) as bitmap:
-                        pil = bitmap.to_pil()
-                        try:
-                            output = io.BytesIO()
-                            pil.save(output, "PNG")
-                            image = output.getvalue()
-                        finally:
-                            pil.close()
-                outputs.append(PageData(number, text, image))
-        return tuple(outputs)
+    try:
+        with _PDF_LOCK, pdfium.PdfDocument(path) as document:
+            outputs: list[PageData] = []
+            for number in pages:
+                if not 1 <= number <= len(document):
+                    raise NousError(
+                        "media.invalid_selection",
+                        "PDF page selection is outside the document",
+                        details={"page": number, "pages": len(document)},
+                    )
+                with closing(document[number - 1]) as page:
+                    with closing(page.get_textpage()) as textpage:
+                        text = textpage.get_text_range()
+                    image: bytes | None = None
+                    if visual:
+                        with closing(cast(_Renderable, page).render(scale=dpi / 72)) as bitmap:
+                            pil = bitmap.to_pil()
+                            try:
+                                output = io.BytesIO()
+                                pil.save(output, "PNG")
+                                image = output.getvalue()
+                            finally:
+                                pil.close()
+                    outputs.append(PageData(number, text, image))
+            return tuple(outputs)
+    except pdfium.PdfiumError as exc:
+        raise NousError("media.invalid_pdf", "PDF document cannot be opened or read") from exc

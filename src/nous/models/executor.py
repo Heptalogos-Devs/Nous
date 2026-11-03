@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, cast
 import jsonschema
 from openai import APIConnectionError, APIStatusError, APITimeoutError
 from pydantic import JsonValue, TypeAdapter, ValidationError
+from pydantic_ai.direct import model_request, model_request_stream
 from pydantic_ai.exceptions import (
     ModelAPIError,
     ModelConnectionError,
@@ -166,6 +167,8 @@ def model_error(error: BaseException, attempts: int) -> NousError:
                 value = values.get(field)
                 if isinstance(value, (str, int)):
                     service_error[field] = value
+    elif isinstance(error, ModelAPIError):
+        service_error["message"] = error.message
     return NousError(
         "model.request_failed",
         "The model request failed",
@@ -395,6 +398,13 @@ class ModelExecutor:
                 "model.profile_invalid",
                 f"Unknown protocol compatibility fields: {sorted(unknown_profile)}",
             )
+        if (
+            route.model.compatibility.get("openai_chat_streaming_requires_finish_reason", True)
+            is not True
+        ):
+            raise NousError(
+                "model.profile_invalid", "Streaming completion requires an explicit finish reason"
+            )
 
     def _model(self, route: ModelRoute) -> OpenAIChatModel:
         profile = OpenAIModelProfile(
@@ -404,6 +414,7 @@ class ModelExecutor:
             supports_image_input="image" in route.model.capabilities,
             supports_document_input="application/pdf" in route.model.input_formats,
             openai_chat_supports_document_input="application/pdf" in route.model.input_formats,
+            openai_chat_streaming_requires_finish_reason=True,
         )
         profile.update(cast(OpenAIModelProfile, route.model.compatibility))
         return OpenAIChatModel(
@@ -458,12 +469,17 @@ class ModelExecutor:
         response: ModelResponse,
         attempts: int,
     ) -> GenerationResult:
-        if response.finish_reason in {"length", "content_filter", "error"}:
+        if response.state != "complete" or response.finish_reason in {
+            "length",
+            "content_filter",
+            "error",
+        }:
             raise NousError(
                 "model.incomplete_output",
                 "The provider did not complete the requested output",
                 details={
                     "finish_reason": response.finish_reason,
+                    "response_state": response.state,
                     "raw_output": response.text,
                     "attempts": attempts,
                 },
@@ -561,10 +577,11 @@ class ModelExecutor:
                 route = prepared.routes[min(attempt - 1, len(prepared.routes) - 1)]
                 response: ModelResponse | None = None
                 try:
-                    response = await self._model(route).request(
+                    response = await model_request(
+                        self._model(route),
                         messages,
-                        self._settings(prepared, route),
-                        self._parameters(prepared),
+                        model_settings=self._settings(prepared, route),
+                        model_request_parameters=self._parameters(prepared),
                     )
                     total_usage.incr(response.usage)
                     result = self._result(prepared, route, response, attempt)
@@ -674,10 +691,11 @@ class ModelExecutor:
                         f"Model {route.model_id} does not declare streaming",
                     )
                 try:
-                    async with self._model(route).request_stream(
+                    async with model_request_stream(
+                        self._model(route),
                         list(prepared.compiled.messages),
-                        self._settings(prepared, route),
-                        self._parameters(prepared),
+                        model_settings=self._settings(prepared, route),
+                        model_request_parameters=self._parameters(prepared),
                     ) as response:
                         async for event in response:
                             delta = (
@@ -697,6 +715,9 @@ class ModelExecutor:
                         if target is not None:
                             target.result = result
                         return
+                except NousError as error:
+                    error.details["partial_output_delivered"] = visible
+                    raise
                 except (
                     APIConnectionError,
                     APIStatusError,

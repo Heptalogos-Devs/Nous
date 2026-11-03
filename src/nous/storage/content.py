@@ -111,8 +111,12 @@ class ContentStore:
         worker = asyncio.create_task(self.execution.blocking(action, *args))
         try:
             return await asyncio.shield(worker)
-        except asyncio.CancelledError:
-            await worker
+        except asyncio.CancelledError as cancelled:
+            try:
+                await worker
+            except Exception as error:
+                code = error.code if isinstance(error, NousError) else type(error).__name__
+                cancelled.add_note(f"File work failed while cancellation was completing: {code}")
             raise
 
     def _publish(self, prepared: PreparedContent) -> PublishedContent:
@@ -273,8 +277,22 @@ class ContentStore:
     async def export(self, blob: BlobRef, destination: Path) -> Path:
         def copy() -> Path:
             destination.parent.mkdir(parents=True, exist_ok=True)
-            with self.path_for(blob).open("rb") as source, destination.open("xb") as output:
-                shutil.copyfileobj(source, output, length=self.io_chunk_bytes)
-            return destination
+            created = False
+            try:
+                with self.path_for(blob).open("rb") as source, destination.open("xb") as output:
+                    created = True
+                    shutil.copyfileobj(source, output, length=self.io_chunk_bytes)
+                # Verify the delivered bytes, including mutations during the copy.
+                self._verify(destination, blob)
+                return destination
+            except BaseException as error:
+                if created:
+                    try:
+                        destination.unlink(missing_ok=True)
+                    except OSError as cleanup:
+                        error.add_note(
+                            f"Failed export could not be removed: {destination}: {cleanup}"
+                        )
+                raise
 
-        return await self.execution.blocking(copy)
+        return await self._file_work(copy)

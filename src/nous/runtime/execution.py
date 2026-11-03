@@ -5,10 +5,11 @@ import contextvars
 import functools
 import logging
 import time
-from collections.abc import AsyncGenerator, Awaitable, Callable, Coroutine
+from collections.abc import AsyncGenerator, Awaitable, Callable, Coroutine, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import TypeVar, cast
 from uuid import uuid4
 
@@ -28,8 +29,8 @@ class OperationContext:
     deadline: float | None
 
 
-_current: contextvars.ContextVar[OperationContext | None] = contextvars.ContextVar(
-    "nous_operation", default=None
+_current: contextvars.ContextVar[Mapping[object, OperationContext]] = contextvars.ContextVar(
+    "nous_operations", default=MappingProxyType({})
 )
 
 
@@ -42,17 +43,19 @@ class ExecutionManager:
             max_workers=int(settings.max_blocking_workers), thread_name_prefix="nous-worker"
         )
         self._snapshot = snapshot
+        self._owner = object()
+        self._operations: dict[asyncio.Task[object], asyncio.Future[None]] = {}
         self._tasks: set[asyncio.Task[object]] = set()
         self._blocking: set[asyncio.Future[object]] = set()
         self._accepting = True
 
     @property
     def in_flight(self) -> int:
-        return len(self._tasks)
+        return len(self._tasks | self._operations.keys())
 
     @property
     def snapshot(self) -> ConfigSnapshot:
-        current = _current.get()
+        current = _current.get().get(self._owner)
         return current.settings if current is not None else self._snapshot()
 
     @asynccontextmanager
@@ -60,9 +63,10 @@ class ExecutionManager:
         self, name: str, settings: ConfigSnapshot | None = None, *, deadline: float | None = None
     ) -> AsyncGenerator[OperationContext]:
         """Acquire once at the root; nested stages share its snapshot and cannot extend its deadline."""
-        if not self._accepting:
+        parent = _current.get().get(self._owner)
+        task = asyncio.current_task()
+        if not self._accepting and parent is None and task not in self._tasks:
             raise NousError("operation.unavailable", "The runtime is stopping.", operation=name)
-        parent = _current.get()
         if parent is not None and settings is not None and settings is not parent.settings:
             raise NousError(
                 "operation.snapshot_conflict",
@@ -81,10 +85,11 @@ class ExecutionManager:
             if timeout is not None:
                 deadline = asyncio.get_running_loop().time() + float(timeout)
         context = OperationContext(str(uuid4()), name, snapshot, deadline)
-        task = asyncio.current_task()
         root = parent is None
+        completed = None
         if root and task is not None:
-            self._tasks.add(task)
+            completed = asyncio.get_running_loop().create_future()
+            self._operations[task] = completed
         acquired = False
         token = None
         try:
@@ -97,7 +102,7 @@ class ExecutionManager:
                         get_meter("nous.execution").create_histogram(
                             "execution.queue_wait", unit="s"
                         ).record(time.monotonic() - started)
-                    token = _current.set(context)
+                    token = _current.set(MappingProxyType({**_current.get(), self._owner: context}))
                     yield context
         finally:
             if token is not None:
@@ -105,7 +110,9 @@ class ExecutionManager:
             if acquired:
                 self._semaphore.release()
             if root and task is not None:
-                self._tasks.discard(task)
+                self._operations.pop(task, None)
+                if completed is not None and not completed.done():
+                    completed.set_result(None)
 
     async def run(
         self, name: str, action: Callable[[], Awaitable[T]], *, deadline: float | None = None
@@ -121,7 +128,7 @@ class ExecutionManager:
         # A background operation owns a new independent request boundary while
         # retaining the OTel initiating context and other contextvars.
         context = contextvars.copy_context()
-        context.run(_current.set, None)
+        context.run(_current.set, MappingProxyType({}))
         task = asyncio.create_task(self.run(name, action), name=name, context=context)
         self._tasks.add(task)
 
@@ -137,7 +144,7 @@ class ExecutionManager:
 
     async def blocking(self, action: Callable[..., T], *args: object, **kwargs: object) -> T:
         """Keep a worker owned after caller cancellation until the actual work finishes."""
-        if not self._accepting:
+        if not self._accepting and self._owner not in _current.get():
             raise NousError("operation.unavailable", "The runtime is stopping.")
         context = contextvars.copy_context()
         future = asyncio.get_running_loop().run_in_executor(
@@ -156,12 +163,24 @@ class ExecutionManager:
     async def aclose(self, grace_seconds: float = 30) -> None:
         """Stop admission, cancel overdue operations and await remaining blocking work."""
         self._accepting = False
-        tasks = self._tasks - {asyncio.current_task()}
-        if tasks:
-            _, pending = await asyncio.wait(tasks, timeout=grace_seconds)
-            for task in pending:
-                task.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
+        current = asyncio.current_task()
+        tasks = self._tasks - {current}
+        operations = {
+            task: completed for task, completed in self._operations.items() if task is not current
+        }
+        waiters = [*tasks, *operations.values()]
+        if waiters:
+            await asyncio.wait(waiters, timeout=grace_seconds)
+            for task, completed in operations.items():
+                if not completed.done():
+                    task.cancel()
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(
+                *(asyncio.shield(cast(Awaitable[object], waiter)) for waiter in waiters),
+                return_exceptions=True,
+            )
         if self._blocking:
             logging.getLogger(__name__).info("execution.waiting_for_blocking_workers")
             await asyncio.gather(

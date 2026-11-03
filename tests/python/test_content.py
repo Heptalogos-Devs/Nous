@@ -2,14 +2,20 @@
 
 import asyncio
 import io
+import shutil
 import sqlite3
+import subprocess
+import wave
 from pathlib import Path
+from unittest.mock import patch
 
+import pypdfium2 as pdfium
 import pytest
 from PIL import Image
 
 from nous.common.errors import NousError
 from nous.content.contracts import OutputContent, ResultInput, SourceSelection
+from nous.media.documents import prepare_pdf_pages
 from nous.runtime.bootstrap import initialize_instance, open_instance
 
 
@@ -53,6 +59,156 @@ def test_content_result_survives_independent_writer_and_reopen(tmp_path: Path) -
                 await runtime.artifacts.read_text(saved.inputs[0].artifact)
                 == "原文\n\nwith exact text\n"
             )
+
+    asyncio.run(scenario())
+
+
+def test_pdf_preparation_reuses_pages_and_rejects_foreign_coordinates(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        instance = tmp_path / "pdf-selections"
+        await initialize_instance(instance, environment={})
+        data = io.BytesIO()
+        document = pdfium.PdfDocument.new()
+        try:
+            for width in (90, 120, 150):
+                page = document.new_page(width=width, height=90)
+                page.close()
+            document.save(data)
+        finally:
+            document.close()
+        async with open_instance(instance, environment={}) as runtime:
+            original = await runtime.artifacts.ingest(
+                data.getvalue(), media_type="application/pdf", display_name="pages.pdf"
+            )
+            text = await runtime.artifacts.ingest("first line\nsecond line\n")
+            settings = runtime.configuration.snapshot.typed_values().media
+            for artifact, selections in (
+                (
+                    text,
+                    (
+                        SourceSelection(pages=(1,)),
+                        SourceSelection(frame=0),
+                        SourceSelection(start_ms=1),
+                        SourceSelection(crop=(0, 0, 1, 1)),
+                    ),
+                ),
+                (
+                    original,
+                    (
+                        SourceSelection(frame=0),
+                        SourceSelection(start_line=1),
+                        SourceSelection(start_ms=1),
+                        SourceSelection(crop=(0, 0, 1, 1)),
+                    ),
+                ),
+            ):
+                for selection in selections:
+                    with pytest.raises(NousError) as invalid:
+                        await runtime.media.preparer.prepare(
+                            artifact.ref, selection, settings=settings
+                        )
+                    assert invalid.value.code == "media.invalid_selection"
+                    assert invalid.value.details["completed_result_refs"] == []
+            with patch(
+                "nous.media.preparation.prepare_pdf_pages", wraps=prepare_pdf_pages
+            ) as render:
+                prepared = await asyncio.gather(
+                    *(
+                        runtime.media.preparer.prepare(
+                            original.ref,
+                            SourceSelection(pages=((index % 3) + 1,)),
+                            settings=settings,
+                            document_mode="visual",
+                        )
+                        for index in range(12)
+                    )
+                )
+                assert render.call_count == 3
+            by_page: dict[int, set[str]] = {}
+            for item in prepared:
+                number = item.selection.pages[0]
+                by_page.setdefault(number, set()).update(item.completed_result_refs)
+                assert item.batches[0].sources[0].selection.pages == (number,)
+                with Image.open(io.BytesIO(item.batches[0].sources[0].media[0].data)) as image:
+                    assert image.width == (90, 120, 150)[number - 1] * 2
+            assert len(by_page) == 3 and all(len(refs) == 1 for refs in by_page.values())
+        async with open_instance(instance, environment={}) as runtime:
+            settings = runtime.configuration.snapshot.typed_values().media
+            with patch(
+                "nous.media.preparation.prepare_pdf_pages", wraps=prepare_pdf_pages
+            ) as render:
+                again = await runtime.media.preparer.prepare(
+                    original.ref,
+                    SourceSelection(pages=(2,)),
+                    settings=settings,
+                    document_mode="visual",
+                )
+                assert render.call_count == 0
+            assert set(again.completed_result_refs) == by_page[2]
+
+    asyncio.run(scenario())
+
+
+def test_audio_video_reject_coordinates_they_do_not_apply(tmp_path: Path) -> None:
+    ffmpeg, ffprobe = shutil.which("ffmpeg"), shutil.which("ffprobe")
+    if not ffmpeg or not ffprobe:
+        pytest.skip("FFmpeg and ffprobe are required for audiovisual preparation")
+    audio_path = tmp_path / "sound.wav"
+    with wave.open(str(audio_path), "wb") as output:
+        output.setnchannels(1)
+        output.setsampwidth(2)
+        output.setframerate(16000)
+        output.writeframes(b"\0\0" * 16000)
+    video_path = tmp_path / "video.mp4"
+    subprocess.run(
+        [
+            ffmpeg,
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=red:s=32x32:r=2:d=1",
+            "-c:v",
+            "mpeg4",
+            str(video_path),
+        ],
+        check=True,
+        capture_output=True,
+    )
+
+    async def scenario() -> None:
+        instance = tmp_path / "av-selections"
+        await initialize_instance(instance, environment={})
+        async with open_instance(instance, environment={}) as runtime:
+            audio = await runtime.artifacts.ingest(audio_path)
+            video = await runtime.artifacts.ingest(video_path)
+            settings = runtime.configuration.snapshot.typed_values().media
+            for artifact, selections in (
+                (
+                    audio,
+                    (
+                        SourceSelection(pages=(1,)),
+                        SourceSelection(frame=0),
+                        SourceSelection(start_line=1),
+                    ),
+                ),
+                (
+                    video,
+                    (
+                        SourceSelection(frame=19),
+                        SourceSelection(frame=999),
+                        SourceSelection(crop=(0, 0, 2, 2)),
+                    ),
+                ),
+            ):
+                for selection in selections:
+                    with pytest.raises(NousError) as invalid:
+                        await runtime.media.preparer.prepare(
+                            artifact.ref, selection, settings=settings
+                        )
+                    assert invalid.value.code == "media.invalid_selection"
+                    assert invalid.value.details["completed_result_refs"] == []
 
     asyncio.run(scenario())
 

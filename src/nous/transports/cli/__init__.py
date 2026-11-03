@@ -14,6 +14,7 @@ import click
 import typer
 from pydantic import JsonValue, TypeAdapter, ValidationError
 from rich.console import Console
+from typer.exceptions import TyperException
 
 from nous.common.errors import NousError
 from nous.configuration import Configuration
@@ -368,14 +369,7 @@ def main() -> None:
             stream.reconfigure(encoding="utf-8")
     try:
         cli(standalone_mode=False)
-    except (
-        NousError,
-        ValueError,
-        OSError,
-        click.ClickException,
-        typer.Abort,
-        KeyboardInterrupt,
-    ) as error:
+    except (Exception, KeyboardInterrupt) as error:
         failure = (
             error
             if isinstance(error, NousError)
@@ -385,10 +379,28 @@ def main() -> None:
                 else "operation.timeout"
                 if isinstance(error, TimeoutError)
                 else "input.invalid"
-                if isinstance(error, (ValueError, click.ClickException))
+                if isinstance(error, (ValueError, click.ClickException, TyperException))
                 else "operation.failed",
-                str(error)
-                or ("Operation exceeded its deadline." if isinstance(error, TimeoutError) else ""),
+                (
+                    str(error)
+                    or (
+                        "Operation exceeded its deadline."
+                        if isinstance(error, TimeoutError)
+                        else ""
+                    )
+                )
+                if isinstance(
+                    error,
+                    (
+                        ValueError,
+                        OSError,
+                        click.ClickException,
+                        TyperException,
+                        typer.Abort,
+                        KeyboardInterrupt,
+                    ),
+                )
+                else "Unexpected error",
             )
         )
         result = failure.to_dict()

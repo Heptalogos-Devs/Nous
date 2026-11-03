@@ -10,6 +10,7 @@ from contextvars import ContextVar
 from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
+from weakref import WeakValueDictionary
 
 from markdown_it import MarkdownIt
 from pydantic import JsonValue
@@ -32,6 +33,7 @@ from .audiovisual import AudioVisual
 from .configuration import MediaConfig
 from .contracts import PreparedBatch, PreparedMedia
 from .documents import (
+    PageData,
     inspect_image,
     inspect_pdf,
     prepare_images,
@@ -46,6 +48,33 @@ if TYPE_CHECKING:
 _completed: ContextVar[list[str] | None] = ContextVar("media_preparation_results", default=None)
 
 
+def _validate_selection(kind: str, selection: SourceSelection) -> None:
+    """Reject coordinates that the selected media path cannot actually apply."""
+    supported = {
+        "text": {"start_line", "end_line"},
+        "image": {"frame", "crop", "start_ms", "end_ms"},
+        "pdf": {"pages"},
+        "audio": {"start_ms", "end_ms"},
+        "video": {"start_ms", "end_ms"},
+    }
+    if kind not in supported:
+        raise NousError(
+            "media.unsupported_format", "Unsupported media type", details={"kind": kind}
+        )
+    supplied = {
+        name
+        for name, value in selection.model_dump().items()
+        if value is not None and (name != "pages" or bool(value))
+    }
+    invalid = sorted(supplied - supported[kind])
+    if invalid:
+        raise NousError(
+            "media.invalid_selection",
+            "The selected media type does not support these coordinates",
+            details={"kind": kind, "fields": invalid},
+        )
+
+
 class MediaPreparer:
     """Materialize precise CAS-backed representations and retain completed conversion stages."""
 
@@ -58,6 +87,9 @@ class MediaPreparer:
     ) -> None:
         self.artifacts, self.results, self.execution = artifacts, results, execution
         self.executor = executor
+        # PDFium serializes its native work; keep one preparation owner per source
+        # so overlapping requests can reuse committed pages instead of rendering them again.
+        self._pdf_locks: WeakValueDictionary[str, asyncio.Lock] = WeakValueDictionary()
 
     async def inspect(
         self, artifact: Artifact | ArtifactRef | str, settings: MediaConfig
@@ -87,16 +119,14 @@ class MediaPreparer:
             "media_type": info.get("media_type", original.media_type),
         }
 
-    async def _derive(
-        self,
+    @staticmethod
+    def _derivative_key(
         original: Artifact,
         selection: SourceSelection,
         operation: str,
-        outputs: dict[str, OutputContent],
         parameters: dict[str, JsonValue],
-    ) -> tuple[Artifact, ...]:
-        """Reuse derivatives for the same accepted source, selection and conversion parameters."""
-        cache_key = hashlib.sha256(
+    ) -> str:
+        return hashlib.sha256(
             json.dumps(
                 {
                     "artifact": original.ref.id,
@@ -107,12 +137,31 @@ class MediaPreparer:
                 sort_keys=True,
             ).encode()
         ).hexdigest()
+
+    async def _cached_derivative(
+        self, operation: str, cache_key: str
+    ) -> tuple[Artifact, ...] | None:
         cached = await self.results.find_cached(operation, cache_key)
         if cached is not None:
             completed = _completed.get()
             if completed is not None:
                 completed.append(cached.ref.address)
             return tuple([await self.artifacts.get(output.artifact) for output in cached.outputs])
+        return None
+
+    async def _derive(
+        self,
+        original: Artifact,
+        selection: SourceSelection,
+        operation: str,
+        outputs: dict[str, OutputContent],
+        parameters: dict[str, JsonValue],
+    ) -> tuple[Artifact, ...]:
+        """Reuse derivatives for the same accepted source, selection and conversion parameters."""
+        cache_key = self._derivative_key(original, selection, operation, parameters)
+        cached = await self._cached_derivative(operation, cache_key)
+        if cached is not None:
+            return cached
         result = await self.results.adopt(
             operation=operation,
             producer={"kind": "deterministic", **parameters},
@@ -242,7 +291,8 @@ class MediaPreparer:
         info = await self.inspect(original, settings)
         blob = await self.artifacts.blob(original.ref)
         path = self.artifacts.content.path_for(blob)
-        kind = info["kind"]
+        kind = cast(str, info["kind"])
+        _validate_selection(kind, selected)
         if kind == "text":
             return await self._text(original, selected, settings)
         if kind == "image":
@@ -463,40 +513,90 @@ class MediaPreparer:
                 "media.vision_required",
                 "PDF visual preparation requires an image-capable model; choose text mode explicitly",
             )
+        lock = self._pdf_locks.get(original.ref.id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._pdf_locks[original.ref.id] = lock
+        async with lock:
+            return await self._render_pdf(original, selection, settings, path, info, pages, visual)
+
+    async def _render_pdf(
+        self,
+        original: Artifact,
+        selection: SourceSelection,
+        settings: MediaConfig,
+        path: Path,
+        info: dict[str, JsonValue],
+        pages: tuple[int, ...],
+        visual: bool,
+    ) -> PreparedMedia:
+        """Read cached pages before rendering missing pages for this source."""
+        parameters: dict[str, JsonValue] = {
+            "tool": info["tool"],
+            "version": info["version"],
+            "render_dpi": settings.pdf.render_dpi,
+            "mode": "visual" if visual else "text_only",
+        }
         batches: list[PreparedBatch] = []
         for offset in range(0, len(pages), settings.pdf.max_pages_per_request):
             page_group = pages[offset : offset + settings.pdf.max_pages_per_request]
-            rendered = await self.execution.blocking(
-                prepare_pdf_pages, path, page_group, settings.pdf.render_dpi, visual
-            )
-            sources: list[PreparedSource] = []
-            for page in rendered:
-                page_selection = SourceSelection(pages=(page.page,))
-                content = {
-                    "text": OutputContent(
-                        data=page.text.encode("utf-8"),
-                        media_type="text/plain",
-                        display_name=f"page-{page.page}.txt",
+            cached_pages: dict[int, tuple[Artifact, ...]] = {}
+            missing: list[int] = []
+            for number in dict.fromkeys(page_group):
+                page_selection = SourceSelection(pages=(number,))
+                key = self._derivative_key(
+                    original, page_selection, "media.prepare.pdf", parameters
+                )
+                cached = await self._cached_derivative("media.prepare.pdf", key)
+                if cached is None:
+                    missing.append(number)
+                else:
+                    cached_pages[number] = cached
+            rendered: dict[int, PageData] = {}
+            if missing:
+                rendered = {
+                    page.page: page
+                    for page in await self.execution.blocking(
+                        prepare_pdf_pages, path, tuple(missing), settings.pdf.render_dpi, visual
                     )
                 }
-                if page.image is not None:
-                    content["image"] = OutputContent(
-                        data=page.image,
-                        media_type="image/png",
-                        display_name=f"page-{page.page}.png",
+            sources: list[PreparedSource] = []
+            for number in page_group:
+                page_selection = SourceSelection(pages=(number,))
+                derivatives = cached_pages.get(number)
+                if derivatives is not None:
+                    if len(derivatives) != (2 if visual else 1):
+                        raise NousError("media.invalid_cache", "Cached PDF page is incomplete")
+                    text = await self.artifacts.read_text(
+                        derivatives[0].ref, max_bytes=settings.max_inline_bytes
                     )
-                derivatives = await self._derive(
-                    original,
-                    page_selection,
-                    "media.prepare.pdf",
-                    content,
-                    {
-                        "tool": info["tool"],
-                        "version": info["version"],
-                        "render_dpi": settings.pdf.render_dpi,
-                        "mode": "visual" if visual else "text_only",
-                    },
-                )
+                    image = (
+                        await self.artifacts.read_bytes(
+                            derivatives[1].ref, max_bytes=settings.max_inline_bytes
+                        )
+                        if visual
+                        else None
+                    )
+                    page = PageData(number, text, image)
+                else:
+                    page = rendered[number]
+                    content = {
+                        "text": OutputContent(
+                            data=page.text.encode("utf-8"),
+                            media_type="text/plain",
+                            display_name=f"page-{page.page}.txt",
+                        )
+                    }
+                    if page.image is not None:
+                        content["image"] = OutputContent(
+                            data=page.image,
+                            media_type="image/png",
+                            display_name=f"page-{page.page}.png",
+                        )
+                    derivatives = await self._derive(
+                        original, page_selection, "media.prepare.pdf", content, parameters
+                    )
+                    cached_pages[number] = derivatives
                 if not page.text.strip() and not visual:
                     raise NousError(
                         "media.page_requires_vision",

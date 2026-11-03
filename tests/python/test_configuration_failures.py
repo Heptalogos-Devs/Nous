@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -18,9 +19,9 @@ from nous.runtime.bootstrap import initialize_instance, open_instance
 def test_configuration_failure_recovery(tmp_path: Path) -> None:
     async def scenario() -> None:
         instance = tmp_path / "configuration-failures"
-        await initialize_instance(instance)
+        await initialize_instance(instance, environment={})
         config_file = instance / "nous.toml"
-        async with open_instance(instance) as runtime:
+        async with open_instance(instance, environment={}) as runtime:
             service = runtime.configuration
             active = service.snapshot
             original_file = config_file.read_bytes()
@@ -76,12 +77,12 @@ def test_configuration_failure_recovery(tmp_path: Path) -> None:
             assert pending_reload["state"] == "saved_pending_restart"
             assert pending_reload["write_performed"] is False
             assert service.snapshot is active
-        async with open_instance(instance) as recovered:
+        async with open_instance(instance, environment={}) as recovered:
             assert "colony" in await recovered.time.domains()
             assert recovered.configuration.snapshot.values.execution.default_timeout_seconds == 7
             assert not recovered.configuration.pending_restart
 
-        async with open_instance(instance) as runtime:
+        async with open_instance(instance, environment={}) as runtime:
             service = runtime.configuration
             active = service.snapshot
             root = logging.getLogger()
@@ -123,12 +124,12 @@ def test_configuration_failure_recovery(tmp_path: Path) -> None:
             pending = await service.update({"execution.default_timeout_seconds": 9})
             assert pending["state"] == "saved_pending_restart"
             assert service.snapshot is active
-        async with open_instance(instance) as recovered:
+        async with open_instance(instance, environment={}) as recovered:
             assert recovered.configuration.snapshot.values.logging.level == "DEBUG"
             assert recovered.configuration.snapshot.values.execution.default_timeout_seconds == 9
             assert "orbit" in await recovered.time.domains()
 
-        async with open_instance(instance) as runtime:
+        async with open_instance(instance, environment={}) as runtime:
             service = runtime.configuration
             active = service.snapshot
             reached = asyncio.Event()
@@ -153,7 +154,7 @@ def test_configuration_failure_recovery(tmp_path: Path) -> None:
             assert service.snapshot is active and service.pending_restart
             assert service.status()["activation_failure"]["file_saved"] is True
             assert "cancelled-domain" not in await runtime.time.domains()
-        async with open_instance(instance) as recovered:
+        async with open_instance(instance, environment={}) as recovered:
             assert "cancelled-domain" in await recovered.time.domains()
 
         original_file = config_file.read_bytes()
@@ -175,6 +176,11 @@ def test_configuration_failure_recovery(tmp_path: Path) -> None:
             capture_output=True,
             text=True,
             encoding="utf-8",
+            env={
+                name: value
+                for name, value in os.environ.items()
+                if not name.upper().startswith("NOUS_")
+            },
             timeout=30,
             check=False,
         )

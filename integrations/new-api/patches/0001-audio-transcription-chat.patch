@@ -1055,6 +1055,23 @@
  
  func TestClaudeMessagesToOpenAIChatPreservesAssistantTextWithToolCalls(t *testing.T) {
  	text := "I will look that up."
+@@ -94,7 +112,7 @@
+ 	assert.Equal(t, "call_1", toolCalls[0].ID)
+ }
+ 
+-func TestRequestConverterRegistryListsSupportedTextConverters(t *testing.T) {
++func TestRequestConverterRegistryListsSupportedConverters(t *testing.T) {
+ 	tests := []struct {
+ 		converter      string
+ 		from           types.RelayFormat
+@@ -103,6 +121,7 @@
+ 		stepConverters []string
+ 		advancedCustom bool
+ 	}{
++		{converter: ConverterAudioTranscriptionToOpenAIChat, from: types.RelayFormatOpenAIAudio, to: types.RelayFormatOpenAI, quality: RequestConverterQualityFair, advancedCustom: true},
+ 		{converter: ConverterClaudeMessagesToOpenAIChat, from: types.RelayFormatClaude, to: types.RelayFormatOpenAI, quality: RequestConverterQualityFair, advancedCustom: true},
+ 		{converter: ConverterGeminiContentToOpenAIChat, from: types.RelayFormatGemini, to: types.RelayFormatOpenAI, quality: RequestConverterQualityFair, advancedCustom: true},
+ 		{converter: ConverterOpenAIChatToClaudeMessages, from: types.RelayFormatOpenAI, to: types.RelayFormatClaude, quality: RequestConverterQualityFair, advancedCustom: true},
 --- /dev/null
 +++ b/service/audio_transcription_billing.go
 @@ -0,0 +1,283 @@

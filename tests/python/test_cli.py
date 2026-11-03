@@ -442,3 +442,58 @@ def test_shutdown_waits_for_cancelled_blocking_worker(tmp_path: Path) -> None:
         assert runtime.state == "stopped"
 
     asyncio.run(scenario())
+
+
+def test_cli_invalid_arguments_and_media_fail_as_json(tmp_path: Path) -> None:
+    instance = tmp_path / "invalid-cli"
+    asyncio.run(initialize_instance(instance, environment={}))
+    invalid_pdf = tmp_path / "broken.pdf"
+    invalid_pdf.write_bytes(b"%PDF-1.7\nnot a readable document")
+    text = tmp_path / "source.txt"
+    text.write_text("A source", encoding="utf-8")
+    command = [
+        sys.executable,
+        "-c",
+        "from nous.transports.cli import main; main()",
+        "--instance",
+        str(instance),
+        "--json",
+    ]
+    for arguments, code in (
+        (("tools", "media", "analyze"), "input.invalid"),
+        (("tools", "media", "analyze", str(text), "--strategy", "wrong"), "input.invalid"),
+        (("not-a-command",), "input.invalid"),
+        (("tools", "media", "inspect", str(invalid_pdf)), "media.invalid_pdf"),
+        (
+            (
+                "tools",
+                "media",
+                "analyze",
+                str(text),
+                "--strategy",
+                "description_only",
+                "--from",
+                "inf",
+            ),
+            "media.invalid_selection",
+        ),
+        (
+            (
+                "tools",
+                "media",
+                "analyze",
+                str(text),
+                "--strategy",
+                "description_only",
+                "--to",
+                "nan",
+            ),
+            "media.invalid_selection",
+        ),
+    ):
+        result = subprocess.run(
+            [*command, *arguments], capture_output=True, text=True, encoding="utf-8", timeout=30
+        )
+        assert result.returncode != 0
+        assert json.loads(result.stdout)["error"]["code"] == code
+        assert "Traceback" not in result.stderr

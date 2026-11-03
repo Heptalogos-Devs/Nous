@@ -51,6 +51,8 @@ nous tools embedding run --space personal-text --purpose document --input ./note
 
 JSON 返回公开类型化结果，正文保持可用。stderr 承担进度与日志。普通引用不要求用户复制 UUID、SHA-256 或长配置 JSON。
 
+参数解析失败也遵守同一错误出口：`--json` 输出结构化错误并返回非零状态。无法归类的异常对用户显示通用失败信息；需要诊断时使用 `--debug` 查看堆栈。
+
 ## 流与持久结果
 
 `--stream` 首轮用于文字 generation。人类模式实时写文本，结束后给出最终结果引用；中断明确提示部分输出。`--json --stream` 使用 NDJSON：delta、completed 或 failed 事件，completed 必须在正式结果提交后发出。

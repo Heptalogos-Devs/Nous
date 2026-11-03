@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import io
+import json
 import math
 from typing import TYPE_CHECKING, Literal, cast
 
 import numpy as np
-from openai import APIConnectionError, APIStatusError, omit
-from pydantic import JsonValue
+from openai import APIConnectionError, APIResponseValidationError, APIStatusError, omit
+from pydantic import BaseModel, FiniteFloat, JsonValue, StrictInt, TypeAdapter, ValidationError
 
 from nous.common.errors import NousError
 from nous.configuration import ConfigSnapshot
@@ -163,14 +164,28 @@ class EmbeddingExecutor:
                         dimensions=dimensions if dimensions is not None else omit,
                         timeout=self.connections.timeout(model.provider, snapshot),
                     )
-                    items = sorted(response.data, key=lambda item: item.index)
+                    data: object = getattr(response, "data", None)
+                    if not isinstance(data, list):
+                        raise NousError(
+                            "embedding.invalid_response",
+                            "Embedding response data must be an array",
+                            details={"attempts": attempt},
+                        )
+                    rows = TypeAdapter(list[tuple[StrictInt, list[FiniteFloat]]]).validate_python(
+                        [
+                            (getattr(item, "index", None), getattr(item, "embedding", None))
+                            for item in cast(list[object], data)
+                        ],
+                        strict=True,
+                    )
+                    rows.sort(key=lambda item: item[0])
                     # Provider batch order can differ; indexes must still cover every input exactly.
-                    if [item.index for item in items] != list(range(len(texts))):
+                    if [item[0] for item in rows] != list(range(len(texts))):
                         raise NousError(
                             "embedding.batch_mismatch",
                             "Returned vectors do not match the input order",
                         )
-                    raw = tuple(tuple(float(value) for value in item.embedding) for item in items)
+                    raw = tuple(tuple(item[1]) for item in rows)
                     actual_dimensions = len(raw[0]) if raw else 0
                     if actual_dimensions == 0 or (
                         dimensions is not None and actual_dimensions != dimensions
@@ -179,11 +194,7 @@ class EmbeddingExecutor:
                             "embedding.dimension_mismatch",
                             "Returned vector dimensions differ from the space",
                         )
-                    if any(
-                        len(vector) != actual_dimensions
-                        or not all(math.isfinite(value) for value in vector)
-                        for vector in raw
-                    ):
+                    if any(len(vector) != actual_dimensions for vector in raw):
                         raise NousError(
                             "embedding.invalid_vector",
                             "Returned vectors must have consistent dimensions and finite values",
@@ -205,6 +216,22 @@ class EmbeddingExecutor:
                     output = io.BytesIO()
                     np.save(output, matrix, allow_pickle=False)
                     vectors = tuple(tuple(float(value) for value in row) for row in matrix)
+                    returned_model = TypeAdapter(str | None).validate_python(
+                        getattr(response, "model", None), strict=True
+                    )
+                    reported_usage: object = getattr(response, "usage", None)
+                    if reported_usage is None:
+                        usage: dict[str, JsonValue] = {}
+                    elif isinstance(reported_usage, BaseModel):
+                        usage = TypeAdapter(dict[str, JsonValue]).validate_python(
+                            reported_usage.model_dump(mode="json")
+                        )
+                    else:
+                        raise NousError(
+                            "embedding.invalid_response",
+                            "Embedding usage must be an object when present",
+                            details={"attempts": attempt},
+                        )
                     return EmbeddingResult(
                         vectors,
                         raw,
@@ -214,10 +241,10 @@ class EmbeddingExecutor:
                             "protocol": "openai-chat-completions",
                             "model_id": model_id,
                             "requested_model_name": model.model_name,
-                            "returned_model_name": response.model,
+                            "returned_model_name": returned_model,
                             "deployment_revision": model.deployment_revision,
                         },
-                        cast(dict[str, JsonValue], response.usage.model_dump(mode="json")),
+                        usage,
                         {
                             "model_id": model_id,
                             "texts": list(texts),
@@ -234,4 +261,14 @@ class EmbeddingExecutor:
                     if attempt >= limit.max_attempts or not retryable(error):
                         raise model_error(error, attempt) from error
                     await retry_delay(error)
+                except (APIResponseValidationError, ValidationError, json.JSONDecodeError) as error:
+                    problem = "The gateway returned an invalid embedding response"
+                    if isinstance(error, ValidationError):
+                        problem = error.errors(include_input=False, include_url=False)[0]["msg"]
+                    raise NousError(
+                        "embedding.invalid_response",
+                        problem,
+                        details={"attempts": attempt, "error_type": type(error).__name__},
+                        cause=error,
+                    ) from error
         raise AssertionError("attempt limit must be positive")
