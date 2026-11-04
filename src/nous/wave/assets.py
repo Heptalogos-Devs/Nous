@@ -295,6 +295,7 @@ async def freeze_inputs(
         )
         paths = list(candidate.paths or ())
         annotation_artifact = None
+        annotation_memberships: tuple[str, ...] | None = None
         if candidate.annotation_ref is not None:
             annotation_artifact = await artifacts.get(candidate.annotation_ref)
             annotation = await read_annotation(artifacts, annotation_artifact.ref)
@@ -306,31 +307,36 @@ async def freeze_inputs(
                 )
             view = await artifacts.text_view(annotation.body_ref)
             blocks = {block.key: block for block in view.blocks}
-            occurrences = {item.key: item for item in annotation.occurrences}
+            occurrences: dict[str, PathStep] = {}
+            covered_concepts: list[str] = []
+            low = representation.view.byte_offset
+            high = low + len(representation.view.text.encode("utf-8"))
+            for occurrence in annotation.occurrences:
+                mapped = candidate.annotation_concepts.get(occurrence.concept, occurrence.concept)
+                if mapped not in concept_rows:
+                    raise NousError(
+                        "wave.concept_not_found",
+                        "Annotation concept needs an explicit manifest mapping",
+                        details={"concept": occurrence.concept},
+                    )
+                covered = [blocks[key].selection.selection for key in occurrence.blocks]
+                start = min(part.start_byte for part in covered if part.start_byte is not None)
+                end = max(part.end_byte for part in covered if part.end_byte is not None)
+                occurrences[occurrence.key] = PathStep(
+                    concept=mapped,
+                    selection=SourceSelection(start_byte=start, end_byte=end),
+                )
+                if low <= start and end <= high:
+                    covered_concepts.append(mapped)
+            # Membership is a fact about covered occurrences, independent of declared paths.
+            annotation_memberships = tuple(dict.fromkeys(covered_concepts))
             for path in annotation.paths:
-                annotation_steps: list[PathStep] = []
-                for occurrence_key in path.occurrences:
-                    occurrence = occurrences[occurrence_key]
-                    mapped = candidate.annotation_concepts.get(
-                        occurrence.concept, occurrence.concept
-                    )
-                    if mapped not in concept_rows:
-                        raise NousError(
-                            "wave.concept_not_found",
-                            "Annotation concept needs an explicit manifest mapping",
-                            details={"concept": occurrence.concept},
-                        )
-                    covered = [blocks[key].selection.selection for key in occurrence.blocks]
-                    start = min(part.start_byte for part in covered if part.start_byte is not None)
-                    end = max(part.end_byte for part in covered if part.end_byte is not None)
-                    annotation_steps.append(
-                        PathStep(
-                            concept=mapped,
-                            selection=SourceSelection(start_byte=start, end_byte=end),
-                        )
-                    )
                 paths.append(
-                    CandidatePath(key=path.key, label=path.label, steps=tuple(annotation_steps))
+                    CandidatePath(
+                        key=path.key,
+                        label=path.label,
+                        steps=tuple(occurrences[key] for key in path.occurrences),
+                    )
                 )
         if (
             candidate.paths is None
@@ -389,17 +395,22 @@ async def freeze_inputs(
             )
         memberships = candidate.concepts
         if memberships is None:
-            memberships = tuple(
-                dict.fromkeys(step.concept for _, steps in selected_paths for _, step in steps)
-            )
-            if not memberships and can_inherit:
-                memberships = tuple(dict.fromkeys(inherited[0][0]))
-        path_concepts = {step.concept for _, steps in selected_paths for _, step in steps}
-        if path_concepts - set(memberships):
+            if annotation_memberships is not None:
+                memberships = annotation_memberships
+            else:
+                memberships = tuple(
+                    dict.fromkeys(step.concept for _, steps in selected_paths for _, step in steps)
+                )
+                if not memberships and can_inherit:
+                    memberships = tuple(dict.fromkeys(inherited[0][0]))
+        required_concepts = {step.concept for _, steps in selected_paths for _, step in steps}
+        required_concepts.update(annotation_memberships or ())
+        missing = required_concepts - set(memberships)
+        if missing:
             raise NousError(
                 "wave.invalid_membership",
-                "Path concepts must belong to candidate memberships",
-                details={"candidate": candidate.key},
+                "Covered annotation and path concepts must belong to candidate memberships",
+                details={"candidate": candidate.key, "concepts": sorted(missing)},
             )
         path_mapping: list[dict[str, object]] = []
         for path, steps in selected_paths:

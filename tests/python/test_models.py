@@ -3,19 +3,290 @@
 import asyncio
 import json
 import os
+import shutil
 import sqlite3
 import subprocess
 import sys
 import threading
+import wave
 from collections.abc import Generator
 from contextlib import closing, contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import cast
 
 import pytest
 
 from nous.application.configuration import open_configuration_operations
 from nous.runtime.bootstrap import initialize_instance
+
+
+@pytest.mark.parametrize("entry", ["model", "media"])
+@pytest.mark.parametrize(
+    ("primary_ok", "text_first", "asr_configured"),
+    [
+        (True, False, True),
+        (False, False, True),
+        (True, True, False),
+        (True, True, True),
+    ],
+    ids=["native-success", "switch-to-text", "text-without-asr", "text-with-asr-down"],
+)
+def test_audio_route_prepares_transcription_only_after_actual_switch(
+    tmp_path: Path, entry: str, primary_ok: bool, text_first: bool, asr_configured: bool
+) -> None:
+    if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
+        pytest.skip("Audio preparation needs FFmpeg and ffprobe")
+    events: list[str] = []
+    submissions: list[dict[str, object]] = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self) -> None:
+            body = self.rfile.read(int(self.headers["Content-Length"]))
+            if self.path.endswith("/audio/transcriptions"):
+                events.append("transcription")
+                status = 503 if primary_ok else 200
+                value = (
+                    {"error": {"message": "transcriber unavailable"}}
+                    if primary_ok
+                    else {"text": "transcript from prerequisite"}
+                )
+            else:
+                request = json.loads(body)
+                submissions.append(request)
+                events.append(request["model"])
+                status = 503 if request["model"] == "native-audio" and not primary_ok else 200
+                value = (
+                    {"error": {"message": "native audio unavailable"}}
+                    if status == 503
+                    else {
+                        "id": "route-response",
+                        "object": "chat.completion",
+                        "created": 1700000000,
+                        "model": request["model"],
+                        "choices": [
+                            {
+                                "index": 0,
+                                "message": {
+                                    "role": "assistant",
+                                    "content": "Saved route response.",
+                                },
+                                "finish_reason": "stop",
+                            }
+                        ],
+                        "usage": {"prompt_tokens": 10, "completion_tokens": 4, "total_tokens": 14},
+                    }
+                )
+            payload = json.dumps(value).encode()
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, format: str, *args: object) -> None:
+            pass
+
+    audio = tmp_path / "source.wav"
+    with wave.open(str(audio), "wb") as output:
+        output.setparams((1, 2, 16000, 0, "NONE", "not compressed"))
+        output.writeframes(b"\0\0" * 16000)
+    instance = tmp_path / "audio-route-instance"
+    with model_server(Handler) as server:
+        configure_models(instance, server)
+
+        async def configure() -> None:
+            async with open_configuration_operations(instance, environment={}) as configuration:
+                await configuration.update(
+                    {
+                        "models.native-audio": {
+                            "provider": "local",
+                            "model_name": "native-audio",
+                            "capabilities": ["text", "audio"],
+                            "input_formats": ["text/plain", "audio/wav"],
+                        },
+                        "models.asr": {
+                            "provider": "local",
+                            "model_name": "asr",
+                            "capabilities": ["audio"],
+                            "input_formats": ["audio/wav"],
+                        },
+                        "tasks.read": {
+                            "model": "reader" if text_first else "native-audio",
+                            "prompt": "summarize",
+                            "fallback": [{"model": "native-audio" if text_first else "reader"}],
+                        },
+                        "tasks.asr": {"model": "asr", "operation": "transcription"},
+                        "media.audio.transcription_task": "asr" if asr_configured else None,
+                    }
+                )
+
+        asyncio.run(configure())
+        preview = model_cli(
+            instance,
+            "tools",
+            "prompt",
+            "preview",
+            "summarize",
+            "--task",
+            "read",
+            "--input",
+            str(audio),
+        )
+        assert preview.returncode == 0, (preview.stdout, preview.stderr)
+        shown = json.loads(preview.stdout)
+        if text_first and asr_configured:
+            assert shown["status"] == "requires_transcription" and shown["model_id"] == "reader"
+        else:
+            assert shown["model_id"] == "native-audio"
+        assert shown["deferred_routes"] == (
+            ["native-audio"] if text_first and asr_configured else [] if text_first else ["reader"]
+        )
+        assert events == []
+        arguments = (
+            ["tools", "model", "run", "--task", "read", "--input", str(audio)]
+            if entry == "model"
+            else [
+                "tools",
+                "media",
+                "analyze",
+                str(audio),
+                "--strategy",
+                "description_only",
+                "--description-task",
+                "read",
+            ]
+        )
+        response = model_cli(instance, *arguments)
+    assert response.returncode == 0, (response.stdout, response.stderr)
+    result = json.loads(response.stdout)["results"][0]
+    if primary_ok:
+        assert events == (
+            ["transcription", "transcription", "native-audio"]
+            if text_first and asr_configured
+            else ["native-audio"]
+        )
+        assert result["producer"]["model_id"] == "native-audio"
+        if text_first and asr_configured:
+            rejected = result["request"]["ineligible_routes"]["reader"]
+            assert rejected["details"]["preparation_route"] == "reader"
+            assert rejected["details"]["status_code"] == 503
+        messages = cast(list[dict[str, object]], submissions[0]["messages"])
+        parts = [
+            part
+            for message in messages
+            if isinstance(message.get("content"), list)
+            for part in cast(list[dict[str, object]], message["content"])
+        ]
+        assert any(part.get("type") == "input_audio" for part in parts)
+    else:
+        assert events == ["native-audio", "transcription", "local-model"]
+        assert result["producer"]["model_id"] == "reader"
+        assert "transcript from prerequisite" in json.dumps(submissions[-1])
+        assert any(
+            part["representation"] == "transcript"
+            for group in result["inputs"]
+            for part in group["parts"]
+        )
+        assert len(result["request"]["attempt_reports"]) == 3
+
+
+@pytest.mark.parametrize("entry", ["model", "media"])
+def test_image_routes_share_selection_with_media_and_local_preview(
+    tmp_path: Path, entry: str
+) -> None:
+    from PIL import Image
+
+    models: list[str] = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self) -> None:
+            request = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            models.append(request["model"])
+            payload = json.dumps(
+                {
+                    "id": "vision-response",
+                    "object": "chat.completion",
+                    "created": 1700000000,
+                    "model": request["model"],
+                    "choices": [
+                        {
+                            "index": 0,
+                            "message": {"role": "assistant", "content": "The image is red."},
+                            "finish_reason": "stop",
+                        }
+                    ],
+                }
+            ).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, format: str, *args: object) -> None:
+            pass
+
+    image = tmp_path / "image.png"
+    Image.new("RGB", (32, 32), "red").save(image)
+    instance = tmp_path / "image-route-instance"
+    with model_server(Handler) as server:
+        configure_models(instance, server)
+
+        async def configure() -> None:
+            async with open_configuration_operations(instance, environment={}) as configuration:
+                await configuration.update(
+                    {
+                        "models.vision": {
+                            "provider": "local",
+                            "model_name": "vision",
+                            "capabilities": ["text", "image"],
+                            "input_formats": ["text/plain", "image/png"],
+                        },
+                        "tasks.read": {
+                            "model": "reader",
+                            "prompt": "summarize",
+                            "fallback": [{"model": "vision"}],
+                        },
+                    }
+                )
+
+        asyncio.run(configure())
+        preview = model_cli(
+            instance,
+            "tools",
+            "prompt",
+            "preview",
+            "summarize",
+            "--task",
+            "read",
+            "--input",
+            str(image),
+        )
+        assert preview.returncode == 0, (preview.stdout, preview.stderr)
+        assert json.loads(preview.stdout)["model_id"] == "vision" and models == []
+        arguments = (
+            ["tools", "model", "run", "--task", "read", "--input", str(image)]
+            if entry == "model"
+            else [
+                "tools",
+                "media",
+                "analyze",
+                str(image),
+                "--strategy",
+                "description_only",
+                "--description-task",
+                "read",
+            ]
+        )
+        response = model_cli(instance, *arguments)
+        assert response.returncode == 0, (response.stdout, response.stderr)
+        result = json.loads(response.stdout)["results"][0]
+        assert result["producer"]["model_id"] == "vision"
+        assert result["inputs"][0]["parts"][0]["media_type"] == "image/png"
+        probe = model_cli(instance, "tools", "model", "probe", "vision", "--input", str(image))
+        assert probe.returncode == 0, (probe.stdout, probe.stderr)
+    assert models == ["vision", "vision"]
 
 
 @contextmanager
@@ -29,6 +300,121 @@ def model_server(handler: type[BaseHTTPRequestHandler]) -> Generator[ThreadingHT
         server.shutdown()
         server.server_close()
         thread.join()
+
+
+def test_media_stages_share_routes_and_reuse_completed_description(tmp_path: Path) -> None:
+    from PIL import Image
+
+    calls: list[bool] = []
+    structure_ok = False
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self) -> None:
+            request = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            structured = "response_format" in request
+            calls.append(structured)
+            assert request["model"] == "vision"
+            status = 503 if structured and not structure_ok else 200
+            content = (
+                json.dumps(
+                    {"title": "Image", "items": [{"text": "Red image", "source_keys": ["S1"]}]}
+                )
+                if structured
+                else "The image is red."
+            )
+            if structured:
+                assert "DESCRIPTION" in json.dumps(request["messages"])
+            body = json.dumps(
+                {"error": {"message": "structure unavailable"}}
+                if status == 503
+                else {
+                    "id": "media-stage",
+                    "object": "chat.completion",
+                    "created": 1700000000,
+                    "model": "vision",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "message": {"role": "assistant", "content": content},
+                            "finish_reason": "stop",
+                        }
+                    ],
+                }
+            ).encode()
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, format: str, *args: object) -> None:
+            pass
+
+    image = tmp_path / "two-stages.png"
+    Image.new("RGB", (32, 32), "red").save(image)
+    instance = tmp_path / "media-stages-instance"
+    with model_server(Handler) as server:
+        configure_models(instance, server)
+
+        async def configure() -> None:
+            async with open_configuration_operations(instance, environment={}) as configuration:
+                await configuration.update(
+                    {
+                        "models.vision": {
+                            "provider": "local",
+                            "model_name": "vision",
+                            "capabilities": ["text", "image", "structured_output"],
+                            "input_formats": ["text/plain", "image/png"],
+                            "output_modes": ["text", "native"],
+                        },
+                        "tasks.describe": {
+                            "model": "reader",
+                            "prompt": "describe-media",
+                            "fallback": [{"model": "vision"}],
+                        },
+                        "tasks.structure": {
+                            "model": "reader",
+                            "prompt": "extract-information",
+                            "output_mode": "native",
+                            "fallback": [{"model": "vision"}],
+                        },
+                    }
+                )
+
+        asyncio.run(configure())
+        added = model_cli(instance, "tools", "content", "add", str(image))
+        assert added.returncode == 0, added.stdout
+        artifact = json.loads(added.stdout)["ref"]["address"]
+        command = [
+            "tools",
+            "media",
+            "analyze",
+            artifact,
+            "--strategy",
+            "describe_then_structure",
+            "--description-task",
+            "describe",
+            "--task",
+            "structure",
+        ]
+        failed = model_cli(instance, *command)
+        assert failed.returncode != 0
+        error = json.loads(failed.stdout)["error"]
+        assert error["details"]["failed_stage"] == "structure"
+        completed = [
+            ref for ref in error["details"]["completed_result_refs"] if ref.startswith("res:")
+        ]
+        assert len(completed) == 1
+        structure_ok = True
+        recovered = model_cli(instance, *command, "--description-result", completed[0])
+        assert recovered.returncode == 0, (recovered.stdout, recovered.stderr)
+    outcome = json.loads(recovered.stdout)
+    assert outcome["descriptions"] == completed
+    assert calls == [False, True, True, True]
+    result = outcome["results"][0]
+    assert result["producer"]["model_id"] == "vision"
+    assert {group["key"] for group in result["inputs"]} == {"S1", "DESCRIPTION"}
+    assert result["coverage"] == outcome["coverage"]["actual"][0]
 
 
 def model_cli(instance: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
@@ -127,7 +513,7 @@ def test_model_stream_requires_provider_completion_before_adoption(
                 "created": 1700000000,
                 "model": "local-model",
             }
-            frames = [
+            frames: list[dict[str, object]] = [
                 {
                     **base,
                     "choices": [
@@ -270,7 +656,8 @@ def test_model_structured_repair_reaches_second_request_and_survives_restart(
         )
     assert response.returncode == 0, (response.stdout, response.stderr)
     assert len(submissions) == 2
-    assert submissions[1]["messages"][-1]["role"] == ("tool" if output_mode == "tool" else "user")
+    messages = cast(list[dict[str, object]], submissions[1]["messages"])
+    assert messages[-1]["role"] == ("tool" if output_mode == "tool" else "user")
     result = json.loads(response.stdout)["results"][0]
     assert result["parameters"]["attempts"] == 2
     assert result["parameters"]["usage"]["input_tokens"] == 20

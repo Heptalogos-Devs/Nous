@@ -10,14 +10,14 @@ ModelExecutor 拥有真实协议请求、响应结构、完成状态、流、有
 
 ```text
 FrozenTask = 任务定义 + 模板内容快照 + 任务配置 + 有序候选路线
-PreparedRun = FrozenTask + 有序 PreparedBatch 引用计划
-PreparedGeneration = FrozenTask + 单批实际消息 + 输出合同 + 合法路线
-execute(PreparedGeneration, context) -> GenerationResult
-stream(PreparedGeneration, context) -> async context manager[GenerationStream]
+PreparedRun = FrozenTask + 有序 RequestGroup 引用计划
+PreparedGeneration = 当前路线的实际消息 + 输出合同 + 尚未准备的后继路线
+execute(PreparedGeneration, context, prepare_route) -> GenerationResult
+stream(PreparedGeneration, context, prepare_route) -> async context manager[GenerationStream]
 ModelExecutor.transcribe(task, audio_bytes, filename, snapshot, context) -> GenerationResult
 ```
 
-阶段语义固定，候选路线的协议参数分别准备。PreparedRun 持有 CAS 引用；应用在当前批次前物化媒体并编译 PreparedGeneration，完成后释放。一次根操作固定其模板，重试/fallback 不读取修改后的模板。
+阶段语义固定，只有选中路线的输入与参数被准备。PreparedRun 持有 CAS 引用；应用在当前批次前物化媒体并编译 PreparedGeneration，完成后释放。真正切换时 executor 回调共同应用操作，准备新路线；ModelExecutor 不访问媒体或内容存储。一次根操作固定其模板，重试/fallback 不读取修改后的模板。
 
 ModelRegistry 负责解析 task/model/preset 和主次路线。Probe 使用显式模型选择建立一次任务，不伪造 ConfigSnapshot 或 tasks 条目。普通配置可读/状态检查不发请求。
 
@@ -41,7 +41,7 @@ ResultStore 保存语义消息、actual model/provider/protocol、模板及 Sche
 
 ## 封装与迁移
 
-Executor 移除 extract-information / passage-selection 的专名分支，由任务合同执行；GenerationOperations 通过任务 outputs 采用。MediaPreparer 移除转写，MediaAnalysis 通过 GenerationOperations.transcribe 组织需要的阶段。`GenerationOperations.run` 消费已经准备的 ReadingInput 与冻结任务；`run_prepared` 执行已编译请求并采用。
+任务 outputs 负责有名结果，GenerationOperations 完成采用。MediaPreparer 仅做确定性准备；prepare_group 在所选路线需要时调用 transcribe。`GenerationOperations.run_group` 执行共同语义组，run_input、run 与 MediaAnalysis 都使用它；`run_prepared` 执行当前已编译请求并采用实际成功路线返回的 ReadingInput 与 coverage。
 
 ## 联合输入与实际尝试
 

@@ -4,14 +4,13 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Sequence
-from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from pydantic import JsonValue, TypeAdapter
 
 from nous.common.errors import NousError
-from nous.common.operations import exception_context
+from nous.common.operations import exception_context, record_completed
 from nous.content.artifacts import ArtifactStore
 from nous.content.contracts import (
     Artifact,
@@ -25,8 +24,7 @@ from nous.content.contracts import (
     SourceSelection,
 )
 from nous.content.results import ResultStore
-from nous.models.contracts import ReadingInput
-from nous.models.operations import GenerationOperations
+from nous.models.operations import GenerationOperations, PendingGeneration
 from nous.runtime.execution import ExecutionManager
 
 from .contracts import AnalysisResult, PreparedBatch, PreparedSource
@@ -37,7 +35,7 @@ if TYPE_CHECKING:
 
 
 class MediaAnalysis:
-    """Run interpretation strategies as durable stages over one prepared representation."""
+    """Run explicit durable interpretation stages over shared semantic input groups."""
 
     def __init__(
         self,
@@ -49,16 +47,6 @@ class MediaAnalysis:
     ) -> None:
         self.artifacts, self.preparer, self.generation = artifacts, preparer, generation
         self.results, self.execution = results, execution
-
-    @staticmethod
-    def _requirements(task: str, snapshot: ConfigSnapshot) -> tuple[str, ...]:
-        config = snapshot.typed_values()
-        assignment = config.tasks.get(task)
-        if assignment is None:
-            raise NousError(
-                "model.task_missing", "Media task is not configured", details={"task": task}
-            )
-        return tuple(config.models[assignment.model].input_formats)
 
     async def _reuse_description(
         self,
@@ -126,7 +114,7 @@ class MediaAnalysis:
         pending: list[dict[str, JsonValue]] = []
         original: Artifact | None = None
         try:
-            async with self.execution.operation("media.analyze", snapshot) as context:
+            async with self.execution.operation("media.analyze", snapshot):
                 if isinstance(input, InputSpec):
                     original = await self.artifacts.accept(input)
                     selection = selection or input.selection
@@ -144,10 +132,6 @@ class MediaAnalysis:
                     )
                 description_task = description_task or settings.analysis.description_task
                 extraction_task = task or settings.analysis.extraction_task
-                language_task = (
-                    description_task if strategy == "description_only" else extraction_task
-                )
-                requirements = self._requirements(language_task, snapshot)
                 frozen_description = (
                     self.generation.executor.freeze(description_task, snapshot)
                     if strategy != "direct_structured"
@@ -158,19 +142,19 @@ class MediaAnalysis:
                     if strategy != "description_only"
                     else None
                 )
-                frozen_transcription = self.generation.freeze_transcription(snapshot)
-                if strategy == "describe_then_structure":
-                    requirements = self._requirements(description_task, snapshot)
-                prepared = await self.preparer.prepare(
+                first_task = frozen_description or frozen_extraction
+                assert first_task is not None
+                prepared = await self.generation.prepare_input(
+                    first_task,
                     original,
-                    selection,
-                    requirements=requirements,
-                    settings=settings,
+                    snapshot,
+                    selection=selection,
                     document_mode=document_mode,
                     without_audio=without_audio,
+                    per_batch=True,
                 )
-                completed.extend(prepared.completed_result_refs)
-                pending = [batch.coverage for batch in prepared.batches]
+                completed.extend(prepared.preparations)
+                pending = [group.coverage for group in prepared.batches]
                 reusable = (
                     [description_result]
                     if isinstance(description_result, str)
@@ -181,93 +165,60 @@ class MediaAnalysis:
                         "media.description_mismatch",
                         "Provide one description result for each prepared batch",
                     )
-                for ordinal, plan in enumerate(prepared.batches):
-                    batch = await self.preparer.materialize(plan)
-                    completed.extend(batch.completed_result_refs)
+                for ordinal, group in enumerate(prepared.batches):
                     description: ProcessingResult | None = None
                     if reusable:
-                        description = await self._reuse_description(
-                            reusable[ordinal], batch, description_task
-                        )
-                        batch = replace(
-                            batch,
-                            inputs=description.inputs,
-                            sources=tuple(
-                                PreparedSource(group.key, group.name, group=group)
-                                for group in description.inputs
-                            ),
-                        )
-                        batch = await self.preparer.materialize(batch)
-                    reading = ReadingInput(question, instructions, batch.sources)
-                    first_task = frozen_description or frozen_extraction
-                    assert first_task is not None
-                    stage = "transcription"
-                    reading = await self.generation.language_sources(
-                        reading, first_task, snapshot, context, completed, frozen_transcription
-                    )
-                    batch = replace(
-                        batch,
-                        sources=reading.sources,
-                        inputs=tuple(
-                            source.group for source in reading.sources if source.group is not None
-                        ),
-                    )
-                    if strategy in {"description_only", "describe_then_structure"}:
-                        stage = "description"
-                        description = description or await self.generation.run(
-                            frozen_description or description_task,
-                            reading,
+                        request = await self.generation.prepare_group(
+                            prepared.frozen,
+                            group,
                             snapshot,
-                            inputs=batch.inputs,
-                            coverage=batch.coverage,
-                            context=context,
-                            transcription=frozen_transcription,
+                            question=question,
+                            instructions=instructions,
+                            preview=True,
+                            completed=completed,
+                        )
+                        reading = (
+                            request.reading
+                            if isinstance(request, PendingGeneration)
+                            else request.compiled.reading
+                        )
+                        expected = PreparedBatch(
+                            reading.sources,
+                            tuple(source.group for source in reading.sources if source.group),
+                            SourceSelection(),
+                            request.coverage,
+                        )
+                        description = await self._reuse_description(
+                            reusable[ordinal], expected, description_task
+                        )
+                        record_completed(description.ref.address)
+                    if frozen_description is not None:
+                        stage = "description"
+                        description = description or await self.generation.run_group(
+                            prepared.frozen,
+                            group,
+                            snapshot,
+                            question=question,
+                            instructions=instructions,
+                            completed=completed,
                         )
                         descriptions.append(description)
-                        completed.extend(
-                            str(ref)
-                            for ref in cast(
-                                list[JsonValue], description.parameters.get("stage_result_refs", [])
-                            )
-                            if isinstance(ref, str)
-                        )
                         completed.append(description.ref.address)
                         if strategy == "description_only":
                             final.append(description)
-                    if strategy in {"direct_structured", "describe_then_structure"}:
+                    if frozen_extraction is not None:
                         stage = "structure"
-                        # Keep the actual media inputs alongside the persisted description.
-                        if strategy == "describe_then_structure":
-                            second_plan = await self.preparer.prepare(
-                                original,
-                                plan.selection,
-                                requirements=self._requirements(extraction_task, snapshot),
-                                settings=settings,
-                                document_mode=document_mode,
-                                without_audio=without_audio,
-                            )
-                            second_batches = [
-                                await self.preparer.materialize(item)
-                                for item in second_plan.batches
-                            ]
-                            sources = [source for item in second_batches for source in item.sources]
-                            inputs = [group for item in second_batches for group in item.inputs]
-                            completed.extend(
-                                ref for item in second_batches for ref in item.completed_result_refs
-                            )
-                        else:
-                            sources = list(batch.sources)
-                            inputs = list(batch.inputs)
+                        extra_sources: list[PreparedSource] = []
                         if description is not None:
                             output = next(
                                 output for output in description.outputs if output.name == "output"
                             )
-                            text = await self.artifacts.read_text(output.artifact)
-                            sources.append(
+                            artifact = await self.artifacts.get(output.artifact)
+                            extra_sources.append(
                                 PreparedSource(
                                     "DESCRIPTION",
                                     "Previously completed media description",
-                                    text=text,
+                                    text=await self.artifacts.read_text(output.artifact),
                                     group=InputGroup(
                                         key="DESCRIPTION",
                                         name="Previously completed media description",
@@ -275,47 +226,35 @@ class MediaAnalysis:
                                             InputPart(
                                                 content=ContentSelection(artifact=output.artifact),
                                                 representation="description",
+                                                media_type=artifact.media_type,
+                                                source_media_type=artifact.media_type,
                                             ),
                                         ),
                                     ),
                                     metadata={"representation": "description"},
                                 )
                             )
-                            inputs.append(
-                                InputGroup(
-                                    key="DESCRIPTION",
-                                    name="Previously completed media description",
-                                    parts=(
-                                        InputPart(
-                                            content=ContentSelection(artifact=output.artifact),
-                                            representation="description",
-                                        ),
-                                    ),
-                                )
-                            )
-                        result = await self.generation.run(
-                            frozen_extraction or extraction_task,
-                            ReadingInput(question, instructions, tuple(sources)),
+                        stage_task = (
+                            prepared.frozen
+                            if strategy == "direct_structured"
+                            else frozen_extraction
+                        )
+                        result = await self.generation.run_group(
+                            stage_task,
+                            group,
                             snapshot,
-                            inputs=inputs,
-                            coverage=batch.coverage,
-                            context=context,
+                            question=question,
+                            instructions=instructions,
                             schema=schema,
-                            transcription=frozen_transcription,
+                            extra_sources=extra_sources,
+                            completed=completed,
                         )
                         final.append(result)
-                        completed.extend(
-                            str(ref)
-                            for ref in cast(
-                                list[JsonValue], result.parameters.get("stage_result_refs", [])
-                            )
-                            if isinstance(ref, str)
-                        )
                         completed.append(result.ref.address)
                     pending.pop(0)
                 return AnalysisResult(
                     original,
-                    prepared.selection,
+                    selection or SourceSelection(),
                     tuple(final),
                     tuple(descriptions),
                     {**prepared.coverage, "actual": [result.coverage for result in final]},

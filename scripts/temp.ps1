@@ -17,7 +17,10 @@ Repository/build assets and generated instance storage are not collected as samp
 
 Close Nous and build commands before applying cleanup. Cleanup recreates the empty
 standard directories afterwards, retaining tools and environments unless requested.
-Detected running processes, Docker bind mounts and linked Git worktrees are skipped.
+Linux reads /proc arguments, cwd and all accessible open descriptors; Windows
+uses CIM executable paths and command lines. Running references, Docker bind mounts
+and linked Git worktrees at any depth are skipped. Each candidate is inspected again
+immediately before removal; unavailable required inspection data retains it.
 The script neither stops services nor removes Docker images or volumes.
 .PARAMETER Apply
 Execute clean. Only valid with the clean action; otherwise cleanup is read-only.
@@ -114,15 +117,101 @@ function Initialize-TempLayout {
     Write-Host "标准 temp 目录已就绪，新增 $created 个目录。"
 }
 
-function Get-BusyPaths {
-    # Only paths and process IDs are exposed; command lines may contain credentials.
+function Get-ProcessReferences {
+    # Keep command lines in memory only; output identifies a process without exposing its arguments.
     if ($IsWindows) {
-        $processes = @(Get-CimInstance Win32_Process | Select-Object ProcessId, Name, ExecutablePath, CommandLine)
-    } else {
-        $processes = @(Get-Process | ForEach-Object {
-            [pscustomobject]@{ ProcessId = $_.Id; Name = $_.ProcessName; ExecutablePath = $_.Path; CommandLine = '' }
+        try {
+            $processes = @(Get-CimInstance Win32_Process -ErrorAction Stop | ForEach-Object {
+                [pscustomobject]@{
+                    ProcessId = $_.ProcessId; Name = $_.Name; ExecutablePath = $_.ExecutablePath
+                    CommandLine = $_.CommandLine; Arguments = @(); WorkingDirectory = $null; OpenPaths = @()
+                }
+            })
+            return [pscustomobject]@{ Processes = $processes; Errors = @() }
+        } catch {
+            return [pscustomobject]@{ Processes = @(); Errors = @('无法读取 Windows CIM 进程信息') }
+        }
+    }
+    if (-not $IsLinux -or -not [IO.Directory]::Exists('/proc')) {
+        return [pscustomobject]@{ Processes = @(); Errors = @('当前平台无法检查进程的命令行、工作目录及打开文件') }
+    }
+    $processes = [Collections.Generic.List[object]]::new()
+    $errors = [Collections.Generic.List[string]]::new()
+    try {
+        $selfStatus = [IO.File]::ReadAllText('/proc/self/status')
+        $uid = [regex]::Match($selfStatus, '(?m)^Uid:\s+(\d+)').Groups[1].Value
+        if (-not $uid) { throw 'missing uid' }
+        $procDirectories = @([IO.Directory]::EnumerateDirectories('/proc') | Where-Object { [IO.Path]::GetFileName($_) -match '^\d+$' })
+    } catch {
+        return [pscustomobject]@{ Processes = @(); Errors = @('无法读取 Linux /proc 进程信息') }
+    }
+    foreach ($directory in $procDirectories) {
+        $processId = [int][IO.Path]::GetFileName($directory)
+        if ($processId -eq $PID) { continue }
+        try {
+            $status = [IO.File]::ReadAllText((Join-Path $directory 'status'))
+        } catch {
+            # A process may leave /proc between enumeration and inspection. Other users'
+            # hidden system processes do not imply that every cleanup target is in use.
+            continue
+        }
+        if ($status -match '(?m)^State:\s+[ZX]\b' -or $status -match '(?m)^Kthread:\s+1\b') { continue }
+        $owned = [regex]::Match($status, '(?m)^Uid:\s+(\d+)').Groups[1].Value -eq $uid
+        $name = [regex]::Match($status, '(?m)^Name:\s+(.+)$').Groups[1].Value.Trim()
+        $arguments = @()
+        $executable = $null
+        $workingDirectory = $null
+        $openPaths = [Collections.Generic.List[string]]::new()
+        $unreadable = [Collections.Generic.List[string]]::new()
+        try {
+            $arguments = @([Text.Encoding]::UTF8.GetString([IO.File]::ReadAllBytes((Join-Path $directory 'cmdline'))).Split([char]0) | Where-Object { $_.Length })
+        } catch { $unreadable.Add('cmdline') }
+        foreach ($field in @('exe', 'cwd')) {
+            try {
+                $target = (Get-Item -LiteralPath (Join-Path $directory $field) -Force -ErrorAction Stop).LinkTarget
+                if (-not $target) { throw 'missing process link' }
+                if ($target.EndsWith(' (deleted)', [StringComparison]::Ordinal)) { $target = $target.Substring(0, $target.Length - 10) }
+                if ($field -eq 'exe') { $executable = $target } else { $workingDirectory = $target }
+            } catch { $unreadable.Add($field) }
+        }
+        try {
+            foreach ($descriptor in [IO.Directory]::EnumerateFileSystemEntries((Join-Path $directory 'fd'))) {
+                try {
+                    $target = (Get-Item -LiteralPath $descriptor -Force -ErrorAction Stop).LinkTarget
+                    if (-not $target) {
+                        # Check the link itself, not its possibly deleted target.
+                        try { [void][IO.File]::GetAttributes($descriptor) }
+                        catch [IO.FileNotFoundException] { continue }
+                        throw '无法读取仍存在的文件描述符链接'
+                    }
+                    if (-not [IO.Path]::IsPathFullyQualified($target)) { continue }
+                    if ($target.EndsWith(' (deleted)', [StringComparison]::Ordinal)) { $target = $target.Substring(0, $target.Length - 10) }
+                    $openPaths.Add($target)
+                } catch {
+                    # Closing an individual descriptor during inspection is normal.
+                    if ($_.CategoryInfo.Category -ne [Management.Automation.ErrorCategory]::ObjectNotFound) { $unreadable.Add('fd') }
+                }
+            }
+        } catch { $unreadable.Add('fd') }
+        if (-not [IO.Directory]::Exists($directory)) { continue }
+        try {
+            $currentStatus = [IO.File]::ReadAllText((Join-Path $directory 'status'))
+            if ($currentStatus -match '(?m)^State:\s+[ZX]\b') { continue }
+        } catch { if (-not [IO.Directory]::Exists($directory)) { continue } }
+        if ($owned -and $unreadable.Count) {
+            $errors.Add("无法完整检查当前用户进程 $processId ($name)：$($unreadable -join ', ')")
+        }
+        $processes.Add([pscustomobject]@{
+            ProcessId = $processId; Name = $name; ExecutablePath = $executable
+            CommandLine = ($arguments -join ' '); Arguments = $arguments
+            WorkingDirectory = $workingDirectory; OpenPaths = $openPaths
         })
     }
+    return [pscustomobject]@{ Processes = $processes; Errors = $errors }
+}
+
+function Get-BusyPaths {
+    $inspection = Get-ProcessReferences
     $mounts = [Collections.Generic.List[string]]::new()
     if (Get-Command docker -ErrorAction SilentlyContinue) {
         $containerIds = @(& docker ps --quiet 2>$null)
@@ -152,27 +241,67 @@ function Get-BusyPaths {
             }
         }
     }
-    return [pscustomobject]@{ Processes = $processes; Mounts = $mounts }
+    return [pscustomobject]@{ Processes = $inspection.Processes; Mounts = $mounts; Errors = $inspection.Errors }
 }
 
-function Get-BlockReason([string]$Path, $Busy) {
+function Get-WorktreeBlockReason([string]$Path) {
+    if (-not [IO.Directory]::Exists($Path)) { return $null }
+    $options = [IO.EnumerationOptions]::new()
+    $options.RecurseSubdirectories = $true
+    $options.IgnoreInaccessible = $false
+    $options.AttributesToSkip = [IO.FileAttributes]::ReparsePoint
+    try {
+        foreach ($gitFile in [IO.Directory]::EnumerateFiles($Path, '.git', $options)) {
+            if (-not (Get-Command git -ErrorAction SilentlyContinue)) { return '发现嵌套 .git 文件但无法调用 Git 确认，保留' }
+            $repository = [IO.Path]::GetDirectoryName($gitFile)
+            $gitPaths = @(& git -C $repository rev-parse --path-format=absolute --git-dir --git-common-dir 2>$null)
+            if ($LASTEXITCODE -ne 0 -or $gitPaths.Count -ne 2) { return '无法确认子树中的 .git 入口，保留' }
+            $gitDirectory = [IO.Path]::GetFullPath($gitPaths[0])
+            $commonDirectory = [IO.Path]::GetFullPath($gitPaths[1])
+            if (-not $gitDirectory.Equals($commonDirectory, $pathComparison)) {
+                return '子树含 Git linked worktree，请用 git worktree remove 处理'
+            }
+        }
+    } catch {
+        return '无法完整检查候选子树中的 Git worktree，保留'
+    }
+    return $null
+}
+
+function Get-BlockReason([string]$Path, $Busy = $null) {
     Assert-TempChild $Path
     if (Test-WithinPath $PWD.ProviderPath $Path) { return '当前工作目录位于其中' }
-    if (Test-Path -LiteralPath (Join-Path $Path '.git') -PathType Leaf) { return 'Git linked worktree，请用 git worktree remove 处理' }
+    $worktree = Get-WorktreeBlockReason $Path
+    if ($worktree) { return $worktree }
+    if ($null -eq $Busy) { $Busy = Get-BusyPaths }
     foreach ($mount in $Busy.Mounts) {
         if ((Test-WithinPath $mount $Path) -or (Test-WithinPath $Path $mount)) { return '运行中的 Docker bind mount' }
     }
     $absoluteText = $Path.Replace('\', '/')
-    $relativeText = [IO.Path]::GetRelativePath($repoRoot, $Path).Replace('\', '/')
     foreach ($process in $Busy.Processes) {
         if ($process.ProcessId -eq $PID) { continue }
         $command = ([string]$process.CommandLine).Replace('\', '/')
-        $referencesPath = $command.Contains($absoluteText, $pathComparison) -or $command.Contains($relativeText, $pathComparison)
+        $referencesPath = $command.Contains($absoluteText, $pathComparison)
         $runsHere = $process.ExecutablePath -and (Test-WithinPath $process.ExecutablePath $Path)
+        $worksHere = $process.WorkingDirectory -and (Test-WithinPath $process.WorkingDirectory $Path)
+        $holdsFile = @($process.OpenPaths | Where-Object { Test-WithinPath $_ $Path }).Count -gt 0
+        if (-not $referencesPath -and $process.WorkingDirectory) {
+            foreach ($argument in $process.Arguments) {
+                $value = [string]$argument
+                if ($value.StartsWith('-') -and $value.Contains('=')) { $value = $value.Substring($value.IndexOf('=') + 1) }
+                if ($value.StartsWith('@')) { $value = $value.Substring(1) }
+                if (-not $value -or $value.StartsWith('-')) { continue }
+                try {
+                    $resolved = [IO.Path]::GetFullPath($value, $process.WorkingDirectory)
+                    if (Test-WithinPath $resolved $Path) { $referencesPath = $true; break }
+                } catch { continue }
+            }
+        }
         $buildInProgress = ([IO.Path]::GetFileName($Path) -in @('build', 'cache')) -and
             $process.Name -match '^(uv|cargo|rustc|go|bun)(\.exe)?$'
-        if ($referencesPath -or $runsHere -or $buildInProgress) { return "进程 $($process.ProcessId) ($($process.Name)) 正在使用" }
+        if ($referencesPath -or $runsHere -or $worksHere -or $holdsFile -or $buildInProgress) { return "进程 $($process.ProcessId) ($($process.Name)) 正在使用" }
     }
+    if ($Busy.Errors.Count) { return ($Busy.Errors -join '；') }
     return $null
 }
 
@@ -297,11 +426,10 @@ if (-not $Apply) {
 # Finish all preservation first. A failed or conflicting copy prevents every deletion.
 foreach ($material in $materials) { Copy-VerifiedMaterial $material }
 Write-Host '样本归集及校验完成，开始清理。'
-$busy = Get-BusyPaths
 $failures = 0
 foreach ($candidate in $candidates) {
     try {
-        $reason = Get-BlockReason $candidate.Path $busy
+        $reason = Get-BlockReason $candidate.Path
         if ($reason) {
             Write-Warning "跳过 $($candidate.Name)：$reason"
             continue

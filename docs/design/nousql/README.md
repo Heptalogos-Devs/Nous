@@ -43,7 +43,7 @@ CLI、HTTP 和 MCP 使用同一 `QueryRequest`。语言放在 `text`，调用者
 
 返回范围包括 `cognition`、`media` 和具体认知种类：`memory`、`memory_semantics`、`concept`、`entity`、`episode`、`journal`、`schema`、`association`、`fact_claim` 等正式 CognitiveKind。`$return(fact_claim)` 读取正式事实主张。`cognition` 单独使用。`$limit` 设置结果数量，受实例检索额度限制。
 
-Fact 撤回后的默认查询可见性正在统一到认知修订状态；当前工作区的修复还需加载并验证。Fact 管理操作和实际运行范围见 [SDK](../../../sdk/python/README.md#事实主张)及[重构进展](../../../docs/python-native-plan/progress-report.md)。
+Fact 撤回后的默认查询可见性正在统一到认知修订状态；当前工作区的修复还需加载并验证。Fact 管理操作和实际运行范围见 [SDK](../../../legacy/sdk/python/README.md#事实主张)及[重构进展](../../../legacy/docs/python-native-plan/progress-report.md)。
 
 `$materialize` 展开所选对象的正式来源视图。展开仍检查来源读取范围，完整身份、实际来源事件和清除缺口保留在机器结果中。
 

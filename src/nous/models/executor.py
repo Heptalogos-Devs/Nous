@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import math
-from collections.abc import AsyncGenerator, Callable, Mapping
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Literal, cast
@@ -51,6 +51,7 @@ from .policy import (
     model_error,
     retry_delay,
     retryable,
+    route_unavailable,
     stage_deadline,
 )
 from .prompts import CompiledPrompt, PromptCompiler, PromptResource
@@ -125,7 +126,7 @@ class PreparedAttempt:
 
 @dataclass(frozen=True)
 class PreparedGeneration:
-    """Keep compiled inputs and candidate routes stable across this stage's attempts."""
+    """Keep the selected input compiled and later routes deferred across this stage."""
 
     task: str
     assignment: TaskAssignment
@@ -139,28 +140,8 @@ class PreparedGeneration:
     estimated_input_tokens: int
     stage_refs: tuple[str, ...] = ()
     ineligible_routes: dict[str, JsonValue] = field(default_factory=dict)
-    route_compiled: dict[str, CompiledPrompt] = field(default_factory=dict)
     attempt_plans: tuple[PreparedAttempt, ...] = ()
-
-    def for_route(self, route: ModelRoute) -> PreparedGeneration:
-        compiled = self.route_compiled.get(route.model_id, self.compiled)
-        output_limit = min(
-            value
-            for value in (
-                self.snapshot.typed_values().model_execution.max_output_tokens,
-                self.assignment.budget.max_output_tokens,
-                route.model.max_output_tokens,
-                route.preset.max_output_tokens,
-            )
-            if value is not None
-        )
-        return replace(
-            self,
-            compiled=compiled,
-            estimated_input_tokens=_estimate_text(compiled),
-            max_output_tokens=output_limit,
-            routes=(route, *(item for item in self.routes if item != route)),
-        )
+    coverage: dict[str, JsonValue] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, JsonValue]:
         return {
@@ -177,11 +158,10 @@ class PreparedGeneration:
             "input_token_count_kind": "estimated",
             "config_version": self.snapshot.version,
             "ineligible_routes": self.ineligible_routes,
-            "route_representations": {
-                key: value.to_dict() for key, value in self.route_compiled.items()
-            },
+            "deferred_routes": [route.model_id for route in self.routes[1:]],
             "media_tokens": None,
             "prepared_attempts": [attempt.to_dict() for attempt in self.attempt_plans],
+            "stage_result_refs": list(self.stage_refs),
         }
 
 
@@ -221,6 +201,21 @@ class ModelExecutor:
         resource = self.compiler.catalog.get(assignment.prompt) if assignment.prompt else None
         return FrozenTask(task, assignment, routes, resource)
 
+    def validate_route(
+        self,
+        frozen: FrozenTask,
+        route: ModelRoute,
+        snapshot: ConfigSnapshot,
+        *,
+        streaming: bool = False,
+    ) -> None:
+        """Check declared protocol/output capability before preparing its input representation."""
+        self._check_route(route, frozen.assignment, None, snapshot)
+        if streaming and "stream" not in route.model.capabilities:
+            raise NousError(
+                "model.capability_missing", f"Model {route.model_id} does not declare streaming"
+            )
+
     def prepare(
         self,
         task: str | FrozenTask,
@@ -228,9 +223,8 @@ class ModelExecutor:
         snapshot: ConfigSnapshot,
         *,
         schema: dict[str, JsonValue] | None = None,
-        route_readings: Mapping[str, ReadingInput] | None = None,
     ) -> PreparedGeneration:
-        """Compile once and check every fallback's ability to preserve the requested input."""
+        """Compile only the selected route; alternative inputs remain deferred until switching."""
         frozen = self.freeze(task, snapshot) if isinstance(task, str) else task
         assignment, routes = frozen.assignment, frozen.routes
         if assignment.operation != "generation" or frozen.resource is None:
@@ -262,67 +256,23 @@ class ModelExecutor:
         input_limit = min(
             limits.max_input_tokens, budget.max_input_tokens or limits.max_input_tokens
         )
-        eligible: list[ModelRoute] = []
-        ineligible: dict[str, JsonValue] = dict(frozen.ineligible_routes)
-        route_compiled: dict[str, CompiledPrompt] = {}
-        for route in routes:
-            try:
-                candidate = (
-                    self.compiler.compile(
-                        frozen.resource, route_readings[route.model_id], schema=schema
-                    )
-                    if route_readings and route.model_id in route_readings
-                    else compiled
-                )
-                self._check_route(route, assignment, candidate, snapshot)
-                route_estimate = _estimate_text(candidate)
-                route_output = min(
-                    value
-                    for value in (
-                        limits.max_output_tokens,
-                        budget.max_output_tokens,
-                        route.model.max_output_tokens,
-                        route.preset.max_output_tokens,
-                    )
-                    if value is not None
-                )
-                if route_estimate > input_limit or (
-                    route.model.context_window is not None
-                    and route_estimate + route_output > route.model.context_window
-                ):
-                    raise NousError(
-                        "model.input_limit",
-                        "Prepared input exceeds this route's context allowance",
-                        details={
-                            "estimated_input_tokens": estimate,
-                            "max_output_tokens": route_output,
-                            "context_window": route.model.context_window,
-                            "limit": input_limit,
-                        },
-                    )
-                eligible.append(route)
-                route_compiled[route.model_id] = candidate
-            except NousError as error:
-                ineligible[route.model_id] = error.to_dict()
-        if not eligible:
+        route = routes[0]
+        self._check_route(route, assignment, compiled, snapshot)
+        if estimate > input_limit or (
+            route.model.context_window is not None
+            and estimate + output_limit > route.model.context_window
+        ):
             raise NousError(
-                "model.no_eligible_route",
-                "No configured route can process the complete prepared input",
-                details={"routes": ineligible},
+                "model.input_limit",
+                "Prepared input exceeds this route's context allowance",
+                details={
+                    "model_id": route.model_id,
+                    "estimated_input_tokens": estimate,
+                    "max_output_tokens": output_limit,
+                    "context_window": route.model.context_window,
+                    "limit": input_limit,
+                },
             )
-        routes = tuple(eligible)
-        compiled = route_compiled[routes[0].model_id]
-        estimate = _estimate_text(compiled)
-        output_limit = min(
-            value
-            for value in (
-                limits.max_output_tokens,
-                budget.max_output_tokens,
-                routes[0].model.max_output_tokens,
-                routes[0].preset.max_output_tokens,
-            )
-            if value is not None
-        )
         prepared = PreparedGeneration(
             frozen.task,
             assignment,
@@ -341,12 +291,11 @@ class ModelExecutor:
             output_limit,
             limits.structured_retries,
             estimate,
-            ineligible_routes=ineligible,
-            route_compiled=route_compiled,
+            ineligible_routes=dict(frozen.ineligible_routes),
         )
         return replace(
             prepared,
-            attempt_plans=tuple(self.prepare_attempt(prepared, route, 1) for route in routes),
+            attempt_plans=(self.prepare_attempt(prepared, routes[0], 1),),
         )
 
     def prepare_attempt(
@@ -356,7 +305,11 @@ class ModelExecutor:
         number: int,
         messages: tuple[ModelMessage, ...] | None = None,
     ) -> PreparedAttempt:
-        active = prepared.for_route(route)
+        if route != prepared.routes[0]:
+            raise NousError(
+                "model.unprepared_route", "Prepare the selected route before creating its attempt"
+            )
+        active = prepared
         parameters = self._request_settings(active, route)
         return PreparedAttempt(
             route,
@@ -398,7 +351,7 @@ class ModelExecutor:
         self,
         route: ModelRoute,
         assignment: TaskAssignment,
-        compiled: CompiledPrompt,
+        compiled: CompiledPrompt | None,
         snapshot: ConfigSnapshot,
     ) -> None:
         provider = snapshot.typed_values().providers[route.model.provider]
@@ -416,12 +369,14 @@ class ModelExecutor:
                 "model.capability_missing",
                 f"Model {route.model_id} does not declare text generation",
             )
-        if compiled.schema and "structured_output" not in route.model.capabilities:
+        if (
+            compiled.schema if compiled else assignment.output_mode != "text"
+        ) and "structured_output" not in route.model.capabilities:
             raise NousError(
                 "model.capability_missing",
                 f"Model {route.model_id} does not declare structured output",
             )
-        for source in compiled.reading.sources:
+        for source in compiled.reading.sources if compiled else ():
             for medium in source.media:
                 mime = medium.media_type
                 if mime.startswith("audio/") and medium.format not in {"wav", "mp3"}:
@@ -655,10 +610,41 @@ class ModelExecutor:
             TypeAdapter(dict[str, JsonValue]).validate_python(
                 TypeAdapter(ModelResponse).dump_python(response, mode="json")
             ),
+            reading=prepared.compiled.reading,
+            coverage=prepared.coverage,
+        )
+
+    @staticmethod
+    async def _prepare_route(
+        initial: PreparedGeneration,
+        index: int,
+        prepare_route: Callable[[ModelRoute], Awaitable[PreparedGeneration]] | None,
+        unavailable: dict[str, JsonValue],
+    ) -> tuple[PreparedGeneration, int]:
+        if prepare_route is None:
+            raise NousError(
+                "model.route_preparation_required", "The next route requires its own prepared input"
+            )
+        for candidate_index in range(min(index, len(initial.routes) - 1), len(initial.routes)):
+            route = initial.routes[candidate_index]
+            try:
+                return await prepare_route(route), candidate_index
+            except NousError as error:
+                if not route_unavailable(error):
+                    raise
+                unavailable[route.model_id] = error.to_dict()
+        raise NousError(
+            "model.no_eligible_route",
+            "No remaining route can prepare this request",
+            details={"routes": unavailable},
         )
 
     async def execute(
-        self, prepared: PreparedGeneration, context: OperationContext | None = None
+        self,
+        prepared: PreparedGeneration,
+        context: OperationContext | None = None,
+        *,
+        prepare_route: Callable[[ModelRoute], Awaitable[PreparedGeneration]] | None = None,
     ) -> GenerationResult:
         """Share one attempt count across transport retry, fallback and output repair."""
         repairs = 0
@@ -670,10 +656,16 @@ class ModelExecutor:
         earlier_responses: list[JsonValue] = []
         repair_feedbacks: list[JsonValue] = []
         report_start = len(attempt_reports())
+        active = prepared
+        unavailable = dict(prepared.ineligible_routes)
         async with asyncio.timeout_at(stage_deadline(prepared.timeout_seconds, context)):
             for attempt in range(1, prepared.max_attempts + 1):
                 route = prepared.routes[min(route_index, len(prepared.routes) - 1)]
-                active = prepared.for_route(route)
+                if route.model_id != active.routes[0].model_id:
+                    active, route_index = await self._prepare_route(
+                        prepared, route_index, prepare_route, unavailable
+                    )
+                    route = active.routes[0]
                 if not messages or route.model_id != previous_route:
                     messages = list(active.compiled.messages)
                     previous_route = route.model_id
@@ -791,6 +783,7 @@ class ModelExecutor:
                         **result.request,
                         "prepared_attempt": submission.to_dict(),
                         "attempt_reports": attempt_reports(report_start),
+                        "ineligible_routes": unavailable,
                         "structured_repairs": repairs,
                         "repair_feedbacks": repair_feedbacks,
                     },
@@ -799,7 +792,11 @@ class ModelExecutor:
 
     @asynccontextmanager
     async def stream(
-        self, prepared: PreparedGeneration, context: OperationContext | None = None
+        self,
+        prepared: PreparedGeneration,
+        context: OperationContext | None = None,
+        *,
+        prepare_route: Callable[[ModelRoute], Awaitable[PreparedGeneration]] | None = None,
     ) -> AsyncGenerator[GenerationStream]:
         """Close the active SDK response when iteration finishes, fails or is abandoned."""
         if prepared.compiled.schema is not None:
@@ -808,7 +805,7 @@ class ModelExecutor:
             )
         stream = GenerationStream()
         # The generator owns and closes every response, including early exit by the consumer.
-        stream.deltas = self._deltas(prepared, context, stream)
+        stream.deltas = self._deltas(prepared, context, stream, prepare_route)
         try:
             yield stream
         finally:
@@ -819,13 +816,21 @@ class ModelExecutor:
         prepared: PreparedGeneration,
         context: OperationContext | None,
         target: GenerationStream | None = None,
+        prepare_route: Callable[[ModelRoute], Awaitable[PreparedGeneration]] | None = None,
     ) -> AsyncGenerator[str]:
         visible = False
         report_start = len(attempt_reports())
+        active = prepared
+        route_index = 0
+        unavailable = dict(prepared.ineligible_routes)
         async with asyncio.timeout_at(stage_deadline(prepared.timeout_seconds, context)):
             for attempt in range(1, prepared.max_attempts + 1):
-                route = prepared.routes[min(attempt - 1, len(prepared.routes) - 1)]
-                active = prepared.for_route(route)
+                route = prepared.routes[min(route_index, len(prepared.routes) - 1)]
+                if route.model_id != active.routes[0].model_id:
+                    active, route_index = await self._prepare_route(
+                        prepared, route_index, prepare_route, unavailable
+                    )
+                    route = active.routes[0]
                 if "stream" not in route.model.capabilities:
                     raise NousError(
                         "model.capability_missing",
@@ -886,6 +891,7 @@ class ModelExecutor:
                             failure = model_error(error, attempt)
                             failure.details["partial_output_delivered"] = visible
                             raise failure from error
+                        route_index += 1
                         retry_error = error
                 if retry_error is not None:
                     await retry_delay(retry_error)
@@ -900,6 +906,7 @@ class ModelExecutor:
                                 active, route, attempt
                             ).to_dict(),
                             "attempt_reports": attempt_reports(report_start),
+                            "ineligible_routes": unavailable,
                         },
                     )
                 return

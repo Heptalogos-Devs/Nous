@@ -548,6 +548,8 @@ class WaveQueries:
             "origin_content": candidate["origin_content"],
             "text": await self.artifacts.read_selection(content),
             "metadata": candidate["metadata"],
+            "concepts": candidate["concepts"],
+            "paths": candidate["paths"],
         }
         if sources:
             result["sources"] = [

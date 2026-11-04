@@ -19,7 +19,8 @@ InputPlan:
   requested_coverage
 
 plan_inputs(inputs, frozen_task, settings, options) -> InputPlan
-materialize(request_group, route, context) -> scoped ReadingInput
+for_route(request_group, accepted_formats, settings) -> RequestGroup
+materialize(request_group, context) -> scoped ReadingInput
 compile(reading, frozen_resource, output_contract) -> CompiledPrompt
 ```
 
@@ -29,11 +30,13 @@ InputPlan 由 `models/input.py` 的完整规划能力拥有，GenerationOperatio
 
 ## 表示选择与两阶段任务
 
-每条实际路线独立取得可用的确定性表示。首选模型接受原生 PDF 时可以保留 PDF，备用模型需要页图时按同一原件与选区准备；参数记录本次实际采用的表示。格式转换由 MediaPreparer 完成，执行器不自建媒体适配器。
+每条路线在实际选中时才取得自己的表示。`GenerationOperations.prepare_group` 使用 input owner 的 `for_route`，按同一语义组的原件与选区重新规划，物化当前批次后编译实际请求。原生 PDF、页图、音频与转写文字可以随路线改变；格式转换由 MediaPreparer 完成。
 
-描述与结构化可以使用不同模型，各自从原件规划表示。第二阶段显式附加已保存的描述；不能直接假定第一阶段的 PNG/WAV 对第二个模型也合法。额外转写是已规划的语言阶段，不属于 fallback 的隐式格式转换。
+主路线成功时不准备备用路线的媒体或转写。ModelExecutor 只有在需要切换时才回调同一个 prepare_group；已知格式、能力或额度不足会跳过该路线并保留原因。文本主模型无法消费图片或缺少可用转写时，仍能选择有相应原生能力的备用模型。未选择的路线保持 deferred 状态。
 
-preview 不发语言请求。依赖转写但尚无转写产物时，展示“需要转写”及实际缺项，不能以空文本假装可执行。task preview、run 和 show-request 使用同一输入计划与编译路径。
+描述与结构化分别调用共同 run_group，消费同一个语义组。第二阶段从原件规划本路线表示，并显式附加已采用的 DESCRIPTION Artifact。配置的转写是所选路线需要时执行的语言前置阶段，结果独立采用；备用路线尚未选择时不运行它。
+
+preview 不发语言请求。所选路线依赖转写时返回 requires_transcription、路线与任务配置；可确定执行时展示一个实际准备值，后继路线列为 deferred_routes。task preview、run、probe 和媒体阶段共用同一选择与准备操作。
 
 ## 有界工作
 

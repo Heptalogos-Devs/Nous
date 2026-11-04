@@ -27,6 +27,8 @@ class GenerationResult:
     attempts: int
     finish_reason: str | None = None
     response: dict[str, JsonValue] = field(default_factory=dict)
+    reading: ReadingInput | None = None
+    coverage: dict[str, JsonValue] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

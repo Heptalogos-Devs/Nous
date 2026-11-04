@@ -15,7 +15,7 @@ Journal 当前正文版本、概念标注版本及 Concept 意义版本由认知
 
 一个 occurrence 指定 concept key、精确正文块/选区及实际顺序。同一个 Concept 可以多次出现。路径是一组 occurrence 的有序列表，具有自己的正文覆盖与用途说明。不同路径之间没有默认边。
 
-无序 memberships 只用于概念接触。给定路径与候选选区，取其实际覆盖的连续子路径；被选区排除的中间步骤不能在裁剪后伪造相邻边。需要跨一项的路径仍按原算法 Span-2 条件计算。
+无序 memberships 只用于概念接触。使用 annotation_ref 时，memberships 从候选精确范围完整覆盖的全部 occurrences 取得，包含未参加路径的出现项；每个出现项引用的全部块都须落在该范围内。paths 为空仍保留这些归属及直接锚召回，原出现项的数组次序不生成候选路径或源图边。显式 candidate.concepts 可以补充归属，并须包含覆盖出现项和路径中的概念。给定路径与候选选区，取其实际覆盖的连续子路径；被选区排除的中间步骤不能在裁剪后伪造相邻边。需要跨一项的路径仍按原算法 Span-2 条件计算。
 
 单个主题 Journal 可以有“经过”“解释”两条路径。对多条路径不执行扁平 concat，不对笛卡尔积建事实边。
 
@@ -42,7 +42,7 @@ S_0(c)=clip(B(c)+A(c)+P_{p^*}(c)+G_{p^*}(c),0,1).
 
 ## 返回正文与 Steward
 
-Native 返回 candidate row、path row、分数与有关关系；Python 将其映射到原 JournalRevision/Artifact 的选区。Steward 后续只选择这些版本上的块，代码回取原文。默认检索交付可直接返回摘要性片段或全文引用，完整出处通过 read 展开。
+Native 返回 candidate row、path row、分数与有关关系；Python 将其映射到原 JournalRevision/Artifact 的选区。Steward 后续只选择这些版本上的块，代码回取原文。默认检索交付可直接返回摘要性片段或全文引用，完整出处通过 read 展开。read 同时返回快照冻结的 concepts 与 paths，保持原文、无序归属和显式顺序的区分。
 
 ## 本轮清单入口
 

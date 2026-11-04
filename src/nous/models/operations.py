@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
@@ -32,7 +32,8 @@ from nous.runtime.execution import ExecutionManager, OperationContext
 
 from .contracts import GenerationResult, ReadingInput
 from .executor import FrozenTask, ModelRoute, PreparedGeneration
-from .input import InputPlan, RequestGroup, materialize, plan_inputs
+from .input import InputPlan, RequestGroup, for_route, materialize, plan_inputs
+from .policy import route_unavailable
 from .tasks import TASKS
 
 if TYPE_CHECKING:
@@ -54,7 +55,6 @@ class PreparedRun:
     instructions: str = ""
     schema: dict[str, JsonValue] | None = None
     preparations: tuple[str, ...] = ()
-    transcription: FrozenTask | None = None
     input_plan: InputPlan | None = None
 
 
@@ -64,6 +64,31 @@ class GenerationOutcome:
     results: tuple[ProcessingResult, ...]
     coverage: dict[str, JsonValue]
     preparations: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class PendingGeneration:
+    frozen: FrozenTask
+    reading: ReadingInput
+    coverage: dict[str, JsonValue]
+    formats: tuple[str, ...]
+    transcription_task: str | None
+
+    def to_dict(self) -> dict[str, JsonValue]:
+        return {
+            "status": "requires_transcription",
+            "task": self.frozen.task,
+            "model_id": self.frozen.routes[0].model_id,
+            "formats": list(self.formats),
+            "transcription_task": self.transcription_task,
+            "source_groups": [
+                source.group.model_dump(mode="json")
+                for source in self.reading.sources
+                if source.group
+            ],
+            "coverage": self.coverage,
+            "deferred_routes": [route.model_id for route in self.frozen.routes[1:]],
+        }
 
 
 class GenerationOperations:
@@ -154,11 +179,11 @@ class GenerationOperations:
     ) -> PreparedRun:
         async with self.execution.operation("model.prepare_input", snapshot):
             frozen = self.executor.freeze(task, snapshot) if isinstance(task, str) else task
-            transcription = self.freeze_transcription(snapshot)
             originals = await self._accept(input, texts)
             unavailable: dict[str, JsonValue] = {}
             for route_index, route in enumerate(frozen.routes):
                 try:
+                    self.executor.validate_route(frozen, route, snapshot)
                     plan = await plan_inputs(
                         self.preparer,
                         originals,
@@ -175,12 +200,7 @@ class GenerationOperations:
                     )
                     break
                 except NousError as error:
-                    if error.code not in {
-                        "media.format_unavailable",
-                        "media.vision_required",
-                        "media.audio_capability_missing",
-                        "media.jpeg_background_required",
-                    }:
+                    if not route_unavailable(error):
                         raise
                     unavailable[route.model_id] = error.to_dict()
             else:
@@ -204,94 +224,127 @@ class GenerationOperations:
                         for ref in item.completed_result_refs
                     )
                 ),
-                transcription,
                 plan,
             )
 
-    async def _route_readings(
+    async def prepare_group(
         self,
-        group: RequestGroup,
-        primary: ReadingInput,
         frozen: FrozenTask,
+        group: RequestGroup,
         snapshot: ConfigSnapshot,
-        context: OperationContext,
-        completed: list[str],
-    ) -> dict[str, ReadingInput]:
-        readings = {frozen.routes[0].model_id: primary}
-        for route in frozen.routes[1:]:
-            alternatives: list[PreparedBatch] = []
-            try:
-                for batch in group.batches:
-                    if batch.conversion is None:
-                        if not any(source.media for source in batch.sources):
-                            alternatives.append(batch)
-                            continue
-                        for source in batch.sources:
-                            if not source.media or source.group is None:
-                                alternatives.append(
-                                    replace(
-                                        batch,
-                                        sources=(source,),
-                                        inputs=(source.group,) if source.group else (),
-                                    )
-                                )
-                                continue
-                            origins = tuple(
-                                dict.fromkeys(
-                                    origin.origin
-                                    for part in source.group.parts
-                                    for origin in part.origins
-                                )
-                            )
-                            selected = origins or tuple(part.content for part in source.group.parts)
-                            for content in selected:
-                                plan = await self.preparer.prepare(
-                                    content.artifact,
-                                    content.selection,
-                                    requirements=route.model.input_formats,
-                                    settings=snapshot.typed_values().media,
-                                )
-                                prefix = source.key.split(":", 1)[0]
-                                alternatives.extend(
-                                    replace(item, source_prefix=prefix) for item in plan.batches
-                                )
-                        continue
-                    recipe = batch.conversion
-                    plan = await self.preparer.prepare(
-                        recipe.artifact,
-                        recipe.selection,
-                        requirements=route.model.input_formats,
-                        settings=recipe.settings,
-                        document_mode=recipe.document_mode,
-                        without_audio=recipe.without_audio,
+        *,
+        question: str = "",
+        instructions: str = "",
+        schema: dict[str, JsonValue] | None = None,
+        extra_sources: Sequence[PreparedSource] = (),
+        preview: bool = False,
+        streaming: bool = False,
+        route: ModelRoute | None = None,
+        completed: list[str] | None = None,
+        on_prepared: Callable[[PreparedGeneration], None] | None = None,
+    ) -> PreparedGeneration | PendingGeneration:
+        """Select and prepare one route; unused alternatives perform no conversion or language work."""
+        completed = completed if completed is not None else []
+        unavailable = dict(frozen.ineligible_routes)
+        candidates = (route,) if route is not None else frozen.routes
+        async with self.execution.operation("model.prepare_route", snapshot) as context:
+            for candidate in candidates:
+                try:
+                    self.executor.validate_route(frozen, candidate, snapshot, streaming=streaming)
+                    selected = replace(
+                        frozen,
+                        routes=frozen.routes[frozen.routes.index(candidate) :],
+                        ineligible_routes=unavailable,
                     )
-                    alternatives.extend(
-                        replace(item, source_prefix=batch.source_prefix) for item in plan.batches
+                    batch = await materialize(
+                        self.preparer,
+                        await for_route(
+                            self.preparer,
+                            group,
+                            candidate.model.input_formats,
+                            snapshot.typed_values().media,
+                        ),
+                        snapshot.typed_values().media.max_inline_bytes,
                     )
-                actual = await materialize(
-                    self.preparer,
-                    RequestGroup(tuple(alternatives), group.coverage),
-                    snapshot.typed_values().media.max_inline_bytes,
-                )
-                completed.extend(actual.completed_result_refs)
-                readings[route.model_id] = await self.language_sources(
-                    ReadingInput(primary.question, primary.instructions, actual.sources),
-                    replace(frozen, routes=(route,)),
+                    completed.extend(batch.completed_result_refs)
+                    reading = ReadingInput(question, instructions, (*batch.sources, *extra_sources))
+                    missing = tuple(
+                        medium.media_type
+                        for source in reading.sources
+                        for medium in source.media
+                        if medium.media_type.startswith("audio/")
+                        and medium.media_type not in candidate.model.input_formats
+                    )
+                    if preview and missing:
+                        return PendingGeneration(
+                            selected,
+                            reading,
+                            batch.coverage,
+                            missing,
+                            snapshot.typed_values().media.audio.transcription_task,
+                        )
+                    reading = await self.language_sources(
+                        reading, selected, snapshot, context, completed
+                    )
+                    prepared = replace(
+                        self.executor.prepare(selected, reading, snapshot, schema=schema),
+                        stage_refs=tuple(dict.fromkeys(completed)),
+                        coverage=batch.coverage,
+                    )
+                    if on_prepared:
+                        on_prepared(prepared)
+                    return prepared
+                except NousError as error:
+                    if not route_unavailable(error):
+                        raise
+                    error.details["preparation_route"] = candidate.model_id
+                    unavailable[candidate.model_id] = error.to_dict()
+                    if route is not None:
+                        raise
+            raise NousError(
+                "model.no_eligible_route",
+                "No configured route can prepare the requested inputs",
+                details={"routes": unavailable},
+            )
+
+    async def run_group(
+        self,
+        frozen: FrozenTask,
+        group: RequestGroup,
+        snapshot: ConfigSnapshot,
+        *,
+        question: str = "",
+        instructions: str = "",
+        schema: dict[str, JsonValue] | None = None,
+        extra_sources: Sequence[PreparedSource] = (),
+        completed: list[str] | None = None,
+        on_delta: Callable[[str], None] | None = None,
+        on_prepared: Callable[[PreparedGeneration], None] | None = None,
+    ) -> ProcessingResult:
+        """Run one semantic group; the executor requests another representation only when switching."""
+        completed = completed if completed is not None else []
+        async with self.execution.operation("model.generate", snapshot):
+
+            async def resolve(route: ModelRoute | None = None) -> PreparedGeneration:
+                request = await self.prepare_group(
+                    frozen,
+                    group,
                     snapshot,
-                    context,
-                    completed,
+                    question=question,
+                    instructions=instructions,
+                    schema=schema,
+                    extra_sources=extra_sources,
+                    route=route,
+                    completed=completed,
+                    on_prepared=on_prepared,
+                    streaming=on_delta is not None,
                 )
-            except NousError as error:
-                if error.code not in {
-                    "media.format_unavailable",
-                    "media.vision_required",
-                    "media.jpeg_background_required",
-                    "model.joint_input_limit",
-                    "media.audio_capability_missing",
-                }:
-                    raise
-                # Executor rejects this route against the available primary representation.
-        return readings
+                assert isinstance(request, PreparedGeneration)
+                return request
+
+            return await self.run_prepared(
+                await resolve(), on_delta=on_delta, prepare_route=resolve
+            )
 
     async def transcribe(
         self,
@@ -347,7 +400,6 @@ class GenerationOperations:
         transcription: FrozenTask | None = None,
     ) -> ReadingInput:
         """Resolve language-dependent representations after deterministic preparation has finished."""
-        transcription = transcription or self.freeze_transcription(snapshot)
         sources: list[PreparedSource] = []
         accepted = frozen.routes[0].model.input_formats
         for source in reading.sources:
@@ -367,6 +419,7 @@ class GenerationOperations:
                 if not artifact.media_type.startswith("audio/") or artifact.media_type in accepted:
                     parts.append(part)
                     continue
+                transcription = transcription or self.freeze_transcription(snapshot)
                 result = await self.transcribe(source, part, snapshot, context, transcription)
                 completed.append(result.ref.address)
                 output = next(output for output in result.outputs if output.name == "transcript")
@@ -404,7 +457,7 @@ class GenerationOperations:
     ) -> GenerationOutcome:
         results: list[ProcessingResult] = []
         completed: list[str] = []
-        async with self.execution.operation("model.run", snapshot) as context:
+        async with self.execution.operation("model.run", snapshot):
             prepared = await self.prepare_input(
                 task,
                 input,
@@ -421,34 +474,16 @@ class GenerationOperations:
             completed.extend(prepared.preparations)
             try:
                 for plan in prepared.batches:
-                    batch = await materialize(
-                        self.preparer, plan, snapshot.typed_values().media.max_inline_bytes
-                    )
-                    completed.extend(batch.completed_result_refs)
-                    reading = await self.language_sources(
-                        ReadingInput(question, instructions, batch.sources),
+                    result = await self.run_group(
                         prepared.frozen,
+                        plan,
                         snapshot,
-                        context,
-                        completed,
-                        prepared.transcription,
-                    )
-                    request = replace(
-                        self.executor.prepare(
-                            prepared.frozen,
-                            reading,
-                            snapshot,
-                            schema=schema,
-                            route_readings=await self._route_readings(
-                                plan, reading, prepared.frozen, snapshot, context, completed
-                            ),
-                        ),
-                        stage_refs=tuple(completed),
-                    )
-                    if on_prepared:
-                        on_prepared(request)
-                    result = await self.run_prepared(
-                        request, coverage=batch.coverage, context=context, on_delta=on_delta
+                        question=question,
+                        instructions=instructions,
+                        schema=schema,
+                        completed=completed,
+                        on_delta=on_delta,
+                        on_prepared=on_prepared,
                     )
                     results.append(result)
                     completed.append(result.ref.address)
@@ -482,63 +517,26 @@ class GenerationOperations:
         *,
         inputs: Sequence[InputGroup] | None = None,
         coverage: Mapping[str, object] | None = None,
-        context: OperationContext | None = None,
         schema: dict[str, JsonValue] | None = None,
-        transcription: FrozenTask | None = None,
     ) -> ProcessingResult:
-        async with self.execution.operation("model.generate", snapshot) as active:
-            frozen = self.executor.freeze(task, snapshot) if isinstance(task, str) else task
-            completed: list[str] = []
-            try:
-                reading = await self.language_sources(
-                    reading, frozen, snapshot, context or active, completed, transcription
-                )
-                # Actual language representations determine adoption, including newly created transcripts.
-                return await self.run_prepared(
-                    replace(
-                        self.executor.prepare(
-                            frozen,
-                            reading,
-                            snapshot,
-                            schema=schema,
-                            route_readings=await self._route_readings(
-                                RequestGroup(
-                                    (
-                                        PreparedBatch(
-                                            reading.sources,
-                                            tuple(
-                                                source.group
-                                                for source in reading.sources
-                                                if source.group
-                                            ),
-                                            SourceSelection(),
-                                            TypeAdapter(dict[str, JsonValue]).validate_python(
-                                                coverage or {}
-                                            ),
-                                        ),
-                                    ),
-                                    TypeAdapter(dict[str, JsonValue]).validate_python(
-                                        coverage or {}
-                                    ),
-                                ),
-                                reading,
-                                frozen,
-                                snapshot,
-                                context or active,
-                                completed,
-                            ),
-                        ),
-                        stage_refs=tuple(completed),
-                    ),
-                    inputs=tuple(source.group for source in reading.sources if source.group)
-                    if completed
-                    else inputs,
-                    coverage=coverage,
-                    context=context or active,
-                )
-            except NousError as exc:
-                exc.details["completed_result_refs"] = [str(ref) for ref in completed]
-                raise
+        frozen = self.executor.freeze(task, snapshot) if isinstance(task, str) else task
+        actual_coverage = TypeAdapter(dict[str, JsonValue]).validate_python(coverage or {})
+        batch = PreparedBatch(
+            reading.sources,
+            tuple(inputs)
+            if inputs is not None
+            else tuple(source.group for source in reading.sources if source.group),
+            SourceSelection(),
+            actual_coverage,
+        )
+        return await self.run_group(
+            frozen,
+            RequestGroup((batch,), actual_coverage),
+            snapshot,
+            question=reading.question,
+            instructions=reading.instructions,
+            schema=schema,
+        )
 
     async def run_prepared(
         self,
@@ -548,12 +546,17 @@ class GenerationOperations:
         coverage: Mapping[str, object] | None = None,
         context: OperationContext | None = None,
         on_delta: Callable[[str], None] | None = None,
+        prepare_route: Callable[[ModelRoute], Awaitable[PreparedGeneration]] | None = None,
     ) -> ProcessingResult:
         async with self.execution.operation("model.generate", prepared.snapshot) as active:
             if on_delta is None:
-                generated = await self.executor.execute(prepared, context=context or active)
+                generated = await self.executor.execute(
+                    prepared, context=context or active, prepare_route=prepare_route
+                )
             else:
-                async with self.executor.stream(prepared, context=context or active) as stream:
+                async with self.executor.stream(
+                    prepared, context=context or active, prepare_route=prepare_route
+                ) as stream:
                     async for delta in stream:
                         on_delta(delta)
                     if stream.result is None:
@@ -570,9 +573,7 @@ class GenerationOperations:
         inputs: Sequence[InputGroup] | None,
         coverage: Mapping[str, object] | None,
     ) -> ProcessingResult:
-        reading = prepared.route_compiled.get(
-            str(generated.producer.get("model_id")), prepared.compiled
-        ).reading
+        reading = generated.reading or prepared.compiled.reading
         definition = TASKS[prepared.compiled.resource.manifest.contract_id]
         outputs = await definition.outputs(
             generated.output,
@@ -599,9 +600,11 @@ class GenerationOperations:
                 "attempts": generated.attempts,
                 "usage": generated.usage,
                 "finish_reason": generated.finish_reason,
-                "stage_result_refs": list(prepared.stage_refs),
+                "stage_result_refs": generated.request.get(
+                    "stage_result_refs", list(prepared.stage_refs)
+                ),
             },
-            coverage=coverage,
+            coverage=generated.coverage or coverage,
         )
 
     async def preview(
@@ -651,34 +654,28 @@ class GenerationOperations:
                 )
             previews: list[JsonValue] = []
             for group in plan.request_groups:
-                batch = await materialize(
-                    self.preparer, group, snapshot.typed_values().media.max_inline_bytes
-                )
-                reading = ReadingInput(question, instructions, batch.sources)
-                accepted = frozen.routes[0].model.input_formats if frozen else ()
-                missing = [
-                    medium.media_type
-                    for source in reading.sources
-                    for medium in source.media
-                    if medium.media_type.startswith("audio/") and medium.media_type not in accepted
-                ]
-                if missing:
-                    preview_missing: dict[str, JsonValue] = {
-                        "status": "requires_transcription",
-                        "formats": list[JsonValue](missing),
-                        "source_groups": list[JsonValue](
-                            [item.model_dump(mode="json") for item in batch.inputs]
-                        ),
-                        "transcription_task": snapshot.typed_values().media.audio.transcription_task,
-                    }
-                    previews.append(preview_missing)
-                    continue
-                compiled = (
-                    self.executor.prepare(frozen, reading, snapshot, schema=schema).compiled
-                    if frozen
-                    else self.executor.compiler.compile(resource, reading, schema=schema)
-                )
-                previews.append(compiled.to_dict())
+                if frozen:
+                    request = await self.prepare_group(
+                        frozen,
+                        group,
+                        snapshot,
+                        question=question,
+                        instructions=instructions,
+                        schema=schema,
+                        preview=True,
+                    )
+                    previews.append(request.to_dict())
+                else:
+                    batch = await materialize(
+                        self.preparer, group, snapshot.typed_values().media.max_inline_bytes
+                    )
+                    previews.append(
+                        self.executor.compiler.compile(
+                            resource,
+                            ReadingInput(question, instructions, batch.sources),
+                            schema=schema,
+                        ).to_dict()
+                    )
             if len(previews) == 1:
                 return dict(cast(dict[str, JsonValue], previews[0]))
             return {"batches": previews, "representation": "task" if task else "template"}

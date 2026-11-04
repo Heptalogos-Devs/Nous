@@ -43,7 +43,7 @@ WaveResult:
   diagnostics?  # include_trace / explain 时展开
 ```
 
-WaveHit 的 rank 决定呈现次序；quality/ranking/score_kind 见 ranking。命中返回精确候选及实际内容选区，来源和反证可以进一步展开。完成没有候选时返回真实空集合与原因，不制造默认答案。
+WaveHit 的 rank 决定呈现次序；quality/ranking/score_kind 见 ranking。annotation_ref 的无序概念归属来自候选实际覆盖的 occurrences，空 paths 不清空归属；read 返回同一份冻结 concepts/paths。命中返回精确候选及实际内容选区，来源和反证可以进一步展开。完成没有候选时返回真实空集合与原因，不制造默认答案。
 
 coverage 包含候选预算、返回上限、实际候选数量及预算或 top_k 是否触发截断。
 

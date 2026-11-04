@@ -28,9 +28,9 @@ documents.derived_from 是外部清单明确声明的派生关系，引用已列
 
 终端原始来源的 source_sequences 提供 source 事实质量。派生 Journal 可以通过带类型、原位置和 SupportGroup 的关系贡献参与结构投影；不能因为多一次派生增加独立来源。两个根共同产生的一项解释保持一个共同依据组。具体规则见 [关系与支持](evidence-projection.md)。
 
-unordered 来源对每个不同 Concept 对形成同质量双向共现，贡献仍属于原根；它不提供方向/序列路径。原上游的 position/window 衰减仅用于 ordered=true。候选 memberships 与 ordered curve 分开：前者可支持概念匹配和直接锚，后者才支撑依赖序位的曲线奖励。没有 curve 时该分量标记不可用，不按 key 排序补造。候选 concepts 缺省为各 paths 中的唯一概念；整文候选可继承其 source_sequence 的成员集合，局部候选只使用实际选区覆盖的出现项。
+unordered 来源对每个不同 Concept 对形成同质量双向共现，贡献仍属于原根；它不提供方向/序列路径。原上游的 position/window 衰减仅用于 ordered=true。候选 memberships 与 ordered curve 分开：前者可支持概念匹配和直接锚，后者才支撑依赖序位的曲线奖励。没有 curve 时该分量标记不可用，不按 key 排序补造。候选绑定 annotation_ref 时，concepts 缺省为其精确范围完整覆盖的全部 occurrences 的唯一概念，独立于 paths 是否为空或包含这些出现项；显式 concepts 须包含这些归属。未绑定标注时，concepts 缺省为各 paths 中的唯一概念，整文候选可继承其 source_sequence 的成员集合。局部候选只使用实际选区完整覆盖的出现项。
 
-source_sequences 缺省不会触发自动抽取：lexical/dense 可用；需要 VCP 时明确报告无相应概念/事实能力。不得用候选全部两两相连或统一 dummy Tag 伪造可用 VCP。
+source_sequences 缺省不会触发自动抽取。已有概念及向量仍支持 Native 的概念接触、融合与直接锚；没有事实边时传播与顺序奖励保持相应的空状态。缺少实际向量或概念能力时报告能力缺项。不得用候选全部两两相连或统一 dummy Tag 伪造可用 VCP。
 
 ## 三种局部身份
 

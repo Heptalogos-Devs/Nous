@@ -177,3 +177,61 @@ async def materialize(
             dict.fromkeys(ref for batch in batches for ref in batch.completed_result_refs)
         ),
     )
+
+
+async def for_route(
+    preparer: MediaPreparer,
+    request: RequestGroup,
+    requirements: Sequence[str],
+    settings: MediaConfig,
+) -> RequestGroup:
+    """Plan only the selected route's representation over the same source ranges."""
+    alternatives: list[PreparedBatch] = []
+    for batch in request.batches:
+        if batch.conversion is not None:
+            recipe = batch.conversion
+            plan = await preparer.prepare(
+                recipe.artifact,
+                recipe.selection,
+                requirements=requirements,
+                settings=recipe.settings,
+                document_mode=recipe.document_mode,
+                without_audio=recipe.without_audio,
+            )
+            alternatives.extend(
+                replace(item, source_prefix=batch.source_prefix) for item in plan.batches
+            )
+            continue
+        for source in batch.sources:
+            binary = (
+                source.media
+                or source.group
+                and any(
+                    part.media_type
+                    and not part.media_type.startswith("text/")
+                    and part.media_type != "application/json"
+                    for part in source.group.parts
+                )
+            )
+            if not binary or source.group is None:
+                alternatives.append(
+                    replace(
+                        batch, sources=(source,), inputs=(source.group,) if source.group else ()
+                    )
+                )
+                continue
+            origins = tuple(
+                dict.fromkeys(
+                    origin.origin for part in source.group.parts for origin in part.origins
+                )
+            )
+            for content in origins or tuple(part.content for part in source.group.parts):
+                plan = await preparer.prepare(
+                    content.artifact,
+                    content.selection,
+                    requirements=requirements,
+                    settings=settings,
+                )
+                prefix = source.key.split(":", 1)[0]
+                alternatives.extend(replace(item, source_prefix=prefix) for item in plan.batches)
+    return RequestGroup(tuple(alternatives), request.coverage)

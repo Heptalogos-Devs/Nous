@@ -20,6 +20,8 @@ Wave：[能力与边界](design/wave/overview.md)、[资产与集合](design/wav
 
 认知设计：[Journal](design/cognition/journal.md)、[修订](design/cognition/journal-revisions.md)、[journalize](design/cognition/journalize.md)、[概念标注](design/cognition/concept-annotations.md)、[多路径投影](design/wave/journal-projection.md)、[关系支持](design/wave/evidence-projection.md)、[时间视图](design/wave/temporal-views.md)。本轮实现范围由主计划界定；完整 Journal 计划单列，不把设计存在当作代码已完成。
 
+NousQL：[查询语言手册](design/nousql/README.md)。
+
 ## 更新规则
 
 一项规则只在其负责专题定义。决定改变时替换原文并迁移关联例子；不在正文保留失效方案的兼容说明。CURRENT 不列讨论归档清单。研究提出的新规则与源码已经具有的能力分别写明；正式 Spec 中已选方案就是本次施工合同。

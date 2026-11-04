@@ -50,6 +50,27 @@ def retryable(error: BaseException) -> bool:
     return False
 
 
+def route_unavailable(error: NousError) -> bool:
+    """Skip an unusable representation or transient prerequisite without counting a chat call."""
+    return (
+        error.code
+        in {
+            "media.format_unavailable",
+            "media.vision_required",
+            "media.audio_capability_missing",
+            "media.jpeg_background_required",
+            "media.input_too_large",
+            "model.joint_input_limit",
+            "model.capability_missing",
+            "model.protocol_format_unsupported",
+            "model.protocol_unsupported",
+            "model.input_limit",
+        }
+        or error.code == "model.request_failed"
+        and error.retryable
+    )
+
+
 def model_error(error: BaseException, attempts: int) -> NousError:
     if isinstance(error, NousError):
         return error

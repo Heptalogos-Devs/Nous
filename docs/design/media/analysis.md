@@ -2,9 +2,9 @@
 
 ## 完整操作
 
-MediaAnalysis 接收实际输入、策略、问题和选区，建立一次 Execution 根操作。它固定配置与所有需要的任务/模板，取得确定性 MediaPlan，然后按批次组织语言阶段并采用结果。
+MediaAnalysis 接收实际输入、策略、问题和选区，建立一次 Execution 根操作。它冻结描述与结构化任务，使用 GenerationOperations.prepare_input 取得共同 RequestGroup，然后按组组织语言阶段。
 
-构造依赖是内容 owner、确定性 MediaPreparer、GenerationOperations、TranscriptionOperations 和 Execution。每个 owner 只取得实际需要的依赖。确定性准备器无模型依赖；MediaAnalysis 不创建 Provider 客户端。
+构造依赖是内容 owner、确定性 MediaPreparer、GenerationOperations 与 Execution。确定性准备器无模型依赖；MediaAnalysis 不创建 Provider 客户端或自己的路线准备器。
 
 ## 三种策略
 
@@ -12,7 +12,7 @@ MediaAnalysis 接收实际输入、策略、问题和选区，建立一次 Execu
 - direct_structured：确定性表示 → 指定结构化任务 → 采用结果。
 - describe_then_structure：描述阶段成功即采用；后续阶段同时取得其需要的原媒体表示与已保存描述，采用最终结果。
 
-任务本身不支持音频且已明确配置转写时，由 MediaAnalysis 在对应批次先调用转写阶段。普通 generation/preview 不通过这个策略自动触发额外调用。原生音频、转写文字与媒体描述的表示身份分别记录。
+每个阶段调用共同 run_group。所选路线不支持音频且已配置转写时，prepare_group 才执行转写；原生主路线成功时不会触发文本备用的转写。原生音频、转写文字与媒体描述的表示身份分别记录，preview 不发语言请求。
 
 ## 不同模型的输入能力
 

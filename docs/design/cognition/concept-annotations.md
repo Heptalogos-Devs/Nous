@@ -30,7 +30,7 @@ AnnotationSet:
 
 路径顺序可以是问题到解释、事件发展、对照或反思，未必是现实时间或因果。每一步需在正文中找到含义；没有路径就允许空集合，不按字母顺序凑链。
 
-长 Journal 的不同章节可给不同路径。重复概念有不同 occurrence，不能先 set 去重再计算序位；memberships 可以另取唯一概念。新解释引用已有经历，其结构贡献及独立支持按 [关系投影](../wave/evidence-projection.md) 区分。
+长 Journal 的不同章节可给不同路径。重复概念有不同 occurrence，不能先 set 去重再计算序位。occurrences 独立于 paths 保存：合法标注可以有出现项而 paths 为空，也可以有未参与任何路径的出现项。Wave 的 memberships 取候选精确范围完整覆盖的 occurrence 的唯一 Concept；定义了名称但没有相应出现项的 Concept 不自动成为正文归属。路径仅按明确的 occurrence_keys 提供顺序，空路径集合保持为空。新解释引用已有经历，其结构贡献及独立支持按 [关系投影](../wave/evidence-projection.md) 区分。
 
 ## 修订
 
