@@ -649,7 +649,7 @@ class ModelExecutor:
         """Share one attempt count across transport retry, fallback and output repair."""
         repairs = 0
         route_index = 0
-        previous_route: str | None = None
+        previous_route: ModelRoute | None = None
         messages: list[ModelMessage] = []
         total_usage = RequestUsage()
         unknown_usage = False
@@ -661,14 +661,14 @@ class ModelExecutor:
         async with asyncio.timeout_at(stage_deadline(prepared.timeout_seconds, context)):
             for attempt in range(1, prepared.max_attempts + 1):
                 route = prepared.routes[min(route_index, len(prepared.routes) - 1)]
-                if route.model_id != active.routes[0].model_id:
+                if route != active.routes[0]:
                     active, route_index = await self._prepare_route(
                         prepared, route_index, prepare_route, unavailable
                     )
                     route = active.routes[0]
-                if not messages or route.model_id != previous_route:
+                if not messages or route != previous_route:
                     messages = list(active.compiled.messages)
-                    previous_route = route.model_id
+                    previous_route = route
                 submission = self.prepare_attempt(active, route, attempt, tuple(messages))
                 response: ModelResponse | None = None
                 result: GenerationResult | None = None
@@ -826,7 +826,7 @@ class ModelExecutor:
         async with asyncio.timeout_at(stage_deadline(prepared.timeout_seconds, context)):
             for attempt in range(1, prepared.max_attempts + 1):
                 route = prepared.routes[min(route_index, len(prepared.routes) - 1)]
-                if route.model_id != active.routes[0].model_id:
+                if route != active.routes[0]:
                     active, route_index = await self._prepare_route(
                         prepared, route_index, prepare_route, unavailable
                     )
@@ -836,6 +836,7 @@ class ModelExecutor:
                         "model.capability_missing",
                         f"Model {route.model_id} does not declare streaming",
                     )
+                submission = self.prepare_attempt(active, route, attempt)
                 retry_error: BaseException | None = None
                 result: GenerationResult | None = None
                 with attempt_scope(
@@ -848,7 +849,7 @@ class ModelExecutor:
                             asyncio.timeout(route.preset.timeout_seconds),
                             model_request_stream(
                                 self._model(route),
-                                list(active.compiled.messages),
+                                list(submission.sdk_messages),
                                 model_settings=self._settings(active, route),
                                 model_request_parameters=self._parameters(active),
                             ) as response,
@@ -902,9 +903,7 @@ class ModelExecutor:
                         result,
                         request={
                             **result.request,
-                            "prepared_attempt": self.prepare_attempt(
-                                active, route, attempt
-                            ).to_dict(),
+                            "prepared_attempt": submission.to_dict(),
                             "attempt_reports": attempt_reports(report_start),
                             "ineligible_routes": unavailable,
                         },

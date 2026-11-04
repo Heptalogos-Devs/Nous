@@ -492,6 +492,126 @@ def persisted_results(instance: Path) -> int:
         return database.execute("select count(*) from processing_results").fetchone()[0]
 
 
+@pytest.mark.parametrize("streaming", [False, True], ids=["response", "stream"])
+def test_same_model_preset_fallback_is_prepared_and_persisted(
+    tmp_path: Path, streaming: bool
+) -> None:
+    submissions: list[dict[str, object]] = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self) -> None:
+            request = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            submissions.append(request)
+            status = 503 if len(submissions) == 1 else 200
+            content_type = "application/json"
+            base = {
+                "id": "preset-response",
+                "created": 1700000000,
+                "model": request["model"],
+            }
+            if status == 503:
+                payload = json.dumps({"error": {"message": "Primary unavailable"}}).encode()
+            elif request.get("stream"):
+                content_type = "text/event-stream"
+                frames = [
+                    {
+                        **base,
+                        "object": "chat.completion.chunk",
+                        "choices": [
+                            {
+                                "index": 0,
+                                "delta": {"role": "assistant", "content": "Backup response."},
+                                "finish_reason": None,
+                            }
+                        ],
+                    },
+                    {
+                        **base,
+                        "object": "chat.completion.chunk",
+                        "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+                    },
+                ]
+                payload = (
+                    "".join("data: " + json.dumps(frame) + "\n\n" for frame in frames)
+                    + "data: [DONE]\n\n"
+                ).encode()
+            else:
+                payload = json.dumps(
+                    {
+                        **base,
+                        "object": "chat.completion",
+                        "choices": [
+                            {
+                                "index": 0,
+                                "message": {"role": "assistant", "content": "Backup response."},
+                                "finish_reason": "stop",
+                            }
+                        ],
+                    }
+                ).encode()
+            self.send_response(status)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, format: str, *args: object) -> None:
+            pass
+
+    instance = tmp_path / "preset-fallback-instance"
+    with model_server(Handler) as server:
+        configure_models(instance, server)
+
+        async def configure() -> None:
+            async with open_configuration_operations(instance, environment={}) as configuration:
+                await configuration.update(
+                    {
+                        "presets.primary": {"temperature": 0.1, "max_output_tokens": 64},
+                        "presets.backup": {"temperature": 0.7, "max_output_tokens": 128},
+                        "tasks.read.preset": "primary",
+                        "tasks.read.fallback": [{"model": "reader", "preset": "backup"}],
+                    }
+                )
+
+        asyncio.run(configure())
+        response = model_cli(
+            instance,
+            "tools",
+            "model",
+            "run",
+            "--task",
+            "read",
+            "--text",
+            "Use the backup preset if the primary request fails.",
+            *(["--stream"] if streaming else []),
+        )
+    assert response.returncode == 0, (response.stdout, response.stderr)
+    assert [request["model"] for request in submissions] == ["local-model", "local-model"]
+    assert [request["temperature"] for request in submissions] == [0.1, 0.7]
+    assert [request["max_completion_tokens"] for request in submissions] == [64, 128]
+    if streaming:
+        events = [json.loads(line) for line in response.stdout.splitlines()]
+        assert any(event["event"] == "delta" for event in events)
+        assert events[-1]["event"] == "completed"
+        reference = events[-1]["result"]
+    else:
+        reference = json.loads(response.stdout)["results"][0]["ref"]["address"]
+    restored = model_cli(instance, "tools", "result", "read", reference, "--details")
+    assert restored.returncode == 0, restored.stderr
+    result = json.loads(restored.stdout)
+    assert result["outputs"][0]["text"] == "Backup response."
+    assert result["parameters"]["attempts"] == 2
+    assert result["request"]["max_output_tokens"] == 128
+    assert result["request"]["prepared_attempt"]["parameters"]["temperature"] == 0.7
+    assert result["request"]["prepared_attempt"]["max_output_tokens"] == 128
+    assert result["request"]["prepared_attempt"]["attempt_number"] == 2
+    assert [report["outcome"] for report in result["request"]["attempt_reports"]] == [
+        "retry",
+        "success",
+    ]
+    assert persisted_results(instance) == 1
+
+
 @pytest.mark.parametrize("complete", [False, True], ids=["early-eof", "finished"])
 def test_model_stream_requires_provider_completion_before_adoption(
     tmp_path: Path, complete: bool
@@ -579,9 +699,10 @@ def test_model_stream_requires_provider_completion_before_adoption(
         assert persisted_results(instance) == 0
 
 
+@pytest.mark.parametrize("fallback", [False, True], ids=["repair", "repair-then-fallback"])
 @pytest.mark.parametrize("output_mode", ["native", "tool"])
-def test_model_structured_repair_reaches_second_request_and_survives_restart(
-    tmp_path: Path, output_mode: str
+def test_model_structured_repair_and_fallback_survive_restart(
+    tmp_path: Path, output_mode: str, fallback: bool
 ) -> None:
     submissions: list[dict[str, object]] = []
 
@@ -589,6 +710,14 @@ def test_model_structured_repair_reaches_second_request_and_survives_restart(
         def do_POST(self) -> None:
             request = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             submissions.append(request)
+            if fallback and len(submissions) == 2:
+                body = json.dumps({"error": {"message": "Repair request unavailable"}}).encode()
+                self.send_response(503)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
             content = json.dumps({"answer": "invalid" if len(submissions) == 1 else 42})
             message: dict[str, object] = {"role": "assistant", "content": content}
             if output_mode == "tool":
@@ -642,6 +771,19 @@ def test_model_structured_repair_reaches_second_request_and_survives_restart(
     )
     with model_server(Handler) as server:
         configure_models(instance, server, output_mode)
+        if fallback:
+
+            async def configure() -> None:
+                async with open_configuration_operations(instance, environment={}) as configuration:
+                    await configuration.update(
+                        {
+                            "model_execution.max_attempts": 3,
+                            "presets.backup": {"temperature": 0.7},
+                            "tasks.read.fallback": [{"model": "reader", "preset": "backup"}],
+                        }
+                    )
+
+            asyncio.run(configure())
         response = model_cli(
             instance,
             "tools",
@@ -655,11 +797,14 @@ def test_model_structured_repair_reaches_second_request_and_survives_restart(
             "The answer is 42.",
         )
     assert response.returncode == 0, (response.stdout, response.stderr)
-    assert len(submissions) == 2
+    assert len(submissions) == (3 if fallback else 2)
     messages = cast(list[dict[str, object]], submissions[1]["messages"])
     assert messages[-1]["role"] == ("tool" if output_mode == "tool" else "user")
+    if fallback:
+        assert submissions[-1]["temperature"] == 0.7
+        assert submissions[-1]["messages"] == submissions[0]["messages"]
     result = json.loads(response.stdout)["results"][0]
-    assert result["parameters"]["attempts"] == 2
+    assert result["parameters"]["attempts"] == len(submissions)
     assert result["parameters"]["usage"]["input_tokens"] == 20
     restored = model_cli(instance, "tools", "result", "read", result["ref"]["address"], "--details")
     assert restored.returncode == 0, restored.stderr
