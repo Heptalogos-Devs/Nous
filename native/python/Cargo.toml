@@ -17,11 +17,7 @@ serde.workspace = true
 serde_json.workspace = true
 schemars.workspace = true
 anyhow.workspace = true
-rayon.workspace = true
-sha2.workspace = true
-uuid.workspace = true
 tempfile.workspace = true
-rmp-serde = "1"
 
 [build-dependencies]
 nous-vcp.workspace = true

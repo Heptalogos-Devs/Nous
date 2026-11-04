@@ -3,7 +3,7 @@
 import sqlalchemy as sa
 
 from nous.content.schema import artifacts
-from nous.models.embedding_store import vectors
+from nous.models.embedding_schema import vectors
 
 metadata = sa.MetaData()
 

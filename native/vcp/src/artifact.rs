@@ -124,7 +124,10 @@ fn semantic_gain_enabled(config: &Value) -> bool {
         || boolean(ordered, &["semanticGain", "enabled"], false)
 }
 
-fn semantic_pairs(rows: &[FileTag]) -> Vec<(i64, i64)> {
+fn semantic_pairs(
+    rows: &[FileTag],
+    cancelled: crate::CancellationCheck<'_>,
+) -> Result<Vec<(i64, i64)>, String> {
     let mut seen = HashSet::new();
     let mut pairs = Vec::new();
     let mut offset = 0;
@@ -134,19 +137,16 @@ fn semantic_pairs(rows: &[FileTag]) -> Vec<(i64, i64)> {
             end += 1;
         }
         let tags = &rows[offset..end];
-        if (2..=100).contains(&tags.len()) {
-            for (i, left) in tags.iter().enumerate() {
-                for right in &tags[i + 1..] {
-                    let key = (left.tag_id.min(right.tag_id), left.tag_id.max(right.tag_id));
-                    if left.tag_id != right.tag_id && seen.insert(key) {
-                        pairs.push((left.tag_id, right.tag_id));
-                    }
-                }
+        crate::occurrences::for_each_pair(tags, cancelled, |left, right| {
+            let key = (left.tag_id.min(right.tag_id), left.tag_id.max(right.tag_id));
+            if left.tag_id != right.tag_id && seen.insert(key) {
+                pairs.push((left.tag_id, right.tag_id));
             }
-        }
+            Ok(())
+        })?;
         offset = end;
     }
-    pairs
+    Ok(pairs)
 }
 
 fn evaluate_pair_gains(pairs: &[(i64, i64)], gain: &(impl Fn(i64, i64) -> f64 + Sync)) -> Vec<f64> {

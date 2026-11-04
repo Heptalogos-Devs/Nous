@@ -15,6 +15,8 @@ nous tools model list
 nous tools model discover gateway
 nous tools model probe vision --input ./photo.png
 nous tools model run --task summarize --input ./notes.md --show-request
+nous tools model run --task summarize --input ./A.md --input ./B.md --question "比较发布日期"
+nous tools model run --task describe-media --input ./long-video.mp4 --per-batch
 nous tools prompt preview summarize --input ./notes.md
 nous tools prompt preview summarize --task summarize --input ./notes.md
 nous tools prompt edit summarize --from-dir ./my-prompt
@@ -29,8 +31,24 @@ nous tools embedding run --space chosen-text --purpose document --input ./notes.
 
 ## 返回、流与错误
 
-普通结果优先正文、短引用、实际覆盖和必要模型说明，内部参数通过 details 展开。content read 的二进制返回元信息和 export 用法。结果 view/provenance 来自共同 owner，CLI 不手写输入关系图展开。
+model run、media analyze 和 result read 的普通输出显示有名正文与结果短引用；`--details` 展开来源、请求与参数，`--json` 保留完整机器结果。content read 的二进制返回元信息和 export 用法。结果 view/provenance 来自共同 owner。
 
 保留当前 CLI 的取消/总超时/部分成功信息。文本流直接交付；JSON 流为 NDJSON delta/completed/failed；completed 必须在正式采用后发出，失败信息保留 partial_output_delivered 和已完成引用。不要将普通 dict 全量挤成不可读的默认产品文案。
 
 独立样本生成和 New API 本地补丁不属于生产 tools，它们继续在自己的开发位置使用。
+
+## 明确的选项与错误合同
+
+恢复并保留这些产品用法：`--schema PATH` 只用于明确接受自定义 Schema 的任务；`--task` 选择已配置用途；媒体描述任务由 --description-task 或配置选择。`--document-mode auto|visual|text` 中 auto 优先合法原生 PDF、否则按所选页提供视觉/文字；visual 强制视觉页，text 明确只取可提取文字。`--without-audio` 显式排除视频音轨。
+
+参数解析错误也遵守 --json 的结构化错误和非零退出状态；无法归类的异常默认显示清楚的通用失败原因，--debug 展开原始异常链。实际操作错误另带 operation/trace 关联、失败阶段、尝试与部分结果。取消使用现有约定，不输出虚构成功。
+
+model run --show-request 写 stderr 后执行同一请求；纯 preview 只显示并结束。--json --stream 保持 NDJSON delta/completed/failed，completed 在正式采用后发出。帮助文案说明混合 --input/--text 的既定顺序。
+
+model run 与 prompt preview 的 `--per-batch` 显式要求各批独立回答；默认多个输入共同参与一次任务，见 [输入规划](../models/input-planning.md)。Embedding run 的多批结果显示有序完整行和成功引用。诊断用法见 [操作诊断](diagnostics.md)。
+
+## 已有管理与持续读取
+
+Prompt list/show/edit/validate 和 content add/read/export 仍是正式产品能力。未配置模型时也可管理模板与读取已有内容。media analyze 支持显式 --description-result 复用匹配来源及覆盖的描述；复用成功产物不等于重新执行第一阶段。
+
+--show-request 在 stderr 展示实际准备值后执行，stdout 的 JSON/NDJSON 保持机器合同。--pages 的实际页码、--from/--to 的小数秒、文档模式与音轨排除均在帮助中解释；用户不需要复制内部控制 DTO。未来 MCP 按完整用户任务组织工具，不按这些管理命令逐项暴露。

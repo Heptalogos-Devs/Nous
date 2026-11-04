@@ -169,6 +169,7 @@ pub fn build_artifact(
         input.anchor_gain,
         wormholes,
         &provenance,
+        input.tag_vectors.keys().copied(),
     );
     drop(transport);
 

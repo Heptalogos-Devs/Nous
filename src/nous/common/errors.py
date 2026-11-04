@@ -1,8 +1,36 @@
 """Transport-independent failures shared by local application operations."""
 
+import asyncio
 from collections.abc import Mapping
 
-from pydantic import JsonValue, TypeAdapter
+from pydantic import JsonValue, TypeAdapter, ValidationError
+
+
+def failure_code(error: BaseException) -> str:
+    if isinstance(error, NousError):
+        return error.code
+    if isinstance(error, (asyncio.CancelledError, KeyboardInterrupt)):
+        return "operation.cancelled"
+    if isinstance(error, TimeoutError):
+        return "operation.timeout"
+    if isinstance(error, ValueError):
+        return "input.invalid"
+    return "operation.failed"
+
+
+def failure_message(error: BaseException) -> str:
+    if isinstance(error, ValidationError):
+        return "; ".join(
+            ".".join(map(str, issue["loc"])) + ": " + issue["msg"]
+            for issue in error.errors(include_input=False, include_url=False)
+        )
+    return str(error) or (
+        "Operation exceeded its deadline."
+        if isinstance(error, TimeoutError)
+        else "Operation cancelled."
+        if isinstance(error, (asyncio.CancelledError, KeyboardInterrupt))
+        else type(error).__name__
+    )
 
 
 class NousError(Exception):

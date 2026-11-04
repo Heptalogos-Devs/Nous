@@ -20,12 +20,28 @@ InputGroup 的文本和多个媒体 part 保持明确顺序；预览显示名称
 
 ## 预览
 
-纯模板 preview 可以接收准备好的文字和确定性媒体；其结果明确为模板预览，未选择实际模型时不宣称窗口/协议已检查。task preview 使用同一任务解析与表示选择，返回各批次分别的准备信息，不把所有批次拼成一个不可能实际发送的超大请求。
+纯模板 preview 可以接收准备好的文字和确定性媒体；其结果明确为模板预览，未选择实际模型时不宣称窗口/协议已检查。task preview 使用同一 InputPlan、任务解析与表示选择，展示真正的请求组。joint 的多个小输入共同出现；明确分批任务分别显示批次。不能展示执行时不会发送的合并请求，也不能把联合问题预览成互不相关的文件。
 
-`model run --show-request` 展示即将执行的 PreparedGeneration 后直接执行同一对象；没有审批停顿。preview 不发转写/描述。缺少必需语言表示时明确指出由 media analyze 或正式 transcription 操作产生，或者用户显式提交已有结果。
+`model run --show-request` 展示即将执行的 PreparedAttempt 后直接执行同一对象；没有审批停顿。preview 不发转写/描述。缺少必需语言表示时明确指出由 media analyze 或正式 transcription 操作产生，或者用户显式提交已有结果。
 
 ## 编辑
 
 导入目录与普通编辑共享资源加载及校验。先直接读取传入目录的 manifest 与 literal 依赖并校验，再写入实例覆盖。已发布请求持有旧内容，不依赖磁盘资源在执行中不变。
 
 包内模板、实例覆盖和 schema 参数形成单一实际请求说明。采用结果保存实际模板版本；缓存只是性能资产。
+
+## 管理与预览的具体合同
+
+`prompt show/edit/validate` 在没有模型配置时仍可使用。validate 检查 manifest、任务引用、Jinja 语法和已知变量；没有真实输入时不声称数据依赖分支已渲染。preview/run 使用实际输入完成 StrictUndefined 校验。
+
+messages 数组保留顺序，append_sources 在对应消息后按 InputPlan 顺序加入来源；Markdown 默认不 HTML 转义，输入中的 Jinja 文字只作为值插入一次。动态 include 不进入隐式依赖。
+
+普通 edit 使用所选编辑器编辑实例副本，返回后校验；无编辑器使用 --from-dir。编译请求在根操作内保持冻结。另一条命令 preview 后再 run 会重新准备当前资源，不提供跨命令隐含冻结。
+
+show-request 写 stderr，stdout 保持结果/JSON/NDJSON。预览只展示媒体类型、实际范围、大小和短引用，不输出 base64。独立纯预览不发转写或描述请求。
+
+## 资源目录与消息槽
+
+实例资源位于 config/prompts/<id>/，与包内只读资源使用同一加载合同。prompt.toml 的 messages 数组决定消息次序；append_sources=true 在该消息文本后按实际顺序加入已经准备的资料组，不执行检索或选择新资料。
+
+修改模板文字不改变 TaskDefinition 的程序输出类型；显式 custom-reading 的 --schema 按其合同使用。预览记录提交给成熟 SDK 的同一语义消息及实际参数；需要 wire 诊断时另展开，不把诊断字节当作第二份请求权威。

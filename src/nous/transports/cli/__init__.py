@@ -5,18 +5,18 @@ import json
 import sys
 from collections.abc import Awaitable, Mapping
 from contextvars import ContextVar
-from dataclasses import asdict, dataclass, is_dataclass
+from dataclasses import asdict, dataclass
 from io import TextIOWrapper
 from pathlib import Path
 from typing import Annotated, Literal, cast
 
 import click
 import typer
-from pydantic import JsonValue, TypeAdapter, ValidationError
 from rich.console import Console
 from typer.exceptions import TyperException
 
-from nous.common.errors import NousError
+from nous.common.errors import NousError, failure_code, failure_message
+from nous.common.operations import exception_context
 from nous.configuration import Configuration
 from nous.configuration.service import Object
 from nous.presentation import error_message, format_status, render_error, select_language, translate
@@ -76,43 +76,19 @@ def options(ctx: typer.Context) -> Options:
 
 
 def run_async[T](action: Awaitable[T]) -> T:
-    """Translate cancellation and deadlines after application resources have unwound."""
-    details: dict[str, JsonValue] = {}
-
-    async def invoke() -> T:
-        try:
-            return await action
-        except (asyncio.CancelledError, TimeoutError) as error:
-            current_error: BaseException | None = error
-            visited: set[int] = set()
-            while current_error is not None and id(current_error) not in visited:
-                visited.add(id(current_error))
-                for note in getattr(current_error, "__notes__", ()):
-                    try:
-                        saved = TypeAdapter(dict[str, JsonValue]).validate_json(note)
-                    except ValidationError, ValueError:
-                        continue
-                    previous = details.get("completed_result_refs", [])
-                    current = saved.pop("completed_result_refs", [])
-                    if isinstance(previous, list) and isinstance(current, list):
-                        details["completed_result_refs"] = list(
-                            dict.fromkeys(
-                                str(reference)
-                                for reference in [*previous, *current]
-                                if isinstance(reference, str)
-                            )
-                        )
-                    details.update(saved)
-                current_error = current_error.__cause__ or current_error.__context__
-            raise
-
+    """Translate cancellation after owners have released their actual workers and resources."""
     try:
-        return asyncio.run(invoke())
-    except (asyncio.CancelledError, KeyboardInterrupt) as error:
-        raise NousError("operation.cancelled", "Operation cancelled", details=details) from error
-    except TimeoutError as error:
+        return asyncio.run(action)
+    except (asyncio.CancelledError, KeyboardInterrupt, TimeoutError) as error:
+        details = exception_context(error)
+        cancelled = isinstance(error, (asyncio.CancelledError, KeyboardInterrupt))
         raise NousError(
-            "operation.timeout", "Operation exceeded its deadline.", details=details
+            "operation.cancelled" if cancelled else "operation.timeout",
+            "Operation cancelled" if cancelled else "Operation exceeded its deadline.",
+            details=details,
+            operation_id=cast(str | None, details.get("operation_id")),
+            trace_id=cast(str | None, details.get("trace_id")),
+            cause=error,
         ) from error
 
 
@@ -304,30 +280,109 @@ def config_schema(
 
 
 @runtime_cli.command("check")
-def runtime_check(ctx: typer.Context) -> None:
-    """实际打开并关闭运行资源 / Open, inspect and close runtime resources."""
-    from nous.observability.instrumentation import operation
+def runtime_check(
+    ctx: typer.Context, details: Annotated[bool, typer.Option("--details")] = False
+) -> None:
+    """打开资源并报告本地能力 / Inspect actual local owners."""
     from nous.runtime.bootstrap import open_instance
 
     async def run() -> Object:
         async with open_instance(options(ctx).locator) as runtime:
-            with operation("runtime.check"):
-                database = await runtime.database.check()
-                result = runtime.status()
-                result["database"] = asdict(database) if is_dataclass(database) else database
-                settings = runtime.configuration.snapshot.typed_values()
-                result["bindings"] = {
-                    "time": "checked",
-                    "embedding": "checked" if settings.embedding.spaces else "unconfigured",
-                }
-                result["observability"] = {
-                    "trace_export": runtime.configuration.snapshot.typed_values().tracing.export,
-                    "metrics_export": runtime.configuration.snapshot.typed_values().metrics.export,
-                }
+            result = await runtime.check()
         result["state"] = runtime.state
+        result["execution"] = runtime.execution.status()
+        result["in_flight"] = runtime.execution.in_flight
         return result
 
-    emit(ctx, run_async(run()))
+    result = run_async(run())
+    if options(ctx).json_mode or details:
+        emit(ctx, result)
+        return
+    console = Console()
+    console.print(f"{result['name']} — {result['state']}", markup=False)
+    for key in (
+        "configuration",
+        "database",
+        "models",
+        "media",
+        "embedding",
+        "wave",
+        "execution",
+        "observability",
+    ):
+        value = cast(dict[str, object], result[key])
+        if key == "configuration":
+            summary = f"saved={value['version']}; effective={value['effective_version']}; {value['state']}; pending restart={value['pending_restart']}"
+        elif key == "database":
+            summary = f"schema {value['schema_version']}; {value['journal_mode']}; foreign keys={value['foreign_keys']}"
+        elif key == "embedding":
+            spaces = cast(list[dict[str, object]], value["spaces"])
+            counts = cast(dict[str, int], value["adopted_rows"])
+            summary = (
+                "; ".join(
+                    f"{space['space_id']}: {cast(dict[str, object], space['definition'])['dimensions']} dimensions, {counts.get(str(space['space_id']), 0)} adopted rows"
+                    for space in spaces
+                )
+                or "no bound spaces"
+            )
+        elif key == "execution":
+            summary = f"{value['root_operations']} root operations; {value['queued']} queued; {value['running']} running; {value['blocking_workers']} blocking workers"
+        elif key == "models":
+            summary = (
+                f"{len(cast(list[object], value['resources']))} configured resources; tasks: "
+                + ", ".join(cast(dict[str, object], value.get("tasks", {})))
+            )
+        elif key == "wave":
+            summary = f"{value['snapshots']} snapshots; Native " + (
+                "loaded" if value["native_loaded"] else "not loaded"
+            )
+        elif key == "observability":
+            summary = f"logs={value['logs']}; spans=" + (
+                "not persisted locally; export=" + str(value["trace_export"])
+            )
+        elif key == "media":
+            summary = ", ".join(cast(list[str], value.get("image_formats", [])))
+            for name, item in cast(
+                dict[str, dict[str, object]], value.get("executables", {})
+            ).items():
+                summary += f"; {name}=" + (
+                    str(item["path"]) if item["available"] else "unavailable"
+                )
+        else:
+            summary = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+        console.print(f"{key}: {summary}", markup=False)
+    recent = cast(list[dict[str, object]], result["recent_results"])
+    if recent:
+        console.print(
+            "Recent adopted results: "
+            + ", ".join(f"{item['operation']} {item['address']}" for item in recent),
+            markup=False,
+        )
+
+
+@runtime_cli.command("logs")
+def runtime_logs(
+    ctx: typer.Context, operation_id: Annotated[str, typer.Option("--operation")]
+) -> None:
+    """查看一次操作的保留日志 / Read retained operation diagnostics."""
+    from nous.observability.diagnostics import operation_logs
+
+    state = inspect_instance(options(ctx).locator)
+    paths = cast(dict[str, str], state["paths"])
+    result = operation_logs(Path(paths["logs"]), operation_id)
+    if options(ctx).json_mode:
+        emit(ctx, result)
+        return
+    typer.echo(f"{result['operation']} — {result['result']} ({result['operation_id']})")
+    for event in cast(list[dict[str, object]], result["events"]):
+        if event.get("event") == "request.attempt":
+            typer.echo(
+                f"  {event.get('stage', '')}: attempt {event.get('number')} {event.get('route')} → {event.get('outcome')} {event.get('error_code', '')} {event.get('duration_seconds', '')}s"
+            )
+        elif event.get("event") in {"operation.failed", "stage.completed", "operation.completed"}:
+            typer.echo(
+                f"  {event.get('stage', '')}: {event.get('result')} {event.get('error_message', '')} {event.get('duration_seconds', '')}s"
+            )
 
 
 @time_cli.command("parse")
@@ -370,19 +425,18 @@ def main() -> None:
     try:
         cli(standalone_mode=False)
     except (Exception, KeyboardInterrupt) as error:
+        context = exception_context(error)
         failure = (
             error
             if isinstance(error, NousError)
             else NousError(
                 "operation.cancelled"
                 if isinstance(error, (typer.Abort, KeyboardInterrupt))
-                else "operation.timeout"
-                if isinstance(error, TimeoutError)
                 else "input.invalid"
-                if isinstance(error, (ValueError, click.ClickException, TyperException))
-                else "operation.failed",
+                if isinstance(error, (click.ClickException, TyperException))
+                else failure_code(error),
                 (
-                    str(error)
+                    failure_message(error)
                     or (
                         "Operation exceeded its deadline."
                         if isinstance(error, TimeoutError)
@@ -401,6 +455,10 @@ def main() -> None:
                     ),
                 )
                 else "Unexpected error",
+                details=context,
+                operation_id=cast(str | None, context.get("operation_id")),
+                trace_id=cast(str | None, context.get("trace_id")),
+                cause=error,
             )
         )
         result = failure.to_dict()

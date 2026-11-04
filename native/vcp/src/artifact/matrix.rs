@@ -59,7 +59,7 @@ pub(super) fn build_fact_matrix(
     // the same index order whichever comes first, so the stored value has the
     // bits every later file would compute. Bounded by the number of fact pairs.
     let pair_gains: HashMap<(i64, i64), f64> = if semantic_enabled {
-        let pairs = semantic_pairs(rows);
+        let pairs = semantic_pairs(rows, cancelled)?;
         let gains = evaluate_pair_gains(&pairs, &semantic_gain);
         pairs
             .into_iter()
@@ -79,55 +79,50 @@ pub(super) fn build_fact_matrix(
             end += 1;
         }
         let tags = &rows[offset..end];
-        if tags.len() >= 2 && tags.len() <= 100 {
-            for left_index in 0..tags.len() {
-                for right_index in (left_index + 1)..tags.len() {
-                    let left = &tags[left_index];
-                    let right = &tags[right_index];
-                    if left.tag_id == right.tag_id {
-                        continue;
-                    }
-                    let semantic = if semantic_enabled {
-                        let pair = (left.tag_id.min(right.tag_id), left.tag_id.max(right.tag_id));
-                        pair_gains[&pair]
-                    } else {
-                        1.0
-                    };
-                    if left.position > 0 && right.position > 0 {
-                        let count = tags.len() as f64;
-                        let phi_left =
-                            0.9 - 0.4 * (left.position - 1).max(0) as f64 / (count - 1.0).max(1.0);
-                        let phi_right =
-                            0.9 - 0.4 * (right.position - 1).max(0) as f64 / (count - 1.0).max(1.0);
-                        let delta = (right.position - left.position).max(1) as f64;
-                        let distance = if distance_decay > 0.0 {
-                            (-distance_decay * (delta - 1.0)).exp()
-                        } else {
-                            1.0
-                        };
-                        let base = phi_left * phi_right * distance;
-                        let forward = base * forward_gain * semantic;
-                        let mut dynamic_reverse = reverse_gain;
-                        if reverse_anchor_enabled {
-                            dynamic_reverse *= anchor_gain
-                                .get(&left.tag_id)
-                                .copied()
-                                .unwrap_or(1.0)
-                                .min(reverse_anchor_max);
-                        }
-                        dynamic_reverse = dynamic_reverse.clamp(0.25, 0.70);
-                        let backward =
-                            (base * dynamic_reverse * semantic).min(forward * reverse_guard);
-                        add_edge(&mut matrix, left.tag_id, right.tag_id, forward);
-                        add_edge(&mut matrix, right.tag_id, left.tag_id, backward);
-                    } else {
-                        let weight = 0.7 * 0.7 * semantic;
-                        add_edge(&mut matrix, left.tag_id, right.tag_id, weight);
-                        add_edge(&mut matrix, right.tag_id, left.tag_id, weight);
-                    }
-                }
+        crate::occurrences::for_each_pair(tags, cancelled, |left, right| {
+            if left.tag_id == right.tag_id {
+                return Ok(());
             }
-        }
+            let semantic = if semantic_enabled {
+                let pair = (left.tag_id.min(right.tag_id), left.tag_id.max(right.tag_id));
+                pair_gains[&pair]
+            } else {
+                1.0
+            };
+            if left.position > 0 && right.position > 0 {
+                let count = tags.len() as f64;
+                let phi_left =
+                    0.9 - 0.4 * (left.position - 1).max(0) as f64 / (count - 1.0).max(1.0);
+                let phi_right =
+                    0.9 - 0.4 * (right.position - 1).max(0) as f64 / (count - 1.0).max(1.0);
+                let delta = (right.position - left.position).max(1) as f64;
+                let distance = if distance_decay > 0.0 {
+                    (-distance_decay * (delta - 1.0)).exp()
+                } else {
+                    1.0
+                };
+                let base = phi_left * phi_right * distance;
+                let forward = base * forward_gain * semantic;
+                let mut dynamic_reverse = reverse_gain;
+                if reverse_anchor_enabled {
+                    dynamic_reverse *= anchor_gain
+                        .get(&left.tag_id)
+                        .copied()
+                        .unwrap_or(1.0)
+                        .min(reverse_anchor_max);
+                }
+                dynamic_reverse = dynamic_reverse.clamp(0.25, 0.70);
+                let backward = (base * dynamic_reverse * semantic).min(forward * reverse_guard);
+                add_edge(&mut matrix, left.tag_id, right.tag_id, forward);
+                add_edge(&mut matrix, right.tag_id, left.tag_id, backward);
+            } else {
+                let weight = 0.7 * 0.7 * semantic;
+                add_edge(&mut matrix, left.tag_id, right.tag_id, weight);
+                add_edge(&mut matrix, right.tag_id, left.tag_id, weight);
+            }
+
+            Ok(())
+        })?;
         offset = end;
     }
     let mut output: HashMap<i64, HashMap<i64, f64>> = HashMap::new();

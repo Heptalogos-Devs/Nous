@@ -2,20 +2,26 @@
 
 ## 已有能力
 
-本地实例、配置、启停、日志与遥测、执行、SQLite、多轴时间和管理入口已接通。`nous tools` 提供 Prompt、文字/结构化/流式生成、CAS 内容、图片/PDF/音视频准备与解释、处理结果读取及文本 Embedding。
+本地实例、配置、启停、SQLite、CAS、多轴时间、执行和观测保持共同入口。当前数据库 schema 为 4，表由组合根显式收集；已有其它 schema 的实例不自动改写。
 
-Wave 可从清单接纳文本和 PDF 选页，使用正式内容与 Embedding 获取候选、概念和精确来源，构建不可变快照。`nous tools wave` 提供 inspect、lexical、dense、TagMemo、RiverMemo、hybrid、DTSC、上下文、Thinking、反证、原文读取及重开。词项构建、查询和内容读取无需模型；向量模式需要配置文本空间或已有实际查询向量。图片与音视频先经媒体解释或转写得到文本 Artifact，再作为 Wave 输入。
+模型和媒体共用输入规划、冻结任务与请求尝试策略。普通任务联合处理多份材料，独立逐批执行显式选择。媒体按真实类型协商表示，转换在消费当前批次时执行，保存实际 MIME、范围和来源。Prompt 预览、probe、生成与媒体各阶段消费同一套能力。
 
-Native 计算采用 VCPToolBox `d5c019e` 的数值闭包，保留质量分与排序键、多根来源排除和显式 DTSC 研究模式。算法参数由 Rust 导出并接入共同配置。查询只限制返回候选；证据视图由快照构建时的来源范围决定。
+Embedding 的 run、ensure、probe 和临时查询使用同一个批次执行器。已采用向量依空间、用途和精确输入选择规范行；网络不占用复用长锁，少量行读取通过 CAS 本地借用及 NPY mmap。临时查询默认不接纳新的正文或向量结果。
 
-当前实例数据库 schema 为 3；旧 schema 不会自动改写。需要本轮能力时，在新的实例目录初始化，原有实例数据保持原样。
+内容关系按输入组、part、origin 和输出规范化保存。来源读取只遍历目标相关祖先；TextView 以 CommonMark 源映射提供精确块与范围，模型选段、概念标注和 Wave 共用。
+
+根操作保持稳定关联，子阶段和实际请求尝试可通过 JSONL 追踪。`runtime check` 报告实际配置、资源、已采用结果及 Native 加载状态；`runtime logs --operation` 读取保留日志。默认不持久保存完整 Span 树。
+
+Wave 使用 Rust retrieval 的 Engine、冻结快照、观测、完整 CandidatePool、召回与读出；PyO3 负责数组、detach 和对象边界。VCP 数值基准为 `d5c019e`，具名 DTSC 保留。稀疏图、长出现序列、多路径和明确支持组均有实际消费；查询可使用临时编码或已采用的显式 VectorRef。
+
+`journal-draft` 和 `annotate-concepts` 生成普通 Markdown/标注 ProcessingResult。真实正文、概念出现和路径可进入 Wave，结果能按原文范围回读；没有创建正式 Journal 或长期 Concept。
 
 ## 有效决定
 
-保持供应商中立。生产代码按协议与能力工作；网关管理不进入产品。Python 拥有业务和正式状态，Rust 拥有可重建计算资产。来源、时间、配置、执行、事务和观测使用共同 owner。
+保持供应商中立，真实模型访问统一网关。Python 拥有正式状态和业务采用，Rust 拥有可重建计算与索引。媒体、向量和 Wave 继续复用配置、Execution、事务、时间、内容与观测 owner。
 
-Wave 清单是操作者明确提供的检索材料，不是自动形成的认知对象。配置的空间绑定实际模型、部署标识、维度、用途编码和归一化；不可见的远端别名变更仍需由操作者确认。
+血缘根集合不等于独立支持。关系通过 SupportGroup 区分共同前提与独立见证，解释性贡献通过显式 profile 启用，检索和标注不自动改变长期认识。
 
-## 后续工作
+## 后续范围
 
-DBOS、正式认知领域、完整 NousQL、HTTP/MCP 与远程 SDK 尚未接入。长期认知、关系修订及自动形成不由当前 Wave 清单或检索结果代替。
+完整 Journal CRUD、自动长期采用、修订生命周期、时间门控执行、DBOS、HTTP/MCP、远程 SDK 和完整 NousQL 尚未接入。Journal/时间视图设计保留为后续合同，当前实验不承担这些生命周期。

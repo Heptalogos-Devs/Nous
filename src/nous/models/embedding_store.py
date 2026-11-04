@@ -6,40 +6,14 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 import sqlalchemy as sa
+from sqlalchemy.dialects.sqlite import insert
 
 from nous.common.errors import NousError
 from nous.configuration import ConfigSnapshot
-from nous.content.schema import metadata
 from nous.storage.database import Database, ReadTx, WriteTx
 
+from .embedding_schema import spaces, vector_rows, vectors
 from .embeddings import SpaceDefinition, resolved_space
-
-spaces = sa.Table(
-    "embedding_spaces",
-    metadata,
-    sa.Column("space_id", sa.String, primary_key=True),
-    sa.Column("definition", sa.JSON, nullable=False),
-)
-vectors = sa.Table(
-    "embedding_vectors",
-    metadata,
-    sa.Column("result_id", sa.String, sa.ForeignKey("processing_results.id"), primary_key=True),
-    sa.Column("space_id", sa.String, sa.ForeignKey("embedding_spaces.space_id"), nullable=False),
-    sa.Column("artifact_id", sa.String, sa.ForeignKey("content_artifacts.id"), nullable=False),
-    sa.Column("purpose", sa.String, nullable=False),
-    sa.Column("input_count", sa.Integer, nullable=False),
-)
-
-vector_rows = sa.Table(
-    "embedding_vector_rows",
-    metadata,
-    sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
-    sa.Column("result_id", sa.String, sa.ForeignKey("embedding_vectors.result_id"), nullable=False),
-    sa.Column("row_index", sa.Integer, nullable=False),
-    sa.Column("input_digest", sa.String(64), nullable=False),
-    sa.UniqueConstraint("result_id", "row_index"),
-)
-sa.Index("ix_embedding_vector_rows_digest", vector_rows.c.input_digest)
 
 
 @dataclass(frozen=True)
@@ -97,7 +71,7 @@ class EmbeddingSpaceRegistry:
         artifact_id: str,
         purpose: str,
         input_digests: Sequence[str],
-    ) -> None:
+    ) -> dict[str, StoredVectorRow]:
         await tx.connection.execute(
             vectors.insert().values(
                 result_id=result_id,
@@ -109,45 +83,101 @@ class EmbeddingSpaceRegistry:
         )
         if input_digests:
             await tx.connection.execute(
-                vector_rows.insert(),
+                insert(vector_rows).on_conflict_do_nothing(),
                 [
-                    {"result_id": result_id, "row_index": index, "input_digest": digest}
+                    {
+                        "space_id": definition.space_id,
+                        "purpose": purpose,
+                        "result_id": result_id,
+                        "row_index": index,
+                        "input_digest": digest,
+                    }
                     for index, digest in enumerate(input_digests)
                 ],
             )
 
+        return await self.find_rows_in(tx, definition, purpose, input_digests)
+
+    async def find_rows_in(
+        self, tx: ReadTx, definition: SpaceDefinition, purpose: str, digests: Sequence[str]
+    ) -> dict[str, StoredVectorRow]:
+        found: dict[str, StoredVectorRow] = {}
+        await self.check_in(tx, definition)
+        for start in range(0, len(digests), 900):
+            statement = (
+                sa.select(
+                    vector_rows.c.input_digest,
+                    vector_rows.c.result_id,
+                    vectors.c.artifact_id,
+                    vector_rows.c.row_index,
+                )
+                .join(vectors, vectors.c.result_id == vector_rows.c.result_id)
+                .where(
+                    vector_rows.c.space_id == definition.space_id,
+                    vector_rows.c.purpose == purpose,
+                    vector_rows.c.input_digest.in_(digests[start : start + 900]),
+                )
+            )
+            for row in (await tx.connection.execute(statement)).mappings():
+                found[str(row["input_digest"])] = StoredVectorRow(
+                    result_id=str(row["result_id"]),
+                    artifact_id=str(row["artifact_id"]),
+                    row_index=int(row["row_index"]),
+                )
+        return found
+
     async def find_rows(
         self, definition: SpaceDefinition, purpose: str, digests: Sequence[str]
     ) -> dict[str, StoredVectorRow]:
-        """Return the first adopted exact row; space semantics are checked before reuse."""
-        found: dict[str, StoredVectorRow] = {}
         async with self._database.read() as tx:
-            await self.check_in(tx, definition)
-            # Stay below SQLite's host-parameter limit even for large collections.
-            for start in range(0, len(digests), 900):
-                statement = (
-                    sa.select(
-                        vector_rows.c.input_digest,
-                        vector_rows.c.result_id,
-                        vectors.c.artifact_id,
-                        vector_rows.c.row_index,
-                    )
-                    .join(vectors, vectors.c.result_id == vector_rows.c.result_id)
-                    .where(
-                        vectors.c.space_id == definition.space_id,
-                        vectors.c.purpose == purpose,
-                        vector_rows.c.input_digest.in_(digests[start : start + 900]),
-                    )
-                    .order_by(vector_rows.c.id)
+            return await self.find_rows_in(tx, definition, purpose, digests)
+
+    async def resolve_row(
+        self, definition: SpaceDefinition, purpose: str, artifact_id: str, row_index: int
+    ) -> StoredVectorRow:
+        async with self._database.read() as tx:
+            stored = await tx.connection.scalar(
+                sa.select(spaces.c.definition).where(spaces.c.space_id == definition.space_id)
+            )
+            if stored != definition.model_dump(mode="json"):
+                raise NousError(
+                    "embedding.space_mismatch", "Vector reference does not match its adopted space"
                 )
-                for row in (await tx.connection.execute(statement)).mappings():
-                    digest = str(row["input_digest"])
-                    found.setdefault(
-                        digest,
-                        StoredVectorRow(
-                            result_id=str(row["result_id"]),
-                            artifact_id=str(row["artifact_id"]),
-                            row_index=int(row["row_index"]),
-                        ),
+            row = (
+                (
+                    await tx.connection.execute(
+                        sa.select(vectors).where(
+                            vectors.c.artifact_id == artifact_id,
+                            vectors.c.space_id == definition.space_id,
+                            vectors.c.purpose == purpose,
+                        )
                     )
-        return found
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if row is None or not 0 <= row_index < int(row["input_count"]):
+                raise NousError(
+                    "embedding.vector_not_found",
+                    "Vector reference does not identify an adopted row",
+                )
+            return StoredVectorRow(str(row["result_id"]), artifact_id, row_index)
+
+    async def status(self) -> dict[str, object]:
+        async with self._database.read() as tx:
+            definitions = (await tx.connection.execute(sa.select(spaces))).mappings().all()
+            counts = (
+                (
+                    await tx.connection.execute(
+                        sa.select(
+                            vectors.c.space_id, sa.func.sum(vectors.c.input_count).label("rows")
+                        ).group_by(vectors.c.space_id)
+                    )
+                )
+                .mappings()
+                .all()
+            )
+        return {
+            "spaces": [dict(row) for row in definitions],
+            "adopted_rows": {str(row["space_id"]): int(row["rows"]) for row in counts},
+        }

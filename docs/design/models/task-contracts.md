@@ -34,3 +34,11 @@ Markdown 块由 markdown-it 提供语法位置；文本读取能力维护精确�
 本轮不以自动抽 Tag 作为构建前提。操作者可以在集合清单中显式给出 Concept 与出现顺序。需要辅助产生概念时，可新增专一的“提出概念描述及正文位置”任务，输出仍是待使用清单；不得让模型编写数值向量、图权重、权限、存储 ID 或 Native 控制参数。
 
 后续 journalize/Steward 直接提供任务定义并消费共同操作，不修改协议执行器。没有实际消费者的任务不预建。
+
+## 正文实验任务
+
+`journal-draft` 使用 joint 输入，返回普通 Markdown 草稿；`concept-annotation` 使用一份共同 TextView，返回概念、出现项和路径，具体合同见 [概念标注](../cognition/concept-annotations.md)。任务 owner 构造局部块键、校验来源并采用普通结果，通用 executor 不识别任务专名。
+
+包内模板资源是 `journal-draft` 和 `annotate-concepts`。标注要求一份完整正文，输入组使用共同 TextView 的 B 键。模型返回 AnnotationProposal；采用时加入正文、parser profile、内容修订与 producer，形成普通 AnnotationSet JSON 产物。`models.annotations.read_annotation` 读取产物、补入实际 ResultRef 并核对正文块键，供 Wave 等消费者复用。
+
+本轮不增加新 Journal 类型的数据库保存捷径。以后 Journal owner 使用这些已有语言任务，并通过自己的正式采用入口完成记忆状态。

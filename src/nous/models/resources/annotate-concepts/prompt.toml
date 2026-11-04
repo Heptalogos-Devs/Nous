@@ -1,0 +1,10 @@
+contract_id = "concept-annotation"
+
+[[messages]]
+role = "system"
+template = "system.md.j2"
+
+[[messages]]
+role = "user"
+template = "user.md.j2"
+append_sources = true

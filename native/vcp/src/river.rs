@@ -199,6 +199,6 @@ use morphology::{compute_omega, compute_query_morphology};
 mod scoring;
 use scoring::assign_v3_scores;
 mod readout;
-pub use readout::{ReadoutRequest, readout};
+pub use readout::{PoolCalibration, PreparedPool, ReadoutRequest, prepare_pool, readout};
 
 mod wormhole;

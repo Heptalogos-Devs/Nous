@@ -1,0 +1,67 @@
+{
+  "concepts": [
+    {
+      "key": "waiting",
+      "label": "停止等待",
+      "description": "调用方不再等待结果，实际工作仍可能继续。"
+    },
+    {
+      "key": "completed",
+      "label": "实际完成",
+      "description": "工作或提交已经到达其定义的完成边界。"
+    },
+    {
+      "key": "ownership",
+      "label": "资源责任",
+      "description": "持有实际工作的对象负责确定资源释放与结果交付。"
+    }
+  ],
+  "occurrences": [
+    {
+      "key": "o1",
+      "concept": "waiting",
+      "blocks": [
+        "B3"
+      ]
+    },
+    {
+      "key": "o2",
+      "concept": "completed",
+      "blocks": [
+        "B3"
+      ]
+    },
+    {
+      "key": "o3",
+      "concept": "ownership",
+      "blocks": [
+        "B5"
+      ]
+    },
+    {
+      "key": "o4",
+      "concept": "completed",
+      "blocks": [
+        "B5"
+      ]
+    }
+  ],
+  "paths": [
+    {
+      "key": "experience",
+      "label": "经过中的完成差异",
+      "occurrences": [
+        "o1",
+        "o2"
+      ]
+    },
+    {
+      "key": "interpretation",
+      "label": "责任与完成判断",
+      "occurrences": [
+        "o3",
+        "o4"
+      ]
+    }
+  ]
+}

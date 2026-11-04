@@ -35,3 +35,9 @@ candidate_filter 在固定证据视图内限制返回集合，普通的返回时
 ## 暂不接入 DBOS
 
 本轮 build/query 使用前台受管理操作和明确结果，长调用可显示进度/取消。DBOS 留给首次要求跨进程恢复的批量建索引/记忆整理。届时按既有事务内入队合同接入当前 build 单元，不在 Native 内新增任务表或重试调度。
+
+## 构建结果与重复加载
+
+Native build 只写完成态文件并返回 BuiltSnapshot 摘要，不先 load 全资产。Python 发布目录后 open 一次；成功核对后短事务登记。读者始终持有不可变快照。反证邻接、Concept 倒排和范数缓存随快照构建/打开准备，不每次 query 扫全库。
+
+查询文字和临时 cue 默认由共同 Embedding encode_query 编码，不因为每次查询都新增正式输入 Artifact。明确保存实验查询时再采用。活动引用仍固定源正文与空间。

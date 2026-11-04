@@ -32,9 +32,48 @@ inputs = sa.Table(
     "processing_inputs",
     metadata,
     sa.Column("result_id", sa.String, sa.ForeignKey("processing_results.id"), primary_key=True),
-    sa.Column("ordinal", sa.Integer, primary_key=True),
-    sa.Column("group", sa.JSON, nullable=False),
+    sa.Column("group_ordinal", sa.Integer, primary_key=True),
+    sa.Column("key", sa.String, nullable=False),
+    sa.Column("name", sa.String, nullable=False),
+    sa.UniqueConstraint("result_id", "key"),
 )
+parts = sa.Table(
+    "processing_input_parts",
+    metadata,
+    sa.Column("result_id", sa.String, primary_key=True),
+    sa.Column("group_ordinal", sa.Integer, primary_key=True),
+    sa.Column("part_ordinal", sa.Integer, primary_key=True),
+    sa.Column("artifact_id", sa.String, sa.ForeignKey("content_artifacts.id"), nullable=False),
+    sa.Column("selector", sa.JSON, nullable=False),
+    sa.Column("representation", sa.String, nullable=False),
+    sa.Column("media_type", sa.String),
+    sa.Column("source_media_type", sa.String),
+    sa.ForeignKeyConstraint(
+        ["result_id", "group_ordinal"],
+        ["processing_inputs.result_id", "processing_inputs.group_ordinal"],
+    ),
+)
+origins = sa.Table(
+    "processing_part_origins",
+    metadata,
+    sa.Column("result_id", sa.String, primary_key=True),
+    sa.Column("group_ordinal", sa.Integer, primary_key=True),
+    sa.Column("part_ordinal", sa.Integer, primary_key=True),
+    sa.Column("origin_ordinal", sa.Integer, primary_key=True),
+    sa.Column("artifact_id", sa.String, sa.ForeignKey("content_artifacts.id"), nullable=False),
+    sa.Column("selector", sa.JSON, nullable=False),
+    sa.Column("transform_result_id", sa.String, sa.ForeignKey("processing_results.id")),
+    sa.ForeignKeyConstraint(
+        ["result_id", "group_ordinal", "part_ordinal"],
+        [
+            "processing_input_parts.result_id",
+            "processing_input_parts.group_ordinal",
+            "processing_input_parts.part_ordinal",
+        ],
+    ),
+)
+sa.Index("ix_processing_parts_artifact", parts.c.artifact_id)
+sa.Index("ix_processing_origins_artifact", origins.c.artifact_id)
 outputs = sa.Table(
     "processing_outputs",
     metadata,

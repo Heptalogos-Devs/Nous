@@ -63,7 +63,8 @@ cache-keys = [
   { file = "native/Cargo.lock" }, { file = "native/**/Cargo.toml" },
   { file = "native/**/*.rs" }, { file = "src/**/*.py" },
   { file = "src/**/*.pyi" }, { file = "src/**/py.typed" },
-  { file = "src/**/licenses/*" }, { file = "src/nous/resources/**/*" },
+  { file = "src/**/licenses/*" }, { file = "src/nous/models/resources/**/*" },
+  { file = "src/nous_native/resources/*.json" },
 ]
 
 [tool.basedpyright]

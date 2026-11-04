@@ -5,6 +5,9 @@ from ._core import (
     CancellationToken as CancellationToken,
 )
 from ._core import (
+    CandidatePool as CandidatePool,
+)
+from ._core import (
     Candidates as Candidates,
 )
 from ._core import (

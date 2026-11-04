@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from collections.abc import AsyncGenerator, Mapping
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -12,6 +11,7 @@ from typing import cast
 from pydantic import JsonValue
 
 from nous.common.errors import NousError
+from nous.common.operations import add_error_context
 from nous.configuration import ConfigSnapshot, Configuration
 from nous.configuration.service import Object, normalize_patch
 from nous.models.embedding_store import EmbeddingSpaceRegistry
@@ -318,7 +318,7 @@ class ConfigurationOperations:
                     failure["cause_details"] = error.details
                 configuration.mark_apply_failure(dict(failure))
                 if not isinstance(error, Exception):
-                    error.add_note(json.dumps(failure, ensure_ascii=False))
+                    add_error_context(error, failure)
                     raise
                 raise NousError(
                     "configuration.apply_failed",

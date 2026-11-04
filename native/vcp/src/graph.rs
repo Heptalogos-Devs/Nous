@@ -17,6 +17,8 @@ fn clamp01(value: f64) -> f64 {
 }
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct NativeArtifact {
+    #[serde(default)]
+    pub support_groups: HashMap<i64, SupportGroup>,
     pub node_ids: Vec<i64>,
     pub node_index: HashMap<i64, usize>,
     pub row_offsets: Vec<usize>,
@@ -31,6 +33,11 @@ pub struct NativeArtifact {
     pub edge_is_wormhole: Vec<bool>,
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SupportGroup {
+    pub required_roots: Vec<i64>,
+    pub kind: String,
+}
 impl NativeArtifact {
     fn validate_layout(&self) -> Result<(), String> {
         let n = self.node_ids.len();
@@ -242,18 +249,32 @@ impl NativeArtifact {
     /// Derived candidates can depend on several originals. Exclude all their
     /// evidence roots while retaining the pinned kernel's weighting and floor.
     pub fn independent_fraction_excluding(&self, source: i64, target: i64, roots: &[i64]) -> f64 {
-        let Some(contributions) = self.provenance.get(&(source, target)) else {
-            return 1.0;
-        };
-        let total: f64 = contributions.iter().map(|item| item.1).sum();
+        self.independent_support_fraction(source, target, roots)
+            .unwrap_or(0.0)
+            .max(0.15)
+    }
+    /// Raw independent evidence, before the numerical attenuation floor.
+    pub fn independent_support_fraction(
+        &self,
+        source: i64,
+        target: i64,
+        roots: &[i64],
+    ) -> Option<f64> {
+        let contributions = self.provenance.get(&(source, target))?;
+        let total: f64 = contributions.iter().map(|v| v.1).sum();
         if total <= 0.0 {
-            return 1.0;
+            return None;
         }
-        let own: f64 = contributions
+        let excluded: f64 = contributions
             .iter()
-            .filter(|item| roots.contains(&item.0))
-            .map(|item| item.1)
+            .filter(|(id, _)| {
+                self.support_groups.get(id).map_or(roots.contains(id), |g| {
+                    g.required_roots.is_empty()
+                        || g.required_roots.iter().any(|r| roots.contains(r))
+                })
+            })
+            .map(|v| v.1)
             .sum();
-        clamp01(1.0 - own / total).max(0.15)
+        Some(clamp01(1.0 - excluded / total))
     }
 }

@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import TYPE_CHECKING, cast
+from collections.abc import Generator, Mapping
+from contextlib import contextmanager
+from typing import TYPE_CHECKING, TypedDict, cast
 
 from openai import APIConnectionError, APIStatusError, APITimeoutError
 from pydantic import JsonValue
@@ -20,6 +22,7 @@ from pydantic_ai.exceptions import (
 )
 
 from nous.common.errors import NousError
+from nous.observability.instrumentation import AttemptScope, request_attempt, request_attempts
 
 if TYPE_CHECKING:
     from nous.runtime.execution import OperationContext
@@ -103,3 +106,44 @@ def stage_deadline(seconds: float, context: OperationContext | None) -> float:
     """Include attempts and retry waits in one deadline, bounded by the root operation."""
     deadline = asyncio.get_running_loop().time() + seconds
     return min(deadline, context.deadline) if context and context.deadline is not None else deadline
+
+
+@contextmanager
+def attempt_scope(
+    number: int, route: Mapping[str, JsonValue], task: str
+) -> Generator[AttemptScope]:
+    """All endpoints submit real attempts through the same operation diagnostics owner."""
+    with request_attempt(number, route, task=task) as scope:
+        yield scope
+
+
+def attempt_reports(start: int = 0) -> list[dict[str, JsonValue]]:
+    return list(request_attempts()[start:])
+
+
+class AttemptError(TypedDict):
+    outcome: str
+    error_code: str
+    provider_status: int | None
+    provider_request_id: str | None
+    retry_reason: str | None
+    next_action: str
+
+
+def error_report(
+    error: BaseException, *, retry: bool = False, repair: bool = False
+) -> AttemptError:
+    mapped = model_error(error, 0)
+    status = getattr(error, "status_code", None)
+    return {
+        "outcome": "retry" if retry else "error",
+        "error_code": mapped.code,
+        "provider_status": status,
+        "provider_request_id": getattr(error, "request_id", None),
+        "retry_reason": "structured_output"
+        if repair
+        else "transient_service_error"
+        if retry
+        else None,
+        "next_action": "repair_same_route" if repair else "next_route" if retry else "raise",
+    }

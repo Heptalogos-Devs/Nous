@@ -23,3 +23,9 @@ provider 未给出的 token/费用保持未知，不填 0。模型费用估计�
 ## 验证
 
 完成一次 runtime check 后能观察实际操作量和耗时；禁用遥测不会改变结果；失败正确增加对应分类；本地状态不依赖遥测连接。来源：[OpenTelemetry Python instrumentation](https://opentelemetry.io/docs/languages/python/instrumentation/)。
+
+## 由实际能力报告使用情况
+
+runtime check 的状态从当前 owner 与已有结果取得，参见 [诊断](../interfaces/diagnostics.md)。configured、ready、实际调用成功分别呈现；未运行的能力不显示虚假健康零值。in_flight 统计根操作，子阶段单独记录耗时，不重复放大并发数量。
+
+本轮不增加金额审批或费用账本；现有实际用量字段继续保留，缺失保持未知。

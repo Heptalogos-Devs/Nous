@@ -9,8 +9,16 @@ from typing import Annotated, Literal, cast
 import typer
 from pydantic import TypeAdapter
 
+from nous.application.embedding import VectorRef
 from nous.runtime.bootstrap import open_instance
-from nous.wave.contracts import CandidateFilter, ContextFragment, QueryCue, ThinkingStage, WaveQuery
+from nous.wave.contracts import (
+    CandidateFilter,
+    CandidatePool,
+    ContextFragment,
+    QueryCue,
+    ThinkingStage,
+    WaveQuery,
+)
 
 from . import emit, options, run_async
 
@@ -115,12 +123,22 @@ def query(
     candidate_filter: Annotated[
         Path | None, typer.Option("--filter", exists=True, dir_okay=False)
     ] = None,
+    vector_ref: Annotated[
+        Path | None, typer.Option("--vector-ref", exists=True, dir_okay=False)
+    ] = None,
+    candidate_pool: Annotated[
+        Path | None, typer.Option("--candidate-pool", exists=True, dir_okay=False)
+    ] = None,
     top_k: Annotated[int | None, typer.Option("--top-k", min=1)] = None,
     explain: Annotated[bool, typer.Option("--explain")] = False,
 ) -> None:
     request = WaveQuery(
         snapshot=snapshot,
         text=text,
+        vector=VectorRef.model_validate_json(vector_ref.read_bytes()) if vector_ref else None,
+        candidate_pool=CandidatePool.model_validate_json(candidate_pool.read_bytes())
+        if candidate_pool
+        else None,
         mode=mode,
         context=_context(context),
         core_concepts=tuple(core or ()),

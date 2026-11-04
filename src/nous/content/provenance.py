@@ -1,0 +1,192 @@
+"""Related-ancestor queries over normalized content relations."""
+
+from __future__ import annotations
+
+from collections.abc import Sequence
+from typing import TYPE_CHECKING
+
+import sqlalchemy as sa
+from pydantic import BaseModel, ConfigDict
+
+from nous.common.errors import NousError
+from nous.storage.database import Database
+
+from . import schema
+from .contracts import ArtifactRef
+
+if TYPE_CHECKING:
+    from .artifacts import ArtifactStore
+
+
+class ProvenanceRelation(BaseModel):
+    model_config = ConfigDict(frozen=True)
+    child: ArtifactRef
+    parent: ArtifactRef
+    result_id: str
+
+
+class ProvenanceSummary(BaseModel):
+    model_config = ConfigDict(frozen=True)
+    terminal_roots: tuple[ArtifactRef, ...]
+    traversed_results: tuple[str, ...] = ()
+    relations: tuple[ProvenanceRelation, ...] = ()
+    complete: bool = True
+
+
+class ProvenanceReader:
+    """SQLite traverses only requested ancestors; shared DAG nodes are visited once per target."""
+
+    def __init__(self, database: Database, artifacts: ArtifactStore) -> None:
+        self.database, self.artifacts = database, artifacts
+
+    async def read(
+        self, refs: Sequence[str | ArtifactRef], *, details: bool = False
+    ) -> dict[str, ProvenanceSummary]:
+        if not refs:
+            return {}
+        targets: list[str] = []
+        for ref in refs:
+            if isinstance(ref, ArtifactRef):
+                if ref.instance_id != self.artifacts.instance_id:
+                    raise NousError(
+                        "content.instance_mismatch", "Artifact belongs to another instance"
+                    )
+                targets.append(ref.id)
+            else:
+                targets.append(ref)
+        async with self.database.read() as tx:
+            rows = (
+                (
+                    await tx.connection.execute(
+                        sa.select(schema.artifacts.c.id, schema.artifacts.c.address).where(
+                            sa.or_(
+                                schema.artifacts.c.id.in_(targets),
+                                schema.artifacts.c.address.in_(targets),
+                            )
+                        )
+                    )
+                )
+                .mappings()
+                .all()
+            )
+            resolved = {str(row["id"]): str(row["id"]) for row in rows}
+            resolved.update({str(row["address"]): str(row["id"]) for row in rows})
+            missing = [target for target in targets if target not in resolved]
+            if missing:
+                raise NousError(
+                    "content.not_found",
+                    "Provenance target does not exist",
+                    details={"refs": missing},
+                )
+            identifiers = list(dict.fromkeys(resolved[target] for target in targets))
+            walk = (
+                sa.select(schema.artifacts.c.id.label("root"), schema.artifacts.c.id.label("node"))
+                .where(schema.artifacts.c.id.in_(identifiers))
+                .cte("ancestors", recursive=True)
+            )
+            part_step = sa.select(
+                walk.c.root, schema.parts.c.artifact_id.label("node")
+            ).select_from(
+                walk.join(schema.outputs, schema.outputs.c.artifact_id == walk.c.node).join(
+                    schema.parts, schema.parts.c.result_id == schema.outputs.c.result_id
+                )
+            )
+            origin_step = sa.select(
+                walk.c.root, schema.origins.c.artifact_id.label("node")
+            ).select_from(
+                walk.join(schema.outputs, schema.outputs.c.artifact_id == walk.c.node).join(
+                    schema.origins, schema.origins.c.result_id == schema.outputs.c.result_id
+                )
+            )
+            walk = walk.union(part_step, origin_step)
+            nodes = (
+                (
+                    await tx.connection.execute(
+                        sa.select(walk.c.root, walk.c.node, schema.artifacts.c.address).select_from(
+                            walk.outerjoin(schema.artifacts, schema.artifacts.c.id == walk.c.node)
+                        )
+                    )
+                )
+                .mappings()
+                .all()
+            )
+            reachable = sa.select(walk.c.node).distinct().subquery()
+
+            def edge_select(table: sa.Table) -> sa.Select[tuple[object, object, object]]:
+                return sa.select(
+                    schema.outputs.c.artifact_id.label("child"),
+                    table.c.artifact_id.label("parent"),
+                    schema.outputs.c.result_id,
+                ).select_from(
+                    reachable.join(
+                        schema.outputs, schema.outputs.c.artifact_id == reachable.c.node
+                    ).join(table, table.c.result_id == schema.outputs.c.result_id)
+                )
+
+            edges = (
+                (
+                    await tx.connection.execute(
+                        sa.union(edge_select(schema.parts), edge_select(schema.origins))
+                    )
+                )
+                .mappings()
+                .all()
+            )
+        identities: dict[str, ArtifactRef] = {}
+        per_target: dict[str, set[str]] = {identifier: set() for identifier in identifiers}
+        for row in nodes:
+            if row["address"] is None:
+                raise NousError("content.provenance_missing", "A provenance ancestor is missing")
+            identifier = str(row["node"])
+            identities[identifier] = ArtifactRef(
+                id=identifier, address=str(row["address"]), instance_id=self.artifacts.instance_id
+            )
+            per_target[str(row["root"])].add(identifier)
+        parents: dict[str, set[str]] = {}
+        for edge in edges:
+            parents.setdefault(str(edge["child"]), set()).add(str(edge["parent"]))
+        memo: dict[str, set[str]] = {}
+        for identifier in identifiers:
+            active: set[str] = set()
+            pending = [(identifier, False)]
+            while pending:
+                node, expanded = pending.pop()
+                if node in memo:
+                    continue
+                if expanded:
+                    memo[node] = (
+                        set().union(*(memo[parent] for parent in parents.get(node, ())))
+                        if parents.get(node)
+                        else {node}
+                    )
+                    active.remove(node)
+                    continue
+                if node in active:
+                    raise NousError(
+                        "content.provenance_cycle", "Content provenance contains a cycle"
+                    )
+                active.add(node)
+                pending.append((node, True))
+                pending.extend(
+                    (parent, False) for parent in parents.get(node, ()) if parent not in memo
+                )
+        output: dict[str, ProvenanceSummary] = {}
+        for identifier in identifiers:
+            related = (
+                [edge for edge in edges if str(edge["child"]) in per_target[identifier]]
+                if details
+                else []
+            )
+            output[identifier] = ProvenanceSummary(
+                terminal_roots=tuple(identities[root] for root in sorted(memo[identifier])),
+                traversed_results=tuple(sorted({str(edge["result_id"]) for edge in related})),
+                relations=tuple(
+                    ProvenanceRelation(
+                        child=identities[str(edge["child"])],
+                        parent=identities[str(edge["parent"])],
+                        result_id=str(edge["result_id"]),
+                    )
+                    for edge in related
+                ),
+            )
+        return output

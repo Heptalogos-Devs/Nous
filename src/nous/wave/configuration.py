@@ -1,6 +1,7 @@
 """Wave's application-level options; numerical profiles belong to Native."""
 
 import copy
+import math
 import os
 from collections.abc import Callable
 from functools import lru_cache
@@ -322,16 +323,29 @@ class AssociationsConfig(ConfigModel):
     enabled: bool = setting(
         True, apply="new_binding", description="Project positive relationships."
     )
+    interpretation_gain: float = setting(
+        0.0,
+        ge=0,
+        apply="new_binding",
+        description="Explicit interpretation projection gain.",
+    )
     relation_gains: dict[str, float] = setting(
         {"related": 1.0, "supports": 1.0, "sequence": 1.0},
         apply="new_binding",
         description="Retrieval gain for each association type.",
     )
 
+    @field_validator("interpretation_gain")
+    @classmethod
+    def finite_interpretation_gain(cls, value: float) -> float:
+        if not math.isfinite(value):
+            raise ValueError("interpretation gain must be finite")
+        return value
+
     @field_validator("relation_gains")
     @classmethod
     def nonnegative_gains(cls, values: dict[str, float]) -> dict[str, float]:
-        if any(value < 0 for value in values.values()):
+        if any(not math.isfinite(value) or value < 0 for value in values.values()):
             raise ValueError("association gains must be nonnegative")
         return values
 

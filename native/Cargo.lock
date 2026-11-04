@@ -936,14 +936,10 @@ dependencies = [
  "nous-vcp",
  "numpy",
  "pyo3",
- "rayon",
- "rmp-serde",
  "schemars",
  "serde",
  "serde_json",
- "sha2",
  "tempfile",
- "uuid",
 ]
 
 [[package]]
@@ -952,6 +948,8 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "nous-vcp",
+ "rayon",
+ "rmp-serde",
  "serde",
  "serde_json",
  "sha2",

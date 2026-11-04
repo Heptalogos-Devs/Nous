@@ -14,6 +14,7 @@ from typing import TypeVar, cast
 from uuid import uuid4
 
 from nous.common.errors import NousError
+from nous.common.operations import OperationDiagnostics
 from nous.configuration import ConfigSnapshot
 from nous.configuration.definitions import ExecutionConfig
 from nous.observability.instrumentation import get_meter, operation
@@ -27,6 +28,8 @@ class OperationContext:
     name: str
     settings: ConfigSnapshot
     deadline: float | None
+    diagnostics: OperationDiagnostics
+    stage: str
 
 
 _current: contextvars.ContextVar[Mapping[object, OperationContext]] = contextvars.ContextVar(
@@ -48,6 +51,8 @@ class ExecutionManager:
         self._tasks: set[asyncio.Task[object]] = set()
         self._blocking: set[asyncio.Future[object]] = set()
         self._accepting = True
+        self._queued = 0
+        self._running = 0
 
     @property
     def in_flight(self) -> int:
@@ -57,6 +62,15 @@ class ExecutionManager:
     def snapshot(self) -> ConfigSnapshot:
         current = _current.get().get(self._owner)
         return current.settings if current is not None else self._snapshot()
+
+    def status(self) -> dict[str, object]:
+        return {
+            "root_operations": self.in_flight,
+            "queued": self._queued,
+            "running": self._running,
+            "blocking_workers": len(self._blocking),
+            "accepting": self._accepting,
+        }
 
     @asynccontextmanager
     async def operation(
@@ -84,7 +98,11 @@ class ExecutionManager:
             timeout = snapshot.typed_values().execution.default_timeout_seconds
             if timeout is not None:
                 deadline = asyncio.get_running_loop().time() + float(timeout)
-        context = OperationContext(str(uuid4()), name, snapshot, deadline)
+        diagnostic = parent.diagnostics if parent else OperationDiagnostics(str(uuid4()), name)
+        stage = f"{parent.stage}/{name}" if parent else name
+        context = OperationContext(
+            diagnostic.operation_id, name, snapshot, deadline, diagnostic, stage
+        )
         root = parent is None
         completed = None
         if root and task is not None:
@@ -93,12 +111,17 @@ class ExecutionManager:
         acquired = False
         token = None
         try:
-            with operation(name, operation_id=context.operation_id):
+            with operation(name, diagnostics=diagnostic, stage=stage, root_operation=root):
                 async with asyncio.timeout_at(deadline):
                     started = time.monotonic()
                     if root:
-                        await self._semaphore.acquire()
+                        self._queued += 1
+                        try:
+                            await self._semaphore.acquire()
+                        finally:
+                            self._queued -= 1
                         acquired = True
+                        self._running += 1
                         get_meter("nous.execution").create_histogram(
                             "execution.queue_wait", unit="s"
                         ).record(time.monotonic() - started)
@@ -108,6 +131,7 @@ class ExecutionManager:
             if token is not None:
                 _current.reset(token)
             if acquired:
+                self._running -= 1
                 self._semaphore.release()
             if root and task is not None:
                 self._operations.pop(task, None)

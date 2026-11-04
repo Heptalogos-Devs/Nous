@@ -27,13 +27,15 @@ struct Module {
     file_id: i64,
     source_ids: Vec<i64>,
     relevance: f64,
-    tags: HashMap<i64, (usize, f64)>,
+    tags: HashMap<i64, Vec<(usize, f64)>>,
+    path_index: Option<usize>,
 }
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Selection {
     pub chunk_id: i64,
+    pub chosen_path: Option<usize>,
     pub score: f64,
     pub parents: Vec<i64>,
     pub relation: &'static str,
@@ -82,32 +84,75 @@ pub struct ThinkingOutput {
     pub generation: String,
     pub stages: Vec<StageOutput>,
 }
+impl ThinkingInput {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.stages.is_empty()
+            || self.stages.len() > 32
+            || !self.min_closure.is_finite()
+            || !(0.0..=1.0).contains(&self.min_closure)
+            || self.stages.iter().any(|s| {
+                s.k == 0
+                    || s.k > 32
+                    || s.candidate_ids.len() > 256
+                    || s.diary_name.trim().is_empty()
+                    || s.candidate_ids.iter().any(|id| *id <= 0)
+            })
+        {
+            return Err("invalid or oversized method planning request".into());
+        }
+        Ok(())
+    }
+}
+#[derive(Debug)]
+pub enum ThinkingError {
+    Invalid(String),
+    RecordsUnavailable { truncated: bool },
+    NoGroundedRoute,
+    Cancelled,
+}
+impl From<String> for ThinkingError {
+    fn from(message: String) -> Self {
+        Self::Invalid(message)
+    }
+}
+impl std::fmt::Display for ThinkingError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Invalid(message) => message.fmt(f),
+            Self::RecordsUnavailable { truncated } => {
+                write!(f, "Sense transitions unavailable (truncated={truncated})")
+            }
+            Self::NoGroundedRoute => {
+                write!(f, "No grounded method route in the accepted observation")
+            }
+            Self::Cancelled => write!(f, "Thinking cancelled"),
+        }
+    }
+}
+impl std::error::Error for ThinkingError {}
+fn check_cancelled(cancelled: crate::CancellationCheck<'_>) -> Result<(), ThinkingError> {
+    if cancelled.is_some_and(|check| check()) {
+        Err(ThinkingError::Cancelled)
+    } else {
+        Ok(())
+    }
+}
 pub fn plan(
     assets: &MemoAssets,
     cached: &PipelineOutput,
     input: ThinkingInput,
     cancelled: crate::CancellationCheck<'_>,
-) -> Result<ThinkingOutput, String> {
-    crate::check_cancelled(cancelled)?;
+) -> Result<ThinkingOutput, ThinkingError> {
+    check_cancelled(cancelled)?;
     cached.validate_for(assets)?;
 
-    if input.stages.is_empty()
-        || input.stages.len() > 32
-        || !input.min_closure.is_finite()
-        || !(0.0..=1.0).contains(&input.min_closure)
-        || input.stages.iter().any(|s| {
-            s.k > 32
-                || s.candidate_ids.len() > 256
-                || s.diary_name.trim().is_empty()
-                || s.candidate_ids.iter().any(|id| *id <= 0)
-        })
-    {
-        return Err("invalid or oversized method planning request".into());
-    }
+    input.validate()?;
 
     let observation = &cached.observation;
     if observation.transitions.is_empty() || observation.transitions_truncated {
-        return Err("Sense transitions unavailable or truncated".into());
+        return Err(ThinkingError::RecordsUnavailable {
+            truncated: observation.transitions_truncated,
+        });
     }
     let dimension = cached.original_query_vector.len();
     let artifact = &assets.graph;
@@ -122,7 +167,7 @@ pub fn plan(
         .fold(0.0, f64::max);
 
     for stage in input.stages {
-        crate::check_cancelled(cancelled)?;
+        check_cancelled(cancelled)?;
         let mut modules = Vec::new();
         let mut seen = HashSet::new();
         for id in stage.candidate_ids {
@@ -139,29 +184,36 @@ pub fn plan(
             {
                 continue;
             }
-            let mut rows: Vec<_> = file
-                .tags
-                .iter()
-                .filter(|row| row.position > 0)
-                .cloned()
-                .collect();
-            rows.sort_by_key(|row| (row.position, row.tag_id));
-            let mut tags = HashMap::new();
-            for (position, row) in rows.iter().take(128).enumerate() {
-                if let Some(vector) = assets.tag_vectors.get(&row.tag_id)
-                    && vector.len() == dimension
-                    && vector.iter().all(|v| v.is_finite())
-                {
-                    tags.insert(row.tag_id, (position, cosine(&data.vector, vector)));
+            let fallback = file.tags.clone();
+            let paths = assets.candidate_paths.get(&id).filter(|p| !p.is_empty());
+            for (path_index, path) in paths
+                .map(|p| {
+                    p.iter()
+                        .enumerate()
+                        .map(|(i, p)| (Some(i), p))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_else(|| vec![(None, &fallback)])
+            {
+                let mut rows: Vec<_> = path.iter().filter(|r| r.position > 0).cloned().collect();
+                rows.sort_by_key(|r| (r.position, r.tag_id));
+                let mut tags = HashMap::<i64, Vec<(usize, f64)>>::new();
+                for (position, row) in rows.iter().enumerate() {
+                    if let Some(vector) = assets.tag_vectors.get(&row.tag_id) {
+                        tags.entry(row.tag_id)
+                            .or_default()
+                            .push((position, cosine(&data.vector, vector)));
+                    }
                 }
+                modules.push(Module {
+                    id,
+                    file_id: data.document_id,
+                    source_ids: data.source_ids.clone(),
+                    tags,
+                    relevance: cosine(&data.vector, &cached.original_query_vector),
+                    path_index,
+                });
             }
-            modules.push(Module {
-                id,
-                file_id: data.document_id,
-                source_ids: data.source_ids.clone(),
-                tags,
-                relevance: cosine(&data.vector, &cached.original_query_vector),
-            });
         }
         let mut results = Vec::new();
         for _ in 0..stage.k {
@@ -174,20 +226,26 @@ pub fn plan(
                 let mut best_parents = Vec::new();
                 let mut best_route_score = 0.0;
                 for edge in &observation.transitions {
-                    crate::check_cancelled(cancelled)?;
+                    check_cancelled(cancelled)?;
                     if edge.immediate_return {
                         continue;
                     }
-                    let (Some((a_pos, a_closure)), Some((b_pos, b_closure))) = (
+                    let (Some(sources), Some(targets)) = (
                         module.tags.get(&edge.source_id),
                         module.tags.get(&edge.target_id),
                     ) else {
                         continue;
                     };
-                    if *a_pos >= *b_pos
-                        || *a_closure < input.min_closure
-                        || *b_closure < input.min_closure
-                    {
+                    let closure = sources
+                        .iter()
+                        .flat_map(|(a, ac)| {
+                            targets.iter().filter_map(move |(b, bc)| {
+                                (*a < *b && *ac >= input.min_closure && *bc >= input.min_closure)
+                                    .then_some((ac * bc).sqrt())
+                            })
+                        })
+                        .fold(0.0_f64, f64::max);
+                    if closure <= 0.0 {
                         continue;
                     }
                     let parents: Vec<i64> = selected
@@ -213,10 +271,8 @@ pub fn plan(
                         edge.target_id,
                         &module.source_ids,
                     );
-                    let score = (edge.flow / maximum_flow.max(1e-12))
-                        * (a_closure * b_closure).sqrt()
-                        * independent
-                        * novelty;
+                    let score =
+                        (edge.flow / maximum_flow.max(1e-12)) * closure * independent * novelty;
                     let score = score * if parents.is_empty() { 0.8 } else { 1.0 };
                     if score > best_route_score {
                         best_route_score = score;
@@ -234,6 +290,7 @@ pub fn plan(
                     module.file_id,
                     Selection {
                         chunk_id: module.id,
+                        chosen_path: module.path_index,
                         score: 0.35 * module.relevance + 0.65 * best_route_score,
                         parents: best_parents,
                         relation,
@@ -266,7 +323,7 @@ pub fn plan(
     }
 
     if !selected.iter().any(|selection| selection.route.is_some()) {
-        return Err("no grounded method route in the accepted observation".into());
+        return Err(ThinkingError::NoGroundedRoute);
     }
     Ok(ThinkingOutput {
         schema: "vcp-river-thinking-plan-v1",

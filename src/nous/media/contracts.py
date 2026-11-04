@@ -1,9 +1,43 @@
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from pydantic import JsonValue
 from pydantic_ai.messages import BinaryContent
 
-from nous.content.contracts import Artifact, InputGroup, ProcessingResult, SourceSelection
+from nous.content.contracts import (
+    Artifact,
+    ArtifactRef,
+    ContentSelection,
+    InputGroup,
+    ProcessingResult,
+    SourceSelection,
+)
+
+from .configuration import MediaConfig
+
+if TYPE_CHECKING:
+    from nous.content.text import TextView
+
+
+@dataclass(frozen=True)
+class PlannedPart:
+    source: ContentSelection
+    source_media_type: str
+    representation: str
+    target_media_type: str
+    recipe: dict[str, JsonValue]
+    known_shape: dict[str, JsonValue] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class PlannedConversion:
+    artifact: Artifact
+    selection: SourceSelection
+    requirements: tuple[str, ...]
+    settings: MediaConfig
+    document_mode: str
+    without_audio: bool
+    parts: tuple[PlannedPart, ...]
 
 
 @dataclass(frozen=True)
@@ -22,15 +56,34 @@ class PreparedBatch:
     inputs: tuple[InputGroup, ...]
     selection: SourceSelection
     coverage: dict[str, JsonValue]
+    conversion: PlannedConversion | None = None
+    completed_result_refs: tuple[str, ...] = ()
+    source_prefix: str = "S1"
 
 
 @dataclass(frozen=True)
-class PreparedMedia:
+class MediaPlan:
     artifact: Artifact
     selection: SourceSelection
     batches: tuple[PreparedBatch, ...]
     coverage: dict[str, JsonValue]
     completed_result_refs: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class TextMapping:
+    content: ContentSelection
+    origins: tuple[ContentSelection, ...]
+
+
+@dataclass(frozen=True)
+class TextRepresentation:
+    body: ArtifactRef
+    view: TextView
+    inputs: tuple[InputGroup, ...]
+    coverage: dict[str, JsonValue]
+    completed_result_refs: tuple[str, ...] = ()
+    mappings: tuple[TextMapping, ...] = ()
 
 
 @dataclass(frozen=True)

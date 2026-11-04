@@ -6,6 +6,8 @@ use serde_json::json;
 fn candidate(id: i64, baseline: f64, eligible: bool) -> ScoredWork {
     ScoredWork {
         curve: Curve {
+            path_index: None,
+            multi_path: false,
             id,
             file_id: id,
             source_ids: vec![id],
@@ -105,6 +107,7 @@ fn public_dataset_preserves_rrf_order_and_candidate_quality_scores() {
                 routes: flows
                     .iter()
                     .map(|flow| Route {
+                        witness_pairs: vec![(vec![900], vec![901])],
                         source_id: 1,
                         target_id: 2,
                         flow: *flow,

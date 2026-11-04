@@ -5,10 +5,10 @@ from __future__ import annotations
 import asyncio
 import json
 import math
-from collections.abc import AsyncGenerator, Callable
+from collections.abc import AsyncGenerator, Callable, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Literal, cast
 
 import jsonschema
 from openai import APIConnectionError, APIStatusError
@@ -44,7 +44,15 @@ from nous.configuration import ConfigSnapshot
 from nous.models.configuration import ModelConfig, PresetConfig, TaskAssignment
 
 from .contracts import GenerationResult, ReadingInput
-from .policy import model_error, retry_delay, retryable, stage_deadline
+from .policy import (
+    attempt_reports,
+    attempt_scope,
+    error_report,
+    model_error,
+    retry_delay,
+    retryable,
+    stage_deadline,
+)
 from .prompts import CompiledPrompt, PromptCompiler, PromptResource
 
 if TYPE_CHECKING:
@@ -86,6 +94,33 @@ class FrozenTask:
     assignment: TaskAssignment
     routes: tuple[ModelRoute, ...]
     resource: PromptResource | None
+    ineligible_routes: dict[str, JsonValue] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class PreparedAttempt:
+    """The immutable representation, protocol parameters and allowance sent on one route."""
+
+    route: ModelRoute
+    compiled: CompiledPrompt
+    parameters: dict[str, JsonValue]
+    max_output_tokens: int
+    estimated_text_tokens: int
+    attempt_number: int
+    sdk_messages: tuple[ModelMessage, ...]
+
+    def to_dict(self) -> dict[str, JsonValue]:
+        return {
+            **self.compiled.to_dict(),
+            "model_id": self.route.model_id,
+            "requested_model_name": self.route.model.model_name,
+            "parameters": self.parameters,
+            "max_output_tokens": self.max_output_tokens,
+            "estimated_text_tokens": self.estimated_text_tokens,
+            "media_tokens": None,
+            "input_token_count_kind": "utf8-bytes/3 estimate; media unknown",
+            "attempt_number": self.attempt_number,
+        }
 
 
 @dataclass(frozen=True)
@@ -104,6 +139,28 @@ class PreparedGeneration:
     estimated_input_tokens: int
     stage_refs: tuple[str, ...] = ()
     ineligible_routes: dict[str, JsonValue] = field(default_factory=dict)
+    route_compiled: dict[str, CompiledPrompt] = field(default_factory=dict)
+    attempt_plans: tuple[PreparedAttempt, ...] = ()
+
+    def for_route(self, route: ModelRoute) -> PreparedGeneration:
+        compiled = self.route_compiled.get(route.model_id, self.compiled)
+        output_limit = min(
+            value
+            for value in (
+                self.snapshot.typed_values().model_execution.max_output_tokens,
+                self.assignment.budget.max_output_tokens,
+                route.model.max_output_tokens,
+                route.preset.max_output_tokens,
+            )
+            if value is not None
+        )
+        return replace(
+            self,
+            compiled=compiled,
+            estimated_input_tokens=_estimate_text(compiled),
+            max_output_tokens=output_limit,
+            routes=(route, *(item for item in self.routes if item != route)),
+        )
 
     def to_dict(self) -> dict[str, JsonValue]:
         return {
@@ -112,13 +169,32 @@ class PreparedGeneration:
             "model_id": self.routes[0].model_id,
             "requested_model_name": self.routes[0].model.model_name,
             "output_mode": self.assignment.output_mode,
-            "parameters": self.routes[0].preset.model_dump(mode="json"),
+            "parameters": self.attempt_plans[0].parameters
+            if self.attempt_plans
+            else self.routes[0].preset.model_dump(mode="json"),
             "max_output_tokens": self.max_output_tokens,
             "estimated_input_tokens": self.estimated_input_tokens,
             "input_token_count_kind": "estimated",
             "config_version": self.snapshot.version,
             "ineligible_routes": self.ineligible_routes,
+            "route_representations": {
+                key: value.to_dict() for key, value in self.route_compiled.items()
+            },
+            "media_tokens": None,
+            "prepared_attempts": [attempt.to_dict() for attempt in self.attempt_plans],
         }
+
+
+def _estimate_text(compiled: CompiledPrompt) -> int:
+    length = sum(
+        len(str(part.get("text", "")).encode())
+        for message in compiled.preview
+        for part in cast(list[dict[str, JsonValue]], message["content"])
+        if part.get("type") == "text"
+    )
+    return math.ceil(
+        (length + (len(json.dumps(compiled.schema).encode()) if compiled.schema else 0)) / 3
+    )
 
 
 @dataclass
@@ -152,6 +228,7 @@ class ModelExecutor:
         snapshot: ConfigSnapshot,
         *,
         schema: dict[str, JsonValue] | None = None,
+        route_readings: Mapping[str, ReadingInput] | None = None,
     ) -> PreparedGeneration:
         """Compile once and check every fallback's ability to preserve the requested input."""
         frozen = self.freeze(task, snapshot) if isinstance(task, str) else task
@@ -181,22 +258,24 @@ class ModelExecutor:
             if v is not None
         )
         # Explicitly estimated; provider usage is retained separately.
-        text_bytes = sum(len(str(item).encode("utf-8")) for item in compiled.preview)
-        schema_bytes = len(json.dumps(compiled.schema).encode()) if structured else 0
-        media_tokens = sum(
-            max(256, math.ceil(len(m.data) / 256))
-            for source in reading.sources
-            for m in source.media
-        )
-        estimate = math.ceil((text_bytes + schema_bytes) / 3) + media_tokens
+        estimate = _estimate_text(compiled)
         input_limit = min(
             limits.max_input_tokens, budget.max_input_tokens or limits.max_input_tokens
         )
         eligible: list[ModelRoute] = []
-        ineligible: dict[str, JsonValue] = {}
+        ineligible: dict[str, JsonValue] = dict(frozen.ineligible_routes)
+        route_compiled: dict[str, CompiledPrompt] = {}
         for route in routes:
             try:
-                self._check_route(route, assignment, compiled, snapshot)
+                candidate = (
+                    self.compiler.compile(
+                        frozen.resource, route_readings[route.model_id], schema=schema
+                    )
+                    if route_readings and route.model_id in route_readings
+                    else compiled
+                )
+                self._check_route(route, assignment, candidate, snapshot)
+                route_estimate = _estimate_text(candidate)
                 route_output = min(
                     value
                     for value in (
@@ -207,9 +286,9 @@ class ModelExecutor:
                     )
                     if value is not None
                 )
-                if estimate > input_limit or (
+                if route_estimate > input_limit or (
                     route.model.context_window is not None
-                    and estimate + route_output > route.model.context_window
+                    and route_estimate + route_output > route.model.context_window
                 ):
                     raise NousError(
                         "model.input_limit",
@@ -222,6 +301,7 @@ class ModelExecutor:
                         },
                     )
                 eligible.append(route)
+                route_compiled[route.model_id] = candidate
             except NousError as error:
                 ineligible[route.model_id] = error.to_dict()
         if not eligible:
@@ -231,6 +311,8 @@ class ModelExecutor:
                 details={"routes": ineligible},
             )
         routes = tuple(eligible)
+        compiled = route_compiled[routes[0].model_id]
+        estimate = _estimate_text(compiled)
         output_limit = min(
             value
             for value in (
@@ -241,7 +323,7 @@ class ModelExecutor:
             )
             if value is not None
         )
-        return PreparedGeneration(
+        prepared = PreparedGeneration(
             frozen.task,
             assignment,
             compiled,
@@ -260,6 +342,30 @@ class ModelExecutor:
             limits.structured_retries,
             estimate,
             ineligible_routes=ineligible,
+            route_compiled=route_compiled,
+        )
+        return replace(
+            prepared,
+            attempt_plans=tuple(self.prepare_attempt(prepared, route, 1) for route in routes),
+        )
+
+    def prepare_attempt(
+        self,
+        prepared: PreparedGeneration,
+        route: ModelRoute,
+        number: int,
+        messages: tuple[ModelMessage, ...] | None = None,
+    ) -> PreparedAttempt:
+        active = prepared.for_route(route)
+        parameters = self._request_settings(active, route)
+        return PreparedAttempt(
+            route,
+            active.compiled,
+            parameters,
+            int(cast(int, parameters["max_tokens"])),
+            active.estimated_input_tokens,
+            number,
+            messages if messages is not None else active.compiled.messages,
         )
 
     @staticmethod
@@ -318,6 +424,12 @@ class ModelExecutor:
         for source in compiled.reading.sources:
             for medium in source.media:
                 mime = medium.media_type
+                if mime.startswith("audio/") and medium.format not in {"wav", "mp3"}:
+                    raise NousError(
+                        "model.protocol_format_unsupported",
+                        "The configured chat protocol accepts WAV or MP3 audio",
+                        details={"media_type": mime, "model_id": route.model_id},
+                    )
                 capability = mime.split("/")[0]
                 if mime not in route.model.input_formats or (
                     capability in {"image", "audio", "video"}
@@ -551,69 +663,102 @@ class ModelExecutor:
         """Share one attempt count across transport retry, fallback and output repair."""
         repairs = 0
         route_index = 0
-        messages: list[ModelMessage] = list(prepared.compiled.messages)
+        previous_route: str | None = None
+        messages: list[ModelMessage] = []
         total_usage = RequestUsage()
+        unknown_usage = False
         earlier_responses: list[JsonValue] = []
         repair_feedbacks: list[JsonValue] = []
+        report_start = len(attempt_reports())
         async with asyncio.timeout_at(stage_deadline(prepared.timeout_seconds, context)):
             for attempt in range(1, prepared.max_attempts + 1):
                 route = prepared.routes[min(route_index, len(prepared.routes) - 1)]
+                active = prepared.for_route(route)
+                if not messages or route.model_id != previous_route:
+                    messages = list(active.compiled.messages)
+                    previous_route = route.model_id
+                submission = self.prepare_attempt(active, route, attempt, tuple(messages))
                 response: ModelResponse | None = None
-                try:
-                    async with asyncio.timeout(route.preset.timeout_seconds):
-                        response = await model_request(
-                            self._model(route),
-                            messages,
-                            model_settings=self._settings(prepared, route),
-                            model_request_parameters=self._parameters(prepared),
-                        )
-                    total_usage.incr(response.usage)
-                    result = self._result(prepared, route, response, attempt)
-                    return replace(
-                        result,
-                        usage=TypeAdapter(dict[str, JsonValue]).validate_python(
-                            total_usage.__dict__
-                        ),
-                        response={**result.response, "earlier_responses": earlier_responses},
-                        request={
-                            **result.request,
-                            "structured_repairs": repairs,
-                            "repair_feedbacks": repair_feedbacks,
-                        },
-                    )
-                # Cancellation propagates to the operation owner and never enters retry handling.
-                except (
-                    APIConnectionError,
-                    APIStatusError,
-                    TimeoutError,
-                    ModelAPIError,
-                    UnexpectedModelBehavior,
-                    NousError,
-                ) as error:
-                    repair = (
-                        isinstance(error, NousError)
-                        and error.code == "model.output_invalid"
-                        and repairs < prepared.structured_retries
-                    )
-                    if attempt >= prepared.max_attempts or not (retryable(error) or repair):
-                        raise model_error(error, attempt) from error
-                    repairs += int(repair)
-                    if not repair:
-                        route_index += 1
-                    if repair and response is not None and isinstance(error, NousError):
-                        earlier_responses.append(
-                            TypeAdapter(JsonValue).validate_python(
-                                TypeAdapter(ModelResponse).dump_python(response, mode="json")
+                result: GenerationResult | None = None
+                retry_error: BaseException | None = None
+                with attempt_scope(
+                    attempt,
+                    {
+                        "model_id": route.model_id,
+                        "provider": route.model.provider,
+                        "model_name": route.model.model_name,
+                        "protocol": "openai-chat-completions",
+                    },
+                    prepared.task,
+                ) as scope:
+                    try:
+                        async with asyncio.timeout(route.preset.timeout_seconds):
+                            response = await model_request(
+                                self._model(route),
+                                list(submission.sdk_messages),
+                                model_settings=self._settings(active, route),
+                                model_request_parameters=self._parameters(active),
                             )
+                        total_usage.incr(response.usage)
+                        result = self._result(active, route, response, attempt)
+                        scope.complete(
+                            outcome="success",
+                            provider_request_id=response.provider_response_id,
+                            reported_usage=result.usage,
                         )
-                        messages.append(response)
-                        feedback = (
-                            "Return a corrected output satisfying the same task schema. "
-                            + str(error.details.get("problem", "Invalid output"))
+                    except (
+                        APIConnectionError,
+                        APIStatusError,
+                        TimeoutError,
+                        ModelAPIError,
+                        UnexpectedModelBehavior,
+                        NousError,
+                    ) as error:
+                        repair = (
+                            isinstance(error, NousError)
+                            and error.code == "model.output_invalid"
+                            and repairs < prepared.structured_retries
                         )
-                        repair_feedbacks.append({"feedback": feedback, "after_attempt": attempt})
-                        calls = [part for part in response.parts if isinstance(part, ToolCallPart)]
-                        if calls:
+                        retry = attempt < prepared.max_attempts and (retryable(error) or repair)
+                        report = error_report(error, retry=retry, repair=repair)
+                        if response is not None:
+                            report["provider_request_id"] = response.provider_response_id
+                            scope.complete(
+                                **report,
+                                reported_usage=TypeAdapter(dict[str, JsonValue]).validate_python(
+                                    response.usage.__dict__
+                                ),
+                            )
+                        else:
+                            unknown_usage = True
+                            scope.complete(**report)
+                        if not retry:
+                            raise model_error(error, attempt) from error
+                        repairs += int(repair)
+                        if not repair:
+                            route_index += 1
+                        if repair and response is not None and isinstance(error, NousError):
+                            earlier_responses.append(
+                                TypeAdapter(JsonValue).validate_python(
+                                    TypeAdapter(ModelResponse).dump_python(response, mode="json")
+                                )
+                            )
+                            messages.append(response)
+                            feedback = (
+                                "Return a corrected output satisfying the same task schema. "
+                                + str(error.details.get("problem", "Invalid output"))
+                            )
+                            repair_feedbacks.append(
+                                {"feedback": feedback, "after_attempt": attempt}
+                            )
+                            calls = [
+                                part for part in response.parts if isinstance(part, ToolCallPart)
+                            ]
+                            retry_info: RetryInfo[Literal["validation_error"]] = RetryInfo(
+                                cause="validation_error",
+                                attempt=repairs,
+                                max_retries=prepared.structured_retries,
+                            )
                             messages.append(
                                 ModelRequest(
                                     parts=[
@@ -622,32 +767,34 @@ class ModelExecutor:
                                             feedback,
                                             call.tool_call_id,
                                             outcome="retried",
-                                            retry=RetryInfo(
-                                                cause="validation_error",
-                                                attempt=repairs,
-                                                max_retries=prepared.structured_retries,
-                                            ),
+                                            retry=retry_info,
                                         )
                                         for call in calls
                                     ]
+                                    if calls
+                                    else [RetryFeedbackPart(feedback, retry=retry_info)]
                                 )
                             )
-                        else:
-                            messages.append(
-                                ModelRequest(
-                                    parts=[
-                                        RetryFeedbackPart(
-                                            feedback,
-                                            retry=RetryInfo(
-                                                cause="validation_error",
-                                                attempt=repairs,
-                                                max_retries=prepared.structured_retries,
-                                            ),
-                                        )
-                                    ]
-                                )
-                            )
-                    await retry_delay(error)
+                        retry_error = error
+                if retry_error is not None:
+                    await retry_delay(retry_error)
+                    continue
+                assert result is not None
+                return replace(
+                    result,
+                    usage={
+                        **TypeAdapter(dict[str, JsonValue]).validate_python(total_usage.__dict__),
+                        "completeness": "partial" if unknown_usage else "reported",
+                    },
+                    response={**result.response, "earlier_responses": earlier_responses},
+                    request={
+                        **result.request,
+                        "prepared_attempt": submission.to_dict(),
+                        "attempt_reports": attempt_reports(report_start),
+                        "structured_repairs": repairs,
+                        "repair_feedbacks": repair_feedbacks,
+                    },
+                )
         raise AssertionError("attempt limit must be positive")
 
     @asynccontextmanager
@@ -674,57 +821,88 @@ class ModelExecutor:
         target: GenerationStream | None = None,
     ) -> AsyncGenerator[str]:
         visible = False
+        report_start = len(attempt_reports())
         async with asyncio.timeout_at(stage_deadline(prepared.timeout_seconds, context)):
             for attempt in range(1, prepared.max_attempts + 1):
                 route = prepared.routes[min(attempt - 1, len(prepared.routes) - 1)]
+                active = prepared.for_route(route)
                 if "stream" not in route.model.capabilities:
                     raise NousError(
                         "model.capability_missing",
                         f"Model {route.model_id} does not declare streaming",
                     )
-                try:
-                    async with (
-                        asyncio.timeout(route.preset.timeout_seconds),
-                        model_request_stream(
-                            self._model(route),
-                            list(prepared.compiled.messages),
-                            model_settings=self._settings(prepared, route),
-                            model_request_parameters=self._parameters(prepared),
-                        ) as response,
-                    ):
-                        async for event in response:
-                            delta = (
-                                event.part.content
-                                if isinstance(event, PartStartEvent)
-                                and isinstance(event.part, TextPart)
-                                else event.delta.content_delta
-                                if isinstance(event, PartDeltaEvent)
-                                and isinstance(event.delta, TextPartDelta)
-                                else ""
+                retry_error: BaseException | None = None
+                result: GenerationResult | None = None
+                with attempt_scope(
+                    attempt,
+                    {"model_id": route.model_id, "provider": route.model.provider},
+                    prepared.task,
+                ) as scope:
+                    try:
+                        async with (
+                            asyncio.timeout(route.preset.timeout_seconds),
+                            model_request_stream(
+                                self._model(route),
+                                list(active.compiled.messages),
+                                model_settings=self._settings(active, route),
+                                model_request_parameters=self._parameters(active),
+                            ) as response,
+                        ):
+                            async for event in response:
+                                delta = (
+                                    event.part.content
+                                    if isinstance(event, PartStartEvent)
+                                    and isinstance(event.part, TextPart)
+                                    else event.delta.content_delta
+                                    if isinstance(event, PartDeltaEvent)
+                                    and isinstance(event.delta, TextPartDelta)
+                                    else ""
+                                )
+                                if delta:
+                                    visible = True
+                                    yield delta
+                            result = self._result(active, route, response.get(), attempt)
+                            scope.complete(
+                                outcome="success",
+                                provider_request_id=cast(
+                                    str | None, result.producer.get("request_id")
+                                ),
+                                reported_usage=result.usage,
                             )
-                            if delta:
-                                # Once visible, changing routes would splice two answers together.
-                                visible = True
-                                yield delta
-                        result = self._result(prepared, route, response.get(), attempt)
-                        if target is not None:
-                            target.result = result
-                        return
-                except NousError as error:
-                    error.details["partial_output_delivered"] = visible
-                    raise
-                except (
-                    APIConnectionError,
-                    APIStatusError,
-                    TimeoutError,
-                    ModelAPIError,
-                    UnexpectedModelBehavior,
-                ) as error:
-                    if visible or attempt >= prepared.max_attempts or not retryable(error):
-                        failure = model_error(error, attempt)
-                        failure.details["partial_output_delivered"] = visible
-                        raise failure from error
-                    await retry_delay(error)
+                    except asyncio.CancelledError, GeneratorExit:
+                        scope.complete(outcome="cancelled", next_action="close_stream")
+                        raise
+                    except (
+                        APIConnectionError,
+                        APIStatusError,
+                        TimeoutError,
+                        ModelAPIError,
+                        UnexpectedModelBehavior,
+                        NousError,
+                    ) as error:
+                        retry = not visible and attempt < prepared.max_attempts and retryable(error)
+                        scope.complete(**error_report(error, retry=retry))
+                        if not retry:
+                            failure = model_error(error, attempt)
+                            failure.details["partial_output_delivered"] = visible
+                            raise failure from error
+                        retry_error = error
+                if retry_error is not None:
+                    await retry_delay(retry_error)
+                    continue
+                assert result is not None
+                if target is not None:
+                    target.result = replace(
+                        result,
+                        request={
+                            **result.request,
+                            "prepared_attempt": self.prepare_attempt(
+                                active, route, attempt
+                            ).to_dict(),
+                            "attempt_reports": attempt_reports(report_start),
+                        },
+                    )
+                return
 
     async def discover(self, provider: str, snapshot: ConfigSnapshot) -> list[str]:
         try:
@@ -768,47 +946,74 @@ class ModelExecutor:
         timeout = min(
             limits.timeout_seconds, assignment.budget.timeout_seconds or limits.timeout_seconds
         )
+        report_start = len(attempt_reports())
         async with asyncio.timeout_at(stage_deadline(timeout, context)):
             for attempt in range(1, maximum + 1):
                 route = routes[min(attempt - 1, len(routes) - 1)]
-                try:
-                    from openai import omit
+                retry_error: BaseException | None = None
+                generated: GenerationResult | None = None
+                with attempt_scope(
+                    attempt,
+                    {
+                        "model_id": route.model_id,
+                        "provider": route.model.provider,
+                        "model_name": route.model.model_name,
+                        "endpoint": "audio.transcriptions",
+                    },
+                    frozen.task,
+                ) as scope:
+                    try:
+                        from openai import omit
 
-                    async with asyncio.timeout(route.preset.timeout_seconds):
-                        response = await self.connections.client(
-                            route.model.provider
-                        ).audio.transcriptions.create(
-                            file=(filename, audio),
-                            model=route.model.model_name,
-                            language=language if language else omit,
-                            prompt=hint if hint else omit,
-                            timeout=self.connections.timeout(route.model.provider, snapshot),
+                        async with asyncio.timeout(route.preset.timeout_seconds):
+                            response = await self.connections.client(
+                                route.model.provider
+                            ).audio.transcriptions.create(
+                                file=(filename, audio),
+                                model=route.model.model_name,
+                                language=language if language else omit,
+                                prompt=hint if hint else omit,
+                                timeout=self.connections.timeout(route.model.provider, snapshot),
+                            )
+                        raw = response.model_dump(mode="json")
+                        usage = TypeAdapter(dict[str, JsonValue]).validate_python(
+                            raw.get("usage") or {}
                         )
-                    raw = response.model_dump(mode="json")
-                    return GenerationResult(
-                        response.text,
-                        {
-                            "kind": "model",
-                            "provider": route.model.provider,
-                            "protocol": "openai-chat-completions",
-                            "model_id": route.model_id,
-                            "requested_model_name": route.model.model_name,
-                            "returned_model_name": None,
-                            "deployment_revision": route.model.deployment_revision,
-                        },
-                        TypeAdapter(dict[str, JsonValue]).validate_python(raw.get("usage") or {}),
-                        {
-                            "task": frozen.task,
-                            "filename": filename,
-                            "bytes": len(audio),
-                            "language": language,
-                            "hint": hint,
-                        },
-                        attempt,
-                        response=TypeAdapter(dict[str, JsonValue]).validate_python(raw),
-                    )
-                except (APIConnectionError, APIStatusError, TimeoutError) as error:
-                    if attempt >= maximum or not retryable(error):
-                        raise model_error(error, attempt) from error
-                    await retry_delay(error)
+                        generated = GenerationResult(
+                            response.text,
+                            {
+                                "kind": "model",
+                                "provider": route.model.provider,
+                                "protocol": "openai-chat-completions",
+                                "model_id": route.model_id,
+                                "requested_model_name": route.model.model_name,
+                                "returned_model_name": None,
+                                "deployment_revision": route.model.deployment_revision,
+                            },
+                            usage,
+                            {
+                                "task": frozen.task,
+                                "filename": filename,
+                                "bytes": len(audio),
+                                "language": language,
+                                "hint": hint,
+                            },
+                            attempt,
+                            response=TypeAdapter(dict[str, JsonValue]).validate_python(raw),
+                        )
+                        scope.complete(outcome="success", reported_usage=usage)
+                    except (APIConnectionError, APIStatusError, TimeoutError) as error:
+                        retry = attempt < maximum and retryable(error)
+                        scope.complete(**error_report(error, retry=retry))
+                        if not retry:
+                            raise model_error(error, attempt) from error
+                        retry_error = error
+                if retry_error is not None:
+                    await retry_delay(retry_error)
+                    continue
+                assert generated is not None
+                return replace(
+                    generated,
+                    request={**generated.request, "attempt_reports": attempt_reports(report_start)},
+                )
         raise AssertionError("attempt limit must be positive")

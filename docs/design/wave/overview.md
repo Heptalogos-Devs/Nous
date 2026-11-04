@@ -32,3 +32,7 @@ VCP QueryObservation 是一次数值计算的观测。它与 Nous 将来的 Obse
 实现描述型概念、按角色/顺序组织的上下文、多来源候选、typed relation 投影、反证关系读取、域内时间过滤和显式的研究模式。完整使用既有来源、向量与时间 owner；不引入新的通用 Cognition 表。
 
 认知吸积的自动创建/合并/拆分、长期 feedback 学习、全量 NousQL、Namespace 授权和持久后台任务不在本轮。相关输入合同为之后的领域接入保留真实语义空间，不放成功占位实现。
+
+## 本轮结构收敛与后续认知
+
+当前整改范围见 [主计划](../../plans/architecture-repair.md)。真实核心位于 retrieval crate；PyO3 为薄边界。Journal 正文、多路径和支持组的接入见 [投影](journal-projection.md)，语义时间见 [时间视图](temporal-views.md)。Journal 对象设计已确定，但当前实际实现范围仅为共同正文结构、标注与检索实验。

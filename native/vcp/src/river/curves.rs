@@ -64,7 +64,11 @@ pub(super) fn source_top(
         .collect()
 }
 
-pub(super) fn select_superset(curves: Vec<Curve>, config: &NativeConfig) -> Vec<Curve> {
+pub(super) fn select_superset(
+    curves: Vec<Curve>,
+    config: &NativeConfig,
+    truncate: bool,
+) -> Vec<Curve> {
     let sources = vec![
         (
             "query_knn",
@@ -158,7 +162,9 @@ pub(super) fn select_superset(curves: Vec<Curve>, config: &NativeConfig) -> Vec<
             })
             .then_with(|| left.id.cmp(&right.id))
     });
-    selected.truncate(config.max_union_candidates.max(1));
+    if truncate {
+        selected.truncate(config.max_union_candidates.max(1));
+    }
     for (index, curve) in selected.iter_mut().enumerate() {
         curve.union_rank = index + 1;
     }
@@ -245,6 +251,8 @@ pub(super) fn load_curves(
             continue;
         };
         curves.push(Curve {
+            path_index: None,
+            multi_path: false,
             id: candidate.id,
             file_id: *file_id,
             source_ids: assets.candidates[&candidate.id].source_ids.clone(),

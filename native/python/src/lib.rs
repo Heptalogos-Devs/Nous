@@ -5,30 +5,9 @@ mod engine;
 mod query;
 pub(crate) use bundles::*;
 pub(crate) use engine::*;
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
-};
 
 pyo3::create_exception!(_core, NativeError, pyo3::exceptions::PyRuntimeError);
-#[derive(Debug)]
-pub(crate) struct Failure {
-    pub code: &'static str,
-    pub message: String,
-}
-impl std::fmt::Display for Failure {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.message.fmt(f)
-    }
-}
-impl std::error::Error for Failure {}
-pub(crate) fn failure(code: &'static str, message: impl ToString) -> anyhow::Error {
-    Failure {
-        code,
-        message: message.to_string(),
-    }
-    .into()
-}
+pub(crate) use nous_retrieval::{Failure, failure};
 pub(crate) fn native_error(error: impl Into<anyhow::Error>) -> PyErr {
     let error = error.into();
     let code = error
@@ -38,25 +17,22 @@ pub(crate) fn native_error(error: impl Into<anyhow::Error>) -> PyErr {
         let result = NativeError::new_err(format!("{error:#}"));
         let value = result.value(py);
         let _ = value.setattr("code", code);
-        let _ = value.setattr("details_json", "{}");
+        let details = error
+            .downcast_ref::<Failure>()
+            .map(|e| e.details.to_string())
+            .unwrap_or_else(|| serde_json::json!({"reason":format!("{error:#}")}).to_string());
+        let _ = value.setattr("details_json", details);
         result
     })
 }
 #[pyclass(frozen, skip_from_py_object, module = "nous_native._core")]
 #[derive(Clone, Default)]
 pub struct CancellationToken {
-    inner: Arc<AtomicBool>,
+    pub(crate) inner: nous_retrieval::CancellationToken,
 }
 impl CancellationToken {
-    pub(crate) fn check(&self) -> anyhow::Result<()> {
-        if self.inner.load(Ordering::Relaxed) {
-            Err(failure("wave.cancelled", "Native operation cancelled"))
-        } else {
-            Ok(())
-        }
-    }
     pub(crate) fn is_cancelled(&self) -> bool {
-        self.inner.load(Ordering::Relaxed)
+        self.inner.is_cancelled()
     }
 }
 #[pymethods]
@@ -66,7 +42,7 @@ impl CancellationToken {
         Self::default()
     }
     fn cancel(&self) {
-        self.inner.store(true, Ordering::Relaxed)
+        self.inner.cancel()
     }
     #[getter]
     fn cancelled(&self) -> bool {
@@ -92,6 +68,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<NativeEngine>()?;
     m.add_class::<NativeSnapshot>()?;
     m.add_class::<query::QueryObservation>()?;
+    m.add_class::<query::CandidatePool>()?;
     m.add_class::<query::NativeQueryResult>()?;
     m.add_function(wrap_pyfunction!(schemas_json, m)?)?;
     m.add_function(wrap_pyfunction!(defaults_json, m)?)?;

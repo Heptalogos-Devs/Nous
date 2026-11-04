@@ -110,70 +110,145 @@
       "key": "cancellation",
       "content": {
         "document": "cancellation",
-        "selector": {
-          "kind": "whole"
-        }
+        "selector": {}
       },
       "document": "cancellation",
-      "curve": [
-        "cancellation",
-        "resource-ownership",
-        "transaction"
+      "paths": [
+        {
+          "key": "body",
+          "steps": [
+            {
+              "concept": "cancellation",
+              "selection": {
+                "start_byte": 0,
+                "end_byte": 522
+              }
+            },
+            {
+              "concept": "resource-ownership",
+              "selection": {
+                "start_byte": 0,
+                "end_byte": 522
+              }
+            },
+            {
+              "concept": "transaction",
+              "selection": {
+                "start_byte": 0,
+                "end_byte": 522
+              }
+            }
+          ]
+        }
       ]
     },
     {
       "key": "transactions",
       "content": {
         "document": "transactions",
-        "selector": {
-          "kind": "whole"
-        }
+        "selector": {}
       },
       "document": "transactions",
-      "curve": [
-        "transaction",
-        "resource-ownership"
+      "paths": [
+        {
+          "key": "body",
+          "steps": [
+            {
+              "concept": "transaction",
+              "selection": {
+                "start_byte": 0,
+                "end_byte": 476
+              }
+            },
+            {
+              "concept": "resource-ownership",
+              "selection": {
+                "start_byte": 0,
+                "end_byte": 476
+              }
+            }
+          ]
+        }
       ]
     },
     {
       "key": "evidence",
       "content": {
         "document": "evidence",
-        "selector": {
-          "kind": "whole"
-        }
+        "selector": {}
       },
       "document": "evidence",
-      "curve": [
-        "provenance",
-        "counterevidence"
+      "paths": [
+        {
+          "key": "body",
+          "steps": [
+            {
+              "concept": "provenance",
+              "selection": {
+                "start_byte": 0,
+                "end_byte": 492
+              }
+            },
+            {
+              "concept": "counterevidence",
+              "selection": {
+                "start_byte": 0,
+                "end_byte": 492
+              }
+            }
+          ]
+        }
       ]
     },
     {
       "key": "summary",
       "content": {
         "document": "summary",
-        "selector": {
-          "kind": "whole"
-        }
+        "selector": {}
       },
       "document": "summary",
-      "curve": [
-        "resource-ownership",
-        "transaction"
+      "paths": [
+        {
+          "key": "body",
+          "steps": [
+            {
+              "concept": "resource-ownership",
+              "selection": {
+                "start_byte": 0,
+                "end_byte": 451
+              }
+            },
+            {
+              "concept": "transaction",
+              "selection": {
+                "start_byte": 0,
+                "end_byte": 451
+              }
+            }
+          ]
+        }
       ]
     },
     {
       "key": "repetition",
       "content": {
         "document": "repetition",
-        "selector": {
-          "kind": "whole"
-        }
+        "selector": {}
       },
       "document": "repetition",
-      "curve": [
-        "repeat-as-evidence"
+      "paths": [
+        {
+          "key": "body",
+          "steps": [
+            {
+              "concept": "repeat-as-evidence",
+              "selection": {
+                "start_byte": 0,
+                "end_byte": 382
+              }
+            }
+          ]
+        }
       ]
     }
   ],
@@ -187,10 +262,7 @@
       "strength": 0.4,
       "confidence": 0.7,
       "polarity": "positive",
-      "evidence": [
-        "transactions",
-        "evidence"
-      ]
+      "support_group": "ownership-to-provenance-basis"
     },
     {
       "key": "provenance-counter-repeat",
@@ -201,10 +273,47 @@
       "strength": 1.0,
       "confidence": 1.0,
       "polarity": "negative",
-      "evidence": [
+      "support_group": "provenance-counter-repeat-basis"
+    }
+  ],
+  "support_groups": [
+    {
+      "key": "ownership-to-provenance-basis",
+      "required_sources": [
+        "transactions",
+        "evidence"
+      ],
+      "basis_refs": [
+        {
+          "document": "transactions"
+        },
+        {
+          "document": "evidence"
+        }
+      ],
+      "kind": "interpretation",
+      "origin_ref": {
+        "document": "transactions"
+      }
+    },
+    {
+      "key": "provenance-counter-repeat-basis",
+      "required_sources": [
         "evidence",
         "repetition"
-      ]
+      ],
+      "basis_refs": [
+        {
+          "document": "evidence"
+        },
+        {
+          "document": "repetition"
+        }
+      ],
+      "kind": "source",
+      "origin_ref": {
+        "document": "evidence"
+      }
     }
   ]
 }

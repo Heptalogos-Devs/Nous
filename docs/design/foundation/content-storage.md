@@ -26,11 +26,11 @@ borrow_local(blob_ref) -> async context manager[LocalContent]
 
 ## 阻塞与取消
 
-文件、Native 与导出调用共享 Execution 的 blocking 生命周期。需要在外层释放句柄前等待 worker 结束的调用使用 `wait_on_cancel`；需要返回资源的创建动作优先在同一个 worker 上下文完成取得/使用/关闭，避免取消时丢失刚返回的 fd/path。
+文件、Native 与导出调用共享 Execution 的 blocking 生命周期。Execution.blocking 在调用者取消后等待实际 worker 收尾，资源 owner 随后释放外层句柄；需要返回资源的创建动作优先在同一个 worker 上下文完成取得/使用/关闭，避免取消时丢失刚返回的 fd/path。
 
 CAS 的临时句柄取得必须在第一次可取消 await 之前登记清理：可在事件循环上同步完成短暂的 mkstemp/句柄登记，再把重读写交给 worker；也可把完整资源作用域放进同一个 worker。不要把一个刚创建的 fd 作为会因等待取消而丢失的 worker 返回值。
 
-将现有 `_file_work` 与 publish 的局部 shield 机制收敛到这一公共行为。CAS 仍然决定哪个文件需要清理，Execution 只负责 worker 何时真正结束。初始临时文件创建、写入、flush、发布和取消之间保持同一资源所有者。
+文件工作与 publish 复用这一公共行为，不再保留第二套局部 shield 生命周期。CAS 仍然决定哪个文件需要清理，Execution 只负责 worker 何时真正结束。初始临时文件创建、写入、flush、发布和取消之间保持同一资源所有者。
 
 ## 读取与导出
 

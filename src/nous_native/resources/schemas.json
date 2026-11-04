@@ -562,6 +562,16 @@
             }
           }
         }
+      },
+      "pairWorkLimit": {
+        "default": null,
+        "description": "Maximum occurrence pairs in each construction pass; null computes all.",
+        "format": "uint64",
+        "minimum": 0,
+        "type": [
+          "integer",
+          "null"
+        ]
       }
     },
     "title": "BuildConfig",
@@ -1368,13 +1378,6 @@
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "additionalProperties": false,
     "properties": {
-      "candidate_budget": {
-        "default": 100,
-        "format": "uint",
-        "maximum": 100000,
-        "minimum": 1,
-        "type": "integer"
-      },
       "rrf_k": {
         "default": 60.0,
         "exclusiveMinimum": 0.0,

@@ -42,3 +42,9 @@ ResultStore 保存语义消息、actual model/provider/protocol、模板及 Sche
 ## 封装与迁移
 
 Executor 移除 extract-information / passage-selection 的专名分支，由任务合同执行；GenerationOperations 通过任务 outputs 采用。MediaPreparer 移除转写，MediaAnalysis 通过 GenerationOperations.transcribe 组织需要的阶段。`GenerationOperations.run` 消费已经准备的 ReadingInput 与冻结任务；`run_prepared` 执行已编译请求并采用。
+
+## 联合输入与实际尝试
+
+任务的 joint/independent_batches 及共同材料规划见 [输入规划](input-planning.md)。多个 input 的原数组定义一次任务，不能在准备时无条件变成“一文件一次生成”。现有 PreparedRun 持有共同计划，按 TaskDefinition 的语义形成实际请求。
+
+路线准备、修复、实际请求参数与诊断统一遵循 [请求尝试](request-attempts.md)。PreparedAttempt 在发送前形成，show-request 与采用记录使用同一对象。Generation/转写/Embedding 复用 policy 的尝试上下文。

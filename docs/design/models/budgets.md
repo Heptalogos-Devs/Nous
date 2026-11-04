@@ -19,3 +19,9 @@ Prepared batch 保存引用与 coverage；一次只物化配置允许的 in-flig
 ## 记录
 
 返回每阶段实际 attempts、各请求用量与合计，若任一项未知则合计相应部分标 unknown/partial。原始服务 usage 可保留用于解释；不能以本地字符数作为真实计费 token。备用模型使用自己的实际参数和上限。
+
+## 可测限制与估计
+
+实际请求字节、模型明确上下文/输出上限、图片尺寸和媒体时长按各自单位约束。压缩媒体字节无法可靠换算 token，删除 bytes/256 硬拒绝；未知媒体 token 明确 unknown。Embedding 的每项与每请求上限统一由其批次执行能力落实。
+
+每条路线独立准备额度，根 deadline 与阶段尝试共用；见 [请求尝试](request-attempts.md)。金额审批和费用治理不属于本轮开发。

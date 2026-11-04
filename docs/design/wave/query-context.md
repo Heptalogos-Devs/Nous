@@ -6,6 +6,7 @@
 WaveQuery:
   snapshot
   text
+  vector?
   context[]: {key, role, sequence, content | text, weight?, time?}
   core_concepts[]
   cues[]: {label, description, is_core}
@@ -51,3 +52,11 @@ VCP `queryVector` 使用本次 effective_query；它在该次 VCP 内部称 orig
 
 
 concept-only 查询的内部聚合键分别使用 core/cue 的稳定序号，重复 label 的临时 cue 保留各自贡献；ghost 的 label 与调用者顺序保持。Thinking 的公开 route 以 source、target、previous 返回快照 Concept key，null 保留，flow/hop/wormhole 保留数值含义。
+
+## 显式向量与临时输入
+
+WaveQuery 增加有空间身份与 query 用途的 VectorRef。通过共同 Embedding 读取即可离线执行，不绕过 Python 完整操作；同维度而不同空间返回明确错误。
+
+上下文先按 role/window、明确的 key/source 去重及零权重规则选取实际片段，再调用共同向量能力。已选片段的权重和序位完整保留。临时 text/cue 使用 encode_query 或对应 document 用途的同一批次核心，默认不持久接纳一次性查询；明确保存时才产生正式产物。
+
+严格历史/知情视图与软时间偏好按 [时间视图](temporal-views.md) 分开。当前本轮只以显式来源子集建快照作实验，不声称已实现任意 $asof。

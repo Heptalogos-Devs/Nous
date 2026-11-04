@@ -3,15 +3,16 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from collections.abc import Sequence
 from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
-from pydantic import JsonValue
+from pydantic import JsonValue, TypeAdapter
 
 from nous.common.errors import NousError
+from nous.common.operations import exception_context
+from nous.content.artifacts import ArtifactStore
 from nous.content.contracts import (
     Artifact,
     ArtifactRef,
@@ -23,7 +24,7 @@ from nous.content.contracts import (
     ProcessingResult,
     SourceSelection,
 )
-from nous.content.store import ArtifactStore, ResultStore
+from nous.content.results import ResultStore
 from nous.models.contracts import ReadingInput
 from nous.models.operations import GenerationOperations
 from nous.runtime.execution import ExecutionManager
@@ -182,6 +183,7 @@ class MediaAnalysis:
                     )
                 for ordinal, plan in enumerate(prepared.batches):
                     batch = await self.preparer.materialize(plan)
+                    completed.extend(batch.completed_result_refs)
                     description: ProcessingResult | None = None
                     if reusable:
                         description = await self._reuse_description(
@@ -235,8 +237,27 @@ class MediaAnalysis:
                     if strategy in {"direct_structured", "describe_then_structure"}:
                         stage = "structure"
                         # Keep the actual media inputs alongside the persisted description.
-                        sources = list(batch.sources)
-                        inputs = list(batch.inputs)
+                        if strategy == "describe_then_structure":
+                            second_plan = await self.preparer.prepare(
+                                original,
+                                plan.selection,
+                                requirements=self._requirements(extraction_task, snapshot),
+                                settings=settings,
+                                document_mode=document_mode,
+                                without_audio=without_audio,
+                            )
+                            second_batches = [
+                                await self.preparer.materialize(item)
+                                for item in second_plan.batches
+                            ]
+                            sources = [source for item in second_batches for source in item.sources]
+                            inputs = [group for item in second_batches for group in item.inputs]
+                            completed.extend(
+                                ref for item in second_batches for ref in item.completed_result_refs
+                            )
+                        else:
+                            sources = list(batch.sources)
+                            inputs = list(batch.inputs)
                         if description is not None:
                             output = next(
                                 output for output in description.outputs if output.name == "output"
@@ -297,7 +318,7 @@ class MediaAnalysis:
                     prepared.selection,
                     tuple(final),
                     tuple(descriptions),
-                    prepared.coverage,
+                    {**prepared.coverage, "actual": [result.coverage for result in final]},
                     preparations=tuple(
                         ref
                         for ref in completed
@@ -305,16 +326,15 @@ class MediaAnalysis:
                     ),
                 )
         except (asyncio.CancelledError, TimeoutError) as exc:
-            exc.add_note(
-                json.dumps(
-                    {
-                        "completed_result_refs": completed,
-                        "failed_stage": stage,
-                        "unfinished_coverage": pending,
-                        "artifact": original.ref.address if original else None,
-                    }
-                )
-            )
+            exc.__dict__["nous_context"] = {
+                **exception_context(exc),
+                **{
+                    "completed_result_refs": completed,
+                    "failed_stage": stage,
+                    "unfinished_coverage": pending,
+                    "artifact": original.ref.address if original else None,
+                },
+            }
             raise
         except NousError as exc:
             details: dict[str, object] = dict(exc.details)
@@ -332,11 +352,5 @@ class MediaAnalysis:
                     "artifact": original.ref.address if original is not None else None,
                 }
             )
-            raise NousError(
-                exc.code,
-                exc.message,
-                operation="media.analyze",
-                details=details,
-                cause=exc,
-                retryable=False,
-            ) from exc
+            exc.details.update(TypeAdapter(dict[str, JsonValue]).validate_python(details))
+            raise

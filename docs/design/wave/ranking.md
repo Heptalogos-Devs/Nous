@@ -4,7 +4,7 @@
 
 lexical 使用 Tantivy/Jieba；dense 使用相同正式空间的 query/document 向量与 USearch。TagMemo 产生增强向量与相关概念；RiverMemo 消费 original/enhanced/local/transfer、词项、直接锚等候选并集，完整执行其读出。
 
-保留候选原来来自哪些通道及各通道名次。candidate_budget 与 top_k 分开；去重在明确位置完成，不能每个包装层都 truncate 一次。
+保留候选原来来自哪些通道及各通道名次。各通道 K、唯一 maxUnionCandidates 与 top_k 分开；候选校准和联合选择在 recall 完成一次，readout 使用固定池，去重随后执行。
 
 ## 当前 RiverMemo 评分合同
 

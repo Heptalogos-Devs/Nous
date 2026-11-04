@@ -23,6 +23,7 @@ pub struct FileData {
 
 #[derive(Clone, Default)]
 pub struct RootFact {
+    pub required_roots: Vec<i64>,
     pub checksum: String,
     pub tags: std::collections::BTreeSet<i64>,
 }
@@ -39,6 +40,7 @@ pub struct MemoAssetInput {
     pub tag_names: BTreeMap<i64, String>,
     pub epa: Option<Arc<crate::pipeline::EpaBasis>>,
     pub candidates: BTreeMap<i64, CandidateData>,
+    pub candidate_paths: BTreeMap<i64, Vec<Vec<crate::artifact::FileTag>>>,
     pub files: BTreeMap<i64, FileData>,
 }
 
@@ -55,6 +57,7 @@ pub struct MemoAssets {
     pub(crate) tag_names: BTreeMap<i64, String>,
     pub(crate) epa: Option<Arc<crate::pipeline::EpaBasis>>,
     pub(crate) candidates: BTreeMap<i64, CandidateData>,
+    pub(crate) candidate_paths: BTreeMap<i64, Vec<Vec<crate::artifact::FileTag>>>,
     pub(crate) files: BTreeMap<i64, FileData>,
 }
 
@@ -123,6 +126,18 @@ impl MemoAssets {
                 return Err(format!("MEMO_CANDIDATE_VECTOR_INVALID: {id}"));
             }
         }
+        for (id, paths) in &input.candidate_paths {
+            if !input.candidates.contains_key(id)
+                || paths.len() > 16
+                || paths.iter().any(|path| {
+                    path.iter().any(|step| {
+                        step.position <= 0 || !input.tag_names.contains_key(&step.tag_id)
+                    }) || path.windows(2).any(|p| p[0].position > p[1].position)
+                })
+            {
+                return Err(format!("MEMO_CANDIDATE_PATH_INVALID: {id}"));
+            }
+        }
         if let Some(epa) = &input.epa
             && (epa.dimension != input.dimension
                 || !vector_valid(&epa.mean)
@@ -144,6 +159,7 @@ impl MemoAssets {
             tag_names: input.tag_names,
             epa: input.epa,
             candidates: input.candidates,
+            candidate_paths: input.candidate_paths,
             files: input.files,
         })
     }
@@ -178,6 +194,15 @@ impl MemoAssets {
                 .collect(),
         }
     }
+    pub fn root_facts(&self) -> &BTreeMap<i64, RootFact> {
+        &self.root_facts
+    }
+    pub fn graph(&self) -> &crate::graph::NativeArtifact {
+        &self.graph
+    }
+    pub fn candidate_paths(&self) -> &BTreeMap<i64, Vec<Vec<crate::artifact::FileTag>>> {
+        &self.candidate_paths
+    }
     pub fn snapshot(&self) -> MemoAssetInput {
         MemoAssetInput {
             tag_aliases: self.tag_aliases.clone(),
@@ -190,6 +215,7 @@ impl MemoAssets {
             tag_names: self.tag_names.clone(),
             epa: self.epa.clone(),
             candidates: self.candidates.clone(),
+            candidate_paths: self.candidate_paths.clone(),
             files: self.files.clone(),
         }
     }

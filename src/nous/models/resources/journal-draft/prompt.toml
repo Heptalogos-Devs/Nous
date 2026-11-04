@@ -1,0 +1,10 @@
+contract_id = "journal-draft"
+
+[[messages]]
+role = "system"
+template = "system.md.j2"
+
+[[messages]]
+role = "user"
+template = "user.md.j2"
+append_sources = true

@@ -25,9 +25,10 @@ class Candidates:
         vectors: Array[np.float32] | None,
         membership_indptr: Array[np.uint64],
         membership_indices: Array[np.uint64],
-        curve_indptr: Array[np.uint64],
-        curve_indices: Array[np.uint64],
-        curve_positions: Array[np.int64],
+        path_indptr: Array[np.uint64],
+        path_step_indptr: Array[np.uint64],
+        path_indices: Array[np.uint64],
+        path_positions: Array[np.int64],
         root_indptr: Array[np.uint64],
         root_indices: Array[np.uint64],
     ) -> None: ...
@@ -59,9 +60,15 @@ class Associations:
         strengths: Array[np.float64],
         confidences: Array[np.float64],
         polarities: Array[np.int8],
-        root_indptr: Array[np.uint64],
-        root_indices: Array[np.uint64],
+        edge_groups: Array[np.uint64],
+        group_root_indptr: Array[np.uint64],
+        group_root_indices: Array[np.uint64],
     ) -> None: ...
+
+class CandidatePool:
+    def __init__(self, value_json: str) -> None: ...
+    @property
+    def value_json(self) -> str: ...
 
 class QueryObservation:
     @property
@@ -102,11 +109,21 @@ class NativeSnapshot:
         allowed_rows: Array[np.uint64] | None = None,
         options_json: str = "{}",
         ghost_vectors: Array[np.float32] | None = None,
+        candidate_pool: CandidatePool | None = None,
         cancel: CancellationToken | None = None,
     ) -> NativeQueryResult: ...
+    def recall(
+        self,
+        observation: QueryObservation,
+        *,
+        allowed_rows: Array[np.uint64] | None = None,
+        options_json: str = "{}",
+        cancel: CancellationToken | None = None,
+    ) -> CandidatePool: ...
     def readout(
         self,
         observation: QueryObservation,
+        candidate_pool: CandidatePool,
         *,
         allowed_rows: Array[np.uint64] | None = None,
         options_json: str = "{}",
@@ -117,6 +134,7 @@ class NativeSnapshot:
         observation: QueryObservation,
         stages_json: str,
         *,
+        options_json: str = "{}",
         cancel: CancellationToken | None = None,
     ) -> str: ...
     def neighborhood(
@@ -140,8 +158,14 @@ class NativeEngine:
         *,
         options_json: str = "{}",
         cancel: CancellationToken | None = None,
+    ) -> str: ...
+    def open(
+        self,
+        path: str,
+        expected_identity_json: str = "{}",
+        *,
+        cancel: CancellationToken | None = None,
     ) -> NativeSnapshot: ...
-    def open(self, path: str, expected_identity_json: str = "{}") -> NativeSnapshot: ...
     def close(self) -> None: ...
 
 def schemas_json() -> str: ...

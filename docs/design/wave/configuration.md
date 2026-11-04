@@ -24,7 +24,7 @@
 | wave.associations.enabled | true；无关系时与 VCP 输入相同 | 新 build |
 | wave.native.build.* | 来自 AGS/事实/索引真实配置类型 | 新 build |
 | wave.native.query.* | 来自 pipeline/readout/Thinking/DTSC 真实配置类型 | next_operation |
-| wave.native.query.controls.candidate_budget | Rust query.candidate_budget；控制实际候选预算 | next_operation |
+| wave.native.query.readout.*K / maxUnionCandidates | 每路实际召回数与唯一并集上限，沿用 Rust 导出名称 | next_operation |
 | wave.native.query.controls.thinking_min_closure | Rust query.thinking_min_closure；Thinking 最低闭合度 | next_operation |
 
 候选预算、场预算、传播跳数、语言门控、双场 α、Ω、动态路线/读出参数全部保留为对应细分配置。不要用一个 effort 值覆盖或丢掉它们。普通用户以 mode、top_k、context、解释选项使用；高级目录可以查看参数含义和实际值。
@@ -35,10 +35,18 @@ serde 类型/Default 是数值字段的唯一执行定义。构建导出 JSON Sc
 
 Python 保留关系语义、上下文呈现与操作范围设置。参数归属变动直接迁移，不额外建运行时插件注册平台。缺少文档说明的上游字段，开发者从实际公式注明单位与作用，不根据名称猜测。
 
-query 控制资源中的候选预算与最低闭合度置于 wave.native.query.controls，调用时展开为 Native Options 的同名字段。top_k、rrf_k 分别保持 wave.query.top_k、wave.fusion.rrf_k 唯一配置路径及原有覆盖优先级；上下文的 context_mix 映射为 wave.context.mix。它们的默认和范围均来自 Rust 静态资源，Python 不维护数值副本。
+最低闭合度继续置于 wave.native.query.controls；移除独立 candidate_budget 字段及消费链，候选数量由各 lane K 与唯一 maxUnionCandidates 定义。top_k、rrf_k 分别保持 wave.query.top_k、wave.fusion.rrf_k 唯一配置路径及原有覆盖优先级；上下文的 context_mix 映射为 wave.context.mix。它们的默认和范围均来自 Rust 静态资源，Python 不维护数值副本。
 
 ## 模式与失败
 
 明确请求 lexical 不调用 embedding。明确请求 dense/tagmemo/rivermemo/dtsc 但资产缺失时报告能力缺项。hybrid 按排名专题选择完整 RiverMemo 或缺图时的 lexical/dense 融合，结果必须列出实际 used/skipped 及原因；当前开发完成条件仍要求用具备完整资产的集合实际运行完整 VCP。
 
 空种子、没有触发 wormhole、无独立路线是正常算法状态；不能当作强制回退错误。上游已经支持的诊断和完整性标记透传解释，不隐去未执行阶段。
+
+## 新增实验参数
+
+`wave.associations.interpretation_gain` 为有限非负数，缺省 0，新构建生效；打开后按 evidence-projection 使用解释结构。旧快照保留原实际值。
+
+Native 的可选 pair_work_limit 缺省 null（完整计算），启用时是明确工作量上限，超过即在发布前返回具体错误；它不决定静默丢弃哪些出现项。由 Rust 类型导出单位、默认与约束。
+
+多路径缺省采用 journal-projection 的成对 max 规则；原 VCP 单路径结果不经过额外混合。Thinking 的显式记录开关/额度由观察配置拥有，不在 binding 暗改。所有新字段接入现有 catalog/explain/update，不让示例 JSON 成为第二份配置权威。

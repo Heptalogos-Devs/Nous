@@ -54,7 +54,11 @@ pub fn run_pipeline(
         dimensions,
         &input.config,
         &mut tag_vectors,
-        Some(&artifact.node_index),
+        if artifact.node_ids.is_empty() {
+            None
+        } else {
+            Some(&artifact.node_index)
+        },
         cancelled,
     )?;
     let pyramid_ms = pyramid_started.elapsed().as_secs_f64() * 1000.0;
@@ -78,7 +82,11 @@ pub fn run_pipeline(
         &core_names,
         &input.config,
         &input.query_text,
-        Some(&artifact.node_index),
+        if artifact.node_ids.is_empty() {
+            None
+        } else {
+            Some(&artifact.node_index)
+        },
         &explicit_cores,
     );
     let seeds: Vec<SenseSeed> = gated_tags

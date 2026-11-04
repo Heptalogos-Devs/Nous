@@ -5,6 +5,14 @@ from nous.configuration.metadata import ConfigModel, setting
 
 class ImageConfig(ConfigModel):
     max_side: int = setting(2048, gt=0, description="Maximum normalized image side in pixels.")
+    formats: list[str] = setting(
+        ["image/png", "image/jpeg", "image/webp"],
+        description="Preferred supported image encodings, in order.",
+    )
+    quality: int = setting(90, ge=1, le=100, description="JPEG and WebP encoder quality.")
+    jpeg_background: str | None = setting(
+        None, description="Explicit Pillow color for compositing transparent images to JPEG."
+    )
 
 
 class PDFConfig(ConfigModel):
@@ -22,6 +30,10 @@ class VideoConfig(ConfigModel):
 
 
 class AudioConfig(ConfigModel):
+    formats: list[str] = setting(
+        ["audio/wav", "audio/mpeg", "audio/flac"],
+        description="Preferred supported audio encodings, in order.",
+    )
     max_seconds_per_request: float = setting(
         60, gt=0, description="Maximum continuous audio segment duration in seconds."
     )

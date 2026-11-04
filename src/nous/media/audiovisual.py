@@ -94,8 +94,23 @@ class AudioVisual:
         )
         streams = cast(list[dict[str, JsonValue]], data.get("streams", []))
         duration = float(data.get("format", {}).get("duration", 0))
+        video = any(s.get("codec_type") == "video" for s in streams)
+        format_name = str(data.get("format", {}).get("format_name", "")).split(",")[0]
+        mime = {
+            "wav": "audio/wav",
+            "mp3": "audio/mpeg",
+            "flac": "audio/flac",
+            "ogg": "video/ogg" if video else "audio/ogg",
+            "matroska": "video/x-matroska" if video else "audio/x-matroska",
+            "webm": "video/webm" if video else "audio/webm",
+            "mov": "video/mp4" if video else "audio/mp4",
+            "mpeg": "video/mpeg",
+            "mpegts": "video/mp2t",
+            "avi": "video/x-msvideo",
+        }.get(format_name, "video/" + format_name if video else "audio/" + format_name)
         return {
-            "kind": "video" if any(s.get("codec_type") == "video" for s in streams) else "audio",
+            "kind": "video" if video else "audio",
+            "media_type": mime,
             "duration_ms": round(duration * 1000),
             "streams": cast(JsonValue, streams),
             "has_audio": any(s.get("codec_type") == "audio" for s in streams),
@@ -103,8 +118,10 @@ class AudioVisual:
             "version": await self.version(),
         }
 
-    async def frame_times(self, path: Path) -> tuple[tuple[int, int], ...]:
-        """Return decoded frame indices and actual timestamps relative to the first video frame."""
+    async def frame_times(
+        self, path: Path, start_ms: int = 0, end_ms: int | None = None, origin_ms: int = 0
+    ) -> tuple[tuple[int, int], ...]:
+        """Inspect only this bounded interval and retain actual source timestamps."""
         data = json.loads(
             await self.process(
                 self.ffprobe,
@@ -112,6 +129,14 @@ class AudioVisual:
                 "error",
                 "-select_streams",
                 "v:0",
+                *(
+                    [
+                        "-read_intervals",
+                        f"{(start_ms + origin_ms) / 1000:.6f}%{(end_ms + origin_ms) / 1000:.6f}",
+                    ]
+                    if end_ms is not None
+                    else []
+                ),
                 "-show_frames",
                 "-show_entries",
                 "frame=best_effort_timestamp_time",
@@ -120,19 +145,29 @@ class AudioVisual:
                 str(path),
             )
         )
-        frames = [
-            (index, round(float(frame["best_effort_timestamp_time"]) * 1000))
-            for index, frame in enumerate(data.get("frames", []))
+        times = [
+            round(float(frame["best_effort_timestamp_time"]) * 1000) - origin_ms
+            for frame in data.get("frames", [])
             if "best_effort_timestamp_time" in frame
+        ]
+        frames = [
+            (index, time)
+            for index, time in enumerate(
+                time for time in times if time >= start_ms and (end_ms is None or time < end_ms)
+            )
         ]
         if not frames:
             raise NousError("media.no_frames", "Video contains no decodable timed frames")
-        origin = frames[0][1]
-        return tuple((index, time - origin) for index, time in frames)
+        return tuple(frames)
 
     @asynccontextmanager
     async def frames(
-        self, path: Path, indices: tuple[int, ...], max_side: int, temporary: Path
+        self,
+        path: Path,
+        indices: tuple[int, ...],
+        max_side: int,
+        temporary: Path,
+        start_ms: int = 0,
     ) -> AsyncGenerator[dict[int, Path]]:
         """Decode selected frames in one FFmpeg traversal; keep only bounded reads in memory."""
         if not indices:
@@ -149,6 +184,8 @@ class AudioVisual:
                 self.ffmpeg,
                 "-v",
                 "error",
+                "-ss",
+                f"{start_ms / 1000:.6f}",
                 "-i",
                 str(path),
                 "-vf",
@@ -170,15 +207,17 @@ class AudioVisual:
         finally:
             await self.execution.blocking(directory.cleanup)
 
-    async def audio(self, path: Path, start_ms: int, end_ms: int) -> bytes:
+    async def audio(
+        self, path: Path, start_ms: int, end_ms: int, media_type: str = "audio/wav"
+    ) -> bytes:
         return await self.process(
             self.ffmpeg,
             "-v",
             "error",
-            "-i",
-            str(path),
             "-ss",
             f"{start_ms / 1000:.6f}",
+            "-i",
+            str(path),
             "-t",
             f"{(end_ms - start_ms) / 1000:.6f}",
             "-map",
@@ -189,6 +228,6 @@ class AudioVisual:
             "-ar",
             "16000",
             "-f",
-            "wav",
+            {"audio/wav": "wav", "audio/mpeg": "mp3", "audio/flac": "flac"}[media_type],
             "pipe:1",
         )

@@ -1,4 +1,4 @@
-use super::field::dtsc_cosine;
+use super::field::{DtscFieldSampler, dtsc_cosine};
 use super::*;
 use super::{positive, unit};
 use serde::{Deserialize, Serialize};
@@ -89,7 +89,7 @@ pub struct ReferenceDtscScore {
 }
 pub(crate) struct DtscCurveContext<'a> {
     pub config: &'a ReferenceDtscConfig,
-    pub field: &'a ReferenceDtscField,
+    pub sampler: &'a DtscFieldSampler<'a>,
     pub inbound: &'a [(i64, f64)],
     pub edges: BTreeMap<(i64, i64), f64>,
     pub anchor: BTreeMap<i64, f64>,
@@ -162,13 +162,7 @@ fn samples<'a>(curve: &'a ReferenceCurve, ctx: &DtscCurveContext<'_>) -> Vec<Sam
             let positional = (-cfg.position_decay * positive(tag.position as f64 - 1.0)).exp();
             Sample {
                 tag,
-                field: reference_dtsc_sample(
-                    tag.id,
-                    &tag.vector,
-                    ctx.field,
-                    ctx.inbound,
-                    &ctx.config.field,
-                ),
+                field: ctx.sampler.sample(tag.id, &tag.vector),
                 mass: (closure * anchor * positional * specificity).max(0.02),
                 closure,
                 specificity,

@@ -8,10 +8,87 @@ pub struct ReadoutRequest {
     pub top_k: usize,
     #[serde(default)]
     pub include_trace: bool,
-    pub candidates: Vec<CandidateInput>,
+    pub pool: PreparedPool,
     pub allowed_file_ids: Option<Vec<i64>>,
     #[serde(default)]
     pub config: NativeConfig,
+}
+#[derive(Clone, Serialize, Deserialize)]
+pub struct PoolCalibration {
+    pub id: i64,
+    pub union_score: f64,
+    pub union_rank: usize,
+    pub sources: Vec<String>,
+    pub anchor_score: f64,
+}
+#[derive(Clone, Serialize, Deserialize)]
+pub struct PreparedPool {
+    pub candidates: Vec<CandidateInput>,
+    pub bm25_reference: f64,
+    pub selection: Vec<PoolCalibration>,
+}
+/// Calibrate over the complete authorized recall pool once, before selecting its union.
+pub fn prepare_pool(
+    connection: &MemoAssets,
+    cached: &PipelineOutput,
+    candidates: Vec<CandidateInput>,
+    config: &NativeConfig,
+    fixed: bool,
+) -> Result<PreparedPool, String> {
+    cached.validate_for(connection)?;
+    config.validate()?;
+    let curve_load = load_curves(connection, &candidates, connection.dimension)?;
+    let mut curves = curve_load.curves;
+    let local_domain: HashSet<i64> = cached.local_domain_ids.iter().copied().collect();
+    compute_anchor_scores(&mut curves, |curve| {
+        curve_load
+            .relations
+            .get(&curve.file_id)
+            .into_iter()
+            .flatten()
+            .filter(|t| local_domain.contains(&t.0) && connection.tag_vectors.contains_key(&t.0))
+            .count()
+    });
+    let bm25_reference = if config.bm25_k > 0 {
+        curves.iter().map(|c| c.bm25_score).fold(0.0, f64::max)
+    } else {
+        0.0
+    };
+    for curve in &mut curves {
+        curve.query_score = cosine(&cached.original_query_vector, &curve.chunk_vector);
+        curve.denoised_score = cosine(&cached.enhanced_vector, &curve.chunk_vector);
+        curve.local_score = cosine(&cached.local_vector, &curve.chunk_vector);
+        curve.transfer_score = cosine(&cached.transfer_vector, &curve.chunk_vector);
+    }
+    let all = if fixed { Some(curves.clone()) } else { None };
+    let mut selected = select_superset(curves, config, !fixed);
+    if let Some(all) = all {
+        for mut curve in all {
+            if !selected.iter().any(|c| c.id == curve.id) {
+                curve.union_rank = selected.len() + 1;
+                selected.push(curve);
+            }
+        }
+    }
+    let selection = selected
+        .iter()
+        .map(|c| PoolCalibration {
+            id: c.id,
+            union_score: c.union_score,
+            union_rank: c.union_rank,
+            sources: c.sources.clone(),
+            anchor_score: c.anchor_score,
+        })
+        .collect::<Vec<_>>();
+    let by_id = candidates
+        .into_iter()
+        .map(|c| (c.id, c))
+        .collect::<HashMap<_, _>>();
+    Ok(PreparedPool {
+        candidates: selected.iter().map(|c| by_id[&c.id].clone()).collect(),
+        bm25_reference,
+        selection,
+    })
 }
 pub fn readout(
     connection: &MemoAssets,
@@ -21,11 +98,8 @@ pub fn readout(
 ) -> Result<NativeOutput, String> {
     crate::check_cancelled(cancelled)?;
     cached.validate_for(connection)?;
-    crate::assets::validate_finite_config(&request.config)?;
-    if !(0.0..=1.0).contains(&request.config.lexical_weight) {
-        return Err("MEMO_CONFIG_INVALID: lexicalWeight must lie in [0, 1]".into());
-    }
-    if request.candidates.iter().any(|candidate| {
+    request.config.validate()?;
+    if request.pool.candidates.iter().any(|candidate| {
         candidate.id <= 0
             || [
                 candidate.score,
@@ -61,7 +135,7 @@ pub fn readout(
         denoised_vector: cached.enhanced_vector.clone(),
         local_vector: cached.local_vector.clone(),
         transfer_vector: cached.transfer_vector.clone(),
-        candidates: request.candidates,
+        candidates: request.pool.candidates,
         allowed_file_ids: request.allowed_file_ids,
         config: request.config,
         query_state: QueryStateInput {
@@ -149,47 +223,18 @@ pub fn readout(
             )
         })
         .collect();
-    let local_domain: HashSet<i64> = input.query_state.local_domain_ids.iter().copied().collect();
-    // Anchor hits count only Tags with a loadable vector, as when every candidate
-    // Tag was loaded up front, so the local-domain Tags are checked now; the
-    // other Tags are read only for the curves that survive selection.
-    let file_tags = |curve: &Curve| {
-        curve_load
-            .relations
-            .get(&curve.file_id)
-            .into_iter()
-            .flatten()
-    };
-    let domain_tag_ids: Vec<i64> = curves
-        .iter()
-        .flat_map(file_tags)
-        .map(|relation| relation.0)
-        .filter(|id| local_domain.contains(id))
-        .collect();
-    let domain_stats = ensure_tag_vectors_loaded(
-        &connection.tag_vectors,
-        &mut tag_vectors,
-        &domain_tag_ids,
-        dimension,
-    )?;
-    compute_anchor_scores(&mut curves, |curve| {
-        file_tags(curve)
-            .filter(|relation| {
-                local_domain.contains(&relation.0) && tag_vectors.contains_key(&relation.0)
-            })
-            .count()
-    });
-    // Normalize within the authorized, hydrated pool before union truncation.
-    // Max normalization retains a sole lexical hit, unlike min/max subtraction.
-    let maximum_bm25 = if input.config.bm25_k > 0 {
-        curves
+    let maximum_bm25 = request.pool.bm25_reference;
+    for curve in &mut curves {
+        let calibrated = request
+            .pool
+            .selection
             .iter()
-            .map(|curve| curve.bm25_score)
-            .fold(0.0, f64::max)
-    } else {
-        0.0
-    };
-    curves.par_iter_mut().for_each(|curve| {
+            .find(|c| c.id == curve.id)
+            .ok_or_else(|| "MEMO_POOL_CALIBRATION_MISSING".to_string())?;
+        curve.union_score = calibrated.union_score;
+        curve.union_rank = calibrated.union_rank;
+        curve.sources = calibrated.sources.clone();
+        curve.anchor_score = calibrated.anchor_score;
         curve.lexical_score = if maximum_bm25 > 0.0 {
             clamp01(curve.bm25_score / maximum_bm25)
         } else {
@@ -199,9 +244,15 @@ pub fn readout(
         curve.denoised_score = cosine(&input.denoised_vector, &curve.chunk_vector);
         curve.local_score = cosine(&input.local_vector, &curve.chunk_vector);
         curve.transfer_score = cosine(&input.transfer_vector, &curve.chunk_vector);
-    });
+    }
     let projected_count = curves.len();
-    let mut curves = select_superset(curves, &input.config);
+    let file_tags = |curve: &Curve| {
+        curve_load
+            .relations
+            .get(&curve.file_id)
+            .into_iter()
+            .flatten()
+    };
     let selected_tag_ids: Vec<i64> = curves
         .iter()
         .flat_map(file_tags)
@@ -216,6 +267,7 @@ pub fn readout(
     attach_tags(&mut curves, &curve_load.relations, &tag_vectors);
     let selected_count = curves.len();
 
+    let local_domain: HashSet<i64> = input.query_state.local_domain_ids.iter().copied().collect();
     let workspace = FieldWorkspace {
         local: normalize_field(&input.query_state.local_field),
         transfer: normalize_field(&input.query_state.transfer_field),
@@ -343,6 +395,48 @@ pub fn readout(
         &cosines,
         &core_ids,
     );
+    // Expand only after pool selection. Each path retains the same body and membership anchors.
+    let mut path_curves = Vec::new();
+    let mut path_anchors = Vec::new();
+    for (curve, anchor) in curves.into_iter().zip(anchor_results) {
+        let Some(paths) = connection
+            .candidate_paths
+            .get(&curve.id)
+            .filter(|p| !p.is_empty())
+        else {
+            path_curves.push(curve);
+            path_anchors.push(anchor);
+            continue;
+        };
+        for (index, steps) in paths.iter().enumerate() {
+            let mut variant = curve.clone();
+            variant.path_index = Some(index);
+            variant.multi_path = paths.len() > 1;
+            // Preserve ordered occurrences and append unrepresented membership contacts.
+            let mut tags = Vec::new();
+            let mut included = HashSet::new();
+            for step in steps {
+                if let Some(tag) = curve.tags.iter().find(|t| t.id == step.tag_id) {
+                    let mut tag = tag.clone();
+                    tag.position = step.position;
+                    included.insert(tag.id);
+                    tags.push(tag);
+                }
+            }
+            for tag in &curve.tags {
+                if !included.contains(&tag.id) {
+                    let mut tag = tag.clone();
+                    tag.position = 0;
+                    tags.push(tag);
+                }
+            }
+            variant.tags = tags;
+            path_curves.push(variant);
+            path_anchors.push(anchor.clone());
+        }
+    }
+    let curves = path_curves;
+    let anchor_results = path_anchors;
     let core_tag_names: HashSet<String> = input
         .query_state
         .field_provenance
@@ -428,6 +522,29 @@ pub fn readout(
     let omega = compute_omega(&input);
     let mode = morphology.dominant_mode.as_str();
     assign_v3_scores(&mut work, mode, &omega, &input.config);
+    let mut path_diagnostics = HashMap::<i64, Vec<Value>>::new();
+    let mut selected_paths = Vec::<ScoredWork>::new();
+    for item in work {
+        path_diagnostics.entry(item.curve.id).or_default().push(serde_json::json!({"path":item.curve.path_index,"P":item.path_bonus,"G":item.gated_bonus,"B":item.pure_score,"A":item.anchor_bonus}));
+        if let Some(existing) = selected_paths
+            .iter_mut()
+            .find(|w| w.curve.id == item.curve.id)
+        {
+            if item.path_bonus + item.gated_bonus > existing.path_bonus + existing.gated_bonus {
+                let base = existing.pure_score;
+                let anchor = existing.anchor_bonus;
+                *existing = item;
+                existing.pure_score = base;
+                existing.anchor_bonus = anchor;
+                existing.final_score =
+                    clamp01(base + anchor + existing.path_bonus + existing.gated_bonus);
+                existing.ranking_score = existing.final_score;
+            }
+        } else {
+            selected_paths.push(item);
+        }
+    }
+    let mut work = selected_paths;
     work.sort_by(|left, right| {
         right
             .final_score
@@ -520,6 +637,8 @@ pub fn readout(
                 None
             };
             NativeResultItem {
+                chosen_path:item.curve.path_index,
+                available_paths:path_diagnostics.remove(&item.curve.id).unwrap_or_default(),
                 id: item.curve.id,
                 chunk_id: item.curve.id,
                 rank: index + 1,
@@ -579,10 +698,8 @@ pub fn readout(
             chunk_source_batches: curve_load.chunk_source_batches,
             file_tag_source_batches: curve_load.file_tag_source_batches,
             query_tag_source_batches,
-            candidate_tag_vector_source_batches: domain_stats.source_batches
-                + selected_stats.source_batches,
-            candidate_tag_vector_fetched_nodes: domain_stats.fetched_nodes
-                + selected_stats.fetched_nodes,
+            candidate_tag_vector_source_batches: selected_stats.source_batches,
+            candidate_tag_vector_fetched_nodes: selected_stats.fetched_nodes,
         },
         results,
         parameters: serde_json::json!({

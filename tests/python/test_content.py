@@ -72,7 +72,8 @@ def test_content_result_survives_independent_writer_and_reopen(tmp_path: Path) -
                 == "原文\n\nwith exact text\n"
             )
             roots = await runtime.results.provenance((saved.outputs[0].artifact,))
-            assert roots[saved.outputs[0].artifact.id] == (original.ref,)
+            assert roots[saved.outputs[0].artifact.id].terminal_roots == (original.ref,)
+            assert roots[saved.outputs[0].artifact.id].complete
             exact = ContentSelection(
                 artifact=original.ref, selection=SourceSelection(start_line=3, end_line=3)
             )
@@ -126,7 +127,6 @@ def test_pdf_preparation_reuses_pages_and_rejects_foreign_coordinates(tmp_path: 
                             artifact.ref, selection, settings=settings
                         )
                     assert invalid.value.code == "media.invalid_selection"
-                    assert invalid.value.details["completed_result_refs"] == []
             with patch(
                 "nous.media.preparation.prepare_pdf_pages", wraps=prepare_pdf_pages
             ) as render:
@@ -141,12 +141,15 @@ def test_pdf_preparation_reuses_pages_and_rejects_foreign_coordinates(tmp_path: 
                         for index in range(12)
                     )
                 )
+                assert render.call_count == 0
+                materialized = await asyncio.gather(
+                    *(runtime.media.preparer.materialize(item.batches[0]) for item in prepared)
+                )
                 assert render.call_count == 3
             by_page: dict[int, set[str]] = {}
-            for item in prepared:
+            for item, batch in zip(prepared, materialized, strict=True):
                 number = item.selection.pages[0]
-                by_page.setdefault(number, set()).update(item.completed_result_refs)
-                batch = await runtime.media.preparer.materialize(item.batches[0])
+                by_page.setdefault(number, set()).update(batch.completed_result_refs)
                 assert batch.inputs[0].parts[0].origins[0].origin.selection.pages == (number,)
                 with Image.open(io.BytesIO(batch.sources[0].media[0].data)) as image:
                     assert image.width == (90, 120, 150)[number - 1] * 2
@@ -162,8 +165,9 @@ def test_pdf_preparation_reuses_pages_and_rejects_foreign_coordinates(tmp_path: 
                     settings=settings,
                     document_mode="visual",
                 )
+                again_batch = await runtime.media.preparer.materialize(again.batches[0])
                 assert render.call_count == 0
-            assert set(again.completed_result_refs) == by_page[2]
+            assert set(again_batch.completed_result_refs) == by_page[2]
 
     asyncio.run(scenario())
 
@@ -227,7 +231,6 @@ def test_audio_video_reject_coordinates_they_do_not_apply(tmp_path: Path) -> Non
                             artifact.ref, selection, settings=settings
                         )
                     assert invalid.value.code == "media.invalid_selection"
-                    assert invalid.value.details["completed_result_refs"] == []
 
             selected = SourceSelection(start_ms=250, end_ms=750)
             planned_audio = await runtime.media.preparer.prepare(
@@ -242,7 +245,7 @@ def test_audio_video_reject_coordinates_they_do_not_apply(tmp_path: Path) -> Non
             planned_video = await runtime.media.preparer.prepare(video.ref, settings=settings)
             video_batch = await runtime.media.preparer.materialize(planned_video.batches[0])
             assert video_batch.sources[0].media[0].data.startswith(b"\x89PNG")
-            assert video_batch.inputs[0].parts[0].origins[0].origin.selection.frame == 0
+            assert video_batch.inputs[0].parts[0].origins[0].origin.selection.start_ms == 0
 
     asyncio.run(scenario())
 
@@ -326,7 +329,6 @@ def test_image_preparation_validates_selection_before_direct_or_normalized_input
                     with pytest.raises(NousError) as invalid:
                         await runtime.media.preparer.prepare(image.ref, selection, settings=options)
                     assert invalid.value.code == "media.invalid_selection"
-                    assert invalid.value.details["completed_result_refs"] == []
 
             selected = SourceSelection(frame=0)
             direct = await runtime.media.preparer.prepare(image.ref, selected, settings=settings)
@@ -340,10 +342,11 @@ def test_image_preparation_validates_selection_before_direct_or_normalized_input
 
             crop = SourceSelection(frame=0, crop=(0, 0, 8, 6))
             cropped = await runtime.media.preparer.prepare(image.ref, crop, settings=settings)
-            source = (await runtime.media.preparer.materialize(cropped.batches[0])).sources[0]
+            cropped_batch = await runtime.media.preparer.materialize(cropped.batches[0])
+            source = cropped_batch.sources[0]
             with Image.open(io.BytesIO(source.media[0].data)) as prepared_image:
                 assert prepared_image.size == (8, 6)
-            conversion = await runtime.results.get(cropped.completed_result_refs[0])
+            conversion = await runtime.results.get(cropped_batch.completed_result_refs[0])
             assert conversion.inputs[0].parts[0].content.artifact == image.ref
             assert conversion.inputs[0].parts[0].content.selection == crop
 
@@ -365,7 +368,6 @@ def test_image_preparation_validates_selection_before_direct_or_normalized_input
                         animation.ref, selection, settings=settings
                     )
                 assert invalid.value.code == "media.invalid_selection"
-                assert invalid.value.details["completed_result_refs"] == []
 
             frame = await runtime.media.preparer.prepare(
                 animation.ref, SourceSelection(frame=1), settings=settings
@@ -378,15 +380,17 @@ def test_image_preparation_validates_selection_before_direct_or_normalized_input
             interval = await runtime.media.preparer.prepare(
                 animation.ref, SourceSelection(start_ms=100, end_ms=300), settings=settings
             )
-            assert interval.batches[0].sources[0].metadata["frame"] == 1
+            interval_batch = await runtime.media.preparer.materialize(interval.batches[0])
+            assert interval_batch.sources[0].metadata["frame"] == 1
             overlapping = SourceSelection(frame=1, start_ms=50, end_ms=150)
             intersection = await runtime.media.preparer.prepare(
                 animation.ref, overlapping, settings=settings
             )
             actual = SourceSelection(frame=1, start_ms=100, end_ms=150)
             assert intersection.selection == overlapping
-            assert intersection.batches[0].inputs[0].parts[0].origins[0].origin.selection == actual
-            conversion = await runtime.results.get(intersection.completed_result_refs[0])
+            intersection_batch = await runtime.media.preparer.materialize(intersection.batches[0])
+            assert intersection_batch.inputs[0].parts[0].origins[0].origin.selection == actual
+            conversion = await runtime.results.get(intersection_batch.completed_result_refs[0])
             assert conversion.inputs[0].parts[0].content.selection == actual
             for disjoint in (
                 SourceSelection(frame=1, start_ms=0, end_ms=100),
@@ -396,6 +400,5 @@ def test_image_preparation_validates_selection_before_direct_or_normalized_input
                 with pytest.raises(NousError) as invalid:
                     await runtime.media.preparer.prepare(animation.ref, disjoint, settings=settings)
                 assert invalid.value.code == "media.invalid_selection"
-                assert invalid.value.details["completed_result_refs"] == []
 
     asyncio.run(scenario())

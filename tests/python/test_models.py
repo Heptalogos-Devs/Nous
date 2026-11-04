@@ -335,14 +335,14 @@ def test_embedding_response_validation_and_adoption_survive_restart(
         assert response.returncode == 0, (response.stdout, response.stderr)
         result = json.loads(response.stdout)
         restored = model_cli(
-            instance, "tools", "result", "read", result["ref"]["address"], "--details"
+            instance, "tools", "result", "read", result["results"][0]["address"], "--details"
         )
         assert restored.returncode == 0, restored.stderr
         assert json.loads(restored.stdout)["parameters"]["usage"] == {}
-        vectors = next(output for output in result["outputs"] if output["name"] == "vectors")
+        vectors = result["rows"][0]["artifact"]["address"]
         export = tmp_path / "vectors.npy"
         exported = model_cli(
-            instance, "tools", "content", "export", vectors["artifact"], "--output", str(export)
+            instance, "tools", "content", "export", vectors, "--output", str(export)
         )
         assert exported.returncode == 0, exported.stderr
         import numpy as np

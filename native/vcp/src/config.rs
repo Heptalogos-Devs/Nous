@@ -499,6 +499,8 @@ impl ArtifactConfig {
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields, rename_all = "camelCase")]
 pub struct BuildConfig {
+    /// Maximum occurrence pairs in each construction pass; null computes all.
+    pub pair_work_limit: Option<u64>,
     pub geometry: GeometryConfig,
     pub artifact: ArtifactConfig,
 }
@@ -515,8 +517,6 @@ impl BuildConfig {
 pub struct QueryControls {
     #[schemars(range(min = 1, max = 10000))]
     pub top_k: usize,
-    #[schemars(range(min = 1, max = 100000))]
-    pub candidate_budget: usize,
     #[schemars(range(min = 0.0, max = 1.0))]
     pub thinking_min_closure: f64,
     #[schemars(extend("exclusiveMinimum" = 0.0))]
@@ -525,7 +525,6 @@ pub struct QueryControls {
 impl Default for QueryControls {
     fn default() -> Self {
         Self {
-            candidate_budget: 100,
             top_k: 10,
             thinking_min_closure: crate::thinking::default_closure(),
             rrf_k: 60.0,
@@ -536,9 +535,6 @@ impl QueryControls {
     pub fn validate(&self) -> Result<(), String> {
         if !(1..=10000).contains(&self.top_k) {
             return Err("top_k must be in 1..10000".into());
-        }
-        if !(1..=100000).contains(&self.candidate_budget) {
-            return Err("candidate_budget must be in 1..100000".into());
         }
         if !self.thinking_min_closure.is_finite()
             || !(0.0..=1.0).contains(&self.thinking_min_closure)

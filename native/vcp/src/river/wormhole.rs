@@ -7,6 +7,7 @@ use super::*;
 pub(super) struct Route {
     source_id: i64,
     target_id: i64,
+    witness_pairs: Vec<(Vec<i64>, Vec<i64>)>,
     flow: f64,
     relative_flow: f64,
     #[serde(skip)]
@@ -75,14 +76,19 @@ pub(super) fn refine(
     for d in decisions.iter_mut().filter(|d| d.accepted) {
         let truncated = d.witness_file_ids.len() > 128;
         let mut witness = None;
+        let mut witness_pairs = Vec::new();
         if !truncated {
-            'pairs: for (i, left_id) in d.witness_file_ids.iter().enumerate() {
+            for (i, left_id) in d.witness_file_ids.iter().enumerate() {
                 for right_id in d.witness_file_ids.iter().skip(i + 1) {
                     let left = &connection.root_facts[left_id];
                     let right = &connection.root_facts[right_id];
                     if left.checksum.is_empty()
                         || right.checksum.is_empty()
                         || left.checksum == right.checksum
+                        || left
+                            .required_roots
+                            .iter()
+                            .any(|r| right.required_roots.contains(r))
                         || left.tags.len() > 128
                         || right.tags.len() > 128
                     {
@@ -109,9 +115,15 @@ pub(super) fn refine(
                         witness = Some(
                             serde_json::json!({"rootIds":[left_id,right_id],"focusId":anchor,"bridgeTagId":bridge}),
                         );
-                        break 'pairs;
+                        witness_pairs
+                            .push((left.required_roots.clone(), right.required_roots.clone()));
                     }
                 }
+            }
+        }
+        for route in &mut model.routes {
+            if route.source_id == d.source_id && route.target_id == d.target_id {
+                route.witness_pairs = witness_pairs.clone();
             }
         }
         d.accepted = witness.is_some();
@@ -165,6 +177,7 @@ pub(super) fn build(
         let route = Route {
             source_id: edge.source_id,
             target_id: edge.target_id,
+            witness_pairs: vec![],
             flow: edge.flow,
             relative_flow: clamp01(edge.flow / maximum),
             vector: vector.clone(),
@@ -221,6 +234,24 @@ pub(super) fn correction(
     for route in &model.routes {
         // Original observation denominator, never renormalized after admission.
         if route.relative_flow < 0.5 || !explicit.contains(&route.source_id) {
+            continue;
+        }
+        if !route.witness_pairs.iter().any(|(a, b)| {
+            !a.iter().any(|r| curve.source_ids.contains(r))
+                && !b.iter().any(|r| curve.source_ids.contains(r))
+        }) {
+            continue;
+        }
+        if curve.multi_path
+            && !curve.tags.iter().any(|a| {
+                a.id == route.source_id
+                    && a.position > 0
+                    && curve
+                        .tags
+                        .iter()
+                        .any(|b| b.id == route.target_id && b.position > a.position)
+            })
+        {
             continue;
         }
         let body = clamp01(cosine(&route.vector, &curve.chunk_vector));

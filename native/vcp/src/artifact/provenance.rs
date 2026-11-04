@@ -21,38 +21,34 @@ pub(super) fn build_provenance(
             end += 1;
         }
         let tags = &rows[offset..end];
-        if tags.len() >= 2 && tags.len() <= 100 {
-            for left_index in 0..tags.len() {
-                for right_index in (left_index + 1)..tags.len() {
-                    let left = &tags[left_index];
-                    let right = &tags[right_index];
-                    if left.tag_id == right.tag_id {
-                        continue;
-                    }
-                    let ordered = left.position > 0 && right.position > 0;
-                    let delta = (right.position - left.position).max(1) as f64;
-                    let distance = if ordered {
-                        (-distance_decay * (delta - 1.0).max(0.0)).exp()
-                    } else {
-                        1.0
-                    };
-                    for (source, target, mass) in [
-                        (left.tag_id, right.tag_id, forward_gain * distance),
-                        (
-                            right.tag_id,
-                            left.tag_id,
-                            if ordered {
-                                reverse_gain * distance
-                            } else {
-                                forward_gain
-                            },
-                        ),
-                    ] {
-                        aggregated.push(((source, target, file_id), mass));
-                    }
-                }
+        crate::occurrences::for_each_pair(tags, cancelled, |left, right| {
+            if left.tag_id == right.tag_id {
+                return Ok(());
             }
-        }
+            let ordered = left.position > 0 && right.position > 0;
+            let delta = (right.position - left.position).max(1) as f64;
+            let distance = if ordered {
+                (-distance_decay * (delta - 1.0).max(0.0)).exp()
+            } else {
+                1.0
+            };
+            for (source, target, mass) in [
+                (left.tag_id, right.tag_id, forward_gain * distance),
+                (
+                    right.tag_id,
+                    left.tag_id,
+                    if ordered {
+                        reverse_gain * distance
+                    } else {
+                        forward_gain
+                    },
+                ),
+            ] {
+                aggregated.push(((source, target, file_id), mass));
+            }
+
+            Ok(())
+        })?;
         offset = end;
     }
 
@@ -77,8 +73,9 @@ pub(super) fn build_native_artifact(
     anchor_gain: HashMap<i64, f64>,
     wormholes: HashSet<(i64, i64)>,
     provenance: &BTreeMap<(i64, i64), Vec<ProvenanceContribution>>,
+    declared_nodes: impl Iterator<Item = i64>,
 ) -> Arc<NativeArtifact> {
-    let mut nodes = BTreeSet::new();
+    let mut nodes = declared_nodes.collect::<BTreeSet<_>>();
     for (source, edges) in transport {
         nodes.insert(*source);
         nodes.extend(edges.keys().copied());

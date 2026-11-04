@@ -7,6 +7,7 @@ if TYPE_CHECKING:
     from ._core import (  # pyright: ignore[reportMissingModuleSource]
         Associations,
         CancellationToken,
+        CandidatePool,
         Candidates,
         Concepts,
         ContextResult,
@@ -27,6 +28,7 @@ __all__ = [
     "Associations",
     "CancellationToken",
     "Candidates",
+    "CandidatePool",
     "Concepts",
     "ContextResult",
     "NativeEngine",

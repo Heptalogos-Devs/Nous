@@ -55,27 +55,23 @@ pub fn build_geometry(
         ids.push(tag.id);
         names.insert(tag.id, tag.name.clone());
     }
-    let flush = |tags: &[(i64, i64)], graph: &mut BTreeMap<i64, BTreeMap<i64, f64>>| {
-        if !(2..=100).contains(&tags.len()) {
-            return;
-        }
-        for i in 0..tags.len() {
-            for j in i + 1..tags.len() {
-                let (a, p) = tags[i];
-                let (b, q) = tags[j];
-                if a == b {
-                    continue;
-                }
-                let delta = if p > 0 && q > 0 {
-                    (p - q).abs().max(1) as f64
-                } else {
-                    1.0
-                };
-                let weight = (-decay * (delta - 1.0)).exp();
-                *graph.entry(a).or_default().entry(b).or_default() += weight;
-                *graph.entry(b).or_default().entry(a).or_default() += weight;
+    let flush = |tags: &[(i64, i64)],
+                 graph: &mut BTreeMap<i64, BTreeMap<i64, f64>>|
+     -> Result<(), String> {
+        crate::occurrences::for_each_pair(tags, cancelled, |&(a, p), &(b, q)| {
+            if a == b {
+                return Ok(());
             }
-        }
+            let delta = if p > 0 && q > 0 {
+                (p - q).abs().max(1) as f64
+            } else {
+                1.0
+            };
+            let weight = (-decay * (delta - 1.0)).exp();
+            *graph.entry(a).or_default().entry(b).or_default() += weight;
+            *graph.entry(b).or_default().entry(a).or_default() += weight;
+            Ok(())
+        })
     };
 
     if let Some(edges) = &input.edges {
@@ -106,15 +102,13 @@ pub fn build_geometry(
             digest.update(id.to_le_bytes());
             digest.update(pos.to_le_bytes());
             if file != Some(fid) {
-                flush(&tags, &mut adjacency);
+                flush(&tags, &mut adjacency)?;
                 tags.clear();
                 file = Some(fid);
             }
-            if tags.len() <= 100 {
-                tags.push((id, pos));
-            }
+            tags.push((id, pos));
         }
-        flush(&tags, &mut adjacency);
+        flush(&tags, &mut adjacency)?;
     }
     let content = format!("{:x}", digest.finalize());
     let signature = hash(

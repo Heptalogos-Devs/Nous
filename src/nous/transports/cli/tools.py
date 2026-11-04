@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import math
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Literal, cast
 
 import click
 import typer
@@ -88,6 +88,28 @@ async def _result(
     return await runtime.results.read_view(address, sources=sources, details=details)
 
 
+def _emit_results(ctx: typer.Context, value: dict[str, object]) -> None:
+    """Present named bodies and readable references; machine output keeps the complete value."""
+    if options(ctx).json_mode:
+        emit(ctx, value)
+        return
+    results = cast(list[dict[str, object]], value.get("results", [value]))
+    for result in results:
+        outputs = cast(list[dict[str, object]], result.get("outputs", []))
+        visible = [output for output in outputs if output.get("name") != "response"]
+        for output in visible:
+            text = output.get("text")
+            if len(visible) > 1:
+                typer.echo(f"\n{output['name']} · {output['artifact']}")
+            if isinstance(text, str):
+                typer.echo(text)
+            else:
+                typer.echo(f"{output['name']}: {output['artifact']} ({output['media_type']})")
+        reference = cast(dict[str, object], result.get("ref", {})).get("address")
+        if reference:
+            typer.echo(f"\n{reference}")
+
+
 @model_cli.command("list")
 def model_list(ctx: typer.Context) -> None:
     settings = Configuration(options(ctx).locator.config_file).snapshot.typed_values()
@@ -145,7 +167,11 @@ def model_run(
     instructions: Annotated[str, typer.Option()] = "",
     schema: Annotated[Path | None, typer.Option("--schema")] = None,
     show_request: Annotated[bool, typer.Option("--show-request")] = False,
+    details: Annotated[bool, typer.Option("--details")] = False,
     stream: Annotated[bool, typer.Option("--stream")] = False,
+    per_batch: Annotated[
+        bool, typer.Option("--per-batch", help="每批独立回答；默认所有输入共同回答")
+    ] = False,
     document_mode: Annotated[str, typer.Option()] = "auto",
     without_audio: Annotated[bool, typer.Option()] = False,
 ) -> None:
@@ -185,6 +211,7 @@ def model_run(
                 schema=_schema(schema),
                 document_mode=document_mode,
                 without_audio=without_audio,
+                per_batch=per_batch,
                 texts=text or (),
                 on_prepared=show if show_request else None,
                 on_delta=delta if stream else None,
@@ -193,7 +220,10 @@ def model_run(
             return {
                 "artifacts": [a.ref.address for a in outcome.artifacts],
                 "results": [
-                    await _result(runtime, result.ref.address) for result in outcome.results
+                    await _result(
+                        runtime, result.ref.address, details=details or options(ctx).json_mode
+                    )
+                    for result in outcome.results
                 ],
                 "coverage": outcome.coverage,
             }
@@ -223,7 +253,10 @@ def model_run(
             raise SystemExit(130 if failure.code == "operation.cancelled" else 4) from None
         raise
     if not stream:
-        emit(ctx, value)
+        if details:
+            emit(ctx, value)
+        else:
+            _emit_results(ctx, value)
 
 
 @prompt_cli.command("list")
@@ -268,6 +301,7 @@ def prompt_preview(
     instructions: Annotated[str, typer.Option()] = "",
     schema: Annotated[Path | None, typer.Option("--schema")] = None,
     task: Annotated[str | None, typer.Option("--task")] = None,
+    per_batch: Annotated[bool, typer.Option("--per-batch")] = False,
 ) -> None:
     async def run() -> dict[str, object]:
         async with open_instance(options(ctx).locator) as runtime:
@@ -281,6 +315,7 @@ def prompt_preview(
                     instructions=instructions,
                     schema=_schema(schema),
                     task=task,
+                    per_batch=per_batch,
                 )
             )
 
@@ -370,6 +405,7 @@ def media_analyze(
     document_mode: Annotated[str, typer.Option()] = "auto",
     without_audio: Annotated[bool, typer.Option()] = False,
     schema: Annotated[Path | None, typer.Option("--schema")] = None,
+    details: Annotated[bool, typer.Option("--details")] = False,
 ) -> None:
     async def run() -> dict[str, object]:
         async with open_instance(options(ctx).locator) as runtime:
@@ -393,11 +429,18 @@ def media_analyze(
                     "coverage": outcome.coverage,
                     "descriptions": [item.ref.address for item in outcome.descriptions],
                     "results": [
-                        await _result(runtime, item.ref.address) for item in outcome.batches
+                        await _result(
+                            runtime, item.ref.address, details=details or options(ctx).json_mode
+                        )
+                        for item in outcome.batches
                     ],
                 }
 
-    emit(ctx, run_async(run()))
+    value = run_async(run())
+    if details:
+        emit(ctx, value)
+    else:
+        _emit_results(ctx, value)
 
 
 @result_cli.command("read")
@@ -410,9 +453,15 @@ def result_read(
     async def run() -> dict[str, object]:
         async with open_instance(options(ctx).locator) as runtime:
             async with runtime.execution.operation("result.read"):
-                return await _result(runtime, ref, sources=sources, details=details)
+                return await _result(
+                    runtime, ref, sources=sources, details=details or options(ctx).json_mode
+                )
 
-    emit(ctx, run_async(run()))
+    value = run_async(run())
+    if details:
+        emit(ctx, value)
+    else:
+        _emit_results(ctx, value)
 
 
 @embedding_cli.command("probe")
@@ -443,10 +492,19 @@ def embedding_run(
     purpose: Annotated[Literal["document", "query"], typer.Option("--purpose")],
     input: Annotated[list[str] | None, typer.Option("--input")] = None,
     text: Annotated[list[str] | None, typer.Option("--text")] = None,
+    details: Annotated[bool, typer.Option("--details")] = False,
 ) -> None:
     async def run() -> dict[str, object]:
         async with open_instance(options(ctx).locator) as runtime:
             result = await runtime.embedding.run(space, purpose, input or (), text or ())
-            return await _result(runtime, result.ref.address)
+            return result.model_dump(mode="json")
 
-    emit(ctx, run_async(run()))
+    value = run_async(run())
+    if options(ctx).json_mode or details:
+        emit(ctx, value)
+        return
+    definition = cast(dict[str, object], value["space"])
+    rows = cast(list[dict[str, object]], value["rows"])
+    typer.echo(f"{space}: {len(rows)} vectors, {definition['dimensions']} dimensions ({purpose})")
+    for ref in cast(list[dict[str, str]], value["results"]):
+        typer.echo(ref["address"])

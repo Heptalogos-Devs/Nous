@@ -3,7 +3,7 @@
 import logging
 from collections.abc import AsyncGenerator, Mapping
 from contextlib import AsyncExitStack, ExitStack, asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from uuid import uuid4
 
@@ -13,11 +13,13 @@ from nous.application.configuration import ConfigurationOperations
 from nous.application.embedding import EmbeddingOperations
 from nous.common.errors import NousError
 from nous.configuration import Configuration
-from nous.content.store import ArtifactStore, ResultStore
+from nous.content.artifacts import ArtifactStore
+from nous.content.results import ResultStore
+from nous.content.schema import metadata as content_metadata
 from nous.media.analysis import MediaAnalysis
 from nous.media.preparation import MediaPreparer
+from nous.models.embedding_schema import metadata as embedding_metadata
 from nous.models.embedding_store import EmbeddingSpaceRegistry
-from nous.models.embedding_store import metadata as content_metadata
 from nous.models.embeddings import EmbeddingExecutor
 from nous.models.executor import ModelExecutor
 from nous.models.operations import GenerationOperations
@@ -103,6 +105,42 @@ class Runtime:
             "paths": self.paths.to_dict(),
         }
 
+    async def check(self) -> dict[str, object]:
+        """Read actual owners and adopted-result summaries without making model requests."""
+        async with self.execution.operation("runtime.check"):
+            settings = self.configuration.snapshot.typed_values()
+            result = self.status()
+            result["database"] = asdict(await self.database.check())
+            result["models"] = {
+                "resources": list(settings.models),
+                "configured": bool(settings.models),
+                **self.generation.capabilities(self.configuration.snapshot),
+            }
+            result["media"] = await self.execution.blocking(
+                self.media.preparer.capabilities, settings.media
+            )
+            result["embedding"] = await self.embedding_spaces.status()
+            result["wave"] = await self.wave.status()
+            result["execution"] = self.execution.status()
+            result["recent_results"] = await self.results.recent()
+            result["observability"] = {
+                "logs": str(self.paths.logs / "nous.jsonl")
+                if settings.logging.file_enabled
+                else None,
+                "trace_enabled": settings.tracing.enabled,
+                "trace_export": settings.tracing.export,
+                "local_spans_persisted": False,
+                "export_configured": settings.tracing.enabled and settings.tracing.export != "none",
+                "trace_sample_ratio": settings.tracing.sample_ratio,
+                "metrics_export": settings.metrics.export,
+                "metrics_enabled": settings.metrics.enabled,
+            }
+            result["bindings"] = {
+                "time": "checked",
+                "embedding": "checked" if settings.embedding.spaces else "unconfigured",
+            }
+            return result
+
 
 async def initialize_instance(
     locator: InstanceLocator | Path | str | None = None,
@@ -168,7 +206,12 @@ async def initialize_instance(
                 descriptor.instance_id,
                 create=not existing,
                 database_id=str(binding.database_id),
-                additional_metadata=(blob_metadata, content_metadata, wave_metadata)
+                additional_metadata=(
+                    blob_metadata,
+                    content_metadata,
+                    embedding_metadata,
+                    wave_metadata,
+                )
                 if not existing
                 else (),
             ) as database:

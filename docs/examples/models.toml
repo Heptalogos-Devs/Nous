@@ -60,6 +60,16 @@ model = "text"
 prompt = "select-passages"
 output_mode = "native"
 
+[tasks.journal-draft]
+model = "text"
+prompt = "journal-draft"
+output_mode = "text"
+
+[tasks.annotate-concepts]
+model = "text"
+prompt = "annotate-concepts"
+output_mode = "native"
+
 [media.analysis]
 description_task = "describe-media"
 extraction_task = "extract-information"

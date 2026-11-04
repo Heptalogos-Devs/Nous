@@ -6,6 +6,7 @@ pub mod config;
 pub mod dtsc;
 pub mod geometry;
 pub mod graph;
+mod occurrences;
 pub mod pipeline;
 pub mod projection;
 pub mod river;

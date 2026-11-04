@@ -23,3 +23,7 @@ status 列出真实 ready/configured/unconfigured/unavailable，不隐式构建�
 先停止新操作，结束已接纳工作、媒体子进程与 Native 实际 worker；再关闭 Native 索引/池、模型连接、内容和数据库；最后观测与日志、实例锁。AsyncExitStack 管理已取得资源，清理失败不覆盖最初原因。
 
 Native 原生 handle 的销毁和 index file/mmap 关闭保持同一所有者；不能在 coroutine 已取消而 Rust 仍运行时提前 close。
+
+## Schema 装配
+
+组合根显式收集 storage/content、content、embedding、wave 的纯表定义，按 SQLAlchemy 的同一 metadata/外键依赖建立完整数据库。删除从 embedding_store 借出 content_metadata 的隐含注册。具体职责见 [操作所有权](operation-ownership.md)，不建设运行时动态服务注册平台。

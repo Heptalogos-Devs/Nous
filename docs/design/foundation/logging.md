@@ -33,3 +33,9 @@
 错误日志遵循[错误专题](errors.md)。观测输出故障不得递归调用自身导致异常风暴；最小回退写 stderr。关闭最后 flush/close 文件 handler，不删除原日志目录。
 
 完成条件：启动前失败可见；正式日志无重复；中文和异常原因可读；JSON/协议输出不夹带日志；并发操作关联不串线。采用 [stdlib handlers](https://docs.python.org/3.14/library/logging.handlers.html) 与 [structlog stdlib integration](https://structlog.org/en/stable/standard-library.html)。
+
+## 两种呈现使用同一事件
+
+终端列只显示有意义的操作、阶段、对象、结果与耗时；完整标识在 JSONL 中保留，失败给一个可检索关联。使用 structlog 的现成 columns/formatter，处理器不得因为终端隐藏字段而同时删掉文件字段。
+
+stdlib extra 中的实际业务字段由共同桥接收集，不能只保留 result/duration/error_type 四项。操作开始通常 DEBUG，关键完成、部分完成和失败使用适当级别；网络尝试记录见 [请求尝试](../models/request-attempts.md)。产品状态与日志读取见 [诊断](../interfaces/diagnostics.md)。

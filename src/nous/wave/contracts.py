@@ -6,6 +6,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
 
+from nous.application.embedding import VectorRef
 from nous.content.contracts import SourceSelection
 from nous.temporal.values import CognitiveTimes, Interval
 
@@ -14,66 +15,11 @@ class WaveValue(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
-class Selector(WaveValue):
-    kind: Literal["whole", "lines", "bytes", "pages", "time", "image"] = "whole"
-    first: int | None = Field(default=None, ge=1)
-    last: int | None = Field(default=None, ge=1)
-    start: int | None = Field(default=None, ge=0)
-    end: int | None = Field(default=None, ge=0)
-    pages: tuple[int, ...] = ()
-    frame: int | None = Field(default=None, ge=0)
-    crop: tuple[int, int, int, int] | None = None
-
-    @model_validator(mode="after")
-    def coordinates_match_kind(self) -> Selector:
-        selected = {
-            name
-            for name in ("first", "last", "start", "end", "pages", "frame", "crop")
-            if getattr(self, name) not in (None, ())
-        }
-        permitted = {
-            "whole": set[str](),
-            "lines": {"first", "last"},
-            "bytes": {"start", "end"},
-            "pages": {"pages"},
-            "time": {"start", "end"},
-            "image": {"frame", "crop", "start", "end"},
-        }[self.kind]
-        if selected - permitted:
-            raise ValueError("selector coordinates do not match its kind")
-        if self.kind == "lines" and self.first is None and self.last is None:
-            raise ValueError("line selection needs a first or last line")
-        if self.kind in {"bytes", "time"} and self.start is None and self.end is None:
-            raise ValueError("range selection needs a start or end")
-        if self.kind == "pages" and not self.pages:
-            raise ValueError("page selection needs at least one page")
-        if self.last is not None and self.first is not None and self.last < self.first:
-            raise ValueError("last line must not precede first line")
-        if self.end is not None and self.start is not None and self.end <= self.start:
-            raise ValueError("range end must follow its start")
-        return self
-
-    def content_selection(self) -> SourceSelection:
-        if self.kind == "whole":
-            return SourceSelection()
-        if self.kind == "lines":
-            return SourceSelection(start_line=self.first, end_line=self.last)
-        if self.kind == "bytes":
-            return SourceSelection(start_byte=self.start, end_byte=self.end)
-        if self.kind == "pages":
-            return SourceSelection(pages=self.pages)
-        if self.kind == "time":
-            return SourceSelection(start_ms=self.start, end_ms=self.end)
-        return SourceSelection(
-            frame=self.frame, crop=self.crop, start_ms=self.start, end_ms=self.end
-        )
-
-
 class DocumentInput(WaveValue):
     file: str | None = None
     text: str | None = None
     artifact: str | None = None
-    selector: Selector = Field(default_factory=Selector)
+    selector: SourceSelection = Field(default_factory=SourceSelection)
 
     @model_validator(mode="after")
     def one_source(self) -> DocumentInput:
@@ -110,7 +56,34 @@ class SourceSequence(WaveValue):
 
 class CandidateContent(WaveValue):
     document: str
-    selector: Selector = Field(default_factory=Selector)
+    selector: SourceSelection = Field(default_factory=SourceSelection)
+
+
+class PathStep(WaveValue):
+    concept: str
+    selection: SourceSelection = Field(default_factory=SourceSelection)
+
+
+class CandidatePath(WaveValue):
+    key: str = Field(min_length=1)
+    label: str = ""
+    steps: tuple[PathStep, ...] = Field(min_length=1)
+
+
+class SupportGroup(WaveValue):
+    key: str = Field(min_length=1)
+    required_sources: tuple[str, ...] = ()
+    basis_refs: tuple[CandidateContent, ...] = ()
+    kind: Literal["source", "interpretation", "hypothesis", "imagination"]
+    origin_ref: CandidateContent | None = None
+
+    @model_validator(mode="after")
+    def evidence_required(self) -> SupportGroup:
+        if self.kind in {"source", "interpretation"} and not self.required_sources:
+            raise ValueError("source and interpretation require source premises")
+        if self.kind == "interpretation" and self.origin_ref is None:
+            raise ValueError("interpretation requires its first origin position")
+        return self
 
 
 class Candidate(WaveValue):
@@ -118,7 +91,18 @@ class Candidate(WaveValue):
     content: CandidateContent
     document: str
     concepts: tuple[str, ...] | None = None
-    curve: tuple[str, ...] | None = None
+    paths: tuple[CandidatePath, ...] | None = Field(default=None, max_length=16)
+    annotation_ref: str | None = None
+    annotation_concepts: dict[str, str] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def one_path_authority(self) -> Candidate:
+        if self.paths is not None and self.annotation_ref is not None:
+            raise ValueError("paths and annotation_ref are mutually exclusive")
+        if self.paths and len({path.key for path in self.paths}) != len(self.paths):
+            raise ValueError("candidate path keys must be unique")
+        return self
+
     metadata: dict[str, JsonValue] = Field(default_factory=dict)
 
 
@@ -131,7 +115,7 @@ class Association(WaveValue):
     strength: float = Field(ge=0, le=1, allow_inf_nan=False)
     confidence: float = Field(ge=0, le=1, allow_inf_nan=False)
     polarity: Literal["positive", "negative"]
-    evidence: tuple[str, ...] = Field(min_length=1)
+    support_group: str
 
 
 class CollectionManifest(WaveValue):
@@ -141,6 +125,7 @@ class CollectionManifest(WaveValue):
     concepts: tuple[Concept, ...] = ()
     source_sequences: tuple[SourceSequence, ...] = ()
     candidates: tuple[Candidate, ...] = ()
+    support_groups: tuple[SupportGroup, ...] = ()
     associations: tuple[Association, ...] = ()
 
     @model_validator(mode="after")
@@ -150,6 +135,7 @@ class CollectionManifest(WaveValue):
             ("concept", self.concepts),
             ("candidate", self.candidates),
             ("association", self.associations),
+            ("support_group", self.support_groups),
         )
         for kind, items in collections:
             keys = [item.key for item in items]
@@ -168,13 +154,24 @@ class CollectionManifest(WaveValue):
         for item in self.candidates:
             if item.document not in documents or item.content.document not in documents:
                 raise ValueError(f"candidate {item.key} references an unknown document")
-            if set(item.concepts or ()) - concepts or set(item.curve or ()) - concepts:
+            if (
+                set(item.concepts or ())
+                | {step.concept for path in item.paths or () for step in path.steps}
+            ) - concepts:
                 raise ValueError(f"candidate {item.key} references an unknown concept")
+        groups = {group.key for group in self.support_groups}
+        for group in self.support_groups:
+            if (
+                set(group.required_sources) - documents
+                or any(ref.document not in documents for ref in group.basis_refs)
+                or (group.origin_ref is not None and group.origin_ref.document not in documents)
+            ):
+                raise ValueError(f"support group {group.key} references an unknown document")
         for item in self.associations:
             if item.source not in concepts or item.target not in concepts:
                 raise ValueError(f"association {item.key} references an unknown concept")
-            if set(item.evidence) - documents:
-                raise ValueError(f"association {item.key} references an unknown document")
+            if item.support_group not in groups:
+                raise ValueError(f"association {item.key} references an unknown support group")
         parents = {item.key: item.derived_from for item in self.documents}
         complete: set[str] = set()
         visiting: set[str] = set()
@@ -197,7 +194,7 @@ class CollectionManifest(WaveValue):
 
 class ContextContent(WaveValue):
     artifact: str
-    selector: Selector = Field(default_factory=Selector)
+    selector: SourceSelection = Field(default_factory=SourceSelection)
 
 
 class ContextFragment(WaveValue):
@@ -242,9 +239,32 @@ class ThinkingStage(WaveValue):
     top_k: int = Field(default=10, ge=1)
 
 
+class CandidateLane(WaveValue):
+    score: float = Field(allow_inf_nan=False)
+    rank: int = Field(ge=1)
+
+
+class CandidatePoolEntry(WaveValue):
+    candidate: str
+    lanes: dict[str, CandidateLane] = Field(default_factory=dict)
+
+
+class CandidatePool(WaveValue):
+    snapshot: str
+    entries: tuple[CandidatePoolEntry, ...]
+
+    @model_validator(mode="after")
+    def unique_candidates(self) -> CandidatePool:
+        if len({item.candidate for item in self.entries}) != len(self.entries):
+            raise ValueError("candidate pool contains duplicate keys")
+        return self
+
+
 class WaveQuery(WaveValue):
     snapshot: str
     text: str = ""
+    vector: VectorRef | None = None
+    candidate_pool: CandidatePool | None = None
     context: tuple[ContextFragment, ...] = ()
     core_concepts: tuple[str, ...] = ()
     cues: tuple[QueryCue, ...] = ()

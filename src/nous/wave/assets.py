@@ -14,19 +14,20 @@ from typing_extensions import TypedDict
 
 from nous.application.embedding import EmbeddingOperations
 from nous.common.errors import NousError
+from nous.content.artifacts import ArtifactStore
 from nous.content.contracts import (
     Artifact,
     ArtifactRef,
     ContentSelection,
     InputSpec,
-    OutputContent,
     SourceSelection,
 )
-from nous.content.store import ArtifactStore, ResultStore
+from nous.content.results import ResultStore
 from nous.media.preparation import MediaPreparer
+from nous.models.annotations import read_annotation
 from nous.temporal.values import CognitiveTimes, Instant, parse_explicit_time
 
-from .contracts import CollectionManifest, Selector
+from .contracts import CandidatePath, CollectionManifest, PathStep
 
 
 class ConceptMapping(TypedDict):
@@ -54,8 +55,9 @@ class CandidateMapping(TypedDict):
     document: str
     roots: list[str]
     concepts: list[str]
-    curve: list[str]
+    paths: list[dict[str, object]]
     metadata: dict[str, JsonValue]
+    annotation: dict[str, str] | None
 
 
 class AssociationMapping(TypedDict):
@@ -67,7 +69,7 @@ class AssociationMapping(TypedDict):
     strength: float
     confidence: float
     polarity: str
-    evidence: list[str]
+    support_group: str
     roots: list[str]
 
 
@@ -79,6 +81,7 @@ class SnapshotMapping(TypedDict):
     concepts: list[ConceptMapping]
     candidates: list[CandidateMapping]
     associations: list[AssociationMapping]
+    support_groups: list[dict[str, object]]
 
 
 class SnapshotRow(TypedDict):
@@ -109,9 +112,10 @@ class FrozenInputs:
     sequence_ordered: npt.NDArray[np.bool_]
     membership_indptr: npt.NDArray[np.uint64]
     membership_indices: npt.NDArray[np.uint64]
-    curve_indptr: npt.NDArray[np.uint64]
-    curve_indices: npt.NDArray[np.uint64]
-    curve_positions: npt.NDArray[np.int64]
+    path_indptr: npt.NDArray[np.uint64]
+    path_step_indptr: npt.NDArray[np.uint64]
+    path_indices: npt.NDArray[np.uint64]
+    path_positions: npt.NDArray[np.int64]
     candidate_root_indptr: npt.NDArray[np.uint64]
     candidate_root_indices: npt.NDArray[np.uint64]
     association_metadata: dict[str, object]
@@ -121,8 +125,9 @@ class FrozenInputs:
     association_strengths: npt.NDArray[np.float64]
     association_confidences: npt.NDArray[np.float64]
     association_polarities: npt.NDArray[np.int8]
-    association_root_indptr: npt.NDArray[np.uint64]
-    association_root_indices: npt.NDArray[np.uint64]
+    association_edge_groups: npt.NDArray[np.uint64]
+    group_root_indptr: npt.NDArray[np.uint64]
+    group_root_indices: npt.NDArray[np.uint64]
     vector_mappings: tuple[dict[str, object], ...]
     mapping: SnapshotMapping
 
@@ -136,26 +141,6 @@ def _csr(rows: list[list[int]]) -> tuple[npt.NDArray[np.uint64], npt.NDArray[np.
     return np.asarray(offsets, dtype=np.uint64), np.asarray(values, dtype=np.uint64)
 
 
-def _candidate_selection(base: Selector, selected: Selector) -> SourceSelection:
-    if selected.kind == "whole":
-        return base.content_selection()
-    if base.kind == "whole":
-        return selected.content_selection()
-    if base.kind != selected.kind or base.kind not in {"lines", "bytes"}:
-        raise NousError(
-            "wave.invalid_selection", "A nested selection must use the document's coordinate kind"
-        )
-    low = base.first if base.kind == "lines" else base.start
-    high = base.last if base.kind == "lines" else base.end
-    sub_low = selected.first if base.kind == "lines" else selected.start
-    sub_high = selected.last if base.kind == "lines" else selected.end
-    if low is not None and (sub_low is None or sub_low < low):
-        raise NousError("wave.invalid_selection", "Candidate starts outside its declared document")
-    if high is not None and (sub_high is None or sub_high > high):
-        raise NousError("wave.invalid_selection", "Candidate ends outside its declared document")
-    return selected.content_selection()
-
-
 def _document_times(document_times: CognitiveTimes | None, artifact: Artifact) -> dict[str, object]:
     declared = document_times.model_dump(mode="json") if document_times is not None else {}
     recorded = parse_explicit_time(artifact.recorded_at.isoformat())
@@ -166,61 +151,6 @@ def _document_times(document_times: CognitiveTimes | None, artifact: Artifact) -
         assert isinstance(formed, Instant)
         declared["formed"] = formed.model_dump(mode="json")
     return declared
-
-
-async def _searchable_content(
-    origin: ContentSelection,
-    artifacts: ArtifactStore,
-    results: ResultStore,
-    preparer: MediaPreparer,
-) -> ContentSelection:
-    """Resolve searchable text through its actual content and deterministic media owners."""
-    artifact = await artifacts.get(origin.artifact)
-    if artifact.media_type == "application/pdf":
-        prepared = await preparer.prepare(
-            artifact,
-            origin.selection,
-            requirements=("text/plain",),
-            settings=preparer.execution.snapshot.typed_values().media,
-            document_mode="text",
-        )
-        groups = tuple(group for batch in prepared.batches for group in batch.inputs)
-        parts = [part for group in groups for part in group.parts if part.representation == "text"]
-        if len(parts) == 1:
-            return parts[0].content
-        text = "\n".join([await artifacts.read_selection(part.content) for part in parts])
-        if not parts:
-            raise NousError("wave.text_required", "Selected PDF pages contain no extractable text")
-        cache_key = hashlib.sha256(origin.model_dump_json().encode()).hexdigest()
-        cached = await results.find_cached("wave.prepare.pdf-text", cache_key)
-        if cached is None:
-            cached = await results.adopt(
-                operation="wave.prepare.pdf-text",
-                producer={"kind": "deterministic", "tool": "PDFium text pages"},
-                inputs=groups,
-                outputs={
-                    "text": OutputContent(
-                        data=text.encode(),
-                        media_type="text/plain",
-                        display_name="selected-pages.txt",
-                    )
-                },
-                parameters={"cache_key": cache_key},
-                coverage=prepared.coverage,
-            )
-        output = next(output for output in cached.outputs if output.name == "text")
-        return ContentSelection(artifact=output.artifact)
-    if artifact.media_type.split("/", 1)[0] in {"image", "audio", "video"}:
-        raise NousError(
-            "wave.text_required",
-            "Wave indexes text; provide an explicit transcript or media-analysis text artifact",
-            details={
-                "artifact": artifact.ref.address,
-                "media_type": artifact.media_type,
-                "selection": origin.selection.model_dump(mode="json"),
-            },
-        )
-    return origin
 
 
 async def freeze_inputs(
@@ -259,13 +189,36 @@ async def freeze_inputs(
         if key in document_roots:
             return document_roots[key]
         document = documents[key]
+        summary = provenance[accepted[key].id]
+        if not summary.complete:
+            raise NousError(
+                "wave.provenance_incomplete",
+                "Cannot freeze incomplete source lineage",
+                details={"document": key},
+            )
         if document.derived_from:
             keys = tuple(
                 dict.fromkeys(root for parent in document.derived_from for root in roots(parent))
             )
+            actual = {ref.id for ref in summary.terminal_roots}
+            if actual != {accepted[key].id}:
+                declared = {ref.id for root in keys for ref in root_artifacts[root]}
+                if actual != declared:
+                    raise NousError(
+                        "wave.provenance_conflict",
+                        "Declared parents conflict with the adopted result lineage",
+                        details={"document": key},
+                    )
         else:
             ref = accepted[key]
-            origins = provenance.get(ref.id, (ref,))
+            summary = provenance[ref.id]
+            if not summary.complete:
+                raise NousError(
+                    "wave.provenance_incomplete",
+                    "Cannot freeze incomplete source lineage",
+                    details={"artifact": ref.address},
+                )
+            origins = summary.terminal_roots
             if document.evidence_group and len(origins) != 1:
                 raise NousError(
                     "wave.invalid_evidence_group",
@@ -301,7 +254,7 @@ async def freeze_inputs(
         document = documents[sequence.document]
         # Only terminal original sources add facts; derived documents are still candidates.
         ref = accepted[sequence.document]
-        origins = provenance.get(ref.id, (ref,))
+        origins = provenance[ref.id].terminal_roots
         if document.derived_from or len(origins) != 1 or origins[0].id != ref.id:
             continue
         document_sequences.setdefault(sequence.document, []).append(
@@ -315,36 +268,151 @@ async def freeze_inputs(
     candidate_texts: list[str] = []
     candidate_contents: list[ContentSelection] = []
     candidate_memberships: list[list[int]] = []
-    candidate_curves: list[list[int]] = []
+    candidate_paths: list[list[int]] = []
+    candidate_path_counts: list[int] = []
+    candidate_positions: list[list[int]] = []
     candidate_roots: list[list[int]] = []
     candidate_mapping: list[CandidateMapping] = []
     for candidate in manifest.candidates:
         document = documents[candidate.content.document]
         selection = ContentSelection(
             artifact=accepted[candidate.content.document],
-            selection=_candidate_selection(document.input.selector, candidate.content.selector),
+            selection=document.input.selector.restrict(candidate.content.selector),
         )
         origin_content = selection
-        selection = await _searchable_content(origin_content, artifacts, results, preparer)
+        representation = await preparer.text_view(
+            origin_content, settings=preparer.execution.snapshot.typed_values().media
+        )
+        selection = representation.view.body
         candidate_contents.append(selection)
-        candidate_texts.append(await artifacts.read_selection(selection))
+        candidate_texts.append(representation.view.text)
         inherited = document_sequences.get(candidate.content.document, [])
         can_inherit = (
-            candidate.content.selector.kind == "whole"
-            and document.input.selector.kind == "whole"
+            candidate.content.selector.is_whole
+            and document.input.selector.is_whole
             and len(document_roots[candidate.content.document]) == 1
             and len(inherited) == 1
         )
-        curve = candidate.curve
-        if curve is None and can_inherit:
-            # Unordered facts may supply membership, never a fabricated curve.
-            if inherited[0][1]:
-                curve = inherited[0][0]
+        paths = list(candidate.paths or ())
+        annotation_artifact = None
+        if candidate.annotation_ref is not None:
+            annotation_artifact = await artifacts.get(candidate.annotation_ref)
+            annotation = await read_annotation(artifacts, annotation_artifact.ref)
+            if annotation.body_ref != selection.artifact:
+                raise NousError(
+                    "wave.annotation_mismatch",
+                    "Annotation belongs to another body",
+                    details={"candidate": candidate.key},
+                )
+            view = await artifacts.text_view(annotation.body_ref)
+            blocks = {block.key: block for block in view.blocks}
+            occurrences = {item.key: item for item in annotation.occurrences}
+            for path in annotation.paths:
+                annotation_steps: list[PathStep] = []
+                for occurrence_key in path.occurrences:
+                    occurrence = occurrences[occurrence_key]
+                    mapped = candidate.annotation_concepts.get(
+                        occurrence.concept, occurrence.concept
+                    )
+                    if mapped not in concept_rows:
+                        raise NousError(
+                            "wave.concept_not_found",
+                            "Annotation concept needs an explicit manifest mapping",
+                            details={"concept": occurrence.concept},
+                        )
+                    covered = [blocks[key].selection.selection for key in occurrence.blocks]
+                    start = min(part.start_byte for part in covered if part.start_byte is not None)
+                    end = max(part.end_byte for part in covered if part.end_byte is not None)
+                    annotation_steps.append(
+                        PathStep(
+                            concept=mapped,
+                            selection=SourceSelection(start_byte=start, end_byte=end),
+                        )
+                    )
+                paths.append(
+                    CandidatePath(key=path.key, label=path.label, steps=tuple(annotation_steps))
+                )
+        if (
+            candidate.paths is None
+            and candidate.annotation_ref is None
+            and can_inherit
+            and inherited[0][1]
+            and inherited[0][0]
+        ):
+            paths = [
+                CandidatePath(
+                    key="source", steps=tuple(PathStep(concept=key) for key in inherited[0][0])
+                )
+            ]
+        path_view = representation.view if paths else None
+        # Clipping splits paths at excluded occurrences; it never joins across a gap.
+        selected_paths: list[tuple[CandidatePath, list[tuple[int, PathStep]]]] = []
+        for path in paths:
+            current: list[tuple[int, PathStep]] = []
+            for position, step in enumerate(path.steps, 1):
+                part = step.selection
+                scope = selection.selection
+                inside = True
+                if path_view is not None:
+                    low = path_view.byte_offset
+                    high = low + len(path_view.text.encode("utf-8"))
+                    if part.start_line is not None or part.end_line is not None:
+                        located = await artifacts.text_view(
+                            ContentSelection(artifact=selection.artifact, selection=part)
+                        )
+                        sub_low = located.byte_offset
+                        sub_high = sub_low + len(located.text.encode("utf-8"))
+                    elif part.start_byte is not None or part.end_byte is not None:
+                        sub_low = part.start_byte or 0
+                        sub_high = part.end_byte
+                    else:
+                        if not scope.is_whole:
+                            raise NousError(
+                                "wave.path_selection_required",
+                                "Local paths need exact body positions",
+                                details={"candidate": candidate.key, "path": path.key},
+                            )
+                        sub_low, sub_high = low, high
+                    inside = sub_high is not None and sub_low >= low and sub_high <= high
+                if inside:
+                    current.append((position, step))
+                elif current:
+                    selected_paths.append((path, current))
+                    current = []
+            if current:
+                selected_paths.append((path, current))
+        if len(selected_paths) > 16:
+            raise NousError(
+                "wave.path_limit",
+                "A candidate may contain at most 16 local paths",
+                details={"candidate": candidate.key},
+            )
         memberships = candidate.concepts
         if memberships is None:
-            memberships = tuple(dict.fromkeys(curve or (inherited[0][0] if can_inherit else ())))
-        curve = curve or ()
-        candidate_curves.append([concept_rows[key] for key in curve])
+            memberships = tuple(
+                dict.fromkeys(step.concept for _, steps in selected_paths for _, step in steps)
+            )
+            if not memberships and can_inherit:
+                memberships = tuple(dict.fromkeys(inherited[0][0]))
+        path_concepts = {step.concept for _, steps in selected_paths for _, step in steps}
+        if path_concepts - set(memberships):
+            raise NousError(
+                "wave.invalid_membership",
+                "Path concepts must belong to candidate memberships",
+                details={"candidate": candidate.key},
+            )
+        path_mapping: list[dict[str, object]] = []
+        for path, steps in selected_paths:
+            candidate_paths.append([concept_rows[step.concept] for _, step in steps])
+            candidate_positions.append([position for position, _ in steps])
+            path_mapping.append(
+                {
+                    "key": path.key,
+                    "label": path.label,
+                    "steps": [step.model_dump(mode="json") for _, step in steps],
+                }
+            )
+        candidate_path_counts.append(len(selected_paths))
         candidate_memberships.append([concept_rows[key] for key in dict.fromkeys(memberships)])
         roots_for_candidate = document_roots[candidate.content.document]
         candidate_roots.append([root_rows[key] for key in roots_for_candidate])
@@ -357,20 +425,60 @@ async def freeze_inputs(
                 "document": candidate.document,
                 "roots": list(roots_for_candidate),
                 "concepts": list(dict.fromkeys(memberships)),
-                "curve": list(curve),
+                "paths": path_mapping,
                 "metadata": candidate.metadata,
+                "annotation": annotation_artifact.ref.model_dump(mode="json")
+                if annotation_artifact is not None
+                else None,
             }
         )
 
-    association_roots: list[list[int]] = []
-    association_mapping: list[AssociationMapping] = []
-    for association in manifest.associations:
+    support_groups: list[dict[str, object]] = []
+    group_mapping: list[dict[str, object]] = []
+    group_rows = {group.key: index for index, group in enumerate(manifest.support_groups)}
+    group_roots: dict[str, tuple[str, ...]] = {}
+    for group in manifest.support_groups:
         evidence = tuple(
             dict.fromkeys(
-                root for document in association.evidence for root in document_roots[document]
+                root for document in group.required_sources for root in document_roots[document]
             )
         )
-        association_roots.append([root_rows[root] for root in evidence])
+        group_roots[group.key] = evidence
+        basis = [
+            ContentSelection(
+                artifact=accepted[ref.document],
+                selection=documents[ref.document].input.selector.restrict(ref.selector),
+            ).model_dump(mode="json")
+            for ref in group.basis_refs
+        ]
+        origin = (
+            ContentSelection(
+                artifact=accepted[group.origin_ref.document],
+                selection=documents[group.origin_ref.document].input.selector.restrict(
+                    group.origin_ref.selector
+                ),
+            ).model_dump(mode="json")
+            if group.origin_ref
+            else None
+        )
+        group_mapping.append(
+            {
+                "key": group.key,
+                "roots": list(evidence),
+                "kind": group.kind,
+                "basis_refs": basis,
+                "origin_ref": origin,
+            }
+        )
+        support_groups.append(
+            {
+                "key": group.key,
+                "kind": group.kind,
+            }
+        )
+    association_mapping: list[AssociationMapping] = []
+    for association in manifest.associations:
+        evidence = group_roots[association.support_group]
         association_mapping.append(
             cast(
                 AssociationMapping, {**association.model_dump(mode="json"), "roots": list(evidence)}
@@ -420,9 +528,12 @@ async def freeze_inputs(
 
     sequence_indptr, sequence_indices = _csr(source_rows)
     membership_indptr, membership_indices = _csr(candidate_memberships)
-    curve_indptr, curve_indices = _csr(candidate_curves)
+    path_step_indptr, path_indices = _csr(candidate_paths)
+    path_indptr, _ = _csr([list(range(count)) for count in candidate_path_counts])
     candidate_root_indptr, candidate_root_indices = _csr(candidate_roots)
-    association_root_indptr, association_root_indices = _csr(association_roots)
+    group_root_indptr, group_root_indices = _csr(
+        [[root_rows[root] for root in group_roots[group.key]] for group in manifest.support_groups]
+    )
     return FrozenInputs(
         candidate_metadata={
             "keys": [item.key for item in manifest.candidates],
@@ -452,17 +563,18 @@ async def freeze_inputs(
         sequence_ordered=np.asarray(source_ordered, dtype=np.bool_),
         membership_indptr=membership_indptr,
         membership_indices=membership_indices,
-        curve_indptr=curve_indptr,
-        curve_indices=curve_indices,
-        curve_positions=np.asarray(
-            [position for row in candidate_curves for position in range(1, len(row) + 1)],
-            dtype=np.int64,
+        path_indptr=path_indptr,
+        path_step_indptr=path_step_indptr,
+        path_indices=path_indices,
+        path_positions=np.asarray(
+            [position for row in candidate_positions for position in row], dtype=np.int64
         ),
         candidate_root_indptr=candidate_root_indptr,
         candidate_root_indices=candidate_root_indices,
         association_metadata={
             "keys": [item.key for item in manifest.associations],
             "relations": [item.relation for item in manifest.associations],
+            "support_groups": support_groups,
         },
         association_sources=np.asarray(
             [concept_rows[item.source] for item in manifest.associations], dtype=np.uint64
@@ -483,8 +595,11 @@ async def freeze_inputs(
             [1 if item.polarity == "positive" else -1 for item in manifest.associations],
             dtype=np.int8,
         ),
-        association_root_indptr=association_root_indptr,
-        association_root_indices=association_root_indices,
+        association_edge_groups=np.asarray(
+            [group_rows[item.support_group] for item in manifest.associations], dtype=np.uint64
+        ),
+        group_root_indptr=group_root_indptr,
+        group_root_indices=group_root_indices,
         vector_mappings=tuple(vector_mappings),
         mapping={
             "name": manifest.name,
@@ -518,5 +633,6 @@ async def freeze_inputs(
             ],
             "candidates": candidate_mapping,
             "associations": association_mapping,
+            "support_groups": group_mapping,
         },
     )

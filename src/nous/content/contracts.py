@@ -5,6 +5,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
 
+from nous.common.errors import NousError
 from nous.storage.content_types import BlobRef as BlobRef
 
 
@@ -39,6 +40,14 @@ class SourceSelection(ContentValue):
 
     @model_validator(mode="after")
     def valid_range(self) -> SourceSelection:
+        groups = (
+            bool(self.pages),
+            self.start_line is not None or self.end_line is not None,
+            self.start_byte is not None or self.end_byte is not None,
+            any(value is not None for value in (self.start_ms, self.end_ms, self.frame, self.crop)),
+        )
+        if sum(groups) > 1:
+            raise ValueError("A selection cannot mix page, text and media coordinates")
         if any(page < 1 for page in self.pages):
             raise ValueError("PDF page numbers start at one")
         if self.end_ms is not None and self.end_ms <= (self.start_ms or 0):
@@ -56,6 +65,79 @@ class SourceSelection(ContentValue):
             if min(left, top) < 0 or right <= left or bottom <= top:
                 raise ValueError("Invalid pixel crop")
         return self
+
+    @property
+    def is_whole(self) -> bool:
+        return not self.pages and all(
+            value is None
+            for value in (
+                self.start_ms,
+                self.end_ms,
+                self.start_line,
+                self.end_line,
+                self.start_byte,
+                self.end_byte,
+                self.frame,
+                self.crop,
+            )
+        )
+
+    def restrict(self, selected: SourceSelection) -> SourceSelection:
+        """Resolve absolute subcoordinates without extending the declared input range."""
+        if self.is_whole:
+            return selected
+        if selected.is_whole:
+            return self
+
+        def family(value: SourceSelection) -> str:
+            if value.pages:
+                return "pages"
+            if value.start_line is not None or value.end_line is not None:
+                return "lines"
+            if value.start_byte is not None or value.end_byte is not None:
+                return "bytes"
+            return "media"
+
+        def invalid() -> NousError:
+            return NousError(
+                "content.invalid_selection",
+                "Selection extends outside its declared input",
+                details={
+                    "input": self.model_dump(mode="json"),
+                    "selected": selected.model_dump(mode="json"),
+                },
+            )
+
+        kind = family(self)
+        if family(selected) != kind:
+            raise invalid()
+        if kind == "pages":
+            if not set(selected.pages).issubset(self.pages):
+                raise invalid()
+            return selected
+        values = self.model_dump()
+        values.update(selected.model_dump(exclude_none=True, exclude_defaults=True))
+        for low, high in (
+            ("start_line", "end_line"),
+            ("start_byte", "end_byte"),
+            ("start_ms", "end_ms"),
+        ):
+            lower, upper = getattr(self, low), getattr(self, high)
+            chosen_lower, chosen_upper = values[low], values[high]
+            if lower is not None and (chosen_lower is None or chosen_lower < lower):
+                raise invalid()
+            if upper is not None and (chosen_upper is None or chosen_upper > upper):
+                raise invalid()
+        if self.frame is not None and values["frame"] != self.frame:
+            raise invalid()
+        if self.crop is not None:
+            left, top, right, bottom = self.crop
+            crop = values["crop"]
+            if crop is None or not (
+                left <= crop[0] < crop[2] <= right and top <= crop[1] < crop[3] <= bottom
+            ):
+                raise invalid()
+        return SourceSelection.model_validate(values)
 
 
 class Artifact(ContentValue):
@@ -84,6 +166,8 @@ class OriginSlice(ContentValue):
 class InputPart(ContentValue):
     content: ContentSelection
     representation: str = "original"
+    source_media_type: str | None = None
+    media_type: str | None = None
     origins: tuple[OriginSlice, ...] = ()
 
 

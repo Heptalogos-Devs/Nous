@@ -6,6 +6,7 @@ from contextlib import ExitStack
 from datetime import UTC, datetime
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
+from typing import cast
 
 import structlog
 from opentelemetry import trace
@@ -32,13 +33,24 @@ def _context(logger: object, method: str, event: EventDict) -> EventDict:
         event["trace_id"] = trace.format_trace_id(current.trace_id)
         event["span_id"] = trace.format_span_id(current.span_id)
     event["timestamp"] = datetime.now(UTC).isoformat()
-    record = event.get("_record")
-    if isinstance(record, logging.LogRecord):
-        for name in ("result", "duration_seconds", "error_code", "error_type"):
-            value = getattr(record, name, None)
-            if value is not None:
-                event[name] = value
+    event.pop("message", None)
     return event
+
+
+def _terminal_event(logger: object, method: str, event: EventDict) -> EventDict:
+    value = dict(event)
+    for key in ("instance_id", "startup_id", "trace_id", "span_id", "attempts", "result_refs"):
+        value.pop(key, None)
+    if value.get("event") != "operation.failed":
+        value.pop("operation_id", None)
+    if value.get("event") == "request.attempt":
+        route = value.pop("route", None)
+        if isinstance(route, dict):
+            route = cast(dict[str, object], route)
+            value["model"] = route.get("model_id", route.get("model", "unknown"))
+        for key in ("start", "end", "provider_request_id", "reported_usage"):
+            value.pop(key, None)
+    return value
 
 
 class LoggingSession:
@@ -57,6 +69,7 @@ class LoggingSession:
             structlog.contextvars.merge_contextvars,
             structlog.stdlib.add_log_level,
             structlog.stdlib.add_logger_name,
+            structlog.stdlib.ExtraAdder(),
             _context,
         ]
         terminal = logging.StreamHandler(sys.stderr)
@@ -65,6 +78,7 @@ class LoggingSession:
                 foreign_pre_chain=shared,
                 processors=[
                     structlog.stdlib.ProcessorFormatter.remove_processors_meta,
+                    _terminal_event,
                     structlog.dev.ConsoleRenderer(colors=False),
                 ],
             )
@@ -102,7 +116,15 @@ class LoggingSession:
             logger_factory=structlog.stdlib.LoggerFactory(),
             cache_logger_on_first_use=True,
         )
-        for name in ("aiosqlite", "sqlalchemy.engine", "urllib3", "httpx", "httpcore"):
+        for name in (
+            "aiosqlite",
+            "sqlalchemy.engine",
+            "urllib3",
+            "httpx",
+            "httpcore",
+            "httpx2",
+            "httpcore2",
+        ):
             logging.getLogger(name).setLevel(logging.WARNING)
 
     def configure(self, settings: LoggingConfig, directory: Path, instance_id: str) -> None:
@@ -155,7 +177,7 @@ class Observability:
                 sampler=ParentBased(TraceIdRatioBased(float(tracing.sample_ratio)))
                 if tracing.enabled
                 else ALWAYS_OFF,
-                span_limits=SpanLimits(max_events=0, max_attribute_length=512),
+                span_limits=SpanLimits(max_events=64, max_attribute_length=1024),
                 shutdown_on_exit=False,
             )
             initializing.callback(self.trace.shutdown)

@@ -102,9 +102,10 @@ pub fn reference_dtsc(input: &ReferenceDtscInput) -> Result<ReferenceDtscOutput>
         sample_tags: Vec::new(),
         config: config.field.clone(),
     });
+    let sampler = field::DtscFieldSampler::new(&field, &input.inbound, &config.field);
     let ctx = DtscCurveContext {
         config: &config,
-        field: &field,
+        sampler: &sampler,
         inbound: &input.inbound,
         edges: input.edges.iter().map(|(a, b, w)| ((*a, *b), *w)).collect(),
         anchor: input.anchor_gain.iter().copied().collect(),
@@ -195,26 +196,6 @@ pub struct ReferenceCurve {
     pub id: i64,
     pub chunk_vector: Vec<f32>,
     pub tags: Vec<ReferenceCurveTag>,
-}
-pub(crate) fn reference_cosine(a: &[f32], b: &[f32]) -> f64 {
-    if a.len() != b.len() || a.is_empty() {
-        return 0.0;
-    }
-    let mut cross = 0.0;
-    let mut aa = 0.0;
-    let mut bb = 0.0;
-    for (a, b) in a.iter().zip(b) {
-        let a = f64::from(*a);
-        let b = f64::from(*b);
-        cross += a * b;
-        aa += a * a;
-        bb += b * b;
-    }
-    if aa > 1e-15 && bb > 1e-15 {
-        cross / (aa.sqrt() * bb.sqrt())
-    } else {
-        0.0
-    }
 }
 fn unit(v: f64) -> f64 {
     if v.is_finite() {

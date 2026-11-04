@@ -238,6 +238,16 @@ impl Default for NativeConfig {
     }
 }
 
+impl NativeConfig {
+    pub fn validate(&self) -> Result<(), String> {
+        crate::assets::validate_finite_config(self)?;
+        if self.max_union_candidates == 0 || !(0.0..=1.0).contains(&self.lexical_weight) {
+            return Err("MEMO_CONFIG_INVALID: maxUnionCandidates must be positive and lexicalWeight must lie in [0,1]".into());
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct TagData {
@@ -252,6 +262,8 @@ pub(super) struct TagData {
 #[derive(Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct Curve {
+    pub(super) path_index: Option<usize>,
+    pub(super) multi_path: bool,
     pub(super) id: i64,
     pub(super) file_id: i64,
     pub(super) source_ids: Vec<i64>,
@@ -441,6 +453,8 @@ pub struct OmegaOutput {
 #[derive(Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NativeResultItem {
+    pub chosen_path: Option<usize>,
+    pub available_paths: Vec<Value>,
     pub ranking_score: f64,
     pub id: i64,
     pub chunk_id: i64,

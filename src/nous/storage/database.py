@@ -42,7 +42,7 @@ time_domain_definitions = sa.Table(
     sa.Column("tick_denominator", sa.String),
     sa.Column("epoch", sa.String),
 )
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 @contextmanager
@@ -213,10 +213,12 @@ class Database:
         try:
             try:
                 if create:
+                    declared = sa.MetaData()
+                    for owner in (metadata, *additional_metadata):
+                        for table in owner.tables.values():
+                            table.to_metadata(declared)
                     async with engine.begin() as connection:
-                        await connection.run_sync(metadata.create_all)
-                        for schema in additional_metadata:
-                            await connection.run_sync(schema.create_all)
+                        await connection.run_sync(declared.create_all)
                         await connection.execute(
                             instance_metadata.insert().values(
                                 instance_id=instance_id,

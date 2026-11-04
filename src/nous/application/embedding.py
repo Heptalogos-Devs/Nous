@@ -1,13 +1,9 @@
-"""Text embeddings, exact adopted-row reuse, and durable space identity."""
+"""Embedding batches, canonical adopted rows and temporary query vectors."""
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
-import io
-import json
-import math
-from collections import deque
+import mmap
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,38 +11,59 @@ from typing import Literal, cast
 
 import numpy as np
 import numpy.typing as npt
-from pydantic import JsonValue
+from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
 from nous.common.errors import NousError
+from nous.common.operations import record_completed
 from nous.configuration import ConfigSnapshot
+from nous.content.artifacts import ArtifactStore
 from nous.content.contracts import (
+    ArtifactRef,
     ContentSelection,
     InputGroup,
     InputPart,
+    InputSpec,
     OutputContent,
-    ProcessingResult,
+    ResultRef,
 )
-from nous.content.store import ArtifactStore, ResultStore
+from nous.content.results import ResultStore
 from nous.models.contracts import EmbeddingResult
 from nous.models.embedding_store import EmbeddingSpaceRegistry, StoredVectorRow
 from nous.models.embeddings import EmbeddingExecutor, SpaceDefinition, resolved_space
-from nous.runtime.execution import ExecutionManager, OperationContext
+from nous.runtime.execution import ExecutionManager
 from nous.storage.database import Database
 
 Purpose = Literal["query", "document"]
 
 
+class VectorRef(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    space: SpaceDefinition
+    purpose: Purpose
+    artifact: ArtifactRef
+    row_index: int = Field(ge=0, strict=True)
+
+
 @dataclass(frozen=True)
 class EmbeddingBatchRef:
-    """Ordered input selections and their rows in adopted immutable vector artifacts."""
-
     space: SpaceDefinition
     purpose: Purpose
     inputs: tuple[ContentSelection, ...]
     rows: tuple[StoredVectorRow, ...]
 
 
+class EmbeddingOutcome(BaseModel):
+    model_config = ConfigDict(frozen=True)
+    space: SpaceDefinition
+    purpose: Purpose
+    rows: tuple[VectorRef, ...]
+    results: tuple[ResultRef, ...]
+    coverage: dict[str, JsonValue]
+
+
 class EmbeddingOperations:
+    """Network requests belong to each caller; SQL chooses immutable canonical exact rows."""
+
     def __init__(
         self,
         database: Database,
@@ -58,25 +75,24 @@ class EmbeddingOperations:
     ) -> None:
         self.database, self.execution, self.artifacts = database, execution, artifacts
         self.results, self.registry, self.executor = results, registry, executor
-        self._ensure_lock = asyncio.Lock()
 
     async def _inputs(
-        self,
-        inputs: Sequence[str],
-        texts: Sequence[str],
-        snapshot: ConfigSnapshot,
-        *,
-        adopt: bool,
+        self, inputs: Sequence[str], texts: Sequence[str], snapshot: ConfigSnapshot, *, adopt: bool
     ) -> tuple[tuple[str, ...], tuple[ContentSelection, ...]]:
         values: list[str] = []
         selections: list[ContentSelection] = []
         limit = snapshot.typed_values().content.text_read_max_bytes
         for item in inputs:
+            if adopt:
+                artifact = await self.artifacts.accept(
+                    InputSpec(kind="artifact", artifact=item)
+                    if item.startswith("art:")
+                    else InputSpec(kind="file", path=item)
+                )
+                selections.append(ContentSelection(artifact=artifact.ref))
+                continue
             if item.startswith("art:"):
                 artifact = await self.artifacts.get(item)
-                value = await self.artifacts.read_text(artifact.ref, max_bytes=limit)
-            elif adopt:
-                artifact = await self.artifacts.ingest(Path(item))
                 value = await self.artifacts.read_text(artifact.ref, max_bytes=limit)
             else:
                 path = Path(item)
@@ -89,12 +105,12 @@ class EmbeddingOperations:
             values.append(value)
             if artifact is not None:
                 selections.append(ContentSelection(artifact=artifact.ref))
-        for text in texts:
-            if len(text.encode("utf-8")) > limit:
+        for value in texts:
+            if len(value.encode("utf-8")) > limit:
                 raise NousError("content.too_large", "Input exceeds the configured text read limit")
-            values.append(text)
+            values.append(value)
             if adopt:
-                artifact = await self.artifacts.ingest(text)
+                artifact = await self.artifacts.ingest(value)
                 selections.append(ContentSelection(artifact=artifact.ref))
         return tuple(values), tuple(selections)
 
@@ -107,25 +123,22 @@ class EmbeddingOperations:
             if purpose == "query"
             else definition.encoding.document_instruction
         )
-        return tuple(hashlib.sha256((prefix + text).encode("utf-8")).hexdigest() for text in values)
+        return tuple(
+            hashlib.sha256((prefix + value).encode("utf-8")).hexdigest() for value in values
+        )
 
-    async def _adopt(
+    async def _adopt_encoded(
         self,
         definition: SpaceDefinition,
         purpose: Purpose,
-        values: tuple[str, ...],
+        generated: EmbeddingResult,
         inputs: tuple[ContentSelection, ...],
-        context: OperationContext,
-    ) -> tuple[ProcessingResult, tuple[StoredVectorRow, ...]]:
-        generated = await self.executor.run(
-            definition.space_id, values, purpose, context.settings, context=context
-        )
+        digests: tuple[str, ...],
+    ) -> dict[str, StoredVectorRow]:
         prepared = await self.results.prepare_outputs(
             {
                 "vectors": OutputContent(
-                    data=generated.npy,
-                    media_type="application/x-npy",
-                    display_name="vectors.npy",
+                    data=generated.npy, media_type="application/x-npy", display_name="vectors.npy"
                 )
             }
         )
@@ -133,7 +146,7 @@ class EmbeddingOperations:
             InputGroup(
                 key=f"S{index + 1}",
                 name=f"S{index + 1}",
-                parts=(InputPart(content=source, representation="text"),),
+                parts=(InputPart(content=source, representation="text", media_type="text/plain"),),
             )
             for index, source in enumerate(inputs)
         )
@@ -146,21 +159,23 @@ class EmbeddingOperations:
                 inputs=groups,
                 prepared_outputs=prepared,
                 request=generated.request,
-                parameters={"usage": generated.usage, "attempts": generated.attempts},
-                coverage={"inputs": len(values), "purpose": purpose},
+                parameters={
+                    "usage": generated.usage,
+                    "attempts": generated.attempts,
+                },
+                coverage={"inputs": len(inputs), "purpose": purpose},
             )
             output = next(item for item in result.outputs if item.name == "vectors")
-            await self.registry.attach_in(
+            canonical = await self.registry.attach_in(
                 tx,
                 definition=definition,
                 result_id=result.ref.id,
                 artifact_id=output.artifact.id,
                 purpose=purpose,
-                input_digests=self._digests(definition, purpose, values),
+                input_digests=digests,
             )
-        return result, tuple(
-            StoredVectorRow(result.ref.id, output.artifact.id, row) for row in range(len(values))
-        )
+        record_completed(result.ref.address)
+        return canonical
 
     async def probe(
         self, model_id: str, inputs: Sequence[str], texts: Sequence[str]
@@ -171,124 +186,174 @@ class EmbeddingOperations:
 
     async def run(
         self, space_id: str, purpose: Purpose, inputs: Sequence[str], texts: Sequence[str]
-    ) -> ProcessingResult:
+    ) -> EmbeddingOutcome:
         async with self.execution.operation("embedding.run") as context:
-            values, sources = await self._inputs(inputs, texts, context.settings, adopt=True)
-            definition = resolved_space(context.settings, space_id)
-            await self.registry.check(definition)
-            result, _ = await self._adopt(definition, purpose, values, sources, context)
-            return result
+            _, sources = await self._inputs(inputs, texts, context.settings, adopt=True)
+            batch = await self.ensure(sources, space_id, purpose)
+            results: dict[str, ResultRef] = {}
+            artifacts: dict[str, ArtifactRef] = {}
+            for row in batch.rows:
+                if row.result_id not in results:
+                    result = await self.results.get(row.result_id)
+                    results[row.result_id] = result.ref
+                    artifacts.update({item.artifact.id: item.artifact for item in result.outputs})
+            return EmbeddingOutcome(
+                space=batch.space,
+                purpose=purpose,
+                rows=tuple(
+                    VectorRef(
+                        space=batch.space,
+                        purpose=purpose,
+                        artifact=artifacts[row.artifact_id],
+                        row_index=row.row_index,
+                    )
+                    for row in batch.rows
+                ),
+                results=tuple(results.values()),
+                coverage={"inputs": len(sources), "rows": len(batch.rows), "batches": len(results)},
+            )
 
     async def ensure(
         self, inputs: Sequence[ContentSelection], space_id: str, purpose: Purpose
     ) -> EmbeddingBatchRef:
-        """Adopt missing exact inputs in bounded batches and reuse previously adopted rows."""
         async with self.execution.operation("embedding.ensure") as context:
             definition = resolved_space(context.settings, space_id)
-            limit = context.settings.typed_values().content.text_read_max_bytes
-            selections = tuple(inputs)
-            values = tuple([await self.artifacts.read_selection(item) for item in selections])
-            if any(len(value.encode("utf-8")) > limit for value in values):
-                raise NousError("content.too_large", "Input exceeds the configured text read limit")
-            if any(not value.strip() for value in values):
-                raise NousError("embedding.empty_input", "Embedding requires nonempty text items")
+            sources = tuple(inputs)
+            if not sources:
+                raise NousError("embedding.empty_input", "Embedding requires at least one input")
+            values = tuple([await self.artifacts.read_selection(item) for item in sources])
             digests = self._digests(definition, purpose, values)
-            # Serializing adoption prevents concurrent requests from buying the same missing row.
-            async with self._ensure_lock:
-                available = await self.registry.find_rows(definition, purpose, digests)
-                missing: dict[str, int] = {}
-                for index, digest in enumerate(digests):
-                    if digest not in available:
-                        missing.setdefault(digest, index)
-                remaining = deque(missing.items())
-                settings = context.settings.typed_values()
-                max_items = settings.embedding.max_batch_size
-                max_tokens = settings.model_execution.max_input_tokens
-                prefix = (
-                    definition.encoding.query_instruction
-                    if purpose == "query"
-                    else definition.encoding.document_instruction
-                )
-                completed: list[str] = []
-                try:
-                    while remaining:
-                        batch: list[tuple[str, int]] = []
-                        size = 0
-                        while remaining and len(batch) < max_items:
-                            digest, index = remaining[0]
-                            added = len((prefix + values[index]).encode("utf-8"))
-                            if batch and math.ceil((size + added) / 3) > max_tokens:
-                                break
-                            batch.append(remaining.popleft())
-                            size += added
-                        result, rows = await self._adopt(
+            available = await self.registry.find_rows(definition, purpose, digests)
+            missing: dict[str, int] = {}
+            for index, digest in enumerate(digests):
+                if digest not in available:
+                    missing.setdefault(digest, index)
+            missing_items = list(missing.items())
+            completed_indices = {
+                index for index, digest in enumerate(digests) if digest in available
+            }
+            try:
+                if missing_items:
+                    async for encoded in self.executor.encode_batches(
+                        tuple(values[index] for _, index in missing_items),
+                        context.settings,
+                        space_id=space_id,
+                        purpose=purpose,
+                        context=context,
+                        original_indices=tuple(index for _, index in missing_items),
+                    ):
+                        chosen = [missing_items[index] for index in encoded.original_indices]
+                        original = [index for _, index in chosen]
+                        request: dict[str, JsonValue] = {
+                            **encoded.result.request,
+                            "original_indices": list[JsonValue](original),
+                        }
+                        generated = EmbeddingResult(
+                            encoded.result.vectors,
+                            encoded.result.raw_vectors,
+                            encoded.result.producer,
+                            encoded.result.usage,
+                            request,
+                            encoded.result.attempts,
+                            encoded.result.npy,
+                        )
+                        canonical = await self._adopt_encoded(
                             definition,
                             purpose,
-                            tuple(values[index] for _, index in batch),
-                            tuple(selections[index] for _, index in batch),
-                            context,
+                            generated,
+                            tuple(sources[index] for index in original),
+                            tuple(digest for digest, _ in chosen),
                         )
-                        completed.append(result.ref.address)
-                        available.update(
-                            {digest: row for (digest, _), row in zip(batch, rows, strict=True)}
+                        available.update(canonical)
+                        completed_indices.update(
+                            index for index, digest in enumerate(digests) if digest in canonical
                         )
-                except BaseException as error:
-                    if completed:
-                        if isinstance(error, NousError):
-                            error.details["completed_result_refs"] = list[JsonValue](completed)
-                        elif isinstance(
-                            error, (asyncio.CancelledError, TimeoutError, KeyboardInterrupt)
-                        ):
-                            error.add_note(json.dumps({"completed_result_refs": completed}))
-                        elif isinstance(error, Exception):
-                            raise NousError(
-                                "embedding.partial_failure",
-                                "Embedding stopped after adopting earlier batches",
-                                details={"completed_result_refs": completed},
-                                cause=error,
-                            ) from error
-                    raise
-                return EmbeddingBatchRef(
-                    space=definition,
-                    purpose=purpose,
-                    inputs=selections,
-                    rows=tuple(available[digest] for digest in digests),
+            except NousError as error:
+                error.details["completed_indices"] = list[JsonValue](sorted(completed_indices))
+                error.details["unfinished_indices"] = list[JsonValue](
+                    [index for index in range(len(sources)) if index not in completed_indices]
                 )
+                raise
+            return EmbeddingBatchRef(
+                definition, purpose, sources, tuple(available[digest] for digest in digests)
+            )
+
+    async def encode_query(
+        self, inputs: Sequence[str | ContentSelection], space_id: str
+    ) -> npt.NDArray[np.float32]:
+        async with self.execution.operation("embedding.query") as context:
+            definition = resolved_space(context.settings, space_id)
+            values = tuple(
+                [
+                    await self.artifacts.read_selection(value)
+                    if isinstance(value, ContentSelection)
+                    else value
+                    for value in inputs
+                ]
+            )
+            output = np.empty((len(values), definition.dimensions), dtype=np.float32)
+            if values:
+                async for encoded in self.executor.encode_batches(
+                    values, context.settings, space_id=space_id, purpose="query", context=context
+                ):
+                    output[list(encoded.original_indices)] = np.asarray(
+                        encoded.result.vectors, dtype=np.float32
+                    )
+            return output
+
+    @staticmethod
+    def _copy_rows(
+        path: Path,
+        locations: list[tuple[int, int]],
+        output: npt.NDArray[np.float32],
+        dimensions: int,
+    ) -> None:
+        try:
+            loaded: object = np.load(path, mmap_mode="r", allow_pickle=False)
+        except (OSError, ValueError) as error:
+            raise NousError(
+                "embedding.corrupt", "Stored vector artifact cannot be mapped"
+            ) from error
+        if not isinstance(loaded, np.ndarray):
+            raise NousError("embedding.corrupt", "Stored vectors must be an NPY matrix")
+        array = cast(npt.NDArray[np.float32], loaded)
+        try:
+            if array.dtype != np.float32 or array.ndim != 2 or array.shape[1] != dimensions:
+                raise NousError("embedding.corrupt", "Stored vector matrix has invalid shape")
+            for target, source in locations:
+                if not 0 <= source < array.shape[0]:
+                    raise NousError("embedding.corrupt", "Vector row is out of range")
+                vector = array[source]
+                if not np.isfinite(vector).all():
+                    raise NousError("embedding.corrupt", "Vector row contains non-finite values")
+                output[target] = vector
+                del vector
+        finally:
+            mapping = getattr(array, "_mmap", None)
+            if isinstance(mapping, mmap.mmap):
+                mapping.close()
+
+    async def _read_rows(
+        self, definition: SpaceDefinition, rows: Sequence[StoredVectorRow]
+    ) -> npt.NDArray[np.float32]:
+        output = np.empty((len(rows), definition.dimensions), dtype=np.float32)
+        grouped: dict[str, list[tuple[int, int]]] = {}
+        for index, row in enumerate(rows):
+            grouped.setdefault(row.artifact_id, []).append((index, row.row_index))
+        for artifact_id, locations in grouped.items():
+            async with self.artifacts.borrow_local(artifact_id) as path:
+                await self.execution.blocking(
+                    self._copy_rows, path, locations, output, definition.dimensions
+                )
+        return output
 
     async def read(self, batch: EmbeddingBatchRef) -> npt.NDArray[np.float32]:
-        """Materialize the exact ordered matrix without contacting the model."""
-        matrices: dict[str, npt.NDArray[np.float32]] = {}
-        output = np.empty((len(batch.rows), batch.space.dimensions), dtype=np.float32)
-        for index, row in enumerate(batch.rows):
-            matrix = matrices.get(row.artifact_id)
-            if matrix is None:
-                blob = await self.artifacts.blob(row.artifact_id)
-                data = await self.artifacts.read_bytes(row.artifact_id, max_bytes=blob.byte_length)
+        return await self._read_rows(batch.space, batch.rows)
 
-                def decode(data: bytes, dimensions: int) -> npt.NDArray[np.float32]:
-                    try:
-                        loaded: object = np.load(io.BytesIO(data), allow_pickle=False)
-                    except (OSError, ValueError) as error:
-                        raise NousError(
-                            "embedding.corrupt", "Stored vector matrix is invalid"
-                        ) from error
-                    if not isinstance(loaded, np.ndarray):
-                        raise NousError("embedding.corrupt", "Stored vectors must be an NPY matrix")
-                    array = cast(npt.NDArray[np.float32], loaded)
-                    if (
-                        array.dtype != np.float32
-                        or array.ndim != 2
-                        or array.shape[1] != dimensions
-                        or not np.isfinite(array).all()
-                    ):
-                        raise NousError(
-                            "embedding.corrupt", "Stored vector matrix has invalid shape or values"
-                        )
-                    return array
-
-                matrix = await self.execution.blocking(decode, data, batch.space.dimensions)
-                matrices[row.artifact_id] = matrix
-            if row.row_index < 0 or row.row_index >= len(matrix):
-                raise NousError("embedding.corrupt", "Stored vector row is out of range")
-            output[index] = matrix[row.row_index]
-        return output
+    async def read_vector(self, ref: VectorRef) -> npt.NDArray[np.float32]:
+        if ref.artifact.instance_id != self.artifacts.instance_id:
+            raise NousError("content.instance_mismatch", "Vector belongs to another instance")
+        row = await self.registry.resolve_row(
+            ref.space, ref.purpose, ref.artifact.id, ref.row_index
+        )
+        return (await self._read_rows(ref.space, (row,)))[0]

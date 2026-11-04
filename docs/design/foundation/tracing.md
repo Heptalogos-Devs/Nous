@@ -31,3 +31,11 @@ SDK provider 由 Runtime 持有，并通过当前执行上下文提供给埋点�
 ## 完成条件
 
 启动、配置更新和一次真实数据库操作可串成清楚的调用关系；禁用 Trace 后同样完成操作；导出不可达时本地能力继续；结束时在有界时间内 flush。来源：[OpenTelemetry API 与 SDK 分工](https://opentelemetry.io/docs/languages/python/instrumentation/)。
+
+## 真实尝试与排错
+
+同一根操作保持一个稳定 operation_id，子阶段 Span 不再生成新的根关联。生成、转写、Embedding 从共同 policy 创建每次真实请求 Span，记录实际模型资源、尝试、状态、业务错误码、退避/切换原因、耗时与已报告用量。
+
+有用事件采用有界 SpanLimits，不再将 max_events 固定为 0。主要错误在应用边界记录一次；失败重试即使最后成功也保留 attempt 事件。默认完整 Span 没有导出时，状态明确显示未持久保存，JSONL 仍提供过程摘要。
+
+Native 通过粗粒度阶段诊断接入，数值热循环不回调 Python。说明字段与呈现见 [诊断](../interfaces/diagnostics.md)。
