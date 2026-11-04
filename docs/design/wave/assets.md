@@ -22,9 +22,17 @@ input 为 file/text/artifact 之一；file 相对清单所在目录。content �
 
 documents.derived_from 是外部清单明确声明的派生关系，引用已列出的 document。它与已存 ResultStore 来源一起构成当前集合的血缘，保存声明来源，不伪装成 Nous 当年执行过的生成。循环或不存在的引用失败。
 
+## 正文与检索语义
+
+候选的 content/origin_content 保留原可读正文与真实原件选区，标注和路径继续使用原文的字节坐标。source Markdown 引用仅按 CommonMark 链接语法去掉目标与链接标记，完整保留可见 label。代码块、行内代码、转义示例和普通链接保持原样。
+
+content.projections.semantic_text 将实际发生变化的原文选区采用为确定性的 text/plain Artifact，ResultStore 保存原选区到投影的来源关系；缓存身份来自精确原选区与实际投影文字。无变化的普通文字直接使用原输入，不创建结果。Wave 的 candidate_texts 与 Embedding.ensure 读取同一投影，retrieval_content 在快照中固定其输入引用；用户读取及标注仍指原 content。投影后没有可检索文字的候选不进入词项或向量行，正文仍可读取。
+
+快照使用实际构建配置；Embedding 的正式摘要按实际编码文字计算，相同输入可以复用规范向量。每次正文修订的投影结果仍保留自己的原文来源，向量复用不改变该引用。
+
 ## 来源与事实单位
 
-原件身份、源事实单位和候选分别保存。终端文稿拥有一个来源根；显式 evidence_group 可把确知属于同一事实来源的多份接纳合并为一个独立支持组。未声明时不凭 digest 合并不同观察。所有派生文本沿 derived_from / ResultStore 血缘取得根集合。
+原件身份、源事实单位和候选分别保存。终端文稿拥有一个来源根；显式 evidence_group 可把确知属于同一事实来源的多份接纳合并为一个独立支持组。未声明时不凭 digest 合并不同观察。清单导入沿 derived_from / ResultStore.support_roots 校验根集合，正式认知文稿由 cognition 固定来源身份；两者都以 CorpusView.evidence 交付同一资产构建能力。只有启发或版本基准的文本保留可检索候选，其空事实根不会被填成新的见证。
 
 终端原始来源的 source_sequences 提供 source 事实质量。派生 Journal 可以通过带类型、原位置和 SupportGroup 的关系贡献参与结构投影；不能因为多一次派生增加独立来源。两个根共同产生的一项解释保持一个共同依据组。具体规则见 [关系与支持](evidence-projection.md)。
 
@@ -38,7 +46,7 @@ source_sequences 缺省不会触发自动抽取。已有概念及向量仍支持
 
 ## 概念向量
 
-每个 Concept 的实际编码文本固定为 label、description、aliases 的明确拼接模板，并将模板版本纳入构建配置。默认 `label + "
+每个 Concept 的实际编码文本由 label、description、aliases 明确拼接。默认 `label + "
 " + description`，非空 aliases 另起一行，重复 label 可按确定规则去重。调用 Embedding owner 的 document 用途，所有向量位于同一正式空间。
 
 原始 label/aliases 供字面焦点识别；完整描述用于语义向量。算法不可把描述截成第一个词，名称变动不能重解释旧快照。查询临时 cue 使用相同描述编码约定，并具有 query/document 编码用途记录。
@@ -92,6 +100,6 @@ required_sources 使用本清单的 documents key；冻结时沿真实来源解�
 
 当前 Python 冻结与持久引用由 `wave/assets.py` 和 `wave/snapshots.py` 负责。候选路径通过 candidate→paths→steps 两级偏移传入；精确选区、块和短说明保留在 Python 映射中。关联的 edge→group 数组与 group→roots CSR 独立存放，同一组的共同前提只冻结一次；关联 metadata 保存 key、relation 与 group 的 key/kind。
 
-AnnotationSet 使用 `models.annotations.read_annotation` 读取，正文和 parser profile 由共同 TextView 校验。`annotation_concepts` 可将标注 local key 显式映射到清单 Concept key；缺省按同一 key 查找。未知 key 返回错误，不按 label 合并。快照固定标注 Artifact 引用及其解析后的精确路径。
+AnnotationSet 使用 `content.annotations.read_annotation` 读取，正文和 parser profile 由共同 TextView 校验。`annotation_concepts` 可将标注 local key 显式映射到清单 Concept key；缺省按同一 key 查找。未知 key 返回错误，不按 label 合并。快照固定标注 Artifact 引用及其解析后的精确路径。
 
 文稿范围与候选范围都使用同一 SourceSelection；候选、支持依据和原位置通过文稿范围的 `restrict(selected)` 组合，坐标继续相对于原 Artifact。继承完整来源序列使用共同 `is_whole` 判定。Wave 不定义第二套坐标类型或转换规则。

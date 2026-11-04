@@ -408,7 +408,10 @@ class EmbeddingExecutor:
                     except (APIConnectionError, APIStatusError) as error:
                         scope.complete(
                             **error_report(
-                                error, retry=attempt < limit.max_attempts and retryable(error)
+                                error,
+                                next_action="retry_same_route"
+                                if attempt < limit.max_attempts and retryable(error)
+                                else "raise",
                             )
                         )
                         if attempt >= limit.max_attempts or not retryable(error):

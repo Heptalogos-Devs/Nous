@@ -46,10 +46,10 @@ Concept 的完整意义版本固定在标注中。概念重命名/合并或意�
 
 ## 正式操作目标
 
-create、read、revise、feedback、journalize、query/read sources 都进入同一领域 owner。多入口只是适配。正文编辑和模型生成都可以产出新版本，但最终采用由领域操作提交。
+文稿 owner 完成 create/read/revise；journalize、feedback 和当前检索各自拥有完整操作，并复用该文稿采用能力。多入口只是适配。正文编辑和模型生成都进入同一个正式 revision 提交方法，职责见 [认知接入](integration.md)。
 
 feedback 可以表达有用/无用、赞同/不同意、具体说明及可选修改。评价检索无用不自动重写正文；明确文本更正进入 revise；新观点需要新篇时建立 related relation。
 
-## 本轮范围
+## 正式接入
 
-本轮落实正文块、概念标注、候选投影和有限实验。这里的 Journal 对象与完整 CRUD 在 [后续首条使用链](../../plans/journal-first-use.md) 落实，当前不得把普通 Artifact 标为已经实现的 Journal。
+[文稿操作](written-records.md)、[引用](citations.md)、[草稿采用](draft-adoption.md)、[标注采用](annotation-adoption.md)与[当前检索](current-retrieval.md)定义本轮完整行为；[交付计划](../../plans/journal-delivery.md)安排实际开发。正文与标注分别版本化，正式认知身份由领域采用，普通 ProcessingResult 继续保留其处理产物身份。

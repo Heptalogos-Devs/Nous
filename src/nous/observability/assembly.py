@@ -47,7 +47,8 @@ def _terminal_event(logger: object, method: str, event: EventDict) -> EventDict:
         route = value.pop("route", None)
         if isinstance(route, dict):
             route = cast(dict[str, object], route)
-            value["model"] = route.get("model_id", route.get("model", "unknown"))
+            value["model"] = route.get("model_name", route.get("model_id", "unknown"))
+            value["model_id"] = route.get("model_id", "unknown")
         for key in ("start", "end", "provider_request_id", "reported_usage"):
             value.pop(key, None)
     return value

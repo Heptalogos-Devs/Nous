@@ -1,5 +1,6 @@
 """Read retained operation events from the existing rotating JSONL log."""
 
+from collections import deque
 from pathlib import Path
 
 from pydantic import JsonValue, TypeAdapter
@@ -51,3 +52,38 @@ def operation_logs(directory: Path, prefix: str) -> dict[str, object]:
         "error": failure,
         "retention": "available_rotating_logs",
     }
+
+
+def recent_failures(directory: Path, limit: int = 5) -> list[dict[str, JsonValue]]:
+    """Summarize recent retained failures using the existing operation log."""
+    failures: list[dict[str, JsonValue]] = []
+    for file in directory.glob("nous.jsonl*"):
+        if not file.is_file():
+            continue
+        file_failures: deque[dict[str, JsonValue]] = deque(maxlen=limit)
+        with file.open("r", encoding="utf-8") as stream:
+            for line in stream:
+                try:
+                    event = _EVENT.validate_json(line)
+                except ValueError:
+                    continue
+                if event.get("event") == "operation.failed" or (
+                    event.get("event") == "request.attempt" and event.get("outcome") == "error"
+                ):
+                    file_failures.append(
+                        {
+                            field: event.get(field)
+                            for field in (
+                                "timestamp",
+                                "operation_id",
+                                "operation",
+                                "stage",
+                                "error_code",
+                                "error_type",
+                                "next_action",
+                            )
+                        }
+                    )
+        failures.extend(file_failures)
+    failures.sort(key=lambda event: str(event.get("timestamp", "")), reverse=True)
+    return failures[:limit]

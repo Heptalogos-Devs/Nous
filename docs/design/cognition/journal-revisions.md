@@ -29,9 +29,9 @@ revise(journal_ref, expected_revision, new_markdown, sources, reason)
 
 正文修订后旧 AnnotationSet 继续绑定旧正文，新 current 尚未标注时仍可普通读取与 lexical/dense 检索。需要路径计算时明确报告尚无对应标注，不把旧块位置装到新正文。
 
-索引快照固定正文、标注、Concept 意义及关系版本。新快照发布后新查询使用它，进行中的查询持有原快照。旧命中可读回精确旧版本，并提示有新版本；不能把旧分数对应的正文偷偷换成新正文。
+索引快照固定正文、标注、Concept 意义及关系版本。保存推进 namespace generation，当前查询按 [当前检索](current-retrieval.md)捕获并发布一次完整视图；进行中的查询固定自己已捕获的快照。旧命中可读回精确旧版本，并提示有新版本；不能把旧分数对应的正文偷偷换成新正文。
 
-引用旧文稿的后续 Journal 不自动改写。若它的有效结论明确依赖被纠正的内容，在领域层将相关支持关系标为待复核/失效；普通历史引用继续成立。用已有依赖查询定位受影响者，不让一次编辑同步唤起所有服务。
+引用旧文稿的后续 Journal 保留正文。只有明确 current_basis 和对应依据纠正才产生待复核含义，状态通过有索引的依赖关系查询，普通 reference/inspiration 继续成立。具体采用与查询规则见 [时间和纠正](temporal-use.md)。
 
 ## 历史视图
 

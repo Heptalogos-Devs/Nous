@@ -1,6 +1,6 @@
 # Journal 首条认知使用链
 
-本文件记录后续实施方向，不属于当前 architecture-repair 的执行授权。
+本文件保留首条使用链的目标概览；本轮具体施工合同、依赖和完成条件见 [Journal 交付计划](journal-delivery.md)。
 
 ## 前置条件
 
@@ -8,7 +8,7 @@
 
 ## 第一条完整能力
 
-实现 Note 主动记录/读取，journalize 草稿与明确采用，Journal 当前/精确版本读取、修订、反馈，以及 Wave 对正文和局部选区的召回。人类可直接写 Journal，不要求先有 Note。领域规则位于独立 `journal/` 和 `notes/` owner，复用现有内容与运行基础。
+实现 Note 主动记录/读取，journalize 草稿与明确采用，Journal 当前/精确版本读取、修订、反馈，以及 Wave 对正文和局部选区的召回。人类可直接写 Journal，不要求先有 Note。Note 与 Journal 的产品语义分别定义，共享有限的文稿版本保存 owner；具体模块见 [认知接入](../design/cognition/integration.md)，复用现有内容与运行基础。
 
 Journal 表只保存认知身份、正文版本/视角/时间及引用；字节仍归 CAS。概念标注引用稳定正文，索引消费它们而不成为新权威。CLI/SDK 共用完整操作；正式 MCP 工具以后按记忆使用任务设计，不逐方法暴露。
 

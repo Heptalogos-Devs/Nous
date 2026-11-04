@@ -1,6 +1,7 @@
 """Model protocol failures through the real SDK, CLI and persistent result path."""
 
 import asyncio
+import base64
 import json
 import os
 import shutil
@@ -890,3 +891,121 @@ def test_embedding_response_validation_and_adoption_survive_restart(
     reopened = model_cli(instance, "runtime", "check")
     assert reopened.returncode == 0, reopened.stderr
     assert persisted_results(instance) == 0
+
+
+@pytest.mark.parametrize("without_audio", [False, True])
+def test_native_video_interval_uses_video_content_and_preserves_audio_policy(
+    tmp_path: Path, without_audio: bool
+) -> None:
+    if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
+        pytest.skip("Video interval preparation needs FFmpeg and ffprobe")
+    video = tmp_path / "source.mp4"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=blue:s=32x32:r=20",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:sample_rate=16000",
+            "-t",
+            "2",
+            "-c:v",
+            "libx264",
+            "-c:a",
+            "aac",
+            str(video),
+        ],
+        check=True,
+    )
+    submissions: list[dict[str, object]] = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self) -> None:
+            request = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            submissions.append(request)
+            payload = json.dumps(
+                {
+                    "id": "video-response",
+                    "created": 1700000000,
+                    "object": "chat.completion",
+                    "model": request["model"],
+                    "choices": [
+                        {
+                            "index": 0,
+                            "message": {"role": "assistant", "content": "Video received."},
+                            "finish_reason": "stop",
+                        }
+                    ],
+                }
+            ).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, format: str, *args: object) -> None:
+            pass
+
+    instance = tmp_path / "instance"
+    with model_server(Handler) as server:
+        configure_models(instance, server)
+
+        async def configure() -> None:
+            async with open_configuration_operations(instance, environment={}) as configuration:
+                await configuration.update(
+                    {
+                        "models.reader.capabilities": ["text", "video"],
+                        "models.reader.input_formats": ["text/plain", "video/mp4"],
+                    }
+                )
+
+        asyncio.run(configure())
+        response = model_cli(
+            instance,
+            "tools",
+            "media",
+            "analyze",
+            str(video),
+            "--strategy",
+            "description_only",
+            "--description-task",
+            "read",
+            "--from",
+            "0.25",
+            "--to",
+            "0.75",
+            *(["--without-audio"] if without_audio else []),
+        )
+        assert response.returncode == 0, (response.stdout, response.stderr)
+    result = json.loads(response.stdout)["results"][0]
+    assert len(submissions) == 1
+    parts = [
+        part
+        for message in submissions[0]["messages"]
+        for part in message["content"]
+        if isinstance(message["content"], list)
+    ]
+    binary = [part for part in parts if part["type"] != "text"]
+    assert [part["type"] for part in binary] == ["video_url"]
+    payload = binary[0]["video_url"]["url"]
+    assert payload.startswith("data:video/mp4;base64,")
+    sent = tmp_path / "sent.mp4"
+    sent.write_bytes(base64.b64decode(payload.split(",", 1)[1]))
+    info = json.loads(
+        subprocess.check_output(
+            ["ffprobe", "-v", "error", "-show_streams", "-show_format", "-of", "json", str(sent)]
+        )
+    )
+    assert abs(float(info["format"]["duration"]) - 0.5) < 0.1
+    assert any(stream["codec_type"] == "audio" for stream in info["streams"]) is not without_audio
+    origin = result["inputs"][0]["parts"][0]["origins"][0]["origin"]
+    assert origin["selection"]["start_ms"] == 250 and origin["selection"]["end_ms"] == 750
+    assert result["coverage"]["audio"] == ("excluded" if without_audio else "included")
+    assert "data:video" not in response.stdout

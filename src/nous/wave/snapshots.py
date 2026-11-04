@@ -7,7 +7,7 @@ import hashlib
 import json
 import os
 import shutil
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 from uuid import uuid4
@@ -21,19 +21,19 @@ from nous.common.address import new_address
 from nous.common.errors import NousError
 from nous.configuration import ConfigSnapshot
 from nous.content.artifacts import ArtifactStore
-from nous.content.contracts import ContentSelection
+from nous.content.contracts import ArtifactRef, ContentSelection, InputSpec
 from nous.content.results import ResultStore
 from nous.media.preparation import MediaPreparer
 from nous.models.embeddings import resolved_space
 from nous.runtime.execution import ExecutionManager
 from nous.runtime.paths import ResolvedPaths
-from nous.storage.database import Database
+from nous.storage.database import Database, WriteTx
 from nous.temporal.domains import TimeService
 
 from . import schema
-from .assets import FrozenInputs, SnapshotRow, freeze_inputs
+from .assets import FrozenInputs, SnapshotRow, content_evidence, freeze_inputs
 from .configuration import require_native_profiles
-from .contracts import CollectionManifest
+from .contracts import CollectionManifest, CorpusView, Document, DocumentInput
 
 if TYPE_CHECKING:
     import nous_native
@@ -45,6 +45,25 @@ def encode_json(value: object) -> str:
 
 def _signature(value: object) -> str:
     return hashlib.sha256(encode_json(value).encode("utf-8")).hexdigest()
+
+
+def build_profile(settings: ConfigSnapshot) -> dict[str, object]:
+    wave = settings.typed_values().wave
+    return {
+        "native": wave.native.build,
+        "associations": wave.associations.model_dump(mode="json"),
+    }
+
+
+def view_profile(settings: ConfigSnapshot, space: str | None, policy: dict[str, object]) -> str:
+    definition = resolved_space(settings, space) if space else None
+    return _signature(
+        {
+            "space": definition.model_dump(mode="json") if definition else None,
+            "build": build_profile(settings),
+            "policy": policy,
+        }
+    )
 
 
 class WaveSnapshots:
@@ -209,40 +228,72 @@ class WaveSnapshots:
             ),
         )
 
-    async def build(
-        self, manifest_path: Path, space: str | None, settings: ConfigSnapshot
-    ) -> dict[str, object]:
+    async def import_manifest(self, manifest_path: Path) -> CorpusView:
+        """Accept a file-based collection and freeze its document identities."""
         path = await self.execution.blocking(manifest_path.resolve)
         manifest_artifact = await self.artifacts.ingest(path)
         manifest = CollectionManifest.model_validate_json(
             await self.artifacts.read_text(manifest_artifact.ref)
         )
-        await self.time.validate(document.times for document in manifest.documents)
-        if space and manifest.space and space != manifest.space:
+        documents: list[Document] = []
+        accepted: dict[str, ArtifactRef] = {}
+        for document in manifest.documents:
+            source = document.input
+            if source.file is not None:
+                file = Path(source.file)
+                file = file if file.is_absolute() else path.parent / file
+                spec = InputSpec(kind="file", path=str(file.resolve()))
+            elif source.text is not None:
+                spec = InputSpec(kind="text", text=source.text, display_name=document.key)
+            else:
+                assert source.artifact is not None
+                spec = InputSpec(kind="artifact", artifact=source.artifact)
+            artifact = await self.artifacts.accept(spec)
+            accepted[document.key] = artifact.ref
+            documents.append(
+                document.model_copy(
+                    update={
+                        "input": DocumentInput(
+                            artifact=artifact.ref.address, selector=source.selector
+                        )
+                    }
+                )
+            )
+        return CorpusView(
+            **manifest.model_dump(exclude={"documents"}),
+            documents=tuple(documents),
+            manifest_artifact=manifest_artifact.ref,
+            evidence=await content_evidence(documents, accepted, self.results),
+        )
+
+    async def build(
+        self,
+        view: CorpusView,
+        space: str | None,
+        settings: ConfigSnapshot,
+        *,
+        publish_if: Callable[[WriteTx], Awaitable[bool]] | None = None,
+    ) -> dict[str, object]:
+        """Build one immutable view; a caller can guard its current-pointer update."""
+        await self.time.validate(document.times for document in view.documents)
+        if space and view.space and space != view.space:
             raise NousError("wave.space_conflict", "Manifest and command select different spaces")
-        space_id = space or manifest.space
+        space_id = space or view.space
         definition = resolved_space(settings, space_id) if space_id else None
-        wave = settings.typed_values().wave
-        build_profile = {
-            "native": wave.native.build,
-            "associations": wave.associations.model_dump(mode="json"),
-            "concept_template": "label-description-aliases-v1",
-        }
+        profile_config = build_profile(settings)
         identifier = str(uuid4())
         identity = {
             "snapshot_id": identifier,
             "space_signature": _signature(
                 definition.model_dump(mode="json") if definition else None
             ),
-            "build_config_signature": _signature(build_profile),
+            "build_config_signature": _signature(profile_config),
         }
-        async with self._build_locks.setdefault(manifest.name, asyncio.Lock()):
+        async with self._build_locks.setdefault(view.name, asyncio.Lock()):
             frozen = await freeze_inputs(
-                manifest,
-                path.parent,
+                view,
                 space_id,
                 self.artifacts,
-                self.results,
                 self.embedding,
                 self.preparer,
             )
@@ -265,7 +316,7 @@ class WaveSnapshots:
                         *bundles,
                         encode_json(identity),
                         str(staging),
-                        options_json=encode_json(build_profile),
+                        options_json=encode_json(profile_config),
                         cancel=token,
                     ),
                     token,
@@ -287,12 +338,12 @@ class WaveSnapshots:
                 async with self.database.write() as tx:
                     await tx.connection.execute(
                         insert(schema.collections)
-                        .values(id=str(uuid4()), name=manifest.name)
+                        .values(id=str(uuid4()), name=view.name)
                         .on_conflict_do_nothing(index_elements=[schema.collections.c.name])
                     )
                     collection_id = await tx.connection.scalar(
                         sa.select(schema.collections.c.id).where(
-                            schema.collections.c.name == manifest.name
+                            schema.collections.c.name == view.name
                         )
                     )
                     if collection_id is None:
@@ -306,7 +357,11 @@ class WaveSnapshots:
                                 id=identifier,
                                 address=address,
                                 collection_id=collection_id,
-                                manifest_artifact_id=manifest_artifact.ref.id,
+                                manifest_artifact_id=(
+                                    view.manifest_artifact.id if view.manifest_artifact else None
+                                ),
+                                covered_generation=view.generation,
+                                profile=view.profile,
                                 space_id=space_id,
                                 space_definition=definition.model_dump(mode="json")
                                 if definition
@@ -324,7 +379,9 @@ class WaveSnapshots:
                         raise NousError("wave.address_exhausted", "Cannot allocate a Wave address")
                     documents = cast(dict[str, dict[str, object]], frozen.mapping["documents"])
                     roots = frozen.mapping["roots"]
-                    input_refs = {manifest_artifact.ref.id}
+                    input_refs: set[str] = (
+                        {view.manifest_artifact.id} if view.manifest_artifact else set()
+                    )
                     for document in documents.values():
                         input_refs.add(cast(dict[str, str], document["artifact"])["id"])
                     for refs in roots.values():
@@ -334,6 +391,11 @@ class WaveSnapshots:
                             input_refs.add(candidate["annotation"]["id"])
                         input_refs.add(
                             ContentSelection.model_validate(candidate["content"]).artifact.id
+                        )
+                        input_refs.add(
+                            ContentSelection.model_validate(
+                                candidate["retrieval_content"]
+                            ).artifact.id
                         )
                     for row in frozen.vector_mappings:
                         input_refs.add(
@@ -349,11 +411,13 @@ class WaveSnapshots:
                             schema.snapshot_vectors.insert(),
                             [{"snapshot_id": identifier, **row} for row in frozen.vector_mappings],
                         )
-                    await tx.connection.execute(
-                        schema.collections.update()
-                        .where(schema.collections.c.id == collection_id)
-                        .values(current_snapshot_id=identifier)
-                    )
+                    make_current = publish_if is None or await publish_if(tx)
+                    if make_current:
+                        await tx.connection.execute(
+                            schema.collections.update()
+                            .where(schema.collections.c.id == collection_id)
+                            .values(current_snapshot_id=identifier)
+                        )
                 self._cached_snapshot = (identifier, reopened)
             except BaseException:
                 if not published:
@@ -365,12 +429,34 @@ class WaveSnapshots:
                     "id": identifier,
                     "address": address,
                 },
-                "collection": manifest.name,
+                "collection": view.name,
                 "space": space_id,
+                "covered_generation": view.generation,
+                "profile": view.profile,
+                "metadata": view.metadata,
+                "current": make_current,
                 "capabilities": capabilities,
                 "statistics": statistics,
                 "identity": identity,
             }
+
+    async def current(self, collection: str) -> SnapshotRow | None:
+        async with self.database.read() as tx:
+            row = (
+                (
+                    await tx.connection.execute(
+                        sa.select(schema.snapshots)
+                        .join(
+                            schema.collections,
+                            schema.collections.c.current_snapshot_id == schema.snapshots.c.id,
+                        )
+                        .where(schema.collections.c.name == collection)
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+        return cast(SnapshotRow, dict(row)) if row is not None else None
 
     async def resolve(self, ref: str) -> SnapshotRow:
         async with self.database.read() as tx:

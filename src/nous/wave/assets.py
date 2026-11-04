@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Sequence
 from dataclasses import dataclass
-from pathlib import Path
 from typing import cast
 
 import numpy as np
@@ -14,20 +14,20 @@ from typing_extensions import TypedDict
 
 from nous.application.embedding import EmbeddingOperations
 from nous.common.errors import NousError
+from nous.content.annotations import read_annotation
 from nous.content.artifacts import ArtifactStore
 from nous.content.contracts import (
     Artifact,
     ArtifactRef,
     ContentSelection,
-    InputSpec,
     SourceSelection,
 )
+from nous.content.projections import semantic_text
 from nous.content.results import ResultStore
 from nous.media.preparation import MediaPreparer
-from nous.models.annotations import read_annotation
 from nous.temporal.values import CognitiveTimes, Instant, parse_explicit_time
 
-from .contracts import CandidatePath, CollectionManifest, PathStep
+from .contracts import CandidatePath, CorpusView, Document, EvidenceProjection, PathStep
 
 
 class ConceptMapping(TypedDict):
@@ -51,6 +51,7 @@ class CandidateMapping(TypedDict):
     key: str
     content: dict[str, object]
     origin_content: dict[str, object]
+    retrieval_content: dict[str, object]
     content_document: str
     document: str
     roots: list[str]
@@ -75,6 +76,7 @@ class AssociationMapping(TypedDict):
 
 class SnapshotMapping(TypedDict):
     name: str
+    metadata: dict[str, JsonValue]
     root_order: list[str]
     documents: dict[str, DocumentMapping]
     roots: dict[str, list[dict[str, str]]]
@@ -88,7 +90,9 @@ class SnapshotRow(TypedDict):
     id: str
     address: str
     collection_id: str
-    manifest_artifact_id: str
+    manifest_artifact_id: str | None
+    covered_generation: int | None
+    profile: str | None
     space_id: str | None
     space_definition: dict[str, object] | None
     identity: dict[str, JsonValue]
@@ -153,34 +157,12 @@ def _document_times(document_times: CognitiveTimes | None, artifact: Artifact) -
     return declared
 
 
-async def freeze_inputs(
-    manifest: CollectionManifest,
-    base_dir: Path,
-    space_id: str | None,
-    artifacts: ArtifactStore,
-    results: ResultStore,
-    embedding: EmbeddingOperations,
-    preparer: MediaPreparer,
-) -> FrozenInputs:
-    """Admit documents once and preserve independent roots through all derived candidates."""
-    documents = {item.key: item for item in manifest.documents}
-    accepted: dict[str, ArtifactRef] = {}
-    accepted_artifacts: dict[str, Artifact] = {}
-    for document in manifest.documents:
-        source = document.input
-        if source.file is not None:
-            path = Path(source.file)
-            path = path if path.is_absolute() else base_dir / path
-            spec = InputSpec(kind="file", path=str(path.resolve()))
-        elif source.text is not None:
-            spec = InputSpec(kind="text", text=source.text, display_name=document.key)
-        else:
-            assert source.artifact is not None
-            spec = InputSpec(kind="artifact", artifact=source.artifact)
-        artifact = await artifacts.accept(spec)
-        accepted[document.key] = artifact.ref
-        accepted_artifacts[document.key] = artifact
-
+async def content_evidence(
+    documents: Sequence[Document], accepted: dict[str, ArtifactRef], results: ResultStore
+) -> EvidenceProjection:
+    """Resolve and validate an imported collection's declared parents against adopted content."""
+    document_values = documents
+    documents_by_key = {document.key: document for document in document_values}
     provenance = await results.provenance(tuple(accepted.values()))
     root_artifacts: dict[str, list[ArtifactRef]] = {}
     document_roots: dict[str, tuple[str, ...]] = {}
@@ -188,7 +170,7 @@ async def freeze_inputs(
     def roots(key: str) -> tuple[str, ...]:
         if key in document_roots:
             return document_roots[key]
-        document = documents[key]
+        document = documents_by_key[key]
         summary = provenance[accepted[key].id]
         if not summary.complete:
             raise NousError(
@@ -200,8 +182,8 @@ async def freeze_inputs(
             keys = tuple(
                 dict.fromkeys(root for parent in document.derived_from for root in roots(parent))
             )
-            actual = {ref.id for ref in summary.terminal_roots}
-            if actual != {accepted[key].id}:
+            actual = {ref.id for ref in summary.support_roots}
+            if actual and actual != {accepted[key].id}:
                 declared = {ref.id for root in keys for ref in root_artifacts[root]}
                 if actual != declared:
                     raise NousError(
@@ -218,7 +200,7 @@ async def freeze_inputs(
                     "Cannot freeze incomplete source lineage",
                     details={"artifact": ref.address},
                 )
-            origins = summary.terminal_roots
+            origins = summary.support_roots
             if document.evidence_group and len(origins) != 1:
                 raise NousError(
                     "wave.invalid_evidence_group",
@@ -240,8 +222,45 @@ async def freeze_inputs(
         document_roots[key] = keys
         return keys
 
-    for key in documents:
+    for key in documents_by_key:
         roots(key)
+    source_documents = tuple(
+        key
+        for key, document in documents_by_key.items()
+        if not document.derived_from
+        and len(provenance[accepted[key].id].terminal_roots) == 1
+        and provenance[accepted[key].id].terminal_roots[0].id == accepted[key].id
+    )
+    return EvidenceProjection(
+        roots={key: tuple(refs) for key, refs in root_artifacts.items()},
+        documents=document_roots,
+        source_documents=source_documents,
+    )
+
+
+async def freeze_inputs(
+    manifest: CorpusView,
+    space_id: str | None,
+    artifacts: ArtifactStore,
+    embedding: EmbeddingOperations,
+    preparer: MediaPreparer,
+) -> FrozenInputs:
+    """Admit documents once and preserve independent roots through all derived candidates."""
+    documents = {item.key: item for item in manifest.documents}
+    accepted: dict[str, ArtifactRef] = {}
+    accepted_artifacts: dict[str, Artifact] = {}
+    for document in manifest.documents:
+        source = document.input
+        assert source.artifact is not None
+        artifact = await artifacts.get(source.artifact)
+        accepted[document.key] = artifact.ref
+        accepted_artifacts[document.key] = artifact
+
+    root_artifacts = {key: list(refs) for key, refs in manifest.evidence.roots.items()}
+    document_roots = manifest.evidence.documents
+    for refs in root_artifacts.values():
+        for ref in refs:
+            await artifacts.get(ref)
     root_keys = list(root_artifacts)
     root_rows = {key: index for index, key in enumerate(root_keys)}
     concept_rows = {concept.key: index for index, concept in enumerate(manifest.concepts)}
@@ -252,10 +271,7 @@ async def freeze_inputs(
     sequence_keys: list[str] = []
     for index, sequence in enumerate(manifest.source_sequences):
         document = documents[sequence.document]
-        # Only terminal original sources add facts; derived documents are still candidates.
-        ref = accepted[sequence.document]
-        origins = provenance[ref.id].terminal_roots
-        if document.derived_from or len(origins) != 1 or origins[0].id != ref.id:
+        if sequence.document not in manifest.evidence.source_documents:
             continue
         document_sequences.setdefault(sequence.document, []).append(
             (sequence.concepts, sequence.ordered)
@@ -267,6 +283,7 @@ async def freeze_inputs(
 
     candidate_texts: list[str] = []
     candidate_contents: list[ContentSelection] = []
+    embedding_contents: list[ContentSelection] = []
     candidate_memberships: list[list[int]] = []
     candidate_paths: list[list[int]] = []
     candidate_path_counts: list[int] = []
@@ -284,8 +301,12 @@ async def freeze_inputs(
             origin_content, settings=preparer.execution.snapshot.typed_values().media
         )
         selection = representation.view.body
+        projected = await semantic_text(selection, preparer.results)
+        if not projected.text.strip():
+            continue
         candidate_contents.append(selection)
-        candidate_texts.append(representation.view.text)
+        embedding_contents.append(projected.content)
+        candidate_texts.append(projected.text)
         inherited = document_sequences.get(candidate.content.document, [])
         can_inherit = (
             candidate.content.selector.is_whole
@@ -432,6 +453,7 @@ async def freeze_inputs(
                 "key": candidate.key,
                 "content": selection.model_dump(mode="json"),
                 "origin_content": origin_content.model_dump(mode="json"),
+                "retrieval_content": projected.content.model_dump(mode="json"),
                 "content_document": candidate.content.document,
                 "document": candidate.document,
                 "roots": list(roots_for_candidate),
@@ -501,18 +523,18 @@ async def freeze_inputs(
     vector_mappings: list[dict[str, object]] = []
     if space_id is not None:
         if candidate_contents:
-            batch = await embedding.ensure(candidate_contents, space_id, "document")
+            batch = await embedding.ensure(embedding_contents, space_id, "document")
             candidate_vectors = await embedding.read(batch)
             vector_mappings.extend(
                 {
                     "kind": "candidate",
-                    "key": candidate.key,
+                    "key": candidate["key"],
                     "input": source.model_dump(mode="json"),
                     "result_id": row.result_id,
                     "row_index": row.row_index,
                 }
                 for candidate, source, row in zip(
-                    manifest.candidates, batch.inputs, batch.rows, strict=True
+                    candidate_mapping, batch.inputs, batch.rows, strict=True
                 )
             )
         concept_contents: list[ContentSelection] = []
@@ -547,8 +569,8 @@ async def freeze_inputs(
     )
     return FrozenInputs(
         candidate_metadata={
-            "keys": [item.key for item in manifest.candidates],
-            "documents": [item.document for item in manifest.candidates],
+            "keys": [item["key"] for item in candidate_mapping],
+            "documents": [item["document"] for item in candidate_mapping],
         },
         candidate_texts=tuple(candidate_texts),
         candidate_vectors=candidate_vectors,
@@ -614,6 +636,7 @@ async def freeze_inputs(
         vector_mappings=tuple(vector_mappings),
         mapping={
             "name": manifest.name,
+            "metadata": manifest.metadata,
             "root_order": root_keys,
             "documents": {
                 item.key: {

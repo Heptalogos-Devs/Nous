@@ -12,6 +12,7 @@ from uuid import uuid4
 
 import sqlalchemy as sa
 
+from nous.common.address import insert_address
 from nous.common.errors import NousError
 from nous.common.operations import record_completed
 from nous.storage.content import ContentStore, PublishedContent
@@ -19,7 +20,7 @@ from nous.storage.database import Database, ReadTx, WriteTx
 from nous.temporal.values import Clock
 
 from . import schema
-from ._records import date_value, insert_address
+from ._records import date_value
 from .configuration import ContentConfig
 from .contracts import (
     Artifact,

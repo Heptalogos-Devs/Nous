@@ -5,12 +5,12 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
-from pydantic import JsonValue, TypeAdapter
+from pydantic import JsonValue
 
 from nous.common.errors import NousError
-from nous.common.operations import exception_context, record_completed
+from nous.common.operations import add_error_context, record_completed
 from nous.content.artifacts import ArtifactStore
 from nous.content.contracts import (
     Artifact,
@@ -67,6 +67,7 @@ class MediaAnalysis:
             if (
                 source is None
                 or source.name != actual.name
+                or source.role != actual.role
                 or len(source.parts) != len(actual.parts)
             ):
                 matching = False
@@ -264,32 +265,15 @@ class MediaAnalysis:
                         if ref not in {result.ref.address for result in (*descriptions, *final)}
                     ),
                 )
-        except (asyncio.CancelledError, TimeoutError) as exc:
-            exc.__dict__["nous_context"] = {
-                **exception_context(exc),
-                **{
-                    "completed_result_refs": completed,
+        except (NousError, asyncio.CancelledError, TimeoutError) as exc:
+            record_completed(completed)
+            add_error_context(
+                exc,
+                {
+                    "completed_result_refs": list(dict.fromkeys(completed)),
                     "failed_stage": stage,
                     "unfinished_coverage": pending,
                     "artifact": original.ref.address if original else None,
                 },
-            }
-            raise
-        except NousError as exc:
-            details: dict[str, object] = dict(exc.details)
-            previous = details.get("completed_result_refs", [])
-            previous_refs = (
-                [value for value in cast(list[object], previous) if isinstance(value, str)]
-                if isinstance(previous, list)
-                else []
             )
-            details.update(
-                {
-                    "completed_result_refs": list(dict.fromkeys([*previous_refs, *completed])),
-                    "failed_stage": stage,
-                    "unfinished_coverage": pending,
-                    "artifact": original.ref.address if original is not None else None,
-                }
-            )
-            exc.details.update(TypeAdapter(dict[str, JsonValue]).validate_python(details))
             raise

@@ -55,6 +55,7 @@ from .policy import (
     stage_deadline,
 )
 from .prompts import CompiledPrompt, PromptCompiler, PromptResource
+from .protocol import CompatibleChatModel
 
 if TYPE_CHECKING:
     from nous.network import ModelConnections
@@ -447,7 +448,7 @@ class ModelExecutor:
             openai_chat_streaming_requires_finish_reason=True,
         )
         profile.update(cast(OpenAIModelProfile, route.model.compatibility))
-        return OpenAIChatModel(
+        return CompatibleChatModel(
             route.model.model_name,
             provider=OpenAIProvider(openai_client=self.connections.client(route.model.provider)),
             profile=profile,
@@ -579,7 +580,7 @@ class ModelExecutor:
                     "Model output failed the task contract",
                     details={"problem": str(error), "raw_output": raw, "attempts": attempts},
                 ) from error
-        if prepared.compiled.schema is None and not output:
+        if prepared.compiled.schema is None and isinstance(output, str) and not output.strip():
             raise NousError("model.empty_output", "The provider returned no task output")
         producer: dict[str, JsonValue] = {
             "kind": "model",
@@ -712,7 +713,19 @@ class ModelExecutor:
                             and repairs < prepared.structured_retries
                         )
                         retry = attempt < prepared.max_attempts and (retryable(error) or repair)
-                        report = error_report(error, retry=retry, repair=repair)
+                        report = error_report(
+                            error,
+                            repair=repair,
+                            next_action=(
+                                "repair_same_route"
+                                if repair
+                                else "next_route"
+                                if route_index + 1 < len(prepared.routes)
+                                else "retry_same_route"
+                            )
+                            if retry
+                            else "raise",
+                        )
                         if response is not None:
                             report["provider_request_id"] = response.provider_response_id
                             scope.complete(
@@ -887,7 +900,18 @@ class ModelExecutor:
                         NousError,
                     ) as error:
                         retry = not visible and attempt < prepared.max_attempts and retryable(error)
-                        scope.complete(**error_report(error, retry=retry))
+                        scope.complete(
+                            **error_report(
+                                error,
+                                next_action=(
+                                    "next_route"
+                                    if route_index + 1 < len(prepared.routes)
+                                    else "retry_same_route"
+                                )
+                                if retry
+                                else "raise",
+                            )
+                        )
                         if not retry:
                             failure = model_error(error, attempt)
                             failure.details["partial_output_delivered"] = visible
@@ -1010,7 +1034,16 @@ class ModelExecutor:
                         scope.complete(outcome="success", reported_usage=usage)
                     except (APIConnectionError, APIStatusError, TimeoutError) as error:
                         retry = attempt < maximum and retryable(error)
-                        scope.complete(**error_report(error, retry=retry))
+                        scope.complete(
+                            **error_report(
+                                error,
+                                next_action=(
+                                    "next_route" if attempt < len(routes) else "retry_same_route"
+                                )
+                                if retry
+                                else "raise",
+                            )
+                        )
                         if not retry:
                             raise model_error(error, attempt) from error
                         retry_error = error

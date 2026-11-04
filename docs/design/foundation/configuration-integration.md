@@ -30,4 +30,4 @@ Provider 网络覆盖中，缺失表示继承实例设置；显式 null 表示�
 
 ## 字段目录与维护
 
-动态模型/媒体/Wave 字段也必须导出类型、描述、缺失、nullable、范围、单位、scope 和生效方式。已选成熟 SDK 的协议配置继续复用，名称只描述协议能力。清除接纳却无消费者的字段：media_strategy 由 MediaAnalysis 的共同选项解析真正使用；无明确 task 默认时 CLI 要求策略，不能默默忽略配置。
+动态模型/媒体/Wave 字段也必须导出类型、描述、缺失、nullable、范围、单位、scope 和生效方式。已选成熟 SDK 的协议配置继续复用，名称只描述协议能力。媒体策略由 MediaAnalysis 的操作参数明确选择，不在模型 TaskAssignment 中配置。

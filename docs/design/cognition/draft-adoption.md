@@ -1,0 +1,46 @@
+# journalize 草稿与正式采用
+
+## 一项专一的写作操作
+
+journalize 将调用者选择的材料围绕一个主题整理为一篇 Markdown。第一版一调用一篇；多主题由调用者明确分成多次，输入超出共同 joint 能力时返回范围建议，不在底层逐文件回答再当成综合文章。
+
+`journal-draft` 只负责正文；`annotate-concepts` 只负责正文标注。正文形成不等待 Concept 解析。无新增内容时，模型仅输出 `!NO_MATERIAL!`；静态写作任务只在 trim 后精确匹配该标记时解释为 `no_material`。普通空响应或纯空白是输出错误。
+
+无材料结果仍保存真实 ProcessingResult（包括原始标记输出及请求），返回其 stage_results，不创建 DraftDescriptor 或 Journal。标记混在正常正文中或写成其他形式时不作无材料解释。输入列表本身为空时可直接返回 no_material，不发生模型请求。
+
+```text
+journalize(namespace, sources, topic?, purpose, viewpoint?,
+           target_revision?, adoption=draft|save) -> JournalizeOutcome
+adopt_draft(draft_ref, changes?) -> SavedRecord
+read_draft(draft_ref) -> DraftView
+```
+
+缺省 adoption=draft；配置或一次调用可以设 save。人工 create 直接保存，不走模型和审批。草稿读出可直接编辑正文后采用，保留原模型稿与实际编辑依据。
+
+## 冻结范围
+
+源 Note/Journal 在开始时固定精确 revision；来源顺序、key、usage、目标 expected_revision、作者和时间、写作参数、实际配置与 Prompt 资源一起固定。目标修改的基准永远是模型写作时看到的 revision，不在采用时重新取得 latest 来覆盖它。
+
+程序负责关系、版本、事务、索引状态。Prompt 只包含任务目标、主题、必要视角、真实材料与可读引用键。
+
+## 共同 produce 与草稿提交
+
+使用 GenerationOperations.produce 执行共同模型链。save_produced 统一解释写作输出并返回 JournalizeOutcome：显式无材料标记只采用 ProcessingResult；正常正文由 ResultStore.prepare_outputs 发布字节，一个 WriteTx 调用 ResultStore.adopt_in 并写 DraftDescriptor。DraftDescriptor 保存 namespace、ProcessingResult、body_artifact、source bindings、target/expected、purpose、viewpoint、times 和可选 adopted_revision。
+
+DraftDescriptor 是用户可反复查看和采用的草稿，不是任务 running/lease/receipt 系统。它只在成功处理之后存在。普通 tools model run 也使用同一 produce + ResultStore 采用；不保留两套语言执行。
+
+草稿提交完成后，再独立执行正式采用。模型生成成功而草稿提交失败时，返回实际失败，保留已发布输出的恢复信息/本次 ProducedTask，禁止重新请求模型补偿 SQL；没有正式引用的字节不得谎称已登记草稿。已经提交的 DraftDescriptor 在之后任何采用失败时始终可读。
+
+## 正式采用
+
+采用事务读取 DraftDescriptor，核对 Namespace 和目标 expected_revision，应用用户编辑正文及 sources，调用 WrittenRecord 的同一 append_in。更新 draft.adopted_revision 与 namespace generation 一起提交。
+
+同一草稿重复采用，返回已采用 revision 和当前状态，不再创建第二篇。用户确实想复制为另一篇时必须显式 `fork`；普通重试不具有复制语义。这是草稿业务键，不扩张为所有操作的幂等请求平台。
+
+并发基准冲突时返回 current_revision、draft_ref、target_revision。用户可以读差异、改稿、明确选择新基准后再采用；默认不自动 merge 或重跑 LLM。
+
+## 采用和检索结果
+
+`adoption=save` 先保存 DraftDescriptor，再保存 Journal；返回两者引用。可显式要求标注或刷新，三个结果分开：written、annotated、indexed。后两者失败不撤销已经采用的正文。
+
+模型草稿、正式作者观点与后续提案分开保留；生成者信息从 ProcessingResult 读取。多媒体先经显式媒体操作得到可读表示；journalize 可消费这些表示，仍记录原件与区域。

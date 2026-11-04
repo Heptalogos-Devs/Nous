@@ -163,6 +163,7 @@ class AttemptScope:
         *,
         outcome: str,
         error_code: str | None = None,
+        error_type: str | None = None,
         provider_status: int | None = None,
         provider_request_id: str | None = None,
         retry_reason: str | None = None,
@@ -175,6 +176,7 @@ class AttemptScope:
                 for key, value in {
                     "outcome": outcome,
                     "error_code": error_code,
+                    "error_type": error_type,
                     "provider_status": provider_status,
                     "provider_request_id": provider_request_id,
                     "retry_reason": retry_reason,

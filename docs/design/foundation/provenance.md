@@ -11,7 +11,7 @@
 将当前 inputs.group JSON 中需要遍历的关系规范化到同一份正式数据：
 
 ```text
-result_inputs(result_id, group_ordinal, key, name)
+result_inputs(result_id, group_ordinal, key, name, role)
 input_parts(result_id, group_ordinal, part_ordinal,
             artifact_id, selector, representation, media_type)
 part_origins(result_id, group_ordinal, part_ordinal, origin_ordinal,
@@ -28,8 +28,9 @@ selector 继续复用 ContentSelection 的共同值。inputs 不再同时保存�
 ```text
 provenance(refs) -> mapping[ArtifactRef, ProvenanceSummary]
 ProvenanceSummary:
-  terminal_roots
-  traversed_results/relations（按需）
+  terminal_roots                 # 全部来源血缘
+  support_roots                  # source/reference/current_basis 路径的终端来源
+  traversed_results/relations（按需，关系保留输入 role）
   complete
 ```
 

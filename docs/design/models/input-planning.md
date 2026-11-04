@@ -30,7 +30,7 @@ InputPlan 由 `models/input.py` 的完整规划能力拥有，GenerationOperatio
 
 ## 表示选择与两阶段任务
 
-每条路线在实际选中时才取得自己的表示。`GenerationOperations.prepare_group` 使用 input owner 的 `for_route`，按同一语义组的原件与选区重新规划，物化当前批次后编译实际请求。原生 PDF、页图、音频与转写文字可以随路线改变；格式转换由 MediaPreparer 完成。
+每条路线在实际选中时才取得自己的表示。`GenerationOperations.prepare_group` 使用 input owner 的 `for_route`，按同一语义组的原件与选区重新规划，物化当前批次后编译实际请求。原生 PDF、原生视频、页图、采样视频帧、音频与转写文字可以随路线改变；格式转换由 MediaPreparer 完成。
 
 主路线成功时不准备备用路线的媒体或转写。ModelExecutor 只有在需要切换时才回调同一个 prepare_group；已知格式、能力或额度不足会跳过该路线并保留原因。文本主模型无法消费图片或缺少可用转写时，仍能选择有相应原生能力的备用模型。未选择的路线保持 deferred 状态。
 
@@ -47,3 +47,9 @@ Root deadline 包含接纳、排队、转换、语言请求和采用。成功转
 ## 完成场景
 
 A 写“周五发布”，B 写“已改到周一”，对二者的比较在同一次真实请求中出现；只返回两个独立摘要不算完成。三个互不相关的音频时段在明确 per-batch 下产生三份可读结果；第二批失败仍能读取第一批。纯预览与实际 show-request 能解释同一组来源、实际表示和模板版本。
+
+## 原生视频
+
+路线明确接收视频 MIME 时，MediaPreparer 优先准备原生视频：可直接发送的完整原件保留原 Artifact；时间选区或排除音轨时用 FFmpeg 生成 MP4，并把原始 start_ms/end_ms、实际音轨策略及转换引用一起保存。选区产物是原视频的一次表示，不增加独立来源。
+
+coverage 使用 native_video 和 sampling=provider；实际发送的是一个视频文件，不登记为本地选定的若干帧。上游如何采样以实际服务合同为准。当前本地文件使用有界 data URI；超出 max_inline_bytes 返回范围建议，尚未接入远端 Files 上传/URL托管。普通 route 只接受图片时仍按现有有界抽帧规划处理；fallback 选中新路线后按同一原件和选区重规划。

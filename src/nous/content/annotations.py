@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
 
 from nous.common.errors import NousError
 from nous.content.contracts import ArtifactRef, ResultRef
@@ -20,8 +20,15 @@ class AnnotationValue(BaseModel):
 
 class ConceptProposal(AnnotationValue):
     key: str = Field(min_length=1)
-    label: str = Field(min_length=1)
-    description: str
+    label: str = ""
+    description: str = ""
+    reuse_key: str | None = None
+
+    @model_validator(mode="after")
+    def meaningful(self) -> ConceptProposal:
+        if not self.reuse_key and (not self.label.strip() or not self.description.strip()):
+            raise ValueError("A new concept requires label and description")
+        return self
 
 
 class OccurrenceProposal(AnnotationValue):

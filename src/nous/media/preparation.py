@@ -425,6 +425,18 @@ class MediaPreparer:
         )
 
     async def materialize(self, batch: PreparedBatch) -> PreparedBatch:
+        if batch.source_role != "source":
+            role_sources = tuple(
+                replace(source, group=source.group.model_copy(update={"role": batch.source_role}))
+                if source.group
+                else source
+                for source in batch.sources
+            )
+            batch = replace(
+                batch,
+                sources=role_sources,
+                inputs=tuple(source.group for source in role_sources if source.group),
+            )
         if batch.conversion is not None:
             recipe = batch.conversion
             completed: list[str] = []
@@ -440,13 +452,16 @@ class MediaPreparer:
                 )
                 materialized = [await self.materialize(item) for item in converted.batches]
                 actual_sources = tuple(source for item in materialized for source in item.sources)
-                if batch.source_prefix != "S1":
+                if batch.source_prefix != "S1" or batch.source_role != "source":
                     actual_sources = tuple(
                         replace(
                             source,
                             key=batch.source_prefix + source.key[2:],
                             group=source.group.model_copy(
-                                update={"key": batch.source_prefix + source.key[2:]}
+                                update={
+                                    "key": batch.source_prefix + source.key[2:],
+                                    "role": batch.source_role,
+                                }
                             )
                             if source.group
                             else None,
@@ -545,6 +560,10 @@ class MediaPreparer:
         mime = str(info["media_type"])
         # Actual identified MIME follows identity references through materialization.
         original = original.model_copy(update={"media_type": mime})
+        if kind == "video" and any(value.startswith("video/") for value in requirements):
+            return self._plan_native_video(
+                original, selected, settings, info, requirements, without_audio
+            )
         selections: list[SourceSelection] = []
         if kind == "pdf":
             pages = selected.pages or tuple(range(1, int(cast(int, info["pages"])) + 1))
@@ -1342,6 +1361,156 @@ class MediaPreparer:
             metadata={"representation": "audio"},
         )
 
+    def _plan_native_video(
+        self,
+        original: Artifact,
+        selection: SourceSelection,
+        settings: MediaConfig,
+        info: dict[str, JsonValue],
+        requirements: Sequence[str],
+        without_audio: bool,
+    ) -> MediaPlan:
+        start, end = (
+            selection.start_ms or 0,
+            selection.end_ms or int(cast(int, info["duration_ms"])),
+        )
+        if not 0 <= start < end <= int(cast(int, info["duration_ms"])):
+            raise NousError("media.invalid_selection", "Time selection exceeds the media duration")
+        direct = (
+            start == 0
+            and end == info["duration_ms"]
+            and original.media_type in requirements
+            and (not without_audio or not info["has_audio"])
+        )
+        if not direct and "video/mp4" not in requirements:
+            raise NousError(
+                "media.format_unavailable",
+                "Selected video intervals require an accepted MP4 representation",
+            )
+        coverage: dict[str, JsonValue] = {
+            "mode": "native_video",
+            "start_ms": start,
+            "end_ms": end,
+            "audio": "excluded"
+            if without_audio and info["has_audio"]
+            else "included"
+            if info["has_audio"]
+            else "absent",
+            "sampling": "provider",
+            "batches": 1,
+        }
+        if direct:
+            coverage["sent_duration_ms"] = int(cast(int, info["duration_ms"]))
+            size = int(cast(int, info["byte_length"]))
+            if size > settings.max_inline_bytes:
+                raise NousError(
+                    "media.input_too_large",
+                    "Native video exceeds the inline byte limit; select a shorter interval",
+                    details={"bytes": size, "max_bytes": settings.max_inline_bytes},
+                )
+            key = f"S1:V{start}-{end}"
+            source = PreparedSource(
+                key,
+                original.display_name,
+                group=self._group(
+                    key, original.display_name, original, representation="native_video"
+                ),
+                metadata={"representation": "native_video", "byte_length": size},
+            )
+            batch = self._batch(original, (source,), selection, coverage)
+        else:
+            recipe = PlannedConversion(
+                original,
+                selection,
+                tuple(requirements),
+                settings,
+                "auto",
+                without_audio,
+                (
+                    PlannedPart(
+                        ContentSelection(artifact=original.ref, selection=selection),
+                        original.media_type,
+                        "native_video",
+                        "video/mp4",
+                        {"operation": "video_interval"},
+                        info,
+                    ),
+                ),
+            )
+            batch = PreparedBatch((), (), selection, coverage, conversion=recipe)
+        return MediaPlan(original, selection, (batch,), coverage)
+
+    async def _native_video(
+        self,
+        original: Artifact,
+        selection: SourceSelection,
+        settings: MediaConfig,
+        path: Path,
+        info: dict[str, JsonValue],
+        requirements: Sequence[str],
+        without_audio: bool,
+    ) -> MediaPlan:
+        plan = self._plan_native_video(
+            original, selection, settings, info, requirements, without_audio
+        )
+        if plan.batches[0].conversion is None:
+            return plan
+        start, end = cast(int, plan.coverage["start_ms"]), cast(int, plan.coverage["end_ms"])
+        interval = SourceSelection(start_ms=start, end_ms=end)
+        av = AudioVisual(settings, self.execution)
+        parameters: dict[str, JsonValue] = {
+            "tool": "FFmpeg",
+            "version": await av.version(),
+            "without_audio": without_audio,
+            "target_media_type": "video/mp4",
+            "video_codec": "libx264",
+            "audio_codec": "aac" if info["has_audio"] and not without_audio else None,
+            "crf": 20,
+            "preset": "veryfast",
+        }
+        cache_key = self._derivative_key(original, interval, "media.prepare.video", parameters)
+        derivatives = await self._cached_derivative("media.prepare.video", cache_key)
+        if derivatives is None:
+            data = await av.video(path, start, end, without_audio=without_audio)
+            if len(data) > settings.max_inline_bytes:
+                raise NousError(
+                    "media.input_too_large",
+                    "Selected native video exceeds the inline byte limit",
+                    details={"bytes": len(data), "max_bytes": settings.max_inline_bytes},
+                )
+            derivatives = await self._derive(
+                original,
+                interval,
+                "media.prepare.video",
+                {
+                    "video": OutputContent(
+                        data=data, media_type="video/mp4", display_name="segment.mp4"
+                    ),
+                },
+                parameters,
+            )
+        artifact = derivatives["video"]
+        async with self.artifacts.borrow_local(artifact.ref) as prepared_path:
+            sent_info = await av.inspect(prepared_path)
+        coverage = {**plan.coverage, "sent_duration_ms": sent_info["duration_ms"]}
+        size = (await self.artifacts.blob(artifact.ref)).byte_length
+        key = f"S1:V{start}-{end}"
+        source = PreparedSource(
+            key,
+            original.display_name,
+            group=self._group(
+                key,
+                original.display_name,
+                artifact,
+                representation="native_video",
+                origin=original,
+                origin_selection=interval,
+            ),
+            metadata={"representation": "native_video", "byte_length": size},
+        )
+        batch = self._batch(original, (source,), interval, coverage)
+        return MediaPlan(original, selection, (batch,), coverage)
+
     async def _av(
         self,
         original: Artifact,
@@ -1362,6 +1531,10 @@ class MediaPreparer:
         if not 0 <= start < end <= duration:
             raise NousError("media.invalid_selection", "Time selection exceeds the media duration")
         is_video = info["kind"] == "video"
+        if is_video and any(value.startswith("video/") for value in requirements):
+            return await self._native_video(
+                original, selection, settings, path, info, requirements, without_audio
+            )
         has_audio = bool(info["has_audio"])
         streams = cast(list[dict[str, JsonValue]], info["streams"])
         origin_ms = round(

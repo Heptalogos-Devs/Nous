@@ -17,6 +17,9 @@ capabilities = ["text", "stream", "structured_output"]
 input_formats = ["text/plain"]
 output_modes = ["text", "native"]
 
+# 完成真实原生视频验证的模型可在 capabilities 增加 "video"，
+# 并在 input_formats 增加实际视频 MIME（如 "video/mp4"）；
+# 此时优先发送原生视频。仅声明图片格式时继续使用采样画面。
 [models.vision]
 provider = "gateway"
 model_name = "REPLACE_WITH_ACTUAL_VISION_MODEL"

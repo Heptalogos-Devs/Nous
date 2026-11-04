@@ -36,7 +36,7 @@ from pydantic_ai.messages import (
 from nous.common.errors import NousError
 
 from .contracts import ReadingInput
-from .tasks import TASKS
+from .tasks import TaskCatalog, builtin_tasks
 
 
 class MessageTemplate(BaseModel):
@@ -106,8 +106,9 @@ class CompiledPrompt:
 class PromptCatalog:
     """Select an instance override or packaged resource and capture its template dependencies."""
 
-    def __init__(self, config_directory: Path) -> None:
+    def __init__(self, config_directory: Path, tasks: TaskCatalog | None = None) -> None:
         self.directory = config_directory / "prompts"
+        self.tasks = tasks if tasks is not None else builtin_tasks()
 
     @staticmethod
     def _safe_name(name: str) -> str:
@@ -150,7 +151,7 @@ class PromptCatalog:
         try:
             manifest_text = root.joinpath("prompt.toml").read_text(encoding="utf-8")
             manifest = PromptManifest.model_validate(tomllib.loads(manifest_text))
-            if manifest.contract_id not in TASKS:
+            if manifest.contract_id not in self.tasks:
                 raise NousError(
                     "prompt.unknown_contract", f"Unknown task contract: {manifest.contract_id}"
                 )
@@ -185,7 +186,7 @@ class PromptCatalog:
             for message in manifest.messages:
                 if message.append_sources and message.role != "user":
                     raise NousError("prompt.invalid_source_slot", "Sources require a user message")
-            output = TASKS[manifest.contract_id].output_type
+            output = self.tasks[manifest.contract_id].output_type
             contract = {
                 "input": "ReadingInput-v1",
                 "output": output.model_json_schema() if output else {"type": "string"},
@@ -295,7 +296,7 @@ class PromptCompiler:
     ) -> CompiledPrompt:
         """Render source values once; the prepared request keeps these messages for execution."""
         resource = self.catalog.get(prompt_id) if isinstance(prompt_id, str) else prompt_id
-        output = TASKS[resource.manifest.contract_id].output_type
+        output = self.catalog.tasks[resource.manifest.contract_id].output_type
         if schema is not None and resource.manifest.contract_id != "custom-reading":
             raise NousError(
                 "model.schema_conflict", "Custom schema requires the custom-reading contract"
@@ -353,5 +354,5 @@ class PromptCompiler:
             tuple(preview),
             reading,
             schema,
-            TASKS[resource.manifest.contract_id].validate,
+            self.catalog.tasks[resource.manifest.contract_id].validate,
         )

@@ -175,9 +175,6 @@ class TaskAssignment(ConfigModel):
     preset: ResourceId | None = None
     fallback: list[Fallback] = Field(default_factory=list)
     budget: Budget = Field(default_factory=Budget)
-    media_strategy: (
-        Literal["description_only", "direct_structured", "describe_then_structure"] | None
-    ) = None
 
     @model_validator(mode="after")
     def generation_prompt_required(self) -> TaskAssignment:

@@ -10,6 +10,7 @@ from nous.content.contracts import (
     ContentSelection,
     InputGroup,
     ProcessingResult,
+    SourceRole,
     SourceSelection,
 )
 
@@ -59,6 +60,7 @@ class PreparedBatch:
     conversion: PlannedConversion | None = None
     completed_result_refs: tuple[str, ...] = ()
     source_prefix: str = "S1"
+    source_role: SourceRole = "source"
 
 
 @dataclass(frozen=True)

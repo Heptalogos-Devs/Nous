@@ -10,10 +10,11 @@ from typing import cast
 
 from pydantic import JsonValue
 
+from nous.cognition.scope import NamespaceOperations
 from nous.common.errors import NousError
 from nous.common.operations import add_error_context
 from nous.configuration import ConfigSnapshot, Configuration
-from nous.configuration.service import Object, normalize_patch
+from nous.configuration.service import Object, get_path, normalize_patch
 from nous.models.embedding_store import EmbeddingSpaceRegistry
 from nous.models.embeddings import resolved_space
 from nous.observability.assembly import LoggingSession
@@ -112,7 +113,9 @@ class ConfigurationOperations:
                 cause=error,
             ) from error
 
-    async def _check_bindings(self, before: ConfigSnapshot, after: ConfigSnapshot) -> None:
+    async def _check_bindings(
+        self, before: ConfigSnapshot, after: ConfigSnapshot, *, saved_namespace: str | None = None
+    ) -> None:
         """Check persistent time and space identities before saving their changed definitions."""
         settings = after.typed_values()
         descriptor = InstanceDescriptor(
@@ -124,8 +127,21 @@ class ConfigurationOperations:
         time_changed = old.time.domains != settings.time.domains
         previous_spaces = {key: resolved_space(before, key) for key in old.embedding.spaces}
         desired_spaces = {key: resolved_space(after, key) for key in settings.embedding.spaces}
-        if time_changed or previous_spaces != desired_spaces:
+        namespace_changed = old.cognition.default_namespace != settings.cognition.default_namespace
+        if (
+            time_changed
+            or previous_spaces != desired_spaces
+            or namespace_changed
+            or saved_namespace is not None
+        ):
             async with self._binding_database() as database:
+                if namespace_changed or saved_namespace is not None:
+                    async with database.read() as tx:
+                        for selector in {settings.cognition.default_namespace, saved_namespace} - {
+                            None
+                        }:
+                            if selector is not None:
+                                await NamespaceOperations.get_in(tx, selector)
                 if time_changed:
                     await check_domains(database, settings.time.domains)
                 if previous_spaces != desired_spaces:
@@ -262,7 +278,13 @@ class ConfigurationOperations:
             reload=reload,
         )
         try:
-            await self._check_bindings(configuration.snapshot, change.candidate)
+            await self._check_bindings(
+                configuration.snapshot,
+                change.candidate,
+                saved_namespace=cast(
+                    str | None, get_path(change.saved, "cognition.default_namespace")
+                ),
+            )
         except Exception as error:
             details = configuration.failure_details(
                 change.target,

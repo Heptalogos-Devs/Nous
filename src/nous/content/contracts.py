@@ -171,15 +171,20 @@ class InputPart(ContentValue):
     origins: tuple[OriginSlice, ...] = ()
 
 
+SourceRole = Literal["source", "reference", "current_basis", "inspiration", "revision_base"]
+
+
 class InputGroup(ContentValue):
     """One local source key, with every independently addressable representation."""
 
     key: str
     name: str
+    role: SourceRole = "source"
     parts: tuple[InputPart, ...] = Field(min_length=1)
 
 
 class InputSpec(ContentValue):
+    role: SourceRole = "source"
     kind: Literal["file", "text", "artifact"]
     path: str | None = None
     text: str | None = None

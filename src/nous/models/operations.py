@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, cast
 from pydantic import JsonValue, TypeAdapter
 
 from nous.common.errors import NousError
-from nous.common.operations import exception_context
+from nous.common.operations import add_error_context, record_completed
 from nous.content.contracts import (
     Artifact,
     ArtifactRef,
@@ -23,6 +23,7 @@ from nous.content.contracts import (
     OriginSlice,
     OutputContent,
     ProcessingResult,
+    SourceRole,
     SourceSelection,
 )
 from nous.content.results import ResultStore
@@ -34,7 +35,6 @@ from .contracts import GenerationResult, ReadingInput
 from .executor import FrozenTask, ModelRoute, PreparedGeneration
 from .input import InputPlan, RequestGroup, for_route, materialize, plan_inputs
 from .policy import route_unavailable
-from .tasks import TASKS
 
 if TYPE_CHECKING:
     from nous.configuration import ConfigSnapshot
@@ -64,6 +64,20 @@ class GenerationOutcome:
     results: tuple[ProcessingResult, ...]
     coverage: dict[str, JsonValue]
     preparations: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class ProducedTask:
+    """A successful language computation whose named outputs can be adopted without another call."""
+
+    operation: str
+    producer: dict[str, JsonValue]
+    actual_inputs: tuple[InputGroup, ...]
+    outputs: dict[str, OutputContent]
+    request: dict[str, JsonValue]
+    parameters: dict[str, JsonValue]
+    coverage: dict[str, JsonValue]
+    completed_stage_refs: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -128,16 +142,16 @@ class GenerationOperations:
 
     async def _accept(
         self, inputs: InputValue | Sequence[InputValue], texts: Sequence[str]
-    ) -> list[tuple[Artifact, SourceSelection]]:
+    ) -> list[tuple[Artifact, SourceSelection, SourceRole]]:
         values = (
             [inputs]
             if isinstance(inputs, (InputSpec, Path, Artifact, ArtifactRef, str))
             else inputs
         )
-        originals: list[tuple[Artifact, SourceSelection]] = []
+        originals: list[tuple[Artifact, SourceSelection, SourceRole]] = []
         for value in values:
             if isinstance(value, Artifact):
-                originals.append((value, SourceSelection()))
+                originals.append((value, SourceSelection(), "source"))
             else:
                 spec = (
                     value
@@ -148,7 +162,9 @@ class GenerationOperations:
                         else InputSpec(kind="artifact", artifact=value)
                     )
                 )
-                originals.append((await self.results.artifacts.accept(spec), spec.selection))
+                originals.append(
+                    (await self.results.artifacts.accept(spec), spec.selection, spec.role)
+                )
         for ordinal, text in enumerate(texts, 1):
             originals.append(
                 (
@@ -156,6 +172,7 @@ class GenerationOperations:
                         InputSpec(kind="text", text=text, display_name=f"text-{ordinal}.txt")
                     ),
                     SourceSelection(),
+                    "source",
                 )
             )
         if not originals:
@@ -187,13 +204,17 @@ class GenerationOperations:
                     plan = await plan_inputs(
                         self.preparer,
                         originals,
-                        frozen,
                         snapshot.typed_values().media,
                         requirements=route.model.input_formats,
                         selection=selection,
                         document_mode=document_mode,
                         without_audio=without_audio,
                         per_batch=per_batch,
+                        contract=self.executor.compiler.catalog.tasks[
+                            frozen.resource.manifest.contract_id
+                        ]
+                        if frozen.resource
+                        else None,
                     )
                     frozen = replace(
                         frozen, routes=frozen.routes[route_index:], ineligible_routes=unavailable
@@ -210,7 +231,7 @@ class GenerationOperations:
                     details={"routes": unavailable},
                 )
             return PreparedRun(
-                tuple(artifact for artifact, _ in originals),
+                tuple(artifact for artifact, _, _ in originals),
                 plan.request_groups,
                 plan.requested_coverage,
                 frozen,
@@ -321,6 +342,35 @@ class GenerationOperations:
         on_delta: Callable[[str], None] | None = None,
         on_prepared: Callable[[PreparedGeneration], None] | None = None,
     ) -> ProcessingResult:
+        async with self.execution.operation("model.generate", snapshot):
+            produced = await self.produce(
+                frozen,
+                group,
+                snapshot,
+                question=question,
+                instructions=instructions,
+                schema=schema,
+                extra_sources=extra_sources,
+                completed=completed,
+                on_delta=on_delta,
+                on_prepared=on_prepared,
+            )
+            return await self.adopt_produced(produced)
+
+    async def produce(
+        self,
+        frozen: FrozenTask,
+        group: RequestGroup,
+        snapshot: ConfigSnapshot,
+        *,
+        question: str = "",
+        instructions: str = "",
+        schema: dict[str, JsonValue] | None = None,
+        extra_sources: Sequence[PreparedSource] = (),
+        completed: list[str] | None = None,
+        on_delta: Callable[[str], None] | None = None,
+        on_prepared: Callable[[PreparedGeneration], None] | None = None,
+    ) -> ProducedTask:
         """Run one semantic group; the executor requests another representation only when switching."""
         completed = completed if completed is not None else []
         async with self.execution.operation("model.generate", snapshot):
@@ -342,7 +392,7 @@ class GenerationOperations:
                 assert isinstance(request, PreparedGeneration)
                 return request
 
-            return await self.run_prepared(
+            return await self.produce_prepared(
                 await resolve(), on_delta=on_delta, prepare_route=resolve
             )
 
@@ -374,7 +424,14 @@ class GenerationOperations:
         return await self.results.adopt(
             operation=task,
             producer=generated.producer,
-            inputs=(InputGroup(key=source.key, name=source.name, parts=(part,)),),
+            inputs=(
+                InputGroup(
+                    key=source.key,
+                    name=source.name,
+                    role=source.group.role if source.group else "source",
+                    parts=(part,),
+                ),
+            ),
             outputs={
                 "transcript": OutputContent(
                     data=generated.output.encode(),
@@ -497,10 +554,8 @@ class GenerationOperations:
                         batch.coverage for batch in prepared.batches[len(results) :]
                     ],
                 }
-                if isinstance(exc, NousError):
-                    exc.details.update(details)
-                else:
-                    exc.__dict__["nous_context"] = {**exception_context(exc), **details}
+                record_completed(completed)
+                add_error_context(exc, details)
                 raise
             return GenerationOutcome(
                 prepared.artifacts,
@@ -548,6 +603,64 @@ class GenerationOperations:
         on_delta: Callable[[str], None] | None = None,
         prepare_route: Callable[[ModelRoute], Awaitable[PreparedGeneration]] | None = None,
     ) -> ProcessingResult:
+        async with self.execution.operation("model.generate", prepared.snapshot):
+            return await self.adopt_produced(
+                await self.produce_prepared(
+                    prepared,
+                    inputs=inputs,
+                    coverage=coverage,
+                    context=context,
+                    on_delta=on_delta,
+                    prepare_route=prepare_route,
+                )
+            )
+
+    async def adopt_produced(self, produced: ProducedTask) -> ProcessingResult:
+        """Save a successful computation; SQL failures never re-enter model execution."""
+        published = None
+        try:
+            published = await self.results.prepare_outputs(produced.outputs)
+            async with self.results.database.write() as tx:
+                result = await self.results.adopt_in(
+                    tx,
+                    operation=produced.operation,
+                    producer=produced.producer,
+                    inputs=produced.actual_inputs,
+                    prepared_outputs=published,
+                    request=produced.request,
+                    parameters=produced.parameters,
+                    coverage=produced.coverage,
+                )
+            record_completed(result.ref.address)
+            return result
+        except BaseException as error:
+            add_error_context(
+                error,
+                {
+                    "stage": "result.adopt",
+                    "model_succeeded": True,
+                    "completed_result_refs": list(produced.completed_stage_refs),
+                    "published_outputs": [
+                        {"name": output.name, "blob": output.content.blob.model_dump(mode="json")}
+                        for output in published.outputs
+                    ]
+                    if published is not None
+                    else [],
+                },
+                recovery=produced,
+            )
+            raise
+
+    async def produce_prepared(
+        self,
+        prepared: PreparedGeneration,
+        *,
+        inputs: Sequence[InputGroup] | None = None,
+        coverage: Mapping[str, object] | None = None,
+        context: OperationContext | None = None,
+        on_delta: Callable[[str], None] | None = None,
+        prepare_route: Callable[[ModelRoute], Awaitable[PreparedGeneration]] | None = None,
+    ) -> ProducedTask:
         async with self.execution.operation("model.generate", prepared.snapshot) as active:
             if on_delta is None:
                 generated = await self.executor.execute(
@@ -564,17 +677,19 @@ class GenerationOperations:
                             "model.incomplete_stream", "The stream returned no completed result"
                         )
                     generated = stream.result
-            return await self._adopt(prepared, generated, inputs, coverage)
+            return await self._interpret(prepared, generated, inputs, coverage)
 
-    async def _adopt(
+    async def _interpret(
         self,
         prepared: PreparedGeneration,
         generated: GenerationResult,
         inputs: Sequence[InputGroup] | None,
         coverage: Mapping[str, object] | None,
-    ) -> ProcessingResult:
+    ) -> ProducedTask:
         reading = generated.reading or prepared.compiled.reading
-        definition = TASKS[prepared.compiled.resource.manifest.contract_id]
+        definition = self.executor.compiler.catalog.tasks[
+            prepared.compiled.resource.manifest.contract_id
+        ]
         outputs = await definition.outputs(
             generated.output,
             reading,
@@ -588,10 +703,13 @@ class GenerationOperations:
                 media_type="application/json",
                 display_name="response.json",
             )
-        return await self.results.adopt(
+        stages = tuple(
+            cast(list[str], generated.request.get("stage_result_refs", list(prepared.stage_refs)))
+        )
+        return ProducedTask(
             operation=prepared.task,
             producer=generated.producer,
-            inputs=tuple(inputs)
+            actual_inputs=tuple(inputs)
             if inputs is not None and reading is prepared.compiled.reading
             else tuple(source.group for source in reading.sources if source.group),
             outputs=outputs,
@@ -604,7 +722,9 @@ class GenerationOperations:
                     "stage_result_refs", list(prepared.stage_refs)
                 ),
             },
-            coverage=generated.coverage or coverage,
+            coverage=generated.coverage
+            or TypeAdapter(dict[str, JsonValue]).validate_python(coverage or {}),
+            completed_stage_refs=stages,
         )
 
     async def preview(
@@ -635,8 +755,10 @@ class GenerationOperations:
                 prepared = await self.prepare_input(
                     frozen,
                     [
-                        InputSpec(kind="artifact", artifact=artifact.ref, selection=selected)
-                        for artifact, selected in originals
+                        InputSpec(
+                            kind="artifact", artifact=artifact.ref, selection=selected, role=role
+                        )
+                        for artifact, selected, role in originals
                     ],
                     snapshot,
                     per_batch=per_batch,
@@ -647,10 +769,10 @@ class GenerationOperations:
                 plan = await plan_inputs(
                     self.preparer,
                     originals,
-                    frozen,
                     snapshot.typed_values().media,
                     requirements=frozen.routes[0].model.input_formats if frozen else (),
                     per_batch=per_batch,
+                    contract=self.executor.compiler.catalog.tasks[resource.manifest.contract_id],
                 )
             previews: list[JsonValue] = []
             for group in plan.request_groups:

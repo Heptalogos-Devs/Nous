@@ -17,7 +17,7 @@ NousQL 是整个 Nous 的查询语言，由 Wave 执行检索。Ego 持有主体
 
 ## 当前状态
 
-当前本地 CLI 提供实例、配置、运行诊断、多轴时间，以及模型、Prompt、内容、媒体和 Wave 检索工具。模型任务可联合多份输入，媒体按真实格式逐批转换；原件与派生结果保存在本地，可按短地址读取来源、正文块和请求诊断。Wave 支持词项、Dense、TagMemo、RiverMemo、混合、DTSC、固定候选池与多路径/支持组实验。实例初始化、内容读取与纯词项检索不要求配置模型或遥测服务。实际能力和后续工作见[当前工作](docs/CURRENT.md)和[架构](docs/ARCHITECTURE.md)。
+当前本地 CLI 提供 Note、Journal、草稿采用、概念标注、当前知识检索和反馈，以及实例、配置、诊断、时间、内容、媒体与 Wave 工具。正文和来源固定到精确版本；修订与归档保留历史读取。手工记录、修订和词项检索无需模型，配置模型后可整理所选材料并生成标注。实际能力和后续工作见[当前工作](docs/CURRENT.md)和[架构](docs/ARCHITECTURE.md)。
 
 此前的服务、SDK 与未迁入的研究材料保存在 [legacy](legacy/README.md)。现行检索计算与索引位于 [native](native/README.md)。
 
@@ -40,7 +40,18 @@ uv run --no-dev nous --instance ./temp/nous-local tools content add ./notes.md
 
 开发和测试时使用 `uv sync --locked` 安装开发依赖。
 
-请求失败时，可用返回的操作关联执行 `nous runtime logs --operation <操作引用>`；保留日志与能力状态见[诊断指南](docs/design/interfaces/diagnostics.md)。配置好模型后，`journal-draft` 与 `annotate-concepts` 可生成普通正文与概念路径标注，完整操作见[正文与 Wave 实验](docs/development/journal-wave-experiments.md)。
+记录一段经历或手写一篇 Journal 后，可以直接用自然语言查询当前认识：
+
+```sh
+uv run --no-dev nous --instance ./temp/nous-local note add --text "取消等待后，后台线程仍在读文件。" --remember
+uv run --no-dev nous --instance ./temp/nous-local journal create --text "资源需要持有到实际工作结束。" --title "资源释放"
+uv run --no-dev nous --instance ./temp/nous-local query "任务结束后文件为什么还被占用" --mode lexical
+uv run --no-dev nous --instance ./temp/nous-local read 'jrn:替换为返回的地址@1' --sources
+```
+
+配置写作和标注任务后，可用 `journalize --source <Note地址> --topic <主题>` 生成可读草稿，再用 `journal draft read` 查看、`journal draft adopt` 明确采用；`journal annotate` 可以提出并采用概念标注。完整命令、修订、来源用途和反馈见[认知命令](docs/design/interfaces/cognition-cli.md)。
+
+请求失败时，可用返回的操作关联执行 `nous runtime logs --operation <操作引用>`；保留日志与能力状态见[诊断指南](docs/design/interfaces/diagnostics.md)。
 
 源码安装使用仓库中的 `uv sync --locked`。`uv build` 生成同一平台的完整 wheel 与源码分发包；wheel 可用 `pip install <wheel路径>` 安装，无需单独取得 Native 包。源码分发包安装时需要上述构建工具链。
 

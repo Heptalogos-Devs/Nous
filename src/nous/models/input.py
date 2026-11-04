@@ -9,16 +9,14 @@ from typing import TYPE_CHECKING
 from pydantic import JsonValue
 
 from nous.common.errors import NousError
-from nous.content.contracts import Artifact, InputGroup, InputPart, SourceSelection
-from nous.media.contracts import MediaPlan, PreparedBatch, PreparedSource
+from nous.content.contracts import Artifact, SourceRole, SourceSelection
+from nous.media.contracts import MediaPlan, PreparedBatch
 
-from .tasks import TASKS
+from .tasks import TaskDefinition
 
 if TYPE_CHECKING:
     from nous.media.configuration import MediaConfig
     from nous.media.preparation import MediaPreparer
-
-    from .executor import FrozenTask
 
 
 @dataclass(frozen=True)
@@ -38,8 +36,7 @@ class InputPlan:
 
 async def plan_inputs(
     preparer: MediaPreparer,
-    originals: Sequence[tuple[Artifact, SourceSelection]],
-    frozen: FrozenTask | None,
+    originals: Sequence[tuple[Artifact, SourceSelection, SourceRole]],
     settings: MediaConfig,
     *,
     requirements: Sequence[str] = (),
@@ -47,53 +44,19 @@ async def plan_inputs(
     document_mode: str = "auto",
     without_audio: bool = False,
     per_batch: bool = False,
+    contract: TaskDefinition | None = None,
 ) -> InputPlan:
-    contract = TASKS[frozen.resource.manifest.contract_id] if frozen and frozen.resource else None
     mode = "independent_batches" if per_batch else contract.input_mode if contract else "joint"
     plans: list[MediaPlan] = []
     batches: list[PreparedBatch] = []
-    for index, (artifact, supplied) in enumerate(originals, 1):
+    chosen_inputs = tuple((artifact, selection or supplied) for artifact, supplied, _ in originals)
+    task_plans = (
+        await contract.prepare_sources(chosen_inputs, preparer.artifacts) if contract else None
+    )
+    for index, (artifact, supplied, role) in enumerate(originals, 1):
         chosen = selection or supplied
-        if contract and contract.id == "concept-annotation":
-            if len(originals) != 1:
-                raise NousError("model.annotation_body", "Concept annotation requires one body")
-            if chosen != SourceSelection():
-                raise NousError(
-                    "model.annotation_body",
-                    "Concept annotation requires one complete immutable body",
-                )
-            view = await preparer.artifacts.text_view(artifact.ref)
-            roots = [block for block in view.blocks if block.parent_key is None]
-            sources = tuple(
-                PreparedSource(
-                    block.key,
-                    artifact.display_name,
-                    text=block.text,
-                    group=InputGroup(
-                        key=block.key,
-                        name=artifact.display_name,
-                        parts=(
-                            InputPart(
-                                content=block.selection,
-                                representation="text",
-                                media_type=artifact.media_type,
-                                source_media_type=artifact.media_type,
-                            ),
-                        ),
-                    ),
-                )
-                for block in roots
-            )
-            batch = PreparedBatch(
-                sources,
-                tuple(source.group for source in sources if source.group),
-                chosen,
-                {
-                    "body_ref": artifact.ref.model_dump(mode="json"),
-                    "parser_profile": view.parser_profile,
-                },
-            )
-            plan = MediaPlan(artifact, chosen, (batch,), batch.coverage)
+        if task_plans is not None:
+            plan = task_plans[index - 1]
         else:
             plan = await preparer.prepare(
                 artifact,
@@ -106,23 +69,29 @@ async def plan_inputs(
         plans.append(plan)
         for batch in plan.batches:
             prefix = f"S{index}"
-            if not (contract and contract.id == "concept-annotation"):
-                sources = tuple(
-                    replace(
-                        source,
-                        key=prefix + source.key[2:],
-                        group=source.group.model_copy(update={"key": prefix + source.key[2:]})
-                        if source.group
-                        else None,
+            preserve = contract is not None and contract.preserve_source_keys
+            sources = tuple(
+                replace(
+                    source,
+                    key=source.key if preserve else prefix + source.key[2:],
+                    group=source.group.model_copy(
+                        update={
+                            "key": source.key if preserve else prefix + source.key[2:],
+                            "role": role,
+                        }
                     )
-                    for source in batch.sources
+                    if source.group
+                    else None,
                 )
-                batch = replace(
-                    batch,
-                    sources=sources,
-                    inputs=tuple(source.group for source in sources if source.group),
-                    source_prefix=prefix,
-                )
+                for source in batch.sources
+            )
+            batch = replace(
+                batch,
+                sources=sources,
+                inputs=tuple(source.group for source in sources if source.group),
+                source_prefix=prefix,
+                source_role=role,
+            )
             batches.append(batch)
     coverage: dict[str, JsonValue] = {
         "mode": mode,
@@ -137,7 +106,7 @@ async def plan_inputs(
         else (RequestGroup(tuple(batches), coverage),)
     )
     return InputPlan(
-        mode, tuple(artifact for artifact, _ in originals), tuple(plans), requests, coverage
+        mode, tuple(artifact for artifact, _, _ in originals), tuple(plans), requests, coverage
     )
 
 
@@ -199,7 +168,8 @@ async def for_route(
                 without_audio=recipe.without_audio,
             )
             alternatives.extend(
-                replace(item, source_prefix=batch.source_prefix) for item in plan.batches
+                replace(item, source_prefix=batch.source_prefix, source_role=batch.source_role)
+                for item in plan.batches
             )
             continue
         for source in batch.sources:
@@ -233,5 +203,8 @@ async def for_route(
                     settings=settings,
                 )
                 prefix = source.key.split(":", 1)[0]
-                alternatives.extend(replace(item, source_prefix=prefix) for item in plan.batches)
+                alternatives.extend(
+                    replace(item, source_prefix=prefix, source_role=source.group.role)
+                    for item in plan.batches
+                )
     return RequestGroup(tuple(alternatives), request.coverage)

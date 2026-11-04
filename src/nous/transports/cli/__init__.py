@@ -377,7 +377,13 @@ def runtime_logs(
     for event in cast(list[dict[str, object]], result["events"]):
         if event.get("event") == "request.attempt":
             typer.echo(
-                f"  {event.get('stage', '')}: attempt {event.get('number')} {event.get('route')} → {event.get('outcome')} {event.get('error_code', '')} {event.get('duration_seconds', '')}s"
+                f"  {event.get('stage', '')}: attempt {event.get('number')} "
+                f"{event.get('route')} → {event.get('outcome')} "
+                f"{event.get('error_code', '')} {event.get('error_type', '')} "
+                f"{event.get('duration_seconds', '')}s"
+                + (f" action={event['next_action']}" if event.get("next_action") else "")
+                + (f" reason={event['retry_reason']}" if event.get("retry_reason") else "")
+                + (f" status={event['provider_status']}" if event.get("provider_status") else "")
             )
         elif event.get("event") in {"operation.failed", "stage.completed", "operation.completed"}:
             typer.echo(
@@ -492,3 +498,10 @@ def main() -> None:
             else 4
         )
         raise SystemExit(status) from None
+
+
+from . import cognition as cognition  # noqa: E402, F401
+from . import concepts as concepts  # noqa: E402, F401
+from . import feedback as feedback  # noqa: E402, F401
+from . import journalize as journalize  # noqa: E402, F401
+from . import retrieval as retrieval  # noqa: E402, F401

@@ -45,11 +45,20 @@ def exception_context(error: BaseException) -> dict[str, JsonValue]:
     )
 
 
-def add_error_context(error: BaseException, values: Mapping[str, object]) -> None:
-    error.__dict__["nous_context"] = {
+def add_error_context(
+    error: BaseException, values: Mapping[str, object], *, recovery: object | None = None
+) -> None:
+    context = {
         **exception_context(error),
         **TypeAdapter(dict[str, JsonValue]).validate_python(dict(values)),
     }
+    error.__dict__["nous_context"] = context
+    if recovery is not None:
+        error.__dict__["nous_recovery"] = recovery
+    from .errors import NousError
+
+    if isinstance(error, NousError):
+        error.details.update(context)
 
 
 def attach_context(error: BaseException, frame: OperationFrame, trace_id: str | None) -> None:

@@ -116,7 +116,6 @@ impl MemoAssets {
             if *id <= 0
                 || *id != candidate.id
                 || !input.files.contains_key(&candidate.file_id)
-                || candidate.source_ids.is_empty()
                 || candidate
                     .source_ids
                     .iter()

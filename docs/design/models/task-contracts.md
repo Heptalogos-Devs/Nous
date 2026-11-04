@@ -4,12 +4,13 @@
 
 每个语言任务定义自己的自然语言目的、纯输入类型、输出类型、来源键校验和结果解释。summarize、describe-media、extract-information、select-passages、custom-reading 继续可用。转写有自己的标准端点输入和纯文本输出。
 
-使用一个静态的 TaskDefinition 目录，由组合根或包内显式注册；无需动态插件平台。
+使用一个静态 TaskCatalog，由组合根显式提供各任务定义。专有输入准备、输出校验与产物解释由该任务负责；通用 InputPlan 不按任务名字分支。无需动态插件平台。
 
 ```text
 TaskDefinition:
   id
   input_type
+  prepare_input(ordered_sources, shared_content) -> task_input
   output_type | json_schema
   validate_output(value, source_groups) -> validated_value
   outputs(value, source_reader) -> named OutputContent
@@ -25,7 +26,7 @@ Markdown 块由 markdown-it 提供语法位置；文本读取能力维护精确�
 
 ## 输出和采用
 
-语言阶段返回实际输出、原生响应必要部分、实际请求/模型/模板/Schema 标识及用量。任务定义把其转换为有名产物，例如 output、passages、response；ResultStore 统一采用。
+共同 GenerationOperations.produce 返回实际输出、输入、原生响应必要部分、实际请求/模型/模板/Schema 标识及用量，并由任务定义解释为有名产物。公共 run 和认知草稿共用这一条计算路径；ResultStore.prepare_outputs/adopt_in 继续统一采用，允许调用方在同一短事务登记自己的正式关系。
 
 失败输出只作为本次可诊断内容或错误引用，不能自动写成成功任务产物。修复次数默认零；启用时仍由共同尝试策略计数。
 
@@ -35,10 +36,10 @@ Markdown 块由 markdown-it 提供语法位置；文本读取能力维护精确�
 
 后续 journalize/Steward 直接提供任务定义并消费共同操作，不修改协议执行器。没有实际消费者的任务不预建。
 
-## 正文实验任务
+## 正文任务
 
 `journal-draft` 使用 joint 输入，返回普通 Markdown 草稿；`concept-annotation` 使用一份共同 TextView，返回概念、出现项和路径，具体合同见 [概念标注](../cognition/concept-annotations.md)。任务 owner 构造局部块键、校验来源并采用普通结果，通用 executor 不识别任务专名。
 
-包内模板资源是 `journal-draft` 和 `annotate-concepts`。标注要求一份完整正文，输入组使用共同 TextView 的 B 键。模型返回 AnnotationProposal；采用时加入正文、parser profile、内容修订与 producer，形成普通 AnnotationSet JSON 产物。`models.annotations.read_annotation` 读取产物、补入实际 ResultRef 并核对正文块键，供 Wave 等消费者复用。
+包内模板资源是 `journal-draft` 和 `annotate-concepts`。标注要求一份完整正文，输入组使用共同 TextView 的 B 键。模型返回 AnnotationProposal；采用时加入正文、parser profile、内容修订与 producer，形成普通 AnnotationSet JSON 产物。`content.annotations.read_annotation` 读取产物、补入实际 ResultRef 并核对正文块键，供 Wave 等消费者复用。
 
-本轮不增加新 Journal 类型的数据库保存捷径。以后 Journal owner 使用这些已有语言任务，并通过自己的正式采用入口完成记忆状态。
+Journal owner 使用这些语言任务，并通过 [草稿采用](../cognition/draft-adoption.md)和正式文稿操作完成状态。模型任务不修改 Journal/Concept 表；正文与标注产物继续可以作为普通 tools 结果独立使用。

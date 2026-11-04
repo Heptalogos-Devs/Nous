@@ -22,7 +22,7 @@ capabilities 表示已经确认的操作能力；input_formats 说明可接受�
 
 ## 输入中立
 
-任务提供文本、媒体及输出目的。Provider/SDK 负责协议线格式；MediaPreparer 负责通用转换。SDK 当前不支持某种原生输入时，采用记录清楚的通用准备路径或明确返回缺项。
+任务提供文本、媒体及输出目的。Provider/SDK 负责协议线格式；MediaPreparer 负责通用转换。声明 `video` capability 和实际视频 MIME（如 `video/mp4`）的路线通过 `video_url` 内容扩展提交原生视频。现有 Pydantic AI OpenAIChatModel 缺少该扩展的编码，`models.protocol.CompatibleChatModel` 仅补充 BinaryContent 视频到 data URI 的映射，其余编码、SDK请求、流及资源仍沿用同一实现。该扩展要求所配网关/模型实际支持，不根据模型名选择。未声明视频 MIME 的视觉路线继续由媒体 owner 提供抽帧表示。
 
 本轮无需支持全部远程供应商 SDK。以后新协议真实接入时增加一个依赖 adapter，保持既有任务输入、结果、网络、配置和来源合同。
 

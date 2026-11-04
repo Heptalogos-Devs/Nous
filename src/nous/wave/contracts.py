@@ -7,7 +7,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
 
 from nous.application.embedding import VectorRef
-from nous.content.contracts import SourceSelection
+from nous.content.contracts import ArtifactRef, SourceSelection
 from nous.temporal.values import CognitiveTimes, Interval
 
 
@@ -189,6 +189,50 @@ class CollectionManifest(WaveValue):
 
         for key in parents:
             visit(key)
+        return self
+
+
+class EvidenceProjection(WaveValue):
+    """Fixed source identities and each document's independent-origin membership."""
+
+    roots: dict[str, tuple[ArtifactRef, ...]]
+    documents: dict[str, tuple[str, ...]]
+    source_documents: tuple[str, ...] = ()
+
+    @model_validator(mode="after")
+    def defined_roots(self) -> EvidenceProjection:
+        if any(not key or not refs for key, refs in self.roots.items()):
+            raise ValueError("evidence roots require an identity and exact artifact references")
+        for document, roots in self.documents.items():
+            if len(roots) != len(set(roots)) or set(roots) - self.roots.keys():
+                raise ValueError(f"document {document} has undefined or repeated evidence roots")
+        if set(self.source_documents) - self.documents.keys():
+            raise ValueError("source sequences require a defined source document")
+        if any(len(self.documents[key]) != 1 for key in self.source_documents):
+            raise ValueError("an original sequence must belong to exactly one independent source")
+        return self
+
+
+class CorpusView(CollectionManifest):
+    """A frozen collection of already accepted content for snapshot construction."""
+
+    evidence: EvidenceProjection
+    generation: int | None = Field(default=None, ge=0)
+    profile: str | None = None
+    manifest_artifact: ArtifactRef | None = None
+    metadata: dict[str, JsonValue] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def accepted_documents(self) -> CorpusView:
+        if any(document.input.artifact is None for document in self.documents):
+            raise ValueError("a corpus view requires accepted artifact references")
+        if set(self.evidence.documents) != {document.key for document in self.documents}:
+            raise ValueError("evidence projection must cover exactly the accepted documents")
+        if any(
+            document.derived_from and document.key in self.evidence.source_documents
+            for document in self.documents
+        ):
+            raise ValueError("a derived document cannot contribute an original source sequence")
         return self
 
 

@@ -48,7 +48,7 @@ utc 固定为 Unix epoch 微秒。模型/媒体的局部时段另有 Selection �
 
 network 的 proxy_url/ca_file 默认 null、trust_env=false、max_connections=20，均 restart；connect/read/write/pool timeout 默认 10/120/30/10 秒，可在下一操作读取。Provider 连接覆盖同类字段，协议/endpoint/credential_ref 改动为 restart。
 
-credentials 支持 env/file；providers、models、presets、tasks 无默认付费服务。具体必需字段由 [模型资源](../models/resources.md) 定义。task media_strategy 为三种现行策略，缺省不隐式处理媒体。
+credentials 支持 env/file；providers、models、presets、tasks 无默认付费服务。具体必需字段由 [模型资源](../models/resources.md) 定义。媒体处理策略由媒体操作参数选择，模型任务只定义语言请求。
 
 model_execution.max_attempts=2、timeout_seconds=120、max_input_tokens=16384、max_output_tokens=2048、structured_retries=0，属于每个语义阶段的技术限制，可在明确作用域内选择更低值；实例参数可按实际资料提高。max_cost 默认 null，本轮不建设费用执行体系。
 

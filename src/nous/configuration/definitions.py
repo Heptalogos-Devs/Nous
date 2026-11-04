@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 
 from pydantic import Field, field_validator, model_validator
 
+from nous.cognition.configuration import CognitionConfig
 from nous.common.values import ResourceId
 from nous.content.configuration import ContentConfig
 from nous.media.configuration import MediaConfig
@@ -327,6 +328,7 @@ class NousConfig(ConfigModel):
     prompt: PromptConfig = Field(default_factory=PromptConfig)
     embedding: EmbeddingConfig = Field(default_factory=EmbeddingConfig)
     wave: WaveConfig = Field(default_factory=WaveConfig)
+    cognition: CognitionConfig = Field(default_factory=CognitionConfig)
 
     @model_validator(mode="after")
     def references_exist(self) -> Self:
@@ -357,6 +359,8 @@ class NousConfig(ConfigModel):
                 raise ValueError(
                     f"embedding.spaces.{key}: text encoding requires only text modality"
                 )
+        if self.cognition.search.space and self.cognition.search.space not in self.embedding.spaces:
+            raise ValueError("cognition.search.space: unknown embedding space")
         return self
 
     def provider_network(self, provider_id: str) -> NetworkConfig:

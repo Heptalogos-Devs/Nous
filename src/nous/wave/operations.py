@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
 from typing import cast
 
@@ -15,12 +15,12 @@ from nous.content.results import ResultStore
 from nous.media.preparation import MediaPreparer
 from nous.runtime.execution import ExecutionManager
 from nous.runtime.paths import ResolvedPaths
-from nous.storage.database import Database
+from nous.storage.database import Database, WriteTx
 from nous.temporal.domains import TimeService
 
-from .contracts import ContextFragment, WaveQuery
+from .contracts import ContextFragment, CorpusView, WaveQuery
 from .query import WaveQueries
-from .snapshots import WaveSnapshots, encode_json
+from .snapshots import WaveSnapshots, encode_json, view_profile
 
 logger = logging.getLogger(__name__)
 
@@ -52,11 +52,44 @@ class WaveOperations:
     async def status(self) -> dict[str, object]:
         return await self.snapshots.status()
 
+    def profile(self, space: str | None, policy: dict[str, object]) -> str:
+        return view_profile(self.execution.snapshot, space, policy)
+
+    async def current(self, collection: str) -> dict[str, object] | None:
+        row = await self.snapshots.current(collection)
+        if row is None:
+            return None
+        return {
+            "snapshot": {
+                "instance_id": self.snapshots.instance_id,
+                "id": row["id"],
+                "address": row["address"],
+            },
+            "covered_generation": row["covered_generation"],
+            "profile": row["profile"],
+            "metadata": row["mapping"]["metadata"],
+        }
+
     async def build(self, manifest_path: Path, space: str | None = None) -> dict[str, object]:
         async with self.execution.operation("wave.build") as context:
-            result = await self.snapshots.build(manifest_path, space, context.settings)
+            view = await self.snapshots.import_manifest(manifest_path)
+            result = await self.snapshots.build(view, space, context.settings)
             snapshot = cast(dict[str, str], result["snapshot"])
             record_completed(snapshot["address"])
+            return result
+
+    async def build_view(
+        self,
+        view: CorpusView,
+        space: str | None = None,
+        *,
+        publish_if: Callable[[WriteTx], Awaitable[bool]] | None = None,
+    ) -> dict[str, object]:
+        async with self.execution.operation("wave.build_view") as context:
+            result = await self.snapshots.build(
+                view, space, context.settings, publish_if=publish_if
+            )
+            record_completed(cast(dict[str, str], result["snapshot"])["address"])
             return result
 
     async def query(self, request: WaveQuery) -> dict[str, object]:
@@ -147,6 +180,9 @@ class WaveOperations:
                 "collection": row["mapping"]["name"],
                 "space": row["space_definition"],
                 "identity": row["identity"],
+                "covered_generation": row["covered_generation"],
+                "profile": row["profile"],
+                "metadata": row["mapping"]["metadata"],
                 "capabilities": list(snapshot.capabilities),
                 "statistics": json.loads(snapshot.statistics_json),
                 "source_roots": len(row["mapping"]["roots"]),

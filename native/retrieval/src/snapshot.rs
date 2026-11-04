@@ -167,10 +167,6 @@ impl Input {
             roots,
         )?;
         ensure!(
-            self.candidates.root_indptr.windows(2).all(|p| p[0] < p[1]),
-            "Each candidate requires evidence roots"
-        );
-        ensure!(
             self.candidates.path_positions.len() == self.candidates.path_indices.len()
                 && self.candidates.path_positions.iter().all(|p| *p > 0),
             "Ordered candidate curve positions must be positive"

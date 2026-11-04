@@ -12,7 +12,7 @@ from nous.common.errors import NousError
 from nous.storage.database import Database
 
 from . import schema
-from .contracts import ArtifactRef
+from .contracts import ArtifactRef, SourceRole
 
 if TYPE_CHECKING:
     from .artifacts import ArtifactStore
@@ -23,11 +23,13 @@ class ProvenanceRelation(BaseModel):
     child: ArtifactRef
     parent: ArtifactRef
     result_id: str
+    role: SourceRole
 
 
 class ProvenanceSummary(BaseModel):
     model_config = ConfigDict(frozen=True)
     terminal_roots: tuple[ArtifactRef, ...]
+    support_roots: tuple[ArtifactRef, ...] = ()
     traversed_results: tuple[str, ...] = ()
     relations: tuple[ProvenanceRelation, ...] = ()
     complete: bool = True
@@ -112,15 +114,22 @@ class ProvenanceReader:
             )
             reachable = sa.select(walk.c.node).distinct().subquery()
 
-            def edge_select(table: sa.Table) -> sa.Select[tuple[object, object, object]]:
+            def edge_select(table: sa.Table):
                 return sa.select(
                     schema.outputs.c.artifact_id.label("child"),
                     table.c.artifact_id.label("parent"),
                     schema.outputs.c.result_id,
+                    schema.inputs.c.role,
                 ).select_from(
-                    reachable.join(
-                        schema.outputs, schema.outputs.c.artifact_id == reachable.c.node
-                    ).join(table, table.c.result_id == schema.outputs.c.result_id)
+                    reachable.join(schema.outputs, schema.outputs.c.artifact_id == reachable.c.node)
+                    .join(table, table.c.result_id == schema.outputs.c.result_id)
+                    .join(
+                        schema.inputs,
+                        sa.and_(
+                            schema.inputs.c.result_id == table.c.result_id,
+                            schema.inputs.c.group_ordinal == table.c.group_ordinal,
+                        ),
+                    )
                 )
 
             edges = (
@@ -143,9 +152,13 @@ class ProvenanceReader:
             )
             per_target[str(row["root"])].add(identifier)
         parents: dict[str, set[str]] = {}
+        supporting: dict[str, set[str]] = {}
         for edge in edges:
             parents.setdefault(str(edge["child"]), set()).add(str(edge["parent"]))
+            if edge["role"] in {"source", "reference", "current_basis"}:
+                supporting.setdefault(str(edge["child"]), set()).add(str(edge["parent"]))
         memo: dict[str, set[str]] = {}
+        support_memo: dict[str, set[str]] = {}
         for identifier in identifiers:
             active: set[str] = set()
             pending = [(identifier, False)]
@@ -156,6 +169,11 @@ class ProvenanceReader:
                 if expanded:
                     memo[node] = (
                         set().union(*(memo[parent] for parent in parents.get(node, ())))
+                        if parents.get(node)
+                        else {node}
+                    )
+                    support_memo[node] = (
+                        set().union(*(support_memo[parent] for parent in supporting.get(node, ())))
                         if parents.get(node)
                         else {node}
                     )
@@ -179,12 +197,14 @@ class ProvenanceReader:
             )
             output[identifier] = ProvenanceSummary(
                 terminal_roots=tuple(identities[root] for root in sorted(memo[identifier])),
+                support_roots=tuple(identities[root] for root in sorted(support_memo[identifier])),
                 traversed_results=tuple(sorted({str(edge["result_id"]) for edge in related})),
                 relations=tuple(
                     ProvenanceRelation(
                         child=identities[str(edge["child"])],
                         parent=identities[str(edge["parent"])],
                         result_id=str(edge["result_id"]),
+                        role=edge["role"],
                     )
                     for edge in related
                 ),

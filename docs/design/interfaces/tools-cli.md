@@ -39,7 +39,7 @@ model run、media analyze 和 result read 的普通输出显示有名正文与�
 
 ## 明确的选项与错误合同
 
-恢复并保留这些产品用法：`--schema PATH` 只用于明确接受自定义 Schema 的任务；`--task` 选择已配置用途；媒体描述任务由 --description-task 或配置选择。`--document-mode auto|visual|text` 中 auto 优先合法原生 PDF、否则按所选页提供视觉/文字；visual 强制视觉页，text 明确只取可提取文字。`--without-audio` 显式排除视频音轨。
+恢复并保留这些产品用法：`--schema PATH` 只用于明确接受自定义 Schema 的任务；`--task` 选择已配置用途；媒体描述任务由 --description-task 或配置选择。`--document-mode auto|visual|text` 中 auto 优先合法原生 PDF、否则按所选页提供视觉/文字；visual 强制视觉页，text 明确只取可提取文字。`--without-audio` 显式排除视频音轨。 模型同时声明 video 能力和视频 MIME 时原生发送视频；--from/--to 对原件时段切片，--without-audio 在发送前剥离音轨。未声明原生视频输入的视觉路线使用采样帧。
 
 参数解析错误也遵守 --json 的结构化错误和非零退出状态；无法归类的异常默认显示清楚的通用失败原因，--debug 展开原始异常链。实际操作错误另带 operation/trace 关联、失败阶段、尝试与部分结果。取消使用现有约定，不输出虚构成功。
 

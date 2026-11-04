@@ -2,16 +2,16 @@
 
 ## 产品能力与本次范围
 
-Nous 提供独立的内容处理与长期认知能力。实例、配置、CAS、Artifact、ProcessingResult、模型、Prompt、媒体和 Embedding 是共同基础。语义输入、逐批表示、来源与正文、请求诊断和 Rust retrieval 各有明确负责模块；Journal 草稿与标注通过这些能力进入 Wave 实验，见 [主计划](plans/architecture-repair.md)。
+Nous 提供独立的内容处理与长期认知能力。实例、配置、CAS、Artifact、ProcessingResult、模型、Prompt、媒体和 Embedding 是共同基础。语义输入、逐批表示、来源与正文、请求诊断和 Rust retrieval 各有明确负责模块；本轮将它们用于正式 Note/Journal 的记录、采用、修订、当前检索和反馈，见 [主计划](plans/journal-delivery.md)。
 
-本轮建立的 Wave 集合是检索输入与可重建投影。Journal 的目标语义与修订已在 cognition 专题定义；完整认知对象由后续领域实现。已存在的 Artifact 可以成为当前候选；将来 Journal 提供相同的精确内容引用即可接入。
+Wave 集合是检索输入与可重建投影。cognition 拥有正式文稿、版本、Concept 与采用；按一致读事务提供类型化 CorpusView，清单导入也调用同一个 Wave 构建能力。内容字节和精确选区继续由 Artifact/TextView 提供。
 
 ## 调用方向
 
 ```text
 CLI / 后续 HTTP、MCP、SDK
   ↓
-完整应用操作：配置、生成、媒体解释、向量、Wave
+完整应用操作：配置、生成、媒体解释、向量、Wave、认知文稿/采用/查询
   ├─ 内容接纳/读取/结果采用 → ArtifactStore、ResultStore → CAS、Database
   ├─ 语言阶段 → 任务合同 + 冻结 Prompt → ModelExecutor → 连接与凭据 → 网关
   ├─ 确定性准备 → MediaPreparer → Pillow、PDFium、FFmpeg
@@ -42,7 +42,9 @@ MediaPreparer 不持有模型执行器；ModelExecutor 不读取业务数据库�
 | 向量空间、已采用向量及输入映射 | Embedding owner |
 | Wave 集合定义、来源映射、活动快照 | Wave owner |
 | 冻结矩阵、索引和单次查询观测 | Native，均为可重建计算资产 |
-| 实际认知、关系和修订 | 后续认知领域；Native 不写认知 |
+| Note/Journal 正文版本与来源 | cognition 文稿 owner，共享有限版本保存机制 |
+| 正式 Concept 与标注绑定 | cognition 各负责操作，固定意义/正文版本 |
+| 当前知识视图与反馈 | cognition，复用 Wave 发布与检索；Native 不写认知 |
 
 ## 事务与副作用
 
@@ -58,7 +60,7 @@ Execution 控制根操作、截止时间和实际 worker 生命周期。Native �
 
 ## 开发边界
 
-现有 VCP 数值模块与 DTSC 保留，本轮补齐可复用检索核心、候选池及多路径/支持组实验；不恢复 retired Node/JS 运行壳和旧 Nous 服务。DBOS 留给实际持久后台任务，完整 NousQL 与认知对象不作为本轮前提。
+现有 VCP 数值模块与 DTSC 保留，本轮接入正式文稿视图及当前查询发布，不恢复旧运行壳。DBOS 留给实际持久后台任务；完整 NousQL、任意历史视图、Social/Ego/Dream/Episode 不进入本轮。
 
 现行代码可以按真实用途重新组织。没有外部兼容承诺的接口直接迁移，旧路径和专属支撑随替换删除。临时样本和诊断留在 temp，网关补丁与独立语音工具保持独立。
 
@@ -66,4 +68,4 @@ Execution 控制根操作、截止时间和实际 worker 生命周期。Native �
 
 具体迁移位置见 [操作所有权](design/foundation/operation-ownership.md)。Rust retrieval 拥有 Engine/Snapshot 与查询业务，PyO3 只做语言边界。纯 schema 模块由组合根显式装配，业务服务不通过隐含导入注册表。
 
-Journal 正文、版本、概念标注、关系结构和支持来源的目标分工见 [Journal](design/cognition/journal.md)。本轮以共同 TextView、现有 ProcessingResult 和 Wave 运行实验；完整 Journal owner 不作为修复工作的前置。
+Journal 正文、版本、概念标注、关系结构和支持来源见 [Journal](design/cognition/journal.md)。具体模块接入见 [认知架构](design/cognition/integration.md)。正文保存与索引发布分别完成；current 查询按 [视图合同](design/cognition/current-retrieval.md)捕获一致代次，不依赖旧图过滤补偿。

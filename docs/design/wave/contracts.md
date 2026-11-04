@@ -12,6 +12,12 @@ derived_from 只引用 documents key，构建读取 DAG 的终端来源。eviden
 
 Concept.key 与 candidate.key 分别唯一，重复 label 允许；core 必须按 key 精确指定，按 label 查找歧义时返回候选供用户选择，不随意选择第一个。vectors 和内部整数 ID 由程序准备，普通清单不要求人工编造。
 
+## 冻结的语料与来源
+
+构建入口接收 `CorpusView`：已接纳 documents、Concept、候选和关系，加上完整的 `EvidenceProjection`。投影的 roots 将稳定来源键绑定到不可变 ArtifactRef 集合，documents 为每份文稿固定独立根集合，source_documents 明确哪些原始文稿可以提供来源出现序列。候选允许根集合为空，仍可按文字/向量检索；来源事实序列和事实支持组继续要求真实来源。
+
+认知 owner 从同一读事务捕获的正式 revision/source bindings 解释独立来源。实验清单适配器以 ResultStore.support_roots 校验 derived_from 后产生同一份投影。Wave 的资产构建只消费这份固定投影，Native 只接收数值集合与行号。
+
 ## 查询请求
 
 ```text

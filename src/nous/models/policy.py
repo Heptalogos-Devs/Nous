@@ -144,6 +144,7 @@ def attempt_reports(start: int = 0) -> list[dict[str, JsonValue]]:
 
 class AttemptError(TypedDict):
     outcome: str
+    error_type: str
     error_code: str
     provider_status: int | None
     provider_request_id: str | None
@@ -152,12 +153,14 @@ class AttemptError(TypedDict):
 
 
 def error_report(
-    error: BaseException, *, retry: bool = False, repair: bool = False
+    error: BaseException, *, next_action: str = "raise", repair: bool = False
 ) -> AttemptError:
+    retry = next_action != "raise"
     mapped = model_error(error, 0)
     status = getattr(error, "status_code", None)
     return {
         "outcome": "retry" if retry else "error",
+        "error_type": type(error).__name__,
         "error_code": mapped.code,
         "provider_status": status,
         "provider_request_id": getattr(error, "request_id", None),
@@ -166,5 +169,5 @@ def error_report(
         else "transient_service_error"
         if retry
         else None,
-        "next_action": "repair_same_route" if repair else "next_route" if retry else "raise",
+        "next_action": next_action,
     }

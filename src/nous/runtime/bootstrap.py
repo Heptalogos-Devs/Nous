@@ -11,6 +11,18 @@ import tomlkit
 
 from nous.application.configuration import ConfigurationOperations
 from nous.application.embedding import EmbeddingOperations
+from nous.cognition.annotations import AnnotationOperations
+from nous.cognition.concept_schema import metadata as concept_metadata
+from nous.cognition.concepts import ConceptOperations
+from nous.cognition.feedback import FeedbackOperations
+from nous.cognition.feedback_schema import metadata as feedback_metadata
+from nous.cognition.journalize import JournalizeOperations
+from nous.cognition.record_reading import WrittenRecordReader
+from nous.cognition.records import WrittenRecords
+from nous.cognition.retrieval import CognitiveRetrieval
+from nous.cognition.schema import metadata as cognition_metadata
+from nous.cognition.scope import NamespaceOperations
+from nous.cognition.scope import initialize_in as initialize_namespaces_in
 from nous.common.errors import NousError
 from nous.configuration import Configuration
 from nous.content.artifacts import ArtifactStore
@@ -24,8 +36,10 @@ from nous.models.embeddings import EmbeddingExecutor
 from nous.models.executor import ModelExecutor
 from nous.models.operations import GenerationOperations
 from nous.models.prompts import PromptCatalog, PromptCompiler
+from nous.models.tasks import builtin_tasks
 from nous.network import ModelConnections
 from nous.observability.assembly import LoggingSession, Observability
+from nous.observability.diagnostics import recent_failures
 from nous.observability.instrumentation import operation
 from nous.storage.content import ContentStore
 from nous.storage.content_schema import metadata as blob_metadata
@@ -79,6 +93,13 @@ class Runtime:
     embedding_spaces: EmbeddingSpaceRegistry
     embedding: EmbeddingOperations
     wave: WaveOperations
+    namespaces: NamespaceOperations
+    records: WrittenRecords
+    concepts: ConceptOperations
+    annotations: AnnotationOperations
+    journalize: JournalizeOperations
+    cognitive_retrieval: CognitiveRetrieval
+    feedback: FeedbackOperations
     state: str = "starting"
 
     def status(self) -> dict[str, object]:
@@ -121,12 +142,22 @@ class Runtime:
             )
             result["embedding"] = await self.embedding_spaces.status()
             result["wave"] = await self.wave.status()
+            result["cognition"] = {
+                **await self.records.status(),
+                "drafts": await self.journalize.status(),
+                "concepts": await self.concepts.status(),
+                "annotations": await self.annotations.status(),
+                "retrieval": await self.cognitive_retrieval.status(),
+            }
             result["execution"] = self.execution.status()
             result["recent_results"] = await self.results.recent()
             result["observability"] = {
                 "logs": str(self.paths.logs / "nous.jsonl")
                 if settings.logging.file_enabled
                 else None,
+                "recent_failures": await self.execution.blocking(recent_failures, self.paths.logs)
+                if settings.logging.file_enabled
+                else [],
                 "trace_enabled": settings.tracing.enabled,
                 "trace_export": settings.tracing.export,
                 "local_spans_persisted": False,
@@ -211,11 +242,17 @@ async def initialize_instance(
                     content_metadata,
                     embedding_metadata,
                     wave_metadata,
+                    cognition_metadata,
+                    concept_metadata,
+                    feedback_metadata,
                 )
                 if not existing
                 else (),
             ) as database:
                 await bind_domains(database, settings.time.domains)
+                if not existing:
+                    async with database.write() as tx:
+                        await initialize_namespaces_in(tx)
                 await database.check()
                 if not existing:
                     binding.write(selected, paths)
@@ -306,7 +343,7 @@ async def open_instance(
                     ),
                 )
                 results = ResultStore(database, artifacts)
-                prompts = PromptCatalog(selected.directory)
+                prompts = PromptCatalog(selected.directory, builtin_tasks())
                 compiler = PromptCompiler(
                     prompts,
                     paths.cache,
@@ -327,6 +364,14 @@ async def open_instance(
                     embeddings,
                 )
                 time_service = TimeService(database, clock)
+                namespaces = NamespaceOperations(database, execution, configuration_operations)
+                record_reader = WrittenRecordReader(database, execution, artifacts, namespaces)
+                concepts = ConceptOperations(
+                    database, execution, namespaces, descriptor.instance_id, clock
+                )
+                annotations = AnnotationOperations(
+                    database, execution, record_reader, concepts, generation
+                )
                 wave = WaveOperations(
                     database,
                     execution,
@@ -338,6 +383,21 @@ async def open_instance(
                     embedding,
                     preparer,
                 )
+                cognitive_retrieval = CognitiveRetrieval(
+                    database, execution, namespaces, record_reader, artifacts, results, wave
+                )
+                records = WrittenRecords(
+                    database,
+                    execution,
+                    artifacts,
+                    time_service,
+                    namespaces,
+                    results,
+                    annotations,
+                    cognitive_retrieval,
+                )
+                journalize = JournalizeOperations(database, execution, records, generation, results)
+                feedback = FeedbackOperations(database, execution, namespaces, records, wave)
                 runtime = Runtime(
                     paths=paths,
                     descriptor=descriptor,
@@ -357,6 +417,13 @@ async def open_instance(
                     embedding_spaces=embedding_spaces,
                     embedding=embedding,
                     wave=wave,
+                    namespaces=namespaces,
+                    records=records,
+                    concepts=concepts,
+                    annotations=annotations,
+                    journalize=journalize,
+                    cognitive_retrieval=cognitive_retrieval,
+                    feedback=feedback,
                     state="ready",
                 )
             logger.info("runtime.ready")

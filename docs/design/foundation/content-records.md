@@ -38,6 +38,7 @@ InputPart:
 InputGroup:
   key: str                     # 模型局部键，如 S1:P3
   name: str
+  role: source | reference | current_basis | inspiration | revision_base
   parts: ordered tuple[InputPart]
 ```
 
@@ -49,7 +50,7 @@ PDF 第 3 页的 PNG，其 `content` 是该 PNG 的 Whole；`origins` 指原 PDF
 
 结果记录两类用途：实际消费的有序 InputGroup；只用于解释派生血缘的 origins/处理关系。原件作为来源存在一次，实际使用整份原件时可以同时承担输入角色，但不再插入无类型的重复 `S1` 行。
 
-`ResultStore.provenance(refs)` 批量读取有向无环的来源关系，按请求 Artifact ID 返回终端来源身份集合；Wave 消费这个公开能力，不遍历 content 的私有表。相同终端来源去重，派生深度和使用次数不扩大独立支持。没有外部来源的主动创作，其原始 Artifact 是一个明确的来源；查询上下文和算法计算不能被当成新的事实支持。
+`ResultStore.provenance(refs)` 批量读取有向无环的来源关系，按请求 Artifact ID 返回终端来源身份集合；Wave 消费这个公开能力，不遍历 content 的私有表。terminal_roots 保留完整血缘；support_roots 只沿 source/reference/current_basis 输入传播，inspiration/revision_base 保留引用但不贡献支持根。原始 Artifact 的支持根为自身；仅依赖启发或版本基准的结果没有新增支持根。相同终端来源去重，派生深度和使用次数不扩大独立支持。没有外部来源的主动创作，其原始 Artifact 是一个明确的来源；查询上下文和算法计算不能被当成新的事实支持。
 
 外部声明“这两个 Artifact 是同一真实来源”由输入清单/正式领域明确表达，不能仅凭 digest 推断。
 

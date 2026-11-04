@@ -11,13 +11,14 @@ from uuid import uuid4
 import sqlalchemy as sa
 from pydantic import JsonValue, TypeAdapter
 
+from nous.common.address import insert_address
 from nous.common.errors import NousError
 from nous.common.operations import record_completed
 from nous.storage.content import PublishedContent
 from nous.storage.database import Database, WriteTx
 
 from . import schema
-from ._records import date_value, insert_address
+from ._records import date_value
 from .artifacts import ArtifactStore
 from .contracts import (
     ArtifactRef,
@@ -173,6 +174,7 @@ class ResultStore:
                     "result_id": identifier,
                     "group_ordinal": ordinal,
                     "key": group.key,
+                    "role": group.role,
                     "name": group.name,
                 }
             )
@@ -417,6 +419,7 @@ class ResultStore:
             inputs = [
                 InputGroup(
                     key=str(source["key"]),
+                    role=source["role"],
                     name=str(source["name"]),
                     parts=tuple(grouped[int(source["group_ordinal"])]),
                 )

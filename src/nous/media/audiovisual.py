@@ -231,3 +231,33 @@ class AudioVisual:
             {"audio/wav": "wav", "audio/mpeg": "mp3", "audio/flac": "flac"}[media_type],
             "pipe:1",
         )
+
+    async def video(self, path: Path, start_ms: int, end_ms: int, *, without_audio: bool) -> bytes:
+        """Encode an exact selected interval as an MP4, preserving the requested audio policy."""
+        return await self.process(
+            self.ffmpeg,
+            "-v",
+            "error",
+            "-ss",
+            f"{start_ms / 1000:.6f}",
+            "-i",
+            str(path),
+            "-t",
+            f"{(end_ms - start_ms) / 1000:.6f}",
+            "-map",
+            "0:v:0",
+            *(["-an"] if without_audio else ["-map", "0:a:0?", "-c:a", "aac"]),
+            "-c:v",
+            "libx264",
+            "-bf",
+            "0",
+            "-preset",
+            "veryfast",
+            "-crf",
+            "20",
+            "-movflags",
+            "frag_keyframe+empty_moov",
+            "-f",
+            "mp4",
+            "pipe:1",
+        )

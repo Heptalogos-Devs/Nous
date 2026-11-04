@@ -19,3 +19,9 @@
 ## 取消与关闭
 
 保留子进程 terminate → wait → 超时 kill → wait 的所有权。关闭、等待和临时文件清理使用同一实际进程句柄。中断返回已经采用的产物引用和未完成时段。Native Wave 不承担媒体解码，避免再造格式处理实现。
+
+## 原生视频输入
+
+明确接收视频 MIME 的模型路线优先原生视频表示，通过同一 SDK 的 video_url 内容扩展发送有界 data URI。完整且无需剥离音轨的文件可直接引用；时间选区或 --without-audio 由 AudioVisual/FFmpeg 生成 MP4，ResultStore 保存确定性转换及原视频的精确时段。选区文件的本地时钟与原件坐标分别保留；coverage 的 start_ms/end_ms 指原件范围，sent_duration_ms 为实际发送容器时长（编码音轨可能带少量填充）。
+
+音轨 included/excluded/absent 记录实际文件内容；模型能否联合理解音画按实际请求验证。sampling=provider 表示视频由上游处理，本地不声称掌握其全部采样帧。只支持图片的路线继续使用现有采样表示，备用路线切换时按同一原件/范围重规划。协议、请求限制与文件上传边界见[模型输入规划](../models/input-planning.md)。

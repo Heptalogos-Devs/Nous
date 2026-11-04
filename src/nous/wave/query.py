@@ -132,6 +132,11 @@ class WaveQueries:
             if key in by_key:
                 resolved_core.append(by_key[key])
                 continue
+            if key.startswith("con:") and "@" not in key:
+                versions = [item for item in concepts if item["key"].startswith(key + "@")]
+                if versions:
+                    resolved_core.extend(versions)
+                    continue
             matches = list({item["key"]: item for item in by_label.get(key, [])}.values())
             if len(matches) != 1:
                 raise NousError(
@@ -428,6 +433,7 @@ class WaveQueries:
                 "content": candidate["content"],
                 "origin_content": candidate["origin_content"],
                 "snippet": text[:500],
+                "metadata": candidate["metadata"],
                 "concepts": [concepts[index]["key"] for index in hit.get("concept_rows", [])],
                 "sources": candidate["roots"],
                 "folded_refs": [

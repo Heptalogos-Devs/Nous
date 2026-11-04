@@ -1,0 +1,42 @@
+{
+  "concepts": [
+    {
+      "key": "c1",
+      "label": "取消等待",
+      "description": "调用者结束对异步工作的等待。",
+      "reuse_key": null
+    },
+    {
+      "key": "c2",
+      "label": "资源生命周期",
+      "description": "资源从取得到实际释放的持有责任。",
+      "reuse_key": null
+    }
+  ],
+  "occurrences": [
+    {
+      "key": "o1",
+      "concept": "c1",
+      "blocks": [
+        "B1"
+      ]
+    },
+    {
+      "key": "o2",
+      "concept": "c2",
+      "blocks": [
+        "B2"
+      ]
+    }
+  ],
+  "paths": [
+    {
+      "key": "p1",
+      "label": "等待与资源责任",
+      "occurrences": [
+        "o1",
+        "o2"
+      ]
+    }
+  ]
+}
