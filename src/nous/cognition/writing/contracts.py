@@ -149,7 +149,7 @@ class DraftRef(CognitiveValue):
     instance_id: str
     namespace_id: str
     id: str
-    address: str
+    identifier: str
 
 
 class DraftContext(CognitiveValue):

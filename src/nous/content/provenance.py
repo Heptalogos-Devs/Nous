@@ -60,10 +60,10 @@ class ProvenanceReader:
             rows = (
                 (
                     await tx.connection.execute(
-                        sa.select(schema.artifacts.c.id, schema.artifacts.c.address).where(
+                        sa.select(schema.artifacts.c.id, schema.artifacts.c.identifier).where(
                             sa.or_(
                                 schema.artifacts.c.id.in_(targets),
-                                schema.artifacts.c.address.in_(targets),
+                                schema.artifacts.c.identifier.in_(targets),
                             )
                         )
                     )
@@ -72,7 +72,7 @@ class ProvenanceReader:
                 .all()
             )
             resolved = {str(row["id"]): str(row["id"]) for row in rows}
-            resolved.update({str(row["address"]): str(row["id"]) for row in rows})
+            resolved.update({str(row["identifier"]): str(row["id"]) for row in rows})
             missing = [target for target in targets if target not in resolved]
             if missing:
                 raise NousError(
@@ -80,10 +80,10 @@ class ProvenanceReader:
                     "Provenance target does not exist",
                     details={"refs": missing},
                 )
-            identifiers = list(dict.fromkeys(resolved[target] for target in targets))
+            object_ids = list(dict.fromkeys(resolved[target] for target in targets))
             walk = (
                 sa.select(schema.artifacts.c.id.label("root"), schema.artifacts.c.id.label("node"))
-                .where(schema.artifacts.c.id.in_(identifiers))
+                .where(schema.artifacts.c.id.in_(object_ids))
                 .cte("ancestors", recursive=True)
             )
             part_step = sa.select(
@@ -104,7 +104,7 @@ class ProvenanceReader:
             nodes = (
                 (
                     await tx.connection.execute(
-                        sa.select(walk.c.root, walk.c.node, schema.artifacts.c.address).select_from(
+                        sa.select(walk.c.root, walk.c.node, schema.artifacts.c.identifier).select_from(
                             walk.outerjoin(schema.artifacts, schema.artifacts.c.id == walk.c.node)
                         )
                     )
@@ -142,15 +142,15 @@ class ProvenanceReader:
                 .all()
             )
         identities: dict[str, ArtifactRef] = {}
-        per_target: dict[str, set[str]] = {identifier: set() for identifier in identifiers}
+        per_target: dict[str, set[str]] = {object_id: set() for object_id in object_ids}
         for row in nodes:
-            if row["address"] is None:
+            if row["identifier"] is None:
                 raise NousError("content.provenance_missing", "A provenance ancestor is missing")
-            identifier = str(row["node"])
-            identities[identifier] = ArtifactRef(
-                id=identifier, address=str(row["address"]), instance_id=self.artifacts.instance_id
+            object_id = str(row["node"])
+            identities[object_id] = ArtifactRef(
+                id=object_id, identifier=str(row["identifier"]), instance_id=self.artifacts.instance_id
             )
-            per_target[str(row["root"])].add(identifier)
+            per_target[str(row["root"])].add(object_id)
         parents: dict[str, set[str]] = {}
         supporting: dict[str, set[str]] = {}
         for edge in edges:
@@ -159,9 +159,9 @@ class ProvenanceReader:
                 supporting.setdefault(str(edge["child"]), set()).add(str(edge["parent"]))
         memo: dict[str, set[str]] = {}
         support_memo: dict[str, set[str]] = {}
-        for identifier in identifiers:
+        for object_id in object_ids:
             active: set[str] = set()
-            pending = [(identifier, False)]
+            pending = [(object_id, False)]
             while pending:
                 node, expanded = pending.pop()
                 if node in memo:
@@ -189,15 +189,15 @@ class ProvenanceReader:
                     (parent, False) for parent in parents.get(node, ()) if parent not in memo
                 )
         output: dict[str, ProvenanceSummary] = {}
-        for identifier in identifiers:
+        for object_id in object_ids:
             related = (
-                [edge for edge in edges if str(edge["child"]) in per_target[identifier]]
+                [edge for edge in edges if str(edge["child"]) in per_target[object_id]]
                 if details
                 else []
             )
-            output[identifier] = ProvenanceSummary(
-                terminal_roots=tuple(identities[root] for root in sorted(memo[identifier])),
-                support_roots=tuple(identities[root] for root in sorted(support_memo[identifier])),
+            output[object_id] = ProvenanceSummary(
+                terminal_roots=tuple(identities[root] for root in sorted(memo[object_id])),
+                support_roots=tuple(identities[root] for root in sorted(support_memo[object_id])),
                 traversed_results=tuple(sorted({str(edge["result_id"]) for edge in related})),
                 relations=tuple(
                     ProvenanceRelation(

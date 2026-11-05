@@ -12,6 +12,7 @@ import sqlalchemy as sa
 from pydantic import JsonValue, TypeAdapter
 
 from nous.common.errors import NousError
+from nous.common.identifier import identifier_type
 from nous.content.citations import normalize_source_links, parse_citations
 from nous.content.contracts import (
     ArtifactRef,
@@ -102,7 +103,7 @@ class WritingOperations:
                 elif (
                     isinstance(source, ArtifactRef)
                     or isinstance(source, str)
-                    and source.startswith("art:")
+                    and identifier_type(source) == "art"
                 ):
                     artifact = await self.results.artifacts.get_in(tx, source)
                     binding = SourceBinding(
@@ -126,7 +127,7 @@ class WritingOperations:
             if reject_journals and bindings:
                 ids = {item.artifact.id for binding in bindings for item in binding.selections}
                 journal = await tx.connection.scalar(
-                    sa.select(schema.records.c.address)
+                    sa.select(schema.records.c.identifier)
                     .join(schema.revisions, schema.revisions.c.record_id == schema.records.c.id)
                     .where(
                         schema.records.c.kind == "journal",
@@ -206,7 +207,7 @@ class WritingOperations:
         rendered: list[str] = []
         for opinion in await self.records.feedback.select_for_edit(refs, base, mappings=mappings):
             rendered.append(
-                f"[{opinion.address}] {opinion.category}: {opinion.value or ''}\n{opinion.comment or ''}"
+                f"[{opinion.identifier}] {opinion.category}: {opinion.value or ''}\n{opinion.comment or ''}"
             )
         if mappings:
             rendered.append(

@@ -11,8 +11,8 @@ import sqlalchemy as sa
 from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.engine import RowMapping
 
-from nous.common.address import insert_address
 from nous.common.errors import NousError
+from nous.common.identifier import insert_identifier
 from nous.common.operations import add_error_context, record_completed
 from nous.content.annotations import AnnotationProposal, AnnotationSet
 from nous.content.contracts import (
@@ -277,9 +277,9 @@ class AnnotationOperations:
                             "cognition.annotation_conflict",
                             "Body changed while annotation was being prepared",
                             details={
-                                "proposal_result": proposed.result_ref.address,
-                                "target_revision": proposed.body_revision.address,
-                                "current_revision": exact.address,
+                                "proposal_result": proposed.result_ref.identifier,
+                                "target_revision": proposed.body_revision.identifier,
+                                "current_revision": exact.identifier,
                             },
                         )
                     if (
@@ -332,20 +332,20 @@ class AnnotationOperations:
                         ).encode()
                     ).hexdigest()
                     existing = await tx.connection.scalar(
-                        sa.select(schema.annotations.c.address).where(
+                        sa.select(schema.annotations.c.identifier).where(
                             schema.annotations.c.adoption_key == adoption_key
                         )
                     )
                     if existing is not None:
-                        address = str(existing)
+                        identifier = str(existing)
                     else:
                         if activate_for_current and row["head_revision_id"] != revision["id"]:
                             raise NousError(
                                 "cognition.annotation_conflict",
                                 "Body changed while annotation was being prepared",
                                 details={
-                                    "proposal_result": proposed.result_ref.address,
-                                    "target_revision": exact.address,
+                                    "proposal_result": proposed.result_ref.identifier,
+                                    "target_revision": exact.identifier,
                                     "current_revision_id": row["head_revision_id"],
                                 },
                             )
@@ -360,32 +360,32 @@ class AnnotationOperations:
                             else expected_active_annotation
                         )
                         if active != expected:
-                            active_address = (
+                            active_identifier = (
                                 await tx.connection.scalar(
-                                    sa.select(schema.annotations.c.address).where(
+                                    sa.select(schema.annotations.c.identifier).where(
                                         schema.annotations.c.id == active
                                     )
                                 )
                                 if active
                                 else None
                             )
-                            if active_address != expected or expected is None:
+                            if active_identifier != expected or expected is None:
                                 raise NousError(
                                     "cognition.annotation_conflict",
                                     "Active annotation changed since proposal preparation",
                                     details={
-                                        "proposal_result": proposed.result_ref.address,
+                                        "proposal_result": proposed.result_ref.identifier,
                                         "expected_annotation": str(expected) if expected else None,
-                                        "current_annotation": active_address,
+                                        "current_annotation": active_identifier,
                                     },
                                 )
-                        identifier = str(uuid4())
-                        address = await insert_address(
+                        object_id = str(uuid4())
+                        identifier = await insert_identifier(
                             tx,
                             schema.annotations,
                             "ann",
                             {
-                                "id": identifier,
+                                "id": object_id,
                                 "record_revision_id": revision["id"],
                                 "body_artifact_id": proposed.annotation.body_ref.id,
                                 "parser_profile": body_view.parser_profile,
@@ -407,7 +407,7 @@ class AnnotationOperations:
                                 )
                             await tx.connection.execute(
                                 schema.bindings.insert().values(
-                                    annotation_id=identifier,
+                                    annotation_id=object_id,
                                     local_key=concept.key,
                                     concept_revision_id=meaning.ref.revision_id,
                                 )
@@ -415,7 +415,7 @@ class AnnotationOperations:
                         for ordinal, occurrence in enumerate(proposed.annotation.occurrences):
                             await tx.connection.execute(
                                 schema.occurrences.insert().values(
-                                    annotation_id=identifier,
+                                    annotation_id=object_id,
                                     key=occurrence.key,
                                     concept_key=occurrence.concept,
                                     ordinal=ordinal,
@@ -424,7 +424,7 @@ class AnnotationOperations:
                             for position, key in enumerate(occurrence.blocks):
                                 await tx.connection.execute(
                                     schema.blocks.insert().values(
-                                        annotation_id=identifier,
+                                        annotation_id=object_id,
                                         occurrence_key=occurrence.key,
                                         ordinal=position,
                                         block_key=key,
@@ -436,7 +436,7 @@ class AnnotationOperations:
                         for ordinal, path in enumerate(proposed.annotation.paths):
                             await tx.connection.execute(
                                 schema.paths.insert().values(
-                                    annotation_id=identifier,
+                                    annotation_id=object_id,
                                     key=path.key,
                                     label=path.label,
                                     ordinal=ordinal,
@@ -447,7 +447,7 @@ class AnnotationOperations:
                                     schema.path_steps.insert(),
                                     [
                                         dict(
-                                            annotation_id=identifier,
+                                            annotation_id=object_id,
                                             path_key=path.key,
                                             ordinal=position,
                                             occurrence_key=key,
@@ -458,24 +458,24 @@ class AnnotationOperations:
                         if activate:
                             await tx.connection.execute(
                                 insert(schema.annotation_heads)
-                                .values(record_revision_id=revision["id"], annotation_id=identifier)
+                                .values(record_revision_id=revision["id"], annotation_id=object_id)
                                 .on_conflict_do_update(
                                     index_elements=[schema.annotation_heads.c.record_revision_id],
-                                    set_={"annotation_id": identifier},
+                                    set_={"annotation_id": object_id},
                                 )
                             )
                             if activate_for_current and row["recall"] and not row["archived"]:
                                 await self.records.scope.advance_in(tx, ns.id)
-                record_completed(address)
+                record_completed(identifier)
                 return await self.read(
-                    address, namespace=proposed.body_revision.record_ref.namespace_id
+                    identifier, namespace=proposed.body_revision.record_ref.namespace_id
                 )
             except BaseException as error:
                 add_error_context(
                     error,
                     {
-                        "proposal_result": proposed.result_ref.address,
-                        "body_revision": proposed.body_revision.address,
+                        "proposal_result": proposed.result_ref.identifier,
+                        "body_revision": proposed.body_revision.identifier,
                     },
                 )
                 raise
@@ -483,7 +483,7 @@ class AnnotationOperations:
     async def read(
         self, target: str | AnnotationRef, *, namespace: str | None = None
     ) -> AnnotationView:
-        """Read an adopted annotation by address or reference in the selected namespace."""
+        """Read an adopted annotation by identifier or reference in the selected namespace."""
         async with self.execution.operation("annotation.read"):
             async with self.database.read() as tx:
                 return await self.read_in(tx, target, namespace=namespace)
@@ -505,14 +505,14 @@ class AnnotationOperations:
                 raise NousError(
                     "cognition.revision_mismatch", "Conflicting exact revision references"
                 )
-        identifiers = list(requested)
+        object_ids = list(requested)
         heads: dict[str, str] = {}
-        for start in range(0, len(identifiers), 400):
+        for start in range(0, len(object_ids), 400):
             rows = (
                 await tx.connection.execute(
                     sa.select(schema.annotation_heads).where(
                         schema.annotation_heads.c.record_revision_id.in_(
-                            identifiers[start : start + 400]
+                            object_ids[start : start + 400]
                         )
                     )
                 )
@@ -539,20 +539,20 @@ class AnnotationOperations:
                     "cognition.instance_mismatch", "Annotation belongs to another instance"
                 )
             namespace = namespace or target.namespace_id
-            identifier = target.id
+            object_id = target.id
         else:
-            identifier = target
-        identifier = await tx.connection.scalar(
+            object_id = target
+        object_id = await tx.connection.scalar(
             sa.select(schema.annotations.c.id).where(
                 sa.or_(
-                    schema.annotations.c.id == identifier,
-                    schema.annotations.c.address == identifier,
+                    schema.annotations.c.id == object_id,
+                    schema.annotations.c.identifier == object_id,
                 )
             )
         )
-        if identifier is None:
+        if object_id is None:
             raise NousError("cognition.annotation_not_found", "Annotation does not exist")
-        view = (await self._read_views_in(tx, [identifier]))[identifier]
+        view = (await self._read_views_in(tx, [object_id]))[object_id]
         await self.records.resolve_in(
             tx, view.ref.body_revision,
             namespace or self.execution.snapshot.typed_values().cognition.default_namespace,
@@ -568,21 +568,21 @@ class AnnotationOperations:
     ) -> dict[str, AnnotationView]:
         """One materializer serves single reads and corpus capture; no content IO occurs here."""
         output: dict[str, AnnotationView] = {}
-        identifiers = list(dict.fromkeys(annotation_ids))
-        for start in range(0, len(identifiers), 400):
-            chunk = identifiers[start : start + 400]
+        object_ids = list(dict.fromkeys(annotation_ids))
+        for start in range(0, len(object_ids), 400):
+            chunk = object_ids[start : start + 400]
             annotations = (
                 (
                     await tx.connection.execute(
                         sa.select(
                             schema.annotations,
                             written.records.c.id.label("record_id"),
-                            written.records.c.address.label("record_address"),
+                            written.records.c.identifier.label("record_identifier"),
                             written.records.c.kind.label("record_kind"),
                             written.records.c.namespace_id,
                             written.revisions.c.ordinal.label("record_ordinal"),
                             written.namespaces.c.content_generation,
-                            processing_results.c.address.label("proposal_address"),
+                            processing_results.c.identifier.label("proposal_identifier"),
                             schema.annotation_heads.c.annotation_id.label("active_annotation"),
                         )
                         .join(
@@ -672,7 +672,7 @@ class AnnotationOperations:
                     namespace_id=row["namespace_id"],
                     kind=row["record_kind"],
                     id=row["record_id"],
-                    address=row["record_address"],
+                    identifier=row["record_identifier"],
                 )
                 bound = bindings[row["id"]]
                 if any(
@@ -697,7 +697,7 @@ class AnnotationOperations:
                         instance_id=self.artifacts.instance_id,
                         namespace_id=record.namespace_id,
                         id=row["id"],
-                        address=row["address"],
+                        identifier=row["identifier"],
                         body_revision=RecordRevisionRef(
                             record_ref=record,
                             revision_id=row["record_revision_id"],
@@ -707,7 +707,7 @@ class AnnotationOperations:
                     proposal_result=ResultRef(
                         instance_id=self.artifacts.instance_id,
                         id=row["proposal_result_id"],
-                        address=row["proposal_address"],
+                        identifier=row["proposal_identifier"],
                     ),
                     parser_profile=row["parser_profile"],
                     bindings=bound,
@@ -716,7 +716,7 @@ class AnnotationOperations:
                     active=row["active_annotation"] == row["id"],
                     generation=row["content_generation"],
                 )
-        missing = set(identifiers) - output.keys()
+        missing = set(object_ids) - output.keys()
         if missing:
             raise NousError(
                 "cognition.annotation_not_found",

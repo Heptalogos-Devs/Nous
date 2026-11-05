@@ -121,7 +121,7 @@ def emit(ctx: typer.Context, value: Mapping[str, object]) -> None:
 def emit_content_view(view: ContentReadView) -> None:
     """Render the shared content view for text and media using existing representations."""
     language = language_for(_current.get())
-    typer.echo(f"{view.name} · {view.media_type} · {view.export_ref.address}")
+    typer.echo(f"{view.name} · {view.media_type} · {view.export_ref.identifier}")
     selection = view.source.selection.model_dump(mode="json", exclude_none=True, exclude_defaults=True)
     if selection:
         typer.echo(f"{translate('Selection', language)}: {json.dumps(selection, ensure_ascii=False)}")
@@ -129,12 +129,12 @@ def emit_content_view(view: ContentReadView) -> None:
         typer.echo(view.body_text)
     for representation in view.available_representations:
         typer.echo(
-            f"  {translate(representation.kind, language)} · {representation.operation} · {representation.result_ref.address} · {representation.content.artifact.address}"
+            f"  {translate(representation.kind, language)} · {representation.operation} · {representation.result_ref.identifier} · {representation.content.artifact.identifier}"
         )
         for source in representation.source_selections:
             coordinates = source.selection.model_dump(mode="json", exclude_none=True, exclude_defaults=True)
             suffix = " " + json.dumps(coordinates, ensure_ascii=False) if coordinates else ""
-            typer.echo(f"  {translate('Source', language)}: {source.artifact.address}{suffix}")
+            typer.echo(f"  {translate('Source', language)}: {source.artifact.identifier}{suffix}")
         if representation.body_text is not None:
             typer.echo(representation.body_text)
 
@@ -407,7 +407,7 @@ def runtime_check(
     if recent:
         console.print(
             "Recent adopted results: "
-            + ", ".join(f"{item['operation']} {item['address']}" for item in recent),
+            + ", ".join(f"{item['operation']} {item['identifier']}" for item in recent),
             markup=False,
         )
     language = language_for(options(ctx))

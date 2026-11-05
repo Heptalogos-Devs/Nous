@@ -14,7 +14,7 @@ class ConceptRef(CognitiveValue):
     instance_id: str
     namespace_id: str
     id: str
-    address: str
+    identifier: str
 
 
 class ConceptRevisionRef(CognitiveValue):
@@ -23,8 +23,8 @@ class ConceptRevisionRef(CognitiveValue):
     ordinal: int = Field(ge=1)
 
     @property
-    def address(self) -> str:
-        return f"{self.concept_ref.address}@{self.ordinal}"
+    def identifier(self) -> str:
+        return f"{self.concept_ref.identifier}@{self.ordinal}"
 
 
 class ConceptView(CognitiveValue):
@@ -41,7 +41,7 @@ class AnnotationRef(CognitiveValue):
     instance_id: str
     namespace_id: str
     id: str
-    address: str
+    identifier: str
     body_revision: RecordRevisionRef
 
 

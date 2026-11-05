@@ -235,7 +235,7 @@ class MediaPreparer:
                 },
                 coverage={**plan.coverage, "text_mappings": mappings},
             )
-        _track_completed(cached.ref.address)
+        _track_completed(cached.ref.identifier)
         body = cached.outputs[0].artifact
         resolved_mappings = tuple(
             TextMapping(
@@ -258,7 +258,7 @@ class MediaPreparer:
             await self.artifacts.text_view(body),
             cached.inputs,
             cached.coverage,
-            (cached.ref.address,),
+            (cached.ref.identifier,),
             resolved_mappings,
         )
 
@@ -322,7 +322,7 @@ class MediaPreparer:
     ) -> dict[str, Artifact] | None:
         cached = await self.results.find_cached(operation, cache_key)
         if cached is not None:
-            _track_completed(cached.ref.address)
+            _track_completed(cached.ref.identifier)
             return {
                 output.name: await self.artifacts.get(output.artifact) for output in cached.outputs
             }
@@ -366,7 +366,7 @@ class MediaPreparer:
             },
             coverage={"selection": selection.model_dump(mode="json")},
         )
-        _track_completed(result.ref.address)
+        _track_completed(result.ref.identifier)
         return {output.name: await self.artifacts.get(output.artifact) for output in result.outputs}
 
     @staticmethod
@@ -963,7 +963,7 @@ class MediaPreparer:
         async with lock:
             cached = await self.results.find_cached("media.prepare.image", cache_key)
             if cached is not None:
-                _track_completed(cached.ref.address)
+                _track_completed(cached.ref.identifier)
                 frame_info = cast(list[dict[str, JsonValue]], cached.parameters["frames"])
                 derivatives = {
                     output.name: await self.artifacts.get(output.artifact)
@@ -1033,7 +1033,7 @@ class MediaPreparer:
                         },
                         coverage={"selection": selection.model_dump(mode="json")},
                     )
-                    _track_completed(derived.ref.address)
+                    _track_completed(derived.ref.identifier)
                     derivatives = {
                         output.name: await self.artifacts.get(output.artifact)
                         for output in derived.outputs
@@ -1320,7 +1320,7 @@ class MediaPreparer:
                     raise NousError(
                         "media.page_requires_vision",
                         "Selected PDF page has no extractable text",
-                        details={"page": page.page, "artifact": original.ref.address},
+                        details={"page": page.page, "artifact": original.ref.identifier},
                     )
                 # Text and page image retain their independent body references in the result graph.
                 sources.append(

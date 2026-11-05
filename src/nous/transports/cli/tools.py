@@ -12,6 +12,7 @@ import typer
 from pydantic import JsonValue, TypeAdapter
 
 from nous.common.errors import NousError
+from nous.common.identifier import identifier_type
 from nous.configuration import Configuration
 from nous.content.contracts import ContentReadView, ProcessingResult, SourceSelection
 from nous.models.executor import PreparedGeneration
@@ -41,7 +42,7 @@ for group, name in (
 
 
 def _source(value: str) -> Path | str:
-    return value if value.startswith("art:") else Path(value)
+    return value if identifier_type(value) == "art" else Path(value)
 
 
 def _schema(path: Path | None) -> dict[str, JsonValue] | None:
@@ -83,9 +84,9 @@ def _selection(pages: str | None, start: float | None, end: float | None) -> Sou
 
 
 async def _result(
-    runtime: Runtime, address: str, *, sources: bool = True, details: bool = False
+    runtime: Runtime, identifier: str, *, sources: bool = True, details: bool = False
 ) -> dict[str, object]:
-    return await runtime.results.read_view(address, sources=sources, details=details)
+    return await runtime.results.read_view(identifier, sources=sources, details=details)
 
 
 def _emit_results(ctx: typer.Context, value: dict[str, object]) -> None:
@@ -105,7 +106,7 @@ def _emit_results(ctx: typer.Context, value: dict[str, object]) -> None:
             typer.echo(f"\n[{key}]")
             for view in views:
                 emit_content_view(ContentReadView.model_validate(view))
-        reference = cast(dict[str, object], result.get("ref", {})).get("address")
+        reference = cast(dict[str, object], result.get("ref", {})).get("identifier")
         if reference:
             typer.echo(f"\n{reference}")
 
@@ -145,7 +146,7 @@ def model_probe(
                 "model": model,
                 "checked": "supplied_input" if input else "text",
                 "results": [
-                    await _result(runtime, result.ref.address) for result in outcome.results
+                    await _result(runtime, result.ref.identifier) for result in outcome.results
                 ],
                 "coverage": outcome.coverage,
             }
@@ -159,7 +160,7 @@ def model_run(
     task: Annotated[str, typer.Option("--task")],
     input: Annotated[
         list[str] | None,
-        typer.Option("--input", help='文件或 Artifact 地址（如 "art:..."）；可重复'),
+        typer.Option("--input", help='文件或 Artifact 地址（如 "art(...)"）；可重复'),
     ] = None,
     text: Annotated[
         list[str] | None, typer.Option("--text", help="文字输入；可重复，排在文件之后")
@@ -196,12 +197,12 @@ def model_run(
                 if options(ctx).json_mode:
                     typer.echo(
                         json.dumps(
-                            {"event": "completed", "result": result.ref.address},
+                            {"event": "completed", "result": result.ref.identifier},
                             ensure_ascii=False,
                         )
                     )
                 else:
-                    typer.echo(f"\n结果 / Result: {result.ref.address}", err=True)
+                    typer.echo(f"\n结果 / Result: {result.ref.identifier}", err=True)
 
             outcome = await runtime.generation.run_input(
                 task,
@@ -219,10 +220,10 @@ def model_run(
                 on_completed=completed if stream else None,
             )
             return {
-                "artifacts": [a.ref.address for a in outcome.artifacts],
+                "artifacts": [a.ref.identifier for a in outcome.artifacts],
                 "results": [
                     await _result(
-                        runtime, result.ref.address, details=details or options(ctx).json_mode
+                        runtime, result.ref.identifier, details=details or options(ctx).json_mode
                     )
                     for result in outcome.results
                 ],
@@ -403,7 +404,7 @@ def content_read(ctx: typer.Context, ref: str) -> None:
                     value["text"] = await runtime.artifacts.read_text(ref)
                 else:
                     value["export_hint"] = (
-                        f'nous tools content export "{artifact.ref.address}" --output PATH'
+                        f'nous tools content export "{artifact.ref.identifier}" --output PATH'
                     )
                 return value
 
@@ -429,7 +430,7 @@ def media_inspect(ctx: typer.Context, input: str) -> None:
             async with runtime.execution.operation("media.inspect") as context:
                 artifact = (
                     await runtime.artifacts.get(input)
-                    if input.startswith("art:")
+                    if identifier_type(input) == "art"
                     else await runtime.artifacts.ingest(Path(input))
                 )
                 info = await runtime.media.preparer.inspect(
@@ -478,12 +479,12 @@ def media_analyze(
                     schema=_schema(schema),
                 )
                 return {
-                    "artifact": outcome.artifact.ref.address,
+                    "artifact": outcome.artifact.ref.identifier,
                     "coverage": outcome.coverage,
-                    "descriptions": [item.ref.address for item in outcome.descriptions],
+                    "descriptions": [item.ref.identifier for item in outcome.descriptions],
                     "results": [
                         await _result(
-                            runtime, item.ref.address, details=details or options(ctx).json_mode
+                            runtime, item.ref.identifier, details=details or options(ctx).json_mode
                         )
                         for item in outcome.batches
                     ],
@@ -560,4 +561,4 @@ def embedding_run(
     rows = cast(list[dict[str, object]], value["rows"])
     typer.echo(f"{space}: {len(rows)} vectors, {definition['dimensions']} dimensions ({purpose})")
     for ref in cast(list[dict[str, str]], value["results"]):
-        typer.echo(ref["address"])
+        typer.echo(ref["identifier"])

@@ -10,15 +10,15 @@
 
 ```sh
 nous --instance ./temp/nous-wave tools wave build --manifest docs/examples/wave/collection.json --space <已配置空间>
-nous --instance ./temp/nous-wave tools wave inspect "<build返回的完整wav地址>"
-nous --instance ./temp/nous-wave tools wave query "<完整wav地址>" "取消了任务，为什么文件仍在使用" --mode dense
-nous --instance ./temp/nous-wave tools wave query "<完整wav地址>" "取消了任务，为什么文件仍在使用" --mode rivermemo --explain
-nous --instance ./temp/nous-wave tools wave query "<完整wav地址>" "此前相关的资源所有权经验" --context docs/examples/wave/context.json --core "resource-ownership" --mode hybrid --explain
-nous --instance ./temp/nous-wave tools wave query "<完整wav地址>" "先定位资源再解决问题" --mode rivermemo --thinking-stages docs/examples/wave/stages.json --explain
-nous --instance ./temp/nous-wave tools wave read "<完整wav地址>" "cancellation" --sources
+nous --instance ./temp/nous-wave tools wave inspect "<build返回的完整wav标识符>"
+nous --instance ./temp/nous-wave tools wave query "<完整wav标识符>" "取消了任务，为什么文件仍在使用" --mode dense
+nous --instance ./temp/nous-wave tools wave query "<完整wav标识符>" "取消了任务，为什么文件仍在使用" --mode rivermemo --explain
+nous --instance ./temp/nous-wave tools wave query "<完整wav标识符>" "此前相关的资源所有权经验" --context docs/examples/wave/context.json --core "resource-ownership" --mode hybrid --explain
+nous --instance ./temp/nous-wave tools wave query "<完整wav标识符>" "先定位资源再解决问题" --mode rivermemo --thinking-stages docs/examples/wave/stages.json --explain
+nous --instance ./temp/nous-wave tools wave read "<完整wav标识符>" "cancellation" --sources
 ```
 
-按实际返回值替换参数；命令中的 `<...>` 是说明占位，不是可直接粘贴的合法地址。库未配 embedding 时，先用现有 embedding probe/run 完成选择；不要在产品默认值写入某台开发机模型名。
+按实际返回值替换参数；命令中的 `<...>` 是说明占位，不是可直接粘贴的合法标识符。库未配 embedding 时，先用现有 embedding probe/run 完成选择；不要在产品默认值写入某台开发机模型名。
 
 ## 需要观察的结果
 

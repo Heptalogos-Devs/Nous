@@ -2,7 +2,7 @@
 
 ## 正式对象
 
-Artifact 表示一次正式接纳或生成的不可变内容，拥有稳定身份、短地址、接纳时的类型声明、名称及可用时间；经过探测的实际表示类型由 MediaInfo/InputPart 明确给出。BlobRef 仅表示字节摘要和长度。同样字节的不同接纳可以属于不同事件；推导同一份材料的多个版本也不会增加独立证据。
+Artifact 表示一次正式接纳或生成的不可变内容，拥有稳定身份、可读标识符、接纳时的类型声明、名称及可用时间；经过探测的实际表示类型由 MediaInfo/InputPart 明确给出。BlobRef 仅表示字节摘要和长度。同样字节的不同接纳可以属于不同事件；推导同一份材料的多个版本也不会增加独立证据。
 
 ProcessingResult 保存成功处理的 operation、producer、精确输入、有名输出、参数、coverage、formed_at、recorded_at。失败或中断由用例返回部分结果，不先建通用 running/receipt 总表。
 

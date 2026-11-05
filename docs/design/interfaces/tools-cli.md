@@ -26,9 +26,9 @@ nous tools prompt import summarize ./my-prompt
 nous tools prompt diff summarize
 nous tools prompt restore summarize
 nous tools content add ./clip.mp4
-nous tools media inspect "<完整Artifact地址>"
-nous tools media analyze "<完整Artifact地址>" --strategy describe_then_structure
-nous tools result read "<完整结果地址>" --sources --details
+nous tools media inspect "<完整Artifact标识符>"
+nous tools media analyze "<完整Artifact标识符>" --strategy describe_then_structure
+nous tools result read "<完整结果标识符>" --sources --details
 nous tools embedding run --space chosen-text --purpose document --input ./notes.md
 ```
 

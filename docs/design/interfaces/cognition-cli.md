@@ -4,24 +4,24 @@
 
 `note`、`journal`、`journalize`、`concept`、`query`、`read`、`feedback` 是长期保留的产品命令，调用共同 cognition 操作。`tools` 继续提供模型/媒体/内容/Wave 管理与实验能力。两者共享基础实现，低层工具不拥有另一个日记系统。
 
-全部命令使用当前 `--instance` / `--profile`、`--json`、`--language` 和错误出口。可读实例 profile 见 [实例选择](instance-selection.md)；状态和未命名标题统一经 presentation 本地化，不持久保存中英双语标签。`--namespace` 可覆盖默认域。正文通过 `--text`、`--file` 或 stdin 的明确单一来源读取；三者冲突时报参数错误。短引用使用实际返回的完整地址，命令行传入时保留引号。
+全部命令使用当前 `--instance` / `--profile`、`--json`、`--language` 和错误出口。可读实例 profile 见 [实例选择](instance-selection.md)；状态和未命名标题统一经 presentation 本地化，不持久保存中英双语标签。`--namespace` 可覆盖默认域。正文通过 `--text`、`--file` 或 stdin 的明确单一来源读取；三者冲突时报参数错误。短引用使用实际返回的完整标识符，命令行传入时保留引号。
 
 手工记录与 journalize 使用 `--source "REF"` 保存普通引用，`--current-basis "REF"` 明确依赖当前认识，`--inspiration "REF"` 保存启发材料。选中的来源按这三组依次分配 S1、S2 等局部键；来源在操作开始时固定精确版本。修订保留原来源；`--clear-sources` 明确移除，或重新传入来源替换绑定。
 
 ```sh
 nous note add --text "今天发现取消等待后线程仍在读取文件。"
 nous note add --text "调整资源持有范围后，关闭正常完成。" --remember
-nous journalize --source "note:..." --source "note:..." --topic "取消与资源生命周期" --save
+nous journalize --source "note(...)" --source "note(...)" --topic "取消与资源生命周期" --save
 nous journal create --file ./review.md --title "资源释放的责任"
 nous query "取消任务后文件仍被占用，有没有相关经验？"
-nous read "jrn:...@1" --sources
-nous journal edit "jrn:..."
-nous journal history "jrn:..."
-nous journal annotate "jrn:..."
-nous feedback record "jrn:...@2" --category accuracy --value negative --comment "第三段把线程结束写成了协程结束"
-nous journal replace "jrn:...@2" --file ./corrected.md --intent correction --reason "更正线程与协程的区别"
+nous read "jrn(...)@1" --sources
+nous journal edit "jrn(...)"
+nous journal history "jrn(...)"
+nous journal annotate "jrn(...)"
+nous feedback record "jrn(...)@2" --category accuracy --value negative --comment "第三段把线程结束写成了协程结束"
+nous journal replace "jrn(...)@2" --file ./corrected.md --intent correction --reason "更正线程与协程的区别"
 nous query "资源应该何时释放？"
-nous journal archive "jrn:...@3"
+nous journal archive "jrn(...)@3"
 ```
 
 `journal edit` 打开当前正文，保存其 base revision；编辑器返回后提交 expected revision。冲突保留用户文件并显示当前版本与重新采用入口。直接 `nous journal replace "<exact-ref>" --file ...` 要求精确基准；局部 patch 和语言 revise/rewrite/reflect 见 [维护入口](journal-maintenance-cli.md)。不能悄悄先读最新版本替换调用者的基准。
@@ -36,9 +36,9 @@ nous journal archive "jrn:...@3"
 
 ## 查询与精确读取
 
-`query` 使用当前 namespace 视图并按需刷新；`--mode lexical` 不调用模型；`--snapshot "wav:..."` 固定旧视图。命中显示标题、最佳原文片段、精确 revision、简短来源和必要时间。`--explain` 展开实际通道/分数/概念路径；高级原始值留给 JSON，不把全部 Native diagnostics 默认倾倒。
+`query` 使用当前 namespace 视图并按需刷新；`--mode lexical` 不调用模型；`--snapshot "wav(...)"` 固定旧视图。命中显示标题、最佳原文片段、精确 revision、简短来源和必要时间。`--explain` 展开实际通道/分数/概念路径；高级原始值留给 JSON，不把全部 Native diagnostics 默认倾倒。
 
-`nous read "jrn:..."` 表示当前；`nous read "jrn:...@N"` 和命中精确引用保持固定。`--blocks B2,B3` 使用对应版本 TextView；不同版本的块键不得串用。旧版本读取显示“当前另有 @M”，不替换正文。
+`nous read "jrn(...)"` 表示当前；`nous read "jrn(...)@N"` 和命中精确引用保持固定。`--blocks B2,B3` 使用对应版本 TextView；不同版本的块键不得串用。旧版本读取显示“当前另有 @M”，不替换正文。
 
 `nous feedback record "<精确引用>"` 可评价当时的正文；`--selection` 接收命中返回的 ContentSelection JSON，`--snapshot` 与 `--candidate` 标识并核对某次命中，`--query-result` 则记录整次公开查询结果。明确更正通过 journal patch/replace/revise 并关联 --feedback；意见列表与处理结果由 feedback read/list/resolve 提供。
 

@@ -209,7 +209,7 @@ class CognitiveRetrieval:
                     cause=error,
                 ) from error
             descriptor = await self.wave.describe(
-                cast(dict[str, str], published["snapshot"])["address"]
+                cast(dict[str, str], published["snapshot"])["identifier"]
             )
             return captured.namespace, descriptor
 
@@ -286,7 +286,7 @@ class CognitiveRetrieval:
             settings = self.execution.snapshot.typed_values()
             result = await self.wave.query(
                 WaveQuery(
-                    snapshot=snapshot.ref.address,
+                    snapshot=snapshot.ref.identifier,
                     text=request.text,
                     mode=selected.mode,
                     top_k=request.top_k or settings.wave.query.top_k,

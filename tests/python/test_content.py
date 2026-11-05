@@ -92,11 +92,9 @@ def test_pdf_preparation_reuses_pages_and_rejects_foreign_coordinates(tmp_path: 
         document: pdfium.PdfDocument = pdfium.PdfDocument.new()
         try:
             for width in (90, 120, 150):
-                # The public page factory leaves width/height unannotated upstream.
-                page: pdfium.PdfPage = document.new_page(width=width, height=90)  # pyright: ignore[reportUnknownMemberType]
+                page: pdfium.PdfPage = document.new_page(width=width, height=90)
                 page.close()
-            # The public API accepts a binary stream; upstream leaves dest/version unannotated.
-            document.save(data)  # pyright: ignore[reportUnknownMemberType]
+            document.save(data)
         finally:
             document.close()
         async with open_instance(instance, environment={}) as runtime:
@@ -284,10 +282,10 @@ def test_result_and_output_references_share_callers_transaction(tmp_path: Path) 
             assert rolled_back is not None
             for reference in (rolled_back.ref, rolled_back.outputs[0].artifact):
                 with pytest.raises(NousError, match="does not exist"):
-                    if reference.address.startswith("res:"):
-                        await runtime.results.get(reference.address)
+                    if reference.identifier.startswith("res("):
+                        await runtime.results.get(reference.identifier)
                     else:
-                        await runtime.artifacts.get(reference.address)
+                        await runtime.artifacts.get(reference.identifier)
             async with runtime.database.write() as tx:
                 adopted = await runtime.results.adopt_in(
                     tx,

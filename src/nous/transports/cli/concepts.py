@@ -26,7 +26,7 @@ def emit_concept(ctx: typer.Context, result: ConceptView) -> None:
     if options(ctx).json_mode:
         typer.echo(result.model_dump_json())
     else:
-        typer.echo(f"{result.label} — {result.ref.address}\n{result.description}")
+        typer.echo(f"{result.label} — {result.ref.identifier}\n{result.description}")
         if result.aliases:
             typer.echo(
                 translate("Aliases", language_for(options(ctx))) + ": " + ", ".join(result.aliases)
@@ -127,7 +127,7 @@ def emit_annotation(ctx: typer.Context, result: AnnotationProposalView | Annotat
         typer.echo(result.model_dump_json())
     elif isinstance(result, AnnotationProposalView):
         typer.echo(
-            f"{translate('Proposal', language_for(options(ctx)))}: {result.result_ref.address}\n{translate('Body', language_for(options(ctx)))}: {result.body_revision.address}"
+            f"{translate('Proposal', language_for(options(ctx)))}: {result.result_ref.identifier}\n{translate('Body', language_for(options(ctx)))}: {result.body_revision.identifier}"
         )
         for concept in result.annotation.concepts:
             typer.echo(
@@ -140,10 +140,10 @@ def emit_annotation(ctx: typer.Context, result: AnnotationProposalView | Annotat
             )
     else:
         typer.echo(
-            f"{translate('Annotation', language_for(options(ctx)))}: {result.ref.address}\n{translate('Body', language_for(options(ctx)))}: {result.ref.body_revision.address}"
+            f"{translate('Annotation', language_for(options(ctx)))}: {result.ref.identifier}\n{translate('Body', language_for(options(ctx)))}: {result.ref.body_revision.identifier}"
         )
         for key, concept in result.bindings.items():
-            typer.echo(f"{key}: {concept.label} — {concept.ref.address}")
+            typer.echo(f"{key}: {concept.label} — {concept.ref.identifier}")
 
 
 @journal_cli.command("annotate")
@@ -158,7 +158,7 @@ def annotate(
     proposal_result: str | None = None,
     bindings: Path | None = None,
     known_concept: Annotated[
-        list[str] | None, typer.Option("--known-concept", help='"C1=con:...@N"')
+        list[str] | None, typer.Option("--known-concept", help='"C1=con(...)@N"')
     ] = None,
     draft_only: bool = False,
     historical: bool = False,
@@ -171,7 +171,7 @@ def annotate(
         key, separator, target = value.partition("=")
         if not separator or not key or not target or key in candidates:
             raise NousError(
-                "input.invalid_candidate", 'Use distinct --known-concept "C1=con:...@N" entries'
+                "input.invalid_candidate", 'Use distinct --known-concept "C1=con(...)@N" entries'
             )
         candidates[key] = target
     supplied: dict[str, ConceptTarget | None] | None = None

@@ -25,9 +25,9 @@ def _show(ctx: typer.Context, feedback: FeedbackView) -> None:
     language = language_for(options(ctx))
     def tr(message: str) -> str:
         return translate(message, language)
-    typer.echo(f"{tr('Feedback')}: {feedback.address}")
+    typer.echo(f"{tr('Feedback')}: {feedback.identifier}")
     if feedback.target.revision is not None:
-        typer.echo(f"{tr('Target')}: {feedback.target.revision.address}")
+        typer.echo(f"{tr('Target')}: {feedback.target.revision.identifier}")
     elif feedback.target.query is not None:
         typer.echo(f"{tr('Query')}: {feedback.target.query.context.request_text}")
     typer.echo(f"{tr('Category')}: {tr(feedback.category)}")
@@ -42,7 +42,7 @@ def _show(ctx: typer.Context, feedback: FeedbackView) -> None:
         labels = {"acknowledged": "Acknowledged", "not_applied": "Not applied", "applied": "Applied"}
         typer.echo(f"{tr('Status')}: {tr(labels[resolution.action])}")
         if resolution.applied_revision:
-            typer.echo(f"{tr('Applied revision')}: {resolution.applied_revision.address}")
+            typer.echo(f"{tr('Applied revision')}: {resolution.applied_revision.identifier}")
         if resolution.note:
             typer.echo(f"{tr('Resolution')}: {resolution.note}")
         if resolution.mapping_note:

@@ -39,7 +39,7 @@ def annotation_paths(annotation: AnnotationView) -> tuple[CandidatePath, ...]:
             label=path.label,
             steps=tuple(
                 PathStep(
-                    concept=annotation.bindings[occurrences[key].concept_key].ref.address,
+                    concept=annotation.bindings[occurrences[key].concept_key].ref.identifier,
                     selections=tuple(part.selection for part in occurrences[key].selections),
                 )
                 for key in path.occurrences
@@ -53,7 +53,7 @@ def annotation_occurrences(annotation: AnnotationView) -> tuple[CandidateOccurre
     return tuple(
         CandidateOccurrence(
             key=occurrence.key,
-            concept=annotation.bindings[occurrence.concept_key].ref.address,
+            concept=annotation.bindings[occurrence.concept_key].ref.identifier,
             selections=tuple(part.selection for part in occurrence.selections),
         )
         for occurrence in annotation.occurrences
@@ -124,17 +124,17 @@ class ProjectionBuilder:
         relevant: set[str] = set()
         pending = list(captured.current)
         while pending:
-            identifier = pending.pop()
-            if identifier in relevant:
+            object_id = pending.pop()
+            if object_id in relevant:
                 continue
-            relevant.add(identifier)
+            relevant.add(object_id)
             pending.extend(
                 source.owner_revision.revision_id
-                for source in captured.records[identifier].sources
+                for source in captured.records[object_id].sources
                 if source.usage != "inspiration" and source.owner_revision is not None
             )
-        for identifier, item in captured.records.items():
-            if identifier not in relevant:
+        for object_id, item in captured.records.items():
+            if object_id not in relevant:
                 continue
             parents: list[str] = []
             for source in item.sources:
@@ -149,14 +149,14 @@ class ProjectionBuilder:
                         parents.append("artifact:" + ref.id)
             documents.append(
                 Document(
-                    key="revision:" + identifier,
-                    input=DocumentInput(artifact=item.body.address),
+                    key="revision:" + object_id,
+                    input=DocumentInput(artifact=item.body.identifier),
                     derived_from=tuple(dict.fromkeys(parents)),
                     times=CognitiveTimes.model_validate(item.revision["cognitive_times"]),
                 )
             )
         documents.extend(
-            Document(key="artifact:" + key, input=DocumentInput(artifact=ref.address))
+            Document(key="artifact:" + key, input=DocumentInput(artifact=ref.identifier))
             for key, ref in external.items()
         )
         document_values = {document.key: document for document in documents}
@@ -164,25 +164,25 @@ class ProjectionBuilder:
         document_roots: dict[str, tuple[str, ...]] = {}
         source_documents: list[str] = []
         formal_origins = {
-            ref.id: "record:" + identifier for identifier, ref in captured.origins.items()
+            ref.id: "record:" + object_id for object_id, ref in captured.origins.items()
         }
         external_lineage = await self.results.provenance(tuple(external.values()))
-        for identifier, ref in external.items():
-            summary = external_lineage[identifier]
+        for object_id, ref in external.items():
+            summary = external_lineage[object_id]
             if not summary.complete:
                 raise NousError(
                     "wave.provenance_incomplete",
                     "External source lineage is incomplete",
-                    details={"artifact": ref.address},
+                    details={"artifact": ref.identifier},
                 )
             keys: list[str] = []
             for origin in summary.support_roots:
                 root = formal_origins.get(origin.id, "artifact:" + origin.id)
                 root_refs[root] = (origin,)
                 keys.append(root)
-            document_roots["artifact:" + identifier] = tuple(dict.fromkeys(keys))
+            document_roots["artifact:" + object_id] = tuple(dict.fromkeys(keys))
             if summary.support_roots == (ref,) and summary.terminal_roots == (ref,):
-                source_documents.append("artifact:" + identifier)
+                source_documents.append("artifact:" + object_id)
 
         def roots(key: str) -> tuple[str, ...]:
             if key in document_roots:
@@ -217,21 +217,21 @@ class ProjectionBuilder:
         associations: list[Association] = []
         concepts: dict[str, Concept] = {}
         sequences: list[SourceSequence] = []
-        for identifier in captured.current:
-            item = captured.records[identifier]
+        for object_id in captured.current:
+            item = captured.records[object_id]
             if item.revision["purpose"] == "exploration" and not include_exploration:
                 continue
-            if identifier in captured.needs_review and not include_review:
+            if object_id in captured.needs_review and not include_review:
                 continue
-            doc = "revision:" + identifier
-            annotation = captured.annotations.get(identifier)
+            doc = "revision:" + object_id
+            annotation = captured.annotations.get(object_id)
             paths = annotation_paths(annotation) if annotation else ()
             occurrences = annotation_occurrences(annotation) if annotation else ()
             if annotation:
                 concepts.update(
                     {
-                        meaning.ref.address: Concept(
-                            key=meaning.ref.address,
+                        meaning.ref.identifier: Concept(
+                            key=meaning.ref.identifier,
                             label=meaning.label,
                             description=meaning.description,
                             aliases=meaning.aliases,
@@ -253,14 +253,14 @@ class ProjectionBuilder:
                 "title": item.revision["title"],
                 "kind": item.record["kind"],
                 "purpose": item.revision["purpose"],
-                "annotation": annotation.ref.address if annotation else None,
-                "needs_review": identifier in captured.needs_review,
+                "annotation": annotation.ref.identifier if annotation else None,
+                "needs_review": object_id in captured.needs_review,
                 "sources": [source.model_dump(mode="json") for source in item.sources],
             }
             candidates.append(
                 DocumentCandidates(
                     document=doc,
-                    group_key=item.ref.address,
+                    group_key=item.ref.identifier,
                     whole=True,
                     local_layout=CompleteBlocks(target_bytes=candidate_limit),
                     paths=paths,

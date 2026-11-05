@@ -386,7 +386,7 @@ def test_media_stages_share_routes_and_reuse_completed_description(tmp_path: Pat
         asyncio.run(configure())
         added = model_cli(instance, "tools", "content", "add", str(image))
         assert added.returncode == 0, added.stdout
-        artifact = json.loads(added.stdout)["ref"]["address"]
+        artifact = json.loads(added.stdout)["ref"]["identifier"]
         command = [
             "tools",
             "media",
@@ -404,7 +404,7 @@ def test_media_stages_share_routes_and_reuse_completed_description(tmp_path: Pat
         error = json.loads(failed.stdout)["error"]
         assert error["details"]["failed_stage"] == "structure"
         completed = [
-            ref for ref in error["details"]["completed_result_refs"] if ref.startswith("res:")
+            ref for ref in error["details"]["completed_result_refs"] if ref.startswith("res(")
         ]
         assert len(completed) == 1
         structure_ok = True
@@ -597,7 +597,7 @@ def test_same_model_preset_fallback_is_prepared_and_persisted(
         assert events[-1]["event"] == "completed"
         reference = events[-1]["result"]
     else:
-        reference = json.loads(response.stdout)["results"][0]["ref"]["address"]
+        reference = json.loads(response.stdout)["results"][0]["ref"]["identifier"]
     restored = model_cli(instance, "tools", "result", "read", reference, "--details")
     assert restored.returncode == 0, restored.stderr
     result = json.loads(restored.stdout)
@@ -808,7 +808,7 @@ def test_model_structured_repair_and_fallback_survive_restart(
     result = json.loads(response.stdout)["results"][0]
     assert result["parameters"]["attempts"] == len(submissions)
     assert result["parameters"]["usage"]["input_tokens"] == 20
-    restored = model_cli(instance, "tools", "result", "read", result["ref"]["address"], "--details")
+    restored = model_cli(instance, "tools", "result", "read", result["ref"]["identifier"], "--details")
     assert restored.returncode == 0, restored.stderr
     assert json.loads(json.loads(restored.stdout)["outputs"][0]["view"]["body_text"]) == {
         "answer": 42
@@ -871,11 +871,11 @@ def test_embedding_response_validation_and_adoption_survive_restart(
         assert response.returncode == 0, (response.stdout, response.stderr)
         result = json.loads(response.stdout)
         restored = model_cli(
-            instance, "tools", "result", "read", result["results"][0]["address"], "--details"
+            instance, "tools", "result", "read", result["results"][0]["identifier"], "--details"
         )
         assert restored.returncode == 0, restored.stderr
         assert json.loads(restored.stdout)["parameters"]["usage"] == {}
-        vectors = result["rows"][0]["artifact"]["address"]
+        vectors = result["rows"][0]["artifact"]["identifier"]
         export = tmp_path / "vectors.npy"
         exported = model_cli(
             instance, "tools", "content", "export", vectors, "--output", str(export)

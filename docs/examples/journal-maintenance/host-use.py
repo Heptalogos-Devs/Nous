@@ -35,7 +35,7 @@ async def main(instance: Path) -> None:
         print("原版本：", old.body)
         found = await cognition.retrieval.query(CognitiveQuery(text="会议日期", mode="lexical"))
         for group in found.groups:
-            print(group.revision_ref.address, group.title, group.passages[0].text)
+            print(group.revision_ref.identifier, group.title, group.passages[0].text)
 
 
 if __name__ == "__main__":

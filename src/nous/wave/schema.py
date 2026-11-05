@@ -19,7 +19,7 @@ snapshots = sa.Table(
     "wave_snapshots",
     metadata,
     sa.Column("id", sa.String, primary_key=True),
-    sa.Column("address", sa.String, nullable=False, unique=True),
+    sa.Column("identifier", sa.String, nullable=False, unique=True),
     sa.Column("collection_id", sa.String, sa.ForeignKey("wave_collections.id"), nullable=False),
     sa.Column("manifest_artifact_id", sa.String, sa.ForeignKey(artifacts.c.id), nullable=True),
     sa.Column("covered_generation", sa.Integer, nullable=True),

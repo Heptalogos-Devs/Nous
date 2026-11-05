@@ -7,6 +7,7 @@ from typing import Literal, TypedDict, cast
 import sqlalchemy as sa
 
 from nous.common.errors import NousError
+from nous.common.identifier import identifier_type, split_revision
 from nous.content.artifacts import ArtifactStore
 from nous.content.contracts import (
     ArtifactRef,
@@ -36,7 +37,7 @@ class RecordRow(TypedDict):
     id: str
     namespace_id: str
     kind: Literal["note", "journal"]
-    address: str
+    identifier: str
     head_revision_id: str
     archived: bool
     recall: bool
@@ -104,7 +105,7 @@ class RecordReader:
             namespace_id=row["namespace_id"],
             kind=row["kind"],
             id=row["id"],
-            address=row["address"],
+            identifier=row["identifier"],
         )
 
     async def resolve_in(
@@ -112,7 +113,7 @@ class RecordReader:
     ) -> tuple[RecordRow, RevisionRow, Namespace]:
         """Resolve a target and namespace in the caller's read view.
 
-        An address suffixed with ``@N`` or a revision reference selects that exact
+        An identifier suffixed with ``@N`` or a revision reference selects that exact
         revision; an unqualified record selects its head. The returned record and
         revision rows are copies.
 
@@ -128,15 +129,7 @@ class RecordReader:
             ref = target
         else:
             ref = None
-            address, marker, suffix = target.rpartition("@")
-            if marker:
-                try:
-                    ordinal = int(suffix)
-                except ValueError as error:
-                    raise NousError(
-                        "input.invalid_reference", "Revision ordinal must be an integer"
-                    ) from error
-                target = address
+            target, ordinal = split_revision(target)
         if ref:
             if ref.instance_id != self.artifacts.instance_id:
                 raise NousError("cognition.instance_mismatch", "Record belongs to another instance")
@@ -145,7 +138,7 @@ class RecordReader:
             (
                 await tx.connection.execute(
                     sa.select(schema.records).where(
-                        sa.or_(schema.records.c.id == target, schema.records.c.address == target)
+                        sa.or_(schema.records.c.id == target, schema.records.c.identifier == target)
                     )
                 )
             )
@@ -258,7 +251,7 @@ class RecordReader:
                 )
                 for row in revisions
             }
-        output: dict[str, list[SourceBinding]] = {identifier: [] for identifier in revision_ids}
+        output: dict[str, list[SourceBinding]] = {object_id: [] for object_id in revision_ids}
         for row in groups:
             output[str(row["revision_id"])].append(
                 SourceBinding(
@@ -269,7 +262,7 @@ class RecordReader:
                     name=row["name"],
                 )
             )
-        return {identifier: tuple(bindings) for identifier, bindings in output.items()}
+        return {object_id: tuple(bindings) for object_id, bindings in output.items()}
 
     async def select_sources(
         self,
@@ -298,7 +291,7 @@ class RecordReader:
                     if (
                         isinstance(target, ArtifactRef)
                         or isinstance(target, str)
-                        and target.startswith("art:")
+                        and identifier_type(target) == "art"
                     ):
                         artifact = await self.artifacts.get_in(tx, target)
                         output.append(
@@ -450,7 +443,7 @@ class RecordReader:
         offset: int = 0,
         limit: int | None = None,
     ) -> tuple[CommittedRecord, ...]:
-        """List current record heads in address order for the selected namespace.
+        """List current record heads in identifier order for the selected namespace.
 
         The archived flag selects archived or unarchived records. Offset must be
         nonnegative and limit between 1 and 200; an omitted limit uses configuration.
@@ -474,12 +467,12 @@ class RecordReader:
                     query = query.where(schema.records.c.kind == kind)
                 ids = (
                     await tx.connection.scalars(
-                        query.order_by(schema.records.c.address).offset(offset).limit(limit)
+                        query.order_by(schema.records.c.identifier).offset(offset).limit(limit)
                     )
                 ).all()
                 output: list[CommittedRecord] = []
-                for identifier in ids:
-                    row, revision, _ = await self.resolve_in(tx, identifier, ns.id)
+                for object_id in ids:
+                    row, revision, _ = await self.resolve_in(tx, object_id, ns.id)
                     output.append(self.committed(row, revision, ns, False))
                 return tuple(output)
 

@@ -68,7 +68,7 @@ cache-keys = [
 ]
 
 [tool.basedpyright]
-stubPath = "typings/manual"
+stubPath = "typings"
 extraPaths = ["src"]
 include = ["src", "tests/python"]
 exclude = ["legacy", "temp", ".venv", "dist"]

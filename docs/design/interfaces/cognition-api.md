@@ -5,7 +5,7 @@
 ## 公共值与调用
 
 ```text
-RecordRef(instance_id, namespace_id, kind, id, address)
+RecordRef(instance_id, namespace_id, kind, id, identifier)
 RecordRevisionRef(record_ref, revision_id, ordinal)
 SourceBinding(key, selections: tuple[ContentSelection, ...], owner_revision?, usage, name?)
 SourceRequest(target, usage=reference)

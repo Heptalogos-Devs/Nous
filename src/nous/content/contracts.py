@@ -15,13 +15,13 @@ class ContentValue(BaseModel):
 
 class ArtifactRef(ContentValue):
     id: str
-    address: str
+    identifier: str
     instance_id: str
 
 
 class ResultRef(ContentValue):
     id: str
-    address: str
+    identifier: str
     instance_id: str
 
 

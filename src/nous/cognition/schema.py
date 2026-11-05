@@ -21,7 +21,7 @@ records = sa.Table(
         "namespace_id", sa.String, sa.ForeignKey(namespaces.c.id), nullable=False, index=True
     ),
     sa.Column("kind", sa.String, nullable=False),
-    sa.Column("address", sa.String, unique=True, nullable=False),
+    sa.Column("identifier", sa.String, unique=True, nullable=False),
     sa.Column(
         "head_revision_id",
         sa.String,
@@ -83,7 +83,7 @@ journal_drafts = sa.Table(
     "journal_drafts",
     metadata,
     sa.Column("id", sa.String, primary_key=True),
-    sa.Column("address", sa.String, nullable=False, unique=True),
+    sa.Column("identifier", sa.String, nullable=False, unique=True),
     sa.Column(
         "namespace_id", sa.String, sa.ForeignKey(namespaces.c.id), nullable=False, index=True
     ),

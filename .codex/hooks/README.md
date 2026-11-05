@@ -31,7 +31,7 @@ same marker. Git-ignored untracked files and files outside this worktree are not
 selected. Diagnostics from imported files outside the selected Git scope are
 not included in the hook response.
 
-BasedPyright resolves maintained dependency stubs from `typings/manual/`, as set
-by its `stubPath`. Generated reference snapshots elsewhere under `typings/` are
-preserved without taking over dependency imports. Handwritten `.pyi` files in
-any Git-visible location still receive explicit hook checks when changed.
+BasedPyright resolves dependency stubs from `typings/`, as set by its `stubPath`.
+Generated snapshots can supply dependency types; their generator-marked files
+remain excluded from hook diagnostics. Handwritten `.pyi` files in any
+Git-visible location still receive explicit hook checks when changed.

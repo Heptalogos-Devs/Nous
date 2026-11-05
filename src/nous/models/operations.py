@@ -523,7 +523,7 @@ class GenerationOperations:
                     continue
                 transcription = transcription or self.freeze_transcription(snapshot)
                 result = await self.transcribe(source, part, snapshot, context, transcription)
-                completed.append(result.ref.address)
+                completed.append(result.ref.identifier)
                 output = next(output for output in result.outputs if output.name == "transcript")
                 texts.append(await self.results.artifacts.read_text(output.artifact))
                 parts.append(
@@ -593,12 +593,12 @@ class GenerationOperations:
                         on_prepared=on_prepared,
                     )
                     results.append(result)
-                    completed.append(result.ref.address)
+                    completed.append(result.ref.identifier)
                     if on_completed:
                         on_completed(result)
             except (NousError, asyncio.CancelledError, TimeoutError) as exc:
                 details: dict[str, JsonValue] = {
-                    "artifacts": [artifact.ref.address for artifact in prepared.artifacts],
+                    "artifacts": [artifact.ref.identifier for artifact in prepared.artifacts],
                     "completed_result_refs": list[JsonValue](completed),
                     "unfinished_coverage": [
                         batch.coverage for batch in prepared.batches[len(results) :]
@@ -693,7 +693,7 @@ class GenerationOperations:
                     parameters=produced.parameters,
                     coverage=produced.coverage,
                 )
-            record_completed(result.ref.address)
+            record_completed(result.ref.identifier)
             return result
         except BaseException as error:
             add_error_context(

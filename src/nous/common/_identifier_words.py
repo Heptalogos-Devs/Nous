@@ -1,8 +1,8 @@
-"""Frozen ordinary-token word tables for 65-bit addresses.
+"""Frozen ordinary-token word tables for 65-bit identifiers.
 
-The table order is part of the address encoding. The words were selected from
+The table order is part of the identifier encoding. The words were selected from
 public tokenizer vocabularies and evaluated across the tokenizers in the
-LLM-optimized identifier research.
+[LLM-optimized identifier research](<ROOT>/docs/research/llm-optimized-id/REPORT.md).
 """
 
 FIRST_WORDS = tuple(

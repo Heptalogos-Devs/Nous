@@ -46,10 +46,10 @@ uv run --no-dev nous --instance ./temp/nous-local tools content add ./notes.md
 uv run --no-dev nous --instance ./temp/nous-local note add --text "取消等待后，后台线程仍在读文件。" --remember
 uv run --no-dev nous --instance ./temp/nous-local journal create --text "资源需要持有到实际工作结束。" --title "资源释放"
 uv run --no-dev nous --instance ./temp/nous-local query "任务结束后文件为什么还被占用" --mode lexical
-uv run --no-dev nous --instance ./temp/nous-local read "替换为返回的完整修订地址" --sources
+uv run --no-dev nous --instance ./temp/nous-local read "替换为返回的完整修订标识符" --sources
 ```
 
-配置写作和标注任务后，可用 `nous journalize --source "<Note地址>" --topic "<主题>"` 生成可读草稿，再用 `journal draft read` 查看、`journal draft adopt` 明确采用；`journal annotate` 可以提出并采用概念标注。完整命令、修订、来源用途和反馈见[认知命令](docs/design/interfaces/cognition-cli.md)。
+配置写作和标注任务后，可用 `nous journalize --source "<Note标识符>" --topic "<主题>"` 生成可读草稿，再用 `journal draft read` 查看、`journal draft adopt` 明确采用；`journal annotate` 可以提出并采用概念标注。完整命令、修订、来源用途和反馈见[认知命令](docs/design/interfaces/cognition-cli.md)。
 
 请求失败时，可用返回的操作关联执行 `nous runtime logs --operation <操作引用>`；保留日志与能力状态见[诊断指南](docs/design/interfaces/diagnostics.md)。
 
@@ -61,14 +61,14 @@ uv run --no-dev nous --instance ./temp/nous-local read "替换为返回的完整
 uv run --no-dev nous --instance ./temp/nous-local tools model discover gateway
 uv run --no-dev nous --instance ./temp/nous-local tools model run --task summarize --input ./notes.md
 uv run --no-dev nous --instance ./temp/nous-local tools media analyze ./photo.png --strategy describe_then_structure
-uv run --no-dev nous --instance ./temp/nous-local tools result read "替换为返回的完整结果地址" --sources
+uv run --no-dev nous --instance ./temp/nous-local tools result read "替换为返回的完整结果标识符" --sources
 uv run --no-dev nous --instance ./temp/nous-local tools embedding probe text-embedding --input ./notes.md
 uv run --no-dev nous --instance ./temp/nous-local tools wave build --manifest ./docs/examples/wave/collection.json --space chosen-text
-uv run --no-dev nous --instance ./temp/nous-local tools wave query "替换为构建返回的完整快照地址" "取消后文件为何仍被占用" --mode hybrid --explain
-uv run --no-dev nous --instance ./temp/nous-local tools wave read "替换为构建返回的完整快照地址" "candidate-key" --sources
+uv run --no-dev nous --instance ./temp/nous-local tools wave query "替换为构建返回的完整快照标识符" "取消后文件为何仍被占用" --mode hybrid --explain
+uv run --no-dev nous --instance ./temp/nous-local tools wave read "替换为构建返回的完整快照标识符" "candidate-key" --sources
 ```
 
-将示例地址替换为实际返回的完整短地址并保留引号，chosen-text 替换为已配置空间，candidate-key 使用实际命中键并保留引号；Embedding 空间按 probe 结果配置后使用 `tools embedding run --space <空间名> --purpose document --input ./notes.md`。音视频处理需要可从 PATH 找到的 FFmpeg 和 ffprobe，也可以通过 `media.ffmpeg_path`、`media.ffprobe_path` 指定可执行文件。详细命令和选项见[工具命令](docs/design/interfaces/tools-cli.md)、[Wave 命令](docs/design/interfaces/wave-cli.md)、[本地网关](docs/development/local-gateway.md)与[实际使用通路](docs/development/model-media-walkthrough.md)。
+将示例标识符替换为实际返回的完整可读标识符并保留引号，chosen-text 替换为已配置空间，candidate-key 使用实际命中键并保留引号；Embedding 空间按 probe 结果配置后使用 `tools embedding run --space <空间名> --purpose document --input ./notes.md`。音视频处理需要可从 PATH 找到的 FFmpeg 和 ffprobe，也可以通过 `media.ffmpeg_path`、`media.ffprobe_path` 指定可执行文件。详细命令和选项见[工具命令](docs/design/interfaces/tools-cli.md)、[Wave 命令](docs/design/interfaces/wave-cli.md)、[本地网关](docs/development/local-gateway.md)与[实际使用通路](docs/development/model-media-walkthrough.md)。
 
 ## 产品范围
 

@@ -14,6 +14,7 @@ import numpy.typing as npt
 from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
 from nous.common.errors import NousError
+from nous.common.identifier import identifier_type
 from nous.common.operations import record_completed
 from nous.configuration import ConfigSnapshot
 from nous.content.artifacts import ArtifactStore
@@ -91,12 +92,12 @@ class EmbeddingOperations:
             if adopt:
                 artifact = await self.artifacts.accept(
                     InputSpec(kind="artifact", artifact=item)
-                    if item.startswith("art:")
+                    if identifier_type(item) == "art"
                     else InputSpec(kind="file", path=item)
                 )
                 selections.append(ContentSelection(artifact=artifact.ref))
                 continue
-            if item.startswith("art:"):
+            if identifier_type(item) == "art":
                 artifact = await self.artifacts.get(item)
                 value = await self.artifacts.read_text(artifact.ref, max_bytes=limit)
             else:
@@ -180,7 +181,7 @@ class EmbeddingOperations:
                 purpose=purpose,
                 input_digests=digests,
             )
-        record_completed(result.ref.address)
+        record_completed(result.ref.identifier)
         return canonical
 
     async def probe(

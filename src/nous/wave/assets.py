@@ -101,7 +101,7 @@ class SnapshotMapping(TypedDict):
 
 class SnapshotRow(TypedDict):
     id: str
-    address: str
+    identifier: str
     collection_id: str
     manifest_artifact_id: str | None
     covered_generation: int | None
@@ -212,7 +212,7 @@ async def content_evidence(
                 raise NousError(
                     "wave.provenance_incomplete",
                     "Cannot freeze incomplete source lineage",
-                    details={"artifact": ref.address},
+                    details={"artifact": ref.identifier},
                 )
             origins = summary.support_roots
             if document.evidence_group and len(origins) != 1:

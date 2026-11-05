@@ -28,10 +28,10 @@ def emit_outcome(ctx: typer.Context, result: WritingOutcome) -> None:
         typer.echo(result.model_dump_json())
     elif result.record:
         if result.draft_ref:
-            typer.echo(f"{translate('Draft', language)}: {result.draft_ref.address}")
+            typer.echo(f"{translate('Draft', language)}: {result.draft_ref.identifier}")
         emit_record(ctx, result.record)
     elif result.draft:
-        typer.echo(result.draft.ref.address)
+        typer.echo(result.draft.ref.identifier)
         if result.draft.diff is not None:
             typer.echo(result.draft.diff or translate("No changes", language))
         else:
@@ -50,7 +50,7 @@ def journalize(
         typer.Option(
             "--source",
             help=(
-                'Note or original material not adopted as a Journal, e.g. "note:..."; '
+                'Note or original material not adopted as a Journal, e.g. "note(...)"; '
                 "repeat for joint writing"
             ),
         ),
@@ -110,7 +110,7 @@ def draft_read(
     if options(ctx).json_mode:
         typer.echo(result.model_dump_json())
     else:
-        typer.echo(result.ref.address)
+        typer.echo(result.ref.identifier)
         if result.adopted_as == "override":
             typer.echo(translate("Generated proposal", language_for(options(ctx))))
         typer.echo(
@@ -120,7 +120,7 @@ def draft_read(
         )
         if result.adopted_revision:
             typer.echo(
-                f"{translate('Adopted as complete Markdown override' if result.adopted_as == 'override' else 'Adopted', language_for(options(ctx)))}: {result.adopted_revision.address}"
+                f"{translate('Adopted as complete Markdown override' if result.adopted_as == 'override' else 'Adopted', language_for(options(ctx)))}: {result.adopted_revision.identifier}"
             )
         from . import emit_content_view
 

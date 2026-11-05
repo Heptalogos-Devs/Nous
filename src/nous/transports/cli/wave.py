@@ -54,7 +54,7 @@ def _hits(value: dict[str, object], explain: bool) -> None:
         content = cast(dict[str, object], hit.get("content", {}))
         artifact = cast(dict[str, object], content.get("artifact", {}))
         typer.echo(
-            f"   {artifact.get('address', '')} {json.dumps(content.get('selection', {}), ensure_ascii=False)}"
+            f"   {artifact.get('identifier', '')} {json.dumps(content.get('selection', {}), ensure_ascii=False)}"
         )
         if hit.get("concepts"):
             typer.echo("   Concepts: " + ", ".join(cast(list[str], hit["concepts"])))

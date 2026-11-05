@@ -9,13 +9,13 @@
 | 数据 | 必要字段与约束 |
 |---|---|
 | cognition_namespaces | id, name UNIQUE, content_generation >=0；初始化 default |
-| written_records | id, namespace_id, kind(note/journal), address UNIQUE, head_revision_id, archived, recall；kind 不原地改写 |
+| written_records | id, namespace_id, kind(note/journal), identifier UNIQUE, head_revision_id, archived, recall；kind 不原地改写 |
 | written_revisions | id, record_id, ordinal, committed_generation, parent_id?, title?, title_source(user/heading/none), body_artifact_id, purpose?, author/viewpoint, cognitive_times, change_kind/reason, origin_result_id?, recorded_at；UNIQUE(record_id,ordinal) |
 | revision_sources | revision_id, key, ordinal, cognitive_target_revision?, usage, name；UNIQUE(revision_id,key)，target 反向索引 |
 | revision_source_targets | revision_id, key, ordinal, artifact_id, selection；每个来源组的有序精确 targets |
-| journal_drafts | id, address, namespace_id, result_id UNIQUE, body_artifact, sources/context, base_revision?, adopted_revision?, adopted_as?；只有成功草稿 |
-| concepts / concept_revisions | stable id/namespace/address/head；exact label/description/aliases/author/times、可选 producer_result/源正文引用，ordinal 唯一 |
-| annotations | id/address, record_revision_id, parser_profile, producer_result?, 只保存已采用的不可变标注；提案留在普通 ProcessingResult |
+| journal_drafts | id, identifier, namespace_id, result_id UNIQUE, body_artifact, sources/context, base_revision?, adopted_revision?, adopted_as?；只有成功草稿 |
+| concepts / concept_revisions | stable id/namespace/identifier/head；exact label/description/aliases/author/times、可选 producer_result/源正文引用，ordinal 唯一 |
+| annotations | id/identifier, record_revision_id, parser_profile, producer_result?, 只保存已采用的不可变标注；提案留在普通 ProcessingResult |
 | revision_annotation_heads | record_revision_id PRIMARY KEY, annotation_id；唯一可变活动指针，与不可变正文/标注分开 |
 | annotation_bindings | annotation_id, local_key, concept_revision_id；local key 唯一 |
 | annotation_occurrences / paths / path_steps | exact body block/selector、绑定和有序重复出现；用顺序/外键约束 |
@@ -34,13 +34,13 @@
 
 反馈更正：WriteTx → records.append_in + Feedback.applied_revision + 依据失效声明 + 必要的 generation → commit。
 
-参与者接收已有 WriteTx，不重新打开写事务。地址生成使用已有 new_address/insert_address 能力；需要复用其合理功能时改为公开的窄接口，不从 content._records 私有模块跨域偷用。
+参与者接收已有 WriteTx，不重新打开写事务。标识符生成使用已有 new_identifier/insert_identifier 能力；需要复用其合理功能时改为公开的窄接口，不从 content._records 私有模块跨域偷用。
 
 ## 引用一致性
 
 Namespace、对象 kind 和 exact revision 的归属在一次操作边界及采用中核实。SQLite 外键/唯一键维护真实关系。body Artifact 和 ConceptRevision 均不可变；head 指针、archive/recall、active_annotation 在明确 owner 内修改。
 
-精确来源目标只能指已经存在的版本，因此 revision 依赖自然向已提交内容指向；跨文稿循环的旧/新版本引用仍按版本 DAG 展开，不能把 logical 地址存成会随将来变化的边。
+精确来源目标只能指已经存在的版本，因此 revision 依赖自然向已提交内容指向；跨文稿循环的旧/新版本引用仍按版本 DAG 展开，不能把 logical 标识符存成会随将来变化的边。
 
 ## 读取规模
 

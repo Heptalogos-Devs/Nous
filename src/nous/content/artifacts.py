@@ -13,8 +13,8 @@ from uuid import uuid4
 import sqlalchemy as sa
 from pydantic import JsonValue
 
-from nous.common.address import insert_address
 from nous.common.errors import NousError
+from nous.common.identifier import insert_identifier
 from nous.common.operations import record_completed
 from nous.storage.content import ContentStore, PublishedContent
 from nous.storage.database import Database, ReadTx, WriteTx
@@ -101,7 +101,7 @@ class ArtifactStore:
                 received_at=now,
                 formed_at=None,
             )
-        record_completed(artifact.ref.address)
+        record_completed(artifact.ref.identifier)
         return artifact
 
     async def register_in(
@@ -116,13 +116,13 @@ class ArtifactStore:
         formed_at: datetime | None,
     ) -> Artifact:
         """Register identity and body in the caller's transaction; the caller owns commit."""
-        identifier, recorded = str(uuid4()), self.clock.utc_now()
-        address = await insert_address(
+        object_id, recorded = str(uuid4()), self.clock.utc_now()
+        identifier = await insert_identifier(
             tx,
             schema.artifacts,
             "art",
             {
-                "id": identifier,
+                "id": object_id,
                 "media_type": media_type,
                 "display_name": display_name,
                 "source": source,
@@ -131,9 +131,9 @@ class ArtifactStore:
                 "recorded_at": recorded.isoformat(),
             },
         )
-        await self.content.attach_in(tx, identifier, "body", published)
+        await self.content.attach_in(tx, object_id, "body", published)
         return Artifact(
-            ref=ArtifactRef(id=identifier, address=address, instance_id=self.instance_id),
+            ref=ArtifactRef(id=object_id, identifier=identifier, instance_id=self.instance_id),
             media_type=media_type,
             display_name=display_name,
             source=source,
@@ -158,7 +158,7 @@ class ArtifactStore:
     ) -> tuple[Artifact, ...]:
         """Resolve artifacts in the caller's read transaction, preserving input order.
 
-        String references can be IDs or addresses; typed references must belong
+        String references can be IDs or identifiers; typed references must belong
         to this instance. Duplicates are preserved. A missing artifact or a
         reference from another instance raises ``NousError``.
         """
@@ -173,15 +173,15 @@ class ArtifactStore:
             else:
                 targets.append(ref)
         found: dict[str, Artifact] = {}
-        identifiers = list(dict.fromkeys(targets))
-        for offset in range(0, len(identifiers), 400):
-            chunk = identifiers[offset : offset + 400]
+        object_ids = list(dict.fromkeys(targets))
+        for offset in range(0, len(object_ids), 400):
+            chunk = object_ids[offset : offset + 400]
             rows = (
                 await tx.connection.execute(
                     sa.select(
                         schema.artifacts,
                         schema.results.c.id.label("producer_id"),
-                        schema.results.c.address.label("producer_address"),
+                        schema.results.c.identifier.label("producer_identifier"),
                     )
                     .outerjoin(
                         schema.outputs, schema.outputs.c.artifact_id == schema.artifacts.c.id
@@ -189,7 +189,7 @@ class ArtifactStore:
                     .outerjoin(schema.results, schema.results.c.id == schema.outputs.c.result_id)
                     .where(
                         sa.or_(
-                            schema.artifacts.c.id.in_(chunk), schema.artifacts.c.address.in_(chunk)
+                            schema.artifacts.c.id.in_(chunk), schema.artifacts.c.identifier.in_(chunk)
                         )
                     )
                 )
@@ -197,7 +197,7 @@ class ArtifactStore:
             for row in rows:
                 artifact = Artifact(
                     ref=ArtifactRef(
-                        id=str(row["id"]), address=str(row["address"]), instance_id=self.instance_id
+                        id=str(row["id"]), identifier=str(row["identifier"]), instance_id=self.instance_id
                     ),
                     media_type=str(row["media_type"]),
                     display_name=str(row["display_name"]),
@@ -207,13 +207,13 @@ class ArtifactStore:
                     recorded_at=cast(datetime, date_value(row["recorded_at"])),
                     producer_result_ref=ResultRef(
                         id=str(row["producer_id"]),
-                        address=str(row["producer_address"]),
+                        identifier=str(row["producer_identifier"]),
                         instance_id=self.instance_id,
                     )
                     if row["producer_id"]
                     else None,
                 )
-                found[artifact.ref.id] = found[artifact.ref.address] = artifact
+                found[artifact.ref.id] = found[artifact.ref.identifier] = artifact
         missing = next((target for target in targets if target not in found), None)
         if missing is not None:
             raise NousError(
@@ -229,16 +229,16 @@ class ArtifactStore:
         else:
             target = ref
         async with self.database.read() as tx:
-            identifier = await tx.connection.scalar(
+            object_id = await tx.connection.scalar(
                 sa.select(schema.artifacts.c.id).where(
-                    sa.or_(schema.artifacts.c.id == target, schema.artifacts.c.address == target)
+                    sa.or_(schema.artifacts.c.id == target, schema.artifacts.c.identifier == target)
                 )
             )
-            if identifier is None:
+            if object_id is None:
                 raise NousError(
                     "content.not_found", "Artifact does not exist", details={"ref": target}
                 )
-            return await self.content.resolve_in(tx, str(identifier))
+            return await self.content.resolve_in(tx, str(object_id))
 
     async def read_view_many(
         self,
@@ -252,16 +252,16 @@ class ArtifactStore:
         async with self.database.read() as tx:
             originals = await self.get_many_in(tx, [selection.artifact for selection in selections])
             blobs = await self.content.resolve_many_in(tx, [item.ref.id for item in originals])
-            identifiers = {item.ref.id for item in originals}
+            object_ids = {item.ref.id for item in originals}
             represented: dict[
                 str, list[tuple[dict[str, object], tuple[ContentSelection, ...]]]
             ] = {}
             if representations == "existing":
                 direct = sa.select(schema.parts.c.result_id).where(
-                    schema.parts.c.artifact_id.in_(identifiers)
+                    schema.parts.c.artifact_id.in_(object_ids)
                 )
                 origins = sa.select(schema.origins.c.result_id).where(
-                    schema.origins.c.artifact_id.in_(identifiers)
+                    schema.origins.c.artifact_id.in_(object_ids)
                 )
                 result_ids = list((await tx.connection.execute(direct.union(origins))).scalars())
                 if result_ids:
@@ -307,7 +307,7 @@ class ArtifactStore:
                             await tx.connection.execute(
                                 sa.select(
                                     schema.results.c.id,
-                                    schema.results.c.address,
+                                    schema.results.c.identifier,
                                     schema.results.c.operation,
                                     schema.results.c.coverage,
                                     schema.results.c.parameters,
@@ -348,8 +348,8 @@ class ArtifactStore:
                                 "A representation belongs to another instance",
                             )
                         details: dict[str, object] = {**dict(row), "representation_kind": info["kind"]}
-                        for identifier in {item.artifact.id for item in exact} & identifiers:
-                            represented.setdefault(identifier, []).append((details, exact))
+                        for object_id in {item.artifact.id for item in exact} & object_ids:
+                            represented.setdefault(object_id, []).append((details, exact))
             derived = await self.get_many_in(
                 tx,
                 list(
@@ -404,7 +404,7 @@ class ArtifactStore:
                         kind=str(row["representation_kind"]),
                         result_ref=ResultRef(
                             id=str(row["id"]),
-                            address=str(row["address"]),
+                            identifier=str(row["identifier"]),
                             instance_id=self.instance_id,
                         ),
                         operation=str(row["operation"]),

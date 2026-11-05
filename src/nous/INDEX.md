@@ -4,7 +4,7 @@
 
 | 要处理的能力 | 位置与职责 |
 |---|---|
-| 短地址 | [common/address.py](common/address.py)：65 位短地址生成与事务内唯一分配；[common/_address_words.py](common/_address_words.py)：固定单元表。 |
+| 可读标识符 | [common/identifier.py](common/identifier.py)：65 位括号式标识符生成、类型识别、修订号解析与事务内唯一分配；[common/_identifier_words.py](common/_identifier_words.py)：固定单元表。 |
 | 实例启停与装配 | [runtime/bootstrap.py](runtime/bootstrap.py)：`initialize_instance`、`open_instance`、`Runtime.cognition` 和任务目录装配；同一运行期复用共享资源并提供绑定 Namespace 的实际操作。 |
 | 实例身份、路径和占有 | [runtime/instance.py](runtime/instance.py)：`InstanceLocator` / `InstanceProfiles`（可读名称注册与当前选择）、`InstanceLock`、`inspect_instance`；[runtime/paths.py](runtime/paths.py)：`ResolvedPaths`；[runtime/bindings.py](runtime/bindings.py)：持久资源身份与位置核对。 |
 | 配置定义与来源 | [configuration/definitions.py](configuration/definitions.py)：`NousConfig` 和基础字段；[configuration/metadata.py](configuration/metadata.py)：`ConfigModel`、`setting`；[configuration/service.py](configuration/service.py)：来源合并、`ConfigSnapshot`、字段目录与原子文件保存。模型、媒体、内容和认知配置分别位于 [models/configuration.py](models/configuration.py)、[media/configuration.py](media/configuration.py)、[content/configuration.py](content/configuration.py)、[cognition/configuration.py](cognition/configuration.py)。 |

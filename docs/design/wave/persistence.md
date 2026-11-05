@@ -4,7 +4,7 @@
 
 正式输入仍由 ArtifactStore/Embedding owner 保存。Wave 保存自己的集合清单、精确候选/Concept/来源映射与活动快照记录。Native 索引和几何文件位于 ResolvedPaths.index 下，是可重建资产。
 
-数据库初期只需 `wave_collections`（名称及当前快照）与 `wave_snapshots`（id/address、manifest Artifact、space、build profile、实际版本、index location）。引用哪些输入 Artifact/向量结果通过正式引用关系维护；不复制正文和整个模型调用账本。
+数据库初期只需 `wave_collections`（名称及当前快照）与 `wave_snapshots`（id/identifier、manifest Artifact、space、build profile、实际版本、index location）。引用哪些输入 Artifact/向量结果通过正式引用关系维护；不复制正文和整个模型调用账本。
 
 没有外部兼容要求，不创建 schema v1/v2 桥接。版本不支持时返回需重新构建；只重置授权开发实例。
 
@@ -14,7 +14,7 @@
 2. 通过 EmbeddingOperations.ensure 批量取得实际向量和逐行映射；精确复用已采用向量。
 3. 准备 FrozenAssets，Native 在 index 的本轮 staging 目录构建全部声明通道与数值资产。
 4. 构建成功后同文件系统完成发布为不可变 snapshot 目录；打开得到的 snapshot 检查必要身份和结构。
-5. 在短 WriteTx 保存快照与引用，并切换 collection.current_snapshot。数据库提交前不向用户返回正式地址。
+5. 在短 WriteTx 保存快照与引用，并切换 collection.current_snapshot。数据库提交前不向用户返回正式标识符。
 
 内容/模型与索引构建不持写事务。构建失败保留旧 current；已产生且未绑定的目录可在本次操作清理。文件发布成功而 SQL 失败不自动删除当前其它快照，也不重发模型请求。
 

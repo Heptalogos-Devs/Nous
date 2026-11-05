@@ -4,22 +4,22 @@
 
 CLI 调用绑定 Namespace 的同一应用能力。文件/标准输入/编辑器只负责取得输入；业务采用、来源和后处理属于应用操作。
 
-将示例中引号内的地址替换为实际返回的完整地址并保留引号；标有 `@N` 的参数使用所需修订的完整地址。
+将示例中引号内的标识符替换为实际返回的完整标识符并保留引号；标有 `@N` 的参数使用所需修订的完整标识符。
 
 ```text
 nous note add --text "..."
 nous journal create --file note.md
-nous journal edit "jrn:…"                      # 编辑器，人工修改
-nous journal patch "jrn:…@3" --changes edits.json
-nous journal replace "jrn:…@3" --file complete.md --reason "..."
-nous journal revise "jrn:…@3" --instruction "只修正这一段"
-nous journal rewrite "jrn:…@3" --instruction "重新组织全文"
-nous journal reflect "jrn:A@2" "jrn:B@1" --topic "共同认识"
-nous journal diff "jrn:…@2" "jrn:…@3"
-nous journal history "jrn:…"
-nous journal draft read "drf:…"
-nous journal draft adopt "drf:…"
-nous journalize --source "note:…" --source "art:…" --topic "新篇主题"
+nous journal edit "jrn(…)"                      # 编辑器，人工修改
+nous journal patch "jrn(…)@3" --changes edits.json
+nous journal replace "jrn(…)@3" --file complete.md --reason "..."
+nous journal revise "jrn(…)@3" --instruction "只修正这一段"
+nous journal rewrite "jrn(…)@3" --instruction "重新组织全文"
+nous journal reflect "jrn(…A)@2" "jrn(…B)@1" --topic "共同认识"
+nous journal diff "jrn(…)@2" "jrn(…)@3"
+nous journal history "jrn(…)"
+nous journal draft read "drf(…)"
+nous journal draft adopt "drf(…)"
+nous journalize --source "note(…)" --source "art(…)" --topic "新篇主题"
 ```
 
 `revise` 作为自然语言提出修改的正式命令；原来 revise 的整篇文件替换迁到 replace，更新现有文档和所有调用方，不保留两套歧义含义。用户也可直接以代码调用明确 API，不需构造临时 JSON。
@@ -33,11 +33,11 @@ root command 参数解析错误继续遵守统一 JSON/非零退出/debug 合同
 ## 反馈使用
 
 ```text
-nous feedback record "jrn:…@3" --category accuracy --value negative --comment "..."
-nous feedback list --target "jrn:…" --unresolved
-nous feedback read "fbk:…"
-nous journal revise "jrn:…@3" --feedback "fbk:…"
-nous feedback resolve "fbk:…" --action not_applied --note "..."
+nous feedback record "jrn(…)@3" --category accuracy --value negative --comment "..."
+nous feedback list --target "jrn(…)" --unresolved
+nous feedback read "fbk(…)"
+nous journal revise "jrn(…)@3" --feedback "fbk(…)"
+nous feedback resolve "fbk(…)" --action not_applied --note "..."
 ```
 
 query result 文件是正式 QueryResult 的序列化，`feedback record --query-result` 反序列化同一类型。提交意见不触发更正，显式修订采用后反馈才标为已处理。每个 complete command 只有一个根 operation。
@@ -92,8 +92,8 @@ revise/rewrite 的 --intent correction 明确按更正采用；省略时是普�
 revise、patch、replace 的 `--feedback-mappings mapping.json` 接收相同 JSON 对象：键是 --feedback 指定的反馈引用，值是适用于这份新基准的非空说明。没有映射时，旧版意见不会被静默当作当前版意见。自然语言提案把该对象保存在 DraftContext.feedback_mappings；采用后 resolution.mapping_note 保留说明。跨文稿和整体查询意见仍不接受这种采用。
 
 ```text
-nous journal revise "jrn:…@2" --feedback "fbk:…" --feedback-mappings mapping.json --instruction "只更正仍有问题的日期" --save
-nous journal patch "jrn:…@2" --changes edits.json --feedback "fbk:…" --feedback-mappings mapping.json
+nous journal revise "jrn(…)@2" --feedback "fbk(…)" --feedback-mappings mapping.json --instruction "只更正仍有问题的日期" --save
+nous journal patch "jrn(…)@2" --changes edits.json --feedback "fbk(…)" --feedback-mappings mapping.json
 ```
 
 标题来源 title_source 为 user、heading 或 none。显式用户标题在正文修改后保留；heading 来源随新 H1 修改或删除而更新，none 在界面按 kind 本地化显示默认名称。读取与历史 JSON 保留这项来源以及真正的 title 值。

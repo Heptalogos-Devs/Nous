@@ -94,7 +94,7 @@ class RecordOperations:
         A handled follow-up error yields ``partial`` with an issue; the record remains
         committed. Deferred retrieval for a recalled record is reported as pending.
         """
-        record_completed(record.revision_ref.address)
+        record_completed(record.revision_ref.identifier)
         annotation = StageOutcome(state="not_requested")
         retrieval = StageOutcome(state="pending" if record.in_recall else "not_requested")
         issues: list[OperationIssue] = []
@@ -111,7 +111,7 @@ class RecordOperations:
                 )
                 assert isinstance(adopted, AnnotationView)
                 annotation = StageOutcome(
-                    state="ready", generation=adopted.generation, ref=adopted.ref.address
+                    state="ready", generation=adopted.generation, ref=adopted.ref.identifier
                 )
             except NousError as error:
                 issue = OperationIssue(
@@ -120,8 +120,8 @@ class RecordOperations:
                     error.message,
                     dict(error.details),
                     error.retryable,
-                    (record.revision_ref.address,),
-                    (record.revision_ref.address,),
+                    (record.revision_ref.identifier,),
+                    (record.revision_ref.identifier,),
                 )
                 issues.append(issue)
                 annotation = StageOutcome(state="failed", issue=issue)
@@ -139,7 +139,7 @@ class RecordOperations:
                 retrieval = StageOutcome(
                     state="ready" if ready else "pending",
                     generation=covered,
-                    ref=cast(dict[str, str], published["snapshot"])["address"],
+                    ref=cast(dict[str, str], published["snapshot"])["identifier"],
                 )
             except NousError as error:
                 issue = OperationIssue(
@@ -148,13 +148,13 @@ class RecordOperations:
                     error.message,
                     dict(error.details),
                     error.retryable,
-                    (record.revision_ref.address,),
-                    (record.revision_ref.address,),
+                    (record.revision_ref.identifier,),
+                    (record.revision_ref.identifier,),
                 )
                 issues.append(issue)
                 retrieval = StageOutcome(state="failed", issue=issue)
         status = "partial" if issues else "success"
-        report_outcome(status, issues=issues, completed_refs=(record.revision_ref.address,))
+        report_outcome(status, issues=issues, completed_refs=(record.revision_ref.identifier,))
         return RecordOutcome(
             record=record,
             status=status,
@@ -472,8 +472,8 @@ class RecordOperations:
                     difflib.unified_diff(
                         before.body.splitlines(keepends=True),
                         after.body.splitlines(keepends=True),
-                        fromfile=before.revision_ref.address,
-                        tofile=after.revision_ref.address,
+                        fromfile=before.revision_ref.identifier,
+                        tofile=after.revision_ref.identifier,
                     )
                 ),
             )
@@ -539,7 +539,7 @@ class RecordOperations:
         offset: int = 0,
         limit: int | None = None,
     ) -> tuple[CommittedRecord, ...]:
-        """List current heads in address order using the selected kind and archive state.
+        """List current heads in identifier order using the selected kind and archive state.
 
         An omitted limit uses the configured page size. Offset must be nonnegative and
         limit must be between 1 and 200.

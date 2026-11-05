@@ -10,7 +10,7 @@ QueryContext:
   selected_context[]             # 本次实际参与的片段，角色、顺序、权重、精确来源
   omitted_context_count
   namespace_id
-  snapshot_ref: SnapshotRef(instance_id, id, address)
+  snapshot_ref: SnapshotRef(instance_id, id, identifier)
   captured_generation, profile_signature, space_signature?
   mode, effective_query_options
   filters, core_concept_refs[], temporary_cues[]
@@ -34,7 +34,7 @@ QueryContext 由共同 query preparation 的实际选择生成。不能仅回显
 
 Wave 的 CorpusView/快照提供 `owner`：manual 或 cognition，cognition 时明确 namespace_id。用于权限/归属的字段由正式构建者给出并保存；collection name 只用于命名。
 
-CognitiveRetrieval 和 FeedbackOperations 通过 Wave 的 typed snapshot descriptor/describe 操作读取 owner，不检查字符串 `startswith("cognition:...")`。`WaveOperations.describe(str | SnapshotRef)` 返回 SnapshotDescriptor，其 ref 是固定 instance_id/id/address，owner 使用 manual/cognition 判别类型；`describe_candidate(snapshot_ref, key)` 返回 exact content、origin_contents、group_key 和冻结 metadata。带完整 SnapshotRef 时校验所有身份字段。读所属范围不加载 Native 索引；原文/候选元数据读取同样不为一次反馈执行索引打开或模型请求。
+CognitiveRetrieval 和 FeedbackOperations 通过 Wave 的 typed snapshot descriptor/describe 操作读取 owner，不检查字符串 `startswith("cognition:...")`。`WaveOperations.describe(str | SnapshotRef)` 返回 SnapshotDescriptor，其 ref 是固定 instance_id/id/identifier，owner 使用 manual/cognition 判别类型；`describe_candidate(snapshot_ref, key)` 返回 exact content、origin_contents、group_key 和冻结 metadata。带完整 SnapshotRef 时校验所有身份字段。读所属范围不加载 Native 索引；原文/候选元数据读取同样不为一次反馈执行索引打开或模型请求。
 
 ## 反馈保存
 

@@ -25,9 +25,9 @@ CLI、HTTP 和 MCP 使用同一 `QueryRequest`。语言放在 `text`，调用者
 | `@ref(正式引用)`                     | 精确读取该对象或修订                         |
 | `@r(正式媒体引用)`                   | 把已有媒体资源作为召回线索                   |
 
-`@ref` 和 `@r` 中的“正式引用”是语法占位记号：使用结果实际返回的词序引用，或机器结果中的完整 `reference`。`addresses.exact` 固定到当前返回的修订；`addresses.object` 表示稳定认知对象，按本次查询的知识截点绑定其 head。对象引用与 `$history` 同用时仍只绑定该截点的一项修订。
+`@ref` 和 `@r` 中的“正式引用”是语法占位记号：使用结果实际返回的词序引用，或机器结果中的完整 `reference`。`identifiers.exact` 固定到当前返回的修订；`identifiers.object` 表示稳定认知对象，按本次查询的知识截点绑定其 head。对象引用与 `$history` 同用时仍只绑定该截点的一项修订。
 
-词序引用使用类型前缀及[共同地址格式](../foundation/application-boundaries.md)。Memory 对象前缀为 `mem:`，固定修订为 `memrev:`；原件为 `art:`。不要编造地址。`@ref`、Entity/Tag/Schema 选择器、`source_read` 和 `references` 工具共用目录及来源范围。知识包中的原地址按安装来源映射到接收主体；本机精确地址保持原绑定。机器认知引用形如 `kind:UUID@revision`；媒体也接受 `material:`、`source-region:`、`representation:` 或 `derived-region:` 完整引用。带空格的引用使用双引号字符串传入。
+词序引用使用类型前缀及[共同标识符格式](../foundation/application-boundaries.md)。Memory 对象使用 `mem(...)`，固定修订使用 `memrev(...)`；原件使用 `art(...)`。不要编造标识符。`@ref`、Entity/Tag/Schema 选择器、`source_read` 和 `references` 工具共用目录及来源范围。知识包中的原标识符按安装来源映射到接收主体；本机精确标识符保持原绑定。机器认知引用形如 `kind:UUID@revision`；媒体也接受 `material:`、`source-region:`、`representation:` 或 `derived-region:` 完整引用。带空格的引用使用双引号字符串传入。
 
 待接续的领域能力包括正式 Resource 名称目录、Observation/evidence 顶层返回和外部权威资源。当前查询使用本手册列出的已有目标与条件。
 

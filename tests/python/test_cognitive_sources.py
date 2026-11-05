@@ -99,6 +99,7 @@ def test_generated_source_links_preserve_existing_markdown() -> None:
 def test_retrieval_projection_preserves_original_annotation_and_plain_inputs(
     tmp_path: Path,
 ) -> None:
+    from nous.cognition.concept_contracts import AnnotationView
     from nous.cognition.contracts import SourceBinding
     from nous.content.annotations import AnnotationProposal
     from nous.content.contracts import ContentSelection
@@ -140,7 +141,8 @@ def test_retrieval_projection_preserves_original_annotation_and_plain_inputs(
                     "paths": [],
                 }
             )
-            await runtime.annotations.annotate(journal.revision_ref, proposal=proposal)
+            annotation = await runtime.annotations.annotate(journal.revision_ref, proposal=proposal)
+            assert isinstance(annotation, AnnotationView)
             await c.records.create_journal("资源释放需要明确的持有者。")
             query = await c.retrieval.query(
                 CognitiveQuery(namespace="default", text="资源释放", mode="lexical")
@@ -154,6 +156,15 @@ def test_retrieval_projection_preserves_original_annotation_and_plain_inputs(
             assert hit.passages[0].content.artifact == raw.body_artifact
             assert hit.passages[0].concept_refs
             assert (await c.records.read(journal.revision_ref)).body == body
+            concept = annotation.bindings["K"].ref
+            scoped = await c.retrieval.query(
+                CognitiveQuery(
+                    namespace="default", text="资源释放", mode="lexical",
+                    core_concepts=(concept.concept_ref.identifier,),
+                )
+            )
+            assert scoped.context.core_concept_refs == (concept.identifier,)
+            assert any(group.revision_ref == journal.revision_ref for group in scoped.groups)
             plain = await runtime.artifacts.ingest("普通文字")
             assert (
                 await semantic_text(ContentSelection(artifact=plain.ref), runtime.results)

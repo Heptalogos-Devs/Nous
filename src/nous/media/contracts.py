@@ -3,8 +3,8 @@ from typing import TYPE_CHECKING
 
 from pydantic import JsonValue
 from pydantic_ai.messages import BinaryContent
-from nous.common.errors import NousError
 
+from nous.common.errors import NousError
 from nous.content.contracts import (
     Artifact,
     ArtifactRef,
@@ -129,7 +129,7 @@ class AnalysisResult:
             dict.fromkeys(
                 (
                     *self.preparations,
-                    *(result.ref.address for result in (*self.descriptions, *self.batches)),
+                    *(result.ref.identifier for result in (*self.descriptions, *self.batches)),
                 )
             )
         )

@@ -343,7 +343,7 @@ def test_model_cli_fallback_and_structured_output(tmp_path: Path) -> None:
         assert len(received_headers) == 1
         assert not any(name.lower() == "authorization" for name in received_headers[0])
         reopened = subprocess.run(
-            [*command, "tools", "result", "read", result["ref"]["address"], "--sources"],
+            [*command, "tools", "result", "read", result["ref"]["identifier"], "--sources"],
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -352,8 +352,8 @@ def test_model_cli_fallback_and_structured_output(tmp_path: Path) -> None:
         )
         restored = json.loads(reopened.stdout)
         assert restored["outputs"][0]["view"]["body_text"] == "A saved answer."
-        assert restored["inputs"][0]["parts"][0]["content"]["artifact"]["address"].startswith(
-            "art:"
+        assert restored["inputs"][0]["parts"][0]["content"]["artifact"]["identifier"].startswith(
+            "art("
         )
 
         schema = tmp_path / "array-schema.json"

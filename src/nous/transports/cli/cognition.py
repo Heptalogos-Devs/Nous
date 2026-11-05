@@ -56,12 +56,12 @@ def emit_record(ctx: typer.Context, result: RecordView | CommittedRecord | Recor
         title = record.title or translate(
             "Untitled note" if record.ref.kind == "note" else "Untitled journal", language
         )
-        typer.echo(f"{title} — {record.revision_ref.address}")
+        typer.echo(f"{title} — {record.revision_ref.identifier}")
         if isinstance(result, RecordView):
             typer.echo(result.body)
             if result.current_revision != result.revision_ref:
                 typer.echo(
-                    f"{translate('Current revision', language)}: {result.current_revision.address}"
+                    f"{translate('Current revision', language)}: {result.current_revision.identifier}"
                 )
             for key, views in result.source_views.items():
                 typer.echo(f"\n[{key}]")
@@ -145,7 +145,7 @@ def note_add(
     source: Annotated[
         list[str] | None,
         typer.Option(
-            "--source", help='Fixed source record, e.g. "note:..."; repeated inputs use S1, S2...'
+            "--source", help='Fixed source record, e.g. "note(...)"; repeated inputs use S1, S2...'
         ),
     ] = None,
     current_basis: Annotated[list[str] | None, typer.Option("--current-basis")] = None,
@@ -185,7 +185,7 @@ def journal_create(
     source: Annotated[
         list[str] | None,
         typer.Option(
-            "--source", help='Fixed source record, e.g. "note:..."; repeated inputs use S1, S2...'
+            "--source", help='Fixed source record, e.g. "note(...)"; repeated inputs use S1, S2...'
         ),
     ] = None,
     current_basis: Annotated[list[str] | None, typer.Option("--current-basis")] = None,
@@ -413,7 +413,7 @@ def history(ctx: typer.Context, ref: str, namespace: str | None = None):
     else:
         for item in result:
             typer.echo(
-                f"{item.revision_ref.address}  {item.title or translate('Untitled note' if item.revision_ref.record_ref.kind == 'note' else 'Untitled journal', language_for(options(ctx)))}  {item.recorded_at.isoformat()}"
+                f"{item.revision_ref.identifier}  {item.title or translate('Untitled note' if item.revision_ref.record_ref.kind == 'note' else 'Untitled journal', language_for(options(ctx)))}  {item.recorded_at.isoformat()}"
             )
 
 
@@ -492,7 +492,7 @@ def list_records(
     else:
         for item in result:
             typer.echo(
-                f"{item.revision_ref.address}  {item.title or translate('Untitled note' if item.revision_ref.record_ref.kind == 'note' else 'Untitled journal', language_for(options(ctx)))}"
+                f"{item.revision_ref.identifier}  {item.title or translate('Untitled note' if item.revision_ref.record_ref.kind == 'note' else 'Untitled journal', language_for(options(ctx)))}"
             )
 
 

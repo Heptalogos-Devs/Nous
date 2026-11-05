@@ -222,7 +222,7 @@ class MediaAnalysis:
                         description = await self._reuse_description(
                             reusable[ordinal], expected, description_task
                         )
-                        record_completed(description.ref.address)
+                        record_completed(description.ref.identifier)
                     if frozen_description is not None:
                         stage = "description"
                         description = description or await self.generation.run_group(
@@ -234,7 +234,7 @@ class MediaAnalysis:
                             completed=completed,
                         )
                         descriptions.append(description)
-                        completed.append(description.ref.address)
+                        completed.append(description.ref.identifier)
                         if strategy == "description_only":
                             final.append(description)
                     if frozen_extraction is not None:
@@ -282,7 +282,7 @@ class MediaAnalysis:
                             completed=completed,
                         )
                         final.append(result)
-                        completed.append(result.ref.address)
+                        completed.append(result.ref.identifier)
                     pending.pop(0)
                 return AnalysisResult(
                     original,
@@ -293,7 +293,7 @@ class MediaAnalysis:
                     preparations=tuple(
                         ref
                         for ref in completed
-                        if ref not in {result.ref.address for result in (*descriptions, *final)}
+                        if ref not in {result.ref.identifier for result in (*descriptions, *final)}
                     ),
                 )
             except (NousError, asyncio.CancelledError, TimeoutError) as exc:
@@ -311,7 +311,7 @@ class MediaAnalysis:
                                     "unfinished_coverage": list[JsonValue](pending),
                                 },
                                 retryable=exc.retryable,
-                                affected_refs=(original.ref.address,) if original else (),
+                                affected_refs=(original.ref.identifier,) if original else (),
                                 completed_refs=tuple(dict.fromkeys(completed)),
                             ),
                         ),
@@ -323,7 +323,7 @@ class MediaAnalysis:
                         "failed_stage": stage,
                         "stage": stage,
                         "unfinished_coverage": pending,
-                        "artifact": original.ref.address if original else None,
+                        "artifact": original.ref.identifier if original else None,
                     },
                 )
                 raise

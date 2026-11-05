@@ -30,7 +30,7 @@ type SnapshotOwner = Annotated[ManualOwner | CognitionOwner, Field(discriminator
 class SnapshotRef(WaveValue):
     instance_id: str
     id: str
-    address: str
+    identifier: str
 
 
 class CandidateRef(WaveValue):

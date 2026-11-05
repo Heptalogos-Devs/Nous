@@ -19,8 +19,8 @@ from pydantic import JsonValue
 from sqlalchemy.dialects.sqlite import insert
 
 from nous.application.embedding import EmbeddingOperations
-from nous.common.address import new_address
 from nous.common.errors import NousError
+from nous.common.identifier import new_identifier
 from nous.configuration import ConfigSnapshot
 from nous.content.artifacts import ArtifactStore
 from nous.content.contracts import ArtifactRef, ContentSelection, InputSpec
@@ -260,7 +260,7 @@ class WaveSnapshots:
                 document.model_copy(
                     update={
                         "input": DocumentInput(
-                            artifact=artifact.ref.address, selector=source.selector
+                            artifact=artifact.ref.identifier, selector=source.selector
                         )
                     }
                 )
@@ -287,9 +287,9 @@ class WaveSnapshots:
         space_id = space or view.space
         definition = resolved_space(settings, space_id) if space_id else None
         profile_config = build_profile(settings)
-        identifier = str(uuid4())
+        object_id = str(uuid4())
         identity = {
-            "snapshot_id": identifier,
+            "snapshot_id": object_id,
             "space_signature": _signature(
                 definition.model_dump(mode="json") if definition else None
             ),
@@ -309,9 +309,9 @@ class WaveSnapshots:
             bundles = self._bundles(frozen)
             root = self.paths.resolve_owned("index", "wave")
             await self.execution.blocking(root.mkdir, parents=True, exist_ok=True)
-            staging_name = f".staging-{identifier}"
+            staging_name = f".staging-{object_id}"
             staging = root / staging_name
-            final = root / identifier
+            final = root / object_id
             if await self.execution.blocking(final.exists):
                 raise NousError("wave.snapshot_exists", "Snapshot directory already exists")
             published = False
@@ -357,14 +357,14 @@ class WaveSnapshots:
                     )
                     if collection_id is None:
                         raise NousError("wave.collection_unavailable", "Cannot create collection")
-                    address = ""
+                    identifier = ""
                     for _ in range(32):
-                        address = new_address("wav")
+                        identifier = new_identifier("wav")
                         inserted = await tx.connection.execute(
                             insert(schema.snapshots)
                             .values(
-                                id=identifier,
-                                address=address,
+                                id=object_id,
+                                identifier=identifier,
                                 collection_id=collection_id,
                                 manifest_artifact_id=(
                                     view.manifest_artifact.id if view.manifest_artifact else None
@@ -376,16 +376,16 @@ class WaveSnapshots:
                                 if definition
                                 else None,
                                 identity=identity,
-                                index_location=f"wave/{identifier}",
+                                index_location=f"wave/{object_id}",
                                 mapping=frozen.mapping,
                                 created_at=self.clock.utc_now().isoformat(),
                             )
-                            .on_conflict_do_nothing(index_elements=[schema.snapshots.c.address])
+                            .on_conflict_do_nothing(index_elements=[schema.snapshots.c.identifier])
                         )
                         if inserted.rowcount == 1:
                             break
                     else:
-                        raise NousError("wave.address_exhausted", "Cannot allocate a Wave address")
+                        raise NousError("wave.identifier_exhausted", "Cannot allocate a Wave identifier")
                     documents = cast(dict[str, dict[str, object]], frozen.mapping["documents"])
                     roots = frozen.mapping["roots"]
                     input_refs: set[str] = (
@@ -413,21 +413,21 @@ class WaveSnapshots:
                     if input_refs:
                         await tx.connection.execute(
                             schema.snapshot_artifacts.insert(),
-                            [{"snapshot_id": identifier, "artifact_id": ref} for ref in input_refs],
+                            [{"snapshot_id": object_id, "artifact_id": ref} for ref in input_refs],
                         )
                     if frozen.vector_mappings:
                         await tx.connection.execute(
                             schema.snapshot_vectors.insert(),
-                            [{"snapshot_id": identifier, **row} for row in frozen.vector_mappings],
+                            [{"snapshot_id": object_id, **row} for row in frozen.vector_mappings],
                         )
                     make_current = publish_if is None or await publish_if(tx)
                     if make_current:
                         await tx.connection.execute(
                             schema.collections.update()
                             .where(schema.collections.c.id == collection_id)
-                            .values(current_snapshot_id=identifier)
+                            .values(current_snapshot_id=object_id)
                         )
-                self._cached_snapshot = (identifier, reopened)
+                self._cached_snapshot = (object_id, reopened)
                 statistics["preparation"] = frozen.preparation_stats
                 statistics["stages_ms"] = {
                     "content_prepare": frozen.preparation_stats["content_prepare_ms"],
@@ -438,7 +438,7 @@ class WaveSnapshots:
                 logger.info(
                     "wave.build.completed",
                     extra={
-                        "snapshot": address,
+                        "snapshot": identifier,
                         "preparation": frozen.preparation_stats,
                         "stages_ms": statistics["stages_ms"],
                     },
@@ -450,8 +450,8 @@ class WaveSnapshots:
             return {
                 "snapshot": {
                     "instance_id": self.instance_id,
-                    "id": identifier,
-                    "address": address,
+                    "id": object_id,
+                    "identifier": identifier,
                 },
                 "collection": view.name,
                 "space": space_id,
@@ -493,7 +493,7 @@ class WaveSnapshots:
                 (
                     await tx.connection.execute(
                         sa.select(schema.snapshots).where(
-                            sa.or_(schema.snapshots.c.id == ref, schema.snapshots.c.address == ref)
+                            sa.or_(schema.snapshots.c.id == ref, schema.snapshots.c.identifier == ref)
                         )
                     )
                 )
@@ -519,7 +519,7 @@ class WaveSnapshots:
             raise NousError(
                 "wave.snapshot_not_found", "Wave snapshot does not exist", details={"ref": ref}
             )
-        if exact is not None and (row["id"] != exact.id or row["address"] != exact.address):
+        if exact is not None and (row["id"] != exact.id or row["identifier"] != exact.identifier):
             raise NousError(
                 "wave.snapshot_mismatch", "Snapshot reference differs from its identity"
             )

@@ -49,7 +49,7 @@ PyO3 build/open/query/observe/readout/think 使用同一数值实现。数组进
 
 使用本包例子或用户真实资料接纳集合。Concept 完整描述、候选正文和 query/context 经 EmbeddingOperations.ensure 得到同一空间实际向量。按根来源只构建一份事实图，保存候选到多根来源与有序曲线。
 
-构建发布不可变快照，登记短地址。query 选择合法候选、上下文与 cues，Native 产生真实候选和解释；read 从内容 owner 读取原文。重开不重新调用文稿/Concept embedding。没有模型时 lexical 与已存内容可用。
+构建发布不可变快照，登记可读标识符。query 选择合法候选、上下文与 cues，Native 产生真实候选和解释；read 从内容 owner 读取原文。重开不重新调用文稿/Concept embedding。没有模型时 lexical 与已存内容可用。
 
 Typed associations、多根来源、上下文、时间过滤和反证读取须有实际消费者。不能只加字段、导出 schema 或留注释而没有对应行为。没有正式认知对象时清单是明确的实验输入，不伪装成主体自动学会的认识。
 

@@ -74,7 +74,7 @@ vectors 为 C-contiguous float32，稀疏指针与索引为 uint64，权重/累�
 
 ## 公开引用和形状
 
-`WaveSnapshotRef = instance_id + snapshot_id + address`，地址使用 `wav:` 前缀及[共同地址格式](../foundation/application-boundaries.md)；`WaveCandidateRef = WaveSnapshotRef + candidate_key`。候选的内容引用仍是 ArtifactRef 与 selector，不给每个候选重建一套文件身份。
+`WaveSnapshotRef = instance_id + snapshot_id + identifier`，标识符使用 `wav(...)` 及[共同标识符格式](../foundation/application-boundaries.md)；`WaveCandidateRef = WaveSnapshotRef + candidate_key`。候选的内容引用仍是 ArtifactRef 与 selector，不给每个候选重建一套文件身份。
 
 清单所有 key 在各自集合内唯一，引用必须存在；association.strength/confidence 为有限的 0..1，polarity 为 positive/negative，support_group 明确；source/interpretation 的 required_roots 非空，想象类没有证据时保持其性质。ordered occurrence 保留重复出现与实际序位；同一根的重复出现可以影响其数值质量，但始终只有一个独立支持身份。实现若将 occurrence 压成集合，必须保留无序标记并不运行依赖序位的曲线分量。
 

@@ -76,7 +76,7 @@ class WaveOperations:
     def _descriptor(self, row: SnapshotRow) -> SnapshotDescriptor:
         return SnapshotDescriptor(
             ref=SnapshotRef(
-                instance_id=self.snapshots.instance_id, id=row["id"], address=row["address"]
+                instance_id=self.snapshots.instance_id, id=row["id"], identifier=row["identifier"]
             ),
             owner=TypeAdapter(SnapshotOwner).validate_python(row["mapping"]["owner"]),
             collection=row["mapping"]["name"],
@@ -111,7 +111,7 @@ class WaveOperations:
                 details={"candidate": key},
             )
         return CandidateDescriptor(
-            ref=CandidateRef(snapshot=row["address"], key=key),
+            ref=CandidateRef(snapshot=row["identifier"], key=key),
             owner=TypeAdapter(SnapshotOwner).validate_python(row["mapping"]["owner"]),
             group_key=candidate["group_key"],
             content=ContentSelection.model_validate(candidate["content"]),
@@ -139,7 +139,7 @@ class WaveOperations:
             view = await self.snapshots.import_manifest(manifest_path)
             result = await self.snapshots.build(view, space, context.settings)
             snapshot = cast(dict[str, str], result["snapshot"])
-            record_completed(snapshot["address"])
+            record_completed(snapshot["identifier"])
             return result
 
     async def build_view(
@@ -166,7 +166,7 @@ class WaveOperations:
             result = await self.snapshots.build(
                 view, space, context.settings, publish_if=publish_if
             )
-            record_completed(cast(dict[str, str], result["snapshot"])["address"])
+            record_completed(cast(dict[str, str], result["snapshot"])["identifier"])
             return result
 
     async def query(self, request: WaveQuery) -> dict[str, object]:
@@ -200,7 +200,7 @@ class WaveOperations:
             logger.info(
                 "wave.query.completed",
                 extra={
-                    "snapshot": row["address"],
+                    "snapshot": row["identifier"],
                     "mode": plan.mode,
                     "returned": len(cast(list[object], output["hits"])),
                     "lanes": output["used_lanes"],
@@ -230,7 +230,7 @@ class WaveOperations:
             row = await self.snapshots.resolve(ref)
             vectors, keys = await self.queries.segment_vectors(row, fragments)
             if not keys:
-                return {"snapshot": row["address"], "segments": []}
+                return {"snapshot": row["identifier"], "segments": []}
             self.snapshots.engine()
             import nous_native as native
 
@@ -241,7 +241,7 @@ class WaveOperations:
             )
             ranges = json.loads(result.ranges_json)
             return {
-                "snapshot": row["address"],
+                "snapshot": row["identifier"],
                 "segments": [
                     {
                         "start": item["start"],
@@ -261,7 +261,7 @@ class WaveOperations:
                 "snapshot": {
                     "instance_id": self.snapshots.instance_id,
                     "id": row["id"],
-                    "address": row["address"],
+                    "identifier": row["identifier"],
                 },
                 "collection": row["mapping"]["name"],
                 "space": row["space_definition"],

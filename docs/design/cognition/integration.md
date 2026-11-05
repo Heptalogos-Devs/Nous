@@ -29,7 +29,7 @@ Note 和 Journal 都需要不可变正文版本、来源及精确引用。共享
 
 所有操作进入 Execution.operation。配置快照从操作取得，时间使用 Clock/TimeService；DB 只用 Database/read/write；长模型/解码/构建在短事务外；跨 owner 使用 *_in(tx)。字节由 CAS 发布，ArtifactStore.register_in 与认知记录同事务登记。ResultStore.prepare_outputs/adopt_in 保存模型产物。
 
-共同纯表在 bootstrap 显式收集；schema 不 import executor/service。没有每个领域单独的 Session、重试、UUID 转短地址、环境变量、文件目录和错误格式。
+共同纯表在 bootstrap 显式收集；schema 不 import executor/service。没有每个领域单独的 Session、重试、UUID 转可读标识符、环境变量、文件目录和错误格式。
 
 ## 任务语义的方向
 

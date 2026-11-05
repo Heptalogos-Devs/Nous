@@ -10,9 +10,9 @@
 
 ```sh
 nous tools model run --task journal-draft --input "<材料A>" --input "<材料B>"
-nous tools result read "<实际结果地址>" --sources
-nous tools model run --task annotate-concepts --input "<上一步Markdown产物地址>"
-nous tools result read "<实际标注结果地址>" --sources
+nous tools result read "<实际结果标识符>" --sources
+nous tools model run --task annotate-concepts --input "<上一步Markdown产物标识符>"
+nous tools result read "<实际标注结果标识符>" --sources
 ```
 
 两个任务由用户现有配置选模型，包内不写固定模型名。未配置模型时仍能人工提供标注和运行已有向量快照。
@@ -23,7 +23,7 @@ AnnotationSet 是普通结果产物。Wave 的集合输入可以显式引用其 
 
 清单中持久化完整概念说明，标注 local_key 在当前清单内映射到 Concept key。不得用标签名称自动合并同名不同义概念。手工 paths 与 annotation_ref 为二选一，冲突要调用者明确选择，不保持两套可独立更新的权威。
 
-本包 annotation.json 是“单份示例正文”的合同例子，执行时从实际 content/标注结果取得正文地址；B1/B2 是对应 profile 内的局部键。不要原样复制一个样例键去指向另一份正文。
+本包 annotation.json 是“单份示例正文”的合同例子，执行时从实际 content/标注结果取得正文标识符；B1/B2 是对应 profile 内的局部键。不要原样复制一个样例键去指向另一份正文。
 
 ## 同一正文上的结构对照
 

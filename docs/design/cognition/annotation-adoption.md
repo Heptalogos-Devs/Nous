@@ -40,4 +40,4 @@ root blocks 的 B1/B2 构造由 annotation task handler 使用 TextView 完成�
 
 `runtime.annotations.propose` 接收 `known_concepts={"C1": exact_concept_ref}`；人工提案使用同一操作的 `proposal=AnnotationProposal(...)`，不需要模型配置。返回的 `result_ref` 可用 `read_proposal` 重新读取。`adopt` 接收目标正文、提案 ResultRef，以及可选的局部概念键到精确 Concept revision 的 bindings；null 明确新建。未覆盖的项按提案 reuse_key 或新 label/description 采用。
 
-`nous journal annotate "<ref>" --proposal proposal.json` 接纳并采用人工提案；加 `--draft-only` 只保存提案。`--proposal-result "res:..."` 继续采用已保存的提案，`--known-concept "C1=con:...@1"` 提供模型候选，`--bindings bindings.json` 覆盖采用决定。`--historical` 明确给历史正文标注，保持当前检索代次。`nous journal annotation read "ann:..."` 读取正式绑定及位置，`nous journal annotation proposal "res:..."` 读取已保存提案。
+`nous journal annotate "<ref>" --proposal proposal.json` 接纳并采用人工提案；加 `--draft-only` 只保存提案。`--proposal-result "res(...)"` 继续采用已保存的提案，`--known-concept "C1=con(...)@1"` 提供模型候选，`--bindings bindings.json` 覆盖采用决定。`--historical` 明确给历史正文标注，保持当前检索代次。`nous journal annotation read "ann(...)"` 读取正式绑定及位置，`nous journal annotation proposal "res(...)"` 读取已保存提案。

@@ -19,7 +19,7 @@ feedback = sa.Table(
     "cognition_feedback",
     metadata,
     sa.Column("id", sa.String, primary_key=True),
-    sa.Column("address", sa.String, nullable=False, unique=True),
+    sa.Column("identifier", sa.String, nullable=False, unique=True),
     sa.Column(
         "namespace_id", sa.String, sa.ForeignKey(namespaces.c.id), nullable=False, index=True
     ),

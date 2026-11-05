@@ -26,7 +26,7 @@ class RecordRef(CognitiveValue):
     namespace_id: str
     kind: Literal["note", "journal"]
     id: str
-    address: str
+    identifier: str
 
 
 class RecordRevisionRef(CognitiveValue):
@@ -35,8 +35,8 @@ class RecordRevisionRef(CognitiveValue):
     ordinal: int = Field(ge=1)
 
     @property
-    def address(self) -> str:
-        return f"{self.record_ref.address}@{self.ordinal}"
+    def identifier(self) -> str:
+        return f"{self.record_ref.identifier}@{self.ordinal}"
 
 
 class SourceBinding(CognitiveValue):

@@ -2,13 +2,13 @@
 
 ## 引用必须固定正文
 
-SourceBinding 保存局部 key、有序的精确 selections（ContentSelection 集合）、可选 owner_revision、usage 和名称。普通单来源也使用长度一的同一形状；不连续位置保持多项，不能扩大成包围区间。可用时间与来源说明继续从正式来源取得。调用者提供逻辑 Note/Journal 地址时，在材料选择的短读事务中固定 revision；整个写作和采用使用该版本。
+SourceBinding 保存局部 key、有序的精确 selections（ContentSelection 集合）、可选 owner_revision、usage 和名称。普通单来源也使用长度一的同一形状；不连续位置保持多项，不能扩大成包围区间。可用时间与来源说明继续从正式来源取得。调用者提供逻辑 Note/Journal 标识符时，在材料选择的短读事务中固定 revision；整个写作和采用使用该版本。
 
 InputGroup/part 继续记录模型实际读取的内容；SourceBinding 解释 Journal 正文中的引用与认知关系。实际字节、来源坐标、作者视角和独立支持不混成一个字符串。
 
 ## Markdown 表达
 
-模型和人工使用普通 Markdown 链接 `[说明文字](source:S1:C1)`。可见 label 是有意义的标题、主体、内容、观点或指代，应当参与正文语义，例如 `[个人网站作者的自述](source:S1:C1)`；机器键只留在 source: 目标中，不用“来源 S1”“S1:C1”等机器标签或“这段材料”等空泛指代作为显示文字。程序给模型完整短键与可读名称列表；模型不输出 UUID、数据库 ID 或长地址。
+模型和人工使用普通 Markdown 链接 `[说明文字](source:S1:C1)`。可见 label 是有意义的标题、主体、内容、观点或指代，应当参与正文语义，例如 `[个人网站作者的自述](source:S1:C1)`；机器键只留在 source: 目标中，不用“来源 S1”“S1:C1”等机器标签或“这段材料”等空泛指代作为显示文字。程序给模型完整短键与可读名称列表；模型不输出 UUID、数据库 ID 或长标识符。
 
 共同 Markdown parser 只从 link token 识别 source: 协议。完整键精确匹配 SourceBinding，冒号后的表示/分片段不能省略。代码块、行内代码、转义文字及 HTML 属性中的示例保持普通内容。
 

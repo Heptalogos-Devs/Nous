@@ -6,8 +6,8 @@ from uuid import uuid4
 
 import sqlalchemy as sa
 
-from nous.common.address import insert_address
 from nous.common.errors import NousError
+from nous.common.identifier import insert_identifier
 from nous.content import schema as content_schema
 from nous.content.artifacts import ArtifactStore
 from nous.content.citations import parse_citations
@@ -173,13 +173,13 @@ class WrittenRecords:
         ns = await self.scope.get_in(tx, namespace)
         resolved_title, title_source = self.resolve_title(title, self.validate_body(body, sources))
         await self.validate_sources_in(tx, ns, sources)
-        identifier, revision_id = str(uuid4()), str(uuid4())
-        address = await insert_address(
+        object_id, revision_id = str(uuid4()), str(uuid4())
+        identifier = await insert_identifier(
             tx,
             schema.records,
             "note" if kind == "note" else "jrn",
             {
-                "id": identifier,
+                "id": object_id,
                 "namespace_id": ns.id,
                 "kind": kind,
                 "head_revision_id": revision_id,
@@ -188,10 +188,10 @@ class WrittenRecords:
             },
         )
         row: RecordRow = {
-            "id": identifier,
+            "id": object_id,
             "namespace_id": ns.id,
             "kind": kind,
-            "address": address,
+            "identifier": identifier,
             "head_revision_id": revision_id,
             "archived": False,
             "recall": recall,
@@ -414,14 +414,14 @@ class WrittenRecords:
             matches = expected is not None and (
                 expected == revision["ordinal"]
                 or expected == revision["id"]
-                or expected == f"{row['address']}@{revision['ordinal']}"
+                or expected == f"{row['identifier']}@{revision['ordinal']}"
             )
         if not matches or row["head_revision_id"] != revision["id"]:
             raise NousError(
                 "cognition.revision_conflict",
                 "Record has changed; keep the edited text and use the current revision as a new explicit base",
                 details={
-                    "current_revision": f"{row['address']}@{revision['ordinal']}",
+                    "current_revision": f"{row['identifier']}@{revision['ordinal']}",
                     "edited_body": body,
                 },
             )

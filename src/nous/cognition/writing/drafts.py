@@ -7,8 +7,8 @@ from uuid import uuid4
 import sqlalchemy as sa
 from pydantic import TypeAdapter
 
-from nous.common.address import insert_address
 from nous.common.errors import NousError
+from nous.common.identifier import insert_identifier
 from nous.common.operations import add_error_context, exception_context, record_completed
 from nous.content.contracts import ContentReadView
 from nous.content.results import ResultStore
@@ -70,7 +70,7 @@ class DraftStore:
                     result = await self.generation.adopt_produced(produced)
                     return WritingOutcome(
                         status="no_material",
-                        stage_results=(*produced.completed_stage_refs, result.ref.address),
+                        stage_results=(*produced.completed_stage_refs, result.ref.identifier),
                     )
                 if context.intent == "edit":
                     edits = produced.outputs.get("edits")
@@ -106,13 +106,13 @@ class DraftStore:
                     body = next(
                         output.artifact for output in result.outputs if output.name == "output"
                     )
-                    identifier = str(uuid4())
-                    address = await insert_address(
+                    object_id = str(uuid4())
+                    identifier = await insert_identifier(
                         tx,
                         schema.journal_drafts,
                         "drf",
                         {
-                            "id": identifier,
+                            "id": object_id,
                             "namespace_id": ns.id,
                             "result_id": result.ref.id,
                             "body_artifact_id": body.id,
@@ -128,10 +128,10 @@ class DraftStore:
                 ref = DraftRef(
                     instance_id=self.results.artifacts.instance_id,
                     namespace_id=ns.id,
-                    id=identifier,
-                    address=address,
+                    id=object_id,
+                    identifier=identifier,
                 )
-                record_completed((result.ref.address, ref.address))
+                record_completed((result.ref.identifier, ref.identifier))
                 draft = DraftView(
                     ref=ref,
                     result_ref=result.ref,
@@ -146,7 +146,7 @@ class DraftStore:
                     status="unchanged" if unchanged else "draft",
                     draft_ref=ref,
                     draft=draft,
-                    stage_results=(*produced.completed_stage_refs, result.ref.address),
+                    stage_results=(*produced.completed_stage_refs, result.ref.identifier),
                 )
             except BaseException as error:
                 add_error_context(
@@ -194,7 +194,7 @@ class DraftStore:
                     sa.select(schema.journal_drafts).where(
                         sa.or_(
                             schema.journal_drafts.c.id == target_id,
-                            schema.journal_drafts.c.address == target_id,
+                            schema.journal_drafts.c.identifier == target_id,
                         )
                     )
                 )
@@ -217,7 +217,7 @@ class DraftStore:
                 instance_id=self.results.artifacts.instance_id,
                 namespace_id=ns.id,
                 id=str(row["id"]),
-                address=str(row["address"]),
+                identifier=str(row["identifier"]),
             ),
             DraftContext.model_validate(row["context"]),
             str(row["result_id"]),
@@ -232,7 +232,7 @@ class DraftStore:
             (
                 await tx.connection.execute(
                     sa.select(
-                        schema.records.c.address,
+                        schema.records.c.identifier,
                         schema.records.c.namespace_id,
                         schema.revisions.c.ordinal,
                     )
@@ -244,14 +244,14 @@ class DraftStore:
             .one()
         )
         record, revision, _ = await self.reader.resolve_in(
-            tx, str(row["address"]) + "@" + str(row["ordinal"]), namespace=str(row["namespace_id"])
+            tx, str(row["identifier"]) + "@" + str(row["ordinal"]), namespace=str(row["namespace_id"])
         )
         return self.reader.revision_ref(record, revision)
 
     async def read(
         self, target: str | DraftRef, *, namespace: str | None = None, sources: bool = False
     ) -> DraftView:
-        """Read a saved draft and its frozen context by ID, address or reference.
+        """Read a saved draft and its frozen context by ID, identifier or reference.
 
         When ``sources`` is true, also materialize its source content views. An adopted
         revision, if present, identifies the formal result of adoption.

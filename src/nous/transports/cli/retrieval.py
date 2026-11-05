@@ -75,12 +75,12 @@ def query(
             else "Untitled note",
             language,
         )
-        typer.echo(f"{group.group_rank}. {title} — {group.revision_ref.address}")
+        typer.echo(f"{group.group_rank}. {title} — {group.revision_ref.identifier}")
         for passage in group.passages:
             typer.echo(passage.snippet)
         if group.sources:
             sources = [
-                f"{source.key} {source.name or ''} ({source.owner_revision.address if source.owner_revision else ', '.join(part.artifact.address for part in source.selections)})"
+                f"{source.key} {source.name or ''} ({source.owner_revision.identifier if source.owner_revision else ', '.join(part.artifact.identifier for part in source.selections)})"
                 for source in group.sources
             ]
             typer.echo(translate("Sources", language) + ": " + ", ".join(sources))

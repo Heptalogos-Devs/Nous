@@ -12,7 +12,7 @@ Journal 是主题明确、自包含的长期 Markdown 文稿，可以直接手�
 
 默认 Namespace 为 `default`，初始化时建立。Namespace 有稳定 ID 和可读唯一名称；提供 create/list/rename/select 所需操作。它划分认知数据及检索范围，本轮不提供账户、ACL 或远程多租户承诺。原件存储仍是实例级，显式在某域采用原件是正式来源关系。选择默认域时保存稳定 Namespace ID，名称仍用于输入和显示。改名保留同一身份；有效配置中的高优先级覆盖仍选择旧名称时，先返回覆盖来源与可操作错误，域名保持可用。
 
-短地址使用[共同地址格式](../foundation/application-boundaries.md)：`note:…`、`jrn:…`、`con:…`；草稿使用 `drf:…`。`jrn:…@3` 固定第三个正文修订；没有 @ 表示当前。内部 revision_id 保持稳定，ordinal 单调递增且不重用。旧快照和来源绑定只使用精确版本。
+可读标识符使用[共同标识符格式](../foundation/application-boundaries.md)：`note(…)`、`jrn(…)`、`con(…)`；草稿使用 `drf(…)`。`jrn(…)@3` 固定第三个正文修订；没有 @ 表示当前。内部 revision_id 保持稳定，ordinal 单调递增且不重用。旧快照和来源绑定只使用精确版本。
 
 Note 和 Journal 的 kind 不原地互换。将 Note 整理为 Journal 创建新身份，并保存来源。公开引用包含实例及 Namespace，入口选择域与引用域不符返回明确错误。
 

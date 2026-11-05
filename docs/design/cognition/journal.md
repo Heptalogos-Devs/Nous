@@ -12,7 +12,7 @@ Memory 是能力统称，不再复制一份 Journal 正文到另一种 Memory �
 
 ```text
 Journal:
-  id, address, namespace, author/subject?
+  id, identifier, namespace, author/subject?
   current_revision
 
 JournalRevision:
@@ -30,7 +30,7 @@ body_artifact 是不可变 Markdown；Journal 保存认知身份及修订关系�
 
 ## 身份与时间
 
-公开短地址指向 Journal；精确引用固定 JournalRevision 与正文选区。读取“当前”得到 current_revision；已经交付给模型的引用固定当时版本。
+公开可读标识符指向 Journal；精确引用固定 JournalRevision 与正文选区。读取“当前”得到 current_revision；已经交付给模型的引用固定当时版本。
 
 recorded 由实际采用事务记录。formed 表达这次认识形成的坐标；subject 运行于虚拟时间时使用 Host 提供的相应域，未提供时保持明示的系统形成时间/未知，不猜世界时间。occurred、observed、valid 来自具体来源和主张，不用写作时间回填。
 

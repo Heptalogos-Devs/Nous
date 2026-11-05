@@ -2,7 +2,7 @@
 
 ## 引用
 
-WaveSnapshotRef 保存 instance_id、snapshot_id 和 wav 短地址。WaveCandidateRef 保存 snapshot_ref、candidate_key。解析引用由 Wave owner 完成；内容仍由 ArtifactRef 与 selector 读取。row_id 仅在该 NativeSnapshot 内有效，不成为长期用户地址。
+WaveSnapshotRef 保存 instance_id、snapshot_id 和 wav 可读标识符。WaveCandidateRef 保存 snapshot_ref、candidate_key。解析引用由 Wave owner 完成；内容仍由 ArtifactRef 与 selector 读取。row_id 仅在该 NativeSnapshot 内有效，不成为长期用户标识符。
 
 ## 构建请求
 

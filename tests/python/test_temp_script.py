@@ -15,14 +15,14 @@ if TYPE_CHECKING:
 else:
     fcntl = pytest.importorskip("fcntl")
 pytestmark = pytest.mark.skipif(sys.platform != "linux", reason="Linux /proc cleanup contract")
-SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "temp.sh"
+SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "temp"
 
 
 @pytest.fixture
 def checkout(tmp_path: Path) -> Path:
     repo = tmp_path / "checkout with spaces"
     (repo / "scripts").mkdir(parents=True)
-    shutil.copy2(SCRIPT, repo / "scripts/temp.sh")
+    shutil.copytree(SCRIPT, repo / "scripts/temp")
     (repo / "temp").mkdir()
     return repo
 
@@ -31,7 +31,7 @@ def invoke(
     repo: Path, *args: str, cwd: Path | None = None, env: Mapping[str, str] | None = None
 ) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        ["sh", str(repo / "scripts/temp.sh"), *args],
+        ["sh", str(repo / "scripts/temp/run.sh"), *args],
         cwd=cwd or repo,
         env=env,
         text=True,
@@ -47,6 +47,18 @@ def write(repo: Path, path: str, value: str = "fixture") -> Path:
     return target
 
 
+def test_init_creates_agents_without_overwriting_existing_file(checkout: Path) -> None:
+    result = invoke(checkout, "init")
+    assert result.returncode == 0, result.stderr
+    agents = checkout / "temp/AGENTS.md"
+    template = (checkout / "scripts/temp/res/AGENTS.template.md").read_text(encoding="utf-8")
+    assert agents.read_text(encoding="utf-8") == template.replace("<ROOT>", "..")
+    agents.write_text("User instructions", encoding="utf-8")
+    result = invoke(checkout, "init")
+    assert result.returncode == 0, result.stderr
+    assert agents.read_text(encoding="utf-8") == "User instructions"
+
+
 def test_preview_and_apply_preserve_samples_and_toolchains(checkout: Path) -> None:
     sample = write(checkout, "loose samples/图片 'line\n2'.png", "sample bytes")
     write(checkout, "loose samples/transcript.txt", "words")
@@ -55,6 +67,7 @@ def test_preview_and_apply_preserve_samples_and_toolchains(checkout: Path) -> No
     tool = write(checkout, "tools/ffmpeg", "tool")
     venv = write(checkout, "venvs/python", "interpreter")
     existing = write(checkout, "test-materials/Text/keep.md", "keep")
+    agents = write(checkout, "AGENTS.md", "local instructions")
     before = sorted(str(path.relative_to(checkout)) for path in checkout.rglob("*"))
     for args in ((), ("status",), ("clean",)):
         result = invoke(checkout, *args)
@@ -75,6 +88,7 @@ def test_preview_and_apply_preserve_samples_and_toolchains(checkout: Path) -> No
     assert not (checkout / "temp/test-materials/Incoming/work").exists()
     assert not (checkout / "temp/work/job").exists()
     assert tool.exists() and venv.exists() and existing.exists()
+    assert agents.read_text() == "local instructions"
     # The PowerShell-style switches are accepted too.
     result = invoke(checkout, "clean", "-Apply", "-IncludeToolchains")
     assert result.returncode == 0, result.stderr

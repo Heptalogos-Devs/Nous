@@ -93,7 +93,7 @@ async def semantic_text_many(
                 artifact_ref = next(item.artifact for item in result.outputs if item.name == "text")
                 adopted[key] = (result.ref, artifact_ref)
     for ref, _ in adopted.values():
-        record_completed(ref.address)
+        record_completed(ref.identifier)
     return tuple(
         SemanticText(
             ContentSelection(artifact=adopted[item.cache_key][1]),

@@ -5,8 +5,8 @@ from uuid import uuid4
 
 import sqlalchemy as sa
 
-from nous.common.address import insert_address
 from nous.common.errors import NousError
+from nous.common.identifier import insert_identifier, split_revision
 from nous.common.operations import record_completed
 from nous.runtime.execution import ExecutionManager
 from nous.storage.database import Database, ReadTx, WriteTx
@@ -68,13 +68,7 @@ class ConceptOperations:
             ref = target
         else:
             ref = None
-            if "@" in target:
-                target, suffix = target.rsplit("@", 1)
-                if not suffix.isdecimal():
-                    raise NousError(
-                        "input.invalid_reference", "Concept revision must be an integer"
-                    )
-                ordinal = int(suffix)
+            target, ordinal = split_revision(target)
         if ref is not None:
             if ref.instance_id != self.instance_id:
                 raise NousError(
@@ -85,7 +79,7 @@ class ConceptOperations:
             (
                 await tx.connection.execute(
                     sa.select(schema.concepts).where(
-                        sa.or_(schema.concepts.c.id == target, schema.concepts.c.address == target)
+                        sa.or_(schema.concepts.c.id == target, schema.concepts.c.identifier == target)
                     )
                 )
             )
@@ -132,7 +126,7 @@ class ConceptOperations:
             instance_id=self.instance_id,
             namespace_id=ns.id,
             id=identity["id"],
-            address=identity["address"],
+            identifier=identity["identifier"],
         )
         return ConceptView(
             ref=ConceptRevisionRef(
@@ -160,7 +154,7 @@ class ConceptOperations:
                 await tx.connection.execute(
                     sa.select(
                         schema.concept_revisions,
-                        schema.concepts.c.address.label("concept_address"),
+                        schema.concepts.c.identifier.label("concept_identifier"),
                         schema.concepts.c.namespace_id,
                         head.c.id.label("current_id"),
                         head.c.ordinal.label("current_ordinal"),
@@ -178,7 +172,7 @@ class ConceptOperations:
                     instance_id=self.instance_id,
                     namespace_id=row["namespace_id"],
                     id=row["concept_id"],
-                    address=row["concept_address"],
+                    identifier=row["concept_identifier"],
                 )
                 output[row["id"]] = ConceptView(
                     ref=ConceptRevisionRef(
@@ -236,7 +230,7 @@ class ConceptOperations:
         self.validate(label, description, aliases)
         ns = await self.scope.get_in(tx, self.namespace(namespace))
         identity, revision_id = str(uuid4()), str(uuid4())
-        address = await insert_address(
+        identifier = await insert_identifier(
             tx,
             schema.concepts,
             "con",
@@ -260,7 +254,7 @@ class ConceptOperations:
                 body_revision_id=body_revision_id,
             )
         )
-        return await self.read_in(tx, address, ns.id)
+        return await self.read_in(tx, identifier, ns.id)
 
     async def create(
         self,
@@ -282,7 +276,7 @@ class ConceptOperations:
                 view = await self.create_in(
                     tx, self.namespace(namespace), label, description, aliases, author=author
                 )
-            record_completed(view.ref.address)
+            record_completed(view.ref.identifier)
             return view
 
     async def read(self, target: ConceptTarget, namespace: str | None = None) -> ConceptView:
@@ -328,8 +322,8 @@ class ConceptOperations:
                         "cognition.concept_conflict",
                         "Concept meaning changed since it was read",
                         details={
-                            "current_revision": current.current_revision.address,
-                            "expected_revision": expected.ref.address,
+                            "current_revision": current.current_revision.identifier,
+                            "expected_revision": expected.ref.identifier,
                         },
                     )
                 new_id = str(uuid4())
@@ -355,7 +349,7 @@ class ConceptOperations:
                 updated = await self.read_in(
                     tx, current.ref.concept_ref, current.ref.concept_ref.namespace_id
                 )
-            record_completed(updated.ref.address)
+            record_completed(updated.ref.identifier)
             return updated
 
     async def find(
@@ -363,7 +357,7 @@ class ConceptOperations:
     ) -> tuple[ConceptView, ...]:
         """Find current meanings by case-insensitive text in label, description or aliases.
 
-        An empty text lists all meanings. Results are ordered by label and address;
+        An empty text lists all meanings. Results are ordered by label and identifier;
         ``offset`` must be nonnegative and ``limit`` must be between 1 and 100.
         """
         if offset < 0 or not 1 <= limit <= 100:
@@ -372,7 +366,7 @@ class ConceptOperations:
             async with self.database.read() as tx:
                 ns = await self.scope.get_in(tx, self.namespace(namespace))
                 query = (
-                    sa.select(schema.concepts.c.address)
+                    sa.select(schema.concepts.c.identifier)
                     .join(
                         schema.concept_revisions,
                         schema.concept_revisions.c.id == schema.concepts.c.head_revision_id,
@@ -396,11 +390,11 @@ class ConceptOperations:
                             .exists(),
                         )
                     )
-                addresses = (
+                identifiers = (
                     (
                         await tx.connection.execute(
                             query.order_by(
-                                schema.concept_revisions.c.label, schema.concepts.c.address
+                                schema.concept_revisions.c.label, schema.concepts.c.identifier
                             )
                             .offset(offset)
                             .limit(limit)
@@ -409,19 +403,19 @@ class ConceptOperations:
                     .scalars()
                     .all()
                 )
-                return tuple([await self.read_in(tx, address, ns.id) for address in addresses])
+                return tuple([await self.read_in(tx, identifier, ns.id) for identifier in identifiers])
 
     async def list(
         self, namespace: str | None = None, *, offset: int = 0, limit: int = 20
     ) -> tuple[ConceptView, ...]:
-        """List current meanings in label and address order using the given page."""
+        """List current meanings in label and identifier order using the given page."""
         return await self.find(namespace, offset=offset, limit=limit)
 
     async def candidates(self, namespace: str, body: str, limit: int) -> tuple[ConceptView, ...]:
         """Discover current meanings whose label or alias occurs in the body.
 
         Matching is case-insensitive and does not require a retrieval snapshot. A
-        nonpositive limit returns an empty tuple; results use label and address order.
+        nonpositive limit returns an empty tuple; results use label and identifier order.
         """
         if limit <= 0:
             return ()
@@ -434,7 +428,7 @@ class ConceptOperations:
                     .alias("alias")
                 )
                 query = (
-                    sa.select(schema.concepts.c.address)
+                    sa.select(schema.concepts.c.identifier)
                     .join(
                         schema.concept_revisions,
                         schema.concept_revisions.c.id == schema.concepts.c.head_revision_id,
@@ -454,11 +448,11 @@ class ConceptOperations:
                             .exists(),
                         ),
                     )
-                    .order_by(schema.concept_revisions.c.label, schema.concepts.c.address)
+                    .order_by(schema.concept_revisions.c.label, schema.concepts.c.identifier)
                     .limit(limit)
                 )
-                addresses = (await tx.connection.execute(query)).scalars().all()
-                return tuple([await self.read_in(tx, address, ns.id) for address in addresses])
+                identifiers = (await tx.connection.execute(query)).scalars().all()
+                return tuple([await self.read_in(tx, identifier, ns.id) for identifier in identifiers])
 
     async def status(self) -> dict[str, int]:
         """Count Concepts and meaning revisions across the instance."""

@@ -10,8 +10,8 @@ from uuid import uuid4
 import sqlalchemy as sa
 from sqlalchemy.engine import RowMapping
 
-from nous.common.address import insert_address
 from nous.common.errors import NousError
+from nous.common.identifier import insert_identifier
 from nous.common.operations import record_completed
 from nous.content.contracts import ContentSelection
 from nous.runtime.execution import ExecutionManager
@@ -52,7 +52,7 @@ class FeedbackResolution(CognitiveValue):
 
 class FeedbackView(CognitiveValue):
     id: str
-    address: str
+    identifier: str
     namespace_id: str
     target: FeedbackTarget
     category: Category
@@ -94,10 +94,10 @@ class FeedbackOperations:
         self, tx: WriteTx, namespace_id: str, target: FeedbackTarget, category: Category,
         value: Value | None, comment: str | None, author: str | None,
     ) -> FeedbackView:
-        identifier = str(uuid4())
+        object_id = str(uuid4())
         recorded = self.clock.utc_now()
-        address = await insert_address(tx, feedback_schema.feedback, "fbk", {
-            "id": identifier,
+        identifier = await insert_identifier(tx, feedback_schema.feedback, "fbk", {
+            "id": object_id,
             "namespace_id": namespace_id,
             "target": target.model_dump(mode="json"),
             "category": category,
@@ -107,7 +107,7 @@ class FeedbackOperations:
             "recorded_at": recorded.isoformat(),
         })
         return FeedbackView(
-            id=identifier, address=address, namespace_id=namespace_id, target=target,
+            id=object_id, identifier=identifier, namespace_id=namespace_id, target=target,
             category=category, value=value, comment=comment, author=author, recorded_at=recorded,
         )
 
@@ -140,7 +140,7 @@ class FeedbackOperations:
     async def _get_in(self, tx: ReadTx, ref: str, namespace_id: str) -> RowMapping:
         row = (await tx.connection.execute(
             sa.select(feedback_schema.feedback).where(
-                sa.or_(feedback_schema.feedback.c.id == ref, feedback_schema.feedback.c.address == ref),
+                sa.or_(feedback_schema.feedback.c.id == ref, feedback_schema.feedback.c.identifier == ref),
                 feedback_schema.feedback.c.namespace_id == namespace_id,
             )
         )).mappings().one_or_none()
@@ -180,7 +180,7 @@ class FeedbackOperations:
                     FeedbackTarget(kind="record", revision=self.reader.revision_ref(row, revision), selection=selection),
                     category, value, comment, author,
                 )
-            record_completed(result.address)
+            record_completed(result.identifier)
             return result
 
     async def record_query(
@@ -222,7 +222,7 @@ class FeedbackOperations:
             if target is not None and target not in result.delivery:
                 raise NousError("cognition.selection_mismatch", "Feedback target was not delivered by this query")
             for delivered in result.delivery:
-                if delivered.candidate_ref.snapshot != snapshot.ref.address:
+                if delivered.candidate_ref.snapshot != snapshot.ref.identifier:
                     raise NousError("cognition.selection_mismatch", "Delivered candidate belongs to another snapshot")
                 candidate = await self.wave.describe_candidate(snapshot.ref, delivered.candidate_ref.key)
                 revision = RecordRevisionRef.model_validate(candidate.metadata.get("record_revision"))
@@ -238,11 +238,11 @@ class FeedbackOperations:
                         selection=target.content if target else None,
                     ), category, value, comment, author,
                 )
-            record_completed(saved.address)
+            record_completed(saved.identifier)
             return saved
 
     async def read(self, ref: str, *, namespace: str | None = None) -> FeedbackView:
-        """Read feedback by ID or address, including its resolution if present."""
+        """Read feedback by ID or identifier, including its resolution if present."""
         async with self.execution.operation("feedback.read"):
             async with self.database.read() as tx:
                 ns = await self._namespace_in(tx, namespace)
@@ -320,7 +320,7 @@ class FeedbackOperations:
                 existing["actor"], existing["mapping_note"],
             ) == (action, applied_id, note, actor, mapping_note):
                 return
-            raise NousError("cognition.feedback_already_resolved", "Feedback has already been resolved", details={"ref": row["address"]})
+            raise NousError("cognition.feedback_already_resolved", "Feedback has already been resolved", details={"ref": row["identifier"]})
         await tx.connection.execute(feedback_schema.resolutions.insert().values(
             feedback_id=row["id"], action=action, note=note, actor=actor, mapping_note=mapping_note,
             applied_revision_id=applied_id, resolved_at=self.clock.utc_now().isoformat(),

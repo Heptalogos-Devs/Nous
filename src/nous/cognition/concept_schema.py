@@ -14,7 +14,7 @@ concepts = sa.Table(
     sa.Column(
         "namespace_id", sa.String, sa.ForeignKey(namespaces.c.id), nullable=False, index=True
     ),
-    sa.Column("address", sa.String, nullable=False, unique=True),
+    sa.Column("identifier", sa.String, nullable=False, unique=True),
     sa.Column(
         "head_revision_id",
         sa.String,
@@ -42,7 +42,7 @@ annotations = sa.Table(
     "cognition_annotations",
     metadata,
     sa.Column("id", sa.String, primary_key=True),
-    sa.Column("address", sa.String, nullable=False, unique=True),
+    sa.Column("identifier", sa.String, nullable=False, unique=True),
     sa.Column(
         "record_revision_id", sa.String, sa.ForeignKey(revisions.c.id), nullable=False, index=True
     ),

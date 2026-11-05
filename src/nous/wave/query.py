@@ -13,6 +13,7 @@ from pydantic import JsonValue
 
 from nous.application.embedding import EmbeddingOperations
 from nous.common.errors import NousError
+from nous.common.identifier import identifier_type
 from nous.content.artifacts import ArtifactStore
 from nous.content.contracts import ContentSelection
 from nous.models.embeddings import resolved_space
@@ -132,7 +133,7 @@ class WaveQueries:
             if key in by_key:
                 resolved_core.append(by_key[key])
                 continue
-            if key.startswith("con:") and "@" not in key:
+            if identifier_type(key) == "con":
                 versions = [item for item in concepts if item["key"].startswith(key + "@")]
                 if versions:
                     resolved_core.extend(versions)
@@ -305,7 +306,7 @@ class WaveQueries:
         if request.vector is not None:
             summary["query_origin"] = "vector+context" if len(context_vectors) else "vector"
             summary["vector_ref"] = {
-                "artifact": request.vector.artifact.address,
+                "artifact": request.vector.artifact.identifier,
                 "row_index": request.vector.row_index,
             }
         summary["core_keys"] = [concept["key"] for concept in resolved_core]
@@ -390,7 +391,7 @@ class WaveQueries:
         native_pool = None
         if request.candidate_pool is not None:
             pool = request.candidate_pool
-            if pool.snapshot not in {row["address"], row["id"]}:
+            if pool.snapshot not in {row["identifier"], row["id"]}:
                 raise NousError(
                     "wave.candidate_pool_mismatch", "Candidate pool belongs to another snapshot"
                 )
@@ -484,7 +485,7 @@ class WaveQueries:
             converted: dict[str, object] = {
                 **hit,
                 "candidate": candidate["key"],
-                "candidate_ref": {"snapshot": row["address"], "key": candidate["key"]},
+                "candidate_ref": {"snapshot": row["identifier"], "key": candidate["key"]},
                 "content": candidate["content"],
                 "origin_contents": candidate["origin_contents"],
                 "text": text,
@@ -576,7 +577,7 @@ class WaveQueries:
                 {
                     "group_key": group["group_key"],
                     "group_rank": group["group_rank"],
-                    "representative": {"snapshot": row["address"], "key": representative["key"]},
+                    "representative": {"snapshot": row["identifier"], "key": representative["key"]},
                     "revision_ref": representative["metadata"].get("record_revision"),
                     "title": representative["metadata"].get("title"),
                     "passages": passages,
@@ -586,7 +587,7 @@ class WaveQueries:
             "snapshot": {
                 "instance_id": self.instance_id,
                 "id": row["id"],
-                "address": row["address"],
+                "identifier": row["identifier"],
             },
             "mode": values["mode"],
             "score_kind": values["score_kind"],
@@ -625,7 +626,7 @@ class WaveQueries:
             )
         content = ContentSelection.model_validate(candidate["content"])
         result: dict[str, object] = {
-            "snapshot": row["address"],
+            "snapshot": row["identifier"],
             "candidate": candidate_key,
             "content": content.model_dump(mode="json"),
             "origin_contents": candidate["origin_contents"],
@@ -695,7 +696,7 @@ class WaveQueries:
                 row["mapping"]["root_order"][index] for index in association["evidence_roots"]
             ]
         return {
-            "snapshot": row["address"],
+            "snapshot": row["identifier"],
             "concepts": list(concepts),
             "neighborhood": neighborhood,
         }

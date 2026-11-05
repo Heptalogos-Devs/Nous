@@ -28,6 +28,6 @@ MediaAnalysis 接收实际输入、策略、问题和选区，建立一次 Execu
 
 ## 逐批提交
 
-一次只物化有界批次。每个成功阶段通过统一 ResultStore 采用，向上累计完成 refs。失败返回已完成 refs、failed_stage 和 unfinished_coverage，保留根取消语义。原件已接纳也返回其地址。
+一次只物化有界批次。每个成功阶段通过统一 ResultStore 采用，向上累计完成 refs。失败返回已完成 refs、failed_stage 和 unfinished_coverage，保留根取消语义。原件已接纳也返回其标识符。
 
 结果读回通过 ResultStore 的公开 view/provenance；CLI 不查询私有关系表。数据库失败不重做模型请求。本轮没有后台恢复承诺；后续 DBOS 将使用明确的批次业务键复用已采用结果。

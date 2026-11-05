@@ -5,7 +5,6 @@ import threading
 from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol, cast
 
 import PIL
 from PIL import Image, ImageOps
@@ -16,20 +15,6 @@ from nous.content.contracts import SourceSelection
 
 # PDFium calls across all documents share this process lock, held by the actual worker.
 _PDF_LOCK = threading.Lock()
-
-
-class _Bitmap(Protocol):
-    def to_pil(self) -> Image.Image: ...
-    def close(self) -> None: ...
-
-
-class _Renderable(Protocol):
-    def render(self, *, scale: float) -> _Bitmap: ...
-
-
-class _PDFWriter(Protocol):
-    def import_pages(self, source: object, *, pages: list[int]) -> None: ...
-    def save(self, output: io.BytesIO) -> None: ...
 
 
 @dataclass(frozen=True)
@@ -245,10 +230,9 @@ def extract_pdf_pages(path: Path, pages: tuple[int, ...]) -> bytes:
 
     try:
         with _PDF_LOCK, pdfium.PdfDocument(path) as source, pdfium.PdfDocument.new() as target:
-            writer = cast(_PDFWriter, target)
-            writer.import_pages(source, pages=[number - 1 for number in pages])
+            target.import_pages(source, pages=[number - 1 for number in pages])
             output = io.BytesIO()
-            writer.save(output)
+            target.save(output)
             return output.getvalue()
     except pdfium.PdfiumError as error:
         raise NousError("media.invalid_pdf", "Selected PDF pages cannot be extracted") from error
@@ -281,7 +265,7 @@ def prepare_pdf_pages(
                         text = textpage.get_text_range()
                     image: bytes | None = None
                     if visual:
-                        with closing(cast(_Renderable, page).render(scale=dpi / 72)) as bitmap:
+                        with closing(page.render(scale=dpi / 72)) as bitmap:
                             pil = bitmap.to_pil()
                             try:
                                 image = encode_image(pil, media_type, quality, background)

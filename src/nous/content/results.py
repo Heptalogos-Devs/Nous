@@ -11,8 +11,8 @@ from uuid import uuid4
 import sqlalchemy as sa
 from pydantic import JsonValue, TypeAdapter
 
-from nous.common.address import insert_address
 from nous.common.errors import NousError
+from nous.common.identifier import insert_identifier
 from nous.common.operations import record_completed
 from nous.storage.content import PublishedContent
 from nous.storage.database import Database, ReadTx, WriteTx
@@ -60,15 +60,15 @@ class ResultStore:
 
     async def find_cached(self, operation: str, cache_key: str) -> ProcessingResult | None:
         async with self.database.read() as tx:
-            address = await tx.connection.scalar(
-                sa.select(schema.results.c.address)
+            identifier = await tx.connection.scalar(
+                sa.select(schema.results.c.identifier)
                 .where(
                     schema.results.c.operation == operation,
                     schema.results.c.parameters["cache_key"].as_string() == cache_key,
                 )
                 .limit(1)
             )
-        return await self.get(str(address)) if address is not None else None
+        return await self.get(str(identifier)) if identifier is not None else None
 
     async def cached_outputs_in(
         self, tx: ReadTx, operation: str, keys: Sequence[str], *, output: str
@@ -83,9 +83,9 @@ class ResultStore:
                     sa.select(
                         cache_key.label("cache_key"),
                         schema.results.c.id.label("result_id"),
-                        schema.results.c.address.label("result_address"),
+                        schema.results.c.identifier.label("result_identifier"),
                         schema.artifacts.c.id.label("artifact_id"),
-                        schema.artifacts.c.address.label("artifact_address"),
+                        schema.artifacts.c.identifier.label("artifact_identifier"),
                     )
                     .select_from(
                         schema.results.join(schema.outputs).join(schema.artifacts)
@@ -106,12 +106,12 @@ class ResultStore:
                         ResultRef(
                             instance_id=self.artifacts.instance_id,
                             id=str(row["result_id"]),
-                            address=str(row["result_address"]),
+                            identifier=str(row["result_identifier"]),
                         ),
                         ArtifactRef(
                             instance_id=self.artifacts.instance_id,
                             id=str(row["artifact_id"]),
-                            address=str(row["artifact_address"]),
+                            identifier=str(row["artifact_identifier"]),
                         ),
                     ),
                 )
@@ -161,19 +161,19 @@ class ResultStore:
             raise NousError(
                 "content.duplicate_source", "Input group keys must be unique in a result"
             )
-        identifier, recorded = str(uuid4()), self.artifacts.clock.utc_now()
+        object_id, recorded = str(uuid4()), self.artifacts.clock.utc_now()
         values = {
             "producer": _JSON.validate_python(dict(producer)),
             "request": _JSON.validate_python(dict(request or {})),
             "parameters": _JSON.validate_python(dict(parameters or {})),
             "coverage": _JSON.validate_python(dict(coverage or {})),
         }
-        address = await insert_address(
+        identifier = await insert_identifier(
             tx,
             schema.results,
             "res",
             {
-                "id": identifier,
+                "id": object_id,
                 "operation": operation,
                 **values,
                 "formed_at": prepared_outputs.formed_at.isoformat(),
@@ -201,23 +201,23 @@ class ResultStore:
             raise NousError(
                 "content.instance_mismatch", "Input relation belongs to another instance"
             )
-        for table, identifiers in (
+        for table, object_ids in (
             (schema.artifacts, list({ref.id for ref in artifact_refs})),
             (schema.results, list({ref.id for ref in transform_refs})),
         ):
             found_ids: set[str] = set()
-            for start in range(0, len(identifiers), 900):
+            for start in range(0, len(object_ids), 900):
                 found_ids.update(
                     str(value)
                     for value in (
                         await tx.connection.execute(
                             sa.select(table.c.id).where(
-                                table.c.id.in_(identifiers[start : start + 900])
+                                table.c.id.in_(object_ids[start : start + 900])
                             )
                         )
                     ).scalars()
                 )
-            if found_ids != set(identifiers):
+            if found_ids != set(object_ids):
                 raise NousError("content.not_found", "An input relation refers to a missing record")
         group_rows: list[dict[str, object]] = []
         part_rows: list[dict[str, object]] = []
@@ -225,7 +225,7 @@ class ResultStore:
         for ordinal, group in enumerate(inputs):
             group_rows.append(
                 {
-                    "result_id": identifier,
+                    "result_id": object_id,
                     "group_ordinal": ordinal,
                     "key": group.key,
                     "slot_key": group.slot_key,
@@ -236,7 +236,7 @@ class ResultStore:
             for part_ordinal, part in enumerate(group.parts):
                 part_rows.append(
                     {
-                        "result_id": identifier,
+                        "result_id": object_id,
                         "group_ordinal": ordinal,
                         "part_ordinal": part_ordinal,
                         "artifact_id": part.content.artifact.id,
@@ -249,7 +249,7 @@ class ResultStore:
                 for origin_ordinal, origin in enumerate(part.origins):
                     origin_rows.append(
                         {
-                            "result_id": identifier,
+                            "result_id": object_id,
                             "group_ordinal": ordinal,
                             "part_ordinal": part_ordinal,
                             "origin_ordinal": origin_ordinal,
@@ -280,7 +280,7 @@ class ResultStore:
             )
             await tx.connection.execute(
                 schema.outputs.insert().values(
-                    result_id=identifier,
+                    result_id=object_id,
                     ordinal=ordinal,
                     name=output.name,
                     artifact_id=artifact.ref.id,
@@ -288,7 +288,7 @@ class ResultStore:
             )
             result_outputs.append(ResultOutput(name=output.name, artifact=artifact.ref))
         return ProcessingResult(
-            ref=ResultRef(id=identifier, address=address, instance_id=self.artifacts.instance_id),
+            ref=ResultRef(id=object_id, identifier=identifier, instance_id=self.artifacts.instance_id),
             operation=operation,
             inputs=tuple(inputs),
             outputs=tuple(result_outputs),
@@ -335,7 +335,7 @@ class ResultStore:
                 parameters=parameters,
                 coverage=coverage,
             )
-        record_completed(result.ref.address)
+        record_completed(result.ref.identifier)
         return result
 
     async def get(self, ref: str | ResultRef) -> ProcessingResult:
@@ -351,7 +351,7 @@ class ResultStore:
                     await tx.connection.execute(
                         sa.select(schema.results).where(
                             sa.or_(
-                                schema.results.c.id == target, schema.results.c.address == target
+                                schema.results.c.id == target, schema.results.c.identifier == target
                             )
                         )
                     )
@@ -411,16 +411,16 @@ class ResultStore:
                 .mappings()
                 .all()
             )
-            identifiers = {
+            object_ids = {
                 str(source["artifact_id"]) for source in [*part_rows, *origin_rows, *output_rows]
             }
             identities: dict[str, ArtifactRef] = {}
-            identity_list = list(identifiers)
+            identity_list = list(object_ids)
             for start in range(0, len(identity_list), 900):
                 selected = identity_list[start : start + 900]
                 artifact_rows = (
                     await tx.connection.execute(
-                        sa.select(schema.artifacts.c.id, schema.artifacts.c.address).where(
+                        sa.select(schema.artifacts.c.id, schema.artifacts.c.identifier).where(
                             schema.artifacts.c.id.in_(selected)
                         )
                     )
@@ -429,13 +429,13 @@ class ResultStore:
                     {
                         str(item["id"]): ArtifactRef(
                             id=str(item["id"]),
-                            address=str(item["address"]),
+                            identifier=str(item["identifier"]),
                             instance_id=self.artifacts.instance_id,
                         )
                         for item in artifact_rows
                     }
                 )
-            if len(identities) != len(identifiers):
+            if len(identities) != len(object_ids):
                 raise NousError("content.provenance_missing", "A result artifact is missing")
             transform_ids = {
                 str(source["transform_result_id"])
@@ -446,7 +446,7 @@ class ResultStore:
             if transform_ids:
                 transform_rows = (
                     await tx.connection.execute(
-                        sa.select(schema.results.c.id, schema.results.c.address).where(
+                        sa.select(schema.results.c.id, schema.results.c.identifier).where(
                             schema.results.c.id.in_(transform_ids)
                         )
                     )
@@ -454,7 +454,7 @@ class ResultStore:
                 transforms = {
                     str(item["id"]): ResultRef(
                         id=str(item["id"]),
-                        address=str(item["address"]),
+                        identifier=str(item["identifier"]),
                         instance_id=self.artifacts.instance_id,
                     )
                     for item in transform_rows
@@ -505,7 +505,7 @@ class ResultStore:
             return ProcessingResult(
                 ref=ResultRef(
                     id=str(row["id"]),
-                    address=str(row["address"]),
+                    identifier=str(row["identifier"]),
                     instance_id=self.artifacts.instance_id,
                 ),
                 operation=str(row["operation"]),
@@ -581,7 +581,7 @@ class ResultStore:
                 (
                     await tx.connection.execute(
                         sa.select(
-                            schema.results.c.address,
+                            schema.results.c.identifier,
                             schema.results.c.operation,
                             schema.results.c.producer,
                             schema.results.c.coverage,
