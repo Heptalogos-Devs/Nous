@@ -38,8 +38,10 @@ revisions = sa.Table(
     sa.Column("id", sa.String, primary_key=True),
     sa.Column("record_id", sa.String, sa.ForeignKey(records.c.id), nullable=False, index=True),
     sa.Column("ordinal", sa.Integer, nullable=False),
+    sa.Column("committed_generation", sa.Integer, nullable=False),
     sa.Column("parent_id", sa.String, sa.ForeignKey("written_revisions.id")),
-    sa.Column("title", sa.String, nullable=False),
+    sa.Column("title", sa.String, nullable=True),
+    sa.Column("title_source", sa.String, nullable=False),
     sa.Column("body_artifact_id", sa.String, sa.ForeignKey(artifacts.c.id), nullable=False),
     sa.Column("purpose", sa.String),
     sa.Column("author", sa.String),
@@ -58,12 +60,23 @@ sources = sa.Table(
     sa.Column("revision_id", sa.String, sa.ForeignKey(revisions.c.id), primary_key=True),
     sa.Column("key", sa.String, primary_key=True),
     sa.Column("ordinal", sa.Integer, nullable=False),
-    sa.Column("artifact_id", sa.String, sa.ForeignKey(artifacts.c.id), nullable=False),
-    sa.Column("selection", sa.JSON, nullable=False),
     sa.Column("target_revision_id", sa.String, sa.ForeignKey(revisions.c.id), index=True),
     sa.Column("usage", sa.String, nullable=False),
     sa.Column("name", sa.String),
     sa.UniqueConstraint("revision_id", "ordinal"),
+)
+
+source_targets = sa.Table(
+    "revision_source_targets",
+    metadata,
+    sa.Column("revision_id", sa.String, primary_key=True),
+    sa.Column("key", sa.String, primary_key=True),
+    sa.Column("ordinal", sa.Integer, primary_key=True),
+    sa.Column("artifact_id", sa.String, sa.ForeignKey(artifacts.c.id), nullable=False),
+    sa.Column("selection", sa.JSON, nullable=False),
+    sa.ForeignKeyConstraint(
+        ["revision_id", "key"], ["revision_sources.revision_id", "revision_sources.key"]
+    ),
 )
 
 journal_drafts = sa.Table(
@@ -77,7 +90,8 @@ journal_drafts = sa.Table(
     sa.Column("result_id", sa.String, sa.ForeignKey(results.c.id), nullable=False, unique=True),
     sa.Column("body_artifact_id", sa.String, sa.ForeignKey(artifacts.c.id), nullable=False),
     sa.Column("context", sa.JSON, nullable=False),
-    sa.Column("target_revision_id", sa.String, sa.ForeignKey(revisions.c.id)),
+    sa.Column("base_revision_id", sa.String, sa.ForeignKey(revisions.c.id)),
     sa.Column("adopted_revision_id", sa.String, sa.ForeignKey(revisions.c.id)),
+    sa.Column("adopted_as", sa.String),
     sa.Column("recorded_at", sa.String, nullable=False),
 )

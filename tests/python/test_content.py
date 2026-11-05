@@ -19,6 +19,7 @@ from nous.content.contracts import (
     InputGroup,
     InputPart,
     OutputContent,
+    ProcessingResult,
     SourceSelection,
 )
 from nous.media.documents import prepare_pdf_pages
@@ -45,6 +46,7 @@ def test_content_result_survives_independent_writer_and_reopen(tmp_path: Path) -
                     inputs=(
                         InputGroup(
                             key="S1",
+                            slot_key="S1",
                             name="original",
                             parts=(InputPart(content=ContentSelection(artifact=original.ref)),),
                         ),
@@ -87,12 +89,14 @@ def test_pdf_preparation_reuses_pages_and_rejects_foreign_coordinates(tmp_path: 
         instance = tmp_path / "pdf-selections"
         await initialize_instance(instance, environment={})
         data = io.BytesIO()
-        document = pdfium.PdfDocument.new()
+        document: pdfium.PdfDocument = pdfium.PdfDocument.new()
         try:
             for width in (90, 120, 150):
-                page = document.new_page(width=width, height=90)
+                # The public page factory leaves width/height unannotated upstream.
+                page: pdfium.PdfPage = document.new_page(width=width, height=90)  # pyright: ignore[reportUnknownMemberType]
                 page.close()
-            document.save(data)
+            # The public API accepts a binary stream; upstream leaves dest/version unannotated.
+            document.save(data)  # pyright: ignore[reportUnknownMemberType]
         finally:
             document.close()
         async with open_instance(instance, environment={}) as runtime:
@@ -259,6 +263,7 @@ def test_result_and_output_references_share_callers_transaction(tmp_path: Path) 
             prepared = await runtime.results.prepare_outputs(
                 {"output": OutputContent(data=b"derived")}
             )
+            rolled_back: ProcessingResult | None = None
             with pytest.raises(RuntimeError, match="outer owner failed"):
                 async with runtime.database.write() as tx:
                     rolled_back = await runtime.results.adopt_in(
@@ -268,6 +273,7 @@ def test_result_and_output_references_share_callers_transaction(tmp_path: Path) 
                         inputs=(
                             InputGroup(
                                 key="S1",
+                                slot_key="S1",
                                 name="original",
                                 parts=(InputPart(content=ContentSelection(artifact=original.ref)),),
                             ),
@@ -275,6 +281,7 @@ def test_result_and_output_references_share_callers_transaction(tmp_path: Path) 
                         prepared_outputs=prepared,
                     )
                     raise RuntimeError("outer owner failed")
+            assert rolled_back is not None
             for reference in (rolled_back.ref, rolled_back.outputs[0].artifact):
                 with pytest.raises(NousError, match="does not exist"):
                     if reference.address.startswith("res:"):
@@ -289,6 +296,7 @@ def test_result_and_output_references_share_callers_transaction(tmp_path: Path) 
                     inputs=(
                         InputGroup(
                             key="S1",
+                            slot_key="S1",
                             name="original",
                             parts=(InputPart(content=ContentSelection(artifact=original.ref)),),
                         ),

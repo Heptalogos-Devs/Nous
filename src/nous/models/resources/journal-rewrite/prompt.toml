@@ -1,0 +1,19 @@
+contract_id = "journal-rewrite"
+
+[documentation]
+title = "明确的全文重写"
+purpose = "按使用者明确目标重新组织同一份文稿，不默认压缩。"
+consumers = ["writing.rewrite"]
+input_notes = "BASE 为固定旧正文及其来源目录；新材料仍以共同输入键提供。"
+output_notes = "返回 Markdown；采用与正式版本处理由程序完成。"
+
+[[messages]]
+role = "system"
+template = "system.md.j2"
+description = "稳定任务、边界及固定假设示例。"
+
+[[messages]]
+role = "user"
+template = "user.md.j2"
+append_sources = true
+description = "本次意图、允许范围及实际材料由程序提供。"

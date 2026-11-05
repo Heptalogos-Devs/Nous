@@ -5,8 +5,33 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass, field
+from typing import Literal
 
 from pydantic import JsonValue, TypeAdapter
+
+
+@dataclass(frozen=True)
+class OperationIssue:
+    """A classified unfinished stage, shared by the response and root diagnostics."""
+
+    stage: str
+    code: str
+    message: str
+    details: dict[str, JsonValue] = field(default_factory=dict)
+    retryable: bool = False
+    affected_refs: tuple[str, ...] = ()
+    completed_refs: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, JsonValue]:
+        return {
+            "stage": self.stage,
+            "code": self.code,
+            "message": self.message,
+            "details": dict(self.details),
+            "retryable": self.retryable,
+            "affected_refs": list[JsonValue](self.affected_refs),
+            "completed_refs": list[JsonValue](self.completed_refs),
+        }
 
 
 @dataclass
@@ -15,6 +40,8 @@ class OperationDiagnostics:
     name: str
     attempts: list[dict[str, JsonValue]] = field(default_factory=list)
     completed_result_refs: list[str] = field(default_factory=list)
+    outcome: Literal["success", "partial"] = "success"
+    issues: list[OperationIssue] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -36,6 +63,25 @@ def record_completed(refs: str | Sequence[str]) -> None:
     for ref in (refs,) if isinstance(refs, str) else refs:
         if ref not in frame.root.completed_result_refs:
             frame.root.completed_result_refs.append(ref)
+
+
+def report_outcome(
+    status: Literal["success", "partial"],
+    *,
+    issues: Sequence[OperationIssue] = (),
+    completed_refs: Sequence[str] = (),
+) -> None:
+    """Report a complete use case explicitly; recovered attempts do not call this."""
+    frame = current_operation.get()
+    if frame is None:
+        return
+    if status == "partial":
+        frame.root.outcome = "partial"
+    for issue in issues:
+        if issue not in frame.root.issues:
+            frame.root.issues.append(issue)
+        record_completed(issue.completed_refs)
+    record_completed(completed_refs)
 
 
 def exception_context(error: BaseException) -> dict[str, JsonValue]:
@@ -72,6 +118,7 @@ def attach_context(error: BaseException, frame: OperationFrame, trace_id: str | 
         "stage": previous.get("stage", frame.stage),
         "attempts": list[JsonValue](frame.root.attempts),
         "completed_result_refs": list[JsonValue](frame.root.completed_result_refs),
+        "issues": [issue.to_dict() for issue in frame.root.issues],
     }
     if trace_id is not None:
         details["trace_id"] = trace_id

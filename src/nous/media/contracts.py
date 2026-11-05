@@ -1,8 +1,9 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
 from pydantic import JsonValue
 from pydantic_ai.messages import BinaryContent
+from nous.common.errors import NousError
 
 from nous.content.contracts import (
     Artifact,
@@ -50,6 +51,29 @@ class PreparedSource:
     group: InputGroup | None = None
     metadata: dict[str, JsonValue] = field(default_factory=dict)
 
+    def bind_slot(
+        self, slot_key: str, prefix: str, role: SourceRole, *, preserve_key: bool = False
+    ) -> PreparedSource:
+        """Rename a local representation using its declared slot, retaining actual source ownership."""
+        if self.group is None:
+            raise NousError("media.invalid_plan", "Prepared source has no exact input group")
+        local = self.group.slot_key
+        if preserve_key:
+            key = self.key
+        elif self.key == local or self.key.startswith(local + ":"):
+            key = prefix + self.key[len(local) :]
+        else:
+            raise NousError(
+                "media.invalid_plan",
+                "Representation key does not belong to its declared slot",
+                details={"key": self.key, "slot_key": local},
+            )
+        return replace(
+            self,
+            key=key,
+            group=self.group.model_copy(update={"key": key, "slot_key": slot_key, "role": role}),
+        )
+
 
 @dataclass(frozen=True)
 class PreparedBatch:
@@ -60,6 +84,7 @@ class PreparedBatch:
     conversion: PlannedConversion | None = None
     completed_result_refs: tuple[str, ...] = ()
     source_prefix: str = "S1"
+    source_slot_key: str = "S1"
     source_role: SourceRole = "source"
 
 

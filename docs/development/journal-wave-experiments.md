@@ -9,10 +9,10 @@
 `journal-draft` 使用 joint 输入，输出 Markdown，保留用户给出的来源局部引用；实际生成血缘由 ResultStore 保存。`annotate-concepts` 接收一份 TextView，输入呈现由任务专属准备器给出 B1/B2 和原文；输出为小型 concept-annotation 合同。它共用 Compiler/Executor，不另造 LLM 客户端。
 
 ```sh
-nous tools model run --task journal-draft --input <材料A> --input <材料B>
-nous tools result read <实际结果地址> --sources
-nous tools model run --task annotate-concepts --input <上一步Markdown产物地址>
-nous tools result read <实际标注结果地址> --sources
+nous tools model run --task journal-draft --input "<材料A>" --input "<材料B>"
+nous tools result read "<实际结果地址>" --sources
+nous tools model run --task annotate-concepts --input "<上一步Markdown产物地址>"
+nous tools result read "<实际标注结果地址>" --sources
 ```
 
 两个任务由用户现有配置选模型，包内不写固定模型名。未配置模型时仍能人工提供标注和运行已有向量快照。

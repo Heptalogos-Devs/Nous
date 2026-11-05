@@ -3,7 +3,7 @@
 import logging
 from collections.abc import AsyncGenerator, Mapping
 from contextlib import AsyncExitStack, ExitStack, asynccontextmanager
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from uuid import uuid4
 
@@ -14,15 +14,20 @@ from nous.application.embedding import EmbeddingOperations
 from nous.cognition.annotations import AnnotationOperations
 from nous.cognition.concept_schema import metadata as concept_metadata
 from nous.cognition.concepts import ConceptOperations
+from nous.cognition.contracts import Namespace
 from nous.cognition.feedback import FeedbackOperations
 from nous.cognition.feedback_schema import metadata as feedback_metadata
-from nous.cognition.journalize import JournalizeOperations
-from nous.cognition.record_reading import WrittenRecordReader
-from nous.cognition.records import WrittenRecords
-from nous.cognition.retrieval import CognitiveRetrieval
+from nous.cognition.retrieval.operations import CognitiveRetrieval
 from nous.cognition.schema import metadata as cognition_metadata
 from nous.cognition.scope import NamespaceOperations
 from nous.cognition.scope import initialize_in as initialize_namespaces_in
+from nous.cognition.services import CognitiveServices
+from nous.cognition.writing.drafts import DraftStore
+from nous.cognition.writing.generation import WritingOperations
+from nous.cognition.writing.operations import RecordOperations
+from nous.cognition.writing.reading import RecordReader
+from nous.cognition.writing.records import WrittenRecords
+from nous.cognition.writing.tasks import writing_tasks
 from nous.common.errors import NousError
 from nous.configuration import Configuration
 from nous.content.artifacts import ArtifactStore
@@ -36,10 +41,10 @@ from nous.models.embeddings import EmbeddingExecutor
 from nous.models.executor import ModelExecutor
 from nous.models.operations import GenerationOperations
 from nous.models.prompts import PromptCatalog, PromptCompiler
-from nous.models.tasks import builtin_tasks
+from nous.models.tasks import TaskCatalog, builtin_tasks
 from nous.network import ModelConnections
 from nous.observability.assembly import LoggingSession, Observability
-from nous.observability.diagnostics import recent_failures
+from nous.observability.diagnostics import recent_content_preparations, recent_problems
 from nous.observability.instrumentation import operation
 from nous.storage.content import ContentStore
 from nous.storage.content_schema import metadata as blob_metadata
@@ -55,6 +60,11 @@ from .instance import InstanceDescriptor, InstanceLocator, InstanceLock
 from .paths import ResolvedPaths
 
 logger = logging.getLogger(__name__)
+
+
+def task_catalog() -> TaskCatalog:
+    """Compose model tasks with the writing domain's actual task contracts."""
+    return TaskCatalog((*builtin_tasks().definitions.values(), *writing_tasks()))
 
 
 @asynccontextmanager
@@ -75,6 +85,14 @@ async def _resources() -> AsyncGenerator[AsyncExitStack]:
 
 @dataclass
 class Runtime:
+    """Borrow the fully assembled services of one open instance.
+
+    Acquire this object with ``open_instance`` and use its services only inside
+    that context. The runtime owns their shared resources and shutdown; callers
+    should not close the individual services. Use ``cognition`` to bind work to
+    a stable namespace identity.
+    """
+
     paths: ResolvedPaths
     descriptor: InstanceDescriptor
     configuration: ConfigurationOperations
@@ -94,13 +112,78 @@ class Runtime:
     embedding: EmbeddingOperations
     wave: WaveOperations
     namespaces: NamespaceOperations
-    records: WrittenRecords
+    written_records: WrittenRecords
+    record_reader: RecordReader
+    drafts: DraftStore
     concepts: ConceptOperations
     annotations: AnnotationOperations
-    journalize: JournalizeOperations
     cognitive_retrieval: CognitiveRetrieval
     feedback: FeedbackOperations
     state: str = "starting"
+    _cognition: dict[str, CognitiveServices] = field(default_factory=dict)
+
+    async def cognition(self, namespace: str | Namespace | None = None) -> CognitiveServices:
+        """Bind shared services to a resolved immutable namespace identity.
+
+        Args:
+            namespace: Namespace identity or selector; None or an empty selector
+                uses the current configured default. The namespace must exist.
+
+        Returns:
+            A runtime-owned service set cached by resolved namespace identity.
+        """
+        selected = namespace.id if isinstance(namespace, Namespace) else namespace
+        selected = (
+            selected or self.configuration.snapshot.typed_values().cognition.default_namespace
+        )
+        async with self.database.read() as tx:
+            identity = await self.namespaces.get_in(tx, selected)
+        cached = self._cognition.get(identity.id)
+        if cached is not None:
+            return cached
+        reader = RecordReader(
+            self.database, self.execution, self.artifacts, self.namespaces, identity
+        )
+        concepts = ConceptOperations(
+            self.database,
+            self.execution,
+            self.namespaces,
+            self.descriptor.instance_id,
+            self.time.clock,
+            namespace=identity,
+        )
+        annotations = AnnotationOperations(
+            self.database, self.execution, reader, concepts, self.generation
+        )
+        retrieval = self.cognitive_retrieval.bind(identity)
+        feedback = FeedbackOperations(
+            self.database,
+            self.execution,
+            self.namespaces,
+            reader,
+            self.wave,
+            self.time.clock,
+            namespace_id=identity.id,
+        )
+        drafts = DraftStore(
+            self.database,
+            self.execution,
+            self.written_records,
+            reader,
+            self.generation,
+            self.results,
+        )
+        records = RecordOperations(
+            identity, self.written_records, reader, drafts, annotations, retrieval, feedback
+        )
+        writing = WritingOperations(
+            identity, self.written_records, reader, self.generation, drafts, records
+        )
+        services = CognitiveServices(
+            identity, records, writing, annotations, concepts, retrieval, feedback
+        )
+        self._cognition[identity.id] = services
+        return services
 
     def status(self) -> dict[str, object]:
         effective = self.configuration.snapshot.typed_values()
@@ -141,10 +224,16 @@ class Runtime:
                 self.media.preparer.capabilities, settings.media
             )
             result["embedding"] = await self.embedding_spaces.status()
-            result["wave"] = await self.wave.status()
+            wave_status = await self.wave.status()
+            wave_status["recent_preparations"] = (
+                await self.execution.blocking(recent_content_preparations, self.paths.logs)
+                if settings.logging.file_enabled
+                else []
+            )
+            result["wave"] = wave_status
             result["cognition"] = {
-                **await self.records.status(),
-                "drafts": await self.journalize.status(),
+                **await self.record_reader.status(),
+                "drafts": await self.drafts.status(),
                 "concepts": await self.concepts.status(),
                 "annotations": await self.annotations.status(),
                 "retrieval": await self.cognitive_retrieval.status(),
@@ -155,7 +244,7 @@ class Runtime:
                 "logs": str(self.paths.logs / "nous.jsonl")
                 if settings.logging.file_enabled
                 else None,
-                "recent_failures": await self.execution.blocking(recent_failures, self.paths.logs)
+                "recent_problems": await self.execution.blocking(recent_problems, self.paths.logs)
                 if settings.logging.file_enabled
                 else [],
                 "trace_enabled": settings.tracing.enabled,
@@ -180,7 +269,23 @@ async def initialize_instance(
     name: str = "default",
     environment: Mapping[str, str] | None = None,
 ) -> InstanceDescriptor:
-    """Create formal resources explicitly, or verify an existing instance without replacing them."""
+    """Initialize a new instance or verify an existing instance's bindings.
+
+    Args:
+        locator: Instance location or selector; None uses normal resolution.
+        layout: ``portable`` or ``platform`` for a newly created instance.
+        name: Human-readable name for a newly created instance.
+        environment: Optional environment mapping used during resolution and
+            configuration loading.
+
+    Returns:
+        The resolved instance identity and layout.
+
+    Raises:
+        NousError: The layout is invalid, the new location is nonempty, or the
+            existing instance's resources cannot be verified. Initialization may
+            leave created files if a later step fails.
+    """
     selected = InstanceLocator.resolve(locator, environment)
     if layout not in {"portable", "platform"}:
         raise NousError(
@@ -267,7 +372,20 @@ async def open_instance(
     environment: Mapping[str, str] | None = None,
     overrides: Mapping[str, object] | None = None,
 ) -> AsyncGenerator[Runtime]:
-    """Acquire and verify instance resources, then release them in reverse ownership order."""
+    """Open an initialized instance and own its resources until context exit.
+
+    Args:
+        locator: Instance location or selector; None uses normal resolution.
+        environment: Optional environment mapping used for configuration.
+        overrides: Optional process-local configuration overrides.
+
+    Yields:
+        A ready runtime whose services share this instance's resources.
+
+    Startup checks persistent bindings and obtains instance locks. Exit stops and
+    waits for operations before closing connections, storage and locks. Opening
+    does not initialize a missing instance; call ``initialize_instance`` first.
+    """
     startup_id = str(uuid4())
     logs = LoggingSession(startup_id)
     runtime: Runtime | None = None
@@ -341,9 +459,13 @@ async def open_instance(
                     text_read_max_bytes=lambda: (
                         execution.snapshot.typed_values().content.text_read_max_bytes
                     ),
+                    text_cache_root=paths.cache,
+                    text_cache_settings=lambda: (
+                        execution.snapshot.typed_values().content.text_cache
+                    ),
                 )
                 results = ResultStore(database, artifacts)
-                prompts = PromptCatalog(selected.directory, builtin_tasks())
+                prompts = PromptCatalog(selected.directory, task_catalog())
                 compiler = PromptCompiler(
                     prompts,
                     paths.cache,
@@ -365,7 +487,7 @@ async def open_instance(
                 )
                 time_service = TimeService(database, clock)
                 namespaces = NamespaceOperations(database, execution, configuration_operations)
-                record_reader = WrittenRecordReader(database, execution, artifacts, namespaces)
+                record_reader = RecordReader(database, execution, artifacts, namespaces)
                 concepts = ConceptOperations(
                     database, execution, namespaces, descriptor.instance_id, clock
                 )
@@ -384,20 +506,24 @@ async def open_instance(
                     preparer,
                 )
                 cognitive_retrieval = CognitiveRetrieval(
-                    database, execution, namespaces, record_reader, artifacts, results, wave
-                )
-                records = WrittenRecords(
                     database,
                     execution,
-                    artifacts,
-                    time_service,
                     namespaces,
+                    record_reader,
+                    artifacts,
                     results,
+                    wave,
                     annotations,
-                    cognitive_retrieval,
                 )
-                journalize = JournalizeOperations(database, execution, records, generation, results)
-                feedback = FeedbackOperations(database, execution, namespaces, records, wave)
+                written_records = WrittenRecords(
+                    database, artifacts, time_service, namespaces, results, record_reader
+                )
+                drafts = DraftStore(
+                    database, execution, written_records, record_reader, generation, results
+                )
+                feedback = FeedbackOperations(
+                    database, execution, namespaces, record_reader, wave, clock
+                )
                 runtime = Runtime(
                     paths=paths,
                     descriptor=descriptor,
@@ -418,10 +544,11 @@ async def open_instance(
                     embedding=embedding,
                     wave=wave,
                     namespaces=namespaces,
-                    records=records,
+                    written_records=written_records,
+                    record_reader=record_reader,
+                    drafts=drafts,
                     concepts=concepts,
                     annotations=annotations,
-                    journalize=journalize,
                     cognitive_retrieval=cognitive_retrieval,
                     feedback=feedback,
                     state="ready",

@@ -1,0 +1,10 @@
+{
+  "edits": [
+    {
+      "target": "T1",
+      "action": "replace",
+      "before": "会议在周二举行。",
+      "after": "会议在周三举行。"
+    }
+  ]
+}

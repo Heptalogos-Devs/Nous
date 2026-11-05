@@ -41,7 +41,7 @@ def _terminal_event(logger: object, method: str, event: EventDict) -> EventDict:
     value = dict(event)
     for key in ("instance_id", "startup_id", "trace_id", "span_id", "attempts", "result_refs"):
         value.pop(key, None)
-    if value.get("event") != "operation.failed":
+    if value.get("event") != "operation.terminal" or value.get("result") == "success":
         value.pop("operation_id", None)
     if value.get("event") == "request.attempt":
         route = value.pop("route", None)

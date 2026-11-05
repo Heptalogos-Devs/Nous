@@ -31,7 +31,19 @@ def _context(path: Path | None) -> tuple[ContextFragment, ...]:
 
 def _hits(value: dict[str, object], explain: bool) -> None:
     hits = cast(list[dict[str, object]], value.get("hits", []))
+    groups = cast(list[dict[str, object]], value.get("groups", []))
+    if groups:
+        hits = [
+            passage
+            for group in groups
+            for passage in cast(list[dict[str, object]], group["passages"])
+        ]
+    previous_group: object = None
     for rank, hit in enumerate(hits, 1):
+        if groups and hit.get("group_key") != previous_group:
+            previous_group = hit["group_key"]
+            group = next(group for group in groups if group["group_key"] == previous_group)
+            typer.echo(f"{group['group_rank']}. {group.get('title') or group['group_key']}")
         ranking = hit.get("ranking_score")
         quality = hit.get("quality_score")
         scores = f"ranking_score={ranking}"
@@ -130,6 +142,8 @@ def query(
         Path | None, typer.Option("--candidate-pool", exists=True, dir_okay=False)
     ] = None,
     top_k: Annotated[int | None, typer.Option("--top-k", min=1)] = None,
+    grouping: Annotated[Literal["candidate", "document"], typer.Option("--grouping")] = "candidate",
+    passages_per_group: Annotated[int, typer.Option("--passages-per-group", min=1)] = 1,
     explain: Annotated[bool, typer.Option("--explain")] = False,
 ) -> None:
     request = WaveQuery(
@@ -152,6 +166,8 @@ def query(
         if candidate_filter
         else None,
         top_k=top_k,
+        grouping=grouping,
+        passages_per_group=passages_per_group,
         include_trace=explain,
     )
 

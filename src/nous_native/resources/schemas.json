@@ -1378,6 +1378,14 @@
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "additionalProperties": false,
     "properties": {
+      "group_scan_limit": {
+        "default": 4096,
+        "description": "Maximum different candidate rows inspected per grouped vector lane.",
+        "format": "uint",
+        "maximum": 1000000,
+        "minimum": 1,
+        "type": "integer"
+      },
       "rrf_k": {
         "default": 60.0,
         "exclusiveMinimum": 0.0,
@@ -1432,6 +1440,7 @@
       },
       "anchorK": {
         "default": 50,
+        "description": "Direct-anchor recall target: candidates, or document groups in document mode.",
         "format": "uint",
         "minimum": 0,
         "type": "integer"
@@ -1443,6 +1452,7 @@
       },
       "bm25K": {
         "default": 50,
+        "description": "Lexical recall target: candidates, or document groups in document mode.",
         "format": "uint",
         "minimum": 0,
         "type": "integer"
@@ -1474,6 +1484,7 @@
       },
       "denoisedK": {
         "default": 100,
+        "description": "Denoised-field recall target: candidates, or document groups in document mode.",
         "format": "uint",
         "minimum": 0,
         "type": "integer"
@@ -1516,6 +1527,7 @@
       },
       "localFieldK": {
         "default": 100,
+        "description": "Local-field recall target: candidates, or document groups in document mode.",
         "format": "uint",
         "minimum": 0,
         "type": "integer"
@@ -1527,6 +1539,7 @@
       },
       "maxUnionCandidates": {
         "default": 300,
+        "description": "Maximum actual candidate rows admitted to the fixed readout pool.",
         "format": "uint",
         "minimum": 0,
         "type": "integer"
@@ -1585,6 +1598,7 @@
       },
       "queryK": {
         "default": 100,
+        "description": "Original-vector recall target: candidates, or document groups in document mode.",
         "format": "uint",
         "minimum": 0,
         "type": "integer"
@@ -1651,6 +1665,7 @@
       },
       "transferFieldK": {
         "default": 100,
+        "description": "Transfer-field recall target: candidates, or document groups in document mode.",
         "format": "uint",
         "minimum": 0,
         "type": "integer"

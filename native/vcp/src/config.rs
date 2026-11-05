@@ -515,6 +515,9 @@ impl BuildConfig {
 #[derive(Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct QueryControls {
+    #[schemars(range(min = 1, max = 1000000))]
+    /// Maximum different candidate rows inspected per grouped vector lane.
+    pub group_scan_limit: usize,
     #[schemars(range(min = 1, max = 10000))]
     pub top_k: usize,
     #[schemars(range(min = 0.0, max = 1.0))]
@@ -526,6 +529,7 @@ impl Default for QueryControls {
     fn default() -> Self {
         Self {
             top_k: 10,
+            group_scan_limit: 4096,
             thinking_min_closure: crate::thinking::default_closure(),
             rrf_k: 60.0,
         }
@@ -533,6 +537,9 @@ impl Default for QueryControls {
 }
 impl QueryControls {
     pub fn validate(&self) -> Result<(), String> {
+        if !(1..=1000000).contains(&self.group_scan_limit) {
+            return Err("group_scan_limit must be in 1..1000000".into());
+        }
         if !(1..=10000).contains(&self.top_k) {
             return Err("top_k must be in 1..10000".into());
         }

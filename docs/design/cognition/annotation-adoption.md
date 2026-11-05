@@ -13,6 +13,7 @@ propose_annotation(record_revision, known_concepts?, task?) -> proposal_result
 adopt_annotation(record_revision, proposal_result, bindings?,
                  expected_active_annotation, activate=true) -> AnnotationRef
 read_annotation(annotation_ref) -> exact body + bindings + paths
+AnnotationOperations.read_many_in(ReadTx, exact_revisions) -> {revision_id: AnnotationView}
 ```
 
 提案可由人提供，同样走校验与采用。默认 annotate 命令可 propose 后 adopt，`--draft-only` 保留提案。普通 journal create/journalize 不强制调用标注；配置/显式参数决定自动接续。
@@ -29,7 +30,9 @@ read_annotation(annotation_ref) -> exact body + bindings + paths
 
 root blocks 的 B1/B2 构造由 annotation task handler 使用 TextView 完成。通用 InputPlan 不检查 task 名字。未知 key 是合同错误，不在 Compiler、CLI、Wave 再各校验一遍同一规则。
 
-正式 Concept 身份属于 cognition；Wave 只消费已采用绑定。实验 Collection 的局部 Concept 仍可以运行，但不会反向写入正式 Concept 表。
+正式 Concept 身份属于 cognition；Wave 只消费已采用绑定。`AnnotationOperations.read_many_in` 在调用方一致读事务内，按最多 400 个身份一批读取活动标注；没有活动标注的正文不出现在结果映射中。返回现有 `AnnotationView`：bindings 保留固定 Concept 意义及同次读取的当前头，occurrences 保留每个独立 `ContentSelection`，paths 保留 occurrence 的顺序和重复。单项 `read_in` 与批量捕获共用同一装配入口；文本、CAS 和 Native 不在该事务中打开。Concept 意义批量读取由 `ConceptOperations.read_revisions_in` 负责。
+
+实验 Collection 的局部 Concept 仍可以运行，但不会反向写入正式 Concept 表。
 
 同一目标版本上已经采用完全相同的 proposal 与 bindings 时返回原 AnnotationRef；新的绑定决定使用当前 active annotation 作为基准产生新标注。不要在重试时重复创建同一批新 Concept。
 
@@ -37,4 +40,4 @@ root blocks 的 B1/B2 构造由 annotation task handler 使用 TextView 完成�
 
 `runtime.annotations.propose` 接收 `known_concepts={"C1": exact_concept_ref}`；人工提案使用同一操作的 `proposal=AnnotationProposal(...)`，不需要模型配置。返回的 `result_ref` 可用 `read_proposal` 重新读取。`adopt` 接收目标正文、提案 ResultRef，以及可选的局部概念键到精确 Concept revision 的 bindings；null 明确新建。未覆盖的项按提案 reuse_key 或新 label/description 采用。
 
-`journal annotate <ref> --proposal proposal.json` 接纳并采用人工提案；加 `--draft-only` 只保存提案。`--proposal-result res:...` 继续采用已保存的提案，`--known-concept C1=con:...@1` 提供模型候选，`--bindings bindings.json` 覆盖采用决定。`--historical` 明确给历史正文标注，保持当前检索代次。`journal annotation read ann:...` 读取正式绑定及位置，`journal annotation proposal res:...` 读取已保存提案。
+`nous journal annotate "<ref>" --proposal proposal.json` 接纳并采用人工提案；加 `--draft-only` 只保存提案。`--proposal-result "res:..."` 继续采用已保存的提案，`--known-concept "C1=con:...@1"` 提供模型候选，`--bindings bindings.json` 覆盖采用决定。`--historical` 明确给历史正文标注，保持当前检索代次。`nous journal annotation read "ann:..."` 读取正式绑定及位置，`nous journal annotation proposal "res:..."` 读取已保存提案。

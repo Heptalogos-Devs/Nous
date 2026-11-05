@@ -732,3 +732,174 @@ msgstr "尚未确认"
 
 msgid "validation"
 msgstr "校验配置"
+
+msgid "No matching knowledge"
+msgstr "没有找到匹配的认识"
+
+msgid "Untitled journal"
+msgstr "未命名文稿"
+
+msgid "Untitled note"
+msgstr "未命名笔记"
+
+msgid "Sources"
+msgstr "来源"
+
+msgid "Needs review"
+msgstr "待复核"
+
+msgid "Retrieval updated"
+msgstr "检索已更新"
+
+msgid "Saved"
+msgstr "已保存"
+
+msgid "Current revision"
+msgstr "当前版本"
+
+msgid "Annotation"
+msgstr "标注"
+
+msgid "Retrieval"
+msgstr "检索"
+
+msgid "Feedback"
+msgstr "反馈"
+
+msgid "Target"
+msgstr "目标"
+
+msgid "Query"
+msgstr "查询"
+
+msgid "Category"
+msgstr "类别"
+
+msgid "Comment"
+msgstr "意见"
+
+msgid "Status"
+msgstr "状态"
+
+msgid "Unresolved"
+msgstr "待处理"
+
+msgid "pending"
+msgstr "待更新"
+
+msgid "Selection"
+msgstr "选区"
+
+msgid "Coverage"
+msgstr "覆盖范围"
+
+msgid "prepared"
+msgstr "已准备的表示"
+
+msgid "transcript"
+msgstr "转写"
+
+msgid "description"
+msgstr "描述"
+
+msgid "text"
+msgstr "文本"
+
+msgid "Acknowledged"
+msgstr "已了解"
+
+msgid "Not applied"
+msgstr "未采用"
+
+msgid "Applied"
+msgstr "已应用"
+
+msgid "Applied revision"
+msgstr "应用后的版本"
+
+msgid "Resolution"
+msgstr "处理说明"
+
+msgid "Revision mapping"
+msgstr "版本映射说明"
+
+msgid "Recent problems"
+msgstr "近期问题"
+
+msgid "Latest content preparation"
+msgstr "最近一次正文准备"
+
+msgid "documents"
+msgstr "篇文稿"
+
+msgid "candidates"
+msgstr "个候选"
+
+msgid "partial"
+msgstr "部分完成"
+
+msgid "error"
+msgstr "失败"
+
+msgid "timeout"
+msgstr "超时"
+
+msgid "cancelled"
+msgstr "已取消"
+
+msgid "annotation"
+msgstr "标注"
+
+msgid "No feedback"
+msgstr "没有反馈"
+
+msgid "accuracy"
+msgstr "准确性"
+
+msgid "usefulness"
+msgstr "有用性"
+
+msgid "agreement"
+msgstr "认同度"
+
+msgid "retrieval"
+msgstr "检索"
+
+msgid "positive"
+msgstr "正面"
+
+msgid "negative"
+msgstr "负面"
+
+msgid "neutral"
+msgstr "中性"
+
+msgid "Aliases"
+msgstr "别名"
+
+msgid "Proposal"
+msgstr "提案"
+
+msgid "Body"
+msgstr "正文"
+
+msgid "Reuse"
+msgstr "复用"
+
+msgid "Draft"
+msgstr "草稿"
+
+msgid "Adopted"
+msgstr "已采用"
+
+msgid "No new material"
+msgstr "没有新增内容"
+
+msgid "No changes"
+msgstr "没有修改"
+
+msgid "Generated proposal"
+msgstr "原生成提案"
+
+msgid "Adopted as complete Markdown override"
+msgstr "已按完整正文覆盖采用"

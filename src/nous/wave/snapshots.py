@@ -5,10 +5,12 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import os
 import shutil
 from collections.abc import Awaitable, Callable
 from pathlib import Path
+from time import perf_counter
 from typing import TYPE_CHECKING, cast
 from uuid import uuid4
 
@@ -33,7 +35,9 @@ from nous.temporal.domains import TimeService
 from . import schema
 from .assets import FrozenInputs, SnapshotRow, content_evidence, freeze_inputs
 from .configuration import require_native_profiles
-from .contracts import CollectionManifest, CorpusView, Document, DocumentInput
+from .contracts import CollectionManifest, CorpusView, Document, DocumentInput, SnapshotRef
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     import nous_native
@@ -51,6 +55,8 @@ def build_profile(settings: ConfigSnapshot) -> dict[str, object]:
     wave = settings.typed_values().wave
     return {
         "native": wave.native.build,
+        "candidate_grouping": "document",
+        "origin_selections": "ordered",
         "associations": wave.associations.model_dump(mode="json"),
     }
 
@@ -311,6 +317,7 @@ class WaveSnapshots:
             published = False
             token = native.CancellationToken()
             try:
+                native_started = perf_counter()
                 await self.compute(
                     lambda: engine.build(
                         *bundles,
@@ -321,6 +328,8 @@ class WaveSnapshots:
                     ),
                     token,
                 )
+                native_ms = (perf_counter() - native_started) * 1000
+                publish_started = perf_counter()
                 try:
                     await self.execution.blocking(os.replace, staging, final)
                 except asyncio.CancelledError:
@@ -419,6 +428,21 @@ class WaveSnapshots:
                             .values(current_snapshot_id=identifier)
                         )
                 self._cached_snapshot = (identifier, reopened)
+                statistics["preparation"] = frozen.preparation_stats
+                statistics["stages_ms"] = {
+                    "content_prepare": frozen.preparation_stats["content_prepare_ms"],
+                    "embedding": frozen.preparation_stats["embedding_ms"],
+                    "native_build": native_ms,
+                    "publish": (perf_counter() - publish_started) * 1000,
+                }
+                logger.info(
+                    "wave.build.completed",
+                    extra={
+                        "snapshot": address,
+                        "preparation": frozen.preparation_stats,
+                        "stages_ms": statistics["stages_ms"],
+                    },
+                )
             except BaseException:
                 if not published:
                     await self.execution.blocking(self._remove_owned, staging, root, staging_name)
@@ -458,7 +482,12 @@ class WaveSnapshots:
             )
         return cast(SnapshotRow, dict(row)) if row is not None else None
 
-    async def resolve(self, ref: str) -> SnapshotRow:
+    async def resolve(self, ref: str | SnapshotRef) -> SnapshotRow:
+        exact = ref if isinstance(ref, SnapshotRef) else None
+        if exact is not None:
+            if exact.instance_id != self.instance_id:
+                raise NousError("wave.instance_mismatch", "Snapshot belongs to another instance")
+            ref = exact.id
         async with self.database.read() as tx:
             row = (
                 (
@@ -471,7 +500,7 @@ class WaveSnapshots:
                 .mappings()
                 .one_or_none()
             )
-            if row is None:
+            if row is None and exact is None:
                 row = (
                     (
                         await tx.connection.execute(
@@ -489,6 +518,10 @@ class WaveSnapshots:
         if row is None:
             raise NousError(
                 "wave.snapshot_not_found", "Wave snapshot does not exist", details={"ref": ref}
+            )
+        if exact is not None and (row["id"] != exact.id or row["address"] != exact.address):
+            raise NousError(
+                "wave.snapshot_mismatch", "Snapshot reference differs from its identity"
             )
         return cast(SnapshotRow, dict(row))
 

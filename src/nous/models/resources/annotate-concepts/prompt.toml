@@ -1,10 +1,19 @@
 contract_id = "concept-annotation"
 
+[documentation]
+title = "标注文稿概念"
+purpose = "对完整文稿的精确块提出概念与出现位置。"
+consumers = ["AnnotationOperations"]
+input_notes = "只接收一篇完整不可变正文；来源键为正文块键。"
+output_notes = "返回真实 AnnotationProposal Schema，由程序校验引用并保存 AnnotationSet。"
+
 [[messages]]
+description = "稳定任务规则、输出要求与固定假设示例。"
 role = "system"
 template = "system.md.j2"
 
 [[messages]]
+description = "本次问题、要求与真实来源；append_sources 保留文本和媒体顺序。"
 role = "user"
 template = "user.md.j2"
 append_sources = true

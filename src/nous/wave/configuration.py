@@ -70,6 +70,7 @@ def _query_defaults() -> dict[str, JsonValue]:
     controls = _profile_defaults("query")
     controls.pop("rrf_k")
     controls.pop("top_k")
+    controls.pop("group_scan_limit")
     return {**_defaults(("pipeline", "readout", "dtsc")), "controls": controls}
 
 
@@ -82,15 +83,17 @@ def _controls_schema() -> dict[str, JsonValue]:
     properties = cast(dict[str, JsonValue], schema["properties"])
     properties.pop("rrf_k")
     properties.pop("top_k")
+    properties.pop("group_scan_limit")
     if isinstance(schema.get("required"), list):
         schema["required"] = [
             item
             for item in cast(list[JsonValue], schema["required"])
-            if item not in {"rrf_k", "top_k"}
+            if item not in {"rrf_k", "top_k", "group_scan_limit"}
         ]
     if isinstance(schema.get("default"), dict):
         cast(dict[str, JsonValue], schema["default"]).pop("rrf_k", None)
         cast(dict[str, JsonValue], schema["default"]).pop("top_k", None)
+        cast(dict[str, JsonValue], schema["default"]).pop("group_scan_limit", None)
     return schema
 
 
@@ -236,6 +239,18 @@ class NativeConfig(ConfigModel):
 
 
 class QueryConfig(ConfigModel):
+    group_scan_limit: int = Field(
+        default_factory=lambda: cast(int, _profile_defaults("query")["group_scan_limit"]),
+        description="Maximum candidate rows inspected by each grouped vector lane.",
+        json_schema_extra=lambda node: _native_field_schema("query", "group_scan_limit", node),
+    )
+
+    @field_validator("group_scan_limit")
+    @classmethod
+    def native_group_scan_limit_value(cls, value: int) -> int:
+        _validate_native_field("query", "group_scan_limit", value)
+        return value
+
     default_mode: Literal["lexical", "dense", "tagmemo", "rivermemo", "hybrid", "dtsc"] = setting(
         "hybrid", description="Default retrieval mode."
     )
@@ -330,7 +345,7 @@ class AssociationsConfig(ConfigModel):
         description="Explicit interpretation projection gain.",
     )
     relation_gains: dict[str, float] = setting(
-        {"related": 1.0, "supports": 1.0, "sequence": 1.0},
+        {"related": 1.0, "supports": 1.0, "sequence": 1.0, "narrative_next": 1.0},
         apply="new_binding",
         description="Retrieval gain for each association type.",
     )

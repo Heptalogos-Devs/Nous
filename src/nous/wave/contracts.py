@@ -2,17 +2,92 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
 
 from nous.application.embedding import VectorRef
-from nous.content.contracts import ArtifactRef, SourceSelection
+from nous.content.contracts import ArtifactRef, ContentSelection, SourceSelection
 from nous.temporal.values import CognitiveTimes, Interval
 
 
 class WaveValue(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+class ManualOwner(WaveValue):
+    kind: Literal["manual"] = "manual"
+
+
+class CognitionOwner(WaveValue):
+    kind: Literal["cognition"] = "cognition"
+    namespace_id: str = Field(min_length=1)
+
+
+type SnapshotOwner = Annotated[ManualOwner | CognitionOwner, Field(discriminator="kind")]
+
+
+class SnapshotRef(WaveValue):
+    instance_id: str
+    id: str
+    address: str
+
+
+class CandidateRef(WaveValue):
+    snapshot: str
+    key: str
+
+
+class SnapshotDescriptor(WaveValue):
+    ref: SnapshotRef
+    owner: SnapshotOwner
+    collection: str
+    captured_generation: int | None
+    profile_signature: str | None
+    space_id: str | None
+    space_signature: str
+    identity: dict[str, JsonValue]
+    metadata: dict[str, JsonValue]
+
+
+class CandidateDescriptor(WaveValue):
+    ref: CandidateRef
+    owner: SnapshotOwner
+    group_key: str
+    content: ContentSelection
+    origin_contents: tuple[ContentSelection, ...] = Field(min_length=1)
+    metadata: dict[str, JsonValue]
+
+
+class LaneCoverage(WaveValue):
+    examined_rows: int
+    eligible_groups_known: int | None
+    recall_exhausted: bool
+    truncated: bool
+    reason: str | None
+
+
+class SearchCoverage(WaveValue):
+    requested_groups: int | None
+    returned_groups: int
+    eligible_groups_known: int | None
+    allowed_groups: int
+    recall_exhausted: bool
+    truncated: bool
+    reason: str | None
+    lanes: dict[str, LaneCoverage]
+    lane_limit_unit: Literal["groups", "candidates"]
+    group_scan_limit: int
+    passages_per_group: int
+    candidates: int
+    total_candidates: int
+    max_union_candidates: int
+    top_k: int
+    offered_candidates: int
+    ranked_candidates: int
+    unique_candidates: int
+    candidate_limit_reached: bool
+    top_k_truncated: bool
 
 
 class DocumentInput(WaveValue):
@@ -61,7 +136,7 @@ class CandidateContent(WaveValue):
 
 class PathStep(WaveValue):
     concept: str
-    selection: SourceSelection = Field(default_factory=SourceSelection)
+    selections: tuple[SourceSelection, ...] = Field(default=(SourceSelection(),), min_length=1)
 
 
 class CandidatePath(WaveValue):
@@ -86,24 +161,60 @@ class SupportGroup(WaveValue):
         return self
 
 
-class Candidate(WaveValue):
-    key: str = Field(min_length=1)
-    content: CandidateContent
-    document: str
+class CandidateOccurrence(WaveValue):
+    key: str
+    concept: str
+    selections: tuple[SourceSelection, ...] = Field(min_length=1)
+
+
+class CandidateAnnotation(WaveValue):
+    occurrences: tuple[CandidateOccurrence, ...] = ()
     concepts: tuple[str, ...] | None = None
     paths: tuple[CandidatePath, ...] | None = Field(default=None, max_length=16)
     annotation_ref: str | None = None
     annotation_concepts: dict[str, str] = Field(default_factory=dict)
+    metadata: dict[str, JsonValue] = Field(default_factory=dict)
 
     @model_validator(mode="after")
-    def one_path_authority(self) -> Candidate:
+    def one_path_authority(self) -> CandidateAnnotation:
+        if self.occurrences and self.annotation_ref is not None:
+            raise ValueError("inline occurrences and annotation_ref are mutually exclusive")
         if self.paths is not None and self.annotation_ref is not None:
             raise ValueError("paths and annotation_ref are mutually exclusive")
         if self.paths and len({path.key for path in self.paths}) != len(self.paths):
             raise ValueError("candidate path keys must be unique")
         return self
 
-    metadata: dict[str, JsonValue] = Field(default_factory=dict)
+
+class Candidate(CandidateAnnotation):
+    kind: Literal["exact"] = "exact"
+    key: str = Field(min_length=1)
+    content: CandidateContent
+    document: str
+    group_key: str | None = Field(default=None, min_length=1)
+
+
+class CompleteBlocks(WaveValue):
+    kind: Literal["complete_blocks"] = "complete_blocks"
+    target_bytes: int = Field(ge=1)
+
+
+class DocumentCandidates(CandidateAnnotation):
+    """Declare one document's layout; Wave expands it over one prepared text view."""
+
+    kind: Literal["document"] = "document"
+    document: str
+    group_key: str = Field(min_length=1)
+    whole: bool = True
+    local_layout: CompleteBlocks | None = None
+
+    @property
+    def key(self) -> str:
+        return self.group_key
+
+    @property
+    def content(self) -> CandidateContent:
+        return CandidateContent(document=self.document)
 
 
 class Association(WaveValue):
@@ -124,7 +235,7 @@ class CollectionManifest(WaveValue):
     documents: tuple[Document, ...] = ()
     concepts: tuple[Concept, ...] = ()
     source_sequences: tuple[SourceSequence, ...] = ()
-    candidates: tuple[Candidate, ...] = ()
+    candidates: tuple[Candidate | DocumentCandidates, ...] = ()
     support_groups: tuple[SupportGroup, ...] = ()
     associations: tuple[Association, ...] = ()
 
@@ -151,12 +262,18 @@ class CollectionManifest(WaveValue):
         for item in self.source_sequences:
             if item.document not in documents or set(item.concepts) - concepts:
                 raise ValueError("source sequence references an unknown document or concept")
+        group_documents: dict[str, str] = {}
         for item in self.candidates:
+            group_key = item.group_key or item.document
+            if group_key in group_documents and group_documents[group_key] != item.document:
+                raise ValueError("a candidate group must belong to one exact document")
+            group_documents[group_key] = item.document
             if item.document not in documents or item.content.document not in documents:
                 raise ValueError(f"candidate {item.key} references an unknown document")
             if (
                 set(item.concepts or ())
                 | {step.concept for path in item.paths or () for step in path.steps}
+                | {occurrence.concept for occurrence in item.occurrences}
             ) - concepts:
                 raise ValueError(f"candidate {item.key} references an unknown concept")
         groups = {group.key for group in self.support_groups}
@@ -217,6 +334,7 @@ class CorpusView(CollectionManifest):
     """A frozen collection of already accepted content for snapshot construction."""
 
     evidence: EvidenceProjection
+    owner: SnapshotOwner = Field(default_factory=ManualOwner)
     generation: int | None = Field(default=None, ge=0)
     profile: str | None = None
     manifest_artifact: ArtifactRef | None = None
@@ -257,6 +375,18 @@ class ContextFragment(WaveValue):
         return self
 
 
+class SelectedContext(WaveValue):
+    key: str
+    role: str
+    sequence: int
+    weight: float
+    decayed_weight: float
+    role_weight: float
+    content: ContentSelection | None = None
+    text: str | None = None
+    time: CognitiveTimes | None = None
+
+
 class QueryCue(WaveValue):
     label: str = Field(min_length=1)
     description: str = Field(min_length=1)
@@ -294,6 +424,7 @@ class CandidatePoolEntry(WaveValue):
 
 
 class CandidatePool(WaveValue):
+    rank_scope: Literal["candidate_lane", "grouped_lane"] = "candidate_lane"
     snapshot: str
     entries: tuple[CandidatePoolEntry, ...]
 
@@ -305,6 +436,8 @@ class CandidatePool(WaveValue):
 
 
 class WaveQuery(WaveValue):
+    grouping: Literal["candidate", "document"] = "candidate"
+    passages_per_group: int = Field(default=1, ge=1, le=10000)
     snapshot: str
     text: str = ""
     vector: VectorRef | None = None

@@ -10,11 +10,15 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from pydantic import JsonValue, TypeAdapter
 
 import nous.temporal.domains as time_domains
 from nous.common.errors import NousError
 from nous.configuration import Configuration
+from nous.configuration.service import get_path
 from nous.runtime.bootstrap import initialize_instance, open_instance
+from nous.storage.database import WriteTx
+from nous.temporal.domains import TimeDomainDefinition
 
 
 def test_environment_resolves_generated_property_spelling_and_array_values(tmp_path: Path) -> None:
@@ -41,8 +45,9 @@ def test_configuration_failure_recovery(tmp_path: Path) -> None:
             service = runtime.configuration
             active = service.snapshot
             original_file = config_file.read_bytes()
+            original_entries = set(instance.iterdir())
             with patch(
-                "nous.configuration.service.os.replace",
+                "nous.common.files.os.replace",
                 side_effect=PermissionError("replace denied"),
             ):
                 with pytest.raises(NousError) as failed_save:
@@ -53,11 +58,11 @@ def test_configuration_failure_recovery(tmp_path: Path) -> None:
             assert service.version == active.version
             assert service.snapshot is active and not service.pending_restart
             assert config_file.read_bytes() == original_file
-            assert not list(instance.glob(".nous-config-*.toml"))
+            assert set(instance.iterdir()) == original_entries
 
             register = time_domains.register_domain
 
-            async def fail_registration(definition, tx):
+            async def fail_registration(definition: TimeDomainDefinition, tx: WriteTx) -> TimeDomainDefinition:
                 await register(definition, tx)
                 if definition.domain_id == "colony":
                     raise RuntimeError("failure after insertion, before commit")
@@ -84,7 +89,9 @@ def test_configuration_failure_recovery(tmp_path: Path) -> None:
             assert error.details["recovery"]
             assert service.snapshot is active and service.pending_restart
             assert "colony" not in await runtime.time.domains()
-            assert "colony" in service.saved()["time"]["domains"]
+            assert "colony" in TypeAdapter(dict[str, JsonValue]).validate_python(
+                get_path(service.saved(), "time.domains")
+            )
             pending = await service.update({"execution.default_timeout_seconds": 7})
             assert pending["state"] == "saved_pending_restart"
             assert pending["effective_version"] == active.version
@@ -95,7 +102,7 @@ def test_configuration_failure_recovery(tmp_path: Path) -> None:
             assert service.snapshot is active
         async with open_instance(instance, environment={}) as recovered:
             assert "colony" in await recovered.time.domains()
-            assert recovered.configuration.snapshot.values.execution.default_timeout_seconds == 7
+            assert recovered.configuration.snapshot.typed_values().execution.default_timeout_seconds == 7
             assert not recovered.configuration.pending_restart
 
         async with open_instance(instance, environment={}) as runtime:
@@ -107,7 +114,7 @@ def test_configuration_failure_recovery(tmp_path: Path) -> None:
             original_set_level = root.setLevel
             assert not inherited.isEnabledFor(logging.DEBUG)
 
-            def fail_after_level_change(level):
+            def fail_after_level_change(level: int | str) -> None:
                 original_set_level(level)
                 assert inherited.isEnabledFor(logging.DEBUG)
                 raise RuntimeError("logging failure after changing the level")
@@ -130,7 +137,7 @@ def test_configuration_failure_recovery(tmp_path: Path) -> None:
             assert service.snapshot is active and service.pending_restart
             # Registration is committed, while operations still retain their old configuration.
             assert "orbit" in await runtime.time.domains()
-            assert "orbit" not in service.resolve().values.time.domains
+            assert "orbit" not in service.resolve().typed_values().time.domains
             with pytest.raises(NousError) as conflict:
                 await service.update(
                     {"execution.default_timeout_seconds": 9}, expected_version=active.version
@@ -141,8 +148,8 @@ def test_configuration_failure_recovery(tmp_path: Path) -> None:
             assert pending["state"] == "saved_pending_restart"
             assert service.snapshot is active
         async with open_instance(instance, environment={}) as recovered:
-            assert recovered.configuration.snapshot.values.logging.level == "DEBUG"
-            assert recovered.configuration.snapshot.values.execution.default_timeout_seconds == 9
+            assert recovered.configuration.snapshot.typed_values().logging.level == "DEBUG"
+            assert recovered.configuration.snapshot.typed_values().execution.default_timeout_seconds == 9
             assert "orbit" in await recovered.time.domains()
 
         async with open_instance(instance, environment={}) as runtime:
@@ -150,11 +157,11 @@ def test_configuration_failure_recovery(tmp_path: Path) -> None:
             active = service.snapshot
             reached = asyncio.Event()
 
-            async def cancel_during_registration(definition, tx):
+            async def cancel_during_registration(definition: TimeDomainDefinition, tx: WriteTx) -> TimeDomainDefinition:
                 await register(definition, tx)
                 if definition.domain_id == "cancelled-domain":
                     reached.set()
-                    await asyncio.Future()
+                    await asyncio.Future[None]()
                 return definition
 
             with patch.object(time_domains, "register_domain", cancel_during_registration):
@@ -168,13 +175,13 @@ def test_configuration_failure_recovery(tmp_path: Path) -> None:
                 with pytest.raises(asyncio.CancelledError):
                     await updating
             assert service.snapshot is active and service.pending_restart
-            assert service.status()["activation_failure"]["file_saved"] is True
+            assert TypeAdapter(dict[str, JsonValue]).validate_python(service.status()["activation_failure"])["file_saved"] is True
             assert "cancelled-domain" not in await runtime.time.domains()
         async with open_instance(instance, environment={}) as recovered:
             assert "cancelled-domain" in await recovered.time.domains()
 
         original_file = config_file.read_bytes()
-        command = "from unittest.mock import patch\nfrom nous.transports.cli import main\nwith patch('nous.configuration.service.os.replace',side_effect=PermissionError('replace denied')):\n main()"
+        command = "from unittest.mock import patch\nfrom nous.transports.cli import main\nwith patch('nous.common.files.os.replace',side_effect=PermissionError('replace denied')):\n main()"
         failed_cli = await asyncio.to_thread(
             subprocess.run,
             [

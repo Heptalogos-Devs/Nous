@@ -593,6 +593,8 @@ class ModelExecutor:
             "request_id": response.provider_response_id,
             "generated_at": response.timestamp.isoformat(),
             "template_version": prepared.compiled.resource.version,
+            "execution_signature": prepared.compiled.resource.execution_signature,
+            "documentation_signature": prepared.compiled.resource.documentation_signature,
         }
         usage = TypeAdapter(dict[str, JsonValue]).validate_python(response.usage.__dict__)
         return GenerationResult(
@@ -647,7 +649,13 @@ class ModelExecutor:
         *,
         prepare_route: Callable[[ModelRoute], Awaitable[PreparedGeneration]] | None = None,
     ) -> GenerationResult:
-        """Share one attempt count across transport retry, fallback and output repair."""
+        """Execute a prepared stage under its shared attempt and deadline limits.
+
+        Transport retries, route fallback and output repair consume the same
+        attempt budget. ``prepare_route`` prepares an alternative representation
+        only if execution switches to that route. The caller owns the enclosing
+        operation and adoption of a successful result.
+        """
         repairs = 0
         route_index = 0
         previous_route: ModelRoute | None = None

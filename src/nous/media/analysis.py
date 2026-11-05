@@ -10,7 +10,12 @@ from typing import TYPE_CHECKING
 from pydantic import JsonValue
 
 from nous.common.errors import NousError
-from nous.common.operations import add_error_context, record_completed
+from nous.common.operations import (
+    OperationIssue,
+    add_error_context,
+    record_completed,
+    report_outcome,
+)
 from nous.content.artifacts import ArtifactStore
 from nous.content.contracts import (
     Artifact,
@@ -107,15 +112,32 @@ class MediaAnalysis:
         description_result: str | Sequence[str] | None = None,
         schema: dict[str, JsonValue] | None = None,
     ) -> AnalysisResult:
-        """Commit successful stages as they finish and report unfinished batch coverage on failure."""
+        """Analyze selected media using the requested interpretation strategy.
+
+        Description and extraction stages are adopted as they complete. A prior
+        description can be reused only when its task, exact inputs and coverage
+        match each prepared batch. On failure or cancellation, completed result
+        references and unfinished coverage are attached to the error so callers
+        can retain completed work when recovering.
+
+        Returns:
+            Final results, any descriptions, preparation references and actual
+            coverage for the selected source.
+
+        Raises:
+            NousError: ``media.description_mismatch`` if supplied descriptions
+                do not match the planned batches, or a stage error. Completed
+                result references and unfinished coverage are included in the
+                error context.
+        """
         completed: list[str] = []
         descriptions: list[ProcessingResult] = []
         final: list[ProcessingResult] = []
         stage = "prepare"
         pending: list[dict[str, JsonValue]] = []
         original: Artifact | None = None
-        try:
-            async with self.execution.operation("media.analyze", snapshot):
+        async with self.execution.operation("media.analyze", snapshot):
+            try:
                 if isinstance(input, InputSpec):
                     original = await self.artifacts.accept(input)
                     selection = selection or input.selection
@@ -147,7 +169,15 @@ class MediaAnalysis:
                 assert first_task is not None
                 prepared = await self.generation.prepare_input(
                     first_task,
-                    original,
+                    InputSpec(
+                        kind="artifact",
+                        artifact=original.ref,
+                        selection=selection or input.selection,
+                        role=input.role,
+                        slot_key=input.slot_key,
+                    )
+                    if isinstance(input, InputSpec)
+                    else original,
                     snapshot,
                     selection=selection,
                     document_mode=document_mode,
@@ -222,6 +252,7 @@ class MediaAnalysis:
                                     text=await self.artifacts.read_text(output.artifact),
                                     group=InputGroup(
                                         key="DESCRIPTION",
+                                        slot_key="DESCRIPTION",
                                         name="Previously completed media description",
                                         parts=(
                                             InputPart(
@@ -265,15 +296,34 @@ class MediaAnalysis:
                         if ref not in {result.ref.address for result in (*descriptions, *final)}
                     ),
                 )
-        except (NousError, asyncio.CancelledError, TimeoutError) as exc:
-            record_completed(completed)
-            add_error_context(
-                exc,
-                {
-                    "completed_result_refs": list(dict.fromkeys(completed)),
-                    "failed_stage": stage,
-                    "unfinished_coverage": pending,
-                    "artifact": original.ref.address if original else None,
-                },
-            )
-            raise
+            except (NousError, asyncio.CancelledError, TimeoutError) as exc:
+                record_completed(completed)
+                if isinstance(exc, NousError):
+                    report_outcome(
+                        "partial",
+                        issues=(
+                            OperationIssue(
+                                stage=stage,
+                                code=exc.code,
+                                message=exc.message,
+                                details={
+                                    **exc.details,
+                                    "unfinished_coverage": list[JsonValue](pending),
+                                },
+                                retryable=exc.retryable,
+                                affected_refs=(original.ref.address,) if original else (),
+                                completed_refs=tuple(dict.fromkeys(completed)),
+                            ),
+                        ),
+                    )
+                add_error_context(
+                    exc,
+                    {
+                        "completed_result_refs": list(dict.fromkeys(completed)),
+                        "failed_stage": stage,
+                        "stage": stage,
+                        "unfinished_coverage": pending,
+                        "artifact": original.ref.address if original else None,
+                    },
+                )
+                raise

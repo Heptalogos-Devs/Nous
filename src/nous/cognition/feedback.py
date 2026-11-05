@@ -1,318 +1,407 @@
-"""Record opinions and apply explicit corrections in the written-record transaction."""
+"""Opinions about exact records or delivered queries and their disposition."""
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import datetime
-from typing import Literal, cast
+from typing import TYPE_CHECKING, Literal
 from uuid import uuid4
 
 import sqlalchemy as sa
-from pydantic import JsonValue
+from sqlalchemy.engine import RowMapping
 
 from nous.common.address import insert_address
 from nous.common.errors import NousError
 from nous.common.operations import record_completed
 from nous.content.contracts import ContentSelection
 from nous.runtime.execution import ExecutionManager
-from nous.storage.database import Database, WriteTx
+from nous.storage.database import Database, ReadTx, WriteTx
+from nous.temporal.values import Clock
+from nous.wave.contracts import CognitionOwner
 from nous.wave.operations import WaveOperations
 
 from . import feedback_schema, schema
-from .contracts import CognitiveValue, RecordRevisionRef, SavedRecord, SourceBinding
-from .records import Target, WrittenRecords
-from .retrieval import Mode
+from .contracts import CognitiveValue, Namespace, RecordRef, RecordRevisionRef
+from .retrieval.contracts import DeliveredSelection, QueryResult
 from .scope import NamespaceOperations
+
+if TYPE_CHECKING:
+    from .writing.reading import RecordReader, Target
 
 Category = Literal["usefulness", "agreement", "accuracy", "retrieval"]
 Value = Literal["positive", "negative", "neutral"]
+ResolutionAction = Literal["acknowledged", "not_applied", "applied"]
+
+
+class FeedbackTarget(CognitiveValue):
+    kind: Literal["record", "query"]
+    revision: RecordRevisionRef | None = None
+    selection: ContentSelection | None = None
+    query: QueryResult | None = None
+    delivered: DeliveredSelection | None = None
+
+
+class FeedbackResolution(CognitiveValue):
+    action: ResolutionAction
+    note: str | None = None
+    mapping_note: str | None = None
+    applied_revision: RecordRevisionRef | None = None
+    actor: str | None = None
+    resolved_at: datetime
 
 
 class FeedbackView(CognitiveValue):
     id: str
     address: str
     namespace_id: str
-    target: dict[str, JsonValue]
+    target: FeedbackTarget
     category: Category
     value: Value | None = None
     comment: str | None = None
     author: str | None = None
     recorded_at: datetime
-    applied_revision: RecordRevisionRef | None = None
+    resolution: FeedbackResolution | None = None
 
 
 class FeedbackOperations:
+    """Record opinions about exact revisions or delivered query results.
+
+    A namespace-bound instance rejects feedback from other namespaces. Recording a
+    new opinion creates a new entry; resolutions are separate durable actions.
+    """
     def __init__(
         self,
         database: Database,
         execution: ExecutionManager,
         scope: NamespaceOperations,
-        records: WrittenRecords,
+        reader: RecordReader,
         wave: WaveOperations,
+        clock: Clock,
+        *,
+        namespace_id: str | None = None,
     ) -> None:
         self.database, self.execution, self.scope = database, execution, scope
-        self.records, self.wave = records, wave
+        self.reader, self.wave, self.clock, self.namespace_id = reader, wave, clock, namespace_id
+
+    async def _namespace_in(self, tx: ReadTx, name: str | None = None) -> Namespace:
+        selected = name or self.namespace_id or self.execution.snapshot.typed_values().cognition.default_namespace
+        namespace = await self.scope.get_in(tx, selected)
+        if self.namespace_id is not None and namespace.id != self.namespace_id:
+            raise NousError("cognition.namespace_mismatch", "Feedback belongs to another namespace")
+        return namespace
 
     async def _insert_in(
-        self,
-        tx: WriteTx,
-        namespace_id: str,
-        target: dict[str, JsonValue],
-        category: Category,
-        value: Value | None,
-        comment: str | None,
-        author: str | None,
-        applied: RecordRevisionRef | None = None,
+        self, tx: WriteTx, namespace_id: str, target: FeedbackTarget, category: Category,
+        value: Value | None, comment: str | None, author: str | None,
     ) -> FeedbackView:
         identifier = str(uuid4())
-        recorded = self.records.time.clock.utc_now()
-        address = await insert_address(
-            tx,
-            feedback_schema.feedback,
-            "fbk",
-            {
-                "id": identifier,
-                "namespace_id": namespace_id,
-                "target": target,
-                "category": category,
-                "value": value,
-                "comment": comment,
-                "author": author,
-                "recorded_at": recorded.isoformat(),
-                "applied_revision_id": applied.revision_id if applied else None,
-            },
-        )
+        recorded = self.clock.utc_now()
+        address = await insert_address(tx, feedback_schema.feedback, "fbk", {
+            "id": identifier,
+            "namespace_id": namespace_id,
+            "target": target.model_dump(mode="json"),
+            "category": category,
+            "value": value,
+            "comment": comment,
+            "author": author,
+            "recorded_at": recorded.isoformat(),
+        })
         return FeedbackView(
-            id=identifier,
-            address=address,
-            namespace_id=namespace_id,
-            target=target,
-            category=category,
-            value=value,
-            comment=comment,
-            author=author,
-            recorded_at=recorded,
-            applied_revision=applied,
+            id=identifier, address=address, namespace_id=namespace_id, target=target,
+            category=category, value=value, comment=comment, author=author, recorded_at=recorded,
         )
 
+    async def _view_in(self, tx: ReadTx, row: RowMapping) -> FeedbackView:
+        saved = (await tx.connection.execute(
+            sa.select(feedback_schema.resolutions).where(
+                feedback_schema.resolutions.c.feedback_id == row["id"]
+            )
+        )).mappings().one_or_none()
+        resolution = None
+        if saved is not None:
+            applied = None
+            if saved["applied_revision_id"] is not None:
+                revision = (await tx.connection.execute(
+                    sa.select(schema.revisions).where(
+                        schema.revisions.c.id == saved["applied_revision_id"]
+                    )
+                )).mappings().one()
+                record, actual, _ = await self.reader.resolve_in(
+                    tx, f"{revision['record_id']}@{revision['ordinal']}", str(row["namespace_id"])
+                )
+                applied = self.reader.revision_ref(record, actual)
+            resolution = FeedbackResolution.model_validate({
+                "action": saved["action"], "note": saved["note"],
+                "mapping_note": saved["mapping_note"], "applied_revision": applied,
+                "actor": saved["actor"], "resolved_at": saved["resolved_at"],
+            })
+        return FeedbackView.model_validate({**dict(row), "resolution": resolution})
+
+    async def _get_in(self, tx: ReadTx, ref: str, namespace_id: str) -> RowMapping:
+        row = (await tx.connection.execute(
+            sa.select(feedback_schema.feedback).where(
+                sa.or_(feedback_schema.feedback.c.id == ref, feedback_schema.feedback.c.address == ref),
+                feedback_schema.feedback.c.namespace_id == namespace_id,
+            )
+        )).mappings().one_or_none()
+        if row is None:
+            raise NousError("cognition.feedback_not_found", "Feedback does not exist in this namespace", details={"ref": ref})
+        return row
+
     async def record(
-        self,
-        target: Target,
-        category: Category,
-        *,
-        value: Value | None = None,
-        comment: str | None = None,
-        author: str | None = None,
-        namespace: str | None = None,
-        snapshot: str | None = None,
-        candidate: str | None = None,
+        self, target: Target, category: Category, *, value: Value | None = None,
+        comment: str | None = None, author: str | None = None, namespace: str | None = None,
         selection: ContentSelection | None = None,
     ) -> FeedbackView:
+        """Record an opinion about an exact record revision.
+
+        A string target must include ``@N``. An optional selection must belong to that
+        revision's body. The feedback is committed before its view is returned.
+
+        Raises:
+            NousError: The revision is not exact or the selection belongs to another
+                body or instance.
+        """
+        if isinstance(target, RecordRef) or isinstance(target, str) and "@" not in target:
+            raise NousError("input.expected_required", "Feedback requires an exact record revision")
         async with self.execution.operation("feedback.record"):
-            selected = (
-                namespace or self.execution.snapshot.typed_values().cognition.default_namespace
-            )
-            hit: dict[str, object] | None = None
-            if candidate and not snapshot:
-                raise NousError("input.invalid_feedback", "A candidate requires its snapshot")
-            if snapshot:
-                async with self.database.read() as tx:
-                    ns = await self.scope.get_in(tx, selected)
-                info = await self.wave.inspect(snapshot)
-                if not str(info["collection"]).startswith(f"cognition:{ns.id}:"):
-                    raise NousError(
-                        "cognition.namespace_mismatch", "Snapshot belongs to another namespace"
-                    )
-                if candidate:
-                    hit = await self.wave.read(snapshot, candidate)
             if selection is not None:
-                await self.records.artifacts.read_selection(selection)
+                await self.reader.artifacts.read_selection(selection)
             async with self.database.write() as tx:
-                row, revision, ns = await self.records.resolve_in(tx, target, selected)
+                ns = await self._namespace_in(tx, namespace)
+                row, revision, _ = await self.reader.resolve_in(tx, target, ns.id)
                 if selection is not None and (
-                    selection.artifact.instance_id != self.records.artifacts.instance_id
+                    selection.artifact.instance_id != self.reader.artifacts.instance_id
                     or selection.artifact.id != revision["body_artifact_id"]
                 ):
-                    raise NousError(
-                        "cognition.selection_mismatch",
-                        "Feedback selection belongs to another revision",
-                    )
-                exact = self.records.revision_ref(row, revision)
-                if hit is not None:
-                    hit_metadata = cast(dict[str, object], hit["metadata"])
-                    if RecordRevisionRef.model_validate(hit_metadata["record_revision"]) != exact:
-                        raise NousError(
-                            "cognition.selection_mismatch", "Candidate belongs to another revision"
-                        )
+                    raise NousError("cognition.selection_mismatch", "Feedback selection belongs to another revision")
                 result = await self._insert_in(
-                    tx,
-                    ns.id,
-                    {
-                        "revision": cast(dict[str, JsonValue], exact.model_dump(mode="json")),
-                        "snapshot": snapshot,
-                        "candidate": candidate,
-                        "selection": (
-                            cast(dict[str, JsonValue], selection.model_dump(mode="json"))
-                            if selection is not None
-                            else None
-                        ),
-                    },
-                    category,
-                    value,
-                    comment,
-                    author,
+                    tx, ns.id,
+                    FeedbackTarget(kind="record", revision=self.reader.revision_ref(row, revision), selection=selection),
+                    category, value, comment, author,
                 )
             record_completed(result.address)
             return result
 
     async def record_query(
-        self,
-        context: dict[str, JsonValue],
-        category: Category,
-        *,
-        value: Value | None = None,
-        comment: str | None = None,
-        author: str | None = None,
+        self, result: QueryResult, category: Category, *, target: DeliveredSelection | None = None,
+        value: Value | None = None, comment: str | None = None, author: str | None = None,
         namespace: str | None = None,
     ) -> FeedbackView:
+        """Record an opinion on a query or one of its delivered selections.
+
+        The query context, snapshot and every delivered candidate are checked against
+        the selected namespace. ``target`` must be one of the actual deliveries; omit
+        it for feedback about the query as a whole.
+
+        Returns:
+            The committed feedback and its frozen query context.
+
+        Raises:
+            NousError: ``cognition.namespace_mismatch`` for a query, snapshot, or
+                delivery from another namespace; ``cognition.query_context_mismatch``
+                if the context differs from the snapshot; or
+                ``cognition.selection_mismatch`` if a selection was not delivered or
+                differs from its snapshot candidate.
+        """
         async with self.execution.operation("feedback.record_query"):
-            selected = (
-                namespace or self.execution.snapshot.typed_values().cognition.default_namespace
-            )
             async with self.database.read() as tx:
-                ns = await self.scope.get_in(tx, selected)
-            snapshot_value = context.get("snapshot")
-            snapshot = (
-                snapshot_value.get("address")
-                if isinstance(snapshot_value, dict)
-                else snapshot_value
-            )
-            if not isinstance(snapshot, str):
-                raise NousError("input.invalid_feedback", "Query context must include its snapshot")
-            info = await self.wave.inspect(snapshot)
-            if not str(info["collection"]).startswith(f"cognition:{ns.id}:"):
-                raise NousError(
-                    "cognition.namespace_mismatch", "Snapshot belongs to another namespace"
-                )
-            hits = context.get("hits", [])
-            if not isinstance(hits, list):
-                raise NousError("input.invalid_feedback", "Query hits must be a list")
-            for hit in hits:
-                if isinstance(hit, dict) and hit.get("record_revision") is not None:
-                    ref = RecordRevisionRef.model_validate(hit["record_revision"])
-                    if ref.record_ref.namespace_id != ns.id:
-                        raise NousError(
-                            "cognition.namespace_mismatch", "Query hit belongs to another namespace"
-                        )
+                ns = await self._namespace_in(tx, namespace or result.context.namespace_id)
+            context = result.context
+            if context.namespace_id != ns.id or result.namespace.id != ns.id:
+                raise NousError("cognition.namespace_mismatch", "Query belongs to another namespace")
+            snapshot = await self.wave.describe(context.snapshot_ref)
+            if not isinstance(snapshot.owner, CognitionOwner) or snapshot.owner.namespace_id != ns.id:
+                raise NousError("cognition.namespace_mismatch", "Snapshot belongs to another namespace")
+            if (
+                context.captured_generation != snapshot.captured_generation
+                or context.profile_signature != snapshot.profile_signature
+                or context.space_signature != snapshot.space_signature
+            ):
+                raise NousError("cognition.query_context_mismatch", "Query context does not match its snapshot")
+            if target is not None and target not in result.delivery:
+                raise NousError("cognition.selection_mismatch", "Feedback target was not delivered by this query")
+            for delivered in result.delivery:
+                if delivered.candidate_ref.snapshot != snapshot.ref.address:
+                    raise NousError("cognition.selection_mismatch", "Delivered candidate belongs to another snapshot")
+                candidate = await self.wave.describe_candidate(snapshot.ref, delivered.candidate_ref.key)
+                revision = RecordRevisionRef.model_validate(candidate.metadata.get("record_revision"))
+                if revision != delivered.revision_ref or candidate.content != delivered.content:
+                    raise NousError("cognition.selection_mismatch", "Delivered selection does not match the snapshot")
+                if revision.record_ref.namespace_id != ns.id:
+                    raise NousError("cognition.namespace_mismatch", "Delivered revision belongs to another namespace")
             async with self.database.write() as tx:
-                result = await self._insert_in(
-                    tx, ns.id, {"query": context}, category, value, comment, author
+                saved = await self._insert_in(
+                    tx, ns.id, FeedbackTarget(
+                        kind="query", query=result, delivered=target,
+                        revision=target.revision_ref if target else None,
+                        selection=target.content if target else None,
+                    ), category, value, comment, author,
                 )
-            record_completed(result.address)
-            return result
+            record_completed(saved.address)
+            return saved
 
-    async def correct(
-        self,
-        target: Target,
-        expected_revision: str | int | RecordRevisionRef,
-        replacement: str,
-        *,
-        reason: str,
-        author: str | None = None,
+    async def read(self, ref: str, *, namespace: str | None = None) -> FeedbackView:
+        """Read feedback by ID or address, including its resolution if present."""
+        async with self.execution.operation("feedback.read"):
+            async with self.database.read() as tx:
+                ns = await self._namespace_in(tx, namespace)
+                return await self._view_in(tx, await self._get_in(tx, ref, ns.id))
+
+    async def list(
+        self, *, target: Target | None = None, category: Category | None = None,
+        unresolved_only: bool = False, limit: int = 50, offset: int = 0,
         namespace: str | None = None,
-        sources: Sequence[SourceBinding] | None = None,
-        refresh: bool = False,
-        refresh_mode: Mode | None = None,
-    ) -> tuple[FeedbackView, SavedRecord]:
-        if not reason.strip():
-            raise NousError("input.reason_required", "A correction requires a reason")
-        async with self.execution.operation("feedback.correct"):
-            selected = (
-                namespace or self.execution.snapshot.typed_values().cognition.default_namespace
-            )
-            published = await self.records.artifacts.content.publish_bytes(
-                replacement.encode("utf-8")
-            )
-            async with self.database.write() as tx:
-                row, old, ns = await self.records.resolve_in(tx, target, selected)
-                exact = self.records.revision_ref(row, old)
-                saved = await self.records.append_in(
-                    tx,
-                    exact,
-                    expected_revision,
-                    replacement,
-                    published,
-                    namespace=ns.id,
-                    change_kind="correction",
-                    reason=reason,
-                    author=author,
-                    sources=sources,
-                )
-                result = await self._insert_in(
-                    tx,
-                    ns.id,
-                    {"revision": cast(dict[str, JsonValue], exact.model_dump(mode="json"))},
-                    "accuracy",
-                    "negative",
-                    reason,
-                    author,
-                    saved.revision_ref,
-                )
-            record_completed(saved.revision_ref.address)
-            record_completed(result.address)
-            return result, await self.records.complete_save(
-                saved, refresh=refresh, refresh_mode=refresh_mode
-            )
+    ) -> tuple[FeedbackView, ...]:
+        """List feedback newest first within the selected namespace.
 
-    async def list(self, namespace: str | None = None) -> tuple[FeedbackView, ...]:
+        A target filters by record identity across revisions. Limit must be 1 through
+        200 and offset nonnegative; ``unresolved_only`` excludes resolved entries.
+        """
+        if not 1 <= limit <= 200 or offset < 0:
+            raise NousError("input.invalid_page", "Feedback page must have a valid limit and offset")
         async with self.execution.operation("feedback.list"):
-            selected = (
-                namespace or self.execution.snapshot.typed_values().cognition.default_namespace
-            )
             async with self.database.read() as tx:
-                ns = await self.scope.get_in(tx, selected)
-                rows = (
-                    (
-                        await tx.connection.execute(
-                            sa.select(feedback_schema.feedback)
-                            .where(feedback_schema.feedback.c.namespace_id == ns.id)
-                            .order_by(feedback_schema.feedback.c.recorded_at.desc())
-                        )
-                    )
-                    .mappings()
-                    .all()
-                )
+                ns = await self._namespace_in(tx, namespace)
+                query = sa.select(feedback_schema.feedback).where(feedback_schema.feedback.c.namespace_id == ns.id)
+                if target is not None:
+                    record, _, _ = await self.reader.resolve_in(tx, target, ns.id)
+                    query = query.where(sa.func.json_extract(
+                        feedback_schema.feedback.c.target, "$.revision.record_ref.id"
+                    ) == record["id"])
+                if category is not None:
+                    query = query.where(feedback_schema.feedback.c.category == category)
+                if unresolved_only:
+                    query = query.where(~sa.exists().where(
+                        feedback_schema.resolutions.c.feedback_id == feedback_schema.feedback.c.id
+                    ))
+                rows = (await tx.connection.execute(
+                    query.order_by(feedback_schema.feedback.c.recorded_at.desc()).limit(limit).offset(offset)
+                )).mappings().all()
+                return tuple([await self._view_in(tx, row) for row in rows])
+
+    async def resolve(
+        self, ref: str, action: Literal["acknowledged", "not_applied"], *,
+        note: str | None = None, actor: str | None = None, namespace: str | None = None,
+    ) -> FeedbackView:
+        """Record an acknowledged or not-applied disposition for feedback.
+
+        Repeating the same action, note and actor returns the existing resolution.
+
+        Returns:
+            The feedback view including its saved resolution.
+
+        Raises:
+            NousError: ``cognition.feedback_not_found`` if the reference is absent in
+                the namespace; ``cognition.feedback_already_resolved`` if an existing
+                resolution differs from the requested one.
+        """
+        async with self.execution.operation("feedback.resolve"):
+            async with self.database.write() as tx:
+                ns = await self._namespace_in(tx, namespace)
+                row = await self._get_in(tx, ref, ns.id)
+                await self._save_resolution_in(tx, row, action, note=note, actor=actor)
+                return await self._view_in(tx, row)
+
+    async def _save_resolution_in(
+        self, tx: WriteTx, row: RowMapping, action: ResolutionAction, *,
+        applied_revision: RecordRevisionRef | None = None, note: str | None = None,
+        actor: str | None = None, mapping_note: str | None = None,
+    ) -> None:
+        existing = (await tx.connection.execute(
+            sa.select(feedback_schema.resolutions).where(
+                feedback_schema.resolutions.c.feedback_id == row["id"]
+            )
+        )).mappings().one_or_none()
+        applied_id = applied_revision.revision_id if applied_revision else None
+        if existing is not None:
+            if (
+                existing["action"], existing["applied_revision_id"], existing["note"],
+                existing["actor"], existing["mapping_note"],
+            ) == (action, applied_id, note, actor, mapping_note):
+                return
+            raise NousError("cognition.feedback_already_resolved", "Feedback has already been resolved", details={"ref": row["address"]})
+        await tx.connection.execute(feedback_schema.resolutions.insert().values(
+            feedback_id=row["id"], action=action, note=note, actor=actor, mapping_note=mapping_note,
+            applied_revision_id=applied_id, resolved_at=self.clock.utc_now().isoformat(),
+        ))
+
+    @staticmethod
+    def _mapping_note(
+        target: FeedbackTarget, ref: str, base: RecordRevisionRef, mappings: Mapping[str, str]
+    ) -> str | None:
+        if target.kind == "query" and target.delivered is None or target.revision is None:
+            raise NousError(
+                "cognition.feedback_target_mismatch",
+                "Feedback does not target an exact delivered record",
+                details={"ref": ref},
+            )
+        note = mappings.get(ref)
+        if note is not None and not note.strip():
+            raise NousError("input.invalid_feedback_mapping", "Feedback mapping notes must not be empty")
+        if target.revision == base:
+            return note
+        if target.revision.record_ref != base.record_ref or note is None:
+            raise NousError(
+                "cognition.feedback_target_mismatch",
+                "Feedback for another revision requires an explicit mapping note for the same record",
+                details={"ref": ref},
+            )
+        return note
+
+    async def select_for_edit(
+        self,
+        refs: Sequence[str],
+        base_revision: RecordRevisionRef,
+        *,
+        mappings: Mapping[str, str] | None = None,
+    ) -> tuple[FeedbackView, ...]:
+        """Freeze selected feedback for an exact base revision in one read view.
+
+        Duplicate references are removed in input order. Feedback on another revision
+        of the same record requires a nonempty mapping note keyed by its reference;
+        feedback about a whole query cannot be used as a record edit target.
+        """
+        selected = tuple(dict.fromkeys(refs))
+        notes = dict(mappings or {})
+        if set(notes) - set(selected):
+            raise NousError("input.invalid_feedback_mapping", "A mapping must refer to selected feedback")
+        async with self.execution.operation("feedback.select_for_edit"):
+            async with self.database.read() as tx:
+                ns = await self._namespace_in(tx, base_revision.record_ref.namespace_id)
                 output: list[FeedbackView] = []
-                for row in rows:
-                    applied = None
-                    if row["applied_revision_id"]:
-                        revision = (
-                            (
-                                await tx.connection.execute(
-                                    sa.select(schema.revisions).where(
-                                        schema.revisions.c.id == row["applied_revision_id"]
-                                    )
-                                )
-                            )
-                            .mappings()
-                            .one()
-                        )
-                        record, exact, _ = await self.records.resolve_in(
-                            tx, f"{revision['record_id']}@{revision['ordinal']}", ns.id
-                        )
-                        applied = self.records.revision_ref(record, exact)
-                    output.append(
-                        FeedbackView(
-                            id=row["id"],
-                            address=row["address"],
-                            namespace_id=ns.id,
-                            target=row["target"],
-                            category=row["category"],
-                            value=row["value"],
-                            comment=row["comment"],
-                            author=row["author"],
-                            recorded_at=datetime.fromisoformat(row["recorded_at"]),
-                            applied_revision=applied,
-                        )
-                    )
+                for ref in selected:
+                    row = await self._get_in(tx, ref, ns.id)
+                    view = await self._view_in(tx, row)
+                    self._mapping_note(view.target, ref, base_revision, notes)
+                    output.append(view)
                 return tuple(output)
+
+    async def resolve_in(
+        self, tx: WriteTx, refs: Sequence[str], *, namespace_id: str,
+        base_revision: RecordRevisionRef, applied_revision: RecordRevisionRef,
+        note: str | None = None, actor: str | None = None,
+        mappings: Mapping[str, str] | None = None,
+    ) -> None:
+        """Mark selected feedback applied in the caller's write transaction.
+
+        The base and applied revisions must belong to the same record and namespace.
+        Feedback from another revision requires a mapping note. Repeating an identical
+        resolution is accepted; a different existing resolution raises an error.
+        """
+        if self.namespace_id is not None and self.namespace_id != namespace_id:
+            raise NousError("cognition.namespace_mismatch", "Feedback belongs to another namespace")
+        if base_revision.record_ref.namespace_id != namespace_id or applied_revision.record_ref != base_revision.record_ref:
+            raise NousError("cognition.namespace_mismatch", "Feedback and revisions must share a record and namespace")
+        selected = tuple(dict.fromkeys(refs))
+        notes = dict(mappings or {})
+        if set(notes) - set(selected):
+            raise NousError("input.invalid_feedback_mapping", "A mapping must refer to selected feedback")
+        for ref in selected:
+            row = await self._get_in(tx, ref, namespace_id)
+            target = FeedbackTarget.model_validate(row["target"])
+            mapping_note = self._mapping_note(target, ref, base_revision, notes)
+            await self._save_resolution_in(
+                tx, row, "applied", applied_revision=applied_revision, note=note, actor=actor,
+                mapping_note=mapping_note,
+            )

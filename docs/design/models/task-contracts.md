@@ -40,6 +40,6 @@ Markdown 块由 markdown-it 提供语法位置；文本读取能力维护精确�
 
 `journal-draft` 使用 joint 输入，返回普通 Markdown 草稿；`concept-annotation` 使用一份共同 TextView，返回概念、出现项和路径，具体合同见 [概念标注](../cognition/concept-annotations.md)。任务 owner 构造局部块键、校验来源并采用普通结果，通用 executor 不识别任务专名。
 
-包内模板资源是 `journal-draft` 和 `annotate-concepts`。标注要求一份完整正文，输入组使用共同 TextView 的 B 键。模型返回 AnnotationProposal；采用时加入正文、parser profile、内容修订与 producer，形成普通 AnnotationSet JSON 产物。`content.annotations.read_annotation` 读取产物、补入实际 ResultRef 并核对正文块键，供 Wave 等消费者复用。
+写作任务使用 `journal-draft`、`journal-edit`、`journal-rewrite` 和 `journal-reflect` 资源，各自的输入输出合同见[写作意图](../cognition/writing-intents.md)。`annotate-concepts` 要求一份完整正文，输入组使用共同 TextView 的 B 键。模型返回 AnnotationProposal；采用时加入正文、parser profile、内容修订与 producer，形成普通 AnnotationSet JSON 产物。`content.annotations.read_annotation` 读取产物、补入实际 ResultRef 并核对正文块键，供 Wave 等消费者复用。
 
 Journal owner 使用这些语言任务，并通过 [草稿采用](../cognition/draft-adoption.md)和正式文稿操作完成状态。模型任务不修改 Journal/Concept 表；正文与标注产物继续可以作为普通 tools 结果独立使用。

@@ -7,6 +7,7 @@ from pydantic import Field
 
 from nous.common.errors import NousError
 
+from .citations import citation_spans
 from .contracts import ArtifactRef, ContentSelection, ContentValue, SourceSelection
 
 PARSER_PROFILE = "commonmark-source-v1"
@@ -40,13 +41,21 @@ class TextChunk(ContentValue):
 
 
 class TextView(ContentValue):
-    """Parser maps identify exact source bytes; rendered Markdown is never authoritative."""
+    """A CommonMark view whose blocks refer to exact immutable source bytes.
+
+    Block keys are meaningful within the body and parser profile carried by
+    their references. Byte selections use absolute UTF-8 offsets with exclusive
+    ends; line selections use one-based inclusive line numbers. Rendered block
+    text is for presentation and does not replace source selections.
+    """
 
     body: ContentSelection
     parser_profile: str = PARSER_PROFILE
     blocks: tuple[TextBlock, ...]
     text: str = Field(repr=False)
     byte_offset: int = 0
+    first_line: int = 1
+    citation_spans: tuple[tuple[int, int, str], ...] = ()
 
     @classmethod
     def parse(
@@ -57,7 +66,8 @@ class TextView(ContentValue):
         for line in lines:
             byte_offsets.append(byte_offsets[-1] + len(line.encode("utf-8")))
         raw = text.encode("utf-8")
-        tokens = MarkdownIt("commonmark").parse(text)
+        environment: dict[str, object] = {}
+        tokens = MarkdownIt("commonmark").parse(text, environment)
         heading_path: list[str] = []
         blocks: list[TextBlock] = []
         previous_end = 0
@@ -93,7 +103,14 @@ class TextView(ContentValue):
                 )
             )
             previous_end = end_line
-        return cls(body=body, blocks=tuple(blocks), text=text, byte_offset=byte_offset)
+        return cls(
+            body=body,
+            blocks=tuple(blocks),
+            text=text,
+            byte_offset=byte_offset,
+            first_line=first_line,
+            citation_spans=citation_spans(text, tokens, environment),
+        )
 
     def block(self, key: str) -> TextBlock:
         selected = next((block for block in self.blocks if block.key == key), None)
@@ -107,6 +124,111 @@ class TextView(ContentValue):
 
     def render(self) -> str:
         return "\n\n".join(f"[{block.key}]\n{block.text}" for block in self.blocks)
+
+    def selection_bounds(self, selection: ContentSelection) -> tuple[int, int]:
+        """Resolve a selection to absolute, half-open UTF-8 byte boundaries.
+
+        The selection must name this view's artifact, stay within the view and
+        land on character boundaries. Line selections are one-based and include
+        both endpoints. Invalid selections raise ``content.invalid_selection``.
+        """
+        if selection.artifact != self.body.artifact:
+            raise NousError("content.invalid_selection", "Selection belongs to a different body")
+        selected = selection.selection
+        raw = self.text.encode("utf-8")
+        offset = self.byte_offset
+        if selected.pages or any(
+            value is not None
+            for value in (selected.start_ms, selected.end_ms, selected.frame, selected.crop)
+        ):
+            raise NousError("content.invalid_selection", "A text view requires a text selection")
+        if selected.start_line is not None or selected.end_line is not None:
+            lines = self.text.splitlines(keepends=True)
+            first = selected.start_line or self.first_line
+            last = selected.end_line or self.first_line + len(lines) - 1
+            if first < self.first_line or last >= self.first_line + len(lines):
+                raise NousError("content.invalid_selection", "Text selection exceeds the view")
+            start = offset + len("".join(lines[: first - self.first_line]).encode("utf-8"))
+            end = offset + len("".join(lines[: last - self.first_line + 1]).encode("utf-8"))
+        else:
+            start = selected.start_byte if selected.start_byte is not None else offset
+            end = selected.end_byte if selected.end_byte is not None else offset + len(raw)
+        if not offset <= start <= end <= offset + len(raw):
+            raise NousError("content.invalid_selection", "Text selection exceeds the view")
+        try:
+            raw[: start - offset].decode("utf-8")
+            raw[start - offset : end - offset].decode("utf-8")
+        except UnicodeDecodeError as error:
+            raise NousError("content.invalid_selection", "Selection splits a UTF-8 character") from error
+        return start, end
+
+    def slice(self, selection: SourceSelection) -> TextView:
+        """Select original bytes and rebind existing structure without parsing again."""
+        start, end = self.selection_bounds(ContentSelection(artifact=self.body.artifact, selection=selection))
+        low, high = start - self.byte_offset, end - self.byte_offset
+        raw = self.text.encode("utf-8")
+        text = raw[low:high].decode("utf-8")
+        body = ContentSelection(
+            artifact=self.body.artifact,
+            selection=SourceSelection(start_byte=start, end_byte=end),
+        )
+        preceding = raw[:low].decode("utf-8")
+        return self.model_copy(
+            update={
+                "body": body,
+                "text": text,
+                "byte_offset": start,
+                "first_line": self.first_line + preceding.count("\n") + preceding.count("\r") - preceding.count("\r\n"),
+                "blocks": tuple(
+                    block for block in self.blocks
+                    if block.selection.selection.start_byte is not None
+                    and block.selection.selection.end_byte is not None
+                    and start <= block.selection.selection.start_byte
+                    and block.selection.selection.end_byte <= end
+                ),
+                "citation_spans": tuple(
+                    (left - low, right - low, label)
+                    for left, right, label in self.citation_spans
+                    if low <= left and right <= high
+                ),
+            }
+        )
+
+    def complete_chunks(self, target_bytes: int) -> tuple[TextChunk, ...]:
+        """Group root blocks without splitting an oversized block."""
+        if target_bytes < 1:
+            raise ValueError("Text chunk target must be positive")
+        raw = self.text.encode("utf-8")
+        chunks: list[TextChunk] = []
+        pending: list[TextBlock] = []
+
+        def emit() -> None:
+            if not pending:
+                return
+            start = pending[0].selection.selection.start_byte
+            end = pending[-1].selection.selection.end_byte
+            assert start is not None and end is not None
+            chunks.append(
+                TextChunk(
+                    text=raw[start - self.byte_offset : end - self.byte_offset].decode("utf-8"),
+                    selection=ContentSelection(
+                        artifact=self.body.artifact,
+                        selection=SourceSelection(start_byte=start, end_byte=end),
+                    ),
+                    blocks=tuple(block.ref for block in pending),
+                    heading_path=pending[0].heading_path,
+                )
+            )
+            pending.clear()
+
+        for block in self.blocks:
+            start = pending[0].selection.selection.start_byte if pending else None
+            end = block.selection.selection.end_byte
+            if start is not None and end is not None and end - start > target_bytes:
+                emit()
+            pending.append(block)
+        emit()
+        return tuple(chunks)
 
     def chunks(
         self, max_chars: int | None = None, *, max_bytes: int | None = None

@@ -24,7 +24,7 @@ documents.derived_from 是外部清单明确声明的派生关系，引用已列
 
 ## 正文与检索语义
 
-候选的 content/origin_content 保留原可读正文与真实原件选区，标注和路径继续使用原文的字节坐标。source Markdown 引用仅按 CommonMark 链接语法去掉目标与链接标记，完整保留可见 label。代码块、行内代码、转义示例和普通链接保持原样。
+候选的 content/origin_contents 保留原可读正文与真实原件选区，标注和路径继续使用原文的字节坐标。source Markdown 引用仅按 CommonMark 链接语法去掉目标与链接标记，完整保留可见 label。代码块、行内代码、转义示例和普通链接保持原样。
 
 content.projections.semantic_text 将实际发生变化的原文选区采用为确定性的 text/plain Artifact，ResultStore 保存原选区到投影的来源关系；缓存身份来自精确原选区与实际投影文字。无变化的普通文字直接使用原输入，不创建结果。Wave 的 candidate_texts 与 Embedding.ensure 读取同一投影，retrieval_content 在快照中固定其输入引用；用户读取及标注仍指原 content。投影后没有可检索文字的候选不进入词项或向量行，正文仍可读取。
 
@@ -74,7 +74,7 @@ vectors 为 C-contiguous float32，稀疏指针与索引为 uint64，权重/累�
 
 ## 公开引用和形状
 
-`WaveSnapshotRef = instance_id + snapshot_id + address(wav:Proquint)`；`WaveCandidateRef = WaveSnapshotRef + candidate_key`。候选的内容引用仍是 ArtifactRef 与 selector，不给每个候选重建一套文件身份。
+`WaveSnapshotRef = instance_id + snapshot_id + address`，地址使用 `wav:` 前缀及[共同地址格式](../foundation/application-boundaries.md)；`WaveCandidateRef = WaveSnapshotRef + candidate_key`。候选的内容引用仍是 ArtifactRef 与 selector，不给每个候选重建一套文件身份。
 
 清单所有 key 在各自集合内唯一，引用必须存在；association.strength/confidence 为有限的 0..1，polarity 为 positive/negative，support_group 明确；source/interpretation 的 required_roots 非空，想象类没有证据时保持其性质。ordered occurrence 保留重复出现与实际序位；同一根的重复出现可以影响其数值质量，但始终只有一个独立支持身份。实现若将 occurrence 压成集合，必须保留无序标记并不运行依赖序位的曲线分量。
 

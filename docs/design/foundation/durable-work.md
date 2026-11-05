@@ -2,7 +2,7 @@
 
 ## 选择
 
-采用 DBOS Python 稳定版本提供持久工作、队列、取消、延迟和恢复。本专题在共享数据库与运行基础完成后实施。定时触发可由外部 Host 调用；本轮不自建定时平台。
+采用 DBOS Python 稳定版本提供持久工作、队列、取消、延迟和恢复。本专题在 Journal 维护之后作为下一项实际建设，详见 [后续路线](../../plans/cognitive-use-roadmap.md)。定时触发可由外部 Host 调用；本轮不自建定时平台。
 
 DBOS 系统数据库与业务表使用同一 SQLite 文件。工作拥有者决定内容、输入、结果和重试是否合理；DBOS 负责通用执行机制。
 
@@ -10,7 +10,7 @@ DBOS 系统数据库与业务表使用同一 SQLite 文件。工作拥有者决�
 
 应用组合根注册命名 workflow 函数并显式绑定所需业务操作。公开 payload 只含可持久序列化的值和正式引用，不包含 Runtime、SQLAlchemy Connection、HTTP 客户端或模型实例。
 
-恢复时在相同命名注册之后启动领取。需要从 DBOSClient 入队的工作使用普通命名函数入口；当前官方客户端不支持直接入队类方法。组合根可在注册时以闭包捕获所需 owner，避免全局 app 查找和按每次请求动态注册函数。
+恢复时在相同命名注册之后启动领取。DBOSClient 当前支持 class_name/instance_name 对已注册方法入队；实施时按实际采用版本固定接口。组合根注册完整操作并绑定所需 owner，避免全局 app 查找和按每次请求动态注册函数。持有实例锁的同一长期宿主运行执行器，不另起一个也 open_instance 的进程。
 
 事务内入队按 [事务专题](transactions.md)执行。方法对当前 SQLAlchemy transaction 生效；不要再复制队列状态到一套应用任务总表。
 
@@ -30,6 +30,6 @@ DBOS 重试用于该工作声明的可重试步骤。模型执行器内部尝试
 
 ## 实施依据与验证
 
-使用 [DBOS Client](https://docs.dbos.dev/python/reference/client) 的事务入队和 [Queues](https://docs.dbos.dev/python/tutorials/queue-tutorial) 原有能力。首个消费者用内容接纳的完整后台操作接通，不建立只回传字符串的永久演示任务。
+使用 [DBOS Client](https://docs.dbos.dev/python/reference/client) 的事务入队和 [Queues](https://docs.dbos.dev/python/tutorials/queue-tutorial) 原有能力。首个消费者用正文保存后的标注与检索发布接通，不建立只回传字符串的永久演示任务。
 
 验证真实入队、状态、结果读取、重启继续、一次失败恢复及业务写入回滚时不入队。只验证本项目的集成责任。

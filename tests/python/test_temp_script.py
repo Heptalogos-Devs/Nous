@@ -4,17 +4,22 @@ import os
 import shutil
 import subprocess
 import sys
+from collections.abc import Mapping
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
-fcntl = pytest.importorskip("fcntl")
+if TYPE_CHECKING:
+    import fcntl
+else:
+    fcntl = pytest.importorskip("fcntl")
 pytestmark = pytest.mark.skipif(sys.platform != "linux", reason="Linux /proc cleanup contract")
 SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "temp.sh"
 
 
 @pytest.fixture
-def checkout(tmp_path):
+def checkout(tmp_path: Path) -> Path:
     repo = tmp_path / "checkout with spaces"
     (repo / "scripts").mkdir(parents=True)
     shutil.copy2(SCRIPT, repo / "scripts/temp.sh")
@@ -22,7 +27,9 @@ def checkout(tmp_path):
     return repo
 
 
-def invoke(repo, *args, cwd=None, env=None):
+def invoke(
+    repo: Path, *args: str, cwd: Path | None = None, env: Mapping[str, str] | None = None
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["sh", str(repo / "scripts/temp.sh"), *args],
         cwd=cwd or repo,
@@ -33,14 +40,14 @@ def invoke(repo, *args, cwd=None, env=None):
     )
 
 
-def write(repo, path, value="fixture"):
+def write(repo: Path, path: str, value: str = "fixture") -> Path:
     target = repo / "temp" / path
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(value)
     return target
 
 
-def test_preview_and_apply_preserve_samples_and_toolchains(checkout):
+def test_preview_and_apply_preserve_samples_and_toolchains(checkout: Path) -> None:
     sample = write(checkout, "loose samples/图片 'line\n2'.png", "sample bytes")
     write(checkout, "loose samples/transcript.txt", "words")
     write(checkout, "loose samples/CUSTOM-ARRAY-SCHEMA.JSON", "schema bytes")
@@ -75,7 +82,7 @@ def test_preview_and_apply_preserve_samples_and_toolchains(checkout):
     assert (checkout / "temp/tools").is_dir()
 
 
-def test_preservation_conflict_prevents_every_deletion(checkout):
+def test_preservation_conflict_prevents_every_deletion(checkout: Path) -> None:
     sample = write(checkout, "loose/sample.pdf", "source")
     destination = write(checkout, "test-materials/Incoming/loose/sample.pdf", "different")
     garbage = write(checkout, "work/job/file", "disposable")
@@ -86,7 +93,7 @@ def test_preservation_conflict_prevents_every_deletion(checkout):
     assert garbage.exists()
 
 
-def test_nested_worktree_retains_ancestor(checkout, tmp_path):
+def test_nested_worktree_retains_ancestor(checkout: Path, tmp_path: Path) -> None:
     source = tmp_path / "source"
     source.mkdir()
     subprocess.run(["git", "init", "-q", str(source)], check=True)
@@ -130,7 +137,7 @@ def test_nested_worktree_retains_ancestor(checkout, tmp_path):
 @pytest.mark.parametrize(
     "reference", ["cwd", "descriptor", "relative_argument", "newline_argument", "symlink_argument"]
 )
-def test_linux_live_process_references_retain_candidate(checkout, reference):
+def test_linux_live_process_references_retain_candidate(checkout: Path, reference: str) -> None:
     name = "line\nbreak.txt" if reference == "newline_argument" else "held.txt"
     held = write(checkout, "work/job/" + name)
     command = [sys.executable, "-c", "import time; print('ready', flush=True); time.sleep(60)"]
@@ -151,6 +158,7 @@ def test_linux_live_process_references_retain_candidate(checkout, reference):
     child = subprocess.Popen(
         command, cwd=cwd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True
     )
+    assert child.stdin is not None and child.stdout is not None
     try:
         if reference == "descriptor":
             child.stdin.write(str(held) + "\n")
@@ -170,7 +178,7 @@ def test_linux_live_process_references_retain_candidate(checkout, reference):
     assert not held.exists()
 
 
-def test_links_never_escape_and_init_rejects_layout_conflicts(checkout, tmp_path):
+def test_links_never_escape_and_init_rejects_layout_conflicts(checkout: Path, tmp_path: Path) -> None:
     outside = tmp_path / "outside"
     outside.mkdir()
     precious = outside / "precious.png"
@@ -195,7 +203,7 @@ def test_links_never_escape_and_init_rejects_layout_conflicts(checkout, tmp_path
     assert precious.read_text() == "keep"
 
 
-def fake_docker(repo, tmp_path, body):
+def fake_docker(repo: Path, tmp_path: Path, body: str) -> dict[str, str]:
     binary = tmp_path / "bin"
     binary.mkdir()
     docker = binary / "docker"
@@ -204,7 +212,7 @@ def fake_docker(repo, tmp_path, body):
     return dict(os.environ, PATH=str(binary) + os.pathsep + os.environ["PATH"], CHECKOUT=str(repo))
 
 
-def test_mount_inspection_failure_and_bind_ancestor_are_safe(checkout, tmp_path):
+def test_mount_inspection_failure_and_bind_ancestor_are_safe(checkout: Path, tmp_path: Path) -> None:
     held = write(checkout, "work/job/file")
     env = fake_docker(checkout, tmp_path, "exit 1\n")
     result = invoke(checkout, "clean", "--apply", env=env)
@@ -219,7 +227,7 @@ def test_mount_inspection_failure_and_bind_ancestor_are_safe(checkout, tmp_path)
     assert held.exists() and "bind mount" in result.stdout
 
 
-def test_concurrent_cleanup_is_refused_and_late_changes_are_retained(checkout, tmp_path):
+def test_concurrent_cleanup_is_refused_and_late_changes_are_retained(checkout: Path, tmp_path: Path) -> None:
     sample = write(checkout, "samples/original.pdf", "original")
     with (checkout / "temp/.cleanup.lock").open("w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -240,7 +248,7 @@ def test_concurrent_cleanup_is_refused_and_late_changes_are_retained(checkout, t
     assert "发生变化" in result.stderr
 
 
-def test_unreadable_current_user_process_blocks_apply(checkout):
+def test_unreadable_current_user_process_blocks_apply(checkout: Path) -> None:
     held = write(checkout, "work/job/file")
     child = subprocess.Popen(
         [
@@ -254,6 +262,7 @@ def test_unreadable_current_user_process_blocks_apply(checkout):
         stdout=subprocess.PIPE,
         text=True,
     )
+    assert child.stdout is not None
     try:
         assert child.stdout.readline().strip() == "ready"
         # PR_SET_DUMPABLE=0 denies same-user /proc cwd/exe/fd reads on Linux.
@@ -272,7 +281,7 @@ def test_unreadable_current_user_process_blocks_apply(checkout):
         child.stdout.close()
 
 
-def test_hardlinked_cache_files_are_removed_across_candidates(checkout):
+def test_hardlinked_cache_files_are_removed_across_candidates(checkout: Path) -> None:
     first = write(checkout, "cache/a", "shared cache bytes")
     same_candidate = first.parent / "b"
     other_candidate = checkout / "temp/build/c"

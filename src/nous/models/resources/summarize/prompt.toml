@@ -1,8 +1,17 @@
 contract_id = "reading-summary"
+
+[documentation]
+title = "阅读摘要"
+purpose = "根据本次问题概括资料。"
+consumers = ["GenerationOperations"]
+input_notes = "本次问题、补充要求与准备后的资料。"
+output_notes = "返回文本摘要。"
 [[messages]]
+description = "稳定任务规则、输出要求与固定假设示例。"
 role = "system"
 template = "system.md.j2"
 [[messages]]
+description = "本次问题、要求与真实来源；append_sources 保留文本和媒体顺序。"
 role = "user"
 template = "user.md.j2"
 append_sources = true

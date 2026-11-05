@@ -10,15 +10,16 @@
 |---|---|
 | cognition_namespaces | id, name UNIQUE, content_generation >=0；初始化 default |
 | written_records | id, namespace_id, kind(note/journal), address UNIQUE, head_revision_id, archived, recall；kind 不原地改写 |
-| written_revisions | id, record_id, ordinal, parent_id?, title, body_artifact_id, purpose?, author/viewpoint, cognitive_times, change_kind/reason, origin_result_id?, recorded_at；UNIQUE(record_id,ordinal) |
-| revision_sources | revision_id, key, ordinal, content Artifact/selection, cognitive_target_revision?, usage, name；UNIQUE(revision_id,key)，target 反向索引 |
-| journal_drafts | id, address, namespace_id, result_id UNIQUE, body_artifact, sources/context, target_revision?, adopted_revision?；只有成功草稿 |
+| written_revisions | id, record_id, ordinal, committed_generation, parent_id?, title?, title_source(user/heading/none), body_artifact_id, purpose?, author/viewpoint, cognitive_times, change_kind/reason, origin_result_id?, recorded_at；UNIQUE(record_id,ordinal) |
+| revision_sources | revision_id, key, ordinal, cognitive_target_revision?, usage, name；UNIQUE(revision_id,key)，target 反向索引 |
+| revision_source_targets | revision_id, key, ordinal, artifact_id, selection；每个来源组的有序精确 targets |
+| journal_drafts | id, address, namespace_id, result_id UNIQUE, body_artifact, sources/context, base_revision?, adopted_revision?, adopted_as?；只有成功草稿 |
 | concepts / concept_revisions | stable id/namespace/address/head；exact label/description/aliases/author/times、可选 producer_result/源正文引用，ordinal 唯一 |
 | annotations | id/address, record_revision_id, parser_profile, producer_result?, 只保存已采用的不可变标注；提案留在普通 ProcessingResult |
 | revision_annotation_heads | record_revision_id PRIMARY KEY, annotation_id；唯一可变活动指针，与不可变正文/标注分开 |
 | annotation_bindings | annotation_id, local_key, concept_revision_id；local key 唯一 |
 | annotation_occurrences / paths / path_steps | exact body block/selector、绑定和有序重复出现；用顺序/外键约束 |
-| cognition_feedback | target 的公开类型化值、category/value/comment/author/time、applied_revision? |
+| cognition_feedback | target 的公开类型化值、category/value/comment/author/time、resolution(action/note/mapping_note/applied_revision/resolved_at/actor)? |
 | basis_invalidations | exact source revision/selection、纠正的新 revision 与原因；用于计算显式依赖的待复核 |
 
 不把整个 Journal 正文/向量复制到这些表。每个 owner 提供纯 metadata，bootstrap 显式注册。基础 Artifact 的 owner/slot 仍是字节引用的唯一来源。

@@ -13,9 +13,28 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class ReadingInput:
-    question: str = ""
-    instructions: str = ""
-    sources: tuple[PreparedSource, ...] = ()
+    question: str = field(
+        default="",
+        metadata={"description": "Current question or writing intent; dynamic user content."},
+    )
+    instructions: str = field(
+        default="",
+        metadata={"description": "Additional instructions for this request; dynamic user content."},
+    )
+    sources: tuple[PreparedSource, ...] = field(
+        default=(),
+        metadata={
+            "description": "Prepared source groups in request order; templates receive key, name and text, while append_sources includes media parts."
+        },
+    )
+
+    def template_values(self) -> dict[str, JsonValue]:
+        """The pure values exposed to Jinja; media remains in the user source slot."""
+        return {
+            "question": self.question,
+            "instructions": self.instructions,
+            "sources": [{"key": s.key, "name": s.name, "text": s.text} for s in self.sources],
+        }
 
 
 @dataclass(frozen=True)

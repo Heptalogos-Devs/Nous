@@ -21,6 +21,7 @@ if TYPE_CHECKING:
 
 
 async def initialize_in(tx: WriteTx) -> None:
+    """Ensure the default namespace exists in the caller's write transaction."""
     await tx.connection.execute(
         insert(namespaces)
         .values(id=str(uuid4()), name="default", content_generation=0)
@@ -29,6 +30,11 @@ async def initialize_in(tx: WriteTx) -> None:
 
 
 class NamespaceOperations:
+    """Create and select namespaces and update their content generations.
+
+    Methods ending in ``_in`` use the supplied transaction; its caller owns commit
+    or rollback. Other methods open their own operation and database transaction.
+    """
     def __init__(
         self,
         database: Database,
@@ -39,6 +45,11 @@ class NamespaceOperations:
 
     @staticmethod
     async def get_in(tx: ReadTx, name: str) -> Namespace:
+        """Resolve a namespace ID or name in the supplied read view.
+
+        Raises:
+            NousError: The namespace does not exist (``cognition.namespace_not_found``).
+        """
         row = (
             (
                 await tx.connection.execute(
@@ -59,6 +70,7 @@ class NamespaceOperations:
         return Namespace.model_validate(dict(row))
 
     async def advance_in(self, tx: WriteTx, namespace_id: str) -> Namespace:
+        """Increment a namespace's content generation in the caller's transaction."""
         await tx.connection.execute(
             sa.update(namespaces)
             .where(namespaces.c.id == namespace_id)
@@ -67,6 +79,11 @@ class NamespaceOperations:
         return await self.get_in(tx, namespace_id)
 
     async def create(self, name: str) -> Namespace:
+        """Create a namespace with generation zero and return it after commit.
+
+        Raises:
+            NousError: The name is blank or already exists.
+        """
         async with self.execution.operation("namespace.create"):
             if not name.strip():
                 raise NousError("input.invalid", "Namespace name must not be empty")
@@ -81,6 +98,7 @@ class NamespaceOperations:
                 return await self.get_in(tx, name)
 
     async def list(self) -> tuple[Namespace, ...]:
+        """Return namespaces ordered by name."""
         async with self.execution.operation("namespace.list"):
             async with self.database.read() as tx:
                 rows = (
@@ -91,6 +109,12 @@ class NamespaceOperations:
                 return tuple(Namespace.model_validate(dict(row)) for row in rows)
 
     async def select(self, namespace: str) -> Namespace:
+        """Save the selected namespace ID as the default configuration.
+
+        If a higher-priority setting shadows the saved value, raises
+        ``configuration.shadowed`` with ``selection_saved`` set to true; update the
+        override to make the selection effective.
+        """
         async with self.execution.operation("namespace.select"):
             async with self.database.read() as tx:
                 selected = await self.get_in(tx, namespace)
@@ -116,6 +140,16 @@ class NamespaceOperations:
             return selected
 
     async def rename(self, namespace: str, name: str) -> Namespace:
+        """Rename a namespace while preserving its stable ID.
+
+        The saved default may first be changed from the old name to the ID. If an
+        exception occurs, its context reports the requested name and saved default;
+        resolve a shadowing override or concurrent rename before retrying.
+
+        Raises:
+            NousError: The name is blank or taken, an override blocks the rename,
+                or the namespace changed since it was read.
+        """
         async with self.execution.operation("namespace.rename"):
             if not name.strip():
                 raise NousError("input.invalid", "Namespace name must not be empty")

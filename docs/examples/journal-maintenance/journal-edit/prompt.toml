@@ -1,0 +1,19 @@
+contract_id = "journal-edit"
+
+[documentation]
+title = "局部修订文稿"
+purpose = "只提出请求范围内需要改变的文字，范围外正文由程序保留。"
+consumers = ["writing.propose_edit"]
+input_notes = "T 为可改范围，BASE 为只读上下文；旧来源键保持，N 为新增材料。"
+output_notes = "返回 edits；TaskDefinition 解释为完整 Markdown 与 diff。"
+
+[[messages]]
+role = "system"
+template = "system.md.j2"
+description = "稳定任务、边界及固定假设示例。"
+
+[[messages]]
+role = "user"
+template = "user.md.j2"
+append_sources = true
+description = "本次意图、允许范围及实际材料由程序提供。"

@@ -127,17 +127,24 @@ pub(super) struct SourceProvenance {
     pub(super) source_type: String,
 }
 
-#[derive(Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(default, rename_all = "camelCase")]
 pub struct NativeConfig {
+    /// Original-vector recall target: candidates, or document groups in document mode.
     pub query_k: usize,
+    /// Denoised-field recall target: candidates, or document groups in document mode.
     pub denoised_k: usize,
+    /// Local-field recall target: candidates, or document groups in document mode.
     pub local_field_k: usize,
+    /// Transfer-field recall target: candidates, or document groups in document mode.
     pub transfer_field_k: usize,
+    /// Lexical recall target: candidates, or document groups in document mode.
     pub bm25_k: usize,
     /// Sparse share of the base score when authorized lexical hits are present.
     pub lexical_weight: f64,
+    /// Direct-anchor recall target: candidates, or document groups in document mode.
     pub anchor_k: usize,
+    /// Maximum actual candidate rows admitted to the fixed readout pool.
     pub max_union_candidates: usize,
     pub local_weight: f64,
     pub transfer_weight: f64,

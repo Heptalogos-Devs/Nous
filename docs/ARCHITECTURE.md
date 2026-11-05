@@ -2,14 +2,14 @@
 
 ## 产品能力与本次范围
 
-Nous 提供独立的内容处理与长期认知能力。实例、配置、CAS、Artifact、ProcessingResult、模型、Prompt、媒体和 Embedding 是共同基础。语义输入、逐批表示、来源与正文、请求诊断和 Rust retrieval 各有明确负责模块；本轮将它们用于正式 Note/Journal 的记录、采用、修订、当前检索和反馈，见 [主计划](plans/journal-delivery.md)。
+Nous 提供独立的内容处理与长期认知能力。实例、配置、CAS、Artifact、ProcessingResult、模型、Prompt、媒体和 Embedding 是共同基础。语义输入、逐批表示、来源与正文、请求诊断和 Rust retrieval 各有明确负责模块；本轮完善正式 Journal 的精确维护、独立写作意图、程序使用、Prompt 上下文及检索/诊断接缝，见 [主计划](plans/journal-maintenance.md)。
 
 Wave 集合是检索输入与可重建投影。cognition 拥有正式文稿、版本、Concept 与采用；按一致读事务提供类型化 CorpusView，清单导入也调用同一个 Wave 构建能力。内容字节和精确选区继续由 Artifact/TextView 提供。
 
 ## 调用方向
 
 ```text
-CLI / 后续 HTTP、MCP、SDK
+进程内宿主 / CLI / 后续 HTTP、MCP、远程 SDK
   ↓
 完整应用操作：配置、生成、媒体解释、向量、Wave、认知文稿/采用/查询
   ├─ 内容接纳/读取/结果采用 → ArtifactStore、ResultStore → CAS、Database
@@ -26,6 +26,8 @@ CLI / 后续 HTTP、MCP、SDK
 ```
 
 MediaPreparer 不持有模型执行器；ModelExecutor 不读取业务数据库。应用操作可以调用其它具有明确业务作用的操作，但不相互递归、不从整个 Runtime 查找依赖。CLI 不创建候选配置或另一套模型/模板编译路径。
+
+Journal 的事务保存核心不持有标注与检索对象；完整 RecordOperations 用例负责 AfterWrite。作用域句柄绑定稳定 Namespace 并复用所有基础服务，见 [维护架构](design/cognition/maintenance-architecture.md)。
 
 ## 状态所有权
 
@@ -60,7 +62,7 @@ Execution 控制根操作、截止时间和实际 worker 生命周期。Native �
 
 ## 开发边界
 
-现有 VCP 数值模块与 DTSC 保留，本轮接入正式文稿视图及当前查询发布，不恢复旧运行壳。DBOS 留给实际持久后台任务；完整 NousQL、任意历史视图、Social/Ego/Dream/Episode 不进入本轮。
+现有 VCP 数值模块与 DTSC 保留，本轮整理正式文稿维护、批量正文准备和 Native 分组，不恢复旧运行壳。DBOS 的保存后维护与持续宿主是紧接着的工作，见 [路线](plans/cognitive-use-roadmap.md)；完整 NousQL、任意历史视图、Social/Ego/Dream/Episode 不进入本轮。
 
 现行代码可以按真实用途重新组织。没有外部兼容承诺的接口直接迁移，旧路径和专属支撑随替换删除。临时样本和诊断留在 temp，网关补丁与独立语音工具保持独立。
 

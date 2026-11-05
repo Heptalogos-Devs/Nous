@@ -5,24 +5,16 @@ from collections.abc import Mapping
 
 import sqlalchemy as sa
 
+from nous.common._address_words import FIRST_WORDS, REMAINING_WORDS
 from nous.storage.database import WriteTx
 
 
 def new_address(prefix: str) -> str:
-    """Encode a random 48-bit value as three readable CVCVC groups."""
-    consonants, vowels = "bdfghjklmnprstvz", "aiou"
-    value = secrets.randbits(48)
-    groups: list[str] = []
-    for shift in (32, 16, 0):
-        group = value >> shift
-        groups.append(
-            consonants[(group >> 12) & 15]
-            + vowels[(group >> 10) & 3]
-            + consonants[(group >> 6) & 15]
-            + vowels[(group >> 4) & 3]
-            + consonants[group & 15]
-        )
-    return prefix + ":" + "-".join(groups)
+    """Encode 65 random bits as six fixed-width ordinary-token units."""
+    value = secrets.randbits(65)
+    groups = [FIRST_WORDS[value >> 55]]
+    groups.extend(REMAINING_WORDS[(value >> shift) & 2047] for shift in (44, 33, 22, 11, 0))
+    return prefix + ":" + " ".join(groups)
 
 
 async def insert_address(

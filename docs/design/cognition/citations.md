@@ -2,7 +2,7 @@
 
 ## 引用必须固定正文
 
-SourceBinding 保存本次局部 key、实际 ContentSelection、可选 cognitive_revision_ref、usage、名称，以及可用时间和来源说明。调用者提供逻辑 Note/Journal 地址时，在材料选择的短读事务中固定 revision；整个写作和采用使用该版本。
+SourceBinding 保存局部 key、有序的精确 selections（ContentSelection 集合）、可选 owner_revision、usage 和名称。普通单来源也使用长度一的同一形状；不连续位置保持多项，不能扩大成包围区间。可用时间与来源说明继续从正式来源取得。调用者提供逻辑 Note/Journal 地址时，在材料选择的短读事务中固定 revision；整个写作和采用使用该版本。
 
 InputGroup/part 继续记录模型实际读取的内容；SourceBinding 解释 Journal 正文中的引用与认知关系。实际字节、来源坐标、作者视角和独立支持不混成一个字符串。
 
@@ -11,6 +11,8 @@ InputGroup/part 继续记录模型实际读取的内容；SourceBinding 解释 J
 模型和人工使用普通 Markdown 链接 `[说明文字](source:S1:C1)`。可见 label 是有意义的标题、主体、内容、观点或指代，应当参与正文语义，例如 `[个人网站作者的自述](source:S1:C1)`；机器键只留在 source: 目标中，不用“来源 S1”“S1:C1”等机器标签或“这段材料”等空泛指代作为显示文字。程序给模型完整短键与可读名称列表；模型不输出 UUID、数据库 ID 或长地址。
 
 共同 Markdown parser 只从 link token 识别 source: 协议。完整键精确匹配 SourceBinding，冒号后的表示/分片段不能省略。代码块、行内代码、转义文字及 HTML 属性中的示例保持普通内容。
+
+写作操作对本次生成内容的链接目标做确定性整理：裸目标精确等于已知来源键时补入 source: 前缀，保留显示文字和其余 Markdown 字节。程序只处理实际来源目录中的键；外链、代码与基准中既有的普通链接保持原样。局部编辑只整理模型给出的替换或插入片段。全文写作发生整理时，原模型 Markdown 以 model_output 保存；局部编辑保留原 proposal，原始 response 继续可读。实际程序产物和整理键记录在 ProcessingResult.parameters 中。
 
 程序校验已出现的 S1 确实在绑定中，再将绑定随 revision 保存。正文保持原样；read --sources 展开精确材料及选区，export 按需输出可读引用说明或规范 URI。复制正文到新对象时，引用映射必须一起显式带入，不能从其它文稿的 S1 猜来源。
 
@@ -41,5 +43,7 @@ source: Markdown 链接保持现有存储形式；既有精确历史正文和来
 ## 实际路线决定最终引用键
 
 选定源对象的版本在写作前固定；S1:P3 等展开后的局部组键以最终成功路线实际编译/发送的 InputGroup 为准。草稿采用读取 ProducedTask.actual_inputs 建立 citation map，并通过保留的 origin 关联到先前固定的认知版本。备用路线换表示时，不用主路线的过期组键登记来源。
+
+InputSpec.slot_key 和 InputGroup.slot_key 保存稳定来源槽，InputGroup.key 只表达实际组键。所有媒体变换与备用路线保留槽身份，不能解析冒号恢复来源。正式采用沿 slot_key 与实际 origins 取得精确来源集合。旧正文引用目录和新增材料目录分别冻结，由程序避免键冲突；范围外原引用保持原样。共同字段与表迁移见 [精确编辑](exact-editing.md)。
 
 用户源序号和 exact revision 保持稳定；表示转换和局部组键可以按真实发送改变。实际请求、正文引用映射与结果采用必须指向同一次成功输出。

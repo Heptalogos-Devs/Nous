@@ -1,8 +1,17 @@
 contract_id = "media-description"
+
+[documentation]
+title = "描述媒体"
+purpose = "描述实际输入表示中的媒体内容。"
+consumers = ["MediaAnalysis"]
+input_notes = "可能含图片、音频、视频或已准备的文本表示；以实际 InputPlan 为准。"
+output_notes = "返回文本描述；后续结构化阶段由独立任务负责。"
 [[messages]]
+description = "稳定任务规则、输出要求与固定假设示例。"
 role = "system"
 template = "system.md.j2"
 [[messages]]
+description = "本次问题、要求与真实来源；append_sources 保留文本和媒体顺序。"
 role = "user"
 template = "user.md.j2"
 append_sources = true

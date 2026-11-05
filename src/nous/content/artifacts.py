@@ -7,10 +7,11 @@ from collections.abc import AsyncGenerator, Callable, Sequence
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import cast
+from typing import Literal, cast
 from uuid import uuid4
 
 import sqlalchemy as sa
+from pydantic import JsonValue
 
 from nous.common.address import insert_address
 from nous.common.errors import NousError
@@ -21,11 +22,13 @@ from nous.temporal.values import Clock
 
 from . import schema
 from ._records import date_value
-from .configuration import ContentConfig
+from .configuration import ContentConfig, TextCacheConfig
 from .contracts import (
     Artifact,
     ArtifactRef,
     BlobRef,
+    ContentReadView,
+    ContentRepresentation,
     ContentSelection,
     InputSpec,
     ResultRef,
@@ -35,7 +38,12 @@ from .text import PARSER_PROFILE, BlockRef, TextBlock, TextView
 
 
 class ArtifactStore:
-    """Own artifact identities while CAS owns their authoritative body bindings."""
+    """Own instance-bound artifact identities and their content access.
+
+    Each acceptance records a separate artifact identity even when the same bytes
+    already exist in CAS. Publish bytes before registering an artifact in a
+    caller-owned transaction; the runtime owns the borrowed database and store.
+    """
 
     def __init__(
         self,
@@ -44,10 +52,15 @@ class ArtifactStore:
         instance_id: str,
         *,
         text_read_max_bytes: Callable[[], int] | None = None,
+        text_cache_root: Path | None = None,
+        text_cache_settings: Callable[[], TextCacheConfig] | None = None,
         clock: Clock | None = None,
     ) -> None:
         self.database, self.content, self.instance_id = database, content, instance_id
         self.clock = clock or Clock()
+        from .text_cache import TextStructureCache
+
+        self.text_cache = TextStructureCache(text_cache_root, text_cache_settings)
         self.text_read_max_bytes = text_read_max_bytes or (
             lambda: ContentConfig().text_read_max_bytes
         )
@@ -60,7 +73,13 @@ class ArtifactStore:
         display_name: str | None = None,
         origin: str | None = None,
     ) -> Artifact:
-        """Publish bytes, then record this acceptance in a short transaction."""
+        """Accept a file, UTF-8 string or bytes as a new artifact.
+
+        A ``Path`` reads a file; a string is text content, not a file path. Bytes
+        are published first and the new identity and body reference are then
+        committed in a short transaction. Repeated acceptance creates distinct
+        artifact identities even if the bytes are identical.
+        """
         if isinstance(source, Path):
             published = await self.content.publish_file(source)
             name = display_name or source.name
@@ -128,54 +147,79 @@ class ArtifactStore:
             return await self.get_in(tx, ref)
 
     async def get_in(self, tx: ReadTx, ref: str | ArtifactRef) -> Artifact:
-        if isinstance(ref, ArtifactRef):
-            if ref.instance_id != self.instance_id:
-                raise NousError("content.instance_mismatch", "Artifact belongs to another instance")
-            target = ref.id
-        else:
-            target = ref
-        row = (
-            (
+        return (await self.get_many_in(tx, (ref,)))[0]
+
+    async def get_many(self, refs: Sequence[str | ArtifactRef]) -> tuple[Artifact, ...]:
+        async with self.database.read() as tx:
+            return await self.get_many_in(tx, refs)
+
+    async def get_many_in(
+        self, tx: ReadTx, refs: Sequence[str | ArtifactRef]
+    ) -> tuple[Artifact, ...]:
+        """Resolve artifacts in the caller's read transaction, preserving input order.
+
+        String references can be IDs or addresses; typed references must belong
+        to this instance. Duplicates are preserved. A missing artifact or a
+        reference from another instance raises ``NousError``.
+        """
+        targets: list[str] = []
+        for ref in refs:
+            if isinstance(ref, ArtifactRef):
+                if ref.instance_id != self.instance_id:
+                    raise NousError(
+                        "content.instance_mismatch", "Artifact belongs to another instance"
+                    )
+                targets.append(ref.id)
+            else:
+                targets.append(ref)
+        found: dict[str, Artifact] = {}
+        identifiers = list(dict.fromkeys(targets))
+        for offset in range(0, len(identifiers), 400):
+            chunk = identifiers[offset : offset + 400]
+            rows = (
                 await tx.connection.execute(
-                    sa.select(schema.artifacts).where(
+                    sa.select(
+                        schema.artifacts,
+                        schema.results.c.id.label("producer_id"),
+                        schema.results.c.address.label("producer_address"),
+                    )
+                    .outerjoin(
+                        schema.outputs, schema.outputs.c.artifact_id == schema.artifacts.c.id
+                    )
+                    .outerjoin(schema.results, schema.results.c.id == schema.outputs.c.result_id)
+                    .where(
                         sa.or_(
-                            schema.artifacts.c.id == target, schema.artifacts.c.address == target
+                            schema.artifacts.c.id.in_(chunk), schema.artifacts.c.address.in_(chunk)
                         )
                     )
                 )
-            )
-            .mappings()
-            .one_or_none()
-        )
-        if row is None:
-            raise NousError("content.not_found", "Artifact does not exist", details={"ref": target})
-        # Output links are the sole producer relation for derived artifacts.
-        producer_row = (
-            (
-                await tx.connection.execute(
-                    sa.select(schema.results.c.id, schema.results.c.address)
-                    .join(schema.outputs)
-                    .where(schema.outputs.c.artifact_id == row["id"])
+            ).mappings()
+            for row in rows:
+                artifact = Artifact(
+                    ref=ArtifactRef(
+                        id=str(row["id"]), address=str(row["address"]), instance_id=self.instance_id
+                    ),
+                    media_type=str(row["media_type"]),
+                    display_name=str(row["display_name"]),
+                    source=row["source"],
+                    received_at=date_value(row["received_at"]),
+                    formed_at=date_value(row["formed_at"]),
+                    recorded_at=cast(datetime, date_value(row["recorded_at"])),
+                    producer_result_ref=ResultRef(
+                        id=str(row["producer_id"]),
+                        address=str(row["producer_address"]),
+                        instance_id=self.instance_id,
+                    )
+                    if row["producer_id"]
+                    else None,
                 )
+                found[artifact.ref.id] = found[artifact.ref.address] = artifact
+        missing = next((target for target in targets if target not in found), None)
+        if missing is not None:
+            raise NousError(
+                "content.not_found", "Artifact does not exist", details={"ref": missing}
             )
-            .mappings()
-            .one_or_none()
-        )
-        producer = (
-            ResultRef(instance_id=self.instance_id, **dict(producer_row)) if producer_row else None
-        )
-        return Artifact(
-            ref=ArtifactRef(
-                id=str(row["id"]), address=str(row["address"]), instance_id=self.instance_id
-            ),
-            media_type=str(row["media_type"]),
-            display_name=str(row["display_name"]),
-            source=str(row["source"]) if row["source"] is not None else None,
-            received_at=date_value(row["received_at"]),
-            formed_at=date_value(row["formed_at"]),
-            recorded_at=cast(datetime, date_value(row["recorded_at"])),
-            producer_result_ref=producer,
-        )
+        return tuple(found[target] for target in targets)
 
     async def blob(self, ref: str | ArtifactRef) -> BlobRef:
         if isinstance(ref, ArtifactRef):
@@ -195,6 +239,232 @@ class ArtifactStore:
                     "content.not_found", "Artifact does not exist", details={"ref": target}
                 )
             return await self.content.resolve_in(tx, str(identifier))
+
+    async def read_view_many(
+        self,
+        selections: Sequence[ContentSelection],
+        *,
+        representations: Literal["existing", "none"] = "existing",
+    ) -> tuple[ContentReadView, ...]:
+        """Read exact text or media references, expanding adopted representations without generation."""
+        if not selections:
+            return ()
+        async with self.database.read() as tx:
+            originals = await self.get_many_in(tx, [selection.artifact for selection in selections])
+            blobs = await self.content.resolve_many_in(tx, [item.ref.id for item in originals])
+            identifiers = {item.ref.id for item in originals}
+            represented: dict[
+                str, list[tuple[dict[str, object], tuple[ContentSelection, ...]]]
+            ] = {}
+            if representations == "existing":
+                direct = sa.select(schema.parts.c.result_id).where(
+                    schema.parts.c.artifact_id.in_(identifiers)
+                )
+                origins = sa.select(schema.origins.c.result_id).where(
+                    schema.origins.c.artifact_id.in_(identifiers)
+                )
+                result_ids = list((await tx.connection.execute(direct.union(origins))).scalars())
+                if result_ids:
+                    used = (
+                        (
+                            await tx.connection.execute(
+                                sa.select(
+                                    schema.parts.c.result_id,
+                                    schema.parts.c.artifact_id,
+                                    schema.parts.c.selector,
+                                ).where(schema.parts.c.result_id.in_(result_ids))
+                            )
+                        )
+                        .mappings()
+                        .all()
+                    )
+                    roots = (
+                        (
+                            await tx.connection.execute(
+                                sa.select(
+                                    schema.origins.c.result_id,
+                                    schema.origins.c.artifact_id,
+                                    schema.origins.c.selector,
+                                ).where(schema.origins.c.result_id.in_(result_ids))
+                            )
+                        )
+                        .mappings()
+                        .all()
+                    )
+                    source_artifacts = await self.get_many_in(
+                        tx, [str(row["artifact_id"]) for row in (*used, *roots)]
+                    )
+                    relations: dict[str, list[ContentSelection]] = {}
+                    for row, artifact in zip((*used, *roots), source_artifacts, strict=True):
+                        selected = ContentSelection(
+                            artifact=artifact.ref,
+                            selection=SourceSelection.model_validate(row["selector"]),
+                        )
+                        if selected not in relations.setdefault(str(row["result_id"]), []):
+                            relations[str(row["result_id"])].append(selected)
+                    outputs = (
+                        (
+                            await tx.connection.execute(
+                                sa.select(
+                                    schema.results.c.id,
+                                    schema.results.c.address,
+                                    schema.results.c.operation,
+                                    schema.results.c.coverage,
+                                    schema.results.c.parameters,
+                                    schema.outputs.c.name,
+                                    schema.outputs.c.artifact_id,
+                                )
+                                .join(schema.outputs)
+                                .where(
+                                    schema.results.c.id.in_(result_ids),
+                                    schema.outputs.c.name != "response",
+                                )
+                                .order_by(schema.results.c.recorded_at, schema.outputs.c.ordinal)
+                            )
+                        )
+                        .mappings()
+                        .all()
+                    )
+                    for row in outputs:
+                        declared = cast(dict[str, JsonValue], row["parameters"]).get(
+                            "representations", {}
+                        )
+                        info = (
+                            declared.get(str(row["name"])) if isinstance(declared, dict) else None
+                        )
+                        if not isinstance(info, dict) or not isinstance(info.get("kind"), str):
+                            continue
+                        exact = (
+                            tuple(
+                                ContentSelection.model_validate(item)
+                                for item in cast(list[JsonValue], info["sources"])
+                            )
+                            if "sources" in info
+                            else tuple(relations[str(row["id"])])
+                        )
+                        if any(item.artifact.instance_id != self.instance_id for item in exact):
+                            raise NousError(
+                                "content.instance_mismatch",
+                                "A representation belongs to another instance",
+                            )
+                        details: dict[str, object] = {**dict(row), "representation_kind": info["kind"]}
+                        for identifier in {item.artifact.id for item in exact} & identifiers:
+                            represented.setdefault(identifier, []).append((details, exact))
+            derived = await self.get_many_in(
+                tx,
+                list(
+                    dict.fromkeys(
+                        str(row["artifact_id"]) for rows in represented.values() for row, _ in rows
+                    )
+                ),
+            )
+        derived_map = {artifact.ref.id: artifact for artifact in derived}
+        texts: dict[str, str] = {}
+        views: list[ContentReadView] = []
+        for selected, artifact, blob in zip(selections, originals, blobs, strict=True):
+            is_text = (
+                artifact.media_type.startswith("text/") or artifact.media_type == "application/json"
+            )
+            async with self.content.borrow_local(blob) as path:
+                if is_text:
+                    data, _, _ = await self.content.execution.blocking(
+                        self._selected_bytes,
+                        path,
+                        selected.selection,
+                        self.text_read_max_bytes(),
+                        blob.byte_length,
+                    )
+                    try:
+                        body = data.decode("utf-8")
+                    except UnicodeDecodeError as error:
+                        raise NousError(
+                            "content.not_text", "Selection does not contain complete UTF-8 text"
+                        ) from error
+                else:
+                    body = None
+            available: list[ContentRepresentation] = []
+            for row, exact in represented.get(artifact.ref.id, []):
+                if not any(
+                    item.artifact.id == artifact.ref.id
+                    and self._overlaps(selected.selection, item.selection)
+                    for item in exact
+                ):
+                    continue
+                output = derived_map[str(row["artifact_id"])]
+                if output.ref.id == artifact.ref.id:
+                    continue
+                if output.media_type.startswith("text/") or output.media_type == "application/json":
+                    if output.ref.id not in texts:
+                        texts[output.ref.id] = await self.read_text(output.ref)
+                    text = texts[output.ref.id]
+                else:
+                    text = None
+                available.append(
+                    ContentRepresentation(
+                        kind=str(row["representation_kind"]),
+                        result_ref=ResultRef(
+                            id=str(row["id"]),
+                            address=str(row["address"]),
+                            instance_id=self.instance_id,
+                        ),
+                        operation=str(row["operation"]),
+                        output_name=str(row["name"]),
+                        content=ContentSelection(artifact=output.ref),
+                        name=output.display_name,
+                        media_type=output.media_type,
+                        source_selections=exact,
+                        coverage=cast(dict[str, JsonValue], row["coverage"]),
+                        body_text=text,
+                    )
+                )
+            views.append(
+                ContentReadView(
+                    source=selected,
+                    name=artifact.display_name,
+                    media_type=artifact.media_type,
+                    byte_length=blob.byte_length,
+                    body_text=body,
+                    export_ref=artifact.ref,
+                    available_representations=tuple(available),
+                    coverage={"selection": selected.selection.model_dump(mode="json")},
+                )
+            )
+        return tuple(views)
+
+    @staticmethod
+    def _overlaps(left: SourceSelection, right: SourceSelection) -> bool:
+        if left.is_whole or right.is_whole:
+            return True
+        if left.pages or right.pages:
+            return bool(set(left.pages) & set(right.pages))
+        for low, high, inclusive in (
+            ("start_byte", "end_byte", False),
+            ("start_line", "end_line", True),
+            ("start_ms", "end_ms", False),
+        ):
+            if any(
+                getattr(item, low) is not None or getattr(item, high) is not None
+                for item in (left, right)
+            ):
+                if not all(
+                    getattr(item, low) is not None or getattr(item, high) is not None
+                    for item in (left, right)
+                ):
+                    return False
+                start = max(getattr(left, low) or 0, getattr(right, low) or 0)
+                end = min(
+                    getattr(left, high) if getattr(left, high) is not None else float("inf"),
+                    getattr(right, high) if getattr(right, high) is not None else float("inf"),
+                )
+                if not (start <= end if inclusive else start < end):
+                    return False
+        if left.frame is not None and right.frame is not None and left.frame != right.frame:
+            return False
+        if left.crop is not None and right.crop is not None:
+            return max(left.crop[0], right.crop[0]) < min(left.crop[2], right.crop[2]) and max(
+                left.crop[1], right.crop[1]
+            ) < min(left.crop[3], right.crop[3])
+        return True
 
     async def read_bytes(
         self, ref: str | ArtifactRef, *, max_bytes: int = 64 * 1024 * 1024
@@ -302,6 +572,11 @@ class ArtifactStore:
         return (await self._selected(content))[0]
 
     async def text_view(self, ref: ContentSelection | ArtifactRef | str) -> TextView:
+        """Parse a precise UTF-8 selection into source-bound Markdown blocks.
+
+        References in the view retain the immutable body identity and absolute
+        byte selections. A plain artifact reference selects its full body.
+        """
         body = (
             ref
             if isinstance(ref, ContentSelection)
@@ -315,6 +590,12 @@ class ArtifactStore:
     async def read_blocks(
         self, refs: Sequence[BlockRef], *, preserve_context: bool = True
     ) -> tuple[TextBlock, ...]:
+        """Resolve and verify exact block references against their original body views.
+
+        Returns first occurrences in input order, deduplicated by body and block
+        key. Unknown parser profiles, blocks or mismatched byte selections raise
+        ``NousError``; references must match the body and view that produced them.
+        """
         views: dict[str, TextView] = {}
         selected: list[TextBlock] = []
         seen: set[tuple[str, str]] = set()

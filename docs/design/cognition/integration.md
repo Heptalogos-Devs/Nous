@@ -10,18 +10,20 @@ Note 和 Journal 都需要不可变正文版本、来源及精确引用。共享
 
 | 位置 | 完整职责 |
 |---|---|
-| cognition/record_reading.py | 文稿精确读取、来源冻结、历史与列表；供写作、标注和查询共同使用 |
-| cognition/records.py | 文稿创建、修订、归档/恢复和短事务；提交后按配置接续标注并返回分别的保存/标注结果 |
-| cognition/journalize.py | 来源选择、草稿形成、采用及重复采用结果 |
+| cognition/writing/reading.py、records.py | 精确读取、来源、历史、事务内保存；核心不依赖模型、标注或检索 |
+| cognition/writing/operations.py | 完整记录/编辑/采用用例及 AfterWrite；程序和 CLI 共用 |
+| cognition/writing/generation.py、drafts.py、tasks.py | 创建型 journalize、编辑建议、重写、反思和成功草稿的统一采用 |
 | cognition/concepts.py | 概念身份、意义版本、发现与明确复用 |
 | cognition/annotations.py | 正式标注采用、绑定与活动版本 |
-| cognition/retrieval.py | 捕获当前知识视图、发布协调、查询/精确命中读取 |
+| cognition/retrieval/ | capture、projection、operations 分别负责一致读取、语义投影和查询发布；正式分组在 Wave 完成 |
 | cognition/feedback.py | 反馈目标与评价；显式修改进入文稿 owner |
 | cognition/scope.py | Namespace、generation 及同事务推进 |
 | cognition/basis.py | 明确依据更正与待复核关系 |
 | cognition/contracts.py、schema.py | 共享公开值和纯数据库定义；复杂后按真实 owner 拆分 |
 
 若某文件已包含两个独立修改原因，就按责任拆分；不按固定行数切出转发文件。避免 cognition/domain/application/infrastructure 四层平行目录。输入输出值可集中；复杂算法放已有 Wave，不塞进 records。
+
+程序内入口与完整迁移见 [维护架构](maintenance-architecture.md)。保存与后处理职责分开，公共用例仍一次完成有意义的操作，不增加逐方法转发层。
 
 ## 公共基础怎样接入
 
@@ -43,7 +45,7 @@ ResultStore 负责采用通用处理结果；模型操作把 ProducedTask 转成
 
 ## 阶段与检索
 
-Generation/Media 通过 common.operations.add_error_context/record_completed 补充领域阶段；policy.error_report 保存实际 next_action。媒体策略由 MediaAnalysis 根据配置和操作参数解释，模型参数交已有协议依赖处理。
+Generation/Media 通过 common.operations.add_error_context/record_completed 补充领域阶段；完整用例通过 report_outcome 报告部分完成，日志与 runtime check 消费同一终态；policy.error_report 保存实际 next_action。媒体策略由 MediaAnalysis 根据配置和操作参数解释，模型参数交已有协议依赖处理。
 
 CognitiveRetrieval 与 Wave 共享类型化 CorpusView 构建。清单文件仅为导入入口，禁止从认知表临时生成 JSON 文件作为服务协议。各操作不从整个 Runtime 获取内部依赖；Runtime 只做明确装配及公共句柄汇集。
 

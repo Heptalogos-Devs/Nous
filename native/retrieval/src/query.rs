@@ -1,4 +1,5 @@
 //! One observation feeds candidate recall, ranked readout and grounded Thinking.
+mod recall;
 use crate::{
     CancellationToken, failure,
     snapshot::{Snapshot, slice, unit},
@@ -22,12 +23,19 @@ use std::{
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct CandidatePool {
+    #[serde(default = "candidate_rank_scope")]
+    pub rank_scope: String,
     pub identity: Value,
     pub entries: Vec<PoolEntry>,
     #[serde(default)]
     pub calibration: Option<PreparedPool>,
     #[serde(default)]
     pub offered_candidates: usize,
+    #[serde(default)]
+    pub lane_coverage: BTreeMap<String, crate::grouping::LaneCoverage>,
+}
+fn candidate_rank_scope() -> String {
+    "candidate_lane".into()
 }
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -44,6 +52,11 @@ pub struct LaneScore {
 #[derive(Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Options {
+    pub grouping: String,
+    pub passages_per_group: usize,
+    pub group_scan_limit: usize,
+    #[serde(skip)]
+    pub lane_coverage: std::sync::Mutex<BTreeMap<String, crate::grouping::LaneCoverage>>,
     pub query_space_signature: Option<String>,
     pub top_k: usize,
     pub rrf_k: f64,
@@ -77,6 +90,10 @@ impl Default for Options {
         let controls = QueryControls::default();
         Self {
             query_space_signature: None,
+            grouping: "candidate".into(),
+            passages_per_group: 1,
+            group_scan_limit: controls.group_scan_limit,
+            lane_coverage: Default::default(),
             top_k: controls.top_k,
             rrf_k: controls.rrf_k,
             include_trace: false,
@@ -93,6 +110,18 @@ impl Default for Options {
     }
 }
 impl Options {
+    fn validate_grouping(&self) -> Result<()> {
+        ensure!(
+            matches!(self.grouping.as_str(), "candidate" | "document")
+                && self.passages_per_group > 0,
+            "Invalid result grouping"
+        );
+        ensure!(
+            (1..=1_000_000).contains(&self.group_scan_limit),
+            "group_scan_limit must be in 1..1000000"
+        );
+        Ok(())
+    }
     fn lane_limit(&self, lane: &str) -> usize {
         match lane {
             "query_knn" => self.readout.query_k,
@@ -231,57 +260,6 @@ impl Snapshot {
             .validate_for(assets)
             .map_err(|e| failure("wave.observation_mismatch", e))
     }
-    fn lexical(
-        &self,
-        text: &str,
-        allowed: &BTreeSet<u64>,
-        limit: usize,
-    ) -> Result<Vec<(u64, f64)>> {
-        if limit == 0 || text.trim().is_empty() {
-            return Ok(vec![]);
-        }
-        let refs = allowed
-            .iter()
-            .map(|r| self.inner.candidates.keys[*r as usize].clone())
-            .collect();
-        let lookup = self
-            .inner
-            .candidates
-            .keys
-            .iter()
-            .enumerate()
-            .map(|(r, k)| (k, r as u64))
-            .collect::<BTreeMap<_, _>>();
-        Ok(self
-            .inner
-            .lexical
-            .search_allowed(text, "snapshot", "snapshot", limit, &refs)?
-            .hits
-            .into_iter()
-            .map(|h| (lookup[&h.id], f64::from(h.score)))
-            .collect())
-    }
-    fn dense(
-        &self,
-        vector: &[f32],
-        allowed: &BTreeSet<u64>,
-        limit: usize,
-    ) -> Result<Vec<(u64, f64)>> {
-        if limit == 0 {
-            return Ok(vec![]);
-        }
-        let ann = self
-            .inner
-            .ann
-            .as_ref()
-            .ok_or_else(|| failure("wave.capability_missing", "Dense vectors unavailable"))?;
-        let ids = allowed.iter().map(|r| *r as i64 + 1).collect();
-        Ok(ann
-            .search_candidates(vector, limit, Some(&ids))?
-            .into_iter()
-            .map(|h| ((h.id - 1) as u64, h.similarity))
-            .collect())
-    }
     pub fn neighborhood(
         &self,
         rows: Vec<u64>,
@@ -339,6 +317,10 @@ impl Snapshot {
         Ok(json!({"nodes":nodes,"edges":edges,"associations":associations,"truncated":total_edges>limit}).to_string())
     }
     pub fn validate_pool(&self, pool: &CandidatePool) -> Result<()> {
+        ensure!(
+            matches!(pool.rank_scope.as_str(), "candidate_lane" | "grouped_lane"),
+            "Invalid candidate pool rank_scope"
+        );
         if pool.identity != self.inner.input.identity {
             return Err(crate::Failure {
                 code: "wave.candidate_pool_mismatch",
@@ -506,132 +488,6 @@ impl Snapshot {
         prepare_pool(assets, &observation.output, candidates, config, fixed)
             .map_err(|e| failure("wave.candidate_calibration_failed", e))
     }
-    pub fn recall(
-        &self,
-        observation: &QueryObservation,
-        allowed: &BTreeSet<u64>,
-        o: &Options,
-        cancel: &CancellationToken,
-    ) -> Result<CandidatePool> {
-        self.validate_observation(observation)?;
-        if allowed
-            .iter()
-            .any(|r| *r >= self.inner.candidates.keys.len() as u64)
-        {
-            return Err(failure(
-                "wave.invalid_input",
-                "Candidate scope contains a row outside this snapshot",
-            ));
-        }
-        o.readout
-            .validate()
-            .map_err(|e| failure("wave.invalid_input", e))?;
-        let mut entries = BTreeMap::<u64, BTreeMap<String, LaneScore>>::new();
-        let output = &observation.output;
-        for (name, vector) in [
-            ("query_knn", &output.original_query_vector),
-            ("denoised_field_knn", &output.enhanced_vector),
-            ("local_field_knn", &output.local_vector),
-            ("transfer_field_knn", &output.transfer_vector),
-        ] {
-            if o.lane_limit(name) > 0 && vector.iter().any(|v| *v != 0.0) {
-                for (rank, (row, score)) in self
-                    .dense(vector, allowed, o.lane_limit(name))?
-                    .into_iter()
-                    .enumerate()
-                {
-                    entries.entry(row).or_default().insert(
-                        name.into(),
-                        LaneScore {
-                            score,
-                            rank: rank + 1,
-                        },
-                    );
-                }
-            }
-        }
-        for (rank, (row, score)) in self
-            .lexical(&observation.text, allowed, o.lane_limit("bm25"))?
-            .into_iter()
-            .enumerate()
-        {
-            entries.entry(row).or_default().insert(
-                "bm25".into(),
-                LaneScore {
-                    score,
-                    rank: rank + 1,
-                },
-            );
-        }
-        let direct = observation
-            .core_rows
-            .iter()
-            .copied()
-            .chain(
-                output
-                    .observation
-                    .nodes
-                    .iter()
-                    .filter(|n| {
-                        n.hop == 0
-                            && matches!(n.source_type.as_str(), "core" | "lexical_seed" | "seed")
-                    })
-                    .map(|n| (n.id - 1) as u64),
-            )
-            .collect::<BTreeSet<_>>();
-        let anchor_rows = direct
-            .iter()
-            .flat_map(|r| self.inner.concept_candidates.get(r).into_iter().flatten())
-            .copied()
-            .filter(|r| allowed.contains(r))
-            .collect::<BTreeSet<_>>();
-        for (rank, row) in anchor_rows
-            .into_iter()
-            .take(o.lane_limit("direct_anchor"))
-            .enumerate()
-        {
-            cancel.check()?;
-            entries.entry(row).or_default().insert(
-                "direct_anchor".into(),
-                LaneScore {
-                    score: 1.0,
-                    rank: rank + 1,
-                },
-            );
-        }
-        let mut entries = entries
-            .into_iter()
-            .map(|(row, lanes)| PoolEntry { row, lanes })
-            .collect::<Vec<_>>();
-        entries.sort_by(|a, b| {
-            let score = |e: &PoolEntry| {
-                e.lanes
-                    .values()
-                    .map(|l| 1.0 / (o.rrf_k + l.rank as f64))
-                    .sum::<f64>()
-            };
-            score(b).total_cmp(&score(a)).then(a.row.cmp(&b.row))
-        });
-
-        let mut pool = CandidatePool {
-            identity: self.inner.input.identity.clone(),
-            offered_candidates: entries.len(),
-            entries,
-            calibration: None,
-        };
-        let prepared = self.prepare_pool(observation, &pool, &o.readout, false)?;
-        pool.entries
-            .retain(|e| prepared.selection.iter().any(|c| c.id == e.row as i64 + 1));
-        pool.entries.sort_by_key(|e| {
-            prepared
-                .selection
-                .iter()
-                .position(|c| c.id == e.row as i64 + 1)
-                .unwrap()
-        });
-        pool.calibration = Some(prepared);
-        Ok(pool)
-    }
     pub fn thinking(
         &self,
         observation: &QueryObservation,
@@ -725,10 +581,16 @@ impl Snapshot {
         if vector.is_some() {
             self.validate_query_space(&o)?;
         }
+        o.validate_grouping()?;
+        ensure!(
+            o.grouping != "document" || o.top_k <= o.readout.max_union_candidates,
+            "Requested document count exceeds max_union_candidates"
+        );
         let normalized = vector.map(unit).transpose()?;
         let vector = normalized.as_deref();
         QueryControls {
             top_k: o.top_k,
+            group_scan_limit: o.group_scan_limit,
             thinking_min_closure: o.thinking_min_closure,
             rrf_k: o.rrf_k,
         }
@@ -763,7 +625,7 @@ impl Snapshot {
         let mut thinking = Value::Null;
         let score_kind;
         let mut wormhole_rrf_active = false;
-        let mut used_lanes = Vec::new();
+        let mut used_lanes = Vec::<String>::new();
         let mut skipped = Vec::new();
         let use_vcp = matches!(mode, "tagmemo" | "rivermemo" | "dtsc")
             || (mode == "hybrid" && self.inner.assets.is_some());
@@ -785,12 +647,15 @@ impl Snapshot {
             let output = &observation.output;
             if mode == "tagmemo" {
                 score_kind = "tagmemo_cosine";
-                used_lanes.push("tagmemo");
+                used_lanes.push("tagmemo".into());
                 for (rank, (row, score)) in self
                     .dense(
                         &output.enhanced_vector,
                         allowed,
-                        o.readout.max_union_candidates,
+                        o.readout.query_k,
+                        &o,
+                        "tagmemo",
+                        cancel,
                     )?
                     .into_iter()
                     .enumerate()
@@ -814,6 +679,19 @@ impl Snapshot {
                     recalled = self.recall(observation, allowed, &o, cancel)?;
                     &recalled
                 };
+                o.lane_coverage
+                    .lock()
+                    .unwrap()
+                    .extend(candidate_pool.lane_coverage.clone());
+                let recall_lanes = candidate_pool
+                    .lane_coverage
+                    .keys()
+                    .chain(candidate_pool.entries.iter()
+                        .filter(|entry| allowed.contains(&entry.row))
+                        .flat_map(|entry| entry.lanes.keys()))
+                    .cloned()
+                    .collect::<BTreeSet<_>>();
+                used_lanes.extend(recall_lanes);
                 let mut pool = BTreeMap::<u64, (f64, f64, Vec<String>)>::new();
                 for entry in &candidate_pool.entries {
                     if !allowed.contains(&entry.row) {
@@ -850,7 +728,7 @@ impl Snapshot {
                 let assets = self.inner.assets.as_ref().unwrap();
                 if mode == "dtsc" {
                     score_kind = "dtsc";
-                    used_lanes.push("dtsc");
+                    used_lanes.push("dtsc".into());
                     let graph = assets.graph();
                     let edges = graph
                         .node_ids
@@ -874,13 +752,17 @@ impl Snapshot {
                         hits.push(json!({"row":row,"quality_score":hit.score,"ranking_score":hit.score,"channels":pool[&row].2,"trace":if o.include_trace{serde_json::to_value(hit)?}else{Value::Null}}));
                     }
                 } else {
-                    used_lanes.push("rivermemo");
-                    let config = o.readout;
+                    used_lanes.push("rivermemo".into());
+                    let config = o.readout.clone();
                     let result = readout(
                         assets,
                         output,
                         ReadoutRequest {
-                            top_k: readout_max_union_candidates,
+                            top_k: if o.grouping == "document" || provided_pool.is_some() {
+                                candidate_pool.entries.len().max(1)
+                            } else {
+                                readout_max_union_candidates
+                            },
                             include_trace: o.include_trace,
                             pool: if let Some(prepared) = &candidate_pool.calibration {
                                 if candidate_pool
@@ -891,6 +773,7 @@ impl Snapshot {
                                     prepared.clone()
                                 } else {
                                     let filtered = CandidatePool {
+                                        rank_scope: candidate_pool.rank_scope.clone(),
                                         identity: candidate_pool.identity.clone(),
                                         entries: candidate_pool
                                             .entries
@@ -900,11 +783,13 @@ impl Snapshot {
                                             .collect(),
                                         calibration: None,
                                         offered_candidates: 0,
+                                        lane_coverage: BTreeMap::new(),
                                     };
                                     self.prepare_pool(observation, &filtered, &config, true)?
                                 }
                             } else {
                                 let filtered = CandidatePool {
+                                    rank_scope: candidate_pool.rank_scope.clone(),
                                     identity: candidate_pool.identity.clone(),
                                     entries: candidate_pool
                                         .entries
@@ -914,6 +799,7 @@ impl Snapshot {
                                         .collect(),
                                     calibration: None,
                                     offered_candidates: 0,
+                                    lane_coverage: BTreeMap::new(),
                                 };
                                 self.prepare_pool(observation, &filtered, &config, true)?
                             },
@@ -963,9 +849,9 @@ impl Snapshot {
             match mode {
                 "lexical" => {
                     score_kind = "bm25";
-                    used_lanes.push("lexical");
+                    used_lanes.push("lexical".into());
                     for (rank, (row, score)) in self
-                        .lexical(text, allowed, o.readout.max_union_candidates)?
+                        .lexical(text, allowed, o.readout.bm25_k, &o, cancel)?
                         .into_iter()
                         .enumerate()
                     {
@@ -982,12 +868,15 @@ impl Snapshot {
                 }
                 "dense" => {
                     score_kind = "cosine";
-                    used_lanes.push("dense");
+                    used_lanes.push("dense".into());
                     for (rank, (row, score)) in self
                         .dense(
                             vector.context("Query vector required")?,
                             allowed,
-                            o.readout.max_union_candidates,
+                            o.readout.query_k,
+                            &o,
+                            "dense",
+                            cancel,
                         )?
                         .into_iter()
                         .enumerate()
@@ -1008,7 +897,7 @@ impl Snapshot {
                     let mut scores = BTreeMap::<u64, (f64, Vec<&str>)>::new();
                     let mut lanes = vec![(
                         "lexical",
-                        self.lexical(text, allowed, o.readout.max_union_candidates)?,
+                        self.lexical(text, allowed, o.readout.bm25_k, &o, cancel)?,
                     )];
                     if self.inner.ann.is_some() {
                         lanes.push((
@@ -1016,7 +905,10 @@ impl Snapshot {
                             self.dense(
                                 vector.context("Query vector required")?,
                                 allowed,
-                                o.readout.max_union_candidates,
+                                o.readout.query_k,
+                                &o,
+                                "dense",
+                                cancel,
                             )?,
                         ));
                     } else {
@@ -1026,7 +918,7 @@ impl Snapshot {
                         json!({"lane":"rivermemo","reason":"concept/fact assets unavailable"}),
                     );
                     for (lane, results) in lanes {
-                        used_lanes.push(lane);
+                        used_lanes.push(lane.into());
                         for (rank, (row, raw_score)) in results.iter().enumerate() {
                             channel_ranks
                                 .entry(*row)
@@ -1060,11 +952,28 @@ impl Snapshot {
             }
         }
         cancel.check()?;
+        if o.grouping == "document"
+            && provided_pool.is_none()
+            && hits.len() > readout_max_union_candidates
+        {
+            offered_candidates = offered_candidates.max(hits.len());
+            let ordered = hits
+                .iter()
+                .map(|hit| hit["row"].as_u64().unwrap())
+                .collect::<Vec<_>>();
+            let selected = crate::grouping::fair_rows(
+                &ordered,
+                &self.inner.candidates.group_rows,
+                readout_max_union_candidates,
+                o.passages_per_group,
+            );
+            hits.retain(|hit| selected.contains(&hit["row"].as_u64().unwrap()));
+        }
         let ranked_candidates = hits.len();
         if offered_candidates == 0 {
             offered_candidates = ranked_candidates;
         }
-        let dedup_vectors = if o.dedup_threshold.is_some() {
+        let dedup_vectors = if o.grouping == "candidate" && o.dedup_threshold.is_some() {
             self.inner.candidate_units.as_ref().map(|vectors| {
                 hits.iter()
                     .map(|hit| vectors[hit["row"].as_u64().unwrap() as usize].as_ref())
@@ -1185,7 +1094,66 @@ impl Snapshot {
             kept.push(hit);
         }
         let before = kept.len();
-        kept.truncate(o.top_k);
+        let all_groups = kept
+            .iter()
+            .map(|hit| self.inner.candidates.group_rows[hit["row"].as_u64().unwrap() as usize])
+            .collect::<BTreeSet<_>>();
+        let mut groups = Vec::<Value>::new();
+        if o.grouping == "document" {
+            // Keep the final readout order: the first candidate establishes each document rank.
+            let mut group_indices = BTreeMap::<u64, usize>::new();
+            let mut selected = Vec::new();
+            for (index, mut hit) in kept.into_iter().enumerate() {
+                let row = hit["row"].as_u64().unwrap();
+                let group = self.inner.candidates.group_rows[row as usize];
+                if !group_indices.contains_key(&group) {
+                    if groups.len() >= o.top_k {
+                        continue;
+                    }
+                    group_indices.insert(group, groups.len());
+                    groups.push(json!({"group_row":group,"group_key":self.inner.candidates.group_keys[group as usize],"group_rank":groups.len()+1,"representative_row":row,"passage_rows":[]}));
+                }
+                let group_index = group_indices[&group];
+                let passages = groups[group_index]["passage_rows"].as_array_mut().unwrap();
+                if passages.len() >= o.passages_per_group {
+                    continue;
+                }
+                passages.push(json!(row));
+                hit["candidate_rank"] = json!(index + 1);
+                hit["group_rank"] = json!(group_index + 1);
+                hit["group_key"] = json!(self.inner.candidates.group_keys[group as usize]);
+                selected.push(hit);
+            }
+            kept = selected;
+        } else {
+            kept.truncate(o.top_k);
+        }
+        let lane_coverage = o.lane_coverage.lock().unwrap().clone();
+        let recall_exhausted =
+            !lane_coverage.is_empty() && lane_coverage.values().all(|lane| lane.recall_exhausted);
+        let recall_truncated = lane_coverage.values().any(|lane| lane.truncated);
+        let pool_truncated = offered_candidates > readout_max_union_candidates;
+        let top_k_truncated = if o.grouping == "document" {
+            all_groups.len() > o.top_k
+        } else {
+            before > o.top_k
+        };
+        let eligible_groups_known = if lane_coverage.len() == 1 {
+            lane_coverage.values().next().unwrap().eligible_groups_known
+        } else if recall_exhausted && !recall_truncated && !pool_truncated {
+            Some(all_groups.len())
+        } else {
+            None
+        };
+        let coverage_reason = if pool_truncated {
+            Some("max_union_candidates".to_string())
+        } else if recall_truncated {
+            lane_coverage.values().find_map(|lane| lane.reason.clone())
+        } else if top_k_truncated {
+            Some("top_k".to_string())
+        } else {
+            None
+        };
         let rows = kept.iter().map(|v| v["row"].as_u64().unwrap()).collect();
         let quality = kept
             .iter()
@@ -1195,10 +1163,12 @@ impl Snapshot {
             .iter()
             .map(|v| v["ranking_score"].as_f64().unwrap())
             .collect();
+        let mut reported_lanes = BTreeSet::new();
+        used_lanes.retain(|lane| reported_lanes.insert(lane.clone()));
         diagnostics["total_ms"] = json!(started.elapsed().as_secs_f64() * 1000.0);
         diagnostics["max_union_candidates"] = json!(readout_max_union_candidates);
         diagnostics["readout_max_union_candidates"] = json!(readout_max_union_candidates);
         diagnostics["input_scale"] = json!({"allowed_candidates":allowed.len(),"concepts":self.inner.concepts.keys.len(),"max_union_candidates":readout_max_union_candidates});
-        Ok(NativeQueryResult{rows,quality,ranking,result_json:json!({"mode":mode,"score_kind":score_kind,"wormhole_rrf_active":wormhole_rrf_active,"used_lanes":used_lanes,"skipped_lanes":skipped,"hits":kept,"thinking":thinking,"algorithm_versions":{"vcp_upstream":"d5c019ebbac1f317c2938d655d2ce916e41b9164","pipeline":"memo.conservative-topology-v2.2","river":"rivermemo.conservative-topology-v2.2"},"coverage":{"candidates":before,"total_candidates":self.inner.candidates.keys.len(),"max_union_candidates":readout_max_union_candidates,"top_k":o.top_k,"offered_candidates":offered_candidates,"ranked_candidates":ranked_candidates,"unique_candidates":before,"candidate_limit_reached":offered_candidates>readout_max_union_candidates,"top_k_truncated":before>o.top_k},"diagnostics":if o.include_trace{diagnostics}else{Value::Null}}).to_string()})
+        Ok(NativeQueryResult{rows,quality,ranking,result_json:json!({"mode":mode,"score_kind":score_kind,"wormhole_rrf_active":wormhole_rrf_active,"used_lanes":used_lanes,"skipped_lanes":skipped,"hits":kept,"groups":groups,"grouping":o.grouping,"rank_scope":provided_pool.map(|pool|pool.rank_scope.as_str()).unwrap_or(if o.grouping == "document" {"grouped_lane"} else {"candidate_lane"}),"thinking":thinking,"algorithm_versions":{"vcp_upstream":"d5c019ebbac1f317c2938d655d2ce916e41b9164","pipeline":"memo.conservative-topology-v2.2","river":"rivermemo.conservative-topology-v2.2"},"coverage":{"requested_groups":if o.grouping=="document"{Some(o.top_k)}else{None},"returned_groups":groups.len(),"eligible_groups_known":eligible_groups_known,"allowed_groups":allowed.iter().map(|row|self.inner.candidates.group_rows[*row as usize]).collect::<BTreeSet<_>>().len(),"recall_exhausted":recall_exhausted,"truncated":recall_truncated||pool_truncated||top_k_truncated,"reason":coverage_reason,"lanes":lane_coverage,"lane_limit_unit":if o.grouping == "document" {"groups"}else{"candidates"},"group_scan_limit":o.group_scan_limit,"passages_per_group":o.passages_per_group,"candidates":before,"total_candidates":self.inner.candidates.keys.len(),"max_union_candidates":readout_max_union_candidates,"top_k":o.top_k,"offered_candidates":offered_candidates,"ranked_candidates":ranked_candidates,"unique_candidates":before,"candidate_limit_reached":offered_candidates>readout_max_union_candidates,"top_k_truncated":top_k_truncated},"diagnostics":if o.include_trace{diagnostics}else{Value::Null}}).to_string()})
     }
 }

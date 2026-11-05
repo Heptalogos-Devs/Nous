@@ -1,0 +1,19 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "^(apply_patch|Bash)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -c \"import os,pathlib,subprocess; r=pathlib.Path(subprocess.check_output(['git','rev-parse','--show-toplevel'],text=True).strip()); e=os.environ.copy(); e.pop('PYTHONHOME',None); e.pop('PYTHONPATH',None); subprocess.run([str(r/'.venv/bin/python'),str(r/'.codex/hooks/python_diagnostics.py')],env=e)\"",
+            "commandWindows": "python -c \"import os,pathlib,subprocess; r=pathlib.Path(subprocess.check_output(['git','rev-parse','--show-toplevel'],text=True).strip()); e=os.environ.copy(); e.pop('PYTHONHOME',None); e.pop('PYTHONPATH',None); subprocess.run([str(r/'.venv/Scripts/python.exe'),str(r/'.codex/hooks/python_diagnostics.py')],env=e)\"",
+            "timeout": 60,
+            "additionalContextLimit": 1200,
+            "statusMessage": "Checking Python syntax and types"
+          }
+        ]
+      }
+    ]
+  }
+}

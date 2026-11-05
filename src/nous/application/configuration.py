@@ -26,7 +26,13 @@ from nous.temporal.domains import bind_domains, check_domains
 
 
 class ConfigurationOperations:
-    """Apply one configuration contract to both borrowed runtime and offline resources."""
+    """Coordinate configuration changes for an open or offline instance.
+
+    Online operations borrow the runtime's database and logging session; the
+    offline context acquires verified resources as needed. Changes check durable
+    bindings before saving. A saved change may require restart, and failed live
+    adoption leaves the previous effective snapshot active.
+    """
 
     def __init__(
         self,
@@ -170,6 +176,23 @@ class ConfigurationOperations:
         *,
         namespace_file: Path | str | None = None,
     ) -> Object:
+        """Validate and save a configuration patch, then apply eligible changes.
+
+        Args:
+            patch: Configuration paths and values to change.
+            scope: Instance or namespace scope.
+            expected_version: If supplied, reject a stale configuration version.
+            namespace_file: Namespace configuration file for namespace scope.
+
+        Returns:
+            Change details including the effective and restart state.
+
+        Raises:
+            NousError: Validation, binding, save, or application failed. For
+                ``configuration.apply_failed``, the file was saved but the old
+                effective snapshot remains active; inspect error details and
+                correct the saved settings or dependency before restarting.
+        """
         return await self._change(
             normalize_patch(patch), (), scope, expected_version, namespace_file
         )
@@ -358,6 +381,11 @@ async def open_configuration_operations(
     *,
     environment: Mapping[str, str] | None = None,
 ) -> AsyncGenerator[ConfigurationOperations]:
+    """Borrow offline configuration operations while holding the instance lock.
+
+    The returned service is valid only within the context. Database resources
+    needed for binding checks are opened and closed by individual changes.
+    """
     selected = InstanceLocator.resolve(locator, environment)
     with InstanceLock(selected.directory):
         configuration = Configuration(selected.config_file, environment=environment)

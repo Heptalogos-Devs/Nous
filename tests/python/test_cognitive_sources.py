@@ -3,7 +3,7 @@
 import asyncio
 from pathlib import Path
 
-from nous.cognition.retrieval import CognitiveQuery
+from nous.cognition.retrieval.contracts import CognitiveQuery
 from nous.runtime.bootstrap import initialize_instance, open_instance
 
 
@@ -12,22 +12,21 @@ def test_inspiration_only_journal_remains_searchable_without_fact_roots(tmp_path
         instance = tmp_path / "instance"
         await initialize_instance(instance, environment={})
         async with open_instance(instance, environment={}) as runtime:
-            note = await runtime.records.record_note(
-                "default", "A comparison that inspired an idea."
-            )
-            inspiration = await runtime.records.select_sources(
-                "default", [note.revision_ref], usage="inspiration"
-            )
-            journal = await runtime.records.create_journal(
-                "default", "Speculation about resource ownership.", sources=inspiration
-            )
-            result = await runtime.cognitive_retrieval.query(
+            c = await runtime.cognition("default")
+            note = (await c.records.add_note("A comparison that inspired an idea.")).record
+            inspiration = await c.records.select_sources([note.revision_ref], usage="inspiration")
+            journal = (
+                await c.records.create_journal(
+                    "Speculation about resource ownership.", sources=inspiration
+                )
+            ).record
+            result = await c.retrieval.query(
                 CognitiveQuery(namespace="default", text="ownership", mode="lexical")
             )
-            assert result["hits"][0]["revision"] == journal.revision_ref.address
-            assert result["hits"][0]["sources"] == []
-            assert result["scope"]["source_roots"] == 0
-            assert (await runtime.records.read(journal.revision_ref)).sources == inspiration
+            assert result.groups[0].revision_ref == journal.revision_ref
+            assert not result.groups[0].passages[0].evidence_roots
+            assert result.groups[0].sources == inspiration
+            assert (await c.records.read(journal.revision_ref)).sources == inspiration
 
     asyncio.run(scenario())
 
@@ -70,6 +69,33 @@ def test_source_projection_keeps_visible_labels_and_literal_markdown() -> None:
     assert project_citations("> [甲](\n> source:S1)\n") == "> 甲\n"
 
 
+def test_generated_source_links_preserve_existing_markdown() -> None:
+    from nous.content.citations import normalize_source_links, parse_citations
+
+    existing = "[existing ordinary link](N1:C1)\r\n"
+    literal = "`[code](N1:C1)`\r\n\r\n```md\r\n[code](N1:C1)\r\n```\r\n"
+    body = (
+        existing + "[**visible label**](<N1:C1> \"title\")\r\n\r\n"
+        "> [reference][r]\r\n>\r\n> [r]: N1:C1\r\n\r\n"
+        "<N1:C1> [external](https://example.com/N1:C1)\r\n\r\n"
+        "![image][picture]\r\n\r\n[picture]: N1:C1\r\n[unused]: N1:C1\r\n\r\n"
+        + literal
+    )
+    expected = (
+        existing + "[**visible label**](<source:N1:C1> \"title\")\r\n\r\n"
+        "> [reference][r]\r\n>\r\n> [r]: source:N1:C1\r\n\r\n"
+        "[N1:C1](source:N1:C1) [external](https://example.com/N1:C1)\r\n\r\n"
+        "![image][picture]\r\n\r\n[picture]: N1:C1\r\n[unused]: N1:C1\r\n\r\n"
+        + literal
+    )
+    normalized = normalize_source_links(body, ("N1:C1",), preserve=existing)
+    assert normalized.text == expected
+    assert tuple(item.key for item in parse_citations(normalized.text).citations) == (
+        "N1:C1", "N1:C1", "N1:C1"
+    )
+    assert not normalize_source_links(normalized.text, ("N1:C1",), preserve=existing).keys
+
+
 def test_retrieval_projection_preserves_original_annotation_and_plain_inputs(
     tmp_path: Path,
 ) -> None:
@@ -82,16 +108,17 @@ def test_retrieval_projection_preserves_original_annotation_and_plain_inputs(
         instance = tmp_path / "projection"
         await initialize_instance(instance, environment={})
         async with open_instance(instance, environment={}) as runtime:
-            note = await runtime.records.record_note("default", "线程结束后关闭存储。")
-            raw_note = await runtime.records.read(note.revision_ref)
+            c = await runtime.cognition("default")
+            note = (await c.records.add_note("线程结束后关闭存储。")).record
+            raw_note = await c.records.read(note.revision_ref)
             source = SourceBinding(
                 key="S1:C1",
-                content_selection=ContentSelection(artifact=raw_note.body_artifact),
+                selections=(ContentSelection(artifact=raw_note.body_artifact),),
                 owner_revision=note.revision_ref,
             )
             body = "资源释放应等待线程结束。[个人网站作者自述](source:S1:C1)"
-            journal = await runtime.records.create_journal("default", body, sources=(source,))
-            raw = await runtime.records.read(journal.revision_ref)
+            journal = (await c.records.create_journal(body, sources=(source,))).record
+            raw = await c.records.read(journal.revision_ref)
             chosen = ContentSelection(artifact=raw.body_artifact)
             projected = await semantic_text(chosen, runtime.results)
             assert (await semantic_text(chosen, runtime.results)).content == projected.content
@@ -114,28 +141,28 @@ def test_retrieval_projection_preserves_original_annotation_and_plain_inputs(
                 }
             )
             await runtime.annotations.annotate(journal.revision_ref, proposal=proposal)
-            await runtime.records.create_journal("default", "资源释放需要明确的持有者。")
-            query = await runtime.cognitive_retrieval.query(
+            await c.records.create_journal("资源释放需要明确的持有者。")
+            query = await c.retrieval.query(
                 CognitiveQuery(namespace="default", text="资源释放", mode="lexical")
             )
-            assert [hit["rank"] for hit in query["hits"]] == list(range(1, len(query["hits"]) + 1))
-            hit = next(
-                hit for hit in query["hits"] if hit["revision"] == journal.revision_ref.address
+            assert [group.group_rank for group in query.groups] == list(
+                range(1, len(query.groups) + 1)
             )
-            assert hit["content"]["artifact"]["id"] == raw.body_artifact.id
-            assert hit["concepts"]
-            assert (await runtime.records.read(journal.revision_ref)).body == body
+            hit = next(
+                group for group in query.groups if group.revision_ref == journal.revision_ref
+            )
+            assert hit.passages[0].content.artifact == raw.body_artifact
+            assert hit.passages[0].concept_refs
+            assert (await c.records.read(journal.revision_ref)).body == body
             plain = await runtime.artifacts.ingest("普通文字")
             assert (
                 await semantic_text(ContentSelection(artifact=plain.ref), runtime.results)
             ).content.artifact == plain.ref
-            only = await runtime.records.create_journal(
-                "default", "[](source:S1:C1)", sources=(source,)
-            )
-            query = await runtime.cognitive_retrieval.query(
+            only = (await c.records.create_journal("[](source:S1:C1)", sources=(source,))).record
+            query = await c.retrieval.query(
                 CognitiveQuery(namespace="default", text="C1", mode="lexical")
             )
-            assert not query["hits"]
-            assert (await runtime.records.read(only.revision_ref)).body == "[](source:S1:C1)"
+            assert not query.groups
+            assert (await c.records.read(only.revision_ref)).body == "[](source:S1:C1)"
 
     asyncio.run(scenario())

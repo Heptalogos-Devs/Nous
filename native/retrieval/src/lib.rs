@@ -1,4 +1,5 @@
 //! Rebuildable lexical, vector and VCP asset engines.
+mod grouping;
 mod lexical;
 mod ordered_dedup;
 pub use lexical::*;

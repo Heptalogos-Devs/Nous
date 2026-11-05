@@ -19,9 +19,11 @@ from nous.common.errors import NousError, failure_code, failure_message
 from nous.common.operations import exception_context
 from nous.configuration import Configuration
 from nous.configuration.service import Object
+from nous.content.contracts import ContentReadView
 from nous.presentation import error_message, format_status, render_error, select_language, translate
 from nous.runtime.instance import (
     InstanceLocator,
+    InstanceProfiles,
     inspect_instance,
 )
 
@@ -55,9 +57,10 @@ def configure(
     ctx: typer.Context,
     instance: Annotated[
         Path | None,
-        typer.Option(
-            help="实例配置目录 / Instance configuration directory", envvar="NOUS_INSTANCE"
-        ),
+        typer.Option(help="实例配置目录 / Instance configuration directory (NOUS_INSTANCE)"),
+    ] = None,
+    profile: Annotated[
+        str | None, typer.Option(help="已登记实例名称 / Registered instance profile")
     ] = None,
     json_mode: Annotated[
         bool, typer.Option("--json", help="输出类型化 JSON / Typed JSON output")
@@ -67,7 +70,9 @@ def configure(
 ) -> None:
     if language not in {None, "zh-CN", "en"}:
         raise NousError("configuration.invalid_language", "Language must be zh-CN or en")
-    ctx.obj = Options(InstanceLocator.resolve(instance), json_mode, language, debug)
+    ctx.obj = Options(
+        InstanceLocator.resolve(instance, profile=profile), json_mode, language, debug
+    )
     _current.set(ctx.obj)
 
 
@@ -111,6 +116,27 @@ def emit(ctx: typer.Context, value: Mapping[str, object]) -> None:
         typer.echo(json.dumps(value, ensure_ascii=False, separators=(",", ":")))
     else:
         typer.echo(format_status(value, language_for(options(ctx))))
+
+
+def emit_content_view(view: ContentReadView) -> None:
+    """Render the shared content view for text and media using existing representations."""
+    language = language_for(_current.get())
+    typer.echo(f"{view.name} · {view.media_type} · {view.export_ref.address}")
+    selection = view.source.selection.model_dump(mode="json", exclude_none=True, exclude_defaults=True)
+    if selection:
+        typer.echo(f"{translate('Selection', language)}: {json.dumps(selection, ensure_ascii=False)}")
+    if view.body_text is not None:
+        typer.echo(view.body_text)
+    for representation in view.available_representations:
+        typer.echo(
+            f"  {translate(representation.kind, language)} · {representation.operation} · {representation.result_ref.address} · {representation.content.artifact.address}"
+        )
+        for source in representation.source_selections:
+            coordinates = source.selection.model_dump(mode="json", exclude_none=True, exclude_defaults=True)
+            suffix = " " + json.dumps(coordinates, ensure_ascii=False) if coordinates else ""
+            typer.echo(f"  {translate('Source', language)}: {source.artifact.address}{suffix}")
+        if representation.body_text is not None:
+            typer.echo(representation.body_text)
 
 
 def configuration(ctx: typer.Context) -> Configuration:
@@ -158,6 +184,32 @@ def initialize(
 def instance_show(ctx: typer.Context) -> None:
     """显示路径和占有状态 / Show paths and ownership."""
     emit(ctx, inspect_instance(options(ctx).locator))
+
+
+@instance_cli.command("register")
+def instance_register(ctx: typer.Context, name: str, directory: Path) -> None:
+    """登记现有实例 / Register an existing instance."""
+    emit(ctx, InstanceProfiles().register(name, directory))
+
+
+@instance_cli.command("use")
+def instance_use(ctx: typer.Context, name: str) -> None:
+    """选择日常使用的实例 / Select the usual instance."""
+    emit(ctx, InstanceProfiles().use(name))
+
+
+@instance_cli.command("current")
+def instance_current(ctx: typer.Context) -> None:
+    """显示当前选择 / Show the effective instance selection."""
+    selected = options(ctx).locator
+    emit(
+        ctx,
+        {
+            "profile": selected.profile,
+            "directory": str(selected.directory),
+            "config_file": str(selected.config_file),
+        },
+    )
 
 
 @config_cli.command("list")
@@ -358,6 +410,37 @@ def runtime_check(
             + ", ".join(f"{item['operation']} {item['address']}" for item in recent),
             markup=False,
         )
+    language = language_for(options(ctx))
+    wave = cast(dict[str, object], result["wave"])
+    preparations = cast(list[dict[str, object]], wave.get("recent_preparations", []))
+    if preparations:
+        preparation = cast(dict[str, object], preparations[0].get("preparation") or {})
+        stages = cast(dict[str, object], preparations[0].get("stages_ms") or {})
+        console.print(
+            f"{translate('Latest content preparation', language)}: "
+            f"{preparation.get('documents', 0)} {translate('documents', language)}, "
+            f"{preparation.get('candidates', 0)} {translate('candidates', language)}, "
+            f"{float(cast(int | float, stages.get('content_prepare', 0))):.0f} ms",
+            markup=False,
+        )
+    observability = cast(dict[str, object], result["observability"])
+    problems = cast(list[dict[str, object]], observability.get("recent_problems", []))
+    if problems:
+        console.print(f"{translate('Recent problems', language)}:", markup=False)
+        for problem in problems:
+            reference = str(problem.get("operation_id") or "")[:8]
+            issues = cast(list[dict[str, object]], problem.get("issues") or [])
+            description = "; ".join(
+                f"{translate(str(issue.get('stage') or ''), language)}: "
+                f"{issue.get('code')} — {issue.get('message')}"
+                for issue in issues
+            ) or str(problem.get("error_message") or problem.get("error_code") or "")
+            completed = ", ".join(cast(list[str], problem.get("completed_result_refs") or []))
+            completed_suffix = f" · {completed}" if completed else ""
+            console.print(
+                f"  {translate(str(problem.get('result') or ''), language)} · "
+                f"{reference} · {description}{completed_suffix}", markup=False
+            )
 
 
 @runtime_cli.command("logs")
@@ -385,10 +468,14 @@ def runtime_logs(
                 + (f" reason={event['retry_reason']}" if event.get("retry_reason") else "")
                 + (f" status={event['provider_status']}" if event.get("provider_status") else "")
             )
-        elif event.get("event") in {"operation.failed", "stage.completed", "operation.completed"}:
+        elif event.get("event") in {"operation.terminal", "stage.completed"}:
             typer.echo(
                 f"  {event.get('stage', '')}: {event.get('result')} {event.get('error_message', '')} {event.get('duration_seconds', '')}s"
             )
+    for issue in cast(list[dict[str, object]], result["issues"]):
+        typer.echo(f"  {issue['stage']}: {issue['code']} — {issue['message']}")
+    for reference in cast(list[str], result["completed_result_refs"]):
+        typer.echo(f"  {reference}")
 
 
 @time_cli.command("parse")
@@ -429,7 +516,9 @@ def main() -> None:
         if isinstance(stream, TextIOWrapper):
             stream.reconfigure(encoding="utf-8")
     try:
-        cli(standalone_mode=False)
+        exit_code = cli(standalone_mode=False)
+        if isinstance(exit_code, int):
+            raise SystemExit(exit_code)
     except (Exception, KeyboardInterrupt) as error:
         context = exception_context(error)
         failure = (

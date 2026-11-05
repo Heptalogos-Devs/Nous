@@ -8,7 +8,7 @@ import hashlib
 import os
 import shutil
 import tempfile
-from collections.abc import AsyncGenerator, AsyncIterable, Callable, Iterable
+from collections.abc import AsyncGenerator, AsyncIterable, Callable, Iterable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -50,7 +50,12 @@ class ContentReader:
 
 
 class ContentStore:
-    """Own immutable bytes and the authoritative owner/slot-to-blob associations."""
+    """Own immutable bytes and authoritative owner/slot-to-blob associations.
+
+    Publish bytes before opening the owning write transaction, then attach the
+    published value in that transaction. Publication alone does not create an
+    owner reference. The runtime owns the execution manager used for file work.
+    """
 
     def __init__(
         self,
@@ -70,7 +75,16 @@ class ContentStore:
         return self.root / "objects" / blob.digest[:2] / blob.digest[2:]
 
     async def prepare(self, stream: AsyncIterable[bytes] | Iterable[bytes]) -> PreparedContent:
-        """Hash and flush a temporary stream whose path is consumed by publication."""
+        """Hash and flush a stream to a temporary file for one publication.
+
+        The iterable may be synchronous or asynchronous and may produce empty
+        content. Publication consumes the returned temporary path; do not reuse
+        the prepared value after attempting publication. A failed preparation
+        removes its temporary file.
+
+        Returns:
+            The temporary path and computed digest and byte length.
+        """
 
         def create() -> tuple[int, str]:
             self.temporary.mkdir(parents=True, exist_ok=True)
@@ -155,6 +169,17 @@ class ContentStore:
                 raise NousError("content.corrupt", "Stored content does not match its digest")
 
     async def publish(self, prepared: PreparedContent) -> PublishedContent:
+        """Publish prepared bytes under their digest and consume the temporary file.
+
+        Existing bytes at that digest are verified. This operation does not
+        attach a database reference; use ``attach_in`` in the owner's transaction.
+        Returns:
+            The published content identity for later attachment.
+
+        Raises:
+            NousError: ``content.corrupt`` if an existing object has the same
+                digest path but conflicting bytes or length.
+        """
         started = False
         try:
             async with self._publish_lock:
@@ -182,7 +207,18 @@ class ContentStore:
     async def attach_in(
         self, tx: WriteTx, owner_ref: str, slot: str, published: PublishedContent
     ) -> BlobRef:
-        """Attach published bytes within the same transaction as their owning record."""
+        """Attach published bytes to an owner and slot in the supplied transaction.
+
+        The caller commits or rolls back the transaction along with the owning
+        record. Publication must have completed first.
+
+        Returns:
+            The attached blob identity; it is committed with the transaction.
+
+        Raises:
+            NousError: ``content.missing`` if published bytes are unavailable,
+                or ``content.corrupt`` if the stored length conflicts.
+        """
         blob = published.blob
         if not self.path_for(blob).is_file():
             raise NousError("content.missing", "Published content is unavailable")
@@ -207,24 +243,53 @@ class ContentStore:
         )
 
     async def resolve_in(self, tx: ReadTx, owner_ref: str, slot: str = "body") -> BlobRef:
-        row = (
-            (
+        return (await self.resolve_many_in(tx, (owner_ref,), slot))[0]
+
+    async def resolve_many_in(
+        self, tx: ReadTx, owner_refs: Sequence[str], slot: str = "body"
+    ) -> tuple[BlobRef, ...]:
+        """Resolve owner/slot bindings in the supplied transaction.
+
+        Results follow ``owner_refs`` including duplicates; an empty input yields
+        an empty tuple. If any requested binding is absent, raise ``NousError``
+        with code ``content.missing`` instead of returning partial results.
+        """
+        found: dict[str, BlobRef] = {}
+        identifiers = list(dict.fromkeys(owner_refs))
+        for offset in range(0, len(identifiers), 800):
+            rows = (
                 await tx.connection.execute(
-                    sa.select(blobs)
+                    sa.select(blobs, references.c.owner_ref)
                     .join(references)
-                    .where(references.c.owner_ref == owner_ref, references.c.slot == slot)
+                    .where(
+                        references.c.owner_ref.in_(identifiers[offset : offset + 800]),
+                        references.c.slot == slot,
+                    )
                 )
-            )
-            .mappings()
-            .one_or_none()
-        )
-        if row is None:
+            ).mappings()
+            for row in rows:
+                found[str(row["owner_ref"])] = BlobRef.model_validate(
+                    {key: value for key, value in row.items() if key != "owner_ref"}
+                )
+        if any(identifier not in found for identifier in owner_refs):
             raise NousError("content.missing", "No content is attached to this record")
-        return BlobRef.model_validate(dict(row))
+        return tuple(found[identifier] for identifier in owner_refs)
 
     @asynccontextmanager
     async def borrow_local(self, blob: BlobRef) -> AsyncGenerator[Path]:
-        """Borrow verified immutable local bytes for a decoder within its operation lifetime."""
+        """Borrow a local immutable object path for the context lifetime.
+
+        Checks existence and byte length before yielding; it does not rehash the
+        file. The borrower must not modify the file or retain the path for work
+        extending beyond the owning operation.
+
+        Yields:
+            The local path while the borrower uses the immutable object.
+
+        Raises:
+            NousError: ``content.missing`` if the file is absent or its length
+                differs from the blob identity.
+        """
         path = self.path_for(blob)
 
         def check() -> None:
@@ -238,6 +303,20 @@ class ContentStore:
     async def open(
         self, blob: BlobRef, *, start: int = 0, end: int | None = None
     ) -> AsyncGenerator[ContentReader]:
+        """Borrow a reader for a half-open byte range of an immutable object.
+
+        Args:
+            blob: Content identity and expected byte length.
+            start: Inclusive byte offset, defaulting to zero.
+            end: Exclusive byte offset; None selects through the end.
+
+        Yields:
+            A reader bounded to the requested range and closed on context exit.
+
+        Raises:
+            NousError: The range is invalid or the stored object is missing or
+                has a different length. The reader closes on context exit.
+        """
         boundary = blob.byte_length if end is None else end
         if not 0 <= start <= boundary <= blob.byte_length:
             raise NousError("content.invalid_range", "Byte selection exceeds the content")
@@ -271,6 +350,11 @@ class ContentStore:
             raise NousError("content.not_text", "Content is not UTF-8 text; use export") from exc
 
     async def export(self, blob: BlobRef, destination: Path) -> Path:
+        """Create and verify a copy at destination, returning that path.
+
+        The destination must not already exist. A failed copy removes the file
+        created by this call when possible; parent directories may remain.
+        """
         def copy() -> Path:
             destination.parent.mkdir(parents=True, exist_ok=True)
             created = False

@@ -17,8 +17,9 @@
 ## 保存
 
 ```text
-revise(journal_ref, expected_revision, new_markdown, sources, reason)
-  -> JournalRevisionRef
+records.replace(exact_base, markdown, sources?, reason?, intent=edit, after=AfterWrite())
+records.apply(exact_base, changes, sources?, reason?, intent=edit, after=AfterWrite())
+  -> RecordOutcome
 ```
 
 新字节先通过 CAS 发布；短 WriteTx 核对 expected_revision，登记新 revision 及引用，切换 current。并发发现当前版本已变化时返回实际 current 引用，调用者据新正文继续；不默默合并，也不自动重跑模型。

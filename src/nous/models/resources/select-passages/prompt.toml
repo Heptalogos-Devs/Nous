@@ -1,8 +1,17 @@
 contract_id = "passage-selection"
+
+[documentation]
+title = "选择原文片段"
+purpose = "选择能回答本次问题的精确来源片段。"
+consumers = ["GenerationOperations"]
+input_notes = "本次问题与准备后的来源组。"
+output_notes = "返回 PassageSelection Schema；output 保存结果，passages 保存精确片段与引用。"
 [[messages]]
+description = "稳定任务规则、输出要求与固定假设示例。"
 role = "system"
 template = "system.md.j2"
 [[messages]]
+description = "本次问题、要求与真实来源；append_sources 保留文本和媒体顺序。"
 role = "user"
 template = "user.md.j2"
 append_sources = true

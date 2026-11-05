@@ -1,8 +1,17 @@
 contract_id = "custom-reading"
+
+[documentation]
+title = "自定义结构化阅读"
+purpose = "按调用者问题与 JSON Schema 处理资料。"
+consumers = ["GenerationOperations"]
+input_notes = "本次问题、要求与准备后的文字或媒体资料。"
+output_notes = "调用者必须提供 JSON Schema；程序按该 Schema 校验。"
 [[messages]]
+description = "稳定任务规则、输出要求与固定假设示例。"
 role = "system"
 template = "system.md.j2"
 [[messages]]
+description = "本次问题、要求与真实来源；append_sources 保留文本和媒体顺序。"
 role = "user"
 template = "user.md.j2"
 append_sources = true

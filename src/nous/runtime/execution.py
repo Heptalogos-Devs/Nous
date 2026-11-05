@@ -38,7 +38,13 @@ _current: contextvars.ContextVar[Mapping[object, OperationContext]] = contextvar
 
 
 class ExecutionManager:
-    """Own operation admission, inherited context and the workers needed to close safely."""
+    """Own operation admission, inherited context and blocking-worker lifetimes.
+
+    The runtime owns this manager and closes it after stopping admission. Root
+    operations use a bounded slot; nested stages share the root configuration
+    snapshot and deadline. Borrowers must finish using operation resources before
+    the owning runtime closes.
+    """
 
     def __init__(self, settings: ExecutionConfig, snapshot: Callable[[], ConfigSnapshot]) -> None:
         self._semaphore = asyncio.Semaphore(int(settings.max_in_flight))
@@ -76,7 +82,20 @@ class ExecutionManager:
     async def operation(
         self, name: str, settings: ConfigSnapshot | None = None, *, deadline: float | None = None
     ) -> AsyncGenerator[OperationContext]:
-        """Acquire once at the root; nested stages share its snapshot and cannot extend its deadline."""
+        """Enter an operation using one root slot and an inherited snapshot.
+
+        Args:
+            name: Name of this stage in operation diagnostics.
+            settings: Root snapshot; nested stages must pass the identical object
+                if supplied. None captures the current snapshot at the root.
+            deadline: Absolute event-loop monotonic time in seconds. None uses the
+                configured root timeout or inherits the parent's deadline. Nested
+                stages can shorten, but cannot extend, the parent deadline.
+
+        Raises:
+            NousError: Admission has stopped or a nested snapshot conflicts.
+            TimeoutError: Admission or work exceeded the effective deadline.
+        """
         parent = _current.get().get(self._owner)
         task = asyncio.current_task()
         if not self._accepting and parent is None and task not in self._tasks:
@@ -147,6 +166,11 @@ class ExecutionManager:
     def spawn(
         self, name: str, action: Callable[[], Coroutine[object, object, T]]
     ) -> asyncio.Task[T]:
+        """Start an independently admitted root operation owned by this manager.
+
+        The returned task can be awaited by the caller; shutdown also waits for
+        it and cancels it after the grace period. Background failures are logged.
+        """
         if not self._accepting:
             raise NousError("operation.unavailable", "The runtime is stopping.", operation=name)
         # A background operation owns a new independent request boundary while
@@ -173,7 +197,12 @@ class ExecutionManager:
         on_cancel: Callable[[], None] | None = None,
         **kwargs: object,
     ) -> T:
-        """Keep a worker owned after caller cancellation until the actual work finishes."""
+        """Run blocking work in the owned pool and wait for its actual completion.
+
+        On cancellation, call ``on_cancel`` when provided, wait until the worker
+        releases its resources, then propagate cancellation. The callback should
+        request cooperative cancellation; it does not replace waiting for exit.
+        """
         if not self._accepting and self._owner not in _current.get():
             raise NousError("operation.unavailable", "The runtime is stopping.")
         context = contextvars.copy_context()
@@ -210,7 +239,13 @@ class ExecutionManager:
             raise cancelled
 
     async def aclose(self, grace_seconds: float = 30) -> None:
-        """Stop admission, cancel overdue operations and await remaining blocking work."""
+        """Stop admission and close owned workers.
+
+        Args:
+            grace_seconds: Time in seconds to let admitted operations finish
+                before cancelling them. Actual blocking workers are still awaited
+                after cancellation, so shutdown may take longer than this grace.
+        """
         self._accepting = False
         current = asyncio.current_task()
         tasks = self._tasks - {current}

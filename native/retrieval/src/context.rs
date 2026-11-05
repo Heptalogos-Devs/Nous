@@ -71,12 +71,14 @@ pub fn aggregate_context(
     }
     let mut context = vec![0.0_f64; dim];
     let mut diagnostics = Vec::new();
+    let mut selected_context = Vec::<Value>::new();
     for (role, mut fragments) in groups {
         fragments.sort_by_key(|(row, f)| (f.sequence, *row));
         let len = fragments.len();
         let mut sum = vec![0.0_f64; dim];
         let mut used = 0;
         let mut zero = 0;
+        let mut role_selected = Vec::<Value>::new();
         for (age, (row, f)) in fragments.into_iter().rev().take(options.window).enumerate() {
             let weight = f.weight * options.decay.powi(age as i32);
             if weight == 0.0 {
@@ -88,6 +90,7 @@ pub fn aggregate_context(
                         *out += f64::from(value) * weight;
                     }
                     used += 1;
+                    role_selected.push(json!({"row":row,"key":f.key,"decayed_weight":weight}));
                 }
                 Err(_) => {
                     zero += 1;
@@ -102,6 +105,12 @@ pub fn aggregate_context(
         let sum: Vec<f32> = sum.into_iter().map(|v| v as f32).collect();
         let normalized = unit(&sum);
         if let Ok(v) = &normalized {
+            if weight > 0.0 {
+                for mut fragment in role_selected {
+                    fragment["role_weight"] = json!(weight);
+                    selected_context.push(fragment);
+                }
+            }
             for (out, value) in context.iter_mut().zip(v) {
                 *out += f64::from(*value) * weight;
             }
@@ -110,6 +119,9 @@ pub fn aggregate_context(
     }
     let context = unit(&context.into_iter().map(|v| v as f32).collect::<Vec<_>>());
     let raw = raw.as_deref().map(unit).transpose()?;
+    if context.is_err() || (raw.is_some() && options.context_mix == 0.0) {
+        selected_context.clear();
+    }
     let (origin, effective) = match (raw, context) {
         (Some(raw), Ok(context)) => {
             let mixed: Vec<f32> = raw
@@ -131,7 +143,7 @@ pub fn aggregate_context(
             ));
         }
     };
-    Ok(ContextResult{vector:effective.clone(),diagnostics_json:json!({"query_origin":origin,"roles":diagnostics,"effective_query":effective,"context_mix":options.context_mix}).to_string()})
+    Ok(ContextResult{vector:effective.clone(),diagnostics_json:json!({"query_origin":origin,"roles":diagnostics,"selected_context":selected_context,"effective_query":effective,"context_mix":options.context_mix}).to_string()})
 }
 pub fn segment(values: Vec<f32>, n: usize, d: usize, threshold: f64) -> Result<SegmentResult> {
     ensure!(

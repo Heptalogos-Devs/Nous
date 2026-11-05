@@ -219,6 +219,7 @@
     "transferTolerance": 1e-9
   },
   "query": {
+    "group_scan_limit": 4096,
     "rrf_k": 60.0,
     "thinking_min_closure": 0.2,
     "top_k": 10

@@ -32,6 +32,8 @@ pub struct Input {
 pub struct CandidateMeta {
     pub keys: Vec<String>,
     pub documents: Vec<String>,
+    pub group_keys: Vec<String>,
+    pub group_rows: Vec<u64>,
 }
 #[derive(Clone, Deserialize, Serialize)]
 pub struct ConceptMeta {
@@ -118,10 +120,25 @@ impl Input {
             "Keys must be unique and nonempty"
         );
         ensure!(
-            c.documents.len() == n
+            c.group_rows.len() == n
+                && unique(&c.group_keys)
+                && c.group_rows.iter().all(|r| *r < c.group_keys.len() as u64)
+                && c.documents.len() == n
                 && self.candidates.texts.len() == n
                 && c.documents.iter().all(|d| !d.is_empty()),
             "Candidate metadata/text length mismatch"
+        );
+        let mut group_documents = BTreeMap::new();
+        for (row, document) in c.documents.iter().enumerate() {
+            let owner = group_documents.entry(c.group_rows[row]).or_insert(document);
+            ensure!(
+                *owner == document,
+                "A candidate group must belong to one exact document"
+            );
+        }
+        ensure!(
+            group_documents.len() == c.group_keys.len(),
+            "Group table contains unused rows"
         );
         ensure!(
             t.labels.len() == m
@@ -788,7 +805,7 @@ pub fn load(path: &Path, expected: &Value, cancel: &CancellationToken) -> Result
     let timings: Value = serde_json::from_slice(&std::fs::read(path.join("timings.json"))?)?;
     let geometry=math.as_ref().map(|m|json!({"algorithm_version":m.geometry["algorithm_version"],"signature":m.geometry["signature"],"tag_count":m.geometry["tag_count"],"computed_count":m.geometry["computed_count"]}));
     let dimension = input.candidates.vectors.as_ref().map(|v| v.cols);
-    let stats = json!({"dimension":dimension,"timings":timings,"candidates":c.keys.len(),"concepts":t.keys.len(),"evidence_roots":f.root_keys.len(),"source_sequences":f.sequence_keys.len(),"associations":a.keys.len(),"graph_nodes":math.as_ref().map_or(0,|m|m.graph.node_ids.len()),"graph_edges":math.as_ref().map_or(0,|m|m.graph.targets.len()),"geometry":geometry});
+    let stats = json!({"dimension":dimension,"timings":timings,"candidates":c.keys.len(),"groups":c.group_keys.len(),"concepts":t.keys.len(),"evidence_roots":f.root_keys.len(),"source_sequences":f.sequence_keys.len(),"associations":a.keys.len(),"graph_nodes":math.as_ref().map_or(0,|m|m.graph.node_ids.len()),"graph_edges":math.as_ref().map_or(0,|m|m.graph.targets.len()),"geometry":geometry});
     let mut concept_candidates = BTreeMap::<u64, Vec<u64>>::new();
     for row in 0..c.keys.len() {
         for concept in slice(
@@ -893,6 +910,7 @@ pub fn build(input: Input, output_dir: &Path, token: &CancellationToken) -> Resu
             .enumerate()
             .map(|(row, key)| IndexDocument {
                 id: key.clone(),
+                group_row: c.group_rows[row],
                 namespace_id: "snapshot".into(),
                 subject_id: "snapshot".into(),
                 commit_seq: 1,

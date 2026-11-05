@@ -15,7 +15,7 @@ from nous.common.address import insert_address
 from nous.common.errors import NousError
 from nous.common.operations import record_completed
 from nous.storage.content import PublishedContent
-from nous.storage.database import Database, WriteTx
+from nous.storage.database import Database, ReadTx, WriteTx
 
 from . import schema
 from ._records import date_value
@@ -70,6 +70,53 @@ class ResultStore:
             )
         return await self.get(str(address)) if address is not None else None
 
+    async def cached_outputs_in(
+        self, tx: ReadTx, operation: str, keys: Sequence[str], *, output: str
+    ) -> dict[str, tuple[ResultRef, ArtifactRef]]:
+        """Look up adopted output identities for multiple deterministic inputs in one read."""
+        found: dict[str, tuple[ResultRef, ArtifactRef]] = {}
+        unique = list(dict.fromkeys(keys))
+        for start in range(0, len(unique), 400):
+            cache_key = schema.results.c.parameters["cache_key"].as_string()
+            rows = (
+                await tx.connection.execute(
+                    sa.select(
+                        cache_key.label("cache_key"),
+                        schema.results.c.id.label("result_id"),
+                        schema.results.c.address.label("result_address"),
+                        schema.artifacts.c.id.label("artifact_id"),
+                        schema.artifacts.c.address.label("artifact_address"),
+                    )
+                    .select_from(
+                        schema.results.join(schema.outputs).join(schema.artifacts)
+                    )
+                    .where(
+                        schema.results.c.operation == operation,
+                        schema.outputs.c.name == output,
+                        cache_key.in_(unique[start : start + 400]),
+                    )
+                    .order_by(schema.results.c.recorded_at, schema.results.c.id)
+                )
+            ).mappings()
+            for row in rows:
+                key = str(row["cache_key"])
+                found.setdefault(
+                    key,
+                    (
+                        ResultRef(
+                            instance_id=self.artifacts.instance_id,
+                            id=str(row["result_id"]),
+                            address=str(row["result_address"]),
+                        ),
+                        ArtifactRef(
+                            instance_id=self.artifacts.instance_id,
+                            id=str(row["artifact_id"]),
+                            address=str(row["artifact_address"]),
+                        ),
+                    ),
+                )
+        return found
+
     async def prepare_outputs(self, outputs: Mapping[str, OutputContent]) -> PreparedOutputs:
         """Publish output bytes before SQL; they remain reusable after an adoption rollback."""
         prepared: list[PreparedOutput] = []
@@ -98,7 +145,14 @@ class ResultStore:
     ) -> ProcessingResult:
         """Register the result, output artifacts and body bindings in one caller-owned transaction.
 
-        Returned references become committed only when that transaction exits successfully.
+        Returns:
+            The result and output references, committed only when the supplied
+            transaction exits successfully.
+
+        Raises:
+            NousError: ``content.empty_result`` for no outputs,
+                ``content.duplicate_source`` for repeated input group keys, or
+                ``content.not_found`` for a missing input relation.
         """
         if not prepared_outputs.outputs:
             raise NousError("content.empty_result", "A result must have at least one output")
@@ -174,6 +228,7 @@ class ResultStore:
                     "result_id": identifier,
                     "group_ordinal": ordinal,
                     "key": group.key,
+                    "slot_key": group.slot_key,
                     "role": group.role,
                     "name": group.name,
                 }
@@ -253,6 +308,21 @@ class ResultStore:
         parameters: Mapping[str, object] | None = None,
         coverage: Mapping[str, object] | None = None,
     ) -> ProcessingResult:
+        """Publish output bytes and atomically adopt the result and its references.
+
+        Call after computation succeeds. Publication happens before the short
+        transaction; if adoption fails, retry adopting the completed outputs
+        rather than repeating the successful computation. For composition with
+        another owner, use ``prepare_outputs`` followed by ``adopt_in`` in the
+        caller's transaction.
+
+        Returns:
+            The committed result with named output and input references.
+
+        Raises:
+            NousError: If result validation or adoption fails, including an
+                empty output set or duplicate input group keys.
+        """
         prepared = await self.prepare_outputs(outputs)
         async with self.database.write() as tx:
             result = await self.adopt_in(
@@ -419,6 +489,7 @@ class ResultStore:
             inputs = [
                 InputGroup(
                     key=str(source["key"]),
+                    slot_key=str(source["slot_key"]),
                     role=source["role"],
                     name=str(source["name"]),
                     parts=tuple(grouped[int(source["group_ordinal"])]),
@@ -458,22 +529,44 @@ class ResultStore:
             value.pop("inputs", None)
         if not details:
             value.pop("request", None)
-        rendered: list[dict[str, object]] = []
-        for output in result.outputs:
-            artifact = await self.artifacts.get(output.artifact)
-            blob = await self.artifacts.blob(output.artifact)
-            item: dict[str, object] = {
+        output_views = await self.artifacts.read_view_many(
+            [ContentSelection(artifact=output.artifact) for output in result.outputs],
+            representations="none",
+        )
+        value["outputs"] = [
+            {
                 "name": output.name,
-                "artifact": artifact.ref.address,
-                "media_type": artifact.media_type,
-                "byte_length": blob.byte_length,
+                "view": view.model_copy(update={"body_text": None}).model_dump(mode="json")
+                if output.name == "response" and not details
+                else view.model_dump(mode="json"),
             }
-            if output.name != "response" and (
-                artifact.media_type.startswith("text/") or artifact.media_type == "application/json"
-            ):
-                item["text"] = await self.artifacts.read_text(output.artifact)
-            rendered.append(item)
-        value["outputs"] = rendered
+            for output, view in zip(result.outputs, output_views, strict=True)
+        ]
+        if sources:
+            grouped = [
+                tuple(
+                    dict.fromkeys(
+                        content
+                        for part in group.parts
+                        for content in (
+                            tuple(origin.origin for origin in part.origins) or (part.content,)
+                        )
+                    )
+                )
+                for group in result.inputs
+            ]
+            all_views = await self.artifacts.read_view_many(
+                [item for group in grouped for item in group]
+            )
+            source_views: dict[str, object] = {}
+            offset = 0
+            for group, selected in zip(result.inputs, grouped, strict=True):
+                source_views[group.key] = [
+                    view.model_dump(mode="json")
+                    for view in all_views[offset : offset + len(selected)]
+                ]
+                offset += len(selected)
+            value["source_views"] = source_views
         return value
 
     async def provenance(

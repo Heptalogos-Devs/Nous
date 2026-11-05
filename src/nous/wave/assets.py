@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
+from time import perf_counter
 from typing import cast
 
 import numpy as np
@@ -14,7 +15,7 @@ from typing_extensions import TypedDict
 
 from nous.application.embedding import EmbeddingOperations
 from nous.common.errors import NousError
-from nous.content.annotations import read_annotation
+from nous.content.annotations import AnnotationSet, read_annotation
 from nous.content.artifacts import ArtifactStore
 from nous.content.contracts import (
     Artifact,
@@ -22,12 +23,22 @@ from nous.content.contracts import (
     ContentSelection,
     SourceSelection,
 )
-from nous.content.projections import semantic_text
+from nous.content.preparation import PreparedText, TextPreparation
 from nous.content.results import ResultStore
+from nous.content.text import TextView
 from nous.media.preparation import MediaPreparer
 from nous.temporal.values import CognitiveTimes, Instant, parse_explicit_time
 
-from .contracts import CandidatePath, CorpusView, Document, EvidenceProjection, PathStep
+from .contracts import (
+    Candidate,
+    CandidateContent,
+    CandidatePath,
+    CorpusView,
+    Document,
+    DocumentCandidates,
+    EvidenceProjection,
+    PathStep,
+)
 
 
 class ConceptMapping(TypedDict):
@@ -50,10 +61,11 @@ class DocumentMapping(TypedDict):
 class CandidateMapping(TypedDict):
     key: str
     content: dict[str, object]
-    origin_content: dict[str, object]
+    origin_contents: list[dict[str, object]]
     retrieval_content: dict[str, object]
     content_document: str
     document: str
+    group_key: str
     roots: list[str]
     concepts: list[str]
     paths: list[dict[str, object]]
@@ -75,6 +87,7 @@ class AssociationMapping(TypedDict):
 
 
 class SnapshotMapping(TypedDict):
+    owner: dict[str, JsonValue]
     name: str
     metadata: dict[str, JsonValue]
     root_order: list[str]
@@ -103,6 +116,7 @@ class SnapshotRow(TypedDict):
 
 @dataclass(frozen=True)
 class FrozenInputs:
+    preparation_stats: dict[str, int | float]
     candidate_metadata: dict[str, object]
     candidate_texts: tuple[str, ...]
     candidate_vectors: npt.NDArray[np.float32] | None
@@ -238,6 +252,73 @@ async def content_evidence(
     )
 
 
+async def _prepare_candidates(
+    manifest: CorpusView,
+    documents: dict[str, Document],
+    accepted: dict[str, ArtifactRef],
+    preparation: TextPreparation,
+) -> AsyncIterator[tuple[Candidate, PreparedText]]:
+    """Normalize exact inputs and document layouts through one content preparation session."""
+    for declaration in manifest.candidates:
+        document = documents[declaration.content.document]
+        origin = ContentSelection(
+            artifact=accepted[document.key],
+            selection=document.input.selector.restrict(declaration.content.selector),
+        )
+        prepared = await preparation.prepare(origin)
+        if isinstance(declaration, Candidate):
+            yield declaration, prepared
+            continue
+        assert isinstance(declaration, DocumentCandidates)
+
+        def exact(
+            key: str, selector: SourceSelection, declaration: DocumentCandidates = declaration
+        ) -> Candidate:
+            return Candidate(
+                key=key,
+                document=declaration.document,
+                group_key=declaration.group_key,
+                content=CandidateContent(document=declaration.document, selector=selector),
+                concepts=declaration.concepts,
+                occurrences=declaration.occurrences,
+                paths=declaration.paths,
+                annotation_ref=declaration.annotation_ref,
+                annotation_concepts=declaration.annotation_concepts,
+                metadata=declaration.metadata,
+            )
+
+        if declaration.whole:
+            yield exact(f"{declaration.group_key}:whole", SourceSelection()), prepared
+        if declaration.local_layout is not None:
+            for index, chunk in enumerate(
+                prepared.view.complete_chunks(declaration.local_layout.target_bytes), 1
+            ):
+                if declaration.whole and chunk.text == prepared.view.text:
+                    continue
+                selector = chunk.selection.selection
+                yield (
+                    exact(f"{declaration.group_key}:part:{index}", selector),
+                    prepared.slice(selector),
+                )
+
+
+async def _covers(
+    prepared: PreparedText, selections: Sequence[SourceSelection], preparation: TextPreparation
+) -> bool:
+    low = prepared.view.byte_offset
+    high = low + len(prepared.view.text.encode("utf-8"))
+    for part in selections:
+        if part.start_byte is not None and part.end_byte is not None:
+            start, end = part.start_byte, part.end_byte
+        else:
+            full = await preparation.prepare(ContentSelection(artifact=prepared.view.body.artifact))
+            view = full.slice(part).view
+            start, end = view.byte_offset, view.byte_offset + len(view.text.encode("utf-8"))
+        if start < low or end > high:
+            return False
+    return True
+
+
 async def freeze_inputs(
     manifest: CorpusView,
     space_id: str | None,
@@ -246,21 +327,22 @@ async def freeze_inputs(
     preparer: MediaPreparer,
 ) -> FrozenInputs:
     """Admit documents once and preserve independent roots through all derived candidates."""
+    prepared_at = perf_counter()
     documents = {item.key: item for item in manifest.documents}
     accepted: dict[str, ArtifactRef] = {}
     accepted_artifacts: dict[str, Artifact] = {}
-    for document in manifest.documents:
-        source = document.input
-        assert source.artifact is not None
-        artifact = await artifacts.get(source.artifact)
+    document_refs = [document.input.artifact for document in manifest.documents]
+    assert all(ref is not None for ref in document_refs)
+    root_artifacts = {key: list(refs) for key, refs in manifest.evidence.roots.items()}
+    document_roots = manifest.evidence.documents
+    root_refs = tuple(dict.fromkeys(ref for refs in root_artifacts.values() for ref in refs))
+    all_artifacts = await artifacts.get_many([*cast(list[str], document_refs), *root_refs])
+    for document, artifact in zip(
+        manifest.documents, all_artifacts[: len(manifest.documents)], strict=True
+    ):
         accepted[document.key] = artifact.ref
         accepted_artifacts[document.key] = artifact
 
-    root_artifacts = {key: list(refs) for key, refs in manifest.evidence.roots.items()}
-    document_roots = manifest.evidence.documents
-    for refs in root_artifacts.values():
-        for ref in refs:
-            await artifacts.get(ref)
     root_keys = list(root_artifacts)
     root_rows = {key: index for index, key in enumerate(root_keys)}
     concept_rows = {concept.key: index for index, concept in enumerate(manifest.concepts)}
@@ -284,29 +366,28 @@ async def freeze_inputs(
     candidate_texts: list[str] = []
     candidate_contents: list[ContentSelection] = []
     embedding_contents: list[ContentSelection] = []
+    prepared_candidates: list[PreparedText] = []
     candidate_memberships: list[list[int]] = []
     candidate_paths: list[list[int]] = []
     candidate_path_counts: list[int] = []
     candidate_positions: list[list[int]] = []
     candidate_roots: list[list[int]] = []
     candidate_mapping: list[CandidateMapping] = []
-    for candidate in manifest.candidates:
+    preparation = TextPreparation(artifacts, preparer, known_artifacts=all_artifacts)
+    await preparation.prime()
+    annotations: dict[str, tuple[Artifact, AnnotationSet, TextView]] = {}
+    async for candidate, prepared in _prepare_candidates(
+        manifest, documents, accepted, preparation
+    ):
         document = documents[candidate.content.document]
-        selection = ContentSelection(
-            artifact=accepted[candidate.content.document],
-            selection=document.input.selector.restrict(candidate.content.selector),
-        )
-        origin_content = selection
-        representation = await preparer.text_view(
-            origin_content, settings=preparer.execution.snapshot.typed_values().media
-        )
-        selection = representation.view.body
-        projected = await semantic_text(selection, preparer.results)
-        if not projected.text.strip():
+        origin_contents = prepared.origin_contents
+        selection = prepared.view.body
+        if not prepared.text.strip():
             continue
         candidate_contents.append(selection)
-        embedding_contents.append(projected.content)
-        candidate_texts.append(projected.text)
+        prepared_candidates.append(prepared)
+        retrieval_content = selection
+        candidate_texts.append(prepared.text)
         inherited = document_sequences.get(candidate.content.document, [])
         can_inherit = (
             candidate.content.selector.is_whole
@@ -317,21 +398,34 @@ async def freeze_inputs(
         paths = list(candidate.paths or ())
         annotation_artifact = None
         annotation_memberships: tuple[str, ...] | None = None
+        if candidate.occurrences:
+            covered_concepts = []
+            for occurrence in candidate.occurrences:
+                if await _covers(prepared, occurrence.selections, preparation):
+                    covered_concepts.append(occurrence.concept)
+            annotation_memberships = tuple(dict.fromkeys(covered_concepts))
         if candidate.annotation_ref is not None:
-            annotation_artifact = await artifacts.get(candidate.annotation_ref)
-            annotation = await read_annotation(artifacts, annotation_artifact.ref)
+            cached_annotation = annotations.get(candidate.annotation_ref)
+            if cached_annotation is None:
+                annotation_artifact = await artifacts.get(candidate.annotation_ref)
+                annotation = await read_annotation(artifacts, annotation_artifact.ref)
+                annotated = await preparation.prepare(
+                    ContentSelection(artifact=annotation.body_ref)
+                )
+                cached_annotation = annotation_artifact, annotation, annotated.view
+                annotations[candidate.annotation_ref] = cached_annotation
+            annotation_artifact, annotation, view = cached_annotation
             if annotation.body_ref != selection.artifact:
                 raise NousError(
                     "wave.annotation_mismatch",
                     "Annotation belongs to another body",
                     details={"candidate": candidate.key},
                 )
-            view = await artifacts.text_view(annotation.body_ref)
             blocks = {block.key: block for block in view.blocks}
             occurrences: dict[str, PathStep] = {}
             covered_concepts: list[str] = []
-            low = representation.view.byte_offset
-            high = low + len(representation.view.text.encode("utf-8"))
+            low = prepared.view.byte_offset
+            high = low + len(prepared.view.text.encode("utf-8"))
             for occurrence in annotation.occurrences:
                 mapped = candidate.annotation_concepts.get(occurrence.concept, occurrence.concept)
                 if mapped not in concept_rows:
@@ -341,13 +435,14 @@ async def freeze_inputs(
                         details={"concept": occurrence.concept},
                     )
                 covered = [blocks[key].selection.selection for key in occurrence.blocks]
-                start = min(part.start_byte for part in covered if part.start_byte is not None)
-                end = max(part.end_byte for part in covered if part.end_byte is not None)
-                occurrences[occurrence.key] = PathStep(
-                    concept=mapped,
-                    selection=SourceSelection(start_byte=start, end_byte=end),
-                )
-                if low <= start and end <= high:
+                occurrences[occurrence.key] = PathStep(concept=mapped, selections=tuple(covered))
+                if all(
+                    part.start_byte is not None
+                    and part.end_byte is not None
+                    and low <= part.start_byte
+                    and part.end_byte <= high
+                    for part in covered
+                ):
                     covered_concepts.append(mapped)
             # Membership is a fact about covered occurrences, independent of declared paths.
             annotation_memberships = tuple(dict.fromkeys(covered_concepts))
@@ -371,36 +466,12 @@ async def freeze_inputs(
                     key="source", steps=tuple(PathStep(concept=key) for key in inherited[0][0])
                 )
             ]
-        path_view = representation.view if paths else None
-        # Clipping splits paths at excluded occurrences; it never joins across a gap.
+        # Clipping splits at each excluded occurrence; no path joins across a gap.
         selected_paths: list[tuple[CandidatePath, list[tuple[int, PathStep]]]] = []
         for path in paths:
             current: list[tuple[int, PathStep]] = []
             for position, step in enumerate(path.steps, 1):
-                part = step.selection
-                scope = selection.selection
-                inside = True
-                if path_view is not None:
-                    low = path_view.byte_offset
-                    high = low + len(path_view.text.encode("utf-8"))
-                    if part.start_line is not None or part.end_line is not None:
-                        located = await artifacts.text_view(
-                            ContentSelection(artifact=selection.artifact, selection=part)
-                        )
-                        sub_low = located.byte_offset
-                        sub_high = sub_low + len(located.text.encode("utf-8"))
-                    elif part.start_byte is not None or part.end_byte is not None:
-                        sub_low = part.start_byte or 0
-                        sub_high = part.end_byte
-                    else:
-                        if not scope.is_whole:
-                            raise NousError(
-                                "wave.path_selection_required",
-                                "Local paths need exact body positions",
-                                details={"candidate": candidate.key, "path": path.key},
-                            )
-                        sub_low, sub_high = low, high
-                    inside = sub_high is not None and sub_low >= low and sub_high <= high
+                inside = await _covers(prepared, step.selections, preparation)
                 if inside:
                     current.append((position, step))
                 elif current:
@@ -452,10 +523,11 @@ async def freeze_inputs(
             {
                 "key": candidate.key,
                 "content": selection.model_dump(mode="json"),
-                "origin_content": origin_content.model_dump(mode="json"),
-                "retrieval_content": projected.content.model_dump(mode="json"),
+                "origin_contents": [part.model_dump(mode="json") for part in origin_contents],
+                "retrieval_content": retrieval_content.model_dump(mode="json"),
                 "content_document": candidate.content.document,
                 "document": candidate.document,
+                "group_key": candidate.group_key or candidate.document,
                 "roots": list(roots_for_candidate),
                 "concepts": list(dict.fromkeys(memberships)),
                 "paths": path_mapping,
@@ -466,9 +538,14 @@ async def freeze_inputs(
             }
         )
 
+    if space_id is not None:
+        embedding_contents.extend(await preparation.semantic_contents(prepared_candidates))
+        for mapping, content in zip(candidate_mapping, embedding_contents, strict=True):
+            mapping["retrieval_content"] = content.model_dump(mode="json")
+
     support_groups: list[dict[str, object]] = []
     group_mapping: list[dict[str, object]] = []
-    group_rows = {group.key: index for index, group in enumerate(manifest.support_groups)}
+    support_group_rows = {group.key: index for index, group in enumerate(manifest.support_groups)}
     group_roots: dict[str, tuple[str, ...]] = {}
     for group in manifest.support_groups:
         evidence = tuple(
@@ -518,11 +595,15 @@ async def freeze_inputs(
             )
         )
 
+    content_prepare_ms = (perf_counter() - prepared_at) * 1000
+    embedding_at = perf_counter()
+    embedding_ensure_calls = 0
     candidate_vectors: npt.NDArray[np.float32] | None = None
     concept_vectors: npt.NDArray[np.float32] | None = None
     vector_mappings: list[dict[str, object]] = []
     if space_id is not None:
         if candidate_contents:
+            embedding_ensure_calls += 1
             batch = await embedding.ensure(embedding_contents, space_id, "document")
             candidate_vectors = await embedding.read(batch)
             vector_mappings.extend(
@@ -539,11 +620,13 @@ async def freeze_inputs(
             )
         concept_contents: list[ContentSelection] = []
         for concept in manifest.concepts:
-            artifact = await artifacts.ingest(
-                concept.embedding_text(), display_name=f"{concept.key}.txt"
+            concept_contents.append(
+                await preparation.literal(
+                    concept.embedding_text(), display_name=f"{concept.key}.txt"
+                )
             )
-            concept_contents.append(ContentSelection(artifact=artifact.ref))
         if concept_contents:
+            embedding_ensure_calls += 1
             batch = await embedding.ensure(concept_contents, space_id, "document")
             concept_vectors = await embedding.read(batch)
             vector_mappings.extend(
@@ -559,6 +642,7 @@ async def freeze_inputs(
                 )
             )
 
+    embedding_ms = (perf_counter() - embedding_at) * 1000
     sequence_indptr, sequence_indices = _csr(source_rows)
     membership_indptr, membership_indices = _csr(candidate_memberships)
     path_step_indptr, path_indices = _csr(candidate_paths)
@@ -567,10 +651,22 @@ async def freeze_inputs(
     group_root_indptr, group_root_indices = _csr(
         [[root_rows[root] for root in group_roots[group.key]] for group in manifest.support_groups]
     )
+    group_keys = list(dict.fromkeys(item["group_key"] for item in candidate_mapping))
+    candidate_group_rows = {key: row for row, key in enumerate(group_keys)}
     return FrozenInputs(
+        preparation_stats={
+            **preparation.stats,
+            "documents": len(manifest.documents),
+            "candidates": len(candidate_mapping),
+            "content_prepare_ms": content_prepare_ms,
+            "embedding_ms": embedding_ms,
+            "embedding_ensure_calls": embedding_ensure_calls,
+        },
         candidate_metadata={
             "keys": [item["key"] for item in candidate_mapping],
             "documents": [item["document"] for item in candidate_mapping],
+            "group_keys": group_keys,
+            "group_rows": [candidate_group_rows[item["group_key"]] for item in candidate_mapping],
         },
         candidate_texts=tuple(candidate_texts),
         candidate_vectors=candidate_vectors,
@@ -629,13 +725,15 @@ async def freeze_inputs(
             dtype=np.int8,
         ),
         association_edge_groups=np.asarray(
-            [group_rows[item.support_group] for item in manifest.associations], dtype=np.uint64
+            [support_group_rows[item.support_group] for item in manifest.associations],
+            dtype=np.uint64,
         ),
         group_root_indptr=group_root_indptr,
         group_root_indices=group_root_indices,
         vector_mappings=tuple(vector_mappings),
         mapping={
             "name": manifest.name,
+            "owner": cast(dict[str, JsonValue], manifest.owner.model_dump(mode="json")),
             "metadata": manifest.metadata,
             "root_order": root_keys,
             "documents": {

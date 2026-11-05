@@ -10,13 +10,14 @@ from nous.cognition.concept_contracts import AnnotationProposalView, AnnotationV
 from nous.cognition.concepts import ConceptTarget
 from nous.common.errors import NousError
 from nous.content.annotations import AnnotationProposal
+from nous.presentation import translate
 from nous.runtime.bootstrap import open_instance
 
-from . import cli, options, run_async
+from . import cli, language_for, options, run_async
 from .cognition import journal_cli, note_cli
 
-concept_cli = typer.Typer(help="概念及意义版本 / Concept meanings", no_args_is_help=True)
-annotation_cli = typer.Typer(help="正文标注与提案 / Annotations", no_args_is_help=True)
+concept_cli = typer.Typer(help="Concept meanings", no_args_is_help=True)
+annotation_cli = typer.Typer(help="Annotations", no_args_is_help=True)
 cli.add_typer(concept_cli, name="concept")
 journal_cli.add_typer(annotation_cli, name="annotation")
 
@@ -27,7 +28,9 @@ def emit_concept(ctx: typer.Context, result: ConceptView) -> None:
     else:
         typer.echo(f"{result.label} — {result.ref.address}\n{result.description}")
         if result.aliases:
-            typer.echo("Aliases: " + ", ".join(result.aliases))
+            typer.echo(
+                translate("Aliases", language_for(options(ctx))) + ": " + ", ".join(result.aliases)
+            )
 
 
 @concept_cli.command("add")
@@ -41,7 +44,7 @@ def concept_add(
 ):
     async def run():
         async with open_instance(options(ctx).locator) as runtime:
-            return await runtime.concepts.create(
+            return await (await runtime.cognition(namespace)).concepts.create(
                 namespace, label, description, alias or (), author=author
             )
 
@@ -52,7 +55,7 @@ def concept_add(
 def concept_read(ctx: typer.Context, ref: str, namespace: str | None = None):
     async def run():
         async with open_instance(options(ctx).locator) as runtime:
-            return await runtime.concepts.read(ref, namespace)
+            return await (await runtime.cognition(namespace)).concepts.read(ref, namespace)
 
     emit_concept(ctx, run_async(run()))
 
@@ -67,7 +70,9 @@ def concept_find(
 ):
     async def run():
         async with open_instance(options(ctx).locator) as runtime:
-            return await runtime.concepts.find(namespace, text, offset=offset, limit=limit)
+            return await (await runtime.cognition(namespace)).concepts.find(
+                namespace, text, offset=offset, limit=limit
+            )
 
     result = run_async(run())
     if options(ctx).json_mode:
@@ -110,7 +115,7 @@ def concept_revise(
 
     async def run():
         async with open_instance(options(ctx).locator) as runtime:
-            return await runtime.concepts.revise(
+            return await (await runtime.cognition(namespace)).concepts.revise(
                 ref, expected, label, description, alias or (), namespace=namespace, author=author
             )
 
@@ -122,16 +127,20 @@ def emit_annotation(ctx: typer.Context, result: AnnotationProposalView | Annotat
         typer.echo(result.model_dump_json())
     elif isinstance(result, AnnotationProposalView):
         typer.echo(
-            f"提案 / Proposal: {result.result_ref.address}\n正文 / Body: {result.body_revision.address}"
+            f"{translate('Proposal', language_for(options(ctx)))}: {result.result_ref.address}\n{translate('Body', language_for(options(ctx)))}: {result.body_revision.address}"
         )
         for concept in result.annotation.concepts:
             typer.echo(
                 f"{concept.key}: "
-                + (f"reuse {concept.reuse_key}" if concept.reuse_key else concept.label)
+                + (
+                    f"{translate('Reuse', language_for(options(ctx)))} {concept.reuse_key}"
+                    if concept.reuse_key
+                    else concept.label
+                )
             )
     else:
         typer.echo(
-            f"标注 / Annotation: {result.ref.address}\n正文 / Body: {result.ref.body_revision.address}"
+            f"{translate('Annotation', language_for(options(ctx)))}: {result.ref.address}\n{translate('Body', language_for(options(ctx)))}: {result.ref.body_revision.address}"
         )
         for key, concept in result.bindings.items():
             typer.echo(f"{key}: {concept.label} — {concept.ref.address}")
@@ -149,15 +158,12 @@ def annotate(
     proposal_result: str | None = None,
     bindings: Path | None = None,
     known_concept: Annotated[
-        list[str] | None, typer.Option("--known-concept", help="C1=con:...@N")
+        list[str] | None, typer.Option("--known-concept", help='"C1=con:...@N"')
     ] = None,
     draft_only: bool = False,
-    adopt: bool = False,
     historical: bool = False,
     task: str | None = None,
 ):
-    if draft_only and adopt:
-        raise NousError("input.conflicting_adoption", "Choose --draft-only or --adopt")
     if proposal is not None and proposal_result is not None:
         raise NousError("input.conflicting_proposal", "Choose --proposal or --proposal-result")
     candidates: dict[str, ConceptTarget] = {}
@@ -165,7 +171,7 @@ def annotate(
         key, separator, target = value.partition("=")
         if not separator or not key or not target or key in candidates:
             raise NousError(
-                "input.invalid_candidate", "Use distinct --known-concept C1=con:...@N entries"
+                "input.invalid_candidate", 'Use distinct --known-concept "C1=con:...@N" entries'
             )
         candidates[key] = target
     supplied: dict[str, ConceptTarget | None] | None = None
@@ -188,24 +194,15 @@ def annotate(
 
     async def run():
         async with open_instance(options(ctx).locator) as runtime:
-            proposed = (
-                await runtime.annotations.read_proposal(proposal_result)
-                if proposal_result
-                else await runtime.annotations.propose(
-                    ref,
-                    namespace=namespace,
-                    proposal=manual,
-                    known_concepts=candidates if known_concept is not None else None,
-                    task=task,
-                )
-            )
-            if draft_only:
-                return proposed
-            return await runtime.annotations.adopt(
+            return await (await runtime.cognition(namespace)).annotations.annotate(
                 ref,
-                proposed.result_ref,
                 namespace=namespace,
+                proposal=manual,
+                proposal_result=proposal_result,
+                known_concepts=candidates if known_concept is not None else None,
                 bindings=supplied,
+                draft_only=draft_only,
+                task=task,
                 activate_for_current=not historical,
             )
 
@@ -216,15 +213,17 @@ def annotate(
 def annotation_read(ctx: typer.Context, ref: str, namespace: str | None = None):
     async def run():
         async with open_instance(options(ctx).locator) as runtime:
-            return await runtime.annotations.read(ref, namespace=namespace)
+            return await (await runtime.cognition(namespace)).annotations.read(
+                ref, namespace=namespace
+            )
 
     emit_annotation(ctx, run_async(run()))
 
 
 @annotation_cli.command("proposal")
-def proposal_read(ctx: typer.Context, ref: str):
+def proposal_read(ctx: typer.Context, ref: str, namespace: str | None = None):
     async def run():
         async with open_instance(options(ctx).locator) as runtime:
-            return await runtime.annotations.read_proposal(ref)
+            return await (await runtime.cognition(namespace)).annotations.read_proposal(ref)
 
     emit_annotation(ctx, run_async(run()))

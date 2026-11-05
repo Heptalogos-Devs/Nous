@@ -22,10 +22,10 @@ lexical 与 semantic 的快照分属明确 profile key，避免一次词项查�
 
 ## 捕获与构建算法
 
-1. 根操作固定配置和 Namespace。读取该 profile 已发布快照及 namespace generation，完全匹配时可直接持有 immutable snapshot。
+1. 根操作固定配置和 Namespace。读取该 profile 已发布快照及 namespace generation，完全匹配时可直接持有 immutable snapshot，热查询不先捕获整库正文/标注。
 2. 需要更新时，取得同 Namespace/profile 的构建协调锁，再检查一次。锁只协调该项构建，不阻塞文稿写入，不是实例级请求锁。
-3. 在一个短 ReadTx 中取得 generation G、所有当前可召回精确 revisions、active annotations、已绑定 Concept 意义版本、支持组与需要的时间/状态。将这些引用复制成类型化 CorpusView 后结束事务。
-4. 网络向量、CAS 读取、Native 构建全在事务外。复用已采用精确向量，构建完整不可变资产；不要用旧图加上新正文后过滤凑当前视图。
+3. 在一个短 ReadTx 中取得 generation G、所有当前可召回精确 revisions、active annotations、已绑定 Concept 意义版本、支持组与需要的时间/状态。通过各 owner 的批量读取取得引用与值，复制成类型化 CorpusView 后结束事务。标注 owner 返回多个精确选区，不把 occurrence 包成跨越无关正文的 min/max 范围。
+4. 网络向量、CAS 读取、Native 构建全在事务外。同一正文和表示在一次构建中只准备一次，复用已采用精确向量，构建完整不可变资产；不要用旧图加上新正文后过滤凑当前视图。
 5. 同卷发布索引并打开一次。短 WriteTx 登记 WaveSnapshot。仅当 namespace generation 仍是 G、profile 仍相同时更新该 profile 的 current 指针；否则保留此快照供本次已捕获视图使用，不回滚内容、不追赶循环。
 6. 本次查询使用捕获的 G；后来写入由下一次 current 查询或显式 refresh 处理。返回 captured_generation，必要时提示已有更晚版本。不要让持续写入造成无限追赶或持有数据库事务等待模型。
 
@@ -38,22 +38,22 @@ CorpusView(namespace_id, generation, profile,
            documents[exact refs], annotations, concept_revisions,
            source_sequences, support_groups, candidate_specs)
 Wave.build_view(view, context) -> PublishedSnapshot
-Wave.search(snapshot_ref, query) -> ordered typed hits
+WaveOperations.query(WaveQuery) -> ordered groups + exact hits
 ```
 
 清单路径入口转换为同样的 view，再进入共同 build。认知代码不导出临时 JSON，也不访问 Wave SQL/Native 内部行号。Wave 只认识可检索正文及计算引用，不理解 Journal 的采用规则。
 
-`CognitiveRetrieval.capture_in(ReadTx)` 负责正式视图；`Wave.build_view` 负责投影。当前指针只有 Wave 的同一发布能力修改，由调用者提供 generation 前置条件；不在 cognition 复制另一套快照发布协议。
+`CorpusCapture.capture_in(ReadTx)` 负责正式视图；`ProjectionBuilder` 声明 DocumentCandidates、独立 occurrence 及路径，`Wave.build_view` 负责共同准备与数值投影。当前指针只有 Wave 的同一发布能力修改，由调用者提供 generation 前置条件；不在 cognition 复制另一套快照发布协议。
 
 ## 候选和证据
 
 Journal 及 remember=true 的 Note 提供当前版本。归档文稿不再贡献自身候选或概念路径；其它 active 文稿明确引用它的历史内容仍可保留来源关系。archive 是收纳选择，不声明那段经历错误。
 
-每篇提供整文和由现有 TextView 生成的有界局部候选。whole/section/block 必须指同一 exact revision；默认按文稿聚合最佳片段展示，需要时展开。局部候选只拥有实际覆盖的 occurrence 和路径片段，截去中间 occurrence 时保留断点，不补新相邻关系。
+认知投影声明 DocumentCandidates，由 Wave 使用共同内容批量准备，在同一 TextView 上生成整文和有界局部候选。whole/section/block 必须指同一 exact revision；召回前就使用文稿分组，不采用 top_k 乘常数后去重。具体行为见 [准备](../wave/corpus-preparation.md)和[分组](../wave/grouped-delivery.md)。局部候选只拥有实际覆盖的 occurrence 和路径片段，截去中间 occurrence 时保留断点，不补新相邻关系。
 
 概念节点按 exact 意义版本映射；未标注正文仍进入 lexical/dense。被更正旧 revision 的 paths/几何贡献从当前投影移除；历史查询只使用其精确旧快照。
 
-独立来源与支持组沿现行 evidence-projection 计算，不把 source link、一次模型输出和同源反复摘要当成独立支持。current_basis 待复核状态按 temporal-use 定义，在捕获时计算。
+正式派生 Journal 的解释性结构按 [结构贡献](structure-contributions.md)进入同一投影；独立来源与支持组沿现行 evidence-projection 计算，不把 source link、一次模型输出和同源反复摘要当成独立支持。current_basis 待复核状态按 temporal-use 定义，在捕获时计算。
 
 ## 失败与使用状态
 
@@ -61,7 +61,7 @@ Journal 及 remember=true 的 Note 提供当前版本。归档文稿不再贡献
 
 `query` 在无法建立所请求当前视图时返回 projection failure；显式 snapshot 查询仍可读旧快照。错误可建议 `--mode lexical`，但程序不自行执行另一条检索来掩盖失败。
 
-不为每次搜索持久保存一套 query receipt。命中含 snapshot_ref + exact revision/selection，反馈时可直接带这些值；需要评价整次查询时提交该次公开结果或 query context。
+不为每次搜索持久保存一套 query receipt。命中含 snapshot_ref + exact revision/selection，反馈时可直接带这些值；需要评价整次查询时提交类型化 QueryResult，固定实际参与的上下文和交付范围；见 [查询情境](query-use-context.md)。快照所属范围使用 typed owner，集合名不承担身份协议。
 
 ## 认知与内容血缘的接缝
 

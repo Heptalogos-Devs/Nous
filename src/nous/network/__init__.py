@@ -41,7 +41,13 @@ class ModelConnections:
         self._clients: dict[str, AsyncOpenAI] = {}
 
     def client(self, provider_id: str) -> AsyncOpenAI:
-        """Borrow a runtime-owned client built from startup connection and credential settings."""
+        """Borrow the runtime-owned client for a configured provider.
+
+        Connection and credential settings are captured at startup; the owner
+        closes the shared client. SDK retries are disabled so request attempts
+        are governed by the model executor. Unknown providers and unsupported
+        protocols raise ``NousError``.
+        """
         existing = self._clients.get(provider_id)
         if existing is not None:
             return existing

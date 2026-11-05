@@ -10,6 +10,7 @@ from nous.common.errors import NousError
 from nous.content.artifacts import ArtifactStore
 from nous.content.contracts import (
     ArtifactRef,
+    ContentReadView,
     ContentSelection,
     SourceSelection,
 )
@@ -17,17 +18,18 @@ from nous.runtime.execution import ExecutionManager
 from nous.storage.database import Database, ReadTx
 from nous.temporal.values import CognitiveTimes
 
-from . import schema
-from .contracts import (
+from .. import schema
+from ..contracts import (
     Namespace,
     RecordRef,
     RecordRevisionRef,
     RecordView,
     RevisionSummary,
-    SavedRecord,
     SourceBinding,
+    TitleSource,
 )
-from .scope import NamespaceOperations
+from ..scope import NamespaceOperations
+from .contracts import CommittedRecord
 
 
 class RecordRow(TypedDict):
@@ -44,8 +46,10 @@ class RevisionRow(TypedDict):
     id: str
     record_id: str
     ordinal: int
+    committed_generation: int
     parent_id: str | None
-    title: str
+    title: str | None
+    title_source: TitleSource
     body_artifact_id: str
     purpose: str | None
     author: str | None
@@ -60,14 +64,21 @@ class RevisionRow(TypedDict):
 Target = str | RecordRef | RecordRevisionRef
 
 
-class WrittenRecordReader:
+class RecordReader:
+    """Read formal record revisions and frozen source bindings.
+
+    Targets may identify a record or an exact revision. Unqualified record targets
+    resolve to the current head; a namespace-bound reader rejects other namespaces.
+    """
     def __init__(
         self,
         database: Database,
         execution: ExecutionManager,
         artifacts: ArtifactStore,
         scope: NamespaceOperations,
+        namespace: Namespace | None = None,
     ):
+        self.bound_namespace = namespace
         self.database, self.execution, self.artifacts, self.scope = (
             database,
             execution,
@@ -75,7 +86,16 @@ class WrittenRecordReader:
             scope,
         )
 
-    def _namespace(self, namespace: str | None) -> str:
+    def namespace(self, namespace: str | None) -> str:
+        if self.bound_namespace is not None:
+            if namespace is not None and namespace not in {
+                self.bound_namespace.id,
+                self.bound_namespace.name,
+            }:
+                raise NousError(
+                    "cognition.namespace_mismatch", "Operation belongs to another namespace"
+                )
+            return self.bound_namespace.id
         return namespace or self.execution.snapshot.typed_values().cognition.default_namespace
 
     def _ref(self, row: RecordRow) -> RecordRef:
@@ -90,6 +110,16 @@ class WrittenRecordReader:
     async def resolve_in(
         self, tx: ReadTx, target: Target, namespace: str | None = None
     ) -> tuple[RecordRow, RevisionRow, Namespace]:
+        """Resolve a target and namespace in the caller's read view.
+
+        An address suffixed with ``@N`` or a revision reference selects that exact
+        revision; an unqualified record selects its head. The returned record and
+        revision rows are copies.
+
+        Raises:
+            NousError: The reference is malformed, missing, or belongs to another
+                instance or namespace, or the exact revision does not exist.
+        """
         ordinal = None
         revision_id = None
         if isinstance(target, RecordRevisionRef):
@@ -127,7 +157,7 @@ class WrittenRecordReader:
                 "cognition.not_found", "Written record does not exist", details={"ref": str(target)}
             )
         ns = await self.scope.get_in(
-            tx, namespace or (ref.namespace_id if ref else self._namespace(None))
+            tx, self.namespace(namespace or (ref.namespace_id if ref else None))
         )
         if row["namespace_id"] != ns.id or (
             ref and (ref.namespace_id != ns.id or ref.kind != row["kind"])
@@ -157,58 +187,89 @@ class WrittenRecordReader:
         )
 
     async def sources_in(self, tx: ReadTx, revision_id: str) -> tuple[SourceBinding, ...]:
-        rows = (
+        return (await self.sources_many_in(tx, (revision_id,)))[revision_id]
+
+    async def sources_many_in(
+        self, tx: ReadTx, revision_ids: Sequence[str]
+    ) -> dict[str, tuple[SourceBinding, ...]]:
+        """Read ordered source groups and all discontinuous targets in the same consistent view."""
+        if not revision_ids:
+            return {}
+        groups = (
             (
                 await tx.connection.execute(
                     sa.select(schema.sources)
-                    .where(schema.sources.c.revision_id == revision_id)
-                    .order_by(schema.sources.c.ordinal)
+                    .where(schema.sources.c.revision_id.in_(revision_ids))
+                    .order_by(schema.sources.c.revision_id, schema.sources.c.ordinal)
                 )
             )
             .mappings()
             .all()
         )
-        output: list[SourceBinding] = []
-        for row in rows:
-            artifact = await self.artifacts.get_in(tx, row["artifact_id"])
-            owner = None
-            if row["target_revision_id"]:
-                rev = (
-                    (
-                        await tx.connection.execute(
-                            sa.select(schema.revisions).where(
-                                schema.revisions.c.id == row["target_revision_id"]
-                            )
-                        )
+        targets = (
+            (
+                await tx.connection.execute(
+                    sa.select(schema.source_targets)
+                    .where(schema.source_targets.c.revision_id.in_(revision_ids))
+                    .order_by(
+                        schema.source_targets.c.revision_id,
+                        schema.source_targets.c.key,
+                        schema.source_targets.c.ordinal,
                     )
-                    .mappings()
-                    .one()
                 )
-                record = (
-                    (
-                        await tx.connection.execute(
-                            sa.select(schema.records).where(schema.records.c.id == rev["record_id"])
-                        )
+            )
+            .mappings()
+            .all()
+        )
+        artifacts = await self.artifacts.get_many_in(
+            tx, [str(row["artifact_id"]) for row in targets]
+        )
+        selected: dict[tuple[str, str], list[ContentSelection]] = {}
+        for row, artifact in zip(targets, artifacts, strict=True):
+            selected.setdefault((str(row["revision_id"]), str(row["key"])), []).append(
+                ContentSelection(
+                    artifact=artifact.ref,
+                    selection=SourceSelection.model_validate(row["selection"]),
+                )
+            )
+        owner_ids = {str(row["target_revision_id"]) for row in groups if row["target_revision_id"]}
+        owners: dict[str, RecordRevisionRef] = {}
+        if owner_ids:
+            revisions = (
+                (
+                    await tx.connection.execute(
+                        sa.select(schema.revisions).where(schema.revisions.c.id.in_(owner_ids))
                     )
-                    .mappings()
-                    .one()
                 )
-                owner = self.revision_ref(
-                    cast(RecordRow, dict(record)), cast(RevisionRow, dict(rev))
+                .mappings()
+                .all()
+            )
+            records = (
+                await tx.connection.execute(
+                    sa.select(schema.records).where(
+                        schema.records.c.id.in_([row["record_id"] for row in revisions])
+                    )
                 )
-            output.append(
+            ).mappings()
+            records_by_id = {str(row["id"]): cast(RecordRow, dict(row)) for row in records}
+            owners = {
+                str(row["id"]): self.revision_ref(
+                    records_by_id[str(row["record_id"])], cast(RevisionRow, dict(row))
+                )
+                for row in revisions
+            }
+        output: dict[str, list[SourceBinding]] = {identifier: [] for identifier in revision_ids}
+        for row in groups:
+            output[str(row["revision_id"])].append(
                 SourceBinding(
-                    key=row["key"],
-                    content_selection=ContentSelection(
-                        artifact=artifact.ref,
-                        selection=SourceSelection.model_validate(row["selection"]),
-                    ),
-                    owner_revision=owner,
+                    key=str(row["key"]),
+                    selections=tuple(selected[(str(row["revision_id"]), str(row["key"]))]),
+                    owner_revision=owners.get(str(row["target_revision_id"])),
                     usage=row["usage"],
                     name=row["name"],
                 )
             )
-        return tuple(output)
+        return {identifier: tuple(bindings) for identifier, bindings in output.items()}
 
     async def select_sources(
         self,
@@ -217,18 +278,21 @@ class WrittenRecordReader:
         *,
         usage: Literal["reference", "current_basis", "inspiration"] = "reference",
     ) -> tuple[SourceBinding, ...]:
-        """Freeze all selected logical records in one consistent short read."""
+        """Freeze source targets in one short read transaction.
+
+        Record targets become exact body revisions; artifacts and selections retain
+        their supplied content. Returned bindings preserve input order and receive
+        keys S1, S2, and so on, with the requested usage.
+        """
         async with self.execution.operation("records.select_sources"):
             async with self.database.read() as tx:
-                ns = await self.scope.get_in(tx, self._namespace(namespace))
+                ns = await self.scope.get_in(tx, self.namespace(namespace))
                 output: list[SourceBinding] = []
                 for index, target in enumerate(targets):
                     if isinstance(target, ContentSelection):
                         await self.artifacts.get_in(tx, target.artifact)
                         output.append(
-                            SourceBinding(
-                                key=f"S{index + 1}", content_selection=target, usage=usage
-                            )
+                            SourceBinding(key=f"S{index + 1}", selections=(target,), usage=usage)
                         )
                         continue
                     if (
@@ -240,7 +304,7 @@ class WrittenRecordReader:
                         output.append(
                             SourceBinding(
                                 key=f"S{index + 1}",
-                                content_selection=ContentSelection(artifact=artifact.ref),
+                                selections=(ContentSelection(artifact=artifact.ref),),
                                 name=artifact.display_name,
                                 usage=usage,
                             )
@@ -251,7 +315,7 @@ class WrittenRecordReader:
                     output.append(
                         SourceBinding(
                             key=f"S{index + 1}",
-                            content_selection=ContentSelection(artifact=artifact.ref),
+                            selections=(ContentSelection(artifact=artifact.ref),),
                             owner_revision=self.revision_ref(row, revision),
                             usage=usage,
                             name=revision["title"],
@@ -267,6 +331,13 @@ class WrittenRecordReader:
         sources: bool = False,
         blocks: Sequence[str] = (),
     ) -> RecordView:
+        """Read a record's selected revision, body and source bindings.
+
+        Unqualified targets select the head. ``blocks`` restricts the returned body to
+        those block keys in order, joined by blank lines. ``sources`` additionally
+        loads source content views; bindings are included in either case. The view
+        also reports the current revision and current membership state.
+        """
         async with self.execution.operation("records.read"):
             async with self.database.read() as tx:
                 row, rev, ns = await self.resolve_in(tx, target, namespace)
@@ -287,20 +358,23 @@ class WrittenRecordReader:
             if blocks:
                 view = await self.artifacts.text_view(artifact.ref)
                 body = "\n\n".join(view.block(key).text for key in blocks)
-            texts = (
-                {
-                    source.key: await self.artifacts.read_selection(source.content_selection)
-                    for source in bindings
-                }
-                if sources
-                else {}
-            )
+            views: dict[str, tuple[ContentReadView, ...]] = {}
+            if sources:
+                selected_views = await self.artifacts.read_view_many(
+                    [selection for binding in bindings for selection in binding.selections]
+                )
+                offset = 0
+                for binding in bindings:
+                    views[binding.key] = selected_views[offset : offset + len(binding.selections)]
+                    offset += len(binding.selections)
             return RecordView(
                 ref=self._ref(row),
                 revision_ref=self.revision_ref(row, rev),
+                committed_generation=rev["committed_generation"],
                 current_revision=self.revision_ref(row, cast(RevisionRow, dict(head))),
                 namespace=ns,
                 title=rev["title"],
+                title_source=rev["title_source"],
                 body_artifact=artifact.ref,
                 body=body,
                 purpose=rev["purpose"],
@@ -308,7 +382,7 @@ class WrittenRecordReader:
                 viewpoint=rev["viewpoint"],
                 times=CognitiveTimes.model_validate(rev["cognitive_times"]),
                 sources=bindings,
-                source_texts=texts,
+                source_views=views,
                 archived=row["archived"],
                 recall=row["recall"],
                 change_kind=rev["change_kind"],
@@ -316,28 +390,30 @@ class WrittenRecordReader:
                 origin_result_id=rev["origin_result_id"],
             )
 
-    def _saved(
+    def committed(
         self, row: RecordRow, revision: RevisionRow, ns: Namespace, changed: bool = True
-    ) -> SavedRecord:
-        return SavedRecord(
+    ) -> CommittedRecord:
+        return CommittedRecord(
             ref=self._ref(row),
             revision_ref=self.revision_ref(row, revision),
             title=revision["title"],
+            title_source=revision["title_source"],
             namespace=ns,
-            generation=ns.content_generation,
+            committed_generation=revision["committed_generation"],
             changed=changed,
-            retrieval_state="pending" if row["recall"] and not row["archived"] else "not_in_scope",
+            in_recall=bool(row["recall"] and not row["archived"]),
         )
 
-    async def saved_in(
+    async def committed_in(
         self, tx: ReadTx, target: Target, *, namespace: str | None = None, changed: bool = False
-    ) -> SavedRecord:
+    ) -> CommittedRecord:
         row, revision, ns = await self.resolve_in(tx, target, namespace)
-        return self._saved(row, revision, ns, changed)
+        return self.committed(row, revision, ns, changed)
 
     async def history(
         self, target: Target, *, namespace: str | None = None
     ) -> tuple[RevisionSummary, ...]:
+        """Return revision summaries in ascending ordinal order for the record."""
         async with self.execution.operation("records.history"):
             async with self.database.read() as tx:
                 row, _, _ = await self.resolve_in(tx, target, namespace)
@@ -355,7 +431,9 @@ class WrittenRecordReader:
                 return tuple(
                     RevisionSummary(
                         revision_ref=self.revision_ref(row, cast(RevisionRow, dict(revision))),
+                        committed_generation=revision["committed_generation"],
                         title=revision["title"],
+                        title_source=revision["title_source"],
                         recorded_at=datetime.fromisoformat(revision["recorded_at"]),
                         change_kind=revision["change_kind"],
                         reason=revision["reason"],
@@ -371,7 +449,12 @@ class WrittenRecordReader:
         archived: bool = False,
         offset: int = 0,
         limit: int | None = None,
-    ) -> tuple[SavedRecord, ...]:
+    ) -> tuple[CommittedRecord, ...]:
+        """List current record heads in address order for the selected namespace.
+
+        The archived flag selects archived or unarchived records. Offset must be
+        nonnegative and limit between 1 and 200; an omitted limit uses configuration.
+        """
         async with self.execution.operation("records.list"):
             limit = (
                 limit
@@ -383,7 +466,7 @@ class WrittenRecordReader:
                     "input.invalid_page", "Offset must be nonnegative and limit between 1 and 200"
                 )
             async with self.database.read() as tx:
-                ns = await self.scope.get_in(tx, self._namespace(namespace))
+                ns = await self.scope.get_in(tx, self.namespace(namespace))
                 query = sa.select(schema.records.c.id).where(
                     schema.records.c.namespace_id == ns.id, schema.records.c.archived == archived
                 )
@@ -394,13 +477,14 @@ class WrittenRecordReader:
                         query.order_by(schema.records.c.address).offset(offset).limit(limit)
                     )
                 ).all()
-                output: list[SavedRecord] = []
+                output: list[CommittedRecord] = []
                 for identifier in ids:
                     row, revision, _ = await self.resolve_in(tx, identifier, ns.id)
-                    output.append(self._saved(row, revision, ns, False))
+                    output.append(self.committed(row, revision, ns, False))
                 return tuple(output)
 
     async def status(self) -> dict[str, object]:
+        """Report record counts and namespace state without modifying records."""
         async with self.execution.operation("records.status"):
             async with self.database.read() as tx:
                 counts = (

@@ -1,0 +1,19 @@
+contract_id = "journal-reflect"
+
+[documentation]
+title = "跨篇形成新理解"
+purpose = "围绕新主题阅读既有 Journal，另写反思文章，不修改来源文稿。"
+consumers = ["writing.reflect"]
+input_notes = "旧文稿以精确版本给出；每份的内部来源键属于原文，引用使用本次提供键。"
+output_notes = "返回 Markdown；采用与正式版本处理由程序完成。"
+
+[[messages]]
+role = "system"
+template = "system.md.j2"
+description = "稳定任务、边界及固定假设示例。"
+
+[[messages]]
+role = "user"
+template = "user.md.j2"
+append_sources = true
+description = "本次意图、允许范围及实际材料由程序提供。"

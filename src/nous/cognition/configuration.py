@@ -28,7 +28,26 @@ class AnnotationConfig(ConfigModel):
     )
 
 
+class EditConfig(ConfigModel):
+    task: str = setting("journal-edit", min_length=1, description="Local edit task assignment.")
+
+
+class RewriteConfig(ConfigModel):
+    task: str = setting(
+        "journal-rewrite", min_length=1, description="Complete rewrite task assignment."
+    )
+
+
+class ReflectionConfig(ConfigModel):
+    task: str = setting(
+        "journal-reflect", min_length=1, description="New reflection task assignment."
+    )
+
+
 class SearchConfig(ConfigModel):
+    passages_per_record: int = setting(
+        2, ge=1, description="Maximum useful passages delivered per formal document."
+    )
     space: str | None = setting(
         None, min_length=1, description="Embedding space for current retrieval."
     )
@@ -54,6 +73,9 @@ class CognitionConfig(ConfigModel):
     )
     notes: NoteConfig = Field(default_factory=NoteConfig)
     journalize: JournalizeConfig = Field(default_factory=JournalizeConfig)
+    edit: EditConfig = Field(default_factory=EditConfig)
+    rewrite: RewriteConfig = Field(default_factory=RewriteConfig)
+    reflection: ReflectionConfig = Field(default_factory=ReflectionConfig)
     annotation: AnnotationConfig = Field(default_factory=AnnotationConfig)
     search: SearchConfig = Field(default_factory=SearchConfig)
     list: ListConfig = Field(default_factory=ListConfig)

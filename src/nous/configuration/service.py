@@ -2,7 +2,6 @@
 
 import json
 import os
-import tempfile
 import types
 from collections.abc import Iterator, Mapping, MutableMapping
 from dataclasses import dataclass
@@ -17,6 +16,7 @@ from pydantic_settings.sources.utils import parse_env_vars
 from typing_extensions import TypeForm
 
 from nous.common.errors import NousError
+from nous.common.files import write_text
 
 from .definitions import NousConfig
 
@@ -84,6 +84,12 @@ def mutable(value: object) -> JsonValue:
 
 @dataclass(frozen=True)
 class ConfigSnapshot:
+    """Frozen effective configuration values, provenance and accepted generation.
+
+    Operations retain one snapshot for their duration. ``typed_values`` and
+    ``to_dict`` return independent copies for callers that need mutable values.
+    """
+
     values: FrozenValues
     version: int
     sources: FrozenValues
@@ -182,6 +188,14 @@ class ConfigurationChange:
 
 
 class Configuration:
+    """Resolve configuration sources and retain saved and effective generations.
+
+    This object owns source merging and file publication. Use
+    ``ConfigurationOperations`` for changes that must validate persistent
+    bindings and apply runtime resources; do not publish changes directly from
+    product entrances.
+    """
+
     def __init__(
         self,
         config_file: Path | str,
@@ -315,6 +329,10 @@ class Configuration:
                 node = object_map(next(iter(object_map(node["patternProperties"]).values())))
             elif isinstance(node.get("additionalProperties"), dict):
                 node = object_map(node["additionalProperties"])
+            elif not (set(node) - {"title", "description", "default", "x-nous", "examples"}):
+                # An unconstrained JSON value can contain nested objects; the enclosing
+                # Pydantic model still validates the complete value on every update.
+                node = {}
             else:
                 raise NousError(
                     "configuration.field_unknown",
@@ -553,6 +571,13 @@ class Configuration:
         namespace_file: Path | str | None = None,
         task_overrides: Mapping[str, object] | None = None,
     ) -> ConfigSnapshot:
+        """Resolve scoped overrides into a new snapshot without publishing them.
+
+        A running instance starts from its effective snapshot, even when saved
+        settings await restart. Namespace, task and explicit layers are checked
+        against their scopes; running task limits cannot exceed instance ceilings.
+        ``namespace_file`` may name a missing file, treated as empty.
+        """
         layers: list[Layer] = []
         new_namespace: tuple[Path, Object] | None = None
         if namespace_file is not None:
@@ -914,19 +939,4 @@ class Configuration:
             object_map(doc["config"]).pop("null_fields", None)
             if not doc["config"]:
                 del doc["config"]
-        target.parent.mkdir(parents=True, exist_ok=True)
-        fd, temporary = tempfile.mkstemp(prefix=".nous-config-", suffix=".toml", dir=target.parent)
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as stream:
-                stream.write(tomlkit.dumps(doc))
-                stream.flush()
-                os.fsync(stream.fileno())
-            os.replace(temporary, target)
-        except BaseException as error:
-            try:
-                Path(temporary).unlink(missing_ok=True)
-            except OSError as cleanup_error:
-                error.add_note(
-                    f"Could not remove temporary configuration file {temporary}: {cleanup_error}"
-                )
-            raise
+        write_text(target, tomlkit.dumps(doc))

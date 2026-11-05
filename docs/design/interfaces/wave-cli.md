@@ -6,17 +6,17 @@
 
 ```sh
 nous --instance ./temp/nous-wave tools wave build --manifest ./collection.json --space chosen-text
-nous --instance ./temp/nous-wave tools wave inspect wav:<实际地址>
-nous --instance ./temp/nous-wave tools wave inspect wav:<实际地址> --concept resource-ownership
-nous --instance ./temp/nous-wave tools wave query wav:<实际地址> "取消之后文件为何仍被占用" --mode hybrid
-nous --instance ./temp/nous-wave tools wave query wav:<实际地址> "此前相关经验" --context ./context.json --core resource-ownership --cue "协程退出与实际工作结束的区别" --explain
-nous --instance ./temp/nous-wave tools wave query wav:<实际地址> "查找解决过程" --mode rivermemo --thinking-stages ./stages.json
-nous --instance ./temp/nous-wave tools wave query wav:<实际地址> "字面线索" --mode rivermemo --vector-ref ./vector.json --candidate-pool ./pool.json
-nous --instance ./temp/nous-wave tools wave read wav:<实际地址> candidate-key --sources
-nous --instance ./temp/nous-wave tools wave segment wav:<实际地址> ./context.json
+nous --instance ./temp/nous-wave tools wave inspect "<完整wav地址>"
+nous --instance ./temp/nous-wave tools wave inspect "<完整wav地址>" --concept "resource-ownership"
+nous --instance ./temp/nous-wave tools wave query "<完整wav地址>" "取消之后文件为何仍被占用" --mode hybrid
+nous --instance ./temp/nous-wave tools wave query "<完整wav地址>" "此前相关经验" --context ./context.json --core "resource-ownership" --cue "协程退出与实际工作结束的区别" --explain
+nous --instance ./temp/nous-wave tools wave query "<完整wav地址>" "查找解决过程" --mode rivermemo --thinking-stages ./stages.json
+nous --instance ./temp/nous-wave tools wave query "<完整wav地址>" "字面线索" --mode rivermemo --vector-ref ./vector.json --candidate-pool ./pool.json
+nous --instance ./temp/nous-wave tools wave read "<完整wav地址>" "candidate-key" --sources
+nous --instance ./temp/nous-wave tools wave segment "<完整wav地址>" ./context.json
 ```
 
-wav 地址由共用可读地址能力分配并持久保存，例子中的占位符必须替换为 build 实际返回。candidate-key 是集合内稳定 key；hit 同时返回可直接用 content read 的精确 Artifact 与选区。
+wav 地址由共用可读地址能力分配并持久保存，例子中的占位符替换为 build 实际返回的完整地址，并保留引号。candidate-key 是集合内稳定 key，使用实际命中键并保留引号；hit 同时返回可直接用 content read 的精确 Artifact 与选区。
 
 build 的 --space 覆盖清单未指定值；两处都给且冲突时明确报错，避免静默选择另一向量空间。清单本地路径相对其文件位置，与 shell cwd 无关。重复 --core/--cue 顺序保持。query 的 --filter 接收 CandidateFilter JSON，--top-k 指定结果数量。
 

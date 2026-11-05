@@ -4,6 +4,7 @@ import asyncio
 import shutil
 import threading
 from pathlib import Path
+from typing import BinaryIO
 from unittest.mock import patch
 
 import pytest
@@ -111,7 +112,7 @@ def test_cancelled_corrupt_export_waits_for_real_file_cleanup(tmp_path: Path) ->
             started, release = threading.Event(), threading.Event()
             copy_file = shutil.copyfileobj
 
-            def delayed_copy(source, output, length):
+            def delayed_copy(source: BinaryIO, output: BinaryIO, length: int) -> None:
                 started.set()
                 if not release.wait(5):
                     raise TimeoutError("copy worker was not released")

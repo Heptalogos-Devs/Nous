@@ -174,7 +174,7 @@ class MediaPreparer:
             "source_media_type": "application/pdf",
             "tool": info["tool"],
             "version": info["version"],
-            "mapping_version": 1,
+            "origin_mapping": "selected_originals",
         }
         key = self._derivative_key(original, source.selection, "media.text-view", parameters)
         cached = await self.results.find_cached("media.text-view", key)
@@ -201,8 +201,15 @@ class MediaPreparer:
                                 "start_byte": start,
                                 "end_byte": offset,
                                 "origins": [
-                                    part.content.model_dump(mode="json")
-                                    for part in item.group.parts
+                                    origin.model_dump(mode="json")
+                                    for origin in dict.fromkeys(
+                                        selected
+                                        for part in item.group.parts
+                                        for selected in (
+                                            tuple(value.origin for value in part.origins)
+                                            or (part.content,)
+                                        )
+                                    )
                                 ]
                                 if item.group
                                 else [],
@@ -221,7 +228,11 @@ class MediaPreparer:
                         display_name="document.txt",
                     )
                 },
-                parameters={**parameters, "cache_key": key},
+                parameters={
+                    **parameters,
+                    "cache_key": key,
+                    "representations": {"text": {"kind": "text"}},
+                },
                 coverage={**plan.coverage, "text_mappings": mappings},
             )
         _track_completed(cached.ref.address)
@@ -336,6 +347,7 @@ class MediaPreparer:
             inputs=(
                 InputGroup(
                     key="S1",
+                    slot_key="S1",
                     name=original.display_name,
                     parts=(
                         InputPart(
@@ -347,7 +359,11 @@ class MediaPreparer:
                 ),
             ),
             outputs=outputs,
-            parameters={**parameters, "cache_key": cache_key},
+            parameters={
+                **parameters,
+                "cache_key": cache_key,
+                "representations": {name: {"kind": "prepared"} for name in outputs},
+            },
             coverage={"selection": selection.model_dump(mode="json")},
         )
         _track_completed(result.ref.address)
@@ -367,6 +383,7 @@ class MediaPreparer:
     ) -> InputGroup:
         return InputGroup(
             key=key,
+            slot_key="S1",
             name=name,
             parts=(
                 InputPart(
@@ -425,6 +442,21 @@ class MediaPreparer:
         )
 
     async def materialize(self, batch: PreparedBatch) -> PreparedBatch:
+        """Materialize one planned batch's text and media for consumption.
+
+        Deferred deterministic conversions may publish and adopt derivatives;
+        their completed result references are returned with the batch or attached
+        to a ``NousError`` if conversion fails. Materialize bounded batches as
+        needed instead of loading all planned media at once.
+
+        Returns:
+            The batch with source representations loaded and completed
+            conversion result references retained.
+
+        Raises:
+            NousError: ``media.invalid_plan`` if a source lacks content
+                references, or a conversion or content-reading error.
+        """
         if batch.source_role != "source":
             role_sources = tuple(
                 replace(source, group=source.group.model_copy(update={"role": batch.source_role}))
@@ -436,6 +468,18 @@ class MediaPreparer:
                 batch,
                 sources=role_sources,
                 inputs=tuple(source.group for source in role_sources if source.group),
+            )
+        if batch.conversion is None:
+            bound_sources = tuple(
+                source.bind_slot(batch.source_slot_key, batch.source_prefix, batch.source_role)
+                if source.group and source.group.slot_key != batch.source_slot_key
+                else source
+                for source in batch.sources
+            )
+            batch = replace(
+                batch,
+                sources=bound_sources,
+                inputs=tuple(source.group for source in bound_sources if source.group),
             )
         if batch.conversion is not None:
             recipe = batch.conversion
@@ -452,19 +496,14 @@ class MediaPreparer:
                 )
                 materialized = [await self.materialize(item) for item in converted.batches]
                 actual_sources = tuple(source for item in materialized for source in item.sources)
-                if batch.source_prefix != "S1" or batch.source_role != "source":
+                if (
+                    batch.source_prefix != "S1"
+                    or batch.source_role != "source"
+                    or batch.source_slot_key != "S1"
+                ):
                     actual_sources = tuple(
-                        replace(
-                            source,
-                            key=batch.source_prefix + source.key[2:],
-                            group=source.group.model_copy(
-                                update={
-                                    "key": batch.source_prefix + source.key[2:],
-                                    "role": batch.source_role,
-                                }
-                            )
-                            if source.group
-                            else None,
+                        source.bind_slot(
+                            batch.source_slot_key, batch.source_prefix, batch.source_role
                         )
                         for source in actual_sources
                     )
@@ -547,7 +586,23 @@ class MediaPreparer:
         document_mode: str = "auto",
         without_audio: bool = False,
     ) -> MediaPlan:
-        """Plan bounded conversion batches without publishing or decoding derivatives."""
+        """Plan bounded batches of deterministic representations for an artifact.
+
+        Args:
+            artifact: Accepted artifact or its instance-bound reference.
+            selection: Requested source region; None selects the whole source.
+            requirements: Accepted MIME types used to choose representations.
+            settings: Media limits and conversion settings for this operation.
+            document_mode: Document representation policy.
+            without_audio: Exclude audio when preparing video.
+
+        Returns:
+            A reference-based plan. Derivative conversion and byte loading occur
+            when a batch is materialized, rather than during planning.
+
+        Raises:
+            NousError: The source, selection or requested representation is invalid.
+        """
         original = (
             artifact if isinstance(artifact, Artifact) else await self.artifacts.get(artifact)
         )
@@ -960,7 +1015,22 @@ class MediaPreparer:
                             for frame in frame_info
                         ),
                         outputs=outputs,
-                        parameters={**parameters, "cache_key": cache_key, "frames": frame_info},
+                        parameters={
+                            **parameters,
+                            "cache_key": cache_key,
+                            "frames": frame_info,
+                            "representations": {
+                                f"image-{index}": {
+                                    "kind": "prepared",
+                                    "sources": [
+                                        ContentSelection(
+                                            artifact=original.ref, selection=frame.selection
+                                        ).model_dump(mode="json")
+                                    ],
+                                }
+                                for index, frame in enumerate(frames)
+                            },
+                        },
                         coverage={"selection": selection.model_dump(mode="json")},
                     )
                     _track_completed(derived.ref.address)
@@ -1263,6 +1333,7 @@ class MediaPreparer:
                         else (),
                         group=InputGroup(
                             key=f"S1:P{page.page}",
+                            slot_key="S1",
                             name=f"{original.display_name} page {page.page}",
                             parts=tuple(
                                 InputPart(

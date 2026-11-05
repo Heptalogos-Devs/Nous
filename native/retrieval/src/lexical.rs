@@ -17,6 +17,7 @@ use tantivy::{
     tokenizer::{LowerCaser, RemoveLongFilter, TextAnalyzer, TokenStream},
 };
 use tantivy_jieba::JiebaTokenizer;
+mod grouped;
 mod scoped;
 
 const TOKENIZER: &str = "nous_jieba";
@@ -25,6 +26,8 @@ const WRITER_BYTES: usize = 20_000_000;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IndexDocument {
     pub id: String,
+    #[serde(default)]
+    pub group_row: u64,
     pub namespace_id: String,
     pub subject_id: String,
     pub commit_seq: i64,
@@ -68,6 +71,7 @@ struct Fields {
     namespace: Field,
     subject: Field,
     body: Field,
+    group: Field,
 }
 struct Inner {
     reader: IndexReader,
@@ -99,6 +103,7 @@ impl RetrievalIndex {
             namespace: schema.get_field("namespace")?,
             subject: schema.get_field("subject")?,
             body: schema.get_field("body")?,
+            group: schema.get_field("group")?,
         };
         let reader = index
             .reader_builder()
@@ -233,6 +238,7 @@ impl RetrievalIndex {
                 if !document.deleted {
                     let mut indexed = TantivyDocument::default();
                     indexed.add_text(self.inner.fields.id, &document.id);
+                    indexed.add_u64(self.inner.fields.group, document.group_row);
                     indexed.add_text(self.inner.fields.namespace, &document.namespace_id);
                     indexed.add_text(self.inner.fields.subject, &document.subject_id);
                     indexed.add_text(self.inner.fields.body, &document.text);
@@ -282,7 +288,7 @@ impl RetrievalIndex {
         subject_id: &str,
         limit: usize,
     ) -> Result<SearchPage> {
-        self.search_inner(query, namespace_id, subject_id, limit, None)
+        self.search_inner(query, namespace_id, subject_id, limit, None, None)
     }
 
     /// Exact admissible identities restrict the native collector before Top-K.
@@ -294,7 +300,37 @@ impl RetrievalIndex {
         limit: usize,
         allowed: &BTreeSet<String>,
     ) -> Result<SearchPage> {
-        self.search_inner(query, namespace_id, subject_id, limit, Some(allowed))
+        self.search_inner(query, namespace_id, subject_id, limit, Some(allowed), None)
+    }
+
+    pub fn search_grouped(
+        &self,
+        query: &str,
+        allowed: &BTreeSet<String>,
+        limit: usize,
+        passages: usize,
+        cancel: &crate::CancellationToken,
+    ) -> Result<(SearchPage, crate::grouping::LaneCoverage)> {
+        let collector = grouped::GroupedCollector {
+            limit,
+            passages,
+            cancel: cancel.clone(),
+        };
+        let mut coverage = crate::grouping::LaneCoverage {
+            recall_exhausted: true,
+            eligible_groups_known: Some(0),
+            ..Default::default()
+        };
+        let page = self.search_inner(
+            query,
+            "snapshot",
+            "snapshot",
+            limit,
+            Some(allowed),
+            Some((&collector, &mut coverage)),
+        )?;
+        cancel.check()?;
+        Ok((page, coverage))
     }
 
     fn search_inner(
@@ -304,6 +340,10 @@ impl RetrievalIndex {
         subject_id: &str,
         limit: usize,
         allowed: Option<&BTreeSet<String>>,
+        grouped: Option<(
+            &grouped::GroupedCollector,
+            &mut crate::grouping::LaneCoverage,
+        )>,
     ) -> Result<SearchPage> {
         let coverage = self.coverage()?;
         let terms = tokenize(query);
@@ -363,8 +403,27 @@ impl RetrievalIndex {
         }
         let query = BooleanQuery::new(clauses);
         let searcher = self.inner.reader.searcher();
-        let hits = searcher
-            .search(&query, &TopDocs::with_limit(limit).order_by_score())?
+        let scored = if let Some((collector, coverage)) = grouped {
+            let (groups, examined) = searcher.search(&query, collector)?;
+            collector.cancel.check()?;
+            coverage.examined_rows = examined;
+            coverage.eligible_groups_known = Some(groups.len());
+            coverage.recall_exhausted = true;
+            coverage.truncated = groups.len() > collector.limit;
+            coverage.reason = coverage.truncated.then(|| "lane_group_limit".into());
+            let mut groups = groups.into_iter().collect::<Vec<_>>();
+            groups.sort_by(|a, b| b.1[0].0.total_cmp(&a.1[0].0).then(a.0.cmp(&b.0)));
+            let mut hits = groups
+                .into_iter()
+                .take(collector.limit)
+                .flat_map(|(_, hits)| hits)
+                .collect::<Vec<_>>();
+            hits.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1)));
+            hits
+        } else {
+            searcher.search(&query, &TopDocs::with_limit(limit).order_by_score())?
+        };
+        let hits = scored
             .into_iter()
             .map(|(score, address)| -> Result<SearchHit> {
                 let document: TantivyDocument = searcher.doc(address)?;
@@ -415,6 +474,7 @@ fn tokenize(text: &str) -> HashSet<String> {
 fn schema() -> Schema {
     let mut builder = Schema::builder();
     builder.add_text_field("id", STRING | STORED);
+    builder.add_u64_field("group", tantivy::schema::FAST);
     builder.add_text_field("namespace", STRING);
     builder.add_text_field("subject", STRING);
     builder.add_text_field(

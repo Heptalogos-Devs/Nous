@@ -62,7 +62,7 @@ coverage 包含候选预算、返回上限、实际候选数量及预算或 top_
 
 ## 可检索正文与媒体选区
 
-Native 当前接收文字候选。纯文本按原 Artifact 的行/字节选区读取；PDF 由 MediaPreparer 在明确页选区上抽取文字。候选同时保存实际 text Artifact 的 content 与原 PDF 精确页选区 origin_content；多页合并结果保留各页有序 InputGroup，来源根仍指向原 PDF。
+Native 当前接收文字候选。纯文本按原 Artifact 的行/字节选区读取；PDF 由 MediaPreparer 在明确页选区上抽取文字。候选同时保存实际 text Artifact 的 content 与原 PDF 精确页选区 origin_contents；origin_contents 按真实映射保留多个原页/选区，跨页片段保留映射顺序并精确去重；没有映射的非空文字报 content.origin_missing。来源根仍指向原 PDF。
 
 图片、音频和视频须先通过显式媒体解释/转写取得文字产物，再把产物 Artifact 作为候选。清单直接提供这些模态时返回 wave.text_required；无可提取文字的 PDF 页返回需要视觉处理的具体错误。
 
@@ -79,3 +79,5 @@ CLI 增加高级选项 `--vector-ref FILE`、`--candidate-pool FILE`，文件只
 多路径命中返回 `chosen_path` 的路径 key/label/精确 steps，并保留各路径的 B/P/G/A。原文读取仍使用候选的 ContentSelection。来源支持诊断将 `independent_support_fraction` 的实际比例与 `support_weight` 的数值衰减分开；未知比例为 null。
 
 Python 的 `WaveSnapshots` 拥有 SQL、不可变目录、身份、Native 资源与已打开快照；`WaveQueries` 拥有 QueryPlan、时间/来源范围和结果物化。`WaveOperations` 在根 operation 内组合 prepare、Native 与精确内容回读。
+
+`used_lanes` 列出本次候选召回与最终读出的实际通道。VCP 查询从同一 CandidatePool 的通道分数及覆盖摘要取得 query_knn/bm25/场召回等，再加入 rivermemo 或 dtsc 读出；每个 hit 的 channels 继续保留该候选实际命中的通道，分数与最终顺序沿原计算。

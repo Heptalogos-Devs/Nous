@@ -24,7 +24,13 @@ class Credentials:
         self._environment = os.environ if environment is None else environment
 
     def resolve(self, reference: str) -> SecretStr:
-        """Return the secret to the connection owner; errors describe its reference and location."""
+        """Resolve a configured credential reference for a connection owner.
+
+        Relative credential file paths are rooted at the instance directory and
+        file contents are stripped. Environment values are read as supplied.
+        Missing references, unreadable files and empty values raise ``NousError``
+        identifying the reference and location without returning the secret.
+        """
         entry = self._references.get(reference)
         if entry is None:
             raise NousError(

@@ -13,12 +13,12 @@ from pydantic import JsonValue, TypeAdapter
 
 from nous.common.errors import NousError
 from nous.configuration import Configuration
-from nous.content.contracts import ProcessingResult, SourceSelection
+from nous.content.contracts import ContentReadView, ProcessingResult, SourceSelection
 from nous.models.executor import PreparedGeneration
 from nous.models.prompts import PromptCatalog
-from nous.runtime.bootstrap import Runtime, open_instance
+from nous.runtime.bootstrap import Runtime, open_instance, task_catalog
 
-from . import emit, options, run_async
+from . import emit, emit_content_view, options, run_async
 from .wave import wave_cli
 
 tools_cli = typer.Typer(help="模型、Prompt、媒体与内容工具", no_args_is_help=True)
@@ -98,13 +98,13 @@ def _emit_results(ctx: typer.Context, value: dict[str, object]) -> None:
         outputs = cast(list[dict[str, object]], result.get("outputs", []))
         visible = [output for output in outputs if output.get("name") != "response"]
         for output in visible:
-            text = output.get("text")
             if len(visible) > 1:
-                typer.echo(f"\n{output['name']} · {output['artifact']}")
-            if isinstance(text, str):
-                typer.echo(text)
-            else:
-                typer.echo(f"{output['name']}: {output['artifact']} ({output['media_type']})")
+                typer.echo(f"\n{output['name']}")
+            emit_content_view(ContentReadView.model_validate(output["view"]))
+        for key, views in cast(dict[str, list[object]], result.get("source_views", {})).items():
+            typer.echo(f"\n[{key}]")
+            for view in views:
+                emit_content_view(ContentReadView.model_validate(view))
         reference = cast(dict[str, object], result.get("ref", {})).get("address")
         if reference:
             typer.echo(f"\n{reference}")
@@ -158,7 +158,8 @@ def model_run(
     ctx: typer.Context,
     task: Annotated[str, typer.Option("--task")],
     input: Annotated[
-        list[str] | None, typer.Option("--input", help="文件或 art: 引用；可重复")
+        list[str] | None,
+        typer.Option("--input", help='文件或 Artifact 地址（如 "art:..."）；可重复'),
     ] = None,
     text: Annotated[
         list[str] | None, typer.Option("--text", help="文字输入；可重复，排在文件之后")
@@ -261,17 +262,59 @@ def model_run(
 
 @prompt_cli.command("list")
 def prompt_list(ctx: typer.Context) -> None:
-    emit(ctx, {"prompts": PromptCatalog(options(ctx).locator.directory).list()})
+    emit(ctx, {"prompts": PromptCatalog(options(ctx).locator.directory, task_catalog()).list()})
 
 
 @prompt_cli.command("show")
-def prompt_show(ctx: typer.Context, prompt: str) -> None:
-    emit(ctx, PromptCatalog(options(ctx).locator.directory).get(prompt).to_dict())
+def prompt_show(
+    ctx: typer.Context,
+    prompt: str,
+    origin: Annotated[
+        Literal["selected", "package", "instance"], typer.Option("--origin")
+    ] = "selected",
+) -> None:
+    emit(
+        ctx,
+        PromptCatalog(options(ctx).locator.directory, task_catalog())
+        .get(prompt, origin=origin)
+        .to_dict(),
+    )
+
+
+@prompt_cli.command("describe")
+def prompt_describe(
+    ctx: typer.Context,
+    prompt: str,
+    task: Annotated[str | None, typer.Option("--task")] = None,
+) -> None:
+    selected = options(ctx)
+    snapshot = Configuration(selected.locator.config_file).snapshot
+    emit(
+        ctx,
+        PromptCatalog(selected.locator.directory, task_catalog())
+        .describe(prompt, task_assignment=task, snapshot=snapshot)
+        .to_dict(),
+    )
+
+
+@prompt_cli.command("diff")
+def prompt_diff(ctx: typer.Context, prompt: str) -> None:
+    emit(ctx, PromptCatalog(options(ctx).locator.directory, task_catalog()).diff(prompt))
+
+
+@prompt_cli.command("restore")
+def prompt_restore(ctx: typer.Context, prompt: str) -> None:
+    emit(
+        ctx,
+        PromptCatalog(options(ctx).locator.directory, task_catalog())
+        .restore_package(prompt)
+        .to_dict(),
+    )
 
 
 @prompt_cli.command("validate")
 def prompt_validate(ctx: typer.Context, prompt: str) -> None:
-    emit(ctx, PromptCatalog(options(ctx).locator.directory).validate(prompt))
+    emit(ctx, PromptCatalog(options(ctx).locator.directory, task_catalog()).validate(prompt))
 
 
 @prompt_cli.command("edit")
@@ -280,14 +323,24 @@ def prompt_edit(
     prompt: str,
     from_dir: Annotated[Path | None, typer.Option("--from-dir")] = None,
 ) -> None:
-    catalog = PromptCatalog(options(ctx).locator.directory)
+    catalog = PromptCatalog(options(ctx).locator.directory, task_catalog())
     if from_dir is not None:
         target = catalog.import_directory(prompt, from_dir)
     else:
-        target = catalog.editable_directory(prompt)
+        target = catalog.editable_directory(
+            prompt, snapshot=Configuration(options(ctx).locator.config_file).snapshot
+        )
         resource = catalog.get(prompt)
-        for filename in ("prompt.toml", *resource.templates):
+        for filename in ("CONTEXT.md", "prompt.toml", *resource.templates):
             click.edit(filename=str(target / filename))
+    emit(ctx, {"directory": str(target), **catalog.validate(prompt)})
+
+
+@prompt_cli.command("import")
+def prompt_import(ctx: typer.Context, prompt: str, source: Path) -> None:
+    catalog = PromptCatalog(options(ctx).locator.directory, task_catalog())
+    target = catalog.import_directory(prompt, source)
+    catalog.write_context(prompt, snapshot=Configuration(options(ctx).locator.config_file).snapshot)
     emit(ctx, {"directory": str(target), **catalog.validate(prompt)})
 
 
@@ -350,7 +403,7 @@ def content_read(ctx: typer.Context, ref: str) -> None:
                     value["text"] = await runtime.artifacts.read_text(ref)
                 else:
                     value["export_hint"] = (
-                        f"nous tools content export {artifact.ref.address} --output PATH"
+                        f'nous tools content export "{artifact.ref.address}" --output PATH'
                     )
                 return value
 

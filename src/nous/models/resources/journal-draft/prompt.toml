@@ -1,10 +1,19 @@
 contract_id = "journal-draft"
 
+[documentation]
+title = "形成新 Journal"
+purpose = "从材料形成一篇新的 Journal。"
+consumers = ["writing.generation"]
+input_notes = "本次主体、视角、主题、要求与真实来源放在 user。"
+output_notes = "返回 Markdown；无可写材料时精确返回 !NO_MATERIAL!。"
+
 [[messages]]
+description = "稳定任务规则、输出要求与固定假设示例。"
 role = "system"
 template = "system.md.j2"
 
 [[messages]]
+description = "本次问题、要求与真实来源；append_sources 保留文本和媒体顺序。"
 role = "user"
 template = "user.md.j2"
 append_sources = true

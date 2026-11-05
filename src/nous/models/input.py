@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
@@ -36,7 +37,7 @@ class InputPlan:
 
 async def plan_inputs(
     preparer: MediaPreparer,
-    originals: Sequence[tuple[Artifact, SourceSelection, SourceRole]],
+    originals: Sequence[tuple[Artifact, SourceSelection, SourceRole, str | None]],
     settings: MediaConfig,
     *,
     requirements: Sequence[str] = (),
@@ -49,11 +50,41 @@ async def plan_inputs(
     mode = "independent_batches" if per_batch else contract.input_mode if contract else "joint"
     plans: list[MediaPlan] = []
     batches: list[PreparedBatch] = []
-    chosen_inputs = tuple((artifact, selection or supplied) for artifact, supplied, _ in originals)
+    chosen_inputs = tuple(
+        (artifact, selection or supplied) for artifact, supplied, _, _ in originals
+    )
     task_plans = (
         await contract.prepare_sources(chosen_inputs, preparer.artifacts) if contract else None
     )
-    for index, (artifact, supplied, role) in enumerate(originals, 1):
+    explicit = {slot for _, _, _, slot in originals if slot is not None}
+    slots: list[str] = []
+    counter = 1
+    for _, _, _, declared in originals:
+        if declared is None:
+            while f"S{counter}" in explicit:
+                counter += 1
+            declared = f"S{counter}"
+            counter += 1
+        if any(char.isspace() for char in declared):
+            raise NousError(
+                "model.invalid_source_slot", "Source slot keys cannot contain whitespace"
+            )
+        slots.append(declared)
+    roles: dict[str, SourceRole] = {}
+    for slot, (_, _, role, _) in zip(slots, originals, strict=True):
+        if slot in roles and roles[slot] != role:
+            raise NousError(
+                "model.source_slot_conflict",
+                "One source slot cannot have different roles",
+                details={"slot_key": slot},
+            )
+        roles[slot] = role
+    counts = Counter(slots)
+    fragments: Counter[str] = Counter()
+    seen_keys: set[str] = set()
+    for index, (artifact, supplied, role, _) in enumerate(originals, 1):
+        slot_key = slots[index - 1]
+        fragments[slot_key] += 1
         chosen = selection or supplied
         if task_plans is not None:
             plan = task_plans[index - 1]
@@ -68,28 +99,26 @@ async def plan_inputs(
             )
         plans.append(plan)
         for batch in plan.batches:
-            prefix = f"S{index}"
+            prefix = slot_key if counts[slot_key] == 1 else f"{slot_key}:F{fragments[slot_key]}"
             preserve = contract is not None and contract.preserve_source_keys
             sources = tuple(
-                replace(
-                    source,
-                    key=source.key if preserve else prefix + source.key[2:],
-                    group=source.group.model_copy(
-                        update={
-                            "key": source.key if preserve else prefix + source.key[2:],
-                            "role": role,
-                        }
-                    )
-                    if source.group
-                    else None,
-                )
+                source.bind_slot(slot_key, prefix, role, preserve_key=preserve)
                 for source in batch.sources
             )
+            for source in sources:
+                if source.key in seen_keys:
+                    raise NousError(
+                        "model.duplicate_source",
+                        "Actual source group keys must be unique",
+                        details={"key": source.key},
+                    )
+                seen_keys.add(source.key)
             batch = replace(
                 batch,
                 sources=sources,
                 inputs=tuple(source.group for source in sources if source.group),
                 source_prefix=prefix,
+                source_slot_key=slot_key,
                 source_role=role,
             )
             batches.append(batch)
@@ -106,7 +135,7 @@ async def plan_inputs(
         else (RequestGroup(tuple(batches), coverage),)
     )
     return InputPlan(
-        mode, tuple(artifact for artifact, _, _ in originals), tuple(plans), requests, coverage
+        mode, tuple(artifact for artifact, _, _, _ in originals), tuple(plans), requests, coverage
     )
 
 
@@ -135,6 +164,9 @@ async def materialize(
                 },
             )
         batches.append(batch)
+    keys = [source.key for batch in batches for source in batch.sources]
+    if len(keys) != len(set(keys)):
+        raise NousError("model.duplicate_source", "Materialized source group keys must be unique")
     return PreparedBatch(
         tuple(source for batch in batches for source in batch.sources),
         tuple(group for batch in batches for group in batch.inputs),
@@ -168,7 +200,12 @@ async def for_route(
                 without_audio=recipe.without_audio,
             )
             alternatives.extend(
-                replace(item, source_prefix=batch.source_prefix, source_role=batch.source_role)
+                replace(
+                    item,
+                    source_prefix=batch.source_prefix,
+                    source_role=batch.source_role,
+                    source_slot_key=batch.source_slot_key,
+                )
                 for item in plan.batches
             )
             continue
@@ -195,16 +232,22 @@ async def for_route(
                     origin.origin for part in source.group.parts for origin in part.origins
                 )
             )
-            for content in origins or tuple(part.content for part in source.group.parts):
+            contents = origins or tuple(part.content for part in source.group.parts)
+            for ordinal, content in enumerate(contents, 1):
                 plan = await preparer.prepare(
                     content.artifact,
                     content.selection,
                     requirements=requirements,
                     settings=settings,
                 )
-                prefix = source.key.split(":", 1)[0]
+                prefix = source.key if len(contents) == 1 else f"{source.key}:R{ordinal}"
                 alternatives.extend(
-                    replace(item, source_prefix=prefix, source_role=source.group.role)
+                    replace(
+                        item,
+                        source_prefix=prefix,
+                        source_slot_key=source.group.slot_key,
+                        source_role=source.group.role,
+                    )
                     for item in plan.batches
                 )
     return RequestGroup(tuple(alternatives), request.coverage)

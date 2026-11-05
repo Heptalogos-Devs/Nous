@@ -34,6 +34,7 @@ inputs = sa.Table(
     sa.Column("result_id", sa.String, sa.ForeignKey("processing_results.id"), primary_key=True),
     sa.Column("group_ordinal", sa.Integer, primary_key=True),
     sa.Column("key", sa.String, nullable=False),
+    sa.Column("slot_key", sa.String, nullable=False),
     sa.Column("role", sa.String, nullable=False),
     sa.Column("name", sa.String, nullable=False),
     sa.UniqueConstraint("result_id", "key"),

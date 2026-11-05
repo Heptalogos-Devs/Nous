@@ -19,11 +19,16 @@ nous tools model run --task summarize --input ./A.md --input ./B.md --question "
 nous tools model run --task describe-media --input ./long-video.mp4 --per-batch
 nous tools prompt preview summarize --input ./notes.md
 nous tools prompt preview summarize --task summarize --input ./notes.md
+nous tools prompt describe summarize --task summarize
+nous tools prompt show summarize --origin package
 nous tools prompt edit summarize --from-dir ./my-prompt
+nous tools prompt import summarize ./my-prompt
+nous tools prompt diff summarize
+nous tools prompt restore summarize
 nous tools content add ./clip.mp4
-nous tools media inspect art:<实际地址>
-nous tools media analyze art:<实际地址> --strategy describe_then_structure
-nous tools result read res:<实际地址> --sources --details
+nous tools media inspect "<完整Artifact地址>"
+nous tools media analyze "<完整Artifact地址>" --strategy describe_then_structure
+nous tools result read "<完整结果地址>" --sources --details
 nous tools embedding run --space chosen-text --purpose document --input ./notes.md
 ```
 
@@ -52,3 +57,5 @@ model run 与 prompt preview 的 `--per-batch` 显式要求各批独立回答；
 Prompt list/show/edit/validate 和 content add/read/export 仍是正式产品能力。未配置模型时也可管理模板与读取已有内容。media analyze 支持显式 --description-result 复用匹配来源及覆盖的描述；复用成功产物不等于重新执行第一阶段。
 
 --show-request 在 stderr 展示实际准备值后执行，stdout 的 JSON/NDJSON 保持机器合同。--pages 的实际页码、--from/--to 的小数秒、文档模式与音轨排除均在帮助中解释；用户不需要复制内部控制 DTO。未来 MCP 按完整用户任务组织工具，不按这些管理命令逐项暴露。
+
+Prompt 的 describe 从真实任务合同和有效配置读取用途、变量、输出 Schema 与模型/协议能力，不发模型请求。edit 在实例副本生成 CONTEXT.md、input-contract.json 和 output-schema.json；三者仅供编辑参考。show 的 --origin 可选 selected、package、instance；diff 比较包内资源与实例覆盖，restore 删除该 Prompt 的实例覆盖并重新选择包内资源。import、edit --from-dir 和 validate 共用同一资源加载与校验。详细合同见 [Prompt 编辑上下文](../models/prompt-editing-context.md)。

@@ -11,13 +11,19 @@ class NativeError(RuntimeError):
     details_json: str
 
 class CancellationToken:
+    """Request cooperative cancellation of Native work using this token.
+
+    Cancellation is permanent for this token. Calling ``cancel`` requests
+    termination; wait for the associated work to return before releasing its
+    resources.
+    """
     def __init__(self) -> None: ...
     def cancel(self) -> None: ...
     @property
     def cancelled(self) -> bool: ...
 
 class Candidates:
-    # metadata: {keys: [str], documents: [str]} (one curve document per row)
+    # metadata: {keys: [str], documents: [str], group_keys: [str], group_rows: [int]} (one curve document per row)
     def __init__(
         self,
         metadata_json: str,
@@ -85,6 +91,12 @@ class NativeQueryResult:
     def result_json(self) -> str: ...
 
 class NativeSnapshot:
+    """Immutable loaded snapshot whose calculations use its engine's worker pool.
+
+    Observations and candidate pools are tied to the snapshot that produced
+    them. Keep the engine open while using the snapshot and pass a cancellation
+    token to long-running operations when cooperative cancellation is needed.
+    """
     @property
     def identity_json(self) -> str: ...
     @property
@@ -146,6 +158,12 @@ class NativeSnapshot:
     ) -> str: ...
 
 class NativeEngine:
+    """Own a bounded Native worker pool for snapshot build, open and queries.
+
+    ``close`` stops new work and waits for active work to leave the pool. Loaded
+    snapshots share the engine and cannot run calculations after it is closed.
+    The runtime owns and closes its engine after its operations have finished.
+    """
     def __init__(self, settings_json: str = "{}") -> None: ...
     def build(
         self,

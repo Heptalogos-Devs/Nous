@@ -154,6 +154,8 @@ class WaveQueries:
                 {
                     "query_origin": "text",
                     "context_used": False,
+                    "selected_context": [],
+                    "omitted_context_count": len(request.context),
                     "core_keys": [concept["key"] for concept in resolved_core],
                     "core_labels": [concept["label"] for concept in resolved_core],
                 },
@@ -186,6 +188,7 @@ class WaveQueries:
             else []
         )
         fragment_meta: list[dict[str, object]] = []
+        resolved_fragments: dict[str, dict[str, object]] = {}
         for _, fragment in fragments:
             if fragment.content is not None:
                 artifact = await self.artifacts.get(fragment.content.artifact)
@@ -196,6 +199,17 @@ class WaveQueries:
                 assert fragment.text is not None
                 selected = fragment.text
             query_selections.append(selected)
+            resolved_fragments[fragment.key] = {
+                "key": fragment.key,
+                "role": fragment.role,
+                "sequence": fragment.sequence,
+                "weight": fragment.weight,
+                "time": fragment.time.model_dump(mode="json") if fragment.time else None,
+                "content": selected.model_dump(mode="json")
+                if isinstance(selected, ContentSelection)
+                else None,
+                "text": selected if isinstance(selected, str) else None,
+            }
             fragment_meta.append(
                 {
                     "key": fragment.key,
@@ -265,11 +279,24 @@ class WaveQueries:
             effective = aggregated.vector
             summary: dict[str, object] = json.loads(aggregated.diagnostics_json)
             summary.pop("effective_query", None)
+            summary["context_options"] = aggregate_options
             if concept_only:
                 summary["query_origin"] = "concepts"
         else:
             effective = raw
             summary = {"query_origin": "text", "context_used": False}
+        native_selected = cast(list[dict[str, object]], summary.pop("selected_context", []))
+        selected_context = [
+            {
+                **resolved_fragments[cast(str, part["key"])],
+                "decayed_weight": part["decayed_weight"],
+                "role_weight": part["role_weight"],
+            }
+            for part in native_selected
+            if part["key"] in resolved_fragments
+        ]
+        summary["selected_context"] = selected_context
+        summary["omitted_context_count"] = len(request.context) - len(selected_context)
         ghosts: npt.NDArray[np.float32] | None = None
         if request.cues:
             ghosts = await self.embedding.encode_query(
@@ -293,6 +320,17 @@ class WaveQueries:
             )
         wave = self.execution.snapshot.typed_values().wave
         mode = request.mode or wave.query.default_mode
+        readout = cast(dict[str, JsonValue], wave.native.query["readout"])
+        maximum = cast(int, readout["maxUnionCandidates"])
+        if request.grouping == "document" and (request.top_k or wave.query.top_k) > maximum:
+            raise NousError(
+                "wave.invalid_input",
+                "Requested document count exceeds max_union_candidates",
+                details={
+                    "top_k": request.top_k or wave.query.top_k,
+                    "max_union_candidates": maximum,
+                },
+            )
         mapping = row["mapping"]
         allowed = self._allowed_rows(mapping, request.candidate_filter)
         vector, ghosts, query_summary = await self._query_inputs(request, row)
@@ -327,6 +365,9 @@ class WaveQueries:
             "query_space_signature": row["identity"]["space_signature"],
             "thinking_min_closure": controls["thinking_min_closure"],
             "top_k": request.top_k or wave.query.top_k,
+            "grouping": request.grouping,
+            "passages_per_group": request.passages_per_group,
+            "group_scan_limit": wave.query.group_scan_limit,
             "include_trace": request.include_trace,
             "core_rows": core_rows,
             "ghosts": [{"name": cue.label, "is_core": cue.is_core} for cue in request.cues],
@@ -366,6 +407,7 @@ class WaveQueries:
                 encode_json(
                     {
                         "identity": row["identity"],
+                        "rank_scope": pool.rank_scope,
                         "entries": [
                             {
                                 "row": candidate_rows[entry.candidate],
@@ -379,6 +421,19 @@ class WaveQueries:
                     }
                 )
             )
+        query_summary["effective_query_options"] = {
+            **search_options,
+            "text": query_text,
+            "context": query_summary.get("context_options"),
+            "query_origin": query_summary.get("query_origin"),
+        }
+        query_summary["grouping"] = {
+            "by": request.grouping,
+            "top_k": request.top_k or wave.query.top_k,
+            "passages_per_group": request.passages_per_group,
+            "lane_limit_unit": "groups" if request.grouping == "document" else "candidates",
+            "group_scan_limit": wave.query.group_scan_limit,
+        }
         return QueryPlan(
             mode,
             query_text,
@@ -431,7 +486,8 @@ class WaveQueries:
                 "candidate": candidate["key"],
                 "candidate_ref": {"snapshot": row["address"], "key": candidate["key"]},
                 "content": candidate["content"],
-                "origin_content": candidate["origin_content"],
+                "origin_contents": candidate["origin_contents"],
+                "text": text,
                 "snippet": text[:500],
                 "metadata": candidate["metadata"],
                 "concepts": [concepts[index]["key"] for index in hit.get("concept_rows", [])],
@@ -508,6 +564,24 @@ class WaveQueries:
                                     "Thinking route references an unknown concept",
                                 )
                             route[output_field] = concepts[concept_id - 1]["key"]
+        hits_by_key = {cast(str, hit["candidate"]): hit for hit in hits}
+        search_groups: list[dict[str, object]] = []
+        for group in cast(list[dict[str, object]], values.get("groups", [])):
+            representative = candidates[cast(int, group["representative_row"])]
+            passages = [
+                hits_by_key[candidates[index]["key"]]
+                for index in cast(list[int], group["passage_rows"])
+            ]
+            search_groups.append(
+                {
+                    "group_key": group["group_key"],
+                    "group_rank": group["group_rank"],
+                    "representative": {"snapshot": row["address"], "key": representative["key"]},
+                    "revision_ref": representative["metadata"].get("record_revision"),
+                    "title": representative["metadata"].get("title"),
+                    "passages": passages,
+                }
+            )
         output: dict[str, object] = {
             "snapshot": {
                 "instance_id": self.instance_id,
@@ -519,6 +593,9 @@ class WaveQueries:
             "used_lanes": values["used_lanes"],
             "skipped_lanes": values["skipped_lanes"],
             "hits": hits,
+            "groups": search_groups,
+            "grouping": values["grouping"],
+            "rank_scope": values["rank_scope"],
             "context_summary": query_summary,
             "cue_summary": [{"label": cue.label, "is_core": cue.is_core} for cue in request.cues],
             "algorithm_versions": values["algorithm_versions"],
@@ -551,7 +628,7 @@ class WaveQueries:
             "snapshot": row["address"],
             "candidate": candidate_key,
             "content": content.model_dump(mode="json"),
-            "origin_content": candidate["origin_content"],
+            "origin_contents": candidate["origin_contents"],
             "text": await self.artifacts.read_selection(content),
             "metadata": candidate["metadata"],
             "concepts": candidate["concepts"],

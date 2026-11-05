@@ -3,21 +3,30 @@
 import json
 import sys
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
 import typer
+from pydantic import TypeAdapter
 
-from nous.cognition.contracts import RecordView, SavedRecord, SourceBinding
-from nous.cognition.records import WrittenRecords
-from nous.cognition.retrieval import Mode
+from nous.cognition.contracts import RecordView
+from nous.cognition.retrieval.contracts import Mode
+from nous.cognition.writing.contracts import (
+    AfterWrite,
+    CommittedRecord,
+    RecordOutcome,
+    SourceChanges,
+    SourceRequest,
+)
 from nous.common.errors import NousError
+from nous.content.edits import TextChange
+from nous.presentation import translate
 from nous.runtime.bootstrap import open_instance
 
-from . import cli, options, run_async
+from . import cli, emit_content_view, language_for, options, run_async
 
-note_cli = typer.Typer(help="记录笔记 / Notes", no_args_is_help=True)
-journal_cli = typer.Typer(help="长期文稿 / Journals", no_args_is_help=True)
-namespace_cli = typer.Typer(help="认知范围 / Namespaces", no_args_is_help=True)
+note_cli = typer.Typer(help="Notes", no_args_is_help=True)
+journal_cli = typer.Typer(help="Journals", no_args_is_help=True)
+namespace_cli = typer.Typer(help="Namespaces", no_args_is_help=True)
 cli.add_typer(note_cli, name="note")
 cli.add_typer(journal_cli, name="journal")
 cli.add_typer(namespace_cli, name="namespace")
@@ -32,74 +41,60 @@ def read_body(text: str | None, file: Path | None) -> str:
     if text is not None:
         return text
     if file is not None:
-        return file.read_text(encoding="utf-8")
+        return file.read_bytes().decode("utf-8")
     if stdin:
         return sys.stdin.read()
     raise NousError("input.body_required", "Provide --text, --file or stdin")
 
 
-def emit_record(ctx: typer.Context, result: RecordView | SavedRecord) -> None:
+def emit_record(ctx: typer.Context, result: RecordView | CommittedRecord | RecordOutcome) -> None:
+    language = language_for(options(ctx))
     if options(ctx).json_mode:
         typer.echo(result.model_dump_json())
-        return
-    value = result.model_dump(mode="json")
-    revision = getattr(result, "revision_ref", None)
-    if revision:
-        typer.echo(f"{value['title']} — {revision.address}")
-    if isinstance(result, SavedRecord):
-        if result.annotation == "adopted":
-            typer.echo(f"标注 / Annotation: {result.annotation_ref}")
-        elif result.annotation == "failed" and result.annotation_error:
-            typer.echo(
-                f"正文已保存；标注失败 / Body saved; annotation failed: {result.annotation_error.get('message')}"
-            )
-    if isinstance(result, RecordView):
-        typer.echo(value["body"])
-        if result.current_revision != result.revision_ref:
-            typer.echo(f"当前版本 / Current: {result.current_revision.address}")
-        for key, body in value.get("source_texts", {}).items():
-            typer.echo(f"\n[{key}]\n{body}")
-    elif "saved" in value:
-        if result.retrieval_state == "failed" and result.retrieval_error:
-            error = result.retrieval_error
-            typer.echo(
-                f"正文已保存；检索刷新失败 / Body saved; retrieval refresh failed: {error.get('message')}"
-            )
-            details = error.get("details")
-            if isinstance(details, dict) and details.get("retry"):
-                typer.echo(str(details["retry"]))
-            if error.get("operation_id"):
-                typer.echo(f"Operation: {error['operation_id']}")
-        else:
-            typer.echo(
-                "已保存；检索已更新 / Saved; retrieval updated"
-                if result.retrieval_state == "ready"
-                else "已保存；检索将在下次查询时更新 / Saved; retrieval updates on next query"
-                if result.retrieval_state == "pending"
-                else "已保存 / Saved"
-            )
-
-
-async def select_source_bindings(
-    records: WrittenRecords,
-    namespace: str | None,
-    source: list[str] | None,
-    current_basis: list[str] | None,
-    inspiration: list[str] | None,
-) -> tuple[SourceBinding, ...]:
-    references, bases, ideas = source or [], current_basis or [], inspiration or []
-    bindings = await records.select_sources(namespace, [*references, *bases, *ideas])
-    return tuple(
-        binding.model_copy(
-            update={
-                "usage": "reference"
-                if index < len(references)
-                else "current_basis"
-                if index < len(references) + len(bases)
-                else "inspiration"
-            }
+    else:
+        record = result.record if isinstance(result, RecordOutcome) else result
+        title = record.title or translate(
+            "Untitled note" if record.ref.kind == "note" else "Untitled journal", language
         )
-        for index, binding in enumerate(bindings)
+        typer.echo(f"{title} — {record.revision_ref.address}")
+        if isinstance(result, RecordView):
+            typer.echo(result.body)
+            if result.current_revision != result.revision_ref:
+                typer.echo(
+                    f"{translate('Current revision', language)}: {result.current_revision.address}"
+                )
+            for key, views in result.source_views.items():
+                typer.echo(f"\n[{key}]")
+                for view in views:
+                    emit_content_view(view)
+        elif isinstance(result, RecordOutcome):
+            typer.echo(translate("Saved", language))
+            for name, stage in (("Annotation", result.annotation), ("Retrieval", result.retrieval)):
+                if stage.state != "not_requested":
+                    typer.echo(f"{translate(name, language)}: {translate(stage.state, language)}")
+                if stage.issue:
+                    typer.echo(f"{stage.issue.code}: {stage.issue.message}")
+            if result.status == "partial":
+                typer.echo(f"{translate('Operation', language)}: {result.operation.operation_id}")
+    if isinstance(result, RecordOutcome) and result.status == "partial":
+        raise typer.Exit(3)
+
+
+def after_write(refresh: bool, mode: Mode | None) -> AfterWrite:
+    return AfterWrite(
+        retrieval="refresh" if refresh or mode is not None else "defer", retrieval_mode=mode
+    )
+
+
+def source_requests(
+    source: list[str] | None, current_basis: list[str] | None, inspiration: list[str] | None
+) -> tuple[SourceRequest, ...]:
+    return (
+        tuple(SourceRequest(target=target, usage="reference") for target in source or ())
+        + tuple(
+            SourceRequest(target=target, usage="current_basis") for target in current_basis or ()
+        )
+        + tuple(SourceRequest(target=target, usage="inspiration") for target in inspiration or ())
     )
 
 
@@ -117,30 +112,25 @@ async def _create(
     inspiration: list[str] | None = None,
     refresh: bool = False,
     refresh_mode: Mode | None = None,
-) -> SavedRecord:
+) -> RecordOutcome:
     body = read_body(text, file)
     async with open_instance(options(ctx).locator) as runtime:
-        bindings = await select_source_bindings(
-            runtime.records, namespace, source, current_basis, inspiration
-        )
+        records = (await runtime.cognition(namespace)).records
+        requests = source_requests(source, current_basis, inspiration)
         if kind == "note":
-            return await runtime.records.record_note(
-                namespace,
+            return await records.add_note(
                 body,
                 title=title,
                 remember=remember,
-                sources=bindings,
-                refresh=refresh,
-                refresh_mode=refresh_mode,
+                source_requests=requests,
+                after=after_write(refresh, refresh_mode),
             )
-        return await runtime.records.create_journal(
-            namespace,
+        return await records.create_journal(
             body,
             title=title,
             purpose=purpose,
-            sources=bindings,
-            refresh=refresh,
-            refresh_mode=refresh_mode,
+            source_requests=requests,
+            after=after_write(refresh, refresh_mode),
         )
 
 
@@ -154,7 +144,9 @@ def note_add(
     namespace: str | None = None,
     source: Annotated[
         list[str] | None,
-        typer.Option("--source", help="Fixed source record; repeated inputs use S1, S2..."),
+        typer.Option(
+            "--source", help='Fixed source record, e.g. "note:..."; repeated inputs use S1, S2...'
+        ),
     ] = None,
     current_basis: Annotated[list[str] | None, typer.Option("--current-basis")] = None,
     inspiration: Annotated[list[str] | None, typer.Option("--inspiration")] = None,
@@ -192,7 +184,9 @@ def journal_create(
     namespace: str | None = None,
     source: Annotated[
         list[str] | None,
-        typer.Option("--source", help="Fixed source record; repeated inputs use S1, S2..."),
+        typer.Option(
+            "--source", help='Fixed source record, e.g. "note:..."; repeated inputs use S1, S2...'
+        ),
     ] = None,
     current_basis: Annotated[list[str] | None, typer.Option("--current-basis")] = None,
     inspiration: Annotated[list[str] | None, typer.Option("--inspiration")] = None,
@@ -230,9 +224,8 @@ def read_record(
 ):
     async def run():
         async with open_instance(options(ctx).locator) as runtime:
-            return await runtime.records.read(
+            return await (await runtime.cognition(namespace)).records.read(
                 ref,
-                namespace=namespace,
                 sources=sources,
                 blocks=tuple(blocks.split(",")) if blocks else (),
             )
@@ -240,8 +233,8 @@ def read_record(
     emit_record(ctx, run_async(run()))
 
 
-@journal_cli.command("revise")
-@note_cli.command("revise")
+@journal_cli.command("replace")
+@note_cli.command("replace")
 def revise_record(
     ctx: typer.Context,
     ref: str,
@@ -250,9 +243,13 @@ def revise_record(
     expected: str | None = None,
     title: str | None = None,
     reason: str | None = None,
+    intent: Literal["edit", "correction"] = "edit",
+    feedback: Annotated[list[str] | None, typer.Option("--feedback")] = None,
+    feedback_mappings: Annotated[Path | None, typer.Option("--feedback-mappings")] = None,
     namespace: str | None = None,
     source: Annotated[list[str] | None, typer.Option("--source")] = None,
     clear_sources: bool = False,
+    source_changes: Annotated[Path | None, typer.Option("--sources")] = None,
     current_basis: Annotated[list[str] | None, typer.Option("--current-basis")] = None,
     inspiration: Annotated[list[str] | None, typer.Option("--inspiration")] = None,
     refresh: bool = False,
@@ -260,6 +257,15 @@ def revise_record(
 ):
     if (source or current_basis or inspiration) and clear_sources:
         raise NousError("input.conflicting_sources", "Choose --source or --clear-sources")
+    if source_changes is not None and clear_sources:
+        raise NousError("input.conflicting_sources", "Choose source changes or --clear-sources")
+    changes = (
+        SourceChanges.model_validate_json(source_changes.read_bytes())
+        if source_changes
+        else SourceChanges(preserve=False)
+        if clear_sources
+        else None
+    )
     if expected is None:
         if "@" not in ref:
             raise NousError("input.expected_required", "Provide an exact ref with @N or --expected")
@@ -267,29 +273,86 @@ def revise_record(
     elif expected.isdecimal():
         expected = ref.split("@")[0] + "@" + expected
     body = read_body(text, file)
+    mappings = (
+        TypeAdapter(dict[str, str]).validate_json(feedback_mappings.read_bytes())
+        if feedback_mappings
+        else {}
+    )
 
     async def run():
         async with open_instance(options(ctx).locator) as runtime:
+            records = (await runtime.cognition(namespace)).records
             bindings = (
-                await select_source_bindings(
-                    runtime.records, namespace, source, current_basis, inspiration
-                )
+                source_requests(source, current_basis, inspiration)
                 if source is not None or current_basis is not None or inspiration is not None
                 else (() if clear_sources else None)
             )
-            return await runtime.records.revise(
-                ref,
+            return await records.replace(
                 expected,
                 body,
-                namespace=namespace,
                 title=title,
                 reason=reason,
-                sources=bindings,
-                refresh=refresh,
-                refresh_mode=refresh_mode,
+                intent=intent,
+                feedback_refs=feedback or (),
+                feedback_mappings=mappings,
+                source_requests=bindings,
+                sources=changes,
+                after=after_write(refresh, refresh_mode),
             )
 
     emit_record(ctx, run_async(run()))
+
+
+@journal_cli.command("patch")
+@note_cli.command("patch")
+def patch_record(
+    ctx: typer.Context,
+    ref: str,
+    changes: Annotated[Path, typer.Option("--changes")],
+    source_changes: Annotated[Path | None, typer.Option("--sources")] = None,
+    namespace: str | None = None,
+    reason: str | None = None,
+    intent: Literal["edit", "correction"] = "edit",
+    feedback: Annotated[list[str] | None, typer.Option("--feedback")] = None,
+    feedback_mappings: Annotated[Path | None, typer.Option("--feedback-mappings")] = None,
+    refresh: bool = False,
+    refresh_mode: Mode | None = None,
+):
+    parsed = TypeAdapter(list[TextChange]).validate_json(changes.read_bytes())
+    mappings = (
+        TypeAdapter(dict[str, str]).validate_json(feedback_mappings.read_bytes())
+        if feedback_mappings
+        else {}
+    )
+    bindings = (
+        SourceChanges.model_validate_json(source_changes.read_bytes()) if source_changes else None
+    )
+
+    async def run():
+        async with open_instance(options(ctx).locator) as runtime:
+            return await (await runtime.cognition(namespace)).records.apply(
+                ref,
+                parsed,
+                sources=bindings,
+                reason=reason,
+                intent=intent,
+                feedback_refs=feedback or (),
+                feedback_mappings=mappings,
+                after=after_write(refresh, refresh_mode),
+            )
+
+    emit_record(ctx, run_async(run()))
+
+
+@journal_cli.command("diff")
+@note_cli.command("diff")
+def record_diff(ctx: typer.Context, left: str, right: str, namespace: str | None = None):
+    async def run():
+        async with open_instance(options(ctx).locator) as runtime:
+            return await (await runtime.cognition(namespace)).records.diff(left, right)
+
+    result = run_async(run())
+    typer.echo(result.model_dump_json() if options(ctx).json_mode else result.unified)
 
 
 @journal_cli.command("edit")
@@ -303,7 +366,7 @@ def edit_record(
 ):
     async def load():
         async with open_instance(options(ctx).locator) as runtime:
-            return await runtime.records.read(ref, namespace=namespace)
+            return await (await runtime.cognition(namespace)).records.read(ref)
 
     original = run_async(load())
     import click
@@ -315,13 +378,10 @@ def edit_record(
     async def save():
         async with open_instance(options(ctx).locator) as runtime:
             try:
-                return await runtime.records.revise(
-                    original.ref,
+                return await (await runtime.cognition(namespace)).records.replace(
                     original.revision_ref,
                     edited,
-                    namespace=namespace,
-                    refresh=refresh,
-                    refresh_mode=refresh_mode,
+                    after=after_write(refresh, refresh_mode),
                 )
             except NousError as error:
                 if error.code == "cognition.revision_conflict":
@@ -341,7 +401,7 @@ def edit_record(
 def history(ctx: typer.Context, ref: str, namespace: str | None = None):
     async def run():
         async with open_instance(options(ctx).locator) as runtime:
-            return await runtime.records.history(ref, namespace=namespace)
+            return await (await runtime.cognition(namespace)).records.history(ref)
 
     result = run_async(run())
     if options(ctx).json_mode:
@@ -352,7 +412,9 @@ def history(ctx: typer.Context, ref: str, namespace: str | None = None):
         )
     else:
         for item in result:
-            typer.echo(f"{item.revision_ref.address}  {item.title}  {item.recorded_at.isoformat()}")
+            typer.echo(
+                f"{item.revision_ref.address}  {item.title or translate('Untitled note' if item.revision_ref.record_ref.kind == 'note' else 'Untitled journal', language_for(options(ctx)))}  {item.recorded_at.isoformat()}"
+            )
 
 
 async def _membership(
@@ -362,7 +424,7 @@ async def _membership(
     operation: str,
     expected: str | None = None,
     enabled: bool | None = None,
-) -> SavedRecord:
+) -> RecordOutcome:
     if expected is None and "@" not in ref:
         raise NousError("input.expected_required", "Provide an exact ref with @N or --expected")
     expected = expected or ref
@@ -370,10 +432,10 @@ async def _membership(
         expected = ref.split("@")[0] + "@" + expected
     async with open_instance(options(ctx).locator) as runtime:
         if operation == "recall":
-            return await runtime.records.set_recall(
-                ref, expected, bool(enabled), namespace=namespace
+            return await (await runtime.cognition(namespace)).records.set_recall(
+                expected, bool(enabled)
             )
-        return await getattr(runtime.records, operation)(ref, expected, namespace=namespace)
+        return await getattr((await runtime.cognition(namespace)).records, operation)(expected)
 
 
 @journal_cli.command("archive")
@@ -416,8 +478,8 @@ def list_records(
 
     async def run():
         async with open_instance(options(ctx).locator) as runtime:
-            return await runtime.records.list(
-                namespace, kind=kind, archived=archived, offset=offset, limit=limit
+            return await (await runtime.cognition(namespace)).records.list(
+                kind=kind, archived=archived, offset=offset, limit=limit
             )
 
     result = run_async(run())
@@ -429,7 +491,9 @@ def list_records(
         )
     else:
         for item in result:
-            typer.echo(f"{item.revision_ref.address}  {item.title}")
+            typer.echo(
+                f"{item.revision_ref.address}  {item.title or translate('Untitled note' if item.revision_ref.record_ref.kind == 'note' else 'Untitled journal', language_for(options(ctx)))}"
+            )
 
 
 @namespace_cli.command("create")

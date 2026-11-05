@@ -23,6 +23,7 @@ from nous.common.operations import (
     OperationFrame,
     attach_context,
     current_operation,
+    exception_context,
 )
 
 
@@ -80,6 +81,7 @@ def operation(
     logger = logging.getLogger("nous.operations")
     started = time.monotonic()
     result = "success"
+    failure: dict[str, JsonValue] | None = None
     labels = {"operation": root.name}
     with (
         structlog.contextvars.bound_contextvars(
@@ -108,35 +110,56 @@ def operation(
             attach_context(
                 error, frame, trace.format_trace_id(context.trace_id) if context.is_valid else None
             )
-            if is_root:
-                logger.warning(
-                    "operation.failed",
-                    extra={
-                        "error_code": code,
-                        "error_message": failure_message(error),
-                        "result": result,
-                        "duration_seconds": time.monotonic() - started,
-                        "attempts": list(root.attempts),
-                        "completed_result_refs": list(root.completed_result_refs),
-                    },
-                )
+            failure = {
+                "error_code": code,
+                "error_message": failure_message(error),
+                "error_type": type(error).__name__,
+                "details": exception_context(error),
+            }
             raise
         finally:
             elapsed = time.monotonic() - started
             if is_root:
+                if result == "success":
+                    result = root.outcome
+                span.set_attribute("nous.outcome", result)
+                if result == "partial":
+                    span.set_status(StatusCode.ERROR)
+                for issue in root.issues:
+                    span.add_event(
+                        "operation.issue",
+                        {
+                            "stage": issue.stage,
+                            "error.code": issue.code,
+                            "error.message": issue.message,
+                        },
+                    )
                 meter.create_counter("operation.count").add(1, {**labels, "result": result})
                 meter.create_histogram("operation.duration", unit="s").record(
                     elapsed, {**labels, "result": result}
                 )
                 meter.create_up_down_counter("runtime.in_flight").add(-1, labels)
             logger.log(
-                logging.INFO if is_root and result == "success" else logging.DEBUG,
-                "operation.completed" if is_root else "stage.completed",
+                (logging.INFO if result == "success" else logging.WARNING)
+                if is_root
+                else logging.DEBUG,
+                "operation.terminal" if is_root else "stage.completed",
                 extra={
+                    "root_operation": is_root,
                     "result": result,
                     "duration_seconds": elapsed,
                     "completed_count": len(root.completed_result_refs),
                     "result_refs": list(root.completed_result_refs) if is_root else [],
+                    **(
+                        {
+                            "issues": [issue.to_dict() for issue in root.issues],
+                            "attempts": list(root.attempts),
+                            "completed_result_refs": list(root.completed_result_refs),
+                            **(failure or {}),
+                        }
+                        if is_root
+                        else {}
+                    ),
                 },
             )
             current_operation.reset(token)

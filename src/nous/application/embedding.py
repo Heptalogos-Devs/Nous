@@ -62,7 +62,12 @@ class EmbeddingOutcome(BaseModel):
 
 
 class EmbeddingOperations:
-    """Network requests belong to each caller; SQL chooses immutable canonical exact rows."""
+    """Produce and reuse exact-input vectors in a configured embedding space.
+
+    Network requests run outside the write transaction. Adoption selects the
+    canonical rows in SQL, including when callers concurrently encode the same
+    input. All dependencies are borrowed from the runtime.
+    """
 
     def __init__(
         self,
@@ -145,6 +150,7 @@ class EmbeddingOperations:
         groups = tuple(
             InputGroup(
                 key=f"S{index + 1}",
+                slot_key=f"S{index + 1}",
                 name=f"S{index + 1}",
                 parts=(InputPart(content=source, representation="text", media_type="text/plain"),),
             )
@@ -216,6 +222,20 @@ class EmbeddingOperations:
     async def ensure(
         self, inputs: Sequence[ContentSelection], space_id: str, purpose: Purpose
     ) -> EmbeddingBatchRef:
+        """Ensure vectors for exact selections and return references in input order.
+
+        Reuses adopted rows by space, purpose and exact input; repeated inputs can
+        refer to the same row. New batches are adopted as they complete. If a
+        later batch fails, ``NousError.details`` reports completed and unfinished
+        input indices; earlier adopted batches remain available for a retry.
+
+        Returns:
+            An instance-bound batch reference with one row per input in order.
+
+        Raises:
+            NousError: ``embedding.empty_input`` for no selections, or an
+                execution or adoption error with completed and unfinished indices.
+        """
         async with self.execution.operation("embedding.ensure") as context:
             definition = resolved_space(context.settings, space_id)
             sources = tuple(inputs)
@@ -281,6 +301,12 @@ class EmbeddingOperations:
     async def encode_query(
         self, inputs: Sequence[str | ContentSelection], space_id: str
     ) -> npt.NDArray[np.float32]:
+        """Encode temporary query strings or exact content selections in order.
+
+        Returns a float32 matrix with one row per input and the configured space
+        dimensions. Empty input yields an empty matrix of that width. Query
+        vectors are returned to the caller without adopting persistent rows.
+        """
         async with self.execution.operation("embedding.query") as context:
             definition = resolved_space(context.settings, space_id)
             values = tuple(
@@ -351,6 +377,11 @@ class EmbeddingOperations:
         return await self._read_rows(batch.space, batch.rows)
 
     async def read_vector(self, ref: VectorRef) -> npt.NDArray[np.float32]:
+        """Read a copied canonical vector identified by an instance-bound reference.
+
+        A reference from another instance or a corrupt stored row raises
+        ``NousError``. The returned array does not retain the mapped file.
+        """
         if ref.artifact.instance_id != self.artifacts.instance_id:
             raise NousError("content.instance_mismatch", "Vector belongs to another instance")
         row = await self.registry.resolve_row(

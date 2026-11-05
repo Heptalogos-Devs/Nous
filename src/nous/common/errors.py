@@ -34,6 +34,8 @@ def failure_message(error: BaseException) -> str:
 
 
 class NousError(Exception):
+    """Nous standard error: A structured failure that carries a code, message, details and cause."""
+
     def __init__(
         self,
         code: str,

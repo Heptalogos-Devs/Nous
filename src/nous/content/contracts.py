@@ -158,6 +158,30 @@ class ContentSelection(ContentValue):
     selection: SourceSelection = Field(default_factory=SourceSelection)
 
 
+class ContentRepresentation(ContentValue):
+    kind: str
+    result_ref: ResultRef
+    operation: str
+    output_name: str
+    content: ContentSelection
+    name: str
+    media_type: str
+    source_selections: tuple[ContentSelection, ...]
+    coverage: dict[str, JsonValue]
+    body_text: str | None = None
+
+
+class ContentReadView(ContentValue):
+    source: ContentSelection
+    name: str
+    media_type: str
+    byte_length: int
+    body_text: str | None = None
+    available_representations: tuple[ContentRepresentation, ...] = ()
+    export_ref: ArtifactRef
+    coverage: dict[str, JsonValue]
+
+
 class OriginSlice(ContentValue):
     origin: ContentSelection
     transform_ref: ResultRef | None = None
@@ -171,13 +195,16 @@ class InputPart(ContentValue):
     origins: tuple[OriginSlice, ...] = ()
 
 
-SourceRole = Literal["source", "reference", "current_basis", "inspiration", "revision_base"]
+SourceRole = Literal[
+    "source", "reference", "current_basis", "inspiration", "revision_base", "edit_target", "context"
+]
 
 
 class InputGroup(ContentValue):
     """One local source key, with every independently addressable representation."""
 
     key: str
+    slot_key: str = Field(min_length=1)
     name: str
     role: SourceRole = "source"
     parts: tuple[InputPart, ...] = Field(min_length=1)
@@ -185,6 +212,7 @@ class InputGroup(ContentValue):
 
 class InputSpec(ContentValue):
     role: SourceRole = "source"
+    slot_key: str | None = Field(default=None, min_length=1)
     kind: Literal["file", "text", "artifact"]
     path: str | None = None
     text: str | None = None

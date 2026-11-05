@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import MISSING, dataclass, fields
 from typing import TYPE_CHECKING, cast
 
 from pydantic import BaseModel, ConfigDict, JsonValue
@@ -15,10 +15,10 @@ from nous.content.annotations import AnnotationProposal, AnnotationSet
 from nous.content.contracts import Artifact, InputGroup, InputPart, OutputContent, SourceSelection
 from nous.media.contracts import MediaPlan, PreparedBatch, PreparedSource
 
+from .contracts import ReadingInput
+
 if TYPE_CHECKING:
     from nous.content.artifacts import ArtifactStore
-
-    from .contracts import ReadingInput
 
 
 class InformationItem(BaseModel):
@@ -40,19 +40,128 @@ class PassageSelection(BaseModel):
 
 @dataclass(frozen=True)
 class TaskDefinition:
+    """Define a language task's input, validation and named output semantics.
+
+    Subclasses can prepare task-specific source plans, validate the model's
+    value against the actual reading, and interpret it into outputs. Source keys
+    refer to prepared sources in that reading. ``program_outputs`` identifies
+    named outputs computed by task code for result provenance; it is not a request
+    for the model to generate those outputs.
+    """
+
     id: str
     output_type: type[BaseModel] | None = None
     source_field: str | None = None
     selected_passages: bool = False
     input_mode: str = "joint"
     preserve_source_keys: bool = False
+    required_capabilities: tuple[str, ...] = ("text",)
+    named_outputs: tuple[tuple[str, str], ...] = (
+        ("output", "Task response: text or the declared structured output."),
+    )
+    source_representation: str | None = None
+    program_outputs: tuple[str, ...] = ()
+    required_roles: tuple[str, ...] = ()
+
+    def describe_contract(self) -> dict[str, JsonValue]:
+        """Describe the same input, output and source semantics used by execution."""
+        variables: dict[str, JsonValue] = {}
+        exposed = ReadingInput().template_values()
+        for item in fields(ReadingInput):
+            if item.name in exposed:
+                variables[item.name] = {
+                    "type": str(item.type),
+                    "required": item.default is MISSING and item.default_factory is MISSING,
+                    "default": exposed[item.name],
+                    "description": str(item.metadata.get("description", "")),
+                    "dynamic_role": "user",
+                }
+        output: JsonValue = (
+            cast(dict[str, JsonValue], self.output_type.model_json_schema())
+            if self.output_type
+            else {"provided_by": "caller", "required": True}
+            if self.id == "custom-reading"
+            else {"type": "string"}
+        )
+        capabilities: list[JsonValue] = list(self.required_capabilities)
+        if self.output_type is not None or self.id == "custom-reading":
+            capabilities.append("structured_output")
+        outputs = dict(self.named_outputs)
+        if self.selected_passages:
+            outputs["passages"] = (
+                "Exact selected source passages with immutable content references."
+            )
+        return {
+            "id": self.id,
+            "input": {
+                "type": f"{ReadingInput.__module__}.{ReadingInput.__qualname__}",
+                "fields": variables,
+                "source_fields": {
+                    item.name: {
+                        "type": str(item.type),
+                        "required": item.default is MISSING and item.default_factory is MISSING,
+                    }
+                    for item in fields(PreparedSource)
+                },
+                "source_group": InputGroup.model_json_schema(),
+            },
+            "variables": variables,
+            "output": output,
+            "source_field": self.source_field,
+            "selected_passages": self.selected_passages,
+            "input_mode": self.input_mode,
+            "preserve_source_keys": self.preserve_source_keys,
+            "required_capabilities": capabilities,
+            "named_outputs": cast(dict[str, JsonValue], outputs),
+            "source_representation": self.source_representation,
+            "program_outputs": list[JsonValue](self.program_outputs),
+            "required_roles": list[JsonValue](self.required_roles),
+            "media_capabilities": "Determined from the actual InputPlan representations; no request input supplied.",
+        }
 
     async def prepare_sources(
         self, originals: Sequence[tuple[Artifact, SourceSelection]], artifacts: ArtifactStore
     ) -> tuple[MediaPlan, ...] | None:
+        """Optionally plan task-specific representations of the exact inputs.
+
+        Args:
+            originals: Accepted artifacts paired with their selected source regions.
+            artifacts: Borrowed store for resolving exact bodies and selections.
+
+        Returns:
+            None to use ordinary media preparation, or one plan per input in the
+            same order. Task-specific plans retain exact input references and
+            source keys needed by validation and interpretation.
+        """
         return None
 
+    def validate_input(self, reading: ReadingInput) -> None:
+        """Require declared source roles in the actual prepared reading.
+
+        Raises:
+            NousError: ``model.input_role_required`` when a required role is absent.
+        """
+        actual = {source.group.role for source in reading.sources if source.group is not None}
+        missing = set(self.required_roles) - actual
+        if missing:
+            raise NousError(
+                "model.input_role_required",
+                "Task requires declared source roles",
+                details={"task_contract": self.id, "missing_roles": sorted(missing)},
+            )
+
     def validate(self, value: JsonValue, reading: ReadingInput) -> JsonValue:
+        """Validate structured output and its keys against actual prepared sources.
+
+        Returns:
+            The validated JSON value; selected-passage keys are deduplicated in
+            first-occurrence order.
+
+        Raises:
+            ValueError: A referenced source key is absent from the reading, or
+                output validation fails. Execution may use validation feedback
+                within its configured repair and attempt budget.
+        """
         if self.output_type is not None:
             value = self.output_type.model_validate(value).model_dump(mode="json")
         known = {source.key for source in reading.sources}
@@ -80,6 +189,23 @@ class TaskDefinition:
         structured: bool,
         producer: dict[str, JsonValue] | None = None,
     ) -> dict[str, OutputContent]:
+        """Interpret a validated value into named bytes for later result adoption.
+
+        Args:
+            value: Validated response value.
+            reading: Actual prepared sources used by the successful request.
+            artifacts: Borrowed store for resolving exact source selections.
+            structured: Serialize the response as JSON when true, or UTF-8 text.
+            producer: Optional producer metadata available to task extensions.
+
+        Returns:
+            Named outputs, including ``output`` and, for passage selection,
+            exact selected text and content references in ``passages``.
+
+        Raises:
+            NousError: ``model.invalid_output`` for non-text unstructured output
+                or ``model.invalid_source`` for a passage without an exact group.
+        """
         if structured:
             output = OutputContent(
                 data=json.dumps(value, ensure_ascii=False, indent=2).encode(),
@@ -121,22 +247,6 @@ class TaskDefinition:
         return outputs
 
 
-class JournalDraftTask(TaskDefinition):
-    """Own the writing task's explicit no-material result and body interpretation."""
-
-    def __init__(self) -> None:
-        super().__init__("journal-draft")
-
-    @staticmethod
-    def body(output: OutputContent | None) -> str | None:
-        if output is None:
-            raise NousError("model.invalid_output", "Writing task returned no Markdown output")
-        text = output.data.decode("utf-8")
-        if not text.strip():
-            raise NousError("model.empty_output", "The provider returned no task output")
-        return None if text.strip() == "!NO_MATERIAL!" else text
-
-
 class ConceptAnnotationTask(TaskDefinition):
     """Prepare and interpret an annotation against one complete immutable Markdown body."""
 
@@ -159,6 +269,7 @@ class ConceptAnnotationTask(TaskDefinition):
                 text=block.text,
                 group=InputGroup(
                     key=block.key,
+                    slot_key="S1",
                     name=artifact.display_name,
                     parts=(
                         InputPart(
@@ -250,12 +361,15 @@ def builtin_tasks() -> TaskCatalog:
     return TaskCatalog(
         (
             TaskDefinition("reading-summary"),
-            TaskDefinition("media-description"),
+            TaskDefinition("media-description", source_representation="description"),
             TaskDefinition("information-extraction", ExtractedInformation, "source_keys"),
             TaskDefinition("passage-selection", PassageSelection, "keys", True),
             TaskDefinition("custom-reading"),
-            TaskDefinition("transcription"),
-            JournalDraftTask(),
+            TaskDefinition(
+                "transcription",
+                required_capabilities=("audio",),
+                source_representation="transcript",
+            ),
             ConceptAnnotationTask(),
         )
     )

@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import cast
 
 import pytest
+from pydantic import JsonValue, TypeAdapter
 
 from nous.application.configuration import open_configuration_operations
 from nous.runtime.bootstrap import initialize_instance
@@ -497,15 +498,15 @@ def persisted_results(instance: Path) -> int:
 def test_same_model_preset_fallback_is_prepared_and_persisted(
     tmp_path: Path, streaming: bool
 ) -> None:
-    submissions: list[dict[str, object]] = []
+    submissions: list[dict[str, JsonValue]] = []
 
     class Handler(BaseHTTPRequestHandler):
         def do_POST(self) -> None:
-            request = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            request = TypeAdapter(dict[str, JsonValue]).validate_json(self.rfile.read(int(self.headers["Content-Length"])))
             submissions.append(request)
             status = 503 if len(submissions) == 1 else 200
             content_type = "application/json"
-            base = {
+            base: dict[str, JsonValue] = {
                 "id": "preset-response",
                 "created": 1700000000,
                 "model": request["model"],
@@ -514,7 +515,7 @@ def test_same_model_preset_fallback_is_prepared_and_persisted(
                 payload = json.dumps({"error": {"message": "Primary unavailable"}}).encode()
             elif request.get("stream"):
                 content_type = "text/event-stream"
-                frames = [
+                frames: list[dict[str, JsonValue]] = [
                     {
                         **base,
                         "object": "chat.completion.chunk",
@@ -600,7 +601,7 @@ def test_same_model_preset_fallback_is_prepared_and_persisted(
     restored = model_cli(instance, "tools", "result", "read", reference, "--details")
     assert restored.returncode == 0, restored.stderr
     result = json.loads(restored.stdout)
-    assert result["outputs"][0]["text"] == "Backup response."
+    assert result["outputs"][0]["view"]["body_text"] == "Backup response."
     assert result["parameters"]["attempts"] == 2
     assert result["request"]["max_output_tokens"] == 128
     assert result["request"]["prepared_attempt"]["parameters"]["temperature"] == 0.7
@@ -686,7 +687,7 @@ def test_model_stream_requires_provider_completion_before_adoption(
         assert events[-1]["event"] == "completed"
         restored = model_cli(instance, "tools", "result", "read", events[-1]["result"])
         assert restored.returncode == 0, restored.stderr
-        assert json.loads(restored.stdout)["outputs"][0]["text"] == "Visible response."
+        assert json.loads(restored.stdout)["outputs"][0]["view"]["body_text"] == "Visible response."
         assert persisted_results(instance) == 1
     else:
         assert response.returncode != 0
@@ -809,7 +810,9 @@ def test_model_structured_repair_and_fallback_survive_restart(
     assert result["parameters"]["usage"]["input_tokens"] == 20
     restored = model_cli(instance, "tools", "result", "read", result["ref"]["address"], "--details")
     assert restored.returncode == 0, restored.stderr
-    assert json.loads(json.loads(restored.stdout)["outputs"][0]["text"]) == {"answer": 42}
+    assert json.loads(json.loads(restored.stdout)["outputs"][0]["view"]["body_text"]) == {
+        "answer": 42
+    }
     assert persisted_results(instance) == 1
 
 
@@ -923,11 +926,11 @@ def test_native_video_interval_uses_video_content_and_preserves_audio_policy(
         ],
         check=True,
     )
-    submissions: list[dict[str, object]] = []
+    submissions: list[dict[str, JsonValue]] = []
 
     class Handler(BaseHTTPRequestHandler):
         def do_POST(self) -> None:
-            request = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            request = TypeAdapter(dict[str, JsonValue]).validate_json(self.rfile.read(int(self.headers["Content-Length"])))
             submissions.append(request)
             payload = json.dumps(
                 {
@@ -986,15 +989,17 @@ def test_native_video_interval_uses_video_content_and_preserves_audio_policy(
         assert response.returncode == 0, (response.stdout, response.stderr)
     result = json.loads(response.stdout)["results"][0]
     assert len(submissions) == 1
+    messages = TypeAdapter(list[dict[str, JsonValue]]).validate_python(submissions[0]["messages"])
     parts = [
         part
-        for message in submissions[0]["messages"]
-        for part in message["content"]
+        for message in messages
         if isinstance(message["content"], list)
+        for part in TypeAdapter(list[dict[str, JsonValue]]).validate_python(message["content"])
     ]
     binary = [part for part in parts if part["type"] != "text"]
     assert [part["type"] for part in binary] == ["video_url"]
-    payload = binary[0]["video_url"]["url"]
+    video_url = TypeAdapter(dict[str, JsonValue]).validate_python(binary[0]["video_url"])
+    payload = TypeAdapter(str).validate_python(video_url["url"])
     assert payload.startswith("data:video/mp4;base64,")
     sent = tmp_path / "sent.mp4"
     sent.write_bytes(base64.b64decode(payload.split(",", 1)[1]))

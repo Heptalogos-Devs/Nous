@@ -1,8 +1,17 @@
 contract_id = "information-extraction"
+
+[documentation]
+title = "提取信息"
+purpose = "按本次问题从资料提取有来源的信息条目。"
+consumers = ["GenerationOperations"]
+input_notes = "本次问题与准备后的资料；引用只能使用本次来源键。"
+output_notes = "返回实际 ExtractedInformation Schema，source_keys 由程序验证。"
 [[messages]]
+description = "稳定任务规则、输出要求与固定假设示例。"
 role = "system"
 template = "system.md.j2"
 [[messages]]
+description = "本次问题、要求与真实来源；append_sources 保留文本和媒体顺序。"
 role = "user"
 template = "user.md.j2"
 append_sources = true

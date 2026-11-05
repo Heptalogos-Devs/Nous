@@ -128,7 +128,12 @@ class TimeService:
     async def validate(
         self, values: Iterable[CognitiveTimes | TemporalValue | TimePoint | None]
     ) -> None:
-        """Validate every explicit coordinate against this instance's registered domains."""
+        """Check explicit coordinate domains against the instance's registered domains.
+
+        None and unknown interval boundaries have no domain to validate. A
+        referenced but unregistered domain raises ``NousError`` with code
+        ``time.domain_unknown`` and the sorted domain IDs in its details.
+        """
         referenced: set[str] = set()
 
         def collect(value: CognitiveTimes | TemporalValue | TimePoint | None) -> None:

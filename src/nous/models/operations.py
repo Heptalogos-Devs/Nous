@@ -106,7 +106,13 @@ class PendingGeneration:
 
 
 class GenerationOperations:
-    """Own admission, language stages and adoption; prepare only the active bounded request."""
+    """Coordinate language preparation, execution and result adoption.
+
+    Only the active bounded request is materialized. Use ``produce`` when a
+    caller must combine a completed model output with its own adoption; use
+    ``run_group`` to execute and adopt a group directly. Dependencies are
+    borrowed from the runtime.
+    """
 
     def __init__(
         self,
@@ -142,16 +148,16 @@ class GenerationOperations:
 
     async def _accept(
         self, inputs: InputValue | Sequence[InputValue], texts: Sequence[str]
-    ) -> list[tuple[Artifact, SourceSelection, SourceRole]]:
+    ) -> list[tuple[Artifact, SourceSelection, SourceRole, str | None]]:
         values = (
             [inputs]
             if isinstance(inputs, (InputSpec, Path, Artifact, ArtifactRef, str))
             else inputs
         )
-        originals: list[tuple[Artifact, SourceSelection, SourceRole]] = []
+        originals: list[tuple[Artifact, SourceSelection, SourceRole, str | None]] = []
         for value in values:
             if isinstance(value, Artifact):
-                originals.append((value, SourceSelection(), "source"))
+                originals.append((value, SourceSelection(), "source", None))
             else:
                 spec = (
                     value
@@ -163,7 +169,12 @@ class GenerationOperations:
                     )
                 )
                 originals.append(
-                    (await self.results.artifacts.accept(spec), spec.selection, spec.role)
+                    (
+                        await self.results.artifacts.accept(spec),
+                        spec.selection,
+                        spec.role,
+                        spec.slot_key,
+                    )
                 )
         for ordinal, text in enumerate(texts, 1):
             originals.append(
@@ -173,6 +184,7 @@ class GenerationOperations:
                     ),
                     SourceSelection(),
                     "source",
+                    None,
                 )
             )
         if not originals:
@@ -231,7 +243,7 @@ class GenerationOperations:
                     details={"routes": unavailable},
                 )
             return PreparedRun(
-                tuple(artifact for artifact, _, _ in originals),
+                tuple(artifact for artifact, _, _, _ in originals),
                 plan.request_groups,
                 plan.requested_coverage,
                 frozen,
@@ -342,6 +354,20 @@ class GenerationOperations:
         on_delta: Callable[[str], None] | None = None,
         on_prepared: Callable[[PreparedGeneration], None] | None = None,
     ) -> ProcessingResult:
+        """Produce and adopt one semantic group using the supplied snapshot.
+
+        Model computation and adoption are separate stages. When composing an
+        atomic adoption with another owner, use ``produce`` and adopt its output
+        within the caller's transaction instead.
+
+        Returns:
+            The committed processing result for the group.
+
+        Raises:
+            NousError: If preparation, model execution or result adoption fails.
+                An adoption failure retains successful computation as recovery
+                context on the error.
+        """
         async with self.execution.operation("model.generate", snapshot):
             produced = await self.produce(
                 frozen,
@@ -371,7 +397,21 @@ class GenerationOperations:
         on_delta: Callable[[str], None] | None = None,
         on_prepared: Callable[[PreparedGeneration], None] | None = None,
     ) -> ProducedTask:
-        """Run one semantic group; the executor requests another representation only when switching."""
+        """Compute one semantic group without adopting its named outputs.
+
+        The executor requests another representation only when switching routes.
+        The returned ``ProducedTask`` retains the successful output and its actual
+        inputs; pass it to ``adopt_produced`` or a caller-owned adoption without
+        making another model request. Completed preparation stages may already
+        have been adopted before this method returns or fails.
+
+        Returns:
+            The successful output, actual inputs and completed preparation
+            references, ready for adoption.
+
+        Raises:
+            NousError: If no eligible route can prepare or complete the request.
+        """
         completed = completed if completed is not None else []
         async with self.execution.operation("model.generate", snapshot):
 
@@ -427,6 +467,7 @@ class GenerationOperations:
             inputs=(
                 InputGroup(
                     key=source.key,
+                    slot_key=source.group.slot_key if source.group else source.key,
                     name=source.name,
                     role=source.group.role if source.group else "source",
                     parts=(part,),
@@ -440,7 +481,11 @@ class GenerationOperations:
                 )
             },
             request=generated.request,
-            parameters={"usage": generated.usage, "attempts": generated.attempts},
+            parameters={
+                "usage": generated.usage,
+                "attempts": generated.attempts,
+                "representations": {"transcript": {"kind": "transcript"}},
+            },
             coverage={
                 "mode": "transcript",
                 "origins": [origin.model_dump(mode="json") for origin in part.origins],
@@ -487,7 +532,12 @@ class GenerationOperations:
                         representation="transcript",
                         media_type="text/plain",
                         source_media_type=part.source_media_type or part.media_type,
-                        origins=(OriginSlice(origin=part.content, transform_ref=result.ref),),
+                        origins=tuple(
+                            OriginSlice(origin=origin, transform_ref=result.ref)
+                            for origin in (
+                                tuple(item.origin for item in part.origins) or (part.content,)
+                            )
+                        ),
                     )
                 )
             group = source.group.model_copy(update={"parts": tuple(parts)})
@@ -616,7 +666,19 @@ class GenerationOperations:
             )
 
     async def adopt_produced(self, produced: ProducedTask) -> ProcessingResult:
-        """Save a successful computation; SQL failures never re-enter model execution."""
+        """Adopt a completed computation without submitting another model request.
+
+        Output publication precedes the write transaction. If adoption fails,
+        the error carries completed-stage and published-output details plus the
+        ``ProducedTask`` as recovery context for the caller.
+
+        Returns:
+            The committed processing result and its output references.
+
+        Raises:
+            NousError: If publication or adoption fails. The exception includes
+                the completed computation as recovery context.
+        """
         published = None
         try:
             published = await self.results.prepare_outputs(produced.outputs)
@@ -716,6 +778,10 @@ class GenerationOperations:
             request=generated.request,
             parameters={
                 "attempts": generated.attempts,
+                "program_outputs": list(definition.program_outputs),
+                "representations": {"output": {"kind": definition.source_representation}}
+                if definition.source_representation is not None
+                else {},
                 "usage": generated.usage,
                 "finish_reason": generated.finish_reason,
                 "stage_result_refs": generated.request.get(
@@ -756,9 +822,13 @@ class GenerationOperations:
                     frozen,
                     [
                         InputSpec(
-                            kind="artifact", artifact=artifact.ref, selection=selected, role=role
+                            kind="artifact",
+                            artifact=artifact.ref,
+                            selection=selected,
+                            role=role,
+                            slot_key=slot_key,
                         )
-                        for artifact, selected, role in originals
+                        for artifact, selected, role, slot_key in originals
                     ],
                     snapshot,
                     per_batch=per_batch,

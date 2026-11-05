@@ -180,6 +180,14 @@ def _connection_factory(settings: DatabaseSettings) -> type[sqlite3.Connection]:
 
 
 class Database:
+    """Own an instance SQLite engine and its transaction boundaries.
+
+    Obtain a database through ``open`` and borrow it only within that context.
+    Use ``read`` for a consistent read transaction and ``write`` for a short
+    atomic adoption. Pass the existing transaction to cooperating owners instead
+    of opening a nested write transaction.
+    """
+
     def __init__(self, engine: AsyncEngine, instance_id: str, database_id: str | None) -> None:
         self._engine = engine
         self._instance_id = instance_id
@@ -198,6 +206,24 @@ class Database:
         database_id: str | None = None,
         additional_metadata: tuple[sa.MetaData, ...] = (),
     ) -> AsyncGenerator[Database]:
+        """Open and verify the bound database, disposing its engine on exit.
+
+        Args:
+            path: Database file location.
+            settings: SQLite connection policy.
+            instance_id: Identity that must match the database metadata.
+            create: Explicitly create a new database and declared tables when true;
+                otherwise the database must already exist.
+            database_id: Expected persistent database identity, if bound.
+            additional_metadata: Owner tables to create with a new database.
+
+        Yields:
+            A database whose engine is disposed when this context exits.
+
+        Raises:
+            NousError: The database is unavailable, invalid, or conflicts with
+                the expected instance or database identity.
+        """
         path = await asyncio.to_thread(path.resolve)
         await asyncio.to_thread(_setup_file, path, create=create)
         url = URL.create(
@@ -240,6 +266,14 @@ class Database:
 
     @asynccontextmanager
     async def read(self) -> AsyncGenerator[ReadTx]:
+        """Borrow a read transaction until the context exits.
+
+        Pass the yielded transaction to collaborating reads that need the same
+        view. Its connection must not be retained after the context exits.
+
+        Yields:
+            A transaction for collaborating reads in this view.
+        """
         with (
             get_tracer(__name__).start_as_current_span("database.read"),
             _observe_transaction("read"),
@@ -249,7 +283,20 @@ class Database:
 
     @asynccontextmanager
     async def write(self) -> AsyncGenerator[WriteTx]:
-        """Serialize this instance's writers; SQLite arbitrates independent connections."""
+        """Borrow a short write transaction, committing on success and rolling back on error.
+
+        Writers through this instance are serialized; SQLite arbitrates other
+        connections. Publish bytes and perform slow computation or network work
+        before entering. Pass this transaction to ``*_in`` methods for atomic
+        changes across owners.
+
+        Yields:
+            A transaction shared by all changes in this atomic adoption.
+
+        Raises:
+            NousError: ``storage.busy`` if SQLite reports a busy or locked
+                database; the error is marked retryable.
+        """
         with (
             get_tracer(__name__).start_as_current_span("database.write"),
             _observe_transaction("write"),

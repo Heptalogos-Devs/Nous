@@ -75,6 +75,7 @@ impl RetrievalIndex {
                 }
                 let mut row = TantivyDocument::default();
                 row.add_text(self.inner.fields.id, &document.id);
+                row.add_u64(self.inner.fields.group, document.group_row);
                 row.add_text(self.inner.fields.namespace, namespace);
                 row.add_text(self.inner.fields.subject, subject);
                 row.add_text(self.inner.fields.body, &document.text);

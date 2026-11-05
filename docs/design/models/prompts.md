@@ -1,5 +1,7 @@
 # Prompt 资源、快照与共同预览
 
+编辑时的用途说明、真实变量/Schema、模型能力和资源差异见 [Prompt 编辑上下文](prompt-editing-context.md)。TOML 的 documentation 与 message.description 只供人阅读；执行指纹和说明指纹分别计算，下面的指令与冻结合同继续成立。
+
 ## 资源
 
 PromptCatalog 管理包内只读与实例可编辑的 Markdown/Jinja 资源。manifest 明确 contract_id、有序 message role/template 和 source 槽；模板只渲染纯值，不查数据库、不准备媒体、不发模型请求。
@@ -33,6 +35,8 @@ system 消息尽量保持稳定，承载可复用的任务、角色、规则、�
 user 消息承载本次主题、作者身份或视角、问题、补充要求及真实资料；实际来源键、名称、选区和文本/媒体 part 只在 user 消息出现。若采用 assistant 模板演示输出，其内容同样使用固定假设示例。SDK 原生工具历史仍按相应协议合同保留。
 
 Markdown/XML 结构与消息角色共同说明指令、例子和资料的边界；原文中出现的模板符号或指令文字继续作为输入资料处理。Journal 的具体写作合同见[认知 Prompt 合同](../cognition/prompt-contracts.md)。
+
+> 如果有些事物仅通过提示词调教仍然难以让模型精确处理，比如某些需要自然语言处理的字段填写或者有明确结构的要求——应当使用 LLMs 的结构化输出能力，并设计合适的 JSON Schema。
 
 ## 冻结范围
 

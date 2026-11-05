@@ -19,19 +19,19 @@
 
 这些是职责，允许相邻的内聚函数同处一文件。不要为每个动作创建 repository/service/manager 三层转发。
 
+共用短地址由类型前缀、冒号与六个以空格分隔的四字母单元组成。首单元从固定的 1,024 项表均匀选择，其余各从固定的 2,048 项表均匀选择，共 65 位随机空间；单元表及其顺序固定。写入由所属表的唯一约束处理碰撞，失败时重新分配。地址按完整字符串传递，在命令行中使用时须整体加引号。
+
 ## 应用接口
 
-```text
-GenerationOperations.run_input(task, InputSpec[], snapshot, options) -> GenerationOutcome
-GenerationOperations.preview(prompt, inputs, snapshot, options) -> prepared previews
-GenerationOperations.probe(model, input?, snapshot) -> GenerationOutcome
-GenerationOperations.run(FrozenTask, ReadingInput, snapshot, context) -> ProcessingResult
-GenerationOperations.transcribe(source, audio_part, snapshot, context) -> ProcessingResult
-MediaAnalysis.analyze(AnalysisRequest) -> AnalysisOutcome
-EmbeddingOperations.ensure(EmbeddingRequest) -> EmbeddingBatchRef
-WaveOperations.build(CollectionManifest) -> WaveSnapshotRef
-WaveOperations.query(WaveQuery) -> WaveResult
-```
+| 使用目的 | 公共服务与调用契约 |
+|---|---|
+| 多输入语言生成、预览与探测 | [GenerationOperations](../../../src/nous/models/operations.py)：run_input、preview、probe |
+| 成功计算与独立结果采用 | GenerationOperations.produce / adopt_produced；成功计算的保存恢复不重复请求模型 |
+| 多媒体解释 | [MediaAnalysis.analyze](../../../src/nous/media/analysis.py) |
+| 文本向量复用与查询编码 | [EmbeddingOperations.ensure / encode_query](../../../src/nous/application/embedding.py) |
+| 集合构建、查询与原文读取 | [WaveOperations](../../../src/nous/wave/operations.py)：build、build_view、query、read |
+
+各服务的准确参数、返回值、异常与资源限制写在源码 docstring 中。跨服务的正式认知操作见[进程内认知入口](../interfaces/cognition-api.md)。
 
 InputSpec 是产品输入值，context 由根操作建立并向内部阶段传递。普通入口使用已打开 Runtime 的 snapshot，不复制配置或伪造版本。内部阶段显式接收冻结任务/输入，与现有根上下文配合。
 
@@ -49,6 +49,3 @@ InputSpec 是产品输入值，context 由根操作建立并向内部阶段传�
 
 模型执行器只判断协议响应、完成状态和输出形状。信息抽取的 source_keys、原文选段恢复、未来概念描述等都由对应任务合同负责。新增语义任务无需修改 Executor 中的任务名分支。
 
-## 同轮迁移
-
-移除 MediaPreparer 的 ModelExecutor 参数；移出 `_audio_source` 的转写和采用。迁移 CLI 中 probe 临时配置与 preview 的硬编码 MIME/新 Compiler。移出 Executor 的具体任务判定，迁移真实消费者并删除旧入口。当前可用的流结束、错误映射、选区及缓存修复继续由各 owner 承担。

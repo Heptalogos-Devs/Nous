@@ -1,6 +1,7 @@
 # Nous 开发指引
 
-本文件适用于整个仓库。修改局部目录内容时，应同时遵循对应目录的 AGENTS.md，如 `src/nous/` 的 [AGENTS.md](src/nous/AGENTS.md)。任何 Agent 不得在不经过开发者明确许可的情况下修订 AGENTS.md 文件。
+本文件适用于整个仓库。修改局部目录内容时，应同时遵循对应目录的 AGENTS.md，如 `src/nous/` 的 [AGENTS.md](src/nous/AGENTS.md)。
+注意：任何 Agent 不得在不经过开发者明确许可的情况下修订原 AGENTS.md 文件；修订规范：在对应文件目录下创建 AGENTS.proposal.patch 文件。
 
 ## AntiRLHF
 
@@ -104,5 +105,7 @@ CodeGraph 或索引不可用时，使用文件和符号检索继续定位； 也
 ## 维护文档
 
 设计、公共契约或职责改变时，原地更新负责专题和源码索引，移除失效说明。同一规则只在一个负责位置定义，其它地方引用，不复制多套版本。
+
+重要类和方法用注释说明职责、状态边界或不明显的不变量，不逐行复述实现；详见 [docstring-std](docs/agents/docstring-std.md)。
 
 `CURRENT.md` 记录当前能力、有效决定和剩余工作，不写成操作日志。不要把每次纠错写成永久禁令，也不要将退役方案、实现过程或自我评审说明留在产品文档、代码注释和用户界面中。

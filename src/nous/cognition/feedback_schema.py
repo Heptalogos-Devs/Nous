@@ -29,5 +29,16 @@ feedback = sa.Table(
     sa.Column("comment", sa.String),
     sa.Column("author", sa.String),
     sa.Column("recorded_at", sa.String, nullable=False),
+)
+
+resolutions = sa.Table(
+    "cognition_feedback_resolutions",
+    metadata,
+    sa.Column("feedback_id", sa.String, sa.ForeignKey(feedback.c.id), primary_key=True),
+    sa.Column("action", sa.String, nullable=False),
+    sa.Column("note", sa.String),
+    sa.Column("mapping_note", sa.String),
     sa.Column("applied_revision_id", sa.String, sa.ForeignKey(revisions.c.id)),
+    sa.Column("actor", sa.String),
+    sa.Column("resolved_at", sa.String, nullable=False),
 )
