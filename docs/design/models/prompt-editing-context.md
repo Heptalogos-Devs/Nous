@@ -4,29 +4,21 @@
 
 扩展现有 prompt.toml，不引入第二份 YAML Front Matter 或新的模板语言。
 
-```toml
-contract_id = "journal-edit"
+`documentation` 和 `message.description` 供维护者阅读，绝不被自动加入模型消息。
+每份 `prompt.toml` 都应在自身说明中提供足以编写相邻 system 和 user 模板的上下文，
+不要求编写者先查看其他生成文件。
 
-[documentation]
-title = "局部修订 Journal"
-purpose = "根据明确意见提出局部编辑，程序保留范围外原文。"
-consumers = ["writing.propose_edit"]
-input_notes = "T 键为允许修改范围；其它正文是只读上下文；N 键为新增材料。"
-output_notes = "返回 edits；程序解释为完整修订与差异。"
+`input_notes` 说明可用模板变量的形状、本任务如何使用它们、来源键和媒体附件如何进入请求；
+给出一组假设变量及其渲染后的完整 user 消息，清楚标出独立附件。
+`output_notes` 说明模型返回的内容、字段和实际用途，并给出与该输入对应的完整输出示例；
+结构化任务补充字段类型、引用约束和空结果，自定义 Schema 示例同时展示调用方提供的 Schema。
+示例与真实任务合同保持一致，不把示例或维护说明发送给模型。
 
-[[messages]]
-role = "system"
-template = "system.md.j2"
-description = "稳定的任务、编辑语义与固定假设例子。"
+例如，[局部编辑资源](../../../src/nous/models/resources/journal-edit/prompt.toml)
+展示了可编辑目标、只读上下文、新增材料，以及返回的 JSON 编辑提案。
+保留用户已写的 Markdown/XML 规则、消息角色分工、静态正反例和实例覆盖。
 
-[[messages]]
-role = "user"
-template = "user.md.j2"
-append_sources = true
-description = "本次修改要求、目标块、来源表与必要上下文。"
-```
-
-documentation 和 message.description 供维护者阅读，绝不被自动加入模型消息。保留用户已写的 Markdown/XML 规则、消息角色分工、静态正反例和实例覆盖。新增上下文说明不能覆盖已有提示词正文。
+`append_sources` 在 user 消息中附加实际材料及已知的用途、范围说明。来源的准确表示与说明可通过 task preview 查看，选区、原件时长或页数等取自实际输入规划；维护说明本身不进入模型消息。
 
 ## 从实际合同取得技术信息
 
@@ -50,7 +42,7 @@ PromptCatalog.restore_package(prompt_id) -> PromptResource
 
 真实请求预览继续走共同 prepare/compile；describe 不发模型请求、不借诊断自动转写。命令为 `nous tools prompt describe <id> [--task <task>]`、`show`、`edit`、`diff`、`restore`。
 
-`edit` 在编辑目录同时生成只供人阅读的 `CONTEXT.md`，包含角色/模板用途、实际变量和 Schema 的相对查看入口及来源说明；input-contract.json 来自 ReadingInput 的真实 dataclass 字段与 template_values，output-schema.json 来自 TaskDefinition 的实际输出类型，custom-reading 明确标记由调用者提供 Schema；它由 describe 生成，可再次生成，不是第二份权威合同，也不进入请求。无编辑器时 --from-dir 沿当前导入能力；有实例覆盖时清楚显示包内/实例两个来源。恢复包内版本是明确用户动作，不在升级时自动覆盖。
+`edit` 在编辑目录同时生成只供人阅读的 `CONTEXT.md`，按输入、输出、消息及已配置模型组织说明，并列出实际路线的能力、格式、预设参数和实例执行限制。input-contract.json 来自 ReadingInput 的真实字段与 template_values，output-schema.json 来自 TaskDefinition 的实际输出类型；custom-reading 明确标记由调用者提供 Schema。实际媒体和逐次参数使用 preview 查看。无编辑器时 --from-dir 沿当前导入能力；有实例覆盖时清楚显示包内/实例两个来源。恢复包内版本是明确用户动作。
 
 ## 实际请求指纹
 

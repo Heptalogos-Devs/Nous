@@ -181,10 +181,16 @@ def test_audio_route_prepares_transcription_only_after_actual_switch(
             for part in cast(list[dict[str, object]], message["content"])
         ]
         assert any(part.get("type") == "input_audio" for part in parts)
+        actual_text = "\n".join(str(part.get("text", "")) for part in parts)
+        assert "源音频时长约 1 秒。" in actual_text
+        assert "本次提供源文件第 0–1 秒的音频。" in actual_text
     else:
         assert events == ["native-audio", "transcription", "local-model"]
         assert result["producer"]["model_id"] == "reader"
         assert "transcript from prerequisite" in json.dumps(submissions[-1])
+        actual_messages = json.dumps(submissions[-1]["messages"], ensure_ascii=False)
+        assert "源音频时长约 1 秒。" in actual_messages
+        assert "本次提供源文件第 0–1 秒的转写文本。" in actual_messages
         assert any(
             part["representation"] == "transcript"
             for group in result["inputs"]
@@ -978,8 +984,16 @@ def test_native_video_interval_uses_video_content_and_preserves_audio_policy(
             async with open_configuration_operations(instance, environment={}) as configuration:
                 await configuration.update(
                     {
-                        "models.reader.capabilities": ["text", "video"],
-                        "models.reader.input_formats": ["text/plain", "video/mp4"],
+                        "models.reader.capabilities": ["text", "image"],
+                        "models.reader.input_formats": ["text/plain", "image/png"],
+                        "localization.language": "en" if without_audio else "zh-CN",
+                        "models.video": {
+                            "provider": "local",
+                            "model_name": "local-video",
+                            "capabilities": ["text", "video"],
+                            "input_formats": ["text/plain", "video/mp4"],
+                        },
+                        "tasks.read.fallback": [{"model": "video"}],
                     }
                 )
 
@@ -1003,6 +1017,7 @@ def test_native_video_interval_uses_video_content_and_preserves_audio_policy(
         assert response.returncode == 0, (response.stdout, response.stderr)
     result = json.loads(response.stdout)["results"][0]
     assert len(submissions) == 1
+    assert submissions[0]["model"] == "local-video"
     messages = TypeAdapter(list[dict[str, JsonValue]]).validate_python(submissions[0]["messages"])
     parts = [
         part
@@ -1011,6 +1026,15 @@ def test_native_video_interval_uses_video_content_and_preserves_audio_policy(
         for part in TypeAdapter(list[dict[str, JsonValue]]).validate_python(message["content"])
     ]
     binary = [part for part in parts if part["type"] != "text"]
+    source_text = "\n".join(str(part["text"]) for part in parts if part["type"] == "text")
+    if without_audio:
+        assert "Source Video duration: approximately 2 seconds." in source_text
+        assert "Provided Video: source interval 0.25–0.75 seconds." in source_text
+        assert "The source audio was excluded from the video." in source_text
+    else:
+        assert "源视频时长约 2 秒。" in source_text
+        assert "本次提供源文件第 0.25–0.75 秒的视频。" in source_text
+        assert "移除源音轨" not in source_text
     assert [part["type"] for part in binary] == ["video_url"]
     video_url = TypeAdapter(dict[str, JsonValue]).validate_python(binary[0]["video_url"])
     payload = TypeAdapter(str).validate_python(video_url["url"])

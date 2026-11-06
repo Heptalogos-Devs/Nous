@@ -4,13 +4,38 @@ import asyncio
 from pathlib import Path
 
 import pytest
+import tomlkit
 
 from nous.cognition.writing.contracts import DraftContext, DraftOverride
 from nous.cognition.writing.tasks import JournalDraftTask
 from nous.common.errors import NousError
 from nous.content.contracts import InputGroup, InputPart, OutputContent
+from nous.models.contracts import ReadingInput
 from nous.models.operations import ProducedTask
-from nous.runtime.bootstrap import initialize_instance, open_instance
+from nous.models.prompts import PromptCatalog, PromptCompiler
+from nous.runtime.bootstrap import initialize_instance, open_instance, task_catalog
+
+
+def test_prompt_editing_notes_are_visible_without_changing_the_request(tmp_path: Path) -> None:
+    catalog = PromptCatalog(tmp_path / "prompts", task_catalog())
+    compiler = PromptCompiler(catalog)
+    original = catalog.get("journal-draft")
+    request = compiler.compile(original, ReadingInput(question="A writing topic"))
+    directory = catalog.editable_directory("journal-draft")
+    manifest = directory / "prompt.toml"
+    document = tomlkit.parse(manifest.read_text(encoding="utf-8"))
+    document["documentation"]["purpose"] = "A clearer description for the editor."
+    manifest.write_text(tomlkit.dumps(document), encoding="utf-8")
+    revised = catalog.get("journal-draft")
+    assert revised.execution_signature == original.execution_signature
+    assert revised.documentation_signature != original.documentation_signature
+    assert (
+        compiler.compile(revised, ReadingInput(question="A writing topic")).preview
+        == request.preview
+    )
+    context = catalog.write_context("journal-draft").read_text(encoding="utf-8")
+    assert "A clearer description for the editor." in context
+    assert "S1:C1" in context and "output-schema.json" in context
 
 
 def test_no_material_preserves_result_and_rejects_empty_output(tmp_path: Path) -> None:
@@ -91,7 +116,9 @@ def test_no_material_preserves_result_and_rejects_empty_output(tmp_path: Path) -
             with pytest.raises(NousError) as failed:
                 await c.records.adopt(unqualified.draft.ref)
             assert failed.value.code == "cognition.source_link_unqualified"
-            assert (await c.writing.read_draft(unqualified.draft.ref)).body == unqualified.draft.body
+            assert (
+                await c.writing.read_draft(unqualified.draft.ref)
+            ).body == unqualified.draft.body
             assert len(await c.records.list(kind="journal")) == 1
             corrected = await c.records.adopt(
                 unqualified.draft.ref,
@@ -99,6 +126,8 @@ def test_no_material_preserves_result_and_rejects_empty_output(tmp_path: Path) -
             )
             retried = await c.records.adopt(unqualified.draft.ref)
             assert retried.record.revision_ref == corrected.record.revision_ref
-            assert (await c.writing.read_draft(unqualified.draft.ref)).body == unqualified.draft.body
+            assert (
+                await c.writing.read_draft(unqualified.draft.ref)
+            ).body == unqualified.draft.body
 
     asyncio.run(scenario())

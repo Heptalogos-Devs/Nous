@@ -115,8 +115,16 @@ def recent_content_preparations(directory: Path, limit: int = 3) -> list[dict[st
                 except ValueError:
                     continue
                 if event.get("event") == "wave.build.completed":
-                    builds.append({
-                        key: event.get(key)
-                        for key in ("timestamp", "operation_id", "snapshot", "preparation", "stages_ms")
-                    })
+                    builds.append(
+                        {
+                            key: event.get(key)
+                            for key in (
+                                "timestamp",
+                                "operation_id",
+                                "snapshot",
+                                "preparation",
+                                "stages_ms",
+                            )
+                        }
+                    )
     return sorted(builds, key=lambda event: str(event.get("timestamp", "")), reverse=True)[:limit]

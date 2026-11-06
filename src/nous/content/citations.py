@@ -109,7 +109,9 @@ def _bare_source_links(markdown: str, keys: Collection[str]) -> tuple[_BareSourc
         matched = reference(state, start_line, end_line, silent)
         if not matched or silent:
             return matched
-        definition = next((token for token in state.tokens[before:] if token.type == "definition"), None)
+        definition = next(
+            (token for token in state.tokens[before:] if token.type == "definition"), None
+        )
         href = definition.meta.get("url") if definition else None
         if not isinstance(href, str) or href not in known:
             return matched
@@ -131,16 +133,27 @@ def _bare_source_links(markdown: str, keys: Collection[str]) -> tuple[_BareSourc
         if label_end < 0 or fragment[label_end + 1 : label_end + 2] != ":":
             return matched
         position = label_end + 2
-        while position < len(fragment) and (isSpace(ord(fragment[position])) or fragment[position] == "\n"):
+        while position < len(fragment) and (
+            isSpace(ord(fragment[position])) or fragment[position] == "\n"
+        ):
             position += 1
         destination = parser.helpers.parseLinkDestination(fragment, position, len(fragment))
         if destination.ok and parser.normalizeLink(destination.str) == href:
             point = position + int(fragment[position] == "<")
             offset = original_positions[positions[point]]
-            definitions.append((label, _BareSourceLink(
-                href, original_positions[positions[0]],
-                original_positions[positions[-1] + 1], offset, offset, "source:",
-            )))
+            definitions.append(
+                (
+                    label,
+                    _BareSourceLink(
+                        href,
+                        original_positions[positions[0]],
+                        original_positions[positions[-1] + 1],
+                        offset,
+                        offset,
+                        "source:",
+                    ),
+                )
+            )
         return matched
 
     parser.block.ruler.at("reference", source_reference)
@@ -148,7 +161,8 @@ def _bare_source_links(markdown: str, keys: Collection[str]) -> tuple[_BareSourc
     tokens = parser.parse(markdown, environment)
     used_references = {
         str(child.meta["label"])
-        for block in tokens for child in block.children or ()
+        for block in tokens
+        for child in block.children or ()
         if child.type == "link_open" and child.meta.get("label")
     }
     links.extend(target for label, target in definitions if label in used_references)
@@ -157,9 +171,13 @@ def _bare_source_links(markdown: str, keys: Collection[str]) -> tuple[_BareSourc
     for line in lines:
         offsets.append(offsets[-1] + len(line))
     for block in tokens:
-        if block.type != "inline" or block.map is None or not any(
-            child.type == "link_open" and child.attrGet("href") in known
-            for child in block.children or ()
+        if (
+            block.type != "inline"
+            or block.map is None
+            or not any(
+                child.type == "link_open" and child.attrGet("href") in known
+                for child in block.children or ()
+            )
         ):
             continue
         low, high = block.map
@@ -178,7 +196,9 @@ def _bare_source_links(markdown: str, keys: Collection[str]) -> tuple[_BareSourc
             matched = rule(state, silent)
             if not matched or silent or state.src != fragment:
                 return matched
-            opening = next((token for token in state.tokens[before:] if token.type == "link_open"), None)
+            opening = next(
+                (token for token in state.tokens[before:] if token.type == "link_open"), None
+            )
             href = opening.attrGet("href") if opening else None
             if not isinstance(href, str) or href not in known:
                 return matched
@@ -187,10 +207,16 @@ def _bare_source_links(markdown: str, keys: Collection[str]) -> tuple[_BareSourc
             if rule is autolink:
                 label = fragment[start + 1 : end - 1]
                 escaped = label.replace("\\", "\\\\").replace("[", "\\[").replace("]", "\\]")
-                links.append(_BareSourceLink(
-                    href, raw_start, raw_end, raw_start, raw_end,
-                    f"[{escaped}](source:{href})",
-                ))
+                links.append(
+                    _BareSourceLink(
+                        href,
+                        raw_start,
+                        raw_end,
+                        raw_start,
+                        raw_end,
+                        f"[{escaped}](source:{href})",
+                    )
+                )
                 return matched
             label_end = state.md.helpers.parseLinkLabel(state, start, True)
             position = label_end + 1
@@ -200,7 +226,11 @@ def _bare_source_links(markdown: str, keys: Collection[str]) -> tuple[_BareSourc
             while position < end and (isStrSpace(fragment[position]) or fragment[position] == "\n"):
                 position += 1
             destination = state.md.helpers.parseLinkDestination(fragment, position, maximum)
-            if destination.ok and destination.pos < end and state.md.normalizeLink(destination.str) == href:
+            if (
+                destination.ok
+                and destination.pos < end
+                and state.md.normalizeLink(destination.str) == href
+            ):
                 point = position + int(fragment[position] == "<")
                 offset = positions[point]
                 links.append(_BareSourceLink(href, raw_start, raw_end, offset, offset, "source:"))
@@ -216,16 +246,20 @@ def normalize_source_links(
     markdown: str, keys: Collection[str], *, preserve: str | None = None
 ) -> NormalizedCitations:
     """Qualify exact known source destinations in generated text, preserving existing links."""
-    inherited: set[tuple[str, str]] = {
-        (link.key, preserve[link.start : link.end])
-        for link in _bare_source_links(preserve, keys)
-    } if preserve is not None else set()
+    inherited: set[tuple[str, str]] = (
+        {(link.key, preserve[link.start : link.end]) for link in _bare_source_links(preserve, keys)}
+        if preserve is not None
+        else set()
+    )
     repairs = tuple(
-        link for link in _bare_source_links(markdown, keys)
+        link
+        for link in _bare_source_links(markdown, keys)
         if (link.key, markdown[link.start : link.end]) not in inherited
     )
     for repair in sorted(repairs, key=lambda item: item.replace_start, reverse=True):
-        markdown = markdown[: repair.replace_start] + repair.replacement + markdown[repair.replace_end :]
+        markdown = (
+            markdown[: repair.replace_start] + repair.replacement + markdown[repair.replace_end :]
+        )
     return NormalizedCitations(markdown, tuple(repair.key for repair in repairs))
 
 

@@ -43,6 +43,7 @@ from .contracts import (
     PlannedPart,
     PreparedBatch,
     PreparedSource,
+    SourceContext,
     TextMapping,
     TextRepresentation,
 )
@@ -656,6 +657,65 @@ class MediaPreparer:
             batches.append(tuple(pending))
         return tuple(batches)
 
+    @staticmethod
+    def _with_source_context(plan: MediaPlan, info: dict[str, JsonValue]) -> MediaPlan:
+        """Keep known original extents with each exact representation sent to a model."""
+        kind = cast(str, info["kind"])
+
+        def number(value: JsonValue | None) -> int | None:
+            return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+        batches: list[PreparedBatch] = []
+        for batch in plan.batches:
+            sources: list[PreparedSource] = []
+            for source in batch.sources:
+                selections: list[SourceSelection] = []
+                if source.group is not None:
+                    for part in source.group.parts:
+                        selections.extend(
+                            origin.origin.selection
+                            for origin in part.origins
+                            if origin.origin.artifact == plan.artifact.ref
+                        )
+                        if part.content.artifact == plan.artifact.ref:
+                            selections.append(part.content.selection)
+                if not selections:
+                    selections.append(batch.selection)
+                actual = tuple(
+                    dict.fromkeys(
+                        plan.selection if item.is_whole and not plan.selection.is_whole else item
+                        for item in selections
+                    )
+                )
+                audio = plan.coverage.get("audio")
+                context = SourceContext.model_validate(
+                    {
+                        "kind": kind,
+                        "selections": actual,
+                        "duration_ms": number(info.get("duration_ms")),
+                        "page_count": number(info.get("pages")),
+                        "byte_length": number(info.get("byte_length")),
+                        "frame_count": number(info.get("frames")),
+                        "width": number(source.metadata.get("source_width", info.get("width"))),
+                        "height": number(source.metadata.get("source_height", info.get("height"))),
+                        "audio": audio
+                        if isinstance(audio, str)
+                        and audio in {"included", "excluded", "absent", "processed"}
+                        else None,
+                    }
+                )
+                sources.append(
+                    replace(
+                        source,
+                        metadata={
+                            **source.metadata,
+                            "source_context": context.model_dump(mode="json", exclude_none=True),
+                        },
+                    )
+                )
+            batches.append(replace(batch, sources=tuple(sources)))
+        return replace(plan, batches=tuple(batches))
+
     async def prepare(
         self,
         artifact: Artifact | ArtifactRef | str,
@@ -691,13 +751,16 @@ class MediaPreparer:
         kind = str(info["kind"])
         _validate_selection_bounds(info, selected)
         if kind == "text":
-            return await self._text(original, selected, settings)
+            return self._with_source_context(await self._text(original, selected, settings), info)
         mime = str(info["media_type"])
         # Actual identified MIME follows identity references through materialization.
         original = original.model_copy(update={"media_type": mime})
         if kind == "video" and any(value.startswith("video/") for value in requirements):
-            return self._plan_native_video(
-                original, selected, settings, info, requirements, without_audio
+            return self._with_source_context(
+                self._plan_native_video(
+                    original, selected, settings, info, requirements, without_audio
+                ),
+                info,
             )
         selections: list[SourceSelection] = []
         if kind == "pdf":
@@ -826,11 +889,18 @@ class MediaPreparer:
                 "selection": part_selection.model_dump(mode="json"),
             }
             batches.append(PreparedBatch((), (), part_selection, coverage, conversion=recipe))
-        return MediaPlan(
-            original,
-            selected,
-            tuple(batches),
-            {"kind": kind, "selection": selected.model_dump(mode="json"), "batches": len(batches)},
+        return self._with_source_context(
+            MediaPlan(
+                original,
+                selected,
+                tuple(batches),
+                {
+                    "kind": kind,
+                    "selection": selected.model_dump(mode="json"),
+                    "batches": len(batches),
+                },
+            ),
+            info,
         )
 
     @staticmethod
@@ -887,22 +957,24 @@ class MediaPreparer:
             kind = cast(str, info["kind"])
             _validate_selection_bounds(info, selected)
             if kind == "text":
-                return await self._text(original, selected, settings)
-            if kind == "image":
-                return await self._images(original, selected, settings, path, info, requirements)
-            if kind == "pdf":
-                return await self._pdf(
+                plan = await self._text(original, selected, settings)
+            elif kind == "image":
+                plan = await self._images(original, selected, settings, path, info, requirements)
+            elif kind == "pdf":
+                plan = await self._pdf(
                     original, selected, settings, path, info, requirements, document_mode
                 )
-            return await self._av(
-                original,
-                selected,
-                settings,
-                path,
-                info,
-                requirements,
-                without_audio,
-            )
+            else:
+                plan = await self._av(
+                    original,
+                    selected,
+                    settings,
+                    path,
+                    info,
+                    requirements,
+                    without_audio,
+                )
+            return self._with_source_context(plan, info)
 
     async def _text(
         self, original: Artifact, selection: SourceSelection, settings: MediaConfig

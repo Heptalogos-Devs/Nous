@@ -4,8 +4,94 @@ contract_id = "journal-reflect"
 title = "跨篇形成新理解"
 purpose = "围绕新主题阅读既有 Journal，另写反思文章，不修改来源文稿。"
 consumers = ["writing.reflect"]
-input_notes = "旧文稿以精确版本给出；每份的内部来源键属于原文，引用使用本次提供键。"
-output_notes = "返回 Markdown；采用与正式版本处理由程序完成。"
+input_notes = '''
+question 是必填的非空反思主题；
+instructions 包含 Author、Viewpoint 和来源目录的使用说明。
+反思至少需要一篇选定的 Journal。
+J1、J2 等槽对应本次选定的 Journal；
+N 槽对应额外材料。
+旧文内部的 source 链接属于旧文目录，本篇引用使用本次展示的完整 J/N 键。
+
+`question` 和 `instructions` 为字符串，缺省为空；各任务入口的必填要求见上文。
+`sources` 是按请求顺序排列的列表，每项有 `key`、`name` 和 `text`（文字或 null）。
+模板变量不包含媒体字节。本资源的 user 模板使用 question 和 instructions；
+`append_sources = true` 随后把带键来源和附件按顺序附加到该 user 消息。
+
+### 一次假设请求
+
+模板可读取的值：
+
+`question`：
+
+```text
+练习时如何根据实际情况调整
+```
+
+`instructions`：
+
+```text
+Author: 记录者
+Viewpoint: 观察不同练习方式
+Write a new Journal. Source documents and their internal source: directories remain in their own namespaces; cite only actual J/N groups provided here.
+```
+
+`sources`：
+
+```json
+[
+  {
+    "key": "J1:C1",
+    "name": "厨房练习.md",
+    "text": "周鸣练习煎饼时先调小火候，再观察面糊变化。"
+  },
+  {
+    "key": "J2:C1",
+    "name": "合唱练习.md",
+    "text": "沈澄练习合唱时先放慢速度，再逐渐加快。"
+  }
+]
+```
+
+模型收到的 user 消息示例：
+
+```text
+# 本次目标
+练习时如何根据实际情况调整
+
+
+# 输入说明与意图
+Author: 记录者
+Viewpoint: 观察不同练习方式
+Write a new Journal. Source documents and their internal source: directories remain in their own namespaces; cite only actual J/N groups provided here.
+
+
+[J1:C1] 厨房练习.md
+材料用途：参考材料。
+周鸣练习煎饼时先调小火候，再观察面糊变化。
+
+[J2:C1] 合唱练习.md
+材料用途：参考材料。
+沈澄练习合唱时先放慢速度，再逐渐加快。
+```
+'''
+output_notes = '''
+模型返回新篇 Markdown，讲清各主体及其经历，在使用的位置引用本次 J/N 来源。
+结果先保存为草稿；
+采用后创建新 Journal，原有文稿保持不变。
+
+### 对应该请求的输出示例
+
+```markdown
+# 在练习中调整
+
+周鸣练习煎饼时[先调小火候并观察面糊](source:J1:C1)；
+沈澄练习合唱时[先放慢速度，再逐渐加快](source:J2:C1)。
+
+两人的调整面向不同的过程，却都给观察和继续练习留出了空间。
+```
+
+没有值得成篇的内容时，模型只返回 `!NO_MATERIAL!`。
+'''
 
 [[messages]]
 role = "system"

@@ -6,6 +6,8 @@
 
 [架构](ARCHITECTURE.md)定义所有权、数据和依赖方向；[当前工作](CURRENT.md)区分已有能力与正在建设的能力。源码位置由 `src/nous/INDEX.md` 维护。开发发现结构不足时直接修改定义者与所有实际消费者。
 
+模型任务设计、输入准备和输出判断遵循 [LLM 使用与提示词设计](agents/llm-use.md)。
+
 公共服务的调用契约写在对应模块、类和方法的 docstring 中，写法见 [Python 文档规范](agents/docstring-std.md)。先通过[源码索引](../src/nous/INDEX.md)定位服务，再查看其输入、结果、资源归属和错误恢复说明；设计专题说明跨模块规则。
 
 ## 专题导航

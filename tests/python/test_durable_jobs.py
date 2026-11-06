@@ -2,11 +2,13 @@
 
 import asyncio
 import concurrent.futures
+import logging
 import sqlite3
 from pathlib import Path
 from uuid import uuid4
 
 import pytest
+from dbos import DBOS
 
 from nous.common.errors import NousError
 from nous.configuration.definitions import (
@@ -215,6 +217,43 @@ def test_job_client_controls_active_host_without_another_instance_lock(tmp_path:
                 assert values == () and cursor is None
 
     asyncio.run(scenario())
+
+
+def test_worker_refuses_an_existing_dbos_without_stopping_it(tmp_path: Path) -> None:
+    instance = tmp_path / "instance"
+    asyncio.run(initialize_instance(instance, environment={}))
+
+    @DBOS.workflow()
+    def external_work(value: int) -> int:
+        return value + 1
+
+    DBOS(
+        config={
+            "name": "external",
+            "system_database_url": f"sqlite:///{(tmp_path / 'external.sqlite').as_posix()}",
+            "enable_otlp": False,
+        }
+    )
+
+    async def check_conflict() -> None:
+        async with open_instance(instance, environment={}, workers=False):
+            pass
+        logger = logging.getLogger("dbos")
+        before = (tuple(logger.handlers), logger.propagate, logger.level)
+        with pytest.raises(NousError) as rejected:
+            async with open_instance(instance, environment={}, workers=True):
+                pass
+        assert rejected.value.code == "job.host_in_use"
+        assert (tuple(logger.handlers), logger.propagate, logger.level) == before
+
+    try:
+        asyncio.run(check_conflict())
+        DBOS.launch()
+        assert DBOS.start_workflow(external_work, 1).get_result() == 2
+        asyncio.run(check_conflict())
+        assert DBOS.start_workflow(external_work, 2).get_result() == 3
+    finally:
+        DBOS.destroy()
 
 
 def test_existing_obsolete_business_schema_is_rejected_before_job_migration(tmp_path: Path) -> None:

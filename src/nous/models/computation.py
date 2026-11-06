@@ -14,12 +14,13 @@ from nous.media.contracts import PreparedSource
 from nous.models.configuration import (
     ModelConfig,
     ModelExecutionConfig,
+    ModelRoute,
     PresetConfig,
     TaskAssignment,
 )
 
 from .contracts import GenerationResult, ReadingInput
-from .executor import FrozenTask, ModelRoute
+from .executor import FrozenTask
 from .prompts import PromptManifest, PromptResource
 
 if TYPE_CHECKING:

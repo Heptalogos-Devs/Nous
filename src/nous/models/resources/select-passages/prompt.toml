@@ -4,14 +4,98 @@ contract_id = "passage-selection"
 title = "选择原文片段"
 purpose = "选择能回答本次问题的精确来源片段。"
 consumers = ["GenerationOperations"]
-input_notes = "本次问题与准备后的来源组。"
-output_notes = "返回 PassageSelection Schema；output 保存结果，passages 保存精确片段与引用。"
+input_notes = '''
+question 是选段问题，instructions 是补充要求；
+来源标题中的完整键标识可选片段。
+同一来源可有多个片段，每个片段均以自己的键和内容出现。
+
+`question` 和 `instructions` 为字符串，缺省为空；各任务入口的必填要求见上文。
+`sources` 是按请求顺序排列的列表，每项有 `key`、`name` 和 `text`（文字或 null）。
+模板变量不包含媒体字节。本资源的 user 模板使用 question 和 instructions；
+`append_sources = true` 随后把带键来源和附件按顺序附加到该 user 消息。
+
+### 一次假设请求
+
+模板可读取的值：
+
+`question`：
+
+```text
+图书室开放时间发生了什么变化？
+```
+
+`instructions`：
+
+```text
+保留原计划和后续变化。
+```
+
+`sources`：
+
+```json
+[
+  {
+    "key": "S1:C1",
+    "name": "通知.md",
+    "text": "社区图书室原定六月开放。"
+  },
+  {
+    "key": "S1:C2",
+    "name": "通知.md",
+    "text": "开放时间推迟到九月。"
+  },
+  {
+    "key": "S1:C3",
+    "name": "通知.md",
+    "text": "图书室将设置阅读桌。"
+  }
+]
+```
+
+模型收到的 user 消息示例：
+
+```text
+# 问题
+图书室开放时间发生了什么变化？
+
+保留原计划和后续变化。
+
+候选段落如下。
+
+[S1:C1] 通知.md
+社区图书室原定六月开放。
+
+[S1:C2] 通知.md
+开放时间推迟到九月。
+
+[S1:C3] 通知.md
+图书室将设置阅读桌。
+```
+'''
+output_notes = '''
+模型返回只包含必填字段 `keys` 的 JSON 对象，`keys` 是完整片段键组成的字符串数组，按阅读顺序列出所选内容。
+键必须来自本次输入；
+系统去重并据此保存精确原文引用。
+
+### 对应该请求的输出示例
+
+```json
+{
+  "keys": [
+    "S1:C1",
+    "S1:C2"
+  ]
+}
+```
+
+没有相关片段时返回 `{"keys":[]}`。
+'''
 [[messages]]
-description = "稳定任务规则、输出要求与固定假设示例。"
+description = "选段目标、前提和返回来源键的要求。"
 role = "system"
 template = "system.md.j2"
 [[messages]]
-description = "本次问题、要求与真实来源；append_sources 保留文本和媒体顺序。"
+description = "查询问题和补充要求，之后附加带键的来源片段。"
 role = "user"
 template = "user.md.j2"
 append_sources = true

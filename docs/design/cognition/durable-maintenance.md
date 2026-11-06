@@ -18,6 +18,8 @@ RecordOutcome 增加 `jobs: tuple[JobRef, ...]`；每个 StageOutcome 可携带�
 
 自动维护只在实际写入/视图变化时建立必要工作。unchanged 返回不重复排队；调用者明确请求再次标注时可通过 maintenance 操作创建新请求，不伪造新的正文修订。
 
+保存前按正式正文差异、召回成员状态和显式请求决定是否准备标注；写事务重新核对版本与相关成员状态。自动标注不适用时无需模型配置。请求的维护准备不可用时，正文可以提交并返回具体的 partial 阶段；事务中已经请求的队列登记失败则回滚整个写入。
+
 ## 两个独立工作
 
 `AnnotationJobRequest`：instance/namespace ref、exact body revision、冻结 annotation recipe 引用、发起关联、采用政策和是否在成功激活后刷新。
@@ -67,6 +69,8 @@ RecordOperations 通过一个明确维护协作者完成 prepare-before-write、
 prepare、生成、采用、刷新用命名步骤分开，步骤返回只含可序列化值。已记录步骤恢复时返回原结果。业务提交与 DBOS checkpoint 之间的窗口由业务幂等键吸收。瞬时 storage.busy 可在幂等数据库阶段按有限策略重试，逻辑冲突、来源错误和模型配置错误直接给出失败原因。显式 `ERROR` 后续重试参见 [Job 操作](../interfaces/jobs-and-host.md)，通过新的 fork Job 执行，从实际失败步骤接续，保留旧工作错误与已采用产物。
 
 用户 `resume` 只用于支持恢复的非 ERROR 状态，沿用原 JobRef 和已记录步骤，不能自动改用当前新 Prompt。要使用新模型/模板重新维护，创建明确的新请求。`ERROR` 重试通过独立 JobRef 和 `forked_from` 关系表达，不覆盖既有工作结果。Job result 的 related_jobs 只表示真实后续工作；`wait` 默认等待本项，调用者可以继续等待这些引用，不把事务入队的独立刷新误当 DBOS child workflow。
+
+`runtime.maintenance.request_annotation(target, namespace=..., task=..., refresh=...)` 为当前修订登记新的明确请求，返回 JobRef；请求固定当时的任务及 Prompt，不创建正文修订。明确请求允许标注不参与召回的 Note；可选 refresh 在标注改变当前召回视图时登记后续刷新。正文在排队或生成期间变化时保留实际阶段结果并报告 superseded。
 
 保存时先验证可确定的维护输入。维护未配置而当前业务允许保存时，按前台操作合同返回正文已保存与维护不可用的真实状态；**已经承诺将入队与正文合成一个 WriteTx 时，SQL 入队失败必须让本次事务整体回滚**。实现不能在某个 except 中吞掉入队错误并返回 queued/pending。自动标注只在本次修订确有召回成员资格和有效前置条件时激活；显式对 `remember=False` Note 的标注是合法的，召回成员资格只影响当前视图与刷新。
 

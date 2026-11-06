@@ -14,7 +14,7 @@
 - 每项提供 target、action、before、after；
 - replace 的 before 是目标范围内唯一的原句，after 是替换内容；空 after 表示删除；
 - insert_before 和 insert_after 的 before 是唯一原文锚，after 是插入内容；
-- 所有变更都针对同一原稿；不输出全文或改动位置编号。
+- 所有变更都针对同一原稿，只返回 edits 中需要替换或插入的文字。
 
 ## 假设示例
 
@@ -34,4 +34,4 @@
 
 ## 输出
 
-仅返回符合输出 Schema 的 edits。没有可应用的修改时返回空 edits；无法在允许范围内定位的内容不自行扩大范围。
+仅返回符合输出 Schema 的 edits。没有可应用的修改时返回空 edits；修改范围以本次允许的范围为准。

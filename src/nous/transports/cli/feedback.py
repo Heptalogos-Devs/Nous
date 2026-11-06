@@ -23,8 +23,10 @@ def _show(ctx: typer.Context, feedback: FeedbackView) -> None:
         emit(ctx, feedback.model_dump(mode="json"))
         return
     language = language_for(options(ctx))
+
     def tr(message: str) -> str:
         return translate(message, language)
+
     typer.echo(f"{tr('Feedback')}: {feedback.identifier}")
     if feedback.target.revision is not None:
         typer.echo(f"{tr('Target')}: {feedback.target.revision.identifier}")
@@ -39,7 +41,11 @@ def _show(ctx: typer.Context, feedback: FeedbackView) -> None:
     if resolution is None:
         typer.echo(f"{tr('Status')}: {tr('Unresolved')}")
     else:
-        labels = {"acknowledged": "Acknowledged", "not_applied": "Not applied", "applied": "Applied"}
+        labels = {
+            "acknowledged": "Acknowledged",
+            "not_applied": "Not applied",
+            "applied": "Applied",
+        }
         typer.echo(f"{tr('Status')}: {tr(labels[resolution.action])}")
         if resolution.applied_revision:
             typer.echo(f"{tr('Applied revision')}: {resolution.applied_revision.identifier}")
@@ -58,16 +64,24 @@ def record(
     comment: str | None = None,
     author: str | None = None,
     namespace: str | None = None,
-    selection: Annotated[Path | None, typer.Option("--selection", exists=True, dir_okay=False)] = None,
-    query_result: Annotated[Path | None, typer.Option("--query-result", exists=True, dir_okay=False)] = None,
+    selection: Annotated[
+        Path | None, typer.Option("--selection", exists=True, dir_okay=False)
+    ] = None,
+    query_result: Annotated[
+        Path | None, typer.Option("--query-result", exists=True, dir_okay=False)
+    ] = None,
     candidate: str | None = None,
 ) -> None:
     if (ref is None) == (query_result is None):
-        raise NousError("input.invalid_feedback", "Choose an exact record revision or a query result")
+        raise NousError(
+            "input.invalid_feedback", "Choose an exact record revision or a query result"
+        )
     if candidate is not None and query_result is None:
         raise NousError("input.invalid_feedback", "A candidate requires a query result")
     if selection is not None and query_result is not None:
-        raise NousError("input.invalid_feedback", "Choose the delivered candidate from the query result")
+        raise NousError(
+            "input.invalid_feedback", "Choose the delivered candidate from the query result"
+        )
 
     async def run() -> FeedbackView:
         async with open_instance(options(ctx).locator) as runtime:
@@ -76,17 +90,28 @@ def record(
                 result = QueryResult.model_validate_json(query_result.read_bytes())
                 target = None
                 if candidate is not None:
-                    matches = [item for item in result.delivery if item.candidate_ref.key == candidate]
+                    matches = [
+                        item for item in result.delivery if item.candidate_ref.key == candidate
+                    ]
                     if len(matches) != 1:
-                        raise NousError("input.invalid_feedback", "Candidate is not a unique delivered selection")
+                        raise NousError(
+                            "input.invalid_feedback",
+                            "Candidate is not a unique delivered selection",
+                        )
                     target = matches[0]
                 return await cognition.feedback.record_query(
                     result, category, target=target, value=value, comment=comment, author=author
                 )
             assert ref is not None
             return await cognition.feedback.record(
-                ref, category, value=value, comment=comment, author=author,
-                selection=ContentSelection.model_validate_json(selection.read_bytes()) if selection else None,
+                ref,
+                category,
+                value=value,
+                comment=comment,
+                author=author,
+                selection=ContentSelection.model_validate_json(selection.read_bytes())
+                if selection
+                else None,
             )
 
     _show(ctx, run_async(run()))
@@ -116,7 +141,11 @@ def list_feedback(
         async with open_instance(options(ctx).locator) as runtime:
             cognition = await runtime.cognition(namespace)
             return await cognition.feedback.list(
-                target=target, category=category, unresolved_only=unresolved, limit=limit, offset=offset
+                target=target,
+                category=category,
+                unresolved_only=unresolved,
+                limit=limit,
+                offset=offset,
             )
 
     result = run_async(run())

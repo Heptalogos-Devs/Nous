@@ -4,14 +4,103 @@ contract_id = "information-extraction"
 title = "提取信息"
 purpose = "按本次问题从资料提取有来源的信息条目。"
 consumers = ["GenerationOperations"]
-input_notes = "本次问题与准备后的资料；引用只能使用本次来源键。"
-output_notes = "返回实际 ExtractedInformation Schema，source_keys 由程序验证。"
+input_notes = '''
+question 是提取目标，instructions 是补充要求；
+user 消息按顺序附加带完整键的文本或媒体。
+多份来源可分别代表不同主体和观点。
+
+`question` 和 `instructions` 为字符串，缺省为空；各任务入口的必填要求见上文。
+`sources` 是按请求顺序排列的列表，每项有 `key`、`name` 和 `text`（文字或 null）。
+模板变量不包含媒体字节。本资源的 user 模板使用 question 和 instructions；
+`append_sources = true` 随后把带键来源和附件按顺序附加到该 user 消息。
+
+### 一次假设请求
+
+模板可读取的值：
+
+`question`：
+
+```text
+关于春季种树有哪些计划和顾虑？
+```
+
+`instructions`：
+
+```text
+分别记录不同人的想法。
+```
+
+`sources`：
+
+```json
+[
+  {
+    "key": "S1:C1",
+    "name": "计划.md",
+    "text": "周宁打算在春季种树。"
+  },
+  {
+    "key": "S2:C1",
+    "name": "讨论.md",
+    "text": "陈青担心春季降雨不足。"
+  }
+]
+```
+
+模型收到的 user 消息示例：
+
+```text
+# 提取目标
+关于春季种树有哪些计划和顾虑？
+
+分别记录不同人的想法。
+
+请使用下方实际资料。
+
+[S1:C1] 计划.md
+周宁打算在春季种树。
+
+[S2:C1] 讨论.md
+陈青担心春季降雨不足。
+```
+'''
+output_notes = '''
+模型返回 JSON 对象：必填的 `title` 是字符串，`items` 是信息项数组。
+每项必填 `text` 和 `source_keys`，分别为可独立理解的字符串与完整来源键的字符串数组。
+顶层对象和信息项不接受其他字段。
+来源键必须存在于本次输入；
+无相关信息时 items 为空。
+
+### 对应该请求的输出示例
+
+```json
+{
+  "title": "春季种树的计划与顾虑",
+  "items": [
+    {
+      "text": "周宁打算在春季种树。",
+      "source_keys": [
+        "S1:C1"
+      ]
+    },
+    {
+      "text": "陈青担心春季降雨不足。",
+      "source_keys": [
+        "S2:C1"
+      ]
+    }
+  ]
+}
+```
+
+空结果示例：`{"title":"春季种树","items":[]}`。
+'''
 [[messages]]
-description = "稳定任务规则、输出要求与固定假设示例。"
+description = "信息项、来源归属和 JSON 输出要求。"
 role = "system"
 template = "system.md.j2"
 [[messages]]
-description = "本次问题、要求与真实来源；append_sources 保留文本和媒体顺序。"
+description = "提取问题和补充要求，之后附加实际来源。"
 role = "user"
 template = "user.md.j2"
 append_sources = true

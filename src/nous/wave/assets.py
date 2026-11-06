@@ -40,6 +40,7 @@ from .contracts import (
     EvidenceProjection,
     PathStep,
     SnapshotOwner,
+    document_order,
 )
 
 
@@ -193,9 +194,7 @@ async def content_evidence(
     root_artifacts: dict[str, list[ArtifactRef]] = {}
     document_roots: dict[str, tuple[str, ...]] = {}
 
-    def roots(key: str) -> tuple[str, ...]:
-        if key in document_roots:
-            return document_roots[key]
+    for key in document_order(document_values):
         document = documents_by_key[key]
         summary = provenance[accepted[key].id]
         if not summary.complete:
@@ -206,7 +205,9 @@ async def content_evidence(
             )
         if document.derived_from:
             keys = tuple(
-                dict.fromkeys(root for parent in document.derived_from for root in roots(parent))
+                dict.fromkeys(
+                    root for parent in document.derived_from for root in document_roots[parent]
+                )
             )
             actual = {ref.id for ref in summary.support_roots}
             if actual and actual != {accepted[key].id}:
@@ -246,10 +247,6 @@ async def content_evidence(
                 keys_list.append(root)
             keys = tuple(dict.fromkeys(keys_list))
         document_roots[key] = keys
-        return keys
-
-    for key in documents_by_key:
-        roots(key)
     source_documents = tuple(
         key
         for key, document in documents_by_key.items()

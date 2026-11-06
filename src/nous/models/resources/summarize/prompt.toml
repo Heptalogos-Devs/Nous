@@ -4,14 +4,87 @@ contract_id = "reading-summary"
 title = "阅读摘要"
 purpose = "根据本次问题概括资料。"
 consumers = ["GenerationOperations"]
-input_notes = "本次问题、补充要求与准备后的资料。"
-output_notes = "返回文本摘要。"
+input_notes = '''
+question 是摘要关注的问题，instructions 是补充要求；
+多个来源按顺序共同提供。
+来源可能是文字或媒体，同一来源标题旁会出现已知用途和范围。
+
+`question` 和 `instructions` 为字符串，缺省为空；各任务入口的必填要求见上文。
+`sources` 是按请求顺序排列的列表，每项有 `key`、`name` 和 `text`（文字或 null）。
+模板变量不包含媒体字节。本资源的 user 模板使用 question 和 instructions；
+`append_sources = true` 随后把带键来源和附件按顺序附加到该 user 消息。
+
+### 一次假设请求
+
+模板可读取的值：
+
+`question`：
+
+```text
+图书室何时开放？
+```
+
+`instructions`：
+
+```text
+保留时间变更和仍未确定的内容。
+```
+
+`sources`：
+
+```json
+[
+  {
+    "key": "S1:C1",
+    "name": "原计划.md",
+    "text": "社区图书室原定六月开放。"
+  },
+  {
+    "key": "S2:C1",
+    "name": "后续通知.md",
+    "text": "开放时间推迟到九月，具体日期尚未公布。"
+  }
+]
+```
+
+模型收到的 user 消息示例：
+
+```text
+# 本次目标
+图书室何时开放？
+
+保留时间变更和仍未确定的内容。
+
+下方是本次实际资料。
+
+[S1:C1] 原计划.md
+社区图书室原定六月开放。
+
+[S2:C1] 后续通知.md
+开放时间推迟到九月，具体日期尚未公布。
+```
+'''
+output_notes = '''
+模型返回带简洁标题和自然段的 Markdown 文本，按来源保留条件和不确定性。
+系统保存阅读任务输出，它不会自动成为 Journal。
+
+### 对应该请求的输出示例
+
+```markdown
+# 图书室开放时间
+
+社区图书室原定六月开放，后来推迟到九月；
+具体日期尚未公布。
+```
+
+没有可回答问题的内容时，在正文中说明缺少的信息。
+'''
 [[messages]]
-description = "稳定任务规则、输出要求与固定假设示例。"
+description = "摘要任务、观点归属和独立阅读要求。"
 role = "system"
 template = "system.md.j2"
 [[messages]]
-description = "本次问题、要求与真实来源；append_sources 保留文本和媒体顺序。"
+description = "本次摘要问题和补充要求，之后附加实际资料。"
 role = "user"
 template = "user.md.j2"
 append_sources = true

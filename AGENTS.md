@@ -1,72 +1,75 @@
-# Nous 开发指引
+# Nous Development Guide
 
-本文件适用于整个仓库。修改局部内容时，应同时遵循对应目录的 AGENTS.md，如 `src/nous/` 的 [AGENTS.md](src/nous/AGENTS.md)； 任何 Agent 不得在不经过开发者明确许可、要求的情况下修改、移动或删除 AGENTS.md 等此类用于治理 Agent 的文件； AGENTS 文件变动规范：在根目录下创建 Git Patch `AGENTS.proposal.patch` 文件，并及时提醒开发者审阅。不必为提议停下其他不相关工作，Patch 应用后自行删除。
+This file applies to the entire repository. When modifying content in one part of it, you should also follow the `AGENTS.md` of the corresponding directory, such as the [AGENTS.md](src/nous/AGENTS.md) of `src/nous/`. No Agent may modify, move, or delete `AGENTS.md` or other such files used to govern Agents unless the developer has explicitly permitted and requested it. The rule for changes to these files: create a Git patch file `AGENTS.proposal.patch` in the repository root, and promptly remind the developer to review it. There is no need to stop other unrelated work for the proposal. After the patch is applied, delete it yourself.
 
 ## AntiRLHF
 
-开发前必读 [AntiRLHF Charter](docs/agents/antirlhf/CHARTER.md)、[CONSTITUTION](docs/agents/antirlhf/CONSTITUTION.zh-CN.md)，尤其是 GPT 模型。AntiRLHF 是项目所有者自研的模型治理方案，针对局部优化、过度工程、过度测试、无意义兼容，以及用流程代替工程判断的行为。
+Required reading before acting: the [AntiRLHF Charter](docs/agents/antirlhf/CHARTER.md) and the [CONSTITUTION](docs/agents/antirlhf/CONSTITUTION.zh-CN.md), especially for GPT models. AntiRLHF is project owner's model-governance scheme, directed at "Local Defensibility Optimization (LDO)", over-engineering, over-testing, meaningless compatibility, and the behavior of substituting verifying or proving process for *real engineering work*.
 
-将这些要求落实到实际选择：找到问题的责任归属，完成用户需要的使用通路，修改不合适的结构，并清除被替代的实现。不要用额外报告、检查清单或反复声明遵循规范来代替工作。
+Apply these requirements into actual actions and decisions: find where responsibility for the problem lies, complete the usage path the user needs, modify structures that are not appropriate, and clear out the implementations that have been replaced. Do not use extra reports, checklists, or repeated declarations of compliance with the rules as a substitute for the work.
 
-## 项目与当前工作
+## The Project and Current Work
 
-Nous 是独立安装的长期认知服务，面向记忆、知识、来源、时间、检索与认知成长。Python 主应用统一领域操作和正式入口，必要的 Rust PyO3 Native 承担性能热点。
+Nous is an independently installed long-term cognitive service, oriented toward memory, knowledge, sources, time, retrieval, and cognitive growth. The Python main application unifies domain operations and the formal entry points. Necessary Rust PyO3 Native takes on the performance hotspots.
 
-当前运行代码在 `src/nous/`。`legacy/` 是退役的研究材料，不参与运行；需要其中的能力时按现行合同迁入，不恢复整套旧运行栈。
+The code currently running is in `src/nous/`. `legacy/` is retired research material and does not participate in running; when a capability in it is needed, migrate/adapt it in according to the current contract, and do not restore the entire old runtime stack.
 
-按任务阅读相关入口，不必把所有设计和历史讨论全读一遍：
+Read the relevant entries according to the task. There is no need to read all of the designs and historical discussions all the way through:
 
-| 要了解的内容 | 入口 |
+| What to understand | Entry |
 | --- | --- |
-| 当前能力、目标与后续工作 | [docs/CURRENT.md](docs/CURRENT.md) |
-| 所有权、依赖方向与产品边界 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
-| 设计专题、实施计划与文档职责 | [docs/README.md](docs/README.md) |
-| 已有实现、符号及调用方 | [src/nous/INDEX.md](src/nous/INDEX.md) |
-| 安装、运行与产品入口 | [README.md](README.md) |
+| Current capabilities, goals, and subsequent work | [docs/CURRENT.md](docs/CURRENT.md) |
+| Ownership, dependency direction, and product boundaries | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
+| Design topics, implementation plans, and document responsibilities | [docs/README.md](docs/README.md) |
+| Existing implementations, symbols, and callers | [src/nous/INDEX.md](src/nous/INDEX.md) |
+| Installation, running, and product entry points | [README.md](README.md) |
 
-`docs/design/` 定义现行合同，`docs/plans/` 安排具体工作的依赖和交付，`docs/sources/` 保留原始讨论。原始讨论中的提案不能直接当成已批准决定。代码与设计不一致时，结合当前需求判断应修改哪一侧，不以旧实现或旧测试为最终标准。
+`docs/design/` defines the current contract, `docs/plans/` arranges the dependencies and delivery of specific work, and `docs/sources/` retains the original discussions. Proposals in the original discussions cannot be taken directly as approved decisions. When code and design are inconsistent, judge, in conjunction with the current requirements, which side should be modified, and do not take the old implementation or old tests as the final standard.
 
-## 工程选择
+## Engineering Choices & Principles
 
-- 项目仍处原型阶段，暂保持 `v0.1.0`，没有外部使用者，也没有内部兼容或内部版本递增需求。结构、数据形态或框架不合适时，直接替换负责实现，迁移实际生产者、消费者、配置、测试和文档，删除被替代的代码及专属支撑。内部实现不得新增 `v1`／`v2` 等递增标识、版本链、兼容分支或双轨路径，也不为淘汰的内部结构建立旧格式保留或备份迁移机制。用户文稿的业务修订与精确历史引用继续按产品合同保存。
-- 禁止为保住错误结构做局部绕过、包装和重复实现。先判断一个行为、数据或状态应由谁负责，再选择实现位置。现有模块可复用，也可因真实需求重新划分职责、重构。
-- 优先采用已选成熟依赖的正式能力。不要自行重写协议客户端、媒体解析、数据库机制等已有能力，也不要为每个概念机械建立 service、repository、manager 或转发层。
-- 保持供应商中立。LLM 服务经统一网关访问，New API 是可用网关之一；生产代码不为某个外部平台增加特殊业务。按明确协议、能力和任务配置工作，不根据模型名猜测能力。
-- 完成一项能力时，同时处理实际生产者、消费者、配置和用户入口。不要留下只在内部方法或演示代码中成立的功能。
+- The project is still in the prototype stage. For the time being, keep `v0.1.0`. It has no external consumers, and it has no need for internal compatibility or for incrementing internal versions. When a structure, the form/shape of the data, or a framework is not appropriate, directly replace the responsible implementation, migrate the actual producers, consumers, configuration, tests, and documents, and delete the replaced code and the support dedicated to it. Internal implementations must not add incrementing identifiers such as `v1`/`v2`, version chains, compatibility branches, or dual-track paths, and must not establish a mechanism of old-format retention or backup migration for internal structures being eliminated. Business revisions of user manuscripts and precise historical citations continue to be preserved according to the product contract.
+- It is prohibited to make local bypasses, wrappers, and duplicate implementations in order to preserve a wrong/inappropriate structure. First judge who should be responsible for a behavior, a piece of data, or a state; then choose where to implement it. Existing modules may be reused, and, because of a real need, may also have their responsibilities redivided and be refactored.
+- Prefer to adopt the formal capabilities of mature dependencies already chosen. DO NOT rewrite, on your own, existing capabilities such as protocol clients, media parsing, and database mechanisms, and do not mechanically establish a service, repository, manager, or forwarding layer for every concept.
+- Remain vendor-neutral. LLM services are accessed through a unified gateway. "New API" is one usable gateway. Production code does not add special business behavior for a particular external platform. Configure the work according to explicit protocol, capability, and task, and do not guess capabilities from model names.
+- Follow the [LLM usage and prompt guide](docs/agents/llm-use.md) when designing or assessing model calls. Provide the context needed for the task and assess outputs using the information actually available to the model.
+- When completing a capability, also handle the actual producers, consumers, configuration, and user entry points. Do not leave functionality that is valid only in an internal method or in demonstration code.
 
-## 验证
+## Verification
 
-禁止 TDD 和红绿循环。不得添加浅层测试、字段存在性测试，或重复验证依赖库已经负责的行为。除确有保护价值的关键契约、安全细节和独立故障外，优先通过真实用户入口验证完整通路（端到端）；验证错误输入和失败行为不属于为了红绿循环制造失败。
+TDD and red-green cycles are prohibited. Must not add shallow tests, field-existence tests, or repeated verification of behavior that a dependency library already owns. Except for key contracts, security details, and independent failures that actually have protective value, prefer to verify the complete path through the real user entry point (end to end). Verifying wrong input and failure behavior is not manufacturing failures for a red-green cycle.
 
-选择能暴露当前改动问题的验证方式。检查功能结果和失败行为，不以提交数、测试数或测试全绿代替产品判断。说明实际执行的验证和结果，区分模拟与真实外部服务，以及未验证的范围；不将开发报告或远端 CI 当成实际运行的证据。旧测试只保护旧实现时，随旧实现一起删除；仍有价值的使用情境迁到新入口。不要为单次测试给生产代码增加专用导出口、平行实现或搭建额外测试框架。
+Choose a verification method that can expose problems in the current change. Check functional results and failure behavior. DO NOT substitute commit count, test count, or an all-green test run for product judgment. State the verification actually executed and the results; distinguish simulation from real external services, and the scope that was not verified. DO NOT treat a development report or remote CI as evidence.
 
-开发脚手架、临时探针、实验性测试和脚本放在 `temp/`，不得进入 Git。已有正式测试位于 `tests/`。
+When an old test only protects an old implementation, delete it together with the old implementation. Migrate usage situations that still have value to the new entry point. Do not, for tests, add a dedicated export point or a parallel implementation to production code, or set up an extra test framework.
 
-## 维护文档
+Put development scaffolding, temporary probes, experimental tests, and scripts in `temp/`. They must not enter Git. Tests are located in `tests`.
 
-设计、公共契约或职责改变时，原地更新负责专题和源码索引，移除失效说明。同一规则只在一个负责位置定义，其它地方引用，不复制多套版本。
+## Document Maintenance
 
-重要类和方法用注释说明职责、状态边界或不明显的不变量，不逐行复述实现；详见 [docstring-std](docs/agents/docstring-std.md)。
+When design, a public contract, or responsibilities change, update the responsible topic and the source index in place, and remove statements that no longer hold. Define the same rule in only one responsible place; other places cite it and DO NOT copy multiple versions.
 
-`CURRENT.md` 记录当前能力、有效决定和剩余工作，不写成操作日志。不要把每次纠错写成永久禁令，也不要将退役方案、实现过程或自我评审说明留在产品文档、代码注释和用户界面中。
+For important classes and methods, use comments to state responsibilities, state boundaries, or non-obvious invariants, and do not restate the implementation line by line. For the details, see [docstring standard](docs/agents/docstring-std.md).
 
-## 开发环境与命令
+`CURRENT.md` records current capabilities, decisions in effect, and remaining work. DO NOT write it as an operations log or changelog. DO NOT write each correction up as a permanent prohibition, and DO NOT leave retired schemes, the implementation process, or self-review explanations in product documents, code comments, or the UI.
 
-使用 Python 3.14 和 uv。先在仓库根目录设置开发环境，使虚拟环境、下载及缓存位于 `temp/`。
+## Development Environment and Commands
 
-Linux / macOS：
+Use Python 3.14 and uv. First set up the development environment in the repository root, so that the virtual environment, downloads, and caches are located in `temp/`.
+
+Linux / macOS:
 
 ```bash
 source scripts/dev-env.sh
 ```
 
-Windows PowerShell：
+Windows PowerShell:
 
 ```powershell
 . ./scripts/dev-env.ps1
 ```
 
-安装开发依赖与查看入口：
+Install the development dependencies and view the entry points:
 
 ```sh
 uv sync --locked
@@ -74,7 +77,7 @@ uv run --locked nous --help
 uv run --locked nous tools --help
 ```
 
-已有检查命令如下，按改动选择使用，不要求每次小修改机械执行全部命令：
+The check commands are as follows. Choose which to use according to the change. It is not required to mechanically run all of them on every small modification:
 
 ```sh
 uv run --locked pytest tests/python
@@ -83,28 +86,28 @@ uv run --locked ruff format --check src tests/python
 uv run --locked basedpyright
 ```
 
-音视频处理需要 FFmpeg 和 ffprobe。通过 PATH 或 `media.ffmpeg_path`、`media.ffprobe_path` 配置；具体产品命令见 [工具 CLI](docs/design/interfaces/tools-cli.md)。涉及模型资源时阅读 [模型配置示例](docs/examples/models.toml) 和相关设计，不把某次开发机器的网关地址、模型名或凭据写成产品默认值。
+Audio and video processing requires FFmpeg and ffprobe. Configure them through PATH, or through `media.ffmpeg_path` and `media.ffprobe_path`. For the concrete product commands, see the [Tools CLI](docs/design/interfaces/tools-cli.md). When model resources are involved, read the [model configuration example](docs/examples/models.toml) and the related design. Do not write the gateway address, model name, or credentials of a particular development machine as product defaults.
 
-本项目跨平台。除需求本身涉及平台适配外，不将开发机器的绝对路径或特有设置写入项目文档和 Git，不创建长期自启动或后台服务。
+This project is cross-platform. Except where the requirement itself involves platform adaptation, do not write the development machine's absolute paths or its particular settings into project documents or Git, and do not create long-term autostart or background services.
 
-## 临时数据
+## Temporary Data
 
-生成产物、参考仓库、临时工作树、下载、安装和实验脚本统一放在仓库内 `temp/`，不要散落到用户目录或其它位置。已有外部开发工具可继续使用，新增项目临时内容仍遵循此约定。
+Put generated products, reference repositories, worktrees, downloads, installations, and experimental scripts all in `temp/`. Do not scatter them into the user directory or other locations. External development tools that already exist may continue to be used. Newly added temporary project content still follows this convention.
 
-使用 [temp 管理工具](scripts/temp/README.md) 建立目录、查看状态和清理。
+Use the [temp management tool](scripts/temp/README.md) to create directories, view status, and clean up.
 
-## 代码与参考项目检索
+## Code and Reference-Project
 
-### Nous 源码
+### Nous Source Code
 
-定位代码、理解符号和追踪调用关系时，先用 CodeGraph MCP 的 `codegraph_explore`，查询中注明文件、符号或具体问题。也可在项目目录执行：
+When locating code, understanding symbols, and tracing call relationships, first use the CodeGraph MCP's `codegraph_explore`, and specify the file, symbol, or concrete problem in the query. You may also run the following in the project directory:
 
 ```sh
-codegraph explore "<符号或问题>"
+codegraph explore "<symbols or questions>"
 ```
 
-CodeGraph 或索引不可用时，使用文件和符号检索继续定位； 也可选择安装或修复该工具，但需向开发者说明并请求许可。沿命中位置阅读负责模块和真实调用方，不凭搜索摘要决定修改。
+When CodeGraph or the index is unavailable, continue locating by file and symbol search. You may also choose to install or repair that tool, but you need to explain this to the developer and request permission. Along the hit locations, read the responsible module and the real callers. Do not decide the modification only on the basis of a search summary.
 
-### 参考实现
+### Reference Implementations
 
-检索参考实现时阅读 [参考项目检索](docs/agents/reference-code.md)。
+When retrieving reference implementations, read [reference-project retrieval](docs/agents/reference-code.md).

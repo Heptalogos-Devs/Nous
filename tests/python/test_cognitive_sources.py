@@ -1,10 +1,12 @@
 """Current retrieval preserves addressable text without inventing independent witnesses."""
 
 import asyncio
+import json
 import shutil
 import subprocess
 import wave
 from pathlib import Path
+from typing import cast
 
 import pypdfium2 as pdfium
 import pytest
@@ -18,6 +20,46 @@ from nous.cognition.writing.contracts import SourceChanges
 from nous.common.errors import NousError
 from nous.content.contracts import ContentSelection, SourceSelection
 from nous.runtime.bootstrap import initialize_instance, open_instance
+from nous.wave.contracts import WaveQuery
+
+
+def test_deep_source_collection_and_cycle_validation(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        instance = tmp_path / "deep-sources"
+        await initialize_instance(instance, environment={})
+        async with open_instance(instance, environment={}) as runtime:
+            source = tmp_path / "source.md"
+            source.write_text("A recognizable original source.", encoding="utf-8")
+            artifact = (await runtime.artifacts.ingest(source)).ref
+            documents = [
+                {
+                    "key": f"d{index}",
+                    "input": {"artifact": artifact.identifier},
+                    "derived_from": [f"d{index - 1}"] if index else [],
+                }
+                for index in range(1500)
+            ]
+            manifest = tmp_path / "collection.json"
+            data = {
+                "name": "deep sources",
+                "documents": documents,
+                "candidates": [
+                    {"key": "last", "document": "d1499", "content": {"document": "d1499"}}
+                ],
+            }
+            manifest.write_text(json.dumps(data), encoding="utf-8")
+            built = await runtime.wave.build(manifest)
+            snapshot = cast(dict[str, str], built["snapshot"])["identifier"]
+            found = await runtime.wave.query(
+                WaveQuery(snapshot=snapshot, text="recognizable", mode="lexical")
+            )
+            assert len(cast(list[object], found["hits"])) == 1
+            documents[0]["derived_from"] = ["d1499"]
+            manifest.write_text(json.dumps(data), encoding="utf-8")
+            with pytest.raises(ValueError, match="cycle"):
+                await runtime.wave.build(manifest)
+
+    asyncio.run(scenario())
 
 
 def test_media_selections_are_checked_before_formal_writes(tmp_path: Path) -> None:

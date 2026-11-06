@@ -18,6 +18,7 @@ from nous.content.contracts import (
     ContentSelection,
     InputGroup,
     InputPart,
+    InputSpec,
     OutputContent,
     ProcessingResult,
     SourceSelection,
@@ -102,6 +103,9 @@ def test_pdf_preparation_reuses_pages_and_rejects_foreign_coordinates(tmp_path: 
                 data.getvalue(), media_type="application/pdf", display_name="pages.pdf"
             )
             text = await runtime.artifacts.ingest("first line\nsecond line\n")
+            image_data = io.BytesIO()
+            Image.new("RGB", (32, 32), "red").save(image_data, format="PNG")
+            picture = await runtime.artifacts.ingest(image_data.getvalue(), media_type="image/png")
             settings = runtime.configuration.snapshot.values.media
             for artifact, selections in (
                 (
@@ -156,6 +160,37 @@ def test_pdf_preparation_reuses_pages_and_rejects_foreign_coordinates(tmp_path: 
                 with Image.open(io.BytesIO(batch.sources[0].media[0].data)) as image:
                     assert image.width == (90, 120, 150)[number - 1] * 2
             assert len(by_page) == 3 and all(len(refs) == 1 for refs in by_page.values())
+            preview = await runtime.generation.preview(
+                "summarize",
+                [
+                    InputSpec(
+                        kind="artifact",
+                        artifact=original.ref,
+                        role="reference",
+                        selection=SourceSelection(pages=(2,)),
+                    ),
+                    InputSpec(
+                        kind="artifact",
+                        artifact=text.ref,
+                        selection=SourceSelection(start_line=2, end_line=2),
+                    ),
+                    InputSpec(
+                        kind="artifact",
+                        artifact=picture.ref,
+                        role="inspiration",
+                        selection=SourceSelection(crop=(2, 3, 20, 21)),
+                    ),
+                ],
+                runtime.configuration.snapshot,
+            )
+            messages = str(preview["messages"])
+            assert "材料用途：参考材料。" in messages
+            assert "源文档共 3 页。" in messages and "本次提供第 2 页。" in messages
+            assert "本次提供的是源文本的摘录。" in messages
+            assert "材料用途：启发材料。" in messages
+            assert "源图像尺寸为 32 × 32 像素。" in messages
+            assert "源图像像素坐标 (2, 3)–(20, 21) 内的裁剪。" in messages
+            assert "second line" in messages and "first line" not in messages
         async with open_instance(instance, environment={}) as runtime:
             settings = runtime.configuration.snapshot.values.media
             with patch(
@@ -248,6 +283,14 @@ def test_audio_video_reject_coordinates_they_do_not_apply(tmp_path: Path) -> Non
             video_batch = await runtime.media.preparer.materialize(planned_video.batches[0])
             assert video_batch.sources[0].media[0].data.startswith(b"\x89PNG")
             assert video_batch.inputs[0].parts[0].origins[0].origin.selection.start_ms == 0
+            preview = await runtime.generation.preview(
+                "describe-media",
+                [InputSpec(kind="artifact", artifact=video.ref)],
+                runtime.configuration.snapshot,
+            )
+            messages = str(preview["messages"])
+            assert "源视频时长约 1 秒。" in messages
+            assert "本次提供源视频第 0 秒的采样画面。" in messages
 
     asyncio.run(scenario())
 

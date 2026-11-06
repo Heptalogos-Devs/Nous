@@ -4,16 +4,127 @@ contract_id = "journal-edit"
 title = "局部修订文稿"
 purpose = "只提出请求范围内需要改变的文字，范围外正文由程序保留。"
 consumers = ["writing.propose_edit"]
-input_notes = "T 为可改范围，CTX 为只读上下文；旧来源键保持，N 为新增材料。完整 BASE 由程序用于编辑血缘及全文组装，不重复作为模型正文输入。"
-output_notes = "返回 edits；TaskDefinition 解释为完整 Markdown 与 diff。"
+input_notes = '''
+question 是编辑意见；
+需提供意见或反馈，只有反馈时 question 可以为空。
+instructions 列出可编辑目标槽、旧来源目录和可选反馈；
+T 槽是允许修改的正文范围，CTX 槽是只读正文上下文，N 槽是新增材料。
+实际展示键可细分为 T1:C1、CTX2:C1、N1:C1；
+T1 是目标槽键。
+完整 BASE 由程序留存以组合正文，不额外发送给模型。
+
+`question` 和 `instructions` 为字符串，缺省为空；各任务入口的必填要求见上文。
+`sources` 是按请求顺序排列的列表，每项有 `key`、`name` 和 `text`（文字或 null）。
+模板变量不包含媒体字节。本资源的 user 模板使用 question 和 instructions；
+`append_sources = true` 随后把带键来源和附件按顺序附加到该 user 消息。
+
+### 一次假设请求
+
+模板可读取的值：
+
+`question`：
+
+```text
+根据通知将讲座时间改为周日。
+```
+
+`instructions`：
+
+```text
+Editable target slots: T1. CTX sources are read-only.
+Existing citation directory: []
+Preserve existing source links; new source keys are the actual N groups shown below.
+Feedback opinions (not external facts):
+```
+
+`sources`：
+
+```json
+[
+  {
+    "key": "T1:C1",
+    "name": "活动记录.md",
+    "text": "观星讲座原定周六举行。"
+  },
+  {
+    "key": "CTX2:C1",
+    "name": "活动记录.md",
+    "text": "参加者需提前报名。"
+  },
+  {
+    "key": "N1:C1",
+    "name": "时间调整通知.md",
+    "text": "社区通知：观星讲座改在周日举行。"
+  }
+]
+```
+
+模型收到的 user 消息示例：
+
+```text
+# 本次目标
+根据通知将讲座时间改为周日。
+
+
+# 输入说明与意图
+Editable target slots: T1. CTX sources are read-only.
+Existing citation directory: []
+Preserve existing source links; new source keys are the actual N groups shown below.
+Feedback opinions (not external facts):
+
+
+
+[T1:C1] 活动记录.md
+材料用途：可编辑范围。
+本次提供的是源文本的摘录。
+观星讲座原定周六举行。
+
+[CTX2:C1] 活动记录.md
+材料用途：上下文。
+本次提供的是源文本的摘录。
+参加者需提前报名。
+
+[N1:C1] 时间调整通知.md
+材料用途：参考材料。
+社区通知：观星讲座改在周日举行。
+```
+'''
+output_notes = '''
+模型返回只包含必填数组 `edits` 的 JSON 对象。
+每项必填 `target`、`action`、`before`、`after`，不接受其他字段。
+`target` 是非空的本次可编辑 T 槽键或实际片段键；
+`action` 是 `replace`、`insert_before` 或 `insert_after`；
+`before` 是该目标范围内唯一的非空原文或插入锚点，`after` 是替换或插入文本。
+`replace` 的空 `after` 表示删除。
+全部操作都针对同一份原稿；
+修改范围不能重叠，也不能共用插入边界。
+程序检查原文位置，并组合完整 Markdown 与差异。
+
+### 对应该请求的输出示例
+
+```json
+{
+  "edits": [
+    {
+      "target": "T1",
+      "action": "replace",
+      "before": "观星讲座原定周六举行。",
+      "after": "观星讲座改在周日举行[时间调整通知](source:N1:C1)。"
+    }
+  ]
+}
+```
+
+没有修改时返回 `{"edits":[]}`；不要把完整正文或差异当成模型输出。
+'''
 
 [[messages]]
 role = "system"
 template = "system.md.j2"
-description = "稳定任务、边界及固定假设示例。"
+description = "局部编辑目标、JSON 操作和固定假设示例。"
 
 [[messages]]
 role = "user"
 template = "user.md.j2"
 append_sources = true
-description = "本次意图、允许范围及实际材料由程序提供。"
+description = "编辑意见、允许范围、只读上下文和新增来源。"

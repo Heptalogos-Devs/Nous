@@ -4,16 +4,99 @@ contract_id = "journal-rewrite"
 title = "明确的全文重写"
 purpose = "按使用者明确目标重新组织同一份文稿，不默认压缩。"
 consumers = ["writing.rewrite"]
-input_notes = "BASE 为固定旧正文及其来源目录；新材料仍以共同输入键提供。"
-output_notes = "返回 Markdown；采用与正式版本处理由程序完成。"
+input_notes = '''
+question 是必填的非空全文重写目标；
+instructions 给出原稿的来源目录。
+BASE 槽是精确旧正文，实际文本组通常形如 BASE:C1；
+N 槽是新增材料。
+原稿内的 source 链接使用旧目录，新增材料使用本次展示的完整 N 键。
+
+`question` 和 `instructions` 为字符串，缺省为空；各任务入口的必填要求见上文。
+`sources` 是按请求顺序排列的列表，每项有 `key`、`name` 和 `text`（文字或 null）。
+模板变量不包含媒体字节。本资源的 user 模板使用 question 和 instructions；
+`append_sources = true` 随后把带键来源和附件按顺序附加到该 user 消息。
+
+### 一次假设请求
+
+模板可读取的值：
+
+`question`：
+
+```text
+先交代取消，再说明此前的预约。
+```
+
+`instructions`：
+
+```text
+Existing citation directory: [{"key": "S1:C1", "name": "预约记录.md", "usage": "reference"}]
+BASE is the complete frozen draft. Preserve its source keys; new N keys are supplied separately.
+```
+
+`sources`：
+
+```json
+[
+  {
+    "key": "BASE:C1",
+    "name": "画室安排.md",
+    "text": "# 画室安排\n\n我先预约了周六的画室，后来因行程变化取消了预约[预约记录](source:S1:C1)。"
+  },
+  {
+    "key": "N1:C1",
+    "name": "后续安排.md",
+    "text": "我准备另找合适的时间。"
+  }
+]
+```
+
+模型收到的 user 消息示例：
+
+```text
+# 本次目标
+先交代取消，再说明此前的预约。
+
+
+# 输入说明与意图
+Existing citation directory: [{"key": "S1:C1", "name": "预约记录.md", "usage": "reference"}]
+BASE is the complete frozen draft. Preserve its source keys; new N keys are supplied separately.
+
+
+[BASE:C1] 画室安排.md
+材料用途：正文基准。
+# 画室安排
+
+我先预约了周六的画室，后来因行程变化取消了预约[预约记录](source:S1:C1)。
+
+[N1:C1] 后续安排.md
+材料用途：参考材料。
+我准备另找合适的时间。
+```
+'''
+output_notes = '''
+模型返回完整 Markdown 正文，保留仍适用的旧链接；
+使用新增材料时引用其实际完整键。
+程序保存草稿并据此生成与旧正文的差异，采用是另一个明确步骤。
+
+### 对应该请求的输出示例
+
+```markdown
+# 画室安排
+
+因行程变化，我取消了原定周六的画室预约[预约记录](source:S1:C1)。
+我准备另找合适的时间[后续安排](source:N1:C1)。
+```
+
+没有需要改动的内容时返回完整原正文。
+'''
 
 [[messages]]
 role = "system"
 template = "system.md.j2"
-description = "稳定任务、边界及固定假设示例。"
+description = "全文重写、原意与来源保留要求。"
 
 [[messages]]
 role = "user"
 template = "user.md.j2"
 append_sources = true
-description = "本次意图、允许范围及实际材料由程序提供。"
+description = "重写要求、原稿来源目录和实际正文及新增材料。"

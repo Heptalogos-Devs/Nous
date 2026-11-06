@@ -36,7 +36,10 @@ from pydantic_ai.messages import (
 )
 
 from nous.common.errors import NousError
+from nous.media.contracts import PreparedSource, SourceContext
+from nous.presentation import translate
 
+from .configuration import ModelRegistry
 from .contracts import ReadingInput
 from .tasks import TaskCatalog
 
@@ -50,6 +53,131 @@ def _signature(value: object) -> str:
     return hashlib.sha256(
         json.dumps(value, sort_keys=True, ensure_ascii=False).encode()
     ).hexdigest()
+
+
+def _source_context(source: PreparedSource, language: str) -> str:
+    """Render only known source scope and role next to the material the model receives."""
+    lines: list[str] = []
+    roles = {
+        "reference": "Reference material",
+        "current_basis": "Current basis",
+        "inspiration": "Inspiration",
+        "revision_base": "Base text",
+        "edit_target": "Editable text",
+        "context": "Context",
+    }
+    if source.group is not None and source.group.role in roles:
+        role = translate(roles[source.group.role], language)
+        lines.append(translate("Source role: {role}.", language).format(role=role))
+    raw = source.metadata.get("source_context")
+    if raw is None:
+        return "\n".join(lines)
+    try:
+        context = SourceContext.model_validate(raw)
+    except ValidationError as error:
+        raise NousError(
+            "model.invalid_source_context", "Source context is invalid", cause=error
+        ) from error
+
+    def seconds(value: int) -> str:
+        return f"{value / 1000:.3f}".rstrip("0").rstrip(".")
+
+    representations: set[str] = (
+        {part.representation for part in source.group.parts} if source.group else set()
+    )
+    if context.kind in {"audio", "video"}:
+        kind = translate("Video" if context.kind == "video" else "Audio", language)
+        if context.duration_ms is not None:
+            lines.append(
+                translate(
+                    "Source {kind} duration: approximately {duration} seconds.", language
+                ).format(kind=kind, duration=seconds(context.duration_ms))
+            )
+        content = translate(
+            "Transcript"
+            if "transcript" in representations
+            else "Audio"
+            if "audio" in representations or context.kind == "audio"
+            else "Video",
+            language,
+        )
+        for selection in context.selections:
+            start = selection.start_ms if selection.start_ms is not None else 0
+            end = selection.end_ms if selection.end_ms is not None else context.duration_ms
+            if "sampled_frame" in representations:
+                lines.append(
+                    translate(
+                        "Provided frame from the source video at {time} seconds.", language
+                    ).format(time=seconds(start))
+                )
+            elif end is not None:
+                lines.append(
+                    translate(
+                        "Provided {content}: source interval {start}–{end} seconds.", language
+                    ).format(content=content, start=seconds(start), end=seconds(end))
+                )
+            elif selection.start_ms is not None:
+                lines.append(
+                    translate(
+                        "Provided {content} begins at {start} seconds in the source.", language
+                    ).format(content=content, start=seconds(start))
+                )
+        if context.kind == "video" and "native_video" in representations:
+            if context.audio == "excluded":
+                lines.append(translate("The source audio was excluded from the video.", language))
+            elif context.audio == "absent":
+                lines.append(translate("The source video has no audio.", language))
+    elif context.kind == "pdf":
+        if context.page_count is not None:
+            lines.append(
+                translate("Source document has {count} pages.", language).format(
+                    count=context.page_count
+                )
+            )
+        pages = tuple(dict.fromkeys(page for item in context.selections for page in item.pages))
+        if pages:
+            lines.append(
+                translate("Provided pages: {pages}.", language).format(
+                    pages=", ".join(map(str, pages))
+                )
+            )
+    elif context.kind == "image":
+        if (
+            any(selection.crop is not None for selection in context.selections)
+            and context.width is not None
+            and context.height is not None
+        ):
+            lines.append(
+                translate(
+                    "Oriented source image size: {width} × {height} pixels.", language
+                ).format(width=context.width, height=context.height)
+            )
+        for selection in context.selections:
+            if selection.frame is not None and context.frame_count and context.frame_count > 1:
+                lines.append(
+                    translate("Provided frame {frame} of {count} (zero-based).", language).format(
+                        frame=selection.frame, count=context.frame_count
+                    )
+                )
+            if selection.crop is not None:
+                left, top, right, bottom = selection.crop
+                lines.append(
+                    translate(
+                        "Image crop in oriented source pixels: ({left}, {top})–({right}, {bottom}).",
+                        language,
+                    ).format(left=left, top=top, right=right, bottom=bottom)
+                )
+    elif context.kind == "text":
+        for selection in context.selections:
+            start, end = selection.start_byte, selection.end_byte
+            if (
+                start is not None
+                and end is not None
+                and (start != 0 or context.byte_length is None or end != context.byte_length)
+            ):
+                lines.append(translate("Provided text is an excerpt of the source.", language))
+                break
+    return "\n".join(lines)
 
 
 class PromptDocumentation(BaseModel):
@@ -322,17 +450,16 @@ class PromptCatalog:
                 if assignment.prompt != prompt_id:
                     raise NousError("prompt.task_mismatch", f"Task {name} uses another prompt")
                 models: list[JsonValue] = []
-                for model_id in [assignment.model, *(item.model for item in assignment.fallback)]:
-                    model = config.models.get(model_id)
-                    provider = config.providers.get(model.provider) if model else None
+                for route in ModelRegistry().routes(assignment, snapshot):
+                    model = route.model
+                    provider = config.providers.get(model.provider)
                     models.append(
                         {
-                            "id": model_id,
+                            "id": route.model_id,
                             "configuration": model.model_dump(
                                 mode="json", exclude={"compatibility"}
-                            )
-                            if model
-                            else None,
+                            ),
+                            "preset": route.preset.model_dump(mode="json", exclude_none=True),
                             "protocol": provider.protocol if provider else None,
                         }
                     )
@@ -341,6 +468,7 @@ class PromptCatalog:
                         "task": name,
                         "assignment": assignment.model_dump(mode="json"),
                         "models": models,
+                        "execution_limits": config.model_execution.model_dump(mode="json"),
                         "configuration_version": snapshot.version,
                     }
                 )
@@ -435,16 +563,37 @@ class PromptCatalog:
             f"- `{message['role']}` / `{message['template']}`: {message['description']}"
             for message in messages
         )
+        assignments: list[str] = []
+        for configured in context.assignments:
+            assignment = cast(dict[str, JsonValue], configured["assignment"])
+            assignments.append(
+                f"### {configured['task']}\n\n"
+                f"输出模式：`{assignment['output_mode']}`；预设：`{assignment.get('preset') or '默认'}`。"
+            )
+            for index, entry in enumerate(cast(list[dict[str, JsonValue]], configured["models"])):
+                model = cast(dict[str, JsonValue], entry["configuration"])
+                preset = json.dumps(entry["preset"], ensure_ascii=False, sort_keys=True)
+                assignments.append(
+                    f"- {'首选' if index == 0 else '后备'} `{entry['id']}` "
+                    f"({model['model_name']})：协议 `{entry['protocol']}`，"
+                    f"能力 {', '.join(cast(list[str], model['capabilities']))}，"
+                    f"输入格式 {', '.join(cast(list[str], model['input_formats']))}；"
+                    f"预设参数：`{preset}`。"
+                )
+            limits = json.dumps(configured["execution_limits"], ensure_ascii=False, sort_keys=True)
+            assignments.append(f"- 实例执行限制：`{limits}`。")
         (target / "CONTEXT.md").write_text(
             f"# {documentation['title'] or prompt_id}\n\n"
             f"{documentation['purpose']}\n\n"
-            f"Resource: `{prompt_id}`; selected origin: `{resource['origin']}`.\n\n"
-            f"{documentation['input_notes']}\n\n{documentation['output_notes']}\n\n"
-            f"{overview}\n\n"
-            "Generated from prompt.toml, the actual TaskDefinition and effective configuration.\n\n"
-            "[Input contract](input-contract.json) · [Output schema](output-schema.json)\n\n"
-            "This file is regenerated for editing and is not sent to the model.\n\n"
-            "```json\n" + json.dumps(context.to_dict(), ensure_ascii=False, indent=2) + "\n```\n",
+            f"资源：`{prompt_id}`；当前来源：`{resource['origin']}`。\n\n"
+            f"## 模型输入\n\n{documentation['input_notes']}\n\n"
+            f"## 模型输出\n\n{documentation['output_notes']}\n\n"
+            f"## 消息与模板\n\n{overview}\n\n"
+            "## 任务与模型\n\n"
+            + ("\n".join(assignments) if assignments else "当前没有配置使用此提示词的任务。")
+            + "\n\n[输入合同](input-contract.json) · [输出 Schema](output-schema.json)\n\n"
+            "这些说明来自提示词资源、实际任务合同和当前配置，不发送给模型。"
+            "实际媒体与参数请使用预览查看。\n",
             encoding="utf-8",
         )
         return target / "CONTEXT.md"
@@ -540,6 +689,7 @@ class PromptCompiler:
         reading: ReadingInput,
         *,
         schema: dict[str, JsonValue] | None = None,
+        language: str = "zh-CN",
     ) -> CompiledPrompt:
         """Render source values once; the prepared request keeps these messages for execution."""
         resource = self.catalog.get(prompt_id) if isinstance(prompt_id, str) else prompt_id
@@ -567,6 +717,9 @@ class PromptCompiler:
             if item.append_sources:
                 for source in reading.sources:
                     heading = f"\n\n[{source.key}] {source.name}"
+                    context = _source_context(source, language)
+                    if context:
+                        heading += "\n" + context
                     if source.text is not None:
                         heading += "\n" + source.text
                     parts.append(heading)

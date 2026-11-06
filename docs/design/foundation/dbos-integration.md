@@ -10,6 +10,8 @@ DBOS 调度循环与 Nous 业务循环隔离。源码依据及接口细节见[�
 
 Nous Runtime 持有实例锁、业务 asyncio loop、数据库 AsyncEngine、模型 HTTP 客户端、Native Engine、ExecutionManager 和领域服务。DBOS 单例及其同步数据库连接由 jobs/runtime 持有，其异步 workflow 在 DBOS 自己的后台 loop 运行。
 
+启动前检查进程内是否已有 DBOS 单例；已有实例由原宿主继续持有，Nous 报告 `job.host_in_use`。DBOS 3.4 没有公开的单例存在性查询，必要的检查集中在 jobs/runtime。关闭只销毁该 Runtime 实际创建并仍持有的单例。
+
 从没有运行中 asyncio loop 的同步启动上下文调用 DBOS.launch，例如在 `asyncio.to_thread` 的启动函数中调用。这样 3.4 的 BackgroundEventLoop 不会把 Nous loop 采纳为主循环。不要在 Nous loop 内直接调用 DBOS 的异步执行 API；3.4 的内部异步支持会替换所用 loop 的默认 executor，这也是选择隔离的具体原因。
 
 所有真实业务经 [RuntimeBridge](runtime-bridge.md) 回到 Nous loop。桥只认识绑定好的函数和序列化值，业务函数通过构造依赖得到服务。workflow 参数不得包含 Runtime、Connection、Lock、Task、客户端、Pydantic 的可变运行对象或 Native 对象。
@@ -69,7 +71,7 @@ DBOS runtime 和 client 使用一致的 DBOSPortableJSONSerializer；持久 payl
 
 - DBOS 按已注册名字/应用版本恢复未完成的工作；重复执行必须经过业务采用幂等校验。进程退出不是用户 cancel，不能在关闭时把所有持久工作写成 CANCELLED。
 - `DBOSClient.resume_workflow(..., queue_name=原队列)` 只用于允许恢复的取消/超出恢复次数状态；明确传队列可保留原队列并发控制，避免立即执行绕过限制。
-- `ERROR` 的步骤失败不调用 resume 假装恢复。由 Jobs owner 选择公开 `fork_workflow(workflow_id, start_step=实际失败步骤ID, queue_name=原队列)`，产生新的工作 ID 和历史关联，已 checkpoint 的前置步骤继续复用。完成前检查旧任务的冻结参数、原子采用键、原始成功计算描述和版本前置条件；不为“重试”重做已成功的外部模型阶段。
+- `ERROR` 的步骤失败由 Jobs owner 使用公开 fork 从实际失败步骤继续，复用已完成步骤；重试身份和重复请求规则见 [Job 操作](../interfaces/jobs-and-host.md)。
 - 若旧工作本身已与新修订不兼容，报告 superseded 或明确要求新的维护请求，不能通过修改冻结 payload 偷偷重试。
 
 用户 `wait` 是对已提交工作状态的读取，不进入工作执行的并发名额；`cancel` 的 DBOS 状态变更和 Runtime 业务任务实际结束分别报告。跨循环桥的 Future 显示 cancelled 不表示持有的数据库/文件/子进程已可关闭。

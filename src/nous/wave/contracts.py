@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+from graphlib import CycleError, TopologicalSorter
+from heapq import heappop, heappush
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
@@ -109,6 +112,37 @@ class Document(WaveValue):
     derived_from: tuple[str, ...] = ()
     evidence_group: str | None = Field(default=None, min_length=1)
     times: CognitiveTimes | None = None
+
+
+def document_order(documents: Sequence[Document]) -> tuple[str, ...]:
+    """Visit parents first while retaining each document's source order."""
+    parents = {item.key: item.derived_from for item in documents}
+    sorter = TopologicalSorter(parents)
+    try:
+        sorter.prepare()
+    except CycleError as error:
+        raise ValueError("document derivation contains a cycle") from error
+    priority: dict[str, int] = {}
+    pending = list(reversed(parents))
+    while pending:
+        key = pending.pop()
+        if key in priority:
+            continue
+        if key not in parents:
+            raise ValueError(f"document references an unknown parent: {key}")
+        priority[key] = len(priority)
+        pending.extend(reversed(parents[key]))
+    ready: list[tuple[int, str]] = []
+    for key in sorter.get_ready():
+        heappush(ready, (priority[key], key))
+    result: list[str] = []
+    while ready:
+        _, key = heappop(ready)
+        result.append(key)
+        sorter.done(key)
+        for successor in sorter.get_ready():
+            heappush(ready, (priority[successor], successor))
+    return tuple(result)
 
 
 class Concept(WaveValue):
@@ -289,23 +323,7 @@ class CollectionManifest(WaveValue):
                 raise ValueError(f"association {item.key} references an unknown concept")
             if item.support_group not in groups:
                 raise ValueError(f"association {item.key} references an unknown support group")
-        parents = {item.key: item.derived_from for item in self.documents}
-        complete: set[str] = set()
-        visiting: set[str] = set()
-
-        def visit(key: str) -> None:
-            if key in visiting:
-                raise ValueError("document derivation contains a cycle")
-            if key in complete:
-                return
-            visiting.add(key)
-            for parent in parents[key]:
-                visit(parent)
-            visiting.remove(key)
-            complete.add(key)
-
-        for key in parents:
-            visit(key)
+        document_order(self.documents)
         return self
 
 

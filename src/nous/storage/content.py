@@ -355,6 +355,7 @@ class ContentStore:
         The destination must not already exist. A failed copy removes the file
         created by this call when possible; parent directories may remain.
         """
+
         def copy() -> Path:
             destination.parent.mkdir(parents=True, exist_ok=True)
             created = False

@@ -1,6 +1,9 @@
 """Pure provider-neutral resource definitions. Loading never contacts providers."""
 
-from typing import Annotated, Literal
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Annotated, Literal, cast
 
 from pydantic import (
     Field,
@@ -10,8 +13,12 @@ from pydantic import (
     model_validator,
 )
 
+from nous.common.errors import NousError
 from nous.common.values import ResourceId
 from nous.configuration.metadata import ConfigJson, ConfigMap, ConfigModel, ConfigSequence, setting
+
+if TYPE_CHECKING:
+    from nous.configuration import ConfigSnapshot
 
 Capability = Literal[
     "text", "image", "audio", "video", "stream", "structured_output", "tools", "embedding"
@@ -181,6 +188,44 @@ class TaskAssignment(ConfigModel):
         if self.operation == "generation" and self.prompt is None:
             raise ValueError("Generation tasks require a prompt resource")
         return self
+
+
+@dataclass(frozen=True)
+class ModelRoute:
+    """A configured model and its effective task preset."""
+
+    model_id: str
+    model: ModelConfig
+    preset: PresetConfig
+
+
+class ModelRegistry:
+    """Resolve task routes consistently for execution and developer inspection."""
+
+    def routes(
+        self, assignment: TaskAssignment, snapshot: ConfigSnapshot
+    ) -> tuple[ModelRoute, ...]:
+        """Resolve primary and fallback models in configured order from one snapshot."""
+        settings = snapshot.values
+        return tuple(
+            ModelRoute(
+                choice.model,
+                settings.models[choice.model],
+                settings.presets[cast(str, choice.preset or assignment.preset)]
+                if (choice.preset or assignment.preset)
+                else PresetConfig(),
+            )
+            for choice in [assignment, *assignment.fallback]
+        )
+
+    def resolve(
+        self, task: str, snapshot: ConfigSnapshot
+    ) -> tuple[TaskAssignment, tuple[ModelRoute, ...]]:
+        """Resolve a named task and its routes without contacting its providers."""
+        if task not in snapshot.values.tasks:
+            raise NousError("model.task_unconfigured", f"No model assignment for task: {task}")
+        assignment = snapshot.values.tasks[task]
+        return assignment, self.routes(assignment, snapshot)
 
 
 class ModelExecutionConfig(ConfigModel):

@@ -1009,5 +1009,98 @@ msgstr "没有工作"
 msgid "Next page"
 msgstr "下一页"
 
-msgid "Retry created"
-msgstr "已创建重试工作"
+msgid "Retry job"
+msgstr "重试工作"
+
+msgid "A DBOS instance already belongs to this process"
+msgstr "当前进程已有其他宿主持有 DBOS"
+
+msgid "The DBOS worker is no longer owned"
+msgstr "当前运行时已不再持有该 DBOS 工作者"
+
+msgid "Retry identity belongs to another job"
+msgstr "重试工作标识属于其他工作"
+
+msgid "The retry received an unexpected identity"
+msgstr "重试工作获得了不符合预期的标识"
+
+msgid "Recall membership changed while maintenance was prepared"
+msgstr "准备维护期间，文稿的召回状态发生变化"
+
+msgid "Background annotation requires the current revision"
+msgstr "后台标注需要文稿的当前修订"
+
+msgid "Body changed before annotation was queued"
+msgstr "标注入队前，正文已经改变"
+
+msgid "Background annotation generates and adopts a current revision without manual options"
+msgstr "后台标注使用当前修订自动生成和采用提案；人工选项请使用前台标注"
+
+msgid "--refresh requires --background for annotation"
+msgstr "标注的 --refresh 需要同时使用 --background"
+
+msgid "Reference material"
+msgstr "参考材料"
+
+msgid "Current basis"
+msgstr "当前认识依据"
+
+msgid "Inspiration"
+msgstr "启发材料"
+
+msgid "Base text"
+msgstr "正文基准"
+
+msgid "Editable text"
+msgstr "可编辑范围"
+
+msgid "Context"
+msgstr "上下文"
+
+msgid "Source role: {role}."
+msgstr "材料用途：{role}。"
+
+msgid "Video"
+msgstr "视频"
+
+msgid "Audio"
+msgstr "音频"
+
+msgid "Transcript"
+msgstr "转写文本"
+
+msgid "Source {kind} duration: approximately {duration} seconds."
+msgstr "源{kind}时长约 {duration} 秒。"
+
+msgid "Provided frame from the source video at {time} seconds."
+msgstr "本次提供源视频第 {time} 秒的采样画面。"
+
+msgid "Provided {content}: source interval {start}–{end} seconds."
+msgstr "本次提供源文件第 {start}–{end} 秒的{content}。"
+
+msgid "Provided {content} begins at {start} seconds in the source."
+msgstr "本次提供的{content}从源文件第 {start} 秒开始。"
+
+msgid "The source audio was excluded from the video."
+msgstr "提供的视频已移除源音轨。"
+
+msgid "The source video has no audio."
+msgstr "源视频没有音轨。"
+
+msgid "Source document has {count} pages."
+msgstr "源文档共 {count} 页。"
+
+msgid "Provided pages: {pages}."
+msgstr "本次提供第 {pages} 页。"
+
+msgid "Provided frame {frame} of {count} (zero-based)."
+msgstr "本次提供第 {frame} 帧（从 0 开始编号），源图共有 {count} 帧。"
+
+msgid "Image crop in oriented source pixels: ({left}, {top})–({right}, {bottom})."
+msgstr "所提供画面是方向校正后的源图像像素坐标 ({left}, {top})–({right}, {bottom}) 内的裁剪。"
+
+msgid "Oriented source image size: {width} × {height} pixels."
+msgstr "方向校正后的源图像尺寸为 {width} × {height} 像素。"
+
+msgid "Provided text is an excerpt of the source."
+msgstr "本次提供的是源文本的摘录。"

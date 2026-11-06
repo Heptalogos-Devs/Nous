@@ -192,7 +192,9 @@ def test_linux_live_process_references_retain_candidate(checkout: Path, referenc
     assert not held.exists()
 
 
-def test_links_never_escape_and_init_rejects_layout_conflicts(checkout: Path, tmp_path: Path) -> None:
+def test_links_never_escape_and_init_rejects_layout_conflicts(
+    checkout: Path, tmp_path: Path
+) -> None:
     outside = tmp_path / "outside"
     outside.mkdir()
     precious = outside / "precious.png"
@@ -226,7 +228,9 @@ def fake_docker(repo: Path, tmp_path: Path, body: str) -> dict[str, str]:
     return dict(os.environ, PATH=str(binary) + os.pathsep + os.environ["PATH"], CHECKOUT=str(repo))
 
 
-def test_mount_inspection_failure_and_bind_ancestor_are_safe(checkout: Path, tmp_path: Path) -> None:
+def test_mount_inspection_failure_and_bind_ancestor_are_safe(
+    checkout: Path, tmp_path: Path
+) -> None:
     held = write(checkout, "work/job/file")
     env = fake_docker(checkout, tmp_path, "exit 1\n")
     result = invoke(checkout, "clean", "--apply", env=env)
@@ -241,7 +245,9 @@ def test_mount_inspection_failure_and_bind_ancestor_are_safe(checkout: Path, tmp
     assert held.exists() and "bind mount" in result.stdout
 
 
-def test_concurrent_cleanup_is_refused_and_late_changes_are_retained(checkout: Path, tmp_path: Path) -> None:
+def test_concurrent_cleanup_is_refused_and_late_changes_are_retained(
+    checkout: Path, tmp_path: Path
+) -> None:
     sample = write(checkout, "samples/original.pdf", "original")
     with (checkout / "temp/.cleanup.lock").open("w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)

@@ -43,9 +43,9 @@ from nous.common.errors import NousError
 from nous.configuration import ConfigSnapshot
 from nous.media.configuration import MediaConfig
 from nous.models.configuration import (
-    ModelConfig,
     ModelExecutionConfig,
-    PresetConfig,
+    ModelRegistry,
+    ModelRoute,
     TaskAssignment,
 )
 
@@ -66,34 +66,6 @@ from .protocol import CompatibleChatModel
 if TYPE_CHECKING:
     from nous.network import ModelConnections
     from nous.runtime.execution import OperationContext
-
-
-@dataclass(frozen=True)
-class ModelRoute:
-    model_id: str
-    model: ModelConfig
-    preset: PresetConfig
-
-
-class ModelRegistry:
-    def resolve(
-        self, task: str, snapshot: ConfigSnapshot
-    ) -> tuple[TaskAssignment, tuple[ModelRoute, ...]]:
-        """Resolve the entire ordered route from one operation snapshot without network I/O."""
-        settings = snapshot.values
-        if task not in settings.tasks:
-            raise NousError("model.task_unconfigured", f"No model assignment for task: {task}")
-        assignment = settings.tasks[task]
-        return assignment, tuple(
-            ModelRoute(
-                choice.model,
-                settings.models[choice.model],
-                settings.presets[cast(str, choice.preset or assignment.preset)]
-                if (choice.preset or assignment.preset)
-                else PresetConfig(),
-            )
-            for choice in [assignment, *assignment.fallback]
-        )
 
 
 @dataclass(frozen=True)
@@ -243,7 +215,9 @@ class ModelExecutor:
             )
         if schema is not None:
             self._validate_schema(schema)
-        compiled = self.compiler.compile(frozen.resource, reading, schema=schema)
+        compiled = self.compiler.compile(
+            frozen.resource, reading, schema=schema, language=snapshot.values.localization.language
+        )
         structured = compiled.schema is not None
         if structured != (assignment.output_mode != "text"):
             raise NousError(

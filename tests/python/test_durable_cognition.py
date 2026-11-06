@@ -6,6 +6,7 @@ import threading
 from collections.abc import Awaitable, Callable, Mapping
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import Literal
 
 import pytest
 import sqlalchemy as sa
@@ -21,6 +22,8 @@ from nous.cognition.writing.reading import Target
 from nous.common.errors import NousError
 from nous.content.contracts import ContentSelection, ResultRef, SourceSelection
 from nous.content.projections import semantic_text
+from nous.jobs.client import open_job_client
+from nous.jobs.contracts import JobRef
 from nous.runtime.bootstrap import initialize_instance, open_instance
 from nous.storage.database import WriteTx
 
@@ -62,6 +65,50 @@ def test_bound_namespace_and_target_preconditions(tmp_path: Path) -> None:
             updated = await bound.records.replace(first.ref, "changed", expected=1)
             assert updated.record.revision_ref.ordinal == 2
             assert updated.record.namespace.ref == bound.namespace
+
+    asyncio.run(scenario())
+
+
+def test_manual_records_survive_unavailable_background_annotation(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        instance = tmp_path / "manual-without-model"
+        await initialize_instance(instance, environment={})
+        async with open_configuration_operations(instance, environment={}) as config:
+            await config.update(
+                {
+                    "cognition.annotation.on_save": True,
+                    "cognition.maintenance.execution": "background",
+                }
+            )
+        async with open_instance(instance, environment={}) as runtime:
+            cognition = await runtime.cognition()
+            private = await cognition.records.add_note("A private note.", remember=False)
+            assert private.status == "success" and not private.jobs
+            updated = await cognition.records.replace(
+                private.record.revision_ref, "A revised note."
+            )
+            assert updated.status == "success" and not updated.jobs
+            unchanged = await cognition.records.replace(
+                updated.record.revision_ref, "A revised note."
+            )
+            assert unchanged.status == "success" and not unchanged.record.changed
+            requested = await cognition.records.replace(
+                updated.record.revision_ref,
+                "An explicit annotation is requested.",
+                after=AfterWrite(annotation="run", execution="background"),
+            )
+            assert requested.status == "partial" and requested.annotation.state == "failed"
+            assert (await cognition.records.read(requested.record.revision_ref)).body.startswith(
+                "An explicit annotation"
+            )
+            recalled = await cognition.records.add_note("A remembered garden.", remember=True)
+            assert recalled.status == "partial" and recalled.annotation.state == "failed"
+            answer = await cognition.retrieval.query(
+                CognitiveQuery(text="garden", mode="lexical", top_k=5)
+            )
+            assert any(
+                group.revision_ref == recalled.record.revision_ref for group in answer.groups
+            )
 
     asyncio.run(scenario())
 
@@ -340,6 +387,116 @@ def test_annotation_fork_reuses_response_and_committed_adoption(tmp_path: Path) 
             assert superseded.activation_state == "inactive"
             assert not superseded.related_jobs
             assert (await runtime.namespaces.read(namespace)).content_generation == generation
+
+            attempts = 0
+
+            async def fail_twice(plan: dict[str, JsonValue]) -> dict[str, JsonValue]:
+                nonlocal attempts
+                attempts += 1
+                if attempts <= 2:
+                    raise NousError("test.generate", "Temporary annotation failure")
+                return await generate(plan)
+
+            runtime.maintenance.generate_annotation = fail_twice
+            count_before = len(requests)
+            failed = await cognition.records.add_note(
+                "A note with a retried annotation.",
+                after=AfterWrite(annotation="run", execution="background"),
+            )
+            original = failed.jobs[0]
+            with pytest.raises(NousError, match="Temporary annotation failure"):
+                await runtime.jobs.wait(original, timeout=60)
+            first = await runtime.jobs.read(original)
+            assert first.failed_step is not None
+            async with (
+                open_job_client(instance, environment={}) as left,
+                open_job_client(instance, environment={}) as right,
+            ):
+                first_retry, duplicate = await asyncio.gather(
+                    left.retry_failed(original, first.failed_step),
+                    right.retry_failed(original, first.failed_step),
+                )
+                assert first_retry == duplicate
+                with pytest.raises(NousError, match="Temporary annotation failure"):
+                    await runtime.jobs.wait(first_retry, timeout=60)
+                assert await left.retry_failed(original, first.failed_step) == first_retry
+                second = await runtime.jobs.read(first_retry)
+                assert second.failed_step is not None
+                second_retry = await right.retry_failed(first_retry, second.failed_step)
+                assert second_retry != first_retry
+                assert (await runtime.jobs.wait(second_retry, timeout=60)).state == "ready"
+            assert attempts == 3 and len(requests) == count_before + 1
+
+            enqueue = runtime.jobs.enqueue_in
+
+            async def fail_enqueue(
+                tx: WriteTx,
+                *,
+                kind: Literal["annotation", "refresh"],
+                workflow_id: str,
+                payload: dict[str, JsonValue],
+            ) -> JobRef:
+                raise NousError("storage.busy", "Queue registration failed")
+
+            notes_before = await cognition.records.list(kind="note")
+            runtime.jobs.enqueue_in = fail_enqueue
+            try:
+                with pytest.raises(NousError, match="Queue registration failed"):
+                    await cognition.records.add_note(
+                        "A record whose work could not be enqueued.",
+                        remember=True,
+                        after=AfterWrite(annotation="run", execution="background"),
+                    )
+            finally:
+                runtime.jobs.enqueue_in = enqueue
+            assert await cognition.records.list(kind="note") == notes_before
+
+        async with open_instance(instance, environment={}) as runtime:
+            cognition = await runtime.cognition()
+            assert first.failed_step is not None
+            assert await runtime.jobs.retry_failed(original, first.failed_step) == first_retry
+            record = await cognition.records.add_note("A note for explicit maintenance.")
+            count_before = len(requests)
+            earlier = await runtime.maintenance.request_annotation(
+                record.record.revision_ref, namespace=cognition.namespace.id
+            )
+            prompt_dir = runtime.prompts.editable_directory("annotate-concepts")
+            prompt = prompt_dir / "system.md.j2"
+            prompt.write_text(
+                prompt.read_text(encoding="utf-8") + "\n\n<!-- revised task instructions -->\n",
+                encoding="utf-8",
+            )
+            later = await runtime.maintenance.request_annotation(
+                record.record.revision_ref,
+                namespace=cognition.namespace.id,
+                task="annotate-concepts",
+            )
+            stale = await cognition.records.add_note("A note that will change while queued.")
+            stale_job = await runtime.maintenance.request_annotation(
+                stale.record.revision_ref, namespace=cognition.namespace.id
+            )
+            await cognition.records.replace(
+                stale.record.revision_ref,
+                "The note has changed before its annotation starts.",
+                after=AfterWrite(annotation="skip", execution="inline"),
+            )
+            assert earlier != later
+            assert (await runtime.jobs.read(earlier)).status == "ENQUEUED"
+            assert (await runtime.jobs.read(later)).status == "ENQUEUED"
+            assert len(await cognition.records.history(record.record.ref)) == 1
+        async with open_instance(instance, environment={}, workers=True) as runtime:
+            first, second, skipped = await asyncio.gather(
+                runtime.jobs.wait(earlier, timeout=60),
+                runtime.jobs.wait(later, timeout=60),
+                runtime.jobs.wait(stale_job, timeout=60),
+            )
+            assert first.proposal_result and second.proposal_result
+            assert first.state in {"ready", "superseded"}
+            assert second.state in {"ready", "superseded"}
+            assert skipped.state == "superseded" and skipped.proposal_result is None
+            sent = [json.dumps(request) for request in requests[count_before:]]
+            assert len(sent) == 2
+            assert sum("revised task instructions" in request for request in sent) == 1
 
     try:
         asyncio.run(scenario())

@@ -163,9 +163,25 @@ def annotate(
     draft_only: bool = False,
     historical: bool = False,
     task: str | None = None,
+    background: bool = False,
+    refresh: bool = False,
 ):
     if proposal is not None and proposal_result is not None:
         raise NousError("input.conflicting_proposal", "Choose --proposal or --proposal-result")
+    if background and (
+        proposal is not None
+        or proposal_result is not None
+        or known_concept is not None
+        or bindings is not None
+        or draft_only
+        or historical
+    ):
+        raise NousError(
+            "input.unsupported_background_annotation",
+            "Background annotation generates and adopts a current revision without manual options",
+        )
+    if refresh and not background:
+        raise NousError("input.invalid", "--refresh requires --background for annotation")
     candidates: dict[str, ConceptTarget] = {}
     for value in known_concept or ():
         key, separator, target = value.partition("=")
@@ -194,7 +210,12 @@ def annotate(
 
     async def run():
         async with open_instance(options(ctx).locator) as runtime:
-            return await (await runtime.cognition(namespace)).annotations.annotate(
+            cognition = await runtime.cognition(namespace)
+            if background:
+                return await runtime.maintenance.request_annotation(
+                    ref, namespace=cognition.namespace.id, task=task, refresh=refresh
+                )
+            return await cognition.annotations.annotate(
                 ref,
                 namespace=namespace,
                 proposal=manual,
@@ -206,7 +227,21 @@ def annotate(
                 activate_for_current=not historical,
             )
 
-    emit_annotation(ctx, run_async(run()))
+    result = run_async(run())
+    if background:
+        from nous.jobs.contracts import JobRef
+
+        assert isinstance(result, JobRef)
+        if options(ctx).json_mode:
+            typer.echo(result.model_dump_json())
+        else:
+            language = language_for(options(ctx))
+            typer.echo(
+                f"{translate('Queued', language)} · {translate('Job', language)}: {result.workflow_id}"
+            )
+    else:
+        assert isinstance(result, (AnnotationProposalView, AnnotationView))
+        emit_annotation(ctx, result)
 
 
 @annotation_cli.command("read")

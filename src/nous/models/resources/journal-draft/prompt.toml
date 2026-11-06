@@ -4,16 +4,97 @@ contract_id = "journal-draft"
 title = "形成新 Journal"
 purpose = "从材料形成一篇新的 Journal。"
 consumers = ["writing.generation"]
-input_notes = "本次主体、视角、主题、要求与真实来源放在 user。"
-output_notes = "返回 Markdown；无可写材料时精确返回 !NO_MATERIAL!。"
+input_notes = '''
+在新篇写作中，question 是可为空的主题；
+instructions 由 Purpose、Author 和 Viewpoint 组成。
+来源可为文本、图像、音频或视频，按选择顺序共同提供。
+
+`question` 和 `instructions` 为字符串，缺省为空；各任务入口的必填要求见上文。
+`sources` 是按请求顺序排列的列表，每项有 `key`、`name` 和 `text`（文字或 null）。
+模板变量不包含媒体字节。本资源的 user 模板使用 question 和 instructions；
+`append_sources = true` 随后把带键来源和附件按顺序附加到该 user 消息。
+
+### 一次假设请求
+
+模板可读取的值：
+
+`question`：
+
+```text
+社区观星活动
+```
+
+`instructions`：
+
+```text
+Purpose: record
+Author: 组织者
+Viewpoint: 组织者的观察
+```
+
+`sources`：
+
+```json
+[
+  {
+    "key": "S1:C1",
+    "name": "活动笔记.md",
+    "text": "周五晚上，社区成员约好在广场观察月亮。"
+  },
+  {
+    "key": "S2:F0",
+    "name": "广场照片.png",
+    "text": null
+  }
+]
+```
+
+模型收到的 user 消息示例：下面的【附件】是对独立媒体部分的说明，不是实际发送的文字。
+
+```text
+# 主题
+社区观星活动
+
+
+# 写作意图
+Purpose: record
+Author: 组织者
+Viewpoint: 组织者的观察
+
+
+[S1:C1] 活动笔记.md
+材料用途：参考材料。
+周五晚上，社区成员约好在广场观察月亮。
+
+[S2:F0] 广场照片.png
+材料用途：启发材料。
+【image/png 附件；假设画面是一架白色望远镜放在广场上】
+```
+'''
+output_notes = '''
+模型返回完整 Markdown 正文：一级标题与自然段；
+使用的各份来源在相关内容附近给出 `[说明文字](source:完整来源键)`。
+调用方先保存结果和草稿，是否采用取决于请求或用户后续操作。
+
+### 对应该请求的输出示例
+
+```markdown
+# 社区观星活动
+
+周五晚上，社区成员约好到广场观察月亮[观星活动的安排](source:S1:C1)。
+广场上还摆着一架白色望远镜[现场的望远镜](source:S2:F0)。
+```
+
+没有新增内容可成篇时，模型只返回 `!NO_MATERIAL!`。没有来源时调用方可直接返回无材料状态。
+'''
 
 [[messages]]
-description = "稳定任务规则、输出要求与固定假设示例。"
+description = "写作角色、自包含要求、来源链接格式与无材料结果。"
 role = "system"
 template = "system.md.j2"
 
 [[messages]]
-description = "本次问题、要求与真实来源；append_sources 保留文本和媒体顺序。"
+description = "本次主题和写作意图；之后按顺序附加真实来源与媒体。"
 role = "user"
 template = "user.md.j2"
 append_sources = true

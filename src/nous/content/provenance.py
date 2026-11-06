@@ -104,7 +104,9 @@ class ProvenanceReader:
             nodes = (
                 (
                     await tx.connection.execute(
-                        sa.select(walk.c.root, walk.c.node, schema.artifacts.c.identifier).select_from(
+                        sa.select(
+                            walk.c.root, walk.c.node, schema.artifacts.c.identifier
+                        ).select_from(
                             walk.outerjoin(schema.artifacts, schema.artifacts.c.id == walk.c.node)
                         )
                     )
@@ -148,7 +150,9 @@ class ProvenanceReader:
                 raise NousError("content.provenance_missing", "A provenance ancestor is missing")
             object_id = str(row["node"])
             identities[object_id] = ArtifactRef(
-                id=object_id, identifier=str(row["identifier"]), instance_id=self.artifacts.instance_id
+                id=object_id,
+                identifier=str(row["identifier"]),
+                instance_id=self.artifacts.instance_id,
             )
             per_target[str(row["root"])].add(object_id)
         parents: dict[str, set[str]] = {}

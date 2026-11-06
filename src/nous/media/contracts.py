@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
-from pydantic import JsonValue
+from pydantic import Field, JsonValue
 from pydantic_ai.messages import BinaryContent
 
 from nous.common.errors import NousError
@@ -9,6 +9,7 @@ from nous.content.contracts import (
     Artifact,
     ArtifactRef,
     ContentSelection,
+    ContentValue,
     InputGroup,
     ProcessingResult,
     SourceRole,
@@ -19,6 +20,20 @@ from .configuration import MediaConfig
 
 if TYPE_CHECKING:
     from nous.content.text import TextView
+
+
+class SourceContext(ContentValue):
+    """Known extent and actual selections of one prepared source."""
+
+    kind: Literal["text", "image", "pdf", "audio", "video"]
+    selections: tuple[SourceSelection, ...] = ()
+    duration_ms: int | None = Field(default=None, ge=0)
+    page_count: int | None = Field(default=None, ge=0)
+    byte_length: int | None = Field(default=None, ge=0)
+    frame_count: int | None = Field(default=None, ge=0)
+    width: int | None = Field(default=None, ge=0)
+    height: int | None = Field(default=None, ge=0)
+    audio: Literal["included", "excluded", "absent", "processed"] | None = None
 
 
 @dataclass(frozen=True)

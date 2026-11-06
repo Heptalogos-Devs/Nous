@@ -59,12 +59,16 @@ DBOS 的 ENQUEUED/PENDING/SUCCESS/ERROR/CANCELLED 等与业务结果分别呈现
 
 `wait` 的调用超时/取消只停止本次等待，不自动 cancel Job。需要取消工作调用显式 cancel。等待不占用业务执行槽，避免 max_in_flight=1 死锁。`resume` 用于已取消或超过恢复尝试上限的工作，默认通过 `queue_name` 重新入原队列，不绕过队列并发限制。`ERROR` 失败终态使用显式 `retry_failed`，依据公开 `DBOSClient.fork_workflow(workflow_id, start_step, queue_name=原队列)` 从失败步骤产生新的 JobRef，保存 `forked_from` 关系；按实际步骤编号选择，不能从起点盲目重发已成功的模型请求。换新参数/Prompt 用明确的新维护请求。
 
+每个失败工作只有一个重试后继。后继身份由原工作确定，`SetWorkflowID` 与数据库唯一性合并并发控制请求；重复重试返回相同 JobRef。后继再次失败时，使用后继的引用重试。冲突身份须核验其来源和队列，其他数据库错误照常报告。
+
 `retry_failed` 在执行前检查原工作确为适用的失败终态、步骤仍与冻结合同相容、已保存计算结果是否可复用以及是否允许再次调用外部模型。若失败源于来源/版本冲突，返回业务错误或 superseded，而不是通过 fork 重试覆盖新 head。旧 Job 保留原错误，新 Job 返回新工作身份；不显示为原工作已恢复。`rewind_workflow` 会修改原步骤记录，因此本轮不用作普通用户的失败重试入口。进程崩溃后的 DBOS 自动恢复无需用户手动发出 `resume`。
 
 ## CLI
 
 ```sh
 nous journal create --file ./notes.md --background --refresh
+nous journal annotate "jrn(...)@1" --background --task annotate-concepts
+nous note annotate "note(...)@1" --background --refresh
 nous job list
 nous job read JOB
 nous job run --until-idle

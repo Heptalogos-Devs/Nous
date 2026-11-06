@@ -30,7 +30,12 @@ def test_identifier_collision_retry_and_cli_roundtrip(tmp_path: Path) -> None:
             binary_path = tmp_path / "source.bin"
             binary_path.write_bytes(b"\x00\x01\x02")
             binary = await runtime.artifacts.ingest(binary_path)
-            return first.ref.identifier, second.ref.identifier, highest.ref.identifier, binary.ref.identifier
+            return (
+                first.ref.identifier,
+                second.ref.identifier,
+                highest.ref.identifier,
+                binary.ref.identifier,
+            )
 
     first, second, highest, binary = asyncio.run(allocate())
     assert first == "art(port with with with with with)"

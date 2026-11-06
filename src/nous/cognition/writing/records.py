@@ -1,6 +1,7 @@
 """Written Note/Journal owner: immutable bodies, exact sources and short transactions."""
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, TypedDict, cast
 from uuid import uuid4
 
@@ -61,6 +62,19 @@ class RevisionMetadata(TypedDict, total=False):
     author: str | None
     viewpoint: str | None
     times: CognitiveTimes | None
+
+
+@dataclass(frozen=True)
+class PreparedRevision:
+    """A checked exact-base change and the membership observed with it."""
+
+    row: RecordRow
+    previous: RevisionRow
+    namespace: Namespace
+    bindings: tuple[SourceBinding, ...]
+    values: RevisionValues
+    times: CognitiveTimes
+    changed: bool
 
 
 class WrittenRecords:
@@ -446,6 +460,61 @@ class WrittenRecords:
             )
         return row, base, ns
 
+    async def prepare_revision_in(
+        self,
+        tx: ReadTx,
+        target: Target,
+        expected_revision: str | int | RecordRevisionRef | None,
+        body: str,
+        published: PublishedContent,
+        *,
+        namespace: str | None = None,
+        title: str | None = None,
+        purpose: str | None = None,
+        author: str | None = None,
+        viewpoint: str | None = None,
+        sources: Sequence[SourceBinding] | None = None,
+        times: CognitiveTimes | None = None,
+    ) -> PreparedRevision:
+        """Resolve and compare a proposed revision in the caller's consistent view."""
+        row, old, ns = await self.resolve_expected_in(
+            tx, target, expected_revision, namespace, body
+        )
+        bindings = (
+            await self.reader.sources_in(tx, old["id"]) if sources is None else tuple(sources)
+        )
+        resolved_title, title_source = self.resolve_title(
+            title, self.validate_body(body, bindings), old
+        )
+        await self.validate_sources_in(tx, ns, bindings)
+        values: RevisionValues = {
+            "title": resolved_title,
+            "title_source": title_source,
+            "purpose": purpose if purpose is not None else old["purpose"],
+            "author": author if author is not None else old["author"],
+            "viewpoint": viewpoint if viewpoint is not None else old["viewpoint"],
+        }
+        old_blob = await self.artifacts.content.resolve_in(tx, old["body_artifact_id"])
+        previous_times = CognitiveTimes.model_validate(old["cognitive_times"])
+        effective_times = times or previous_times
+        equal_times = effective_times.model_dump(exclude={"recorded"}) == previous_times.model_dump(
+            exclude={"recorded"}
+        )
+        unchanged = (
+            old_blob.digest == published.blob.digest
+            and (
+                values["title"],
+                values["title_source"],
+                values["purpose"],
+                values["author"],
+                values["viewpoint"],
+            )
+            == (old["title"], old["title_source"], old["purpose"], old["author"], old["viewpoint"])
+            and bindings == await self.reader.sources_in(tx, old["id"])
+            and equal_times
+        )
+        return PreparedRevision(row, old, ns, bindings, values, effective_times, not unchanged)
+
     async def append_in(
         self,
         tx: WriteTx,
@@ -473,58 +542,37 @@ class WrittenRecords:
         Corrections also invalidate dependent current-basis relationships. Published
         body bytes are supplied by the caller before opening the transaction.
         """
-        row, old, ns = await self.resolve_expected_in(
-            tx, target, expected_revision, namespace, body
+        prepared = await self.prepare_revision_in(
+            tx,
+            target,
+            expected_revision,
+            body,
+            published,
+            namespace=namespace,
+            title=title,
+            purpose=purpose,
+            author=author,
+            viewpoint=viewpoint,
+            sources=sources,
+            times=times,
         )
-        head = old
-        bindings = (
-            await self.reader.sources_in(tx, old["id"]) if sources is None else tuple(sources)
-        )
-        resolved_title, title_source = self.resolve_title(
-            title, self.validate_body(body, bindings), old
-        )
-        await self.validate_sources_in(tx, ns, bindings)
-        values: RevisionValues = {
-            "title": resolved_title,
-            "title_source": title_source,
-            "purpose": purpose if purpose is not None else old["purpose"],
-            "author": author if author is not None else old["author"],
-            "viewpoint": viewpoint if viewpoint is not None else old["viewpoint"],
-        }
-        old_blob = await self.artifacts.content.resolve_in(tx, old["body_artifact_id"])
-        previous_times = CognitiveTimes.model_validate(old["cognitive_times"])
-        effective_times = times or previous_times
-        equal_times = effective_times.model_dump(exclude={"recorded"}) == previous_times.model_dump(
-            exclude={"recorded"}
-        )
-        if (
-            old_blob.digest == published.blob.digest
-            and (
-                values["title"],
-                values["title_source"],
-                values["purpose"],
-                values["author"],
-                values["viewpoint"],
-            )
-            == (old["title"], old["title_source"], old["purpose"], old["author"], old["viewpoint"])
-            and bindings == await self.reader.sources_in(tx, old["id"])
-            and equal_times
-        ):
+        row, old, ns = prepared.row, prepared.previous, prepared.namespace
+        if not prepared.changed:
             return self.reader.committed(row, old, ns, False)
         now = parse_explicit_time(self.time.clock.utc_now().isoformat())
         assert isinstance(now, Instant)
-        effective_times = effective_times.model_copy(update={"recorded": now.at})
+        effective_times = prepared.times.model_copy(update={"recorded": now.at})
         revision_id = str(uuid4())
         revision = await self._insert_revision_in(
             tx,
             row,
             revision_id,
-            head["ordinal"] + 1,
-            head["id"],
+            old["ordinal"] + 1,
+            old["id"],
             published,
-            **values,
+            **prepared.values,
             times=effective_times,
-            sources=bindings,
+            sources=prepared.bindings,
             change_kind=change_kind,
             reason=reason,
             origin_result_id=origin_result_id,

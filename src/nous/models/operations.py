@@ -32,7 +32,7 @@ from nous.content.contracts import (
 )
 from nous.content.results import ResultStore
 from nous.media.contracts import PreparedBatch, PreparedSource
-from nous.models.configuration import PresetConfig, TaskAssignment
+from nous.models.configuration import ModelRoute, PresetConfig, TaskAssignment
 from nous.runtime.execution import ExecutionManager, OperationContext
 
 from .computation import (
@@ -46,7 +46,7 @@ from .computation import (
     reading_value,
 )
 from .contracts import GenerationResult, ReadingInput
-from .executor import FrozenTask, ModelRoute, PreparedGeneration
+from .executor import FrozenTask, PreparedGeneration
 from .input import InputPlan, RequestGroup, for_route, materialize, plan_inputs
 from .policy import route_unavailable
 
@@ -142,8 +142,10 @@ class GenerationOperations:
             preparer,
         )
 
-    async def freeze_language_task(self, task: str, snapshot: ConfigSnapshot) -> FrozenLanguageTask:
-        frozen = self.executor.freeze(task, snapshot)
+    async def freeze_language_task(
+        self, task: str | FrozenTask, snapshot: ConfigSnapshot
+    ) -> FrozenLanguageTask:
+        frozen = self.executor.freeze(task, snapshot) if isinstance(task, str) else task
         contract = (
             self.executor.compiler.catalog.tasks[
                 frozen.resource.manifest.contract_id
@@ -155,7 +157,7 @@ class GenerationOperations:
         transcription_task = snapshot.values.media.audio.transcription_task
         if (
             transcription_task
-            and transcription_task != task
+            and transcription_task != frozen.task
             and frozen.assignment.operation != "transcription"
         ):
             transcription = self.executor.freeze(transcription_task, snapshot)
@@ -347,7 +349,23 @@ class GenerationOperations:
             frozen = self.executor.freeze(task, snapshot) if isinstance(task, str) else task
             originals = await self._accept(input, texts)
             unavailable: dict[str, JsonValue] = {}
-            for route_index, route in enumerate(frozen.routes):
+            routes = frozen.routes
+            if any(artifact.media_type.startswith("video/") for artifact, _, _, _ in originals):
+                # Prefer an explicitly declared native video route over sampled frames.
+                routes = tuple(
+                    sorted(
+                        routes,
+                        key=lambda item: (
+                            not (
+                                "video" in item.model.capabilities
+                                and any(
+                                    mime.startswith("video/") for mime in item.model.input_formats
+                                )
+                            )
+                        ),
+                    )
+                )
+            for route_index, route in enumerate(routes):
                 try:
                     self.executor.validate_route(frozen, route, snapshot)
                     plan = await plan_inputs(
@@ -366,7 +384,7 @@ class GenerationOperations:
                         else None,
                     )
                     frozen = replace(
-                        frozen, routes=frozen.routes[route_index:], ineligible_routes=unavailable
+                        frozen, routes=routes[route_index:], ineligible_routes=unavailable
                     )
                     break
                 except NousError as error:
@@ -1225,6 +1243,7 @@ class GenerationOperations:
                             resource,
                             ReadingInput(question, instructions, batch.sources),
                             schema=schema,
+                            language=snapshot.values.localization.language,
                         ).to_dict()
                     )
             if len(previews) == 1:

@@ -4,16 +4,136 @@ contract_id = "concept-annotation"
 title = "标注文稿概念"
 purpose = "对完整文稿的精确块提出概念与出现位置。"
 consumers = ["AnnotationOperations"]
-input_notes = "只接收一篇完整不可变正文；来源键为正文块键。"
-output_notes = "返回真实 AnnotationProposal Schema，由程序校验引用并保存 AnnotationSet。"
+input_notes = '''
+输入为一篇完整文稿，按原文顺序附加顶层正文块；
+B1、B2 是本次真实块键。
+自动标注的 question 通常为空，instructions 列出可复用的已有 Concept 候选，每项包括候选键、名称、说明和 aliases；
+候选也可能为空。
+
+`question` 和 `instructions` 为字符串，缺省为空；各任务入口的必填要求见上文。
+`sources` 是按请求顺序排列的列表，每项有 `key`、`name` 和 `text`（文字或 null）。
+模板变量不包含媒体字节。本资源的 user 模板使用 question 和 instructions；
+`append_sources = true` 随后把带键来源和附件按顺序附加到该 user 消息。
+
+### 一次假设请求
+
+模板可读取的值：
+
+`question`：空字符串 `""`。
+
+`instructions`：
+
+```text
+Existing exact Concept candidates; use reuse_key only for these keys:
+C1: 感应照明
+人靠近时触发的照明方式
+aliases: 感应灯
+```
+
+`sources`：
+
+```json
+[
+  {
+    "key": "B1",
+    "name": "社区照明.md",
+    "text": "花园入口的感应灯在人靠近时亮起。"
+  },
+  {
+    "key": "B2",
+    "name": "社区照明.md",
+    "text": "社区每月检查一次感应灯是否正常。"
+  }
+]
+```
+
+模型收到的 user 消息示例：
+
+```text
+# 标注要求
+
+
+
+Existing exact Concept candidates; use reuse_key only for these keys:
+C1: 感应照明
+人靠近时触发的照明方式
+aliases: 感应灯
+
+下面是带局部块键的原文。
+
+[B1] 社区照明.md
+材料用途：正文基准。
+花园入口的感应灯在人靠近时亮起。
+
+[B2] 社区照明.md
+材料用途：正文基准。
+社区每月检查一次感应灯是否正常。
+```
+'''
+output_notes = '''
+模型返回 JSON 对象，必填 `concepts`、`occurrences` 和 `paths` 三个数组；
+对象与各数组项不接受其他字段。
+concepts 中 `key` 是非空局部键，新概念给出非空 `label` 和 `description`；
+复用候选时 `reuse_key` 使用本次候选键，label 和 description 可以省略。
+occurrences 的 `key` 是非空局部键，`concept` 引用概念键，`blocks` 是至少一个真实正文块键。
+paths 的 `key` 是非空局部键，`label` 是路径名称，`occurrences` 是至少一个出现项局部键。
+各数组内的 key 不得重复。
+系统校验并保存提案，正式 Concept 的建立或绑定由采用操作完成。
+
+### 对应该请求的输出示例
+
+```json
+{
+  "concepts": [
+    {
+      "key": "K1",
+      "reuse_key": "C1"
+    },
+    {
+      "key": "K2",
+      "label": "定期检查",
+      "description": "按固定周期检查设备状态"
+    }
+  ],
+  "occurrences": [
+    {
+      "key": "O1",
+      "concept": "K1",
+      "blocks": [
+        "B1"
+      ]
+    },
+    {
+      "key": "O2",
+      "concept": "K2",
+      "blocks": [
+        "B2"
+      ]
+    }
+  ],
+  "paths": [
+    {
+      "key": "P1",
+      "label": "照明与检查",
+      "occurrences": [
+        "O1",
+        "O2"
+      ]
+    }
+  ]
+}
+```
+
+没有适合的内容时可返回 `{"concepts":[],"occurrences":[],"paths":[]}`；没有自然路径时 paths 可以为空。
+'''
 
 [[messages]]
-description = "稳定任务规则、输出要求与固定假设示例。"
+description = "概念、出现项、路径和复用候选的规则。"
 role = "system"
 template = "system.md.j2"
 
 [[messages]]
-description = "本次问题、要求与真实来源；append_sources 保留文本和媒体顺序。"
+description = "候选概念与精确正文块，按原文顺序提供。"
 role = "user"
 template = "user.md.j2"
 append_sources = true

@@ -32,6 +32,8 @@ nous journal archive "jrn(...)@3"
 
 `journal annotate --draft-only` 只产生提案；普通 annotate 按明确候选/新建策略采用。普通 annotate 直接调用 `AnnotationOperations.annotate`，提案、采用和读取已有 proposal-result 在同一根 operation 内完成；`--historical` 由同一方法控制历史版本的激活。无需人工逐个批准概念。高级使用可 `--bindings bindings.json` 指定确切复用映射；普通用户只看到复用/新建的可读概念摘要。
 
+`note annotate "note(...)@N" --background` 和 `journal annotate "jrn(...)@N" --background` 为当前修订发起新的后台标注，返回 Job ID；`--task` 可选择任务，`--refresh` 在标注改变当前召回视图时登记刷新。不参与召回的 Note 也可明确标注。人工提案、指定候选或绑定、`--draft-only` 和 `--historical` 使用前台入口，这些选项不能与 `--background` 合用。
+
 `concept add/read/find/revise` 使用 name/description 与短引用。meaning 改变需要新 revision，更新旧 Journal 绑定须重新标注。普通 query 不要求用户提供概念 ID。
 
 ## 查询与精确读取

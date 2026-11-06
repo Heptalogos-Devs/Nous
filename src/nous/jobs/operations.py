@@ -8,11 +8,13 @@ from collections.abc import AsyncGenerator, Callable, Coroutine
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import Concatenate, Literal, cast
+from uuid import NAMESPACE_URL, uuid5
 
 from dbos import (
     DBOSClient,
     EnqueueOptions,
     PortableWorkflowError,
+    SetWorkflowID,
     WorkflowHandle,
     WorkflowSerializationFormat,
     WorkflowStatus,
@@ -20,6 +22,7 @@ from dbos import (
 from opentelemetry.propagate import inject
 from pydantic import JsonValue
 from sqlalchemy import Connection
+from sqlalchemy.exc import IntegrityError
 
 from nous.common.errors import NousError, failure_code, failure_message
 from nous.common.operations import OperationIssue
@@ -345,7 +348,11 @@ class JobOperations:
 
     @_controlled
     async def retry_failed(self, ref: JobRef, from_step: int) -> JobRef:
-        """Fork an ERROR from its actual failed step, retaining the original job and queue."""
+        """Return the single retry of a failed job, preserving its completed steps and queue.
+
+        Concurrent callers receive the same successor. Retry that successor if it
+        subsequently fails; its predecessor retains the original failure.
+        """
         old = await self._status(ref, load_output=False)
         if old.status != "ERROR":
             raise NousError("job.not_failed", "Only failed jobs can be retried")
@@ -355,17 +362,35 @@ class JobOperations:
         steps = await complete_cleanup(
             asyncio.to_thread(self._client.list_workflow_steps, ref.workflow_id)
         )
-        if not any(
-            step["function_id"] == from_step and step["error"] is not None for step in steps
-        ):
+        failed = next((step for step in reversed(steps) if step["error"] is not None), None)
+        if failed is None or failed["function_id"] != from_step:
             raise NousError("job.invalid_step", "The requested step is not the failed step")
-        handle = await complete_cleanup(
-            asyncio.to_thread(
-                self._client.fork_workflow,
-                ref.workflow_id,
-                from_step,
-                application_version=CONTRACT_VERSION,
-                queue_name=old.queue_name,
-            )
+        retry = JobRef(
+            instance_id=self.instance_id,
+            workflow_id=str(
+                uuid5(NAMESPACE_URL, f"nous:retry:{self.instance_id}:{ref.workflow_id}")
+            ),
         )
-        return JobRef(instance_id=self.instance_id, workflow_id=handle.get_workflow_id())
+
+        def fork() -> str:
+            with SetWorkflowID(retry.workflow_id):
+                handle = self._client.fork_workflow(
+                    ref.workflow_id,
+                    from_step,
+                    application_version=CONTRACT_VERSION,
+                    queue_name=old.queue_name,
+                )
+                return handle.get_workflow_id()
+
+        try:
+            created = await complete_cleanup(asyncio.to_thread(fork))
+        except IntegrityError:
+            existing = await self._status(retry, load_output=False)
+            if existing.forked_from != ref.workflow_id or existing.queue_name != old.queue_name:
+                raise NousError(
+                    "job.retry_conflict", "Retry identity belongs to another job"
+                ) from None
+            return retry
+        if created != retry.workflow_id:
+            raise NousError("job.retry_conflict", "The retry received an unexpected identity")
+        return retry

@@ -25,6 +25,7 @@ from nous.wave.contracts import (
     PathStep,
     SourceSequence,
     SupportGroup,
+    document_order,
 )
 
 from ..concept_contracts import AnnotationView
@@ -101,6 +102,7 @@ def interpretation_contributions(
 
 class ProjectionBuilder:
     """Build Wave projections from a frozen cognitive corpus."""
+
     def __init__(self, results: ResultStore):
         self.results = results
 
@@ -184,14 +186,14 @@ class ProjectionBuilder:
             if summary.support_roots == (ref,) and summary.terminal_roots == (ref,):
                 source_documents.append("artifact:" + object_id)
 
-        def roots(key: str) -> tuple[str, ...]:
+        for key in document_order(documents):
             if key in document_roots:
-                return document_roots[key]
+                continue
             document = document_values[key]
             if document.derived_from:
                 value = tuple(
                     dict.fromkeys(
-                        root for parent in document.derived_from for root in roots(parent)
+                        root for parent in document.derived_from for root in document_roots[parent]
                     )
                 )
             else:
@@ -205,10 +207,6 @@ class ProjectionBuilder:
                     value = (root,)
                     source_documents.append(key)
             document_roots[key] = value
-            return value
-
-        for document in documents:
-            roots(document.key)
         evidence = EvidenceProjection(
             roots=root_refs, documents=document_roots, source_documents=tuple(source_documents)
         )

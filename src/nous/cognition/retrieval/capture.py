@@ -38,6 +38,7 @@ class CapturedCorpus:
 
 class CorpusCapture:
     """Capture retrieval inputs from formal records in a caller-owned read view."""
+
     def __init__(
         self,
         scope: NamespaceOperations,

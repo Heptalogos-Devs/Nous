@@ -10,6 +10,7 @@ from opentelemetry.propagate import inject
 from pydantic import JsonValue, TypeAdapter
 
 from nous.common.errors import NousError
+from nous.common.operations import record_completed
 from nous.jobs.contracts import JobOutcome, JobRef
 from nous.models.embeddings import resolved_space
 from nous.models.operations import GenerationOperations
@@ -24,7 +25,7 @@ from ..retrieval.contracts import Mode
 from ..retrieval.operations import CognitiveRetrieval
 from ..scope import NamespaceOperations
 from ..writing.contracts import AfterWrite, CommittedRecord
-from ..writing.reading import RecordReader
+from ..writing.reading import RecordReader, Target
 
 if TYPE_CHECKING:
     from nous.jobs.operations import JobOperations
@@ -50,6 +51,15 @@ class EnqueuedMaintenance:
     @property
     def jobs(self) -> tuple[JobRef, ...]:
         return tuple(job for job in (self.annotation, self.retrieval) if job is not None)
+
+
+@dataclass(frozen=True)
+class PreparedMaintenance:
+    """Frozen work and any unavailable follow-up stages before a record commit."""
+
+    recipe: JsonObject
+    annotation_error: NousError | None = None
+    retrieval_error: NousError | None = None
 
 
 class MaintenanceOperations:
@@ -79,14 +89,16 @@ class MaintenanceOperations:
             jobs,
         )
 
-    async def prepare_after(self, after: AfterWrite, *, annotate: bool = True) -> JsonObject:
+    async def prepare_after(
+        self, after: AfterWrite, *, annotate: bool = True, task: str | None = None
+    ) -> PreparedMaintenance:
         """Freeze the requested maintenance policy before the owning write commits."""
         settings = self.execution.snapshot.values.cognition
         background = (
             after.execution if after.execution != "default" else settings.maintenance.execution
         ) == "background"
         if not background:
-            return {"background": False}
+            return PreparedMaintenance({"background": False})
         run_annotation = annotate and (
             after.annotation == "run"
             or after.annotation == "default"
@@ -100,10 +112,24 @@ class MaintenanceOperations:
         if not refresh:
             effective_mode = "lexical"
         space = None if effective_mode == "lexical" else settings.search.space
-        if effective_mode != "lexical" and space is None:
-            raise NousError(
-                "cognition.space_required", "This retrieval mode requires an embedding space"
-            )
+        retrieval_error = None
+        build_config: JsonObject = {}
+        space_definition: JsonObject | None = None
+        if refresh:
+            try:
+                if effective_mode != "lexical" and space is None:
+                    raise NousError(
+                        "cognition.space_required",
+                        "This retrieval mode requires an embedding space",
+                    )
+                if space:
+                    space_definition = _json(
+                        resolved_space(self.execution.snapshot, space).model_dump(mode="json")
+                    )
+                build_config = _json(build_profile(self.execution.snapshot))
+            except NousError as error:
+                retrieval_error = error
+                refresh = False
         recipe: JsonObject = {
             "background": background,
             "annotation": run_annotation,
@@ -111,26 +137,108 @@ class MaintenanceOperations:
             "refresh": refresh,
             "mode": effective_mode,
             "space": space,
-            "space_definition": resolved_space(self.execution.snapshot, space).model_dump(
-                mode="json"
-            )
-            if space
-            else None,
+            "space_definition": space_definition,
             "include_review": settings.search.include_review,
             "include_exploration": settings.search.include_exploration,
             "candidate_limit": settings.search.local_candidate_max_bytes,
-            "build_config": _json(build_profile(self.execution.snapshot)),
+            "build_config": build_config,
         }
         carrier: dict[str, str] = {}
         inject(carrier)
         recipe["trace"] = _json(carrier)
-        if background and run_annotation:
-            frozen = await self.generation.freeze_language_task(
-                settings.annotation.task, self.execution.snapshot
+        annotation_error = None
+        if run_annotation:
+            try:
+                selected = self.generation.executor.freeze(
+                    task or settings.annotation.task, self.execution.snapshot
+                )
+                if (
+                    selected.resource is None
+                    or selected.resource.manifest.contract_id != "concept-annotation"
+                ):
+                    raise NousError(
+                        "model.task_contract_mismatch",
+                        "Annotation task uses another output contract",
+                    )
+                frozen = await self.generation.freeze_language_task(
+                    selected, self.execution.snapshot
+                )
+                recipe["frozen_task"] = frozen.descriptor.model_dump(mode="json")
+                recipe["candidate_limit_annotation"] = settings.annotation.known_concept_limit
+            except NousError as error:
+                annotation_error = error
+                recipe["annotation"] = False
+        return PreparedMaintenance(recipe, annotation_error, retrieval_error)
+
+    async def request_annotation(
+        self,
+        target: Target,
+        *,
+        namespace: str | None = None,
+        task: str | None = None,
+        refresh: bool = False,
+    ) -> JobRef:
+        """Enqueue a new annotation for the current revision without changing its body.
+
+        The task and exact revision are frozen for this request. A later request
+        receives its own identity and may use a newer model or prompt. Explicit
+        requests can annotate Notes outside the current recall view.
+
+        Args:
+            target: Record or exact current revision to annotate.
+            namespace: Namespace selector; None uses the configured default.
+            task: Annotation task to freeze; None uses the configured task.
+            refresh: Enqueue a retrieval refresh if activation changes the current view.
+
+        Returns:
+            The committed work reference, which can be read or waited on through jobs.
+
+        Raises:
+            NousError: The target is not current, the selected task cannot be frozen,
+                or queue registration fails.
+        """
+        async with self.execution.operation("maintenance.annotation.request"):
+            async with self.database.read() as tx:
+                row, revision, ns = await self.records.resolve_in(tx, target, namespace)
+                if row["head_revision_id"] != revision["id"]:
+                    raise NousError(
+                        "cognition.annotation_conflict",
+                        "Background annotation requires the current revision",
+                    )
+                exact = self.records.revision_ref(row, revision)
+            prepared = await self.prepare_after(
+                AfterWrite(
+                    annotation="run",
+                    retrieval="refresh" if refresh else "defer",
+                    execution="background",
+                ),
+                task=task,
             )
-            recipe["frozen_task"] = frozen.descriptor.model_dump(mode="json")
-            recipe["candidate_limit_annotation"] = settings.annotation.known_concept_limit
-        return recipe
+            if prepared.annotation_error is not None:
+                raise prepared.annotation_error
+            if prepared.retrieval_error is not None:
+                raise prepared.retrieval_error
+            job_id = str(uuid4())
+            payload: JsonObject = {
+                "job_id": job_id,
+                "namespace_ref": ns.ref.model_dump(mode="json"),
+                "target_revision": exact.model_dump(mode="json"),
+                "recipe": prepared.recipe,
+                "trace": prepared.recipe.get("trace", {}),
+                "automatic": False,
+                "require_current": True,
+            }
+            async with self.database.write() as tx:
+                row, revision, _ = await self.records.resolve_in(tx, exact, ns.id)
+                if row["head_revision_id"] != revision["id"]:
+                    raise NousError(
+                        "cognition.annotation_conflict", "Body changed before annotation was queued"
+                    )
+                job = await self.jobs.enqueue_in(
+                    tx, kind="annotation", workflow_id=job_id, payload=payload
+                )
+            record_completed(job.workflow_id)
+            return job
 
     async def enqueue_in(
         self,
@@ -261,7 +369,10 @@ class MaintenanceOperations:
 
     async def annotate_inline(self, record: CommittedRecord, *, automatic: bool) -> AnnotationView:
         """Execute the same frozen stages synchronously after an inline save."""
-        recipe = await self.prepare_after(AfterWrite(annotation="run", execution="background"))
+        prepared = await self.prepare_after(AfterWrite(annotation="run", execution="background"))
+        if prepared.annotation_error is not None:
+            raise prepared.annotation_error
+        recipe = prepared.recipe
         recipe["refresh"] = False
         payload: JsonObject = {
             "job_id": str(uuid4()),

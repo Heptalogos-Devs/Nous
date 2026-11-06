@@ -4,14 +4,94 @@ contract_id = "custom-reading"
 title = "自定义结构化阅读"
 purpose = "按调用者问题与 JSON Schema 处理资料。"
 consumers = ["GenerationOperations"]
-input_notes = "本次问题、要求与准备后的文字或媒体资料。"
-output_notes = "调用者必须提供 JSON Schema；程序按该 Schema 校验。"
+input_notes = '''
+调用者提供 question、可选 instructions 和本次 JSON Schema；
+文本或媒体按来源组附加。
+Schema 是请求的结构化输出合同，不是模板变量，也不会被插入 system 或 user 正文。
+
+`question` 和 `instructions` 为字符串，缺省为空；各任务入口的必填要求见上文。
+`sources` 是按请求顺序排列的列表，每项有 `key`、`name` 和 `text`（文字或 null）。
+模板变量不包含媒体字节。本资源的 user 模板使用 question 和 instructions；
+`append_sources = true` 随后把带键来源和附件按顺序附加到该 user 消息。
+
+### 一次假设请求
+
+模板可读取的值：
+
+`question`：
+
+```text
+展板的背景是什么颜色？
+```
+
+`instructions`：
+
+```text
+按给定字段返回。
+```
+
+`sources`：
+
+```json
+[
+  {
+    "key": "S1:C1",
+    "name": "展板说明.md",
+    "text": "展板的背景是深蓝色。"
+  }
+]
+```
+
+模型收到的 user 消息示例：
+
+```text
+# 提取目标
+展板的背景是什么颜色？
+
+按给定字段返回。
+
+请使用下方实际资料。
+
+[S1:C1] 展板说明.md
+展板的背景是深蓝色。
+```
+
+同次调用者提供的输出 Schema：
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "color": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "color"
+  ],
+  "additionalProperties": false
+}
+```
+'''
+output_notes = '''
+模型返回符合调用者本次 Schema 的 JSON；
+字段、是否必填以及缺失值的表示由该 Schema 决定。
+本例要求且只允许字符串字段 `color`，系统按调用者的 Schema 校验并保存。
+
+### 对应该请求的输出示例
+
+```json
+{
+  "color": "深蓝色"
+}
+```
+'''
 [[messages]]
-description = "稳定任务规则、输出要求与固定假设示例。"
+description = "按调用者 Schema 处理资料的通用规则。"
 role = "system"
 template = "system.md.j2"
 [[messages]]
-description = "本次问题、要求与真实来源；append_sources 保留文本和媒体顺序。"
+description = "本次问题和要求，之后附加实际文本与媒体来源。"
 role = "user"
 template = "user.md.j2"
 append_sources = true

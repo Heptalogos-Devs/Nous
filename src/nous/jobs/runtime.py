@@ -8,6 +8,7 @@ import threading
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
+import dbos._dbos as dbos_runtime
 from dbos import DBOS, DBOSClient, DBOSConfig, DBOSPortableJSONSerializer
 from sqlalchemy import Engine
 from sqlalchemy.exc import SQLAlchemyError
@@ -23,6 +24,11 @@ from .operations import QUEUES, JobOperations, application_name
 
 _host_lock = threading.Lock()
 _instances: dict[str, NousMaintenance] = {}
+
+
+def _active_dbos() -> DBOS | None:
+    """Inspect the pinned DBOS singleton before claiming or releasing its lifecycle."""
+    return dbos_runtime._dbos_global_instance  # pyright: ignore[reportPrivateUsage]
 
 
 class _SchedulerLogFilter(logging.Filter):
@@ -95,6 +101,7 @@ class JobRuntime:
         self.engine = engine
         self.bridge: RuntimeBridge | None = None
         self.worker_running = False
+        self._dbos: DBOS | None = None
         self._instance: NousMaintenance | None = None
         self._logging_state: tuple[list[logging.Handler], bool, int] | None = None
         self._log_filter = _SchedulerLogFilter()
@@ -121,8 +128,12 @@ class JobRuntime:
                 raise NousError(
                     "job.host_in_use", "A DBOS worker host is already running in this process"
                 )
-            constructed = False
+            owned: DBOS | None = None
             try:
+                if _active_dbos() is not None:
+                    raise NousError(
+                        "job.host_in_use", "A DBOS instance already belongs to this process"
+                    )
                 _register_queues(self._client, self.settings)
                 dbos_logger = logging.getLogger("dbos")
                 self._logging_state = (
@@ -143,8 +154,14 @@ class JobRuntime:
                     "run_migrations": False,
                     "enable_otlp": False,
                 }
-                constructed = True
-                DBOS(config=config)
+                constructed = DBOS(config=config)
+                configured_engine = constructed._config.get("system_database_engine")  # pyright: ignore[reportPrivateUsage]
+                if _active_dbos() is not constructed or configured_engine is not self.engine:
+                    raise NousError(
+                        "job.host_in_use", "A DBOS instance already belongs to this process"
+                    )
+                owned = constructed
+                self._dbos = owned
                 dbos_logger.setLevel(logging.NOTSET)
                 instance = _instances.get(self.operations.instance_id)
                 if instance is None:
@@ -157,9 +174,10 @@ class JobRuntime:
                 self.worker_running = True
             except BaseException:
                 try:
-                    if constructed:
+                    if owned is not None and _active_dbos() is owned:
                         DBOS.destroy()
                 finally:
+                    self._dbos = None
                     if self._instance is not None:
                         self._instance.unbind()
                     self._restore_logging()
@@ -179,8 +197,13 @@ class JobRuntime:
                 self.bridge = None
             if self.worker_running:
                 try:
+                    if self._dbos is None or _active_dbos() is not self._dbos:
+                        raise NousError(
+                            "job.host_ownership_lost", "The DBOS worker is no longer owned"
+                        )
                     await asyncio.to_thread(DBOS.destroy)
                 finally:
+                    self._dbos = None
                     if self._instance is not None:
                         self._instance.unbind()
                     self.worker_running = False

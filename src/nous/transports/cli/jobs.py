@@ -218,7 +218,7 @@ def retry_job(
                 emit(ctx, value.model_dump(mode="json"))
             else:
                 language = language_for(options(ctx))
-                typer.echo(f"{translate('Retry created', language)}: {value.workflow_id}")
+                typer.echo(f"{translate('Retry job', language)}: {value.workflow_id}")
                 typer.echo(
                     f"{translate('Wait', language)}: {_command(ctx, 'wait', value.workflow_id)}"
                 )
