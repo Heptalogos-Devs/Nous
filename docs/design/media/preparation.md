@@ -9,10 +9,11 @@ MediaPreparer 接收正式内容引用、模态选区、实际需求和配置，
 ## 输入与输出
 
 ```text
-inspect(content, settings) -> MediaInfo
-plan(content, requirements, settings, options) -> MediaPlan
-batches(plan, context) -> async context manager[async iterator[MaterializedBatch]]
-text_view(content, options, context) -> TextRepresentation
+inspect(content, settings) -> dict
+prepare(content, selection, requirements=..., settings=...) -> MediaPlan
+materialize(PreparedBatch) -> PreparedBatch
+batches(plan, context) -> async context manager[async iterator[PreparedBatch]]
+text_view(content, settings=...) -> TextRepresentation
 ```
 
 MediaPlan 保存不可变原件 refs、请求范围、实际识别类型、输出表示要求、转换参数和轻量批次边界。每项 PlannedPart 明确：
@@ -62,7 +63,7 @@ MediaPlan 的每个 PreparedBatch 保存 PlannedConversion 与 PlannedPart，转
 
 text_view 为模型、Wave 和后续 Journal 提供指定材料的实际文字表示及来源。PDF 多页拼接、缓存和采用在此 owner 完成。TextRepresentation 提供 body、共同 TextView、输入组、精确字节范围到页文字的 mappings 与 coverage；无文本且未显式选择 OCR/语言解析时报告缺项。
 
-文本准备直接读取指定选区的 ArtifactStore.text_view，并使用 TextView.chunks(max_bytes=...) 形成精确字节引用；媒体探测不整读正文来计算行数。共同正文 owner 负责 Markdown 分块与 UTF-8 字节边界。
+文本准备直接读取指定选区的 ArtifactStore.text_view，TextView.chunks(max_bytes=...) 连续覆盖定义行、CRLF、间隙和尾部，形成精确字节引用。片段和元数据的物化在 ExecutionManager.blocking 中执行；媒体探测不整读正文来计算行数。共同正文 owner 负责选区归一化、Markdown 结构与 UTF-8 字节边界。Wave 等跨格式批量消费者使用 application.preparation.TextPreparation；media 继续单独拥有确定性格式处理。
 
 缓存键包含源字节身份/接纳语义、精确选区、真实源 MIME、目标 MIME、转换器版本、尺寸与质量参数。不同 JPEG/WebP 表示不能共用错误缓存。媒体范围与来源规则见内容专题；联合多输入规则见 [输入规划](../models/input-planning.md)。
 

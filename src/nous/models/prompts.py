@@ -307,7 +307,7 @@ class PromptCatalog:
         resource = self.get(prompt_id)
         assignments: list[dict[str, JsonValue]] = []
         if snapshot is not None:
-            config = snapshot.typed_values()
+            config = snapshot.values
             if isinstance(task_assignment, str):
                 if task_assignment not in config.tasks:
                     raise NousError("model.task_missing", f"Unknown task: {task_assignment}")

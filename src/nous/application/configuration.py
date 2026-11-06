@@ -14,11 +14,12 @@ from nous.cognition.scope import NamespaceOperations
 from nous.common.errors import NousError
 from nous.common.operations import add_error_context
 from nous.configuration import ConfigSnapshot, Configuration
-from nous.configuration.service import Object, get_path, normalize_patch
+from nous.configuration.service import Object, get_path, normalize_patch, set_path
 from nous.models.embedding_store import EmbeddingSpaceRegistry
 from nous.models.embeddings import resolved_space
 from nous.observability.assembly import LoggingSession
 from nous.runtime.bindings import InstanceBinding
+from nous.runtime.execution import ExecutionManager
 from nous.runtime.instance import InstanceDescriptor, InstanceLocator, InstanceLock
 from nous.runtime.paths import ResolvedPaths
 from nous.storage.database import Database
@@ -41,6 +42,7 @@ class ConfigurationOperations:
         binding: InstanceBinding,
         paths: ResolvedPaths,
         *,
+        execution: ExecutionManager,
         database: Database | None = None,
         logs: LoggingSession | None = None,
     ) -> None:
@@ -50,6 +52,7 @@ class ConfigurationOperations:
         self._paths = paths
         self._database = database
         self._logs = logs
+        self._execution = execution
         self._lock = asyncio.Lock()
 
     @property
@@ -96,7 +99,7 @@ class ConfigurationOperations:
         if self._database is not None:
             yield self._database
             return
-        settings = self._configuration.snapshot.typed_values()
+        settings = self._configuration.snapshot.values
         descriptor = InstanceDescriptor(
             settings.instance.id, settings.instance.name, settings.instance.layout
         )
@@ -123,13 +126,13 @@ class ConfigurationOperations:
         self, before: ConfigSnapshot, after: ConfigSnapshot, *, saved_namespace: str | None = None
     ) -> None:
         """Check persistent time and space identities before saving their changed definitions."""
-        settings = after.typed_values()
+        settings = after.values
         descriptor = InstanceDescriptor(
             settings.instance.id, settings.instance.name, settings.instance.layout
         )
         paths = ResolvedPaths.resolve(self._locator, descriptor, settings.paths)
         self._binding.check_locations(self._locator, descriptor, paths, settings.database.filename)
-        old = before.typed_values()
+        old = before.values
         time_changed = old.time.domains != settings.time.domains
         previous_spaces = {key: resolved_space(before, key) for key in old.embedding.spaces}
         desired_spaces = {key: resolved_space(after, key) for key in settings.embedding.spaces}
@@ -142,12 +145,15 @@ class ConfigurationOperations:
         ):
             async with self._binding_database() as database:
                 if namespace_changed or saved_namespace is not None:
+                    namespaces = NamespaceOperations(
+                        database, self._execution, self, descriptor.instance_id
+                    )
                     async with database.read() as tx:
                         for selector in {settings.cognition.default_namespace, saved_namespace} - {
                             None
                         }:
                             if selector is not None:
-                                await NamespaceOperations.get_in(tx, selector)
+                                await namespaces.get_in(tx, selector)
                 if time_changed:
                     await check_domains(database, settings.time.domains)
                 if previous_spaces != desired_spaces:
@@ -159,14 +165,14 @@ class ConfigurationOperations:
                 "configuration.binding_check_unavailable",
                 "Time binding application is unavailable.",
             )
-        await bind_domains(self._database, candidate.typed_values().time.domains)
+        await bind_domains(self._database, candidate.values.time.domains)
 
     def _apply_live(self, candidate: ConfigSnapshot) -> None:
         if self._logs is None:
             raise NousError(
                 "configuration.live_apply_unavailable", "Live logging application is unavailable."
             )
-        self._logs.set_level(candidate.typed_values().logging.level)
+        self._logs.set_level(candidate.values.logging.level)
 
     async def update(
         self,
@@ -238,7 +244,7 @@ class ConfigurationOperations:
         namespace_file: Path | str | None,
         reload: bool = False,
     ) -> Object:
-        async with self._lock:
+        async with self._execution.operation("configuration.change"), self._lock:
             try:
                 return await self._change_locked(
                     patch, removals, scope, expected_version, namespace_file, reload
@@ -292,6 +298,15 @@ class ConfigurationOperations:
     ) -> Object:
         """Save desired state before applying bindings; publish only after successful adoption."""
         configuration = self._configuration
+        selector = get_path(patch, "cognition.default_namespace")
+        if isinstance(selector, str):
+            async with self._binding_database() as database:
+                namespaces = NamespaceOperations(
+                    database, self._execution, self, configuration.snapshot.values.instance.id
+                )
+                resolved = await namespaces.resolve(selector)
+            patch = normalize_patch(patch)
+            set_path(patch, "cognition.default_namespace", resolved.id)
         change = configuration.prepare_change(
             patch,
             removals,
@@ -389,11 +404,17 @@ async def open_configuration_operations(
     selected = InstanceLocator.resolve(locator, environment)
     with InstanceLock(selected.directory):
         configuration = Configuration(selected.config_file, environment=environment)
-        settings = configuration.snapshot.typed_values()
+        settings = configuration.snapshot.values
         descriptor = InstanceDescriptor(
             settings.instance.id, settings.instance.name, settings.instance.layout
         )
         paths = ResolvedPaths.resolve(selected, descriptor, settings.paths)
         binding = InstanceBinding.read(selected)
         binding.check_locations(selected, descriptor, paths, settings.database.filename)
-        yield ConfigurationOperations(configuration, selected, binding, paths)
+        execution = ExecutionManager(settings.execution, lambda: configuration.snapshot)
+        try:
+            yield ConfigurationOperations(
+                configuration, selected, binding, paths, execution=execution
+            )
+        finally:
+            await execution.aclose(settings.runtime.shutdown_grace_seconds)

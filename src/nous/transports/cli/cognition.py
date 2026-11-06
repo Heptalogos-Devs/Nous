@@ -72,6 +72,8 @@ def emit_record(ctx: typer.Context, result: RecordView | CommittedRecord | Recor
             for name, stage in (("Annotation", result.annotation), ("Retrieval", result.retrieval)):
                 if stage.state != "not_requested":
                     typer.echo(f"{translate(name, language)}: {translate(stage.state, language)}")
+                if stage.job:
+                    typer.echo(f"Job: {stage.job.workflow_id}")
                 if stage.issue:
                     typer.echo(f"{stage.issue.code}: {stage.issue.message}")
             if result.status == "partial":
@@ -80,9 +82,20 @@ def emit_record(ctx: typer.Context, result: RecordView | CommittedRecord | Recor
         raise typer.Exit(3)
 
 
-def after_write(refresh: bool, mode: Mode | None) -> AfterWrite:
+def after_write(
+    refresh: bool,
+    mode: Mode | None,
+    background: bool = False,
+    inline: bool = False,
+    annotate: bool = False,
+) -> AfterWrite:
+    if background and inline:
+        raise NousError("input.invalid", "Choose --background or --inline")
     return AfterWrite(
-        retrieval="refresh" if refresh or mode is not None else "defer", retrieval_mode=mode
+        annotation="run" if annotate else "default",
+        retrieval="refresh" if refresh or mode is not None else "defer",
+        retrieval_mode=mode,
+        execution="background" if background else "inline" if inline else "default",
     )
 
 
@@ -112,6 +125,9 @@ async def _create(
     inspiration: list[str] | None = None,
     refresh: bool = False,
     refresh_mode: Mode | None = None,
+    background: bool = False,
+    inline: bool = False,
+    annotate: bool = False,
 ) -> RecordOutcome:
     body = read_body(text, file)
     async with open_instance(options(ctx).locator) as runtime:
@@ -123,14 +139,14 @@ async def _create(
                 title=title,
                 remember=remember,
                 source_requests=requests,
-                after=after_write(refresh, refresh_mode),
+                after=after_write(refresh, refresh_mode, background, inline, annotate),
             )
         return await records.create_journal(
             body,
             title=title,
             purpose=purpose,
             source_requests=requests,
-            after=after_write(refresh, refresh_mode),
+            after=after_write(refresh, refresh_mode, background, inline, annotate),
         )
 
 
@@ -152,6 +168,9 @@ def note_add(
     inspiration: Annotated[list[str] | None, typer.Option("--inspiration")] = None,
     refresh: bool = False,
     refresh_mode: Mode | None = None,
+    background: bool = False,
+    inline: bool = False,
+    annotate: bool = False,
 ):
     emit_record(
         ctx,
@@ -169,6 +188,9 @@ def note_add(
                 inspiration=inspiration,
                 refresh=refresh,
                 refresh_mode=refresh_mode,
+                background=background,
+                inline=inline,
+                annotate=annotate,
             )
         ),
     )
@@ -192,6 +214,9 @@ def journal_create(
     inspiration: Annotated[list[str] | None, typer.Option("--inspiration")] = None,
     refresh: bool = False,
     refresh_mode: Mode | None = None,
+    background: bool = False,
+    inline: bool = False,
+    annotate: bool = False,
 ):
     emit_record(
         ctx,
@@ -209,6 +234,9 @@ def journal_create(
                 inspiration=inspiration,
                 refresh=refresh,
                 refresh_mode=refresh_mode,
+                background=background,
+                inline=inline,
+                annotate=annotate,
             )
         ),
     )
@@ -254,6 +282,9 @@ def revise_record(
     inspiration: Annotated[list[str] | None, typer.Option("--inspiration")] = None,
     refresh: bool = False,
     refresh_mode: Mode | None = None,
+    background: bool = False,
+    inline: bool = False,
+    annotate: bool = False,
 ):
     if (source or current_basis or inspiration) and clear_sources:
         raise NousError("input.conflicting_sources", "Choose --source or --clear-sources")
@@ -266,12 +297,6 @@ def revise_record(
         if clear_sources
         else None
     )
-    if expected is None:
-        if "@" not in ref:
-            raise NousError("input.expected_required", "Provide an exact ref with @N or --expected")
-        expected = ref
-    elif expected.isdecimal():
-        expected = ref.split("@")[0] + "@" + expected
     body = read_body(text, file)
     mappings = (
         TypeAdapter(dict[str, str]).validate_json(feedback_mappings.read_bytes())
@@ -288,8 +313,9 @@ def revise_record(
                 else (() if clear_sources else None)
             )
             return await records.replace(
-                expected,
+                ref,
                 body,
+                expected=expected,
                 title=title,
                 reason=reason,
                 intent=intent,
@@ -297,7 +323,7 @@ def revise_record(
                 feedback_mappings=mappings,
                 source_requests=bindings,
                 sources=changes,
-                after=after_write(refresh, refresh_mode),
+                after=after_write(refresh, refresh_mode, background, inline, annotate),
             )
 
     emit_record(ctx, run_async(run()))
@@ -317,6 +343,9 @@ def patch_record(
     feedback_mappings: Annotated[Path | None, typer.Option("--feedback-mappings")] = None,
     refresh: bool = False,
     refresh_mode: Mode | None = None,
+    background: bool = False,
+    inline: bool = False,
+    annotate: bool = False,
 ):
     parsed = TypeAdapter(list[TextChange]).validate_json(changes.read_bytes())
     mappings = (
@@ -338,7 +367,7 @@ def patch_record(
                 intent=intent,
                 feedback_refs=feedback or (),
                 feedback_mappings=mappings,
-                after=after_write(refresh, refresh_mode),
+                after=after_write(refresh, refresh_mode, background, inline, annotate),
             )
 
     emit_record(ctx, run_async(run()))
@@ -363,6 +392,9 @@ def edit_record(
     namespace: str | None = None,
     refresh: bool = False,
     refresh_mode: Mode | None = None,
+    background: bool = False,
+    inline: bool = False,
+    annotate: bool = False,
 ):
     async def load():
         async with open_instance(options(ctx).locator) as runtime:
@@ -381,7 +413,7 @@ def edit_record(
                 return await (await runtime.cognition(namespace)).records.replace(
                     original.revision_ref,
                     edited,
-                    after=after_write(refresh, refresh_mode),
+                    after=after_write(refresh, refresh_mode, background, inline, annotate),
                 )
             except NousError as error:
                 if error.code == "cognition.revision_conflict":
@@ -424,34 +456,80 @@ async def _membership(
     operation: str,
     expected: str | None = None,
     enabled: bool | None = None,
+    refresh: bool = False,
+    refresh_mode: Mode | None = None,
+    background: bool = False,
+    inline: bool = False,
 ) -> RecordOutcome:
-    if expected is None and "@" not in ref:
-        raise NousError("input.expected_required", "Provide an exact ref with @N or --expected")
-    expected = expected or ref
-    if expected.isdecimal():
-        expected = ref.split("@")[0] + "@" + expected
+    after = after_write(refresh, refresh_mode, background, inline)
     async with open_instance(options(ctx).locator) as runtime:
         if operation == "recall":
             return await (await runtime.cognition(namespace)).records.set_recall(
-                expected, bool(enabled)
+                ref, bool(enabled), expected=expected, after=after
             )
-        return await getattr((await runtime.cognition(namespace)).records, operation)(expected)
+        return await getattr((await runtime.cognition(namespace)).records, operation)(
+            ref, expected=expected, after=after
+        )
 
 
 @journal_cli.command("archive")
 @note_cli.command("archive")
 def archive(
-    ctx: typer.Context, ref: str, namespace: str | None = None, expected: str | None = None
+    ctx: typer.Context,
+    ref: str,
+    namespace: str | None = None,
+    expected: str | None = None,
+    refresh: bool = False,
+    refresh_mode: Mode | None = None,
+    background: bool = False,
+    inline: bool = False,
 ):
-    emit_record(ctx, run_async(_membership(ctx, ref, namespace, "archive", expected)))
+    emit_record(
+        ctx,
+        run_async(
+            _membership(
+                ctx,
+                ref,
+                namespace,
+                "archive",
+                expected,
+                refresh=refresh,
+                refresh_mode=refresh_mode,
+                background=background,
+                inline=inline,
+            )
+        ),
+    )
 
 
 @journal_cli.command("restore")
 @note_cli.command("restore")
 def restore(
-    ctx: typer.Context, ref: str, namespace: str | None = None, expected: str | None = None
+    ctx: typer.Context,
+    ref: str,
+    namespace: str | None = None,
+    expected: str | None = None,
+    refresh: bool = False,
+    refresh_mode: Mode | None = None,
+    background: bool = False,
+    inline: bool = False,
 ):
-    emit_record(ctx, run_async(_membership(ctx, ref, namespace, "restore", expected)))
+    emit_record(
+        ctx,
+        run_async(
+            _membership(
+                ctx,
+                ref,
+                namespace,
+                "restore",
+                expected,
+                refresh=refresh,
+                refresh_mode=refresh_mode,
+                background=background,
+                inline=inline,
+            )
+        ),
+    )
 
 
 @note_cli.command("remember")
@@ -461,8 +539,28 @@ def remember(
     namespace: str | None = None,
     expected: str | None = None,
     enabled: bool = True,
+    refresh: bool = False,
+    refresh_mode: Mode | None = None,
+    background: bool = False,
+    inline: bool = False,
 ):
-    emit_record(ctx, run_async(_membership(ctx, ref, namespace, "recall", expected, enabled)))
+    emit_record(
+        ctx,
+        run_async(
+            _membership(
+                ctx,
+                ref,
+                namespace,
+                "recall",
+                expected,
+                enabled,
+                refresh=refresh,
+                refresh_mode=refresh_mode,
+                background=background,
+                inline=inline,
+            )
+        ),
+    )
 
 
 @journal_cli.command("list")

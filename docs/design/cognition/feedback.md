@@ -9,8 +9,8 @@ Feedback 指向 exact record revision/selection、某个检索命中（含 snaps
 ## 操作
 
 ```text
-feedback(target, category, value?, comment?) -> FeedbackRef
-RecordOperations.apply/replace(base_revision, ..., feedback_refs=[...], feedback_mappings={...}) -> RecordOutcome
+feedback.record(target, category, value?, comment?) -> FeedbackView
+RecordOperations.apply/replace(target, ..., expected=base_revision, feedback_refs=[...], feedback_mappings={...}) -> RecordOutcome
 feedback.read/list/resolve(...) -> 已有意见及处理结果
 ```
 
@@ -22,6 +22,6 @@ feedback.read/list/resolve(...) -> 已有意见及处理结果
 
 ## 查看与诊断
 
-反馈列表可以按目标/类别读取。对整次查询，调用者提交正式 QueryResult（实际问题、参与上下文、快照和交付选区），无需为了未来可能反馈而记录每次查询的一整套持久对象。CLI 可用 `--query-result result.json`，Agent 直接传类型化值。快照 owner 使用正式字段验证，不解析集合名前缀；见 [查询情境](query-use-context.md)。
+反馈列表可以按目标/类别读取。对整次查询，调用者提交正式 QueryResult；反馈 owner 保存 QueryFeedback 中的实际问题、参与上下文、精确快照、交付顺序及操作关联。一次描述和一次批量候选读取完成核验。CLI 可用 `--query-result result.json`，Agent 直接传类型化值。快照 owner 使用正式字段验证；见[查询情境](query-use-context.md)。
 
 完成输出表达“已记录反馈”或“已更正为 revision N”，附可读短引用和检索是否待更新。来源、操作关联与失败原因经共同错误与日志能力返回。

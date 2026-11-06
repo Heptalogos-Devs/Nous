@@ -35,7 +35,7 @@ def test_content_result_survives_independent_writer_and_reopen(tmp_path: Path) -
         ) as runtime:
             original = await runtime.artifacts.ingest("原文\n\nwith exact text\n")
             database_path = (
-                runtime.paths.data / runtime.configuration.snapshot.typed_values().database.filename
+                runtime.paths.data / runtime.configuration.snapshot.values.database.filename
             )
             blocker = sqlite3.connect(database_path, timeout=0, autocommit=True)
             blocker.execute("BEGIN IMMEDIATE")
@@ -102,7 +102,7 @@ def test_pdf_preparation_reuses_pages_and_rejects_foreign_coordinates(tmp_path: 
                 data.getvalue(), media_type="application/pdf", display_name="pages.pdf"
             )
             text = await runtime.artifacts.ingest("first line\nsecond line\n")
-            settings = runtime.configuration.snapshot.typed_values().media
+            settings = runtime.configuration.snapshot.values.media
             for artifact, selections in (
                 (
                     text,
@@ -157,7 +157,7 @@ def test_pdf_preparation_reuses_pages_and_rejects_foreign_coordinates(tmp_path: 
                     assert image.width == (90, 120, 150)[number - 1] * 2
             assert len(by_page) == 3 and all(len(refs) == 1 for refs in by_page.values())
         async with open_instance(instance, environment={}) as runtime:
-            settings = runtime.configuration.snapshot.typed_values().media
+            settings = runtime.configuration.snapshot.values.media
             with patch(
                 "nous.media.preparation.prepare_pdf_pages", wraps=prepare_pdf_pages
             ) as render:
@@ -208,7 +208,7 @@ def test_audio_video_reject_coordinates_they_do_not_apply(tmp_path: Path) -> Non
         async with open_instance(instance, environment={}) as runtime:
             audio = await runtime.artifacts.ingest(audio_path)
             video = await runtime.artifacts.ingest(video_path)
-            settings = runtime.configuration.snapshot.typed_values().media
+            settings = runtime.configuration.snapshot.values.media
             for artifact, selections in (
                 (
                     audio,
@@ -319,7 +319,7 @@ def test_image_preparation_validates_selection_before_direct_or_normalized_input
             image = await runtime.artifacts.ingest(
                 original_bytes, media_type="image/png", display_name="single.png"
             )
-            settings = runtime.configuration.snapshot.typed_values().media
+            settings = runtime.configuration.snapshot.values.media
             resized_settings = settings.model_copy(
                 update={"image": settings.image.model_copy(update={"max_side": 8})}
             )
@@ -406,5 +406,171 @@ def test_image_preparation_validates_selection_before_direct_or_normalized_input
                 with pytest.raises(NousError) as invalid:
                     await runtime.media.preparer.prepare(animation.ref, disjoint, settings=settings)
                 assert invalid.value.code == "media.invalid_selection"
+
+    asyncio.run(scenario())
+
+
+def test_exact_text_selection_lossless_edits_and_producer_conflicts(tmp_path: Path) -> None:
+    from nous.content.edits import ReplaceSelection, prepare_text_edit
+
+    async def scenario() -> None:
+        instance = tmp_path / "exact-content"
+        await initialize_instance(instance, environment={})
+        text = "[label]: source:S1\r\n\r\n中文 x\r\n\r\ntrailing"
+        async with open_instance(instance, environment={}) as runtime:
+            artifact = await runtime.artifacts.ingest(text)
+            view = await runtime.artifacts.text_view(artifact.ref)
+            assert "".join(chunk.text for chunk in view.chunks(max_bytes=7)) == text
+            assert "".join(chunk.text for chunk in view.complete_chunks(11)) == text
+            definition = ContentSelection(
+                artifact=artifact.ref, selection=SourceSelection(start_line=1, end_line=1)
+            )
+            edited = prepare_text_edit(
+                view,
+                (
+                    ReplaceSelection(
+                        selection=definition,
+                        expected_text="[label]: source:S1\r\n",
+                        replacement="[label]: source:S2\r\n",
+                    ),
+                ),
+            )
+            assert edited.utf8_bytes == text.replace("source:S1", "source:S2").encode()
+            bounds = await runtime.artifacts.normalize_selections((definition,))
+            assert bounds[0].selection == SourceSelection(start_byte=0, end_byte=20)
+            group = InputGroup(
+                key="S1",
+                slot_key="material",
+                name="exact",
+                role="reference",
+                parts=(InputPart(content=bounds[0]),),
+            )
+            result = await runtime.results.adopt(
+                operation="selected",
+                producer={"kind": "deterministic"},
+                inputs=(group,),
+                outputs={"body": OutputContent(data=b"same")},
+                producer_key="stable-output",
+            )
+            duplicate = await runtime.results.adopt(
+                operation="selected",
+                producer={"kind": "deterministic"},
+                inputs=(group,),
+                outputs={"body": OutputContent(data=b"same")},
+                producer_key="stable-output",
+            )
+            assert duplicate.ref == result.ref
+            with pytest.raises(NousError, match="different result"):
+                await runtime.results.adopt(
+                    operation="selected",
+                    producer={"kind": "deterministic"},
+                    inputs=(group,),
+                    outputs={"body": OutputContent(data=b"changed")},
+                    producer_key="stable-output",
+                )
+        async with open_instance(
+            instance, environment={}, overrides={"content.text_read_max_bytes": 11}
+        ) as runtime:
+            selected = ContentSelection(
+                artifact=artifact.ref, selection=SourceSelection(start_line=3, end_line=3)
+            )
+            value = (await runtime.artifacts.read_selections((selected,)))[0]
+            assert value.data == "中文 x\r\n".encode()
+            assert value.first_line == 3
+            byte_value = (await runtime.artifacts.read_selections((value.content,)))[0]
+            assert byte_value == value
+            local = await runtime.artifacts.text_view(selected)
+            assert local.byte_offset == value.start_byte and local.first_line == 3
+            assert local.chunks(max_bytes=11)[0].text == value.text
+            from nous.application.preparation import TextPreparation
+
+            prefix = "prefix\n" * 8000
+            overlapping = await runtime.artifacts.ingest(prefix + "abcdefghijk\n")
+            offset = len(prefix.encode())
+            selections = tuple(
+                ContentSelection(
+                    artifact=overlapping.ref,
+                    selection=SourceSelection(start_byte=offset + start, end_byte=offset + end),
+                )
+                for start, end in ((0, 8), (3, 11))
+            )
+            session = TextPreparation(runtime.artifacts, runtime.generation.preparer)
+            with patch.object(
+                runtime.artifacts, "text_view", wraps=runtime.artifacts.text_view
+            ) as reading:
+                prepared = await session.prepare_many(selections)
+                assert tuple(item.view.text for item in prepared) == ("abcdefgh", "defghijk")
+                assert tuple(item.origin_contents for item in prepared) == tuple(
+                    (item,) for item in selections
+                )
+                assert reading.call_count == 1
+            saved = await runtime.results.find_producer("stable-output")
+            assert saved is not None and saved.ref == result.ref
+            with pytest.raises(NousError, match="UTF-8"):
+                await runtime.artifacts.read_selection(
+                    ContentSelection(
+                        artifact=artifact.ref,
+                        selection=SourceSelection(
+                            start_byte=value.start_byte + 1, end_byte=value.start_byte + 2
+                        ),
+                    )
+                )
+
+    asyncio.run(scenario())
+
+
+def test_adopted_text_projection_maps_exact_regions_without_matching_bytes(tmp_path: Path) -> None:
+    from nous.content.projections import semantic_text
+
+    async def scenario() -> None:
+        instance = tmp_path / "mapped-projection"
+        await initialize_instance(instance, environment={})
+        async with open_instance(instance, environment={}) as runtime:
+            original = await runtime.artifacts.ingest("before [标签](source:S1) after\n")
+            projected = await semantic_text(
+                ContentSelection(artifact=original.ref), runtime.results
+            )
+            assert projected.text == "before 标签 after\n"
+            selected = ContentSelection(
+                artifact=projected.content.artifact,
+                selection=SourceSelection(start_byte=0, end_byte=6),
+            )
+            mapped = await runtime.artifacts.map_origins(selected, original.ref)
+            assert tuple(item.origin.selection for item in mapped) == (
+                SourceSelection(start_byte=0, end_byte=6),
+            )
+            assert (
+                mapped[0].transform_ref
+                == (await runtime.artifacts.get(projected.content.artifact)).producer_result_ref
+            )
+            label = ContentSelection(
+                artifact=projected.content.artifact,
+                selection=SourceSelection(start_byte=7, end_byte=13),
+            )
+            label_origins = await runtime.artifacts.map_origins(label, original.ref)
+            assert (
+                await runtime.artifacts.read_selection(label_origins[0].origin)
+                == "[标签](source:S1)"
+            )
+            with pytest.raises(NousError, match="exact mapping"):
+                await runtime.artifacts.map_origins(
+                    ContentSelection(
+                        artifact=projected.content.artifact,
+                        selection=SourceSelection(start_byte=7, end_byte=10),
+                    ),
+                    original.ref,
+                )
+            duplicate = await runtime.artifacts.ingest(projected.text)
+            with pytest.raises(NousError, match="exact mapping"):
+                await runtime.artifacts.map_origins(
+                    ContentSelection(artifact=duplicate.ref), original.ref
+                )
+            whole = await runtime.artifacts.map_origins(projected.content, original.ref)
+            assert tuple(
+                [await runtime.artifacts.read_selection(item.origin) for item in whole]
+            ) == ("before [标签](source:S1) after\n",)
+        async with open_instance(instance, environment={}) as runtime:
+            restored = await runtime.artifacts.map_origins(selected, original.ref)
+            assert restored == mapped
 
     asyncio.run(scenario())

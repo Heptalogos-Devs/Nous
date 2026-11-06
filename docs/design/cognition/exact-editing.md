@@ -6,7 +6,7 @@
 2. 自然语言要求：专一任务提出局部 edits，程序组装新正文，形成可读提案；显式 apply 或采用策略才提交。
 3. 明确全文重写：独立写作任务输出完整正文，不经过 journalize，不缺省要求压缩。
 
-最终都保存完整不可变 revision。旧版和旧选区保持可读；`expected_revision` 是操作开始看到的版本。历史业务版本不是内部 API 兼容承诺。
+最终都保存完整不可变 revision。旧版和旧选区保持可读；`target` 指明操作对象，`expected` 固定操作开始看到的版本，见[稳定身份与前置条件](../foundation/stable-identities.md)。
 
 ## 共同文本编辑能力
 
@@ -35,8 +35,9 @@ quote/anchor 必须在所给精确 scope 内唯一匹配。使用字面匹配，
 
 ```text
 RecordOperations.apply(
-  base: RecordRevisionRef,
+  target: RecordTarget,
   changes: sequence[TextChange],
+  expected: ExpectedRevision | None = None,
   reason?: str,
   intent: edit | correction = edit,
   sources: SourceChanges = preserve,
@@ -45,7 +46,7 @@ RecordOperations.apply(
 ) -> RecordOutcome
 
 RecordOperations.replace(
-  base, markdown, reason?, intent=edit, sources=preserve,
+  target, markdown, expected=None, reason?, intent=edit, sources=preserve,
   feedback_refs=(), after=default
 ) -> RecordOutcome
 

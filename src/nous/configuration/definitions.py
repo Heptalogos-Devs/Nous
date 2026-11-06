@@ -10,6 +10,7 @@ from pydantic import Field, field_validator, model_validator
 from nous.cognition.configuration import CognitionConfig
 from nous.common.values import ResourceId
 from nous.content.configuration import ContentConfig
+from nous.jobs.configuration import JobsConfig
 from nous.media.configuration import MediaConfig
 from nous.models.configuration import (
     CredentialReference,
@@ -24,7 +25,7 @@ from nous.models.configuration import (
 from nous.temporal.coordinates import validate_coordinates
 from nous.wave.configuration import WaveConfig
 
-from .metadata import ConfigModel, setting
+from .metadata import ConfigMap, ConfigModel, setting
 
 
 class InstanceConfig(ConfigModel):
@@ -264,7 +265,7 @@ class TimeDomainConfig(ConfigModel):
 
 
 class TimeConfig(ConfigModel):
-    domains: dict[ResourceId, TimeDomainConfig] = Field(
+    domains: ConfigMap[ResourceId, TimeDomainConfig] = Field(
         default_factory=lambda: {
             "utc": TimeDomainConfig(
                 kind="utc", tick_seconds="1/1000000", epoch="Unix epoch", name="UTC"
@@ -319,11 +320,12 @@ class NousConfig(ConfigModel):
     media: MediaConfig = Field(default_factory=MediaConfig)
     time: TimeConfig = Field(default_factory=TimeConfig)
     network: NetworkConfig = Field(default_factory=NetworkConfig)
-    credentials: dict[ResourceId, CredentialReference] = Field(default_factory=dict)
-    providers: dict[ResourceId, ProviderConfig] = Field(default_factory=dict)
-    models: dict[ResourceId, ModelConfig] = Field(default_factory=dict)
-    presets: dict[ResourceId, PresetConfig] = Field(default_factory=dict)
-    tasks: dict[ResourceId, TaskAssignment] = Field(default_factory=dict)
+    credentials: ConfigMap[ResourceId, CredentialReference] = Field(default_factory=dict)
+    providers: ConfigMap[ResourceId, ProviderConfig] = Field(default_factory=dict)
+    models: ConfigMap[ResourceId, ModelConfig] = Field(default_factory=dict)
+    presets: ConfigMap[ResourceId, PresetConfig] = Field(default_factory=dict)
+    tasks: ConfigMap[ResourceId, TaskAssignment] = Field(default_factory=dict)
+    jobs: JobsConfig = Field(default_factory=JobsConfig)
     model_execution: ModelExecutionConfig = Field(default_factory=ModelExecutionConfig)
     prompt: PromptConfig = Field(default_factory=PromptConfig)
     embedding: EmbeddingConfig = Field(default_factory=EmbeddingConfig)
@@ -355,7 +357,7 @@ class NousConfig(ConfigModel):
                 raise ValueError(f"embedding.spaces.{key}.model: unknown model {space.model}")
             if "embedding" not in self.models[space.model].capabilities:
                 raise ValueError(f"embedding.spaces.{key}: model must declare embedding capability")
-            if space.encoding.input_combination == "text" and space.modalities != ["text"]:
+            if space.encoding.input_combination == "text" and space.modalities != ("text",):
                 raise ValueError(
                     f"embedding.spaces.{key}: text encoding requires only text modality"
                 )

@@ -18,6 +18,8 @@ journalize adoption、模型/媒体技术限额、具体检索通道、正文分
 
 模板说明由 prompt.toml 和 TaskDefinition 拥有，实际模型资源仍由 tasks 配置引用；不在 cognition 定义 Provider 客户端或备用列表副本。
 
+保存后维护的执行方式与 Job 队列参数见[持久维护配置](../foundation/durable-configuration.md)。任务在登记时冻结所需策略，运行资源及上限继续由当前 Runtime 持有。
+
 ## 字段信息
 
 每个字段都明确类型、默认值、单位、是否允许缺失/null、范围、作用域、说明和生效方式。普通用户不必调整的字段放 advanced；适用空间的危险配置继续使用已有绑定规则。

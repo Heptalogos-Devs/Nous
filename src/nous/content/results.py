@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
@@ -87,9 +89,7 @@ class ResultStore:
                         schema.artifacts.c.id.label("artifact_id"),
                         schema.artifacts.c.identifier.label("artifact_identifier"),
                     )
-                    .select_from(
-                        schema.results.join(schema.outputs).join(schema.artifacts)
-                    )
+                    .select_from(schema.results.join(schema.outputs).join(schema.artifacts))
                     .where(
                         schema.results.c.operation == operation,
                         schema.outputs.c.name == output,
@@ -142,6 +142,7 @@ class ResultStore:
         request: Mapping[str, object] | None = None,
         parameters: Mapping[str, object] | None = None,
         coverage: Mapping[str, object] | None = None,
+        producer_key: str | None = None,
     ) -> ProcessingResult:
         """Register the result, output artifacts and body bindings in one caller-owned transaction.
 
@@ -168,6 +169,42 @@ class ResultStore:
             "parameters": _JSON.validate_python(dict(parameters or {})),
             "coverage": _JSON.validate_python(dict(coverage or {})),
         }
+        signature = hashlib.sha256(
+            json.dumps(
+                {
+                    "operation": operation,
+                    **values,
+                    "inputs": [group.model_dump(mode="json") for group in inputs],
+                    "outputs": [
+                        {
+                            "name": item.name,
+                            "blob": item.content.blob.model_dump(mode="json"),
+                            "media_type": item.media_type,
+                            "display_name": item.display_name,
+                        }
+                        for item in prepared_outputs.outputs
+                    ],
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            ).encode()
+        ).hexdigest()
+        if producer_key is not None:
+            existing = (
+                await tx.connection.execute(
+                    sa.select(schema.results.c.id, schema.results.c.adoption_signature).where(
+                        schema.results.c.producer_key == producer_key
+                    )
+                )
+            ).one_or_none()
+            if existing is not None:
+                if existing.adoption_signature != signature:
+                    raise NousError(
+                        "content.producer_conflict",
+                        "Producer key already identifies a different result",
+                        details={"producer_key": producer_key},
+                    )
+                return await self.get_in(tx, str(existing.id))
         identifier = await insert_identifier(
             tx,
             schema.results,
@@ -175,6 +212,8 @@ class ResultStore:
             {
                 "id": object_id,
                 "operation": operation,
+                "producer_key": producer_key,
+                "adoption_signature": signature,
                 **values,
                 "formed_at": prepared_outputs.formed_at.isoformat(),
                 "recorded_at": recorded.isoformat(),
@@ -288,7 +327,9 @@ class ResultStore:
             )
             result_outputs.append(ResultOutput(name=output.name, artifact=artifact.ref))
         return ProcessingResult(
-            ref=ResultRef(id=object_id, identifier=identifier, instance_id=self.artifacts.instance_id),
+            ref=ResultRef(
+                id=object_id, identifier=identifier, instance_id=self.artifacts.instance_id
+            ),
             operation=operation,
             inputs=tuple(inputs),
             outputs=tuple(result_outputs),
@@ -307,6 +348,7 @@ class ResultStore:
         request: Mapping[str, object] | None = None,
         parameters: Mapping[str, object] | None = None,
         coverage: Mapping[str, object] | None = None,
+        producer_key: str | None = None,
     ) -> ProcessingResult:
         """Publish output bytes and atomically adopt the result and its references.
 
@@ -334,240 +376,248 @@ class ResultStore:
                 request=request,
                 parameters=parameters,
                 coverage=coverage,
+                producer_key=producer_key,
             )
         record_completed(result.ref.identifier)
         return result
 
+    async def find_producer(self, producer_key: str) -> ProcessingResult | None:
+        async with self.database.read() as tx:
+            ref = await tx.connection.scalar(
+                sa.select(schema.results.c.id).where(schema.results.c.producer_key == producer_key)
+            )
+            return await self.get_in(tx, str(ref)) if ref is not None else None
+
     async def get(self, ref: str | ResultRef) -> ProcessingResult:
+        async with self.database.read() as tx:
+            return await self.get_in(tx, ref)
+
+    async def get_in(self, tx: ReadTx, ref: str | ResultRef) -> ProcessingResult:
         if isinstance(ref, ResultRef):
             if ref.instance_id != self.artifacts.instance_id:
                 raise NousError("content.instance_mismatch", "Result belongs to another instance")
             target = ref.id
         else:
             target = ref
-        async with self.database.read() as tx:
-            row = (
-                (
-                    await tx.connection.execute(
-                        sa.select(schema.results).where(
-                            sa.or_(
-                                schema.results.c.id == target, schema.results.c.identifier == target
-                            )
-                        )
+        row = (
+            (
+                await tx.connection.execute(
+                    sa.select(schema.results).where(
+                        sa.or_(schema.results.c.id == target, schema.results.c.identifier == target)
                     )
                 )
-                .mappings()
-                .one_or_none()
             )
-            if row is None:
-                raise NousError(
-                    "content.not_found", "Processing result does not exist", details={"ref": target}
-                )
-            input_rows = (
-                (
-                    await tx.connection.execute(
-                        sa.select(schema.inputs)
-                        .where(schema.inputs.c.result_id == row["id"])
-                        .order_by(schema.inputs.c.group_ordinal)
-                    )
-                )
-                .mappings()
-                .all()
+            .mappings()
+            .one_or_none()
+        )
+        if row is None:
+            raise NousError(
+                "content.not_found", "Processing result does not exist", details={"ref": target}
             )
-            part_rows = (
-                (
-                    await tx.connection.execute(
-                        sa.select(schema.parts)
-                        .where(schema.parts.c.result_id == row["id"])
-                        .order_by(schema.parts.c.group_ordinal, schema.parts.c.part_ordinal)
-                    )
+        input_rows = (
+            (
+                await tx.connection.execute(
+                    sa.select(schema.inputs)
+                    .where(schema.inputs.c.result_id == row["id"])
+                    .order_by(schema.inputs.c.group_ordinal)
                 )
-                .mappings()
-                .all()
             )
-            origin_rows = (
-                (
-                    await tx.connection.execute(
-                        sa.select(schema.origins)
-                        .where(schema.origins.c.result_id == row["id"])
-                        .order_by(
-                            schema.origins.c.group_ordinal,
-                            schema.origins.c.part_ordinal,
-                            schema.origins.c.origin_ordinal,
-                        )
-                    )
+            .mappings()
+            .all()
+        )
+        part_rows = (
+            (
+                await tx.connection.execute(
+                    sa.select(schema.parts)
+                    .where(schema.parts.c.result_id == row["id"])
+                    .order_by(schema.parts.c.group_ordinal, schema.parts.c.part_ordinal)
                 )
-                .mappings()
-                .all()
             )
-            output_rows = (
-                (
-                    await tx.connection.execute(
-                        sa.select(schema.outputs)
-                        .where(schema.outputs.c.result_id == row["id"])
-                        .order_by(schema.outputs.c.ordinal)
+            .mappings()
+            .all()
+        )
+        origin_rows = (
+            (
+                await tx.connection.execute(
+                    sa.select(schema.origins)
+                    .where(schema.origins.c.result_id == row["id"])
+                    .order_by(
+                        schema.origins.c.group_ordinal,
+                        schema.origins.c.part_ordinal,
+                        schema.origins.c.origin_ordinal,
                     )
                 )
-                .mappings()
-                .all()
             )
-            object_ids = {
-                str(source["artifact_id"]) for source in [*part_rows, *origin_rows, *output_rows]
-            }
-            identities: dict[str, ArtifactRef] = {}
-            identity_list = list(object_ids)
-            for start in range(0, len(identity_list), 900):
-                selected = identity_list[start : start + 900]
-                artifact_rows = (
-                    await tx.connection.execute(
-                        sa.select(schema.artifacts.c.id, schema.artifacts.c.identifier).where(
-                            schema.artifacts.c.id.in_(selected)
-                        )
-                    )
-                ).mappings()
-                identities.update(
-                    {
-                        str(item["id"]): ArtifactRef(
-                            id=str(item["id"]),
-                            identifier=str(item["identifier"]),
-                            instance_id=self.artifacts.instance_id,
-                        )
-                        for item in artifact_rows
-                    }
+            .mappings()
+            .all()
+        )
+        output_rows = (
+            (
+                await tx.connection.execute(
+                    sa.select(schema.outputs)
+                    .where(schema.outputs.c.result_id == row["id"])
+                    .order_by(schema.outputs.c.ordinal)
                 )
-            if len(identities) != len(object_ids):
-                raise NousError("content.provenance_missing", "A result artifact is missing")
-            transform_ids = {
-                str(source["transform_result_id"])
-                for source in origin_rows
-                if source["transform_result_id"] is not None
-            }
-            transforms: dict[str, ResultRef] = {}
-            if transform_ids:
-                transform_rows = (
-                    await tx.connection.execute(
-                        sa.select(schema.results.c.id, schema.results.c.identifier).where(
-                            schema.results.c.id.in_(transform_ids)
-                        )
+            )
+            .mappings()
+            .all()
+        )
+        object_ids = {
+            str(source["artifact_id"]) for source in [*part_rows, *origin_rows, *output_rows]
+        }
+        identities: dict[str, ArtifactRef] = {}
+        identity_list = list(object_ids)
+        for start in range(0, len(identity_list), 900):
+            selected = identity_list[start : start + 900]
+            artifact_rows = (
+                await tx.connection.execute(
+                    sa.select(schema.artifacts.c.id, schema.artifacts.c.identifier).where(
+                        schema.artifacts.c.id.in_(selected)
                     )
-                ).mappings()
-                transforms = {
-                    str(item["id"]): ResultRef(
+                )
+            ).mappings()
+            identities.update(
+                {
+                    str(item["id"]): ArtifactRef(
                         id=str(item["id"]),
                         identifier=str(item["identifier"]),
                         instance_id=self.artifacts.instance_id,
                     )
-                    for item in transform_rows
+                    for item in artifact_rows
                 }
-            origins: dict[tuple[int, int], list[OriginSlice]] = {}
-            for source in origin_rows:
-                key = (int(source["group_ordinal"]), int(source["part_ordinal"]))
-                origins.setdefault(key, []).append(
-                    OriginSlice(
-                        origin=ContentSelection(
-                            artifact=identities[str(source["artifact_id"])],
-                            selection=SourceSelection.model_validate(source["selector"]),
-                        ),
-                        transform_ref=transforms.get(str(source["transform_result_id"])),
-                    )
-                )
-            grouped: dict[int, list[InputPart]] = {}
-            for source in part_rows:
-                ordinal = int(source["group_ordinal"])
-                grouped.setdefault(ordinal, []).append(
-                    InputPart(
-                        content=ContentSelection(
-                            artifact=identities[str(source["artifact_id"])],
-                            selection=SourceSelection.model_validate(source["selector"]),
-                        ),
-                        representation=str(source["representation"]),
-                        media_type=source["media_type"],
-                        source_media_type=source["source_media_type"],
-                        origins=tuple(origins.get((ordinal, int(source["part_ordinal"])), [])),
-                    )
-                )
-            inputs = [
-                InputGroup(
-                    key=str(source["key"]),
-                    slot_key=str(source["slot_key"]),
-                    role=source["role"],
-                    name=str(source["name"]),
-                    parts=tuple(grouped[int(source["group_ordinal"])]),
-                )
-                for source in input_rows
-            ]
-            outputs = [
-                ResultOutput(
-                    name=str(output["name"]), artifact=identities[str(output["artifact_id"])]
-                )
-                for output in output_rows
-            ]
-            return ProcessingResult(
-                ref=ResultRef(
-                    id=str(row["id"]),
-                    identifier=str(row["identifier"]),
-                    instance_id=self.artifacts.instance_id,
-                ),
-                operation=str(row["operation"]),
-                inputs=tuple(inputs),
-                outputs=tuple(outputs),
-                producer=_JSON.validate_python(row["producer"]),
-                request=_JSON.validate_python(row["request"]),
-                parameters=_JSON.validate_python(row["parameters"]),
-                coverage=_JSON.validate_python(row["coverage"]),
-                formed_at=cast(datetime, date_value(row["formed_at"])),
-                recorded_at=cast(datetime, date_value(row["recorded_at"])),
             )
+        if len(identities) != len(object_ids):
+            raise NousError("content.provenance_missing", "A result artifact is missing")
+        transform_ids = {
+            str(source["transform_result_id"])
+            for source in origin_rows
+            if source["transform_result_id"] is not None
+        }
+        transforms: dict[str, ResultRef] = {}
+        if transform_ids:
+            transform_rows = (
+                await tx.connection.execute(
+                    sa.select(schema.results.c.id, schema.results.c.identifier).where(
+                        schema.results.c.id.in_(transform_ids)
+                    )
+                )
+            ).mappings()
+            transforms = {
+                str(item["id"]): ResultRef(
+                    id=str(item["id"]),
+                    identifier=str(item["identifier"]),
+                    instance_id=self.artifacts.instance_id,
+                )
+                for item in transform_rows
+            }
+        origins: dict[tuple[int, int], list[OriginSlice]] = {}
+        for source in origin_rows:
+            key = (int(source["group_ordinal"]), int(source["part_ordinal"]))
+            origins.setdefault(key, []).append(
+                OriginSlice(
+                    origin=ContentSelection(
+                        artifact=identities[str(source["artifact_id"])],
+                        selection=SourceSelection.model_validate(source["selector"]),
+                    ),
+                    transform_ref=transforms.get(str(source["transform_result_id"])),
+                )
+            )
+        grouped: dict[int, list[InputPart]] = {}
+        for source in part_rows:
+            ordinal = int(source["group_ordinal"])
+            grouped.setdefault(ordinal, []).append(
+                InputPart(
+                    content=ContentSelection(
+                        artifact=identities[str(source["artifact_id"])],
+                        selection=SourceSelection.model_validate(source["selector"]),
+                    ),
+                    representation=str(source["representation"]),
+                    media_type=source["media_type"],
+                    source_media_type=source["source_media_type"],
+                    origins=tuple(origins.get((ordinal, int(source["part_ordinal"])), [])),
+                )
+            )
+        inputs = [
+            InputGroup(
+                key=str(source["key"]),
+                slot_key=str(source["slot_key"]),
+                role=source["role"],
+                name=str(source["name"]),
+                parts=tuple(grouped[int(source["group_ordinal"])]),
+            )
+            for source in input_rows
+        ]
+        outputs = [
+            ResultOutput(name=str(output["name"]), artifact=identities[str(output["artifact_id"])])
+            for output in output_rows
+        ]
+        return ProcessingResult(
+            ref=ResultRef(
+                id=str(row["id"]),
+                identifier=str(row["identifier"]),
+                instance_id=self.artifacts.instance_id,
+            ),
+            operation=str(row["operation"]),
+            inputs=tuple(inputs),
+            outputs=tuple(outputs),
+            producer=_JSON.validate_python(row["producer"]),
+            request=_JSON.validate_python(row["request"]),
+            parameters=_JSON.validate_python(row["parameters"]),
+            coverage=_JSON.validate_python(row["coverage"]),
+            formed_at=cast(datetime, date_value(row["formed_at"])),
+            recorded_at=cast(datetime, date_value(row["recorded_at"])),
+        )
 
     async def read_view(
         self, ref: str | ResultRef, *, sources: bool = True, details: bool = False
     ) -> dict[str, object]:
         """Read named output bodies and their exact sources for any product entrance."""
-        result = await self.get(ref)
-        value = result.model_dump(mode="json")
-        if not sources:
-            value.pop("inputs", None)
-        if not details:
-            value.pop("request", None)
-        output_views = await self.artifacts.read_view_many(
-            [ContentSelection(artifact=output.artifact) for output in result.outputs],
-            representations="none",
-        )
-        value["outputs"] = [
-            {
-                "name": output.name,
-                "view": view.model_copy(update={"body_text": None}).model_dump(mode="json")
-                if output.name == "response" and not details
-                else view.model_dump(mode="json"),
-            }
-            for output, view in zip(result.outputs, output_views, strict=True)
-        ]
-        if sources:
-            grouped = [
-                tuple(
-                    dict.fromkeys(
-                        content
-                        for part in group.parts
-                        for content in (
-                            tuple(origin.origin for origin in part.origins) or (part.content,)
+        async with self.artifacts.content.execution.operation("content.result_read"):
+            result = await self.get(ref)
+            value = result.model_dump(mode="json")
+            if not sources:
+                value.pop("inputs", None)
+            if not details:
+                value.pop("request", None)
+            output_views = await self.artifacts.read_view_many(
+                [ContentSelection(artifact=output.artifact) for output in result.outputs],
+                representations="none",
+            )
+            value["outputs"] = [
+                {
+                    "name": output.name,
+                    "view": view.model_copy(update={"body_text": None}).model_dump(mode="json")
+                    if output.name == "response" and not details
+                    else view.model_dump(mode="json"),
+                }
+                for output, view in zip(result.outputs, output_views, strict=True)
+            ]
+            if sources:
+                grouped = [
+                    tuple(
+                        dict.fromkeys(
+                            content
+                            for part in group.parts
+                            for content in (
+                                tuple(origin.origin for origin in part.origins) or (part.content,)
+                            )
                         )
                     )
-                )
-                for group in result.inputs
-            ]
-            all_views = await self.artifacts.read_view_many(
-                [item for group in grouped for item in group]
-            )
-            source_views: dict[str, object] = {}
-            offset = 0
-            for group, selected in zip(result.inputs, grouped, strict=True):
-                source_views[group.key] = [
-                    view.model_dump(mode="json")
-                    for view in all_views[offset : offset + len(selected)]
+                    for group in result.inputs
                 ]
-                offset += len(selected)
-            value["source_views"] = source_views
-        return value
+                all_views = await self.artifacts.read_view_many(
+                    [item for group in grouped for item in group]
+                )
+                source_views: dict[str, object] = {}
+                offset = 0
+                for group, selected in zip(result.inputs, grouped, strict=True):
+                    source_views[group.key] = [
+                        view.model_dump(mode="json")
+                        for view in all_views[offset : offset + len(selected)]
+                    ]
+                    offset += len(selected)
+                value["source_views"] = source_views
+            return value
 
     async def provenance(
         self, refs: Sequence[str | ArtifactRef], *, details: bool = False

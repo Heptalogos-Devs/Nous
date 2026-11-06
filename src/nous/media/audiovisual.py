@@ -52,17 +52,43 @@ class AudioVisual:
                 "Cannot start media executable",
                 details={"executable": args[0]},
             ) from exc
+        communication = asyncio.create_task(process.communicate())
         try:
-            stdout, stderr = await process.communicate()
-        except BaseException:
-            if process.returncode is None:
-                process.terminate()
+            stdout, stderr = await asyncio.shield(communication)
+        except BaseException as primary:
+
+            async def stop() -> None:
+                if process.returncode is None:
+                    try:
+                        process.terminate()
+                    except ProcessLookupError:
+                        pass
                 try:
-                    await asyncio.wait_for(process.communicate(), timeout=5)
+                    await asyncio.wait_for(
+                        asyncio.shield(communication),
+                        timeout=float(
+                            self.execution.snapshot.values.runtime.shutdown_grace_seconds
+                        ),
+                    )
                 except TimeoutError:
-                    process.kill()
-                    await process.communicate()
-            raise
+                    if process.returncode is None:
+                        try:
+                            process.kill()
+                        except ProcessLookupError:
+                            pass
+                    await communication
+
+            cleanup = asyncio.create_task(stop())
+            while not cleanup.done():
+                try:
+                    await asyncio.shield(cleanup)
+                except asyncio.CancelledError:
+                    continue
+            try:
+                cleanup.result()
+            except BaseException as error:
+                primary.add_note(f"Subprocess cleanup failed: {type(error).__name__}: {error}")
+            raise primary
         if process.returncode:
             raise NousError(
                 "media.conversion_failed",

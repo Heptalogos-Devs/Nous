@@ -1,12 +1,12 @@
 from pydantic import Field
 
-from nous.configuration.metadata import ConfigModel, setting
+from nous.configuration.metadata import ConfigModel, ConfigSequence, setting
 
 
 class ImageConfig(ConfigModel):
     max_side: int = setting(2048, gt=0, description="Maximum normalized image side in pixels.")
-    formats: list[str] = setting(
-        ["image/png", "image/jpeg", "image/webp"],
+    formats: ConfigSequence[str] = setting(
+        ("image/png", "image/jpeg", "image/webp"),
         description="Preferred supported image encodings, in order.",
     )
     quality: int = setting(90, ge=1, le=100, description="JPEG and WebP encoder quality.")
@@ -30,8 +30,8 @@ class VideoConfig(ConfigModel):
 
 
 class AudioConfig(ConfigModel):
-    formats: list[str] = setting(
-        ["audio/wav", "audio/mpeg", "audio/flac"],
+    formats: ConfigSequence[str] = setting(
+        ("audio/wav", "audio/mpeg", "audio/flac"),
         description="Preferred supported audio encodings, in order.",
     )
     max_seconds_per_request: float = setting(

@@ -1,10 +1,127 @@
 """Current retrieval preserves addressable text without inventing independent witnesses."""
 
 import asyncio
+import shutil
+import subprocess
+import wave
 from pathlib import Path
 
+import pypdfium2 as pdfium
+import pytest
+from PIL import Image
+
+from nous.application.configuration import open_configuration_operations
+from nous.cognition import SourceRequest
+from nous.cognition.contracts import SourceBinding
 from nous.cognition.retrieval.contracts import CognitiveQuery
+from nous.cognition.writing.contracts import SourceChanges
+from nous.common.errors import NousError
+from nous.content.contracts import ContentSelection, SourceSelection
 from nous.runtime.bootstrap import initialize_instance, open_instance
+
+
+def test_media_selections_are_checked_before_formal_writes(tmp_path: Path) -> None:
+    pdf = tmp_path / "one.pdf"
+    document = pdfium.PdfDocument.new()
+    page = document.new_page(200, 200)
+    page.close()
+    document.save(pdf)
+    document.close()
+    image = tmp_path / "small.png"
+    Image.new("RGB", (16, 12), "red").save(image)
+    ffmpeg, ffprobe = shutil.which("ffmpeg"), shutil.which("ffprobe")
+    audio = tmp_path / "tone.wav"
+    video = tmp_path / "video.mp4"
+    if ffmpeg and ffprobe:
+        with wave.open(str(audio), "wb") as output:
+            output.setnchannels(1)
+            output.setsampwidth(2)
+            output.setframerate(8000)
+            output.writeframes(b"\0\0" * 8000)
+        subprocess.run(
+            [
+                ffmpeg,
+                "-loglevel",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=red:s=32x24:r=10:d=1",
+                "-c:v",
+                "mpeg4",
+                "-y",
+                str(video),
+            ],
+            check=True,
+        )
+
+    async def scenario() -> None:
+        instance = tmp_path / "media-sources"
+        await initialize_instance(instance, environment={})
+        if ffmpeg and ffprobe:
+            async with open_configuration_operations(instance, environment={}) as configuration:
+                await configuration.update(
+                    {"media.ffmpeg_path": ffmpeg, "media.ffprobe_path": ffprobe}
+                )
+        async with open_instance(instance, environment={}) as runtime:
+            cognition = await runtime.cognition()
+            original = (await cognition.records.create_journal("original body")).record
+            pdf_ref = (await runtime.artifacts.ingest(pdf)).ref
+            image_ref = (await runtime.artifacts.ingest(image)).ref
+            invalid = [
+                ContentSelection(artifact=pdf_ref, selection=SourceSelection(pages=(999,))),
+                ContentSelection(
+                    artifact=image_ref, selection=SourceSelection(crop=(0, 0, 50, 50))
+                ),
+                ContentSelection(artifact=image_ref, selection=SourceSelection(frame=2)),
+            ]
+            valid = [
+                ContentSelection(artifact=pdf_ref, selection=SourceSelection(pages=(1,))),
+                ContentSelection(
+                    artifact=image_ref, selection=SourceSelection(crop=(1, 1, 12, 10))
+                ),
+            ]
+            if ffmpeg and ffprobe:
+                for path in (audio, video):
+                    ref = (await runtime.artifacts.ingest(path)).ref
+                    invalid.append(
+                        ContentSelection(
+                            artifact=ref, selection=SourceSelection(start_ms=0, end_ms=5000)
+                        )
+                    )
+                    valid.append(
+                        ContentSelection(
+                            artifact=ref, selection=SourceSelection(start_ms=0, end_ms=500)
+                        )
+                    )
+            generation = (await runtime.namespaces.read(cognition.namespace)).content_generation
+            for selection in invalid:
+                with pytest.raises(NousError) as error:
+                    await cognition.records.create_journal(
+                        "must not save", source_requests=[SourceRequest(target=selection)]
+                    )
+                assert error.value.code == "media.invalid_selection"
+            with pytest.raises(NousError) as error:
+                await cognition.records.replace(
+                    original.revision_ref,
+                    "must not change",
+                    sources=SourceChanges(add=(SourceBinding(key="N1", selections=(invalid[0],)),)),
+                )
+            assert error.value.code == "media.invalid_selection"
+            assert (await cognition.records.read(original.revision_ref)).body == "original body"
+            assert (
+                await runtime.namespaces.read(cognition.namespace)
+            ).content_generation == generation
+            assert len(await cognition.records.list(kind="journal")) == 1
+            saved = await cognition.records.create_journal(
+                "valid selections", source_requests=[SourceRequest(target=item) for item in valid]
+            )
+            assert [
+                source.selections[0]
+                for source in (await cognition.records.read(saved.record.revision_ref)).sources
+            ] == valid
+
+    asyncio.run(scenario())
 
 
 def test_inspiration_only_journal_remains_searchable_without_fact_roots(tmp_path: Path) -> None:
@@ -75,23 +192,23 @@ def test_generated_source_links_preserve_existing_markdown() -> None:
     existing = "[existing ordinary link](N1:C1)\r\n"
     literal = "`[code](N1:C1)`\r\n\r\n```md\r\n[code](N1:C1)\r\n```\r\n"
     body = (
-        existing + "[**visible label**](<N1:C1> \"title\")\r\n\r\n"
+        existing + '[**visible label**](<N1:C1> "title")\r\n\r\n'
         "> [reference][r]\r\n>\r\n> [r]: N1:C1\r\n\r\n"
         "<N1:C1> [external](https://example.com/N1:C1)\r\n\r\n"
-        "![image][picture]\r\n\r\n[picture]: N1:C1\r\n[unused]: N1:C1\r\n\r\n"
-        + literal
+        "![image][picture]\r\n\r\n[picture]: N1:C1\r\n[unused]: N1:C1\r\n\r\n" + literal
     )
     expected = (
-        existing + "[**visible label**](<source:N1:C1> \"title\")\r\n\r\n"
+        existing + '[**visible label**](<source:N1:C1> "title")\r\n\r\n'
         "> [reference][r]\r\n>\r\n> [r]: source:N1:C1\r\n\r\n"
         "[N1:C1](source:N1:C1) [external](https://example.com/N1:C1)\r\n\r\n"
-        "![image][picture]\r\n\r\n[picture]: N1:C1\r\n[unused]: N1:C1\r\n\r\n"
-        + literal
+        "![image][picture]\r\n\r\n[picture]: N1:C1\r\n[unused]: N1:C1\r\n\r\n" + literal
     )
     normalized = normalize_source_links(body, ("N1:C1",), preserve=existing)
     assert normalized.text == expected
     assert tuple(item.key for item in parse_citations(normalized.text).citations) == (
-        "N1:C1", "N1:C1", "N1:C1"
+        "N1:C1",
+        "N1:C1",
+        "N1:C1",
     )
     assert not normalize_source_links(normalized.text, ("N1:C1",), preserve=existing).keys
 
@@ -159,7 +276,9 @@ def test_retrieval_projection_preserves_original_annotation_and_plain_inputs(
             concept = annotation.bindings["K"].ref
             scoped = await c.retrieval.query(
                 CognitiveQuery(
-                    namespace="default", text="资源释放", mode="lexical",
+                    namespace="default",
+                    text="资源释放",
+                    mode="lexical",
                     core_concepts=(concept.concept_ref.identifier,),
                 )
             )

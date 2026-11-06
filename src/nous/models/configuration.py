@@ -11,7 +11,7 @@ from pydantic import (
 )
 
 from nous.common.values import ResourceId
-from nous.configuration.metadata import ConfigModel, setting
+from nous.configuration.metadata import ConfigJson, ConfigMap, ConfigModel, ConfigSequence, setting
 
 Capability = Literal[
     "text", "image", "audio", "video", "stream", "structured_output", "tools", "embedding"
@@ -112,8 +112,8 @@ class ProviderConfig(ConfigModel):
 class ModelConfig(ConfigModel):
     provider: ResourceId = Field(description="Configured provider connection ID.")
     model_name: str = Field(min_length=1, description="Model name sent to the configured gateway.")
-    capabilities: list[Capability] = Field(
-        default_factory=list, description="Explicitly confirmed model capabilities."
+    capabilities: ConfigSequence[Capability] = Field(
+        default_factory=tuple, description="Explicitly confirmed model capabilities."
     )
     context_window: int | None = Field(
         default=None, ge=1, description="Optional model context limit in tokens."
@@ -124,13 +124,13 @@ class ModelConfig(ConfigModel):
     deployment_revision: str | None = Field(
         default=None, description="Operator-declared model deployment revision."
     )
-    input_formats: list[str] = Field(
-        default_factory=lambda: ["text/plain"], description="Accepted MIME formats."
+    input_formats: ConfigSequence[str] = Field(
+        default_factory=lambda: ("text/plain",), description="Accepted MIME formats."
     )
-    output_modes: list[Literal["text", "native", "tool"]] = Field(
-        default_factory=lambda: ["text"], description="Confirmed generation output modes."
+    output_modes: ConfigSequence[Literal["text", "native", "tool"]] = Field(
+        default_factory=lambda: ("text",), description="Confirmed generation output modes."
     )
-    compatibility: dict[str, JsonValue] = Field(
+    compatibility: ConfigMap[str, ConfigJson] = Field(
         default_factory=dict, description="Explicit SDK protocol profile overrides."
     )
 
@@ -138,10 +138,10 @@ class ModelConfig(ConfigModel):
 class PresetConfig(ConfigModel):
     temperature: float | None = Field(default=None, ge=0)
     top_p: float | None = Field(default=None, ge=0, le=1)
-    reasoning: dict[str, JsonValue] = Field(default_factory=dict)
+    reasoning: ConfigMap[str, ConfigJson] = Field(default_factory=dict)
     max_output_tokens: int | None = Field(default=None, ge=1)
     timeout_seconds: float | None = Field(default=None, gt=0)
-    extensions: dict[str, JsonValue] = Field(default_factory=dict)
+    extensions: ConfigMap[str, ConfigJson] = Field(default_factory=dict)
 
 
 class Budget(ConfigModel):
@@ -173,7 +173,7 @@ class TaskAssignment(ConfigModel):
     operation: Literal["generation", "transcription"] = "generation"
     output_mode: Literal["text", "native", "tool"] = "text"
     preset: ResourceId | None = None
-    fallback: list[Fallback] = Field(default_factory=list)
+    fallback: ConfigSequence[Fallback] = Field(default_factory=tuple)
     budget: Budget = Field(default_factory=Budget)
 
     @model_validator(mode="after")
@@ -236,7 +236,7 @@ class EmbeddingSpace(ConfigModel):
     model: ResourceId
     deployment_revision: str = Field(min_length=1)
     dimensions: int = Field(gt=0)
-    modalities: list[Literal["text", "image", "audio", "video"]] = Field(min_length=1)
+    modalities: ConfigSequence[Literal["text", "image", "audio", "video"]] = Field(min_length=1)
     normalization: Literal["none", "l2"]
     encoding: EncodingConfig
 
@@ -246,7 +246,7 @@ class EmbeddingConfig(ConfigModel):
         64, ge=1, description="Maximum inputs submitted in one embedding gateway request."
     )
 
-    spaces: dict[ResourceId, EmbeddingSpace] = setting(
+    spaces: ConfigMap[ResourceId, EmbeddingSpace] = setting(
         {},
         apply="new_binding",
         impact="data_bound",

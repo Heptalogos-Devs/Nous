@@ -22,7 +22,7 @@ local block key 如 B1/B2，只在这份正文和解析 profile 内有效。公�
 
 根正文块保持不重叠：普通段落、代码块、列表、引用、标题等有自己的语法范围。列表和引用作为容器保留必要上下文；确需细分时提供明确子块与父块引用，不让阅读者拿到失去列表/引用语义的碎片。代码 fence、标题路径、引用祖先都可用于阅读上下文。
 
-TextView 保留原 Markdown。检索由 `content.projections.semantic_text` 在精确选区上产生确定性语义投影：完整保留 source 链接的可见 label，仅去掉链接目标与标记；普通文字不建立额外产物。投影以 ResultStore 保留原选区血缘，供词项与向量共同使用，正文读取和标注继续使用原 TextView 字节坐标。不将 B1、行号、UUID 注入检索语义；模型看见的局部键由呈现器附加，正式正文不改写。
+TextView 保留整个原 Markdown，包括没有形成根 token 的定义行、块间片段和尾部；无损全文/编辑输入按实际字节范围交付，不能以根块集合代替原文。引用定义单独被选择时也是合法非空内容。TaskDefinition 声明无损或结构化输入意图，详见 [正文与选区](../content/selection-and-text.md)。检索由 `content.projections.semantic_text` 在精确选区上产生确定性语义投影：完整保留 source 链接的可见 label，仅去掉链接目标与标记；普通文字不建立额外产物。投影以 ResultStore 保留原选区血缘，供词项与向量共同使用，正文读取和标注继续使用原 TextView 字节坐标。不将 B1、行号、UUID 注入检索语义；模型看见的局部键由呈现器附加，正式正文不改写。
 
 ## 选择与分片
 
@@ -36,6 +36,6 @@ TextView 保留原 Markdown。检索由 `content.projections.semantic_text` 在�
 
 PDF 原件通过 MediaPreparer.text_view 得到实际文字 Artifact、页范围及来源；TextView 只解析那份文字，不导入 PDFium。OCR/转写属明确语言或专用解析阶段，不能在普通文本读取中自动发生。
 
-本轮先把现有 select-passages、媒体文字展示和 Wave 片段全部迁到 TextView，再让 Journal 标注实验使用。缓存由正文身份与 parser_profile 确定，无需新增正文数据库权威。
+模型输入、编辑、媒体文字展示、选段和 Wave 共用范围/结构机制。跨内容与媒体的准备在 application/preparation 协调，content 不反向依赖 media。纯结构缓存按内容摘要与 parser_profile 复用；身份和正式来源单独绑定。缓存命中的反序列化、绑定和写缓存的序列化均纳入受管理的阻塞计算，按需物化块，不在事件循环急切重建全部正文对象。
 
 依据：[markdown-it-py token/source map](https://markdown-it-py.readthedocs.io/en/latest/using.html)。

@@ -46,7 +46,7 @@ class EmbeddingSpaceRegistry:
 
     async def check_snapshot(self, snapshot: ConfigSnapshot) -> None:
         async with self._database.read() as tx:
-            for space_id in snapshot.typed_values().embedding.spaces:
+            for space_id in snapshot.values.embedding.spaces:
                 await self.check_in(tx, resolved_space(snapshot, space_id))
 
     async def bind_in(self, tx: WriteTx, definition: SpaceDefinition) -> None:

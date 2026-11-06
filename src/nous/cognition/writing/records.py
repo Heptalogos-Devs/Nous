@@ -1,13 +1,13 @@
 """Written Note/Journal owner: immutable bodies, exact sources and short transactions."""
 
 from collections.abc import Sequence
-from typing import Literal, TypedDict, cast
+from typing import TYPE_CHECKING, Literal, TypedDict, cast
 from uuid import uuid4
 
 import sqlalchemy as sa
 
 from nous.common.errors import NousError
-from nous.common.identifier import insert_identifier
+from nous.common.identifier import insert_identifier, split_revision
 from nous.content import schema as content_schema
 from nous.content.artifacts import ArtifactStore
 from nous.content.citations import parse_citations
@@ -33,6 +33,9 @@ from ..contracts import (
 from ..scope import NamespaceOperations
 from .contracts import CommittedRecord
 from .reading import RecordReader, RecordRow, RevisionRow, Target
+
+if TYPE_CHECKING:
+    from ..sources import SourceResolver
 
 
 class RevisionValues(TypedDict):
@@ -75,9 +78,10 @@ class WrittenRecords:
         scope: NamespaceOperations,
         results: ResultStore,
         reader: RecordReader,
+        sources: SourceResolver,
     ):
         self.database, self.artifacts, self.time = database, artifacts, time
-        self.scope, self.results, self.reader = scope, results, reader
+        self.scope, self.results, self.reader, self.sources = scope, results, reader, sources
 
     @staticmethod
     def resolve_title(
@@ -117,22 +121,7 @@ class WrittenRecords:
         self, tx: ReadTx, namespace: Namespace, sources: Sequence[SourceBinding]
     ) -> None:
         """Validate source artifacts and exact owner revisions in the caller's read view."""
-        artifacts = await self.artifacts.get_many_in(
-            tx, [selection.artifact for source in sources for selection in source.selections]
-        )
-        offset = 0
-        for source in sources:
-            selected = artifacts[offset : offset + len(source.selections)]
-            offset += len(source.selections)
-            if source.owner_revision:
-                _, revision, _ = await self.reader.resolve_in(
-                    tx, source.owner_revision, namespace.id
-                )
-                if any(revision["body_artifact_id"] != artifact.ref.id for artifact in selected):
-                    raise NousError(
-                        "cognition.source_mismatch",
-                        "Source content does not match its exact owner revision",
-                    )
+        await self.sources.validate_in(tx, namespace.ref, sources)
 
     async def prepare_times(self, times: CognitiveTimes | None) -> CognitiveTimes:
         """Set the recorded time and validate cognitive time coordinates."""
@@ -392,45 +381,76 @@ class WrittenRecords:
             )
         return revision
 
-    @staticmethod
-    def check_expected(
-        row: RecordRow,
-        revision: RevisionRow,
+    async def resolve_expected_in(
+        self,
+        tx: ReadTx,
+        target: Target,
         expected: str | int | RecordRevisionRef | None,
+        namespace: str | None = None,
         body: str | None = None,
-    ) -> None:
-        """Require the expected revision to be the record's current head.
-
-        On conflict, ``cognition.revision_conflict`` includes the current revision and
-        provided edited body so the caller can choose a new explicit base.
-        """
-        if isinstance(expected, RecordRevisionRef):
-            matches = (
-                expected.revision_id == row["head_revision_id"]
-                and expected.record_ref.id == row["id"]
-                and expected.ordinal == revision["ordinal"]
-            )
+    ) -> tuple[RecordRow, RevisionRow, Namespace]:
+        """Resolve the target and its explicit base without changing either identity."""
+        row, selected, ns = await self.reader.resolve_in(tx, target, namespace)
+        target_exact = isinstance(target, RecordRevisionRef) or (
+            isinstance(target, str) and split_revision(target)[1] is not None
+        )
+        if expected is None:
+            if not target_exact:
+                raise NousError(
+                    "input.expected_required", "Provide an exact revision or expected ordinal"
+                )
+            expected_row, base = row, selected
         else:
-            matches = expected is not None and (
-                expected == revision["ordinal"]
-                or expected == revision["id"]
-                or expected == f"{row['identifier']}@{revision['ordinal']}"
-            )
-        if not matches or row["head_revision_id"] != revision["id"]:
+            if isinstance(expected, str) and expected.isdecimal():
+                expected = int(expected)
+            if isinstance(expected, int):
+                if expected < 1:
+                    raise NousError("input.invalid", "Expected ordinal must be positive")
+                expected_target: str | RecordRevisionRef = f"{row['identifier']}@{expected}"
+            else:
+                expected_target = expected
+                if isinstance(expected, str) and split_revision(expected)[1] is None:
+                    raise NousError("input.expected_required", "Expected revision must be exact")
+            expected_row, base, _ = await self.reader.resolve_in(tx, expected_target, ns.id)
+            if expected_row["id"] != row["id"]:
+                raise NousError(
+                    "cognition.target_mismatch", "Expected revision belongs to another record"
+                )
+            if target_exact and selected["id"] != base["id"]:
+                raise NousError(
+                    "input.conflicting_expected", "Target and expected revisions differ"
+                )
+        head = cast(
+            RevisionRow,
+            dict(
+                (
+                    await tx.connection.execute(
+                        sa.select(schema.revisions).where(
+                            schema.revisions.c.id == row["head_revision_id"]
+                        )
+                    )
+                )
+                .mappings()
+                .one()
+            ),
+        )
+        if base["id"] != head["id"]:
             raise NousError(
                 "cognition.revision_conflict",
                 "Record has changed; keep the edited text and use the current revision as a new explicit base",
                 details={
-                    "current_revision": f"{row['identifier']}@{revision['ordinal']}",
+                    "current_revision": f"{row['identifier']}@{head['ordinal']}",
+                    "expected_revision": f"{row['identifier']}@{base['ordinal']}",
                     "edited_body": body,
                 },
             )
+        return row, base, ns
 
     async def append_in(
         self,
         tx: WriteTx,
         target: Target,
-        expected_revision: str | int | RecordRevisionRef,
+        expected_revision: str | int | RecordRevisionRef | None,
         body: str,
         published: PublishedContent,
         *,
@@ -453,21 +473,10 @@ class WrittenRecords:
         Corrections also invalidate dependent current-basis relationships. Published
         body bytes are supplied by the caller before opening the transaction.
         """
-        row, old, ns = await self.reader.resolve_in(tx, target, namespace)
-        head = (
-            (
-                await tx.connection.execute(
-                    sa.select(schema.revisions).where(
-                        schema.revisions.c.id == row["head_revision_id"]
-                    )
-                )
-            )
-            .mappings()
-            .one()
+        row, old, ns = await self.resolve_expected_in(
+            tx, target, expected_revision, namespace, body
         )
-        self.check_expected(row, cast(RevisionRow, dict(head)), expected_revision, body)
-        if old["id"] != head["id"]:
-            self.check_expected(row, cast(RevisionRow, dict(head)), old["id"], body)
+        head = old
         bindings = (
             await self.reader.sources_in(tx, old["id"]) if sources is None else tuple(sources)
         )
@@ -549,7 +558,7 @@ class WrittenRecords:
         self,
         tx: WriteTx,
         target: Target,
-        expected_revision: str | int | RecordRevisionRef,
+        expected_revision: str | int | RecordRevisionRef | None,
         *,
         namespace: str | None = None,
         archived: bool | None = None,
@@ -561,21 +570,7 @@ class WrittenRecords:
         for a Note. A no-op returns changed false; a change in effective recall
         membership advances the namespace content generation.
         """
-        row, revision, ns = await self.reader.resolve_in(tx, target, namespace)
-        head = (
-            (
-                await tx.connection.execute(
-                    sa.select(schema.revisions).where(
-                        schema.revisions.c.id == row["head_revision_id"]
-                    )
-                )
-            )
-            .mappings()
-            .one()
-        )
-        self.check_expected(row, cast(RevisionRow, dict(head)), expected_revision)
-        if revision["id"] != head["id"]:
-            self.check_expected(row, cast(RevisionRow, dict(head)), revision["id"])
+        row, revision, ns = await self.resolve_expected_in(tx, target, expected_revision, namespace)
         if recall is not None and row["kind"] != "note":
             raise NousError("input.invalid_kind", "Recall membership can be changed only for Note")
         changed = {

@@ -2,13 +2,13 @@
 
 ## 本轮形成的基础
 
-完成可维护文稿、进程内操作、准确来源、类型化查询情境、分组结果和可追查部分失败。主计划见 [Journal 维护](journal-maintenance.md)。下面内容是后续方向与接入方法，本轮不建立空实现。
+Journal Maintenance 已形成可维护文稿、进程内操作、类型化查询情境、分组结果和部分失败诊断。当前进入 [可靠认知操作与持久维护](durable-cognition.md)，修复身份、来源、原文和执行的一致性并接入真实后台维护。实际完成状态仍见 CURRENT。
 
-## 随后接入 DBOS 与持久宿主
+## 当前接入 DBOS 与持久宿主
 
-首个持久工作是正文保存之后的标注和检索发布。它已有真实输入与结果，能够让宿主返回已保存文稿后继续维护，并在重启后继续。
+首批持久工作为独立的标注与检索刷新。保存可同时登记两项，标注失败不阻断正文检索；标注成功激活后，在采用事务中登记新代次的刷新。
 
-拥有实例锁的长生命周期宿主同时运行应用能力和 DBOS；不得另启动一个也 open_instance 的 worker。工作参数只含 Namespace、精确 revision、任务/模板快照、请求的维护效果；依赖由组合根注册和绑定。
+拥有实例锁的长生命周期宿主运行应用能力与 DBOS。DBOS 使用独立调度循环，真实业务通过有限 RuntimeBridge 回到既有 Nous 循环和共享资源；不另启动一个也 open_instance 的 worker。工作参数只含稳定 Namespace、精确 revision、冻结任务/模板与请求的维护效果。
 
 业务写入与明确维护入队使用同一个 SQLAlchemy 事务及 DBOS 系统数据库。当前官方 `enqueue_in_transaction` 接受同一数据库上的 connection；异步连接通过正式桥接调用。DBOSClient 也支持 class_name/instance_name 注册方法，文档中旧“不支持类方法”的说法应删除。
 
@@ -16,9 +16,11 @@
 
 不增加自制任务总表、通用 outbox、无限 lease/receipt 框架。工作状态由 DBOS，认知结果由实际 owner。普通前台调用仍可直接完成，两个入口复用同一业务操作。
 
-下一份实施计划还需固定：所采用 DBOS 版本、序列化方式、模板冻结如何持久化、启动注册/恢复顺序、单宿主退出和用户实际状态入口。用完整保存→维护→关闭重开通路开发，不先做空队列演示。
+本轮固定 DBOS 3.4.0、portable JSON、成功产物描述、业务采用幂等、注册与关闭顺序及 runtime.jobs/nous job；详见 [DBOS 接入](../design/foundation/dbos-integration.md) 和 [持久维护](../design/cognition/durable-maintenance.md)。使用完整保存→维护→关闭重开通路开发。Job 表示持久执行；WorkContext 保留认知工作语义。
 
 ## 然后接入工作中的记忆使用
+
+详细方向见 [认知使用与发展](cognitive-use-next.md)。
 
 最先选择一个真实开发/研究任务：跨会话保留目标、有效决定、进度和待解问题；根据当前问题召回 Journal；Steward 选出原文段落；宿主把这些段落交给模型，反馈实际有用性。
 

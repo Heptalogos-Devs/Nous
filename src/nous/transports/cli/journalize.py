@@ -64,6 +64,9 @@ def journalize(
     stream: bool = False,
     refresh: bool = False,
     refresh_mode: Mode | None = None,
+    background: bool = False,
+    inline: bool = False,
+    annotate: bool = False,
     current_basis: Annotated[list[str] | None, typer.Option("--current-basis")] = None,
     inspiration: Annotated[list[str] | None, typer.Option("--inspiration")] = None,
 ):
@@ -83,7 +86,7 @@ def journalize(
                     viewpoint=viewpoint,
                     adoption=("save" if save else "draft") if save is not None else None,
                     on_delta=delta if stream else None,
-                    after=after_write(refresh, refresh_mode),
+                    after=after_write(refresh, refresh_mode, background, inline, annotate),
                 )
             finally:
                 if stream:
@@ -142,6 +145,9 @@ def draft_adopt(
     fork: bool = False,
     refresh: bool = False,
     refresh_mode: Mode | None = None,
+    background: bool = False,
+    inline: bool = False,
+    annotate: bool = False,
 ):
     body = (
         read_body(text, file)
@@ -167,7 +173,7 @@ def draft_adopt(
                 override=override,
                 title=title,
                 fork=fork,
-                after=after_write(refresh, refresh_mode),
+                after=after_write(refresh, refresh_mode, background, inline, annotate),
             )
 
     emit_record(ctx, run_async(run()))
@@ -191,6 +197,9 @@ def propose_edit(
     save: bool = False,
     refresh: bool = False,
     refresh_mode: Mode | None = None,
+    background: bool = False,
+    inline: bool = False,
+    annotate: bool = False,
 ):
     selected = (
         TypeAdapter(tuple[BlockRef | ContentSelection, ...]).validate_json(scopes.read_bytes())
@@ -216,7 +225,7 @@ def propose_edit(
                 feedback_mappings=mappings,
                 intent=intent,
                 adoption="save" if save else "draft",
-                after=after_write(refresh, refresh_mode),
+                after=after_write(refresh, refresh_mode, background, inline, annotate),
             )
 
     emit_outcome(ctx, run_async(run()))
@@ -235,6 +244,9 @@ def rewrite(
     save: bool = False,
     refresh: bool = False,
     refresh_mode: Mode | None = None,
+    background: bool = False,
+    inline: bool = False,
+    annotate: bool = False,
 ):
     async def run():
         async with open_instance(options(ctx).locator) as runtime:
@@ -244,7 +256,7 @@ def rewrite(
                 intent=intent,
                 sources=source_requests(source, current_basis, inspiration),
                 adoption="save" if save else "draft",
-                after=after_write(refresh, refresh_mode),
+                after=after_write(refresh, refresh_mode, background, inline, annotate),
             )
 
     emit_outcome(ctx, run_async(run()))
@@ -264,6 +276,9 @@ def reflect(
     save: bool = False,
     refresh: bool = False,
     refresh_mode: Mode | None = None,
+    background: bool = False,
+    inline: bool = False,
+    annotate: bool = False,
 ):
     async def run():
         async with open_instance(options(ctx).locator) as runtime:
@@ -274,7 +289,7 @@ def reflect(
                 author=author,
                 viewpoint=viewpoint,
                 adoption="save" if save else "draft",
-                after=after_write(refresh, refresh_mode),
+                after=after_write(refresh, refresh_mode, background, inline, annotate),
             )
 
     emit_outcome(ctx, run_async(run()))

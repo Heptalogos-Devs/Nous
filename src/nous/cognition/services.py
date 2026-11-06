@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from .annotations import AnnotationOperations
 from .concepts import ConceptOperations
-from .contracts import Namespace
+from .contracts import NamespaceRef
 from .feedback import FeedbackOperations
 from .retrieval.operations import CognitiveRetrieval
 from .writing.generation import WritingOperations
@@ -19,7 +19,8 @@ class CognitiveServices:
     records for formal revisions, writing for model-produced drafts, and retrieval
     for current or explicitly selected snapshots.
     """
-    namespace: Namespace
+
+    namespace: NamespaceRef
     records: RecordOperations
     writing: WritingOperations
     annotations: AnnotationOperations

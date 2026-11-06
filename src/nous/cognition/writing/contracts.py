@@ -6,6 +6,7 @@ from pydantic import Field, model_validator
 
 from nous.common.operations import OperationIssue
 from nous.content.contracts import ArtifactRef, ContentReadView, ContentSelection, ResultRef
+from nous.jobs.contracts import JobRef
 from nous.temporal.values import CognitiveTimes
 
 from ..contracts import (
@@ -13,6 +14,7 @@ from ..contracts import (
     Namespace,
     RecordRef,
     RecordRevisionRef,
+    RevisionSelection,
     SourceBinding,
     TitleSource,
 )
@@ -22,6 +24,7 @@ WritingIntent = Literal["new", "edit", "rewrite", "reflection"]
 
 class SourceChanges(CognitiveValue):
     """Describe how to retain, remove and add bindings when creating a revision."""
+
     preserve: bool = True
     add: tuple[SourceBinding, ...] = ()
     remove: tuple[str, ...] = ()
@@ -88,18 +91,20 @@ class AfterWrite(CognitiveValue):
     ``retrieval="defer"`` leaves retrieval work pending for recalled records.
     A retrieval mode also requests refresh.
     """
+
     annotation: Literal["default", "skip", "run"] = "default"
     retrieval: Literal["defer", "refresh"] = "defer"
     retrieval_mode: (
         Literal["auto", "lexical", "dense", "tagmemo", "rivermemo", "hybrid", "dtsc"] | None
     ) = None
+    execution: Literal["default", "inline", "background"] = "default"
 
 
 DEFAULT_AFTER_WRITE = AfterWrite()
 
 
 class SourceRequest(CognitiveValue):
-    target: str | RecordRef | RecordRevisionRef | ArtifactRef | ContentSelection
+    target: str | RecordRef | RecordRevisionRef | RevisionSelection | ArtifactRef | ContentSelection
     usage: Literal["reference", "current_basis", "inspiration"] = "reference"
 
 
@@ -119,6 +124,7 @@ class StageOutcome(CognitiveValue):
     generation: int | None = None
     ref: str | None = None
     issue: OperationIssue | None = None
+    job: JobRef | None = None
 
 
 class OperationLink(CognitiveValue):
@@ -132,11 +138,13 @@ class RecordOutcome(CognitiveValue):
     A ``partial`` status identifies a failed follow-up while the record is already
     committed. Stage states and issues identify the work to retry.
     """
+
     record: CommittedRecord
     status: Literal["success", "partial"]
     annotation: StageOutcome
     retrieval: StageOutcome
     operation: OperationLink
+    jobs: tuple[JobRef, ...] = ()
 
 
 class RevisionDiff(CognitiveValue):
@@ -202,6 +210,7 @@ class WritingOutcome(CognitiveValue):
     draft; ``adopted`` includes a formal record. An unchanged adoption also includes
     its record. Stage results identify completed processing results.
     """
+
     status: Literal["no_material", "draft", "adopted", "unchanged"]
     draft_ref: DraftRef | None = None
     draft: DraftView | None = None

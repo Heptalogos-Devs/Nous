@@ -3,11 +3,13 @@
 import hashlib
 import json
 from collections import defaultdict
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import replace
+from typing import cast
 from uuid import uuid4
 
 import sqlalchemy as sa
+from pydantic import JsonValue, TypeAdapter
 from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.engine import RowMapping
 
@@ -16,6 +18,7 @@ from nous.common.identifier import insert_identifier
 from nous.common.operations import add_error_context, record_completed
 from nous.content.annotations import AnnotationProposal, AnnotationSet
 from nous.content.contracts import (
+    ArtifactRef,
     ContentSelection,
     InputSpec,
     ResultRef,
@@ -25,7 +28,7 @@ from nous.content.schema import results as processing_results
 from nous.models.contracts import ReadingInput
 from nous.models.operations import GenerationOperations, ProducedTask
 from nous.runtime.execution import ExecutionManager
-from nous.storage.database import Database, ReadTx
+from nous.storage.database import Database, ReadTx, WriteTx
 
 from . import concept_schema as schema
 from . import schema as written
@@ -39,10 +42,15 @@ from .concept_contracts import (
     ConceptView,
 )
 from .concepts import ConceptOperations, ConceptTarget
-from .contracts import RecordRef, RecordRevisionRef
+from .contracts import Namespace, NamespaceRef, RecordRef, RecordRevisionRef
 from .writing.reading import RecordReader, Target
 
 _EXPECTED = object()
+JsonObject = dict[str, JsonValue]
+
+
+def _json(value: object) -> JsonObject:
+    return TypeAdapter(JsonObject).validate_python(value)
 
 
 class AnnotationOperations:
@@ -51,6 +59,7 @@ class AnnotationOperations:
     Proposals retain the body revision, Concept candidates and active annotation
     observed during preparation. Adoption checks those facts before binding meanings.
     """
+
     def __init__(
         self,
         database: Database,
@@ -62,6 +71,137 @@ class AnnotationOperations:
         self.database, self.execution, self.records = database, execution, records
         self.concepts, self.generation = concepts, generation
         self.results, self.artifacts = generation.results, generation.results.artifacts
+
+    async def prepare_annotation(
+        self, payload: JsonObject, *, known_concepts: Mapping[str, ConceptTarget] | None = None
+    ) -> JsonObject:
+        """Freeze an exact body, candidate meanings and active-pointer precondition."""
+        async with self.execution.operation("maintenance.annotation.prepare"):
+            namespace = NamespaceRef.model_validate(payload["namespace_ref"])
+            target = RecordRevisionRef.model_validate(payload["target_revision"])
+            recipe = _json(payload["recipe"])
+            async with self.database.read() as tx:
+                selected = await self.records.namespace_in(tx, namespace)
+                row, revision, ns = await self.records.resolve_in(tx, target, selected.id)
+                automatic = bool(payload.get("automatic", True))
+                require_current = bool(payload.get("require_current", automatic))
+                if (require_current and row["head_revision_id"] != revision["id"]) or (
+                    automatic and (row["archived"] or not row["recall"])
+                ):
+                    return {"state": "superseded"}
+                body = (await self.artifacts.get_in(tx, revision["body_artifact_id"])).ref
+                active = await tx.connection.scalar(
+                    sa.select(schema.annotation_heads.c.annotation_id).where(
+                        schema.annotation_heads.c.record_revision_id == revision["id"]
+                    )
+                )
+            if known_concepts is None:
+                candidates = await self.concepts.candidates(
+                    ns.id,
+                    await self.artifacts.read_text(body),
+                    int(cast(int, recipe["candidate_limit_annotation"])),
+                )
+                chosen = {f"C{index}": candidate for index, candidate in enumerate(candidates, 1)}
+            else:
+                async with self.database.read() as tx:
+                    chosen = {
+                        key: await self.concepts.read_in(tx, value, ns.id)
+                        for key, value in known_concepts.items()
+                    }
+            if any(not key or any(char.isspace() for char in key) for key in chosen):
+                raise NousError(
+                    "input.invalid_candidate", "Concept candidate keys must be nonempty local keys"
+                )
+            instructions = (
+                "Existing exact Concept candidates; use reuse_key only for these keys:\n"
+                + "\n".join(
+                    f"{key}: {value.label}\n{value.description}\naliases: {', '.join(value.aliases)}"
+                    for key, value in chosen.items()
+                )
+            )
+            return {
+                **payload,
+                "body": body.model_dump(mode="json"),
+                "instructions": instructions,
+                "annotation_context": {
+                    "body_revision": target.model_dump(mode="json"),
+                    "expected_active_annotation": active,
+                    "candidates": {
+                        key: value.ref.model_dump(mode="json") for key, value in chosen.items()
+                    },
+                },
+            }
+
+    async def generate_annotation(self, plan: JsonObject) -> JsonObject:
+        """Publish the successful model computation under its stable business key."""
+        async with self.execution.operation("maintenance.annotation.generate"):
+            recipe = _json(plan["recipe"])
+            frozen_ref = ArtifactRef.model_validate(recipe["frozen_task"])
+            frozen = await self.generation.load_language_task(frozen_ref, self.execution.snapshot)
+            if (
+                frozen.resource is None
+                or frozen.resource.manifest.contract_id != "concept-annotation"
+            ):
+                raise NousError(
+                    "model.task_contract_mismatch", "Annotation task uses another output contract"
+                )
+            prepared = await self.generation.prepare_input(
+                frozen,
+                InputSpec(
+                    kind="artifact",
+                    artifact=ArtifactRef.model_validate(plan["body"]),
+                    role="revision_base",
+                ),
+                self.execution.snapshot,
+            )
+            if len(prepared.batches) != 1:
+                raise NousError(
+                    "cognition.annotation_body", "Annotation requires one complete body"
+                )
+            producer_key = f"{plan['job_id']}:annotation"
+            produced = await self.generation.produce(
+                prepared.frozen,
+                prepared.batches[0],
+                self.execution.snapshot,
+                instructions=str(plan["instructions"]),
+                producer_key=producer_key,
+                frozen_task_ref=frozen_ref,
+                completed=list(prepared.preparations),
+            )
+            annotation = AnnotationSet.model_validate_json(produced.outputs["output"].data)
+            candidates = _json(_json(plan["annotation_context"])["candidates"])
+            unknown = {item.reuse_key for item in annotation.concepts if item.reuse_key} - set(
+                candidates
+            )
+            if unknown:
+                raise NousError(
+                    "cognition.unknown_candidate",
+                    "Proposal uses unknown Concept candidate keys",
+                    details={"keys": sorted(unknown)},
+                )
+            produced = replace(
+                produced,
+                parameters={
+                    **produced.parameters,
+                    "annotation_context": plan["annotation_context"],
+                },
+            )
+            published = await self.generation.publish_computation(
+                produced, producer_key + ":computation", frozen_ref
+            )
+            return published.model_dump(mode="json")
+
+    async def save_computation(
+        self, plan: JsonObject, generated: JsonObject
+    ) -> AnnotationProposalView:
+        """Adopt a published proposal idempotently without another model request."""
+        produced = await self.generation.load_computation(
+            ArtifactRef.model_validate(generated["descriptor"])
+        )
+        result = await self.generation.adopt_produced(
+            produced, producer_key=f"{plan['job_id']}:proposal"
+        )
+        return await self.read_proposal(result.ref)
 
     async def propose(
         self,
@@ -84,6 +224,27 @@ class AnnotationOperations:
                 candidates, or the body cannot be prepared as one complete batch.
         """
         async with self.execution.operation("annotation.propose"):
+            if proposal is None:
+                async with self.database.read() as tx:
+                    row, revision, ns = await self.records.resolve_in(tx, target, namespace)
+                    exact = self.records.revision_ref(row, revision)
+                settings = self.execution.snapshot.values.cognition.annotation
+                frozen = await self.generation.freeze_language_task(
+                    task or settings.task, self.execution.snapshot
+                )
+                payload: JsonObject = {
+                    "job_id": str(uuid4()),
+                    "namespace_ref": ns.ref.model_dump(mode="json"),
+                    "target_revision": exact.model_dump(mode="json"),
+                    "automatic": False,
+                    "recipe": {
+                        "frozen_task": frozen.descriptor.model_dump(mode="json"),
+                        "candidate_limit_annotation": settings.known_concept_limit,
+                    },
+                }
+                plan = await self.prepare_annotation(payload, known_concepts=known_concepts)
+                generated = await self.generate_annotation(plan)
+                return await self.save_computation(plan, generated)
             async with self.database.read() as tx:
                 row, revision, ns = await self.records.resolve_in(tx, target, namespace)
                 exact = self.records.revision_ref(row, revision)
@@ -97,16 +258,6 @@ class AnnotationOperations:
                     key: await self.concepts.read_in(tx, value, ns.id)
                     for key, value in (known_concepts or {}).items()
                 }
-            settings = self.execution.snapshot.typed_values().cognition.annotation
-            if known_concepts is None and proposal is None:
-                discovered = await self.concepts.candidates(
-                    ns.id,
-                    await self.artifacts.read_text(artifact.ref),
-                    settings.known_concept_limit,
-                )
-                candidates = {
-                    f"C{index}": candidate for index, candidate in enumerate(discovered, 1)
-                }
             if any(not key or any(char.isspace() for char in key) for key in candidates):
                 raise NousError(
                     "input.invalid_candidate", "Concept candidate keys must be nonempty local keys"
@@ -118,54 +269,30 @@ class AnnotationOperations:
                     key: value.ref.model_dump(mode="json") for key, value in candidates.items()
                 },
             }
-            if proposal is None:
-                prepared = await self.generation.prepare_input(
-                    task or settings.task,
-                    InputSpec(kind="artifact", artifact=artifact.ref, role="revision_base"),
-                    self.execution.snapshot,
-                )
-                if len(prepared.batches) != 1:
-                    raise NousError(
-                        "cognition.annotation_body", "Annotation requires one complete body"
-                    )
-                instructions = "\n".join(
-                    f"{key}: {candidate.label}\n{candidate.description}\n"
-                    f"aliases: {', '.join(candidate.aliases)}"
-                    for key, candidate in candidates.items()
-                )
-                produced = await self.generation.produce(
-                    prepared.frozen,
-                    prepared.batches[0],
-                    self.execution.snapshot,
-                    instructions="Existing exact Concept candidates; use reuse_key only for these keys:\n"
-                    + instructions,
-                )
-                annotation = AnnotationSet.model_validate_json(produced.outputs["output"].data)
-            else:
-                definition = self.generation.executor.compiler.catalog.tasks["concept-annotation"]
-                plans = await definition.prepare_sources(
-                    ((artifact, SourceSelection()),), self.artifacts
-                )
-                assert plans is not None
-                reading = ReadingInput(sources=plans[0].batches[0].sources)
-                validated = definition.validate(proposal.model_dump(mode="json"), reading)
-                outputs = await definition.outputs(
-                    validated, reading, self.artifacts, structured=True, producer={"kind": "manual"}
-                )
-                annotation = AnnotationSet.model_validate_json(outputs["output"].data)
-                produced = ProducedTask(
-                    operation="annotation.manual",
-                    producer={"kind": "manual"},
-                    actual_inputs=tuple(
-                        group.model_copy(update={"role": "revision_base"})
-                        for group in plans[0].batches[0].inputs
-                    ),
-                    outputs=outputs,
-                    request={},
-                    parameters={},
-                    coverage=plans[0].coverage,
-                    completed_stage_refs=(),
-                )
+            definition = self.generation.executor.compiler.catalog.tasks["concept-annotation"]
+            plans = await definition.prepare_sources(
+                ((artifact, SourceSelection()),), self.artifacts
+            )
+            assert plans is not None
+            reading = ReadingInput(sources=plans[0].batches[0].sources)
+            validated = definition.validate(proposal.model_dump(mode="json"), reading)
+            outputs = await definition.outputs(
+                validated, reading, self.artifacts, structured=True, producer={"kind": "manual"}
+            )
+            annotation = AnnotationSet.model_validate_json(outputs["output"].data)
+            produced = ProducedTask(
+                operation="annotation.manual",
+                producer={"kind": "manual"},
+                actual_inputs=tuple(
+                    group.model_copy(update={"role": "revision_base"})
+                    for group in plans[0].batches[0].inputs
+                ),
+                outputs=outputs,
+                request={},
+                parameters={},
+                coverage=plans[0].coverage,
+                completed_stage_refs=(),
+            )
             unknown = {
                 concept.reuse_key for concept in annotation.concepts if concept.reuse_key
             } - set(candidates)
@@ -227,6 +354,8 @@ class AnnotationOperations:
         expected_active_annotation: str | None | object = _EXPECTED,
         activate: bool = True,
         activate_for_current: bool = True,
+        require_recall: bool = False,
+        on_activation: Callable[[WriteTx, Namespace, int], Awaitable[None]] | None = None,
     ) -> AnnotationView:
         """Adopt a saved proposal against its exact body in one write transaction.
 
@@ -235,6 +364,8 @@ class AnnotationOperations:
         captured by the proposal. Repeating the same body, proposal and binding
         decisions reuses the existing annotation. A new adoption checks the active
         annotation and, when ``activate_for_current`` is true, the current body.
+        Automatic maintenance sets ``require_recall`` to check current membership
+        in the adoption transaction. Explicit requests can annotate private Notes.
         On conflict the saved proposal remains available for inspection or retry.
 
         Returns:
@@ -255,8 +386,16 @@ class AnnotationOperations:
                     "cognition.annotation_body", "Proposal parser profile differs from its body"
                 )
             proposed.annotation.validate_references(
-                {block.key for block in body_view.blocks if block.parent_key is None}
+                {block.key for block in body_view.structure if block.parent_key is None}
             )
+            block_selections = {
+                block.key: ContentSelection(
+                    artifact=body_view.body.artifact,
+                    selection=SourceSelection(start_byte=block.start, end_byte=block.end),
+                )
+                for block in body_view.structure
+                if block.parent_key is None
+            }
             supplied = dict(bindings or {})
             unknown = set(supplied) - {concept.key for concept in proposed.annotation.concepts}
             if unknown:
@@ -331,54 +470,16 @@ class AnnotationOperations:
                             sort_keys=True,
                         ).encode()
                     ).hexdigest()
-                    existing = await tx.connection.scalar(
-                        sa.select(schema.annotations.c.identifier).where(
-                            schema.annotations.c.adoption_key == adoption_key
+                    existing = (
+                        await tx.connection.execute(
+                            sa.select(
+                                schema.annotations.c.id, schema.annotations.c.identifier
+                            ).where(schema.annotations.c.adoption_key == adoption_key)
                         )
-                    )
+                    ).one_or_none()
                     if existing is not None:
-                        identifier = str(existing)
+                        object_id, identifier = str(existing.id), str(existing.identifier)
                     else:
-                        if activate_for_current and row["head_revision_id"] != revision["id"]:
-                            raise NousError(
-                                "cognition.annotation_conflict",
-                                "Body changed while annotation was being prepared",
-                                details={
-                                    "proposal_result": proposed.result_ref.identifier,
-                                    "target_revision": exact.identifier,
-                                    "current_revision_id": row["head_revision_id"],
-                                },
-                            )
-                        active = await tx.connection.scalar(
-                            sa.select(schema.annotation_heads.c.annotation_id).where(
-                                schema.annotation_heads.c.record_revision_id == revision["id"]
-                            )
-                        )
-                        expected = (
-                            proposed.expected_active_annotation
-                            if expected_active_annotation is _EXPECTED
-                            else expected_active_annotation
-                        )
-                        if active != expected:
-                            active_identifier = (
-                                await tx.connection.scalar(
-                                    sa.select(schema.annotations.c.identifier).where(
-                                        schema.annotations.c.id == active
-                                    )
-                                )
-                                if active
-                                else None
-                            )
-                            if active_identifier != expected or expected is None:
-                                raise NousError(
-                                    "cognition.annotation_conflict",
-                                    "Active annotation changed since proposal preparation",
-                                    details={
-                                        "proposal_result": proposed.result_ref.identifier,
-                                        "expected_annotation": str(expected) if expected else None,
-                                        "current_annotation": active_identifier,
-                                    },
-                                )
                         object_id = str(uuid4())
                         identifier = await insert_identifier(
                             tx,
@@ -428,9 +529,7 @@ class AnnotationOperations:
                                         occurrence_key=occurrence.key,
                                         ordinal=position,
                                         block_key=key,
-                                        selection=body_view.block(key).selection.model_dump(
-                                            mode="json"
-                                        ),
+                                        selection=block_selections[key].model_dump(mode="json"),
                                     )
                                 )
                         for ordinal, path in enumerate(proposed.annotation.paths):
@@ -455,7 +554,53 @@ class AnnotationOperations:
                                         for position, key in enumerate(path.occurrences)
                                     ],
                                 )
-                        if activate:
+                    if activate:
+                        if require_recall and (row["archived"] or not row["recall"]):
+                            raise NousError(
+                                "cognition.annotation_conflict",
+                                "Record is no longer eligible for automatic annotation",
+                                details={"proposal_result": proposed.result_ref.identifier},
+                            )
+                        if activate_for_current and row["head_revision_id"] != revision["id"]:
+                            raise NousError(
+                                "cognition.annotation_conflict",
+                                "Body changed while annotation was being prepared",
+                                details={
+                                    "proposal_result": proposed.result_ref.identifier,
+                                    "target_revision": exact.identifier,
+                                    "current_revision_id": row["head_revision_id"],
+                                },
+                            )
+                        active = await tx.connection.scalar(
+                            sa.select(schema.annotation_heads.c.annotation_id).where(
+                                schema.annotation_heads.c.record_revision_id == revision["id"]
+                            )
+                        )
+                        expected = (
+                            proposed.expected_active_annotation
+                            if expected_active_annotation is _EXPECTED
+                            else expected_active_annotation
+                        )
+                        if active != object_id:
+                            active_identifier = (
+                                await tx.connection.scalar(
+                                    sa.select(schema.annotations.c.identifier).where(
+                                        schema.annotations.c.id == active
+                                    )
+                                )
+                                if active
+                                else None
+                            )
+                            if active != expected and active_identifier != expected:
+                                raise NousError(
+                                    "cognition.annotation_conflict",
+                                    "Active annotation changed since proposal preparation",
+                                    details={
+                                        "proposal_result": proposed.result_ref.identifier,
+                                        "expected_annotation": str(expected) if expected else None,
+                                        "current_annotation": active_identifier,
+                                    },
+                                )
                             await tx.connection.execute(
                                 insert(schema.annotation_heads)
                                 .values(record_revision_id=revision["id"], annotation_id=object_id)
@@ -464,8 +609,14 @@ class AnnotationOperations:
                                     set_={"annotation_id": object_id},
                                 )
                             )
-                            if activate_for_current and row["recall"] and not row["archived"]:
-                                await self.records.scope.advance_in(tx, ns.id)
+                            if (
+                                row["head_revision_id"] == revision["id"]
+                                and row["recall"]
+                                and not row["archived"]
+                            ):
+                                ns = await self.records.scope.advance_in(tx, ns.id)
+                                if on_activation is not None:
+                                    await on_activation(tx, ns, ns.content_generation)
                 record_completed(identifier)
                 return await self.read(
                     identifier, namespace=proposed.body_revision.record_ref.namespace_id
@@ -554,8 +705,9 @@ class AnnotationOperations:
             raise NousError("cognition.annotation_not_found", "Annotation does not exist")
         view = (await self._read_views_in(tx, [object_id]))[object_id]
         await self.records.resolve_in(
-            tx, view.ref.body_revision,
-            namespace or self.execution.snapshot.typed_values().cognition.default_namespace,
+            tx,
+            view.ref.body_revision,
+            namespace or self.execution.snapshot.values.cognition.default_namespace,
         )
         if isinstance(target, AnnotationRef) and view.ref != target:
             raise NousError(

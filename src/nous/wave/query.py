@@ -120,7 +120,7 @@ class WaveQueries:
     ) -> tuple[npt.NDArray[np.float32] | None, npt.NDArray[np.float32] | None, dict[str, object]]:
         import nous_native as native
 
-        mode = request.mode or self.execution.snapshot.typed_values().wave.query.default_mode
+        mode = request.mode or self.execution.snapshot.values.wave.query.default_mode
         concepts = row["mapping"]["concepts"]
         by_key = {item["key"]: item for item in concepts}
         by_label: dict[str, list[ConceptMapping]] = {}
@@ -166,7 +166,7 @@ class WaveQueries:
         definition = resolved_space(self.execution.snapshot, row["space_id"])
         if definition.model_dump(mode="json") != row["space_definition"]:
             raise NousError("wave.space_mismatch", "Snapshot and configured vector space differ")
-        options = self.execution.snapshot.typed_values().wave.context
+        options = self.execution.snapshot.values.wave.context
         query_selections: list[str | ContentSelection] = []
         raw_vector = None
         if request.vector is not None:
@@ -258,7 +258,7 @@ class WaveQueries:
                 "window": options.window,
                 "decay": options.decay,
                 "context_mix": options.mix,
-                "role_weights": options.role_weights,
+                "role_weights": dict(options.role_weights),
                 "default_role_weight": options.default_role_weight,
             }
             if concept_only:
@@ -319,9 +319,10 @@ class WaveQueries:
             await self.time.validate(
                 condition.range for condition in request.candidate_filter.times
             )
-        wave = self.execution.snapshot.typed_values().wave
+        wave = self.execution.snapshot.values.wave
         mode = request.mode or wave.query.default_mode
-        readout = cast(dict[str, JsonValue], wave.native.query["readout"])
+        query_settings = wave.native.model_dump(mode="json")["query"]
+        readout = cast(dict[str, JsonValue], query_settings["readout"])
         maximum = cast(int, readout["maxUnionCandidates"])
         if request.grouping == "document" and (request.top_k or wave.query.top_k) > maximum:
             raise NousError(
@@ -360,9 +361,9 @@ class WaveQueries:
                     "top_k": stage.top_k,
                 }
             )
-        controls = cast(dict[str, JsonValue], wave.native.query["controls"])
+        controls = cast(dict[str, JsonValue], query_settings["controls"])
         search_options = {
-            **{name: value for name, value in wave.native.query.items() if name != "controls"},
+            **{name: value for name, value in query_settings.items() if name != "controls"},
             "query_space_signature": row["identity"]["space_signature"],
             "thinking_min_closure": controls["thinking_min_closure"],
             "top_k": request.top_k or wave.query.top_k,

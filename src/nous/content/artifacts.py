@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import codecs
 import mimetypes
 from collections.abc import AsyncGenerator, Callable, Sequence
 from contextlib import asynccontextmanager
@@ -31,7 +32,9 @@ from .contracts import (
     ContentRepresentation,
     ContentSelection,
     InputSpec,
+    OriginSlice,
     ResultRef,
+    SelectedText,
     SourceSelection,
 )
 from .text import PARSER_PROFILE, BlockRef, TextBlock, TextView
@@ -189,7 +192,8 @@ class ArtifactStore:
                     .outerjoin(schema.results, schema.results.c.id == schema.outputs.c.result_id)
                     .where(
                         sa.or_(
-                            schema.artifacts.c.id.in_(chunk), schema.artifacts.c.identifier.in_(chunk)
+                            schema.artifacts.c.id.in_(chunk),
+                            schema.artifacts.c.identifier.in_(chunk),
                         )
                     )
                 )
@@ -197,7 +201,9 @@ class ArtifactStore:
             for row in rows:
                 artifact = Artifact(
                     ref=ArtifactRef(
-                        id=str(row["id"]), identifier=str(row["identifier"]), instance_id=self.instance_id
+                        id=str(row["id"]),
+                        identifier=str(row["identifier"]),
+                        instance_id=self.instance_id,
                     ),
                     media_type=str(row["media_type"]),
                     display_name=str(row["display_name"]),
@@ -247,189 +253,211 @@ class ArtifactStore:
         representations: Literal["existing", "none"] = "existing",
     ) -> tuple[ContentReadView, ...]:
         """Read exact text or media references, expanding adopted representations without generation."""
-        if not selections:
-            return ()
-        async with self.database.read() as tx:
-            originals = await self.get_many_in(tx, [selection.artifact for selection in selections])
-            blobs = await self.content.resolve_many_in(tx, [item.ref.id for item in originals])
-            object_ids = {item.ref.id for item in originals}
-            represented: dict[
-                str, list[tuple[dict[str, object], tuple[ContentSelection, ...]]]
-            ] = {}
-            if representations == "existing":
-                direct = sa.select(schema.parts.c.result_id).where(
-                    schema.parts.c.artifact_id.in_(object_ids)
+        async with self.content.execution.operation("content.read_view_many"):
+            if not selections:
+                return ()
+            async with self.database.read() as tx:
+                originals = await self.get_many_in(
+                    tx, [selection.artifact for selection in selections]
                 )
-                origins = sa.select(schema.origins.c.result_id).where(
-                    schema.origins.c.artifact_id.in_(object_ids)
+                blobs = await self.content.resolve_many_in(tx, [item.ref.id for item in originals])
+                object_ids = {item.ref.id for item in originals}
+                represented: dict[
+                    str, list[tuple[dict[str, object], tuple[ContentSelection, ...]]]
+                ] = {}
+                if representations == "existing":
+                    direct = sa.select(schema.parts.c.result_id).where(
+                        schema.parts.c.artifact_id.in_(object_ids)
+                    )
+                    origins = sa.select(schema.origins.c.result_id).where(
+                        schema.origins.c.artifact_id.in_(object_ids)
+                    )
+                    result_ids = list(
+                        (await tx.connection.execute(direct.union(origins))).scalars()
+                    )
+                    if result_ids:
+                        used = (
+                            (
+                                await tx.connection.execute(
+                                    sa.select(
+                                        schema.parts.c.result_id,
+                                        schema.parts.c.artifact_id,
+                                        schema.parts.c.selector,
+                                    ).where(schema.parts.c.result_id.in_(result_ids))
+                                )
+                            )
+                            .mappings()
+                            .all()
+                        )
+                        roots = (
+                            (
+                                await tx.connection.execute(
+                                    sa.select(
+                                        schema.origins.c.result_id,
+                                        schema.origins.c.artifact_id,
+                                        schema.origins.c.selector,
+                                    ).where(schema.origins.c.result_id.in_(result_ids))
+                                )
+                            )
+                            .mappings()
+                            .all()
+                        )
+                        source_artifacts = await self.get_many_in(
+                            tx, [str(row["artifact_id"]) for row in (*used, *roots)]
+                        )
+                        relations: dict[str, list[ContentSelection]] = {}
+                        for row, artifact in zip((*used, *roots), source_artifacts, strict=True):
+                            selected = ContentSelection(
+                                artifact=artifact.ref,
+                                selection=SourceSelection.model_validate(row["selector"]),
+                            )
+                            if selected not in relations.setdefault(str(row["result_id"]), []):
+                                relations[str(row["result_id"])].append(selected)
+                        outputs = (
+                            (
+                                await tx.connection.execute(
+                                    sa.select(
+                                        schema.results.c.id,
+                                        schema.results.c.identifier,
+                                        schema.results.c.operation,
+                                        schema.results.c.coverage,
+                                        schema.results.c.parameters,
+                                        schema.outputs.c.name,
+                                        schema.outputs.c.artifact_id,
+                                    )
+                                    .join(schema.outputs)
+                                    .where(
+                                        schema.results.c.id.in_(result_ids),
+                                        schema.outputs.c.name != "response",
+                                    )
+                                    .order_by(
+                                        schema.results.c.recorded_at, schema.outputs.c.ordinal
+                                    )
+                                )
+                            )
+                            .mappings()
+                            .all()
+                        )
+                        for row in outputs:
+                            declared = cast(dict[str, JsonValue], row["parameters"]).get(
+                                "representations", {}
+                            )
+                            info = (
+                                declared.get(str(row["name"]))
+                                if isinstance(declared, dict)
+                                else None
+                            )
+                            if not isinstance(info, dict) or not isinstance(info.get("kind"), str):
+                                continue
+                            exact = (
+                                tuple(
+                                    ContentSelection.model_validate(item)
+                                    for item in cast(list[JsonValue], info["sources"])
+                                )
+                                if "sources" in info
+                                else tuple(relations[str(row["id"])])
+                            )
+                            if any(item.artifact.instance_id != self.instance_id for item in exact):
+                                raise NousError(
+                                    "content.instance_mismatch",
+                                    "A representation belongs to another instance",
+                                )
+                            details: dict[str, object] = {
+                                **dict(row),
+                                "representation_kind": info["kind"],
+                            }
+                            for object_id in {item.artifact.id for item in exact} & object_ids:
+                                represented.setdefault(object_id, []).append((details, exact))
+                derived = await self.get_many_in(
+                    tx,
+                    list(
+                        dict.fromkeys(
+                            str(row["artifact_id"])
+                            for rows in represented.values()
+                            for row, _ in rows
+                        )
+                    ),
                 )
-                result_ids = list((await tx.connection.execute(direct.union(origins))).scalars())
-                if result_ids:
-                    used = (
-                        (
-                            await tx.connection.execute(
-                                sa.select(
-                                    schema.parts.c.result_id,
-                                    schema.parts.c.artifact_id,
-                                    schema.parts.c.selector,
-                                ).where(schema.parts.c.result_id.in_(result_ids))
-                            )
+            derived_map = {artifact.ref.id: artifact for artifact in derived}
+            texts: dict[str, str] = {}
+            views: list[ContentReadView] = []
+            for selected, artifact, blob in zip(selections, originals, blobs, strict=True):
+                is_text = (
+                    artifact.media_type.startswith("text/")
+                    or artifact.media_type == "application/json"
+                )
+                async with self.content.borrow_local(blob) as path:
+                    if is_text:
+                        data, _, _ = await self.content.execution.blocking(
+                            self._selected_bytes,
+                            path,
+                            selected.selection,
+                            self.text_read_max_bytes(),
+                            blob.byte_length,
                         )
-                        .mappings()
-                        .all()
-                    )
-                    roots = (
-                        (
-                            await tx.connection.execute(
-                                sa.select(
-                                    schema.origins.c.result_id,
-                                    schema.origins.c.artifact_id,
-                                    schema.origins.c.selector,
-                                ).where(schema.origins.c.result_id.in_(result_ids))
-                            )
-                        )
-                        .mappings()
-                        .all()
-                    )
-                    source_artifacts = await self.get_many_in(
-                        tx, [str(row["artifact_id"]) for row in (*used, *roots)]
-                    )
-                    relations: dict[str, list[ContentSelection]] = {}
-                    for row, artifact in zip((*used, *roots), source_artifacts, strict=True):
-                        selected = ContentSelection(
-                            artifact=artifact.ref,
-                            selection=SourceSelection.model_validate(row["selector"]),
-                        )
-                        if selected not in relations.setdefault(str(row["result_id"]), []):
-                            relations[str(row["result_id"])].append(selected)
-                    outputs = (
-                        (
-                            await tx.connection.execute(
-                                sa.select(
-                                    schema.results.c.id,
-                                    schema.results.c.identifier,
-                                    schema.results.c.operation,
-                                    schema.results.c.coverage,
-                                    schema.results.c.parameters,
-                                    schema.outputs.c.name,
-                                    schema.outputs.c.artifact_id,
-                                )
-                                .join(schema.outputs)
-                                .where(
-                                    schema.results.c.id.in_(result_ids),
-                                    schema.outputs.c.name != "response",
-                                )
-                                .order_by(schema.results.c.recorded_at, schema.outputs.c.ordinal)
-                            )
-                        )
-                        .mappings()
-                        .all()
-                    )
-                    for row in outputs:
-                        declared = cast(dict[str, JsonValue], row["parameters"]).get(
-                            "representations", {}
-                        )
-                        info = (
-                            declared.get(str(row["name"])) if isinstance(declared, dict) else None
-                        )
-                        if not isinstance(info, dict) or not isinstance(info.get("kind"), str):
-                            continue
-                        exact = (
-                            tuple(
-                                ContentSelection.model_validate(item)
-                                for item in cast(list[JsonValue], info["sources"])
-                            )
-                            if "sources" in info
-                            else tuple(relations[str(row["id"])])
-                        )
-                        if any(item.artifact.instance_id != self.instance_id for item in exact):
+                        try:
+                            body = data.decode("utf-8")
+                        except UnicodeDecodeError as error:
                             raise NousError(
-                                "content.instance_mismatch",
-                                "A representation belongs to another instance",
-                            )
-                        details: dict[str, object] = {**dict(row), "representation_kind": info["kind"]}
-                        for object_id in {item.artifact.id for item in exact} & object_ids:
-                            represented.setdefault(object_id, []).append((details, exact))
-            derived = await self.get_many_in(
-                tx,
-                list(
-                    dict.fromkeys(
-                        str(row["artifact_id"]) for rows in represented.values() for row, _ in rows
+                                "content.not_text", "Selection does not contain complete UTF-8 text"
+                            ) from error
+                    else:
+                        body = None
+                available: list[ContentRepresentation] = []
+                normalized_selected = (
+                    (await self.normalize_selections((selected,)))[0] if is_text else selected
+                )
+                for row, exact in represented.get(artifact.ref.id, []):
+                    normalized_exact = await self.normalize_selections(exact)
+                    if not any(
+                        item.artifact.id == artifact.ref.id
+                        and self._overlaps(normalized_selected.selection, item.selection)
+                        for item in normalized_exact
+                    ):
+                        continue
+                    output = derived_map[str(row["artifact_id"])]
+                    if output.ref.id == artifact.ref.id:
+                        continue
+                    if (
+                        output.media_type.startswith("text/")
+                        or output.media_type == "application/json"
+                    ):
+                        if output.ref.id not in texts:
+                            texts[output.ref.id] = await self.read_text(output.ref)
+                        text = texts[output.ref.id]
+                    else:
+                        text = None
+                    available.append(
+                        ContentRepresentation(
+                            kind=str(row["representation_kind"]),
+                            result_ref=ResultRef(
+                                id=str(row["id"]),
+                                identifier=str(row["identifier"]),
+                                instance_id=self.instance_id,
+                            ),
+                            operation=str(row["operation"]),
+                            output_name=str(row["name"]),
+                            content=ContentSelection(artifact=output.ref),
+                            name=output.display_name,
+                            media_type=output.media_type,
+                            source_selections=exact,
+                            coverage=cast(dict[str, JsonValue], row["coverage"]),
+                            body_text=text,
+                        )
                     )
-                ),
-            )
-        derived_map = {artifact.ref.id: artifact for artifact in derived}
-        texts: dict[str, str] = {}
-        views: list[ContentReadView] = []
-        for selected, artifact, blob in zip(selections, originals, blobs, strict=True):
-            is_text = (
-                artifact.media_type.startswith("text/") or artifact.media_type == "application/json"
-            )
-            async with self.content.borrow_local(blob) as path:
-                if is_text:
-                    data, _, _ = await self.content.execution.blocking(
-                        self._selected_bytes,
-                        path,
-                        selected.selection,
-                        self.text_read_max_bytes(),
-                        blob.byte_length,
-                    )
-                    try:
-                        body = data.decode("utf-8")
-                    except UnicodeDecodeError as error:
-                        raise NousError(
-                            "content.not_text", "Selection does not contain complete UTF-8 text"
-                        ) from error
-                else:
-                    body = None
-            available: list[ContentRepresentation] = []
-            for row, exact in represented.get(artifact.ref.id, []):
-                if not any(
-                    item.artifact.id == artifact.ref.id
-                    and self._overlaps(selected.selection, item.selection)
-                    for item in exact
-                ):
-                    continue
-                output = derived_map[str(row["artifact_id"])]
-                if output.ref.id == artifact.ref.id:
-                    continue
-                if output.media_type.startswith("text/") or output.media_type == "application/json":
-                    if output.ref.id not in texts:
-                        texts[output.ref.id] = await self.read_text(output.ref)
-                    text = texts[output.ref.id]
-                else:
-                    text = None
-                available.append(
-                    ContentRepresentation(
-                        kind=str(row["representation_kind"]),
-                        result_ref=ResultRef(
-                            id=str(row["id"]),
-                            identifier=str(row["identifier"]),
-                            instance_id=self.instance_id,
-                        ),
-                        operation=str(row["operation"]),
-                        output_name=str(row["name"]),
-                        content=ContentSelection(artifact=output.ref),
-                        name=output.display_name,
-                        media_type=output.media_type,
-                        source_selections=exact,
-                        coverage=cast(dict[str, JsonValue], row["coverage"]),
-                        body_text=text,
+                views.append(
+                    ContentReadView(
+                        source=selected,
+                        name=artifact.display_name,
+                        media_type=artifact.media_type,
+                        byte_length=blob.byte_length,
+                        body_text=body,
+                        export_ref=artifact.ref,
+                        available_representations=tuple(available),
+                        coverage={"selection": selected.selection.model_dump(mode="json")},
                     )
                 )
-            views.append(
-                ContentReadView(
-                    source=selected,
-                    name=artifact.display_name,
-                    media_type=artifact.media_type,
-                    byte_length=blob.byte_length,
-                    body_text=body,
-                    export_ref=artifact.ref,
-                    available_representations=tuple(available),
-                    coverage={"selection": selected.selection.model_dump(mode="json")},
-                )
-            )
-        return tuple(views)
+            return tuple(views)
 
     @staticmethod
     def _overlaps(left: SourceSelection, right: SourceSelection) -> bool:
@@ -510,12 +538,38 @@ class ArtifactStore:
                 raise NousError(
                     "content.too_large", "Text selection exceeds the configured read limit"
                 )
+            first_line = 1
+            previous_cr = False
+            decoder = codecs.getincrementaldecoder("utf-8")()
             with path.open("rb") as stream:
-                stream.seek(start)
+                remaining = start
+                try:
+                    while remaining:
+                        prefix = stream.read(min(65536, remaining))
+                        if not prefix:
+                            raise NousError("content.corrupt", "Stored content is incomplete")
+                        remaining -= len(prefix)
+                        decoded = decoder.decode(prefix, final=remaining == 0)
+                        for character in decoded:
+                            if character == "\r":
+                                first_line += 1
+                            elif character == "\n" and not previous_cr:
+                                first_line += 1
+                            previous_cr = character == "\r"
+                except UnicodeDecodeError as error:
+                    raise NousError(
+                        "content.invalid_selection", "Selection splits a UTF-8 character"
+                    ) from error
                 data = stream.read(end - start)
+                try:
+                    data.decode("utf-8")
+                except UnicodeDecodeError as error:
+                    raise NousError(
+                        "content.invalid_selection", "Selection splits a UTF-8 character"
+                    ) from error
             if len(data) != end - start:
                 raise NousError("content.corrupt", "Stored content is incomplete")
-            return data, start, 1
+            return data, start, first_line
         if selection.start_line is None and selection.end_line is None:
             if byte_length > limit:
                 raise NousError(
@@ -550,42 +604,149 @@ class ArtifactStore:
             raise NousError("content.invalid_selection", "Text selection exceeds the artifact")
         return b"".join(parts), start, first
 
-    async def _selected(self, content: ContentSelection) -> tuple[str, int, int]:
-        blob = await self.blob(content.artifact)
-        async with self.content.borrow_local(blob) as path:
-            data, offset, line = await self.content.execution.blocking(
-                self._selected_bytes,
-                path,
-                content.selection,
-                self.text_read_max_bytes(),
-                blob.byte_length,
-            )
+    async def read_selections(self, values: Sequence[ContentSelection]) -> tuple[SelectedText, ...]:
+        """Read exact bounded text ranges in order using one metadata snapshot."""
+        async with self.content.execution.operation("content.read_selections"):
+            async with self.database.read() as tx:
+                originals = await self.get_many_in(tx, [value.artifact for value in values])
+                blobs = await self.content.resolve_many_in(tx, [item.ref.id for item in originals])
+            result: list[SelectedText] = []
+            for value, blob in zip(values, blobs, strict=True):
+                async with self.content.borrow_local(blob) as path:
+                    data, start, line = await self.content.execution.blocking(
+                        self._selected_bytes,
+                        path,
+                        value.selection,
+                        self.text_read_max_bytes(),
+                        blob.byte_length,
+                    )
+                try:
+                    text = data.decode("utf-8")
+                except UnicodeDecodeError as error:
+                    raise NousError(
+                        "content.not_text", "Selection does not contain complete UTF-8 text"
+                    ) from error
+                content = ContentSelection(
+                    artifact=value.artifact,
+                    selection=SourceSelection(start_byte=start, end_byte=start + len(data)),
+                )
+                result.append(
+                    SelectedText(
+                        content=content,
+                        blob=blob,
+                        data=data,
+                        text=text,
+                        start_byte=start,
+                        end_byte=start + len(data),
+                        first_line=line,
+                    )
+                )
+            return tuple(result)
+
+    @staticmethod
+    def _normalize_text(
+        path: Path, selection: SourceSelection, byte_length: int
+    ) -> SourceSelection:
+        """Resolve coordinates without retaining or limiting unrequested source bytes."""
+        if selection.pages or any(
+            value is not None
+            for value in (selection.start_ms, selection.end_ms, selection.frame, selection.crop)
+        ):
+            raise NousError("content.invalid_selection", "Text requires byte or line coordinates")
+        if selection.start_line is None and selection.end_line is None:
+            start = selection.start_byte or 0
+            end = selection.end_byte if selection.end_byte is not None else byte_length
+            if not 0 <= start <= end <= byte_length:
+                raise NousError("content.invalid_selection", "Byte selection exceeds the artifact")
+            with path.open("rb") as stream:
+                for position in (start, end):
+                    if position < byte_length:
+                        stream.seek(position)
+                        character = stream.read(1)
+                        if not character:
+                            raise NousError("content.corrupt", "Stored content is incomplete")
+                        if character[0] & 0xC0 == 0x80:
+                            raise NousError(
+                                "content.invalid_selection", "Selection splits a UTF-8 character"
+                            )
+            return SourceSelection(start_byte=start, end_byte=end)
+        first, last = selection.start_line or 1, selection.end_line
+        count = offset = start = 0
         try:
-            return data.decode("utf-8"), offset, line
+            with path.open("r", encoding="utf-8", newline="") as stream:
+                for count, line in enumerate(stream, 1):
+                    if count == first:
+                        start = offset
+                    offset += len(line.encode("utf-8"))
+                    if last is not None and count == last:
+                        break
         except UnicodeDecodeError as error:
-            raise NousError(
-                "content.not_text", "Selection does not contain complete UTF-8 text"
-            ) from error
+            raise NousError("content.not_text", "Stored content is not UTF-8 text") from error
+        if first > count or last is not None and last > count:
+            raise NousError("content.invalid_selection", "Text selection exceeds the artifact")
+        return SourceSelection(start_byte=start, end_byte=offset)
+
+    async def normalize_selections(
+        self, values: Sequence[ContentSelection]
+    ) -> tuple[ContentSelection, ...]:
+        """Canonicalize text coordinates; preserve media coordinates for its format owner."""
+        async with self.content.execution.operation("content.normalize_selections"):
+            async with self.database.read() as tx:
+                originals = await self.get_many_in(tx, [value.artifact for value in values])
+                blobs = await self.content.resolve_many_in(tx, [item.ref.id for item in originals])
+            normalized: list[ContentSelection] = []
+            for value, artifact, blob in zip(values, originals, blobs, strict=True):
+                if artifact.media_type.startswith("text/") or artifact.media_type in {
+                    "application/json",
+                    "application/xml",
+                    "application/xhtml+xml",
+                }:
+                    async with self.content.borrow_local(blob) as path:
+                        selected = await self.content.execution.blocking(
+                            self._normalize_text, path, value.selection, blob.byte_length
+                        )
+                    value = ContentSelection(artifact=value.artifact, selection=selected)
+                normalized.append(value)
+            return tuple(normalized)
+
+    async def map_origins(
+        self, content: ContentSelection, target: ArtifactRef
+    ) -> tuple[OriginSlice, ...]:
+        """Map an adopted representation to exact target bytes using its declared coordinate maps."""
+        from .mappings import map_origins
+
+        async with self.content.execution.operation("content.map_origins"):
+            return await map_origins(self, content, target)
 
     async def read_selection(self, content: ContentSelection) -> str:
-        """Read only the requested bytes or streamed lines from immutable content."""
-        return (await self._selected(content))[0]
+        return (await self.read_selections((content,)))[0].text
+
+    async def text_views(self, values: Sequence[ContentSelection]) -> tuple[TextView, ...]:
+        async with self.content.execution.operation("content.text_views"):
+            result: list[TextView] = []
+            for item in await self.read_selections(values):
+                if item.start_byte == 0 and item.end_byte == item.blob.byte_length:
+                    view, _ = await self.text_cache.view(
+                        item.content.artifact, item.blob, item.text, self.content.execution
+                    )
+                else:
+                    view = await self.content.execution.blocking(
+                        TextView.parse,
+                        item.content,
+                        item.text,
+                        byte_offset=item.start_byte,
+                        first_line=item.first_line,
+                    )
+                result.append(view)
+            return tuple(result)
 
     async def text_view(self, ref: ContentSelection | ArtifactRef | str) -> TextView:
-        """Parse a precise UTF-8 selection into source-bound Markdown blocks.
-
-        References in the view retain the immutable body identity and absolute
-        byte selections. A plain artifact reference selects its full body.
-        """
         body = (
             ref
             if isinstance(ref, ContentSelection)
             else ContentSelection(artifact=(await self.get(ref)).ref)
         )
-        text, offset, line = await self._selected(body)
-        return await self.content.execution.blocking(
-            TextView.parse, body, text, byte_offset=offset, first_line=line
-        )
+        return (await self.text_views((body,)))[0]
 
     async def read_blocks(
         self, refs: Sequence[BlockRef], *, preserve_context: bool = True
@@ -596,26 +757,29 @@ class ArtifactStore:
         key. Unknown parser profiles, blocks or mismatched byte selections raise
         ``NousError``; references must match the body and view that produced them.
         """
-        views: dict[str, TextView] = {}
-        selected: list[TextBlock] = []
-        seen: set[tuple[str, str]] = set()
-        for ref in refs:
-            if ref.parser_profile != PARSER_PROFILE:
-                raise NousError("content.parser_profile_unknown", "Unknown text parser profile")
-            body = ref.view or ContentSelection(artifact=ref.body)
-            view_key = body.model_dump_json()
-            view = views.get(view_key)
-            if view is None:
-                view = await self.text_view(body)
-                views[view_key] = view
-            block = view.block(ref.key)
-            if block.selection != ref.content:
-                raise NousError("content.block_mismatch", "Block does not match its immutable body")
-            identity = (ref.body.id, ref.key)
-            if identity not in seen:
-                selected.append(block)
-                seen.add(identity)
-        return tuple(selected)
+        async with self.content.execution.operation("content.read_blocks"):
+            views: dict[str, TextView] = {}
+            selected: list[TextBlock] = []
+            seen: set[tuple[str, str]] = set()
+            for ref in refs:
+                if ref.parser_profile != PARSER_PROFILE:
+                    raise NousError("content.parser_profile_unknown", "Unknown text parser profile")
+                body = ref.view or ContentSelection(artifact=ref.body)
+                view_key = body.model_dump_json()
+                view = views.get(view_key)
+                if view is None:
+                    view = await self.text_view(body)
+                    views[view_key] = view
+                block = view.block(ref.key)
+                if block.selection != ref.content:
+                    raise NousError(
+                        "content.block_mismatch", "Block does not match its immutable body"
+                    )
+                identity = (ref.body.id, ref.key)
+                if identity not in seen:
+                    selected.append(block)
+                    seen.add(identity)
+            return tuple(selected)
 
     @asynccontextmanager
     async def borrow_local(self, ref: str | ArtifactRef) -> AsyncGenerator[Path]:

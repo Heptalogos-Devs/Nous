@@ -1,6 +1,6 @@
 # Nous
 
-Nous 是独立安装的长期认知服务，为智能体提供记忆、知识、来源、时间、检索与认知成长，也是 Heptalogos 的认知和人格中心。Python 主应用负责领域、模型、授权、事务与 CLI、HTTP、MCP、Python SDK；必要的 Native 计算承担 VCP、NousQL 等性能热点。
+Nous 是独立安装的长期认知服务，为智能体提供记忆、知识、来源、时间、检索与认知成长，也是 Heptalogos 的认知和人格中心。Python 主应用负责领域、模型、事务、CLI 与程序内 SDK；HTTP、MCP 与远程 SDK 沿后续路线接入。必要的 Native 计算承担 VCP 与检索索引等性能热点。
 
 ## 领域
 
@@ -17,7 +17,7 @@ NousQL 是整个 Nous 的查询语言，由 Wave 执行检索。Ego 持有主体
 
 ## 当前状态
 
-当前本地 CLI 提供 Note、Journal、草稿采用、概念标注、当前知识检索和反馈，以及实例、配置、诊断、时间、内容、媒体与 Wave 工具。正文和来源固定到精确版本；修订与归档保留历史读取。手工记录、修订和词项检索无需模型，配置模型后可整理所选材料并生成标注。实际能力和后续工作见[当前工作](docs/CURRENT.md)和[架构](docs/ARCHITECTURE.md)。
+当前 CLI 与程序内 SDK 提供 Note、Journal、草稿采用、概念标注、当前知识检索和反馈，以及实例、配置、诊断、时间、内容、媒体与 Wave 工具。正文和来源固定到精确版本；修订与归档保留历史读取。保存可以在同一事务中登记持久维护，DBOS 在宿主运行时执行标注和刷新，关闭重开后继续。手工记录、修订和词项检索无需模型，配置模型后可整理所选材料并生成标注。实际能力和后续工作见[当前工作](docs/CURRENT.md)和[架构](docs/ARCHITECTURE.md)。
 
 此前的服务、SDK 与未迁入的研究材料保存在 [legacy](legacy/README.md)。现行检索计算与索引位于 [native](native/README.md)。
 
@@ -53,6 +53,18 @@ uv run --no-dev nous --instance ./temp/nous-local read "替换为返回的完整
 
 请求失败时，可用返回的操作关联执行 `nous runtime logs --operation <操作引用>`；保留日志与能力状态见[诊断指南](docs/design/interfaces/diagnostics.md)。
 
+需要让保存后的维护持续执行时，选择后台方式，并运行待办工作：
+
+```sh
+nous --instance ./temp/nous-local journal create --file ./journal.md --background --refresh-mode lexical
+nous --instance ./temp/nous-local job list
+nous --instance ./temp/nous-local job run --until-idle
+nous --instance ./temp/nous-local job read JOB
+nous --instance ./temp/nous-local job wait JOB
+```
+
+配置好标注任务后，保存时增加 `--annotate`。`runtime run` 持续运行同一实例宿主；程序内使用 `open_instance(..., workers=True)`。取消的工作通过 `job resume JOB` 继续，ERROR 工作按 `job read` 给出的失败步骤执行 `job retry JOB --from-step STEP`。详情见[宿主与 Job](docs/design/interfaces/jobs-and-host.md)及[程序示例](docs/examples/durable-cognition/host-use.py)。
+
 源码安装使用仓库中的 `uv sync --locked`。`uv build` 生成同一平台的完整 wheel 与源码分发包；wheel 可用 `pip install <wheel路径>` 安装，无需单独取得 Native 包。源码分发包安装时需要上述构建工具链。
 
 按[模型配置示例](docs/examples/models.toml)在实例 `nous.toml` 中填写网关、凭据引用、模型与任务后，可以发现模型、处理资料并读取结果：
@@ -72,4 +84,4 @@ uv run --no-dev nous --instance ./temp/nous-local tools wave read "替换为构�
 
 ## 产品范围
 
-Nous 支持材料、来源及五轴时间，Memory、Episode、Journal、Ego、Social、LanguageConvention、Motivation 和知识检索。A-Memorix 已有的检索、画像、Episode、导入、图谱、维护、纠错、Bundle、图片及管理接口是需要完整覆盖的功能基线；CLI、HTTP、MCP 和 Python SDK 是正式调用入口。
+Nous 的长期范围包括材料、来源及五轴时间，以及 Memory、Episode、Journal、Ego、Social、LanguageConvention、Motivation 和知识检索。当前正式入口是 CLI 与程序内 SDK，已接通的领域和后续建设按[当前工作](docs/CURRENT.md)区分。

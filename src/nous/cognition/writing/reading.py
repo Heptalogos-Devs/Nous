@@ -7,10 +7,9 @@ from typing import Literal, TypedDict, cast
 import sqlalchemy as sa
 
 from nous.common.errors import NousError
-from nous.common.identifier import identifier_type, split_revision
+from nous.common.identifier import split_revision
 from nous.content.artifacts import ArtifactStore
 from nous.content.contracts import (
-    ArtifactRef,
     ContentReadView,
     ContentSelection,
     SourceSelection,
@@ -22,9 +21,11 @@ from nous.temporal.values import CognitiveTimes
 from .. import schema
 from ..contracts import (
     Namespace,
+    NamespaceRef,
     RecordRef,
     RecordRevisionRef,
     RecordView,
+    RevisionSelection,
     RevisionSummary,
     SourceBinding,
     TitleSource,
@@ -71,13 +72,14 @@ class RecordReader:
     Targets may identify a record or an exact revision. Unqualified record targets
     resolve to the current head; a namespace-bound reader rejects other namespaces.
     """
+
     def __init__(
         self,
         database: Database,
         execution: ExecutionManager,
         artifacts: ArtifactStore,
         scope: NamespaceOperations,
-        namespace: Namespace | None = None,
+        namespace: NamespaceRef | None = None,
     ):
         self.bound_namespace = namespace
         self.database, self.execution, self.artifacts, self.scope = (
@@ -87,17 +89,8 @@ class RecordReader:
             scope,
         )
 
-    def namespace(self, namespace: str | None) -> str:
-        if self.bound_namespace is not None:
-            if namespace is not None and namespace not in {
-                self.bound_namespace.id,
-                self.bound_namespace.name,
-            }:
-                raise NousError(
-                    "cognition.namespace_mismatch", "Operation belongs to another namespace"
-                )
-            return self.bound_namespace.id
-        return namespace or self.execution.snapshot.typed_values().cognition.default_namespace
+    async def namespace_in(self, tx: ReadTx, namespace: str | NamespaceRef | None) -> Namespace:
+        return await self.scope.bound_in(tx, self.bound_namespace, namespace)
 
     def _ref(self, row: RecordRow) -> RecordRef:
         return RecordRef(
@@ -149,9 +142,7 @@ class RecordReader:
             raise NousError(
                 "cognition.not_found", "Written record does not exist", details={"ref": str(target)}
             )
-        ns = await self.scope.get_in(
-            tx, self.namespace(namespace or (ref.namespace_id if ref else None))
-        )
+        ns = await self.namespace_in(tx, namespace or (ref.namespace_id if ref else None))
         if row["namespace_id"] != ns.id or (
             ref and (ref.namespace_id != ns.id or ref.kind != row["kind"])
         ):
@@ -264,58 +255,6 @@ class RecordReader:
             )
         return {object_id: tuple(bindings) for object_id, bindings in output.items()}
 
-    async def select_sources(
-        self,
-        namespace: str | None,
-        targets: Sequence[Target | ArtifactRef | ContentSelection],
-        *,
-        usage: Literal["reference", "current_basis", "inspiration"] = "reference",
-    ) -> tuple[SourceBinding, ...]:
-        """Freeze source targets in one short read transaction.
-
-        Record targets become exact body revisions; artifacts and selections retain
-        their supplied content. Returned bindings preserve input order and receive
-        keys S1, S2, and so on, with the requested usage.
-        """
-        async with self.execution.operation("records.select_sources"):
-            async with self.database.read() as tx:
-                ns = await self.scope.get_in(tx, self.namespace(namespace))
-                output: list[SourceBinding] = []
-                for index, target in enumerate(targets):
-                    if isinstance(target, ContentSelection):
-                        await self.artifacts.get_in(tx, target.artifact)
-                        output.append(
-                            SourceBinding(key=f"S{index + 1}", selections=(target,), usage=usage)
-                        )
-                        continue
-                    if (
-                        isinstance(target, ArtifactRef)
-                        or isinstance(target, str)
-                        and identifier_type(target) == "art"
-                    ):
-                        artifact = await self.artifacts.get_in(tx, target)
-                        output.append(
-                            SourceBinding(
-                                key=f"S{index + 1}",
-                                selections=(ContentSelection(artifact=artifact.ref),),
-                                name=artifact.display_name,
-                                usage=usage,
-                            )
-                        )
-                        continue
-                    row, revision, _ = await self.resolve_in(tx, target, ns.id)
-                    artifact = await self.artifacts.get_in(tx, revision["body_artifact_id"])
-                    output.append(
-                        SourceBinding(
-                            key=f"S{index + 1}",
-                            selections=(ContentSelection(artifact=artifact.ref),),
-                            owner_revision=self.revision_ref(row, revision),
-                            usage=usage,
-                            name=revision["title"],
-                        )
-                    )
-                return tuple(output)
-
     async def read(
         self,
         target: Target,
@@ -347,10 +286,14 @@ class RecordReader:
                 )
                 artifact = await self.artifacts.get_in(tx, rev["body_artifact_id"])
                 bindings = await self.sources_in(tx, rev["id"])
-            body = await self.artifacts.read_text(artifact.ref)
             if blocks:
                 view = await self.artifacts.text_view(artifact.ref)
-                body = "\n\n".join(view.block(key).text for key in blocks)
+                selected_blocks = [view.block(key) for key in blocks]
+                body = "\n\n".join(block.text for block in selected_blocks)
+                selections = tuple(block.selection for block in selected_blocks)
+            else:
+                body = await self.artifacts.read_text(artifact.ref)
+                selections = (ContentSelection(artifact=artifact.ref),)
             views: dict[str, tuple[ContentReadView, ...]] = {}
             if sources:
                 selected_views = await self.artifacts.read_view_many(
@@ -370,6 +313,9 @@ class RecordReader:
                 title_source=rev["title_source"],
                 body_artifact=artifact.ref,
                 body=body,
+                selection=RevisionSelection(
+                    revision=self.revision_ref(row, rev), selections=selections
+                ),
                 purpose=rev["purpose"],
                 author=rev["author"],
                 viewpoint=rev["viewpoint"],
@@ -452,14 +398,14 @@ class RecordReader:
             limit = (
                 limit
                 if limit is not None
-                else self.execution.snapshot.typed_values().cognition.list.page_size
+                else self.execution.snapshot.values.cognition.list.page_size
             )
             if offset < 0 or not 1 <= limit <= 200:
                 raise NousError(
                     "input.invalid_page", "Offset must be nonnegative and limit between 1 and 200"
                 )
             async with self.database.read() as tx:
-                ns = await self.scope.get_in(tx, self.namespace(namespace))
+                ns = await self.namespace_in(tx, namespace)
                 query = sa.select(schema.records.c.id).where(
                     schema.records.c.namespace_id == ns.id, schema.records.c.archived == archived
                 )

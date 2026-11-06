@@ -113,7 +113,7 @@ def _emit_results(ctx: typer.Context, value: dict[str, object]) -> None:
 
 @model_cli.command("list")
 def model_list(ctx: typer.Context) -> None:
-    settings = Configuration(options(ctx).locator.config_file).snapshot.typed_values()
+    settings = Configuration(options(ctx).locator.config_file).snapshot.values
     emit(
         ctx,
         {"models": {key: value.model_dump(mode="json") for key, value in settings.models.items()}},
@@ -433,9 +433,7 @@ def media_inspect(ctx: typer.Context, input: str) -> None:
                     if identifier_type(input) == "art"
                     else await runtime.artifacts.ingest(Path(input))
                 )
-                info = await runtime.media.preparer.inspect(
-                    artifact, context.settings.typed_values().media
-                )
+                info = await runtime.media.preparer.inspect(artifact, context.settings.values.media)
                 return {"artifact": artifact.model_dump(mode="json"), "media": info}
 
     emit(ctx, run_async(run()))

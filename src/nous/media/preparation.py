@@ -32,6 +32,7 @@ from nous.content.contracts import (
     SourceSelection,
 )
 from nous.content.results import ResultStore
+from nous.content.text import TextView
 from nous.runtime.execution import ExecutionManager
 
 from .audiovisual import AudioVisual
@@ -96,6 +97,48 @@ def _validate_selection(kind: str, selection: SourceSelection) -> None:
         )
 
 
+def _validate_selection_bounds(info: dict[str, JsonValue], selection: SourceSelection) -> None:
+    """Check selected coordinates against deterministic media inspection metadata."""
+    kind = str(info["kind"])
+    _validate_selection(kind, selection)
+    if kind == "pdf":
+        if any(page > int(cast(int, info["pages"])) for page in selection.pages):
+            raise NousError("media.invalid_selection", "PDF page selection exceeds the document")
+    elif kind in {"audio", "video"}:
+        duration = int(cast(int, info["duration_ms"]))
+        start, end = selection.start_ms or 0, selection.end_ms or duration
+        if not 0 <= start < end <= duration:
+            raise NousError("media.invalid_selection", "Time selection exceeds the media duration")
+    elif kind == "image":
+        frames = int(cast(int, info["frames"]))
+        validate_image_selection(selection, frames)
+        if selection.crop is not None:
+            width, height = int(cast(int, info["width"])), int(cast(int, info["height"]))
+            if int(cast(int, info["orientation"])) in {5, 6, 7, 8}:
+                width, height = height, width
+            if selection.crop[2] > width or selection.crop[3] > height:
+                raise NousError("media.invalid_selection", "Pixel crop exceeds the image")
+        if frames > 1:
+            duration = int(cast(int, info["duration_ms"]))
+            if (selection.start_ms is not None and selection.start_ms >= duration) or (
+                selection.end_ms is not None and selection.end_ms > duration
+            ):
+                raise NousError(
+                    "media.invalid_selection", "Time selection exceeds the image duration"
+                )
+            if selection.frame is not None:
+                frame = cast(list[dict[str, int]], info["frame_times"])[selection.frame]
+                if (
+                    frame["start_ms"] + max(1, frame["duration_ms"]) <= (selection.start_ms or 0)
+                    or selection.end_ms is not None
+                    and frame["start_ms"] >= selection.end_ms
+                ):
+                    raise NousError(
+                        "media.invalid_selection",
+                        "Selected image frame and time interval do not overlap",
+                    )
+
+
 class MediaPreparer:
     """Materialize precise CAS-backed representations and retain completed conversion stages."""
 
@@ -156,6 +199,7 @@ class MediaPreparer:
         )
         original = await self.artifacts.get(source.artifact)
         info = await self.inspect(original, settings)
+        _validate_selection_bounds(info, source.selection)
         if info["kind"] == "text":
             view = await self.artifacts.text_view(source)
             return TextRepresentation(
@@ -271,6 +315,42 @@ class MediaPreparer:
         blob = await self.artifacts.blob(original.ref)
         async with self.artifacts.borrow_local(original.ref) as path:
             return await self._inspect_local(original, blob.byte_length, path, settings)
+
+    async def validate_selections(
+        self, values: Sequence[ContentSelection], *, settings: MediaConfig
+    ) -> tuple[ContentSelection, ...]:
+        """Normalize text and inspect media coordinates without creating derivatives."""
+        normalized = await self.artifacts.normalize_selections(values)
+        originals = await self.artifacts.get_many([value.artifact for value in normalized])
+        inspected: dict[str, dict[str, JsonValue]] = {}
+        for value, artifact in zip(normalized, originals, strict=True):
+            selection = value.selection
+            if selection.is_whole:
+                continue
+            text = artifact.media_type.startswith("text/") or artifact.media_type in {
+                "application/json",
+                "application/xml",
+                "application/xhtml+xml",
+            }
+            if text and not (
+                selection.pages
+                or any(
+                    item is not None
+                    for item in (
+                        selection.start_ms,
+                        selection.end_ms,
+                        selection.frame,
+                        selection.crop,
+                    )
+                )
+            ):
+                continue
+            info = inspected.get(artifact.ref.id)
+            if info is None:
+                info = await self.inspect(artifact, settings)
+                inspected[artifact.ref.id] = info
+            _validate_selection_bounds(info, selection)
+        return normalized
 
     async def _inspect_local(
         self, original: Artifact, byte_length: int, path: Path, settings: MediaConfig
@@ -609,7 +689,7 @@ class MediaPreparer:
         selected = selection or SourceSelection()
         info = await self.inspect(original, settings)
         kind = str(info["kind"])
-        _validate_selection(kind, selected)
+        _validate_selection_bounds(info, selected)
         if kind == "text":
             return await self._text(original, selected, settings)
         mime = str(info["media_type"])
@@ -622,10 +702,6 @@ class MediaPreparer:
         selections: list[SourceSelection] = []
         if kind == "pdf":
             pages = selected.pages or tuple(range(1, int(cast(int, info["pages"])) + 1))
-            if any(page > int(cast(int, info["pages"])) for page in pages):
-                raise NousError(
-                    "media.invalid_selection", "PDF page selection exceeds the document"
-                )
             native = (
                 document_mode == "auto"
                 and "application/pdf" in requirements
@@ -654,10 +730,6 @@ class MediaPreparer:
                 selected.start_ms or 0,
                 selected.end_ms or int(cast(int, info["duration_ms"])),
             )
-            if not 0 <= start < end <= int(cast(int, info["duration_ms"])):
-                raise NousError(
-                    "media.invalid_selection", "Time selection exceeds the media duration"
-                )
             span = max(1, round(settings.audio.max_seconds_per_request * 1000))
             if kind == "video":
                 span = min(
@@ -669,20 +741,7 @@ class MediaPreparer:
             ]
             target = self._image_format(requirements, settings) if kind == "video" else "audio/wav"
         else:
-            validate_image_selection(selected, int(cast(int, info["frames"])))
             selections = [selected]
-            if selected.frame is not None and int(cast(int, info["frames"])) > 1:
-                chosen_frame = cast(list[dict[str, int]], info["frame_times"])[selected.frame]
-                if (
-                    chosen_frame["start_ms"] + max(1, chosen_frame["duration_ms"])
-                    <= (selected.start_ms or 0)
-                    or selected.end_ms is not None
-                    and chosen_frame["start_ms"] >= selected.end_ms
-                ):
-                    raise NousError(
-                        "media.invalid_selection",
-                        "Selected image frame and time interval do not overlap",
-                    )
             if int(cast(int, info["frames"])) > 1 and selected.frame is None:
                 next_sample = selected.start_ms or 0
                 selections = []
@@ -805,7 +864,7 @@ class MediaPreparer:
         raise NousError(
             "media.audio_capability_missing",
             "Audio requires an accepted encoding or a configured transcription task",
-            details={"wanted": list(requirements), "available": settings.audio.formats},
+            details={"wanted": list(requirements), "available": list(settings.audio.formats)},
         )
 
     async def _prepare(
@@ -826,7 +885,7 @@ class MediaPreparer:
         original = original.model_copy(update={"media_type": str(info["media_type"])})
         async with self.artifacts.borrow_local(original.ref) as path:
             kind = cast(str, info["kind"])
-            _validate_selection(kind, selected)
+            _validate_selection_bounds(info, selected)
             if kind == "text":
                 return await self._text(original, selected, settings)
             if kind == "image":
@@ -851,6 +910,12 @@ class MediaPreparer:
         view = await self.artifacts.text_view(
             ContentSelection(artifact=original.ref, selection=selection)
         )
+        return await self.execution.blocking(self._text_plan, original, selection, settings, view)
+
+    def _text_plan(
+        self, original: Artifact, selection: SourceSelection, settings: MediaConfig, view: TextView
+    ) -> MediaPlan:
+        chunks = view.chunks(max_bytes=settings.max_inline_bytes)
         sources = tuple(
             PreparedSource(
                 key=f"S1:C{index}",
@@ -872,7 +937,7 @@ class MediaPreparer:
                     "byte_length": len(chunk.text.encode("utf-8")),
                 },
             )
-            for index, chunk in enumerate(view.chunks(max_bytes=settings.max_inline_bytes), 1)
+            for index, chunk in enumerate(chunks, 1)
         )
         if not sources:
             raise NousError("media.empty_selection", "The selected text has no readable body")

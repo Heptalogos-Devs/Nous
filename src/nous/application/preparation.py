@@ -9,15 +9,21 @@ from dataclasses import dataclass
 import sqlalchemy as sa
 
 from nous.common.errors import NousError
+from nous.content.artifacts import ArtifactStore
+from nous.content.citations import project_citation_slice
+from nous.content.contracts import (
+    Artifact,
+    ArtifactRef,
+    BlobRef,
+    ContentSelection,
+    OutputContent,
+    SourceSelection,
+)
+from nous.content.projections import TextProjection, semantic_text_many
+from nous.content.text import TextView
 from nous.media.contracts import TextMapping
 from nous.media.preparation import MediaPreparer
 from nous.storage import content_schema
-
-from .artifacts import ArtifactStore
-from .citations import project_citation_slice
-from .contracts import Artifact, BlobRef, ContentSelection, OutputContent, SourceSelection
-from .projections import TextProjection, semantic_text_many
-from .text import TextView
 
 
 @dataclass(frozen=True)
@@ -50,20 +56,28 @@ class PreparedText:
                 nonempty converted text has no overlapping original mapping.
         """
         view = self.view.slice(selection)
-        if len(self.origin_contents) == 1 and self.origin_contents[0].artifact == view.body.artifact:
+        if (
+            len(self.origin_contents) == 1
+            and self.origin_contents[0].artifact == view.body.artifact
+        ):
             origins = (view.body,)
         else:
-            origins = tuple(dict.fromkeys(
-                origin
-                for mapping in self.mappings
-                if mapping.content.selection.start_byte is not None
-                and mapping.content.selection.end_byte is not None
-                and mapping.content.selection.end_byte > view.byte_offset
-                and mapping.content.selection.start_byte < view.byte_offset + len(view.text.encode("utf-8"))
-                for origin in mapping.origins
-            ))
+            origins = tuple(
+                dict.fromkeys(
+                    origin
+                    for mapping in self.mappings
+                    if mapping.content.selection.start_byte is not None
+                    and mapping.content.selection.end_byte is not None
+                    and mapping.content.selection.end_byte > view.byte_offset
+                    and mapping.content.selection.start_byte
+                    < view.byte_offset + len(view.text.encode("utf-8"))
+                    for origin in mapping.origins
+                )
+            )
             if not origins and view.text:
-                raise NousError("content.origin_missing", "Prepared text has no original source mapping")
+                raise NousError(
+                    "content.origin_missing", "Prepared text has no original source mapping"
+                )
         return PreparedText(view, origins, self.session, self.mappings)
 
     async def semantic_content(self) -> ContentSelection:
@@ -90,6 +104,7 @@ class TextPreparation:
         self._blobs: dict[str, BlobRef] = {}
         self._views: dict[str, TextView] = {}
         self._texts: dict[str, str] = {}
+        self._selected_views: dict[ContentSelection, TextView] = {}
         self._media: dict[str, PreparedText] = {}
         self.stats = {
             "bodies": 0,
@@ -131,7 +146,9 @@ class TextPreparation:
         if set(ids) - self._blobs.keys():
             raise NousError("content.missing", "No content is attached to an artifact")
 
-    async def semantic_contents(self, values: Sequence[PreparedText]) -> tuple[ContentSelection, ...]:
+    async def semantic_contents(
+        self, values: Sequence[PreparedText]
+    ) -> tuple[ContentSelection, ...]:
         """Reuse or adopt citation-projected semantic text in input order.
 
         Returns:
@@ -143,6 +160,55 @@ class TextPreparation:
             self.preparer.results,
         )
         return tuple(item.content for item in projections)
+
+    async def prepare_many(self, sources: Sequence[ContentSelection]) -> tuple[PreparedText, ...]:
+        """Read overlapping requested text regions together, without filling unrequested gaps."""
+        missing = tuple(
+            dict.fromkeys(
+                source.artifact for source in sources if source.artifact.id not in self._artifacts
+            )
+        )
+        if missing:
+            self._artifacts.update(
+                (item.ref.id, item) for item in await self.artifacts.get_many(missing)
+            )
+        normalized = await self.artifacts.normalize_selections(sources)
+        grouped: dict[ArtifactRef, list[tuple[int, int]]] = {}
+        for source in normalized:
+            selection = source.selection
+            artifact = self._artifacts[source.artifact.id]
+            is_text = artifact.media_type.startswith("text/") or artifact.media_type in {
+                "application/json",
+                "application/xml",
+                "application/xhtml+xml",
+            }
+            if is_text and selection.start_byte is not None and selection.end_byte is not None:
+                grouped.setdefault(source.artifact, []).append(
+                    (selection.start_byte, selection.end_byte)
+                )
+        limit = self.artifacts.text_read_max_bytes()
+        for artifact, ranges in grouped.items():
+            merged: list[tuple[int, int]] = []
+            for start, end in sorted(set(ranges)):
+                if (
+                    merged
+                    and start <= merged[-1][1]
+                    and max(end, merged[-1][1]) - merged[-1][0] <= limit
+                ):
+                    merged[-1] = (merged[-1][0], max(end, merged[-1][1]))
+                else:
+                    merged.append((start, end))
+            for start, end in merged:
+                source = ContentSelection(
+                    artifact=artifact, selection=SourceSelection(start_byte=start, end_byte=end)
+                )
+                blob = self._blobs.get(artifact.id) or await self.artifacts.blob(artifact)
+                self._blobs[artifact.id] = blob
+                if start == 0 and end == blob.byte_length:
+                    await self.prepare(ContentSelection(artifact=artifact))
+                else:
+                    await self.prepare(source)
+        return tuple([await self.prepare(source) for source in normalized])
 
     async def prepare(self, source: ContentSelection) -> PreparedText:
         """Prepare the exact artifact selection for this build session.
@@ -161,16 +227,47 @@ class TextPreparation:
             artifact = await self.artifacts.get(source.artifact)
             self._artifacts[artifact.ref.id] = artifact
         elif artifact.ref != source.artifact:
-            raise NousError("content.instance_mismatch", "Artifact reference does not match this instance")
+            raise NousError(
+                "content.instance_mismatch", "Artifact reference does not match this instance"
+            )
         if artifact.media_type.startswith("text/") or artifact.media_type in {
-            "application/json", "application/xml", "application/xhtml+xml"
+            "application/json",
+            "application/xml",
+            "application/xhtml+xml",
         }:
             view = self._views.get(artifact.ref.id)
+            if view is None and not source.selection.is_whole:
+                normalized = (await self.artifacts.normalize_selections((source,)))[0]
+                view = self._selected_views.get(normalized)
+                if view is None:
+                    chosen = normalized.selection
+                    for cached, candidate in self._selected_views.items():
+                        bounds = cached.selection
+                        if cached.artifact == normalized.artifact and (
+                            bounds.start_byte is not None
+                            and bounds.end_byte is not None
+                            and chosen.start_byte is not None
+                            and chosen.end_byte is not None
+                            and bounds.start_byte
+                            <= chosen.start_byte
+                            <= chosen.end_byte
+                            <= bounds.end_byte
+                        ):
+                            view = await self.artifacts.content.execution.blocking(
+                                candidate.slice, chosen
+                            )
+                            break
+                    if view is None:
+                        view = await self.artifacts.text_view(normalized)
+                    self._selected_views[normalized] = view
+                return PreparedText(view, (view.body,), self)
             if view is None:
                 blob = self._blobs.get(artifact.ref.id) or await self.artifacts.blob(artifact.ref)
                 text = self._texts.get(blob.digest)
                 if text is None:
-                    text = await self.artifacts.content.read_text(blob, self.artifacts.text_read_max_bytes())
+                    text = await self.artifacts.content.read_text(
+                        blob, self.artifacts.text_read_max_bytes()
+                    )
                     self._texts[blob.digest] = text
                     self.stats["bytes_read"] += blob.byte_length
                     self.stats["unique_bodies"] += 1
@@ -181,18 +278,28 @@ class TextPreparation:
                 self.stats["cache_hits" if cached else "parsed"] += 1
                 self._views[artifact.ref.id] = view
             prepared = PreparedText(view, (view.body,), self)
-            return prepared if source.selection.is_whole else prepared.slice(source.selection)
+            return (
+                prepared
+                if source.selection.is_whole
+                else await self.artifacts.content.execution.blocking(
+                    prepared.slice, source.selection
+                )
+            )
         key = source.model_dump_json()
         prepared = self._media.get(key)
         if prepared is None:
             representation = await self.preparer.text_view(
-                source, settings=self.preparer.execution.snapshot.typed_values().media
+                source, settings=self.preparer.execution.snapshot.values.media
             )
-            origins = tuple(dict.fromkeys(
-                origin for mapping in representation.mappings for origin in mapping.origins
-            ))
+            origins = tuple(
+                dict.fromkeys(
+                    origin for mapping in representation.mappings for origin in mapping.origins
+                )
+            )
             if not origins and representation.view.text:
-                raise NousError("content.origin_missing", "Prepared text has no original source mapping")
+                raise NousError(
+                    "content.origin_missing", "Prepared text has no original source mapping"
+                )
             prepared = PreparedText(representation.view, origins, self, representation.mappings)
             self.stats["media_views"] += 1
             self.stats["represented_text_bytes"] += len(representation.view.text.encode("utf-8"))
@@ -208,7 +315,15 @@ class TextPreparation:
                 operation="content.literal_text",
                 producer={"kind": "deterministic"},
                 inputs=(),
-                outputs={"text": OutputContent(data=text.encode("utf-8"), media_type="text/plain", display_name=display_name)},
+                outputs={
+                    "text": OutputContent(
+                        data=text.encode("utf-8"),
+                        media_type="text/plain",
+                        display_name=display_name,
+                    )
+                },
                 parameters={"cache_key": key},
             )
-        return ContentSelection(artifact=next(item.artifact for item in result.outputs if item.name == "text"))
+        return ContentSelection(
+            artifact=next(item.artifact for item in result.outputs if item.name == "text")
+        )

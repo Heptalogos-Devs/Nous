@@ -21,7 +21,6 @@ from nous.runtime.paths import ResolvedPaths
 from nous.storage.database import Database, WriteTx
 from nous.temporal.domains import TimeService
 
-from .assets import SnapshotRow
 from .contracts import (
     CandidateDescriptor,
     CandidateRef,
@@ -70,56 +69,60 @@ class WaveOperations:
     async def status(self) -> dict[str, object]:
         return await self.snapshots.status()
 
-    def profile(self, space: str | None, policy: dict[str, object]) -> str:
-        return view_profile(self.execution.snapshot, space, policy)
-
-    def _descriptor(self, row: SnapshotRow) -> SnapshotDescriptor:
-        return SnapshotDescriptor(
-            ref=SnapshotRef(
-                instance_id=self.snapshots.instance_id, id=row["id"], identifier=row["identifier"]
-            ),
-            owner=TypeAdapter(SnapshotOwner).validate_python(row["mapping"]["owner"]),
-            collection=row["mapping"]["name"],
-            captured_generation=row["covered_generation"],
-            profile_signature=row["profile"],
-            space_id=row["space_id"],
-            space_signature=cast(str, row["identity"]["space_signature"]),
-            identity=row["identity"],
-            metadata=row["mapping"]["metadata"],
-        )
+    def profile(
+        self,
+        space: str | None,
+        policy: dict[str, object],
+        *,
+        build_config: dict[str, object] | None = None,
+    ) -> str:
+        return view_profile(self.execution.snapshot, space, policy, build_config=build_config)
 
     async def current(self, collection: str) -> SnapshotDescriptor | None:
-        """Return the collection's published snapshot descriptor, or None if absent."""
-        row = await self.snapshots.current(collection)
-        return self._descriptor(row) if row is not None else None
+        """Return the current descriptor without decoding the candidate mapping."""
+        async with self.execution.operation("wave.current"):
+            return await self.snapshots.current(collection)
 
     async def describe(self, ref: str | SnapshotRef) -> SnapshotDescriptor:
-        """Read the frozen ownership and identity without opening a Native index."""
-        return self._descriptor(await self.snapshots.resolve(ref))
+        """Read frozen ownership and identity without loading candidates or Native."""
+        async with self.execution.operation("wave.describe"):
+            return await self.snapshots.describe(ref)
 
-    async def describe_candidate(self, ref: str | SnapshotRef, key: str) -> CandidateDescriptor:
-        row = await self.snapshots.resolve(ref)
-        candidate = next(
-            (item for item in row["mapping"]["candidates"] if item["key"] == key), None
-        )
-        if candidate is None:
-            from nous.common.errors import NousError
+    async def describe_candidates(
+        self, ref: str | SnapshotRef, keys: Sequence[str]
+    ) -> tuple[CandidateDescriptor, ...]:
+        """Read candidates in request order, including repeated keys, in one mapping read.
 
-            raise NousError(
-                "wave.candidate_not_found",
-                "Candidate does not exist in this snapshot",
-                details={"candidate": key},
+        Raises:
+            NousError: A snapshot identity is invalid or requested keys are absent.
+        """
+        from nous.common.errors import NousError
+
+        async with self.execution.operation("wave.describe_candidates"):
+            row = await self.snapshots.resolve(ref)
+            by_key = {item["key"]: item for item in row["mapping"]["candidates"]}
+            missing = list(dict.fromkeys(key for key in keys if key not in by_key))
+            if missing:
+                raise NousError(
+                    "wave.candidate_not_found",
+                    "Candidates do not exist in this snapshot",
+                    details={"candidates": missing},
+                )
+            owner = TypeAdapter(SnapshotOwner).validate_python(row["owner"])
+            return tuple(
+                CandidateDescriptor(
+                    ref=CandidateRef(snapshot=row["identifier"], key=key),
+                    owner=owner,
+                    group_key=by_key[key]["group_key"],
+                    content=ContentSelection.model_validate(by_key[key]["content"]),
+                    origin_contents=tuple(
+                        ContentSelection.model_validate(part)
+                        for part in by_key[key]["origin_contents"]
+                    ),
+                    metadata=by_key[key]["metadata"],
+                )
+                for key in keys
             )
-        return CandidateDescriptor(
-            ref=CandidateRef(snapshot=row["identifier"], key=key),
-            owner=TypeAdapter(SnapshotOwner).validate_python(row["mapping"]["owner"]),
-            group_key=candidate["group_key"],
-            content=ContentSelection.model_validate(candidate["content"]),
-            origin_contents=tuple(
-                ContentSelection.model_validate(part) for part in candidate["origin_contents"]
-            ),
-            metadata=candidate["metadata"],
-        )
 
     async def build(self, manifest_path: Path, space: str | None = None) -> dict[str, object]:
         """Import a manifest and build and publish its immutable snapshot.
@@ -148,6 +151,8 @@ class WaveOperations:
         space: str | None = None,
         *,
         publish_if: Callable[[WriteTx], Awaitable[bool]] | None = None,
+        build_key: str | None = None,
+        build_config: dict[str, object] | None = None,
     ) -> dict[str, object]:
         """Build a snapshot from a captured typed corpus view.
 
@@ -164,7 +169,12 @@ class WaveOperations:
         """
         async with self.execution.operation("wave.build_view") as context:
             result = await self.snapshots.build(
-                view, space, context.settings, publish_if=publish_if
+                view,
+                space,
+                context.settings,
+                publish_if=publish_if,
+                build_key=build_key,
+                build_config=build_config,
             )
             record_completed(cast(dict[str, str], result["snapshot"])["identifier"])
             return result
@@ -237,7 +247,7 @@ class WaveOperations:
             result = await self.execution.blocking(
                 native.segment,
                 vectors,
-                context.settings.typed_values().wave.context.segment_threshold,
+                context.settings.values.wave.context.segment_threshold,
             )
             ranges = json.loads(result.ranges_json)
             return {

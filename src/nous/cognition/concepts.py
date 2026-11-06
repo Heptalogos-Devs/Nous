@@ -14,7 +14,7 @@ from nous.temporal.values import Clock
 
 from . import concept_schema as schema
 from .concept_contracts import ConceptRef, ConceptRevisionRef, ConceptView
-from .contracts import Namespace
+from .contracts import Namespace, NamespaceRef
 from .scope import NamespaceOperations
 
 ConceptTarget = str | ConceptRef | ConceptRevisionRef
@@ -27,6 +27,7 @@ class ConceptOperations:
     configured default when no namespace is supplied. Methods ending in ``_in``
     use a caller-owned transaction.
     """
+
     def __init__(
         self,
         database: Database,
@@ -34,23 +35,14 @@ class ConceptOperations:
         scope: NamespaceOperations,
         instance_id: str,
         clock: Clock,
-        namespace: Namespace | None = None,
+        namespace: NamespaceRef | None = None,
     ):
         self.database, self.execution, self.scope = database, execution, scope
         self.instance_id, self.clock = instance_id, clock
         self.bound_namespace = namespace
 
-    def namespace(self, namespace: str | None) -> str:
-        if self.bound_namespace is not None:
-            if namespace is not None and namespace not in {
-                self.bound_namespace.id,
-                self.bound_namespace.name,
-            }:
-                raise NousError(
-                    "cognition.namespace_mismatch", "Operation belongs to another namespace"
-                )
-            return self.bound_namespace.id
-        return namespace or self.execution.snapshot.typed_values().cognition.default_namespace
+    async def namespace_in(self, tx: ReadTx, namespace: str | NamespaceRef | None) -> Namespace:
+        return await self.scope.bound_in(tx, self.bound_namespace, namespace)
 
     async def read_in(
         self, tx: ReadTx, target: ConceptTarget, namespace: str | None = None
@@ -79,7 +71,9 @@ class ConceptOperations:
             (
                 await tx.connection.execute(
                     sa.select(schema.concepts).where(
-                        sa.or_(schema.concepts.c.id == target, schema.concepts.c.identifier == target)
+                        sa.or_(
+                            schema.concepts.c.id == target, schema.concepts.c.identifier == target
+                        )
                     )
                 )
             )
@@ -88,9 +82,7 @@ class ConceptOperations:
         )
         if identity is None:
             raise NousError("cognition.concept_not_found", "Concept does not exist")
-        ns = await self.scope.get_in(
-            tx, self.namespace(namespace or (ref.namespace_id if ref else None))
-        )
+        ns = await self.namespace_in(tx, namespace or (ref.namespace_id if ref else None))
         if identity["namespace_id"] != ns.id or (ref is not None and ref.namespace_id != ns.id):
             raise NousError("cognition.namespace_mismatch", "Concept belongs to another namespace")
         head = (
@@ -228,7 +220,7 @@ class ConceptOperations:
         the origin of an adopted meaning when supplied.
         """
         self.validate(label, description, aliases)
-        ns = await self.scope.get_in(tx, self.namespace(namespace))
+        ns = await self.namespace_in(tx, namespace)
         identity, revision_id = str(uuid4()), str(uuid4())
         identifier = await insert_identifier(
             tx,
@@ -274,7 +266,12 @@ class ConceptOperations:
         async with self.execution.operation("concept.create"):
             async with self.database.write() as tx:
                 view = await self.create_in(
-                    tx, self.namespace(namespace), label, description, aliases, author=author
+                    tx,
+                    (await self.namespace_in(tx, namespace)).id,
+                    label,
+                    description,
+                    aliases,
+                    author=author,
                 )
             record_completed(view.ref.identifier)
             return view
@@ -364,7 +361,7 @@ class ConceptOperations:
             raise NousError("input.invalid", "Use a nonnegative offset and a limit from 1 to 100")
         async with self.execution.operation("concept.find"):
             async with self.database.read() as tx:
-                ns = await self.scope.get_in(tx, self.namespace(namespace))
+                ns = await self.namespace_in(tx, namespace)
                 query = (
                     sa.select(schema.concepts.c.identifier)
                     .join(
@@ -403,7 +400,9 @@ class ConceptOperations:
                     .scalars()
                     .all()
                 )
-                return tuple([await self.read_in(tx, identifier, ns.id) for identifier in identifiers])
+                return tuple(
+                    [await self.read_in(tx, identifier, ns.id) for identifier in identifiers]
+                )
 
     async def list(
         self, namespace: str | None = None, *, offset: int = 0, limit: int = 20
@@ -421,7 +420,7 @@ class ConceptOperations:
             return ()
         async with self.execution.operation("concept.candidates"):
             async with self.database.read() as tx:
-                ns = await self.scope.get_in(tx, self.namespace(namespace))
+                ns = await self.namespace_in(tx, namespace)
                 alias = (
                     sa.func.json_each(schema.concept_revisions.c.aliases)
                     .table_valued("value")
@@ -452,7 +451,9 @@ class ConceptOperations:
                     .limit(limit)
                 )
                 identifiers = (await tx.connection.execute(query)).scalars().all()
-                return tuple([await self.read_in(tx, identifier, ns.id) for identifier in identifiers])
+                return tuple(
+                    [await self.read_in(tx, identifier, ns.id) for identifier in identifiers]
+                )
 
     async def status(self) -> dict[str, int]:
         """Count Concepts and meaning revisions across the instance."""

@@ -21,11 +21,11 @@ Wave.build_view(CorpusView)
   → 冻结数组 → 原 Native build → 发布/打开一次
 ```
 
-Cognition 不先逐候选读正文，然后让 Wave 再读；Wave 不经字符串文件协议取得知识集合。Content owner 提供具体准备方法，Wave 消费它的结果。
+Cognition 不先逐候选读正文，然后让 Wave 再读；Wave 不经字符串文件协议取得知识集合。ArtifactStore 提供共同范围与结构能力，application.preparation.TextPreparation 组织跨内容/媒体的批量准备，Wave 消费其结果。
 
 ## CorpusView 候选声明
 
-保留显式候选的使用价值，同时为正式文稿提供布局声明；两者归一到同一个 PreparedCandidate，不维护两套 build。
+显式 Candidate 与正式文稿的布局声明经同一个 _prepare_candidates 展开为 Candidate/PreparedText，再进入同一冻结构建通路。
 
 ```text
 CandidateSpec = Candidate(kind="exact") | DocumentCandidates(kind="document")
@@ -38,7 +38,7 @@ DocumentCandidates:
   metadata                      # 标题、kind、revision、来源摘要
 ```
 
-`CorpusView.candidates` 使用这两个带 kind 的输入类型。`DocumentCandidates` 由 document、group_key、whole、local_layout 及共同 concepts/occurrences/paths/annotation_ref/metadata 组成；显式 `Candidate` 继续提供 key/content/document，group_key 缺省使用 document。`Wave.assets._prepare_candidates` 在一个 `TextPreparation` 会话中展开整篇与 complete_chunks：每个文稿只准备一次正文，局部片段使用 PreparedText.slice。没有语义空间时只用内存投影词项，不为各片段采用语义 Artifact；需要 embedding 时才调用 semantic_content 并沿 EmbeddingOperations 批量 ensure/read。
+`CorpusView.candidates` 使用这两个带 kind 的输入类型。`DocumentCandidates` 由 document、group_key、whole、local_layout 及共同 concepts/occurrences/paths/annotation_ref/metadata 组成；显式 `Candidate` 继续提供 key/content/document，group_key 缺省使用 document。`wave/assets.py` 的 _prepare_candidates 先调用一个 TextPreparation 会话的 prepare_many，再展开整篇与 complete_chunks：有 whole 请求时只准备一次全文，只有局部请求时合并实际重叠/相邻选区而不强制读取整件，局部片段使用 PreparedText.slice。引用定义、块间空白与尾部保留在覆盖中。没有语义空间时只用内存投影词项，不为各片段采用语义 Artifact；需要 embedding 时才调用 semantic_content 并沿 EmbeddingOperations 批量 ensure/read。
 
 清单导入可以给显式 Candidate；正式认知提供 DocumentCandidates。冻结前统一展开为当前 Native 需要的文本、向量、选区、group_row、membership 和路径数组。不要让 Rust 解析 Journal Markdown 或访问认知数据库。
 
@@ -48,7 +48,7 @@ AnnotationOperations 提供 `read_many_in(ReadTx, exact_revisions)`，包括活�
 
 ## 准备结果复用
 
-复用 [共同内容准备](../content/reading-and-preparation.md)。在同一次 build 中以 exact body 和转换策略建立一个有界准备会话；一份正文的 whole/section/block 共用解析、元数据与源图。只在当前 selected view 中访问材料，缓存命中不绕过引用和 Namespace 校验。
+复用 [共同内容准备](../content/reading-and-preparation.md)及[统一选区](../content/selection-and-text.md)。出现项与路径范围通过 ArtifactStore.normalize_selections 转为同一字节坐标后比较，不为判定局部覆盖重新读取全文。在同一次 build 中以 exact body 和转换策略建立一个有界准备会话；一份正文的 whole/section/block 共用解析、元数据与源图。只在当前 selected view 中访问材料，缓存命中不绕过引用和 Namespace 校验。
 
 向量仍由 EmbeddingOperations.ensure 选择规范行；短 query 使用 encode_query。Concept 的实际编码文字通过同一确定性文本表示缓存复用，不每次重建都重新 ingest 一份完全相同的概念文稿身份。
 

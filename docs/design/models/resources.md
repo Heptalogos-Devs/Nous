@@ -30,7 +30,9 @@ capabilities 表示已经确认的操作能力；input_formats 说明可接受�
 
 `ModelRegistry.resolve(task, snapshot)` 产生确定的资源选择及 fallback 候选，不联网。
 
-`ModelOperations.list/discover(provider)` 提供资源与目录操作；`probe(resource, sample)` 为指定资源准备一个明确任务，复用 GenerationOperations 的请求与结果通路。普通运行直接由 `GenerationOperations.run(request, context)` 提供，ModelOperations 不另维护生成或采用实现。资源列表与 status 不隐式生成付费请求。
+本地模型列表读取 ConfigSnapshot.values.models；`ModelExecutor.discover(provider, snapshot)` 使用统一连接读取远端目录。`GenerationOperations.probe(model, input, snapshot)` 为指定资源准备明确任务；普通调用使用 run_input(task, input, snapshot) 或 run(task, ReadingInput, snapshot)，共享准备、请求及采用通路。资源列表与 status 不隐式生成付费请求。
+
+持久语言任务经 load_language_task 核对当前模型定义，以及 provider 的 endpoint、protocol 和 credential_ref；不一致返回 model.resource_binding。凭据引用指向的密钥内容可以轮换，任务参数和模板继续取自冻结配方。
 
 实际调用保存 requested_model_name、returned_model_name（可空）、protocol、provider 连接 ID 和操作者声明的 deployment_revision。不能根据相同字符串声称取得了同一模型权重。
 

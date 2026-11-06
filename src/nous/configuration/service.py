@@ -19,6 +19,7 @@ from nous.common.errors import NousError
 from nous.common.files import write_text
 
 from .definitions import NousConfig
+from .metadata import ConfigMap, mutable
 
 type Object = dict[str, object]
 type Layer = tuple[str, str, Object]
@@ -72,35 +73,21 @@ def freeze(value: object) -> object:
     return value
 
 
-def mutable(value: object) -> JsonValue:
-    if isinstance(value, Mapping):
-        return {key: mutable(item) for key, item in cast(Mapping[str, object], value).items()}
-    if isinstance(value, (list, tuple)):
-        return [mutable(item) for item in cast(tuple[object, ...] | list[object], value)]
-    if value is None or isinstance(value, (str, int, float, bool)):
-        return value
-    raise TypeError("Unsupported configuration value")
-
-
 @dataclass(frozen=True)
 class ConfigSnapshot:
     """Frozen effective configuration values, provenance and accepted generation.
 
-    Operations retain one snapshot for their duration. ``typed_values`` and
-    ``to_dict`` return independent copies for callers that need mutable values.
+    ``values`` is a validated, deeply immutable typed view retained by operations.
+    ``to_dict`` creates an independent JSON-compatible copy for explicit editing.
     """
 
-    values: FrozenValues
+    values: NousConfig
     version: int
     sources: FrozenValues
     state: str = "effective"
 
     def to_dict(self) -> Object:
-        return object_map(mutable(self.values))
-
-    def typed_values(self) -> NousConfig:
-        """Return a typed independent copy; mutations cannot change this snapshot."""
-        return NousConfig.model_validate(self.to_dict())
+        return self.values.model_dump(mode="json")
 
 
 def merge(base: Mapping[str, object], override: Mapping[str, object]) -> Object:
@@ -126,9 +113,14 @@ def leaves(value: Mapping[str, object], prefix: str = "") -> Iterator[tuple[str,
 def get_path(value: object, path: str, default: object = None) -> object:
     current = value
     for part in path.split("."):
+        if isinstance(current, BaseModel):
+            if part not in type(current).model_fields:
+                return default
+            current = getattr(current, part)
+            continue
         if not isinstance(current, Mapping) or part not in current:
             return default
-        current = cast(MutableMapping[str, object], current[part])
+        current = cast(Mapping[str, object], current)[part]
     return current
 
 
@@ -217,7 +209,9 @@ class Configuration:
         self._saved = self._read(self.config_file)
         # Materialize package defaults before source merging, including keyed resources.
         # A supplied domains map must retain the built-in utc definition.
-        self._defaults = self._validate({"instance": self._saved.get("instance")})
+        self._defaults = self._validate({"instance": self._saved.get("instance")}).model_dump(
+            mode="json"
+        )
         self._environment = self._environment_values()
         self._snapshot = self._resolve(self._saved)
 
@@ -385,7 +379,7 @@ class Configuration:
                     )
                     check(item, child, f"{path}.{name}".lstrip("."))
                 return
-            if origin is dict and isinstance(value, Mapping):
+            if origin in {dict, Mapping, ConfigMap} and isinstance(value, Mapping):
                 key_type, value_type = get_args(annotation)
                 for name, item in cast(Mapping[str, object], value).items():
                     TypeAdapter(key_type).validate_python(name, strict=True)
@@ -484,9 +478,9 @@ class Configuration:
             set_path(normalized, path, value)
         return normalized
 
-    def _validate(self, values: Mapping[str, object]) -> Object:
+    def _validate(self, values: Mapping[str, object]) -> NousConfig:
         try:
-            return NousConfig.model_validate(values).model_dump(mode="json")
+            return NousConfig.model_validate(values)
         except ValidationError as error:
             issues = [
                 {"path": ".".join(map(str, item["loc"])), "message": item["msg"]}
@@ -519,7 +513,8 @@ class Configuration:
         values = merge(merge(merge(self._defaults, saved), self._environment), self.overrides)
         instance = self._validate(values)
         sources = {
-            path: {"layer": "default", "location": "package"} for path, _ in leaves(instance)
+            path: {"layer": "default", "location": "package"}
+            for path, _ in leaves(instance.model_dump(mode="json"))
         }
         for layer, location, data in (
             ("instance", str(self.config_file), saved),
@@ -540,18 +535,18 @@ class Configuration:
                     if leaf == path or leaf.startswith(path + "."):
                         sources[leaf] = {"layer": layer, "location": source_location}
                 sources[path] = {"layer": layer, "location": source_location}
-        resolved = self._validate(values)
+        resolved = self._validate(values) if layers else instance
         if layers:
             for name in ("max_attempts", "max_input_tokens", "max_output_tokens"):
-                if cast(int, object_map(resolved["model_execution"])[name]) > cast(
-                    int, object_map(instance["model_execution"])[name]
+                if getattr(resolved.model_execution, name) > getattr(
+                    instance.model_execution, name
                 ):
                     raise NousError(
                         "configuration.limit_exceeded",
                         f"model_execution.{name} exceeds the instance ceiling",
                     )
         state = "effective" if self.running else "prospective"
-        return ConfigSnapshot(FrozenValues(resolved), self._version, FrozenValues(sources), state)
+        return ConfigSnapshot(resolved, self._version, FrozenValues(sources), state)
 
     def _check_scope(self, values: Object, scope: str) -> None:
         for path, _ in leaves(values):
@@ -596,6 +591,8 @@ class Configuration:
             )
         # Operations inherit the currently published generation, never pending files.
         if self.running:
+            if not layers:
+                return self._snapshot
             values = self._snapshot.to_dict()
             sources = object_map(mutable(self._snapshot.sources))
             for layer, location, data in layers:
@@ -606,15 +603,15 @@ class Configuration:
                     sources[path] = {"layer": layer, "location": location}
             checked = self._validate(values)
             for name in ("max_attempts", "max_input_tokens", "max_output_tokens"):
-                if cast(int, object_map(checked["model_execution"])[name]) > getattr(
-                    self._snapshot.typed_values().model_execution, name
+                if getattr(checked.model_execution, name) > getattr(
+                    self._snapshot.values.model_execution, name
                 ):
                     raise NousError(
                         "configuration.limit_exceeded",
                         f"model_execution.{name} exceeds the instance ceiling",
                     )
             result = ConfigSnapshot(
-                FrozenValues(checked), self._snapshot.version, FrozenValues(sources), "effective"
+                checked, self._snapshot.version, FrozenValues(sources), "effective"
             )
         else:
             result = self._resolve(self._saved, scope=scope, layers=tuple(layers))
@@ -678,9 +675,7 @@ class Configuration:
                     **meta,
                 }
                 if "<id>" not in path and hasattr(self, "_snapshot"):
-                    entry["default"] = get_path(
-                        self._validate({"instance": self._snapshot.to_dict()["instance"]}), path
-                    )
+                    entry["default"] = get_path(self._defaults, path)
                 elif "default" in node:
                     entry["default"] = node["default"]
                 result.append(entry)
@@ -736,14 +731,12 @@ class Configuration:
                 "shape": "passed",
                 "references": "passed",
                 "bindings": "not_run",
-                "model_execution": "configured"
-                if candidate.typed_values().tasks
-                else "unconfigured",
+                "model_execution": "configured" if candidate.values.tasks else "unconfigured",
                 "embedding_binding": "not_run"
-                if candidate.typed_values().embedding.spaces
+                if candidate.values.embedding.spaces
                 else "unconfigured",
                 "embedding_remote_deployment": "not_verified"
-                if candidate.typed_values().embedding.spaces
+                if candidate.values.embedding.spaces
                 else "not_applicable",
             },
         }

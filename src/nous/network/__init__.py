@@ -107,7 +107,7 @@ class ModelConnections:
 
     def timeout(self, provider_id: str, snapshot: ConfigSnapshot) -> httpx2.Timeout:
         """Read per-request timeouts from the operation snapshot while retaining its shared pool."""
-        settings = snapshot.typed_values()
+        settings = snapshot.values
         provider = settings.providers.get(provider_id)
         if provider is None:
             raise NousError(

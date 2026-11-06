@@ -147,7 +147,7 @@ class MediaAnalysis:
                     original = input
                 else:
                     original = await self.artifacts.get(input)
-                settings = snapshot.typed_values().media
+                settings = snapshot.values.media
                 if description_result and strategy == "direct_structured":
                     raise NousError(
                         "media.description_mismatch",

@@ -21,8 +21,14 @@ from nous.content.edits import TextChange, prepare_text_edit
 from nous.temporal.values import CognitiveTimes
 
 from .. import schema
-from ..concept_contracts import AnnotationView
-from ..contracts import Namespace, RecordRevisionRef, RecordView, RevisionSummary, SourceBinding
+from ..contracts import (
+    NamespaceRef,
+    RecordRevisionRef,
+    RecordView,
+    RevisionSelection,
+    RevisionSummary,
+    SourceBinding,
+)
 from .contracts import (
     DEFAULT_AFTER_WRITE,
     AfterWrite,
@@ -43,6 +49,8 @@ from .records import CreateMetadata, RevisionMetadata, WrittenRecords
 if TYPE_CHECKING:
     from ..annotations import AnnotationOperations
     from ..feedback import FeedbackOperations
+    from ..maintenance import MaintenanceOperations
+    from ..maintenance.operations import EnqueuedMaintenance
     from ..retrieval.operations import CognitiveRetrieval
 
 
@@ -68,16 +76,18 @@ class RecordOperations:
 
     def __init__(
         self,
-        namespace: Namespace,
+        namespace: NamespaceRef,
         core: WrittenRecords,
         reader: RecordReader,
         drafts: DraftStore,
         annotations: AnnotationOperations,
         retrieval: CognitiveRetrieval,
         feedback: FeedbackOperations,
+        maintenance: MaintenanceOperations,
     ):
         self.namespace, self.core, self.reader, self.drafts = namespace, core, reader, drafts
         self.annotations, self.retrieval, self.feedback = annotations, retrieval, feedback
+        self.maintenance = maintenance
         self.execution, self.database = reader.execution, reader.database
 
     async def finish_write(
@@ -87,6 +97,8 @@ class RecordOperations:
         operation: OperationLink,
         *,
         annotate: bool = True,
+        work: EnqueuedMaintenance | None = None,
+        background: bool = False,
     ) -> RecordOutcome:
         """Run requested post-commit maintenance for an already committed record.
 
@@ -98,18 +110,35 @@ class RecordOperations:
         annotation = StageOutcome(state="not_requested")
         retrieval = StageOutcome(state="pending" if record.in_recall else "not_requested")
         issues: list[OperationIssue] = []
-        run_annotation = annotate and (
-            after.annotation == "run"
-            or after.annotation == "default"
-            and record.changed
-            and self.execution.snapshot.typed_values().cognition.annotation.on_save
+        run_annotation = (
+            record.changed
+            and annotate
+            and (
+                after.annotation == "run"
+                or after.annotation == "default"
+                and record.in_recall
+                and self.execution.snapshot.values.cognition.annotation.on_save
+            )
         )
+        if background:
+            if work is not None and work.annotation is not None:
+                annotation = StageOutcome(state="pending", job=work.annotation)
+            if work is not None and work.retrieval is not None:
+                retrieval = StageOutcome(state="pending", job=work.retrieval)
+            report_outcome("success", completed_refs=(record.revision_ref.identifier,))
+            return RecordOutcome(
+                record=record,
+                status="success",
+                annotation=annotation,
+                retrieval=retrieval,
+                operation=operation,
+                jobs=work.jobs if work is not None else (),
+            )
         if run_annotation:
             try:
-                adopted = await self.annotations.annotate(
-                    record.revision_ref, namespace=self.namespace.id
+                adopted = await self.maintenance.annotate_inline(
+                    record, automatic=after.annotation == "default"
                 )
-                assert isinstance(adopted, AnnotationView)
                 annotation = StageOutcome(
                     state="ready", generation=adopted.generation, ref=adopted.ref.identifier
                 )
@@ -173,19 +202,10 @@ class RecordOperations:
     async def _resolve_requests(
         self, requests: Sequence[SourceRequest], *, prefix: str = "S", reserved: Sequence[str] = ()
     ) -> tuple[SourceBinding, ...]:
-        selected = await self.reader.select_sources(
-            self.namespace.id, [request.target for request in requests]
+        selected = await self.core.sources.prepare(
+            self.namespace, requests, prefix=prefix, reserved_keys=reserved
         )
-        output: list[SourceBinding] = []
-        index = 0
-        for binding, request in zip(selected, requests, strict=True):
-            while True:
-                index += 1
-                key = f"{prefix}{index}"
-                if not any(old == key or old.startswith(key + ":") for old in reserved):
-                    break
-            output.append(binding.model_copy(update={"key": key, "usage": request.usage}))
-        return tuple(output)
+        return selected.bindings
 
     async def _create(
         self,
@@ -205,10 +225,21 @@ class RecordOperations:
                     "input.conflicting_sources", "Choose frozen bindings or source requests"
                 )
             metadata["sources"] = await self._resolve_requests(source_requests)
+        elif existing_sources := metadata.get("sources"):
+            prepared = await self.core.sources.prepare(
+                self.namespace, existing_sources, preserve_keys=True
+            )
+            metadata["sources"] = prepared.bindings
         self.core.validate_body(body, metadata.get("sources", ()))
         times = await self.core.prepare_times(metadata.get("times"))
+        recipe = await self.maintenance.prepare_after(
+            after, annotate=recall or after.annotation == "run"
+        )
         published = await self.core.artifacts.content.publish_bytes(body.encode("utf-8"))
         async with self.database.write() as tx:
+            previous_generation = (
+                await self.reader.scope.get_in(tx, self.namespace.id)
+            ).content_generation
             committed = await self.core.create_in(
                 tx,
                 self.namespace.id,
@@ -223,7 +254,12 @@ class RecordOperations:
                 viewpoint=metadata.get("viewpoint"),
                 sources=metadata.get("sources", ()),
             )
-        return await self.finish_write(committed, after, self._link())
+            jobs = await self.maintenance.enqueue_in(
+                tx, committed, recipe, previous_generation=previous_generation
+            )
+        return await self.finish_write(
+            committed, after, self._link(), work=jobs, background=bool(recipe["background"])
+        )
 
     async def add_note(
         self,
@@ -249,7 +285,7 @@ class RecordOperations:
         """
         async with self.execution.operation("note.add"):
             recall = (
-                self.execution.snapshot.typed_values().cognition.notes.default_recall
+                self.execution.snapshot.values.cognition.notes.default_recall
                 if remember is None
                 else remember
             )
@@ -311,11 +347,22 @@ class RecordOperations:
             raise NousError("input.expected_required", "An exact revision with @N is required")
         return await self.read(base)
 
+    async def _target_base(
+        self, target: Target, expected: str | int | RecordRevisionRef | None
+    ) -> RecordView:
+        async with self.database.read() as tx:
+            row, revision, _ = await self.core.resolve_expected_in(
+                tx, target, expected, self.namespace.id
+            )
+            exact = self.reader.revision_ref(row, revision)
+        return await self.read(exact)
+
     async def _replace(
         self,
-        base: str | RecordRevisionRef,
+        base: Target,
         body: str,
         *,
+        expected: str | int | RecordRevisionRef | None,
         after: AfterWrite,
         feedback_refs: Sequence[str],
         feedback_mappings: Mapping[str, str],
@@ -324,21 +371,36 @@ class RecordOperations:
         metadata: RevisionMetadata,
         source_changes: SourceChanges | None,
     ) -> RecordOutcome:
-        original = await self._base(base)
+        original = await self._target_base(base, expected)
         bindings = (
             source_changes.apply_to(original.sources)
             if source_changes is not None
             else original.sources
         )
+        if source_changes is not None and source_changes.add:
+            prepared = await self.core.sources.prepare(
+                self.namespace,
+                source_changes.add,
+                prefix="N",
+                reserved_keys=[source.key for source in original.sources],
+                preserve_keys=True,
+            )
+            bindings = source_changes.model_copy(update={"add": prepared.bindings}).apply_to(
+                original.sources
+            )
         changed_times = metadata.get("times")
         if changed_times is not None:
             await self.core.time.validate([changed_times])
+        recipe = await self.maintenance.prepare_after(after)
         published = await self.core.artifacts.content.publish_bytes(body.encode("utf-8"))
         async with self.database.write() as tx:
+            previous_generation = (
+                await self.reader.scope.get_in(tx, self.namespace.id)
+            ).content_generation
             committed = await self.core.append_in(
                 tx,
-                original.revision_ref,
-                original.revision_ref,
+                base,
+                expected,
                 body,
                 published,
                 namespace=self.namespace.id,
@@ -357,13 +419,19 @@ class RecordOperations:
                     note=reason,
                     mappings=feedback_mappings,
                 )
-        return await self.finish_write(committed, after, self._link())
+            jobs = await self.maintenance.enqueue_in(
+                tx, committed, recipe, previous_generation=previous_generation
+            )
+        return await self.finish_write(
+            committed, after, self._link(), work=jobs, background=bool(recipe["background"])
+        )
 
     async def replace(
         self,
-        base: str | RecordRevisionRef,
+        base: Target,
         markdown: str,
         *,
+        expected: str | int | RecordRevisionRef | None = None,
         reason: str | None = None,
         intent: Literal["edit", "correction"] = "edit",
         after: AfterWrite = DEFAULT_AFTER_WRITE,
@@ -391,7 +459,7 @@ class RecordOperations:
         """
         async with self.execution.operation("records.replace"):
             if source_requests is not None:
-                original = await self._base(base)
+                original = await self._target_base(base, expected)
                 additions = await self._resolve_requests(
                     source_requests,
                     prefix="N",
@@ -405,6 +473,7 @@ class RecordOperations:
             return await self._replace(
                 base,
                 markdown,
+                expected=expected,
                 after=after,
                 feedback_refs=feedback_refs,
                 feedback_mappings=feedback_mappings or {},
@@ -416,9 +485,10 @@ class RecordOperations:
 
     async def apply(
         self,
-        base: str | RecordRevisionRef,
+        base: Target,
         changes: Sequence[TextChange],
         *,
+        expected: str | int | RecordRevisionRef | None = None,
         reason: str | None = None,
         intent: Literal["edit", "correction"] = "edit",
         sources: SourceChanges | None = None,
@@ -441,12 +511,13 @@ class RecordOperations:
                 text edit, source, or feedback validation error.
         """
         async with self.execution.operation("records.apply"):
-            original = await self._base(base)
+            original = await self._target_base(base, expected)
             view = await self.core.artifacts.text_view(original.body_artifact)
             edited = prepare_text_edit(view, changes)
             return await self._replace(
-                original.revision_ref,
+                base,
                 edited.utf8_bytes.decode("utf-8"),
+                expected=expected,
                 after=after,
                 feedback_refs=feedback_refs,
                 feedback_mappings=feedback_mappings or {},
@@ -480,43 +551,66 @@ class RecordOperations:
 
     async def _membership(
         self,
-        base: str | RecordRevisionRef,
+        base: Target,
         *,
+        expected: str | int | RecordRevisionRef | None = None,
         archived: bool | None = None,
         recall: bool | None = None,
         after: AfterWrite,
     ) -> RecordOutcome:
-        original = await self._base(base)
+        recipe = await self.maintenance.prepare_after(after, annotate=False)
         async with self.database.write() as tx:
+            previous_generation = (
+                await self.reader.scope.get_in(tx, self.namespace.id)
+            ).content_generation
             committed = await self.core.membership_in(
                 tx,
-                original.revision_ref,
-                original.revision_ref,
+                base,
+                expected,
                 namespace=self.namespace.id,
                 archived=archived,
                 recall=recall,
             )
-        return await self.finish_write(committed, after, self._link(), annotate=False)
+            jobs = await self.maintenance.enqueue_in(
+                tx, committed, recipe, previous_generation=previous_generation
+            )
+        return await self.finish_write(
+            committed,
+            after,
+            self._link(),
+            annotate=False,
+            work=jobs,
+            background=bool(recipe["background"]),
+        )
 
     async def archive(
-        self, base: str | RecordRevisionRef, *, after: AfterWrite = DEFAULT_AFTER_WRITE
+        self,
+        base: Target,
+        *,
+        expected: str | int | RecordRevisionRef | None = None,
+        after: AfterWrite = DEFAULT_AFTER_WRITE,
     ) -> RecordOutcome:
         """Archive a record against its exact current base and report follow-up state."""
         async with self.execution.operation("records.archive"):
-            return await self._membership(base, archived=True, after=after)
+            return await self._membership(base, expected=expected, archived=True, after=after)
 
     async def restore(
-        self, base: str | RecordRevisionRef, *, after: AfterWrite = DEFAULT_AFTER_WRITE
+        self,
+        base: Target,
+        *,
+        expected: str | int | RecordRevisionRef | None = None,
+        after: AfterWrite = DEFAULT_AFTER_WRITE,
     ) -> RecordOutcome:
         """Restore an archived record against its exact current base."""
         async with self.execution.operation("records.restore"):
-            return await self._membership(base, archived=False, after=after)
+            return await self._membership(base, expected=expected, archived=False, after=after)
 
     async def set_recall(
         self,
-        base: str | RecordRevisionRef,
+        base: Target,
         enabled: bool,
         *,
+        expected: str | int | RecordRevisionRef | None = None,
         after: AfterWrite = DEFAULT_AFTER_WRITE,
     ) -> RecordOutcome:
         """Set a Note's recall membership against its exact current base.
@@ -525,7 +619,7 @@ class RecordOperations:
             NousError: The base is stale or the target is not a Note.
         """
         async with self.execution.operation("records.recall"):
-            return await self._membership(base, recall=enabled, after=after)
+            return await self._membership(base, expected=expected, recall=enabled, after=after)
 
     async def history(self, target: Target) -> tuple[RevisionSummary, ...]:
         """Return the record's revision summaries in ascending ordinal order."""
@@ -550,7 +644,7 @@ class RecordOperations:
 
     async def select_sources(
         self,
-        targets: Sequence[Target | ArtifactRef | ContentSelection],
+        targets: Sequence[Target | ArtifactRef | ContentSelection | RevisionSelection],
         *,
         usage: Literal["reference", "current_basis", "inspiration"] = "reference",
     ) -> tuple[SourceBinding, ...]:
@@ -559,7 +653,8 @@ class RecordOperations:
         Logical record targets resolve to exact revisions in one read view; the returned
         bindings use S1, S2, and subsequent keys and the requested usage.
         """
-        return await self.reader.select_sources(self.namespace.id, targets, usage=usage)
+        selected = await self.core.sources.prepare(self.namespace, targets, usage=usage)
+        return selected.bindings
 
     async def adopt(
         self,
@@ -606,24 +701,38 @@ class RecordOperations:
                 if override is None or override.source_changes is None
                 else override.source_changes.apply_to(draft.context.source_bindings)
             )
+            if bindings:
+                prepared = await self.core.sources.prepare(
+                    self.namespace, bindings, preserve_keys=True
+                )
+                bindings = prepared.bindings
             if override is None and (draft.adopted_revision is None or fork):
                 previous = (
                     await self.reader.read(draft.context.base_revision, namespace=self.namespace.id)
-                    if draft.context.base_revision else None
+                    if draft.context.base_revision
+                    else None
                 )
                 unqualified = normalize_source_links(
-                    text, tuple(binding.key for binding in bindings),
+                    text,
+                    tuple(binding.key for binding in bindings),
                     preserve=previous.body if previous else None,
                 )
                 if unqualified.keys:
                     raise NousError(
                         "cognition.source_link_unqualified",
                         "Known source links require the source: prefix; adopt a corrected Markdown override",
-                        details={"keys": list(unqualified.keys), "draft_ref": draft.ref.model_dump(mode="json")},
+                        details={
+                            "keys": list(unqualified.keys),
+                            "draft_ref": draft.ref.model_dump(mode="json"),
+                        },
                     )
             published = await self.core.artifacts.content.publish_bytes(text.encode("utf-8"))
+            recipe = await self.maintenance.prepare_after(after)
             try:
                 async with self.database.write() as tx:
+                    previous_generation = (
+                        await self.reader.scope.get_in(tx, self.namespace.id)
+                    ).content_generation
                     ref, context, result_id, _, adopted, _ = await self.drafts.descriptor_in(
                         tx, draft.ref, self.namespace.id
                     )
@@ -706,7 +815,12 @@ class RecordOperations:
                             applied_revision=committed.revision_ref,
                             mappings=context.feedback_mappings,
                         )
-                return await self.finish_write(committed, after, self._link())
+                    jobs = await self.maintenance.enqueue_in(
+                        tx, committed, recipe, previous_generation=previous_generation
+                    )
+                return await self.finish_write(
+                    committed, after, self._link(), work=jobs, background=bool(recipe["background"])
+                )
             except BaseException as error:
                 add_error_context(
                     error,

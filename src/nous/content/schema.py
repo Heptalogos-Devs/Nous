@@ -21,6 +21,8 @@ results = sa.Table(
     sa.Column("id", sa.String, primary_key=True),
     sa.Column("identifier", sa.String, nullable=False, unique=True),
     sa.Column("operation", sa.String, nullable=False),
+    sa.Column("producer_key", sa.String, unique=True),
+    sa.Column("adoption_signature", sa.String),
     sa.Column("producer", sa.JSON, nullable=False),
     sa.Column("request", sa.JSON, nullable=False),
     sa.Column("parameters", sa.JSON, nullable=False),

@@ -43,10 +43,16 @@ class JournalDraftTask(TaskDefinition):
     NO_MATERIAL: ClassVar[str] = NO_MATERIAL
 
     def __init__(self) -> None:
-        super().__init__("journal-draft", named_outputs=(
-            ("output", "Markdown with known source destinations qualified when needed."),
-            ("model_output", "Original model Markdown when source-link normalization changed it."),
-        ))
+        super().__init__(
+            "journal-draft",
+            named_outputs=(
+                ("output", "Markdown with known source destinations qualified when needed."),
+                (
+                    "model_output",
+                    "Original model Markdown when source-link normalization changed it.",
+                ),
+            ),
+        )
 
     def describe_contract(self) -> dict[str, JsonValue]:
         return {**super().describe_contract(), "output_semantics": {"no_material": NO_MATERIAL}}
@@ -58,10 +64,19 @@ class JournalDraftTask(TaskDefinition):
 
 class JournalReflectTask(TaskDefinition):
     def __init__(self) -> None:
-        super().__init__("journal-reflect", named_outputs=(
-            ("output", "Reflection Markdown with known source destinations qualified when needed."),
-            ("model_output", "Original model Markdown when source-link normalization changed it."),
-        ))
+        super().__init__(
+            "journal-reflect",
+            named_outputs=(
+                (
+                    "output",
+                    "Reflection Markdown with known source destinations qualified when needed.",
+                ),
+                (
+                    "model_output",
+                    "Original model Markdown when source-link normalization changed it.",
+                ),
+            ),
+        )
 
     def describe_contract(self) -> dict[str, JsonValue]:
         return {
@@ -76,11 +91,15 @@ class JournalRewriteTask(TaskDefinition):
             "journal-rewrite",
             named_outputs=(
                 ("output", "Complete rewritten Markdown."),
-                ("model_output", "Original model Markdown when source-link normalization changed it."),
+                (
+                    "model_output",
+                    "Original model Markdown when source-link normalization changed it.",
+                ),
                 ("diff", "Program-produced exact before/after difference."),
             ),
             program_outputs=("diff",),
             required_roles=("revision_base",),
+            text_input_mode="lossless",
         )
 
     async def outputs(
@@ -146,6 +165,7 @@ class JournalEditTask(TaskDefinition):
             ),
             program_outputs=("output", "edits", "diff"),
             required_roles=("edit_target",),
+            text_input_mode="lossless",
         )
 
     def validate(self, value: JsonValue, reading: ReadingInput) -> JsonValue:

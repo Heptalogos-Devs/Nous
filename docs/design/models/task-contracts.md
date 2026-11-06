@@ -9,11 +9,13 @@
 ```text
 TaskDefinition:
   id
-  input_type
-  prepare_input(ordered_sources, shared_content) -> task_input
-  output_type | json_schema
-  validate_output(value, source_groups) -> validated_value
-  outputs(value, source_reader) -> named OutputContent
+  input_mode: joint | independent_batches
+  text_input_mode: lossless | structured
+  prepare_sources(originals, artifacts) -> MediaPlan[] | None
+  validate_input(ReadingInput)
+  output_type | caller_schema
+  validate(value, ReadingInput) -> validated_value
+  outputs(value, ReadingInput, artifacts, structured, producer) -> named OutputContent
 ```
 
 具体方法名可符合现有代码风格，但相同输出类型不得手写成三套 Schema。Pydantic 类型负责结构；自定义 JSON Schema 使用 jsonschema。模型执行器接收这些明确能力，不出现按 contract_id 分支的业务判断。
@@ -26,9 +28,11 @@ Markdown 块由 markdown-it 提供语法位置；文本读取能力维护精确�
 
 ## 输出和采用
 
-共同 GenerationOperations.produce 返回实际输出、输入、原生响应必要部分、实际请求/模型/模板/Schema 标识及用量，并由任务定义解释为有名产物。公共 run 和认知草稿共用这一条计算路径；ResultStore.prepare_outputs/adopt_in 继续统一采用，允许调用方在同一短事务登记自己的正式关系。
+TaskDefinition 的 `text_input_mode` 声明 lossless 或 structured；普通全文输入按连续 UTF-8 范围保留定义行、CRLF、间隙与尾部，结构化呈现仍保留块外原文。
 
-失败输出只作为本次可诊断内容或错误引用，不能自动写成成功任务产物。修复次数默认零；启用时仍由共同尝试策略计数。
+共同 GenerationOperations.produce 在协议完整响应和结构化 validate 成功后，先通过 ResultStore 保存正式可读的原始成功响应，再调用任务 outputs 解释有名产物，返回 ProducedTask 的实际输出、输入、请求/模型/模板/Schema 标识及用量。validate 参与既有结构化修复预算；outputs 的确定性解释失败使用已保存响应恢复。公共 run 和认知草稿共用这一条计算路径；ResultStore.prepare_outputs/adopt_in 继续统一采用，允许调用方在同一短事务登记自己的正式关系。
+
+结构化校验未通过的响应留在本次尝试诊断中；已经通过校验、但 outputs 或后续采用失败的响应拥有正式 model.language_response 引用。按原 producer_key 重入 produce 或调用 recover_response(response_ref, snapshot) 可重新解释，见[成功计算恢复](durable-computation.md)。修复次数默认零；启用时仍由共同尝试策略计数。
 
 ## 新增 Wave 输入任务
 
@@ -38,7 +42,7 @@ Markdown 块由 markdown-it 提供语法位置；文本读取能力维护精确�
 
 ## 正文任务
 
-`journal-draft` 使用 joint 输入，返回普通 Markdown 草稿；`concept-annotation` 使用一份共同 TextView，返回概念、出现项和路径，具体合同见 [概念标注](../cognition/concept-annotations.md)。任务 owner 构造局部块键、校验来源并采用普通结果，通用 executor 不识别任务专名。
+`journal-draft` 使用 joint 输入，返回普通 Markdown 草稿；认知 `cognition/annotation_tasks.py` 定义的 ConceptAnnotationTask（合同 ID `concept-annotation`）使用一份共同 TextView，返回概念、出现项和路径，具体合同见 [概念标注](../cognition/concept-annotations.md)。任务 owner 构造局部块键、校验来源并采用普通结果，通用 executor 不识别任务专名。
 
 写作任务使用 `journal-draft`、`journal-edit`、`journal-rewrite` 和 `journal-reflect` 资源，各自的输入输出合同见[写作意图](../cognition/writing-intents.md)。`annotate-concepts` 要求一份完整正文，输入组使用共同 TextView 的 B 键。模型返回 AnnotationProposal；采用时加入正文、parser profile、内容修订与 producer，形成普通 AnnotationSet JSON 产物。`content.annotations.read_annotation` 读取产物、补入实际 ResultRef 并核对正文块键，供 Wave 等消费者复用。
 

@@ -41,7 +41,13 @@ from pydantic_ai.usage import RequestUsage
 
 from nous.common.errors import NousError
 from nous.configuration import ConfigSnapshot
-from nous.models.configuration import ModelConfig, PresetConfig, TaskAssignment
+from nous.media.configuration import MediaConfig
+from nous.models.configuration import (
+    ModelConfig,
+    ModelExecutionConfig,
+    PresetConfig,
+    TaskAssignment,
+)
 
 from .contracts import GenerationResult, ReadingInput
 from .policy import (
@@ -74,7 +80,7 @@ class ModelRegistry:
         self, task: str, snapshot: ConfigSnapshot
     ) -> tuple[TaskAssignment, tuple[ModelRoute, ...]]:
         """Resolve the entire ordered route from one operation snapshot without network I/O."""
-        settings = snapshot.typed_values()
+        settings = snapshot.values
         if task not in settings.tasks:
             raise NousError("model.task_unconfigured", f"No model assignment for task: {task}")
         assignment = settings.tasks[task]
@@ -97,6 +103,9 @@ class FrozenTask:
     routes: tuple[ModelRoute, ...]
     resource: PromptResource | None
     ineligible_routes: dict[str, JsonValue] = field(default_factory=dict)
+    execution_limits: ModelExecutionConfig | None = None
+    media_settings: MediaConfig | None = None
+    transcription: FrozenTask | None = None
 
 
 @dataclass(frozen=True)
@@ -240,11 +249,13 @@ class ModelExecutor:
             raise NousError(
                 "model.output_mode_mismatch", "Task output mode does not match its prompt contract"
             )
-        limits = snapshot.typed_values().model_execution
+        limits = frozen.execution_limits or snapshot.values.model_execution
+        current_limits = snapshot.values.model_execution
         budget = assignment.budget
         output_limit = min(
             v
             for v in [
+                current_limits.max_output_tokens,
                 limits.max_output_tokens,
                 budget.max_output_tokens,
                 routes[0].model.max_output_tokens,
@@ -255,7 +266,9 @@ class ModelExecutor:
         # Explicitly estimated; provider usage is retained separately.
         estimate = _estimate_text(compiled)
         input_limit = min(
-            limits.max_input_tokens, budget.max_input_tokens or limits.max_input_tokens
+            current_limits.max_input_tokens,
+            limits.max_input_tokens,
+            budget.max_input_tokens or limits.max_input_tokens,
         )
         route = routes[0]
         self._check_route(route, assignment, compiled, snapshot)
@@ -280,17 +293,22 @@ class ModelExecutor:
             compiled,
             routes,
             snapshot,
-            min(limits.max_attempts, budget.max_attempts or limits.max_attempts),
+            min(
+                current_limits.max_attempts,
+                limits.max_attempts,
+                budget.max_attempts or limits.max_attempts,
+            ),
             min(
                 v
                 for v in [
+                    current_limits.timeout_seconds,
                     limits.timeout_seconds,
                     budget.timeout_seconds,
                 ]
                 if v is not None
             ),
             output_limit,
-            limits.structured_retries,
+            min(current_limits.structured_retries, limits.structured_retries),
             estimate,
             ineligible_routes=dict(frozen.ineligible_routes),
         )
@@ -355,7 +373,7 @@ class ModelExecutor:
         compiled: CompiledPrompt | None,
         snapshot: ConfigSnapshot,
     ) -> None:
-        provider = snapshot.typed_values().providers[route.model.provider]
+        provider = snapshot.values.providers[route.model.provider]
         if provider.protocol != "openai-chat-completions":
             raise NousError(
                 "model.protocol_unsupported", f"Unsupported protocol: {provider.protocol}"
@@ -447,7 +465,9 @@ class ModelExecutor:
             openai_chat_supports_document_input="application/pdf" in route.model.input_formats,
             openai_chat_streaming_requires_finish_reason=True,
         )
-        profile.update(cast(OpenAIModelProfile, route.model.compatibility))
+        profile.update(
+            cast(OpenAIModelProfile, route.model.model_dump(mode="json")["compatibility"])
+        )
         return CompatibleChatModel(
             route.model.model_name,
             provider=OpenAIProvider(openai_client=self.connections.client(route.model.provider)),
@@ -459,7 +479,7 @@ class ModelExecutor:
         output_limit = min(
             value
             for value in (
-                prepared.snapshot.typed_values().model_execution.max_output_tokens,
+                prepared.max_output_tokens,
                 prepared.assignment.budget.max_output_tokens,
                 route.model.max_output_tokens,
                 route.preset.max_output_tokens,
@@ -485,8 +505,11 @@ class ModelExecutor:
         if route.preset.top_p is not None:
             settings["top_p"] = route.preset.top_p
         if route.preset.reasoning:
-            settings["extra_body"] = dict(route.preset.reasoning)
-        return cast(OpenAIChatModelSettings, {**settings, **route.preset.extensions})
+            settings["extra_body"] = route.preset.model_dump(mode="json")["reasoning"]
+        return cast(
+            OpenAIChatModelSettings,
+            {**settings, **route.preset.model_dump(mode="json")["extensions"]},
+        )
 
     @staticmethod
     def _parameters(prepared: PreparedGeneration) -> ModelRequestParameters:
@@ -979,10 +1002,16 @@ class ModelExecutor:
                 str(part.get("text", ""))
                 for part in cast(list[dict[str, JsonValue]], compiled.preview[0]["content"])
             )
-        limits = snapshot.typed_values().model_execution
-        maximum = min(limits.max_attempts, assignment.budget.max_attempts or limits.max_attempts)
+        limits = frozen.execution_limits or snapshot.values.model_execution
+        maximum = min(
+            snapshot.values.model_execution.max_attempts,
+            limits.max_attempts,
+            assignment.budget.max_attempts or limits.max_attempts,
+        )
         timeout = min(
-            limits.timeout_seconds, assignment.budget.timeout_seconds or limits.timeout_seconds
+            snapshot.values.model_execution.timeout_seconds,
+            limits.timeout_seconds,
+            assignment.budget.timeout_seconds or limits.timeout_seconds,
         )
         report_start = len(attempt_reports())
         async with asyncio.timeout_at(stage_deadline(timeout, context)):

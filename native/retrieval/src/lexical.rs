@@ -19,6 +19,8 @@ use tantivy::{
 use tantivy_jieba::JiebaTokenizer;
 mod grouped;
 mod scoped;
+#[cfg(windows)]
+mod windows_directory;
 
 const TOKENIZER: &str = "nous_jieba";
 const WRITER_BYTES: usize = 20_000_000;
@@ -86,12 +88,12 @@ impl RetrievalIndex {
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         std::fs::create_dir_all(path.as_ref())?;
         let expected = schema();
-        let index = if path.as_ref().join("meta.json").exists() {
-            Index::open_in_dir(path.as_ref()).context("cannot open lexical index")?
-        } else {
-            Index::create_in_dir(path.as_ref(), expected.clone())
-                .context("cannot create lexical index")?
-        };
+        #[cfg(windows)]
+        let directory = windows_directory::WindowsDirectory::open(path.as_ref())?;
+        #[cfg(not(windows))]
+        let directory = tantivy::directory::MmapDirectory::open(path.as_ref())?;
+        let index = Index::open_or_create(directory, expected.clone())
+            .context("cannot open or create lexical index")?;
         ensure!(
             index.schema() == expected,
             "lexical schema changed; rebuild the projection"

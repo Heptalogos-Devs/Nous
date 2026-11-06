@@ -7,7 +7,7 @@ import logging
 import time
 from collections.abc import AsyncGenerator, Awaitable, Callable, Coroutine, Mapping
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import asynccontextmanager
+from contextlib import AbstractContextManager, asynccontextmanager, nullcontext
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import TypeVar, cast
@@ -37,6 +37,25 @@ _current: contextvars.ContextVar[Mapping[object, OperationContext]] = contextvar
 )
 
 
+async def complete_cleanup[T](work: Awaitable[T]) -> T:
+    """Finish owned cleanup despite repeated cancellation, then propagate cancellation."""
+    task = asyncio.ensure_future(work)
+    cancelled: asyncio.CancelledError | None = None
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError as error:
+            if cancelled is None:
+                cancelled = error
+        except BaseException:
+            break
+    if cancelled is not None:
+        if not task.cancelled() and (failure := task.exception()) is not None:
+            cancelled.add_note(f"Cleanup failed: {type(failure).__name__}: {failure}")
+        raise cancelled
+    return task.result()
+
+
 class ExecutionManager:
     """Own operation admission, inherited context and blocking-worker lifetimes.
 
@@ -46,12 +65,19 @@ class ExecutionManager:
     the owning runtime closes.
     """
 
-    def __init__(self, settings: ExecutionConfig, snapshot: Callable[[], ConfigSnapshot]) -> None:
+    def __init__(
+        self,
+        settings: ExecutionConfig,
+        snapshot: Callable[[], ConfigSnapshot],
+        *,
+        observability_scope: Callable[[], AbstractContextManager[None]] = nullcontext,
+    ) -> None:
         self._semaphore = asyncio.Semaphore(int(settings.max_in_flight))
         self._workers = ThreadPoolExecutor(
             max_workers=int(settings.max_blocking_workers), thread_name_prefix="nous-worker"
         )
         self._snapshot = snapshot
+        self._observability_scope = observability_scope
         self._owner = object()
         self._operations: dict[asyncio.Task[object], asyncio.Future[None]] = {}
         self._tasks: set[asyncio.Task[object]] = set()
@@ -114,7 +140,7 @@ class ExecutionManager:
         if parent and parent.deadline is not None:
             deadline = min(deadline, parent.deadline) if deadline is not None else parent.deadline
         elif parent is None and deadline is None:
-            timeout = snapshot.typed_values().execution.default_timeout_seconds
+            timeout = snapshot.values.execution.default_timeout_seconds
             if timeout is not None:
                 deadline = asyncio.get_running_loop().time() + float(timeout)
         diagnostic = parent.diagnostics if parent else OperationDiagnostics(str(uuid4()), name)
@@ -130,7 +156,10 @@ class ExecutionManager:
         acquired = False
         token = None
         try:
-            with operation(name, diagnostics=diagnostic, stage=stage, root_operation=root):
+            with (
+                self._observability_scope() if root else nullcontext(),
+                operation(name, diagnostics=diagnostic, stage=stage, root_operation=root),
+            ):
                 async with asyncio.timeout_at(deadline):
                     started = time.monotonic()
                     if root:
@@ -246,11 +275,13 @@ class ExecutionManager:
                 before cancelling them. Actual blocking workers are still awaited
                 after cancellation, so shutdown may take longer than this grace.
         """
+        await complete_cleanup(self._close(grace_seconds, asyncio.current_task()))
+
+    async def _close(self, grace_seconds: float, caller: asyncio.Task[object] | None) -> None:
         self._accepting = False
-        current = asyncio.current_task()
-        tasks = self._tasks - {current}
+        tasks = self._tasks - {caller}
         operations = {
-            task: completed for task, completed in self._operations.items() if task is not current
+            task: completed for task, completed in self._operations.items() if task is not caller
         }
         waiters = [*tasks, *operations.values()]
         if waiters:

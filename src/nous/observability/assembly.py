@@ -2,7 +2,8 @@
 
 import logging
 import sys
-from contextlib import ExitStack
+from collections.abc import Generator
+from contextlib import ExitStack, contextmanager
 from datetime import UTC, datetime
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -80,7 +81,9 @@ class LoggingSession:
                 processors=[
                     structlog.stdlib.ProcessorFormatter.remove_processors_meta,
                     _terminal_event,
-                    structlog.dev.ConsoleRenderer(colors=False),
+                    structlog.dev.ConsoleRenderer(
+                        colors=False, exception_formatter=structlog.dev.plain_traceback
+                    ),
                 ],
             )
         )
@@ -232,6 +235,18 @@ class Observability:
             )
             self._token = active_providers.set(self)
             initializing.pop_all()
+
+    @contextmanager
+    def scope(self, instance_id: str, startup_id: str) -> Generator[None]:
+        """Bind this runtime's providers even in tasks created before it opened."""
+        token = active_providers.set(self)
+        try:
+            with structlog.contextvars.bound_contextvars(
+                instance_id=instance_id, startup_id=startup_id
+            ):
+                yield
+        finally:
+            active_providers.reset(token)
 
     def close(self) -> None:
         active_providers.reset(self._token)

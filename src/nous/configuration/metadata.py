@@ -1,13 +1,62 @@
 """Metadata attached to the authoritative Pydantic fields."""
 
-from typing import Required, TypedDict, Unpack, overload
+from collections.abc import Mapping
+from types import MappingProxyType
+from typing import Annotated, Required, TypedDict, Unpack, cast, overload
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    JsonValue,
+    SerializerFunctionWrapHandler,
+    WrapSerializer,
+)
 from pydantic.fields import FieldInfo
 
 
 class ConfigModel(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True, allow_inf_nan=False)
+    model_config = ConfigDict(
+        extra="forbid", frozen=True, strict=True, allow_inf_nan=False, validate_default=True
+    )
+
+
+def _readonly_map[K, V](value: Mapping[K, V]) -> Mapping[K, V]:
+    return MappingProxyType(dict(value))
+
+
+def _serialize_map(
+    value: Mapping[object, object], handler: SerializerFunctionWrapHandler
+) -> object:
+    return handler(dict(value))
+
+
+def _sequence(value: object) -> object:
+    return tuple(cast(list[object], value)) if isinstance(value, list) else value
+
+
+type ConfigMap[K, V] = Annotated[
+    Mapping[K, V], AfterValidator(_readonly_map), WrapSerializer(_serialize_map)
+]
+type ConfigSequence[T] = Annotated[tuple[T, ...], BeforeValidator(_sequence)]
+type ConfigJson = (
+    None | bool | int | float | str | ConfigSequence[ConfigJson] | ConfigMap[str, ConfigJson]
+)
+
+
+def mutable(value: object) -> JsonValue:
+    """Copy read-only configuration containers into JSON-compatible values."""
+    if isinstance(value, BaseModel):
+        return cast(JsonValue, value.model_dump(mode="json"))
+    if isinstance(value, Mapping):
+        return {key: mutable(item) for key, item in cast(Mapping[str, object], value).items()}
+    if isinstance(value, (list, tuple)):
+        return [mutable(item) for item in cast(tuple[object, ...] | list[object], value)]
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    raise TypeError("Unsupported configuration value")
 
 
 class SettingOptions(TypedDict, total=False):

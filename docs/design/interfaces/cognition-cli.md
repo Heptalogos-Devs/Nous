@@ -42,7 +42,7 @@ nous journal archive "jrn(...)@3"
 
 `nous feedback record "<精确引用>"` 可评价当时的正文；`--selection` 接收命中返回的 ContentSelection JSON，`--snapshot` 与 `--candidate` 标识并核对某次命中，`--query-result` 则记录整次公开查询结果。明确更正通过 journal patch/replace/revise 并关联 --feedback；意见列表与处理结果由 feedback read/list/resolve 提供。
 
-`journal refresh` 刷新当前域配置 profile；`--mode lexical` 显式刷新词项。保存后的默认输出“已保存 @N；检索将在下次查询时更新”，不要求用户先理解 Native 快照。`--refresh` 在正文提交后接续当前 profile 刷新；`--refresh-mode lexical` 本身也触发刷新，并明确只构建词项视图。成功返回 ready；构建期间又有写入且产物未成为 current 时返回 pending。失败返回 saved=true、indexed=false、retrieval_state=failed、保存引用及具体错误/操作关联，不撤销正文。上述接续适用于手工记录和修订、草稿采用、journalize --save，以及显式 correction。
+`journal refresh` 刷新当前域配置 profile；`--mode lexical` 显式刷新词项。保存时 `--refresh` 接续当前 profile 刷新，`--refresh-mode lexical` 明确只构建词项视图；`--annotate` 请求标注。`--background` 将请求的维护工作与正文一起登记并显示 Job ID，`--inline` 等待维护结果，二者省略时使用 `cognition.maintenance.execution`。后台工作和长期宿主的操作见 [Job 与宿主](jobs-and-host.md)。前台维护失败时保留已保存正文并返回 partial。手工记录和修订、草稿采用、journalize --save 及 correction 共用这些选择。
 
 ## 失败、流与 JSON
 

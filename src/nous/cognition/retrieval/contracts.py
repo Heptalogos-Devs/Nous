@@ -15,7 +15,13 @@ from nous.wave.contracts import (
     SnapshotRef,
 )
 
-from ..contracts import CognitiveValue, Namespace, RecordRevisionRef, SourceBinding
+from ..contracts import (
+    CognitiveValue,
+    Namespace,
+    RecordRevisionRef,
+    RevisionSelection,
+    SourceBinding,
+)
 
 Mode = Literal["auto", "lexical", "dense", "tagmemo", "rivermemo", "hybrid", "dtsc"]
 SearchMode = Literal["lexical", "dense", "tagmemo", "rivermemo", "hybrid", "dtsc"]
@@ -56,6 +62,7 @@ class QueryContext(CognitiveValue):
 
 class SearchPassage(CognitiveValue):
     candidate_ref: CandidateRef
+    selection: RevisionSelection
     content: ContentSelection
     origin_contents: tuple[ContentSelection, ...] = Field(min_length=1)
     candidate_rank: int = Field(ge=1)
@@ -85,6 +92,7 @@ class SearchGroup(CognitiveValue):
 
 class DeliveredSelection(CognitiveValue):
     revision_ref: RecordRevisionRef
+    selection: RevisionSelection
     candidate_ref: CandidateRef
     content: ContentSelection
     group_rank: int

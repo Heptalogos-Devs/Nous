@@ -55,7 +55,7 @@ def test_portable_move_and_resource_replacement(tmp_path: Path) -> None:
         content.rmdir()
         (moved / "old-content").rename(content)
 
-        settings = Configuration(config_file, environment={}).snapshot.typed_values()
+        settings = Configuration(config_file, environment={}).snapshot.values
         foreign = moved / "data" / "foreign.sqlite3"
         async with Database.open(foreign, settings.database, settings.instance.id, create=True):
             pass

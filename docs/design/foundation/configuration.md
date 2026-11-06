@@ -30,7 +30,7 @@ unset 删除本层值和对应 null 标记，恢复继承。资源删除使用�
 
 ## 读取、目录与版本
 
-catalog/schema/explain/resolve/validate 使用共同定义。有效快照在公开语义上不可变，包括嵌套容器；提供类型化读取时不得让调用者取得可以修改原快照的 dict/list。
+catalog/schema/explain/resolve/validate 使用共同定义。ConfigSnapshot 在生成时完成全量类型校验，`values` 持有深度不可变的类型化视图；普通读取返回同一视图，显式编辑时通过 `to_dict()` 取得独立副本。嵌套容器与扩展参数也不可修改原快照，详见 [类型化快照](typed-config-snapshot.md)。
 
 快照保留值、版本及每个有效字段的来源。期望版本与生效版本分开，restart pending 时可不同。运行中的操作固定一份快照；内部任务参数来自它与合法调用覆盖，不反复读取全局配置。
 
@@ -40,6 +40,6 @@ catalog/schema/explain/resolve/validate 使用共同定义。有效快照在公�
 
 本轮实例设置使用 TOML，包内默认及 Prompt 资源随代码提供。数据库保存正式身份/资产绑定，作用是维护持久语义，不镜像整份 TOML。
 
-保存使用 tomlkit 与同目录原子文件替换，保留非目标字段的注释。文件、数据库绑定、资源生效是可区分的事实，具体状态见 [变更](configuration-changes.md)。
+在线 update/unset/reload/remove_resource 使用运行实例的 ExecutionManager，并在同一根操作固定前置配置；离线操作复用同一配置业务能力及轻量运行资源。保存使用 tomlkit 与同目录原子文件替换，保留非目标字段的注释。文件、数据库绑定、资源生效是可区分的事实，具体状态见 [变更](configuration-changes.md)。
 
 新增字段从负责模块定义并接到真实调用点；目录能解释尚未接入资源而不伪报功能 ready。初始参数可按实际资料调整，配置能力不被命令行当前呈现范围限制。

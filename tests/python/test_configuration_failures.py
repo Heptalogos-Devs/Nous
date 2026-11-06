@@ -1,11 +1,13 @@
 """Configuration failures keep durable intent and active resources observable."""
 
 import asyncio
+import contextvars
 import json
 import logging
 import os
 import subprocess
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 from unittest.mock import patch
 
@@ -26,14 +28,45 @@ def test_environment_resolves_generated_property_spelling_and_array_values(tmp_p
     asyncio.run(initialize_instance(instance, environment={}))
     variable = "NOUS__WAVE__NATIVE__QUERY__PIPELINE__ACTIVATIONMULTIPLIER"
     configuration = Configuration(instance / "nous.toml", environment={variable: "[1.0,1.25]"})
-    pipeline = configuration.snapshot.typed_values().wave.native.query["pipeline"]
-    assert isinstance(pipeline, dict)
-    assert pipeline["activationMultiplier"] == [1.0, 1.25]
+    pipeline = configuration.snapshot.values.wave.native.query["pipeline"]
+    assert isinstance(pipeline, Mapping)
+    assert pipeline["activationMultiplier"] == (1.0, 1.25)
     assert "activationmultiplier" not in pipeline
     assert configuration.explain("wave.native.query.pipeline.activationMultiplier")["source"] == {
         "layer": "environment",
         "location": variable,
     }
+
+
+def test_configuration_update_obeys_runtime_admission(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        instance = tmp_path / "configuration-admission"
+        await initialize_instance(instance, environment={})
+        async with open_instance(instance, environment={}) as runtime:
+            await runtime.configuration.update(
+                {
+                    "execution.max_in_flight": 1,
+                    "execution.default_timeout_seconds": 0.05,
+                }
+            )
+        async with open_instance(instance, environment={}) as runtime:
+            before = (instance / "nous.toml").read_bytes()
+            snapshot = runtime.configuration.snapshot
+            async with runtime.execution.operation(
+                "hold.admission", deadline=asyncio.get_running_loop().time() + 2
+            ):
+                task = asyncio.create_task(
+                    runtime.configuration.update({"logging.level": "DEBUG"}),
+                    context=contextvars.Context(),
+                )
+                # The independent request must time out while waiting for the
+                # only root slot, before it can change the file or live logger.
+                with pytest.raises(TimeoutError):
+                    await task
+            assert runtime.configuration.snapshot is snapshot
+            assert (instance / "nous.toml").read_bytes() == before
+
+    asyncio.run(scenario())
 
 
 def test_configuration_failure_recovery(tmp_path: Path) -> None:
@@ -62,7 +95,9 @@ def test_configuration_failure_recovery(tmp_path: Path) -> None:
 
             register = time_domains.register_domain
 
-            async def fail_registration(definition: TimeDomainDefinition, tx: WriteTx) -> TimeDomainDefinition:
+            async def fail_registration(
+                definition: TimeDomainDefinition, tx: WriteTx
+            ) -> TimeDomainDefinition:
                 await register(definition, tx)
                 if definition.domain_id == "colony":
                     raise RuntimeError("failure after insertion, before commit")
@@ -102,7 +137,7 @@ def test_configuration_failure_recovery(tmp_path: Path) -> None:
             assert service.snapshot is active
         async with open_instance(instance, environment={}) as recovered:
             assert "colony" in await recovered.time.domains()
-            assert recovered.configuration.snapshot.typed_values().execution.default_timeout_seconds == 7
+            assert recovered.configuration.snapshot.values.execution.default_timeout_seconds == 7
             assert not recovered.configuration.pending_restart
 
         async with open_instance(instance, environment={}) as runtime:
@@ -137,7 +172,7 @@ def test_configuration_failure_recovery(tmp_path: Path) -> None:
             assert service.snapshot is active and service.pending_restart
             # Registration is committed, while operations still retain their old configuration.
             assert "orbit" in await runtime.time.domains()
-            assert "orbit" not in service.resolve().typed_values().time.domains
+            assert "orbit" not in service.resolve().values.time.domains
             with pytest.raises(NousError) as conflict:
                 await service.update(
                     {"execution.default_timeout_seconds": 9}, expected_version=active.version
@@ -148,8 +183,8 @@ def test_configuration_failure_recovery(tmp_path: Path) -> None:
             assert pending["state"] == "saved_pending_restart"
             assert service.snapshot is active
         async with open_instance(instance, environment={}) as recovered:
-            assert recovered.configuration.snapshot.typed_values().logging.level == "DEBUG"
-            assert recovered.configuration.snapshot.typed_values().execution.default_timeout_seconds == 9
+            assert recovered.configuration.snapshot.values.logging.level == "DEBUG"
+            assert recovered.configuration.snapshot.values.execution.default_timeout_seconds == 9
             assert "orbit" in await recovered.time.domains()
 
         async with open_instance(instance, environment={}) as runtime:
@@ -157,7 +192,9 @@ def test_configuration_failure_recovery(tmp_path: Path) -> None:
             active = service.snapshot
             reached = asyncio.Event()
 
-            async def cancel_during_registration(definition: TimeDomainDefinition, tx: WriteTx) -> TimeDomainDefinition:
+            async def cancel_during_registration(
+                definition: TimeDomainDefinition, tx: WriteTx
+            ) -> TimeDomainDefinition:
                 await register(definition, tx)
                 if definition.domain_id == "cancelled-domain":
                     reached.set()
@@ -175,7 +212,12 @@ def test_configuration_failure_recovery(tmp_path: Path) -> None:
                 with pytest.raises(asyncio.CancelledError):
                     await updating
             assert service.snapshot is active and service.pending_restart
-            assert TypeAdapter(dict[str, JsonValue]).validate_python(service.status()["activation_failure"])["file_saved"] is True
+            assert (
+                TypeAdapter(dict[str, JsonValue]).validate_python(
+                    service.status()["activation_failure"]
+                )["file_saved"]
+                is True
+            )
             assert "cancelled-domain" not in await runtime.time.domains()
         async with open_instance(instance, environment={}) as recovered:
             assert "cancelled-domain" in await recovered.time.domains()

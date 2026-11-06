@@ -42,7 +42,7 @@ Markdown/XML 结构与消息角色共同说明指令、例子和资料的边界�
 
 根操作开始时捕获其所有计划内任务资源，内容、manifest、literal include/extends 和输入输出合同共同确定版本。Jinja 使用 DictLoader 冻结本次实际内容、StrictUndefined、已配置编译缓存和 bytecode cache。后续阶段与 fallback 使用同一份已捕获资源。
 
-输入正文只作为值插入一次，原文中的模板符号原样保留。动态文件名 include 本轮不支持。模板修改影响下一根操作；不建立每次编辑的永久版本数据库。
+输入正文只作为值插入一次，原文中的模板符号原样保留。动态文件名 include 本轮不支持。模板修改影响下一次普通根操作。已排队任务使用 GenerationOperations.freeze_language_task 发布的正式 FrozenLanguageTask；其中保留 manifest、实际模板及 include/import 内容，load_language_task 在当前 Runtime 核验资源绑定后恢复，既有任务继续使用接受时的模板。冻结保存与资源绑定详见[成功计算恢复](durable-computation.md)。
 
 ## 共同编译
 

@@ -65,6 +65,22 @@ class DraftStore:
         async with self.execution.operation("writing.save_draft"):
             published = None
             try:
+                selected = await self.core.sources.prepare(
+                    context.namespace.ref, context.selected_sources, preserve_keys=True
+                )
+                bindings = (
+                    selected
+                    if context.source_bindings == context.selected_sources
+                    else await self.core.sources.prepare(
+                        context.namespace.ref, context.source_bindings, preserve_keys=True
+                    )
+                )
+                context = context.model_copy(
+                    update={
+                        "selected_sources": selected.bindings,
+                        "source_bindings": bindings.bindings,
+                    }
+                )
                 text = writing_body(context.intent, produced.outputs.get("output"))
                 if text is None:
                     result = await self.generation.adopt_produced(produced)
@@ -181,13 +197,13 @@ class DraftStore:
         if isinstance(target, DraftRef):
             if target.instance_id != self.results.artifacts.instance_id:
                 raise NousError("cognition.instance_mismatch", "Draft belongs to another instance")
-            selected, target_id = self.reader.namespace(namespace or target.namespace_id), target.id
+            selected, target_id = namespace or target.namespace_id, target.id
         else:
             selected, target_id = (
-                self.reader.namespace(namespace),
+                namespace,
                 target,
             )
-        ns = await self.reader.scope.get_in(tx, selected)
+        ns = await self.reader.namespace_in(tx, selected)
         row = (
             (
                 await tx.connection.execute(
@@ -244,7 +260,9 @@ class DraftStore:
             .one()
         )
         record, revision, _ = await self.reader.resolve_in(
-            tx, str(row["identifier"]) + "@" + str(row["ordinal"]), namespace=str(row["namespace_id"])
+            tx,
+            str(row["identifier"]) + "@" + str(row["ordinal"]),
+            namespace=str(row["namespace_id"]),
         )
         return self.reader.revision_ref(record, revision)
 

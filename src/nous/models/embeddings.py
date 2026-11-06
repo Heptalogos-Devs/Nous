@@ -49,7 +49,7 @@ class SpaceDefinition(ConfigModel):
 
 def resolved_space(snapshot: ConfigSnapshot, space_id: str) -> SpaceDefinition:
     """Resolve declared model identity and encoding rules from the same configuration snapshot."""
-    settings = snapshot.typed_values()
+    settings = snapshot.values
     space = settings.embedding.spaces.get(space_id)
     if space is None:
         raise NousError("embedding.space_unknown", f"Embedding space is not configured: {space_id}")
@@ -63,7 +63,7 @@ def resolved_space(snapshot: ConfigSnapshot, space_id: str) -> SpaceDefinition:
         model_name=model.model_name,
         deployment_revision=space.deployment_revision,
         dimensions=space.dimensions,
-        modalities=space.modalities,
+        modalities=list(space.modalities),
         normalization=space.normalization,
         encoding=space.encoding,
     )
@@ -93,7 +93,7 @@ class EmbeddingExecutor:
         original_indices: Sequence[int] | None = None,
     ) -> AsyncGenerator[EncodedBatch]:
         """One ordered request planner for probe, adopted vectors and temporary queries."""
-        settings = snapshot.typed_values()
+        settings = snapshot.values
         definition = resolved_space(snapshot, space_id) if space_id is not None else None
         prefix = ""
         if definition is not None:
@@ -264,7 +264,7 @@ class EmbeddingExecutor:
     ) -> EmbeddingResult:
         if not texts or any(not text.strip() for text in texts):
             raise NousError("embedding.empty_input", "Embedding requires nonempty text items")
-        settings = snapshot.typed_values()
+        settings = snapshot.values
         model = settings.models.get(model_id)
         if model is None or "embedding" not in model.capabilities:
             raise NousError(

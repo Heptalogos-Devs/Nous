@@ -406,6 +406,12 @@ def test_media_stages_share_routes_and_reuse_completed_description(tmp_path: Pat
         completed = [
             ref for ref in error["details"]["completed_result_refs"] if ref.startswith("res(")
         ]
+        completed = [
+            ref
+            for ref in completed
+            if json.loads(model_cli(instance, "tools", "result", "read", ref).stdout)["operation"]
+            == "describe"
+        ]
         assert len(completed) == 1
         structure_ok = True
         recovered = model_cli(instance, *command, "--description-result", completed[0])
@@ -487,11 +493,13 @@ def configure_models(
     asyncio.run(configure())
 
 
-def persisted_results(instance: Path) -> int:
+def persisted_task_results(instance: Path) -> int:
     with closing(
         sqlite3.connect((instance / "data" / "nous.sqlite3").as_uri() + "?mode=ro", uri=True)
     ) as database:
-        return database.execute("select count(*) from processing_results").fetchone()[0]
+        return database.execute(
+            "select count(*) from processing_results where operation != 'model.language_response'"
+        ).fetchone()[0]
 
 
 @pytest.mark.parametrize("streaming", [False, True], ids=["response", "stream"])
@@ -502,7 +510,9 @@ def test_same_model_preset_fallback_is_prepared_and_persisted(
 
     class Handler(BaseHTTPRequestHandler):
         def do_POST(self) -> None:
-            request = TypeAdapter(dict[str, JsonValue]).validate_json(self.rfile.read(int(self.headers["Content-Length"])))
+            request = TypeAdapter(dict[str, JsonValue]).validate_json(
+                self.rfile.read(int(self.headers["Content-Length"]))
+            )
             submissions.append(request)
             status = 503 if len(submissions) == 1 else 200
             content_type = "application/json"
@@ -611,7 +621,7 @@ def test_same_model_preset_fallback_is_prepared_and_persisted(
         "retry",
         "success",
     ]
-    assert persisted_results(instance) == 1
+    assert persisted_task_results(instance) == 1
 
 
 @pytest.mark.parametrize("complete", [False, True], ids=["early-eof", "finished"])
@@ -688,7 +698,7 @@ def test_model_stream_requires_provider_completion_before_adoption(
         restored = model_cli(instance, "tools", "result", "read", events[-1]["result"])
         assert restored.returncode == 0, restored.stderr
         assert json.loads(restored.stdout)["outputs"][0]["view"]["body_text"] == "Visible response."
-        assert persisted_results(instance) == 1
+        assert persisted_task_results(instance) == 1
     else:
         assert response.returncode != 0
         assert not any(event["event"] == "completed" for event in events)
@@ -698,7 +708,7 @@ def test_model_stream_requires_provider_completion_before_adoption(
         original = model_cli(instance, "tools", "content", "read", error["details"]["artifacts"][0])
         assert original.returncode == 0, original.stderr
         assert json.loads(original.stdout)["text"] == "Streaming source."
-        assert persisted_results(instance) == 0
+        assert persisted_task_results(instance) == 0
 
 
 @pytest.mark.parametrize("fallback", [False, True], ids=["repair", "repair-then-fallback"])
@@ -808,12 +818,14 @@ def test_model_structured_repair_and_fallback_survive_restart(
     result = json.loads(response.stdout)["results"][0]
     assert result["parameters"]["attempts"] == len(submissions)
     assert result["parameters"]["usage"]["input_tokens"] == 20
-    restored = model_cli(instance, "tools", "result", "read", result["ref"]["identifier"], "--details")
+    restored = model_cli(
+        instance, "tools", "result", "read", result["ref"]["identifier"], "--details"
+    )
     assert restored.returncode == 0, restored.stderr
     assert json.loads(json.loads(restored.stdout)["outputs"][0]["view"]["body_text"]) == {
         "answer": 42
     }
-    assert persisted_results(instance) == 1
+    assert persisted_task_results(instance) == 1
 
 
 @pytest.mark.parametrize(
@@ -886,14 +898,14 @@ def test_embedding_response_validation_and_adoption_survive_restart(
         assert np.array_equal(
             np.load(export, allow_pickle=False), np.array([[0.5, 0.25]], dtype=np.float32)
         )
-        assert persisted_results(instance) == 1
+        assert persisted_task_results(instance) == 1
         return
     assert response.returncode != 0
     error = json.loads(response.stdout)["error"]
     assert error["code"] == "embedding.invalid_response", (response.stdout, response.stderr)
     reopened = model_cli(instance, "runtime", "check")
     assert reopened.returncode == 0, reopened.stderr
-    assert persisted_results(instance) == 0
+    assert persisted_task_results(instance) == 0
 
 
 @pytest.mark.parametrize("without_audio", [False, True])
@@ -930,7 +942,9 @@ def test_native_video_interval_uses_video_content_and_preserves_audio_policy(
 
     class Handler(BaseHTTPRequestHandler):
         def do_POST(self) -> None:
-            request = TypeAdapter(dict[str, JsonValue]).validate_json(self.rfile.read(int(self.headers["Content-Length"])))
+            request = TypeAdapter(dict[str, JsonValue]).validate_json(
+                self.rfile.read(int(self.headers["Content-Length"]))
+            )
             submissions.append(request)
             payload = json.dumps(
                 {
@@ -1014,3 +1028,285 @@ def test_native_video_interval_uses_video_content_and_preserves_audio_policy(
     assert origin["selection"]["start_ms"] == 250 and origin["selection"]["end_ms"] == 750
     assert result["coverage"]["audio"] == ("excluded" if without_audio else "included")
     assert "data:video" not in response.stdout
+
+
+def test_language_response_survives_interpretation_failure_and_reopen(tmp_path: Path) -> None:
+    """A saved protocol response outlives prompt changes and is adopted without another request."""
+    from unittest.mock import patch
+
+    from nous.common.errors import NousError
+    from nous.models.tasks import TaskDefinition
+    from nous.runtime.bootstrap import open_instance
+
+    requests: list[dict[str, JsonValue]] = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self) -> None:
+            request = TypeAdapter(dict[str, JsonValue]).validate_json(
+                self.rfile.read(int(self.headers["Content-Length"]))
+            )
+            requests.append(request)
+            payload = json.dumps(
+                {
+                    "id": "durable-response",
+                    "object": "chat.completion",
+                    "created": 1700000000,
+                    "model": "local-model",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "message": {
+                                "role": "assistant",
+                                "content": "Persisted language output.",
+                            },
+                            "finish_reason": "stop",
+                        }
+                    ],
+                }
+            ).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, format: str, *args: object) -> None:
+            pass
+
+    async def fail_interpretation(*args: object, **kwargs: object) -> dict[str, object]:
+        raise NousError("test.interpretation_failed", "Downstream interpretation failed")
+
+    instance = tmp_path / "durable-language"
+    with model_server(Handler) as server:
+        configure_models(instance, server)
+
+        async def scenario() -> None:
+            async with open_instance(instance, environment={}) as runtime:
+                snapshot = runtime.configuration.snapshot
+                source = await runtime.artifacts.ingest(
+                    "[label]: source:S1\r\n\r\nBody [label].\r\n\r\n"
+                )
+                frozen_ref = await runtime.generation.freeze_language_task("read", snapshot)
+                frozen = await runtime.generation.load_language_task(frozen_ref, snapshot)
+                prepared = await runtime.generation.prepare_input(frozen, source, snapshot)
+                with patch.object(TaskDefinition, "outputs", new=fail_interpretation):
+                    with pytest.raises(
+                        NousError, match="Downstream interpretation failed"
+                    ) as failed:
+                        await runtime.generation.produce(
+                            frozen,
+                            prepared.batches[0],
+                            snapshot,
+                            producer_key="workflow:stable:compute",
+                            frozen_task_ref=frozen_ref.descriptor,
+                        )
+                assert failed.value.details["response_result_ref"]
+                response = await runtime.results.find_producer("workflow:stable:compute:response")
+                assert response is not None
+                output = next(
+                    value.artifact for value in response.outputs if value.name == "response"
+                )
+                assert "durable-response" in await runtime.artifacts.read_text(output)
+                resource = runtime.prompts.get("summarize")
+                directory = runtime.paths.config / "prompts" / "summarize"
+                directory.mkdir(parents=True)
+                (directory / "prompt.toml").write_text(resource.manifest_text, encoding="utf-8")
+                for name, template in resource.templates.items():
+                    target = directory / name
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_text(template + "\nCHANGED TEMPLATE", encoding="utf-8")
+            async with open_instance(instance, environment={}) as runtime:
+                snapshot = runtime.configuration.snapshot
+                frozen = await runtime.generation.load_language_task(frozen_ref, snapshot)
+                assert frozen.resource is not None
+                assert all(
+                    "CHANGED TEMPLATE" not in template
+                    for template in frozen.resource.templates.values()
+                )
+                prepared = await runtime.generation.prepare_input(frozen, source, snapshot)
+                produced = await runtime.generation.produce(
+                    frozen,
+                    prepared.batches[0],
+                    snapshot,
+                    producer_key="workflow:stable:compute",
+                    frozen_task_ref=frozen_ref.descriptor,
+                )
+                published = await runtime.generation.publish_computation(
+                    produced, "workflow:stable:published", frozen_task_ref=frozen_ref.descriptor
+                )
+                repeated = await runtime.generation.publish_computation(
+                    produced, "workflow:stable:published", frozen_task_ref=frozen_ref.descriptor
+                )
+                assert repeated == published
+                restored = await runtime.generation.load_computation(published)
+                assert restored == produced
+                recovered = await runtime.generation.recover_response(response.ref, snapshot)
+                assert recovered == produced
+                assert restored.outputs["output"].data == b"Persisted language output."
+                assert len(requests) == 1
+                assert "[label]: source:S1\\r\\n" in json.dumps(requests[0])
+
+        asyncio.run(scenario())
+
+
+def test_hybrid_query_preserves_context_selection_and_feedback(tmp_path: Path) -> None:
+    """A real Wave query consumes immutable context settings and retains its exact source."""
+    from nous.cognition import CognitiveQuery
+    from nous.content.contracts import ContentSelection, SourceSelection
+    from nous.runtime.bootstrap import open_instance
+    from nous.temporal.values import Instant, Interval, Known, TimePoint, parse_explicit_time
+    from nous.wave.contracts import (
+        CandidateFilter,
+        ContextContent,
+        ContextFragment,
+        TimeCondition,
+        WaveQuery,
+    )
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self) -> None:
+            request = TypeAdapter(dict[str, JsonValue]).validate_json(
+                self.rfile.read(int(self.headers["Content-Length"]))
+            )
+            inputs = request["input"]
+            count = len(inputs) if isinstance(inputs, list) else 1
+            body = json.dumps(
+                {
+                    "object": "list",
+                    "model": "local-embedding",
+                    "data": [
+                        {"object": "embedding", "index": index, "embedding": [0.5, 0.25]}
+                        for index in range(count)
+                    ],
+                    "usage": {"prompt_tokens": count, "total_tokens": count},
+                }
+            ).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, format: str, *args: object) -> None:
+            pass
+
+    instance = tmp_path / "context-feedback"
+    with model_server(Handler) as server:
+        configure_models(instance, server)
+
+        async def scenario() -> None:
+            async with open_configuration_operations(instance, environment={}) as configuration:
+                await configuration.update({"cognition.search.space": "test-space"})
+            async with open_instance(instance, environment={}) as runtime:
+                cognition = await runtime.cognition()
+                note = await cognition.records.add_note(
+                    "Moonlight reflects borrowed light.", remember=True
+                )
+                view = await cognition.records.read(note.record.revision_ref)
+                selector = SourceSelection(start_byte=0, end_byte=9)
+                selected = ContentSelection(artifact=view.body_artifact, selection=selector)
+                request = CognitiveQuery(
+                    text="How can help become a source of light?",
+                    mode="hybrid",
+                    context=(
+                        ContextFragment(
+                            key="source-excerpt",
+                            role="user",
+                            sequence=1,
+                            content=ContextContent(
+                                artifact=view.body_artifact.identifier, selector=selector
+                            ),
+                        ),
+                    ),
+                )
+                answer = await cognition.retrieval.query(request)
+                assert answer.groups and answer.context.selected_context[0].content == selected
+                recorded = view.times.recorded
+                assert recorded is not None
+                window = Interval(
+                    start=Known(at=recorded),
+                    end=Known(at=recorded.model_copy(update={"ticks": recorded.ticks + 1})),
+                    meaning="duration",
+                )
+                filtered = await cognition.retrieval.query(
+                    CognitiveQuery(
+                        text="Moonlight",
+                        mode="hybrid",
+                        filters=CandidateFilter(
+                            times=(TimeCondition(axis="recorded", range=window),)
+                        ),
+                    )
+                )
+                assert [group.revision_ref for group in filtered.groups] == [
+                    note.record.revision_ref
+                ]
+                # Manual collections cannot replace the artifact's actual recorded time.
+                manifest = tmp_path / "manual-time.json"
+                manifest.write_text(
+                    json.dumps(
+                        {
+                            "name": "manual-recorded-time",
+                            "documents": [
+                                {
+                                    "key": "body",
+                                    "input": {"artifact": view.body_artifact.identifier},
+                                    "times": {"recorded": {"domain_id": "utc", "ticks": 0}},
+                                }
+                            ],
+                            "candidates": [
+                                {"key": "body", "document": "body", "content": {"document": "body"}}
+                            ],
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                snapshot = cast(dict[str, str], (await runtime.wave.build(manifest))["snapshot"])[
+                    "identifier"
+                ]
+                epoch = TimePoint(domain_id="utc", ticks=0)
+                spoofed = Interval(
+                    start=Known(at=epoch),
+                    end=Known(at=epoch.model_copy(update={"ticks": 1})),
+                    meaning="duration",
+                )
+
+                def temporal_filter(value: Interval) -> CandidateFilter:
+                    return CandidateFilter(times=(TimeCondition(axis="recorded", range=value),))
+
+                old = await runtime.wave.query(
+                    WaveQuery(
+                        snapshot=snapshot,
+                        text="Moonlight",
+                        mode="lexical",
+                        candidate_filter=temporal_filter(spoofed),
+                    )
+                )
+                assert not old["hits"]
+                artifact = await runtime.artifacts.get(view.body_artifact)
+                actual = parse_explicit_time(artifact.recorded_at.isoformat())
+                assert isinstance(actual, Instant)
+                actual_window = Interval(
+                    start=Known(at=actual.at),
+                    end=Known(at=actual.at.model_copy(update={"ticks": actual.at.ticks + 1})),
+                    meaning="duration",
+                )
+                current = await runtime.wave.query(
+                    WaveQuery(
+                        snapshot=snapshot,
+                        text="Moonlight",
+                        mode="lexical",
+                        candidate_filter=temporal_filter(actual_window),
+                    )
+                )
+                assert len(cast(list[object], current["hits"])) == 1
+                feedback = await cognition.feedback.record_query(
+                    answer, "retrieval", target=answer.delivery[0]
+                )
+            async with open_instance(instance, environment={}) as reopened:
+                stored = await (await reopened.cognition()).feedback.read(feedback.identifier)
+                assert stored.target.query is not None
+                assert (
+                    stored.target.query.context.selected_context == answer.context.selected_context
+                )
+
+        asyncio.run(scenario())

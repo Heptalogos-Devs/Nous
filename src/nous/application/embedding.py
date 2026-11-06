@@ -87,7 +87,7 @@ class EmbeddingOperations:
     ) -> tuple[tuple[str, ...], tuple[ContentSelection, ...]]:
         values: list[str] = []
         selections: list[ContentSelection] = []
-        limit = snapshot.typed_values().content.text_read_max_bytes
+        limit = snapshot.values.content.text_read_max_bytes
         for item in inputs:
             if adopt:
                 artifact = await self.artifacts.accept(

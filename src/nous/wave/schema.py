@@ -29,6 +29,11 @@ snapshots = sa.Table(
     sa.Column("identity", sa.JSON, nullable=False),
     sa.Column("index_location", sa.String, nullable=False),
     sa.Column("mapping", sa.JSON, nullable=False),
+    sa.Column("owner", sa.JSON, nullable=False),
+    sa.Column("metadata", sa.JSON, nullable=False),
+    sa.Column("build_key", sa.String, nullable=True, unique=True),
+    sa.Column("build_signature", sa.String, nullable=True),
+    sa.Column("build_summary", sa.JSON, nullable=False),
     sa.Column("created_at", sa.String, nullable=False),
 )
 

@@ -1,6 +1,8 @@
-# NousQL 查询手册
+# NousQL 语言设计
 
-直接提出自然语言问题即可查询，自然语言属于合法 NousQL。已知人物、事项、对象或时间时，强烈建议把确定的信息写入问题（指代消解）；未知指代保留原意。
+当前通过 `nous query` 或绑定 Namespace 的 `CognitiveRetrieval.query(CognitiveQuery(...))` 提出自然语言问题，结果包含正式文稿修订、选区、来源及查询情境。使用方法见[认知命令](../interfaces/cognition-cli.md)和[当前检索](../cognition/current-retrieval.md)。
+
+以下定义后续 NousQL 的语言目标：自然语言作为基础查询，选择器、时间、组合与历史表达式提供结构化控制。完整语言解析、HTTP/MCP、任意历史截面与模型重排按后续路线接入。已知人物、事项、对象或时间可以直接写入问题；未知指代保留原意。
 
 ```nousql
 最近讨论过哪些发布风险？
@@ -8,11 +10,11 @@
 How does reader reclamation work?
 ```
 
-CLI、HTTP 和 MCP 使用同一 `QueryRequest`。语言放在 `text`，调用者同时提供真实 `subject_id`。`source_read` 继续限定可读来源；语言条件在该范围内选择结果。
+语言入口将与程序内查询共用业务能力。当前 `CognitiveQuery.text` 提供问题，Namespace 句柄固定域身份，精确修订和来源由各 owner 核验；未来协议的身份及来源读取范围由各自正式合同确定。
 
 ## 选择对象
 
-普通文字旁可以加入选择器。名称来自主体已有目录；歧义错误的 `candidates` 给出可选择的正式引用。
+规划中的选择器可与普通文字组合。名称绑定到相应领域的正式目录，歧义应返回可选择的正式引用；Entity、Schema 与 Observation 目录待各域实现。
 
 | 语法                                 | 含义                                         |
 | ------------------------------------ | -------------------------------------------- |
@@ -25,11 +27,11 @@ CLI、HTTP 和 MCP 使用同一 `QueryRequest`。语言放在 `text`，调用者
 | `@ref(正式引用)`                     | 精确读取该对象或修订                         |
 | `@r(正式媒体引用)`                   | 把已有媒体资源作为召回线索                   |
 
-`@ref` 和 `@r` 中的“正式引用”是语法占位记号：使用结果实际返回的词序引用，或机器结果中的完整 `reference`。`identifiers.exact` 固定到当前返回的修订；`identifiers.object` 表示稳定认知对象，按本次查询的知识截点绑定其 head。对象引用与 `$history` 同用时仍只绑定该截点的一项修订。
+`@ref` 和 `@r` 中的“正式引用”是语法占位记号。当前结果以 `RecordRevisionRef` 固定修订，`RecordRef` 表示稳定文稿；选段使用携带修订归属的 `RevisionSelection`。未来对象引用按本次查询的知识截点绑定 head；与 `$history` 同用时仍只绑定该截点的一项修订。
 
-词序引用使用类型前缀及[共同标识符格式](../foundation/application-boundaries.md)。Memory 对象使用 `mem(...)`，固定修订使用 `memrev(...)`；原件使用 `art(...)`。不要编造标识符。`@ref`、Entity/Tag/Schema 选择器、`source_read` 和 `references` 工具共用目录及来源范围。知识包中的原标识符按安装来源映射到接收主体；本机精确标识符保持原绑定。机器认知引用形如 `kind:UUID@revision`；媒体也接受 `material:`、`source-region:`、`representation:` 或 `derived-region:` 完整引用。带空格的引用使用双引号字符串传入。
+可读引用沿用[共同标识符格式](../foundation/application-boundaries.md)：Journal 使用 `jrn(...)`，Note 使用 `note(...)`，精确修订号置于括号外，如 `jrn(...)@3`；原件使用 `art(...)`。实际标识符从操作结果取得，带空格时整体引用。机器引用保留实例、域与稳定对象身份，内容范围使用 `ContentSelection`，不依显示字符串推断归属。
 
-待接续的领域能力包括正式 Resource 名称目录、Observation/evidence 顶层返回和外部权威资源。当前查询使用本手册列出的已有目标与条件。
+待接续的领域能力包括正式 Resource 名称目录、Observation/evidence 顶层返回和外部权威资源。当前可用参数由 `CognitiveQuery` 与 CLI 帮助定义。
 
 单独的选择器也可查询。精确读取保持所选修订，直接使用权威数据；实体、标签、图式等选择器用于召回。读取名称和标签不会创建认知对象。
 
@@ -41,9 +43,7 @@ CLI、HTTP 和 MCP 使用同一 `QueryRequest`。语言放在 `text`，调用者
 讨论涉及哪些人物？ $return(entity)
 ```
 
-返回范围包括 `cognition`、`media` 和具体认知种类：`memory`、`memory_semantics`、`concept`、`entity`、`episode`、`journal`、`schema`、`association`、`fact_claim` 等正式 CognitiveKind。`$return(fact_claim)` 读取正式事实主张。`cognition` 单独使用。`$limit` 设置结果数量，受实例检索额度限制。
-
-Fact 撤回后的默认查询可见性正在统一到认知修订状态；当前工作区的修复还需加载并验证。Fact 管理操作和实际运行范围见 [SDK](../../../legacy/sdk/python/README.md#事实主张)及[重构进展](../../../legacy/docs/python-native-plan/progress-report.md)。
+规划的返回范围包括 `cognition`、`media` 与领域种类，例如 `concept`、`entity`、`episode`、`journal`、`schema`、`association`。具体种类和状态由各域正式模型定义。当前查询按文稿分组交付 Note/Journal 及已采用的概念标注；`top_k` 控制返回文稿数，`passages_per_record` 控制每篇交付片段数。
 
 `$materialize` 展开所选对象的正式来源视图。展开仍检查来源读取范围，完整身份、实际来源事件和清除缺口保留在机器结果中。
 
@@ -76,19 +76,19 @@ Fact 撤回后的默认查询可见性正在统一到认知修订状态；当前
 $time(occurred,within=7d) $sort(occurred,desc) $mode(lexical)
 ```
 
-默认时间域是 `unix_ms`。ISO 时间须带时区。自定义域使用明确整数坐标，可写 `domain="域名"`。相对时长单位为 `ms`、`s`、`m`、`h`、`d`、`w`，从请求中的实际 `clock` 点计算。
+当前默认时间域为 `utc`，单位为 Unix epoch 起的微秒。ISO 时间须带时区，自定义域保留明确坐标和精度。语言规划中可写 `domain="域名"`；相对时长单位为 `ms`、`s`、`m`、`h`、`d`、`w`，从本次实际 clock 点计算。
 
 基础配置 `time.domains` 声明刻度比例：
 
 ```json
 {
-  "unix_ms": { "kind": "linear", "ticks": 1000, "seconds": 1 },
-  "simulation": { "kind": "linear", "ticks": 1, "seconds": 1 },
-  "frame": { "kind": "uncalibrated" }
+  "utc": { "kind": "utc", "tick_seconds": "1/1000000", "epoch": "Unix epoch" },
+  "simulation": { "kind": "linear", "tick_seconds": "1", "epoch": "simulation start" },
+  "frame": { "kind": "opaque" }
 }
 ```
 
-`unix_ms` 单位固定。未标定域可以比较绝对整数坐标；相对时长需要线性比例。世界日历到该域坐标的映射由世界的时间服务提供。
+`utc` 单位固定。opaque 域保留域内坐标；相对现实时间换算需要线性比例。五轴坐标经 TimeService 核验已登记的域，媒体帧号、页码和相对时段各守其内容范围语义。
 
 `$asof` 选择当时已经记录的权威视图，名称、成员关系和修订头都在该截面绑定：
 

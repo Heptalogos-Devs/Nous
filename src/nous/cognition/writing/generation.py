@@ -5,17 +5,16 @@ from __future__ import annotations
 import difflib
 import json
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from typing import Literal
+from uuid import uuid4
 
-import sqlalchemy as sa
 from pydantic import JsonValue, TypeAdapter
 
 from nous.common.errors import NousError
-from nous.common.identifier import identifier_type
+from nous.common.operations import add_error_context
 from nous.content.citations import normalize_source_links, parse_citations
 from nous.content.contracts import (
-    ArtifactRef,
     ContentSelection,
     InputGroup,
     InputPart,
@@ -28,8 +27,8 @@ from nous.content.text import BlockRef
 from nous.models.operations import GenerationOperations, ProducedTask
 from nous.temporal.values import CognitiveTimes
 
-from .. import schema
-from ..contracts import Namespace, RecordRevisionRef, RecordView, SourceBinding
+from ..contracts import NamespaceRef, RecordRevisionRef, RecordView, SourceBinding
+from ..sources import PreparedSources, SourceInput
 from .contracts import (
     DEFAULT_AFTER_WRITE,
     AfterWrite,
@@ -39,15 +38,22 @@ from .contracts import (
     DraftView,
     NormalizedEdit,
     SourceChanges,
-    SourceRequest,
     WritingOutcome,
 )
 from .drafts import DraftStore
 from .operations import RecordOperations
-from .reading import RecordReader, Target
+from .reading import RecordReader
 from .records import WrittenRecords
 
-SourceInput = Target | SourceBinding | ContentSelection | ArtifactRef | SourceRequest
+
+@dataclass(frozen=True)
+class PendingWriting:
+    produced: ProducedTask
+    context: DraftContext
+    adoption: Literal["draft", "save"]
+    after: AfterWrite
+    base: RecordView | None
+    sources: PreparedSources
 
 
 class WritingOperations:
@@ -58,9 +64,10 @@ class WritingOperations:
     then adopts it. The returned outcome identifies the draft and any committed
     record. A failed adoption leaves the saved draft available for a separate retry.
     """
+
     def __init__(
         self,
-        namespace: Namespace,
+        namespace: NamespaceRef,
         core: WrittenRecords,
         reader: RecordReader,
         generation: GenerationOperations,
@@ -82,69 +89,17 @@ class WritingOperations:
         prefix: str = "S",
         reserved: Sequence[str] = (),
         reject_journals: bool = False,
-    ) -> tuple[Namespace, tuple[SourceBinding, ...]]:
-        async with self.database.read() as tx:
-            ns = await self.reader.scope.get_in(tx, self.namespace.id)
-            bindings: list[SourceBinding] = []
-            index = 0
-            for source in sources:
-                while True:
-                    index += 1
-                    key = f"{prefix}{index}"
-                    if not any(old == key or old.startswith(key + ":") for old in reserved):
-                        break
-                usage = source.usage if isinstance(source, SourceRequest) else None
-                if isinstance(source, SourceRequest):
-                    source = source.target
-                if isinstance(source, SourceBinding):
-                    binding = source.model_copy(update={"key": key})
-                elif isinstance(source, ContentSelection):
-                    binding = SourceBinding(key=key, selections=(source,))
-                elif (
-                    isinstance(source, ArtifactRef)
-                    or isinstance(source, str)
-                    and identifier_type(source) == "art"
-                ):
-                    artifact = await self.results.artifacts.get_in(tx, source)
-                    binding = SourceBinding(
-                        key=key,
-                        selections=(ContentSelection(artifact=artifact.ref),),
-                        name=artifact.display_name,
-                    )
-                else:
-                    row, revision, _ = await self.reader.resolve_in(tx, source, ns.id)
-                    artifact = await self.results.artifacts.get_in(tx, revision["body_artifact_id"])
-                    binding = SourceBinding(
-                        key=key,
-                        selections=(ContentSelection(artifact=artifact.ref),),
-                        owner_revision=self.reader.revision_ref(row, revision),
-                        name=revision["title"],
-                    )
-                if usage is not None:
-                    binding = binding.model_copy(update={"usage": usage})
-                bindings.append(binding)
-            await self.core.validate_sources_in(tx, ns, bindings)
-            if reject_journals and bindings:
-                ids = {item.artifact.id for binding in bindings for item in binding.selections}
-                journal = await tx.connection.scalar(
-                    sa.select(schema.records.c.identifier)
-                    .join(schema.revisions, schema.revisions.c.record_id == schema.records.c.id)
-                    .where(
-                        schema.records.c.kind == "journal",
-                        schema.revisions.c.body_artifact_id.in_(ids),
-                    )
-                    .limit(1)
-                )
-                if journal is not None:
-                    raise NousError(
-                        "cognition.writing_intent_required",
-                        "Choose rewrite or reflection for an existing Journal",
-                        details={"journal": str(journal), "operations": ["rewrite", "reflect"]},
-                    )
-            return ns, tuple(bindings)
+    ) -> PreparedSources:
+        return await self.core.sources.prepare(
+            self.namespace,
+            sources,
+            prefix=prefix,
+            reserved_keys=reserved,
+            reject_journals=reject_journals,
+        )
 
     @staticmethod
-    def _inputs(sources: Sequence[SourceBinding]) -> list[InputSpec]:
+    def _inputs(sources: PreparedSources) -> list[InputSpec]:
         return [
             InputSpec(
                 kind="artifact",
@@ -153,9 +108,35 @@ class WritingOperations:
                 slot_key=source.key,
                 role=source.usage,
             )
-            for source in sources
-            for item in source.selections
+            for source in sources.bindings
+            for item in sources.actual[source.key]
         ]
+
+    async def _attach_origins(
+        self, produced: ProducedTask, prepared: PreparedSources
+    ) -> ProducedTask:
+        """Keep consumed representations while attaching their exact formal origins."""
+        bindings = {item.key: item for item in prepared.bindings}
+        groups: list[InputGroup] = []
+        for group in produced.actual_inputs:
+            source = bindings.get(group.slot_key)
+            if source is None or source.owner_revision is None:
+                groups.append(group)
+                continue
+            target = source.selections[0].artifact
+            representation_ids = {item.artifact.id for item in prepared.actual[source.key]}
+            parts: list[InputPart] = []
+            for part in group.parts:
+                origins = list(part.origins)
+                candidates = (part.content, *(item.origin for item in part.origins))
+                for item in candidates:
+                    if item.artifact.id in representation_ids and item.artifact.id != target.id:
+                        for origin in await self.results.artifacts.map_origins(item, target):
+                            if origin not in origins:
+                                origins.append(origin)
+                parts.append(part.model_copy(update={"origins": tuple(origins)}))
+            groups.append(group.model_copy(update={"parts": tuple(parts)}))
+        return replace(produced, actual_inputs=tuple(groups))
 
     @staticmethod
     def _actual_bindings(
@@ -178,9 +159,7 @@ class WritingOperations:
                 dict.fromkeys(
                     content
                     for part in group.parts
-                    for content in (
-                        tuple(origin.origin for origin in part.origins) or (part.content,)
-                    )
+                    for content in (part.content, *(origin.origin for origin in part.origins))
                     if content.artifact.id in ids
                 )
             )
@@ -249,6 +228,7 @@ class WritingOperations:
             instructions=instructions,
             completed=list(prepared.preparations),
             on_delta=on_delta,
+            producer_key=f"writing:{uuid4()}",
         )
 
     async def _complete(
@@ -258,7 +238,44 @@ class WritingOperations:
         adoption: Literal["draft", "save"],
         after: AfterWrite,
         base: RecordView | None = None,
+        *,
+        sources: PreparedSources,
     ) -> WritingOutcome:
+        try:
+            return await self._complete_inner(produced, context, adoption, after, base, sources)
+        except BaseException as error:
+            add_error_context(
+                error,
+                {
+                    "stage": "writing.complete",
+                    "model_succeeded": True,
+                    "completed_result_refs": list(produced.completed_stage_refs),
+                },
+                recovery=PendingWriting(produced, context, adoption, after, base, sources),
+            )
+            raise
+
+    async def complete_pending(self, pending: PendingWriting) -> WritingOutcome:
+        """Continue a successful generation from normalization without another request."""
+        return await self._complete(
+            pending.produced,
+            pending.context,
+            pending.adoption,
+            pending.after,
+            pending.base,
+            sources=pending.sources,
+        )
+
+    async def _complete_inner(
+        self,
+        produced: ProducedTask,
+        context: DraftContext,
+        adoption: Literal["draft", "save"],
+        after: AfterWrite,
+        base: RecordView | None,
+        sources: PreparedSources,
+    ) -> WritingOutcome:
+        produced = await self._attach_origins(produced, sources)
         actual = self._actual_bindings(produced, context.selected_sources)
         produced = await self._normalize_links(produced, context, actual, base)
         text = produced.outputs["output"].data.decode("utf-8")
@@ -298,7 +315,9 @@ class WritingOperations:
         base: RecordView | None,
     ) -> ProducedTask:
         """Interpret known source destinations while retaining the actual model response."""
-        keys = tuple(source.key for source in (*context.citation_context.inherited_sources, *actual))
+        keys = tuple(
+            source.key for source in (*context.citation_context.inherited_sources, *actual)
+        )
         outputs = dict(produced.outputs)
         repairs: list[JsonValue] = []
         program_outputs = TypeAdapter(list[str]).validate_python(
@@ -311,28 +330,37 @@ class WritingOperations:
             for edit in edits:
                 normalized = normalize_source_links(edit.after, keys, preserve=edit.before)
                 repairs.extend(normalized.keys)
-                changes.append(ReplaceSelection(
-                    selection=ContentSelection(
-                        artifact=base.body_artifact,
-                        selection=SourceSelection(start_byte=edit.start_byte, end_byte=edit.end_byte),
-                    ),
-                    expected_text=edit.before,
-                    replacement=normalized.text,
-                ))
+                changes.append(
+                    ReplaceSelection(
+                        selection=ContentSelection(
+                            artifact=base.body_artifact,
+                            selection=SourceSelection(
+                                start_byte=edit.start_byte, end_byte=edit.end_byte
+                            ),
+                        ),
+                        expected_text=edit.before,
+                        replacement=normalized.text,
+                    )
+                )
             if not repairs:
                 return produced
             view = await self.results.artifacts.text_view(base.body_artifact)
             edited = prepare_text_edit(view, changes)
             outputs["output"] = OutputContent(data=edited.utf8_bytes)
             outputs["edits"] = OutputContent(
-                data=TypeAdapter(tuple[NormalizedEdit, ...]).dump_json(tuple(
-                    NormalizedEdit(
-                        start_byte=change.start_byte, end_byte=change.end_byte,
-                        before=change.expected_bytes.decode("utf-8"),
-                        after=change.replacement_bytes.decode("utf-8"),
-                    ) for change in edited.changes
-                )),
-                media_type="application/json", display_name="edits.json",
+                data=TypeAdapter(tuple[NormalizedEdit, ...]).dump_json(
+                    tuple(
+                        NormalizedEdit(
+                            start_byte=change.start_byte,
+                            end_byte=change.end_byte,
+                            before=change.expected_bytes.decode("utf-8"),
+                            after=change.replacement_bytes.decode("utf-8"),
+                        )
+                        for change in edited.changes
+                    )
+                ),
+                media_type="application/json",
+                display_name="edits.json",
             )
             diff = edited.diff
         else:
@@ -344,17 +372,30 @@ class WritingOperations:
                 return produced
             repairs.extend(normalized.keys)
             outputs["model_output"] = original
-            outputs["output"] = original.model_copy(update={"data": normalized.text.encode("utf-8")})
+            outputs["output"] = original.model_copy(
+                update={"data": normalized.text.encode("utf-8")}
+            )
             program_outputs.append("output")
-            diff = "".join(difflib.unified_diff(
-                base.body.splitlines(keepends=True), normalized.text.splitlines(keepends=True),
-                fromfile="before", tofile="after",
-            )) if base else None
+            diff = (
+                "".join(
+                    difflib.unified_diff(
+                        base.body.splitlines(keepends=True),
+                        normalized.text.splitlines(keepends=True),
+                        fromfile="before",
+                        tofile="after",
+                    )
+                )
+                if base
+                else None
+            )
         if diff is not None:
-            outputs["diff"] = OutputContent(data=diff.encode("utf-8"), media_type="text/plain", display_name="changes.diff")
+            outputs["diff"] = OutputContent(
+                data=diff.encode("utf-8"), media_type="text/plain", display_name="changes.diff"
+            )
             program_outputs.append("diff")
         return replace(
-            produced, outputs=outputs,
+            produced,
+            outputs=outputs,
             parameters={
                 **produced.parameters,
                 "program_outputs": list(dict.fromkeys(program_outputs)),
@@ -401,17 +442,20 @@ class WritingOperations:
                 batches; or ``model.task_contract_mismatch`` for the wrong task contract.
         """
         async with self.execution.operation("journalize"):
-            config = self.execution.snapshot.typed_values()
+            config = self.execution.snapshot.values
             policy = adoption or config.cognition.journalize.adoption
             self._policy(policy, after)
-            ns, selected = await self._freeze(sources, reject_journals=True)
+            if times is not None:
+                await self.core.time.validate([times])
+            prepared = await self._freeze(sources, reject_journals=True)
+            ns, selected = prepared.namespace, prepared.bindings
             if not selected:
                 return WritingOutcome(status="no_material")
             task = config.cognition.journalize.task
             produced = await self._produce(
                 task,
                 "journal-draft",
-                self._inputs(selected),
+                self._inputs(prepared),
                 question=topic or "",
                 instructions=f"Purpose: {purpose}\nAuthor: {author or ''}\nViewpoint: {viewpoint or ''}",
                 on_delta=on_delta,
@@ -429,7 +473,7 @@ class WritingOperations:
                 config_version=self.execution.snapshot.version,
                 task=task,
             )
-            return await self._complete(produced, context, policy, after)
+            return await self._complete(produced, context, policy, after, sources=prepared)
 
     async def propose_edit(
         self,
@@ -454,7 +498,7 @@ class WritingOperations:
         Returns:
             A writing outcome containing the saved draft and, with save adoption, the
             committed record. ``unchanged`` identifies unchanged output;
-    ``no_material`` indicates no usable output.
+            ``no_material`` indicates no usable output.
 
         Raises:
             NousError: ``input.expected_required`` if a string base lacks ``@N``;
@@ -521,11 +565,12 @@ class WritingOperations:
                             role="context",
                         )
                     )
-            ns, selected = await self._freeze(
+            prepared = await self._freeze(
                 sources, prefix="N", reserved=[source.key for source in original.sources]
             )
-            inputs.extend(self._inputs(selected))
-            task = self.execution.snapshot.typed_values().cognition.edit.task
+            ns, selected = prepared.namespace, prepared.bindings
+            inputs.extend(self._inputs(prepared))
+            task = self.execution.snapshot.values.cognition.edit.task
             instructions = (
                 f"Editable target slots: {', '.join(targets)}. CTX sources are read-only.\n"
                 f"Existing citation directory: {json_sources(original.sources)}\n"
@@ -574,7 +619,9 @@ class WritingOperations:
                 config_version=self.execution.snapshot.version,
                 task=task,
             )
-            return await self._complete(produced, context, adoption, after, original)
+            return await self._complete(
+                produced, context, adoption, after, original, sources=prepared
+            )
 
     async def rewrite(
         self,
@@ -594,7 +641,7 @@ class WritingOperations:
         Returns:
             A writing outcome containing the saved draft and, with save adoption, the
             committed record. ``unchanged`` identifies unchanged output;
-    ``no_material`` indicates no usable output.
+            ``no_material`` indicates no usable output.
 
         Raises:
             NousError: ``input.instruction_required`` for a blank instruction;
@@ -610,9 +657,10 @@ class WritingOperations:
                     "input.instruction_required", "Provide an explicit rewrite instruction"
                 )
             original = await self._base(base, journal_only=True)
-            ns, selected = await self._freeze(
+            prepared = await self._freeze(
                 sources, prefix="N", reserved=[source.key for source in original.sources]
             )
+            ns, selected = prepared.namespace, prepared.bindings
             inputs = [
                 InputSpec(
                     kind="artifact",
@@ -620,9 +668,9 @@ class WritingOperations:
                     slot_key="BASE",
                     role="revision_base",
                 ),
-                *self._inputs(selected),
+                *self._inputs(prepared),
             ]
-            task = self.execution.snapshot.typed_values().cognition.rewrite.task
+            task = self.execution.snapshot.values.cognition.rewrite.task
             produced = await self._produce(
                 task,
                 "journal-rewrite",
@@ -647,7 +695,9 @@ class WritingOperations:
                 config_version=self.execution.snapshot.version,
                 task=task,
             )
-            return await self._complete(produced, context, adoption, after, original)
+            return await self._complete(
+                produced, context, adoption, after, original, sources=prepared
+            )
 
     async def reflect(
         self,
@@ -668,7 +718,7 @@ class WritingOperations:
         Returns:
             A writing outcome containing the saved draft and, with save adoption, the
             committed record. ``no_material`` indicates a model result signaling no
-        material.
+            material.
 
         Raises:
             NousError: ``input.reflection_required`` without Journals or a nonblank
@@ -684,14 +734,18 @@ class WritingOperations:
                     "Reflection requires exact Journals and a new topic",
                 )
             originals = [await self._base(target, journal_only=True) for target in journals]
-            ns, selected = await self._freeze([view.revision_ref for view in originals], prefix="J")
-            _, additional = await self._freeze(sources, prefix="N")
-            selected = (*selected, *additional)
-            task = self.execution.snapshot.typed_values().cognition.reflection.task
+            first = await self._freeze([view.revision_ref for view in originals], prefix="J")
+            additional = await self._freeze(sources, prefix="N")
+            ns = first.namespace
+            prepared = PreparedSources(
+                ns, (*first.bindings, *additional.bindings), {**first.actual, **additional.actual}
+            )
+            selected = prepared.bindings
+            task = self.execution.snapshot.values.cognition.reflection.task
             produced = await self._produce(
                 task,
                 "journal-reflect",
-                self._inputs(selected),
+                self._inputs(prepared),
                 question=topic,
                 instructions=f"Author: {author or ''}\nViewpoint: {viewpoint or ''}\n"
                 "Write a new Journal. Source documents and their internal source: directories remain in their own namespaces; cite only actual J/N groups provided here.",
@@ -709,7 +763,7 @@ class WritingOperations:
                 config_version=self.execution.snapshot.version,
                 task=task,
             )
-            return await self._complete(produced, context, adoption, after)
+            return await self._complete(produced, context, adoption, after, sources=prepared)
 
     async def read_draft(self, target: str | DraftRef, *, sources: bool = False) -> DraftView:
         """Read a saved draft in the bound namespace.

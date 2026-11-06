@@ -2,18 +2,16 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 from collections.abc import Sequence
 from dataclasses import MISSING, dataclass, fields
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, JsonValue
 
 from nous.common.errors import NousError
-from nous.content.annotations import AnnotationProposal, AnnotationSet
-from nous.content.contracts import Artifact, InputGroup, InputPart, OutputContent, SourceSelection
-from nous.media.contracts import MediaPlan, PreparedBatch, PreparedSource
+from nous.content.contracts import Artifact, InputGroup, OutputContent, SourceSelection
+from nous.media.contracts import MediaPlan, PreparedSource
 
 from .contracts import ReadingInput
 
@@ -62,6 +60,7 @@ class TaskDefinition:
     source_representation: str | None = None
     program_outputs: tuple[str, ...] = ()
     required_roles: tuple[str, ...] = ()
+    text_input_mode: Literal["lossless", "structured"] = "lossless"
 
     def describe_contract(self) -> dict[str, JsonValue]:
         """Describe the same input, output and source semantics used by execution."""
@@ -110,6 +109,7 @@ class TaskDefinition:
             "source_field": self.source_field,
             "selected_passages": self.selected_passages,
             "input_mode": self.input_mode,
+            "text_input_mode": self.text_input_mode,
             "preserve_source_keys": self.preserve_source_keys,
             "required_capabilities": capabilities,
             "named_outputs": cast(dict[str, JsonValue], outputs),
@@ -247,101 +247,6 @@ class TaskDefinition:
         return outputs
 
 
-class ConceptAnnotationTask(TaskDefinition):
-    """Prepare and interpret an annotation against one complete immutable Markdown body."""
-
-    def __init__(self) -> None:
-        super().__init__("concept-annotation", AnnotationProposal, preserve_source_keys=True)
-
-    async def prepare_sources(
-        self, originals: Sequence[tuple[Artifact, SourceSelection]], artifacts: ArtifactStore
-    ) -> tuple[MediaPlan, ...]:
-        if len(originals) != 1 or originals[0][1] != SourceSelection():
-            raise NousError(
-                "model.annotation_body", "Concept annotation requires one complete immutable body"
-            )
-        artifact, chosen = originals[0]
-        view = await artifacts.text_view(artifact.ref)
-        sources = tuple(
-            PreparedSource(
-                block.key,
-                artifact.display_name,
-                text=block.text,
-                group=InputGroup(
-                    key=block.key,
-                    slot_key="S1",
-                    name=artifact.display_name,
-                    parts=(
-                        InputPart(
-                            content=block.selection,
-                            representation="text",
-                            media_type=artifact.media_type,
-                            source_media_type=artifact.media_type,
-                        ),
-                    ),
-                ),
-            )
-            for block in view.blocks
-            if block.parent_key is None
-        )
-        batch = PreparedBatch(
-            sources,
-            tuple(source.group for source in sources if source.group),
-            chosen,
-            {
-                "body_ref": artifact.ref.model_dump(mode="json"),
-                "parser_profile": view.parser_profile,
-            },
-        )
-        return (MediaPlan(artifact, chosen, (batch,), batch.coverage),)
-
-    def validate(self, value: JsonValue, reading: ReadingInput) -> JsonValue:
-        proposal = AnnotationProposal.model_validate(value)
-        proposal.validate_references({source.key for source in reading.sources})
-        return proposal.model_dump(mode="json")
-
-    async def outputs(
-        self,
-        value: JsonValue,
-        reading: ReadingInput,
-        artifacts: ArtifactStore,
-        *,
-        structured: bool,
-        producer: dict[str, JsonValue] | None = None,
-    ) -> dict[str, OutputContent]:
-        outputs = await super().outputs(
-            value, reading, artifacts, structured=structured, producer=producer
-        )
-        bodies = {
-            part.content.artifact.id: part.content.artifact
-            for source in reading.sources
-            if source.group
-            for part in source.group.parts
-        }
-        if len(bodies) != 1:
-            raise NousError("model.annotation_body", "Concept annotation requires one exact body")
-        body = next(iter(bodies.values()))
-        view = await artifacts.text_view(body)
-        proposal = AnnotationProposal.model_validate(value)
-        proposal.validate_references(
-            {block.key for block in view.blocks if block.parent_key is None}
-        )
-        annotation = AnnotationSet(
-            **proposal.model_dump(),
-            body_ref=body,
-            parser_profile=view.parser_profile,
-            annotation_revision=hashlib.sha256(outputs["output"].data).hexdigest(),
-            producer=producer or {},
-        )
-        return {
-            "output": OutputContent(
-                data=annotation.model_dump_json(indent=2).encode(),
-                media_type="application/json",
-                display_name="annotation.json",
-            )
-        }
-
-
 class TaskCatalog:
     """Explicit static task contracts shared by prompt loading, preparation and interpretation."""
 
@@ -370,6 +275,5 @@ def builtin_tasks() -> TaskCatalog:
                 required_capabilities=("audio",),
                 source_representation="transcript",
             ),
-            ConceptAnnotationTask(),
         )
     )

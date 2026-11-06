@@ -14,6 +14,7 @@ from pydantic import JsonValue
 from typing_extensions import TypedDict
 
 from nous.application.embedding import EmbeddingOperations
+from nous.application.preparation import PreparedText, TextPreparation
 from nous.common.errors import NousError
 from nous.content.annotations import AnnotationSet, read_annotation
 from nous.content.artifacts import ArtifactStore
@@ -23,7 +24,6 @@ from nous.content.contracts import (
     ContentSelection,
     SourceSelection,
 )
-from nous.content.preparation import PreparedText, TextPreparation
 from nous.content.results import ResultStore
 from nous.content.text import TextView
 from nous.media.preparation import MediaPreparer
@@ -33,11 +33,13 @@ from .contracts import (
     Candidate,
     CandidateContent,
     CandidatePath,
+    CognitionOwner,
     CorpusView,
     Document,
     DocumentCandidates,
     EvidenceProjection,
     PathStep,
+    SnapshotOwner,
 )
 
 
@@ -111,6 +113,11 @@ class SnapshotRow(TypedDict):
     identity: dict[str, JsonValue]
     index_location: str
     mapping: SnapshotMapping
+    owner: dict[str, JsonValue]
+    metadata: dict[str, JsonValue]
+    build_key: str | None
+    build_signature: str | None
+    build_summary: dict[str, JsonValue]
     created_at: str
 
 
@@ -159,11 +166,16 @@ def _csr(rows: list[list[int]]) -> tuple[npt.NDArray[np.uint64], npt.NDArray[np.
     return np.asarray(offsets, dtype=np.uint64), np.asarray(values, dtype=np.uint64)
 
 
-def _document_times(document_times: CognitiveTimes | None, artifact: Artifact) -> dict[str, object]:
+def _document_times(
+    document_times: CognitiveTimes | None, artifact: Artifact, owner: SnapshotOwner
+) -> dict[str, object]:
     declared = document_times.model_dump(mode="json") if document_times is not None else {}
-    recorded = parse_explicit_time(artifact.recorded_at.isoformat())
-    assert isinstance(recorded, Instant)
-    declared["recorded"] = recorded.at.model_dump(mode="json")
+    # A cognitive revision records its own transaction time. A manually supplied
+    # manifest can declare other axes, but cannot replace the Artifact's recorded time.
+    if not isinstance(owner, CognitionOwner) or declared.get("recorded") is None:
+        recorded = parse_explicit_time(artifact.recorded_at.isoformat())
+        assert isinstance(recorded, Instant)
+        declared["recorded"] = recorded.at.model_dump(mode="json")
     if declared.get("formed") is None and artifact.formed_at is not None:
         formed = parse_explicit_time(artifact.formed_at.isoformat())
         assert isinstance(formed, Instant)
@@ -259,6 +271,17 @@ async def _prepare_candidates(
     preparation: TextPreparation,
 ) -> AsyncIterator[tuple[Candidate, PreparedText]]:
     """Normalize exact inputs and document layouts through one content preparation session."""
+    await preparation.prepare_many(
+        tuple(
+            ContentSelection(
+                artifact=accepted[documents[declaration.content.document].key],
+                selection=documents[declaration.content.document].input.selector.restrict(
+                    declaration.content.selector
+                ),
+            )
+            for declaration in manifest.candidates
+        )
+    )
     for declaration in manifest.candidates:
         document = documents[declaration.content.document]
         origin = ContentSelection(
@@ -290,15 +313,18 @@ async def _prepare_candidates(
         if declaration.whole:
             yield exact(f"{declaration.group_key}:whole", SourceSelection()), prepared
         if declaration.local_layout is not None:
-            for index, chunk in enumerate(
-                prepared.view.complete_chunks(declaration.local_layout.target_bytes), 1
-            ):
+            chunks = await preparation.artifacts.content.execution.blocking(
+                prepared.view.complete_chunks, declaration.local_layout.target_bytes
+            )
+            for index, chunk in enumerate(chunks, 1):
                 if declaration.whole and chunk.text == prepared.view.text:
                     continue
                 selector = chunk.selection.selection
                 yield (
                     exact(f"{declaration.group_key}:part:{index}", selector),
-                    prepared.slice(selector),
+                    await preparation.artifacts.content.execution.blocking(
+                        prepared.slice, selector
+                    ),
                 )
 
 
@@ -307,13 +333,15 @@ async def _covers(
 ) -> bool:
     low = prepared.view.byte_offset
     high = low + len(prepared.view.text.encode("utf-8"))
-    for part in selections:
-        if part.start_byte is not None and part.end_byte is not None:
-            start, end = part.start_byte, part.end_byte
-        else:
-            full = await preparation.prepare(ContentSelection(artifact=prepared.view.body.artifact))
-            view = full.slice(part).view
-            start, end = view.byte_offset, view.byte_offset + len(view.text.encode("utf-8"))
+    normalized = await preparation.artifacts.normalize_selections(
+        tuple(
+            ContentSelection(artifact=prepared.view.body.artifact, selection=part)
+            for part in selections
+        )
+    )
+    for value in normalized:
+        start, end = value.selection.start_byte, value.selection.end_byte
+        assert start is not None and end is not None
         if start < low or end > high:
             return False
     return True
@@ -742,7 +770,9 @@ async def freeze_inputs(
                     "selector": item.input.selector.model_dump(mode="json"),
                     "roots": list(document_roots[item.key]),
                     "derived_from": list(item.derived_from),
-                    "times": _document_times(item.times, accepted_artifacts[item.key]),
+                    "times": _document_times(
+                        item.times, accepted_artifacts[item.key], manifest.owner
+                    ),
                     "declared_times": item.times.model_dump(mode="json") if item.times else None,
                     "artifact_times": {
                         "received_at": received.isoformat()

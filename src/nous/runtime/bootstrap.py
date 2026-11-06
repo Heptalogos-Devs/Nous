@@ -11,17 +11,17 @@ import tomlkit
 
 from nous.application.configuration import ConfigurationOperations
 from nous.application.embedding import EmbeddingOperations
+from nous.cognition.annotation_task import ConceptAnnotationTask
 from nous.cognition.annotations import AnnotationOperations
-from nous.cognition.concept_schema import metadata as concept_metadata
 from nous.cognition.concepts import ConceptOperations
-from nous.cognition.contracts import Namespace
+from nous.cognition.contracts import NamespaceRef
 from nous.cognition.feedback import FeedbackOperations
-from nous.cognition.feedback_schema import metadata as feedback_metadata
+from nous.cognition.maintenance import MaintenanceOperations
 from nous.cognition.retrieval.operations import CognitiveRetrieval
-from nous.cognition.schema import metadata as cognition_metadata
 from nous.cognition.scope import NamespaceOperations
 from nous.cognition.scope import initialize_in as initialize_namespaces_in
 from nous.cognition.services import CognitiveServices
+from nous.cognition.sources import SourceResolver
 from nous.cognition.writing.drafts import DraftStore
 from nous.cognition.writing.generation import WritingOperations
 from nous.cognition.writing.operations import RecordOperations
@@ -32,10 +32,10 @@ from nous.common.errors import NousError
 from nous.configuration import Configuration
 from nous.content.artifacts import ArtifactStore
 from nous.content.results import ResultStore
-from nous.content.schema import metadata as content_metadata
+from nous.jobs.operations import JobOperations
+from nous.jobs.runtime import JobRuntime, initialize_jobs, open_jobs
 from nous.media.analysis import MediaAnalysis
 from nous.media.preparation import MediaPreparer
-from nous.models.embedding_schema import metadata as embedding_metadata
 from nous.models.embedding_store import EmbeddingSpaceRegistry
 from nous.models.embeddings import EmbeddingExecutor
 from nous.models.executor import ModelExecutor
@@ -47,24 +47,25 @@ from nous.observability.assembly import LoggingSession, Observability
 from nous.observability.diagnostics import recent_content_preparations, recent_problems
 from nous.observability.instrumentation import operation
 from nous.storage.content import ContentStore
-from nous.storage.content_schema import metadata as blob_metadata
 from nous.storage.database import Database
 from nous.temporal.domains import TimeService, bind_domains, check_domains
 from nous.temporal.values import Clock
 from nous.wave.operations import WaveOperations
-from nous.wave.schema import metadata as wave_metadata
 
 from .bindings import InstanceBinding, prepare_resource_directories
 from .execution import ExecutionManager
 from .instance import InstanceDescriptor, InstanceLocator, InstanceLock
 from .paths import ResolvedPaths
+from .schema import BUSINESS_METADATA
 
 logger = logging.getLogger(__name__)
 
 
 def task_catalog() -> TaskCatalog:
     """Compose model tasks with the writing domain's actual task contracts."""
-    return TaskCatalog((*builtin_tasks().definitions.values(), *writing_tasks()))
+    return TaskCatalog(
+        (*builtin_tasks().definitions.values(), *writing_tasks(), ConceptAnnotationTask())
+    )
 
 
 @asynccontextmanager
@@ -119,10 +120,13 @@ class Runtime:
     annotations: AnnotationOperations
     cognitive_retrieval: CognitiveRetrieval
     feedback: FeedbackOperations
+    maintenance: MaintenanceOperations
+    jobs: JobOperations
+    job_runtime: JobRuntime
     state: str = "starting"
     _cognition: dict[str, CognitiveServices] = field(default_factory=dict)
 
-    async def cognition(self, namespace: str | Namespace | None = None) -> CognitiveServices:
+    async def cognition(self, namespace: str | NamespaceRef | None = None) -> CognitiveServices:
         """Bind shared services to a resolved immutable namespace identity.
 
         Args:
@@ -132,12 +136,9 @@ class Runtime:
         Returns:
             A runtime-owned service set cached by resolved namespace identity.
         """
-        selected = namespace.id if isinstance(namespace, Namespace) else namespace
-        selected = (
-            selected or self.configuration.snapshot.typed_values().cognition.default_namespace
-        )
+        selected = namespace or self.configuration.snapshot.values.cognition.default_namespace
         async with self.database.read() as tx:
-            identity = await self.namespaces.get_in(tx, selected)
+            identity = (await self.namespaces.get_in(tx, selected)).ref
         cached = self._cognition.get(identity.id)
         if cached is not None:
             return cached
@@ -174,7 +175,14 @@ class Runtime:
             self.results,
         )
         records = RecordOperations(
-            identity, self.written_records, reader, drafts, annotations, retrieval, feedback
+            identity,
+            self.written_records,
+            reader,
+            drafts,
+            annotations,
+            retrieval,
+            feedback,
+            self.maintenance,
         )
         writing = WritingOperations(
             identity, self.written_records, reader, self.generation, drafts, records
@@ -186,7 +194,7 @@ class Runtime:
         return services
 
     def status(self) -> dict[str, object]:
-        effective = self.configuration.snapshot.typed_values()
+        effective = self.configuration.snapshot.values
         configured_models = bool(effective.models)
         return {
             "state": self.state,
@@ -202,7 +210,7 @@ class Runtime:
                 "models": "configured" if configured_models else "unconfigured",
                 "network": "ready",
                 "content": "ready",
-                "durable_execution": "unavailable",
+                "durable_execution": "ready" if self.job_runtime.worker_running else "available",
             },
             "in_flight": self.execution.in_flight,
             "model_execution": "configured" if configured_models else "unconfigured",
@@ -212,7 +220,7 @@ class Runtime:
     async def check(self) -> dict[str, object]:
         """Read actual owners and adopted-result summaries without making model requests."""
         async with self.execution.operation("runtime.check"):
-            settings = self.configuration.snapshot.typed_values()
+            settings = self.configuration.snapshot.values
             result = self.status()
             result["database"] = asdict(await self.database.check())
             result["models"] = {
@@ -239,6 +247,18 @@ class Runtime:
                 "retrieval": await self.cognitive_retrieval.status(),
             }
             result["execution"] = self.execution.status()
+            jobs, _ = await self.jobs.list(limit=20)
+            failed_jobs = [job for job in jobs if job.status == "ERROR"][:3]
+            failures = [await self.jobs.read(job.ref) for job in failed_jobs]
+            result["jobs"] = {
+                "worker_running": self.job_runtime.worker_running,
+                "active_stages": self.job_runtime.bridge.in_flight
+                if self.job_runtime.bridge
+                else 0,
+                "queues": await self.jobs.queues(),
+                "recent": [job.model_dump(mode="json") for job in jobs],
+                "recent_failures": [job.model_dump(mode="json") for job in failures],
+            }
             result["recent_results"] = await self.results.recent()
             result["observability"] = {
                 "logs": str(self.paths.logs / "nous.jsonl")
@@ -312,7 +332,7 @@ async def initialize_instance(
                 "instance.in_use", "Another operation is initializing this instance.", cause=error
             ) from error
     configuration = Configuration(selected.config_file, environment=environment)
-    settings = configuration.snapshot.typed_values()
+    settings = configuration.snapshot.values
     if not existing and (
         settings.instance.id != created_identity or settings.instance.layout != layout
     ):
@@ -342,23 +362,26 @@ async def initialize_instance(
                 descriptor.instance_id,
                 create=not existing,
                 database_id=str(binding.database_id),
-                additional_metadata=(
-                    blob_metadata,
-                    content_metadata,
-                    embedding_metadata,
-                    wave_metadata,
-                    cognition_metadata,
-                    concept_metadata,
-                    feedback_metadata,
-                )
-                if not existing
-                else (),
+                additional_metadata=BUSINESS_METADATA,
             ) as database:
                 await bind_domains(database, settings.time.domains)
                 if not existing:
                     async with database.write() as tx:
-                        await initialize_namespaces_in(tx)
+                        default_namespace = await initialize_namespaces_in(
+                            tx, descriptor.instance_id
+                        )
+                    change = configuration.prepare_change(
+                        {"cognition": {"default_namespace": default_namespace.id}},
+                        (),
+                        "instance",
+                        None,
+                        None,
+                        reload=False,
+                    )
+                    candidate = configuration.save_change(change)
+                    configuration.publish_change(change, candidate, pending=False)
                 await database.check()
+                await initialize_jobs(database, descriptor.instance_id, settings.jobs)
                 if not existing:
                     binding.write(selected, paths)
             paths.create_runtime_directories()
@@ -371,6 +394,7 @@ async def open_instance(
     *,
     environment: Mapping[str, str] | None = None,
     overrides: Mapping[str, object] | None = None,
+    workers: bool = False,
 ) -> AsyncGenerator[Runtime]:
     """Open an initialized instance and own its resources until context exit.
 
@@ -378,6 +402,7 @@ async def open_instance(
         locator: Instance location or selector; None uses normal resolution.
         environment: Optional environment mapping used for configuration.
         overrides: Optional process-local configuration overrides.
+        workers: Start the persistent maintenance workers in this host when true.
 
     Yields:
         A ready runtime whose services share this instance's resources.
@@ -398,7 +423,7 @@ async def open_instance(
         configuration = Configuration(
             selected.config_file, environment=environment, overrides=overrides, running=True
         )
-        settings = configuration.snapshot.typed_values()
+        settings = configuration.snapshot.values
         descriptor = InstanceDescriptor(
             settings.instance.id, settings.instance.name, settings.instance.layout
         )
@@ -413,16 +438,18 @@ async def open_instance(
         observability = Observability(settings.tracing, settings.metrics, descriptor.instance_id)
         stack.callback(observability.close)
         storage = await stack.enter_async_context(AsyncExitStack())
-        execution = ExecutionManager(settings.execution, lambda: configuration.snapshot)
+        execution = ExecutionManager(
+            settings.execution,
+            lambda: configuration.snapshot,
+            observability_scope=lambda: observability.scope(descriptor.instance_id, startup_id),
+        )
         connections = ModelConnections(selected.directory, settings, configuration.environment)
         stack.push_async_callback(connections.aclose)
         wave: WaveOperations | None = None
 
         async def close_execution() -> None:
             with operation("runtime.shutdown"):
-                await execution.aclose(
-                    configuration.snapshot.typed_values().runtime.shutdown_grace_seconds
-                )
+                await execution.aclose(configuration.snapshot.values.runtime.shutdown_grace_seconds)
                 if wave is not None:
                     wave.close()
 
@@ -435,14 +462,31 @@ async def open_instance(
                         settings.database,
                         descriptor.instance_id,
                         database_id=str(binding.database_id),
+                        additional_metadata=BUSINESS_METADATA,
                     )
                 )
+                job_runtime = await stack.enter_async_context(
+                    open_jobs(database, descriptor.instance_id, settings.jobs, execution)
+                )
+
+                async def close_jobs() -> None:
+                    await job_runtime.close(
+                        grace_seconds=configuration.snapshot.values.runtime.shutdown_grace_seconds
+                    )
+
+                stack.push_async_callback(close_jobs)
                 embedding_spaces = EmbeddingSpaceRegistry(database)
                 await check_domains(database, settings.time.domains)
                 await embedding_spaces.check_snapshot(configuration.snapshot)
                 await bind_domains(database, settings.time.domains)
                 configuration_operations = ConfigurationOperations(
-                    configuration, selected, binding, paths, database=database, logs=logs
+                    configuration,
+                    selected,
+                    binding,
+                    paths,
+                    database=database,
+                    logs=logs,
+                    execution=execution,
                 )
                 content = ContentStore(
                     paths.content,
@@ -457,12 +501,10 @@ async def open_instance(
                     descriptor.instance_id,
                     clock=clock,
                     text_read_max_bytes=lambda: (
-                        execution.snapshot.typed_values().content.text_read_max_bytes
+                        execution.snapshot.values.content.text_read_max_bytes
                     ),
                     text_cache_root=paths.cache,
-                    text_cache_settings=lambda: (
-                        execution.snapshot.typed_values().content.text_cache
-                    ),
+                    text_cache_settings=lambda: execution.snapshot.values.content.text_cache,
                 )
                 results = ResultStore(database, artifacts)
                 prompts = PromptCatalog(selected.directory, task_catalog())
@@ -486,7 +528,9 @@ async def open_instance(
                     embeddings,
                 )
                 time_service = TimeService(database, clock)
-                namespaces = NamespaceOperations(database, execution, configuration_operations)
+                namespaces = NamespaceOperations(
+                    database, execution, configuration_operations, descriptor.instance_id
+                )
                 record_reader = RecordReader(database, execution, artifacts, namespaces)
                 concepts = ConceptOperations(
                     database, execution, namespaces, descriptor.instance_id, clock
@@ -516,13 +560,29 @@ async def open_instance(
                     annotations,
                 )
                 written_records = WrittenRecords(
-                    database, artifacts, time_service, namespaces, results, record_reader
+                    database,
+                    artifacts,
+                    time_service,
+                    namespaces,
+                    results,
+                    record_reader,
+                    SourceResolver(record_reader, preparer),
                 )
                 drafts = DraftStore(
                     database, execution, written_records, record_reader, generation, results
                 )
                 feedback = FeedbackOperations(
                     database, execution, namespaces, record_reader, wave, clock
+                )
+                maintenance = MaintenanceOperations(
+                    database,
+                    execution,
+                    namespaces,
+                    record_reader,
+                    generation,
+                    annotations,
+                    cognitive_retrieval,
+                    job_runtime.operations,
                 )
                 runtime = Runtime(
                     paths=paths,
@@ -551,8 +611,13 @@ async def open_instance(
                     annotations=annotations,
                     cognitive_retrieval=cognitive_retrieval,
                     feedback=feedback,
+                    maintenance=maintenance,
+                    jobs=job_runtime.operations,
+                    job_runtime=job_runtime,
                     state="ready",
                 )
+                if workers:
+                    await job_runtime.start(maintenance)
             logger.info("runtime.ready")
             yield runtime
         except BaseException:

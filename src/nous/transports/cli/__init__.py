@@ -101,11 +101,9 @@ def language_for(selected: Options | None) -> str:
     configured: str | None = None
     if selected is not None and selected.language is None:
         try:
-            configured = (
-                Configuration(selected.locator.config_file)
-                .snapshot.typed_values()
-                .localization.language
-            )
+            configured = Configuration(
+                selected.locator.config_file
+            ).snapshot.values.localization.language
         except NousError, OSError:
             pass
     return select_language(selected.language if selected else None, configured)
@@ -122,9 +120,13 @@ def emit_content_view(view: ContentReadView) -> None:
     """Render the shared content view for text and media using existing representations."""
     language = language_for(_current.get())
     typer.echo(f"{view.name} · {view.media_type} · {view.export_ref.identifier}")
-    selection = view.source.selection.model_dump(mode="json", exclude_none=True, exclude_defaults=True)
+    selection = view.source.selection.model_dump(
+        mode="json", exclude_none=True, exclude_defaults=True
+    )
     if selection:
-        typer.echo(f"{translate('Selection', language)}: {json.dumps(selection, ensure_ascii=False)}")
+        typer.echo(
+            f"{translate('Selection', language)}: {json.dumps(selection, ensure_ascii=False)}"
+        )
     if view.body_text is not None:
         typer.echo(view.body_text)
     for representation in view.available_representations:
@@ -132,7 +134,9 @@ def emit_content_view(view: ContentReadView) -> None:
             f"  {translate(representation.kind, language)} · {representation.operation} · {representation.result_ref.identifier} · {representation.content.artifact.identifier}"
         )
         for source in representation.source_selections:
-            coordinates = source.selection.model_dump(mode="json", exclude_none=True, exclude_defaults=True)
+            coordinates = source.selection.model_dump(
+                mode="json", exclude_none=True, exclude_defaults=True
+            )
             suffix = " " + json.dumps(coordinates, ensure_ascii=False) if coordinates else ""
             typer.echo(f"  {translate('Source', language)}: {source.artifact.identifier}{suffix}")
         if representation.body_text is not None:
@@ -351,6 +355,7 @@ def runtime_check(
         emit(ctx, result)
         return
     console = Console()
+    language = language_for(options(ctx))
     console.print(f"{result['name']} — {result['state']}", markup=False)
     for key in (
         "configuration",
@@ -360,6 +365,7 @@ def runtime_check(
         "embedding",
         "wave",
         "execution",
+        "jobs",
         "observability",
     ):
         value = cast(dict[str, object], result[key])
@@ -379,6 +385,25 @@ def runtime_check(
             )
         elif key == "execution":
             summary = f"{value['root_operations']} root operations; {value['queued']} queued; {value['running']} running; {value['blocking_workers']} blocking workers"
+        elif key == "jobs":
+            recent_jobs = cast(list[dict[str, object]], value["recent"])
+            counts = {
+                "total": len(recent_jobs),
+                "queued": sum(job["status"] in {"ENQUEUED", "DELAYED"} for job in recent_jobs),
+                "running": sum(job["status"] == "PENDING" for job in recent_jobs),
+                "failed": sum(job["status"] == "ERROR" for job in recent_jobs),
+            }
+            worker = translate(
+                "Worker running" if value["worker_running"] else "Worker not started", language
+            )
+            summary = (
+                worker
+                + "; "
+                + translate(
+                    "Recent jobs: {total}; queued: {queued}; running: {running}; failed: {failed}",
+                    language,
+                ).format(**counts)
+            )
         elif key == "models":
             summary = (
                 f"{len(cast(list[object], value['resources']))} configured resources; tasks: "
@@ -402,7 +427,31 @@ def runtime_check(
                 )
         else:
             summary = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
-        console.print(f"{key}: {summary}", markup=False)
+        console.print(
+            f"{translate('Jobs', language) if key == 'jobs' else key}: {summary}", markup=False
+        )
+        if key == "jobs":
+            for job in cast(list[dict[str, object]], value["recent_failures"]):
+                ref = cast(dict[str, str], job["ref"])
+                issue = cast(dict[str, object] | None, job.get("error"))
+                reason = translate(str(issue.get("message", "")), language) if issue else ""
+                stage = str(issue.get("stage", "")) if issue else ""
+                console.print(
+                    "  "
+                    + translate(
+                        "Failed job: {kind} {job_id} — {stage} (step {step}): {reason}",
+                        language,
+                    ).format(
+                        kind=job["kind"],
+                        job_id=ref["workflow_id"],
+                        stage=stage,
+                        step=job.get("failed_step")
+                        if job.get("failed_step") is not None
+                        else translate("unknown", language),
+                        reason=reason,
+                    ),
+                    markup=False,
+                )
     recent = cast(list[dict[str, object]], result["recent_results"])
     if recent:
         console.print(
@@ -410,7 +459,6 @@ def runtime_check(
             + ", ".join(f"{item['operation']} {item['identifier']}" for item in recent),
             markup=False,
         )
-    language = language_for(options(ctx))
     wave = cast(dict[str, object], result["wave"])
     preparations = cast(list[dict[str, object]], wave.get("recent_preparations", []))
     if preparations:
@@ -439,7 +487,8 @@ def runtime_check(
             completed_suffix = f" · {completed}" if completed else ""
             console.print(
                 f"  {translate(str(problem.get('result') or ''), language)} · "
-                f"{reference} · {description}{completed_suffix}", markup=False
+                f"{reference} · {description}{completed_suffix}",
+                markup=False,
             )
 
 
@@ -490,9 +539,9 @@ def time_parse(
     from nous.temporal.values import parse_explicit_time
 
     service = configuration(ctx)
-    if domain not in service.snapshot.typed_values().time.domains:
+    if domain not in service.snapshot.values.time.domains:
         raise NousError("time.domain_unknown", f"Unknown time domain: {domain}")
-    zone = timezone or service.snapshot.typed_values().localization.timezone
+    zone = timezone or service.snapshot.values.localization.timezone
     parsed = parse_explicit_time(value, domain=domain, timezone=zone, fold=fold)
     emit(
         ctx,
@@ -505,9 +554,11 @@ def time_parse(
     )
 
 
+from .jobs import job_cli  # noqa: E402
 from .tools import tools_cli  # noqa: E402
 
 cli.add_typer(tools_cli, name="tools")
+cli.add_typer(job_cli, name="job")
 
 
 def main() -> None:

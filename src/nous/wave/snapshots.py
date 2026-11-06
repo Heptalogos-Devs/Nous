@@ -12,11 +12,12 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from time import perf_counter
 from typing import TYPE_CHECKING, cast
-from uuid import uuid4
+from uuid import UUID, uuid4, uuid5
 
 import sqlalchemy as sa
-from pydantic import JsonValue
+from pydantic import JsonValue, TypeAdapter
 from sqlalchemy.dialects.sqlite import insert
+from sqlalchemy.engine import RowMapping
 
 from nous.application.embedding import EmbeddingOperations
 from nous.common.errors import NousError
@@ -35,7 +36,15 @@ from nous.temporal.domains import TimeService
 from . import schema
 from .assets import FrozenInputs, SnapshotRow, content_evidence, freeze_inputs
 from .configuration import require_native_profiles
-from .contracts import CollectionManifest, CorpusView, Document, DocumentInput, SnapshotRef
+from .contracts import (
+    CollectionManifest,
+    CorpusView,
+    Document,
+    DocumentInput,
+    SnapshotDescriptor,
+    SnapshotOwner,
+    SnapshotRef,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -52,21 +61,27 @@ def _signature(value: object) -> str:
 
 
 def build_profile(settings: ConfigSnapshot) -> dict[str, object]:
-    wave = settings.typed_values().wave
+    wave = settings.values.wave
     return {
-        "native": wave.native.build,
+        "native": wave.native.model_dump(mode="json")["build"],
         "candidate_grouping": "document",
         "origin_selections": "ordered",
         "associations": wave.associations.model_dump(mode="json"),
     }
 
 
-def view_profile(settings: ConfigSnapshot, space: str | None, policy: dict[str, object]) -> str:
+def view_profile(
+    settings: ConfigSnapshot,
+    space: str | None,
+    policy: dict[str, object],
+    *,
+    build_config: dict[str, object] | None = None,
+) -> str:
     definition = resolved_space(settings, space) if space else None
     return _signature(
         {
             "space": definition.model_dump(mode="json") if definition else None,
-            "build": build_profile(settings),
+            "build": build_config if build_config is not None else build_profile(settings),
             "policy": policy,
         }
     )
@@ -111,7 +126,7 @@ class WaveSnapshots:
             ) from error
         require_native_profiles()
         if self._engine is None:
-            settings = self.execution.snapshot.typed_values().wave.native
+            settings = self.execution.snapshot.values.wave.native
             self._engine = native.NativeEngine(encode_json({"threads": settings.threads}))
         return self._engine
 
@@ -279,6 +294,8 @@ class WaveSnapshots:
         settings: ConfigSnapshot,
         *,
         publish_if: Callable[[WriteTx], Awaitable[bool]] | None = None,
+        build_key: str | None = None,
+        build_config: dict[str, object] | None = None,
     ) -> dict[str, object]:
         """Build one immutable view; a caller can guard its current-pointer update."""
         await self.time.validate(document.times for document in view.documents)
@@ -286,8 +303,19 @@ class WaveSnapshots:
             raise NousError("wave.space_conflict", "Manifest and command select different spaces")
         space_id = space or view.space
         definition = resolved_space(settings, space_id) if space_id else None
-        profile_config = build_profile(settings)
-        object_id = str(uuid4())
+        profile_config = build_config if build_config is not None else build_profile(settings)
+        build_signature = (
+            _signature(
+                {
+                    "view": view.model_dump(mode="json"),
+                    "build": profile_config,
+                    "space": definition.model_dump(mode="json") if definition else None,
+                }
+            )
+            if build_key
+            else None
+        )
+        object_id = str(uuid5(UUID(self.instance_id), build_key)) if build_key else str(uuid4())
         identity = {
             "snapshot_id": object_id,
             "space_signature": _signature(
@@ -296,6 +324,47 @@ class WaveSnapshots:
             "build_config_signature": _signature(profile_config),
         }
         async with self._build_locks.setdefault(view.name, asyncio.Lock()):
+            if build_key:
+                async with self.database.read() as tx:
+                    previous = (
+                        (
+                            await tx.connection.execute(
+                                sa.select(
+                                    schema.snapshots,
+                                    schema.collections.c.name,
+                                    schema.collections.c.current_snapshot_id,
+                                )
+                                .join(
+                                    schema.collections,
+                                    schema.snapshots.c.collection_id == schema.collections.c.id,
+                                )
+                                .where(schema.snapshots.c.build_key == build_key)
+                            )
+                        )
+                        .mappings()
+                        .one_or_none()
+                    )
+                if previous is not None:
+                    if previous["build_signature"] != build_signature:
+                        raise NousError(
+                            "wave.build_key_conflict",
+                            "Build key identifies a different captured view",
+                        )
+                    return {
+                        "snapshot": {
+                            "instance_id": self.instance_id,
+                            "id": previous["id"],
+                            "identifier": previous["identifier"],
+                        },
+                        "collection": previous["name"],
+                        "space": previous["space_id"],
+                        "covered_generation": previous["covered_generation"],
+                        "profile": previous["profile"],
+                        "metadata": previous["metadata"],
+                        "current": previous["current_snapshot_id"] == previous["id"],
+                        "identity": previous["identity"],
+                        **previous["build_summary"],
+                    }
             frozen = await freeze_inputs(
                 view,
                 space_id,
@@ -312,26 +381,33 @@ class WaveSnapshots:
             staging_name = f".staging-{object_id}"
             staging = root / staging_name
             final = root / object_id
-            if await self.execution.blocking(final.exists):
+            final_exists = await self.execution.blocking(final.exists)
+            if final_exists and not build_key:
                 raise NousError("wave.snapshot_exists", "Snapshot directory already exists")
-            published = False
+            published = final_exists
             token = native.CancellationToken()
             try:
                 native_started = perf_counter()
-                await self.compute(
-                    lambda: engine.build(
-                        *bundles,
-                        encode_json(identity),
-                        str(staging),
-                        options_json=encode_json(profile_config),
-                        cancel=token,
-                    ),
-                    token,
-                )
+                if not final_exists:
+                    if build_key and await self.execution.blocking(staging.exists):
+                        await self.execution.blocking(
+                            self._remove_owned, staging, root, staging_name
+                        )
+                    await self.compute(
+                        lambda: engine.build(
+                            *bundles,
+                            encode_json(identity),
+                            str(staging),
+                            options_json=encode_json(profile_config),
+                            cancel=token,
+                        ),
+                        token,
+                    )
                 native_ms = (perf_counter() - native_started) * 1000
                 publish_started = perf_counter()
                 try:
-                    await self.execution.blocking(os.replace, staging, final)
+                    if not final_exists:
+                        await self.execution.blocking(os.replace, staging, final)
                 except asyncio.CancelledError:
                     # The worker may have completed the rename before cancellation surfaced.
                     published = final.is_dir() and not staging.exists()
@@ -378,6 +454,14 @@ class WaveSnapshots:
                                 identity=identity,
                                 index_location=f"wave/{object_id}",
                                 mapping=frozen.mapping,
+                                owner=frozen.mapping["owner"],
+                                metadata=frozen.mapping["metadata"],
+                                build_key=build_key,
+                                build_signature=build_signature,
+                                build_summary={
+                                    "capabilities": capabilities,
+                                    "statistics": statistics,
+                                },
                                 created_at=self.clock.utc_now().isoformat(),
                             )
                             .on_conflict_do_nothing(index_elements=[schema.snapshots.c.identifier])
@@ -385,7 +469,9 @@ class WaveSnapshots:
                         if inserted.rowcount == 1:
                             break
                     else:
-                        raise NousError("wave.identifier_exhausted", "Cannot allocate a Wave identifier")
+                        raise NousError(
+                            "wave.identifier_exhausted", "Cannot allocate a Wave identifier"
+                        )
                     documents = cast(dict[str, dict[str, object]], frozen.mapping["documents"])
                     roots = frozen.mapping["roots"]
                     input_refs: set[str] = (
@@ -464,64 +550,97 @@ class WaveSnapshots:
                 "identity": identity,
             }
 
-    async def current(self, collection: str) -> SnapshotRow | None:
-        async with self.database.read() as tx:
-            row = (
-                (
-                    await tx.connection.execute(
-                        sa.select(schema.snapshots)
-                        .join(
-                            schema.collections,
-                            schema.collections.c.current_snapshot_id == schema.snapshots.c.id,
-                        )
-                        .where(schema.collections.c.name == collection)
-                    )
-                )
-                .mappings()
-                .one_or_none()
-            )
-        return cast(SnapshotRow, dict(row)) if row is not None else None
+    def _descriptor(self, row: RowMapping) -> SnapshotDescriptor:
+        return SnapshotDescriptor(
+            ref=SnapshotRef(
+                instance_id=self.instance_id, id=row["id"], identifier=row["identifier"]
+            ),
+            owner=TypeAdapter(SnapshotOwner).validate_python(row["owner"]),
+            collection=row["name"],
+            captured_generation=row["covered_generation"],
+            profile_signature=row["profile"],
+            space_id=row["space_id"],
+            space_signature=row["identity"]["space_signature"],
+            identity=row["identity"],
+            metadata=row["metadata"],
+        )
 
-    async def resolve(self, ref: str | SnapshotRef) -> SnapshotRow:
+    async def _lookup(
+        self, ref: str | SnapshotRef, *, include_mapping: bool = False, current: bool = False
+    ) -> RowMapping | None:
         exact = ref if isinstance(ref, SnapshotRef) else None
         if exact is not None:
             if exact.instance_id != self.instance_id:
                 raise NousError("wave.instance_mismatch", "Snapshot belongs to another instance")
             ref = exact.id
-        async with self.database.read() as tx:
-            row = (
-                (
-                    await tx.connection.execute(
-                        sa.select(schema.snapshots).where(
-                            sa.or_(schema.snapshots.c.id == ref, schema.snapshots.c.identifier == ref)
-                        )
-                    )
-                )
-                .mappings()
-                .one_or_none()
+        columns = (
+            list(schema.snapshots.c)
+            if include_mapping
+            else [
+                schema.snapshots.c.id,
+                schema.snapshots.c.identifier,
+                schema.snapshots.c.owner,
+                schema.snapshots.c.metadata,
+                schema.snapshots.c.covered_generation,
+                schema.snapshots.c.profile,
+                schema.snapshots.c.space_id,
+                schema.snapshots.c.identity,
+            ]
+        )
+        query = sa.select(*columns, schema.collections.c.name).join(
+            schema.collections, schema.snapshots.c.collection_id == schema.collections.c.id
+        )
+        condition = (
+            sa.and_(
+                schema.collections.c.name == ref,
+                schema.collections.c.current_snapshot_id == schema.snapshots.c.id,
             )
-            if row is None and exact is None:
+            if current
+            else sa.or_(schema.snapshots.c.id == ref, schema.snapshots.c.identifier == ref)
+        )
+        async with self.database.read() as tx:
+            row = (await tx.connection.execute(query.where(condition))).mappings().one_or_none()
+            if row is None and exact is None and not current:
                 row = (
                     (
                         await tx.connection.execute(
-                            sa.select(schema.snapshots)
-                            .join(
-                                schema.collections,
+                            query.where(
+                                schema.collections.c.name == ref,
                                 schema.collections.c.current_snapshot_id == schema.snapshots.c.id,
                             )
-                            .where(schema.collections.c.name == ref)
                         )
                     )
                     .mappings()
                     .one_or_none()
                 )
-        if row is None:
-            raise NousError(
-                "wave.snapshot_not_found", "Wave snapshot does not exist", details={"ref": ref}
-            )
-        if exact is not None and (row["id"] != exact.id or row["identifier"] != exact.identifier):
+        if (
+            row is not None
+            and exact is not None
+            and (row["id"] != exact.id or row["identifier"] != exact.identifier)
+        ):
             raise NousError(
                 "wave.snapshot_mismatch", "Snapshot reference differs from its identity"
+            )
+        return row
+
+    async def current(self, collection: str) -> SnapshotDescriptor | None:
+        row = await self._lookup(collection, current=True)
+        return self._descriptor(row) if row is not None else None
+
+    async def describe(self, ref: str | SnapshotRef) -> SnapshotDescriptor:
+        """Read only immutable identity, ownership and summary columns."""
+        row = await self._lookup(ref)
+        if row is None:
+            raise NousError(
+                "wave.snapshot_not_found", "Wave snapshot does not exist", details={"ref": str(ref)}
+            )
+        return self._descriptor(row)
+
+    async def resolve(self, ref: str | SnapshotRef) -> SnapshotRow:
+        row = await self._lookup(ref, include_mapping=True)
+        if row is None:
+            raise NousError(
+                "wave.snapshot_not_found", "Wave snapshot does not exist", details={"ref": str(ref)}
             )
         return cast(SnapshotRow, dict(row))
 

@@ -16,11 +16,13 @@
 4. 构建成功后同文件系统完成发布为不可变 snapshot 目录；打开得到的 snapshot 检查必要身份和结构。
 5. 在短 WriteTx 保存快照与引用，并切换 collection.current_snapshot。数据库提交前不向用户返回正式标识符。
 
+Windows 上 Tantivy 的 metadata 原子发布通过正式 Directory 接口接入 std::fs::rename，允许分享删除权限的旧读句柄继续读取原文件，同时新读者取得已提交 metadata；segment 文件、mmap、锁与格式沿用 MmapDirectory。
+
 内容/模型与索引构建不持写事务。构建失败保留旧 current；已产生且未绑定的目录可在本次操作清理。文件发布成功而 SQL 失败不自动删除当前其它快照，也不重发模型请求。
 
 ## 重开与使用
 
-查询打开数据库保存的明确快照，核对 space、dimensions、配置和实际算法版本。Native 文件 manifest 保存必要的完整性与数组/索引映射；不在每次 query 重新 hash 全库。
+WaveOperations.current/describe 返回不解码候选 mapping、不打开 Native 的 SnapshotDescriptor。describe_candidates(ref, keys) 在一次 mapping 读取中保留请求顺序和重复键，返回具体候选与真实 origin_contents；query/read 才读取实际候选内容或打开 Native。查询打开数据库保存的明确快照，核对 space、dimensions、配置和实际算法版本。Native 文件 manifest 保存必要的完整性与数组/索引映射；不在每次 query 重新 hash 全库。
 
 正在执行的查询持有旧 Arc；新构建可发布新快照，旧查询继续原内容。第一版一个 collection 的 build 串行，查询读取不可变版本；无需蓝绿部署或跨主机发布平台。
 
@@ -32,9 +34,9 @@
 
 candidate_filter 在固定证据视图内限制返回集合，普通的返回时间过滤可保留全快照背景。未来访问控制或历史知情 owner 可以提供新的构建子集；当前单操作者实例不预建 RBAC 系统。
 
-## 暂不接入 DBOS
+## 前台操作与持久维护
 
-本轮 build/query 使用前台受管理操作和明确结果，长调用可显示进度/取消。DBOS 留给首次要求跨进程恢复的批量建索引/记忆整理。届时按既有事务内入队合同接入当前 build 单元，不在 Native 内新增任务表或重试调度。
+直接 build/query 使用受管理操作。认知 refresh 的持久 workflow 调用同一 WaveOperations.build_view；build_key 固定工作身份，publish_if 在短写事务内核对捕获代次，重放复用已发布的结果。DBOS 与跨循环调度属于 jobs，领域编排属于 cognition.maintenance，Native 继续只执行冻结资产计算，见[持久工作](../foundation/durable-work.md)。
 
 ## 构建结果与重复加载
 

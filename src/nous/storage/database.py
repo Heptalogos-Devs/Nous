@@ -15,6 +15,7 @@ from typing import Protocol
 from uuid import uuid4
 
 import sqlalchemy as sa
+from sqlalchemy import event
 from sqlalchemy.engine import URL
 from sqlalchemy.exc import OperationalError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_engine
@@ -128,13 +129,10 @@ def _setup_file(path: Path, *, create: bool) -> None:
         raise NousError(code, "Cannot open instance database", details={"path": str(path)}) from exc
 
 
-def _connection_factory(settings: DatabaseSettings) -> type[sqlite3.Connection]:
-    """Apply connection PRAGMAs before Python opens its non-legacy transaction.
-
-    sqlite3's documented factory runs on aiosqlite's connection worker.  Its
-    public autocommit attribute lets us enable foreign keys outside a transaction
-    without combining driver transaction control with manual BEGIN hooks.
-    """
+def _connection_factory(
+    settings: DatabaseSettings, *, explicit_begin: bool = False
+) -> type[sqlite3.Connection]:
+    """Apply the same connection policy to business and DBOS connections."""
     busy_timeout_ms = int(settings.busy_timeout_ms)
     synchronous = str(settings.synchronous).upper()
     if busy_timeout_ms < 0 or synchronous not in {"FULL", "NORMAL"}:
@@ -152,18 +150,16 @@ def _connection_factory(settings: DatabaseSettings) -> type[sqlite3.Connection]:
             factory: type[sqlite3.Connection] | None = None,
             cached_statements: int = 128,
             uri: bool = False,
-            autocommit: bool = False,
         ) -> None:
-            # isolation_level has no effect with autocommit=False.
             super().__init__(
                 database,
                 timeout=timeout,
                 detect_types=detect_types,
+                isolation_level=None if explicit_begin else "DEFERRED",
                 check_same_thread=check_same_thread,
                 factory=factory,
                 cached_statements=cached_statements,
                 uri=uri,
-                autocommit=True,
             )
             try:
                 self.execute("PRAGMA foreign_keys=ON")
@@ -171,7 +167,6 @@ def _connection_factory(settings: DatabaseSettings) -> type[sqlite3.Connection]:
                 self.execute(f"PRAGMA synchronous={synchronous}")
                 if self.execute("PRAGMA foreign_keys").fetchone() != (1,):
                     raise sqlite3.OperationalError("foreign keys could not be enabled")
-                self.autocommit = False
             except BaseException:
                 self.close()
                 raise
@@ -188,11 +183,38 @@ class Database:
     of opening a nested write transaction.
     """
 
-    def __init__(self, engine: AsyncEngine, instance_id: str, database_id: str | None) -> None:
+    def __init__(
+        self,
+        engine: AsyncEngine,
+        path: Path,
+        settings: DatabaseSettings,
+        instance_id: str,
+        database_id: str | None,
+    ) -> None:
         self._engine = engine
+        self.path = path
+        self.settings = settings
         self._instance_id = instance_id
         self._database_id = database_id
         self._writer_lock = asyncio.Lock()
+
+    def sync_engine(self, *, pool_size: int = 4) -> sa.Engine:
+        """Create an independently owned synchronous engine on this same bound file."""
+        factory = _connection_factory(self.settings)
+        return sa.create_engine(
+            URL.create("sqlite", database=str(self.path)),
+            creator=lambda: sqlite3.connect(
+                self.path.as_uri() + "?mode=rw", uri=True, factory=factory, check_same_thread=False
+            ),
+            pool_size=pool_size,
+            max_overflow=0,
+        )
+
+    def migration_url(self) -> str:
+        """Build a read-write-only SQLite URI without losing path characters."""
+        return URL.create(
+            "sqlite", database=self.path.as_uri(), query={"mode": "rw", "uri": "true"}
+        ).render_as_string(hide_password=False)
 
     @classmethod
     @asynccontextmanager
@@ -215,7 +237,7 @@ class Database:
             create: Explicitly create a new database and declared tables when true;
                 otherwise the database must already exist.
             database_id: Expected persistent database identity, if bound.
-            additional_metadata: Owner tables to create with a new database.
+            additional_metadata: Owner tables to create or verify when opening.
 
         Yields:
             A database whose engine is disposed when this context exits.
@@ -233,9 +255,20 @@ class Database:
         )
         engine = create_async_engine(
             url,
-            connect_args={"autocommit": False, "factory": _connection_factory(settings)},
+            connect_args={"factory": _connection_factory(settings, explicit_begin=True)},
         )
-        database = cls(engine, instance_id, database_id)
+
+        def begin(connection: sa.Connection) -> None:
+            statement = (
+                "BEGIN IMMEDIATE"
+                if connection.get_execution_options().get("sqlite_write")
+                else "BEGIN"
+            )
+            connection.exec_driver_sql(statement)
+
+        event.listen(engine.sync_engine, "begin", begin)
+
+        database = cls(engine, path, settings, instance_id, database_id)
         try:
             try:
                 if create:
@@ -243,16 +276,19 @@ class Database:
                     for owner in (metadata, *additional_metadata):
                         for table in owner.tables.values():
                             table.to_metadata(declared)
-                    async with engine.begin() as connection:
-                        await connection.run_sync(declared.create_all)
-                        await connection.execute(
-                            instance_metadata.insert().values(
-                                instance_id=instance_id,
-                                database_id=database_id or str(uuid4()),
-                                schema_version=SCHEMA_VERSION,
+                    async with engine.connect() as connection:
+                        await connection.execution_options(sqlite_write=True)
+                        async with connection.begin():
+                            await connection.run_sync(declared.create_all)
+                            await connection.execute(
+                                instance_metadata.insert().values(
+                                    instance_id=instance_id,
+                                    database_id=database_id or str(uuid4()),
+                                    schema_version=SCHEMA_VERSION,
+                                )
                             )
-                        )
                 await database.check()
+                await database.check_schema(additional_metadata)
             except SQLAlchemyError as exc:
                 raise NousError(
                     "storage.unavailable",
@@ -303,8 +339,10 @@ class Database:
         ):
             async with self._writer_lock:
                 try:
-                    async with self._engine.begin() as connection:
-                        yield WriteTx(connection)
+                    async with self._engine.connect() as connection:
+                        await connection.execution_options(sqlite_write=True)
+                        async with connection.begin():
+                            yield WriteTx(connection)
                 except OperationalError as exc:
                     if "locked" in str(exc).lower() or "busy" in str(exc).lower():
                         raise NousError("storage.busy", "Database is busy", retryable=True) from exc
@@ -345,3 +383,32 @@ class Database:
             raise NousError(
                 "storage.invalid_format", "Instance database schema is unreadable"
             ) from exc
+
+    async def check_schema(self, owners: tuple[sa.MetaData, ...]) -> None:
+        """Reject obsolete business schemas before any initialization or job migration."""
+
+        def inspect_schema(connection: sa.Connection) -> dict[str, list[str]]:
+            inspector = sa.inspect(connection)
+            tables = set(inspector.get_table_names())
+            missing: dict[str, list[str]] = {}
+            for owner in (metadata, *owners):
+                for table in owner.tables.values():
+                    if table.name not in tables:
+                        missing[table.name] = ["<table>"]
+                        continue
+                    actual = {column["name"] for column in inspector.get_columns(table.name)}
+                    absent = sorted(
+                        column.name for column in table.columns if column.name not in actual
+                    )
+                    if absent:
+                        missing[table.name] = absent
+            return missing
+
+        async with self.read() as tx:
+            missing = await tx.connection.run_sync(inspect_schema)
+        if missing:
+            raise NousError(
+                "storage.invalid_format",
+                "This database schema is incompatible; initialize a new instance in a new directory.",
+                details={"missing": missing},
+            )

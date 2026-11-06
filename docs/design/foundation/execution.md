@@ -6,13 +6,13 @@ ExecutionManager 负责根操作名额、配置快照、截止时间、运行范
 
 保留 fdb39e4 的 owner 隔离：同一 ExecutionManager 内嵌套操作继承上下文；A→B→A 中 B 有独立名额，回到 A 复用 A。前台按作用域完成信号结束，spawn 任务按实际 Task 生命周期结束。spawn 清空操作继承而保留日志/Trace 上下文。
 
-已接纳操作在停止接纳后的宽限期内可完成嵌套阶段和清理；新根操作被拒绝。OperationContext 不保存全局服务容器。
+已接纳操作在停止接纳后的宽限期内可完成嵌套阶段和清理；新根操作被拒绝。OperationContext 不保存全局服务容器。根操作绑定所调用 Runtime 的实例/启动关联与观测 provider，先于 Runtime 创建的异步 worker 同样取得正确上下文。配置更新等完整公开操作也进入该边界；详见 [执行与 Job 生命周期](execution-and-job-lifecycle.md)。
 
 ## 共同阻塞操作
 
 ExecutionManager.blocking(action, *args, on_cancel=None, **kwargs) 管理实际 worker。等待方收到取消后先调用一次同步、轻量的 on_cancel（若有），等待真实 worker 完成，再传播原 CancelledError。收尾异常附在原取消上；重复取消也继续等待。
 
-Native 使用 on_cancel=token.cancel。CAS 的文件操作和发布复用同一等待能力，文件句柄、临时路径和发布锁保持到 worker 退出。能在 worker 内完成打开/关闭的操作优先使用这一方式。
+Native 使用 on_cancel=token.cancel。CAS 的文件操作和发布复用同一等待能力，文件句柄、临时路径和发布锁保持到 worker 退出。能在 worker 内完成打开/关闭的操作优先使用这一方式。正文缓存命中的反序列化、绑定及未命中的序列化也属于阻塞计算；媒体子进程的终止、必要时 kill 和等待退出在重复取消下继续完成。
 
 ## 请求与并行层次
 
@@ -24,4 +24,4 @@ Native 所有请求共用一个有界 Rayon 池；Python 的 worker 只承载跨
 
 执行资源可在同进程独立构造多个 owner；完整 Runtime 的日志/SDK 装配仍按一个主要实例运行的当前部署合同。执行隔离修复不自动授权共享全局日志的多实例服务。真正需要多实例 Host 时再修改观测装配合同。
 
-关闭依次停止新入口、结束操作/子进程/Native 实际计算、关闭模型连接与存储、刷新观测、释放锁。独立操作异常不取消无关请求。沿用现有正常停止与启动失败清理能力。
+关闭依次停止新入口和 DBOS 桥接新派发、结束操作/子进程/Native 实际计算、销毁 DBOS 调度资源、关闭模型连接与存储、刷新观测、释放锁。DBOS 调度循环与原业务循环分开，桥接以实际 Task 完成信号收尾，详见 [运行桥接](runtime-bridge.md)。Job 等待与控制不占用其所等待业务需要的执行名额。独立操作异常不取消无关请求。沿用现有正常停止与启动失败清理能力。

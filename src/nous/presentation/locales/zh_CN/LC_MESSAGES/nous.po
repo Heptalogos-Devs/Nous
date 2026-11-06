@@ -903,3 +903,111 @@ msgstr "原生成提案"
 
 msgid "Adopted as complete Markdown override"
 msgstr "已按完整正文覆盖采用"
+
+msgid "Jobs"
+msgstr "维护工作"
+
+msgid "Worker running"
+msgstr "工作进程运行中"
+
+msgid "Worker not started"
+msgstr "工作进程未启动"
+
+msgid "Recent jobs: {total}; queued: {queued}; running: {running}; failed: {failed}"
+msgstr "近期工作：{total}；排队：{queued}；运行：{running}；失败：{failed}"
+
+msgid "Failed job: {kind} {job_id} — {stage} (step {step}): {reason}"
+msgstr "失败工作：{kind} {job_id} — {stage}（步骤 {step}）：{reason}"
+
+msgid "The model request failed"
+msgstr "模型请求失败"
+
+msgid "The current retrieval view could not be built"
+msgstr "无法构建当前检索视图"
+
+msgid "unknown"
+msgstr "未知"
+
+msgid "Retrieval refresh"
+msgstr "检索刷新"
+
+msgid "Queued"
+msgstr "已排队"
+
+msgid "Scheduled"
+msgstr "等待定时执行"
+
+msgid "Running"
+msgstr "运行中"
+
+msgid "Completed"
+msgstr "已完成"
+
+msgid "Failed"
+msgstr "失败"
+
+msgid "Cancelled"
+msgstr "已取消"
+
+msgid "Recovery limit reached"
+msgstr "已达恢复次数上限"
+
+msgid "Namespace"
+msgstr "命名空间"
+
+msgid "Outcome"
+msgstr "结果状态"
+
+msgid "Ready"
+msgstr "已就绪"
+
+msgid "Skipped"
+msgstr "已跳过"
+
+msgid "Superseded"
+msgstr "已被新版本取代"
+
+msgid "Published; newer changes are pending"
+msgstr "已发布；有较新的变更待处理"
+
+msgid "active"
+msgstr "已激活"
+
+msgid "inactive"
+msgstr "未激活"
+
+msgid "Result"
+msgstr "结果"
+
+msgid "Related job"
+msgstr "后续工作"
+
+msgid "Job"
+msgstr "工作"
+
+msgid "Retried from"
+msgstr "重试来源"
+
+msgid "Error"
+msgstr "错误"
+
+msgid "Failed step"
+msgstr "失败步骤"
+
+msgid "Retry"
+msgstr "重试"
+
+msgid "Resume"
+msgstr "继续"
+
+msgid "Wait"
+msgstr "等待"
+
+msgid "No jobs"
+msgstr "没有工作"
+
+msgid "Next page"
+msgstr "下一页"
+
+msgid "Retry created"
+msgstr "已创建重试工作"

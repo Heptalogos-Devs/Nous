@@ -1,6 +1,6 @@
 # Nous Native
 
-`vcp` 拥有 VCP d5c019e 的纯数值内核、来源独立性及具名 DTSC；`retrieval` 拥有 Tantivy/Jieba 与 USearch 索引；`python` 提供 `nous_native` 的 PyO3/NumPy 边界。Python WaveOperations 负责内容、模型、来源引用与快照发布。
+`vcp` 拥有 VCP d5c019e 的纯数值内核、来源独立性及具名 DTSC；`retrieval` 拥有 Tantivy/Jieba 与 USearch 索引；Windows 的 Tantivy Directory 复用标准库原子替换，允许旧 metadata 读者持有已打开的文件；`python` 提供 `nous_native` 的 PyO3/NumPy 边界。Python WaveOperations 负责内容、模型、来源引用与快照发布。
 
 从仓库根目录设置 `scripts/dev-env` 后执行 `uv sync --locked`。maturin 随本地依赖构建 CPython 3.14 扩展；Rust 和 C/C++ 构建产物、下载位于 `temp/`。
 

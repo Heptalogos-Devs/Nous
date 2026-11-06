@@ -115,8 +115,8 @@ def test_runtime_snapshots_transactions_and_time_domain_bindings(tmp_path: Path)
             old = runtime.configuration.snapshot
             result = await runtime.configuration.update({"execution.default_timeout_seconds": 2})
             assert result["state"] == "applied"
-            assert old.typed_values().execution.default_timeout_seconds is None
-            assert runtime.configuration.snapshot.typed_values().execution.default_timeout_seconds == 2
+            assert old.values.execution.default_timeout_seconds is None
+            assert runtime.configuration.snapshot.values.execution.default_timeout_seconds == 2
 
             mars = {"kind": "linear", "name": "Mars", "tick_seconds": "1/1000", "epoch": "sol 0"}
             assert (await runtime.configuration.update({"time.domains.mars": mars}))[
@@ -143,8 +143,8 @@ def test_runtime_snapshots_transactions_and_time_domain_bindings(tmp_path: Path)
             assert result["state"] == "saved_pending_restart"
             assert runtime.configuration.snapshot is before_restart
         async with open_instance(instance) as reopened:
-            assert reopened.configuration.snapshot.typed_values().execution.max_in_flight == 3
-            assert reopened.configuration.snapshot.typed_values().logging.level == "ERROR"
+            assert reopened.configuration.snapshot.values.execution.max_in_flight == 3
+            assert reopened.configuration.snapshot.values.logging.level == "ERROR"
             assert (await reopened.time.domains())["mars"].tick_seconds == Fraction(1, 1000)
             result = await reopened.configuration.update(
                 {

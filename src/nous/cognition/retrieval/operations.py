@@ -13,6 +13,7 @@ from pydantic import JsonValue, TypeAdapter
 
 from nous.common.errors import NousError
 from nous.content.artifacts import ArtifactStore
+from nous.content.contracts import ContentSelection
 from nous.content.results import ResultStore
 from nous.runtime.execution import ExecutionManager
 from nous.storage.database import Database, WriteTx
@@ -28,7 +29,7 @@ from nous.wave.operations import WaveOperations
 
 from .. import basis, schema
 from ..annotations import AnnotationOperations
-from ..contracts import Namespace, RecordRevisionRef, SourceBinding
+from ..contracts import Namespace, NamespaceRef, RecordRevisionRef, RevisionSelection, SourceBinding
 from ..scope import NamespaceOperations
 from ..writing.reading import RecordReader
 from .capture import CorpusCapture
@@ -76,7 +77,7 @@ class CognitiveRetrieval:
         wave: WaveOperations,
         annotations: AnnotationOperations,
         *,
-        namespace: Namespace | None = None,
+        namespace: NamespaceRef | None = None,
         locks: dict[tuple[str, str], asyncio.Lock] | None = None,
     ):
         self.database, self.execution, self.scope = database, execution, scope
@@ -86,7 +87,7 @@ class CognitiveRetrieval:
         self.projection = ProjectionBuilder(results)
         self._locks = locks if locks is not None else {}
 
-    def bind(self, namespace: Namespace) -> CognitiveRetrieval:
+    def bind(self, namespace: NamespaceRef) -> CognitiveRetrieval:
         """Return a namespace-bound retrieval service sharing the build locks."""
         return CognitiveRetrieval(
             self.database,
@@ -101,24 +102,22 @@ class CognitiveRetrieval:
             locks=self._locks,
         )
 
-    def _options(
+    async def _options(
         self,
         namespace: str | None,
         mode: Mode | None,
         include_review: bool | None,
         include_exploration: bool | None,
+        candidate_limit: int | None = None,
+        space_override: str | None = None,
     ) -> SearchOptions:
-        settings = self.execution.snapshot.typed_values().cognition
-        if self.namespace is not None:
-            if namespace is not None and namespace not in {self.namespace.name, self.namespace.id}:
-                raise NousError(
-                    "cognition.namespace_mismatch", "Retrieval is bound to another namespace"
-                )
-            namespace = self.namespace.id
+        settings = self.execution.snapshot.values.cognition
+        async with self.database.read() as tx:
+            namespace = (await self.scope.bound_in(tx, self.namespace, namespace)).id
         selected = mode or settings.search.default_mode
         if selected == "auto":
             selected = "hybrid" if settings.search.space else "lexical"
-        space = None if selected == "lexical" else settings.search.space
+        space = None if selected == "lexical" else (space_override or settings.search.space)
         if selected != "lexical" and not space:
             raise NousError(
                 "cognition.space_required", "This retrieval mode requires an embedding space"
@@ -131,16 +130,24 @@ class CognitiveRetrieval:
             settings.search.include_exploration
             if include_exploration is None
             else include_exploration,
-            settings.search.local_candidate_max_bytes,
+            candidate_limit
+            if candidate_limit is not None
+            else settings.search.local_candidate_max_bytes,
         )
 
-    async def _current_view(self, selected: SearchOptions) -> tuple[Namespace, SnapshotDescriptor]:
+    async def _current_view(
+        self,
+        selected: SearchOptions,
+        *,
+        build_key: str | None = None,
+        build_config: dict[str, object] | None = None,
+    ) -> tuple[Namespace, SnapshotDescriptor]:
         policy: dict[str, object] = {
             "include_review": selected.include_review,
             "include_exploration": selected.include_exploration,
             "local_candidate_max_bytes": selected.candidate_limit,
         }
-        profile = self.wave.profile(selected.space, policy)
+        profile = self.wave.profile(selected.space, policy, build_config=build_config)
         async with self.database.read() as tx:
             ns = await self.scope.get_in(tx, selected.namespace)
         collection = f"cognition:{ns.id}:{profile}"
@@ -194,7 +201,17 @@ class CognitiveRetrieval:
                 ).content_generation == captured.namespace.content_generation
 
             try:
-                published = await self.wave.build_view(view, selected.space, publish_if=unchanged)
+                published = await self.wave.build_view(
+                    view,
+                    selected.space,
+                    publish_if=unchanged,
+                    build_key=(
+                        f"{build_key}:{captured.namespace.content_generation}:{profile}"
+                        if build_key
+                        else None
+                    ),
+                    build_config=build_config,
+                )
             except NousError as error:
                 raise NousError(
                     "cognition.projection_failed",
@@ -228,6 +245,10 @@ class CognitiveRetrieval:
         mode: Mode | None = None,
         include_review: bool | None = None,
         include_exploration: bool | None = None,
+        build_key: str | None = None,
+        build_config: dict[str, object] | None = None,
+        candidate_limit: int | None = None,
+        space_override: str | None = None,
     ) -> dict[str, object]:
         """Ensure a retrieval snapshot for the selected namespace.
 
@@ -246,14 +267,26 @@ class CognitiveRetrieval:
                 Wave cannot build the view.
         """
         async with self.execution.operation("cognition.refresh"):
-            selected = self._options(namespace, mode, include_review, include_exploration)
-            ns, snapshot = await self._current_view(selected)
+            selected = await self._options(
+                namespace,
+                mode,
+                include_review,
+                include_exploration,
+                candidate_limit,
+                space_override,
+            )
+            ns, snapshot = await self._current_view(
+                selected, build_key=build_key, build_config=build_config
+            )
+            async with self.database.read() as tx:
+                current = await self.scope.get_in(tx, ns.id)
             return {
                 "namespace": ns.model_dump(mode="json"),
                 "snapshot": snapshot.ref.model_dump(mode="json"),
                 "covered_generation": snapshot.captured_generation,
                 "profile": snapshot.profile_signature,
                 "metadata": snapshot.metadata,
+                "current": current.content_generation == snapshot.captured_generation,
             }
 
     async def query(self, request: CognitiveQuery) -> QueryResult:
@@ -273,7 +306,7 @@ class CognitiveRetrieval:
                 ``cognition.projection_failed`` if Wave cannot build the current view.
         """
         async with self.execution.operation("cognition.query") as operation:
-            selected = self._options(
+            selected = await self._options(
                 request.namespace, request.mode, request.include_review, request.include_exploration
             )
             if request.snapshot:
@@ -283,7 +316,7 @@ class CognitiveRetrieval:
                 self._check_owner(snapshot, ns)
             else:
                 ns, snapshot = await self._current_view(selected)
-            settings = self.execution.snapshot.typed_values()
+            settings = self.execution.snapshot.values
             result = await self.wave.query(
                 WaveQuery(
                     snapshot=snapshot.ref.identifier,
@@ -323,6 +356,12 @@ class CognitiveRetrieval:
                     passage = SearchPassage.model_validate(
                         {
                             **{key: hit.get(key) for key in fields},
+                            "selection": RevisionSelection(
+                                revision=revision,
+                                selections=TypeAdapter(
+                                    tuple[ContentSelection, ...]
+                                ).validate_python(hit["origin_contents"]),
+                            ),
                             "channel_ranks": hit.get("channel_ranks") or {},
                             "channel_scores": hit.get("channel_scores") or {},
                             "evidence_roots": hit["sources"],
@@ -347,6 +386,7 @@ class CognitiveRetrieval:
                     delivery.append(
                         DeliveredSelection(
                             revision_ref=revision,
+                            selection=passage.selection,
                             candidate_ref=passage.candidate_ref,
                             content=passage.content,
                             group_rank=cast(int, raw["group_rank"]),
@@ -422,10 +462,10 @@ class CognitiveRetrieval:
         async with self.execution.operation("cognition.retrieval_status"):
             failure = None
             try:
-                selected = self._options(None, None, None, None)
+                selected = await self._options(None, None, None, None)
             except NousError as error:
                 failure = error.to_dict()
-                settings = self.execution.snapshot.typed_values().cognition
+                settings = self.execution.snapshot.values.cognition
                 selected = SearchOptions(
                     settings.default_namespace,
                     settings.search.default_mode

@@ -9,7 +9,10 @@ ModelExecutor 拥有真实协议请求、响应结构、完成状态、流、有
 ## 准备与执行值
 
 ```text
-FrozenTask = 任务定义 + 模板内容快照 + 任务配置 + 有序候选路线
+FrozenTask = 任务名 + 模板内容快照 + 任务配置 + 有序候选路线
+FrozenLanguageTask = 正式 Artifact 中可恢复的 FrozenTask 配方
+ProducedTask = 成功语言响应经 outputs 解释后的类型化有名产物
+PublishedComputation = 正式 descriptor Artifact + producer_key
 PreparedRun = FrozenTask + 有序 RequestGroup 引用计划
 PreparedGeneration = 当前路线的实际消息 + 输出合同 + 尚未准备的后继路线
 execute(PreparedGeneration, context, prepare_route) -> GenerationResult
@@ -25,7 +28,7 @@ ModelRegistry 负责解析 task/model/preset 和主次路线。Probe 使用显�
 
 生成、转写、Embedding 复用同一组截止时间、可重试错误分类、退避和尝试统计；各端点仍封装自己的请求和响应。把已有共用函数移到窄的请求策略模块，不通过导入整个 generation executor 来复用一小段逻辑，也不为共用循环发明自主工作流。
 
-SDK 自动重试为零或明确纳入同一计数。只有网络/服务暂态失败和显式启用的结构修复进入尝试。输入、模板、能力或来源错误直接返回。保存失败发生在尝试循环之外。
+SDK 自动重试为零或明确纳入同一计数。只有网络/服务暂态失败和显式启用的结构修复进入尝试。输入、模板和能力错误直接返回。结构化响应依次通过 JSON Schema 与 TaskDefinition.validate；模型返回了无效字段或未知来源键时，按 structured_retries/max_attempts 的共同预算处理修复。TaskDefinition.outputs 的内容读取、链接/编辑解释和采用在请求尝试循环之外执行。
 
 ## 完成和流
 
@@ -40,6 +43,8 @@ ResultStore 保存语义消息、actual model/provider/protocol、模板及 Sche
 请求参数必须是经过合并并实际交给 SDK 的参数；不只记录原 preset。已返回用量累加；未报告的 token、费用保持未知。采用者负责正式数据生命周期，诊断 Trace 不承担唯一来源记录。
 
 ## 封装与迁移
+
+GenerationOperations 在 execute/stream 返回成功 GenerationResult 后、调用 TaskDefinition.outputs 前，将原始响应与实际 ReadingInput 采用为 model.language_response。outputs 失败仍返回 response_result_ref、稳定 producer_key 和已完成引用；recover_response(ref, snapshot) 直接重做解释，持久 workflow 用原 producer_key 重入 produce 复用响应。两条恢复路径均不提交新的协议请求；详细冻结、绑定及发布接口见[成功计算恢复](durable-computation.md)。
 
 任务 outputs 负责有名结果，GenerationOperations 完成采用。MediaPreparer 仅做确定性准备；prepare_group 在所选路线需要时调用 transcribe。`GenerationOperations.run_group` 执行共同语义组，run_input、run 与 MediaAnalysis 都使用它；`run_prepared` 执行当前已编译请求并采用实际成功路线返回的 ReadingInput 与 coverage。
 

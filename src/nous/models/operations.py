@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
+from uuid import uuid4
 
 from pydantic import JsonValue, TypeAdapter
 
@@ -16,6 +18,7 @@ from nous.common.operations import add_error_context, record_completed
 from nous.content.contracts import (
     Artifact,
     ArtifactRef,
+    BlobRef,
     ContentSelection,
     InputGroup,
     InputPart,
@@ -23,6 +26,7 @@ from nous.content.contracts import (
     OriginSlice,
     OutputContent,
     ProcessingResult,
+    ResultRef,
     SourceRole,
     SourceSelection,
 )
@@ -31,6 +35,16 @@ from nous.media.contracts import PreparedBatch, PreparedSource
 from nous.models.configuration import PresetConfig, TaskAssignment
 from nous.runtime.execution import ExecutionManager, OperationContext
 
+from .computation import (
+    FrozenLanguageTask,
+    PublishedComputation,
+    descriptor_text,
+    freeze_task,
+    generated_value,
+    load_task,
+    read_generated,
+    reading_value,
+)
 from .contracts import GenerationResult, ReadingInput
 from .executor import FrozenTask, ModelRoute, PreparedGeneration
 from .input import InputPlan, RequestGroup, for_route, materialize, plan_inputs
@@ -128,9 +142,132 @@ class GenerationOperations:
             preparer,
         )
 
+    async def freeze_language_task(self, task: str, snapshot: ConfigSnapshot) -> FrozenLanguageTask:
+        frozen = self.executor.freeze(task, snapshot)
+        contract = (
+            self.executor.compiler.catalog.tasks[
+                frozen.resource.manifest.contract_id
+            ].describe_contract()
+            if frozen.resource
+            else {}
+        )
+        transcription_ref = None
+        transcription_task = snapshot.values.media.audio.transcription_task
+        if (
+            transcription_task
+            and transcription_task != task
+            and frozen.assignment.operation != "transcription"
+        ):
+            transcription = self.executor.freeze(transcription_task, snapshot)
+            transcription_contract = (
+                self.executor.compiler.catalog.tasks[
+                    transcription.resource.manifest.contract_id
+                ].describe_contract()
+                if transcription.resource
+                else {}
+            )
+            transcription_ref = (
+                await freeze_task(self.results, transcription, snapshot, transcription_contract)
+            ).descriptor
+        return await freeze_task(self.results, frozen, snapshot, contract, transcription_ref)
+
+    async def load_language_task(
+        self, ref: ArtifactRef | FrozenLanguageTask, snapshot: ConfigSnapshot
+    ) -> FrozenTask:
+        return await load_task(
+            self.results,
+            ref.descriptor if isinstance(ref, FrozenLanguageTask) else ref,
+            snapshot,
+            self.executor.compiler.catalog.tasks,
+        )
+
+    async def publish_computation(
+        self, produced: ProducedTask, producer_key: str, frozen_task_ref: ArtifactRef | None = None
+    ) -> PublishedComputation:
+        published = await self.results.prepare_outputs(produced.outputs)
+        value = {
+            "producer_key": producer_key,
+            "operation": produced.operation,
+            "producer": produced.producer,
+            "actual_inputs": [group.model_dump(mode="json") for group in produced.actual_inputs],
+            "outputs": {
+                output.name: {
+                    "blob": output.content.blob.model_dump(mode="json"),
+                    "media_type": output.media_type,
+                    "display_name": output.display_name,
+                }
+                for output in published.outputs
+            },
+            "request": produced.request,
+            "parameters": produced.parameters,
+            "coverage": produced.coverage,
+            "completed_stage_refs": list(produced.completed_stage_refs),
+            "frozen_task_ref": frozen_task_ref.model_dump(mode="json") if frozen_task_ref else None,
+        }
+        outputs = {
+            **produced.outputs,
+            "computation_descriptor": OutputContent(
+                data=json.dumps(value, sort_keys=True, ensure_ascii=False).encode(),
+                media_type="application/json",
+                display_name="computation.json",
+            ),
+        }
+        result = await self.results.adopt(
+            operation="model.published_computation",
+            producer=produced.producer,
+            inputs=produced.actual_inputs,
+            outputs=outputs,
+            request=produced.request,
+            parameters={"stage_result_refs": list(produced.completed_stage_refs)},
+            coverage=produced.coverage,
+            producer_key=producer_key,
+        )
+        return PublishedComputation(
+            descriptor=next(
+                output.artifact
+                for output in result.outputs
+                if output.name == "computation_descriptor"
+            ),
+            producer_key=producer_key,
+        )
+
+    async def load_computation(self, value: PublishedComputation | ArtifactRef) -> ProducedTask:
+        descriptor = value.descriptor if isinstance(value, PublishedComputation) else value
+        data = json.loads(await descriptor_text(self.results, descriptor))
+        if (
+            isinstance(value, PublishedComputation)
+            and data.get("producer_key") != value.producer_key
+        ):
+            raise NousError(
+                "content.producer_conflict",
+                "Computation descriptor belongs to a different producer key",
+            )
+        outputs: dict[str, OutputContent] = {}
+        for name, output in data["outputs"].items():
+            blob = BlobRef.model_validate(output["blob"])
+            outputs[name] = OutputContent(
+                data=await self.results.artifacts.content.read_bytes(
+                    blob, max_bytes=max(blob.byte_length, 1)
+                ),
+                media_type=output["media_type"],
+                display_name=output["display_name"],
+            )
+        return ProducedTask(
+            operation=data["operation"],
+            producer=data["producer"],
+            actual_inputs=tuple(
+                InputGroup.model_validate(group) for group in data["actual_inputs"]
+            ),
+            outputs=outputs,
+            request=data["request"],
+            parameters=data["parameters"],
+            coverage=data["coverage"],
+            completed_stage_refs=tuple(data["completed_stage_refs"]),
+        )
+
     def capabilities(self, snapshot: ConfigSnapshot) -> dict[str, JsonValue]:
         tasks: dict[str, JsonValue] = {}
-        for name in snapshot.typed_values().tasks:
+        for name in snapshot.values.tasks:
             try:
                 frozen = self.executor.freeze(name, snapshot)
                 tasks[name] = {
@@ -143,7 +280,7 @@ class GenerationOperations:
         return {"tasks": tasks}
 
     def freeze_transcription(self, snapshot: ConfigSnapshot) -> FrozenTask | None:
-        task = snapshot.typed_values().media.audio.transcription_task
+        task = snapshot.values.media.audio.transcription_task
         return self.executor.freeze(task, snapshot) if task else None
 
     async def _accept(
@@ -216,7 +353,7 @@ class GenerationOperations:
                     plan = await plan_inputs(
                         self.preparer,
                         originals,
-                        snapshot.typed_values().media,
+                        (frozen.media_settings or snapshot.values.media),
                         requirements=route.model.input_formats,
                         selection=selection,
                         document_mode=document_mode,
@@ -295,9 +432,12 @@ class GenerationOperations:
                             self.preparer,
                             group,
                             candidate.model.input_formats,
-                            snapshot.typed_values().media,
+                            (frozen.media_settings or snapshot.values.media),
                         ),
-                        snapshot.typed_values().media.max_inline_bytes,
+                        min(
+                            (frozen.media_settings or snapshot.values.media).max_inline_bytes,
+                            snapshot.values.media.max_inline_bytes,
+                        ),
                     )
                     completed.extend(batch.completed_result_refs)
                     reading = ReadingInput(question, instructions, (*batch.sources, *extra_sources))
@@ -314,7 +454,7 @@ class GenerationOperations:
                             reading,
                             batch.coverage,
                             missing,
-                            snapshot.typed_values().media.audio.transcription_task,
+                            snapshot.values.media.audio.transcription_task,
                         )
                     reading = await self.language_sources(
                         reading, selected, snapshot, context, completed
@@ -396,6 +536,8 @@ class GenerationOperations:
         completed: list[str] | None = None,
         on_delta: Callable[[str], None] | None = None,
         on_prepared: Callable[[PreparedGeneration], None] | None = None,
+        producer_key: str | None = None,
+        frozen_task_ref: ArtifactRef | None = None,
     ) -> ProducedTask:
         """Compute one semantic group without adopting its named outputs.
 
@@ -414,6 +556,53 @@ class GenerationOperations:
         """
         completed = completed if completed is not None else []
         async with self.execution.operation("model.generate", snapshot):
+            identity = hashlib.sha256(
+                json.dumps(
+                    {
+                        "task": frozen.task,
+                        "prompt": frozen.resource.execution_signature if frozen.resource else None,
+                        "question": question,
+                        "instructions": instructions,
+                        "schema": schema,
+                        "inputs": [
+                            [item.model_dump(mode="json") for item in batch.inputs]
+                            for batch in group.batches
+                        ],
+                        "extra_sources": reading_value(ReadingInput(sources=tuple(extra_sources))),
+                    },
+                    sort_keys=True,
+                    ensure_ascii=False,
+                ).encode()
+            ).hexdigest()
+            if producer_key is not None:
+                accepted = await self.results.find_producer(producer_key + ":response")
+                if accepted is not None:
+                    if accepted.parameters.get("request_identity") != identity:
+                        raise NousError(
+                            "content.producer_conflict",
+                            "Saved response belongs to a different language request",
+                            details={"producer_key": producer_key},
+                        )
+                    envelope = next(
+                        output.artifact
+                        for output in accepted.outputs
+                        if output.name == "computation"
+                    )
+                    generated = read_generated(
+                        json.loads(await descriptor_text(self.results, envelope))
+                    )
+                    assert generated.reading is not None
+                    prepared = self.executor.prepare(
+                        frozen, generated.reading, snapshot, schema=schema
+                    )
+                    return await self._interpret_response(
+                        prepared,
+                        generated,
+                        accepted,
+                        producer_key + ":response",
+                        None,
+                        generated.coverage,
+                    )
 
             async def resolve(route: ModelRoute | None = None) -> PreparedGeneration:
                 request = await self.prepare_group(
@@ -433,7 +622,12 @@ class GenerationOperations:
                 return request
 
             return await self.produce_prepared(
-                await resolve(), on_delta=on_delta, prepare_route=resolve
+                await resolve(),
+                on_delta=on_delta,
+                prepare_route=resolve,
+                producer_key=producer_key,
+                frozen_task_ref=frozen_task_ref,
+                request_identity=identity,
             )
 
     async def transcribe(
@@ -445,7 +639,7 @@ class GenerationOperations:
         frozen: FrozenTask | None = None,
     ) -> ProcessingResult:
         """Adopt exactly one successful endpoint response, with segment-local body coordinates."""
-        task = snapshot.typed_values().media.audio.transcription_task
+        task = frozen.task if frozen is not None else snapshot.values.media.audio.transcription_task
         if task is None:
             raise NousError(
                 "media.audio_capability_missing",
@@ -521,7 +715,14 @@ class GenerationOperations:
                 if not artifact.media_type.startswith("audio/") or artifact.media_type in accepted:
                     parts.append(part)
                     continue
-                transcription = transcription or self.freeze_transcription(snapshot)
+                transcription = transcription or frozen.transcription
+                if transcription is None:
+                    if frozen.media_settings is not None:
+                        raise NousError(
+                            "media.audio_capability_missing",
+                            "The accepted task has no configured transcription resource",
+                        )
+                    transcription = self.freeze_transcription(snapshot)
                 result = await self.transcribe(source, part, snapshot, context, transcription)
                 completed.append(result.ref.identifier)
                 output = next(output for output in result.outputs if output.name == "transcript")
@@ -665,7 +866,9 @@ class GenerationOperations:
                 )
             )
 
-    async def adopt_produced(self, produced: ProducedTask) -> ProcessingResult:
+    async def adopt_produced(
+        self, produced: ProducedTask, *, producer_key: str | None = None
+    ) -> ProcessingResult:
         """Adopt a completed computation without submitting another model request.
 
         Output publication precedes the write transaction. If adoption fails,
@@ -692,6 +895,7 @@ class GenerationOperations:
                     request=produced.request,
                     parameters=produced.parameters,
                     coverage=produced.coverage,
+                    producer_key=producer_key,
                 )
             record_completed(result.ref.identifier)
             return result
@@ -722,24 +926,179 @@ class GenerationOperations:
         context: OperationContext | None = None,
         on_delta: Callable[[str], None] | None = None,
         prepare_route: Callable[[ModelRoute], Awaitable[PreparedGeneration]] | None = None,
+        producer_key: str | None = None,
+        frozen_task_ref: ArtifactRef | None = None,
+        request_identity: str | None = None,
     ) -> ProducedTask:
         async with self.execution.operation("model.generate", prepared.snapshot) as active:
-            if on_delta is None:
-                generated = await self.executor.execute(
-                    prepared, context=context or active, prepare_route=prepare_route
+            producer_key = producer_key or "generation:" + str(uuid4())
+            response_key = producer_key + ":response"
+            identity = (
+                request_identity
+                or hashlib.sha256(
+                    json.dumps(
+                        {
+                            "task": prepared.task,
+                            "prompt": prepared.compiled.resource.execution_signature,
+                            "reading": reading_value(prepared.compiled.reading),
+                        },
+                        sort_keys=True,
+                        ensure_ascii=False,
+                    ).encode()
+                ).hexdigest()
+            )
+            accepted = await self.results.find_producer(response_key)
+            if accepted is not None:
+                if accepted.parameters.get("request_identity") != identity:
+                    raise NousError(
+                        "content.producer_conflict",
+                        "Saved response belongs to a different language request",
+                        details={"producer_key": response_key},
+                    )
+                envelope = next(
+                    output.artifact for output in accepted.outputs if output.name == "computation"
+                )
+                generated = read_generated(
+                    json.loads(await descriptor_text(self.results, envelope))
                 )
             else:
-                async with self.executor.stream(
-                    prepared, context=context or active, prepare_route=prepare_route
-                ) as stream:
-                    async for delta in stream:
-                        on_delta(delta)
-                    if stream.result is None:
-                        raise NousError(
-                            "model.incomplete_stream", "The stream returned no completed result"
-                        )
-                    generated = stream.result
-            return await self._interpret(prepared, generated, inputs, coverage)
+                if on_delta is None:
+                    generated = await self.executor.execute(
+                        prepared, context=context or active, prepare_route=prepare_route
+                    )
+                else:
+                    async with self.executor.stream(
+                        prepared, context=context or active, prepare_route=prepare_route
+                    ) as stream:
+                        async for delta in stream:
+                            on_delta(delta)
+                        if stream.result is None:
+                            raise NousError(
+                                "model.incomplete_stream", "The stream returned no completed result"
+                            )
+                        generated = stream.result
+                reading = generated.reading or prepared.compiled.reading
+                accepted = await self.results.adopt(
+                    operation="model.language_response",
+                    producer=generated.producer,
+                    inputs=tuple(source.group for source in reading.sources if source.group),
+                    outputs={
+                        "response": OutputContent(
+                            data=json.dumps(generated.response, ensure_ascii=False).encode(),
+                            media_type="application/json",
+                            display_name="response.json",
+                        ),
+                        "computation": OutputContent(
+                            data=json.dumps(
+                                generated_value(generated, reading), ensure_ascii=False
+                            ).encode(),
+                            media_type="application/json",
+                            display_name="response-computation.json",
+                        ),
+                    },
+                    request=generated.request,
+                    parameters={
+                        "request_identity": identity,
+                        "producer_key": response_key,
+                        "frozen_task_ref": frozen_task_ref.model_dump(mode="json")
+                        if frozen_task_ref
+                        else None,
+                    },
+                    coverage=generated.coverage,
+                    producer_key=response_key,
+                )
+            return await self._interpret_response(
+                prepared, generated, accepted, response_key, inputs, coverage
+            )
+
+    async def recover_response(
+        self,
+        ref: str | ResultRef,
+        snapshot: ConfigSnapshot,
+        *,
+        frozen: FrozenTask | None = None,
+    ) -> ProducedTask:
+        """Interpret an accepted language response without sending another protocol request.
+
+        A retained frozen task is loaded against the current resource bindings.
+        Ordinary responses use the installed task with the same output contract.
+        """
+        async with self.execution.operation("model.recover_response", snapshot):
+            accepted = await self.results.get(ref)
+            if accepted.operation != "model.language_response":
+                raise NousError(
+                    "model.response_required", "Recovery requires an accepted language response"
+                )
+            envelope = next(
+                output.artifact for output in accepted.outputs if output.name == "computation"
+            )
+            generated = read_generated(json.loads(await descriptor_text(self.results, envelope)))
+            retained = accepted.parameters.get("frozen_task_ref")
+            if frozen is None:
+                frozen = (
+                    await self.load_language_task(ArtifactRef.model_validate(retained), snapshot)
+                    if retained
+                    else self.executor.freeze(str(generated.request["task"]), snapshot)
+                )
+            if (
+                frozen.resource is None
+                or frozen.resource.manifest.contract_id != generated.request.get("contract_id")
+            ):
+                raise NousError(
+                    "model.task_contract_changed",
+                    "Installed task contract differs from the accepted response",
+                )
+            assert generated.reading is not None
+            schema = cast(dict[str, JsonValue] | None, generated.request.get("schema"))
+            prepared = self.executor.prepare(
+                frozen,
+                generated.reading,
+                snapshot,
+                schema=schema if frozen.resource.manifest.contract_id == "custom-reading" else None,
+            )
+            if prepared.compiled.schema != schema:
+                raise NousError(
+                    "model.task_contract_changed",
+                    "Installed output schema differs from the accepted response",
+                )
+            return await self._interpret_response(
+                prepared,
+                generated,
+                accepted,
+                str(accepted.parameters.get("producer_key") or accepted.ref.identifier),
+                None,
+                generated.coverage,
+            )
+
+    async def _interpret_response(
+        self,
+        prepared: PreparedGeneration,
+        generated: GenerationResult,
+        accepted: ProcessingResult,
+        producer_key: str,
+        inputs: Sequence[InputGroup] | None,
+        coverage: Mapping[str, object] | None,
+    ) -> ProducedTask:
+        try:
+            produced = await self._interpret(prepared, generated, inputs, coverage)
+            return replace(
+                produced,
+                completed_stage_refs=tuple(
+                    dict.fromkeys((*produced.completed_stage_refs, accepted.ref.identifier))
+                ),
+            )
+        except BaseException as error:
+            add_error_context(
+                error,
+                {
+                    "stage": "model.interpret",
+                    "model_succeeded": True,
+                    "response_result_ref": accepted.ref.model_dump(mode="json"),
+                    "producer_key": producer_key,
+                    "completed_result_refs": [accepted.ref.identifier],
+                },
+            )
+            raise
 
     async def _interpret(
         self,
@@ -839,7 +1198,7 @@ class GenerationOperations:
                 plan = await plan_inputs(
                     self.preparer,
                     originals,
-                    snapshot.typed_values().media,
+                    snapshot.values.media,
                     requirements=frozen.routes[0].model.input_formats if frozen else (),
                     per_batch=per_batch,
                     contract=self.executor.compiler.catalog.tasks[resource.manifest.contract_id],
@@ -859,7 +1218,7 @@ class GenerationOperations:
                     previews.append(request.to_dict())
                 else:
                     batch = await materialize(
-                        self.preparer, group, snapshot.typed_values().media.max_inline_bytes
+                        self.preparer, group, snapshot.values.media.max_inline_bytes
                     )
                     previews.append(
                         self.executor.compiler.compile(
@@ -875,7 +1234,7 @@ class GenerationOperations:
     async def probe(
         self, model: str, input: Path | None, snapshot: ConfigSnapshot
     ) -> GenerationOutcome:
-        settings = snapshot.typed_values()
+        settings = snapshot.values
         selected = settings.models.get(model)
         if selected is None:
             raise NousError(

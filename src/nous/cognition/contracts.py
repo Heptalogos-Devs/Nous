@@ -15,10 +15,21 @@ class CognitiveValue(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
 
-class Namespace(CognitiveValue):
+class NamespaceRef(CognitiveValue):
+    """Stable identity of a namespace within an instance."""
+
+    instance_id: str
     id: str
+
+
+class Namespace(CognitiveValue):
+    ref: NamespaceRef
     name: str
     content_generation: int = 0
+
+    @property
+    def id(self) -> str:
+        return self.ref.id
 
 
 class RecordRef(CognitiveValue):
@@ -37,6 +48,13 @@ class RecordRevisionRef(CognitiveValue):
     @property
     def identifier(self) -> str:
         return f"{self.record_ref.identifier}@{self.ordinal}"
+
+
+class RevisionSelection(CognitiveValue):
+    """Selections in the body of one exact, formally adopted revision."""
+
+    revision: RecordRevisionRef
+    selections: tuple[ContentSelection, ...] = Field(min_length=1)
 
 
 class SourceBinding(CognitiveValue):
@@ -67,6 +85,7 @@ class RecordView(CognitiveValue):
     title_source: TitleSource
     body_artifact: ArtifactRef
     body: str
+    selection: RevisionSelection
 
     @computed_field
     @property

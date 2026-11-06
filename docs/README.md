@@ -1,6 +1,6 @@
 # Nous 设计与开发文档
 
-当前施工入口为 [Journal 可控维护与共同能力整改](plans/journal-maintenance.md)。首条持续认知链已形成，本轮在其上完善使用与维护。已完成的基础收敛与 Wave Native 计划保留为对应能力的实施依据。
+当前能力见[当前工作](CURRENT.md)，保存后维护的完整使用见[操作说明](development/durable-cognition-walkthrough.md)。[可靠认知操作与持久维护](plans/durable-cognition.md)记录身份、来源、原文、执行与 DBOS 维护的交付范围；Journal Maintenance、基础收敛与 Wave Native 计划保留为对应能力的实施依据。
 
 ## 全局入口
 
@@ -28,6 +28,8 @@ Wave：[能力与边界](design/wave/overview.md)、[资产与集合](design/wav
 
 共同接缝：[内容阅读与准备](design/content/reading-and-preparation.md)、[投影准备](design/wave/corpus-preparation.md)、[文稿分组](design/wave/grouped-delivery.md)、[操作结果](design/foundation/operation-outcomes.md)、[Prompt 编辑上下文](design/models/prompt-editing-context.md)、[配置](design/cognition/maintenance-configuration.md)、[维护 CLI](design/interfaces/journal-maintenance-cli.md)、[实例选择](design/interfaces/instance-selection.md)。
 
-后续：[认知使用路线](plans/cognitive-use-roadmap.md)。
+本轮专题：[稳定身份](design/foundation/stable-identities.md)、[来源解析](design/cognition/source-resolution.md)、[无损正文](design/content/selection-and-text.md)、[当前视图变化](design/cognition/current-view-mutations.md)、[配置快照](design/foundation/typed-config-snapshot.md)、[执行与资源](design/foundation/execution-and-job-lifecycle.md)、[DBOS 接入](design/foundation/dbos-integration.md)、[持久维护](design/cognition/durable-maintenance.md)、[成功计算](design/models/durable-computation.md)、[宿主与 Job](design/interfaces/jobs-and-host.md)。
 
-NousQL：[查询语言手册](design/nousql/README.md)。
+后续：[认知使用路线](plans/cognitive-use-roadmap.md)、[工作中的认知使用](plans/cognitive-use-next.md)。
+
+NousQL：[查询语言设计](design/nousql/README.md)。

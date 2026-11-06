@@ -2,7 +2,7 @@
 
 ## 选择
 
-采用 DBOS Python 稳定版本提供持久工作、队列、取消、延迟和恢复。本专题在 Journal 维护之后作为下一项实际建设，详见 [后续路线](../../plans/cognitive-use-roadmap.md)。定时触发可由外部 Host 调用；本轮不自建定时平台。
+采用 DBOS Python 3.4.0 提供持久工作、队列、取消、延迟和恢复。本轮实施见 [可靠认知操作与持久维护](../../plans/durable-cognition.md)，具体版本、装配与事务接口见 [DBOS 接入](dbos-integration.md)。定时触发可由外部 Host 调用；本轮不自建定时平台。
 
 DBOS 系统数据库与业务表使用同一 SQLite 文件。工作拥有者决定内容、输入、结果和重试是否合理；DBOS 负责通用执行机制。
 
@@ -10,13 +10,13 @@ DBOS 系统数据库与业务表使用同一 SQLite 文件。工作拥有者决�
 
 应用组合根注册命名 workflow 函数并显式绑定所需业务操作。公开 payload 只含可持久序列化的值和正式引用，不包含 Runtime、SQLAlchemy Connection、HTTP 客户端或模型实例。
 
-恢复时在相同命名注册之后启动领取。DBOSClient 当前支持 class_name/instance_name 对已注册方法入队；实施时按实际采用版本固定接口。组合根注册完整操作并绑定所需 owner，避免全局 app 查找和按每次请求动态注册函数。持有实例锁的同一长期宿主运行执行器，不另起一个也 open_instance 的进程。
+恢复时在相同命名注册之后启动领取。DBOSClient 当前支持 class_name/instance_name 对已注册方法入队；实施时按实际采用版本固定接口。组合根注册完整操作并绑定所需 owner，避免全局 app 查找和按每次请求动态注册函数。持有实例锁的同一长期宿主运行执行器，不另起一个也 open_instance 的进程。DBOS 使用自己的调度循环，业务阶段通过有限 RuntimeBridge 回到原 Nous 循环；数据库 AsyncEngine、模型连接和 Native 资源不跨循环使用。
 
 事务内入队按 [事务专题](transactions.md)执行。方法对当前 SQLAlchemy transaction 生效；不要再复制队列状态到一套应用任务总表。
 
 ## 结果与状态
 
-业务结果以所属对象保存。任务 handle 返回当前状态、结果引用及真实错误。恢复、等待和继续使用同一个 handle；普通用户看到可读工作名和进展，不必拆内部 request ID 再猜调用方式。
+业务结果以所属对象保存。公开入口使用 runtime.jobs、JobRef 和 nous job，保留 WorkContext 的认知含义。任务 handle 返回当前状态、结果引用及真实错误。恢复、等待和继续使用同一个 handle；普通用户看到可读工作名和进展，不必拆内部 request ID 再猜调用方式。
 
 DBOS 工作记录可按其保留策略处理。正式采用的模型输出、认知或内容引用保持独立生命周期，不能随任务历史清理一起消失。
 
@@ -26,10 +26,10 @@ DBOS 重试用于该工作声明的可重试步骤。模型执行器内部尝试
 
 外部模型可能已经收到一次失败或超时请求。DBOS 的数据库执行保证不被描述成提供方收费 exactly-once。没有拿到结果的请求状态按实际信息保留；是否重试由预算与工作政策决定。
 
-任务取消后停止后续采用或新调用；已经提交的正式结果不会自动回滚。关闭服务先停止领取，处理当前执行，再关闭 DBOS 及数据库资源。
+任务取消后停止后续采用或新调用；已经提交的正式结果不会自动回滚。关闭服务先停止新的业务派发，等待或取消当前执行并等到实际资源退出，再关闭 DBOS 及数据库资源。跨循环 Future 的 cancelled 状态不作为清理结束信号，详见 [运行桥接](runtime-bridge.md)。
 
 ## 实施依据与验证
 
-使用 [DBOS Client](https://docs.dbos.dev/python/reference/client) 的事务入队和 [Queues](https://docs.dbos.dev/python/tutorials/queue-tutorial) 原有能力。首个消费者用正文保存后的标注与检索发布接通，不建立只回传字符串的永久演示任务。
+使用 [DBOS Client](https://docs.dbos.dev/python/reference/client) 的事务入队和 [Queues](https://docs.dbos.dev/python/tutorials/queue-tutorial) 原有能力。首个消费者为独立的标注与刷新工作：保存事务可分别登记两者，标注成功激活后在采用事务登记新代次刷新；标注失败不阻断正文检索。具体合同见 [持久维护](../cognition/durable-maintenance.md)，不建立只回传字符串的永久演示任务。
 
 验证真实入队、状态、结果读取、重启继续、一次失败恢复及业务写入回滚时不入队。只验证本项目的集成责任。

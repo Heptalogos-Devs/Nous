@@ -2,7 +2,7 @@
 
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, cast
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import sqlalchemy as sa
 from sqlalchemy.dialects.sqlite import insert
@@ -13,20 +13,25 @@ from nous.configuration.service import get_path
 from nous.runtime.execution import ExecutionManager
 from nous.storage.database import Database, ReadTx, WriteTx
 
-from .contracts import Namespace
+from .contracts import Namespace, NamespaceRef
 from .schema import namespaces
 
 if TYPE_CHECKING:
     from nous.application.configuration import ConfigurationOperations
 
 
-async def initialize_in(tx: WriteTx) -> None:
+async def initialize_in(tx: WriteTx, instance_id: str) -> NamespaceRef:
     """Ensure the default namespace exists in the caller's write transaction."""
     await tx.connection.execute(
         insert(namespaces)
         .values(id=str(uuid4()), name="default", content_generation=0)
         .on_conflict_do_nothing(index_elements=[namespaces.c.name])
     )
+    identity = await tx.connection.scalar(
+        sa.select(namespaces.c.id).where(namespaces.c.name == "default")
+    )
+    assert identity is not None
+    return NamespaceRef(instance_id=instance_id, id=identity)
 
 
 class NamespaceOperations:
@@ -35,29 +40,40 @@ class NamespaceOperations:
     Methods ending in ``_in`` use the supplied transaction; its caller owns commit
     or rollback. Other methods open their own operation and database transaction.
     """
+
     def __init__(
         self,
         database: Database,
         execution: ExecutionManager,
         configuration: ConfigurationOperations,
+        instance_id: str,
     ):
         self.database, self.execution, self.configuration = database, execution, configuration
+        self.instance_id = instance_id
 
-    @staticmethod
-    async def get_in(tx: ReadTx, name: str) -> Namespace:
+    async def get_in(self, tx: ReadTx, name: str | NamespaceRef) -> Namespace:
         """Resolve a namespace ID or name in the supplied read view.
 
         Raises:
             NousError: The namespace does not exist (``cognition.namespace_not_found``).
         """
-        row = (
-            (
-                await tx.connection.execute(
-                    sa.select(namespaces).where(
-                        sa.or_(namespaces.c.id == name, namespaces.c.name == name)
-                    )
+        if isinstance(name, NamespaceRef):
+            if name.instance_id != self.instance_id:
+                raise NousError(
+                    "cognition.instance_mismatch", "Namespace belongs to another instance"
                 )
-            )
+            selector = name.id
+            condition = namespaces.c.id == selector
+        else:
+            selector = name
+            try:
+                UUID(selector)
+            except ValueError:
+                condition = namespaces.c.name == selector
+            else:
+                condition = namespaces.c.id == selector
+        row = (
+            (await tx.connection.execute(sa.select(namespaces).where(condition)))
             .mappings()
             .one_or_none()
         )
@@ -67,7 +83,36 @@ class NamespaceOperations:
                 "Namespace does not exist",
                 details={"namespace": name},
             )
-        return Namespace.model_validate(dict(row))
+        return Namespace(
+            ref=NamespaceRef(instance_id=self.instance_id, id=row["id"]),
+            name=row["name"],
+            content_generation=row["content_generation"],
+        )
+
+    async def resolve(
+        self, selector: str | NamespaceRef, *, tx: ReadTx | None = None
+    ) -> NamespaceRef:
+        """Resolve a selector to an instance-bound, stable identity."""
+        if tx is not None:
+            return (await self.get_in(tx, selector)).ref
+        async with self.database.read() as view:
+            return (await self.get_in(view, selector)).ref
+
+    async def read(self, ref: NamespaceRef) -> Namespace:
+        async with self.database.read() as tx:
+            return await self.get_in(tx, ref)
+
+    async def bound_in(
+        self, tx: ReadTx, bound: NamespaceRef | None, selector: str | NamespaceRef | None
+    ) -> Namespace:
+        """Resolve explicit selectors before comparing them to a bound identity."""
+        chosen = selector or bound or self.execution.snapshot.values.cognition.default_namespace
+        namespace = await self.get_in(tx, chosen)
+        if bound is not None and namespace.ref != bound:
+            raise NousError(
+                "cognition.namespace_mismatch", "Operation belongs to another namespace"
+            )
+        return namespace
 
     async def advance_in(self, tx: WriteTx, namespace_id: str) -> Namespace:
         """Increment a namespace's content generation in the caller's transaction."""
@@ -87,6 +132,12 @@ class NamespaceOperations:
         async with self.execution.operation("namespace.create"):
             if not name.strip():
                 raise NousError("input.invalid", "Namespace name must not be empty")
+            try:
+                UUID(name)
+            except ValueError:
+                pass
+            else:
+                raise NousError("input.invalid", "Namespace name cannot be a namespace ID")
             async with self.database.write() as tx:
                 result = await tx.connection.execute(
                     insert(namespaces)
@@ -106,7 +157,14 @@ class NamespaceOperations:
                     .mappings()
                     .all()
                 )
-                return tuple(Namespace.model_validate(dict(row)) for row in rows)
+                return tuple(
+                    Namespace(
+                        ref=NamespaceRef(instance_id=self.instance_id, id=row["id"]),
+                        name=row["name"],
+                        content_generation=row["content_generation"],
+                    )
+                    for row in rows
+                )
 
     async def select(self, namespace: str) -> Namespace:
         """Save the selected namespace ID as the default configuration.
@@ -119,7 +177,7 @@ class NamespaceOperations:
             async with self.database.read() as tx:
                 selected = await self.get_in(tx, namespace)
             await self.configuration.update({"cognition.default_namespace": selected.id})
-            effective = self.configuration.snapshot.typed_values().cognition.default_namespace
+            effective = self.configuration.snapshot.values.cognition.default_namespace
             if effective != selected.id:
                 async with self.database.read() as tx:
                     actual = await self.get_in(tx, effective)
@@ -153,11 +211,17 @@ class NamespaceOperations:
         async with self.execution.operation("namespace.rename"):
             if not name.strip():
                 raise NousError("input.invalid", "Namespace name must not be empty")
+            try:
+                UUID(name)
+            except ValueError:
+                pass
+            else:
+                raise NousError("input.invalid", "Namespace name cannot be a namespace ID")
             async with self.database.read() as tx:
                 current = await self.get_in(tx, namespace)
             if current.name == name:
                 return current
-            selected = self.execution.snapshot.typed_values().cognition.default_namespace
+            selected = self.execution.snapshot.values.cognition.default_namespace
             raw_source = self.execution.snapshot.sources.get("cognition.default_namespace")
             source: Mapping[str, object] = (
                 cast(Mapping[str, object], raw_source) if isinstance(raw_source, Mapping) else {}
@@ -170,12 +234,9 @@ class NamespaceOperations:
                 "call",
             }
             try:
-                if (
-                    self.configuration.snapshot.typed_values().cognition.default_namespace
-                    == current.name
-                ):
+                if self.configuration.snapshot.values.cognition.default_namespace == current.name:
                     await self.configuration.update({"cognition.default_namespace": current.id})
-                effective = self.configuration.snapshot.typed_values().cognition.default_namespace
+                effective = self.configuration.snapshot.values.cognition.default_namespace
                 if effective == current.name or selected == current.name and overridden:
                     raise NousError(
                         "configuration.shadowed",

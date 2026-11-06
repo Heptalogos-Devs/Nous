@@ -3,7 +3,7 @@
 import copy
 import math
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from functools import lru_cache
 from importlib.util import find_spec
 from pathlib import Path
@@ -13,7 +13,7 @@ from jsonschema import Draft202012Validator
 from jsonschema import ValidationError as SchemaValidationError
 from pydantic import Field, JsonValue, TypeAdapter, ValidationInfo, field_validator
 
-from nous.configuration.metadata import ConfigModel, setting
+from nous.configuration.metadata import ConfigJson, ConfigMap, ConfigModel, mutable, setting
 
 
 @lru_cache(maxsize=1)
@@ -199,13 +199,17 @@ class NativeConfig(ConfigModel):
         apply="restart",
         description="Native worker limit.",
     )
-    build: dict[str, JsonValue] = Field(
-        default_factory=_build_defaults,
+    build: ConfigMap[str, ConfigJson] = Field(
+        default_factory=lambda: TypeAdapter(ConfigMap[str, ConfigJson]).validate_python(
+            _build_defaults()
+        ),
         description="Native construction profile.",
         json_schema_extra=_build_schema,
     )
-    query: dict[str, JsonValue] = Field(
-        default_factory=_query_defaults,
+    query: ConfigMap[str, ConfigJson] = Field(
+        default_factory=lambda: TypeAdapter(ConfigMap[str, ConfigJson]).validate_python(
+            _query_defaults()
+        ),
         description="Native query profile.",
         json_schema_extra=_query_schema,
     )
@@ -213,8 +217,8 @@ class NativeConfig(ConfigModel):
     @field_validator("build", "query")
     @classmethod
     def validate_native_profile(
-        cls, value: dict[str, JsonValue], info: ValidationInfo
-    ) -> dict[str, JsonValue]:
+        cls, value: Mapping[str, ConfigJson], info: ValidationInfo
+    ) -> Mapping[str, ConfigJson]:
         _, schemas = _native_profiles()
         profiles = {"build": value} if info.field_name == "build" else value
         for name, options in profiles.items():
@@ -229,7 +233,7 @@ class NativeConfig(ConfigModel):
                 raise ValueError(f"unknown or unavailable Native profile: {name}")
             validate = cast(Callable[[object], None], Draft202012Validator(raw).validate)
             try:
-                validate(options)
+                validate(mutable(options))
             except SchemaValidationError as error:
                 path = ".".join(map(str, error.absolute_path))
                 raise ValueError(
@@ -287,7 +291,7 @@ class ContextConfig(ConfigModel):
         description="Context contribution to the query.",
         json_schema_extra=lambda node: _native_field_schema("context", "context_mix", node),
     )
-    role_weights: dict[str, float] = Field(
+    role_weights: ConfigMap[str, float] = Field(
         default_factory=lambda: cast(
             dict[str, float], _profile_defaults("context")["role_weights"]
         ),
@@ -311,7 +315,7 @@ class ContextConfig(ConfigModel):
     @classmethod
     def native_context_value(cls, value: object, info: ValidationInfo) -> object:
         name = "context_mix" if info.field_name == "mix" else str(info.field_name)
-        _validate_native_field("context", name, value)
+        _validate_native_field("context", name, mutable(value))
         return value
 
 
@@ -344,7 +348,7 @@ class AssociationsConfig(ConfigModel):
         apply="new_binding",
         description="Explicit interpretation projection gain.",
     )
-    relation_gains: dict[str, float] = setting(
+    relation_gains: ConfigMap[str, float] = setting(
         {"related": 1.0, "supports": 1.0, "sequence": 1.0, "narrative_next": 1.0},
         apply="new_binding",
         description="Retrieval gain for each association type.",
@@ -359,7 +363,7 @@ class AssociationsConfig(ConfigModel):
 
     @field_validator("relation_gains")
     @classmethod
-    def nonnegative_gains(cls, values: dict[str, float]) -> dict[str, float]:
+    def nonnegative_gains(cls, values: Mapping[str, float]) -> Mapping[str, float]:
         if any(not math.isfinite(value) or value < 0 for value in values.values()):
             raise ValueError("association gains must be nonnegative")
         return values

@@ -42,6 +42,8 @@ def test_nested_instances_own_snapshots_capacity_and_shutdown(tmp_path: Path) ->
                 async with first.execution.operation("first.outer") as outer:
                     assert outer.settings is first_snapshot
                     assert second.execution.snapshot is second_snapshot
+                    await first.configuration.update({"runtime.shutdown_grace_seconds": 2})
+                    assert outer.settings is first_snapshot
                     queued.set()
                     async with second.execution.operation("second.cross") as crossing:
                         assert crossing.settings is second_snapshot
@@ -70,7 +72,6 @@ def test_nested_instances_own_snapshots_capacity_and_shutdown(tmp_path: Path) ->
                 await asyncio.wait_for(queued.wait(), 2)
                 assert not entered.is_set()
                 assert second.execution.in_flight == 2
-                await first.configuration.update({"runtime.shutdown_grace_seconds": 2})
                 assert first.configuration.snapshot is not first_snapshot
                 closing = asyncio.create_task(close_second())
                 await asyncio.wait_for(closing_started.wait(), 2)

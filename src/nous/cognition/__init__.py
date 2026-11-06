@@ -3,6 +3,8 @@
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from .contracts import NamespaceRef as NamespaceRef
+    from .contracts import RevisionSelection as RevisionSelection
     from .retrieval.contracts import CognitiveQuery as CognitiveQuery
     from .writing.contracts import AfterWrite as AfterWrite
     from .writing.contracts import DraftOverride as DraftOverride
@@ -10,11 +12,22 @@ if TYPE_CHECKING:
     from .writing.contracts import SourceChanges as SourceChanges
     from .writing.contracts import SourceRequest as SourceRequest
 __all__ = [
-    "AfterWrite", "CognitiveQuery", "DraftOverride", "RecordOutcome", "SourceChanges", "SourceRequest"
+    "AfterWrite",
+    "CognitiveQuery",
+    "DraftOverride",
+    "NamespaceRef",
+    "RecordOutcome",
+    "RevisionSelection",
+    "SourceChanges",
+    "SourceRequest",
 ]
 
 
 def __getattr__(name: str) -> object:
+    if name in {"NamespaceRef", "RevisionSelection"}:
+        from . import contracts
+
+        return getattr(contracts, name)
     if name == "CognitiveQuery":
         from .retrieval.contracts import CognitiveQuery
 

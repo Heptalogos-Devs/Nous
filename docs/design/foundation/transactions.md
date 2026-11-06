@@ -4,7 +4,7 @@
 
 完整业务用例打开 WriteTx。所有需要一起提交的参与者接收同一个事务，负责自己的数据变化，提交与回滚由用例的事务上下文完成。参与者不 commit、不另开会逃出外层回滚的事务。
 
-首轮实现事务基础，时间域登记是其真实消费者。后续 Journal 修订、来源关系、内容引用和持久入队使用同一结构。
+时间域登记、Journal 修订、来源关系、内容引用和明确维护入队使用同一事务参与结构。写事务在读取修改依据前取得 SQLite 写入资格，使用共同 Database 的 BEGIN IMMEDIATE 入口；不要把业务进程内写锁当成 DBOS 独立连接也遵守的锁。
 
 ## I/O 分界
 
@@ -20,11 +20,11 @@ recorded_at 由实际写入时的 UTC 时钟提供。确有历史顺序要求的
 
 ## 持久入队接入
 
-后续引入 DBOS 时，使用它的 `DBOSClient.enqueue_in_transaction`，传入当前事务中的 SQLAlchemy Connection。同一 SQLite 文件保存应用与 DBOS 系统表。异步连接通过官方支持的 `AsyncConnection.run_sync` 取得绑定到同一事务的同步 connection。
+本轮使用 DBOS 3.4.0 的 `DBOSClient.enqueue_in_transaction`，传入当前事务中的 SQLAlchemy Connection。同一 SQLite 文件保存应用与 DBOS 系统表。异步连接通过官方支持的 `AsyncConnection.run_sync` 取得绑定到同一事务的同步 connection。
 
 该方法不提交也不重试调用者事务；事务提交后才可以等待其 handle。不要在写事务里等待 worker 完成。不要为此再建立应用 outbox 与轮询搬运器。
 
-首轮还未引入 DBOS，不在 WriteTx 中放一个成功但未入队的空 `enqueue` 实现。后续按 [持久工作](durable-work.md)实际接入后再开放这个方法。
+正式接入见 [DBOS 与 Runtime](dbos-integration.md)。显式维护入队失败使同一业务事务回滚；不返回虚假的已排队结果。标注与刷新使用各自工作身份；队列 deduplication 的 return-existing 策略不用于事务内合并。
 
 ## 完成条件
 

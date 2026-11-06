@@ -2,7 +2,7 @@
 
 ## 产品能力与本次范围
 
-Nous 提供独立的内容处理与长期认知能力。实例、配置、CAS、Artifact、ProcessingResult、模型、Prompt、媒体和 Embedding 是共同基础。语义输入、逐批表示、来源与正文、请求诊断和 Rust retrieval 各有明确负责模块；本轮完善正式 Journal 的精确维护、独立写作意图、程序使用、Prompt 上下文及检索/诊断接缝，见 [主计划](plans/journal-maintenance.md)。
+Nous 提供独立的内容处理与长期认知能力。实例、配置、CAS、Artifact、ProcessingResult、模型、Prompt、媒体和 Embedding 是共同基础。语义输入、逐批表示、来源与正文、请求诊断和 Rust retrieval 各有明确负责模块；本轮收敛身份、来源、原文、配置与执行的不变量，接入真实的 DBOS 保存后维护与长期宿主，见 [主计划](plans/durable-cognition.md)。
 
 Wave 集合是检索输入与可重建投影。cognition 拥有正式文稿、版本、Concept 与采用；按一致读事务提供类型化 CorpusView，清单导入也调用同一个 Wave 构建能力。内容字节和精确选区继续由 Artifact/TextView 提供。
 
@@ -23,9 +23,10 @@ Wave 集合是检索输入与可重建投影。cognition 拥有正式文稿、�
 
 组合根：生命周期与依赖装配
 共同基础：配置快照、Clock、Execution、Database、CAS、错误、轻量观测
+持久维护：DBOS 调度循环 → RuntimeBridge → 业务循环的同一标注/刷新操作
 ```
 
-MediaPreparer 不持有模型执行器；ModelExecutor 不读取业务数据库。应用操作可以调用其它具有明确业务作用的操作，但不相互递归、不从整个 Runtime 查找依赖。CLI 不创建候选配置或另一套模型/模板编译路径。
+跨内容和媒体的批量准备归 application/preparation；content 拥有范围和结构，media 拥有确定性表示。MediaPreparer 不持有模型执行器；ModelExecutor 不读取业务数据库。应用操作可以调用其它具有明确业务作用的操作，但不相互递归、不从整个 Runtime 查找依赖。CLI 不创建候选配置或另一套模型/模板编译路径。
 
 Journal 的事务保存核心不持有标注与检索对象；完整 RecordOperations 用例负责 AfterWrite。作用域句柄绑定稳定 Namespace 并复用所有基础服务，见 [维护架构](design/cognition/maintenance-architecture.md)。
 
@@ -47,6 +48,8 @@ Journal 的事务保存核心不持有标注与检索对象；完整 RecordOpera
 | Note/Journal 正文版本与来源 | cognition 文稿 owner，共享有限版本保存机制 |
 | 正式 Concept 与标注绑定 | cognition 各负责操作，固定意义/正文版本 |
 | 当前知识视图与反馈 | cognition，复用 Wave 发布与检索；Native 不写认知 |
+| 持久 Job 与步骤状态 | DBOS，经 jobs 公共适配操作；正式结果仍由领域 owner 采用 |
+| 标注与刷新业务 | cognition maintenance，前台和后台共用完整操作 |
 
 ## 事务与副作用
 
@@ -56,13 +59,13 @@ Journal 的事务保存核心不持有标注与检索对象；完整 RecordOpera
 
 CPython 3.14、uv 与当前成熟依赖继续使用；Rust 通过 PyO3/maturin 接入。现行 Native 工作区是复用来源，不是不可变接口。计算脱离 Python 后使用自有不可变内存和一个实例级有界 Rayon 池。
 
-Execution 控制根操作、截止时间和实际 worker 生命周期。Native 合作取消由 Rust token 实现，取消后等待实际计算退出再释放资产。不存在独立 Native 守护进程或另一套任务调度器。
+Execution 控制根操作、截止时间和实际 worker 生命周期。Native 合作取消由 Rust token 实现，取消后等待实际计算退出再释放资产。Native 不另起守护进程。DBOS 使用独立调度循环，业务通过有限 bridge 回到本 Runtime 的循环和资源；Job 的取消请求与实际业务结束分别处理。
 
 数据库、内容、模型与 Wave 分别使用已解析配置。Rust 算法参数由其真实配置类型导出 schema/defaults，Python 配置目录承接；不保留两套手写默认值。
 
 ## 开发边界
 
-现有 VCP 数值模块与 DTSC 保留，本轮整理正式文稿维护、批量正文准备和 Native 分组，不恢复旧运行壳。DBOS 的保存后维护与持续宿主是紧接着的工作，见 [路线](plans/cognitive-use-roadmap.md)；完整 NousQL、任意历史视图、Social/Ego/Dream/Episode 不进入本轮。
+现有 VCP 数值模块与 DTSC 保留。本轮完成共同能力整改、DBOS 3.4 保存后维护、Job 管理和长期宿主，见 [模块收敛](design/foundation/module-convergence.md)。WorkContext—Wave—Steward—实际使用—情境反馈为后续主线；完整 NousQL、任意历史视图、Social/Ego/Dream/Episode 不进入本轮。
 
 现行代码可以按真实用途重新组织。没有外部兼容承诺的接口直接迁移，旧路径和专属支撑随替换删除。临时样本和诊断留在 temp，网关补丁与独立语音工具保持独立。
 

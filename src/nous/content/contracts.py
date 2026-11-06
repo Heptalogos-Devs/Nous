@@ -158,6 +158,18 @@ class ContentSelection(ContentValue):
     selection: SourceSelection = Field(default_factory=SourceSelection)
 
 
+class SelectedText(ContentValue):
+    """Exact source bytes and their absolute coordinate origin."""
+
+    content: ContentSelection
+    blob: BlobRef
+    data: bytes
+    text: str
+    start_byte: int
+    end_byte: int
+    first_line: int
+
+
 class ContentRepresentation(ContentValue):
     kind: str
     result_ref: ResultRef

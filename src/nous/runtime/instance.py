@@ -214,9 +214,7 @@ def inspect_instance(
             "display_name": instance.get("name"),
             "layout": instance.get("layout"),
         }
-        candidate = Configuration(
-            selected.config_file, environment=environment
-        ).snapshot.typed_values()
+        candidate = Configuration(selected.config_file, environment=environment).snapshot.values
         descriptor = InstanceDescriptor(
             candidate.instance.id, candidate.instance.name, candidate.instance.layout
         )
