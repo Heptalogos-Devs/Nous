@@ -6,8 +6,10 @@ from collections.abc import AsyncGenerator, Mapping
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+from nous.cognition.maintenance.definitions import queues as maintenance_queues
 from nous.configuration import Configuration
 from nous.runtime.bindings import InstanceBinding
+from nous.runtime.execution import ExecutionManager
 from nous.runtime.instance import InstanceDescriptor, InstanceLocator
 from nous.runtime.paths import ResolvedPaths
 from nous.runtime.schema import BUSINESS_METADATA
@@ -34,12 +36,25 @@ async def open_job_client(
     binding = InstanceBinding.read(selected)
     binding.check_locations(selected, descriptor, paths, settings.database.filename)
     binding.check_resources(paths)
-    async with Database.open(
-        paths.resolve_owned("data", settings.database.filename),
-        settings.database,
-        descriptor.instance_id,
-        database_id=str(binding.database_id),
-        additional_metadata=BUSINESS_METADATA,
-    ) as database:
-        async with open_jobs(database, descriptor.instance_id, settings.jobs, None) as host:
-            yield host.operations
+    execution = ExecutionManager(settings.execution, lambda: configuration.snapshot)
+    try:
+        async with Database.open(
+            paths.resolve_owned("data", settings.database.filename),
+            settings.database,
+            descriptor.instance_id,
+            database_id=str(binding.database_id),
+            additional_metadata=BUSINESS_METADATA,
+        ) as database:
+            async with open_jobs(
+                database,
+                descriptor.instance_id,
+                settings.jobs,
+                execution,
+                maintenance_queues(settings.jobs),
+            ) as host:
+                try:
+                    yield host.operations
+                finally:
+                    await execution.drain()
+    finally:
+        await execution.aclose()

@@ -38,7 +38,7 @@ class SourceResolver:
     ) -> None: ...
 ```
 
-`SourceResolver.prepare` 返回的 `PreparedSources` 同时包含正式 `bindings` 和按来源键组织的实际消费选区。写入采用正文坐标；语言请求使用实际表示，并在处理结果输入部件上保留指向正文的 `OriginSlice` 及其正式变换引用。部分选区只有存在精确映射时才可归属；无法细分的表示范围报告映射错误。
+`SourceResolver.prepare` 返回的 `PreparedSources` 同时包含正式 `bindings` 和供语言规划使用的 `SelectedInputs`，按逻辑槽连接两者。写入采用正文坐标；语言请求保留实际消费表示。消费后的正式来源由 SourceResolver 按逻辑槽与生产者登记的坐标映射解析，不能从后续消费记录推测坐标。
 
 使用共同的键分配规则，保持输入组、顺序、usage、显示名称和不连续范围。source:S1:C1 的局部键是这次输入目录中的键，不承担认知身份。
 

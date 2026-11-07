@@ -65,6 +65,9 @@ class SearchPassage(CognitiveValue):
     selection: RevisionSelection
     content: ContentSelection
     origin_contents: tuple[ContentSelection, ...] = Field(min_length=1)
+    passage_contents: tuple[ContentSelection, ...] = Field(min_length=1)
+    matched_fields: tuple[Literal["title", "body"], ...]
+    passage_reason: Literal["body_match", "title_preview", "candidate_preview", "local_candidate"]
     candidate_rank: int = Field(ge=1)
     text: str
     snippet: str

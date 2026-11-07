@@ -3,7 +3,11 @@
 ## 程序入口
 
 ```python
-async with open_instance(locator, workers=True) as runtime:
+from nous.cognition import AfterWrite
+from nous.cognition.maintenance.contracts import MaintenanceOutcome
+from nous.runtime.host import run_host
+
+async def application(runtime):
     cognition = await runtime.cognition("research")
     outcome = await cognition.records.create_journal(
         markdown,
@@ -16,52 +20,24 @@ async with open_instance(locator, workers=True) as runtime:
         if ref.workflow_id in seen:
             continue
         seen.add(ref.workflow_id)
-        result = await runtime.jobs.wait(ref)
+        result = MaintenanceOutcome.model_validate(await runtime.jobs.wait(ref))
         pending.extend(result.related_jobs)
-    current = await cognition.records.read(outcome.record.revision_ref)
+    return await cognition.records.read(outcome.record.revision_ref)
+
+current = run_host(locator, application)
 ```
 
-`workers=False` 为默认，不启动 DBOS 执行器，但能登记工作并读取状态。`workers=True` 在同一实例宿主中启动持久维护。任一业务资源只由 Runtime 装配一次；外部已存在 worker 可以正常调用绑定服务。
+`run_host` 是同步应用根入口，拥有一个 asyncio.Runner 和本进程的 DBOS 生命周期；应用协程与持久工作共享 Runtime。普通 `async with open_instance(locator)` 可保存内容、登记及控制 Job，不启动持久工作。已有异步应用将主协程交给其根入口的 `run_host`。
 
 ## 公开值与方法
 
-```python
-class JobRef(CognitiveValue):
-    instance_id: str
-    workflow_id: str
+`JobRef` 保存 instance_id 和 workflow_id。`JobView` 包含工作种类、状态、队列、边界输入、创建/开始/完成时间、结果、错误、失败步骤与重试来源。通用 Job 结果是 JSON 对象；认知维护调用者使用 `MaintenanceOutcome.model_validate(result)` 读取 state、正式 proposal/annotation 或快照引用、覆盖代次及 related_jobs。
 
-class JobView(CognitiveValue):
-    ref: JobRef
-    kind: Literal["annotation", "refresh"]
-    status: str                 # 保留明确映射的 DBOS 原状态
-    namespace_ref: NamespaceRef
-    target_revision: RecordRevisionRef | None
-    created_at: datetime | None
-    started_at: datetime | None
-    completed_at: datetime | None
-    result: JobOutcome | None
-    error: OperationIssue | None
+`JobOperations.list(kind?, status?, limit, cursor)`、`read(ref)`、`wait(ref, timeout?)`、`cancel(ref)`、`resume(ref)`、`retry_failed(ref, from_step)` 是完整控制入口。工作引用按实例、应用和已登记工作名核验。
 
-class JobOutcome(CognitiveValue):
-    state: Literal["ready", "skipped", "superseded", "published_not_current"]
-    result_refs: tuple[str, ...]
-    proposal_result: ResultRef | None
-    annotation_ref: AnnotationRef | None
-    activation_state: Literal["active", "inactive"] | None
-    related_jobs: tuple[JobRef, ...]
-    captured_generation: int | None
-    covered_generation: int | None
-```
+DBOS 的 ENQUEUED/PENDING/SUCCESS/ERROR/CANCELLED 与业务结果分别呈现。成功可能返回 superseded；取消记录后，实际资源结束仍由宿主等待。
 
-`JobOperations.list(kind?, status?, limit, cursor)`、`read(ref)`、`wait(ref, timeout?)`、`cancel(ref)`、`resume(ref)`、`retry_failed(ref, from_step)` 为完整入口。直接按引用查看/等待的工作必须核验 instance 与 application 归属。普通列表不默认返回巨大 inputs/outputs；详情按需显示可读目标与结果引用。
-
-DBOS 的 ENQUEUED/PENDING/SUCCESS/ERROR/CANCELLED 等与业务结果分别呈现，不复制持久 job.status 到应用表。任务成功可能是 superseded，用户需要看到其实际影响。取消返回“取消请求已记录/后续执行停止”的真实状态，资源实际结束由宿主执行能力负责，不能把数据库 CANCELLED 误呈现为进程已退出。
-
-`wait` 的调用超时/取消只停止本次等待，不自动 cancel Job。需要取消工作调用显式 cancel。等待不占用业务执行槽，避免 max_in_flight=1 死锁。`resume` 用于已取消或超过恢复尝试上限的工作，默认通过 `queue_name` 重新入原队列，不绕过队列并发限制。`ERROR` 失败终态使用显式 `retry_failed`，依据公开 `DBOSClient.fork_workflow(workflow_id, start_step, queue_name=原队列)` 从失败步骤产生新的 JobRef，保存 `forked_from` 关系；按实际步骤编号选择，不能从起点盲目重发已成功的模型请求。换新参数/Prompt 用明确的新维护请求。
-
-每个失败工作只有一个重试后继。后继身份由原工作确定，`SetWorkflowID` 与数据库唯一性合并并发控制请求；重复重试返回相同 JobRef。后继再次失败时，使用后继的引用重试。冲突身份须核验其来源和队列，其他数据库错误照常报告。
-
-`retry_failed` 在执行前检查原工作确为适用的失败终态、步骤仍与冻结合同相容、已保存计算结果是否可复用以及是否允许再次调用外部模型。若失败源于来源/版本冲突，返回业务错误或 superseded，而不是通过 fork 重试覆盖新 head。旧 Job 保留原错误，新 Job 返回新工作身份；不显示为原工作已恢复。`rewind_workflow` 会修改原步骤记录，因此本轮不用作普通用户的失败重试入口。进程崩溃后的 DBOS 自动恢复无需用户手动发出 `resume`。
+`wait` 超时或调用者取消只结束本次等待；显式 cancel 才取消 Job。等待不占业务执行名额。`resume` 将已取消或超出恢复尝试的工作放回原队列。ERROR 使用 `retry_failed` 从实际失败步骤 fork，保留原错误与已完成步骤。并发重试同一失败工作得到同一后继；后继再次失败时再对后继发起重试。需要使用新 Prompt 时创建新的标注请求。
 
 ## CLI
 
@@ -81,7 +57,7 @@ nous runtime run
 
 `--background` 只选择 AfterWrite.execution，不把 CLI 编排成另一个队列。`--inline` 显式前台，二者冲突时报输入错误。正常 deferred 检索或已入队维护返回 success；明确前台后续失败沿既有 partial 退出码 3。
 
-`job run --until-idle` 打开一个持锁 Runtime 并启动 workers，处理当前可运行工作及其即时后续；没有可运行工作且本实例实际业务阶段全部退出时结束。未来延迟工作可保持 queued/delayed，输出其数量/状态，不为了等待远期节点一直占锁。`runtime run` 持续运行直至正常停止，不自行转为操作系统服务或启动第二个 worker 进程。
+`job run --until-idle` 打开一个持锁 Runtime 并启动持久宿主，处理当前可运行工作及其即时后续；没有可运行工作且本实例实际业务阶段全部退出时结束。未来延迟工作可保持 queued/delayed，输出其数量/状态，不为了等待远期节点一直占锁。`runtime run` 持续运行直至正常停止，不自行转为操作系统服务或启动第二个 worker 进程。
 
 短保存命令结束后，queued 工作可以等下一次 run。持续 Runtime 占用实例锁时，其他本地认知写命令仍按既有合同返回 instance.in_use；本轮没有任意远程 RPC。程序宿主在同进程使用 Runtime 执行业务；独立 CLI 仅 Job 状态/控制可以使用受限 DBOSClient。
 

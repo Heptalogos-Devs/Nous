@@ -8,7 +8,7 @@ from typing import Annotated, Literal
 import typer
 from pydantic import TypeAdapter
 
-from nous.cognition.contracts import RecordView
+from nous.cognition.contracts import NamespaceRef, RecordView
 from nous.cognition.retrieval.contracts import Mode
 from nous.cognition.writing.contracts import (
     AfterWrite,
@@ -388,44 +388,119 @@ def record_diff(ctx: typer.Context, left: str, right: str, namespace: str | None
 @note_cli.command("edit")
 def edit_record(
     ctx: typer.Context,
-    ref: str,
+    ref: Annotated[str | None, typer.Argument()] = None,
     namespace: str | None = None,
     refresh: bool = False,
     refresh_mode: Mode | None = None,
     background: bool = False,
     inline: bool = False,
     annotate: bool = False,
+    resume: Annotated[Path | None, typer.Option("--resume")] = None,
 ):
-    async def load():
-        async with open_instance(options(ctx).locator) as runtime:
-            return await (await runtime.cognition(namespace)).records.read(ref)
+    from difflib import unified_diff
 
-    original = run_async(load())
     import click
 
-    edited = click.edit(original.body, extension=".md", require_save=True)
-    if edited is None:
-        return
+    from .editing import EditSession
+
+    selected = options(ctx)
+    language = language_for(selected)
+    if resume is not None:
+        kind = ctx.parent.info_name if ctx.parent else ""
+        session = EditSession.resume(resume, selected.locator, kind or "")
+        if (refresh or refresh_mode or background or inline or annotate) and after_write(
+            refresh, refresh_mode, background, inline, annotate
+        ) != session.after:
+            raise NousError(
+                "input.edit_session_mismatch",
+                "The edit recovery request has different maintenance options.",
+            )
+    else:
+        if ref is None:
+            raise NousError("input.body_required", "Provide a record or --resume PATH.")
+
+        async def load():
+            async with open_instance(selected.locator) as runtime:
+                original = await (await runtime.cognition(namespace)).records.read(ref)
+                return EditSession.create(
+                    runtime.paths,
+                    original,
+                    after_write(refresh, refresh_mode, background, inline, annotate),
+                )
+
+        session = run_async(load())
 
     async def save():
-        async with open_instance(options(ctx).locator) as runtime:
+        async with open_instance(selected.locator) as runtime:
+            if runtime.descriptor.instance_id != session.target.instance_id:
+                raise NousError(
+                    "input.edit_session_mismatch", "The edit session belongs to another instance."
+                )
+            records = (
+                await runtime.cognition(
+                    NamespaceRef(
+                        instance_id=session.target.instance_id, id=session.target.namespace_id
+                    )
+                )
+            ).records
+            if ref is not None:
+                requested = await records.read(ref)
+                if requested.ref != session.target:
+                    raise NousError(
+                        "input.edit_session_mismatch", "The edit session belongs to another target."
+                    )
             try:
-                return await (await runtime.cognition(namespace)).records.replace(
-                    original.revision_ref,
-                    edited,
-                    after=after_write(refresh, refresh_mode, background, inline, annotate),
+                return await records.replace(
+                    session.target,
+                    body,
+                    expected=session.expected,
+                    write_key=session.id,
+                    after=session.after,
                 )
             except NousError as error:
                 if error.code == "cognition.revision_conflict":
-                    from uuid import uuid4
-
-                    path = runtime.paths.temp / ("edit-" + str(uuid4()) + ".md")
-                    path.parent.mkdir(parents=True, exist_ok=True)
-                    path.write_text(edited, encoding="utf-8")
-                    error.details["edited_file"] = str(path)
+                    current = await records.read(session.target)
+                    error.details.update(
+                        current=current.revision_ref.identifier,
+                        expected=session.expected.identifier,
+                        diff="".join(
+                            unified_diff(
+                                current.body.splitlines(keepends=True),
+                                body.splitlines(keepends=True),
+                                fromfile=current.revision_ref.identifier,
+                                tofile=str(session.file),
+                            )
+                        ),
+                    )
                 raise
 
-    emit_record(ctx, run_async(save()))
+    try:
+        if resume is None:
+            click.edit(filename=str(session.file))
+        body = session.read()
+        if session.unchanged(body):
+            session.clear()
+            return
+        result = run_async(save())
+        try:
+            emit_record(ctx, result)
+        except typer.Exit as exit:
+            if exit.exit_code == 3:  # A partial outcome still confirms the written revision.
+                session.clear()
+            raise
+        else:
+            session.clear()
+    except BaseException as error:
+        if session.descriptor.exists():
+            if isinstance(error, NousError):
+                error.details.update(
+                    edited_file=str(session.file), edit_session=str(session.descriptor)
+                )
+            typer.echo(f"{translate('Edit recovery file', language)}: {session.file}", err=True)
+            typer.echo(
+                f"{translate('Edit recovery session', language)}: {session.descriptor}", err=True
+            )
+        raise
 
 
 @journal_cli.command("history")

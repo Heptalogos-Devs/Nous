@@ -21,6 +21,4 @@ jobs:
       - name: Python contracts
         run: |
           source scripts/dev-env.sh
-          uv run basedpyright --pythonpath "$UV_PROJECT_ENVIRONMENT/bin/python"
-          uv run ruff check src tests/python
-          uv run pytest tests/python
+          sh scripts/check/run.sh --profile ci

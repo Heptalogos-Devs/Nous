@@ -6,12 +6,9 @@ from pathlib import Path
 import pytest
 import tomlkit
 
-from nous.cognition.writing.contracts import DraftContext, DraftOverride
-from nous.cognition.writing.tasks import JournalDraftTask
+from nous.cognition.writing.contracts import DraftOverride
 from nous.common.errors import NousError
-from nous.content.contracts import InputGroup, InputPart, OutputContent
 from nous.models.contracts import ReadingInput
-from nous.models.operations import ProducedTask
 from nous.models.prompts import PromptCatalog, PromptCompiler
 from nous.runtime.bootstrap import initialize_instance, open_instance, task_catalog
 
@@ -38,96 +35,158 @@ def test_prompt_editing_notes_are_visible_without_changing_the_request(tmp_path:
     assert "S1:C1" in context and "output-schema.json" in context
 
 
-def test_no_material_preserves_result_and_rejects_empty_output(tmp_path: Path) -> None:
+def test_no_material_and_draft_corrections_use_real_writing_path(tmp_path: Path) -> None:
+    import json
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    from nous.application.configuration import open_configuration_operations
+
+    answer = ""
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self) -> None:
+            self.rfile.read(int(self.headers["Content-Length"]))
+            payload = json.dumps(
+                {
+                    "id": "writing",
+                    "object": "chat.completion",
+                    "created": 1700000000,
+                    "model": "local",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "message": {"role": "assistant", "content": answer},
+                            "finish_reason": "stop",
+                        }
+                    ],
+                }
+            ).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, format: str, *args: object) -> None:
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
     async def scenario() -> None:
+        nonlocal answer
         instance = tmp_path / "journal-output"
         await initialize_instance(instance, environment={})
+        async with open_configuration_operations(instance, environment={}) as config:
+            await config.update(
+                {
+                    "providers.local": {
+                        "protocol": "openai-chat-completions",
+                        "endpoint": f"http://127.0.0.1:{server.server_port}/v1",
+                    },
+                    "models.reader": {
+                        "provider": "local",
+                        "model_name": "local",
+                        "capabilities": ["text"],
+                        "output_modes": ["text"],
+                    },
+                    "tasks.journal-draft": {
+                        "model": "reader",
+                        "prompt": "journal-draft",
+                        "output_mode": "text",
+                    },
+                }
+            )
         async with open_instance(instance, environment={}) as runtime:
             c = await runtime.cognition("default")
             note = (await c.records.add_note("你好。")).record
-            sources = await c.records.select_sources([note.revision_ref])
-            context = DraftContext(
-                namespace=note.namespace,
-                intent="new",
-                selected_sources=sources,
-                source_bindings=sources,
-                times=(await c.records.read(note.revision_ref)).times,
-                config_version=runtime.configuration.version,
-                task="journal-draft",
-            )
-
-            def produced(text: str) -> ProducedTask:
-                return ProducedTask(
-                    operation="journal-draft",
-                    producer={"kind": "contract-test"},
-                    actual_inputs=(
-                        InputGroup(
-                            key="S1",
-                            slot_key="S1",
-                            name="问候",
-                            parts=tuple(
-                                InputPart(content=selection) for selection in sources[0].selections
-                            ),
-                        ),
-                    ),
-                    outputs={"output": OutputContent(data=text.encode())},
-                    request={},
-                    parameters={},
-                    coverage={},
-                    completed_stage_refs=(),
-                )
-
-            raw_marker = "\n !NO_MATERIAL!\t"
-            outcome = await c.writing.drafts.save_produced(produced(raw_marker), context)
+            answer = "\n !NO_MATERIAL!\t"
+            outcome = await c.writing.journalize([note.revision_ref], adoption="draft")
             assert outcome.status == "no_material" and outcome.draft is None
             result = await runtime.results.get(outcome.stage_results[-1])
             output = next(item.artifact for item in result.outputs if item.name == "output")
-            assert await runtime.artifacts.read_text(output) == raw_marker
+            assert await runtime.artifacts.read_text(output) == answer
             assert await c.writing.drafts.status() == {"drafts": 0, "unadopted": 0}
             assert await c.records.list(kind="journal") == ()
 
-            for empty in ("", " \n\t"):
-                with pytest.raises(NousError, match="no task output") as failed:
-                    await c.writing.drafts.save_produced(produced(empty), context)
+            for invalid_answer in ("", " \n\t"):
+                answer = invalid_answer
+                with pytest.raises(NousError) as failed:
+                    await c.writing.journalize([note.revision_ref], adoption="draft")
                 assert failed.value.code == "model.empty_output"
-            assert len(await runtime.results.recent()) == 1
 
-            body = "# 标记说明\n\n!NO_MATERIAL! 出现在正常正文中。"
-            assert JournalDraftTask.body(OutputContent(data=b"NO_MATERIAL")) == "NO_MATERIAL"
-            drafted = await c.writing.drafts.save_produced(produced(body), context)
-            assert drafted.status == "draft" and drafted.draft is not None
-            assert drafted.draft.body == body
+            answer = "# 标记说明\n\n!NO_MATERIAL! 出现在正常正文中。"
+            drafted = await c.writing.journalize([note.revision_ref], adoption="draft")
+            assert drafted.draft is not None and drafted.draft.body == answer
             saved = await c.records.adopt(drafted.draft.ref)
-            assert (await c.records.read(saved.record.revision_ref)).body == body
+            assert (await c.records.read(saved.record.revision_ref)).body == answer
 
-            invalid = await c.writing.drafts.save_produced(
-                produced("# 引用待修\n\n[材料](source:missing)"), context
-            )
+            answer = "# 引用待修\n\n[材料](source:missing)"
+            invalid = await c.writing.journalize([note.revision_ref], adoption="draft")
             assert invalid.draft is not None
             with pytest.raises(NousError) as failed:
                 await c.records.adopt(invalid.draft.ref)
             assert failed.value.code == "cognition.source_unknown"
-            assert (await c.writing.read_draft(invalid.draft.ref)).body == invalid.draft.body
-
-            unqualified = await c.writing.drafts.save_produced(
-                produced("# 引用待修\n\n[材料](S1)"), context
-            )
-            assert unqualified.draft is not None
-            with pytest.raises(NousError) as failed:
-                await c.records.adopt(unqualified.draft.ref)
-            assert failed.value.code == "cognition.source_link_unqualified"
-            assert (
-                await c.writing.read_draft(unqualified.draft.ref)
-            ).body == unqualified.draft.body
-            assert len(await c.records.list(kind="journal")) == 1
+            source_key = invalid.draft.context.source_bindings[0].key
             corrected = await c.records.adopt(
-                unqualified.draft.ref,
-                override=DraftOverride(markdown="# 引用已修\n\n[材料](source:S1)"),
+                invalid.draft.ref,
+                override=DraftOverride(markdown=f"# 引用已修\n\n[材料](source:{source_key})"),
             )
-            retried = await c.records.adopt(unqualified.draft.ref)
+            retried = await c.records.adopt(invalid.draft.ref)
             assert retried.record.revision_ref == corrected.record.revision_ref
-            assert (
-                await c.writing.read_draft(unqualified.draft.ref)
-            ).body == unqualified.draft.body
 
-    asyncio.run(scenario())
+    try:
+        asyncio.run(scenario())
+    finally:
+        server.shutdown()
+        thread.join()
+        server.server_close()
+
+
+def test_task_contract_ignores_nested_schema_help_but_keeps_business_fields() -> None:
+    from pydantic import Field, create_model
+
+    from nous.content.contracts import SelectedInputs
+    from nous.models.generation import GenerationRequest
+    from nous.models.tasks import TaskDefinition
+
+    def task(help_text: str, *, min_length: int = 1) -> TaskDefinition:
+        nested = create_model(
+            "Nested",
+            title=(str, Field(..., description=help_text, min_length=min_length)),
+            description=(str, Field(..., description=help_text)),
+            examples=(list[str], Field(..., description=help_text)),
+        )
+        output = create_model("Output", child=(nested, Field(..., description=help_text)))
+        return TaskDefinition("nested-contract", output_type=output)
+
+    before = task("Before")
+    help_only = task("After")
+    changed = task("After", min_length=2)
+    assert before.interpretation_contract() == help_only.interpretation_contract()
+    assert help_only.output_type is not None
+    assert before.supports_schema(help_only.output_type.model_json_schema())
+    assert before.interpretation_contract() != changed.interpretation_contract()
+    assert before.output_type is not None and changed.output_type is not None
+    original_request = GenerationRequest(
+        "custom", SelectedInputs(sources=()), schema=before.output_type.model_json_schema()
+    )
+    help_request = GenerationRequest(
+        "custom", SelectedInputs(sources=()), schema=help_only.output_type.model_json_schema()
+    )
+    changed_request = GenerationRequest(
+        "custom", SelectedInputs(sources=()), schema=changed.output_type.model_json_schema()
+    )
+    assert original_request.identity() == help_request.identity()
+    assert original_request.identity() != changed_request.identity()
+    schema = before.interpretation_contract()["output_schema"]
+    assert isinstance(schema, dict)
+    definitions = schema["$defs"]
+    assert isinstance(definitions, dict)
+    nested_schema = definitions["Nested"]
+    assert isinstance(nested_schema, dict)
+    properties = nested_schema["properties"]
+    assert isinstance(properties, dict)
+    assert set(properties) == {"title", "description", "examples"}

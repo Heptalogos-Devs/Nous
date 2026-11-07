@@ -31,7 +31,7 @@ read_draft(draft_ref) -> DraftView
 
 DraftDescriptor 是用户可反复查看和采用的草稿，不是任务 running/lease/receipt 系统。它只在成功处理之后存在。普通 tools model run 也使用同一 produce + ResultStore 采用；不保留两套语言执行。
 
-草稿提交完成后，再独立执行正式采用。模型生成成功而草稿提交失败时，返回实际失败，保留已发布输出的恢复信息/本次 ProducedTask，禁止重新请求模型补偿 SQL；没有正式引用的字节不得谎称已登记草稿。已经提交的 DraftDescriptor 在之后任何采用失败时始终可读。
+写作请求先由 DraftStore 保存 WritingRequest，固定原始选择、精确 base、来源、反馈映射、采用选择和 AfterWrite。语言响应把该请求作为执行依赖。解释、链接规范化、草稿保存或正式采用失败时返回 writing_request_ref；重开实例后可通过 writing.recover(ref) 或 journal draft recover <ref> 继续。草稿提交后独立采用正式正文，重复恢复返回同一修订。
 
 来源键错误的成功正文同样保存为可读草稿，正式采用再执行来源校验。已知裸键的确定性整理遵循[正文引用](citations.md)；未修正的来源错误会带草稿引用返回，使用者可用完整 Markdown 覆盖修订后采用。
 

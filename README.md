@@ -55,6 +55,8 @@ nous read "替换为返回的完整修订标识符" --sources
 
 配置写作和标注任务后，可用 `nous journalize --source "<Note标识符>" --topic "<主题>"` 生成可读草稿，再用 `journal draft read` 查看、`journal draft adopt` 明确采用；`journal annotate` 可以提出并采用概念标注。完整命令、修订、来源用途和反馈见[认知命令](docs/design/interfaces/cognition-cli.md)。
 
+`note edit` 和 `journal edit` 直接编辑实例持有的恢复文件。保存遇到锁、冲突或其他错误时，保留稿件并显示会话路径；用 `nous journal edit --resume <会话.json>` 或 `nous note edit --resume <会话.json>` 按原基准继续提交。已提交但终端输出失败的恢复复用原修订。
+
 请求失败时，可用返回的操作关联执行 `nous runtime logs --operation <操作引用>`；保留日志与能力状态见[诊断指南](docs/design/interfaces/diagnostics.md)。
 
 需要让保存后的维护持续执行时，选择后台方式，并运行待办工作：
@@ -67,7 +69,7 @@ nous job read JOB
 nous job wait JOB
 ```
 
-配置好标注任务后，保存时增加 `--annotate`。`runtime run` 持续运行同一实例宿主；程序内使用 `open_instance(..., workers=True)`。取消的工作通过 `job resume JOB` 继续，ERROR 工作按 `job read` 给出的失败步骤执行 `job retry JOB --from-step STEP`。详情见[宿主与 Job](docs/design/interfaces/jobs-and-host.md)及[程序示例](docs/examples/durable-cognition/host-use.py)。
+配置好标注任务后，保存时增加 `--annotate`。`runtime run` 持续运行同一实例宿主；程序内用 `run_host(instance, application)` 明确拥有持久宿主和应用循环。普通 `async with open_instance(instance)` 提供可嵌入的业务 Runtime。取消的工作通过 `job resume JOB` 继续，ERROR 工作按 `job read` 给出的失败步骤执行 `job retry JOB --from-step STEP`。详情见[宿主与 Job](docs/design/interfaces/jobs-and-host.md)及[程序示例](docs/examples/durable-cognition/host-use.py)。
 
 源码安装使用仓库中的 `uv sync --locked`。`uv build` 生成同一平台的完整 wheel 与源码分发包；wheel 可用 `pip install <wheel路径>` 安装，无需单独取得 Native 包。源码分发包安装时需要上述构建工具链。
 

@@ -13,5 +13,5 @@
 ## 构建与修改
 
 - 从仓库根执行 `uv sync --locked` 经 maturin 重建扩展；先 `source scripts/workspace.sh`（Windows 为 `. ./scripts/workspace.ps1`），让 cargo 目录落在 `temp/`。
-- 修改 `vcp` 或 `retrieval` 后在 `native/` 用 `cargo test -p nous-vcp` 或 `cargo test -p nous-retrieval` 运行对应测试。这两个 crate 启用 workspace lints，禁止 `unsafe`。`python` crate 的改动通过实际的 `nous tools wave` 调用验证。
+- 修改 `vcp` 或 `retrieval` 后，在仓库根用开发检查工具运行对应测试：`tests --rust nous-vcp` 或 `tests --rust nous-retrieval`。Windows 入口是 `pwsh -File ./scripts/check/run.ps1`，其他系统是 `sh scripts/check/run.sh`。这两个 crate 启用 workspace lints，禁止 `unsafe`。`python` crate 的改动通过实际的 `nous tools wave` 调用验证。
 - 接口或行为改变时更新上述设计专题；源码位置或职责变化时更新 [INDEX.md](../src/nous/INDEX.md)。

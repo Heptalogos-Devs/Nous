@@ -22,9 +22,9 @@ PDF页、图片帧/裁剪、音视频时间范围分别由媒体已知元信息�
 
 ## 已采用表示回原文
 
-`ArtifactStore.map_origins(content, target_body)` 返回有序 `OriginSlice`，只沿已采用结果声明的 coverage.text_mappings 或 InputPart.origins 关系变换范围。每项 origin 保留目标原件的精确坐标，transform_ref 指向正式变换结果。同字节的另一件原件、共同参与一次计算或任意血缘祖先都不建立坐标映射。
+`ArtifactStore.map_origins(content, target_body)` 返回有序 `OriginSlice`，只沿表示生产者在结果采用时登记的有名输出映射变换范围。每项 origin 保留目标原件的精确坐标，transform_ref 指向正式变换结果。同字节的另一件原件、共同参与一次计算或任意血缘祖先都不建立坐标映射。
 
-text_mappings 以 output_name 绑定有名输出，并保存表示内 start_byte/end_byte、origins 与 mode。identity 支持等长字节范围的线性偏移；atomic 只允许完整选择该映射片段；whole 明确描述整份表示的原文覆盖。CommonMark source-link 投影从真实 citation_spans 发布未改字节的 identity 映射及可见 label 的 atomic 映射，完整投影另保留 whole 映射。部分切入不可细分的 label、未覆盖的拼接间隙、没有到目标正文的完整路径或多条不一致路径返回 content.origin_unmapped。
+OutputMapping 绑定 output_name，保存输出字节范围、有序精确来源及 relation。identity 对等长 UTF-8 字节范围进行线性换算；atomic 的任意交叠返回完整的对应源单元；derived 记录处理来源，不提供精确坐标换算。CommonMark source-link 投影对未改字节登记 identity，对可见标签登记 atomic。拼接间隙或没有到目标正文的精确路径时返回 content.origin_unmapped。
 
 范围变换可以保留多个不连续原文选区。认知来源 owner 再核对它们与指定正式 revision 的归属，模型 actual_inputs 仍保存实际消费的表示，不能以回映后的原文替换 part.content。既有 TextMapping 没有细粒度变换时，仅能使用其完整映射片段；读取不触发新模型或根据样本文字猜位置。
 

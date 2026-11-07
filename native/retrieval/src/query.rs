@@ -1052,6 +1052,11 @@ impl Snapshot {
             hit["channel_ranks"] = json!(channel_ranks.get(&(row as u64)));
             hit["channel_scores"] = json!(channel_scores.get(&(row as u64)));
             hit["score_kind"] = json!(score_kind);
+            hit["lexical_evidence"] = self.inner.lexical.evidence(
+                text,
+                &self.inner.input.candidates.texts[row],
+                &self.inner.candidates.titles[row],
+            );
             hit["rank"] = json!(kept.len() + 1);
             if o.include_counterevidence {
                 let targets = concepts

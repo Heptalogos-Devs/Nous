@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 
-from .annotations import AnnotationOperations
+from .annotation.operations import AnnotationOperations
 from .concepts import ConceptOperations
 from .contracts import NamespaceRef
 from .feedback import FeedbackOperations

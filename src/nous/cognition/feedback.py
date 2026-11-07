@@ -337,6 +337,25 @@ class FeedbackOperations:
                         "cognition.selection_mismatch",
                         "Delivered selection does not match the snapshot",
                     )
+                if delivered.selection.revision != revision:
+                    raise NousError(
+                        "cognition.selection_mismatch", "Passage belongs to another revision"
+                    )
+                ranges = await self.reader.artifacts.normalize_selections(
+                    (candidate.content, *delivered.selection.selections)
+                )
+                base, *passages = ranges
+                if any(
+                    part.artifact != base.artifact
+                    or part.selection.start_byte is None
+                    or part.selection.end_byte is None
+                    or base.selection.start_byte is None
+                    or base.selection.end_byte is None
+                    or part.selection.start_byte < base.selection.start_byte
+                    or part.selection.end_byte > base.selection.end_byte
+                    for part in passages
+                ):
+                    raise NousError("cognition.selection_mismatch", "Passage exceeds its candidate")
                 if revision.record_ref.namespace_id != ns.id:
                     raise NousError(
                         "cognition.namespace_mismatch",
@@ -361,6 +380,9 @@ class FeedbackOperations:
                     value,
                     comment,
                     author,
+                )
+                await self.wave.retain_in(
+                    tx, snapshot.ref, owner_kind="feedback", owner_id=saved.id
                 )
             record_completed(saved.identifier)
             return saved

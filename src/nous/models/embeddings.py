@@ -16,9 +16,7 @@ from pydantic import BaseModel, FiniteFloat, JsonValue, StrictInt, TypeAdapter, 
 
 from nous.common.errors import NousError
 from nous.configuration import ConfigSnapshot
-from nous.configuration.metadata import ConfigModel
 
-from .configuration import EncodingConfig
 from .contracts import EmbeddingResult
 from .policy import (
     attempt_reports,
@@ -29,22 +27,11 @@ from .policy import (
     retryable,
     stage_deadline,
 )
+from .vector_contracts import SpaceDefinition
 
 if TYPE_CHECKING:
     from nous.network import ModelConnections
     from nous.runtime.execution import OperationContext
-
-
-class SpaceDefinition(ConfigModel):
-    """Vector semantics used for binding comparisons, independent of connection resource IDs."""
-
-    space_id: str
-    model_name: str
-    deployment_revision: str
-    dimensions: int
-    modalities: list[Literal["text", "image", "audio", "video"]]
-    normalization: Literal["none", "l2"]
-    encoding: EncodingConfig
 
 
 def resolved_space(snapshot: ConfigSnapshot, space_id: str) -> SpaceDefinition:

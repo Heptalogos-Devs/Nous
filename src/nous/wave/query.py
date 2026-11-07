@@ -9,13 +9,13 @@ from typing import TYPE_CHECKING, cast
 
 import numpy as np
 import numpy.typing as npt
-from pydantic import JsonValue
+from pydantic import JsonValue, TypeAdapter
 
 from nous.application.embedding import EmbeddingOperations
 from nous.common.errors import NousError
 from nous.common.identifier import identifier_type
 from nous.content.artifacts import ArtifactStore
-from nous.content.contracts import ContentSelection
+from nous.content.contracts import ContentSelection, SourceSelection
 from nous.models.embeddings import resolved_space
 from nous.runtime.execution import ExecutionManager
 from nous.temporal.domains import TimeService
@@ -453,6 +453,8 @@ class WaveQueries:
         row: SnapshotRow,
         result: nous_native.NativeQueryResult,
         query_summary: dict[str, object],
+        *,
+        local_passages: Mapping[int, tuple[int, dict[str, object]]] | None = None,
     ) -> dict[str, object]:
         mapping = row["mapping"]
         candidates = mapping["candidates"]
@@ -461,9 +463,80 @@ class WaveQueries:
         values = json.loads(result.result_json)
         hits: list[dict[str, object]] = []
         for hit in values["hits"]:
-            candidate = candidates[cast(int, hit["row"])]
-            selection = ContentSelection.model_validate(candidate["content"])
-            text = await self.artifacts.read_selection(selection)
+            hit_row = cast(int, hit["row"])
+            candidate = candidates[hit_row]
+            local = local_passages.get(hit_row) if local_passages else None
+            passage_candidate = candidates[local[0]] if local else candidate
+            selection = ContentSelection.model_validate(passage_candidate["content"])
+            evidence = TypeAdapter(dict[str, JsonValue]).validate_python(
+                local[1] if local else hit.get("lexical_evidence") or {}
+            )
+            body_range = TypeAdapter(tuple[int, int] | None).validate_python(
+                evidence.get("body_range")
+            )
+            matched_fields = TypeAdapter(list[str]).validate_python(
+                evidence.get("matched_fields", [])
+            )
+            if body_range:
+                represented = ContentSelection.model_validate(
+                    passage_candidate["retrieval_content"]
+                )
+                represented = (await self.artifacts.normalize_selections((represented,)))[0]
+                start = represented.selection.start_byte
+                assert start is not None
+                selected = ContentSelection(
+                    artifact=represented.artifact,
+                    selection=SourceSelection(
+                        start_byte=start + body_range[0], end_byte=start + body_range[1]
+                    ),
+                )
+                origins = await self.artifacts.map_origins(selected, selection.artifact)
+                merged: list[ContentSelection] = []
+                for item in origins:
+                    current = item.origin
+                    if (
+                        merged
+                        and merged[-1].artifact == current.artifact
+                        and merged[-1].selection.end_byte is not None
+                        and current.selection.start_byte is not None
+                        and current.selection.start_byte <= merged[-1].selection.end_byte
+                        and current.selection.end_byte is not None
+                    ):
+                        previous = merged[-1]
+                        merged[-1] = ContentSelection(
+                            artifact=previous.artifact,
+                            selection=SourceSelection(
+                                start_byte=previous.selection.start_byte,
+                                end_byte=max(
+                                    previous.selection.end_byte or 0, current.selection.end_byte
+                                ),
+                            ),
+                        )
+                    else:
+                        merged.append(current)
+                passage_contents = tuple(merged)
+                passage_reason = "body_match"
+            else:
+                whole = (await self.artifacts.normalize_selections((selection,)))[0]
+                if local or not selection.selection.is_whole:
+                    passage_contents = (whole,)
+                    passage_reason = "local_candidate"
+                else:
+                    text = await self.artifacts.read_selection(whole)
+                    start = whole.selection.start_byte
+                    assert start is not None
+                    end = start + len(text[:500].encode("utf-8"))
+                    passage_contents = (
+                        ContentSelection(
+                            artifact=whole.artifact,
+                            selection=SourceSelection(start_byte=start, end_byte=end),
+                        ),
+                    )
+                    passage_reason = (
+                        "title_preview" if "title" in matched_fields else "candidate_preview"
+                    )
+            parts = [await self.artifacts.read_selection(part) for part in passage_contents]
+            snippet = "…".join(parts)
             counterevidence: list[dict[str, object]] = []
             for link in hit.get("counterevidence_links", []):
                 related = candidates[cast(int, link["row"])]
@@ -489,8 +562,11 @@ class WaveQueries:
                 "candidate_ref": {"snapshot": row["identifier"], "key": candidate["key"]},
                 "content": candidate["content"],
                 "origin_contents": candidate["origin_contents"],
-                "text": text,
-                "snippet": text[:500],
+                "text": snippet,
+                "snippet": snippet,
+                "passage_contents": [part.model_dump(mode="json") for part in passage_contents],
+                "matched_fields": matched_fields,
+                "passage_reason": passage_reason,
                 "metadata": candidate["metadata"],
                 "concepts": [concepts[index]["key"] for index in hit.get("concept_rows", [])],
                 "sources": candidate["roots"],
@@ -526,6 +602,7 @@ class WaveQueries:
                 "evidence_roots",
                 "folded_rows",
                 "counterevidence_links",
+                "lexical_evidence",
             ):
                 converted.pop(internal, None)
             hits.append(converted)

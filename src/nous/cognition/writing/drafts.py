@@ -1,8 +1,9 @@
 """Joint writing, durable drafts and exact, retryable Journal adoption."""
 
-from dataclasses import dataclass
+import asyncio
 from typing import Literal, cast
 from uuid import uuid4
+from weakref import WeakValueDictionary
 
 import sqlalchemy as sa
 from pydantic import TypeAdapter
@@ -10,9 +11,9 @@ from pydantic import TypeAdapter
 from nous.common.errors import NousError
 from nous.common.identifier import insert_identifier
 from nous.common.operations import add_error_context, exception_context, record_completed
-from nous.content.contracts import ContentReadView
+from nous.content.contracts import ContentReadView, InputGroup, InputPart, OutputContent, ResultRef
 from nous.content.results import ResultStore
-from nous.models.operations import GenerationOperations, ProducedTask
+from nous.models.generation import GenerationOperations, ProducedTask
 from nous.runtime.execution import ExecutionManager
 from nous.storage.database import Database, ReadTx
 
@@ -24,18 +25,11 @@ from .contracts import (
     DraftView,
     NormalizedEdit,
     WritingOutcome,
+    WritingRequest,
 )
 from .reading import RecordReader
 from .records import WrittenRecords
 from .tasks import writing_body
-
-
-@dataclass(frozen=True)
-class PendingDraft:
-    """Successful model computation and frozen meaning, retained for a SQL-only retry."""
-
-    produced: ProducedTask
-    context: DraftContext
 
 
 class DraftStore:
@@ -52,15 +46,85 @@ class DraftStore:
     ):
         self.database, self.execution, self.core, self.reader = database, execution, core, reader
         self.generation, self.results = generation, results
+        self._request_locks: WeakValueDictionary[str, asyncio.Lock] = WeakValueDictionary()
 
-    async def save_produced(self, produced: ProducedTask, context: DraftContext) -> WritingOutcome:
+    async def save_request(self, request: WritingRequest) -> ResultRef:
+        """Persist writing intent before any remote language request."""
+        inputs = tuple(
+            InputGroup(
+                key=source.slot_key,
+                slot_key=source.slot_key,
+                role=source.role,
+                name=source.display_name or source.slot_key,
+                parts=tuple(InputPart(content=item) for item in source.selections),
+            )
+            for source in request.inputs.sources
+        )
+        result = await self.results.adopt(
+            operation="writing.request",
+            producer={"kind": "user"},
+            inputs=inputs,
+            outputs={
+                "request": OutputContent(
+                    data=request.model_dump_json().encode("utf-8"),
+                    media_type="application/json",
+                    display_name="writing-request.json",
+                )
+            },
+            parameters={"computation_key": request.computation_key},
+            dependencies=(request.task.descriptor,),
+            producer_key=request.computation_key + ":request",
+        )
+        return result.ref
+
+    async def read_request(self, ref: str | ResultRef) -> tuple[ResultRef, WritingRequest]:
+        result = await self.results.get(ref)
+        if result.operation != "writing.request":
+            raise NousError("writing.request_required", "Recovery requires a writing request")
+        artifact = next(item.artifact for item in result.outputs if item.name == "request")
+        return result.ref, WritingRequest.model_validate_json(
+            await self.results.artifacts.read_bytes(artifact)
+        )
+
+    async def find_request(self, ref: ResultRef) -> DraftView | None:
+        async with self.database.read() as tx:
+            row = (
+                await tx.connection.execute(
+                    sa.select(
+                        schema.journal_drafts.c.identifier, schema.journal_drafts.c.namespace_id
+                    ).where(schema.journal_drafts.c.request_result_id == ref.id)
+                )
+            ).one_or_none()
+        return (
+            await self.read(str(row.identifier), namespace=str(row.namespace_id))
+            if row is not None
+            else None
+        )
+
+    async def save_produced(
+        self, produced: ProducedTask, context: DraftContext, request_ref: ResultRef
+    ) -> WritingOutcome:
+        lock = self._request_locks.setdefault(request_ref.id, asyncio.Lock())
+        async with lock:
+            existing = await self.find_request(request_ref)
+            if existing is not None:
+                return WritingOutcome(
+                    status="draft",
+                    draft_ref=existing.ref,
+                    draft=existing,
+                    stage_results=(*produced.completed_stage_refs, existing.result_ref.identifier),
+                )
+            return await self._save_produced(produced, context, request_ref)
+
+    async def _save_produced(
+        self, produced: ProducedTask, context: DraftContext, request_ref: ResultRef
+    ) -> WritingOutcome:
         """Save a successful computation and its frozen draft without another model call.
 
         Output bytes are prepared before the result and draft descriptor are adopted
         together in a write transaction. An output without material returns
-        ``no_material`` after saving its result. On save failure the exception carries
-        a ``PendingDraft`` in ``nous_recovery``; pass its produced result and context
-        to this method to retry saving without requesting the model again.
+        ``no_material`` after saving its result. A saved request reference allows
+        recovery after reopening the instance.
         """
         async with self.execution.operation("writing.save_draft"):
             published = None
@@ -83,7 +147,11 @@ class DraftStore:
                 )
                 text = writing_body(context.intent, produced.outputs.get("output"))
                 if text is None:
-                    result = await self.generation.adopt_produced(produced)
+                    prepared = await self.generation.prepare_adoption(
+                        produced, producer_key="writing:" + request_ref.id + ":no_material"
+                    )
+                    async with self.database.write() as tx:
+                        result = await self.generation.adopt_in(tx, prepared)
                     return WritingOutcome(
                         status="no_material",
                         stage_results=(*produced.completed_stage_refs, result.ref.identifier),
@@ -103,22 +171,16 @@ class DraftStore:
                         context.base_revision, namespace=context.namespace.id
                     )
                     unchanged = text == base.body and context.source_bindings == base.sources
-                published = await self.results.prepare_outputs(produced.outputs)
+                prepared = await self.generation.prepare_adoption(
+                    produced, producer_key="writing:" + request_ref.id + ":draft-result"
+                )
+                published = prepared.outputs
                 async with self.database.write() as tx:
                     ns = await self.reader.scope.get_in(tx, context.namespace.id)
                     await self.core.validate_sources_in(
                         tx, ns, (*context.selected_sources, *context.source_bindings)
                     )
-                    result = await self.results.adopt_in(
-                        tx,
-                        operation=produced.operation,
-                        producer=produced.producer,
-                        inputs=produced.actual_inputs,
-                        prepared_outputs=published,
-                        request=produced.request,
-                        parameters=produced.parameters,
-                        coverage=produced.coverage,
-                    )
+                    result = await self.generation.adopt_in(tx, prepared)
                     body = next(
                         output.artifact for output in result.outputs if output.name == "output"
                     )
@@ -131,6 +193,7 @@ class DraftStore:
                             "id": object_id,
                             "namespace_id": ns.id,
                             "result_id": result.ref.id,
+                            "request_result_id": request_ref.id,
                             "body_artifact_id": body.id,
                             "context": context.model_dump(mode="json"),
                             "base_revision_id": context.base_revision.revision_id
@@ -169,6 +232,7 @@ class DraftStore:
                     error,
                     {
                         "stage": "writing.save_draft",
+                        "writing_request_ref": request_ref.model_dump(mode="json"),
                         "model_succeeded": True,
                         "raw_output": produced.outputs["output"].data.decode("utf-8")
                         if "output" in produced.outputs
@@ -184,7 +248,6 @@ class DraftStore:
                         if published is not None
                         else exception_context(error).get("published_outputs", []),
                     },
-                    recovery=PendingDraft(produced, context),
                 )
                 raise
 

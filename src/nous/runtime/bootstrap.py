@@ -1,6 +1,5 @@
 """Construct and close exactly the resources used by a local instance."""
 
-import logging
 from collections.abc import AsyncGenerator, Mapping
 from contextlib import AsyncExitStack, ExitStack, asynccontextmanager
 from dataclasses import asdict, dataclass, field
@@ -11,12 +10,13 @@ import tomlkit
 
 from nous.application.configuration import ConfigurationOperations
 from nous.application.embedding import EmbeddingOperations
-from nous.cognition.annotation_task import ConceptAnnotationTask
-from nous.cognition.annotations import AnnotationOperations
+from nous.cognition.annotation.operations import AnnotationOperations
+from nous.cognition.annotation.task import ConceptAnnotationTask
 from nous.cognition.concepts import ConceptOperations
 from nous.cognition.contracts import NamespaceRef
 from nous.cognition.feedback import FeedbackOperations
 from nous.cognition.maintenance import MaintenanceOperations
+from nous.cognition.maintenance.definitions import queues as maintenance_queues
 from nous.cognition.retrieval.operations import CognitiveRetrieval
 from nous.cognition.scope import NamespaceOperations
 from nous.cognition.scope import initialize_in as initialize_namespaces_in
@@ -39,13 +39,13 @@ from nous.media.preparation import MediaPreparer
 from nous.models.embedding_store import EmbeddingSpaceRegistry
 from nous.models.embeddings import EmbeddingExecutor
 from nous.models.executor import ModelExecutor
-from nous.models.operations import GenerationOperations
+from nous.models.generation import GenerationOperations
 from nous.models.prompts import PromptCatalog, PromptCompiler
 from nous.models.tasks import TaskCatalog, builtin_tasks
 from nous.network import ModelConnections
 from nous.observability.assembly import LoggingSession, Observability
 from nous.observability.diagnostics import recent_content_preparations, recent_problems
-from nous.observability.instrumentation import operation
+from nous.observability.instrumentation import get_logger, operation
 from nous.storage.content import ContentStore
 from nous.storage.database import Database
 from nous.temporal.domains import TimeService, bind_domains, check_domains
@@ -57,8 +57,6 @@ from .execution import ExecutionManager
 from .instance import InstanceDescriptor, InstanceLocator, InstanceLock
 from .paths import ResolvedPaths
 from .schema import BUSINESS_METADATA
-
-logger = logging.getLogger(__name__)
 
 
 def task_catalog() -> TaskCatalog:
@@ -252,9 +250,7 @@ class Runtime:
             failures = [await self.jobs.read(job.ref) for job in failed_jobs]
             result["jobs"] = {
                 "worker_running": self.job_runtime.worker_running,
-                "active_stages": self.job_runtime.bridge.in_flight
-                if self.job_runtime.bridge
-                else 0,
+                "active_stages": self.execution.status()["durable_tasks"],
                 "queues": await self.jobs.queues(),
                 "recent": [job.model_dump(mode="json") for job in jobs],
                 "recent_failures": [job.model_dump(mode="json") for job in failures],
@@ -381,7 +377,12 @@ async def initialize_instance(
                     candidate = configuration.save_change(change)
                     configuration.publish_change(change, candidate, pending=False)
                 await database.check()
-                await initialize_jobs(database, descriptor.instance_id, settings.jobs)
+                await initialize_jobs(
+                    database,
+                    descriptor.instance_id,
+                    settings.jobs,
+                    maintenance_queues(settings.jobs),
+                )
                 if not existing:
                     binding.write(selected, paths)
             paths.create_runtime_directories()
@@ -394,7 +395,6 @@ async def open_instance(
     *,
     environment: Mapping[str, str] | None = None,
     overrides: Mapping[str, object] | None = None,
-    workers: bool = False,
 ) -> AsyncGenerator[Runtime]:
     """Open an initialized instance and own its resources until context exit.
 
@@ -402,7 +402,6 @@ async def open_instance(
         locator: Instance location or selector; None uses normal resolution.
         environment: Optional environment mapping used for configuration.
         overrides: Optional process-local configuration overrides.
-        workers: Start the persistent maintenance workers in this host when true.
 
     Yields:
         A ready runtime whose services share this instance's resources.
@@ -419,7 +418,7 @@ async def open_instance(
         stack.callback(leases.close)
         stack.callback(logs.close)
         selected = InstanceLocator.resolve(locator, environment)
-        logger.info("runtime.starting")
+        get_logger(__name__).info("runtime.starting")
         configuration = Configuration(
             selected.config_file, environment=environment, overrides=overrides, running=True
         )
@@ -435,7 +434,9 @@ async def open_instance(
         binding.check_resources(paths)
         paths.create_runtime_directories()
         logs.configure(settings.logging, paths.logs, descriptor.instance_id)
-        observability = Observability(settings.tracing, settings.metrics, descriptor.instance_id)
+        observability = Observability(
+            settings.tracing, settings.metrics, descriptor.instance_id, logs
+        )
         stack.callback(observability.close)
         storage = await stack.enter_async_context(AsyncExitStack())
         execution = ExecutionManager(
@@ -448,14 +449,20 @@ async def open_instance(
         wave: WaveOperations | None = None
 
         async def close_execution() -> None:
-            with operation("runtime.shutdown"):
-                await execution.aclose(configuration.snapshot.values.runtime.shutdown_grace_seconds)
+            with (
+                observability.scope(descriptor.instance_id, startup_id),
+                operation("runtime.shutdown"),
+            ):
+                await execution.drain(configuration.snapshot.values.runtime.shutdown_grace_seconds)
                 if wave is not None:
                     wave.close()
 
-        stack.push_async_callback(close_execution)
+        stack.push_async_callback(execution.aclose)
         try:
-            with operation("runtime.startup"):
+            with (
+                observability.scope(descriptor.instance_id, startup_id),
+                operation("runtime.startup"),
+            ):
                 database = await storage.enter_async_context(
                     Database.open(
                         paths.resolve_owned("data", settings.database.filename),
@@ -466,15 +473,16 @@ async def open_instance(
                     )
                 )
                 job_runtime = await stack.enter_async_context(
-                    open_jobs(database, descriptor.instance_id, settings.jobs, execution)
-                )
-
-                async def close_jobs() -> None:
-                    await job_runtime.close(
-                        grace_seconds=configuration.snapshot.values.runtime.shutdown_grace_seconds
+                    open_jobs(
+                        database,
+                        descriptor.instance_id,
+                        settings.jobs,
+                        execution,
+                        maintenance_queues(settings.jobs),
                     )
-
-                stack.push_async_callback(close_jobs)
+                )
+                # Admitted saves may still enqueue until execution has drained.
+                stack.push_async_callback(close_execution)
                 embedding_spaces = EmbeddingSpaceRegistry(database)
                 await check_domains(database, settings.time.domains)
                 await embedding_spaces.check_snapshot(configuration.snapshot)
@@ -616,14 +624,14 @@ async def open_instance(
                     job_runtime=job_runtime,
                     state="ready",
                 )
-                if workers:
-                    await job_runtime.start(maintenance)
-            logger.info("runtime.ready")
+            with observability.scope(descriptor.instance_id, startup_id):
+                get_logger(__name__).info("runtime.ready")
             yield runtime
         except BaseException:
             if runtime is not None:
                 runtime.state = "failed"
-            logger.info("runtime.failed")
+            with observability.scope(descriptor.instance_id, startup_id):
+                get_logger(__name__).info("runtime.failed")
             raise
         finally:
             if runtime is not None and runtime.state != "failed":

@@ -1,18 +1,18 @@
-# 两阶段日志
+# 实例日志与宿主出口
 
 ## 日志入口与输出所有者
 
-模块直接使用标准 `logging.getLogger(__name__)`。需要结构化绑定时使用 structlog 与 stdlib 集成。处理器、格式、级别和输出位置由观测装配统一建立。
+模块在事件发生时使用 `observability.instrumentation.get_logger(__name__)` 取得标准 LoggerAdapter。当前根操作绑定实例路由；关联字段在创建事件时固定。实例自己的 logger 持有文件 handler，向上不传播到宿主 root。模块名作为事件来源保留。
 
 模块不持有业务化的 TraceService，不在 import 时安装日志处理器。基础错误和路径读取无需等待完整观测启动。
 
-## 启动阶段
+## 实例出口
 
-程序入口首先安装 stderr handler，默认 INFO，纯文本格式包含时间、级别、模块和消息。此时不依赖配置、目录或数据库。取得实例后加入 startup_id，用于与随后正式启动过程关联。
+`LoggingSession` 只管理所属 Runtime 的 handler 和等级，不修改 root、全局 structlog 配置或第三方日志等级。未绑定实例的启动信息使用包级 logger，由宿主或 CLI 呈现。
 
-配置可读取、日志路径可用后，将 stdlib 与 structlog 输出接入正式配置。本地文件采用 UTF-8 JSON Lines 和标准 RotatingFileHandler，轮转参数见[字段目录](configuration-fields.md)。终端继续使用适合人阅读的 stderr。
+配置可读取、日志路径可用后，所属实例建立 UTF-8 JSON Lines 文件及标准 RotatingFileHandler，轮转参数见[字段目录](configuration-fields.md)。CLI 负责结果、进度与错误的终端呈现；SDK 不接收宿主和其他实例的日志。
 
-旧 handler 在新处理器可用后移除并关闭，避免重复输出。早期日志已经在 stderr 可见；不维护永久启动日志缓冲重放系统。文件创建失败时保留 stderr 并说明故障。
+新文件 handler 成功建立后替换本实例旧 handler。文件创建失败通过 stderr 说明；未启用文件日志时不显示其他实例的记录作为补齐。
 
 ## 正式字段
 
@@ -24,7 +24,9 @@
 
 ## 上下文与线程
 
-入口用 contextvars 绑定关联字段，操作退出时恢复。标准 logging 的桥接 formatter 读取当前关联。同步库的日志也进入同一格式。线程切换采用成熟的 context 传播方式，不以全局可变 dict 保存当前用户或操作。
+根操作通过 contextvars 绑定 provider、实例路由与关联字段，退出同一范围时恢复。预先创建的 worker 根据当前调用的 Runtime 进入范围；跨实例嵌套返回后恢复原归属。线程切换沿受管理计算传播上下文。
+
+Formatter 使用事件已携带的关联，不在输出时猜测实例。格式化副本不会改变共享 LogRecord 的消息和异常；宿主显式挂接的其他出口仍能读取原事件。资源持有不保存创建 Task 的 contextvar token，交错关闭实例不依赖关闭顺序。
 
 `stdout` 留给命令结果、JSON 或协议帧。任何后续 MCP stdio 服务也遵守这一输出边界。
 
@@ -34,8 +36,8 @@
 
 完成条件：启动前失败可见；正式日志无重复；中文和异常原因可读；JSON/协议输出不夹带日志；并发操作关联不串线。采用 [stdlib handlers](https://docs.python.org/3.14/library/logging.handlers.html) 与 [structlog stdlib integration](https://structlog.org/en/stable/standard-library.html)。
 
-## 两种呈现使用同一事件
+## 事件与呈现
 
-终端列只显示有意义的操作、阶段、对象、结果与耗时；完整标识在 JSONL 中保留，失败给一个可检索关联。使用 structlog 的现成 columns/formatter，处理器不得因为终端隐藏字段而同时删掉文件字段。
+终端显示有意义的操作、阶段、对象与结果；完整标识在 JSONL 中保留，失败给出可检索关联。实例出口采用 structlog 的标准 formatter，呈现不改变事件的正式字段。
 
 stdlib extra 中的实际业务字段由共同桥接收集，不能只保留 result/duration/error_type 四项。操作开始通常 DEBUG，关键完成、部分完成和失败使用适当级别；网络尝试记录见 [请求尝试](../models/request-attempts.md)。产品状态与日志读取见 [诊断](../interfaces/diagnostics.md)。

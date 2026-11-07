@@ -119,7 +119,11 @@ class AudioVisual:
             )
         )
         streams = cast(list[dict[str, JsonValue]], data.get("streams", []))
-        duration = float(data.get("format", {}).get("duration", 0))
+        raw_duration = data.get("format", {}).get("duration")
+        try:
+            duration = float(raw_duration) if raw_duration is not None else None
+        except TypeError, ValueError:
+            duration = None
         video = any(s.get("codec_type") == "video" for s in streams)
         format_name = str(data.get("format", {}).get("format_name", "")).split(",")[0]
         mime = {
@@ -137,7 +141,7 @@ class AudioVisual:
         return {
             "kind": "video" if video else "audio",
             "media_type": mime,
-            "duration_ms": round(duration * 1000),
+            "duration_ms": round(duration * 1000) if duration is not None else None,
             "streams": cast(JsonValue, streams),
             "has_audio": any(s.get("codec_type") == "audio" for s in streams),
             "tool": "FFmpeg",

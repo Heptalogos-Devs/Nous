@@ -50,4 +50,4 @@ Candidate 可以显式选择手工 paths，或绑定其实际正文的 annotatio
 
 候选读出先按原规则计算一次正文基项和直接锚；每条路径分别计算成对 P/G，并按两者之和选一条。返回包含所有路径的可用贡献与最终选择。相同路径复制多次保留同样数值。Thinking 的每个候选模块绑定一条实际路径，重复 Concept occurrence 保留独立位置，不跨两条路径拼接前驱。
 
-Wave 的显式行/字节 selector 保持调用者指定的原文范围，不自动扩成块，也不向既有 Embedding 编码拼接标题。需要完整块候选的调用方使用共同 BlockRef.content/SourceSelection，并可将该块 heading_path 保留到候选 metadata 供呈现。annotation_ref 是当前 Wave 的结构消费者：通过同一 TextView 的实际 block.selection 取得出现位置；Wave 不再解析或切分 Markdown。
+Wave 的显式行/字节 selector 保持调用者指定的原文范围，不自动扩成块。标题作为独立字段进入词项索引及语义输入，正文选区仍指真实 Markdown。需要完整块候选的调用方使用共同 BlockRef.content/SourceSelection；annotation_ref 通过同一 TextView 的实际 block.selection 取得出现位置。

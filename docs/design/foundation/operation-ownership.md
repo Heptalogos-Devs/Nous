@@ -52,4 +52,4 @@ Python Wave → PyO3 边界 → Rust retrieval 核心 → VCP、Tantivy、USearc
 
 复用 Execution 的根操作、嵌套上下文、期限、阻塞工作和取消。局部 owner 决定文件/句柄何时释放，Execution 保证 worker 真正退出。协议 SDK 的隐式重试关闭，保留唯一实际尝试策略。
 
-代码长度由职责衡量；明显长到混合装配、算法、协议、存储时在这些职责处拆分。无需行数门禁，也不把十行纯值对象拆成新包。
+代码长度由职责衡量；明显长到混合装配、算法、协议、存储时在这些职责处拆分。开发检查的警告和拒绝阈值由 [scripts/check/config/check.toml](../../../scripts/check/config/check.toml) 定义；文件仍按职责拆分，也不把十行纯值对象拆成新包。

@@ -8,6 +8,8 @@ WaveSnapshotRef 保存 instance_id、snapshot_id 和 wav 可读标识符。WaveC
 
 CollectionManifest 的 documents/concepts/source_sequences/candidates/support_groups/associations 见 assets。input 对象必须且只包含 file、text 或 artifact 一个来源；已有 artifact 可带 selector。DocumentInput.selector、CandidateContent.selector 与 ContextContent.selector 均为共同 SourceSelection，省略或 `{}` 表示全文；各字段沿用 content 的 start_line/end_line、start_byte/end_byte、pages、start_ms/end_ms、frame/crop。candidate.content 的 document 必须等于实际正文来源，candidate.document 用于曲线文稿分组；两者不同必须在 manifest 明确说明，不能自动用 evidence root 代替。
 
+Document 的 `title` 是独立元数据。词项索引只在整篇候选登记标题；语义输入将标题与候选正文组合，并为正文部分登记真实映射。正文 Artifact 和修订不因标题索引而改变。
+
 derived_from 只引用 documents key，构建读取 DAG 的终端来源。evidence_group 是集合内独立支持分组标识，不作为原件 ID。association.support_group 指向具有完整共同前提的支持组；负 polarity 保留，不送进正传输矩阵。
 
 Concept.key 与 candidate.key 分别唯一，重复 label 允许；core 必须按 key 精确指定，按 label 查找歧义时返回候选供用户选择，不随意选择第一个。vectors 和内部整数 ID 由程序准备，普通清单不要求人工编造。
@@ -17,6 +19,8 @@ Concept.key 与 candidate.key 分别唯一，重复 label 允许；core 必须�
 构建入口接收 `CorpusView`：已接纳 documents、Concept、候选和关系，加上完整的 `EvidenceProjection`。投影的 roots 将稳定来源键绑定到不可变 ArtifactRef 集合，documents 为每份文稿固定独立根集合，source_documents 明确哪些原始文稿可以提供来源出现序列。候选允许根集合为空，仍可按文字/向量检索；来源事实序列和事实支持组继续要求真实来源。
 
 认知 owner 从同一读事务捕获的正式 revision/source bindings 解释独立来源。实验清单适配器以 ResultStore.support_roots 校验 derived_from 后产生同一份投影。Wave 的资产构建只消费这份固定投影，Native 只接收数值集合与行号。
+
+`resolve_build_profile` 固定空间和构建配置；`prepare_build` 返回可恢复的 PreparedSnapshot。`accept_in` 在调用者的 WriteTx 登记结果，`promote_in` 在领域资格成立后切换指针；事务成功后释放准备结果的临时持有。
 
 ## 查询请求
 
@@ -49,7 +53,7 @@ WaveResult:
   diagnostics?  # include_trace / explain 时展开
 ```
 
-WaveHit 的 rank 决定呈现次序；quality/ranking/score_kind 见 ranking。annotation_ref 的无序概念归属来自候选实际覆盖的 occurrences，空 paths 不清空归属；read 返回同一份冻结 concepts/paths。命中返回精确候选及实际内容选区，来源和反证可以进一步展开。完成没有候选时返回真实空集合与原因，不制造默认答案。
+WaveHit 的 rank 决定呈现次序；quality/ranking/score_kind 见 ranking。annotation_ref 的无序概念归属来自候选实际覆盖的 occurrences，空 paths 不清空归属。`content` 保留可完整回读的候选，`passage_contents`、`text`、`matched_fields` 和 `passage_reason` 描述实际交付原文；read 返回冻结 concepts/paths 与完整候选。
 
 coverage 包含候选预算、返回上限、实际候选数量及预算或 top_k 是否触发截断。
 

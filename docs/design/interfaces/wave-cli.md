@@ -14,6 +14,7 @@ nous --instance ./temp/nous-wave tools wave query "<完整wav标识符>" "查找
 nous --instance ./temp/nous-wave tools wave query "<完整wav标识符>" "字面线索" --mode rivermemo --vector-ref ./vector.json --candidate-pool ./pool.json
 nous --instance ./temp/nous-wave tools wave read "<完整wav标识符>" "candidate-key" --sources
 nous --instance ./temp/nous-wave tools wave segment "<完整wav标识符>" ./context.json
+nous --instance ./temp/nous-wave tools wave cleanup --keep-recent 2 --retain "<需保留的快照>"
 ```
 
 wav 标识符由共用可读标识符能力分配并持久保存，例子中的占位符替换为 build 实际返回的完整标识符，并保留引号。candidate-key 是集合内稳定 key，使用实际命中键并保留引号；hit 同时返回可直接用 content read 的精确 Artifact 与选区。
@@ -25,6 +26,8 @@ build 的 --space 覆盖清单未指定值；两处都给且冲突时明确报�
 query 普通文字即可使用。context JSON 提供有序片段，roles 和序位可读；Thinking stages 使用候选 key 数组和阶段名称，不要求内部矩阵/UUID。
 
 普通返回按 Native 数组顺序显示排名、ranking_score、可用的 quality_score、score_kind、正文片段、概念匹配、精确短引用和来源摘要。--explain 展开本次 lane、quality/ranking score、实际算法版本、context/cue 作用、传播/反证路线与裁剪信息。默认不打印向量、全部 CSR 和全部参数。
+
+cleanup 显式删除不再保留的旧快照与无引用组件；当前快照、运行中的读取、正在准备的结果和正式反馈所需快照自动保留。`--keep-recent` 指定每个集合额外保留的最近快照数，`--retain` 可重复指定本次保留的快照。
 
 --json 返回同一公开结果的完整类型，日志与进度到 stderr。read 在原 owner 取回真实原文，不让模型“补写”匹配段落。近重复折叠的其他来源可以展开。
 

@@ -36,6 +36,42 @@ class PassageSelection(BaseModel):
     keys: list[str]
 
 
+def schema_semantics(schema: dict[str, JsonValue]) -> dict[str, JsonValue]:
+    """Drop documentation annotations while retaining the actual validation contract."""
+    maps = {"$defs", "definitions", "properties", "patternProperties", "dependentSchemas"}
+    singles = {
+        "items",
+        "additionalProperties",
+        "unevaluatedProperties",
+        "contains",
+        "not",
+        "if",
+        "then",
+        "else",
+        "propertyNames",
+    }
+    arrays = {"allOf", "anyOf", "oneOf", "prefixItems"}
+    ignored = {"title", "description", "examples", "example", "$comment"}
+    result: dict[str, JsonValue] = {}
+    for key, value in schema.items():
+        if key in ignored:
+            continue
+        if key in maps and isinstance(value, dict):
+            result[key] = {
+                name: schema_semantics(item) if isinstance(item, dict) else item
+                for name, item in value.items()
+            }
+        elif key in singles and isinstance(value, dict):
+            result[key] = schema_semantics(value)
+        elif key in arrays and isinstance(value, list):
+            result[key] = [
+                schema_semantics(item) if isinstance(item, dict) else item for item in value
+            ]
+        else:
+            result[key] = value
+    return result
+
+
 @dataclass(frozen=True)
 class TaskDefinition:
     """Define a language task's input, validation and named output semantics.
@@ -61,6 +97,43 @@ class TaskDefinition:
     program_outputs: tuple[str, ...] = ()
     required_roles: tuple[str, ...] = ()
     text_input_mode: Literal["lossless", "structured"] = "lossless"
+
+    def interpretation_contract(self) -> dict[str, JsonValue]:
+        """The installed semantics needed to interpret a saved response."""
+        return {
+            "id": self.id,
+            "output_schema": schema_semantics(
+                cast(dict[str, JsonValue], self.output_type.model_json_schema())
+            )
+            if self.output_type
+            else None,
+            "source_field": self.source_field,
+            "selected_passages": self.selected_passages,
+            "named_outputs": [name for name, _ in self.named_outputs],
+            "source_representation": self.source_representation,
+            "program_outputs": list(self.program_outputs),
+        }
+
+    def supports_schema(self, schema: JsonValue) -> bool:
+        return (
+            self.output_type is None
+            or isinstance(schema, dict)
+            and (
+                schema_semantics(cast(dict[str, JsonValue], self.output_type.model_json_schema()))
+                == schema_semantics(schema)
+            )
+        )
+
+    def execution_contract(self) -> dict[str, JsonValue]:
+        """Return only semantics that affect execution and interpretation."""
+        return {
+            **self.interpretation_contract(),
+            "input_mode": self.input_mode,
+            "text_input_mode": self.text_input_mode,
+            "preserve_source_keys": self.preserve_source_keys,
+            "required_capabilities": list(self.required_capabilities),
+            "required_roles": list(self.required_roles),
+        }
 
     def describe_contract(self) -> dict[str, JsonValue]:
         """Describe the same input, output and source semantics used by execution."""

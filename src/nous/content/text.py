@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+from bisect import bisect_left, bisect_right
 from functools import cached_property
 
 from markdown_it import MarkdownIt
@@ -111,9 +112,42 @@ class TextView(ContentValue):
                 )
             )
             previous_end = end_line
+        # CommonMark omits definition lines and whitespace from its root tokens.
+        # Keep those byte ranges addressable alongside the parsed blocks.
+        complete: list[BlockStructure] = []
+        cursor = 0
+        gaps = 0
+        for block in blocks:
+            start = block.start - byte_offset
+            if cursor < start:
+                gaps += 1
+                complete.append(
+                    BlockStructure(
+                        key=f"G{gaps}",
+                        kind="source_gap",
+                        start=byte_offset + cursor,
+                        end=byte_offset + start,
+                        start_line=first_line + bisect_right(byte_offsets, cursor) - 1,
+                        end_line=first_line + bisect_left(byte_offsets, start) - 1,
+                    )
+                )
+            complete.append(block)
+            cursor = block.end - byte_offset
+        if cursor < byte_offsets[-1]:
+            gaps += 1
+            complete.append(
+                BlockStructure(
+                    key=f"G{gaps}",
+                    kind="source_gap",
+                    start=byte_offset + cursor,
+                    end=byte_offset + byte_offsets[-1],
+                    start_line=first_line + bisect_right(byte_offsets, cursor) - 1,
+                    end_line=first_line + bisect_left(byte_offsets, byte_offsets[-1]) - 1,
+                )
+            )
         return cls(
             body=body,
-            structure=tuple(blocks),
+            structure=tuple(complete),
             text=text,
             byte_offset=byte_offset,
             first_line=first_line,

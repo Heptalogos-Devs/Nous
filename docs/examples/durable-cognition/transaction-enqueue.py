@@ -1,13 +1,31 @@
-"""Register maintenance within the same transaction as an application's commit."""
+"""Compose annotation adoption and refresh in one caller-owned transaction."""
 
-from pydantic import JsonValue
-
+from nous.cognition.annotation.contracts import AnnotationCommit
+from nous.cognition.annotation.operations import AnnotationOperations, PreparedAnnotationAdoption
+from nous.cognition.maintenance.contracts import RefreshRequest
+from nous.cognition.maintenance.operations import MaintenanceOperations
+from nous.common.errors import NousError
 from nous.jobs import JobRef
-from nous.jobs.operations import JobOperations
-from nous.storage.database import WriteTx
+from nous.storage.database import Database
 
 
-async def enqueue_refresh(
-    tx: WriteTx, jobs: JobOperations, workflow_id: str, payload: dict[str, JsonValue]
-) -> JobRef:
-    return await jobs.enqueue_in(tx, kind="refresh", workflow_id=workflow_id, payload=payload)
+async def adopt_with_refresh(
+    database: Database,
+    annotations: AnnotationOperations,
+    maintenance: MaintenanceOperations,
+    prepared: PreparedAnnotationAdoption,
+    refresh: RefreshRequest,
+    *,
+    key: str,
+) -> tuple[AnnotationCommit, JobRef | None]:
+    async with database.write() as tx:
+        committed = await annotations.adopt_in(tx, prepared)
+        if committed.conflict is not None:
+            issue = committed.conflict
+            raise NousError(issue.code, issue.message, details=issue.details)
+        job = None
+        if committed.current_view_changed:
+            job = await maintenance.enqueue_refresh_in(
+                tx, committed.namespace, committed.generation, refresh, key=key
+            )
+    return committed, job

@@ -1,12 +1,12 @@
-"""Own DBOS client, scheduler lifecycle and the shared SQLite connection pool."""
+"""DBOS client connections and ownership of an explicitly started host."""
 
 from __future__ import annotations
 
 import asyncio
-import logging
 import threading
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Sequence
 from contextlib import asynccontextmanager
+from typing import TYPE_CHECKING
 
 import dbos._dbos as dbos_runtime
 from dbos import DBOS, DBOSClient, DBOSConfig, DBOSPortableJSONSerializer
@@ -17,53 +17,57 @@ from nous.common.errors import NousError
 from nous.runtime.execution import ExecutionManager, complete_cleanup
 from nous.storage.database import Database
 
-from .bridge import RuntimeBridge
 from .configuration import JobsConfig
-from .maintenance import CONTRACT_VERSION, MaintenanceStages, NousMaintenance
-from .operations import QUEUES, JobOperations, application_name
+from .contracts import QueueDefinition
+from .operations import JobOperations, application_name
+
+if TYPE_CHECKING:
+    from nous.cognition.maintenance.operations import MaintenanceOperations
 
 _host_lock = threading.Lock()
-_instances: dict[str, NousMaintenance] = {}
 
 
 def _active_dbos() -> DBOS | None:
-    """Inspect the pinned DBOS singleton before claiming or releasing its lifecycle."""
     return dbos_runtime._dbos_global_instance  # pyright: ignore[reportPrivateUsage]
 
 
-class _SchedulerLogFilter(logging.Filter):
-    """Business diagnostics already own failures; do not log SDK frame contents again."""
+def _registry_in_use() -> bool:
+    """Check the pinned SDK registry without modifying another application's registrations."""
+    registry = dbos_runtime._dbos_global_registry  # pyright: ignore[reportPrivateUsage]
+    return registry is not None and bool(
+        registry.workflow_info_map
+        or registry.class_info_map
+        or registry.instance_info_map
+        or registry.pollers
+        or registry.datasources
+        or registry.kafka_registrations
+    )
 
-    def filter(self, record: logging.LogRecord) -> bool:
-        if record.exc_info is not None:
-            record.error_type = type(record.exc_info[1]).__name__
-            record.exc_info = None
-            record.exc_text = None
-            record.stack_info = None
-        return True
 
-
-def _register_queues(client: DBOSClient, settings: JobsConfig) -> None:
-    for name, concurrency in (
-        (QUEUES["annotation"], settings.annotation_concurrency),
-        (QUEUES["refresh"], settings.refresh_concurrency),
-    ):
+def _register_queues(
+    client: DBOSClient, settings: JobsConfig, definitions: Sequence[QueueDefinition]
+) -> None:
+    for definition in definitions:
         client.register_queue(
-            name,
-            worker_concurrency=concurrency,
+            definition.queue,
+            worker_concurrency=definition.concurrency,
             polling_interval_sec=settings.poll_interval_seconds,
             on_conflict="always_update",
         )
 
 
-async def initialize_jobs(database: Database, instance_id: str, settings: JobsConfig) -> None:
-    """Run the official system migration while the instance initialization lock is held."""
+async def initialize_jobs(
+    database: Database,
+    instance_id: str,
+    settings: JobsConfig,
+    definitions: Sequence[QueueDefinition],
+) -> None:
+    """Run SDK migrations and register queues during explicit instance initialization."""
 
     async def initialize() -> None:
         engine = database.sync_engine(pool_size=settings.database_pool_size)
         try:
-            url = database.migration_url()
-            await asyncio.to_thread(DBOS.migrate, url)
+            await asyncio.to_thread(DBOS.migrate, database.migration_url())
             client = await asyncio.to_thread(
                 DBOSClient,
                 system_database_engine=engine,
@@ -72,7 +76,7 @@ async def initialize_jobs(database: Database, instance_id: str, settings: JobsCo
                 retry_connection_errors=False,
             )
             try:
-                await asyncio.to_thread(_register_queues, client, settings)
+                await asyncio.to_thread(_register_queues, client, settings, definitions)
             finally:
                 await asyncio.to_thread(client.destroy)
         finally:
@@ -82,143 +86,84 @@ async def initialize_jobs(database: Database, instance_id: str, settings: JobsCo
 
 
 class JobRuntime:
-    """The client may enqueue without workers; the host explicitly starts workers."""
+    """Own the control client; a durable host alone may claim the DBOS singleton."""
 
     def __init__(
         self,
         client: DBOSClient,
         operations: JobOperations,
-        database: Database,
-        execution: ExecutionManager | None,
+        execution: ExecutionManager,
         settings: JobsConfig,
         engine: Engine,
+        definitions: Sequence[QueueDefinition],
     ) -> None:
         self._client = client
         self.operations = operations
-        self.database = database
         self.execution = execution
         self.settings = settings
         self.engine = engine
-        self.bridge: RuntimeBridge | None = None
+        self.definitions = tuple(definitions)
         self.worker_running = False
         self._dbos: DBOS | None = None
-        self._instance: NousMaintenance | None = None
-        self._logging_state: tuple[list[logging.Handler], bool, int] | None = None
-        self._log_filter = _SchedulerLogFilter()
-        self._lifecycle_lock = asyncio.Lock()
 
-    async def start(self, stages: MaintenanceStages) -> None:
-        """Start the worker on DBOS's own loop with the bound business stages."""
-        await complete_cleanup(self._start(stages))
+    async def start(self, maintenance: MaintenanceOperations) -> None:
+        """Register and launch on the same running loop as the owning application."""
+        if self.worker_running or not _host_lock.acquire(blocking=False):
+            raise NousError("job.host_in_use", "A durable host is already running")
+        owned: DBOS | None = None
+        registered = False
+        try:
+            if _active_dbos() is not None or _registry_in_use():
+                raise NousError("job.host_in_use", "DBOS is already owned by this process")
+            await self.execution.control_blocking(
+                _register_queues, self._client, self.settings, self.definitions
+            )
+            if _active_dbos() is not None or _registry_in_use():
+                raise NousError("job.host_in_use", "DBOS is already owned by this process")
+            from nous.cognition.maintenance.durable import register
 
-    async def _start(self, stages: MaintenanceStages) -> None:
-        async with self._lifecycle_lock:
-            await self._launch(stages)
-
-    async def _launch(self, stages: MaintenanceStages) -> None:
-        if self.worker_running:
-            raise NousError("job.host_in_use", "The durable worker is already running")
-        if self.execution is None:
-            raise NousError("job.host_unavailable", "A control client cannot start workers")
-        bridge = RuntimeBridge(self.execution)
-        self.bridge = bridge
-
-        def launch() -> None:
-            if not _host_lock.acquire(blocking=False):
-                raise NousError(
-                    "job.host_in_use", "A DBOS worker host is already running in this process"
-                )
-            owned: DBOS | None = None
+            registered = True
+            register(self.operations.instance_id, self.execution, maintenance)
+            config: DBOSConfig = {
+                "name": self.operations.application,
+                "system_database_engine": self.engine,
+                "executor_id": self.operations.application,
+                "serializer": DBOSPortableJSONSerializer(),
+                "max_executor_threads": self.settings.max_executor_threads,
+                "run_migrations": False,
+                "enable_otlp": False,
+            }
+            owned = DBOS(config=config)
+            if _active_dbos() is not owned:
+                raise NousError("job.host_in_use", "DBOS is already owned by this process")
+            self._dbos = owned
+            DBOS.launch()
+            self.worker_running = True
+        except BaseException:
             try:
-                if _active_dbos() is not None:
-                    raise NousError(
-                        "job.host_in_use", "A DBOS instance already belongs to this process"
-                    )
-                _register_queues(self._client, self.settings)
-                dbos_logger = logging.getLogger("dbos")
-                self._logging_state = (
-                    list(dbos_logger.handlers),
-                    dbos_logger.propagate,
-                    dbos_logger.level,
+                if registered and (_active_dbos() is owned or _active_dbos() is None):
+                    await self.execution.control_blocking(DBOS.destroy, destroy_registry=True)
+            finally:
+                self._dbos = None
+                _host_lock.release()
+            raise
+
+    async def close(self) -> None:
+        """Destroy only this host's SDK after accepted business tasks have exited."""
+        if not self.worker_running:
+            return
+        if self._dbos is None or _active_dbos() is not self._dbos:
+            raise NousError("job.host_ownership_lost", "The DBOS worker is no longer owned")
+        try:
+            await complete_cleanup(
+                self.execution.control_blocking(
+                    DBOS.destroy, destroy_registry=True, workflow_completion_timeout_sec=30
                 )
-                dbos_logger.handlers = [logging.NullHandler()]
-                dbos_logger.propagate = True
-                dbos_logger.addFilter(self._log_filter)
-                config: DBOSConfig = {
-                    "name": self.operations.application,
-                    "system_database_engine": self.engine,
-                    "application_version": CONTRACT_VERSION,
-                    "executor_id": self.operations.application,
-                    "serializer": DBOSPortableJSONSerializer(),
-                    "max_executor_threads": self.settings.max_executor_threads,
-                    "run_migrations": False,
-                    "enable_otlp": False,
-                }
-                constructed = DBOS(config=config)
-                configured_engine = constructed._config.get("system_database_engine")  # pyright: ignore[reportPrivateUsage]
-                if _active_dbos() is not constructed or configured_engine is not self.engine:
-                    raise NousError(
-                        "job.host_in_use", "A DBOS instance already belongs to this process"
-                    )
-                owned = constructed
-                self._dbos = owned
-                dbos_logger.setLevel(logging.NOTSET)
-                instance = _instances.get(self.operations.instance_id)
-                if instance is None:
-                    instance = NousMaintenance(self.operations.instance_id, bridge, stages)
-                    _instances[self.operations.instance_id] = instance
-                else:
-                    instance.bind(bridge, stages)
-                self._instance = instance
-                DBOS.launch()
-                self.worker_running = True
-            except BaseException:
-                try:
-                    if owned is not None and _active_dbos() is owned:
-                        DBOS.destroy()
-                finally:
-                    self._dbos = None
-                    if self._instance is not None:
-                        self._instance.unbind()
-                    self._restore_logging()
-                    _host_lock.release()
-                raise
-
-        await asyncio.to_thread(launch)
-
-    async def close(self, *, grace_seconds: float) -> None:
-        """Stop dispatch, await real business cleanup and leave interrupted work recoverable."""
-        await complete_cleanup(self._close(grace_seconds=grace_seconds))
-
-    async def _close(self, *, grace_seconds: float) -> None:
-        async with self._lifecycle_lock:
-            if self.bridge is not None:
-                await self.bridge.quiesce(grace_seconds=grace_seconds)
-                self.bridge = None
-            if self.worker_running:
-                try:
-                    if self._dbos is None or _active_dbos() is not self._dbos:
-                        raise NousError(
-                            "job.host_ownership_lost", "The DBOS worker is no longer owned"
-                        )
-                    await asyncio.to_thread(DBOS.destroy)
-                finally:
-                    self._dbos = None
-                    if self._instance is not None:
-                        self._instance.unbind()
-                    self.worker_running = False
-                    self._restore_logging()
-                    _host_lock.release()
-
-    def _restore_logging(self) -> None:
-        if self._logging_state is not None:
-            handlers, propagate, level = self._logging_state
-            dbos_logger = logging.getLogger("dbos")
-            dbos_logger.removeFilter(self._log_filter)
-            dbos_logger.handlers = handlers
-            dbos_logger.propagate = propagate
-            dbos_logger.setLevel(level)
-            self._logging_state = None
+            )
+        finally:
+            self._dbos = None
+            self.worker_running = False
+            _host_lock.release()
 
 
 @asynccontextmanager
@@ -226,16 +171,16 @@ async def open_jobs(
     database: Database,
     instance_id: str,
     settings: JobsConfig,
-    execution: ExecutionManager | None,
+    execution: ExecutionManager,
+    definitions: Sequence[QueueDefinition],
 ) -> AsyncGenerator[JobRuntime]:
     engine = database.sync_engine(pool_size=settings.database_pool_size)
     client: DBOSClient | None = None
-    operations: JobOperations | None = None
     try:
 
         async def connect() -> None:
             nonlocal client
-            client = await asyncio.to_thread(
+            client = await execution.control_blocking(
                 DBOSClient,
                 system_database_engine=engine,
                 serializer=DBOSPortableJSONSerializer(),
@@ -243,13 +188,13 @@ async def open_jobs(
                 retry_connection_errors=False,
             )
             try:
-                await asyncio.to_thread(
+                await execution.control_blocking(
                     client.list_queues, application_name=application_name(instance_id)
                 )
             except SQLAlchemyError as error:
                 raise NousError(
                     "job.schema_missing",
-                    "Durable job schema is unavailable; run instance initialization to upgrade.",
+                    "Durable job schema is unavailable; initialize the instance.",
                 ) from error
 
         await complete_cleanup(connect())
@@ -258,18 +203,18 @@ async def open_jobs(
             client,
             instance_id,
             settings,
-            current_settings=(lambda: execution.snapshot.values.jobs) if execution else None,
+            execution,
+            definitions,
+            current_settings=lambda: execution.snapshot.values.jobs,
         )
-        yield JobRuntime(client, operations, database, execution, settings, engine)
+        yield JobRuntime(client, operations, execution, settings, engine, definitions)
     finally:
 
         async def cleanup() -> None:
             try:
-                if operations is not None:
-                    await operations.aclose()
                 if client is not None:
-                    await asyncio.to_thread(client.destroy)
+                    await execution.control_blocking(client.destroy)
             finally:
-                await asyncio.to_thread(engine.dispose)
+                await execution.control_blocking(engine.dispose)
 
         await complete_cleanup(cleanup())

@@ -11,7 +11,7 @@ Rust 核心无 pyo3/numpy 依赖；Python bundle 转成核心自有结构后调�
 ## 接口
 
 ```text
-Engine.build(FrozenAssets, BuildOptions, staging_path, cancel) -> BuiltSnapshot
+Engine.build(FrozenAssets, BuildOptions, component_path, cancel) -> BuiltSnapshot
 Engine.open(published_path, expected_identity, cancel) -> Snapshot
 Snapshot.observe(QuerySignals, ObserveOptions, cancel) -> Observation
 Snapshot.recall(observation_or_query, RetrievalPlan, allowed, cancel) -> CandidatePool
@@ -54,7 +54,7 @@ NativeError 使用 code/message/details，错误在了解含义的模块构造�
 
 ## 快照和执行
 
-build 结束时所有 staged 文件和 writer 已关闭，只返回 BuiltSnapshot 的身份、规模及文件信息。Python 发布目录后 open 一次并登记数据库。open 校验必要身份与资产，不重新 Embedding 或重建数学资产。
+build 在稳定组件目录内关闭 writer 和构建期 reader，再原子写入完成清单并返回 BuiltSnapshot 的身份和文件信息。Wave 以完整冻结输入、行映射、空间和构建配置的签名共享不可变组件；签名变化时重新构建词项索引、ANN 与 VCP 数学资产。open 校验身份与资产，不重新 Embedding 或重建数学资产。
 
 所有 CPU 工作使用同一个有界 Engine pool，外层 Execution.blocking 传入取消 Token 并等待真正退出。Tantivy/USearch 的内部线程纳入同一资源目标。反证邻接、概念到候选倒排和必要范数在快照构建/打开时准备，查询不对每个 hit 重新扫描全部候选及全部关系。
 

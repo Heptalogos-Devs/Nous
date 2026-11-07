@@ -7,7 +7,7 @@
 ```text
 CollectionManifest:
   name, space?
-  documents[]: {key, input, derived_from?, evidence_group?, times?}
+  documents[]: {key, input, title?, derived_from?, evidence_group?, times?}
   concepts[]: {key, label, description, aliases?}
   source_sequences[]: {document, concepts[], ordered}
   candidates[]: {key, content, document, concepts?, paths?, metadata?}
@@ -26,7 +26,7 @@ documents.derived_from 是外部清单明确声明的派生关系，引用已列
 
 候选的 content/origin_contents 保留原可读正文与真实原件选区，标注和路径继续使用原文的字节坐标。source Markdown 引用仅按 CommonMark 链接语法去掉目标与链接标记，完整保留可见 label。代码块、行内代码、转义示例和普通链接保持原样。
 
-content.projections.semantic_text 将实际发生变化的原文选区采用为确定性的 text/plain Artifact，ResultStore 保存原选区到投影的来源关系；缓存身份来自精确原选区与实际投影文字。无变化的普通文字直接使用原输入，不创建结果。Wave 的 candidate_texts 与 Embedding.ensure 读取同一投影，retrieval_content 在快照中固定其输入引用；用户读取及标注仍指原 content。投影后没有可检索文字的候选不进入词项或向量行，正文仍可读取。
+content.projections.semantic_text 将实际发生变化的原文选区采用为确定性的 text/plain Artifact，ResultStore 保存原选区到投影的正式坐标映射。无变化的普通文字直接使用原输入。Wave 的 candidate_texts 与 retrieval_content 对应同一正文投影；有标题时，向量输入再组合标题和正文，并登记正文部分到该投影的映射。用户读取及标注仍指原 content。
 
 快照使用实际构建配置；Embedding 的正式摘要按实际编码文字计算，相同输入可以复用规范向量。每次正文修订的投影结果仍保留自己的原文来源，向量复用不改变该引用。
 

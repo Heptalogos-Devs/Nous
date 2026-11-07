@@ -24,7 +24,7 @@ TaskDefinition 管理输入输出类型及引用规则。system/user/assistant �
 
 InputGroup 的文本和多个媒体 part 保持明确顺序；预览显示名称、类型、来源选区和已知尺寸，不打印 base64 或大矩阵。`append_sources` 是固定槽，没有过程式 DSL。
 
-附加来源时，user 消息在材料旁以当前配置语言说明已知的来源用途和实际范围；具体范围来自媒体准备和来源组，不从文件名、编号或模型名称猜测。详见[输入规划](input-planning.md)。
+附加来源时，user 消息从实际 InputGroup.context 的 SourceContext 以当前配置语言说明已知的来源用途和实际范围；具体范围来自媒体准备和来源组，不从文件名、编号或模型名称猜测。详见[输入规划](input-planning.md)。
 
 ## 预览
 

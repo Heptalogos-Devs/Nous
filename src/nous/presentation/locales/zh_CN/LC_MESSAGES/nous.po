@@ -1104,3 +1104,27 @@ msgstr "方向校正后的源图像尺寸为 {width} × {height} 像素。"
 
 msgid "Provided text is an excerpt of the source."
 msgstr "本次提供的是源文本的摘录。"
+
+msgid "Edit recovery file"
+msgstr "编辑恢复文件"
+
+msgid "Edit recovery session"
+msgstr "编辑恢复会话"
+
+msgid "Cannot read the edit recovery session."
+msgstr "无法读取编辑恢复会话。"
+
+msgid "The edit recovery session belongs to another instance or target."
+msgstr "编辑恢复会话属于其他实例或目标。"
+
+msgid "The edit session belongs to another instance."
+msgstr "编辑会话属于其他实例。"
+
+msgid "The edit session belongs to another target."
+msgstr "编辑会话属于其他目标。"
+
+msgid "Provide a record or --resume PATH."
+msgstr "请提供文稿或使用 --resume PATH。"
+
+msgid "The edit recovery request has different maintenance options."
+msgstr "编辑恢复请求使用了不同的维护选项。"

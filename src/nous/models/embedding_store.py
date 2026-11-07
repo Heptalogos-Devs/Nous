@@ -13,7 +13,8 @@ from nous.configuration import ConfigSnapshot
 from nous.storage.database import Database, ReadTx, WriteTx
 
 from .embedding_schema import spaces, vector_rows, vectors
-from .embeddings import SpaceDefinition, resolved_space
+from .embeddings import resolved_space
+from .vector_contracts import SpaceDefinition
 
 
 @dataclass(frozen=True)

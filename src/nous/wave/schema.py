@@ -28,13 +28,131 @@ snapshots = sa.Table(
     sa.Column("space_definition", sa.JSON, nullable=True),
     sa.Column("identity", sa.JSON, nullable=False),
     sa.Column("index_location", sa.String, nullable=False),
-    sa.Column("mapping", sa.JSON, nullable=False),
+    sa.Column("layout", sa.JSON, nullable=False),
     sa.Column("owner", sa.JSON, nullable=False),
     sa.Column("metadata", sa.JSON, nullable=False),
     sa.Column("build_key", sa.String, nullable=True, unique=True),
     sa.Column("build_signature", sa.String, nullable=True),
+    sa.Column("component_signature", sa.String, nullable=False, index=True),
+    sa.Column(
+        "graph_signature",
+        sa.String,
+        sa.ForeignKey("wave_projection_graphs.signature"),
+        nullable=False,
+    ),
     sa.Column("build_summary", sa.JSON, nullable=False),
     sa.Column("created_at", sa.String, nullable=False),
+)
+
+projection_units = sa.Table(
+    "wave_projection_units",
+    metadata,
+    sa.Column("signature", sa.String, primary_key=True),
+    sa.Column("input_signature", sa.String, nullable=False, index=True),
+    sa.Column("document_key", sa.String, nullable=False),
+    sa.Column("document", sa.JSON, nullable=False),
+    sa.Column("roots", sa.JSON, nullable=False),
+    sa.Column("candidates", sa.JSON, nullable=False),
+    sa.Column("candidate_data", sa.JSON, nullable=False),
+)
+
+projection_graphs = sa.Table(
+    "wave_projection_graphs",
+    metadata,
+    sa.Column("signature", sa.String, primary_key=True),
+    sa.Column("concepts", sa.JSON, nullable=False),
+    sa.Column("associations", sa.JSON, nullable=False),
+    sa.Column("support_groups", sa.JSON, nullable=False),
+)
+
+projection_graph_artifacts = sa.Table(
+    "wave_projection_graph_artifacts",
+    metadata,
+    sa.Column(
+        "graph_signature",
+        sa.String,
+        sa.ForeignKey("wave_projection_graphs.signature"),
+        primary_key=True,
+    ),
+    sa.Column("artifact_id", sa.String, sa.ForeignKey(artifacts.c.id), primary_key=True),
+)
+
+projection_graph_vectors = sa.Table(
+    "wave_projection_graph_vectors",
+    metadata,
+    sa.Column(
+        "graph_signature",
+        sa.String,
+        sa.ForeignKey("wave_projection_graphs.signature"),
+        primary_key=True,
+    ),
+    sa.Column("key", sa.String, primary_key=True),
+    sa.Column("input", sa.JSON, nullable=False),
+    sa.Column("result_id", sa.String, sa.ForeignKey(vectors.c.result_id), nullable=False),
+    sa.Column("row_index", sa.Integer, nullable=False),
+)
+
+projection_artifacts = sa.Table(
+    "wave_projection_artifacts",
+    metadata,
+    sa.Column(
+        "unit_signature",
+        sa.String,
+        sa.ForeignKey("wave_projection_units.signature"),
+        primary_key=True,
+    ),
+    sa.Column("artifact_id", sa.String, sa.ForeignKey(artifacts.c.id), primary_key=True),
+)
+
+projection_vectors = sa.Table(
+    "wave_projection_vectors",
+    metadata,
+    sa.Column(
+        "unit_signature",
+        sa.String,
+        sa.ForeignKey("wave_projection_units.signature"),
+        primary_key=True,
+    ),
+    sa.Column("key", sa.String, primary_key=True),
+    sa.Column("input", sa.JSON, nullable=False),
+    sa.Column("result_id", sa.String, sa.ForeignKey(vectors.c.result_id), nullable=False),
+    sa.Column("row_index", sa.Integer, nullable=False),
+)
+
+snapshot_members = sa.Table(
+    "wave_snapshot_members",
+    metadata,
+    sa.Column("snapshot_id", sa.String, sa.ForeignKey("wave_snapshots.id"), primary_key=True),
+    sa.Column("ordinal", sa.Integer, primary_key=True),
+    sa.Column(
+        "unit_signature",
+        sa.String,
+        sa.ForeignKey("wave_projection_units.signature"),
+        nullable=False,
+    ),
+)
+
+snapshot_candidates = sa.Table(
+    "wave_snapshot_candidates",
+    metadata,
+    sa.Column("snapshot_id", sa.String, sa.ForeignKey("wave_snapshots.id"), primary_key=True),
+    sa.Column("key", sa.String, primary_key=True),
+    sa.Column(
+        "unit_signature",
+        sa.String,
+        sa.ForeignKey("wave_projection_units.signature"),
+        nullable=False,
+    ),
+    sa.Column("unit_index", sa.Integer, nullable=False),
+    sa.Column("row_index", sa.Integer, nullable=False),
+)
+
+snapshot_references = sa.Table(
+    "wave_snapshot_references",
+    metadata,
+    sa.Column("snapshot_id", sa.String, sa.ForeignKey("wave_snapshots.id"), primary_key=True),
+    sa.Column("owner_kind", sa.String, primary_key=True),
+    sa.Column("owner_id", sa.String, primary_key=True),
 )
 
 snapshot_artifacts = sa.Table(
@@ -42,15 +160,4 @@ snapshot_artifacts = sa.Table(
     metadata,
     sa.Column("snapshot_id", sa.String, sa.ForeignKey("wave_snapshots.id"), primary_key=True),
     sa.Column("artifact_id", sa.String, sa.ForeignKey(artifacts.c.id), primary_key=True),
-)
-
-snapshot_vectors = sa.Table(
-    "wave_snapshot_vectors",
-    metadata,
-    sa.Column("snapshot_id", sa.String, sa.ForeignKey("wave_snapshots.id"), primary_key=True),
-    sa.Column("kind", sa.String, primary_key=True),
-    sa.Column("key", sa.String, primary_key=True),
-    sa.Column("input", sa.JSON, nullable=False),
-    sa.Column("result_id", sa.String, sa.ForeignKey(vectors.c.result_id), nullable=False),
-    sa.Column("row_index", sa.Integer, nullable=False),
 )

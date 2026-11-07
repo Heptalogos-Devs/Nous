@@ -1,28 +1,20 @@
-# DBOS 3.4 与既有 Runtime 的接入
+# DBOS 3.4 与显式宿主
 
 ## 采用范围
 
 采用 `dbos==3.4.0`，更新 pyproject/锁文件，不自动升级到不同 API 的版本。使用公开 DBOS、DBOSClient、DBOSConfiguredInstance、workflow/step、队列、portable JSON 和事务入队。DBOS 负责持久工作及步骤记录；认知与内容 owner 继续负责正式状态和结果。无需本轮改成 Datasource ORM、独立 PostgreSQL 或新任务平台。
 
-DBOS 调度循环与 Nous 业务循环隔离。源码依据及接口细节见[研究记录](../../research/dbos-3.4-integration-notes.md)。
+持久宿主在自身应用循环启动 DBOS，异步工作流和业务阶段共享该循环。
 
-## 一个进程、一个实例宿主、两个循环
+## 宿主与注册
 
-Nous Runtime 持有实例锁、业务 asyncio loop、数据库 AsyncEngine、模型 HTTP 客户端、Native Engine、ExecutionManager 和领域服务。DBOS 单例及其同步数据库连接由 jobs/runtime 持有，其异步 workflow 在 DBOS 自己的后台 loop 运行。
+`run_host(locator, application)` 是同步入口，使用 asyncio.Runner 建立一个循环、打开 Runtime，并在运行中的该循环同步调用 DBOS.launch。普通 `open_instance` 不注册工作流、不启动 DBOS，也不改变调用者事件循环的默认线程池。
 
-启动前检查进程内是否已有 DBOS 单例；已有实例由原宿主继续持有，Nous 报告 `job.host_in_use`。DBOS 3.4 没有公开的单例存在性查询，必要的检查集中在 jobs/runtime。关闭只销毁该 Runtime 实际创建并仍持有的单例。
+一个进程只运行一个 Nous 持久宿主。启动前检查 DBOS 单例和已有注册，发现外部所有权时返回 `job.host_in_use`，不销毁外部实例。3.4 的只读所有权检查集中在 jobs/runtime；宿主正常关闭时清理自己创建的注册。
 
-从没有运行中 asyncio loop 的同步启动上下文调用 DBOS.launch，例如在 `asyncio.to_thread` 的启动函数中调用。这样 3.4 的 BackgroundEventLoop 不会把 Nous loop 采纳为主循环。不要在 Nous loop 内直接调用 DBOS 的异步执行 API；3.4 的内部异步支持会替换所用 loop 的默认 executor，这也是选择隔离的具体原因。
+`cognition/maintenance/durable.py` 在宿主启动时注册 `nous.annotation` 与 `nous.refresh`，并以稳定实例身份构造 `NousMaintenance` 配置实例。业务依赖在注册前完整构造。队列 `nous-annotation` 和 `nous-refresh` 使用 DBOSClient.register_queue，容量来自 jobs 配置。导入普通 Runtime 或 Job 客户端不会执行工作流装饰器。
 
-所有真实业务经 [RuntimeBridge](runtime-bridge.md) 回到 Nous loop。桥只认识绑定好的函数和序列化值，业务函数通过构造依赖得到服务。workflow 参数不得包含 Runtime、Connection、Lock、Task、客户端、Pydantic 的可变运行对象或 Native 对象。
-
-## DBOS 注册
-
-静态 `@DBOS.dbos_class()` 类 NousMaintenance 继承 DBOSConfiguredInstance，组合根为当前实例构造一次。`config_name`/`instance_name` 使用稳定实例身份；startup_id 只表示一次启动。注册的 workflow 名为 `NousMaintenance.annotation`、`NousMaintenance.refresh`，class_name 为 `NousMaintenance`，实际目录由 jobs/maintenance.py 统一持有。函数名、参数序列化和步骤顺序组成待恢复工作的执行合同。
-
-注册装饰器、配置实例及服务绑定必须在 launch 前完成，不能按请求/Namespace 动态创建工作类。一个 Runtime 的多个 Namespace 共用两个 workflow，通过 payload 的 namespace_ref 区分。
-
-队列为 `nous-annotation` 与 `nous-refresh`，使用 3.4 的 register_queue 公共接口；不能用旧教程里的 `Queue("name")`。运行期注册在 launch 后；为避免恢复时配置缺失，可在 schema 已建立后通过 DBOSClient.register_queue 预先登记，再启动 DBOS。两种方式必须使用同一配置和 application_name。
+持久载荷只包含 JSON 值、业务计划与正式引用，不携带 Runtime、连接、Task、客户端或 Native 对象。业务阶段直接使用所属 Runtime 的服务。
 
 ## SQLite 与事务
 
@@ -53,17 +45,15 @@ async with database.write() as tx:
 
 ## 业务幂等与调度重复
 
-自动维护 ID 从精确 revision/提交事件、工作种类、冻结配方或刷新 profile/目标代次形成稳定键。一次事务重试复用该键。手工明确重新维护创建新的请求身份，保留此前工作结果。
+标注计算键在创建请求时确定；刷新工作键由实际写入或标注采用及代次确定。一次恢复复用原计算和工作身份。手工明确重新维护创建新的请求身份，保留此前工作结果。
 
 恢复步骤可能重复进入一个已经提交成功的业务方法，因此 ResultStore 和正式采用按工作/步骤业务键查找同一结果。键相同、内容合同不同报冲突，不静默返回别人的结果。Job ID 不能替代文稿 revision identity。
 
-## JSON 与版本
+## JSON 与部署
 
-DBOS runtime 和 client 使用一致的 DBOSPortableJSONSerializer；持久 payload、步骤返回与结果显式使用 JSON 标量、数组、对象和正式引用的 JSON 表示。大型正文、模型输出和模板存 CAS，checkpoint 只保存稳定内容引用和必要值，不用 pickle 保存 Python 类实例。
+DBOS runtime 和 client 使用一致的 DBOSPortableJSONSerializer；持久载荷、步骤返回与结果在边界转为 JSON 和正式引用。正文、模型输出与模板存于内容存储。
 
-`application_version` 使用显式的 workflow 合同版本（初值 `nous-durable-cognition-1`），不以每次进程随机值或任意源码 hash 破坏重启恢复。仅内部实现变化且步骤序列/语义兼容时保留版本；破坏重放合同的变更在发布前排空或明确迁移未完成工作，不能自动把旧工作重放到不同步骤序列。不开启 Enterprise auto_upgrade，不建立内部 v1/v2 兼容链。
-
-`executor_id` 使用同一单宿主实例稳定值以便本地恢复；startup_id 仍只用于一次启动诊断。系统只运行当前实例、当前支持合同的工作；不接管其他安装的共享数据。
+application version 由 DBOS 的部署机制确定，executor_id 根据实例身份稳定派生；项目不维护内部工作流版本链。开发期更换内部结构时使用明确选择的新实例。
 
 ## 恢复、失败重试和工作身份
 
@@ -74,18 +64,16 @@ DBOS runtime 和 client 使用一致的 DBOSPortableJSONSerializer；持久 payl
 - `ERROR` 的步骤失败由 Jobs owner 使用公开 fork 从实际失败步骤继续，复用已完成步骤；重试身份和重复请求规则见 [Job 操作](../interfaces/jobs-and-host.md)。
 - 若旧工作本身已与新修订不兼容，报告 superseded 或明确要求新的维护请求，不能通过修改冻结 payload 偷偷重试。
 
-用户 `wait` 是对已提交工作状态的读取，不进入工作执行的并发名额；`cancel` 的 DBOS 状态变更和 Runtime 业务任务实际结束分别报告。跨循环桥的 Future 显示 cancelled 不表示持有的数据库/文件/子进程已可关闭。
+用户 `wait` 是对已提交工作状态的读取，不进入工作执行的并发名额；`cancel` 的 DBOS 状态变更和 Runtime 业务任务实际结束分别报告。资源实际结束由 ExecutionManager 跟踪，包括工作流 Task 的最后检查点。
 
 ## 启动与关闭
 
-启动顺序：取得实例锁并核验资源 → 打开业务基础 → 建立 Job client/同步引擎并验证 DBOS schema → 装配 Runtime 与维护 owner → 建立 bridge → 注册 DBOS 类/实例、配置队列 → 在同步启动上下文 launch → 宣布 workers ready。
+启动依次取得实例锁并核验资源、构造业务能力和 Job 客户端、检查框架所有权、注册已绑定工作流，在应用循环 launch，随后运行应用协程。
 
-短命令 workers=False 只持有 Job client，不构造/launch DBOS 单例。工作可以被持久登记，等待下一次 worker 宿主运行。
-
-关闭顺序按 [执行与生命周期](execution-and-job-lifecycle.md)：先停止新的 bridge 业务派发，再结束实际业务任务，最后 destroy DBOS 和关闭依赖。DBOS.destroy 只能在同步生命周期线程调用，避免阻塞 Nous loop；它开始前不得留下仍依赖业务数据库的无主任务。
+关闭时停止新业务接纳，按宽限期等待或取消已接纳任务，直至子进程、Native 和托管线程实际结束。随后通过 ExecutionManager 的独立线程池调用 DBOS.destroy，应用循环继续运行以完成 SDK 收尾；最后关闭客户端、同步引擎、业务资源与实例锁。用户取消与宿主停止分别使用 DBOS 取消和可恢复中断语义。
 
 ## 限制与错误处理
 
 SQLite 不支持 DBOS attributes containment 过滤；Job 列表使用公开可用过滤与有界分页，不直接查询系统私有表假装完整能力。控制客户端关闭无限连接错误重试，连接错误由共同执行期限与错误合同处理。
 
-本轮不要求 Conductor、Kafka、Cron 或云账户。DBOS 日志接入既有 logging，关闭重复 OTLP/控制台输出，启停不会重设主应用的全局 OTel provider。恢复日志保留 job_id 与步骤，正文/凭据不默认输出。
+本轮不要求 Conductor、Kafka、Cron 或云账户。业务日志按实例归属，SDK 不额外启用 OTLP 导出；启停不重设主应用的全局 OTel provider。恢复日志保留 job_id 与步骤，正文/凭据不默认输出。

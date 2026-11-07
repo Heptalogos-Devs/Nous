@@ -36,7 +36,7 @@ from pydantic_ai.messages import (
 )
 
 from nous.common.errors import NousError
-from nous.media.contracts import PreparedSource, SourceContext
+from nous.media.contracts import PreparedSource
 from nous.presentation import translate
 
 from .configuration import ModelRegistry
@@ -69,15 +69,9 @@ def _source_context(source: PreparedSource, language: str) -> str:
     if source.group is not None and source.group.role in roles:
         role = translate(roles[source.group.role], language)
         lines.append(translate("Source role: {role}.", language).format(role=role))
-    raw = source.metadata.get("source_context")
-    if raw is None:
+    context = source.group.context if source.group else None
+    if context is None:
         return "\n".join(lines)
-    try:
-        context = SourceContext.model_validate(raw)
-    except ValidationError as error:
-        raise NousError(
-            "model.invalid_source_context", "Source context is invalid", cause=error
-        ) from error
 
     def seconds(value: int) -> str:
         return f"{value / 1000:.3f}".rstrip("0").rstrip(".")
@@ -365,21 +359,7 @@ class PromptCatalog:
                     raise NousError("prompt.invalid_source_slot", "Sources require a user message")
             contract = self.tasks[manifest.contract_id].describe_contract()
             variables = cast(dict[str, dict[str, JsonValue]], contract["variables"])
-            execution_contract = {
-                **{
-                    key: value
-                    for key, value in contract.items()
-                    if key not in {"variables", "input", "named_outputs", "media_capabilities"}
-                },
-                "input": {
-                    **cast(dict[str, JsonValue], contract["input"]),
-                    "fields": {
-                        name: {key: value for key, value in info.items() if key != "description"}
-                        for name, info in variables.items()
-                    },
-                },
-                "named_outputs": sorted(cast(dict[str, JsonValue], contract["named_outputs"])),
-            }
+            execution_contract = self.tasks[manifest.contract_id].execution_contract()
             execution = manifest.model_dump(mode="json", exclude={"documentation"})
             execution["messages"] = [
                 item.model_dump(mode="json", exclude={"description"}) for item in manifest.messages

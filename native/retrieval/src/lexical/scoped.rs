@@ -79,6 +79,7 @@ impl RetrievalIndex {
                 row.add_text(self.inner.fields.namespace, namespace);
                 row.add_text(self.inner.fields.subject, subject);
                 row.add_text(self.inner.fields.body, &document.text);
+                row.add_text(self.inner.fields.title, &document.title);
                 writer.add_document(row)?;
             }
             let mut commit = writer.prepare_commit()?;

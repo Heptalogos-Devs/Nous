@@ -14,11 +14,11 @@
 
 队列并发与 Runtime.execution.max_in_flight 是不同资源层次；业务阶段仍要进入共同执行准入。Job 等待不占该业务槽。配置更新不在同一 patch 中偷偷增大模型尝试预算或改变向量空间。
 
-`workers` 是本次打开 Runtime 的明确运行选择，CLI runtime run/job run 与 SDK workers=True 启用；不因执行一次 status/create 自动启动永久 worker。无需新增通用服务管理平台。
+CLI `runtime run`、`job run --until-idle` 与 SDK `run_host` 显式启动持久宿主；普通打开、状态查询和保存可以登记工作，但不启动工作者。
 
-SQLite 文件路径、busy_timeout、synchronous、日志级别、shutdown_grace、凭据和网络继续使用现有字段，不在 jobs 下复制另一套同义配置。DBOS application_name/executor_id 根据稳定实例身份派生，workflow_contract_version 来自本轮代码合同，不给普通用户一个可随意改动导致工作失联的文本配置。
+SQLite 文件路径、busy_timeout、synchronous、日志级别、shutdown_grace、凭据和网络继续使用现有字段。DBOS application_name/executor_id 根据稳定实例身份派生，应用版本由 SDK 的部署机制处理。
 
-DBOS 连接不读取 DBOS_SYSTEM_DATABASE_URL 来覆盖正式实例配置；应用明确传 system_database_url/engine。关闭重复 SDK OTLP/控制台 exporter，默认日志通过既有会话。需要独立导出时沿现有观测配置接入，不添加第二套 OTel 私有全局状态。
+DBOS 连接不读取 DBOS_SYSTEM_DATABASE_URL 来覆盖正式实例配置；应用明确传 system_database_engine。持久宿主不额外启用 SDK OTLP 导出，业务日志使用实例会话。
 
 自动恢复最多尝试 20 次，这是静态 workflow 合同的一部分。DBOS 3.4 在注册时固定该值，由合同变更管理。
 

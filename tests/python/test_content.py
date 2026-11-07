@@ -465,6 +465,9 @@ def test_exact_text_selection_lossless_edits_and_producer_conflicts(tmp_path: Pa
             view = await runtime.artifacts.text_view(artifact.ref)
             assert "".join(chunk.text for chunk in view.chunks(max_bytes=7)) == text
             assert "".join(chunk.text for chunk in view.complete_chunks(11)) == text
+            assert any(
+                block.kind == "source_gap" and "[label]:" in block.text for block in view.blocks
+            )
             definition = ContentSelection(
                 artifact=artifact.ref, selection=SourceSelection(start_line=1, end_line=1)
             )
@@ -481,6 +484,11 @@ def test_exact_text_selection_lossless_edits_and_producer_conflicts(tmp_path: Pa
             assert edited.utf8_bytes == text.replace("source:S1", "source:S2").encode()
             bounds = await runtime.artifacts.normalize_selections((definition,))
             assert bounds[0].selection == SourceSelection(start_byte=0, end_byte=20)
+            plan = await runtime.generation.preparer.prepare(
+                artifact, bounds[0].selection, settings=runtime.configuration.snapshot.values.media
+            )
+            batch = await runtime.generation.preparer.materialize(plan.batches[0])
+            assert batch.sources[0].text == "[label]: source:S1\r\n"
             group = InputGroup(
                 key="S1",
                 slot_key="material",
@@ -595,25 +603,87 @@ def test_adopted_text_projection_maps_exact_regions_without_matching_bytes(tmp_p
                 await runtime.artifacts.read_selection(label_origins[0].origin)
                 == "[标签](source:S1)"
             )
-            with pytest.raises(NousError, match="exact mapping"):
-                await runtime.artifacts.map_origins(
-                    ContentSelection(
-                        artifact=projected.content.artifact,
-                        selection=SourceSelection(start_byte=7, end_byte=10),
-                    ),
-                    original.ref,
-                )
+            partial_label = await runtime.artifacts.map_origins(
+                ContentSelection(
+                    artifact=projected.content.artifact,
+                    selection=SourceSelection(start_byte=7, end_byte=10),
+                ),
+                original.ref,
+            )
+            assert (
+                await runtime.artifacts.read_selection(partial_label[0].origin)
+                == "[标签](source:S1)"
+            )
             duplicate = await runtime.artifacts.ingest(projected.text)
             with pytest.raises(NousError, match="exact mapping"):
                 await runtime.artifacts.map_origins(
                     ContentSelection(artifact=duplicate.ref), original.ref
                 )
             whole = await runtime.artifacts.map_origins(projected.content, original.ref)
-            assert tuple(
-                [await runtime.artifacts.read_selection(item.origin) for item in whole]
-            ) == ("before [标签](source:S1) after\n",)
+            assert (
+                "".join([await runtime.artifacts.read_selection(item.origin) for item in whole])
+                == "before [标签](source:S1) after\n"
+            )
         async with open_instance(instance, environment={}) as runtime:
             restored = await runtime.artifacts.map_origins(selected, original.ref)
             assert restored == mapped
+
+    asyncio.run(scenario())
+
+
+def test_deep_producer_mappings_keep_exact_ranges(tmp_path: Path) -> None:
+    """Coordinate recovery follows a long producer chain without Python recursion."""
+    from nous.content.contracts import OutputMapping
+
+    async def scenario() -> None:
+        instance = tmp_path / "deep-mapping"
+        await initialize_instance(instance, environment={})
+        async with open_instance(instance, environment={}) as runtime:
+            original = await runtime.artifacts.ingest("abc")
+            current = ContentSelection(
+                artifact=original.ref, selection=SourceSelection(start_byte=0, end_byte=3)
+            )
+            prepared = await runtime.results.prepare_outputs(
+                {
+                    "text": OutputContent(
+                        data=b"abc", media_type="text/plain", display_name="text.txt"
+                    )
+                }
+            )
+            async with runtime.database.write() as tx:
+                for _ in range(1050):
+                    result = await runtime.results.adopt_in(
+                        tx,
+                        operation="projection",
+                        producer={"kind": "deterministic"},
+                        inputs=(
+                            InputGroup(
+                                key="S1",
+                                slot_key="S1",
+                                name="source",
+                                parts=(InputPart(content=current),),
+                            ),
+                        ),
+                        prepared_outputs=prepared,
+                        mappings=(
+                            OutputMapping(
+                                output_name="text",
+                                selection=SourceSelection(start_byte=0, end_byte=3),
+                                relation="identity",
+                                origins=(current,),
+                            ),
+                        ),
+                    )
+                    current = ContentSelection(
+                        artifact=result.outputs[0].artifact,
+                        selection=SourceSelection(start_byte=0, end_byte=3),
+                    )
+            selected = current.model_copy(
+                update={"selection": SourceSelection(start_byte=1, end_byte=2)}
+            )
+            mapped = await runtime.artifacts.map_origins(selected, original.ref)
+            assert len(mapped) == 1
+            assert mapped[0].origin.selection == SourceSelection(start_byte=1, end_byte=2)
+            assert await runtime.artifacts.read_selection(mapped[0].origin) == "b"
 
     asyncio.run(scenario())

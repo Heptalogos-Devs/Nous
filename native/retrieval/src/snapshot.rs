@@ -32,6 +32,7 @@ pub struct Input {
 pub struct CandidateMeta {
     pub keys: Vec<String>,
     pub documents: Vec<String>,
+    pub titles: Vec<String>,
     pub group_keys: Vec<String>,
     pub group_rows: Vec<u64>,
 }
@@ -124,6 +125,7 @@ impl Input {
                 && unique(&c.group_keys)
                 && c.group_rows.iter().all(|r| *r < c.group_keys.len() as u64)
                 && c.documents.len() == n
+                && c.titles.len() == n
                 && self.candidates.texts.len() == n
                 && c.documents.iter().all(|d| !d.is_empty()),
             "Candidate metadata/text length mismatch"
@@ -769,9 +771,26 @@ pub fn load(path: &Path, expected: &Value, cancel: &CancellationToken) -> Result
     );
     let manifest: BTreeMap<String, String> =
         serde_json::from_slice(&std::fs::read(path.join("manifest.json"))?)?;
-    for name in ["assets.msgpack", "math.msgpack", "timings.json"] {
+    for name in [
+        "assets.msgpack",
+        "math.msgpack",
+        "timings.json",
+        "lexical/meta.json",
+    ] {
         ensure!(
-            manifest.get(name) == Some(&file_hash(&path.join(name), cancel)?),
+            manifest.contains_key(name),
+            "Snapshot component missing from manifest: {name}"
+        );
+    }
+    for (name, expected_hash) in &manifest {
+        ensure!(
+            Path::new(name)
+                .components()
+                .all(|component| matches!(component, std::path::Component::Normal(_))),
+            "Invalid snapshot component path"
+        );
+        ensure!(
+            expected_hash == &file_hash(&path.join(name), cancel)?,
             "Snapshot component checksum mismatch: {name}"
         );
     }
@@ -915,12 +934,16 @@ pub fn build(input: Input, output_dir: &Path, token: &CancellationToken) -> Resu
                 subject_id: "snapshot".into(),
                 commit_seq: 1,
                 text: input.candidates.texts[row].clone(),
+                title: c.titles[row].clone(),
                 deleted: false,
             })
             .collect::<Vec<_>>(),
         1,
     )?;
     lexical.close()?;
+    // The build no longer needs the reader or its mapped segments. Release them
+    // before handing the completed component to the publication owner.
+    drop(lexical);
     let lexical_ms = stage.elapsed().as_secs_f64() * 1000.0;
     let stage = std::time::Instant::now();
     token.check()?;
@@ -951,16 +974,52 @@ pub fn build(input: Input, output_dir: &Path, token: &CancellationToken) -> Resu
             &json!({"total_ms":started.elapsed().as_secs_f64()*1000.0,"geometry_artifact_ms":math_ms,"lexical_ms":lexical_ms,"ann_ms":ann_ms}),
         )?,
     )?;
-    let manifest = ["assets.msgpack", "math.msgpack", "timings.json"]
-        .into_iter()
-        .map(|name| Ok((name.to_string(), file_hash(&path.join(name), token)?)))
-        .collect::<Result<BTreeMap<_, _>>>()?;
-    std::fs::write(path.join("manifest.json"), serde_json::to_vec(&manifest)?)?;
+    let manifest = component_manifest(&path, token)?;
+    let pending_manifest = path.join(format!(".manifest-{}.tmp", uuid::Uuid::new_v4()));
+    {
+        use std::io::Write;
+        let mut file = std::fs::File::create(&pending_manifest)?;
+        file.write_all(&serde_json::to_vec(&manifest)?)?;
+        file.sync_all()?;
+    }
+    std::fs::rename(&pending_manifest, path.join("manifest.json"))?;
     Ok(BuiltSnapshot {
         identity: input.identity.clone(),
         manifest,
     })
 }
+
+fn component_manifest(root: &Path, cancel: &CancellationToken) -> Result<BTreeMap<String, String>> {
+    let mut manifest = BTreeMap::new();
+    let mut pending = vec![root.to_path_buf()];
+    while let Some(directory) = pending.pop() {
+        cancel.check()?;
+        for entry in std::fs::read_dir(directory)? {
+            let entry = entry?;
+            let path = entry.path();
+            let kind = entry.file_type()?;
+            if kind.is_dir() {
+                pending.push(path);
+            } else if kind.is_file() {
+                let relative = path.strip_prefix(root)?;
+                let name = relative
+                    .to_str()
+                    .context("Snapshot component path is not UTF-8")?;
+                let name = name.replace('\\', "/");
+                let filename = entry.file_name();
+                let filename = filename.to_string_lossy();
+                if name == "manifest.json" || filename.ends_with(".lock") {
+                    continue;
+                }
+                manifest.insert(name, file_hash(&path, cancel)?);
+            } else {
+                ensure!(false, "Unsupported snapshot component type");
+            }
+        }
+    }
+    Ok(manifest)
+}
+
 fn file_hash(path: &Path, cancel: &CancellationToken) -> Result<String> {
     use sha2::{Digest, Sha256};
     use std::io::Read;

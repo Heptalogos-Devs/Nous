@@ -153,6 +153,7 @@ class ProjectionBuilder:
                 Document(
                     key="revision:" + object_id,
                     input=DocumentInput(artifact=item.body.identifier),
+                    title=item.revision["title"],
                     derived_from=tuple(dict.fromkeys(parents)),
                     times=CognitiveTimes.model_validate(item.revision["cognitive_times"]),
                 )

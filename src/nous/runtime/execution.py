@@ -3,7 +3,6 @@
 import asyncio
 import contextvars
 import functools
-import logging
 import time
 from collections.abc import AsyncGenerator, Awaitable, Callable, Coroutine, Mapping
 from concurrent.futures import ThreadPoolExecutor
@@ -17,7 +16,7 @@ from nous.common.errors import NousError
 from nous.common.operations import OperationDiagnostics
 from nous.configuration import ConfigSnapshot
 from nous.configuration.definitions import ExecutionConfig
-from nous.observability.instrumentation import get_meter, operation
+from nous.observability.instrumentation import get_logger, get_meter, operation
 
 T = TypeVar("T")
 
@@ -34,6 +33,9 @@ class OperationContext:
 
 _current: contextvars.ContextVar[Mapping[object, OperationContext]] = contextvars.ContextVar(
     "nous_operations", default=MappingProxyType({})
+)
+_admitted: contextvars.ContextVar[frozenset[object]] = contextvars.ContextVar(
+    "nous_admitted_durable", default=frozenset()
 )
 
 
@@ -81,14 +83,17 @@ class ExecutionManager:
         self._owner = object()
         self._operations: dict[asyncio.Task[object], asyncio.Future[None]] = {}
         self._tasks: set[asyncio.Task[object]] = set()
+        self._durable: set[asyncio.Task[object]] = set()
+        self._controls: dict[asyncio.Task[object], tuple[int, asyncio.Future[None]]] = {}
         self._blocking: set[asyncio.Future[object]] = set()
         self._accepting = True
         self._queued = 0
         self._running = 0
+        self._closed = False
 
     @property
     def in_flight(self) -> int:
-        return len(self._tasks | self._operations.keys())
+        return len(self._tasks | self._durable | self._operations.keys() | self._controls.keys())
 
     @property
     def snapshot(self) -> ConfigSnapshot:
@@ -101,6 +106,7 @@ class ExecutionManager:
             "queued": self._queued,
             "running": self._running,
             "blocking_workers": len(self._blocking),
+            "durable_tasks": len(self._durable),
             "accepting": self._accepting,
         }
 
@@ -124,7 +130,14 @@ class ExecutionManager:
         """
         parent = _current.get().get(self._owner)
         task = asyncio.current_task()
-        if not self._accepting and parent is None and task not in self._tasks:
+        if (
+            not self._accepting
+            and parent is None
+            and task not in self._tasks
+            and task not in self._durable
+            and task not in self._controls
+            and self._owner not in _admitted.get()
+        ):
             raise NousError("operation.unavailable", "The runtime is stopping.", operation=name)
         if parent is not None and settings is not None and settings is not parent.settings:
             raise NousError(
@@ -192,6 +205,55 @@ class ExecutionManager:
         async with self.operation(name, deadline=deadline):
             return await action()
 
+    @asynccontextmanager
+    async def control(self) -> AsyncGenerator[None]:
+        """Track a slot-free control call until all its nested calls finish."""
+        task = asyncio.current_task()
+        if task is None:
+            raise RuntimeError("Control requires an asyncio task")
+        previous = self._controls.get(task)
+        if previous is None:
+            if (
+                not self._accepting
+                and task not in self._operations
+                and task not in self._tasks
+                and task not in self._durable
+                and self._owner not in _admitted.get()
+            ):
+                raise NousError("operation.unavailable", "The runtime is stopping.")
+            completed = asyncio.get_running_loop().create_future()
+            self._controls[task] = (1, completed)
+        else:
+            completed = previous[1]
+            self._controls[task] = (previous[0] + 1, completed)
+        try:
+            yield
+        finally:
+            count, _ = self._controls[task]
+            if count == 1:
+                del self._controls[task]
+                completed.set_result(None)
+            else:
+                self._controls[task] = (count - 1, completed)
+
+    @asynccontextmanager
+    async def durable(self) -> AsyncGenerator[None]:
+        """Track the framework's actual task through its final checkpoint."""
+        task = asyncio.current_task()
+        if task is None:
+            raise RuntimeError("Durable execution requires an asyncio task")
+        self._durable.add(task)
+        task.add_done_callback(self._durable.discard)
+        if not self._accepting:
+            raise asyncio.CancelledError("Runtime is stopping")
+        token = _current.set(MappingProxyType({}))
+        admission = _admitted.set(_admitted.get() | {self._owner})
+        try:
+            yield
+        finally:
+            _admitted.reset(admission)
+            _current.reset(token)
+
     def spawn(
         self, name: str, action: Callable[[], Coroutine[object, object, T]]
     ) -> asyncio.Task[T]:
@@ -212,7 +274,7 @@ class ExecutionManager:
         def completed(done: asyncio.Task[T]) -> None:
             self._tasks.discard(done)
             if not done.cancelled() and (error := done.exception()) is not None:
-                logging.getLogger(__name__).error(
+                get_logger(__name__).error(
                     "execution.background_failed", extra={"error_type": type(error).__name__}
                 )
 
@@ -234,6 +296,16 @@ class ExecutionManager:
         """
         if not self._accepting and self._owner not in _current.get():
             raise NousError("operation.unavailable", "The runtime is stopping.")
+        return await self.control_blocking(action, *args, on_cancel=on_cancel, **kwargs)
+
+    async def control_blocking(
+        self,
+        action: Callable[..., T],
+        *args: object,
+        on_cancel: Callable[[], None] | None = None,
+        **kwargs: object,
+    ) -> T:
+        """Run admitted control and shutdown work on the runtime-owned pool."""
         context = contextvars.copy_context()
         future = asyncio.get_running_loop().run_in_executor(
             self._workers, context.run, functools.partial(action, *args, **kwargs)
@@ -277,16 +349,36 @@ class ExecutionManager:
         """
         await complete_cleanup(self._close(grace_seconds, asyncio.current_task()))
 
-    async def _close(self, grace_seconds: float, caller: asyncio.Task[object] | None) -> None:
+    def stop_admission(self) -> None:
         self._accepting = False
-        tasks = self._tasks - {caller}
+
+    async def drain(self, grace_seconds: float = 30) -> None:
+        """Wait for accepted tasks and their actual cleanup while retaining the pool."""
+        await complete_cleanup(self._drain(grace_seconds, asyncio.current_task()))
+
+    async def _close(self, grace_seconds: float, caller: asyncio.Task[object] | None) -> None:
+        if self._closed:
+            return
+        await self._drain(grace_seconds, caller)
+        self._workers.shutdown(wait=True, cancel_futures=True)
+        self._closed = True
+
+    async def _drain(self, grace_seconds: float, caller: asyncio.Task[object] | None) -> None:
+        self._accepting = False
+        tasks = (self._tasks | self._durable) - {caller}
         operations = {
             task: completed for task, completed in self._operations.items() if task is not caller
         }
-        waiters = [*tasks, *operations.values()]
+        controls = {
+            task: completed for task, (_, completed) in self._controls.items() if task is not caller
+        }
+        waiters = [*tasks, *operations.values(), *controls.values()]
         if waiters:
             await asyncio.wait(waiters, timeout=grace_seconds)
             for task, completed in operations.items():
+                if not completed.done():
+                    task.cancel()
+            for task, completed in controls.items():
                 if not completed.done():
                     task.cancel()
             for task in tasks:
@@ -297,9 +389,8 @@ class ExecutionManager:
                 return_exceptions=True,
             )
         if self._blocking:
-            logging.getLogger(__name__).info("execution.waiting_for_blocking_workers")
+            get_logger(__name__).info("execution.waiting_for_blocking_workers")
             await asyncio.gather(
                 *(asyncio.shield(future) for future in tuple(self._blocking)),
                 return_exceptions=True,
             )
-        self._workers.shutdown(wait=True, cancel_futures=True)

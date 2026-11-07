@@ -12,7 +12,7 @@
 |---|---|
 | media/preparation.py | 移出模型转写；批次变成引用计划；模态内部缓存与转换按职责组织 |
 | media/analysis.py | 完整组织转写/描述/结构化，冻结任务，逐批采用与返回部分结果 |
-| models/operations.py | 共同接纳/准备、preview/probe、语言阶段与任务采用 |
+| models/generation/ | 共同接纳/准备、preview/probe、语言阶段、响应恢复与任务采用 |
 | models/executor.py | 保留协议、完成状态、尝试与流；移出专名任务判断与共享策略 |
 | models/prompts.py | 资源快照、单一 Compiler、编辑/预览合同 |
 | content/contracts.py、store.py | 输入组/实际 part 与 origin 分开，精确读取与批量来源能力 |

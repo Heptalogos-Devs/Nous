@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING
 
-from pydantic import Field, JsonValue
+from pydantic import JsonValue
 from pydantic_ai.messages import BinaryContent
 
 from nous.common.errors import NousError
@@ -9,7 +9,6 @@ from nous.content.contracts import (
     Artifact,
     ArtifactRef,
     ContentSelection,
-    ContentValue,
     InputGroup,
     ProcessingResult,
     SourceRole,
@@ -20,20 +19,6 @@ from .configuration import MediaConfig
 
 if TYPE_CHECKING:
     from nous.content.text import TextView
-
-
-class SourceContext(ContentValue):
-    """Known extent and actual selections of one prepared source."""
-
-    kind: Literal["text", "image", "pdf", "audio", "video"]
-    selections: tuple[SourceSelection, ...] = ()
-    duration_ms: int | None = Field(default=None, ge=0)
-    page_count: int | None = Field(default=None, ge=0)
-    byte_length: int | None = Field(default=None, ge=0)
-    frame_count: int | None = Field(default=None, ge=0)
-    width: int | None = Field(default=None, ge=0)
-    height: int | None = Field(default=None, ge=0)
-    audio: Literal["included", "excluded", "absent", "processed"] | None = None
 
 
 @dataclass(frozen=True)
@@ -93,7 +78,6 @@ class PreparedSource:
 @dataclass(frozen=True)
 class PreparedBatch:
     sources: tuple[PreparedSource, ...]
-    inputs: tuple[InputGroup, ...]
     selection: SourceSelection
     coverage: dict[str, JsonValue]
     conversion: PlannedConversion | None = None
@@ -101,6 +85,10 @@ class PreparedBatch:
     source_prefix: str = "S1"
     source_slot_key: str = "S1"
     source_role: SourceRole = "source"
+
+    @property
+    def inputs(self) -> tuple[InputGroup, ...]:
+        return tuple(source.group for source in self.sources if source.group is not None)
 
 
 @dataclass(frozen=True)

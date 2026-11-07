@@ -212,6 +212,49 @@ SourceRole = Literal[
 ]
 
 
+class SelectedSource(ContentValue):
+    """One logical source slot and its ordered, independently selected regions."""
+
+    slot_key: str = Field(min_length=1)
+    role: SourceRole = "source"
+    selections: tuple[ContentSelection, ...] = Field(min_length=1)
+    display_name: str | None = None
+
+
+class SourceFacts(ContentValue):
+    """Detected facts for an immutable original, separate from its declared MIME."""
+
+    artifact: ArtifactRef
+    declared_mime: str
+    detected_mime: str
+    kind: Literal["text", "image", "pdf", "audio", "video"]
+    details: dict[str, JsonValue] = Field(default_factory=dict)
+
+
+class SelectedInputs(ContentValue):
+    """The original material choices, independent of physical representations."""
+
+    sources: tuple[SelectedSource, ...]
+    facts: tuple[SourceFacts, ...] = ()
+
+    def identity(self) -> list[dict[str, JsonValue]]:
+        return [source.model_dump(mode="json", exclude={"display_name"}) for source in self.sources]
+
+
+class SourceContext(ContentValue):
+    """Known original extents and actual selections delivered to a request."""
+
+    kind: Literal["text", "image", "pdf", "audio", "video"]
+    selections: tuple[SourceSelection, ...] = ()
+    duration_ms: int | None = Field(default=None, ge=0)
+    page_count: int | None = Field(default=None, ge=0)
+    byte_length: int | None = Field(default=None, ge=0)
+    frame_count: int | None = Field(default=None, ge=0)
+    width: int | None = Field(default=None, ge=0)
+    height: int | None = Field(default=None, ge=0)
+    audio: Literal["included", "excluded", "absent", "processed"] | None = None
+
+
 class InputGroup(ContentValue):
     """One local source key, with every independently addressable representation."""
 
@@ -220,6 +263,7 @@ class InputGroup(ContentValue):
     name: str
     role: SourceRole = "source"
     parts: tuple[InputPart, ...] = Field(min_length=1)
+    context: SourceContext | None = None
 
 
 class InputSpec(ContentValue):
@@ -253,11 +297,22 @@ class ResultOutput(ContentValue):
     artifact: ArtifactRef
 
 
+class OutputMapping(ContentValue):
+    """A producer-declared relation between one output range and its origins."""
+
+    output_name: str
+    selection: SourceSelection
+    relation: Literal["identity", "atomic", "derived"]
+    origins: tuple[ContentSelection, ...] = Field(min_length=1)
+
+
 class ProcessingResult(ContentValue):
     ref: ResultRef
     operation: str
     inputs: tuple[InputGroup, ...]
     outputs: tuple[ResultOutput, ...]
+    mappings: tuple[OutputMapping, ...] = ()
+    dependencies: tuple[ArtifactRef | ResultRef, ...] = ()
     producer: dict[str, JsonValue]
     request: dict[str, JsonValue]
     parameters: dict[str, JsonValue]

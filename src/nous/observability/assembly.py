@@ -1,4 +1,4 @@
-"""Process-owned stdlib logging and OpenTelemetry assembly."""
+"""Instance-owned logging sinks and OpenTelemetry providers."""
 
 import logging
 import sys
@@ -7,10 +7,8 @@ from contextlib import ExitStack, contextmanager
 from datetime import UTC, datetime
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import cast
 
 import structlog
-from opentelemetry import trace
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import (
     InMemoryMetricReader,
@@ -25,69 +23,35 @@ from structlog.typing import EventDict
 
 from nous.configuration.definitions import LoggingConfig, MetricsConfig, TracingConfig
 
-from .instrumentation import active_providers
+from .instrumentation import active_logging, active_providers, get_logger
 
 
 def _context(logger: object, method: str, event: EventDict) -> EventDict:
-    current = trace.get_current_span().get_span_context()
-    if current.is_valid:
-        event["trace_id"] = trace.format_trace_id(current.trace_id)
-        event["span_id"] = trace.format_span_id(current.span_id)
     event["timestamp"] = datetime.now(UTC).isoformat()
     event.pop("message", None)
     return event
 
 
-def _terminal_event(logger: object, method: str, event: EventDict) -> EventDict:
-    value = dict(event)
-    for key in ("instance_id", "startup_id", "trace_id", "span_id", "attempts", "result_refs"):
-        value.pop(key, None)
-    if value.get("event") != "operation.terminal" or value.get("result") == "success":
-        value.pop("operation_id", None)
-    if value.get("event") == "request.attempt":
-        route = value.pop("route", None)
-        if isinstance(route, dict):
-            route = cast(dict[str, object], route)
-            value["model"] = route.get("model_name", route.get("model_id", "unknown"))
-            value["model_id"] = route.get("model_id", "unknown")
-        for key in ("start", "end", "provider_request_id", "reported_usage"):
-            value.pop(key, None)
-    return value
-
-
 class LoggingSession:
-    """Replace only handlers owned by Nous; leave host handlers intact."""
+    """Own one runtime's sinks without modifying process logging configuration."""
 
     def __init__(self, startup_id: str) -> None:
         self.handlers: list[logging.Handler] = []
-        self.previous_level = logging.getLogger().level
-        self.tokens = structlog.contextvars.bind_contextvars(startup_id=startup_id)
+        self.startup_id = startup_id
+        self.route = logging.getLogger(f"nous.instances.{startup_id}")
+        self.route.propagate = False
         self._install("INFO", None)
 
     def _install(
         self, level: str, file: Path | None, max_bytes: int = 10485760, backups: int = 5
     ) -> None:
         shared: list[structlog.typing.Processor] = [
-            structlog.contextvars.merge_contextvars,
             structlog.stdlib.add_log_level,
             structlog.stdlib.add_logger_name,
             structlog.stdlib.ExtraAdder(),
             _context,
         ]
-        terminal = logging.StreamHandler(sys.stderr)
-        terminal.setFormatter(
-            structlog.stdlib.ProcessorFormatter(
-                foreign_pre_chain=shared,
-                processors=[
-                    structlog.stdlib.ProcessorFormatter.remove_processors_meta,
-                    _terminal_event,
-                    structlog.dev.ConsoleRenderer(
-                        colors=False, exception_formatter=structlog.dev.plain_traceback
-                    ),
-                ],
-            )
-        )
-        pending: list[logging.Handler] = [terminal]
+        pending: list[logging.Handler] = [logging.NullHandler()]
         if file is not None:
             try:
                 file.parent.mkdir(parents=True, exist_ok=True)
@@ -107,32 +71,18 @@ class LoggingSession:
                 pending.append(handler)
             except OSError as error:
                 sys.stderr.write(f"Nous log file unavailable: {error}\n")
-        root = logging.getLogger()
         for handler in pending:
-            root.addHandler(handler)
+            self.route.addHandler(handler)
         for handler in self.handlers:
-            root.removeHandler(handler)
+            self.route.removeHandler(handler)
             handler.close()
         self.handlers = pending
-        root.setLevel(level)
-        structlog.configure(
-            processors=[*shared, structlog.stdlib.ProcessorFormatter.wrap_for_formatter],
-            logger_factory=structlog.stdlib.LoggerFactory(),
-            cache_logger_on_first_use=True,
-        )
-        for name in (
-            "aiosqlite",
-            "sqlalchemy.engine",
-            "urllib3",
-            "httpx",
-            "httpcore",
-            "httpx2",
-            "httpcore2",
-        ):
-            logging.getLogger(name).setLevel(logging.WARNING)
+        self.route.setLevel(level)
+
+    def logger(self, name: str) -> logging.Logger:
+        return self.route.getChild(name)
 
     def configure(self, settings: LoggingConfig, directory: Path, instance_id: str) -> None:
-        structlog.contextvars.bind_contextvars(instance_id=instance_id)
         self._install(
             str(settings.level),
             directory / "nous.jsonl" if settings.file_enabled else None,
@@ -141,33 +91,34 @@ class LoggingSession:
         )
 
     def set_level(self, level: str) -> None:
-        root = logging.getLogger()
-        previous = root.level
+        previous = self.route.level
         try:
-            root.setLevel(level)
+            self.route.setLevel(level)
         except Exception as primary:
             try:
-                logging.Logger.setLevel(root, previous)
+                logging.Logger.setLevel(self.route, previous)
             except Exception as cleanup:
                 primary.add_note(f"Restoring the previous log level also failed: {cleanup!r}")
             raise
 
     def close(self) -> None:
-        root = logging.getLogger()
         for handler in self.handlers:
-            root.removeHandler(handler)
+            self.route.removeHandler(handler)
             handler.flush()
             handler.close()
         self.handlers.clear()
-        root.setLevel(self.previous_level)
-        structlog.contextvars.reset_contextvars(**self.tokens)
-        structlog.contextvars.unbind_contextvars("instance_id")
 
 
 class Observability:
     def __init__(
-        self, tracing: TracingConfig, metric_settings: MetricsConfig, instance_id: str
+        self,
+        tracing: TracingConfig,
+        metric_settings: MetricsConfig,
+        instance_id: str,
+        logging_session: LoggingSession | None = None,
     ) -> None:
+        self.logging = logging_session
+        self.instance_id = instance_id
         with ExitStack() as initializing:
             resource = Resource.create(
                 {
@@ -233,28 +184,29 @@ class Observability:
                 )
                 * 1000
             )
-            self._token = active_providers.set(self)
             initializing.pop_all()
 
     @contextmanager
     def scope(self, instance_id: str, startup_id: str) -> Generator[None]:
         """Bind this runtime's providers even in tasks created before it opened."""
         token = active_providers.set(self)
+        logging_token = active_logging.set(self.logging)
         try:
             with structlog.contextvars.bound_contextvars(
                 instance_id=instance_id, startup_id=startup_id
             ):
                 yield
         finally:
+            active_logging.reset(logging_token)
             active_providers.reset(token)
 
     def close(self) -> None:
-        active_providers.reset(self._token)
-        try:
-            self.trace.force_flush(timeout_millis=int(self.timeout_millis))
-            self.metrics.force_flush(timeout_millis=self.timeout_millis)
-        except Exception:
-            logging.getLogger(__name__).warning("telemetry.flush_failed", exc_info=True)
-        finally:
-            self.trace.shutdown()
-            self.metrics.shutdown(timeout_millis=self.timeout_millis)
+        with self.scope(self.instance_id, self.logging.startup_id if self.logging else ""):
+            try:
+                self.trace.force_flush(timeout_millis=int(self.timeout_millis))
+                self.metrics.force_flush(timeout_millis=self.timeout_millis)
+            except Exception:
+                get_logger(__name__).warning("telemetry.flush_failed", exc_info=True)
+            finally:
+                self.trace.shutdown()
+                self.metrics.shutdown(timeout_millis=self.timeout_millis)

@@ -34,6 +34,7 @@ propose_edit(base, instruction, scopes?, blocks=(), sources=(), feedback_refs=()
 rewrite(base, instruction, sources=(), intent=edit, adoption=draft, after=default) -> WritingOutcome
 reflect(journals, topic, sources=(), author?, viewpoint?,
         adoption=draft, after=default) -> WritingOutcome
+recover(writing_request_ref) -> WritingOutcome
 read_draft(draft_ref, sources=false) -> DraftView
 RecordOperations.adopt(draft_ref, override?: DraftOverride, after=default) -> RecordOutcome
 ```
@@ -57,7 +58,7 @@ WritingDraft:
 
 它只在成功计算及解释后出现，不保存 running/lease/retry 队列状态。edit 的实际模型提案保存为 proposal，由共同算法组装的完整 Markdown、规范 edits 和 diff 分别保存；parameters.program_outputs 标明程序解释产物，原始 SDK 响应仍保存为 response。完整 BASE 仅在程序解释时读取，其 revision_base 血缘用 program_input_keys 明确记录，不重复发送“全文＋目标块”。普通用户读取默认显示差异和完整正文入口，不显示庞大内部 DTO。
 
-ProducedTask 与 DraftDescriptor 在一个短事务中采用；正式正文采用是后续独立事务。失败恢复沿现有成功计算保留机制，不为了 SQL 重试重新调用模型。DraftStore 不自行选择模型或更换基准。
+WritingRequest 在模型请求前保存精确意图和选择；成功响应保留该请求引用。PreparedProduction 与 DraftDescriptor 在一个短事务中采用；正式正文采用是后续独立事务。writing.recover 从正式请求引用继续已完成的响应或草稿，DraftStore 不自行选择模型或更换基准。
 
 ## 采用和并发
 

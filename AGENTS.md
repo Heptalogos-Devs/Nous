@@ -6,6 +6,8 @@ No Agent may modify, move, or delete `AGENTS.md` or another file that governs Ag
 
 If an action is rejected, do not bypass the rejection by wrapping or rephrasing the same action; report it if no separately authorized safe action is available.
 
+Unless a Skill requires otherwise, proactively use the applicable Skill(s) as needed, without the developer having to specify or request them.
+
 ## AntiRLHF
 
 **Required** reading before acting (especially for GPT models): the [CONSTITUTION](docs/agents/antirlhf/CONSTITUTION.zh-CN.md), which states the binding behavior requirements. The [AntiRLHF Charter](docs/agents/antirlhf/CHARTER.md) records the background and the reasoning; read it when writing or assessing governance text (AGENTS.md, Skills, prompts) or when a requirement's intent is unclear. AntiRLHF is the project owner's model-governance scheme, directed at "Local Defensibility Optimization", over-engineering, over-testing, meaningless compatibility, and the behavior of substituting verifying or proving process for *real engineering work*.
@@ -81,21 +83,25 @@ uv run --locked nous --help
 uv run --locked nous tools --help
 ```
 
-The check commands are as follows. Choose which to use according to the change. It is not required to mechanically run all of them on every small modification:
+Before a commit, run the development check from the repository root. It reads [scripts/check/config/check.toml](scripts/check/config/check.toml), runs length and format before lint, types, and tests, and skips the slower steps when an earlier group fails. Warnings do not fail the run. Choose the command according to the change.
 
-```sh
-uv run --locked pytest tests/python
-uv run --locked ruff check src tests/python
-uv run --locked ruff format --check src tests/python
+```powershell
+pwsh -File ./scripts/check/run.ps1
+pwsh -File ./scripts/check/run.ps1 length src/nous/example.py
+pwsh -File ./scripts/check/run.ps1 tests -- tests/python/test_cli.py
+pwsh -File ./scripts/check/run.ps1 all
 ```
 
-`basedpyright` must resolve the project environment that workspace initialization puts in `temp/venvs/nous`:
-
 ```sh
-uv run --locked basedpyright --pythonpath "$UV_PROJECT_ENVIRONMENT/bin/python"
+sh scripts/check/run.sh
+sh scripts/check/run.sh length src/nous/example.py
+sh scripts/check/run.sh tests -- tests/python/test_cli.py
+sh scripts/check/run.sh all
 ```
 
-On Windows PowerShell use `"$env:UV_PROJECT_ENVIRONMENT\Scripts\python.exe"`. Run the affected test file directly (`uv run --locked pytest tests/python/test_cli.py`), and check product behavior through a real `nous` command on the instance from [README.md](README.md).
+`check` runs length, format, lint, and types. `length <path>` prints that file's code-line count. `tests --` adds the named pytest arguments after the faster checks pass. `all` adds the full Python and Rust test commands. Thresholds, the CI profile, and git hook commands are in [scripts/check/README.md](scripts/check/README.md).
+
+Check product behavior through a real `nous` command on the instance from [README.md](README.md).
 
 Audio and video processing requires FFmpeg and ffprobe. Configure them through PATH, or through `media.ffmpeg_path` and `media.ffprobe_path`. For the concrete product commands, see the [Tools CLI](docs/design/interfaces/tools-cli.md). When model resources are involved, read the [model configuration example](docs/examples/models.toml) and the related design. Do not write the gateway address, model name, or credentials of a particular development machine as product defaults.
 

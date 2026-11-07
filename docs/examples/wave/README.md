@@ -5,3 +5,5 @@
 `collection.json` 不含模型名、维度、API Key 或假向量。build 的 --space 指向实例实际空间；命令接纳所有文件并通过共同 Embedding 能力产生向量。路径相对清单目录。
 
 context 和 stages 是产品公开输入，不是测试 DSL。Thinking 的阶段候选只是可选池，算法仍需依据实际 transitions/closure 决定是否产生路线。
+
+每个路径步骤以 `selections` 数组声明一个或多个原文选区；数组内的字节坐标对应随附 Markdown 文件。未配置向量空间时省略 `--space`，即可构建并使用 lexical 检索。

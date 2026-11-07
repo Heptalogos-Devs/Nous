@@ -26,7 +26,7 @@ lexical 与 semantic 的快照分属明确 profile key，避免一次词项查�
 2. 需要更新时，取得同 Namespace/profile 的构建协调锁，再检查一次。锁只协调该项构建，不阻塞文稿写入，不是实例级请求锁。
 3. 在一个短 ReadTx 中取得 generation G、所有当前可召回精确 revisions、active annotations、已绑定 Concept 意义版本、支持组与需要的时间/状态。通过各 owner 的批量读取取得引用与值，复制成类型化 CorpusView 后结束事务。标注 owner 返回多个精确选区，不把 occurrence 包成跨越无关正文的 min/max 范围。
 4. 网络向量、CAS 读取、Native 构建全在事务外。同一正文和表示在一次构建中只准备一次，复用已采用精确向量，构建完整不可变资产；不要用旧图加上新正文后过滤凑当前视图。
-5. 同卷发布索引并打开一次。短 WriteTx 登记 WaveSnapshot。仅当 namespace generation 仍是 G、profile 仍相同时更新该 profile 的 current 指针；否则保留此快照供本次已捕获视图使用，不回滚内容、不追赶循环。
+5. 在稳定组件目录完成构建并校验完成清单。短 WriteTx 登记 WaveSnapshot。仅当 namespace generation 仍是 G、profile 仍相同时更新该 profile 的 current 指针；否则保留此快照供本次已捕获视图使用，不回滚内容、不追赶循环。
 6. 本次查询使用捕获的 G；后来写入由下一次 current 查询或显式 refresh 处理。返回 captured_generation，必要时提示已有更晚版本。不要让持续写入造成无限追赶或持有数据库事务等待模型。
 
 取消只影响本次未发布工作，已保存文稿不受影响；同 profile 等待者可在后续接管构建。直接读取正文、精确旧快照及其它 profile 不等待本次构建。
@@ -37,13 +37,15 @@ lexical 与 semantic 的快照分属明确 profile key，避免一次词项查�
 CorpusView(namespace_id, generation, profile,
            documents[exact refs], annotations, concept_revisions,
            source_sequences, support_groups, candidate_specs)
-Wave.build_view(view, context) -> PublishedSnapshot
+Wave.prepare_build(view, resolved_profile) -> PreparedSnapshot
+Wave.accept_in(tx, prepared) -> SnapshotDescriptor
+Wave.promote_in(tx, snapshot_ref) -> None
 WaveOperations.query(WaveQuery) -> ordered groups + exact hits
 ```
 
 清单路径入口转换为同样的 view，再进入共同 build。认知代码不导出临时 JSON，也不访问 Wave SQL/Native 内部行号。Wave 只认识可检索正文及计算引用，不理解 Journal 的采用规则。
 
-`CorpusCapture.capture_in(ReadTx)` 负责正式视图；`ProjectionBuilder` 声明 DocumentCandidates、独立 occurrence 及路径，`Wave.build_view` 负责共同准备与数值投影。当前指针只有 Wave 的同一发布能力修改，由调用者提供 generation 前置条件；不在 cognition 复制另一套快照发布协议。
+`CorpusCapture.capture_in(ReadTx)` 负责正式视图；`ProjectionBuilder` 声明 DocumentCandidates、标题、独立 occurrence 及路径。Wave 负责准备单元与数值组件；认知用例在自己的 WriteTx 检查 generation、接纳结果并在条件成立时提升当前指针。
 
 ## 候选和证据
 

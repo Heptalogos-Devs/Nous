@@ -12,7 +12,7 @@ ModelExecutor 拥有真实协议请求、响应结构、完成状态、流、有
 FrozenTask = 任务名 + 模板内容快照 + 任务配置 + 有序候选路线
 FrozenLanguageTask = 正式 Artifact 中可恢复的 FrozenTask 配方
 ProducedTask = 成功语言响应经 outputs 解释后的类型化有名产物
-PublishedComputation = 正式 descriptor Artifact + producer_key
+PreparedProduction = 已发布的 PreparedOutputs + 一次事务采用所需事实
 PreparedRun = FrozenTask + 有序 RequestGroup 引用计划
 PreparedGeneration = 当前路线的实际消息 + 输出合同 + 尚未准备的后继路线
 execute(PreparedGeneration, context, prepare_route) -> GenerationResult
@@ -46,7 +46,7 @@ ResultStore 保存语义消息、actual model/provider/protocol、模板及 Sche
 
 GenerationOperations 在 execute/stream 返回成功 GenerationResult 后、调用 TaskDefinition.outputs 前，将原始响应与实际 ReadingInput 采用为 model.language_response。outputs 失败仍返回 response_result_ref、稳定 producer_key 和已完成引用；recover_response(ref, snapshot) 直接重做解释，持久 workflow 用原 producer_key 重入 produce 复用响应。两条恢复路径均不提交新的协议请求；详细冻结、绑定及发布接口见[成功计算恢复](durable-computation.md)。
 
-任务 outputs 负责有名结果，GenerationOperations 完成采用。MediaPreparer 仅做确定性准备；prepare_group 在所选路线需要时调用 transcribe。`GenerationOperations.run_group` 执行共同语义组，run_input、run 与 MediaAnalysis 都使用它；`run_prepared` 执行当前已编译请求并采用实际成功路线返回的 ReadingInput 与 coverage。
+任务 outputs 负责有名结果，GenerationOperations 完成采用。MediaPreparer 仅做确定性准备；当前路线需要时才执行转写。普通请求使用 run，跨领域组合使用 produce、prepare_adoption 和 adopt_in；媒体阶段使用同一材料规划与结果采用能力。
 
 ## 联合输入与实际尝试
 

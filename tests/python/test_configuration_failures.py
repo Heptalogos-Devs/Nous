@@ -144,9 +144,12 @@ def test_configuration_failure_recovery(tmp_path: Path) -> None:
             service = runtime.configuration
             active = service.snapshot
             root = logging.getLogger()
-            inherited = logging.getLogger("nous.test.configuration-live")
+            assert runtime.observability.logging is not None
+            route = runtime.observability.logging.route
+            inherited = route.getChild("configuration-live")
             previous_level = root.level
-            original_set_level = root.setLevel
+            previous_route_level = route.level
+            original_set_level = route.setLevel
             assert not inherited.isEnabledFor(logging.DEBUG)
 
             def fail_after_level_change(level: int | str) -> None:
@@ -154,7 +157,7 @@ def test_configuration_failure_recovery(tmp_path: Path) -> None:
                 assert inherited.isEnabledFor(logging.DEBUG)
                 raise RuntimeError("logging failure after changing the level")
 
-            with patch.object(root, "setLevel", fail_after_level_change):
+            with patch.object(route, "setLevel", fail_after_level_change):
                 with pytest.raises(NousError) as failed_live:
                     await service.update(
                         {
@@ -169,6 +172,7 @@ def test_configuration_failure_recovery(tmp_path: Path) -> None:
             assert error.details["binding_application"] == "applied"
             assert error.details["live_application"] == "failed"
             assert root.level == previous_level and not inherited.isEnabledFor(logging.DEBUG)
+            assert route.level == previous_route_level
             assert service.snapshot is active and service.pending_restart
             # Registration is committed, while operations still retain their old configuration.
             assert "orbit" in await runtime.time.domains()

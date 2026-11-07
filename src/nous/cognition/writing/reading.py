@@ -59,6 +59,8 @@ class RevisionRow(TypedDict):
     cognitive_times: dict[str, object]
     change_kind: str
     reason: str | None
+    write_key: str | None
+    write_fingerprint: str | None
     origin_result_id: str | None
     recorded_at: str
 
@@ -326,6 +328,7 @@ class RecordReader:
                 recall=row["recall"],
                 change_kind=rev["change_kind"],
                 reason=rev["reason"],
+                write_key=rev["write_key"],
                 origin_result_id=rev["origin_result_id"],
             )
 
@@ -376,6 +379,7 @@ class RecordReader:
                         recorded_at=datetime.fromisoformat(revision["recorded_at"]),
                         change_kind=revision["change_kind"],
                         reason=revision["reason"],
+                        write_key=revision["write_key"],
                     )
                     for revision in revisions
                 )

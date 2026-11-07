@@ -34,7 +34,28 @@ class _Providers(Protocol):
     def metrics(self) -> metrics.MeterProvider: ...
 
 
+class EventSink(Protocol):
+    def logger(self, name: str) -> logging.Logger: ...
+
+
 active_providers: ContextVar[_Providers | None] = ContextVar("nous_observability", default=None)
+active_logging: ContextVar[EventSink | None] = ContextVar("nous_logging", default=None)
+
+
+def get_logger(name: str) -> logging.LoggerAdapter[logging.Logger]:
+    """Capture instance and correlation before dispatching an event to its owner."""
+    sink = active_logging.get()
+    values = dict(structlog.contextvars.get_contextvars())
+    values["module_name"] = name
+    context = trace.get_current_span().get_span_context()
+    if context.is_valid:
+        values.update(
+            trace_id=trace.format_trace_id(context.trace_id),
+            span_id=trace.format_span_id(context.span_id),
+        )
+    return logging.LoggerAdapter(
+        sink.logger(name) if sink else logging.getLogger(name), values, merge_extra=True
+    )
 
 
 def get_tracer(name: str) -> trace.Tracer:
@@ -78,7 +99,6 @@ def operation(
     frame = OperationFrame(root, stage or name)
     token = current_operation.set(frame)
     meter = get_meter("nous.operations")
-    logger = logging.getLogger("nous.operations")
     started = time.monotonic()
     result = "success"
     failure: dict[str, JsonValue] | None = None
@@ -91,7 +111,7 @@ def operation(
     ):
         if is_root:
             meter.create_up_down_counter("runtime.in_flight").add(1, labels)
-        logger.debug("operation.started", extra={"root_operation": is_root})
+        get_logger("nous.operations").debug("operation.started", extra={"root_operation": is_root})
         try:
             yield span
         except BaseException as error:
@@ -139,7 +159,7 @@ def operation(
                     elapsed, {**labels, "result": result}
                 )
                 meter.create_up_down_counter("runtime.in_flight").add(-1, labels)
-            logger.log(
+            get_logger("nous.operations").log(
                 (logging.INFO if result == "success" else logging.WARNING)
                 if is_root
                 else logging.DEBUG,
@@ -253,8 +273,7 @@ def request_attempt(
                     if isinstance(value, (int, float)) and not isinstance(value, bool):
                         attributes["usage." + key] = value
             span.add_event("request.attempt", attributes)
-            logger = logging.getLogger("nous.models.attempts")
-            logger.info("request.attempt", extra=dict(scope.report))
+            get_logger("nous.models.attempts").info("request.attempt", extra=dict(scope.report))
             labels = {
                 "protocol": str(route.get("protocol", "unknown")),
                 "model": str(route.get("model", route.get("model_id", "unknown"))),

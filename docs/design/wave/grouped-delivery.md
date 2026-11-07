@@ -62,7 +62,7 @@ SearchCoverage:
 
 `WaveQuery(grouping="document", passages_per_group=2, top_k=10)` 请求最多十篇文稿，每篇最多两个片段；`grouping="candidate"` 保留实验逐候选查询。CLI 使用 `nous tools wave query "SNAPSHOT" "TEXT" --grouping document --passages-per-group 2 --top-k 10`。准备查询时先校验组目标能容纳在 max_union_candidates 内，然后取得查询向量。
 
-Wave 返回 `groups` 和用于逐候选解释的 `hits`。每组给出 group_key/group_rank、representative 的 snapshot/key、revision_ref、可空 title 和完整 passages；每个 passage 保留本次最终读出的 candidate_rank、质量分、排名分、精确选区及该选区的完整原文 text；snippet 单独提供最多 500 字的界面摘要。`context_summary.grouping` 记录有效粒度、组数、片段数、通道单位和 group_scan_limit。`coverage.lanes` 的 examined_rows 是该通道实际检查的候选行数；ANN 不提供内部图访问数，不用它冒充全库覆盖。各通道另给 recall_exhausted/truncated/reason 和确知的 eligible_groups_known。
+Wave 返回 `groups` 和用于逐候选解释的 `hits`。每个 passage 保留候选引用、排名分、实际交付的原文选区及文字；完整候选继续通过 read 读取。词项命中使用 Tantivy 的同一分词器和片段能力取得正文范围，再经内容 owner 的正式映射还原原文；相邻范围合并，离散范围分别保留。`matched_fields` 区分标题与正文，只有标题命中时交付正文预览并以 `title_preview` 标明。语义或关系模式选中整篇且没有正文词项范围时，在该文稿已有局部候选中以同一模式进行有界选择并标明 `local_candidate`；固定候选池维持其限定范围。没有可用局部候选时返回 `candidate_preview`。`context_summary.grouping` 和 `coverage.lanes` 保留实际粒度、通道工作量与截断原因。
 
 Native 构建配置包含 `candidate_grouping=document`，正式当前投影会依现有 profile 失配机制重新构建。没有 group rows 的内部旧 Native 资产需重建；正文和业务修订继续由 cognition 保留。
 

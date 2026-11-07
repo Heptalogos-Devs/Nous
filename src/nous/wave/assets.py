@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
 from time import perf_counter
@@ -22,9 +23,13 @@ from nous.content.contracts import (
     Artifact,
     ArtifactRef,
     ContentSelection,
+    InputGroup,
+    InputPart,
+    OutputContent,
+    OutputMapping,
     SourceSelection,
 )
-from nous.content.results import ResultStore
+from nous.content.results import PreparedOutputs, ResultStore
 from nous.content.text import TextView
 from nous.media.preparation import MediaPreparer
 from nous.temporal.values import CognitiveTimes, Instant, parse_explicit_time
@@ -53,6 +58,7 @@ class ConceptMapping(TypedDict):
 
 class DocumentMapping(TypedDict):
     artifact: dict[str, str]
+    title: str | None
     selector: dict[str, JsonValue]
     roots: list[str]
     derived_from: list[str]
@@ -118,6 +124,8 @@ class SnapshotRow(TypedDict):
     metadata: dict[str, JsonValue]
     build_key: str | None
     build_signature: str | None
+    component_signature: str
+    graph_signature: str
     build_summary: dict[str, JsonValue]
     created_at: str
 
@@ -155,6 +163,7 @@ class FrozenInputs:
     group_root_indptr: npt.NDArray[np.uint64]
     group_root_indices: npt.NDArray[np.uint64]
     vector_mappings: tuple[dict[str, object], ...]
+    candidate_data: tuple[dict[str, JsonValue], ...]
     mapping: SnapshotMapping
 
 
@@ -165,6 +174,36 @@ def _csr(rows: list[list[int]]) -> tuple[npt.NDArray[np.uint64], npt.NDArray[np.
         values.extend(row)
         offsets.append(len(values))
     return np.asarray(offsets, dtype=np.uint64), np.asarray(values, dtype=np.uint64)
+
+
+def projection_inputs(view: CorpusView) -> dict[str, dict[str, object]]:
+    """Separate exact per-document inputs from the small snapshot-wide view."""
+    documents = {document.key: document for document in view.documents}
+    declarations_by_document: dict[str, list[Candidate | DocumentCandidates]] = {}
+    for declaration in view.candidates:
+        declarations_by_document.setdefault(declaration.document, []).append(declaration)
+    result: dict[str, dict[str, object]] = {}
+    for document in view.documents:
+        declarations = declarations_by_document.get(document.key, [])
+        sources = {item.content.document for item in declarations} | {document.key}
+        roots = {root for key in sources for root in view.evidence.documents[key]}
+        payload = {
+            "owner": view.owner.model_dump(mode="json"),
+            "documents": [documents[key].model_dump(mode="json") for key in sorted(sources)],
+            "declarations": [item.model_dump(mode="json") for item in declarations],
+            "sequences": [
+                item.model_dump(mode="json")
+                for item in view.source_sequences
+                if item.document in sources
+            ],
+            "document_roots": {key: list(view.evidence.documents[key]) for key in sorted(sources)},
+            "roots": {
+                key: [ref.model_dump(mode="json") for ref in view.evidence.roots[key]]
+                for key in sorted(roots)
+            },
+        }
+        result[document.key] = cast(dict[str, object], payload)
+    return result
 
 
 def _document_times(
@@ -266,7 +305,8 @@ async def _prepare_candidates(
     documents: dict[str, Document],
     accepted: dict[str, ArtifactRef],
     preparation: TextPreparation,
-) -> AsyncIterator[tuple[Candidate, PreparedText]]:
+    cached: dict[str, list[dict[str, object]]],
+) -> AsyncIterator[tuple[Candidate | None, PreparedText | None, dict[str, object] | None]]:
     """Normalize exact inputs and document layouts through one content preparation session."""
     await preparation.prepare_many(
         tuple(
@@ -277,9 +317,24 @@ async def _prepare_candidates(
                 ),
             )
             for declaration in manifest.candidates
+            if declaration.document not in cached
         )
     )
     for declaration in manifest.candidates:
+        if declaration.document in cached:
+            for item in cached[declaration.document]:
+                key = cast(str, cast(dict[str, object], item["mapping"])["key"])
+                if (
+                    isinstance(declaration, Candidate)
+                    and key == declaration.key
+                    or isinstance(declaration, DocumentCandidates)
+                    and (
+                        key == f"{declaration.group_key}:whole"
+                        or key.startswith(f"{declaration.group_key}:part:")
+                    )
+                ):
+                    yield None, None, item
+            continue
         document = documents[declaration.content.document]
         origin = ContentSelection(
             artifact=accepted[document.key],
@@ -287,7 +342,7 @@ async def _prepare_candidates(
         )
         prepared = await preparation.prepare(origin)
         if isinstance(declaration, Candidate):
-            yield declaration, prepared
+            yield declaration, prepared, None
             continue
         assert isinstance(declaration, DocumentCandidates)
 
@@ -308,7 +363,7 @@ async def _prepare_candidates(
             )
 
         if declaration.whole:
-            yield exact(f"{declaration.group_key}:whole", SourceSelection()), prepared
+            yield exact(f"{declaration.group_key}:whole", SourceSelection()), prepared, None
         if declaration.local_layout is not None:
             chunks = await preparation.artifacts.content.execution.blocking(
                 prepared.view.complete_chunks, declaration.local_layout.target_bytes
@@ -322,6 +377,7 @@ async def _prepare_candidates(
                     await preparation.artifacts.content.execution.blocking(
                         prepared.slice, selector
                     ),
+                    None,
                 )
 
 
@@ -344,12 +400,115 @@ async def _covers(
     return True
 
 
+async def _titled_semantics(
+    preparation: TextPreparation,
+    contents: Sequence[ContentSelection],
+    texts: Sequence[str],
+    titles: Sequence[str],
+) -> tuple[ContentSelection, ...]:
+    """Adopt title-plus-body inputs, mapping only their body back to source text."""
+    requests: dict[str, tuple[ContentSelection, str, str]] = {}
+    order: list[str | None] = []
+    for content, text, title in zip(contents, texts, titles, strict=True):
+        if not title:
+            order.append(None)
+            continue
+        key = hashlib.sha256(
+            json.dumps(
+                {"content": content.model_dump(mode="json"), "title": title},
+                ensure_ascii=False,
+                sort_keys=True,
+            ).encode("utf-8")
+        ).hexdigest()
+        requests[key] = (content, text, title)
+        order.append(key)
+    results = preparation.preparer.results
+    async with results.database.read() as tx:
+        adopted = await results.cached_outputs_in(
+            tx, "wave.titled_semantic_text", tuple(requests), output="text"
+        )
+    pending = [key for key in requests if key not in adopted]
+    for start in range(0, len(pending), 100):
+        keys = pending[start : start + 100]
+        sources = await preparation.artifacts.normalize_selections(
+            [requests[key][0] for key in keys]
+        )
+        artifacts = await preparation.artifacts.get_many([source.artifact for source in sources])
+        outputs: list[PreparedOutputs] = []
+        for key in keys:
+            _, text, title = requests[key]
+            outputs.append(
+                await results.prepare_outputs(
+                    {
+                        "text": OutputContent(
+                            data=f"{title}\n\n{text}".encode(),
+                            media_type="text/plain",
+                            display_name="retrieval-text.txt",
+                        )
+                    }
+                )
+            )
+        async with results.database.write() as tx:
+            adopted.update(
+                await results.cached_outputs_in(
+                    tx, "wave.titled_semantic_text", keys, output="text"
+                )
+            )
+            for key, source, artifact, output in zip(
+                keys, sources, artifacts, outputs, strict=True
+            ):
+                if key in adopted:
+                    continue
+                _, text, title = requests[key]
+                offset = len(f"{title}\n\n".encode())
+                result = await results.adopt_in(
+                    tx,
+                    operation="wave.titled_semantic_text",
+                    producer={"kind": "deterministic"},
+                    inputs=(
+                        InputGroup(
+                            key="body",
+                            slot_key="body",
+                            name="Body",
+                            parts=(
+                                InputPart(
+                                    content=source,
+                                    representation="semantic_text",
+                                    media_type=artifact.media_type,
+                                ),
+                            ),
+                        ),
+                    ),
+                    prepared_outputs=output,
+                    parameters={"cache_key": key, "title": title, "title_field": "title"},
+                    mappings=(
+                        OutputMapping(
+                            output_name="text",
+                            relation="identity",
+                            origins=(source,),
+                            selection=SourceSelection(
+                                start_byte=offset, end_byte=offset + len(text.encode("utf-8"))
+                            ),
+                        ),
+                    ),
+                )
+                adopted[key] = (
+                    result.ref,
+                    next(value.artifact for value in result.outputs if value.name == "text"),
+                )
+    return tuple(
+        content if key is None else ContentSelection(artifact=adopted[key][1])
+        for content, key in zip(contents, order, strict=True)
+    )
+
+
 async def freeze_inputs(
     manifest: CorpusView,
     space_id: str | None,
     artifacts: ArtifactStore,
     embedding: EmbeddingOperations,
     preparer: MediaPreparer,
+    cached_units: dict[str, list[dict[str, object]]],
 ) -> FrozenInputs:
     """Admit documents once and preserve independent roots through all derived candidates."""
     prepared_at = perf_counter()
@@ -389,9 +548,14 @@ async def freeze_inputs(
         sequence_keys.append(f"{sequence.document}:{index}")
 
     candidate_texts: list[str] = []
+    candidate_titles: list[str] = []
+    indexed_titles: list[str] = []
     candidate_contents: list[ContentSelection] = []
     embedding_contents: list[ContentSelection] = []
     prepared_candidates: list[PreparedText] = []
+    fresh_indices: list[int] = []
+    semantic_slots: list[ContentSelection | None] = []
+    candidate_position_groups: list[list[list[int]]] = []
     candidate_memberships: list[list[int]] = []
     candidate_paths: list[list[int]] = []
     candidate_path_counts: list[int] = []
@@ -401,18 +565,45 @@ async def freeze_inputs(
     preparation = TextPreparation(artifacts, preparer, known_artifacts=all_artifacts)
     await preparation.prime()
     annotations: dict[str, tuple[Artifact, AnnotationSet, TextView]] = {}
-    async for candidate, prepared in _prepare_candidates(
-        manifest, documents, accepted, preparation
+    async for candidate, prepared, cached in _prepare_candidates(
+        manifest, documents, accepted, preparation, cached_units
     ):
+        if cached is not None:
+            mapping = cast(CandidateMapping, cached["mapping"])
+            positions = cast(list[list[int]], cached["path_positions"])
+            candidate_mapping.append(mapping)
+            candidate_contents.append(ContentSelection.model_validate(mapping["content"]))
+            semantic_slots.append(ContentSelection.model_validate(mapping["retrieval_content"]))
+            candidate_texts.append(cast(str, cached["text"]))
+            candidate_titles.append(documents[mapping["content_document"]].title or "")
+            indexed_titles.append(cast(str, cached["indexed_title"]))
+            candidate_memberships.append([concept_rows[key] for key in mapping["concepts"]])
+            for path in mapping["paths"]:
+                candidate_paths.append(
+                    [
+                        concept_rows[cast(str, step["concept"])]
+                        for step in cast(list[dict[str, object]], path["steps"])
+                    ]
+                )
+            candidate_positions.extend(positions)
+            candidate_position_groups.append(positions)
+            candidate_path_counts.append(len(positions))
+            candidate_roots.append([root_rows[key] for key in mapping["roots"]])
+            continue
+        assert candidate is not None and prepared is not None
         document = documents[candidate.content.document]
         origin_contents = prepared.origin_contents
         selection = prepared.view.body
         if not prepared.text.strip():
             continue
         candidate_contents.append(selection)
+        fresh_indices.append(len(candidate_mapping))
+        semantic_slots.append(None)
         prepared_candidates.append(prepared)
         retrieval_content = selection
         candidate_texts.append(prepared.text)
+        candidate_titles.append(document.title or "")
+        indexed_titles.append((document.title or "") if candidate.content.selector.is_whole else "")
         inherited = document_sequences.get(candidate.content.document, [])
         can_inherit = (
             candidate.content.selector.is_whole
@@ -541,6 +732,9 @@ async def freeze_inputs(
                 }
             )
         candidate_path_counts.append(len(selected_paths))
+        candidate_position_groups.append(
+            [[position for position, _ in steps] for _, steps in selected_paths]
+        )
         candidate_memberships.append([concept_rows[key] for key in dict.fromkeys(memberships)])
         roots_for_candidate = document_roots[candidate.content.document]
         candidate_roots.append([root_rows[key] for key in roots_for_candidate])
@@ -563,10 +757,18 @@ async def freeze_inputs(
             }
         )
 
+    fresh_semantics = await preparation.semantic_contents(prepared_candidates)
+    for index, content in zip(fresh_indices, fresh_semantics, strict=True):
+        candidate_mapping[index]["retrieval_content"] = content.model_dump(mode="json")
+        semantic_slots[index] = content
+    assert all(content is not None for content in semantic_slots)
+    semantic_contents = cast(list[ContentSelection], semantic_slots)
     if space_id is not None:
-        embedding_contents.extend(await preparation.semantic_contents(prepared_candidates))
-        for mapping, content in zip(candidate_mapping, embedding_contents, strict=True):
-            mapping["retrieval_content"] = content.model_dump(mode="json")
+        embedding_contents.extend(
+            await _titled_semantics(
+                preparation, semantic_contents, candidate_texts, candidate_titles
+            )
+        )
 
     support_groups: list[dict[str, object]] = []
     group_mapping: list[dict[str, object]] = []
@@ -686,10 +888,12 @@ async def freeze_inputs(
             "content_prepare_ms": content_prepare_ms,
             "embedding_ms": embedding_ms,
             "embedding_ensure_calls": embedding_ensure_calls,
+            "reused_projection_units": len(cached_units),
         },
         candidate_metadata={
             "keys": [item["key"] for item in candidate_mapping],
             "documents": [item["document"] for item in candidate_mapping],
+            "titles": indexed_titles,
             "group_keys": group_keys,
             "group_rows": [candidate_group_rows[item["group_key"]] for item in candidate_mapping],
         },
@@ -756,6 +960,15 @@ async def freeze_inputs(
         group_root_indptr=group_root_indptr,
         group_root_indices=group_root_indices,
         vector_mappings=tuple(vector_mappings),
+        candidate_data=tuple(
+            cast(
+                dict[str, JsonValue],
+                {"text": text, "path_positions": positions, "indexed_title": title},
+            )
+            for text, positions, title in zip(
+                candidate_texts, candidate_position_groups, indexed_titles, strict=True
+            )
+        ),
         mapping={
             "name": manifest.name,
             "owner": cast(dict[str, JsonValue], manifest.owner.model_dump(mode="json")),
@@ -764,6 +977,7 @@ async def freeze_inputs(
             "documents": {
                 item.key: {
                     "artifact": accepted[item.key].model_dump(mode="json"),
+                    "title": item.title,
                     "selector": item.input.selector.model_dump(mode="json"),
                     "roots": list(document_roots[item.key]),
                     "derived_from": list(item.derived_from),

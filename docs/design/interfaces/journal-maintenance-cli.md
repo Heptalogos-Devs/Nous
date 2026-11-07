@@ -19,12 +19,15 @@ nous journal diff "jrn(…)@2" "jrn(…)@3"
 nous journal history "jrn(…)"
 nous journal draft read "drf(…)"
 nous journal draft adopt "drf(…)"
+nous journal draft recover "res(…)"
 nous journalize --source "note(…)" --source "art(…)" --topic "新篇主题"
 ```
 
 `revise` 作为自然语言提出修改的正式命令；原来 revise 的整篇文件替换迁到 replace，更新现有文档和所有调用方，不保留两套歧义含义。用户也可直接以代码调用明确 API，不需构造临时 JSON。
 
 patch/edit/replace 不发语言请求。rewrite 是明确全文操作，journalize 不再接受已有 Journal 或 target。无需让每项人工编辑走提案审批；需要提案的自然语言操作可 --save 直接接续采用。
+
+生成后的解释或草稿保存失败时，错误包含 writing_request_ref。使用 `journal draft recover` 传入该结果引用，按原基准、来源和采用选择继续。
 
 `--changes` 文件是 TextChange 数组，每项通过 `action` 指定 `replace_quote`、`insert_before`、`insert_after` 或 `replace_selection`；`scope` 或 `selection` 使用读取到的精确正文选区或块引用。字段与坐标见[精确编辑](../cognition/exact-editing.md)。
 

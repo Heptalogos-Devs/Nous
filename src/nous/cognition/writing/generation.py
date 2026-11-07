@@ -5,7 +5,7 @@ from __future__ import annotations
 import difflib
 import json
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from typing import Literal
 from uuid import uuid4
 
@@ -20,11 +20,12 @@ from nous.content.contracts import (
     InputPart,
     InputSpec,
     OutputContent,
+    ResultRef,
     SourceSelection,
 )
 from nous.content.edits import ReplaceSelection, prepare_text_edit
 from nous.content.text import BlockRef
-from nous.models.operations import GenerationOperations, ProducedTask
+from nous.models.generation import GenerationOperations, GenerationRequest, ProducedTask
 from nous.temporal.values import CognitiveTimes
 
 from ..contracts import NamespaceRef, RecordRevisionRef, RecordView, SourceBinding
@@ -39,21 +40,12 @@ from .contracts import (
     NormalizedEdit,
     SourceChanges,
     WritingOutcome,
+    WritingRequest,
 )
 from .drafts import DraftStore
 from .operations import RecordOperations
 from .reading import RecordReader
 from .records import WrittenRecords
-
-
-@dataclass(frozen=True)
-class PendingWriting:
-    produced: ProducedTask
-    context: DraftContext
-    adoption: Literal["draft", "save"]
-    after: AfterWrite
-    base: RecordView | None
-    sources: PreparedSources
 
 
 class WritingOperations:
@@ -105,72 +97,12 @@ class WritingOperations:
                 kind="artifact",
                 artifact=item.artifact,
                 selection=item.selection,
-                slot_key=source.key,
-                role=source.usage,
+                slot_key=source.slot_key,
+                role=source.role,
             )
-            for source in sources.bindings
-            for item in sources.actual[source.key]
+            for source in sources.selected_inputs.sources
+            for item in source.selections
         ]
-
-    async def _attach_origins(
-        self, produced: ProducedTask, prepared: PreparedSources
-    ) -> ProducedTask:
-        """Keep consumed representations while attaching their exact formal origins."""
-        bindings = {item.key: item for item in prepared.bindings}
-        groups: list[InputGroup] = []
-        for group in produced.actual_inputs:
-            source = bindings.get(group.slot_key)
-            if source is None or source.owner_revision is None:
-                groups.append(group)
-                continue
-            target = source.selections[0].artifact
-            representation_ids = {item.artifact.id for item in prepared.actual[source.key]}
-            parts: list[InputPart] = []
-            for part in group.parts:
-                origins = list(part.origins)
-                candidates = (part.content, *(item.origin for item in part.origins))
-                for item in candidates:
-                    if item.artifact.id in representation_ids and item.artifact.id != target.id:
-                        for origin in await self.results.artifacts.map_origins(item, target):
-                            if origin not in origins:
-                                origins.append(origin)
-                parts.append(part.model_copy(update={"origins": tuple(origins)}))
-            groups.append(group.model_copy(update={"parts": tuple(parts)}))
-        return replace(produced, actual_inputs=tuple(groups))
-
-    @staticmethod
-    def _actual_bindings(
-        produced: ProducedTask, selected: Sequence[SourceBinding]
-    ) -> tuple[SourceBinding, ...]:
-        source_map = {source.key: source for source in selected}
-        output: list[SourceBinding] = []
-        for group in produced.actual_inputs:
-            if group.role not in {"source", "reference", "current_basis", "inspiration"}:
-                continue
-            source = source_map.get(group.slot_key)
-            if source is None:
-                raise NousError(
-                    "cognition.source_mismatch",
-                    "Successful input has no frozen source",
-                    details={"key": group.key},
-                )
-            ids = {item.artifact.id for item in source.selections}
-            coordinates = tuple(
-                dict.fromkeys(
-                    content
-                    for part in group.parts
-                    for content in (part.content, *(origin.origin for origin in part.origins))
-                    if content.artifact.id in ids
-                )
-            )
-            if not coordinates:
-                raise NousError(
-                    "cognition.source_mismatch",
-                    "Actual source group has no exact original selections",
-                    details={"key": group.key},
-                )
-            output.append(source.model_copy(update={"key": group.key, "selections": coordinates}))
-        return tuple(output)
 
     async def _base(self, base: str | RecordRevisionRef, *, journal_only: bool) -> RecordView:
         if isinstance(base, str) and "@" not in base:
@@ -194,42 +126,128 @@ class WritingOperations:
             )
         return "\n\n".join(rendered)
 
-    async def _produce(
+    async def _start(
         self,
         task: str,
         contract: str,
         inputs: Sequence[InputSpec],
+        context: DraftContext,
+        adoption: Literal["draft", "save"],
+        after: AfterWrite,
+        sources: PreparedSources,
         *,
         question: str,
         instructions: str,
         on_delta: Callable[[str], None] | None = None,
-    ) -> ProducedTask:
+    ) -> WritingOutcome:
         snapshot = self.execution.snapshot
-        frozen = self.generation.executor.freeze(task, snapshot)
-        if frozen.resource is None or frozen.resource.manifest.contract_id != contract:
-            raise NousError(
-                "model.task_contract_mismatch",
-                "Writing task uses another output contract",
-                details={"task": task, "expected_contract": contract},
-            )
-        prepared = await self.generation.prepare_input(
-            frozen, inputs, snapshot, question=question, instructions=instructions
-        )
-        if len(prepared.batches) != 1:
-            raise NousError(
-                "cognition.joint_required",
-                "Select one topic and fewer sources for one writing operation",
-            )
-        return await self.generation.produce(
-            prepared.frozen,
-            prepared.batches[0],
-            snapshot,
+        self.generation.require_contract(task, contract, snapshot)
+        selected = await self.generation.accept_inputs(inputs, snapshot)
+        frozen = await self.generation.freeze_language_task(task, snapshot, inputs=selected)
+        request = WritingRequest(
+            context=context,
+            task=frozen,
+            inputs=selected,
+            computation_key=f"writing:{uuid4()}",
             question=question,
             instructions=instructions,
-            completed=list(prepared.preparations),
-            on_delta=on_delta,
-            producer_key=f"writing:{uuid4()}",
+            adoption=adoption,
+            after=after,
         )
+        ref = await self.drafts.save_request(request)
+        return await self._continue(ref, request, on_delta=on_delta)
+
+    async def recover(self, request_ref: str | ResultRef) -> WritingOutcome:
+        """Continue a saved writing request, preserving its original adoption intent."""
+        ref, request = await self.drafts.read_request(request_ref)
+        if request.context.namespace.ref != self.namespace:
+            raise NousError(
+                "cognition.namespace_mismatch", "Writing request belongs to another namespace"
+            )
+        return await self._continue(ref, request)
+
+    async def _continue(
+        self,
+        ref: ResultRef,
+        request: WritingRequest,
+        *,
+        on_delta: Callable[[str], None] | None = None,
+    ) -> WritingOutcome:
+        existing = await self.drafts.find_request(ref)
+        if existing is not None:
+            if request.adoption == "draft":
+                return WritingOutcome(
+                    status="draft",
+                    draft_ref=existing.ref,
+                    draft=existing,
+                    stage_results=(existing.result_ref.identifier,),
+                )
+            adopted = await self.records.adopt(existing.ref, after=request.after)
+            return WritingOutcome(
+                status="adopted" if adopted.record.changed else "unchanged",
+                draft_ref=existing.ref,
+                draft=existing,
+                record=adopted,
+                stage_results=(existing.result_ref.identifier,),
+            )
+        no_material = await self.results.find_producer("writing:" + ref.id + ":no_material")
+        if no_material is not None:
+            return WritingOutcome(status="no_material", stage_results=(no_material.ref.identifier,))
+        try:
+            produced = await self.generation.produce(
+                GenerationRequest(
+                    request.task,
+                    request.inputs,
+                    question=request.question,
+                    instructions=request.instructions,
+                    dependencies=(ref,),
+                ),
+                snapshot=self.execution.snapshot,
+                on_delta=on_delta,
+                computation_key=request.computation_key,
+            )
+            base = (
+                await self.reader.read(request.context.base_revision, namespace=self.namespace.id)
+                if request.context.base_revision
+                else None
+            )
+            if request.context.intent == "edit":
+                assert base is not None
+                produced = replace(
+                    produced,
+                    actual_inputs=(
+                        *produced.actual_inputs,
+                        InputGroup(
+                            key="BASE",
+                            slot_key="BASE",
+                            role="revision_base",
+                            name=base.title or "Original body",
+                            parts=(
+                                InputPart(
+                                    content=base.body_selection,
+                                    representation="text",
+                                    media_type="text/markdown",
+                                ),
+                            ),
+                        ),
+                    ),
+                    parameters={**produced.parameters, "program_input_keys": ["BASE"]},
+                )
+            sources = PreparedSources(
+                request.context.namespace, request.context.selected_sources, request.inputs
+            )
+            return await self._complete(
+                produced,
+                request.context,
+                request.adoption,
+                request.after,
+                base,
+                sources=sources,
+                request_ref=ref,
+            )
+        except BaseException as error:
+            add_error_context(error, {"writing_request_ref": ref.model_dump(mode="json")})
+            raise
 
     async def _complete(
         self,
@@ -240,9 +258,12 @@ class WritingOperations:
         base: RecordView | None = None,
         *,
         sources: PreparedSources,
+        request_ref: ResultRef,
     ) -> WritingOutcome:
         try:
-            return await self._complete_inner(produced, context, adoption, after, base, sources)
+            return await self._complete_inner(
+                produced, context, adoption, after, base, sources, request_ref
+            )
         except BaseException as error:
             add_error_context(
                 error,
@@ -250,21 +271,10 @@ class WritingOperations:
                     "stage": "writing.complete",
                     "model_succeeded": True,
                     "completed_result_refs": list(produced.completed_stage_refs),
+                    "writing_request_ref": request_ref.model_dump(mode="json"),
                 },
-                recovery=PendingWriting(produced, context, adoption, after, base, sources),
             )
             raise
-
-    async def complete_pending(self, pending: PendingWriting) -> WritingOutcome:
-        """Continue a successful generation from normalization without another request."""
-        return await self._complete(
-            pending.produced,
-            pending.context,
-            pending.adoption,
-            pending.after,
-            pending.base,
-            sources=pending.sources,
-        )
 
     async def _complete_inner(
         self,
@@ -274,9 +284,9 @@ class WritingOperations:
         after: AfterWrite,
         base: RecordView | None,
         sources: PreparedSources,
+        request_ref: ResultRef,
     ) -> WritingOutcome:
-        produced = await self._attach_origins(produced, sources)
-        actual = self._actual_bindings(produced, context.selected_sources)
+        actual = await self.core.sources.actual_bindings(produced.actual_inputs, sources)
         produced = await self._normalize_links(produced, context, actual, base)
         text = produced.outputs["output"].data.decode("utf-8")
         inherited = context.citation_context.inherited_sources
@@ -289,7 +299,7 @@ class WritingOperations:
         else:
             bindings = actual
         context = context.model_copy(update={"source_bindings": tuple(bindings)})
-        outcome = await self.drafts.save_produced(produced, context)
+        outcome = await self.drafts.save_produced(produced, context, request_ref)
         if outcome.status == "no_material":
             return outcome
         if adoption == "draft":
@@ -452,14 +462,6 @@ class WritingOperations:
             if not selected:
                 return WritingOutcome(status="no_material")
             task = config.cognition.journalize.task
-            produced = await self._produce(
-                task,
-                "journal-draft",
-                self._inputs(prepared),
-                question=topic or "",
-                instructions=f"Purpose: {purpose}\nAuthor: {author or ''}\nViewpoint: {viewpoint or ''}",
-                on_delta=on_delta,
-            )
             context = DraftContext(
                 namespace=ns,
                 intent="new",
@@ -473,7 +475,18 @@ class WritingOperations:
                 config_version=self.execution.snapshot.version,
                 task=task,
             )
-            return await self._complete(produced, context, policy, after, sources=prepared)
+            return await self._start(
+                task,
+                "journal-draft",
+                self._inputs(prepared),
+                context,
+                policy,
+                after,
+                prepared,
+                question=topic or "",
+                instructions=f"Purpose: {purpose}\nAuthor: {author or ''}\nViewpoint: {viewpoint or ''}",
+                on_delta=on_delta,
+            )
 
     async def propose_edit(
         self,
@@ -577,29 +590,6 @@ class WritingOperations:
                 "Preserve existing source links; new source keys are the actual N groups shown below.\n"
                 f"Feedback opinions (not external facts):\n{feedback}"
             )
-            produced = await self._produce(
-                task, "journal-edit", inputs, question=instruction, instructions=instructions
-            )
-            produced = replace(
-                produced,
-                actual_inputs=(
-                    *produced.actual_inputs,
-                    InputGroup(
-                        key="BASE",
-                        slot_key="BASE",
-                        role="revision_base",
-                        name=original.title or "Original body",
-                        parts=(
-                            InputPart(
-                                content=original.body_selection,
-                                representation="text",
-                                media_type="text/markdown",
-                            ),
-                        ),
-                    ),
-                ),
-                parameters={**produced.parameters, "program_input_keys": ["BASE"]},
-            )
             context = DraftContext(
                 namespace=ns,
                 intent="edit",
@@ -619,8 +609,16 @@ class WritingOperations:
                 config_version=self.execution.snapshot.version,
                 task=task,
             )
-            return await self._complete(
-                produced, context, adoption, after, original, sources=prepared
+            return await self._start(
+                task,
+                "journal-edit",
+                inputs,
+                context,
+                adoption,
+                after,
+                prepared,
+                question=instruction,
+                instructions=instructions,
             )
 
     async def rewrite(
@@ -671,13 +669,6 @@ class WritingOperations:
                 *self._inputs(prepared),
             ]
             task = self.execution.snapshot.values.cognition.rewrite.task
-            produced = await self._produce(
-                task,
-                "journal-rewrite",
-                inputs,
-                question=instruction,
-                instructions=f"Existing citation directory: {json_sources(original.sources)}\nBASE is the complete frozen draft. Preserve its source keys; new N keys are supplied separately.",
-            )
             context = DraftContext(
                 namespace=ns,
                 intent="rewrite",
@@ -695,8 +686,16 @@ class WritingOperations:
                 config_version=self.execution.snapshot.version,
                 task=task,
             )
-            return await self._complete(
-                produced, context, adoption, after, original, sources=prepared
+            return await self._start(
+                task,
+                "journal-rewrite",
+                inputs,
+                context,
+                adoption,
+                after,
+                prepared,
+                question=instruction,
+                instructions=f"Existing citation directory: {json_sources(original.sources)}\nBASE is the complete frozen draft. Preserve its source keys; new N keys are supplied separately.",
             )
 
     async def reflect(
@@ -738,18 +737,19 @@ class WritingOperations:
             additional = await self._freeze(sources, prefix="N")
             ns = first.namespace
             prepared = PreparedSources(
-                ns, (*first.bindings, *additional.bindings), {**first.actual, **additional.actual}
+                ns,
+                (*first.bindings, *additional.bindings),
+                first.selected_inputs.model_copy(
+                    update={
+                        "sources": (
+                            *first.selected_inputs.sources,
+                            *additional.selected_inputs.sources,
+                        )
+                    }
+                ),
             )
             selected = prepared.bindings
             task = self.execution.snapshot.values.cognition.reflection.task
-            produced = await self._produce(
-                task,
-                "journal-reflect",
-                self._inputs(prepared),
-                question=topic,
-                instructions=f"Author: {author or ''}\nViewpoint: {viewpoint or ''}\n"
-                "Write a new Journal. Source documents and their internal source: directories remain in their own namespaces; cite only actual J/N groups provided here.",
-            )
             context = DraftContext(
                 namespace=ns,
                 intent="reflection",
@@ -763,7 +763,18 @@ class WritingOperations:
                 config_version=self.execution.snapshot.version,
                 task=task,
             )
-            return await self._complete(produced, context, adoption, after, sources=prepared)
+            return await self._start(
+                task,
+                "journal-reflect",
+                self._inputs(prepared),
+                context,
+                adoption,
+                after,
+                prepared,
+                question=topic,
+                instructions=f"Author: {author or ''}\nViewpoint: {viewpoint or ''}\n"
+                "Write a new Journal. Source documents and their internal source: directories remain in their own namespaces; cite only actual J/N groups provided here.",
+            )
 
     async def read_draft(self, target: str | DraftRef, *, sources: bool = False) -> DraftView:
         """Read a saved draft in the bound namespace.

@@ -56,14 +56,16 @@ NativeError 具有 code、message 和小型 details，经统一映射成为 Nous
 
 ## 索引后端
 
-Tantivy 与 Jieba 承担词项/中文分词；USearch 承担候选与 Concept 双向量索引。成熟依赖已能实现的索引、序列化和矩阵计算不自行重写。Native 只能在 Python 提供的 index/staging 目录管理派生资产，不知道业务数据库地址和 CAS 根。
+Tantivy 与 Jieba 承担词项/中文分词；USearch 承担候选与 Concept 双向量索引。成熟依赖已能实现的索引、序列化和矩阵计算不自行重写。Native 只能在 Python 提供的组件目录管理派生资产，不知道业务数据库地址和 CAS 根。
+
+Tantivy 为正文和标题建立独立字段，标题仅由文稿级候选承载。查询使用同一分析器的 SnippetGenerator 返回正文片段在检索文本中的字节范围，并标明标题和正文的匹配字段；原文坐标映射由内容 owner 完成。
 
 ## 真实核心和完整接缝
 
 具体接口、CandidatePool、统一候选规划、空图、长序列、Thinking 记录及构建/open 的分工见 [检索核心](engine.md)。这些行为在 retrieval crate 实现，PyO3 不持另一套 query/engine 业务。
 
-build 返回已经关闭 staged readers/writers 的 BuiltSnapshot；发布后 open 一次。readout 必须接收外部 CandidatePool，不自行再召回。think 接收显式 options，不用绑定层默认值覆盖请求。已有向量的 Python 完整查询使用带空间身份的 VectorRef。
+build 显式关闭构建期 writer 并释放 reader 的映射，最后原子写入完成清单并返回 BuiltSnapshot；Wave 打开同一稳定目录校验。组件目录无需移动，查询借用结束后释放 Native 资源。readout 必须接收外部 CandidatePool，不自行再召回。think 接收显式 options，不用绑定层默认值覆盖请求。已有向量的 Python 完整查询使用带空间身份的 VectorRef。
 
-核心的 Engine 持有有界 Rayon 池、关闭状态与实际工作锁；Snapshot/冻结资产由 retrieval 持有。PyO3 的 Engine/Snapshot 只借用核心对象并 detach。打开可传取消令牌，完整性摘要读取按块检查取消；发布后的快照只打开一次。
+核心的 Engine 持有有界 Rayon 池、关闭状态与实际工作锁；Snapshot/冻结资产由 retrieval 持有。PyO3 的 Engine/Snapshot 只借用核心对象并 detach。打开可传取消令牌，完整性摘要读取按块检查取消；Wave 对读者提供范围化借用并持有有界缓存。
 
 CandidatePool 保存快照身份、有序候选与各 lane 的原始分/名次，以及完整授权召回池产生的 BM25 参照、联合选择校准。普通 recall 完成一次校准和并集选择；固定外部池使用相同校准公式但保留明确给出的集合。readout 消费已准备的池，不再调用 select_superset 或索引。

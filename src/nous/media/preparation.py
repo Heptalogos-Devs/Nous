@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import codecs
 import hashlib
 import json
 import shutil
@@ -29,6 +30,8 @@ from nous.content.contracts import (
     InputPart,
     OriginSlice,
     OutputContent,
+    OutputMapping,
+    SourceContext,
     SourceSelection,
 )
 from nous.content.results import ResultStore
@@ -43,7 +46,6 @@ from .contracts import (
     PlannedPart,
     PreparedBatch,
     PreparedSource,
-    SourceContext,
     TextMapping,
     TextRepresentation,
 )
@@ -106,9 +108,15 @@ def _validate_selection_bounds(info: dict[str, JsonValue], selection: SourceSele
         if any(page > int(cast(int, info["pages"])) for page in selection.pages):
             raise NousError("media.invalid_selection", "PDF page selection exceeds the document")
     elif kind in {"audio", "video"}:
-        duration = int(cast(int, info["duration_ms"]))
-        start, end = selection.start_ms or 0, selection.end_ms or duration
-        if not 0 <= start < end <= duration:
+        duration = info.get("duration_ms")
+        start = selection.start_ms or 0
+        end = selection.end_ms if selection.end_ms is not None else duration
+        if (
+            start < 0
+            or end is not None
+            and (not isinstance(end, int) or end <= start)
+            or (isinstance(duration, int) and end is not None and end > duration)
+        ):
             raise NousError("media.invalid_selection", "Time selection exceeds the media duration")
     elif kind == "image":
         frames = int(cast(int, info["frames"]))
@@ -138,6 +146,16 @@ def _validate_selection_bounds(info: dict[str, JsonValue], selection: SourceSele
                         "media.invalid_selection",
                         "Selected image frame and time interval do not overlap",
                     )
+
+
+def _media_interval(info: dict[str, JsonValue], selection: SourceSelection) -> tuple[int, int]:
+    _validate_selection_bounds(info, selection)
+    end = selection.end_ms if selection.end_ms is not None else info.get("duration_ms")
+    if not isinstance(end, int):
+        raise NousError(
+            "media.duration_unknown", "Choose an end time for media with unknown duration"
+        )
+    return selection.start_ms or 0, end
 
 
 class MediaPreparer:
@@ -233,7 +251,7 @@ class MediaPreparer:
             )
             texts: list[str] = []
             inputs: list[InputGroup] = []
-            mappings: list[JsonValue] = []
+            mappings: list[OutputMapping] = []
             offset = 0
             async with self.batches(plan) as batches:
                 async for batch in batches:
@@ -241,25 +259,29 @@ class MediaPreparer:
                         text = item.text or ""
                         start = offset + (2 if texts else 0)
                         offset = start + len(text.encode())
-                        mappings.append(
-                            {
-                                "start_byte": start,
-                                "end_byte": offset,
-                                "origins": [
-                                    origin.model_dump(mode="json")
-                                    for origin in dict.fromkeys(
-                                        selected
-                                        for part in item.group.parts
-                                        for selected in (
-                                            tuple(value.origin for value in part.origins)
-                                            or (part.content,)
-                                        )
+                        origins = (
+                            tuple(
+                                dict.fromkeys(
+                                    selected
+                                    for part in item.group.parts
+                                    for selected in (
+                                        tuple(value.origin for value in part.origins)
+                                        or (part.content,)
                                     )
-                                ]
-                                if item.group
-                                else [],
-                            }
+                                )
+                            )
+                            if item.group
+                            else ()
                         )
+                        if start < offset and origins:
+                            mappings.append(
+                                OutputMapping(
+                                    output_name="text",
+                                    selection=SourceSelection(start_byte=start, end_byte=offset),
+                                    relation="atomic",
+                                    origins=origins,
+                                )
+                            )
                         texts.append(text)
                     inputs.extend(batch.inputs)
             cached = await self.results.adopt(
@@ -278,7 +300,8 @@ class MediaPreparer:
                     "cache_key": key,
                     "representations": {"text": {"kind": "text"}},
                 },
-                coverage={**plan.coverage, "text_mappings": mappings},
+                coverage=plan.coverage,
+                mappings=mappings,
             )
         _track_completed(cached.ref.identifier)
         body = cached.outputs[0].artifact
@@ -287,16 +310,14 @@ class MediaPreparer:
                 ContentSelection(
                     artifact=body,
                     selection=SourceSelection(
-                        start_byte=int(cast(int, mapping["start_byte"])),
-                        end_byte=int(cast(int, mapping["end_byte"])),
+                        start_byte=mapping.selection.start_byte,
+                        end_byte=mapping.selection.end_byte,
                     ),
                 ),
-                tuple(
-                    ContentSelection.model_validate(origin)
-                    for origin in cast(list[JsonValue], mapping["origins"])
-                ),
+                mapping.origins,
             )
-            for mapping in cast(list[dict[str, JsonValue]], cached.coverage["text_mappings"])
+            for mapping in cached.mappings
+            if mapping.output_name == "text"
         )
         return TextRepresentation(
             body,
@@ -318,59 +339,54 @@ class MediaPreparer:
             return await self._inspect_local(original, blob.byte_length, path, settings)
 
     async def validate_selections(
-        self, values: Sequence[ContentSelection], *, settings: MediaConfig
+        self,
+        values: Sequence[ContentSelection],
+        *,
+        settings: MediaConfig,
+        facts: dict[str, dict[str, JsonValue]] | None = None,
     ) -> tuple[ContentSelection, ...]:
         """Normalize text and inspect media coordinates without creating derivatives."""
-        normalized = await self.artifacts.normalize_selections(values)
-        originals = await self.artifacts.get_many([value.artifact for value in normalized])
-        inspected: dict[str, dict[str, JsonValue]] = {}
+        originals = await self.artifacts.get_many([value.artifact for value in values])
+        inspected = dict(facts or {})
+        for artifact in originals:
+            if artifact.ref.id not in inspected:
+                inspected[artifact.ref.id] = await self.inspect(artifact, settings)
+        normalized = await self.artifacts.normalize_selections(
+            values, media_types={key: str(value["media_type"]) for key, value in inspected.items()}
+        )
         for value, artifact in zip(normalized, originals, strict=True):
             selection = value.selection
-            if selection.is_whole:
-                continue
-            text = artifact.media_type.startswith("text/") or artifact.media_type in {
-                "application/json",
-                "application/xml",
-                "application/xhtml+xml",
-            }
-            if text and not (
-                selection.pages
-                or any(
-                    item is not None
-                    for item in (
-                        selection.start_ms,
-                        selection.end_ms,
-                        selection.frame,
-                        selection.crop,
-                    )
-                )
-            ):
-                continue
-            info = inspected.get(artifact.ref.id)
-            if info is None:
-                info = await self.inspect(artifact, settings)
-                inspected[artifact.ref.id] = info
-            _validate_selection_bounds(info, selection)
+            _validate_selection_bounds(inspected[artifact.ref.id], selection)
         return normalized
 
     async def _inspect_local(
         self, original: Artifact, byte_length: int, path: Path, settings: MediaConfig
     ) -> dict[str, JsonValue]:
         with path.open("rb") as source:
-            header = source.read(16)
+            header = source.read(4096)
         if header.startswith(b"%PDF-"):
             info = await self.execution.blocking(inspect_pdf, path)
         else:
             try:
                 info = await self.execution.blocking(inspect_image, path)
             except UnidentifiedImageError, OSError:
-                if (
-                    original.media_type.startswith("text/")
-                    or original.media_type == "application/json"
-                ):
-                    info = {"kind": "text", "encoding": "utf-8"}
-                else:
+                try:
+                    decoded = codecs.getincrementaldecoder("utf-8")().decode(header, final=False)
+                    controls = sum(ord(char) < 32 and char not in "\r\n\t" for char in decoded)
+                    text = "\x00" not in decoded and controls <= len(decoded) // 100
+                except UnicodeDecodeError:
+                    text = False
+                if not text:
                     info = await AudioVisual(settings, self.execution).inspect(path)
+                else:
+                    mime = (
+                        original.media_type
+                        if original.media_type.startswith("text/")
+                        or original.media_type
+                        in {"application/json", "application/xml", "application/xhtml+xml"}
+                        else "text/plain"
+                    )
+                    info = {"kind": "text", "encoding": "utf-8", "media_type": mime}
         return {
             **info,
             "artifact": original.ref.model_dump(mode="json"),
@@ -446,6 +462,16 @@ class MediaPreparer:
                 "representations": {name: {"kind": "prepared"} for name in outputs},
             },
             coverage={"selection": selection.model_dump(mode="json")},
+            mappings=tuple(
+                OutputMapping(
+                    output_name=name,
+                    selection=SourceSelection(start_byte=0, end_byte=len(output.data)),
+                    relation="atomic",
+                    origins=(ContentSelection(artifact=original.ref, selection=selection),),
+                )
+                for name, output in outputs.items()
+                if output.data
+            ),
         )
         _track_completed(result.ref.identifier)
         return {output.name: await self.artifacts.get(output.artifact) for output in result.outputs}
@@ -517,7 +543,6 @@ class MediaPreparer:
         )
         return PreparedBatch(
             plans,
-            tuple(source.group for source in plans if source.group is not None),
             selection,
             coverage,
         )
@@ -548,7 +573,6 @@ class MediaPreparer:
             batch = replace(
                 batch,
                 sources=role_sources,
-                inputs=tuple(source.group for source in role_sources if source.group),
             )
         if batch.conversion is None:
             bound_sources = tuple(
@@ -560,7 +584,6 @@ class MediaPreparer:
             batch = replace(
                 batch,
                 sources=bound_sources,
-                inputs=tuple(source.group for source in bound_sources if source.group),
             )
         if batch.conversion is not None:
             recipe = batch.conversion
@@ -574,6 +597,7 @@ class MediaPreparer:
                     settings=recipe.settings,
                     document_mode=recipe.document_mode,
                     without_audio=recipe.without_audio,
+                    facts=recipe.parts[0].known_shape if recipe.parts else None,
                 )
                 materialized = [await self.materialize(item) for item in converted.batches]
                 actual_sources = tuple(source for item in materialized for source in item.sources)
@@ -591,7 +615,6 @@ class MediaPreparer:
                 return replace(
                     batch,
                     sources=actual_sources,
-                    inputs=tuple(source.group for source in actual_sources if source.group),
                     conversion=None,
                     coverage=converted.coverage,
                     completed_result_refs=tuple(dict.fromkeys(completed)),
@@ -707,10 +730,9 @@ class MediaPreparer:
                 sources.append(
                     replace(
                         source,
-                        metadata={
-                            **source.metadata,
-                            "source_context": context.model_dump(mode="json", exclude_none=True),
-                        },
+                        group=source.group.model_copy(update={"context": context})
+                        if source.group
+                        else None,
                     )
                 )
             batches.append(replace(batch, sources=tuple(sources)))
@@ -725,6 +747,7 @@ class MediaPreparer:
         settings: MediaConfig,
         document_mode: str = "auto",
         without_audio: bool = False,
+        facts: dict[str, JsonValue] | None = None,
     ) -> MediaPlan:
         """Plan bounded batches of deterministic representations for an artifact.
 
@@ -747,7 +770,7 @@ class MediaPreparer:
             artifact if isinstance(artifact, Artifact) else await self.artifacts.get(artifact)
         )
         selected = selection or SourceSelection()
-        info = await self.inspect(original, settings)
+        info = facts if facts is not None else await self.inspect(original, settings)
         kind = str(info["kind"])
         _validate_selection_bounds(info, selected)
         if kind == "text":
@@ -789,10 +812,7 @@ class MediaPreparer:
                 else "text/plain"
             )
         elif kind in {"audio", "video"}:
-            start, end = (
-                selected.start_ms or 0,
-                selected.end_ms or int(cast(int, info["duration_ms"])),
-            )
+            start, end = _media_interval(info, selected)
             span = max(1, round(settings.audio.max_seconds_per_request * 1000))
             if kind == "video":
                 span = min(
@@ -888,7 +908,7 @@ class MediaPreparer:
                 "kind": kind,
                 "selection": part_selection.model_dump(mode="json"),
             }
-            batches.append(PreparedBatch((), (), part_selection, coverage, conversion=recipe))
+            batches.append(PreparedBatch((), part_selection, coverage, conversion=recipe))
         return self._with_source_context(
             MediaPlan(
                 original,
@@ -946,12 +966,13 @@ class MediaPreparer:
         settings: MediaConfig,
         document_mode: str = "auto",
         without_audio: bool = False,
+        facts: dict[str, JsonValue] | None = None,
     ) -> MediaPlan:
         original = (
             artifact if isinstance(artifact, Artifact) else await self.artifacts.get(artifact)
         )
         selected = selection or SourceSelection()
-        info = await self.inspect(original, settings)
+        info = facts if facts is not None else await self.inspect(original, settings)
         original = original.model_copy(update={"media_type": str(info["media_type"])})
         async with self.artifacts.borrow_local(original.ref) as path:
             kind = cast(str, info["kind"])
@@ -1169,6 +1190,22 @@ class MediaPreparer:
                             },
                         },
                         coverage={"selection": selection.model_dump(mode="json")},
+                        mappings=tuple(
+                            OutputMapping(
+                                output_name=f"image-{index}",
+                                selection=SourceSelection(
+                                    start_byte=0, end_byte=len(outputs[f"image-{index}"].data)
+                                ),
+                                relation="atomic",
+                                origins=(
+                                    ContentSelection(
+                                        artifact=original.ref, selection=frame.selection
+                                    ),
+                                ),
+                            )
+                            for index, frame in enumerate(frames)
+                            if outputs[f"image-{index}"].data
+                        ),
                     )
                     _track_completed(derived.ref.identifier)
                     derivatives = {
@@ -1578,12 +1615,7 @@ class MediaPreparer:
         requirements: Sequence[str],
         without_audio: bool,
     ) -> MediaPlan:
-        start, end = (
-            selection.start_ms or 0,
-            selection.end_ms or int(cast(int, info["duration_ms"])),
-        )
-        if not 0 <= start < end <= int(cast(int, info["duration_ms"])):
-            raise NousError("media.invalid_selection", "Time selection exceeds the media duration")
+        start, end = _media_interval(info, selection)
         direct = (
             start == 0
             and end == info["duration_ms"]
@@ -1645,7 +1677,7 @@ class MediaPreparer:
                     ),
                 ),
             )
-            batch = PreparedBatch((), (), selection, coverage, conversion=recipe)
+            batch = PreparedBatch((), selection, coverage, conversion=recipe)
         return MediaPlan(original, selection, (batch,), coverage)
 
     async def _native_video(
@@ -1731,13 +1763,7 @@ class MediaPreparer:
     ) -> MediaPlan:
         """Partition the interval, recording timed video samples and each batch's audio representation."""
         av = AudioVisual(settings, self.execution)
-        start, end = (
-            selection.start_ms or 0,
-            selection.end_ms or int(cast(int, info["duration_ms"])),
-        )
-        duration = int(cast(int, info["duration_ms"]))
-        if not 0 <= start < end <= duration:
-            raise NousError("media.invalid_selection", "Time selection exceeds the media duration")
+        start, end = _media_interval(info, selection)
         is_video = info["kind"] == "video"
         if is_video and any(value.startswith("video/") for value in requirements):
             return await self._native_video(

@@ -7,14 +7,18 @@ import json
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from pydantic import JsonValue
-
 from nous.common.errors import NousError
 from nous.common.operations import record_completed
 
 from .citations import citation_spans, project_citation_slice, project_citations
-from .contracts import ContentSelection, InputGroup, InputPart, OutputContent, SourceSelection
-from .mappings import TextOriginMapping
+from .contracts import (
+    ContentSelection,
+    InputGroup,
+    InputPart,
+    OutputContent,
+    OutputMapping,
+    SourceSelection,
+)
 from .results import ResultStore
 
 
@@ -44,7 +48,7 @@ class TextProjection:
         ).hexdigest()
 
 
-def _projection_mappings(item: TextProjection, source: ContentSelection) -> list[JsonValue]:
+def _projection_mappings(item: TextProjection, source: ContentSelection) -> list[OutputMapping]:
     """Publish spans from the CommonMark transform, without searching projected text."""
     raw = item.original.encode("utf-8")
     output_length = len(item.projected.encode("utf-8"))
@@ -53,26 +57,28 @@ def _projection_mappings(item: TextProjection, source: ContentSelection) -> list
         raise NousError(
             "content.invalid_projection", "Projection input differs from its exact source range"
         )
-    mappings = [
-        TextOriginMapping(
-            start_byte=0,
-            end_byte=output_length,
-            origins=(source,),
-            mode="whole",
-            output_name="text",
-        )
-    ]
+    mappings: list[OutputMapping] = []
     spans = citation_spans(item.original)
     if project_citation_slice(raw, spans, 0, len(raw)) != item.projected:
-        return [value.model_dump(mode="json") for value in mappings]
+        return (
+            [
+                OutputMapping(
+                    output_name="text",
+                    selection=SourceSelection(start_byte=0, end_byte=output_length),
+                    origins=(source,),
+                    relation="atomic",
+                )
+            ]
+            if output_length
+            else []
+        )
     cursor = position = 0
     for low, high, label in (*spans, (len(raw), len(raw), "")):
         if low > cursor:
             size = low - cursor
             mappings.append(
-                TextOriginMapping(
-                    start_byte=position,
-                    end_byte=position + size,
+                OutputMapping(
+                    selection=SourceSelection(start_byte=position, end_byte=position + size),
                     origins=(
                         ContentSelection(
                             artifact=source.artifact,
@@ -81,7 +87,7 @@ def _projection_mappings(item: TextProjection, source: ContentSelection) -> list
                             ),
                         ),
                     ),
-                    mode="identity",
+                    relation="identity",
                     output_name="text",
                 )
             )
@@ -89,9 +95,8 @@ def _projection_mappings(item: TextProjection, source: ContentSelection) -> list
         size = len(label.encode("utf-8"))
         if size:
             mappings.append(
-                TextOriginMapping(
-                    start_byte=position,
-                    end_byte=position + size,
+                OutputMapping(
+                    selection=SourceSelection(start_byte=position, end_byte=position + size),
                     origins=(
                         ContentSelection(
                             artifact=source.artifact,
@@ -100,13 +105,13 @@ def _projection_mappings(item: TextProjection, source: ContentSelection) -> list
                             ),
                         ),
                     ),
-                    mode="atomic",
+                    relation="atomic",
                     output_name="text",
                 )
             )
             position += size
         cursor = high
-    return [value.model_dump(mode="json") for value in mappings]
+    return mappings
 
 
 async def semantic_text_many(
@@ -178,7 +183,8 @@ async def semantic_text_many(
                     ),
                     prepared_outputs=output,
                     parameters={"cache_key": key, "representations": {"text": {"kind": "text"}}},
-                    coverage={"source": source.model_dump(mode="json"), "text_mappings": mapping},
+                    coverage={"source": source.model_dump(mode="json")},
+                    mappings=mapping,
                 )
                 artifact_ref = next(item.artifact for item in result.outputs if item.name == "text")
                 adopted[key] = (result.ref, artifact_ref)

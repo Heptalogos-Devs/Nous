@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 from dataclasses import dataclass
 from time import perf_counter
 from typing import cast
@@ -15,8 +14,9 @@ from nous.common.errors import NousError
 from nous.content.artifacts import ArtifactStore
 from nous.content.contracts import ContentSelection
 from nous.content.results import ResultStore
+from nous.observability.instrumentation import get_logger
 from nous.runtime.execution import ExecutionManager
-from nous.storage.database import Database, WriteTx
+from nous.storage.database import Database
 from nous.wave.contracts import (
     CandidateRef,
     CognitionOwner,
@@ -28,7 +28,7 @@ from nous.wave.contracts import (
 from nous.wave.operations import WaveOperations
 
 from .. import basis, schema
-from ..annotations import AnnotationOperations
+from ..annotation.operations import AnnotationOperations
 from ..contracts import Namespace, NamespaceRef, RecordRevisionRef, RevisionSelection, SourceBinding
 from ..scope import NamespaceOperations
 from ..writing.reading import RecordReader
@@ -45,8 +45,6 @@ from .contracts import (
     SearchPassage,
 )
 from .projection import ProjectionBuilder
-
-logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -141,6 +139,7 @@ class CognitiveRetrieval:
         *,
         build_key: str | None = None,
         build_config: dict[str, object] | None = None,
+        minimum_generation: int = 0,
     ) -> tuple[Namespace, SnapshotDescriptor]:
         policy: dict[str, object] = {
             "include_review": selected.include_review,
@@ -150,6 +149,15 @@ class CognitiveRetrieval:
         profile = self.wave.profile(selected.space, policy, build_config=build_config)
         async with self.database.read() as tx:
             ns = await self.scope.get_in(tx, selected.namespace)
+        if ns.content_generation < minimum_generation:
+            raise NousError(
+                "cognition.generation_unavailable",
+                "The requested generation is newer than the namespace",
+                details={
+                    "minimum_generation": minimum_generation,
+                    "current_generation": ns.content_generation,
+                },
+            )
         collection = f"cognition:{ns.id}:{profile}"
         existing = await self.wave.current(collection)
         if (
@@ -184,7 +192,7 @@ class CognitiveRetrieval:
                 candidate_limit=selected.candidate_limit,
             )
 
-            logger.info(
+            get_logger(__name__).info(
                 "cognition.capture.completed",
                 extra={
                     "namespace_id": ns.id,
@@ -195,22 +203,30 @@ class CognitiveRetrieval:
                 },
             )
 
-            async def unchanged(tx: WriteTx) -> bool:
-                return (
-                    await self.scope.get_in(tx, ns.id)
-                ).content_generation == captured.namespace.content_generation
-
             try:
-                published = await self.wave.build_view(
+                prepared = await self.wave.prepare_build(
                     view,
-                    selected.space,
-                    publish_if=unchanged,
+                    self.wave.resolve_build_profile(selected.space, build_config=build_config),
                     build_key=(
                         f"{build_key}:{captured.namespace.content_generation}:{profile}"
                         if build_key
                         else None
                     ),
-                    build_config=build_config,
+                )
+                publish_started = perf_counter()
+                async with self.database.write() as tx:
+                    descriptor = await self.wave.accept_in(tx, prepared)
+                    if (
+                        await self.scope.get_in(tx, ns.id)
+                    ).content_generation == captured.namespace.content_generation:
+                        await self.wave.promote_in(tx, descriptor.ref)
+                self.wave.release_prepared(prepared)
+                get_logger(__name__).info(
+                    "wave.publish.completed",
+                    extra={
+                        "snapshot": descriptor.ref.identifier,
+                        "publish_ms": (perf_counter() - publish_started) * 1000,
+                    },
                 )
             except NousError as error:
                 raise NousError(
@@ -225,9 +241,6 @@ class CognitiveRetrieval:
                     retryable=error.retryable,
                     cause=error,
                 ) from error
-            descriptor = await self.wave.describe(
-                cast(dict[str, str], published["snapshot"])["identifier"]
-            )
             return captured.namespace, descriptor
 
     @staticmethod
@@ -249,6 +262,7 @@ class CognitiveRetrieval:
         build_config: dict[str, object] | None = None,
         candidate_limit: int | None = None,
         space_override: str | None = None,
+        minimum_generation: int = 0,
     ) -> dict[str, object]:
         """Ensure a retrieval snapshot for the selected namespace.
 
@@ -276,7 +290,10 @@ class CognitiveRetrieval:
                 space_override,
             )
             ns, snapshot = await self._current_view(
-                selected, build_key=build_key, build_config=build_config
+                selected,
+                build_key=build_key,
+                build_config=build_config,
+                minimum_generation=minimum_generation,
             )
             async with self.database.read() as tx:
                 current = await self.scope.get_in(tx, ns.id)
@@ -343,6 +360,9 @@ class CognitiveRetrieval:
                         "candidate_ref",
                         "content",
                         "origin_contents",
+                        "passage_contents",
+                        "matched_fields",
+                        "passage_reason",
                         "candidate_rank",
                         "text",
                         "snippet",
@@ -360,7 +380,7 @@ class CognitiveRetrieval:
                                 revision=revision,
                                 selections=TypeAdapter(
                                     tuple[ContentSelection, ...]
-                                ).validate_python(hit["origin_contents"]),
+                                ).validate_python(hit["passage_contents"]),
                             ),
                             "channel_ranks": hit.get("channel_ranks") or {},
                             "channel_scores": hit.get("channel_scores") or {},
@@ -457,21 +477,22 @@ class CognitiveRetrieval:
                 ),
             )
 
-    async def status(self) -> dict[str, object]:
+    async def status(self, *, mode: Mode | None = None) -> dict[str, object]:
         """Report content and published generations without rebuilding or calling models."""
         async with self.execution.operation("cognition.retrieval_status"):
             failure = None
             try:
-                selected = await self._options(None, None, None, None)
+                selected = await self._options(None, mode, None, None)
             except NousError as error:
                 failure = error.to_dict()
                 settings = self.execution.snapshot.values.cognition
+                selected_mode = mode or settings.search.default_mode
+                if selected_mode == "auto":
+                    selected_mode = "hybrid" if settings.search.space else "lexical"
                 selected = SearchOptions(
                     settings.default_namespace,
-                    settings.search.default_mode
-                    if settings.search.default_mode != "auto"
-                    else "hybrid",
-                    settings.search.space,
+                    selected_mode,
+                    None if selected_mode == "lexical" else settings.search.space,
                     settings.search.include_review,
                     settings.search.include_exploration,
                     settings.search.local_candidate_max_bytes,

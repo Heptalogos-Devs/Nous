@@ -73,6 +73,7 @@ class RevisionSummary(CognitiveValue):
     recorded_at: datetime
     change_kind: str
     reason: str | None = None
+    write_key: str | None = None
 
 
 class RecordView(CognitiveValue):
@@ -102,4 +103,5 @@ class RecordView(CognitiveValue):
     recall: bool
     change_kind: str
     reason: str | None = None
+    write_key: str | None = None
     origin_result_id: str | None = None

@@ -12,6 +12,8 @@
 propose_annotation(record_revision, known_concepts?, task?) -> proposal_result
 adopt_annotation(record_revision, proposal_result, bindings?,
                  expected_active_annotation, activate=true) -> AnnotationView
+prepare_adoption(target, proposal_result, decisions...) -> PreparedAnnotationAdoption
+adopt_in(WriteTx, prepared) -> AnnotationCommit
 read_annotation(annotation_ref) -> exact body + bindings + paths
 AnnotationOperations.read_many_in(ReadTx, exact_revisions) -> {revision_id: AnnotationView}
 ```
@@ -20,7 +22,9 @@ AnnotationOperations.read_many_in(ReadTx, exact_revisions) -> {revision_id: Anno
 
 ## 原子采用
 
-读取提案并校验正文/块；WriteTx 内取得或创建不可变标注，再独立核对 active 前置条件并按请求切换指针。标注成为当前可召回正文的活动标注时推进 namespace generation；指针未变、历史正文及非召回正文不推进。后台自动任务在同一事务再次核对当前正文与召回资格；显式标注非召回 Note 合法。完整规则见[当前视图变化](current-view-mutations.md)与[持久维护](durable-maintenance.md)。
+prepare_adoption 在事务外读取提案并校验正文与块；完整用例持有 WriteTx，adopt_in 取得或创建不可变标注，独立核对活动指针并返回 AnnotationCommit。结果明确活动状态、当前视图是否改变、域、generation 与冲突。严格手工采用在冲突时回滚；后台用例可在同一事务保留 inactive 结果并报告 superseded。
+
+标注成为当前可召回正文的活动标注时推进 namespace generation；指针未变、历史正文及非召回正文不推进。后台自动任务在同一事务再次核对当前正文与召回资格；显式标注非召回 Note 合法。完整规则见[当前视图变化](current-view-mutations.md)与[持久维护](durable-maintenance.md)。
 
 目标正文或自动任务的召回资格在模型执行期间变了：提案仍保存，后台结果为 superseded，活动指针不被覆盖。需要给历史版本标注时显式指定历史 ref 和 activate_for_current=false；如果该版本实际是当前可召回正文，指针变化仍推进 generation。
 

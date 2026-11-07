@@ -10,7 +10,7 @@ from nous.content.contracts import ArtifactRef
 from nous.storage.database import ReadTx
 
 from .. import basis, schema
-from ..annotations import AnnotationOperations
+from ..annotation.operations import AnnotationOperations
 from ..concept_contracts import AnnotationView
 from ..contracts import Namespace, RecordRevisionRef, SourceBinding
 from ..scope import NamespaceOperations

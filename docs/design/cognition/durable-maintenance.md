@@ -22,13 +22,13 @@ RecordOutcome 增加 `jobs: tuple[JobRef, ...]`；每个 StageOutcome 可携带�
 
 ## 两个独立工作
 
-`AnnotationJobRequest`：instance/namespace ref、exact body revision、冻结 annotation recipe 引用、发起关联、采用政策和是否在成功激活后刷新。
+`AnnotationRequest` 固定计算键、语言任务、候选上限及当前性资格；入队值另携精确正文修订、域和可选刷新请求。准备步骤生成 AnnotationPlan，固定正文选区、候选意义及预期活动标注。
 
-`RefreshJobRequest`：instance/namespace ref、profile/space身份与冻结构建设置、目标 minimum_generation、发起关联。minimum_generation 表示本次需求的最低覆盖，实际构建捕获当时 G，可覆盖更新的提交。
+`RefreshRequest` 固定检索模式、空间身份和构建设置；入队值另携域、minimum_generation 与发起关联。minimum_generation 表示本次需求的最低覆盖，实际构建捕获当时 G，可覆盖更新的提交。
 
 二者在保存事务中各自入队。初次 refresh 可以在模型标注前完成，让正文先可检索；annotation 失败只影响该工作。annotation 实际改变当前活动标注后，在同一采用事务登记新 generation 的 refresh。
 
-不以“某域已有一个 refresh Job”为由丢弃新需求：旧工作可能已经捕获较早 G。使用具体提交代次/配方身份登记；重复工作开始时发现已满足可以快速结束。先利用现有 profile 构建锁与 generation，不引入自制 debounce/dirty/lease 状态。
+不以“某域已有一个 refresh Job”为由丢弃新需求：旧工作可能已经捕获较早 G。使用具体提交代次和构建计划登记；重复工作开始时发现已满足可以快速结束。先利用现有 profile 构建锁与 generation。
 
 ## 标注 workflow
 
@@ -36,15 +36,15 @@ RecordOutcome 增加 `jobs: tuple[JobRef, ...]`；每个 StageOutcome 可携带�
 
 读取固定正文 revision；检查是否仍处于自动维护的当前/可召回范围，已经过期或归档时返回明确 skipped/superseded。人工要求历史标注另走显式操作，不让后台猜测意图。
 
-确定概念候选的精确意义版本、当前活动标注前置条件、真实文本结构 profile 与已冻结语言配方，形成 AnnotationPlan。计划保存的是实际生成需要的值，后续步骤不重新搜索不同候选。准备/生成期间不持有数据库事务。
+确定概念候选的精确意义版本、当前活动标注前置条件、精确正文选区与已冻结语言任务，形成 AnnotationPlan。计划保存实际生成需要的值，后续步骤不重新搜索不同候选。准备/生成期间不持有数据库事务。
 
 ### 产生语言结果
 
-调用既有 GenerationOperations 和模型尝试策略，输入为计划固定的正文/候选，输出专一 AnnotationProposal。使用 [持久计算](../models/durable-computation.md) 的成功产物描述，DBOS 记录可序列化结果引用。工作层不再次自动重试整个模型阶段。
+调用 GenerationOperations 和模型尝试策略，输入为计划固定的正文/候选，成功响应经解释并采用为正式提案。DBOS 步骤只记录提案引用；已存在提案或成功响应可继续，不重新请求模型。
 
 ### 保存提案并采用
 
-从可重读计算结果恢复提案，ResultStore 采用使用稳定业务键。正式 Annotation 采用固定 body 与 meaning refs，在短 WriteTx 中核验活动资格，复用/create 标注对象并独立更新活动指针。
+从正式提案准备采用值。完整维护用例打开短 WriteTx，调用 AnnotationOperations.adopt_in 核验活动资格、复用或创建标注并更新指针；当前视图变化需要刷新时，同事务调用 enqueue_refresh_in。
 
 正文或活动指针已经被别人改变时，保存可读提案/历史结果，返回 superseded/inactive，不覆盖当前状态，也不重发模型试图“追上新版本”。符合条件时采用并推进 generation，再登记 refresh。
 
@@ -66,7 +66,7 @@ RecordOperations 通过一个明确维护协作者完成 prepare-before-write、
 
 ## 重试、恢复和状态
 
-prepare、生成、采用、刷新用命名步骤分开，步骤返回只含可序列化值。已记录步骤恢复时返回原结果。业务提交与 DBOS checkpoint 之间的窗口由业务幂等键吸收。瞬时 storage.busy 可在幂等数据库阶段按有限策略重试，逻辑冲突、来源错误和模型配置错误直接给出失败原因。显式 `ERROR` 后续重试参见 [Job 操作](../interfaces/jobs-and-host.md)，通过新的 fork Job 执行，从实际失败步骤接续，保留旧工作错误与已采用产物。
+准备、生成、采用、刷新使用命名步骤，步骤返回只含可序列化值。已记录步骤恢复时返回原结果；业务提交与 DBOS checkpoint 之间的窗口由业务键吸收。显式 `ERROR` 重试通过新的 fork Job 从失败步骤接续，保留旧工作错误与已采用产物。
 
 用户 `resume` 只用于支持恢复的非 ERROR 状态，沿用原 JobRef 和已记录步骤，不能自动改用当前新 Prompt。要使用新模型/模板重新维护，创建明确的新请求。`ERROR` 重试通过独立 JobRef 和 `forked_from` 关系表达，不覆盖既有工作结果。Job result 的 related_jobs 只表示真实后续工作；`wait` 默认等待本项，调用者可以继续等待这些引用，不把事务入队的独立刷新误当 DBOS child workflow。
 

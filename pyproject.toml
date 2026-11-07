@@ -71,7 +71,7 @@ cache-keys = [
 [tool.basedpyright]
 stubPath = "typings"
 extraPaths = ["src"]
-include = ["src", "tests/python"]
+include = ["src", "tests/python", "scripts/check"]
 exclude = ["legacy", "temp", ".venv", "dist"]
 ignore = ["legacy", "temp"]
 pythonVersion = "3.14"

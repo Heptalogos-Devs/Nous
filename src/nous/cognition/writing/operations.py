@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import difflib
+import hashlib
+import json
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Literal, TypedDict, Unpack, cast
 
 import sqlalchemy as sa
+from pydantic_core import to_jsonable_python
 
 from nous.common.errors import NousError
 from nous.common.operations import (
@@ -47,10 +50,13 @@ from .reading import RecordReader, Target
 from .records import CreateMetadata, RevisionMetadata, WrittenRecords
 
 if TYPE_CHECKING:
-    from ..annotations import AnnotationOperations
+    from nous.jobs.contracts import JobRef
+
+    from ..annotation.operations import AnnotationOperations
     from ..feedback import FeedbackOperations
     from ..maintenance import MaintenanceOperations
-    from ..maintenance.operations import EnqueuedMaintenance, PreparedMaintenance
+    from ..maintenance.contracts import MaintenancePlan
+    from ..maintenance.operations import EnqueuedMaintenance
     from ..retrieval.operations import CognitiveRetrieval
 
 
@@ -93,126 +99,80 @@ class RecordOperations:
     async def finish_write(
         self,
         record: CommittedRecord,
-        after: AfterWrite,
+        plan: MaintenancePlan,
         operation: OperationLink,
         *,
-        annotate: bool = True,
         work: EnqueuedMaintenance | None = None,
-        preparation: PreparedMaintenance | None = None,
-        background: bool = False,
     ) -> RecordOutcome:
-        """Run requested post-commit maintenance for an already committed record.
-
-        Returns the committed revision and individual annotation and retrieval states.
-        A handled follow-up error yields ``partial`` with an issue; the record remains
-        committed. Deferred retrieval for a recalled record is reported as pending.
-        """
+        """Report the committed record and execute its already-decided inline work."""
         record_completed(record.revision_ref.identifier)
         annotation = StageOutcome(state="not_requested")
         retrieval = StageOutcome(state="pending" if record.in_recall else "not_requested")
         issues: list[OperationIssue] = []
-        run_annotation = (
-            record.changed
-            and annotate
-            and (
-                after.annotation == "run"
-                or after.annotation == "default"
-                and record.in_recall
-                and self.execution.snapshot.values.cognition.annotation.on_save
+        for item in plan.unavailable if record.changed else ():
+            issue = OperationIssue(
+                item.stage,
+                item.code,
+                item.message,
+                item.details,
+                item.retryable,
+                (record.revision_ref.identifier,),
+                (record.revision_ref.identifier,),
             )
-        )
-        if background:
+            issues.append(issue)
+            if issue.stage == "annotation":
+                annotation = StageOutcome(state="failed", issue=issue)
+            else:
+                retrieval = StageOutcome(state="failed", issue=issue)
+        if record.changed and plan.execution == "background":
             if work is not None and work.annotation is not None:
                 annotation = StageOutcome(state="pending", job=work.annotation)
             if work is not None and work.retrieval is not None:
                 retrieval = StageOutcome(state="pending", job=work.retrieval)
-            for stage, error, requested in (
-                (
-                    "annotation",
-                    preparation.annotation_error if preparation else None,
-                    run_annotation,
-                ),
-                (
-                    "retrieval",
-                    preparation.retrieval_error if preparation else None,
-                    record.changed
-                    and (after.retrieval == "refresh" or after.retrieval_mode is not None),
-                ),
-            ):
-                if error is None or not requested:
-                    continue
-                issue = OperationIssue(
-                    stage,
-                    error.code,
-                    error.message,
-                    dict(error.details),
-                    error.retryable,
-                    (record.revision_ref.identifier,),
-                    (record.revision_ref.identifier,),
-                )
-                issues.append(issue)
-                if stage == "annotation":
+        elif record.changed:
+            if plan.annotation is not None:
+                try:
+                    adopted = await self.maintenance.annotate_inline(record, plan.annotation)
+                    annotation = StageOutcome(
+                        state="ready", generation=adopted.generation, ref=adopted.ref.identifier
+                    )
+                except NousError as error:
+                    issue = OperationIssue(
+                        "annotation",
+                        error.code,
+                        error.message,
+                        dict(error.details),
+                        error.retryable,
+                        (record.revision_ref.identifier,),
+                        (record.revision_ref.identifier,),
+                    )
+                    issues.append(issue)
                     annotation = StageOutcome(state="failed", issue=issue)
-                else:
+            if plan.refresh is not None:
+                try:
+                    outcome = await self.maintenance.refresh(
+                        record.namespace.ref,
+                        record.namespace.content_generation,
+                        plan.refresh,
+                        build_key=f"inline:{record.revision_ref.revision_id}",
+                    )
+                    retrieval = StageOutcome(
+                        state="ready" if outcome.state == "ready" else "pending",
+                        generation=outcome.covered_generation,
+                        ref=outcome.result_refs[0] if outcome.result_refs else None,
+                    )
+                except NousError as error:
+                    issue = OperationIssue(
+                        "retrieval",
+                        error.code,
+                        error.message,
+                        dict(error.details),
+                        error.retryable,
+                        (record.revision_ref.identifier,),
+                        (record.revision_ref.identifier,),
+                    )
+                    issues.append(issue)
                     retrieval = StageOutcome(state="failed", issue=issue)
-            status = "partial" if issues else "success"
-            report_outcome(status, issues=issues, completed_refs=(record.revision_ref.identifier,))
-            return RecordOutcome(
-                record=record,
-                status=status,
-                annotation=annotation,
-                retrieval=retrieval,
-                operation=operation,
-                jobs=work.jobs if work is not None else (),
-            )
-        if run_annotation:
-            try:
-                adopted = await self.maintenance.annotate_inline(
-                    record, automatic=after.annotation == "default"
-                )
-                annotation = StageOutcome(
-                    state="ready", generation=adopted.generation, ref=adopted.ref.identifier
-                )
-            except NousError as error:
-                issue = OperationIssue(
-                    "annotation",
-                    error.code,
-                    error.message,
-                    dict(error.details),
-                    error.retryable,
-                    (record.revision_ref.identifier,),
-                    (record.revision_ref.identifier,),
-                )
-                issues.append(issue)
-                annotation = StageOutcome(state="failed", issue=issue)
-        if after.retrieval == "refresh" or after.retrieval_mode is not None:
-            try:
-                published = await self.retrieval.refresh(
-                    self.namespace.id, mode=after.retrieval_mode
-                )
-                covered = cast(int, published["covered_generation"])
-                async with self.database.read() as tx:
-                    current = await self.reader.scope.get_in(tx, self.namespace.id)
-                ready = (
-                    bool(published.get("current", True)) and current.content_generation == covered
-                )
-                retrieval = StageOutcome(
-                    state="ready" if ready else "pending",
-                    generation=covered,
-                    ref=cast(dict[str, str], published["snapshot"])["identifier"],
-                )
-            except NousError as error:
-                issue = OperationIssue(
-                    "retrieval",
-                    error.code,
-                    error.message,
-                    dict(error.details),
-                    error.retryable,
-                    (record.revision_ref.identifier,),
-                    (record.revision_ref.identifier,),
-                )
-                issues.append(issue)
-                retrieval = StageOutcome(state="failed", issue=issue)
         status = "partial" if issues else "success"
         report_outcome(status, issues=issues, completed_refs=(record.revision_ref.identifier,))
         return RecordOutcome(
@@ -221,6 +181,7 @@ class RecordOperations:
             annotation=annotation,
             retrieval=retrieval,
             operation=operation,
+            jobs=work.jobs if work is not None else (),
         )
 
     def _link(self) -> OperationLink:
@@ -263,15 +224,9 @@ class RecordOperations:
             metadata["sources"] = prepared.bindings
         self.core.validate_body(body, metadata.get("sources", ()))
         times = await self.core.prepare_times(metadata.get("times"))
-        preparation = await self.maintenance.prepare_after(
-            after, annotate=recall or after.annotation == "run"
-        )
-        recipe = preparation.recipe
+        preparation = await self.maintenance.prepare_after(after, in_recall=recall)
         published = await self.core.artifacts.content.publish_bytes(body.encode("utf-8"))
         async with self.database.write() as tx:
-            previous_generation = (
-                await self.reader.scope.get_in(tx, self.namespace.id)
-            ).content_generation
             committed = await self.core.create_in(
                 tx,
                 self.namespace.id,
@@ -286,16 +241,12 @@ class RecordOperations:
                 viewpoint=metadata.get("viewpoint"),
                 sources=metadata.get("sources", ()),
             )
-            jobs = await self.maintenance.enqueue_in(
-                tx, committed, recipe, previous_generation=previous_generation
-            )
+            jobs = await self.maintenance.enqueue_in(tx, committed, preparation)
         return await self.finish_write(
             committed,
-            after,
+            preparation,
             self._link(),
             work=jobs,
-            preparation=preparation,
-            background=bool(recipe["background"]),
         )
 
     async def add_note(
@@ -407,6 +358,8 @@ class RecordOperations:
         reason: str | None,
         metadata: RevisionMetadata,
         source_changes: SourceChanges | None,
+        write_key: str | None = None,
+        write_fingerprint: str | None = None,
     ) -> RecordOutcome:
         original = await self._target_base(base, expected)
         bindings = (
@@ -442,60 +395,148 @@ class RecordOperations:
             )
         expected_recall = bool(proposed.row["recall"] and not proposed.row["archived"])
         preparation = await self.maintenance.prepare_after(
-            after, annotate=proposed.changed and (expected_recall or after.annotation == "run")
+            after, in_recall=expected_recall, changed=proposed.changed
         )
-        recipe = preparation.recipe
+        replayed: CommittedRecord | None = None
+        committed: CommittedRecord | None = None
+        jobs: EnqueuedMaintenance | None = None
         async with self.database.write() as tx:
-            previous_generation = (
-                await self.reader.scope.get_in(tx, self.namespace.id)
-            ).content_generation
-            committed = await self.core.append_in(
-                tx,
-                base,
-                expected,
-                body,
-                published,
-                namespace=self.namespace.id,
-                change_kind=intent,
-                reason=reason,
-                sources=bindings,
-                **metadata,
-            )
-            if (
-                committed.changed
-                and after.annotation == "default"
-                and self.execution.snapshot.values.cognition.annotation.on_save
-                and committed.in_recall != expected_recall
-            ):
-                raise NousError(
-                    "cognition.maintenance_conflict",
-                    "Recall membership changed while maintenance was prepared",
+            if write_key is not None:
+                assert write_fingerprint is not None
+                replayed = await self.core.replay_in(
+                    tx, base, expected, self.namespace.id, write_key, write_fingerprint
                 )
-            if feedback_refs:
-                await self.feedback.resolve_in(
+            if replayed is None:
+                committed = await self.core.append_in(
                     tx,
-                    feedback_refs,
-                    namespace_id=self.namespace.id,
-                    base_revision=original.revision_ref,
-                    applied_revision=committed.revision_ref,
-                    note=reason,
-                    mappings=feedback_mappings,
+                    base,
+                    expected,
+                    body,
+                    published,
+                    namespace=self.namespace.id,
+                    change_kind=intent,
+                    reason=reason,
+                    sources=bindings,
+                    write_key=write_key,
+                    write_fingerprint=write_fingerprint,
+                    **metadata,
                 )
-            jobs = await self.maintenance.enqueue_in(
-                tx, committed, recipe, previous_generation=previous_generation
-            )
+                if (
+                    committed.changed
+                    and preparation.recall_precondition is not None
+                    and committed.in_recall != preparation.recall_precondition
+                ):
+                    raise NousError(
+                        "cognition.maintenance_conflict",
+                        "Recall membership changed while maintenance was prepared",
+                    )
+                if feedback_refs:
+                    await self.feedback.resolve_in(
+                        tx,
+                        feedback_refs,
+                        namespace_id=self.namespace.id,
+                        base_revision=original.revision_ref,
+                        applied_revision=committed.revision_ref,
+                        note=reason,
+                        mappings=feedback_mappings,
+                    )
+                jobs = await self.maintenance.enqueue_in(tx, committed, preparation)
+        if replayed is not None:
+            return await self._replayed(replayed, after)
+        assert committed is not None
         return await self.finish_write(
             committed,
-            after,
+            preparation,
             self._link(),
             work=jobs,
-            preparation=preparation,
-            background=bool(recipe["background"]),
+        )
+
+    async def _replayed(self, record: CommittedRecord, after: AfterWrite) -> RecordOutcome:
+        """Read current maintenance facts without repeating the committed write."""
+        annotation = StageOutcome(state="not_requested")
+        issues: list[OperationIssue] = []
+        jobs: list[JobRef] = []
+        if after.annotation != "skip":
+            async with self.database.read() as tx:
+                active = await self.annotations.read_many_in(tx, [record.revision_ref])
+            view = active.get(record.revision_ref.revision_id)
+            if view is not None:
+                annotation = StageOutcome(
+                    state="ready", ref=view.ref.identifier, generation=view.generation
+                )
+            else:
+                job = await self.maintenance.record_annotation_job(record.revision_ref)
+                if job is not None:
+                    jobs.append(job.ref)
+                if job is not None and job.status in {
+                    "ERROR",
+                    "CANCELLED",
+                    "MAX_RECOVERY_ATTEMPTS_EXCEEDED",
+                }:
+                    issue = job.error or OperationIssue(
+                        "annotation", "job." + job.status.lower(), f"Job ended in {job.status}"
+                    )
+                    issues.append(issue)
+                    annotation = StageOutcome(state="failed", issue=issue, job=job.ref)
+                elif job is not None and job.status in {"ENQUEUED", "PENDING", "DELAYED"}:
+                    annotation = StageOutcome(state="pending", job=job.ref)
+                elif job is not None or after.annotation == "run":
+                    annotation = StageOutcome(state="pending")
+
+        requested = after.retrieval == "refresh" or after.retrieval_mode is not None
+        retrieval = StageOutcome(
+            state="pending" if record.in_recall or requested else "not_requested"
+        )
+        if record.in_recall or requested:
+            status = await self.retrieval.status(mode=after.retrieval_mode)
+            namespaces = cast(list[dict[str, object]], status["namespaces"])
+            current = next(
+                (value for value in namespaces if value["namespace_id"] == record.namespace.id),
+                None,
+            )
+            if current is not None:
+                covered = current["covered_generation"]
+                snapshot = current["snapshot"]
+                if isinstance(covered, int) and covered >= record.committed_generation:
+                    ref = cast(dict[str, object], snapshot) if isinstance(snapshot, dict) else {}
+                    if isinstance(ref.get("identifier"), str):
+                        retrieval = StageOutcome(
+                            state="ready", generation=covered, ref=cast(str, ref["identifier"])
+                        )
+            if requested:
+                job = await self.maintenance.record_refresh_job(record)
+                if job is not None:
+                    jobs.append(job.ref)
+                    if retrieval.state != "ready" and job.status in {
+                        "ERROR",
+                        "CANCELLED",
+                        "MAX_RECOVERY_ATTEMPTS_EXCEEDED",
+                    }:
+                        issue = job.error or OperationIssue(
+                            "retrieval",
+                            "job." + job.status.lower(),
+                            f"Job ended in {job.status}",
+                        )
+                        issues.append(issue)
+                        retrieval = StageOutcome(state="failed", issue=issue, job=job.ref)
+                    elif retrieval.state != "ready" and job.status in {
+                        "ENQUEUED",
+                        "PENDING",
+                        "DELAYED",
+                    }:
+                        retrieval = StageOutcome(state="pending", job=job.ref)
+        return RecordOutcome(
+            record=record,
+            status="partial" if issues else "success",
+            annotation=annotation,
+            retrieval=retrieval,
+            operation=self._link(),
+            jobs=tuple(jobs),
         )
 
     async def replace(
         self,
-        base: Target,
+        target: Target,
         markdown: str,
         *,
         expected: str | int | RecordRevisionRef | None = None,
@@ -506,6 +547,7 @@ class RecordOperations:
         feedback_mappings: Mapping[str, str] | None = None,
         source_requests: Sequence[SourceRequest] | None = None,
         sources: SourceChanges | None = None,
+        write_key: str | None = None,
         **metadata: Unpack[RevisionMetadata],
     ) -> RecordOutcome:
         """Replace the complete Markdown body against an exact base revision.
@@ -525,34 +567,77 @@ class RecordOperations:
                 to the base; or a body or source validation error.
         """
         async with self.execution.operation("records.replace"):
-            if source_requests is not None:
-                original = await self._target_base(base, expected)
-                additions = await self._resolve_requests(
-                    source_requests,
-                    prefix="N",
-                    reserved=[source.key for source in original.sources]
-                    + [source.key for source in sources.add]
-                    if sources
-                    else [source.key for source in original.sources],
+            fingerprint = None
+            if write_key is not None:
+                if not write_key:
+                    raise NousError("input.invalid", "Write key must not be empty")
+                request = to_jsonable_python(
+                    {
+                        "body": markdown,
+                        "reason": reason,
+                        "intent": intent,
+                        "after": after,
+                        "feedback_refs": feedback_refs,
+                        "feedback_mappings": feedback_mappings or {},
+                        "source_requests": source_requests,
+                        "sources": sources,
+                        "metadata": metadata,
+                    }
                 )
-                changes = sources or SourceChanges()
-                sources = changes.model_copy(update={"add": (*changes.add, *additions)})
-            return await self._replace(
-                base,
-                markdown,
-                expected=expected,
-                after=after,
-                feedback_refs=feedback_refs,
-                feedback_mappings=feedback_mappings or {},
-                intent=intent,
-                reason=reason,
-                metadata=metadata,
-                source_changes=sources,
-            )
+                fingerprint = hashlib.sha256(
+                    json.dumps(request, sort_keys=True, separators=(",", ":")).encode()
+                ).hexdigest()
+
+            async def replay() -> CommittedRecord | None:
+                if write_key is None:
+                    return None
+                assert fingerprint is not None
+                async with self.database.read() as tx:
+                    committed = await self.core.replay_in(
+                        tx, target, expected, self.namespace.id, write_key, fingerprint
+                    )
+                return committed
+
+            existing = await replay()
+            if existing is not None:
+                return await self._replayed(existing, after)
+            try:
+                if source_requests is not None:
+                    original = await self._target_base(target, expected)
+                    additions = await self._resolve_requests(
+                        source_requests,
+                        prefix="N",
+                        reserved=[source.key for source in original.sources]
+                        + [source.key for source in sources.add]
+                        if sources
+                        else [source.key for source in original.sources],
+                    )
+                    changes = sources or SourceChanges()
+                    sources = changes.model_copy(update={"add": (*changes.add, *additions)})
+                return await self._replace(
+                    target,
+                    markdown,
+                    expected=expected,
+                    after=after,
+                    feedback_refs=feedback_refs,
+                    feedback_mappings=feedback_mappings or {},
+                    intent=intent,
+                    reason=reason,
+                    metadata=metadata,
+                    source_changes=sources,
+                    write_key=write_key,
+                    write_fingerprint=fingerprint,
+                )
+            except NousError as error:
+                if error.code == "cognition.revision_conflict":
+                    existing = await replay()
+                    if existing is not None:
+                        return await self._replayed(existing, after)
+                raise
 
     async def apply(
         self,
-        base: Target,
+        target: Target,
         changes: Sequence[TextChange],
         *,
         expected: str | int | RecordRevisionRef | None = None,
@@ -578,11 +663,11 @@ class RecordOperations:
                 text edit, source, or feedback validation error.
         """
         async with self.execution.operation("records.apply"):
-            original = await self._target_base(base, expected)
+            original = await self._target_base(target, expected)
             view = await self.core.artifacts.text_view(original.body_artifact)
             edited = prepare_text_edit(view, changes)
             return await self._replace(
-                base,
+                target,
                 edited.utf8_bytes.decode("utf-8"),
                 expected=expected,
                 after=after,
@@ -618,7 +703,7 @@ class RecordOperations:
 
     async def _membership(
         self,
-        base: Target,
+        target: Target,
         *,
         expected: str | int | RecordRevisionRef | None = None,
         archived: bool | None = None,
@@ -626,57 +711,48 @@ class RecordOperations:
         after: AfterWrite,
     ) -> RecordOutcome:
         preparation = await self.maintenance.prepare_after(after, annotate=False)
-        recipe = preparation.recipe
         async with self.database.write() as tx:
-            previous_generation = (
-                await self.reader.scope.get_in(tx, self.namespace.id)
-            ).content_generation
             committed = await self.core.membership_in(
                 tx,
-                base,
+                target,
                 expected,
                 namespace=self.namespace.id,
                 archived=archived,
                 recall=recall,
             )
-            jobs = await self.maintenance.enqueue_in(
-                tx, committed, recipe, previous_generation=previous_generation
-            )
+            jobs = await self.maintenance.enqueue_in(tx, committed, preparation)
         return await self.finish_write(
             committed,
-            after,
+            preparation,
             self._link(),
-            annotate=False,
             work=jobs,
-            preparation=preparation,
-            background=bool(recipe["background"]),
         )
 
     async def archive(
         self,
-        base: Target,
+        target: Target,
         *,
         expected: str | int | RecordRevisionRef | None = None,
         after: AfterWrite = DEFAULT_AFTER_WRITE,
     ) -> RecordOutcome:
         """Archive a record against its exact current base and report follow-up state."""
         async with self.execution.operation("records.archive"):
-            return await self._membership(base, expected=expected, archived=True, after=after)
+            return await self._membership(target, expected=expected, archived=True, after=after)
 
     async def restore(
         self,
-        base: Target,
+        target: Target,
         *,
         expected: str | int | RecordRevisionRef | None = None,
         after: AfterWrite = DEFAULT_AFTER_WRITE,
     ) -> RecordOutcome:
         """Restore an archived record against its exact current base."""
         async with self.execution.operation("records.restore"):
-            return await self._membership(base, expected=expected, archived=False, after=after)
+            return await self._membership(target, expected=expected, archived=False, after=after)
 
     async def set_recall(
         self,
-        base: Target,
+        target: Target,
         enabled: bool,
         *,
         expected: str | int | RecordRevisionRef | None = None,
@@ -688,7 +764,7 @@ class RecordOperations:
             NousError: The base is stale or the target is not a Note.
         """
         async with self.execution.operation("records.recall"):
-            return await self._membership(base, expected=expected, recall=enabled, after=after)
+            return await self._membership(target, expected=expected, recall=enabled, after=after)
 
     async def history(self, target: Target) -> tuple[RevisionSummary, ...]:
         """Return the record's revision summaries in ascending ordinal order."""
@@ -817,14 +893,10 @@ class RecordOperations:
                 changed = proposed.changed
                 expected_recall = bool(proposed.row["recall"] and not proposed.row["archived"])
             preparation = await self.maintenance.prepare_after(
-                after, annotate=changed and (expected_recall or after.annotation == "run")
+                after, in_recall=expected_recall, changed=changed
             )
-            recipe = preparation.recipe
             try:
                 async with self.database.write() as tx:
-                    previous_generation = (
-                        await self.reader.scope.get_in(tx, self.namespace.id)
-                    ).content_generation
                     ref, context, result_id, _, adopted, _ = await self.drafts.descriptor_in(
                         tx, draft.ref, self.namespace.id
                     )
@@ -895,9 +967,8 @@ class RecordOperations:
                             )
                     if (
                         committed.changed
-                        and after.annotation == "default"
-                        and self.execution.snapshot.values.cognition.annotation.on_save
-                        and committed.in_recall != expected_recall
+                        and preparation.recall_precondition is not None
+                        and committed.in_recall != preparation.recall_precondition
                     ):
                         raise NousError(
                             "cognition.maintenance_conflict",
@@ -917,16 +988,12 @@ class RecordOperations:
                             applied_revision=committed.revision_ref,
                             mappings=context.feedback_mappings,
                         )
-                    jobs = await self.maintenance.enqueue_in(
-                        tx, committed, recipe, previous_generation=previous_generation
-                    )
+                    jobs = await self.maintenance.enqueue_in(tx, committed, preparation)
                 return await self.finish_write(
                     committed,
-                    after,
+                    preparation,
                     self._link(),
                     work=jobs,
-                    preparation=preparation,
-                    background=bool(recipe["background"]),
                 )
             except BaseException as error:
                 add_error_context(

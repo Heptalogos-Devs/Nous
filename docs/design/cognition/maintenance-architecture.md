@@ -23,25 +23,27 @@ RecordOperations 按 AfterWrite 选择前台维护或在正文事务中登记持
 
 ## 代码归属
 
-将现行写作相关大文件收为 `cognition/writing/`，检索相关大文件收为 `cognition/retrieval/`。每个目录只按真实职责分文件，不再加 domain/application/infrastructure 平行层。
+写作、标注和检索分别由 `cognition/writing/`、`cognition/annotation/` 与 `cognition/retrieval/` 按实际职责组织。
 
-| 文件 | 责任及实际迁移 |
+| 文件 | 责任 |
 |---|---|
-| `cognition/writing/records.py` | 从原 records.py 迁入创建、修订、成员状态和事务内采用。保留 `create_in/append_in` 的语义；无 annotations/retrieval 依赖。 |
+| `cognition/writing/records.py` | 文稿创建、修订、成员状态与事务内采用；不依赖标注或检索。 |
 | `cognition/writing/reading.py` | 精确读取、批量读取与历史；来源冻结集中到 cognition/sources，复用共同内容视图。 |
 | `cognition/writing/operations.py` | RecordOperations：一个完整根操作中的输入准备、短事务、提交后维护、结果与部分完成。不能只逐方法转发。 |
-| `cognition/writing/drafts.py` | 合并原 journal_drafts 的成功提案保存、读取与采用关联；支持 new/edit/rewrite/reflection 四种真实意图。 |
-| `cognition/writing/generation.py` | 替换原 JournalizeOperations：创建型 journalize、精确编辑建议、显式全文重写、跨篇反思。复用共同 produce。 |
+| `cognition/writing/drafts.py` | 成功提案保存、读取与采用关联；支持 new/edit/rewrite/reflection。 |
+| `cognition/writing/generation.py` | 创建型 journalize、精确编辑建议、显式全文重写、跨篇反思；复用共同生成。 |
 | `cognition/writing/tasks.py` | 语言任务自己的输入解释、输出类型和产物，由组合根静态注册。 |
 | `cognition/writing/contracts.py` | 本目录请求、提案与结果类型。公开 RecordRef/Namespace 等共同身份仍留在 cognition/contracts.py。 |
+| `cognition/annotation/` | 标注计划、语言任务、正式提案、采用和读取。 |
+| `cognition/maintenance/` | 维护计划、事务组合与两个持久工作流。 |
 | `cognition/retrieval/capture.py` | 一个 ReadTx 捕获文稿、来源、标注与概念版本。通过负责者的批量 `*_in` 读取。 |
 | `cognition/retrieval/projection.py` | 正式知识视图到 CorpusView 的纯语义映射；声明候选布局，不逐候选读/解析正文。 |
 | `cognition/retrieval/operations.py` | 当前视图协调、查询、刷新和类型化结果。不得复制 Native 排名或分组。 |
 | `cognition/retrieval/contracts.py` | QueryContext、QueryResult、交付范围和值类型。 |
 
-纯表可以继续按当前 owner 保留在 cognition/schema.py、concept_schema.py、feedback_schema.py；若拆分，组合根显式收集。不要仅因文件搬迁复制表定义。原 records.py、record_reading.py、journalize.py、retrieval.py 及旧导入口在消费者迁移后删除，不保留转发兼容文件。
+领域表定义由组合根显式收集，分别位于 cognition/schema.py、concept_schema.py 和 feedback_schema.py。
 
-AnnotationOperations 增加批量读取；ConceptOperations 仍负责意义采用。它们暂不需要再拆出新的服务层。真正超过单一职责时再在自己的 owner 内拆文件。
+AnnotationOperations 负责提案、计划、采用和批量读取；ConceptOperations 负责意义版本。MaintenanceOperations 解释维护政策并组合认知 owner 的事务参与方法。
 
 ## 公共程序入口
 
@@ -56,7 +58,7 @@ async with open_instance(locator) as runtime:
 
 `runtime.cognition(namespace)` 返回 `CognitiveServices`：只绑定稳定 NamespaceRef（不缓存可变名称和代次作为权威）及共享依赖的 records、writing、annotations、concepts、retrieval、feedback。该对象只汇集实际操作，不再封装第二份业务实现，也不持有 SQL transaction。多个 Namespace 句柄可在同一 Runtime 同时使用；不修改全局“当前 Namespace”。每次根操作照常取得共同配置快照、期限和取消上下文。
 
-CLI 解析 locator、文件和显式参数后使用相同句柄。新接口不要求实例 UUID；引用本身携带并校验实例与域。保留 `open_instance` 为业务资源生命周期入口，workers=True 在同一宿主启用后台维护。本轮无远程 SDK/HTTP；Job 管理的受限独立客户端见 [宿主与 Job](../interfaces/jobs-and-host.md)。
+CLI 解析 locator、文件和显式参数后使用相同句柄。引用本身携带并校验实例与域。普通 `open_instance` 负责业务资源，`run_host` 明确启动同循环持久工作；Job 管理的受限独立客户端见 [宿主与 Job](../interfaces/jobs-and-host.md)。
 
 ## 提交与后续维护
 
@@ -73,6 +75,8 @@ AfterWrite:
 ```
 
 default 读取 `cognition.annotation.on_save`；不在 CLI 重复判断。正常 defer 是成功且检索 pending，不记作 partial；明确请求或配置启用的标注/刷新失败才是 partial。前台由共同维护能力在提交后执行；background 在正文事务中登记独立标注/刷新工作，提交后返回 jobs 引用，见 [持久维护](durable-maintenance.md)。
+
+MaintenanceOperations 将 AfterWrite、正文是否改变和召回成员状态解释为一次 MaintenancePlan，固定执行方式、实际请求、已知不可用项及相关成员状态前置条件。写事务核对该前置条件，提交后按计划组合结果；未请求的阶段不冻结模型。
 
 人工修改、提案采用和反馈更正都调用相同事务内提交。相关反馈的解决记录、提案采用关联和正文修订一起提交；后续维护发生在提交之后。维护失败不能导致再次生成或再次修订正文。
 
@@ -97,7 +101,7 @@ RecordOutcome:
   jobs: tuple[JobRef, ...]
 ```
 
-StageOutcome 明确 not_requested/pending/queued/ready/failed（只用适合该阶段的状态），失败带共同 OperationIssue；每个成功阶段可给自己的实际 generation。`record.committed_generation` 不随稍后的标注变化。`RecordOperations.read` 返回 RecordView，含精确版、当前版、正文与 ContentReadView 来源，和写入结果不同。
+StageOutcome 使用 not_requested、pending、ready、failed；已入队的 pending 附实际 JobRef，失败带 OperationIssue，成功可附实际 generation。`record.committed_generation` 不随稍后的标注变化。`RecordOperations.read` 返回 RecordView，含精确版、当前版、正文与 ContentReadView 来源，和写入结果不同。
 
 `nous.cognition` 导出 CognitiveQuery、AfterWrite、RecordOutcome、SourceRequest、SourceChanges、DraftOverride、NamespaceRef 和 RevisionSelection；`nous.content` 导出精确编辑值。包 `__init__` 提供当前正式 API 的显式导出。示例见 `docs/examples/journal-maintenance/host-use.py`。
 

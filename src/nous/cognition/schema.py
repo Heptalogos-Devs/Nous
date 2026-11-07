@@ -49,9 +49,12 @@ revisions = sa.Table(
     sa.Column("cognitive_times", sa.JSON, nullable=False),
     sa.Column("change_kind", sa.String, nullable=False),
     sa.Column("reason", sa.String),
+    sa.Column("write_key", sa.String),
+    sa.Column("write_fingerprint", sa.String),
     sa.Column("origin_result_id", sa.String, sa.ForeignKey(results.c.id)),
     sa.Column("recorded_at", sa.String, nullable=False),
     sa.UniqueConstraint("record_id", "ordinal"),
+    sa.UniqueConstraint("record_id", "write_key"),
     sa.CheckConstraint("ordinal > 0"),
 )
 sources = sa.Table(
@@ -88,6 +91,9 @@ journal_drafts = sa.Table(
         "namespace_id", sa.String, sa.ForeignKey(namespaces.c.id), nullable=False, index=True
     ),
     sa.Column("result_id", sa.String, sa.ForeignKey(results.c.id), nullable=False, unique=True),
+    sa.Column(
+        "request_result_id", sa.String, sa.ForeignKey(results.c.id), nullable=False, unique=True
+    ),
     sa.Column("body_artifact_id", sa.String, sa.ForeignKey(artifacts.c.id), nullable=False),
     sa.Column("context", sa.JSON, nullable=False),
     sa.Column("base_revision_id", sa.String, sa.ForeignKey(revisions.c.id)),

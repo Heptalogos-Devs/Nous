@@ -7,10 +7,13 @@ from typing import Annotated, Literal
 
 import typer
 
+from nous.cognition.contracts import NamespaceRef, RecordRevisionRef
+from nous.cognition.maintenance.contracts import MaintenanceOutcome
 from nous.jobs.client import open_job_client
-from nous.jobs.contracts import JobOutcome, JobRef, JobView
+from nous.jobs.contracts import JobRef, JobView
 from nous.presentation import translate
-from nous.runtime.bootstrap import open_instance
+from nous.runtime.bootstrap import Runtime
+from nous.runtime.host import run_host as run_durable_host
 
 from . import emit, language_for, options, run_async, runtime_cli
 
@@ -53,12 +56,14 @@ def _status(status: str, language: str) -> str:
 
 
 def _target(job: JobView, language: str) -> str:
-    if job.target_revision is not None:
-        return job.target_revision.identifier
-    return f"{translate('Namespace', language)} {job.namespace_ref.id}"
+    target = job.input.get("target_revision")
+    if target is not None:
+        return RecordRevisionRef.model_validate(target).identifier
+    namespace = NamespaceRef.model_validate(job.input["namespace_ref"])
+    return f"{translate('Namespace', language)} {namespace.id}"
 
 
-def _outcome(outcome: JobOutcome, language: str) -> None:
+def _outcome(outcome: MaintenanceOutcome, language: str) -> None:
     states = {
         "ready": "Ready",
         "skipped": "Skipped",
@@ -107,7 +112,7 @@ def _emit_job(ctx: typer.Context, job: JobView) -> None:
                 f"{translate('Failed step', language)}: {job.failed_step} · {job.error.stage}"
             )
     if job.result is not None:
-        _outcome(job.result, language)
+        _outcome(MaintenanceOutcome.model_validate(job.result), language)
     if job.status == "ERROR" and job.failed_step is not None:
         typer.echo(
             f"{translate('Retry', language)}: "
@@ -177,10 +182,10 @@ def wait_job(
                 JobRef(instance_id=jobs.instance_id, workflow_id=job), timeout=timeout
             )
             if options(ctx).json_mode:
-                emit(ctx, value.model_dump(mode="json"))
+                emit(ctx, value)
             else:
                 typer.echo(f"{translate('Job', language_for(options(ctx)))}: {job}")
-                _outcome(value, language_for(options(ctx)))
+                _outcome(MaintenanceOutcome.model_validate(value), language_for(options(ctx)))
 
     run_async(action())
 
@@ -234,35 +239,18 @@ def run_jobs(
     if not until_idle:
         raise typer.BadParameter("Use --until-idle to run the current queue")
 
-    async def action() -> None:
-        async with open_instance(options(ctx).locator, workers=True) as runtime:
-            jobs = runtime.jobs
-            quiet = False
-            while True:
-                active = await jobs.has_runnable()
-                running = runtime.job_runtime.bridge.in_flight if runtime.job_runtime.bridge else 0
-                if not active and not running:
-                    if quiet:
-                        break
-                    quiet = True
-                else:
-                    quiet = False
-                await asyncio.sleep(float(jobs.settings.poll_interval_seconds))
-            delayed, _ = await jobs.list(status="DELAYED", limit=500)
-            emit(ctx, {"state": "idle", "delayed": len(delayed)})
+    async def action(runtime: Runtime) -> int:
+        return await runtime.jobs.wait_until_idle()
 
-    run_async(action())
+    delayed = run_durable_host(options(ctx).locator, action)
+    emit(ctx, {"state": "idle", "delayed": delayed})
 
 
 @runtime_cli.command("run")
 def run_host(ctx: typer.Context) -> None:
     """Run the instance worker host until interrupted."""
 
-    async def action() -> None:
-        async with open_instance(options(ctx).locator, workers=True):
-            try:
-                await asyncio.Event().wait()
-            except asyncio.CancelledError:
-                pass
+    async def action(runtime: Runtime) -> None:
+        await asyncio.Event().wait()
 
-    run_async(action())
+    run_durable_host(options(ctx).locator, action)

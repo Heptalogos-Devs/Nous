@@ -37,7 +37,7 @@ MediaPlan 的每个 PreparedBatch 保存 PlannedConversion 与 PlannedPart，转
 
 保留最新输入校验：文字仅行/字节，PDF 页码，图片帧/裁框、动画可含时段，音视频时段。当前视频不提供任意帧号/裁框操作；不适用字段明确失败。页码对外 1 基含端点，时段毫秒左闭右开。
 
-实际 part 的 selector 属于实际 Artifact；原件选区通过 origins 表达。旋转、裁剪、缩放、抽帧和转写均保留变换来源。媒体时间不填进认知发生轴。
+实际 part 的 selector 属于实际 Artifact；InputGroup.context 以类型化 SourceContext 保存已知原件范围和实际交付事实。原件选区通过生产者登记的输出映射表达。旋转、裁剪、缩放、抽帧和转写均保留变换来源。媒体时间不填进认知发生轴。
 
 ## 能力与表示
 

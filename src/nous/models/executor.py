@@ -41,6 +41,7 @@ from pydantic_ai.usage import RequestUsage
 
 from nous.common.errors import NousError
 from nous.configuration import ConfigSnapshot
+from nous.content.contracts import ArtifactRef
 from nous.media.configuration import MediaConfig
 from nous.models.configuration import (
     ModelExecutionConfig,
@@ -69,6 +70,17 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True)
+class UnavailableTask:
+    """A frozen prerequisite failure, reported only if its route is selected."""
+
+    task: str
+    code: str
+    message: str
+    details: dict[str, JsonValue]
+    retryable: bool
+
+
+@dataclass(frozen=True)
 class FrozenTask:
     task: str
     assignment: TaskAssignment
@@ -77,7 +89,7 @@ class FrozenTask:
     ineligible_routes: dict[str, JsonValue] = field(default_factory=dict)
     execution_limits: ModelExecutionConfig | None = None
     media_settings: MediaConfig | None = None
-    transcription: FrozenTask | None = None
+    transcription: ArtifactRef | UnavailableTask | None = None
 
 
 @dataclass(frozen=True)

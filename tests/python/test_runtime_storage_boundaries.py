@@ -1,8 +1,11 @@
 """Runtime ownership and exported content retain their actual instance identity."""
 
 import asyncio
+import json
+import logging
 import shutil
 import threading
+from contextlib import AsyncExitStack
 from pathlib import Path
 from typing import BinaryIO
 from unittest.mock import patch
@@ -10,7 +13,79 @@ from unittest.mock import patch
 import pytest
 
 from nous.common.errors import NousError
-from nous.runtime.bootstrap import initialize_instance, open_instance
+from nous.observability.instrumentation import active_providers, get_logger
+from nous.runtime.bootstrap import Runtime, initialize_instance, open_instance
+
+
+def test_instance_logs_follow_operations_in_existing_workers_and_interleaved_close(
+    tmp_path: Path,
+) -> None:
+    import structlog
+
+    async def scenario() -> None:
+        first_path, second_path = tmp_path / "first", tmp_path / "second"
+        root = logging.getLogger()
+        process_logging = (root.level, tuple(root.handlers), dict(structlog.get_config()))
+        work: asyncio.Queue[tuple[Runtime, str, asyncio.Event] | None] = asyncio.Queue()
+
+        async def worker() -> None:
+            while item := await work.get():
+                runtime, label, done = item
+                try:
+                    async with runtime.execution.operation(label):
+                        get_logger("nous.test.worker").warning(label)
+                        if label == "first.failed":
+                            raise NousError("input.failed", "first-only-error")
+                except NousError:
+                    pass
+                done.set()
+
+        task = asyncio.create_task(worker())
+        first_stack, second_stack = AsyncExitStack(), AsyncExitStack()
+        try:
+            await initialize_instance(first_path, environment={})
+            await initialize_instance(second_path, environment={})
+            first = await first_stack.enter_async_context(open_instance(first_path, environment={}))
+            second = await second_stack.enter_async_context(
+                open_instance(second_path, environment={})
+            )
+            for runtime, label in ((first, "first.failed"), (second, "second.before")):
+                done = asyncio.Event()
+                await work.put((runtime, label, done))
+                await asyncio.wait_for(done.wait(), 3)
+            root.warning("host-only-event")
+            await asyncio.create_task(first_stack.aclose())
+            done = asyncio.Event()
+            await work.put((second, "second.after", done))
+            await asyncio.wait_for(done.wait(), 3)
+            await asyncio.create_task(second_stack.aclose())
+            assert active_providers.get() is None
+        finally:
+            await work.put(None)
+            await task
+            await second_stack.aclose()
+            await first_stack.aclose()
+        assert (root.level, tuple(root.handlers), dict(structlog.get_config())) == process_logging
+        first_events = [
+            json.loads(line) for line in (first_path / "logs/nous.jsonl").read_text().splitlines()
+        ]
+        second_events = [
+            json.loads(line) for line in (second_path / "logs/nous.jsonl").read_text().splitlines()
+        ]
+        assert any(event.get("error_message") == "first-only-error" for event in first_events)
+        assert any(event.get("event") == "second.after" for event in second_events)
+        assert all(
+            event.get("instance_id") == first.descriptor.instance_id for event in first_events
+        )
+        assert all(
+            event.get("instance_id") == second.descriptor.instance_id for event in second_events
+        )
+        assert not any("first-only-error" in json.dumps(event) for event in second_events)
+        assert not any(
+            event.get("event") == "host-only-event" for event in first_events + second_events
+        )
+
+    asyncio.run(scenario())
 
 
 def test_nested_instances_own_snapshots_capacity_and_shutdown(tmp_path: Path) -> None:
@@ -22,10 +97,11 @@ def test_nested_instances_own_snapshots_capacity_and_shutdown(tmp_path: Path) ->
             open_instance(
                 first_path, environment={}, overrides={"execution.max_in_flight": 1}
             ) as first,
-            open_instance(
-                second_path, environment={}, overrides={"execution.max_in_flight": 1}
-            ) as second,
+            AsyncExitStack() as second_stack,
         ):
+            second = await second_stack.enter_async_context(
+                open_instance(second_path, environment={}, overrides={"execution.max_in_flight": 1})
+            )
             occupied, release_occupied = asyncio.Event(), asyncio.Event()
             queued, entered, release_cross = asyncio.Event(), asyncio.Event(), asyncio.Event()
             left_second, release_first_tail = asyncio.Event(), asyncio.Event()
@@ -61,7 +137,7 @@ def test_nested_instances_own_snapshots_capacity_and_shutdown(tmp_path: Path) ->
 
             async def close_second() -> None:
                 closing_started.set()
-                await second.execution.aclose(grace_seconds=5)
+                await second_stack.aclose()
 
             holding = asyncio.create_task(occupy_second())
             crossing = None
@@ -84,6 +160,12 @@ def test_nested_instances_own_snapshots_capacity_and_shutdown(tmp_path: Path) ->
                 await asyncio.wait_for(closing, 2)
                 assert not crossing.done()
                 assert second.execution.in_flight == 0
+                assert second.state == "stopped"
+                async with open_instance(second_path, environment={}) as reopened:
+                    assert reopened.descriptor.instance_id == second.descriptor.instance_id
+                    assert all((await reopened.jobs.queues()).values())
+                    async with reopened.execution.operation("second.reopened"):
+                        assert not crossing.done()
                 release_first_tail.set()
                 await asyncio.wait_for(crossing, 2)
             finally:

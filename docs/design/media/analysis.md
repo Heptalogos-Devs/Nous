@@ -2,7 +2,7 @@
 
 ## 完整操作
 
-MediaAnalysis 接收实际输入、策略、问题和选区，建立一次 Execution 根操作。它冻结描述与结构化任务，使用 GenerationOperations.prepare_input 取得共同 RequestGroup，然后按组组织语言阶段。
+MediaAnalysis 接收实际输入、策略、问题和选区，建立一次 Execution 根操作。输入接纳与类型探测形成 SelectedInputs 和 SourceFacts；描述及结构化任务各自按同一原始材料规划表示。
 
 构造依赖是内容 owner、确定性 MediaPreparer、GenerationOperations 与 Execution。确定性准备器无模型依赖；MediaAnalysis 不创建 Provider 客户端或自己的路线准备器。
 
@@ -22,7 +22,7 @@ MediaAnalysis 接收实际输入、策略、问题和选区，建立一次 Execu
 
 ## 复用与缓存
 
-`description_result` 必须匹配请求的原件/选区、描述任务/合同、实际表示与必要参数。允许当前最终阶段采用另一种确定性表示，只要来源和覆盖等价；核对由共同来源能力完成，不能仅比较整个 DTO 是否字面相同。
+`description_result` 指向已采用的描述。恢复核对保存的原件与离散选区、任务、问题和指令，使用描述时记录的实际范围重新规划后续阶段；显示名称、当前分批大小和表示形状不构成原始身份。任务或选区不符时返回具体字段。
 
 确定性转换可以自动 exact 复用；语言结果仅显式复用。重用既有描述后不再次触发描述模型。
 
@@ -30,4 +30,4 @@ MediaAnalysis 接收实际输入、策略、问题和选区，建立一次 Execu
 
 一次只物化有界批次。每个成功阶段通过统一 ResultStore 采用，向上累计完成 refs。失败返回已完成 refs、failed_stage 和 unfinished_coverage，保留根取消语义。原件已接纳也返回其标识符。
 
-结果读回通过 ResultStore 的公开 view/provenance；CLI 不查询私有关系表。数据库失败不重做模型请求。本轮没有后台恢复承诺；后续 DBOS 将使用明确的批次业务键复用已采用结果。
+结果读回通过 ResultStore 的公开 view/provenance；CLI 不查询私有关系表。描述成功后的失败返回其正式引用；重开实例后可传入该引用继续结构化。成功转写按实际输入和转写任务复用。

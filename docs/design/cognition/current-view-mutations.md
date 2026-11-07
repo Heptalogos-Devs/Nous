@@ -38,4 +38,4 @@ Job 的 SUCCESS 表示这次工作已按其合同结束。Job 结果必须另外
 
 ## 修改位置与检查
 
-`cognition/annotations.py`、`scope.py`、`writing/records.py`、`basis.py`、`retrieval/{capture,projection,operations}.py` 与 `wave/snapshots.py`。覆盖当前/historical、重复采用后激活、旧修订处理、归档恢复、明确依据更正、并发写入和旧快照读取，不改变 Concept 独立意义修订语义。
+`cognition/annotation/`、`maintenance/`、`scope.py`、`writing/records.py`、`basis.py`、`retrieval/{capture,projection,operations}.py` 与 `wave/snapshots.py`。标注采用返回真实变化，完整用例组合刷新入队；覆盖当前/historical、重复采用后激活、旧修订处理、归档恢复、明确依据更正、并发写入和旧快照读取，保留 Concept 独立意义修订语义。

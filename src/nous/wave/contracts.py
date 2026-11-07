@@ -9,8 +9,8 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
 
-from nous.application.embedding import VectorRef
 from nous.content.contracts import ArtifactRef, ContentSelection, SourceSelection
+from nous.models.vector_contracts import SpaceDefinition, VectorRef
 from nous.temporal.values import CognitiveTimes, Interval
 
 
@@ -109,6 +109,7 @@ class DocumentInput(WaveValue):
 class Document(WaveValue):
     key: str = Field(min_length=1)
     input: DocumentInput
+    title: str | None = None
     derived_from: tuple[str, ...] = ()
     evidence_group: str | None = Field(default=None, min_length=1)
     times: CognitiveTimes | None = None
@@ -370,6 +371,51 @@ class CorpusView(CollectionManifest):
         ):
             raise ValueError("a derived document cannot contribute an original source sequence")
         return self
+
+
+class ResolvedBuildProfile(WaveValue):
+    """The exact vector space and Native build settings selected for one build."""
+
+    space_id: str | None
+    space_definition: SpaceDefinition | None
+    build_config: dict[str, JsonValue]
+
+
+class ProjectionUnit(WaveValue):
+    """A reusable document projection and its stable candidate data."""
+
+    signature: str
+    input_signature: str
+    input_payload: dict[str, JsonValue]
+    document_key: str
+    document: dict[str, JsonValue]
+    candidates: tuple[dict[str, JsonValue], ...]
+    candidate_data: tuple[dict[str, JsonValue], ...]
+    artifact_ids: tuple[str, ...]
+    vector_mappings: tuple[dict[str, JsonValue], ...]
+    candidate_rows: tuple[int, ...]
+
+
+class PreparedSnapshot(WaveValue):
+    """Published immutable files and their complete, same-build registration data."""
+
+    ref: SnapshotRef
+    view: CorpusView
+    profile: ResolvedBuildProfile
+    identity: dict[str, JsonValue]
+    build_key: str | None
+    build_signature: str
+    component_signature: str
+    graph_signature: str
+    graph_payload: dict[str, JsonValue]
+    index_location: str
+    layout: dict[str, JsonValue]
+    units: tuple[ProjectionUnit, ...]
+    vector_mappings: tuple[dict[str, JsonValue], ...]
+    artifact_ids: tuple[str, ...]
+    native_manifest: dict[str, str]
+    summary: dict[str, JsonValue]
+    created_at: str
 
 
 class ContextContent(WaveValue):

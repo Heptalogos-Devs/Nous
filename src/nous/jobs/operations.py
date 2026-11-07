@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import functools
-from collections.abc import AsyncGenerator, Callable, Coroutine
-from contextlib import asynccontextmanager
+from collections.abc import Callable, Coroutine, Sequence
 from datetime import UTC, datetime
-from typing import Concatenate, Literal, cast
+from typing import Concatenate, cast
 from uuid import NAMESPACE_URL, uuid5
 
 from dbos import (
@@ -26,15 +25,11 @@ from sqlalchemy.exc import IntegrityError
 
 from nous.common.errors import NousError, failure_code, failure_message
 from nous.common.operations import OperationIssue
-from nous.runtime.execution import complete_cleanup
+from nous.runtime.execution import ExecutionManager
 from nous.storage.database import WriteTx
 
 from .configuration import JobsConfig
-from .contracts import JobOutcome, JobRef, JobView
-from .maintenance import CLASS_NAME, CONTRACT_VERSION, WORKFLOW_NAMES
-
-Kind = Literal["annotation", "refresh"]
-QUEUES: dict[Kind, str] = {"annotation": "nous-annotation", "refresh": "nous-refresh"}
+from .contracts import JobRef, JobView, QueueDefinition
 
 
 def application_name(instance_id: str) -> str:
@@ -50,7 +45,7 @@ def _controlled[**P, T](
 ) -> Callable[Concatenate[JobOperations, P], Coroutine[object, object, T]]:
     @functools.wraps(action)
     async def run(self: JobOperations, *args: P.args, **kwargs: P.kwargs) -> T:
-        async with self._control():  # pyright: ignore[reportPrivateUsage]
+        async with self.execution.control():
             return await action(self, *args, **kwargs)
 
     return run
@@ -64,65 +59,29 @@ class JobOperations:
         client: DBOSClient,
         instance_id: str,
         settings: JobsConfig,
+        execution: ExecutionManager,
+        definitions: Sequence[QueueDefinition],
         current_settings: Callable[[], JobsConfig] | None = None,
     ) -> None:
         self._client = client
         self.instance_id = instance_id
         self.settings = settings
+        self.execution = execution
+        self.definitions = {definition.kind: definition for definition in definitions}
         self.current_settings = current_settings or (lambda: settings)
         self.application = application_name(instance_id)
-        self._accepting = True
-        self._controls: dict[asyncio.Task[object], tuple[int, asyncio.Future[None]]] = {}
-
-    @asynccontextmanager
-    async def _control(self) -> AsyncGenerator[None]:
-        task = asyncio.current_task()
-        if task is None:
-            raise RuntimeError("Job control requires an asyncio task")
-        previous = self._controls.get(task)
-        if previous is None:
-            if not self._accepting:
-                raise NousError("job.unavailable", "The job client is stopping")
-            completed = asyncio.get_running_loop().create_future()
-            self._controls[task] = (1, completed)
-        else:
-            completed = previous[1]
-            self._controls[task] = (previous[0] + 1, completed)
-        try:
-            yield
-        finally:
-            count, _ = self._controls[task]
-            if count == 1:
-                del self._controls[task]
-                completed.set_result(None)
-            else:
-                self._controls[task] = (count - 1, completed)
-
-    async def aclose(self) -> None:
-        """Stop control requests and wait for their in-progress client calls to exit."""
-        self._accepting = False
-        current = asyncio.current_task()
-        pending = [
-            (task, done) for task, (_, done) in self._controls.items() if task is not current
-        ]
-        for task, _ in pending:
-            task.cancel()
-        if pending:
-            await asyncio.gather(*(asyncio.shield(done) for _, done in pending))
 
     @_controlled
     async def enqueue_in(
         self,
         tx: WriteTx,
         *,
-        kind: Kind,
+        kind: str,
         workflow_id: str,
         payload: dict[str, JsonValue],
     ) -> JobRef:
         """Register work on the caller's connection and leave its commit to the owner."""
-        namespace = payload.get("namespace_ref")
-        if not isinstance(namespace, dict) or namespace.get("instance_id") != self.instance_id:
-            raise NousError("job.instance_mismatch", "Job namespace belongs to another instance")
+        definition = self.definitions[kind]
         payload = dict(payload)
         if "trace" not in payload:
             carrier: dict[str, str] = {}
@@ -130,13 +89,12 @@ class JobOperations:
             if carrier:
                 payload["trace"] = {key: cast(JsonValue, value) for key, value in carrier.items()}
         options: EnqueueOptions = {
-            "workflow_name": WORKFLOW_NAMES[kind],
-            "class_name": CLASS_NAME,
+            "workflow_name": definition.workflow,
+            "class_name": definition.class_name,
             "instance_name": self.instance_id,
-            "queue_name": QUEUES[kind],
+            "queue_name": definition.queue,
             "workflow_id": workflow_id,
             "workflow_id_reuse_policy": "reject",
-            "app_version": CONTRACT_VERSION,
             "application_name": self.application,
             "serialization_type": WorkflowSerializationFormat.PORTABLE,
         }
@@ -157,26 +115,22 @@ class JobOperations:
     async def _status(self, ref: JobRef, *, load_output: bool = True) -> WorkflowStatus:
         if ref.instance_id != self.instance_id:
             raise NousError("job.instance_mismatch", "Job belongs to another instance")
-        matches = await complete_cleanup(
-            asyncio.to_thread(
-                self._client.list_workflows,
-                workflow_ids=[ref.workflow_id],
-                application_name=self.application,
-                load_input=True,
-                load_output=load_output,
-                limit=1,
-            )
+        matches = await self.execution.control_blocking(
+            self._client.list_workflows,
+            workflow_ids=[ref.workflow_id],
+            application_name=self.application,
+            load_input=True,
+            load_output=load_output,
+            limit=1,
         )
         if not matches:
             raise NousError(
                 "job.not_found", "Job was not found", details={"job_id": ref.workflow_id}
             )
         status = matches[0]
-        if (
-            status.class_name != CLASS_NAME
-            or status.config_name != self.instance_id
-            or status.name not in WORKFLOW_NAMES.values()
-            or status.app_version != CONTRACT_VERSION
+        if status.config_name != self.instance_id or not any(
+            status.class_name == definition.class_name and status.name == definition.workflow
+            for definition in self.definitions.values()
         ):
             raise NousError("job.not_found", "Job does not belong to this maintenance contract")
         return status
@@ -187,7 +141,10 @@ class JobOperations:
         if inputs is None or not inputs["args"] or not isinstance(inputs["args"][0], dict):
             raise NousError("job.invalid_payload", "Stored job input is invalid")
         payload = cast(dict[str, JsonValue], inputs["args"][0])
-        kind: Kind = "annotation" if status.name == WORKFLOW_NAMES["annotation"] else "refresh"
+        definition = next(
+            item for item in self.definitions.values() if item.workflow == status.name
+        )
+        kind = definition.kind
         error = status.error
         issue = None
         if error is not None:
@@ -209,9 +166,8 @@ class JobOperations:
                 "ref": {"instance_id": self.instance_id, "workflow_id": status.workflow_id},
                 "kind": kind,
                 "status": status.status,
-                "queue_name": status.queue_name or QUEUES[kind],
-                "namespace_ref": payload.get("namespace_ref"),
-                "target_revision": payload.get("target_revision"),
+                "queue_name": status.queue_name or definition.queue,
+                "input": payload,
                 "created_at": _timestamp(status.created_at),
                 "started_at": _timestamp(status.dequeued_at),
                 "completed_at": _timestamp(status.completed_at),
@@ -226,8 +182,8 @@ class JobOperations:
         """Read a job in this instance, including the failed step ID when it failed."""
         view = self._view(await self._status(ref))
         if view.status == "ERROR":
-            steps = await complete_cleanup(
-                asyncio.to_thread(self._client.list_workflow_steps, ref.workflow_id)
+            steps = await self.execution.control_blocking(
+                self._client.list_workflow_steps, ref.workflow_id
             )
             failed = next((step for step in reversed(steps) if step["error"] is not None), None)
             if failed is not None:
@@ -249,7 +205,7 @@ class JobOperations:
     async def list(
         self,
         *,
-        kind: Kind | None = None,
+        kind: str | None = None,
         status: str | None = None,
         limit: int = 50,
         cursor: int = 0,
@@ -257,24 +213,27 @@ class JobOperations:
         """Return a bounded page and an offset to continue scanning this instance's jobs."""
         if limit < 1 or limit > 500 or cursor < 0:
             raise NousError("input.invalid", "Invalid job pagination")
-        rows = await complete_cleanup(
-            asyncio.to_thread(
-                self._client.list_workflows,
-                application_name=self.application,
-                app_version=CONTRACT_VERSION,
-                name=WORKFLOW_NAMES[kind] if kind else list(WORKFLOW_NAMES.values()),
-                status=status,
-                limit=limit + 1,
-                offset=cursor,
-                sort_desc=True,
-                load_input=True,
-                load_output=False,
-            )
+        rows = await self.execution.control_blocking(
+            self._client.list_workflows,
+            application_name=self.application,
+            name=self.definitions[kind].workflow
+            if kind
+            else [definition.workflow for definition in self.definitions.values()],
+            status=status,
+            limit=limit + 1,
+            offset=cursor,
+            sort_desc=True,
+            load_input=True,
+            load_output=False,
         )
         valid = [
             row
             for row in rows
-            if row.class_name == CLASS_NAME and row.config_name == self.instance_id
+            if row.config_name == self.instance_id
+            and any(
+                row.class_name == item.class_name and row.name == item.workflow
+                for item in self.definitions.values()
+            )
         ]
         return tuple(self._view(row) for row in valid[:limit]), cursor + limit if len(
             rows
@@ -283,31 +242,36 @@ class JobOperations:
     @_controlled
     async def has_runnable(self) -> bool:
         """Check whether the current contract has queued or executing work."""
-        rows = await complete_cleanup(
-            asyncio.to_thread(
-                self._client.list_workflows,
-                application_name=self.application,
-                app_version=CONTRACT_VERSION,
-                name=list(WORKFLOW_NAMES.values()),
-                status=["ENQUEUED", "PENDING"],
-                limit=1,
-                load_input=False,
-                load_output=False,
-            )
+        rows = await self.execution.control_blocking(
+            self._client.list_workflows,
+            application_name=self.application,
+            name=[item.workflow for item in self.definitions.values()],
+            status=["ENQUEUED", "PENDING"],
+            limit=1,
+            load_input=False,
+            load_output=False,
         )
         return bool(rows)
 
     @_controlled
-    async def queues(self) -> dict[str, bool]:
-        """Report whether the configured maintenance queues exist for this instance."""
-        queues = await complete_cleanup(
-            asyncio.to_thread(self._client.list_queues, application_name=self.application)
-        )
-        names = {queue.name for queue in queues}
-        return {name: name in names for name in QUEUES.values()}
+    async def wait_until_idle(self) -> int:
+        """Wait for all queued and running work; return the delayed-job count."""
+        while await self.has_runnable():  # noqa: ASYNC110
+            await asyncio.sleep(float(self.current_settings().poll_interval_seconds))
+        delayed, _ = await self.list(status="DELAYED", limit=500)
+        return len(delayed)
 
     @_controlled
-    async def wait(self, ref: JobRef, *, timeout: float | None = None) -> JobOutcome:  # noqa: ASYNC109
+    async def queues(self) -> dict[str, bool]:
+        """Report whether the configured maintenance queues exist for this instance."""
+        queues = await self.execution.control_blocking(
+            self._client.list_queues, application_name=self.application
+        )
+        names = {queue.name for queue in queues}
+        return {item.queue: item.queue in names for item in self.definitions.values()}
+
+    @_controlled
+    async def wait(self, ref: JobRef, *, timeout: float | None = None) -> dict[str, JsonValue]:  # noqa: ASYNC109
         """Wait without a business slot; timeout or caller cancellation leaves the job running."""
         async with asyncio.timeout(timeout):
             while True:
@@ -327,7 +291,7 @@ class JobOperations:
     async def cancel(self, ref: JobRef) -> JobView:
         """Record a durable cancel request; running business cleanup may still be in progress."""
         await self._status(ref, load_output=False)
-        await complete_cleanup(asyncio.to_thread(self._client.cancel_workflow, ref.workflow_id))
+        await self.execution.control_blocking(self._client.cancel_workflow, ref.workflow_id)
         return await self.read(ref)
 
     @_controlled
@@ -338,11 +302,9 @@ class JobOperations:
             raise NousError(
                 "job.not_resumable", "Only cancelled or recovery-exhausted jobs can resume"
             )
-        kind: Kind = "annotation" if old.name == WORKFLOW_NAMES["annotation"] else "refresh"
-        await complete_cleanup(
-            asyncio.to_thread(
-                self._client.resume_workflow, ref.workflow_id, queue_name=QUEUES[kind]
-            )
+        definition = next(item for item in self.definitions.values() if item.workflow == old.name)
+        await self.execution.control_blocking(
+            self._client.resume_workflow, ref.workflow_id, queue_name=definition.queue
         )
         return await self.read(ref)
 
@@ -356,11 +318,11 @@ class JobOperations:
         old = await self._status(ref, load_output=False)
         if old.status != "ERROR":
             raise NousError("job.not_failed", "Only failed jobs can be retried")
-        kind: Kind = "annotation" if old.name == WORKFLOW_NAMES["annotation"] else "refresh"
-        if old.queue_name != QUEUES[kind]:
+        definition = next(item for item in self.definitions.values() if item.workflow == old.name)
+        if old.queue_name != definition.queue:
             raise NousError("job.queue_mismatch", "The failed job has an unexpected queue")
-        steps = await complete_cleanup(
-            asyncio.to_thread(self._client.list_workflow_steps, ref.workflow_id)
+        steps = await self.execution.control_blocking(
+            self._client.list_workflow_steps, ref.workflow_id
         )
         failed = next((step for step in reversed(steps) if step["error"] is not None), None)
         if failed is None or failed["function_id"] != from_step:
@@ -377,13 +339,13 @@ class JobOperations:
                 handle = self._client.fork_workflow(
                     ref.workflow_id,
                     from_step,
-                    application_version=CONTRACT_VERSION,
+                    application_version=old.app_version,
                     queue_name=old.queue_name,
                 )
                 return handle.get_workflow_id()
 
         try:
-            created = await complete_cleanup(asyncio.to_thread(fork))
+            created = await self.execution.control_blocking(fork)
         except IntegrityError:
             existing = await self._status(retry, load_output=False)
             if existing.forked_from != ref.workflow_id or existing.queue_name != old.queue_name:

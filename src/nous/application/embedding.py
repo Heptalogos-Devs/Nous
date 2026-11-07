@@ -7,11 +7,11 @@ import mmap
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, cast
+from typing import cast
 
 import numpy as np
 import numpy.typing as npt
-from pydantic import BaseModel, ConfigDict, Field, JsonValue
+from pydantic import BaseModel, ConfigDict, JsonValue
 
 from nous.common.errors import NousError
 from nous.common.identifier import identifier_type
@@ -30,19 +30,10 @@ from nous.content.contracts import (
 from nous.content.results import ResultStore
 from nous.models.contracts import EmbeddingResult
 from nous.models.embedding_store import EmbeddingSpaceRegistry, StoredVectorRow
-from nous.models.embeddings import EmbeddingExecutor, SpaceDefinition, resolved_space
+from nous.models.embeddings import EmbeddingExecutor, resolved_space
+from nous.models.vector_contracts import Purpose, SpaceDefinition, VectorRef
 from nous.runtime.execution import ExecutionManager
 from nous.storage.database import Database
-
-Purpose = Literal["query", "document"]
-
-
-class VectorRef(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
-    space: SpaceDefinition
-    purpose: Purpose
-    artifact: ArtifactRef
-    row_index: int = Field(ge=0, strict=True)
 
 
 @dataclass(frozen=True)

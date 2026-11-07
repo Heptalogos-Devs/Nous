@@ -5,8 +5,15 @@ from typing import Literal
 from pydantic import Field, model_validator
 
 from nous.common.operations import OperationIssue
-from nous.content.contracts import ArtifactRef, ContentReadView, ContentSelection, ResultRef
+from nous.content.contracts import (
+    ArtifactRef,
+    ContentReadView,
+    ContentSelection,
+    ResultRef,
+    SelectedInputs,
+)
 from nous.jobs.contracts import JobRef
+from nous.models.generation import FrozenLanguageTask
 from nous.temporal.values import CognitiveTimes
 
 from ..contracts import (
@@ -189,6 +196,19 @@ class DraftContext(CognitiveValue):
         if self.normalized_edits and self.intent != "edit":
             raise ValueError("Only edit drafts contain normalized edits")
         return self
+
+
+class WritingRequest(CognitiveValue):
+    """Durable intent needed to interpret, normalize and adopt a writing response."""
+
+    context: DraftContext
+    task: FrozenLanguageTask
+    inputs: SelectedInputs
+    computation_key: str
+    question: str
+    instructions: str
+    adoption: Literal["draft", "save"]
+    after: AfterWrite
 
 
 class DraftView(CognitiveValue):

@@ -10,7 +10,14 @@ from typing import TYPE_CHECKING
 from pydantic import JsonValue
 
 from nous.common.errors import NousError
-from nous.content.contracts import Artifact, SourceRole, SourceSelection
+from nous.content.contracts import (
+    Artifact,
+    ContentSelection,
+    SelectedInputs,
+    SelectedSource,
+    SourceRole,
+    SourceSelection,
+)
 from nous.media.contracts import MediaPlan, PreparedBatch
 
 from .tasks import TaskDefinition
@@ -24,12 +31,17 @@ if TYPE_CHECKING:
 class RequestGroup:
     batches: tuple[PreparedBatch, ...]
     coverage: dict[str, JsonValue]
+    selected_inputs: SelectedInputs
+    route_inputs: SelectedInputs
+    contract: TaskDefinition | None = None
+    document_mode: str = "auto"
+    without_audio: bool = False
 
 
 @dataclass(frozen=True)
 class InputPlan:
     task_mode: str
-    ordered_source_groups: tuple[Artifact, ...]
+    selected_inputs: SelectedInputs
     representation_plans: tuple[MediaPlan, ...]
     request_groups: tuple[RequestGroup, ...]
     requested_coverage: dict[str, JsonValue]
@@ -37,22 +49,27 @@ class InputPlan:
 
 async def plan_inputs(
     preparer: MediaPreparer,
-    originals: Sequence[tuple[Artifact, SourceSelection, SourceRole, str | None]],
+    selected_inputs: SelectedInputs,
     settings: MediaConfig,
     *,
     requirements: Sequence[str] = (),
-    selection: SourceSelection | None = None,
     document_mode: str = "auto",
     without_audio: bool = False,
     per_batch: bool = False,
     contract: TaskDefinition | None = None,
 ) -> InputPlan:
     mode = "independent_batches" if per_batch else contract.input_mode if contract else "joint"
+    originals: list[tuple[Artifact, SourceSelection, SourceRole, str | None]] = []
+    for source in selected_inputs.sources:
+        artifacts = await preparer.artifacts.get_many([item.artifact for item in source.selections])
+        originals.extend(
+            (artifact, item.selection, source.role, source.slot_key)
+            for item, artifact in zip(source.selections, artifacts, strict=True)
+        )
+    facts = {item.artifact.id: item.details for item in selected_inputs.facts}
     plans: list[MediaPlan] = []
     batches: list[PreparedBatch] = []
-    chosen_inputs = tuple(
-        (artifact, selection or supplied) for artifact, supplied, _, _ in originals
-    )
+    chosen_inputs = tuple((artifact, supplied) for artifact, supplied, _, _ in originals)
     task_plans = (
         await contract.prepare_sources(chosen_inputs, preparer.artifacts) if contract else None
     )
@@ -82,10 +99,11 @@ async def plan_inputs(
     counts = Counter(slots)
     fragments: Counter[str] = Counter()
     seen_keys: set[str] = set()
+    route_batches: list[SelectedInputs] = []
     for index, (artifact, supplied, role, _) in enumerate(originals, 1):
         slot_key = slots[index - 1]
         fragments[slot_key] += 1
-        chosen = selection or supplied
+        chosen = supplied
         if task_plans is not None:
             plan = task_plans[index - 1]
         else:
@@ -96,6 +114,7 @@ async def plan_inputs(
                 settings=settings,
                 document_mode=document_mode,
                 without_audio=without_audio,
+                facts=facts.get(artifact.ref.id),
             )
         plans.append(plan)
         for batch in plan.batches:
@@ -116,12 +135,26 @@ async def plan_inputs(
             batch = replace(
                 batch,
                 sources=sources,
-                inputs=tuple(source.group for source in sources if source.group),
                 source_prefix=prefix,
                 source_slot_key=slot_key,
                 source_role=role,
             )
             batches.append(batch)
+            route_batches.append(
+                SelectedInputs(
+                    sources=(
+                        SelectedSource(
+                            slot_key=slot_key,
+                            role=role,
+                            selections=(
+                                ContentSelection(artifact=artifact.ref, selection=batch.selection),
+                            ),
+                            display_name=artifact.display_name,
+                        ),
+                    ),
+                    facts=selected_inputs.facts,
+                )
+            )
     coverage: dict[str, JsonValue] = {
         "mode": mode,
         "inputs": [
@@ -130,13 +163,32 @@ async def plan_inputs(
         ],
     }
     requests = (
-        tuple(RequestGroup((batch,), batch.coverage) for batch in batches)
+        tuple(
+            RequestGroup(
+                (batch,),
+                batch.coverage,
+                selected_inputs,
+                route_inputs,
+                contract,
+                document_mode,
+                without_audio,
+            )
+            for batch, route_inputs in zip(batches, route_batches, strict=True)
+        )
         if mode == "independent_batches"
-        else (RequestGroup(tuple(batches), coverage),)
+        else (
+            RequestGroup(
+                tuple(batches),
+                coverage,
+                selected_inputs,
+                selected_inputs,
+                contract,
+                document_mode,
+                without_audio,
+            ),
+        )
     )
-    return InputPlan(
-        mode, tuple(artifact for artifact, _, _, _ in originals), tuple(plans), requests, coverage
-    )
+    return InputPlan(mode, selected_inputs, tuple(plans), requests, coverage)
 
 
 async def materialize(
@@ -169,7 +221,6 @@ async def materialize(
         raise NousError("model.duplicate_source", "Materialized source group keys must be unique")
     return PreparedBatch(
         tuple(source for batch in batches for source in batch.sources),
-        tuple(group for batch in batches for group in batch.inputs),
         SourceSelection(),
         {**request.coverage, "actual": [batch.coverage for batch in batches]}
         if request.coverage.get("mode") == "joint" or len(batches) != 1
@@ -186,68 +237,16 @@ async def for_route(
     requirements: Sequence[str],
     settings: MediaConfig,
 ) -> RequestGroup:
-    """Plan only the selected route's representation over the same source ranges."""
-    alternatives: list[PreparedBatch] = []
-    for batch in request.batches:
-        if batch.conversion is not None:
-            recipe = batch.conversion
-            plan = await preparer.prepare(
-                recipe.artifact,
-                recipe.selection,
-                requirements=requirements,
-                settings=recipe.settings,
-                document_mode=recipe.document_mode,
-                without_audio=recipe.without_audio,
-            )
-            alternatives.extend(
-                replace(
-                    item,
-                    source_prefix=batch.source_prefix,
-                    source_role=batch.source_role,
-                    source_slot_key=batch.source_slot_key,
-                )
-                for item in plan.batches
-            )
-            continue
-        for source in batch.sources:
-            binary = (
-                source.media
-                or source.group
-                and any(
-                    part.media_type
-                    and not part.media_type.startswith("text/")
-                    and part.media_type != "application/json"
-                    for part in source.group.parts
-                )
-            )
-            if not binary or source.group is None:
-                alternatives.append(
-                    replace(
-                        batch, sources=(source,), inputs=(source.group,) if source.group else ()
-                    )
-                )
-                continue
-            origins = tuple(
-                dict.fromkeys(
-                    origin.origin for part in source.group.parts for origin in part.origins
-                )
-            )
-            contents = origins or tuple(part.content for part in source.group.parts)
-            for ordinal, content in enumerate(contents, 1):
-                plan = await preparer.prepare(
-                    content.artifact,
-                    content.selection,
-                    requirements=requirements,
-                    settings=settings,
-                )
-                prefix = source.key if len(contents) == 1 else f"{source.key}:R{ordinal}"
-                alternatives.extend(
-                    replace(
-                        item,
-                        source_prefix=prefix,
-                        source_slot_key=source.group.slot_key,
-                        source_role=source.group.role,
-                    )
-                    for item in plan.batches
-                )
-    return RequestGroup(tuple(alternatives), request.coverage)
+    """Replan the selected physical range from the retained original selections."""
+    plan = await plan_inputs(
+        preparer,
+        request.route_inputs,
+        settings,
+        requirements=requirements,
+        document_mode=request.document_mode,
+        without_audio=request.without_audio,
+        contract=request.contract,
+    )
+    return replace(
+        request, batches=tuple(batch for group in plan.request_groups for batch in group.batches)
+    )

@@ -119,28 +119,35 @@
           "steps": [
             {
               "concept": "cancellation",
-              "selection": {
-                "start_byte": 0,
-                "end_byte": 522
-              }
+              "selections": [
+                {
+                  "start_byte": 0,
+                  "end_byte": 522
+                }
+              ]
             },
             {
               "concept": "resource-ownership",
-              "selection": {
-                "start_byte": 0,
-                "end_byte": 522
-              }
+              "selections": [
+                {
+                  "start_byte": 0,
+                  "end_byte": 522
+                }
+              ]
             },
             {
               "concept": "transaction",
-              "selection": {
-                "start_byte": 0,
-                "end_byte": 522
-              }
+              "selections": [
+                {
+                  "start_byte": 0,
+                  "end_byte": 522
+                }
+              ]
             }
           ]
         }
-      ]
+      ],
+      "kind": "exact"
     },
     {
       "key": "transactions",
@@ -155,21 +162,26 @@
           "steps": [
             {
               "concept": "transaction",
-              "selection": {
-                "start_byte": 0,
-                "end_byte": 476
-              }
+              "selections": [
+                {
+                  "start_byte": 0,
+                  "end_byte": 476
+                }
+              ]
             },
             {
               "concept": "resource-ownership",
-              "selection": {
-                "start_byte": 0,
-                "end_byte": 476
-              }
+              "selections": [
+                {
+                  "start_byte": 0,
+                  "end_byte": 476
+                }
+              ]
             }
           ]
         }
-      ]
+      ],
+      "kind": "exact"
     },
     {
       "key": "evidence",
@@ -184,21 +196,26 @@
           "steps": [
             {
               "concept": "provenance",
-              "selection": {
-                "start_byte": 0,
-                "end_byte": 492
-              }
+              "selections": [
+                {
+                  "start_byte": 0,
+                  "end_byte": 492
+                }
+              ]
             },
             {
               "concept": "counterevidence",
-              "selection": {
-                "start_byte": 0,
-                "end_byte": 492
-              }
+              "selections": [
+                {
+                  "start_byte": 0,
+                  "end_byte": 492
+                }
+              ]
             }
           ]
         }
-      ]
+      ],
+      "kind": "exact"
     },
     {
       "key": "summary",
@@ -213,21 +230,26 @@
           "steps": [
             {
               "concept": "resource-ownership",
-              "selection": {
-                "start_byte": 0,
-                "end_byte": 451
-              }
+              "selections": [
+                {
+                  "start_byte": 0,
+                  "end_byte": 451
+                }
+              ]
             },
             {
               "concept": "transaction",
-              "selection": {
-                "start_byte": 0,
-                "end_byte": 451
-              }
+              "selections": [
+                {
+                  "start_byte": 0,
+                  "end_byte": 451
+                }
+              ]
             }
           ]
         }
-      ]
+      ],
+      "kind": "exact"
     },
     {
       "key": "repetition",
@@ -242,14 +264,17 @@
           "steps": [
             {
               "concept": "repeat-as-evidence",
-              "selection": {
-                "start_byte": 0,
-                "end_byte": 382
-              }
+              "selections": [
+                {
+                  "start_byte": 0,
+                  "end_byte": 382
+                }
+              ]
             }
           ]
         }
-      ]
+      ],
+      "kind": "exact"
     }
   ],
   "associations": [

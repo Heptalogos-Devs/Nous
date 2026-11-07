@@ -12,6 +12,8 @@
 
 普通操作不强制携带通用 operation UUID 或永久 request/response receipt。重复投递按实际业务身份处理，例如宿主原 event_id、导入运行的单元身份、持久工作 ID。操作诊断 ID 不负责业务去重。
 
+编辑会话可向文稿替换传入 `write_key`。正式修订保存该键和请求摘要；重复请求核验目标、原 expected 与请求内容，返回既有修订及可读取的维护状态，不再次写入或入队。
+
 ## 修订与时间
 
 各领域决定同一对象的修订以及预期旧版本。共同记录能力以后可复用 identity/revision/支持关系，但数据库层不以一个统一枚举解释所有认知变化。
@@ -25,6 +27,8 @@ recorded_at 由实际写入时的 UTC 时钟提供。确有历史顺序要求的
 该方法不提交也不重试调用者事务；事务提交后才可以等待其 handle。不要在写事务里等待 worker 完成。不要为此再建立应用 outbox 与轮询搬运器。
 
 正式接入见 [DBOS 与 Runtime](dbos-integration.md)。显式维护入队失败使同一业务事务回滚；不返回虚假的已排队结果。标注与刷新使用各自工作身份；队列 deduplication 的 return-existing 策略不用于事务内合并。
+
+标注提案在事务外准备；完整维护用例在同一 WriteTx 内调用 `annotations.adopt_in(tx, prepared)`，根据返回的实际当前视图变化调用 `maintenance.enqueue_refresh_in(tx, namespace, generation, request, key=...)`。入队失败同时回滚活动指针与代次。Wave 的构建准备在事务外完成，认知用例在自己的事务内采用快照并决定是否提升当前指针。
 
 ## 完成条件
 

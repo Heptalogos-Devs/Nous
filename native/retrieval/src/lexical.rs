@@ -14,6 +14,7 @@ use tantivy::{
     schema::{
         Field, IndexRecordOption, STORED, STRING, Schema, TextFieldIndexing, TextOptions, Value,
     },
+    snippet::SnippetGenerator,
     tokenizer::{LowerCaser, RemoveLongFilter, TextAnalyzer, TokenStream},
 };
 use tantivy_jieba::JiebaTokenizer;
@@ -34,6 +35,7 @@ pub struct IndexDocument {
     pub subject_id: String,
     pub commit_seq: i64,
     pub text: String,
+    pub title: String,
     pub deleted: bool,
 }
 
@@ -73,6 +75,7 @@ struct Fields {
     namespace: Field,
     subject: Field,
     body: Field,
+    title: Field,
     group: Field,
 }
 struct Inner {
@@ -105,6 +108,7 @@ impl RetrievalIndex {
             namespace: schema.get_field("namespace")?,
             subject: schema.get_field("subject")?,
             body: schema.get_field("body")?,
+            title: schema.get_field("title")?,
             group: schema.get_field("group")?,
         };
         let reader = index
@@ -244,6 +248,7 @@ impl RetrievalIndex {
                     indexed.add_text(self.inner.fields.namespace, &document.namespace_id);
                     indexed.add_text(self.inner.fields.subject, &document.subject_id);
                     indexed.add_text(self.inner.fields.body, &document.text);
+                    indexed.add_text(self.inner.fields.title, &document.title);
                     writer.add_document(indexed)?;
                 }
             }
@@ -359,15 +364,15 @@ impl RetrievalIndex {
         let text = BooleanQuery::new(
             terms
                 .into_iter()
-                .map(|term| {
+                .flat_map(|term| [self.inner.fields.body, self.inner.fields.title].map(move |field| {
                     (
                         Occur::Should,
                         Box::new(TermQuery::new(
-                            Term::from_field_text(self.inner.fields.body, &term),
+                            Term::from_field_text(field, &term),
                             IndexRecordOption::WithFreqs,
                         )) as Box<dyn Query>,
                     )
-                })
+                }))
                 .collect(),
         );
         let exact_scope = |field, value: &str| {
@@ -439,6 +444,24 @@ impl RetrievalIndex {
             .collect::<Result<Vec<_>>>()?;
         Ok(SearchPage { hits, coverage })
     }
+
+    /// Select source offsets with the same analyzer as the lexical index.
+    pub fn evidence(&self, query: &str, body: &str, title: &str) -> serde_json::Value {
+        let terms = tokenize(query).into_iter().map(|term| (term, 1.0)).collect();
+        let body_generator = SnippetGenerator::new(terms, analyzer(), self.inner.fields.body, 500);
+        let body_snippet = body_generator.snippet(body);
+        let title_terms = tokenize(query).into_iter().map(|term| (term, 1.0)).collect();
+        let title_generator = SnippetGenerator::new(title_terms, analyzer(), self.inner.fields.title, 500);
+        let title_snippet = title_generator.snippet(title);
+        let mut fields = Vec::new();
+        if !title_snippet.is_empty() { fields.push("title"); }
+        if !body_snippet.is_empty() { fields.push("body"); }
+        let range = body_snippet.fragment_range();
+        serde_json::json!({
+            "matched_fields": fields,
+            "body_range": if body_snippet.is_empty() { None } else { Some([range.start, range.end]) },
+        })
+    }
 }
 
 /// Token overlap for a bounded authority delta, using the exact same Chinese/Latin analyzer.
@@ -481,6 +504,14 @@ fn schema() -> Schema {
     builder.add_text_field("subject", STRING);
     builder.add_text_field(
         "body",
+        TextOptions::default().set_indexing_options(
+            TextFieldIndexing::default()
+                .set_tokenizer(TOKENIZER)
+                .set_index_option(IndexRecordOption::WithFreqs),
+        ),
+    );
+    builder.add_text_field(
+        "title",
         TextOptions::default().set_indexing_options(
             TextFieldIndexing::default()
                 .set_tokenizer(TOKENIZER)

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import os
 import sqlite3
 import time
@@ -21,9 +20,7 @@ from sqlalchemy.exc import OperationalError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_engine
 
 from nous.common.errors import NousError
-from nous.observability.instrumentation import get_meter, get_tracer
-
-logger = logging.getLogger(__name__)
+from nous.observability.instrumentation import get_logger, get_meter, get_tracer
 
 metadata = sa.MetaData()
 instance_metadata = sa.Table(
@@ -295,7 +292,9 @@ class Database:
                     "Cannot access instance database",
                     details={"path": str(path)},
                 ) from exc
-            logger.info("Instance database opened", extra={"database_path": str(path)})
+            get_logger(__name__).info(
+                "Instance database opened", extra={"database_path": str(path)}
+            )
             yield database
         finally:
             await engine.dispose()

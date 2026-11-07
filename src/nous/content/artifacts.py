@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import codecs
 import mimetypes
-from collections.abc import AsyncGenerator, Callable, Sequence
+from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
@@ -687,7 +687,7 @@ class ArtifactStore:
         return SourceSelection(start_byte=start, end_byte=offset)
 
     async def normalize_selections(
-        self, values: Sequence[ContentSelection]
+        self, values: Sequence[ContentSelection], *, media_types: Mapping[str, str] | None = None
     ) -> tuple[ContentSelection, ...]:
         """Canonicalize text coordinates; preserve media coordinates for its format owner."""
         async with self.content.execution.operation("content.normalize_selections"):
@@ -696,11 +696,25 @@ class ArtifactStore:
                 blobs = await self.content.resolve_many_in(tx, [item.ref.id for item in originals])
             normalized: list[ContentSelection] = []
             for value, artifact, blob in zip(values, originals, blobs, strict=True):
-                if artifact.media_type.startswith("text/") or artifact.media_type in {
-                    "application/json",
-                    "application/xml",
-                    "application/xhtml+xml",
-                }:
+                media_type = (media_types or {}).get(artifact.ref.id, artifact.media_type)
+                media_coordinates = bool(value.selection.pages) or any(
+                    item is not None
+                    for item in (
+                        value.selection.start_ms,
+                        value.selection.end_ms,
+                        value.selection.frame,
+                        value.selection.crop,
+                    )
+                )
+                if not media_coordinates and (
+                    media_type.startswith("text/")
+                    or media_type
+                    in {
+                        "application/json",
+                        "application/xml",
+                        "application/xhtml+xml",
+                    }
+                ):
                     async with self.content.borrow_local(blob) as path:
                         selected = await self.content.execution.blocking(
                             self._normalize_text, path, value.selection, blob.byte_length

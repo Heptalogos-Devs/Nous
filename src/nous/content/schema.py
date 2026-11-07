@@ -39,6 +39,7 @@ inputs = sa.Table(
     sa.Column("slot_key", sa.String, nullable=False),
     sa.Column("role", sa.String, nullable=False),
     sa.Column("name", sa.String, nullable=False),
+    sa.Column("context", sa.JSON),
     sa.UniqueConstraint("result_id", "key"),
 )
 parts = sa.Table(
@@ -88,4 +89,29 @@ outputs = sa.Table(
         "artifact_id", sa.String, sa.ForeignKey("content_artifacts.id"), nullable=False, unique=True
     ),
     sa.UniqueConstraint("result_id", "name"),
+)
+
+output_mappings = sa.Table(
+    "content_output_mappings",
+    metadata,
+    sa.Column("result_id", sa.String, primary_key=True),
+    sa.Column("output_name", sa.String, primary_key=True),
+    sa.Column("ordinal", sa.Integer, primary_key=True),
+    sa.Column("selection", sa.JSON, nullable=False),
+    sa.Column("relation", sa.String, nullable=False),
+    sa.Column("origins", sa.JSON, nullable=False),
+    sa.ForeignKeyConstraint(
+        ["result_id", "output_name"], ["processing_outputs.result_id", "processing_outputs.name"]
+    ),
+    sa.CheckConstraint("relation IN ('identity', 'atomic', 'derived')"),
+)
+
+dependencies = sa.Table(
+    "content_result_dependencies",
+    metadata,
+    sa.Column("result_id", sa.String, sa.ForeignKey(results.c.id), primary_key=True),
+    sa.Column("ordinal", sa.Integer, primary_key=True),
+    sa.Column("artifact_id", sa.String, sa.ForeignKey(artifacts.c.id)),
+    sa.Column("dependency_result_id", sa.String, sa.ForeignKey(results.c.id)),
+    sa.CheckConstraint("(artifact_id IS NULL) != (dependency_result_id IS NULL)"),
 )

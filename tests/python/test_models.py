@@ -944,6 +944,9 @@ def test_native_video_interval_uses_video_content_and_preserves_audio_policy(
         ],
         check=True,
     )
+    opaque_video = tmp_path / "source-without-extension"
+    video.rename(opaque_video)
+    video = opaque_video
     submissions: list[dict[str, JsonValue]] = []
 
     class Handler(BaseHTTPRequestHandler):
@@ -1056,9 +1059,11 @@ def test_native_video_interval_uses_video_content_and_preserves_audio_policy(
 
 def test_language_response_survives_interpretation_failure_and_reopen(tmp_path: Path) -> None:
     """A saved protocol response outlives prompt changes and is adopted without another request."""
+    from dataclasses import replace
     from unittest.mock import patch
 
     from nous.common.errors import NousError
+    from nous.models.generation import GenerationRequest, PendingResponse
     from nous.models.tasks import TaskDefinition
     from nous.runtime.bootstrap import open_instance
 
@@ -1111,18 +1116,16 @@ def test_language_response_survives_interpretation_failure_and_reopen(tmp_path: 
                     "[label]: source:S1\r\n\r\nBody [label].\r\n\r\n"
                 )
                 frozen_ref = await runtime.generation.freeze_language_task("read", snapshot)
-                frozen = await runtime.generation.load_language_task(frozen_ref, snapshot)
-                prepared = await runtime.generation.prepare_input(frozen, source, snapshot)
+                selected = await runtime.generation.accept_inputs(source, snapshot)
+                request = GenerationRequest(frozen_ref, selected)
                 with patch.object(TaskDefinition, "outputs", new=fail_interpretation):
                     with pytest.raises(
                         NousError, match="Downstream interpretation failed"
                     ) as failed:
                         await runtime.generation.produce(
-                            frozen,
-                            prepared.batches[0],
-                            snapshot,
-                            producer_key="workflow:stable:compute",
-                            frozen_task_ref=frozen_ref.descriptor,
+                            request,
+                            snapshot=snapshot,
+                            computation_key="workflow:stable:compute",
                         )
                 assert failed.value.details["response_result_ref"]
                 response = await runtime.results.find_producer("workflow:stable:compute:response")
@@ -1141,34 +1144,91 @@ def test_language_response_survives_interpretation_failure_and_reopen(tmp_path: 
                     target.write_text(template + "\nCHANGED TEMPLATE", encoding="utf-8")
             async with open_instance(instance, environment={}) as runtime:
                 snapshot = runtime.configuration.snapshot
-                frozen = await runtime.generation.load_language_task(frozen_ref, snapshot)
-                assert frozen.resource is not None
-                assert all(
-                    "CHANGED TEMPLATE" not in template
-                    for template in frozen.resource.templates.values()
-                )
-                prepared = await runtime.generation.prepare_input(frozen, source, snapshot)
-                produced = await runtime.generation.produce(
-                    frozen,
-                    prepared.batches[0],
-                    snapshot,
-                    producer_key="workflow:stable:compute",
-                    frozen_task_ref=frozen_ref.descriptor,
-                )
-                published = await runtime.generation.publish_computation(
-                    produced, "workflow:stable:published", frozen_task_ref=frozen_ref.descriptor
-                )
-                repeated = await runtime.generation.publish_computation(
-                    produced, "workflow:stable:published", frozen_task_ref=frozen_ref.descriptor
-                )
-                assert repeated == published
-                restored = await runtime.generation.load_computation(published)
-                assert restored == produced
-                recovered = await runtime.generation.recover_response(response.ref, snapshot)
+                with patch.object(
+                    runtime.generation,
+                    "load_language_task",
+                    side_effect=AssertionError("provider lookup"),
+                ):
+                    produced = await runtime.generation.produce(
+                        request, snapshot=snapshot, computation_key="workflow:stable:compute"
+                    )
+                    recovered = await runtime.generation.recover_response(response.ref, snapshot)
                 assert recovered == produced
-                assert restored.outputs["output"].data == b"Persisted language output."
+                tasks = runtime.generation.executor.compiler.catalog.tasks
+                definition = tasks["reading-summary"]
+                with patch.dict(
+                    tasks.definitions,
+                    {
+                        "reading-summary": replace(
+                            definition, named_outputs=(("output", "Updated explanatory help"),)
+                        )
+                    },
+                ):
+                    assert (
+                        await runtime.generation.recover_response(response.ref, snapshot)
+                        == produced
+                    )
+                with patch.dict(
+                    tasks.definitions,
+                    {"reading-summary": replace(definition, program_outputs=("different",))},
+                ):
+                    with pytest.raises(NousError) as changed:
+                        await runtime.generation.recover_response(response.ref, snapshot)
+                    assert changed.value.code == "model.task_contract_changed"
+                prepared = await runtime.generation.prepare_adoption(
+                    produced, producer_key="workflow:stable:result"
+                )
+                async with runtime.database.write() as tx:
+                    adopted = await runtime.generation.adopt_in(tx, prepared)
+                async with runtime.database.write() as tx:
+                    repeated = await runtime.generation.adopt_in(tx, prepared)
+                assert repeated.ref == adopted.ref
+                assert produced.outputs["output"].data == b"Persisted language output."
                 assert len(requests) == 1
                 assert "[label]: source:S1\\r\\n" in json.dumps(requests[0])
+                with patch.object(
+                    runtime.generation,
+                    "_adopt_response",
+                    side_effect=NousError("test.adopt", "save failed"),
+                ):
+                    with pytest.raises(NousError) as failed:
+                        await runtime.generation.produce(
+                            request, snapshot=snapshot, computation_key="workflow:second"
+                        )
+                pending = cast(object, failed.value.__dict__.get("nous_recovery"))
+                assert isinstance(pending, PendingResponse)
+                with patch.object(
+                    runtime.results,
+                    "prepare_outputs",
+                    side_effect=AssertionError("already published"),
+                ):
+                    restored = await runtime.generation.resume_response(pending, snapshot)
+                assert restored.outputs["output"].data == b"Persisted language output."
+                assert len(requests) == 2
+                renamed = selected.model_copy(
+                    update={
+                        "sources": tuple(
+                            item.model_copy(update={"display_name": "renamed"})
+                            for item in selected.sources
+                        )
+                    }
+                )
+                same = await runtime.generation.produce(
+                    GenerationRequest(frozen_ref, renamed),
+                    snapshot=snapshot,
+                    computation_key="workflow:stable:compute",
+                )
+                assert same.outputs["output"] == produced.outputs["output"]
+                first, second = await asyncio.gather(
+                    *(
+                        runtime.generation.produce(
+                            request, snapshot=snapshot, computation_key="workflow:concurrent"
+                        )
+                        for _ in range(2)
+                    )
+                )
+                assert first.outputs["output"] == second.outputs["output"]
+                assert len(requests) == 3
 
         asyncio.run(scenario())
 
@@ -1334,3 +1394,437 @@ def test_hybrid_query_preserves_context_selection_and_feedback(tmp_path: Path) -
                 )
 
         asyncio.run(scenario())
+
+
+def test_writing_recovery_keeps_base_sources_and_adoption_after_reopen(tmp_path: Path) -> None:
+    """A saved writing intent and response complete without another model request."""
+    from unittest.mock import patch
+
+    from nous.cognition.writing.contracts import AfterWrite, SourceRequest
+    from nous.cognition.writing.drafts import DraftStore
+    from nous.common.errors import NousError
+    from nous.content.contracts import ResultRef
+    from nous.runtime.bootstrap import open_instance
+
+    requests: list[dict[str, JsonValue]] = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self) -> None:
+            requests.append(
+                TypeAdapter(dict[str, JsonValue]).validate_json(
+                    self.rfile.read(int(self.headers["Content-Length"]))
+                )
+            )
+            body = json.dumps(
+                {
+                    "id": "rewrite",
+                    "object": "chat.completion",
+                    "created": 1700000000,
+                    "model": "local-model",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "message": {
+                                "role": "assistant",
+                                "content": "# Rewritten\n\nRetained facts.",
+                            },
+                            "finish_reason": "stop",
+                        }
+                    ],
+                }
+            ).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, format: str, *args: object) -> None:
+            pass
+
+    instance = tmp_path / "writing-recovery"
+    with model_server(Handler) as server:
+        configure_models(instance, server)
+
+        async def scenario() -> None:
+            async with open_configuration_operations(instance, environment={}) as config:
+                await config.update(
+                    {
+                        "tasks.journal-rewrite": {
+                            "model": "reader",
+                            "prompt": "journal-rewrite",
+                            "output_mode": "text",
+                        }
+                    }
+                )
+            async with open_instance(instance, environment={}) as runtime:
+                cognition = await runtime.cognition()
+                note = (await cognition.records.add_note("A source")).record
+                base = (await cognition.records.create_journal("Original body")).record
+                with patch.object(
+                    DraftStore, "save_produced", side_effect=NousError("test.save", "save failed")
+                ):
+                    with pytest.raises(NousError) as failed:
+                        await cognition.writing.rewrite(
+                            base.revision_ref,
+                            "Rewrite this",
+                            sources=[
+                                SourceRequest(target=note.revision_ref, usage="current_basis")
+                            ],
+                            adoption="save",
+                            after=AfterWrite(annotation="skip"),
+                        )
+                request_ref = ResultRef.model_validate(failed.value.details["writing_request_ref"])
+
+            async with open_instance(instance, environment={}) as runtime:
+                cognition = await runtime.cognition()
+                with patch.object(
+                    runtime.generation,
+                    "load_language_task",
+                    side_effect=AssertionError("provider lookup"),
+                ):
+                    outcome = await cognition.writing.recover(request_ref)
+                    repeated = await cognition.writing.recover(request_ref)
+                assert outcome.record is not None and repeated.record is not None
+                assert outcome.record.record.revision_ref == repeated.record.record.revision_ref
+                assert outcome.draft is not None
+                assert outcome.draft.context.base_revision == base.revision_ref
+                assert outcome.draft.context.source_bindings[0].owner_revision == note.revision_ref
+                assert (
+                    await cognition.records.read(outcome.record.record.revision_ref)
+                ).body.startswith("# Rewritten")
+                assert len(requests) == 1
+
+        asyncio.run(scenario())
+
+
+def test_audio_analysis_resumes_without_repeating_transcription(tmp_path: Path) -> None:
+    if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
+        pytest.skip("Audio preparation needs FFmpeg and ffprobe")
+    events: list[str] = []
+    structure_ok = False
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self) -> None:
+            data = self.rfile.read(int(self.headers["Content-Length"]))
+            if self.path.endswith("/audio/transcriptions"):
+                events.append("transcription")
+                status, value = 200, {"text": "The speaker describes the meeting."}
+            else:
+                request = json.loads(data)
+                structured = "response_format" in request
+                events.append("structure" if structured else "description")
+                status = 503 if structured and not structure_ok else 200
+                content = (
+                    json.dumps({"title": "Meeting", "items": []})
+                    if structured
+                    else "A meeting is described."
+                )
+                value = (
+                    {"error": {"message": "unavailable"}}
+                    if status == 503
+                    else {
+                        "id": "audio-stage",
+                        "object": "chat.completion",
+                        "created": 1700000000,
+                        "model": request["model"],
+                        "choices": [
+                            {
+                                "index": 0,
+                                "message": {"role": "assistant", "content": content},
+                                "finish_reason": "stop",
+                            }
+                        ],
+                    }
+                )
+            payload = json.dumps(value).encode()
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, format: str, *args: object) -> None:
+            pass
+
+    audio = tmp_path / "speech.wav"
+    with wave.open(str(audio), "wb") as output:
+        output.setparams((1, 2, 16000, 0, "NONE", "not compressed"))
+        output.writeframes(b"\0\0" * 16000)
+    instance = tmp_path / "audio-analysis"
+    with model_server(Handler) as server:
+        configure_models(instance, server)
+
+        async def configure() -> None:
+            async with open_configuration_operations(instance, environment={}) as config:
+                await config.update(
+                    {
+                        "models.asr": {
+                            "provider": "local",
+                            "model_name": "asr",
+                            "capabilities": ["audio"],
+                            "input_formats": ["audio/wav"],
+                        },
+                        "tasks.asr": {"model": "asr", "operation": "transcription"},
+                        "tasks.describe": {"model": "reader", "prompt": "describe-media"},
+                        "tasks.structure": {
+                            "model": "reader",
+                            "prompt": "extract-information",
+                            "output_mode": "native",
+                        },
+                        "media.audio.transcription_task": "asr",
+                    }
+                )
+
+        asyncio.run(configure())
+        added = model_cli(instance, "tools", "content", "add", str(audio))
+        assert added.returncode == 0, added.stdout
+        artifact = json.loads(added.stdout)["ref"]["identifier"]
+        command = [
+            "tools",
+            "media",
+            "analyze",
+            artifact,
+            "--strategy",
+            "describe_then_structure",
+            "--description-task",
+            "describe",
+            "--task",
+            "structure",
+        ]
+        failed = model_cli(instance, *command)
+        assert failed.returncode != 0
+        error = json.loads(failed.stdout)["error"]
+        descriptions = error["details"]["description_result_refs"]
+        assert len(descriptions) == 1
+        assert events.count("transcription") == 1
+        assert events.count("description") == 1
+        structure_ok = True
+        recovered = model_cli(instance, *command, "--description-result", descriptions[0])
+        assert recovered.returncode == 0, (recovered.stdout, recovered.stderr)
+    assert events.count("transcription") == 1
+    assert events.count("description") == 1
+    result = json.loads(recovered.stdout)
+    assert result["descriptions"] == descriptions
+    assert result["results"][0]["inputs"][0]["parts"][0]["representation"] == "transcript"
+
+
+@pytest.mark.parametrize("entry", ["model", "media"])
+@pytest.mark.parametrize("primary_ok", [True, False], ids=["native-success", "fallback-needs-asr"])
+def test_invalid_transcription_does_not_block_native_audio(
+    tmp_path: Path, entry: str, primary_ok: bool
+) -> None:
+    """A missing backup transcription task is reported only when that route is used."""
+    if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
+        pytest.skip("Audio preparation needs FFmpeg and ffprobe")
+    events: list[str] = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self) -> None:
+            body = self.rfile.read(int(self.headers["Content-Length"]))
+            if self.path.endswith("/audio/transcriptions"):
+                events.append("transcription")
+                status, value = 200, {"text": "Unexpected transcription"}
+            else:
+                request = json.loads(body)
+                events.append(request["model"])
+                status = 200 if primary_ok else 503
+                value = (
+                    {
+                        "id": "native",
+                        "object": "chat.completion",
+                        "created": 1700000000,
+                        "model": request["model"],
+                        "choices": [
+                            {
+                                "index": 0,
+                                "message": {"role": "assistant", "content": "Audio received."},
+                                "finish_reason": "stop",
+                            }
+                        ],
+                    }
+                    if primary_ok
+                    else {"error": {"message": "native route unavailable"}}
+                )
+            payload = json.dumps(value).encode()
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, format: str, *args: object) -> None:
+            pass
+
+    audio = tmp_path / "source.wav"
+    with wave.open(str(audio), "wb") as output:
+        output.setparams((1, 2, 16000, 0, "NONE", "not compressed"))
+        output.writeframes(b"\0\0" * 16000)
+    instance = tmp_path / "invalid-transcription"
+    with model_server(Handler) as server:
+        configure_models(instance, server)
+
+        async def configure() -> None:
+            async with open_configuration_operations(instance, environment={}) as config:
+                await config.update(
+                    {
+                        "models.native-audio": {
+                            "provider": "local",
+                            "model_name": "native-audio",
+                            "capabilities": ["text", "audio"],
+                            "input_formats": ["text/plain", "audio/wav"],
+                        },
+                        "tasks.read": {
+                            "model": "native-audio",
+                            "prompt": "summarize",
+                            "fallback": [{"model": "reader"}],
+                        },
+                        "media.audio.transcription_task": "missing-asr",
+                    }
+                )
+
+        asyncio.run(configure())
+        arguments = (
+            ["tools", "model", "run", "--task", "read", "--input", str(audio)]
+            if entry == "model"
+            else [
+                "tools",
+                "media",
+                "analyze",
+                str(audio),
+                "--strategy",
+                "description_only",
+                "--description-task",
+                "read",
+                "--from",
+                "0.25",
+                "--to",
+                "0.75",
+            ]
+        )
+        response = model_cli(instance, *arguments)
+        data = json.loads(response.stdout)
+        assert events == ["native-audio"]
+        if primary_ok:
+            assert response.returncode == 0, (response.stdout, response.stderr)
+            context = data["results"][0]["inputs"][0]["context"]
+            assert context["kind"] == "audio"
+            selected = context["selections"][0]
+            assert (selected["start_ms"], selected["end_ms"]) == (
+                (250, 750) if entry == "media" else (0, 1000)
+            )
+        else:
+            assert response.returncode != 0
+            error = data["error"]
+            assert error["code"] == "model.no_eligible_route"
+            unavailable = error["details"]["routes"]["reader"]
+            assert unavailable["code"] == "media.audio_capability_missing"
+            assert unavailable["details"]["transcription_task"] == "missing-asr"
+            assert (
+                unavailable["details"]["configuration_error"]["code"] == "model.task_unconfigured"
+            )
+            completed = error["details"]["completed_result_refs"]
+            assert completed
+            results = [
+                json.loads(model_cli(instance, "tools", "result", "read", ref).stdout)
+                for ref in completed
+                if ref.startswith("res(")
+            ]
+            assert any(result["operation"] == "media.prepare.audio" for result in results)
+            if entry == "media":
+                from nous.common.errors import NousError
+                from nous.content.contracts import SelectedInputs
+                from nous.models.generation import FrozenLanguageTask, GenerationRequest
+                from nous.runtime.bootstrap import open_instance
+
+                async def capture_plan() -> tuple[FrozenLanguageTask, SelectedInputs]:
+                    async with open_instance(instance, environment={}) as runtime:
+                        snapshot = runtime.configuration.snapshot
+                        selected = await runtime.generation.accept_inputs(audio, snapshot)
+                        frozen = await runtime.generation.freeze_language_task(
+                            "read", snapshot, inputs=selected
+                        )
+                        return frozen, selected
+
+                frozen, selected = asyncio.run(capture_plan())
+
+                async def configure_transcription() -> None:
+                    async with open_configuration_operations(instance, environment={}) as config:
+                        await config.update(
+                            {
+                                "models.asr": {
+                                    "provider": "local",
+                                    "model_name": "asr",
+                                    "capabilities": ["audio"],
+                                    "input_formats": ["audio/wav"],
+                                },
+                                "tasks.missing-asr": {"model": "asr", "operation": "transcription"},
+                            }
+                        )
+
+                asyncio.run(configure_transcription())
+
+                async def retry_plan() -> None:
+                    async with open_instance(instance, environment={}) as runtime:
+                        with pytest.raises(NousError) as failed:
+                            await runtime.generation.produce(
+                                GenerationRequest(frozen, selected),
+                                computation_key="accepted-plan",
+                                snapshot=runtime.configuration.snapshot,
+                            )
+                        routes = failed.value.details["routes"]
+                        assert isinstance(routes, dict)
+                        route = routes["reader"]
+                        assert isinstance(route, dict)
+                        details = route["details"]
+                        assert isinstance(details, dict)
+                        issue = details["configuration_error"]
+                        assert isinstance(issue, dict)
+                        assert issue["code"] == "model.task_unconfigured"
+
+                asyncio.run(retry_plan())
+                assert events == ["native-audio", "native-audio"]
+
+                # A once-valid frozen transcription binding is checked at fallback,
+                # not while the original audio-capable route succeeds.
+                frozen, selected = asyncio.run(capture_plan())
+
+                async def change_transcription_binding() -> None:
+                    async with open_configuration_operations(instance, environment={}) as config:
+                        await config.update({"models.asr.model_name": "changed-asr"})
+
+                asyncio.run(change_transcription_binding())
+                primary_ok = True
+
+                async def use_native_route() -> None:
+                    async with open_instance(instance, environment={}) as runtime:
+                        result = await runtime.generation.produce(
+                            GenerationRequest(frozen, selected),
+                            computation_key="native-with-stale-asr",
+                            snapshot=runtime.configuration.snapshot,
+                        )
+                        assert result.producer["model_id"] == "native-audio"
+
+                asyncio.run(use_native_route())
+                primary_ok = False
+
+                async def use_changed_prerequisite() -> None:
+                    async with open_instance(instance, environment={}) as runtime:
+                        with pytest.raises(NousError) as failed:
+                            await runtime.generation.produce(
+                                GenerationRequest(frozen, selected),
+                                computation_key="fallback-with-stale-asr",
+                                snapshot=runtime.configuration.snapshot,
+                            )
+                        routes = failed.value.details["routes"]
+                        assert isinstance(routes, dict)
+                        route = routes["reader"]
+                        assert isinstance(route, dict)
+                        details = route["details"]
+                        assert isinstance(details, dict)
+                        issue = details["configuration_error"]
+                        assert isinstance(issue, dict)
+                        assert issue["code"] == "model.resource_binding"
+
+                asyncio.run(use_changed_prerequisite())
+                assert events == ["native-audio"] * 4

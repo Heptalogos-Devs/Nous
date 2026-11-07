@@ -25,13 +25,13 @@ nous query '文稿所讨论的问题'
 
 ## 持续宿主
 
-程序使用 `open_instance(locator, workers=True)`，通过同一Runtime写作、读取、查询并运行后台维护。CLI `runtime run` 则保持执行器运行。普通跨进程认知修改仍受到实例锁限制；本轮没有引入远程认知API。
+普通程序用 `async with open_instance(locator)` 取得可嵌入 Runtime，执行文稿和查询操作。需要持久维护时，从应用根入口调用同步 `run_host(locator, application)`，其中 `application(runtime)` 是异步函数，使用同一 Runtime 写作、读取、查询并运行后台维护。CLI `runtime run` 持续运行这一显式宿主。宿主持有应用循环和实例占有，其他进程的普通认知修改继续受实例锁限制。
 
 另外一个终端可以 `job list/read/wait/cancel/resume/retry`，这些操作使用受限管理客户端，不再启动另一个业务 Runtime。wait 超时只结束等待。
 
 ## 关闭后继续
 
-运行维护并在一个有实际工作的节点正常停止。未完成Job保留其状态和已经记录的步骤；再次打开同一实例、相同workflow合同后继续。已采用结果仍是原引用，旧正文的后台结果不能覆盖新head。
+运行维护并在有实际工作的节点正常停止。宿主先等待已接纳工作，宽限后取消并等待真实退出，再结束 DBOS 和业务资源。未完成 Job 保留已记录步骤；再次 run_host 或 runtime run 继续。普通 open_instance 不启动队列。已采用结果仍是原引用，旧正文的后台结果不会覆盖新 head。
 
 Job的生成步骤已经完成时，后续采用失败再恢复不能重新发送模型请求。进程在外部响应尚未有本地记录时退出属于另一窗口，诊断要如实记录。
 
@@ -43,6 +43,6 @@ Job的生成步骤已经完成时，后续采用失败再恢复不能重新发�
 
 ## 观察结果
 
-runtime check反映worker启用状态、当前维护问题与检索代次。Job成功结果也要看其业务state：superseded表示保留结果但没有覆盖当前状态，published_not_current表示构建了精确快照但期间有新写入。
+runtime check 反映宿主状态、当前维护问题与检索代次。Job 成功结果还包括领域 state：superseded 表示保留结果但没有覆盖当前状态，published_not_current 表示构建了精确快照但期间有新写入。
 
-完整示例见 `docs/examples/durable-cognition/host-use.py`。没有真实模型/Windows/跨平台环境时，只报告实际走过的范围，不把本地受控HTTP验证写成生成质量结论。
+完整示例见[同宿主保存与查询](../examples/durable-cognition/host-use.py)。操作诊断使用 `runtime logs --operation`；wait 的调用超时只结束等待，用户取消 Job 与停止宿主分别保留其持久含义。

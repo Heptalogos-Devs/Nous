@@ -1,72 +1,25 @@
-# 冻结语言任务与成功计算的恢复
+# 语言任务与成功结果恢复
 
-## 分工
+## 正式结果与任务语义
 
-模型执行器负责当前请求、路线尝试、流和协议响应；具体 TaskDefinition 负责输出解释；ResultStore 负责正式处理结果采用。DBOS 记录步骤完成值，不能成为认知或原始内容的另一份权威。
+GenerationOperations 在发送前冻结实际任务的 Prompt 模板、解释合同、模型语义、参数和路线。输入确实需要转写时，冻结对应转写任务；纯文本任务不依赖无关转写配置。冻结内容通过 Artifact 和 ResultStore 保存，凭据仅保留引用。新请求加载冻结任务时核对当前连接绑定与运行限额。
 
-`ProducedTask` 是成功语言响应经 outputs 解释后的内存值；`FrozenLanguageTask` 与 `PublishedComputation` 提供正式内容引用，连接模型响应、任务解释和领域采用。
+GenerationRequest 包含任务、SelectedInputs、问题、指令、输出 Schema、批次语义和正式执行依赖。稳定 computation_key 标识一次计算；主动重新生成使用新 key。请求身份由语义输入和精确选择决定，显示名称和物理批次不改变身份。
 
-## 先校验可确定的输入
+模型协议响应完成并通过输出校验后，GenerationOperations 先采用 model.language_response，再由静态 TaskDefinition 解释有名输出。响应保存实际输入与 SourceContext、原始协议输出、请求参数、实际路线、用量、冻结任务引用以及执行依赖。解释合同保存实际输出 Schema、来源引用及程序产物语义；Prompt 编辑说明和字段帮助不参与判断。
 
-journalize/reflect/rewrite/edit 在发送请求前校验 Namespace、exact base、来源范围/归属、任务合同、采用方式以及调用者提供的认知时间域。`TimeService.validate` 验证已经提供的时间坐标；默认 formed 在实际形成时确定，recorded 由采用事务记录，不能把“提前校验”误实现为把所有时间固定成排队时刻。
+## 恢复顺序
 
-成功响应先由 GenerationOperations 采用；outputs 失败携带 response_result_ref 和 producer_key。写作 _complete 从链接规范化开始捕获失败并保留 PendingWriting，complete_pending 继续使用已成功的 ProducedTask；已知时间域由写作用例在请求前验证。
+完整 run 或领域 propose 先查询自己的正式结果；已采用的结果直接返回。没有正式产物时，produce 按 computation_key 查找已采用响应；存在则使用保存的实际输入和安装的 TaskDefinition 在本地解释。只有两者都不存在时才准备媒体、核对当前模型绑定并发送新请求。同一计算的并发请求在生成 owner 的短键锁内复用结果，不阻塞无关计算。
 
-## FrozenLanguageTask
+recover_response(response_ref, snapshot) 和按原 key 重入 produce 使用同一解释路径。当前 Provider、凭据或 Prompt 是否仍然配置不影响已保存响应的本地解释；安装的解释合同已经改变时返回 model.task_contract_changed，原响应保持可读。
 
-冻结材料使用现有 Artifact/CAS 保存 JSON，包含：任务名称、当前任务合同描述、输入/输出 schema 与 Prompt 执行签名、Prompt manifest、system/user/assistant 实际模板文本及依赖 include/import 内容、顺序路线与模型资源定义、preset/参数、输出方式、任务预算和媒体准备政策。
+响应已经由远端完成但本地采用失败时，错误保留成功响应及已发布字节；同进程可用 resume_response 完成采用。远端完成与本地首次保存之间仍有进程中断窗口。模型执行器按配置执行有限次数的请求和修复。
 
-只保存模板文件名或 config_version 不足以在重启后重现已接受任务。模板随实例覆盖变更后，既有 Job 继续用被冻结内容。freeze 不执行语言请求；可以在提交前准备，正文 revision 在事务里确定后放入 Job payload。
+## 组合采用
 
-不得在冻结对象里保存原始密钥、运行中的 SDK 对象或全局 Runtime。凭据仍使用正式 credential_ref；当前凭据轮换可以生效。load_language_task 逐一核对当前完整 ModelConfig 与冻结定义，并核对 provider 的 endpoint、protocol、credential_ref；任一不一致返回 model.resource_binding。任务合同描述变化返回 model.task_contract_changed。Embedding 空间由其正式 owner 按维护配方另行核验。
+ProducedTask 是进程内的解释结果。prepare_adoption 发布输出字节一次并得到 PreparedProduction；adopt_in(tx, prepared) 在调用者的短事务中采用这些已发布输出，并登记输入、输出映射和执行依赖。事务回滚后可复用同一准备值。ResultStore 的 producer_key 防止同一业务键采用不同结果。
 
-恢复使用当前 Runtime 的连接、文件与真实执行资源。任务请求参数、模型路线、preset、媒体准备政策及依赖转写任务采用冻结值；当前安装的输入/输出、尝试与期限上限继续约束执行。不要将旧 Snapshot 设置为当前全局配置，也不要让每个 owner 自己重新解析 TOML。
+标注生成形成正式提案 ResultRef，之后的标注采用直接读取提案。写作在请求前由 DraftStore 保存 WritingRequest，包含精确 base、来源、反馈映射、写作意图、采用选择与 AfterWrite，并作为语言响应的执行依赖。解释、草稿保存或采用失败返回正式写作请求引用；writing.recover 和 journal draft recover 从该引用继续，保留原基准与意图。已采用草稿重试返回原修订。
 
-## PublishedComputation
-
-```python
-class PublishedComputation(ContentValue):
-    descriptor: ArtifactRef
-    producer_key: str
-
-# descriptor JSON 中的核心内容：
-# operation, producer, actual_inputs, request,
-# outputs[name] -> {blob/artifact ref, media_type, display_name},
-# parameters, coverage, completed_stage_refs, frozen_task_ref
-```
-
-成功输出在 CAS 发布，并形成可以独立读取的描述；正文/响应不塞入 DBOS 步骤表。**描述及其稳定 `producer_key` 必须有可持久查询的关联**，使用既有 ResultStore 的 adopted processing result/有名输出以及共同内容引用机制扩展，不能只把 JSON 文件放进 CAS 后期待重启时扫描目录找回。描述保持 actual_inputs 的 slot、role、顺序、origins、精确选区以及真实请求路线；不得用最初计划覆盖实际备用路线消耗的输入。
-
-GenerationOperations 的 `freeze_language_task(task, snapshot)` 发布 FrozenLanguageTask，`load_language_task(ref, snapshot)` 在当前资源绑定下恢复 FrozenTask。`produce`/`produce_prepared` 接受稳定 producer_key 与 frozen_task_ref；协议成功响应采用为 `model.language_response`，业务键为 `<producer_key>:response`。
-
-`publish_computation(produced, producer_key, frozen_task_ref=...)` / `load_computation(ref)` 把 ProducedTask 与 PublishedComputation 互转，`model.published_computation` 的有名输出同时保留 descriptor 及所有实际输出字节。`adopt_produced(..., producer_key=...)` 在正式采用处复用同一唯一键合同。转换仅发生在持久边界，普通进程内调用仍用类型化对象。持久步骤返回 descriptor 的 JSON 引用。
-
-ModelExecutor 在完整响应、JSON Schema 与 TaskDefinition.validate 均通过后返回 GenerationResult。validate 继续参与既有结构化修复预算；GenerationOperations 在此后、TaskDefinition.outputs 之前正式采用 model.language_response。其 response 有名输出保存原始协议响应，computation 有名输出保存已验证输出、实际 ReadingInput、请求/模型信息与 coverage；输入组保留 slot、role、origins 和精确选区。
-
-outputs 失败的错误包含 response_result_ref 与 `<producer_key>:response`。调用 `ResultStore.find_producer(key)` 或 `get(response_ref)` 可取得正式结果，`read_view(response_ref, details=True)` 展开原始响应。恢复解释有两个入口：以原 producer_key 重入 produce/produce_prepared，或调用 `GenerationOperations.recover_response(response_ref, snapshot)`。两者读取已保存响应，再调用同一 outputs owner，不发送新的模型请求。已保存 frozen_task_ref 时恢复会加载冻结配方并核对当前资源绑定；普通非持久调用的响应采用当前同合同任务，输出 schema 改变时明确拒绝。解释、链接规范化与后续采用各自失败均保留已完成引用。
-
-外部请求已经返回但原始响应还没有首次被本地采用时，崩溃仍可能重新调用，这是实际最窄的不可避免窗口。持久化原始响应后，下游任何失败都不能因没有 DBOS checkpoint 而静默重发模型。调用前的时间域、来源、任务与配置约束由写作用例预先校验；出错时不消耗一次已经成功的模型计算。
-
-## 采用幂等
-
-ResultStore.adopt/adopt_in 的正式采用接受可选 producer_key，数据库唯一约束负责同一业务产物只采用一次。键由持久 workflow 和阶段身份给出，不使用临时 operation_id。重复采用前核对操作、producer、实际有序输入、输出 blob/类型/名称、request、parameters 和 coverage 的采用签名；不一致返回 content.producer_conflict。
-
-已采用结果返回相同 ResultRef。DraftStore 的 result_id 唯一关联继续复用；Annotation adoption_key 继续复用；业务 revision 采用仍核验固定基准。CAS 写入可以重试，已发布相同字节复用，不让 SQL 重试重新调用模型。
-
-对外返回只带正式引用、可读错误和恢复入口，不泄漏庞大内部 DTO。持久恢复操作读取明确 descriptor，复用原 ResultStore/领域采用能力，不接受任意 Python 反序列化。
-
-## DBOS 步骤边界
-
-准备、语言计算、采用分为明确步骤。计算步骤默认 retries_allowed=False；既有模型执行器的 max_attempts/备用路线/结构化重试已组成一次预算。SQL 采用和可重建的确定性步骤允许按错误分类有限重试。
-
-DBOS 已记录的成功步骤不会再次调用模型；业务结果已经提交但步骤 checkpoint 尚未完成时，通过 producer_key 返回原结果。外部模型已成功而进程在任何本地持久记录前退出的窗口仍可能重发，不能以 DBOS 事务保证宣传提供方收费 exactly-once。这个事实只影响该故障窗口，不扩大为普遍重复调用。
-
-已发布描述在 DBOS 清理历史之前必须被正式结果引用或保留至工作/恢复窗口结束；CAS GC 不得把正在恢复的描述当无主临时文件删除。本轮沿现有内容 owner/slot 引用建立保留关系，不创建另一种文件存储。
-
-## 迁移位置
-
-`models/operations.py`、`models/executor.py`、`models/prompts.py`、`content/results.py`、`content/schema.py`、`cognition/writing/{generation,drafts,tasks}.py`、认知标注任务和 Job workflow。ConceptAnnotationTask 位于 cognition/annotation_tasks.py，通用 TaskCatalog 由 runtime/task_catalog.py 显式装配。
-
-## 完成行为
-
-未知时间域在发送前失败；Prompt 更新不改变已排队任务；成功计算后的链接/来源/采用错误有真实可读恢复引用；恢复后不改变原输入来源或重复正式结果；凭据内容不进入冻结产物；当前新 head 不被旧草稿/旧标注覆盖。
+执行依赖保存恢复所需引用，不参与独立证据根的计算。字节、实际输入和正式结果分别由 ContentStore、ArtifactStore 和 ResultStore 持有。

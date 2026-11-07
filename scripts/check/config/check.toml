@@ -1,0 +1,72 @@
+exclude_roots = ["legacy", "temp"]
+exclude_dirs = ["target", "__pycache__", ".venv"]
+
+[length.python]
+warn = 800
+reject = 900
+suffix = ".py"
+roots = ["src", "tests/python", "scripts"]
+input = "stdin"
+format = ["uv", "run", "--locked", "ruff", "format", "--stdin-filename", "{path}"]
+
+[length.rust]
+warn = 500
+reject = 600
+suffix = ".rs"
+roots = ["native"]
+input = "path"
+format = ["rustfmt", "--edition", "2024", "--emit", "stdout", "{path}"]
+
+[format.python]
+argv = ["uv", "run", "--locked", "ruff", "format", "--check"]
+paths = ["src", "tests/python", "scripts"]
+
+[format.rust]
+argv = ["cargo", "fmt", "--manifest-path", "native/Cargo.toml", "--all", "--", "--check"]
+subset = ["rustfmt", "--check", "--edition", "2024"]
+
+[lint.python]
+argv = ["uv", "run", "--locked", "ruff", "check"]
+paths = ["src", "tests/python", "scripts"]
+
+[types.python]
+argv = ["uv", "run", "--locked", "basedpyright", "--pythonpath", "{venv_python}"]
+
+[tests.python]
+argv = ["uv", "run", "--locked", "pytest"]
+full = ["tests/python"]
+
+[[tests.rust]]
+package = "nous-vcp"
+argv = ["cargo", "test", "--manifest-path", "native/Cargo.toml", "-p", "nous-vcp"]
+
+[[tests.rust]]
+package = "nous-retrieval"
+argv = ["cargo", "test", "--manifest-path", "native/Cargo.toml", "-p", "nous-retrieval"]
+
+[[groups]]
+id = "fast"
+steps = ["length", "format"]
+
+[[groups]]
+id = "static"
+steps = ["lint", "types"]
+
+[[groups]]
+id = "tests"
+steps = ["tests"]
+
+[profiles.default]
+groups = ["fast", "static"]
+languages = ["python", "rust"]
+empty = "tree"
+
+[profiles.ci]
+groups = ["fast", "static", "tests"]
+languages = ["python"]
+empty = "tree"
+
+[profiles.hook]
+groups = ["fast"]
+languages = ["python", "rust"]
+empty = "pass"

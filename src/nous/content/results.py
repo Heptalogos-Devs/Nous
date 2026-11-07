@@ -29,9 +29,11 @@ from .contracts import (
     InputPart,
     OriginSlice,
     OutputContent,
+    OutputMapping,
     ProcessingResult,
     ResultOutput,
     ResultRef,
+    SourceContext,
     SourceSelection,
 )
 from .provenance import ProvenanceReader, ProvenanceSummary
@@ -143,6 +145,8 @@ class ResultStore:
         parameters: Mapping[str, object] | None = None,
         coverage: Mapping[str, object] | None = None,
         producer_key: str | None = None,
+        mappings: Sequence[OutputMapping] = (),
+        dependencies: Sequence[ArtifactRef | ResultRef] = (),
     ) -> ProcessingResult:
         """Register the result, output artifacts and body bindings in one caller-owned transaction.
 
@@ -162,6 +166,71 @@ class ResultStore:
             raise NousError(
                 "content.duplicate_source", "Input group keys must be unique in a result"
             )
+        outputs_by_name = {item.name: item for item in prepared_outputs.outputs}
+        ranges: dict[str, list[tuple[int, int]]] = {}
+        for mapping in mappings:
+            output = outputs_by_name.get(mapping.output_name)
+            start, end = mapping.selection.start_byte, mapping.selection.end_byte
+            if (
+                output is None
+                or start is None
+                or end is None
+                or not 0 <= start < end <= output.content.blob.byte_length
+            ):
+                raise NousError(
+                    "content.invalid_mapping", "Output mapping exceeds its named output"
+                )
+            if mapping.relation != "derived":
+                ranges.setdefault(mapping.output_name, []).append((start, end))
+            if any(
+                origin.artifact.instance_id != self.artifacts.instance_id
+                for origin in mapping.origins
+            ):
+                raise NousError(
+                    "content.instance_mismatch", "Mapping origin belongs to another instance"
+                )
+            origin_artifacts = await self.artifacts.get_many_in(
+                tx, [origin.artifact for origin in mapping.origins]
+            )
+            origin_blobs = await self.artifacts.content.resolve_many_in(
+                tx, [item.ref.id for item in origin_artifacts]
+            )
+            for origin, blob in zip(mapping.origins, origin_blobs, strict=True):
+                source = origin.selection
+                if (
+                    source.start_byte is not None
+                    and source.start_byte > blob.byte_length
+                    or source.end_byte is not None
+                    and source.end_byte > blob.byte_length
+                ):
+                    raise NousError("content.invalid_mapping", "Mapping origin exceeds its source")
+            if mapping.relation == "identity":
+                source = mapping.origins[0].selection
+                if (
+                    len(mapping.origins) != 1
+                    or source.start_byte is None
+                    or source.end_byte is None
+                    or source.end_byte - source.start_byte != end - start
+                ):
+                    raise NousError(
+                        "content.invalid_mapping",
+                        "Identity mapping requires equally sized exact byte ranges",
+                    )
+        if any(
+            right[0] < left[1]
+            for values in ranges.values()
+            for left, right in zip(sorted(values), sorted(values)[1:], strict=False)
+        ):
+            raise NousError("content.invalid_mapping", "Output mapping ranges overlap")
+        for dependency in dependencies:
+            if dependency.instance_id != self.artifacts.instance_id:
+                raise NousError(
+                    "content.instance_mismatch", "Dependency belongs to another instance"
+                )
+            if isinstance(dependency, ArtifactRef):
+                await self.artifacts.get_in(tx, dependency)
+            else:
+                await self.get_in(tx, dependency)
         object_id, recorded = str(uuid4()), self.artifacts.clock.utc_now()
         values = {
             "producer": _JSON.validate_python(dict(producer)),
@@ -184,6 +253,8 @@ class ResultStore:
                         }
                         for item in prepared_outputs.outputs
                     ],
+                    "mappings": [item.model_dump(mode="json") for item in mappings],
+                    "dependencies": [item.model_dump(mode="json") for item in dependencies],
                 },
                 ensure_ascii=False,
                 sort_keys=True,
@@ -270,6 +341,7 @@ class ResultStore:
                     "slot_key": group.slot_key,
                     "role": group.role,
                     "name": group.name,
+                    "context": group.context.model_dump(mode="json") if group.context else None,
                 }
             )
             for part_ordinal, part in enumerate(group.parts):
@@ -326,6 +398,36 @@ class ResultStore:
                 )
             )
             result_outputs.append(ResultOutput(name=output.name, artifact=artifact.ref))
+        if mappings:
+            ordinals: dict[str, int] = {}
+            rows: list[dict[str, object]] = []
+            for mapping in mappings:
+                ordinal = ordinals.get(mapping.output_name, 0)
+                ordinals[mapping.output_name] = ordinal + 1
+                rows.append(
+                    {
+                        "result_id": object_id,
+                        "output_name": mapping.output_name,
+                        "ordinal": ordinal,
+                        "selection": mapping.selection.model_dump(mode="json"),
+                        "relation": mapping.relation,
+                        "origins": [item.model_dump(mode="json") for item in mapping.origins],
+                    }
+                )
+            await tx.connection.execute(schema.output_mappings.insert(), rows)
+        if dependencies:
+            await tx.connection.execute(
+                schema.dependencies.insert(),
+                [
+                    {
+                        "result_id": object_id,
+                        "ordinal": ordinal,
+                        "artifact_id": ref.id if isinstance(ref, ArtifactRef) else None,
+                        "dependency_result_id": ref.id if isinstance(ref, ResultRef) else None,
+                    }
+                    for ordinal, ref in enumerate(dependencies)
+                ],
+            )
         return ProcessingResult(
             ref=ResultRef(
                 id=object_id, identifier=identifier, instance_id=self.artifacts.instance_id
@@ -333,6 +435,8 @@ class ResultStore:
             operation=operation,
             inputs=tuple(inputs),
             outputs=tuple(result_outputs),
+            mappings=tuple(mappings),
+            dependencies=tuple(dependencies),
             **values,
             formed_at=prepared_outputs.formed_at,
             recorded_at=recorded,
@@ -349,6 +453,8 @@ class ResultStore:
         parameters: Mapping[str, object] | None = None,
         coverage: Mapping[str, object] | None = None,
         producer_key: str | None = None,
+        mappings: Sequence[OutputMapping] = (),
+        dependencies: Sequence[ArtifactRef | ResultRef] = (),
     ) -> ProcessingResult:
         """Publish output bytes and atomically adopt the result and its references.
 
@@ -377,6 +483,8 @@ class ResultStore:
                 parameters=parameters,
                 coverage=coverage,
                 producer_key=producer_key,
+                mappings=mappings,
+                dependencies=dependencies,
             )
         record_completed(result.ref.identifier)
         return result
@@ -543,6 +651,9 @@ class ResultStore:
                 slot_key=str(source["slot_key"]),
                 role=source["role"],
                 name=str(source["name"]),
+                context=SourceContext.model_validate(source["context"])
+                if source["context"]
+                else None,
                 parts=tuple(grouped[int(source["group_ordinal"])]),
             )
             for source in input_rows
@@ -551,6 +662,60 @@ class ResultStore:
             ResultOutput(name=str(output["name"]), artifact=identities[str(output["artifact_id"])])
             for output in output_rows
         ]
+        mapping_rows = (
+            (
+                await tx.connection.execute(
+                    sa.select(schema.output_mappings)
+                    .where(schema.output_mappings.c.result_id == row["id"])
+                    .order_by(
+                        schema.output_mappings.c.output_name, schema.output_mappings.c.ordinal
+                    )
+                )
+            )
+            .mappings()
+            .all()
+        )
+        mappings = tuple(
+            OutputMapping(
+                output_name=str(item["output_name"]),
+                selection=SourceSelection.model_validate(item["selection"]),
+                relation=item["relation"],
+                origins=tuple(
+                    ContentSelection.model_validate(origin) for origin in item["origins"]
+                ),
+            )
+            for item in mapping_rows
+        )
+        dependency_rows = (
+            (
+                await tx.connection.execute(
+                    sa.select(schema.dependencies)
+                    .where(schema.dependencies.c.result_id == row["id"])
+                    .order_by(schema.dependencies.c.ordinal)
+                )
+            )
+            .mappings()
+            .all()
+        )
+        dependencies: list[ArtifactRef | ResultRef] = []
+        for item in dependency_rows:
+            if item["artifact_id"] is not None:
+                dependencies.append((await self.artifacts.get_in(tx, str(item["artifact_id"]))).ref)
+            else:
+                dependency_row = (
+                    await tx.connection.execute(
+                        sa.select(schema.results.c.id, schema.results.c.identifier).where(
+                            schema.results.c.id == item["dependency_result_id"]
+                        )
+                    )
+                ).one()
+                dependencies.append(
+                    ResultRef(
+                        id=str(dependency_row.id),
+                        identifier=str(dependency_row.identifier),
+                        instance_id=self.artifacts.instance_id,
+                    )
+                )
         return ProcessingResult(
             ref=ResultRef(
                 id=str(row["id"]),
@@ -560,6 +725,8 @@ class ResultStore:
             operation=str(row["operation"]),
             inputs=tuple(inputs),
             outputs=tuple(outputs),
+            mappings=mappings,
+            dependencies=tuple(dependencies),
             producer=_JSON.validate_python(row["producer"]),
             request=_JSON.validate_python(row["request"]),
             parameters=_JSON.validate_python(row["parameters"]),

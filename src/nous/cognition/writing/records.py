@@ -304,6 +304,8 @@ class WrittenRecords:
         origin_result_id: str | None,
         body_artifact: ArtifactRef | None = None,
         committed_generation: int,
+        write_key: str | None = None,
+        write_fingerprint: str | None = None,
     ) -> RevisionRow:
         if body_artifact is not None:
             artifact = await self.artifacts.get_in(tx, body_artifact)
@@ -363,6 +365,8 @@ class WrittenRecords:
             "cognitive_times": times.model_dump(mode="json"),
             "change_kind": change_kind,
             "reason": reason,
+            "write_key": write_key,
+            "write_fingerprint": write_fingerprint,
             "origin_result_id": origin_result_id,
             "recorded_at": recorded_at.isoformat(),
         }
@@ -402,6 +406,8 @@ class WrittenRecords:
         expected: str | int | RecordRevisionRef | None,
         namespace: str | None = None,
         body: str | None = None,
+        *,
+        require_current: bool = True,
     ) -> tuple[RecordRow, RevisionRow, Namespace]:
         """Resolve the target and its explicit base without changing either identity."""
         row, selected, ns = await self.reader.resolve_in(tx, target, namespace)
@@ -448,7 +454,7 @@ class WrittenRecords:
                 .one()
             ),
         )
-        if base["id"] != head["id"]:
+        if require_current and base["id"] != head["id"]:
             raise NousError(
                 "cognition.revision_conflict",
                 "Record has changed; keep the edited text and use the current revision as a new explicit base",
@@ -459,6 +465,41 @@ class WrittenRecords:
                 },
             )
         return row, base, ns
+
+    async def replay_in(
+        self,
+        tx: ReadTx,
+        target: Target,
+        expected: str | int | RecordRevisionRef | None,
+        namespace: str,
+        write_key: str,
+        fingerprint: str,
+    ) -> CommittedRecord | None:
+        """Resolve a previously committed write without redoing its maintenance."""
+        row, _, ns = await self.reader.resolve_in(tx, target, namespace)
+        saved = (
+            (
+                await tx.connection.execute(
+                    sa.select(schema.revisions).where(
+                        schema.revisions.c.record_id == row["id"],
+                        schema.revisions.c.write_key == write_key,
+                    )
+                )
+            )
+            .mappings()
+            .one_or_none()
+        )
+        if saved is None:
+            return None
+        _, base, _ = await self.resolve_expected_in(
+            tx, target, expected, namespace, require_current=False
+        )
+        if saved["parent_id"] != base["id"] or saved["write_fingerprint"] != fingerprint:
+            raise NousError(
+                "cognition.write_key_conflict",
+                "The write key belongs to a different record change",
+            )
+        return self.reader.committed(row, cast(RevisionRow, dict(saved)), ns, False)
 
     async def prepare_revision_in(
         self,
@@ -534,6 +575,8 @@ class WrittenRecords:
         reason: str | None = None,
         origin_result_id: str | None = None,
         body_artifact: ArtifactRef | None = None,
+        write_key: str | None = None,
+        write_fingerprint: str | None = None,
     ) -> CommittedRecord:
         """Append an exact-base revision in the caller's write transaction.
 
@@ -578,6 +621,8 @@ class WrittenRecords:
             origin_result_id=origin_result_id,
             body_artifact=body_artifact,
             committed_generation=ns.content_generation,
+            write_key=write_key,
+            write_fingerprint=write_fingerprint,
         )
         await tx.connection.execute(
             sa.update(schema.records)

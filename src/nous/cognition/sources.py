@@ -8,7 +8,13 @@ import sqlalchemy as sa
 
 from nous.common.errors import NousError
 from nous.common.identifier import identifier_type
-from nous.content.contracts import ArtifactRef, ContentSelection
+from nous.content.contracts import (
+    ArtifactRef,
+    ContentSelection,
+    InputGroup,
+    SelectedInputs,
+    SelectedSource,
+)
 from nous.media.preparation import MediaPreparer
 from nous.storage.database import ReadTx
 
@@ -28,7 +34,7 @@ class PreparedSources:
 
     namespace: Namespace
     bindings: tuple[SourceBinding, ...]
-    actual: dict[str, tuple[ContentSelection, ...]]
+    selected_inputs: SelectedInputs
 
 
 class SourceResolver:
@@ -186,7 +192,64 @@ class SourceResolver:
             offset += count
         async with self.reader.database.read() as tx:
             await self.validate_in(tx, ns.ref, output)
-        return PreparedSources(ns, tuple(output), actual)
+        return PreparedSources(
+            ns,
+            tuple(output),
+            SelectedInputs(
+                sources=tuple(
+                    SelectedSource(
+                        slot_key=binding.key,
+                        role=binding.usage,
+                        selections=actual[binding.key],
+                        display_name=binding.name,
+                    )
+                    for binding in output
+                )
+            ),
+        )
+
+    async def actual_bindings(
+        self, groups: Sequence[InputGroup], prepared: PreparedSources
+    ) -> tuple[SourceBinding, ...]:
+        """Bind consumed representations to the exact formal sources frozen for their slots."""
+        sources = {source.key: source for source in prepared.bindings}
+        output: list[SourceBinding] = []
+        for group in groups:
+            if group.role not in {"source", "reference", "current_basis", "inspiration"}:
+                continue
+            source = sources.get(group.slot_key)
+            if source is None:
+                raise NousError(
+                    "cognition.source_mismatch",
+                    "Successful input has no frozen source",
+                    details={"key": group.key},
+                )
+            coordinates: list[ContentSelection] = []
+            for part in group.parts:
+                for target in source.selections:
+                    try:
+                        origins = await self.artifacts.map_origins(part.content, target.artifact)
+                    except NousError as error:
+                        if error.code == "content.origin_unmapped":
+                            continue
+                        raise
+                    for origin in origins:
+                        try:
+                            target.selection.restrict(origin.origin.selection)
+                        except NousError:
+                            continue
+                        if origin.origin not in coordinates:
+                            coordinates.append(origin.origin)
+            if not coordinates:
+                raise NousError(
+                    "cognition.source_mismatch",
+                    "Actual source has no exact mapping to its selected original",
+                    details={"key": group.key},
+                )
+            output.append(
+                source.model_copy(update={"key": group.key, "selections": tuple(coordinates)})
+            )
+        return tuple(output)
 
     async def validate_in(
         self, tx: ReadTx, namespace: NamespaceRef, sources: Sequence[SourceBinding]

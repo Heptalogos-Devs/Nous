@@ -25,6 +25,7 @@ fn commit_replaces_metadata_while_previous_readers_remain_open() -> anyhow::Resu
             subject_id: "snapshot".into(),
             commit_seq: 1,
             text: "Resource ownership remains searchable.".into(),
+            title: String::new(),
             deleted: false,
         }],
         1,

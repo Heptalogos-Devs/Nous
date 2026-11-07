@@ -20,6 +20,8 @@ TaskDefinition:
 
 具体方法名可符合现有代码风格，但相同输出类型不得手写成三套 Schema。Pydantic 类型负责结构；自定义 JSON Schema 使用 jsonschema。模型执行器接收这些明确能力，不出现按 contract_id 分支的业务判断。
 
+TaskDefinition.interpretation_contract() 固定恢复解释所需的输出 Schema、来源规则和有名程序产物。恢复只读取保存的成功输出与实际输入，按静态任务目录解释；人工帮助、类型所在路径和描述展示不进入解释合同。Schema 在各层 schema 节点去掉 title、description、examples 等说明字段；properties 下同名业务字段仍保留，类型、范围、必填及其他约束继续参与身份比较。
+
 ## 来源校验与原文选段
 
 信息提取的 source_keys 必须指向本次输入组。选段任务返回组键/块键，由任务采用者调用共同内容读取能力取回原文。重复返回键按请求顺序保留一次，未知键报具体错误。模型不重述已选段落，也不决定数据库操作。
@@ -42,7 +44,7 @@ TaskDefinition 的 `text_input_mode` 声明 lossless 或 structured；普通全�
 
 ## 正文任务
 
-`journal-draft` 使用 joint 输入，返回普通 Markdown 草稿；认知 `cognition/annotation_tasks.py` 定义的 ConceptAnnotationTask（合同 ID `concept-annotation`）使用一份共同 TextView，返回概念、出现项和路径，具体合同见 [概念标注](../cognition/concept-annotations.md)。任务 owner 构造局部块键、校验来源并采用普通结果，通用 executor 不识别任务专名。
+`journal-draft` 使用 joint 输入，返回普通 Markdown 草稿；认知 `cognition/annotation/task.py` 定义的 ConceptAnnotationTask（合同 ID `concept-annotation`）使用一份共同 TextView，返回概念、出现项和路径，具体合同见 [概念标注](../cognition/concept-annotations.md)。任务 owner 构造局部块键、校验来源并采用普通结果，通用 executor 不识别任务专名。
 
 写作任务使用 `journal-draft`、`journal-edit`、`journal-rewrite` 和 `journal-reflect` 资源，各自的输入输出合同见[写作意图](../cognition/writing-intents.md)。`annotate-concepts` 要求一份完整正文，输入组使用共同 TextView 的 B 键。模型返回 AnnotationProposal；采用时加入正文、parser profile、内容修订与 producer，形成普通 AnnotationSet JSON 产物。`content.annotations.read_annotation` 读取产物、补入实际 ResultRef 并核对正文块键，供 Wave 等消费者复用。
 

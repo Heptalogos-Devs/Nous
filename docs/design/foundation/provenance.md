@@ -11,17 +11,19 @@
 将当前 inputs.group JSON 中需要遍历的关系规范化到同一份正式数据：
 
 ```text
-result_inputs(result_id, group_ordinal, key, name, role)
+result_inputs(result_id, group_ordinal, key, name, role, context)
 input_parts(result_id, group_ordinal, part_ordinal,
             artifact_id, selector, representation, media_type)
 part_origins(result_id, group_ordinal, part_ordinal, origin_ordinal,
              artifact_id, selector, transform_result_id?)
 result_outputs(result_id, ordinal, name, artifact_id)
+content_output_mappings(result_id, output_name, ordinal, selection, relation, origins)
+content_result_dependencies(result_id, ordinal, artifact_id?, dependency_result_id?)
 ```
 
 selector 继续复用 ContentSelection 的共同值。inputs 不再同时保存一份可独立更新的完整 group JSON。get/read_view 由这些关系恢复公开 InputGroup；各表通过 result、artifact 和有意义的序位建立索引/外键。
 
-`adopt_in(tx)` 在同一个短事务写结果、parts、origins、outputs 和 CAS 正文映射。外部来源声明在其正式清单/领域中保存，不伪造成曾实际执行的模型处理。
+`adopt_in(tx)` 在同一个短事务写结果、parts、origins、outputs、生产者声明的坐标映射和执行依赖。坐标映射说明输出与原件范围的可证明对应，详见[选区与正文](../content/selection-and-text.md)；执行依赖保存解释或恢复所需的任务、写作请求和前置结果，不进入 support_roots。外部来源声明在其正式清单/领域中保存，不伪造成曾实际执行的模型处理。
 
 ## 公开读取
 

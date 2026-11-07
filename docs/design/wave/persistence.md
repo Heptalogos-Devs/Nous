@@ -4,27 +4,25 @@
 
 正式输入仍由 ArtifactStore/Embedding owner 保存。Wave 保存自己的集合清单、精确候选/Concept/来源映射与活动快照记录。Native 索引和几何文件位于 ResolvedPaths.index 下，是可重建资产。
 
-数据库初期只需 `wave_collections`（名称及当前快照）与 `wave_snapshots`（id/identifier、manifest Artifact、space、build profile、实际版本、index location）。引用哪些输入 Artifact/向量结果通过正式引用关系维护；不复制正文和整个模型调用账本。
-
-没有外部兼容要求，不创建 schema v1/v2 桥接。版本不支持时返回需重新构建；只重置授权开发实例。
+`wave_collections` 保存当前指针，`wave_snapshots` 保存快照身份、owner、代次、profile 和组件引用。不可变投影单元保存每份文稿的候选布局、来源 roots、正文与候选向量引用；独立图单元保存共享的概念、关系、支持组及概念向量引用。快照成员保存单元引用，候选索引保存本次行号并支持按键批量读取。正式反馈和资产依赖使用关系表维护。
 
 ## 构建通路
 
-1. 接纳并固定清单里的文稿与 Concept 描述；解析源血缘、选区和时间。
-2. 通过 EmbeddingOperations.ensure 批量取得实际向量和逐行映射；精确复用已采用向量。
-3. 准备 FrozenAssets，Native 在 index 的本轮 staging 目录构建全部声明通道与数值资产。
-4. 构建成功后同文件系统完成发布为不可变 snapshot 目录；打开得到的 snapshot 检查必要身份和结构。
-5. 在短 WriteTx 保存快照与引用，并切换 collection.current_snapshot。数据库提交前不向用户返回正式标识符。
+1. 认知在一致读视图捕获正式版本和来源，或将手工清单接纳成 `CorpusView`。
+2. `prepare_build(view, profile)` 在事务外按完整输入签名复用未改变的文稿单元及已采用向量，冻结 Native 数组。
+3. 完整 Native 输入签名相同时引用已有不可变组件；输入变化时在稳定组件目录中完整构建。关闭构建期 reader 和 writer 后，Native 原子发布该目录的完成清单；Wave 只接纳通过清单与身份校验的组件。
+4. 已准备清单保存单元引用及顺序、候选行关系、组件身份和摘要；精确文稿输入、来源、候选、向量和概念关系分别存于按签名共享的文稿／图单元文件。恢复时逐项校验这些文件和完整输入签名。
+5. `accept_in(tx, prepared)` 登记快照与引用；调用者核验领域代次后以 `promote_in(tx, ref)` 切换当前指针。事务提交后释放准备结果的临时持有。
 
 Windows 上 Tantivy 的 metadata 原子发布通过正式 Directory 接口接入 std::fs::rename，允许分享删除权限的旧读句柄继续读取原文件，同时新读者取得已提交 metadata；segment 文件、mmap、锁与格式沿用 MmapDirectory。
 
-内容/模型与索引构建不持写事务。构建失败保留旧 current；已产生且未绑定的目录可在本次操作清理。文件发布成功而 SQL 失败不自动删除当前其它快照，也不重发模型请求。
+内容、模型与索引构建不持写事务。没有完成清单的目录是中断的构建，不可作为组件读取；只有确认没有已接纳快照、已完成准备结果或已发布准备清单持有时才能清理。文件发布成功而 SQL 失败后，同一 build key 从已发布清单及共享单元恢复原准备结果；相同 key 对应不同输入时报错。
 
 ## 重开与使用
 
-WaveOperations.current/describe 返回不解码候选 mapping、不打开 Native 的 SnapshotDescriptor。describe_candidates(ref, keys) 在一次 mapping 读取中保留请求顺序和重复键，返回具体候选与真实 origin_contents；query/read 才读取实际候选内容或打开 Native。查询打开数据库保存的明确快照，核对 space、dimensions、配置和实际算法版本。Native 文件 manifest 保存必要的完整性与数组/索引映射；不在每次 query 重新 hash 全库。
+`current`/`describe` 返回轻量 SnapshotDescriptor，不打开 Native 或加载候选。`describe_candidates(ref, keys)` 批量读取涉及的单元，保留请求顺序和重复键。查询按指定快照组装行映射并范围化借用 Native 读者；清单固定组件摘要和单元身份。
 
-正在执行的查询持有旧 Arc；新构建可发布新快照，旧查询继续原内容。第一版一个 collection 的 build 串行，查询读取不可变版本；无需蓝绿部署或跨主机发布平台。
+正在执行的读取持有旧快照，发布和清理不会关闭其组件。`wave cleanup` 显式清理未保留旧快照及无引用资产；当前、在用、正在准备、显式保留及正式反馈依赖的快照继续保留。未完成的已发布准备清单也保留其组件和单元。
 
 模型不可用时仍可读取、纯 lexical 查询；需要新的 query embedding 时才使用连接。已有合法 query vector 的进程内接口可离线执行，不以 dummy 向量顶替。
 
@@ -36,10 +34,10 @@ candidate_filter 在固定证据视图内限制返回集合，普通的返回时
 
 ## 前台操作与持久维护
 
-直接 build/query 使用受管理操作。认知 refresh 的持久 workflow 调用同一 WaveOperations.build_view；build_key 固定工作身份，publish_if 在短写事务内核对捕获代次，重放复用已发布的结果。DBOS 与跨循环调度属于 jobs，领域编排属于 cognition.maintenance，Native 继续只执行冻结资产计算，见[持久工作](../foundation/durable-work.md)。
+直接 build/query 使用受管理操作。认知 refresh 在自己的短事务里核验捕获代次，再调用 Wave 的接纳与提升方法；build key 固定工作身份，重放恢复同源准备结果。领域编排属于 cognition.maintenance，见[持久工作](../foundation/durable-work.md)。
 
 ## 构建结果与重复加载
 
-Native build 只写完成态文件并返回 BuiltSnapshot 摘要，不先 load 全资产。Python 发布目录后 open 一次；成功核对后短事务登记。读者始终持有不可变快照。反证邻接、Concept 倒排和范数缓存随快照构建/打开准备，不每次 query 扫全库。
+Native build 写完成态文件并返回 BuiltSnapshot 摘要。Wave 打开发布的组件核对身份，再登记数据库。反证邻接、Concept 倒排和范数缓存随组件打开准备。VCP 数学资产和 ANN 索引在对应完整输入发生变化时仍全量构建；局部 Native 增量发布尚未接入。
 
 查询文字和临时 cue 默认由共同 Embedding encode_query 编码，不因为每次查询都新增正式输入 Artifact。明确保存实验查询时再采用。活动引用仍固定源正文与空间。

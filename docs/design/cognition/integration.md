@@ -14,7 +14,7 @@ Note 和 Journal 都需要不可变正文版本、来源及精确引用。共享
 | cognition/writing/operations.py | 完整记录/编辑/采用用例及 AfterWrite；程序和 CLI 共用 |
 | cognition/writing/generation.py、drafts.py、tasks.py | 创建型 journalize、编辑建议、重写、反思和成功草稿的统一采用 |
 | cognition/concepts.py | 概念身份、意义版本、发现与明确复用 |
-| cognition/annotations.py | 正式标注采用、绑定与活动版本 |
+| cognition/annotation/ | 领域计划、语言提案、事务参与采用、绑定与活动版本 |
 | cognition/retrieval/ | capture、projection、operations 分别负责一致读取、语义投影和查询发布；正式分组在 Wave 完成 |
 | cognition/feedback.py | 反馈目标与评价；显式修改进入文稿 owner |
 | cognition/scope.py | Namespace、generation 及同事务推进 |
@@ -33,7 +33,7 @@ Note 和 Journal 都需要不可变正文版本、来源及精确引用。共享
 
 ## 任务语义的方向
 
-TaskDefinition 提供输入准备、输出校验和输出解释。普通语言输入经共同 InputPlan；concept annotation 的单正文块结构由其任务处理器定义。TaskCatalog 由组合根用显式列表提供给模型操作。
+TaskDefinition 提供输入准备、输出校验和输出解释。普通语言请求携带完整 SelectedInputs，每条路线规划实际表示；concept annotation 的单正文块结构由其任务处理器定义。TaskCatalog 由组合根用显式列表提供给模型操作，已有响应的解释只使用实际交付与保存的语义合同。
 
 正文标注值由 content.annotations 提供，供任务和 cognition/Wave 共用；模型提案与正式 Concept binding 分开。块校验由共同标注值负责。
 
@@ -58,6 +58,7 @@ ProducedTask:
   outputs: named OutputContent
   request, parameters, coverage
   completed_stage_refs
+  selected_inputs, dependencies
 ```
 
-`produce` 包含任务输出校验和解释，因此调用者不用复制 `_adopt` 中的 TaskDefinition 分支。普通 run 是 produce + ResultStore 采用；journalize 是同一 produce + ResultStore.adopt_in + DraftDescriptor。网络尝试、流、转写和最终实际 reading 全都只有一套实现。出错时保留已完成正式阶段引用；成功输出可以重试保存，禁止把保存重试放回请求循环。
+`produce` 包含任务输出校验和解释，`prepare_adoption` 准备可复用的已发布输出，`adopt_in` 参加调用方事务。普通 run 采用正式 ProcessingResult；journalize 在同一结果采用事务中保存 DraftContext 与草稿。写作请求另有正式恢复引用，固定原基准、来源与采用选择。网络尝试、流、转写和实际交付各使用同一负责能力；出错保留已完成阶段，成功输出的保存重试沿用已完成结果。

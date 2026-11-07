@@ -133,6 +133,17 @@ def draft_read(
                 emit_content_view(view)
 
 
+@draft_cli.command("recover")
+def draft_recover(ctx: typer.Context, request: str, namespace: str | None = None):
+    """Continue writing from a previously saved request reference."""
+
+    async def run():
+        async with open_instance(options(ctx).locator) as runtime:
+            return await (await runtime.cognition(namespace)).writing.recover(request)
+
+    emit_outcome(ctx, run_async(run()))
+
+
 @draft_cli.command("adopt")
 def draft_adopt(
     ctx: typer.Context,

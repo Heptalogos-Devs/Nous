@@ -9,7 +9,7 @@ from typing import Annotated, Literal, cast
 import typer
 from pydantic import TypeAdapter
 
-from nous.application.embedding import VectorRef
+from nous.models.vector_contracts import VectorRef
 from nous.runtime.bootstrap import open_instance
 from nous.wave.contracts import (
     CandidateFilter,
@@ -23,6 +23,22 @@ from nous.wave.contracts import (
 from . import emit, options, run_async
 
 wave_cli = typer.Typer(help="构建、检索和回读内容集合 / Wave retrieval", no_args_is_help=True)
+
+
+@wave_cli.command("cleanup")
+def cleanup(
+    ctx: typer.Context,
+    keep_recent: Annotated[int, typer.Option("--keep-recent", min=0)] = 0,
+    retain: Annotated[list[str] | None, typer.Option("--retain")] = None,
+) -> None:
+    """清理未保留的旧快照 / Remove unretained old snapshots."""
+
+    async def run() -> dict[str, object]:
+        async with open_instance(options(ctx).locator) as runtime:
+            refs = tuple([(await runtime.wave.describe(value)).ref for value in retain or ()])
+            return await runtime.wave.cleanup(keep_recent=keep_recent, retain=refs)
+
+    emit(ctx, run_async(run()))
 
 
 def _context(path: Path | None) -> tuple[ContextFragment, ...]:
@@ -51,11 +67,11 @@ def _hits(value: dict[str, object], explain: bool) -> None:
             scores += f"  quality_score={quality}"
         typer.echo(f"{rank}. {hit['candidate']}  {scores}  ({value.get('score_kind', '')})")
         typer.echo(str(hit.get("snippet", "")))
-        content = cast(dict[str, object], hit.get("content", {}))
-        artifact = cast(dict[str, object], content.get("artifact", {}))
-        typer.echo(
-            f"   {artifact.get('identifier', '')} {json.dumps(content.get('selection', {}), ensure_ascii=False)}"
-        )
+        for content in cast(list[dict[str, object]], hit.get("passage_contents", [])):
+            artifact = cast(dict[str, object], content.get("artifact", {}))
+            typer.echo(
+                f"   {artifact.get('identifier', '')} {json.dumps(content.get('selection', {}), ensure_ascii=False)}"
+            )
         if hit.get("concepts"):
             typer.echo("   Concepts: " + ", ".join(cast(list[str], hit["concepts"])))
         if hit.get("sources"):

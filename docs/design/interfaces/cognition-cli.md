@@ -6,7 +6,7 @@
 
 全部命令使用当前 `--instance` / `--profile`、`--json`、`--language` 和错误出口。可读实例 profile 见 [实例选择](instance-selection.md)；状态和未命名标题统一经 presentation 本地化，不持久保存中英双语标签。`--namespace` 可覆盖默认域。正文通过 `--text`、`--file` 或 stdin 的明确单一来源读取；三者冲突时报参数错误。短引用使用实际返回的完整标识符，命令行传入时保留引号。
 
-手工记录与 journalize 使用 `--source "REF"` 保存普通引用，`--current-basis "REF"` 明确依赖当前认识，`--inspiration "REF"` 保存启发材料。选中的来源按这三组依次分配 S1、S2 等局部键；来源在操作开始时固定精确版本。修订保留原来源；`--clear-sources` 明确移除，或重新传入来源替换绑定。
+手工记录与 journalize 使用 `--source "REF"` 保存普通引用，`--current-basis "REF"` 明确依赖当前认识，`--inspiration "REF"` 保存启发材料。选中的来源按这三组依次分配 S1、S2 等局部键；来源在操作开始时固定精确版本。修订省略来源时继承，重新传入时追加；`--clear-sources` 明确清空。程序内精确删除或替换使用 `SourceChanges`，并核对正文没有悬空引用。
 
 ```sh
 nous note add --text "今天发现取消等待后线程仍在读取文件。"
@@ -24,11 +24,15 @@ nous query "资源应该何时释放？"
 nous journal archive "jrn(...)@3"
 ```
 
-`journal edit` 打开当前正文，保存其 base revision；编辑器返回后提交 expected revision。冲突保留用户文件并显示当前版本与重新采用入口。直接 `nous journal replace "<exact-ref>" --file ...` 要求精确基准；局部 patch 和语言 revise/rewrite/reflect 见 [维护入口](journal-maintenance-cli.md)。不能悄悄先读最新版本替换调用者的基准。
+`note edit` 和 `journal edit` 在释放读取 Runtime、启动编辑器之前，将正文与固定目标、原 expected 的会话描述写入实例 data 下的 `recovery/edits/`。编辑器直接打开该文件。锁占用、取消、配置错误、版本冲突或未确认保存的其他出口保留文件并给出恢复路径。
+
+`nous journal edit --resume <会话.json>` 或 `nous note edit --resume <会话.json>` 继续提交保留文件，核对实例、稳定目标及原 expected，并沿用会话已保存的维护请求。恢复期间出现版本冲突，显示当前版本、原基准与差异并保稿。正式修订的 write_key 识别同一次提交；保存已完成而退出或呈现失败后再次恢复不会重复创建修订。已确认保存的 partial 同样可以清理会话。没有修改的会话正常结束时清理。
+
+直接 `nous journal replace "<exact-ref>" --file <保留稿.md>` 使用明确精确基准；局部 patch 和语言 revise/rewrite/reflect 见 [维护入口](journal-maintenance-cli.md)。恢复不会读取最新 head 充当原基准。
 
 ## 草稿与标注
 
-`journalize` 缺省返回新篇草稿，`--save` 明确采用；不再接受 --target 或已知 Journal 的重复压缩输入。`journal draft read/adopt` 复用统一草稿能力；edit/rewrite 固定生成时的精确基准，不在采用时换 target。修改草稿正文和来源使用明确操作并保留原产物。重复 adopt 返回原采用结果；明确 fork 只将完整正文另建一篇。
+`journalize` 缺省返回新篇草稿，`--save` 明确采用；不再接受 --target 或已知 Journal 的重复压缩输入。`journal draft read/adopt` 复用统一草稿能力，`journal draft recover <请求引用>` 继续已保存的写作请求；edit/rewrite 固定生成时的精确基准，不在采用时换 target。修改草稿正文和来源使用明确操作并保留原产物。重复 adopt 返回原采用结果；明确 fork 只将完整正文另建一篇。
 
 `journal annotate --draft-only` 只产生提案；普通 annotate 按明确候选/新建策略采用。普通 annotate 直接调用 `AnnotationOperations.annotate`，提案、采用和读取已有 proposal-result 在同一根 operation 内完成；`--historical` 由同一方法控制历史版本的激活。无需人工逐个批准概念。高级使用可 `--bindings bindings.json` 指定确切复用映射；普通用户只看到复用/新建的可读概念摘要。
 

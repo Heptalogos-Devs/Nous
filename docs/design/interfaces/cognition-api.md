@@ -1,6 +1,6 @@
 # 进程内认知操作合同
 
-通过 `open_instance` 持有唯一 Runtime，通过 `await runtime.cognition(namespace)` 取得绑定稳定 Namespace 身份的实际操作集合。同一 Runtime 内可以同时使用多个域的句柄；修改默认域不会改变已取得句柄的归属。
+通过 `open_instance` 借用实例的 Runtime，通过 `await runtime.cognition(namespace)` 取得绑定稳定 Namespace 身份的实际操作集合。同一 Runtime 内可以同时使用多个域的句柄；修改默认域不会改变已取得句柄的归属。普通打开不启动 DBOS；需要持久执行时使用 `run_host(locator, application)` 显式拥有应用循环。
 
 ## 公共值与调用
 
@@ -9,7 +9,7 @@ RecordRef(instance_id, namespace_id, kind, id, identifier)
 RecordRevisionRef(record_ref, revision_id, ordinal)
 SourceBinding(key, selections: tuple[ContentSelection, ...], owner_revision?, usage, name?)
 SourceRequest(target, usage=reference)
-AfterWrite(annotation=default|skip|run, retrieval=defer|refresh, retrieval_mode?)
+AfterWrite(annotation=default|skip|run, retrieval=defer|refresh, retrieval_mode?, execution=default|inline|background)
 SourceChanges(preserve=True, add=(), remove=())
 CommittedRecord(ref, revision_ref, namespace, title?, changed, committed_generation, in_recall)
 RecordOutcome(record, status=success|partial, annotation, retrieval, operation)
@@ -42,7 +42,7 @@ async with open_instance(instance) as runtime:
 
 `cognition.writing.read_draft` 读取写作草稿、冻结上下文和精确来源；`cognition.records.adopt` 完成正式采用及 adopted_revision 关联；人工全篇覆盖通过 DraftOverride(markdown, source_changes) 提供。再次采用返回原正式修订；已经采用后传入不同覆盖正文或来源返回冲突。人工覆盖仍保留原模型 ProcessingResult 和编辑血缘。
 
-成功计算的持久化失败通过异常恢复值 `PendingDraft(produced, context)` 保留，可调用 `cognition.writing.drafts.save_produced(produced, context)` 仅重试保存。精确输出 `!NO_MATERIAL!` 返回 no_material，并保留 ProcessingResult 与 stage_results，不建立空草稿。
+写作请求持久保存原精确基准、来源、时间、反馈与采用选择。成功响应后解释或草稿保存失败，异常提供正式请求引用；关闭重开后调用 `cognition.writing.recover(request_ref)`，或使用 `journal draft recover <请求引用>` 继续。已有草稿或采用结果直接复用，成功响应只在本地解释，缺少成功结果才发送请求。精确输出 `!NO_MATERIAL!` 返回 no_material，并保留 ProcessingResult 与 stage_results，不建立空草稿。
 
 Runtime 负责装配与资源生命周期；业务操作以构造参数取得依赖。WrittenRecords 只做文稿事务内采用，RecordReader 只做读取，DraftStore 管成功草稿，RecordOperations 完成提交与独立维护。`*_in` 方法用于同一正式采用事务，普通宿主调用上述完整操作。后续入口使用相同操作和类型。
 
