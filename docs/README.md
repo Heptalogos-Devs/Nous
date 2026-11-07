@@ -8,6 +8,8 @@
 
 模型任务设计、输入准备和输出判断遵循 [LLM 使用与提示词设计](agents/llm-use.md)。
 
+项目文档与真实材料的批量导入、草稿和检索实验见 [Journal 与 Wave 使用实验](development/journal-wave-experiments.md)。
+
 公共服务的调用契约写在对应模块、类和方法的 docstring 中，写法见 [Python 文档规范](agents/docstring-std.md)。先通过[源码索引](../src/nous/INDEX.md)定位服务，再查看其输入、结果、资源归属和错误恢复说明；设计专题说明跨模块规则。
 
 ## 专题导航

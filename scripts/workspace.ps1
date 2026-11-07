@@ -1,4 +1,5 @@
-# Dot-source this file: . ./scripts/dev-env.ps1
+# Dot-source this file: . ./scripts/workspace.ps1
+param([ValidateSet('init', 'status')][string]$Action = 'init')
 $nousRepoRoot = Split-Path -Parent $PSScriptRoot
 $nousTempRoot = Join-Path $nousRepoRoot 'temp'
 $nousEnvPaths = @{
@@ -16,7 +17,13 @@ foreach ($nousEntry in $nousEnvPaths.GetEnumerator()) {
 }
 [Environment]::SetEnvironmentVariable('UV_NO_EDITABLE', '1', 'Process')
 $nousPythonScripts = Join-Path $env:UV_PROJECT_ENVIRONMENT 'Scripts'
-if (($env:PATH -split [IO.Path]::PathSeparator) -notcontains $nousPythonScripts) {
-    $env:PATH = $nousPythonScripts + [IO.Path]::PathSeparator + $env:PATH
+foreach ($nousBin in @($nousPythonScripts, (Join-Path $nousTempRoot 'tools/zvec-grep/node_modules/@zvec/zvec-grep/bin'), (Join-Path $nousTempRoot 'tools/codegraph/node_modules/.bin'))) {
+    if (($env:PATH -split [IO.Path]::PathSeparator) -notcontains $nousBin) {
+        $env:PATH = $nousBin + [IO.Path]::PathSeparator + $env:PATH
+    }
 }
-Write-Output "Development temporary files: $nousTempRoot"
+$env:ZVEC_GREP_HOME = Join-Path $nousTempRoot 'tools/zvec-grep/runtime'
+$env:ZVEC_GREP_MODEL_CACHE = Join-Path $nousTempRoot 'tools/zvec-grep/models'
+$nousUv = Get-Command uv -CommandType Application -ErrorAction Stop | Select-Object -First 1
+& $nousUv.Source run --no-project --with tomlkit python -B (Join-Path $PSScriptRoot 'workspace.py') $Action
+if ($LASTEXITCODE -ne 0) { throw '工作区初始化失败。' }

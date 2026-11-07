@@ -47,6 +47,7 @@ BusyPaths = tuple[list[ProcessReference], list[tuple[str, bool]], list[str]]
 
 class ProcessInfo(TypedDict):
     ProcessId: int
+    ParentProcessId: int | None
     Name: str | None
     ExecutablePath: str | None
     CommandLine: str | None
@@ -181,6 +182,14 @@ def command(args: Sequence[str]) -> bytes:
         raise Unsafe(f'无法完成 {args[0]} 检查，保留候选。') from None
 
 
+def cleanup_invocation(arguments: Sequence[str]) -> bool:
+    """Identify our own launch command without hiding unrelated ancestor references."""
+    command_line = ' '.join(arguments).replace('\\', '/').casefold()
+    return any(name in command_line for name in (
+        'scripts/temp/manage.py', 'scripts/temp/run.ps1', 'scripts/temp/run.sh',
+    ))
+
+
 def snapshot(path: Path) -> Snapshot:
     """Do not follow links; reject mount points and linked worktrees; capture changes."""
     if os.name == 'nt':
@@ -221,6 +230,16 @@ def process_references() -> tuple[list[ProcessReference], list[str]]:
         return [], ['当前平台无法检查进程的命令行、工作目录及打开文件']
     processes: list[ProcessReference] = []
     errors: list[str] = []
+    ancestors: set[str] = set()
+    parent = os.getpid()
+    while parent and str(parent) not in ancestors:
+        ancestors.add(str(parent))
+        try:
+            status = Path(f'/proc/{parent}/status').read_text()
+            match = re.search(r'^PPid:\s+(\d+)', status, re.M)
+            parent = int(match[1]) if match else 0
+        except OSError:
+            break
     for proc in Path('/proc').iterdir():
         if not proc.name.isdigit():
             continue
@@ -249,6 +268,9 @@ def process_references() -> tuple[list[ProcessReference], list[str]]:
             arguments = [os.fsdecode(arg) for arg in (proc / 'cmdline').read_bytes().split(b'\0') if arg]
         except OSError:
             unreadable.append('cmdline')
+        if proc.name in ancestors and cleanup_invocation(arguments):
+            # These command lines contain the user's selected paths, not a separate user of them.
+            arguments = []
         for field in ('exe', 'cwd'):
             try:
                 raw_target = os.readlink(proc / field)
@@ -434,6 +456,38 @@ def remove_snapshot(path: Path, tree: Snapshot, unlinked: dict[Identity, tuple[F
                     os.close(file_fd)
 
 
+def selected_targets(values: Sequence[str]) -> list[Path]:
+    """Resolve explicitly selected paths without traversing links or leaving temp."""
+    result: list[Path] = []
+    for value in values:
+        requested = Path(value).expanduser()
+        if requested.is_absolute():
+            target = requested
+        elif requested.parts and os.path.normcase(requested.parts[0]) == os.path.normcase('temp'):
+            target = ROOT / requested
+        else:
+            target = TEMP / requested
+        target = Path(os.path.abspath(target))
+        if not within(target, TEMP) or os.path.normcase(str(target)) == os.path.normcase(str(TEMP)):
+            raise Unsafe(f'清理目标必须是 temp 内的具体路径：{value}')
+        if (os.path.normcase(str(target)) in {
+            os.path.normcase(str(TEMP / LOCK)), os.path.normcase(str(TEMP / 'AGENTS.md')),
+            os.path.normcase(str(MATERIALS)),
+        }):
+            raise Unsafe(f'不能选择受保护的路径：{target}')
+        if os.name == 'nt':
+            windows_assert_directory(target.parent)
+        else:
+            with directory(target.parent):
+                pass
+        if not os.path.lexists(target):
+            raise Unsafe(f'清理目标不存在：{target}')
+        if not any(within(target, selected) for selected in result):
+            result = [selected for selected in result if not within(selected, target)]
+            result.append(target)
+    return sorted(result)
+
+
 def clean(args: argparse.Namespace, locked_root: Identity | None = None) -> None:
     busy = busy_paths()
     if args.apply and busy[2]:
@@ -441,26 +495,38 @@ def clean(args: argparse.Namespace, locked_root: Identity | None = None) -> None
     candidates: list[tuple[Path, Snapshot, list[tuple[Path, Fingerprint]]]] = []
     saved: dict[Path, list[tuple[Path, bytes]]] = {}
     print(f'扫描 {TEMP}（{"归集样本后清理" if args.apply else "只预览"}）...')
-    for entry in sorted(TEMP.iterdir()):
-        if entry.name in (LOCK, 'AGENTS.md', 'test-materials') or (not args.include_toolchains and entry.name in ('tools', 'venvs')):
-            print(f'保留 temp/{entry.name}')
+    targeted = bool(args.targets)
+    entries = selected_targets(args.targets) if targeted else sorted(TEMP.iterdir())
+    skipped = 0
+    for entry in entries:
+        name = entry.relative_to(TEMP).as_posix()
+        if not targeted and (entry.name in (LOCK, 'AGENTS.md', 'test-materials') or (not args.include_toolchains and entry.name in ('tools', 'venvs'))):
+            print(f'保留 temp/{name}')
             continue
         reason = block_reason(entry, busy)
         try:
             if reason:
                 raise Unsafe(reason)
             tree = snapshot(entry)
+            protected = [entry / relative for relative in tree
+                         if (entry / relative).name.casefold() == 'agents.md'
+                         or (within(entry / relative, MATERIALS) and (entry / relative).name.startswith('0-'))]
+            if protected:
+                raise Unsafe(f'包含受保护的 Agent 指令或用户原始材料：{protected[0]}')
         except (OSError, Unsafe) as exc:
-            print(f'保留 temp/{entry.name}：{exc}')
+            skipped += 1
+            print(f'保留 temp/{name}：{exc}')
             continue
+        top = entry.relative_to(TEMP).parts[0]
         materials = [(entry / relative, info) for relative, info in tree.items()
-                     if stat.S_ISREG(info[2]) and is_material(entry / relative, entry.name)]
+                     if stat.S_ISREG(info[2]) and not within(entry / relative, MATERIALS)
+                     and is_material(entry / relative, top)]
         size = sum(info[3] for info in tree.values() if stat.S_ISREG(info[2]))
         candidates.append((entry, tree, materials))
-        print(f'候选 temp/{entry.name}：{size / 1024**2:.1f} MiB，先保留 {len(materials)} 份样本')
+        print(f'候选 temp/{name}：{size / 1024**2:.1f} MiB，先保留 {len(materials)} 份样本')
     print(f'候选 {len(candidates)} 项。')
     if not args.apply:
-        print('预览完成，未修改文件。执行清理：使用 temp 入口运行 clean --apply')
+        print('预览完成，未修改文件。执行清理：在本次命令中加入 --apply。')
         return
     # Finish all preservation before the first deletion. Conflicts stop the entire run.
     for entry, _, materials in candidates:
@@ -468,7 +534,7 @@ def clean(args: argparse.Namespace, locked_root: Identity | None = None) -> None
     for copies in saved.values():
         for destination, expected_hash in copies:
             verify_material(destination, expected_hash)
-    failures = 0
+    failures = skipped if targeted else 0
     unlinked: dict[Identity, tuple[Fingerprint, Fingerprint]] = {}
     for entry, tree, _ in candidates:
         try:
@@ -482,13 +548,14 @@ def clean(args: argparse.Namespace, locked_root: Identity | None = None) -> None
                 for destination, expected_hash in saved[entry]:
                     verify_material(destination, expected_hash)
                 remove_snapshot(entry, tree, unlinked)
-            print(f'已清理 temp/{entry.name}')
+            print(f'已清理 temp/{entry.relative_to(TEMP).as_posix()}')
         except (OSError, Unsafe) as exc:
             failures += 1
-            print(f'跳过 temp/{entry.name}：{exc}', file=sys.stderr)
-    initialize()
+            print(f'跳过 temp/{entry.relative_to(TEMP).as_posix()}：{exc}', file=sys.stderr)
+    if not targeted:
+        initialize()
     if failures:
-        raise Unsafe(f'{failures} 项在清理前变化或无法清理；请关闭相关任务后重试。')
+        raise Unsafe(f'{failures} 项被保留或无法清理；请检查上述原因。')
     print('清理完成。测试材料位于 temp/test-materials/。')
 
 
@@ -600,14 +667,21 @@ def windows_busy_paths() -> BusyPaths:
     errors: list[str] = []
     try:
         script = ("[Console]::OutputEncoding=[Text.UTF8Encoding]::new(); "
-                  "Get-CimInstance Win32_Process | Select-Object ProcessId,Name,ExecutablePath,CommandLine | ConvertTo-Json -Compress")
+                  "Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name,ExecutablePath,CommandLine | ConvertTo-Json -Compress")
         raw = command(['pwsh', '-NoProfile', '-NonInteractive', '-Command', script])
         data = cast(Union[ProcessInfo, list[ProcessInfo]], json.loads(raw.decode('utf-8-sig')))  # noqa: UP007
         items = [data] if isinstance(data, dict) else data
+        parents = {item['ProcessId']: item['ParentProcessId'] for item in items}
+        ancestors: set[int] = set()
+        parent: int | None = os.getpid()
+        while parent and parent not in ancestors:
+            ancestors.add(parent)
+            parent = parents.get(parent)
         for item in items:
             executable = item.get('ExecutablePath')
             line = item.get('CommandLine') or ''
-            processes.append((str(item['ProcessId']), item['Name'] or '', [executable] if executable else [], [line]))
+            arguments = [] if item['ProcessId'] in ancestors and cleanup_invocation([line]) else [line]
+            processes.append((str(item['ProcessId']), item['Name'] or '', [executable] if executable else [], arguments))
     except (Unsafe, ValueError, KeyError, TypeError):
         errors.append('无法读取 Windows CIM 进程信息')
     docker = shutil.which('docker')
@@ -681,11 +755,12 @@ def windows_remove_snapshot(path: Path, tree: Snapshot) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(prog='temp', description='建立、查看或清理当前仓库的 temp 目录；init 从模板创建缺失的 temp/AGENTS.md。')
     parser.add_argument('action', choices=('init', 'status', 'clean'), default='status', nargs='?')
+    parser.add_argument('targets', nargs='*', help='clean 指定 temp 内的文件或目录；默认扫描整个 temp')
     parser.add_argument('--apply', '-Apply', action='store_true', help='实际执行 clean；默认只预览')
     parser.add_argument('--include-toolchains', '-IncludeToolchains', action='store_true', help='clean 同时清理 tools 和 venvs')
     args = parser.parse_args()
-    if args.action != 'clean' and (args.apply or args.include_toolchains):
-        parser.error('--apply 和 --include-toolchains 仅适用于 clean')
+    if args.action != 'clean' and (args.apply or args.include_toolchains or args.targets):
+        parser.error('指定路径、--apply 和 --include-toolchains 仅适用于 clean')
     if args.action == 'init':
         initialize()
         initialize_agents()

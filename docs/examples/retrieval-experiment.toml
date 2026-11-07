@@ -1,0 +1,58 @@
+# Paths and glob patterns are relative to the repository root.
+[corpus]
+text = [
+  "docs/**/*.md",
+  "src/**/*.md",
+  "temp/test-materials/Text/0-*.md",
+]
+docstrings = ["src/nous/**/*.py"]
+
+[[draft]]
+name = "项目检索与证据"
+topic = "理解当前检索、来源与独立证据"
+sources = [
+  { path = "docs/design/cognition/current-retrieval.md" },
+  { path = "docs/design/wave/evidence-projection.md" },
+]
+
+[[draft]]
+name = "猫咪视频"
+topic = "记录视频选段中观察到的互动"
+sources = [
+  { path = "temp/test-materials/Video/0-cats-fighting.mp4", selection = { start_ms = 0, end_ms = 30000 } },
+  { path = "temp/test-materials/Image/Real/0-cats-fighting.jpg" },
+]
+
+[[draft]]
+name = "播放器截图"
+topic = "记录音乐播放器截图中的页面、曲目与可见文字"
+sources = [{ path = "temp/test-materials/Image/Screenshots/0-folia-music-player.png" }]
+
+[[draft]]
+name = "音乐片段"
+topic = "记录音频选段中可以听到的内容"
+sources = [
+  { path = "temp/test-materials/Audio/Music/0-vermilion.m4a", selection = { start_ms = 0, end_ms = 30000 } },
+]
+
+[[draft]]
+name = "PDF 报告"
+topic = "概括报告所述问题、实现与结果"
+sources = [{ path = "temp/test-materials/PDF/01-code-report.pdf" }]
+
+[[query]]
+question = "一段话被多次转述，是否就成了许多独立的证人？"
+modes = ["hybrid", "dense", "lexical"]
+top_k = 8
+
+[[query]]
+question = "搜索期间有人修改了文章，我读到的是哪个版本？"
+
+[[query]]
+question = "总是觉得自己不够好，休息时害怕自己没有价值。"
+
+[[query]]
+question = "怎么看到两只猫在浴室互相靠近的录像？"
+
+[[query]]
+question = "音乐播放器截图里正在播放哪首歌，界面上有什么？"

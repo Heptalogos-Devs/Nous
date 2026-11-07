@@ -3,7 +3,9 @@
   "python.languageServer": "None",
   "python.testing.pytestEnabled": true,
   "python.testing.unittestEnabled": false,
-  "python.testing.pytestArgs": ["tests/python"],
+  "python.testing.pytestArgs": [
+    "tests/python"
+  ],
   "[python]": {
     "editor.defaultFormatter": "charliermarsh.ruff",
     "editor.formatOnSave": true,
@@ -12,12 +14,15 @@
     }
   },
   "ruff.configuration": "${workspaceFolder}/pyproject.toml",
-  "rust-analyzer.files.excludeDirs": ["legacy"],
+  "rust-analyzer.files.excludeDirs": [
+    "legacy"
+  ],
   "rust-analyzer.linkedProjects": [],
   "files.watcherExclude": {
     "**/legacy/**": true,
     "**/temp/**": true,
     "**/.venv/**": true,
     "**/target/**": true
-  }
+  },
+  "markdown.validate.enabled": true
 }

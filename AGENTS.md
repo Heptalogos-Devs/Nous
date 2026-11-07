@@ -1,10 +1,14 @@
 # Nous Development Guide
 
-This file applies to the entire repository. When modifying content in one part of it, you should also follow the `AGENTS.md` of the corresponding directory, such as the [AGENTS.md](src/nous/AGENTS.md) of `src/nous/`. No Agent may modify, move, or delete `AGENTS.md` or other such files used to govern Agents unless the developer has explicitly permitted and requested it. The rule for changes to these files: create a Git patch file `AGENTS.proposal.patch` in the repository root, and promptly remind the developer to review it. There is no need to stop other unrelated work for the proposal. After the patch is applied, delete it yourself.
+This file applies to the entire repository. When modifying content in one part of it, follow the `AGENTS.md` of the corresponding directory, such as [src/nous/AGENTS.md](src/nous/AGENTS.md). Rules belong in the file that loads where the work happens: native-side constraints live in `native/`, not in `src/nous/`.
+
+No Agent may modify, move, or delete `AGENTS.md` or another file that governs Agents, such as the (*) documents listed in [docs/AGENTS.md](docs/AGENTS.md), unless the developer has explicitly permitted and requested it. Without that permission, deliver the change as `<TOPIC>.proposal.patch` in the repository root, remind the developer to review it, and keep working on unrelated parts. The patch is not repository content: Git ignores it, and you delete it once it has been applied.
+
+If an action is rejected, do not bypass the rejection by wrapping or rephrasing the same action; report it if no separately authorized safe action is available.
 
 ## AntiRLHF
 
-Required reading before acting: the [AntiRLHF Charter](docs/agents/antirlhf/CHARTER.md) and the [CONSTITUTION](docs/agents/antirlhf/CONSTITUTION.zh-CN.md), especially for GPT models. AntiRLHF is project owner's model-governance scheme, directed at "Local Defensibility Optimization (LDO)", over-engineering, over-testing, meaningless compatibility, and the behavior of substituting verifying or proving process for *real engineering work*.
+**Required** reading before acting (especially for GPT models): the [CONSTITUTION](docs/agents/antirlhf/CONSTITUTION.zh-CN.md), which states the binding behavior requirements. The [AntiRLHF Charter](docs/agents/antirlhf/CHARTER.md) records the background and the reasoning; read it when writing or assessing governance text (AGENTS.md, Skills, prompts) or when a requirement's intent is unclear. AntiRLHF is the project owner's model-governance scheme, directed at "Local Defensibility Optimization", over-engineering, over-testing, meaningless compatibility, and the behavior of substituting verifying or proving process for *real engineering work*.
 
 Apply these requirements into actual actions and decisions: find where responsibility for the problem lies, complete the usage path the user needs, modify structures that are not appropriate, and clear out the implementations that have been replaced. Do not use extra reports, checklists, or repeated declarations of compliance with the rules as a substitute for the work.
 
@@ -21,7 +25,7 @@ Read the relevant entries according to the task. There is no need to read all of
 | Current capabilities, goals, and subsequent work | [docs/CURRENT.md](docs/CURRENT.md) |
 | Ownership, dependency direction, and product boundaries | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
 | Design topics, implementation plans, and document responsibilities | [docs/README.md](docs/README.md) |
-| Existing implementations, symbols, and callers | [src/nous/INDEX.md](src/nous/INDEX.md) |
+| Existing implementations, symbols, and owners | [src/nous/INDEX.md](src/nous/INDEX.md) |
 | Installation, running, and product entry points | [README.md](README.md) |
 
 `docs/design/` defines the current contract, `docs/plans/` arranges the dependencies and delivery of specific work, and `docs/sources/` retains the original discussions. Proposals in the original discussions cannot be taken directly as approved decisions. When code and design are inconsistent, judge, in conjunction with the current requirements, which side should be modified, and do not take the old implementation or old tests as the final standard.
@@ -43,7 +47,7 @@ Choose a verification method that can expose problems in the current change. Che
 
 When an old test only protects an old implementation, delete it together with the old implementation. Migrate usage situations that still have value to the new entry point. Do not, for tests, add a dedicated export point or a parallel implementation to production code, or set up an extra test framework.
 
-Put development scaffolding, temporary probes, experimental tests, and scripts in `temp/`. They must not enter Git. Tests are located in `tests`.
+Tests are located in `tests`; scaffolding, probes and experimental scripts go in `temp/` under the Temporary Data rules.
 
 ## Document Maintenance
 
@@ -55,18 +59,18 @@ For important classes and methods, use comments to state responsibilities, state
 
 ## Development Environment and Commands
 
-Use Python 3.14 and uv. First set up the development environment in the repository root, so that the virtual environment, downloads, and caches are located in `temp/`.
+Use Python 3.14 and uv. First set up the development environment in the repository root, so that the virtual environment, downloads, and caches are located in `temp/`. A source build also needs Rust 1.97 and a C/C++ toolchain, because `uv sync --locked` builds the PyO3 extension through maturin.
 
 Linux / macOS:
 
 ```bash
-source scripts/dev-env.sh
+source scripts/workspace.sh
 ```
 
 Windows PowerShell:
 
 ```powershell
-. ./scripts/dev-env.ps1
+. ./scripts/workspace.ps1
 ```
 
 Install the development dependencies and view the entry points:
@@ -83,8 +87,15 @@ The check commands are as follows. Choose which to use according to the change. 
 uv run --locked pytest tests/python
 uv run --locked ruff check src tests/python
 uv run --locked ruff format --check src tests/python
-uv run --locked basedpyright
 ```
+
+`basedpyright` must resolve the project environment that workspace initialization puts in `temp/venvs/nous`:
+
+```sh
+uv run --locked basedpyright --pythonpath "$UV_PROJECT_ENVIRONMENT/bin/python"
+```
+
+On Windows PowerShell use `"$env:UV_PROJECT_ENVIRONMENT\Scripts\python.exe"`. Run the affected test file directly (`uv run --locked pytest tests/python/test_cli.py`), and check product behavior through a real `nous` command on the instance from [README.md](README.md).
 
 Audio and video processing requires FFmpeg and ffprobe. Configure them through PATH, or through `media.ffmpeg_path` and `media.ffprobe_path`. For the concrete product commands, see the [Tools CLI](docs/design/interfaces/tools-cli.md). When model resources are involved, read the [model configuration example](docs/examples/models.toml) and the related design. Do not write the gateway address, model name, or credentials of a particular development machine as product defaults.
 
@@ -94,20 +105,20 @@ This project is cross-platform. Except where the requirement itself involves pla
 
 Put generated products, reference repositories, worktrees, downloads, installations, and experimental scripts all in `temp/`. Do not scatter them into the user directory or other locations. External development tools that already exist may continue to be used. Newly added temporary project content still follows this convention.
 
-Use the [temp management tool](scripts/temp/README.md) to create directories, view status, and clean up.
+Use the [temp management tool](scripts/temp/README.md) to create directories, view status, and clean up. Recursive shell deletion commands are prohibited and usually blocked. For authorized temporary cleanup, use the temp tool to preview and select the specific paths, then apply the intended cleanup.
 
-## Code and Reference-Project
+## Code and Reference Retrieval
 
 ### Nous Source Code
 
-When locating code, understanding symbols, and tracing call relationships, first use the CodeGraph MCP's `codegraph_explore`, and specify the file, symbol, or concrete problem in the query. You may also run the following in the project directory:
+`src/nous/INDEX.md` owns the file, symbol and owner map; the `AGENTS.md` files state the constraints at each insertion point. Use CodeGraph for symbols and code relationships, and Zvec-grep for semantic and lexical discovery across code and documents. See the [retrieval handbook](docs/agents/retrieval.md) for the tools and reference projects.
 
 ```sh
 codegraph explore "<symbols or questions>"
 ```
 
-When CodeGraph or the index is unavailable, continue locating by file and symbol search. You may also choose to install or repair that tool, but you need to explain this to the developer and request permission. Along the hit locations, read the responsible module and the real callers. Do not decide the modification only on the basis of a search summary.
+Initialize or repair the tools and indexes through `scripts/workspace.ps1` or `scripts/workspace.sh` when needed. Read the responsible module and actual callers along the results; use exact text search to check important relationships. Do not decide the modification only on the basis of a search summary.
 
 ### Reference Implementations
 
-When retrieving reference implementations, read [reference-project retrieval](docs/agents/reference-code.md).
+When retrieving reference implementations, read the [retrieval handbook](docs/agents/retrieval.md).

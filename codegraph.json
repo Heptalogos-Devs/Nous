@@ -1,3 +1,5 @@
 {
-  "deprioritize": ["legacy/"]
+  "exclude": [
+    "legacy/"
+  ]
 }

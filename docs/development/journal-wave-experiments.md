@@ -54,3 +54,20 @@ AnnotationSet 是普通结果产物。Wave 的集合输入可以显式引用其 
 若结构没有改善，保留实际结果，判断是标注、概念空间、候选通道还是读出造成；不增加更多 Prompt 限定或更复杂数学来掩盖输入问题。先让人工合理结构成立，再评价模型是否能稳定提出这种结构。
 
 实验产物留在用户授权的 temp 实例，可用正式 read 查阅。无需固定案例数量、排名通过率、基准发布或永久运行日志。
+
+## 重复使用真实材料
+
+[检索实验脚本](../../scripts/retrieval_experiment.py)使用正式 SDK 批量接纳材料、生成草稿和运行查询。复制或编辑[实验配置示例](../examples/retrieval-experiment.toml)，按需要更换文本路径、Python 源码、媒体选段和问题；路径与 glob 均相对仓库根目录。来源的 `selection` 使用内容选区合同，可指定音视频毫秒范围、PDF 页码、文本行号和图片范围。示例中的 `temp/test-materials` 材料按本机实际情况选择。图片、音频和视频按所选模型路线准备，视频支持原生输入时直接使用视频。
+
+先用 `nous init` 建立独立实例并配置模型和检索空间，再从仓库根目录运行：
+
+```powershell
+python scripts/retrieval_experiment.py --instance ./temp/work/my-experiment/instance --plan ./docs/examples/retrieval-experiment.toml --output ./temp/work/my-experiment/results ingest
+python scripts/retrieval_experiment.py --instance ./temp/work/my-experiment/instance --plan ./docs/examples/retrieval-experiment.toml --output ./temp/work/my-experiment/results draft
+python scripts/retrieval_experiment.py --instance ./temp/work/my-experiment/instance --plan ./docs/examples/retrieval-experiment.toml --output ./temp/work/my-experiment/results adopt "<草稿标识符>" --title "<标题>" --body ./temp/work/my-experiment/reviewed.md --annotate
+python scripts/retrieval_experiment.py --instance ./temp/work/my-experiment/instance --plan ./docs/examples/retrieval-experiment.toml --output ./temp/work/my-experiment/results query
+```
+
+`draft` 可在命令后指定一个或多个配置中的任务名；不指定时运行全部任务。草稿保存在实例和 `drafts.md`，阅读正文与来源后才执行 `adopt`。`--body` 用审阅后的 Markdown 覆盖草稿正文，未修改时省略；`--annotate` 明确请求概念标注。采用失败不会丢失草稿。`query` 将可读结果写入 `queries.md`，完整分组、片段和精确引用写入 `queries.json`；遇到上游限流时，本轮继续执行词项查询并保留未执行的语义查询，恢复后可运行 `query --retry-failed`，只重试未完成和失败的查询。用 `nous read "<修订标识符>" --sources` 回读原文和来源。根据实际结果判断相关性，不将某个预定文件名或排名当成唯一正确答案。
+
+`state.json` 记录本次导入、草稿、采用和实例身份。使用同一实例和输出目录重新运行 `ingest` 会跳过未变更文件，并按上次保存的精确版本修订已改变的来源；如果文稿已被其他操作修改，会报告版本冲突。材料中原有的 `source:` 链接作为原文示例保留，原文件始终可通过来源读取。输出目录属于特定实例和命名空间，不会被脚本删除或用于另一实例。模型配置和凭据由实例管理，素材与结果不需要进入 Git。

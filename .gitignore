@@ -7,6 +7,9 @@
 !.env.*.example
 *.log
 
+# Agent governance change proposals (reviewed and applied by the developer)
+*.proposal.patch
+
 # Python environments, caches, and distributions
 .venv/
 venv/
@@ -33,6 +36,7 @@ target/
 
 # Node.js dependencies and caches
 node_modules/
+.zvec-grep/
 .npm/
 .pnpm-store/
 .yarn/cache/

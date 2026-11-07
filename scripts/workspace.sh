@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 在工程终端 source；缓存与实例不进入源码目录。
-NOUS_REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+NOUS_REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 export NOUS_REPO_ROOT
 export UV_CACHE_DIR="$NOUS_REPO_ROOT/temp/cache/uv"
 export UV_PROJECT_ENVIRONMENT="$NOUS_REPO_ROOT/temp/venvs/nous"
@@ -16,8 +16,14 @@ export TMP="$TEMP"
 export TMPDIR="$TEMP"
 export npm_config_cache="$NOUS_REPO_ROOT/temp/cache/npm"
 export XDG_CACHE_HOME="$NOUS_REPO_ROOT/temp/cache/xdg"
+export ZVEC_GREP_HOME="$NOUS_REPO_ROOT/temp/tools/zvec-grep/runtime"
+export ZVEC_GREP_MODEL_CACHE="$NOUS_REPO_ROOT/temp/tools/zvec-grep/models"
 mkdir -p "$UV_CACHE_DIR" "$PYTHONPYCACHEPREFIX" \
     "$UV_PYTHON_INSTALL_DIR" "$PIP_CACHE_DIR" "$RUFF_CACHE_DIR" "$CARGO_HOME" "$CARGO_TARGET_DIR" \
     "$TEMP" "$npm_config_cache" "$XDG_CACHE_HOME"
 
-export PATH="$UV_PROJECT_ENVIRONMENT/bin:$PATH"
+for nous_bin in "$UV_PROJECT_ENVIRONMENT/bin" "$NOUS_REPO_ROOT/temp/tools/codegraph/node_modules/.bin" "$NOUS_REPO_ROOT/temp/tools/zvec-grep/node_modules/@zvec/zvec-grep/bin"; do
+    case ":$PATH:" in *":$nous_bin:"*) ;; *) PATH="$nous_bin:$PATH" ;; esac
+done
+export PATH
+uv run --no-project --with tomlkit python -B "$NOUS_REPO_ROOT/scripts/workspace.py" "${1:-init}" || return $?
